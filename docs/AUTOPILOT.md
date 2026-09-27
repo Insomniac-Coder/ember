@@ -18,8 +18,18 @@ next session needs to know goes into `docs/HANDOFF.md`, in the start-here subsec
 ## 2. What to work on
 
 Implement Ember 0.9.9 in the compiler until it is done, or until the owner says stop. Do not wait
-for a go-ahead between tasks while the owner is asleep; keep going. The owner's order
-(2026-09-25):
+for a go-ahead between tasks while the owner is asleep; keep going.
+
+**Current priority (owner, 2026-09-27): finish Phases 1–3 and their dependencies first.**
+Core language, ownership/borrowing, and classes/reference counting are the backbone.
+Finish the already verified static-library batch, then build a current rule-and-evidence
+checklist for those three phases and close its gaps. Other phases are eligible only where
+they supply a concrete dependency of this work. Defer further FFI expansion, including
+export tables, until this priority is fulfilled. Keep delegating by complexity and commit
+about every five features. Progress estimates must follow verified obligations, not stale
+audit rows. This supersedes the older lowest-completion-first ordering below.
+
+Historical order (2026-09-25):
 
 **A. Finish `std.math`, where it was left on 2026-09-25** (`std/src/math.em`, ODR-038):
 

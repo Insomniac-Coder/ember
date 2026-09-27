@@ -22,39 +22,39 @@ pages, and the records that keep them consistent.
 
 | | |
 |---|---|
-| Language version being implemented | **0.9.9**, specification `Ember_v0.9.9_Hardened_28` |
-| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.9_Hardened_28.md`](docs/spec-source/Ember_v0.9.9_Hardened_28.md) |
+| Language version being implemented | **0.9.9**, specification `Ember_v0.9.9_Hardened_39` |
+| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.9_Hardened_39.md`](docs/spec-source/Ember_v0.9.9_Hardened_39.md) |
 | Specification sources | [`tasks/spec-0.9.9/parts/`](tasks/spec-0.9.9/parts/), one file per Part; each `Hardened_N` is their concatenation and is never edited afterwards |
 | Last adopted normative specification | [`docs/spec-source/ember-spec.md`](docs/spec-source/ember-spec.md), 0.8.5_Hardened_1 (0.9.9 is adopted when its gates pass and the owner installs it) |
-| Tests | 272 Rust tests; 1,543 Ember test programs, 250 conformance rule directories |
-| Defects | 323 fixed, 5 open ([`docs/DEFECTS.md`](docs/DEFECTS.md)) |
-| Language decisions | 70 ODRs in [`docs/OWNER-QUEUE.md`](docs/OWNER-QUEUE.md), each carried into a `Hardened_N` |
+| Tests | Rust unit and integration suites; Ember run and conformance suites in [`tests/`](tests/) |
+| Defects | Current fixed and open findings in [`docs/DEFECTS.md`](docs/DEFECTS.md) |
+| Language decisions | Current owner decisions (ODRs) in [`docs/OWNER-QUEUE.md`](docs/OWNER-QUEUE.md) |
 | CI | Linux (Clang, GCC) and Windows (MSVC, clang-cl); every push to `main` |
 
-Phase estimates against 0.9.9 (2026-09-26, end of day; weighted by the size of each phase's rules;
+Phase estimates against 0.9.9 (2026-09-27; weighted by the size of each phase's rules;
 method in [`docs/HANDOFF.md`](docs/HANDOFF.md)):
 
 | Phase | Scope | Done |
 |---|---|---:|
 | 1 | Core language (Parts II–VI) | 97% |
 | 2 | Ownership, borrowing, regions | 88% |
-| 3 | Classes, reference counting, exclusivity | 50% |
+| 3 | Classes, reference counting, exclusivity | 59% |
 | 4 | Effects, compile time, reflection, derives | 13% |
-| 5 | C interoperability | 8% |
+| 5 | C interoperability | 14% |
 | 6 | Concurrency and data-oriented design | 2% |
 | 7 | C++ interoperability and the interpreter | 0% |
 | 7a | Iteration, determinism, cost control | 6% |
-| 8 | Hardening and 1.0 | 14% |
-| | Overall | 57% |
+| 8 | Hardening and 1.0 | 16% |
+| | Overall | 58% |
 
-The latest language work is the owner's simplification pass
-([`docs/proposals/Ember_Simplification_Pass_Revised.md`](docs/proposals/Ember_Simplification_Pass_Revised.md)),
-adopted as ODR-049 to ODR-069 (ODR-070 is a nesting limit): associated-type defaults, `alloc_array` by `Default` and a separate
-`alloc_zeroed`, float operators that stay IEEE in generic code, no early destruction, a
-memory-safety fix for borrows through handles stored in objects, map lookups that need no key
-conversion (`AsKey`/`ToKey`), `get_pair_mut`, when two const generic arguments are equal, and one
-storage rule for views in every container (a `Map[str, int]` of string literals), checked at every
-store.
+The latest language work includes the owner's simplification pass
+([`docs/proposals/Ember_Simplification_Pass_Revised.md`](docs/proposals/Ember_Simplification_Pass_Revised.md));
+its rulings and current status are tracked in [`docs/OWNER-QUEUE.md`](docs/OWNER-QUEUE.md). It
+covers associated-type defaults, `alloc_array` by `Default` and a separate `alloc_zeroed`, float
+operators that stay IEEE in generic code, no early destruction, a memory-safety fix for borrows
+through handles stored in objects, map lookups that need no key conversion (`AsKey`/`ToKey`),
+`get_pair_mut`, when two const generic arguments are equal, and one storage rule for views in every
+container (a `Map[str, int]` of string literals), checked at every store.
 
 ## What works today
 
@@ -85,7 +85,7 @@ ECS facilities, C++ interop, the interpreter, and hot reload. The open defects a
 
 ## Examples
 
-Every example below compiles and runs with the current compiler.
+Every standalone program example below compiles and runs with the current compiler.
 
 ```ember
 fn main():
@@ -188,6 +188,68 @@ ember inspect --safety <path>
 ```
 
 `--cc clang|gcc|msvc` (or the environment variable `EMBER_CC`) overrides C compiler detection.
+
+### Embed a static library from C
+
+Build a C-compatible library for embedding in a C or C++ host. The full
+MSVC and clang-cl suites, linked C/C++ archive tests, and repository gates
+passed; see the [handoff](docs/HANDOFF.md) for details. In a package directory,
+add `ember.toml` and use the default `src/lib.em` entry:
+
+```toml
+[package]
+name = "demo_api"
+version = "0.1.0"
+language = "0.9.9"
+kind = "staticlib"
+```
+
+```ember
+@export("answer")
+fn answer() -> i32:
+    return 42
+```
+
+Run `ember build` from the package directory. With GNU-style toolchains, the
+debug profile emits `target/debug/lib/libdemo_api.a` and `demo_api.h`, plus
+`target/debug/lib/ember_runtime/libember_rt.a` and `ember_rt.h`. MSVC and
+clang-cl use `demo_api.lib` and `ember_rt.lib` at the corresponding paths.
+
+```c
+#include "demo_api.h"
+#include "ember_runtime/ember_rt.h"
+
+int main(void) {
+    (void)ember_rt_init(NULL);
+    int result = answer();
+    ember_rt_shutdown();
+    return result == 42 ? 0 : 1;
+}
+```
+
+On Linux, link the package archive before its runtime archive:
+
+```sh
+cc host.c -I target/debug/lib \
+  -L target/debug/lib -ldemo_api \
+  -L target/debug/lib/ember_runtime -lember_rt -lm -o host
+./host
+```
+
+From a Windows Developer Command Prompt, use the matching toolchain and
+profile:
+
+```bat
+cl /MD /std:c11 /I target\debug\lib host.c target\debug\lib\demo_api.lib target\debug\lib\ember_runtime\ember_rt.lib
+host.exe
+```
+
+Use matching profile flags when linking; shipping builds retain their LTO
+settings. The same archives can be linked from C++; use the C++ driver
+(`c++`/`clang++` or `cl`) for a C++ host. `ember build --emit c` emits C, and
+`ember build --emit header` emits only the header without invoking a C
+compiler. `cdylib`, shared-runtime, and native-library packaging are not
+implemented.
 
 Tests:
 

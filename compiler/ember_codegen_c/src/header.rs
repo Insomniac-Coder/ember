@@ -2,12 +2,12 @@
 //! declarators come from the same emitter and type plan as the C translation
 //! unit, while the dependency walk limits this header to exported types.
 
-use super::{Definition, Emitter, TypeNode};
+use super::{Definition, Emitter, HeaderOutput, TypeNode};
 use ember_mir::Body;
 use ember_types::{Ty, TyKind, IntTy, UintTy};
 use std::collections::BTreeSet;
 
-pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str) -> Result<String, String> {
+pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str) -> Result<HeaderOutput, String> {
     let exports: Vec<&Body> = bodies.iter()
         .filter(|body| body.abi.as_deref() == Some("C")
             && !body.is_extern_declaration && !body.is_abstract)
@@ -44,7 +44,8 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
     line(&mut out, "#include <stddef.h>");
     line(&mut out, "#include <stdint.h>");
     if reachable.runtime_integer_carrier {
-        line(&mut out, &format!("#include \"{}\"", ember_branding::runtime_header()));
+        line(&mut out, &format!("#include \"{}_runtime/{}\"",
+            ember_branding::SYMBOL_PREFIX, ember_branding::runtime_header()));
     }
     line(&mut out, "");
     line(&mut out, "#ifdef __cplusplus");
@@ -89,7 +90,7 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
     line(&mut out, "}");
     line(&mut out, "#endif");
     line(&mut out, &format!("#endif /* {guard} */"));
-    Ok(out)
+    Ok(HeaderOutput { source: out, needs_runtime_header: reachable.runtime_integer_carrier })
 }
 
 fn line(out: &mut String, value: &str) {

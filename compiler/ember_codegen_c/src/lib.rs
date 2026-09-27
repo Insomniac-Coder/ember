@@ -32,12 +32,18 @@ pub struct Output {
     /// The single translation unit for this module.
     pub c_source: String,
     /// The standalone C/C++ declaration surface for defined C exports.
-    pub header_source: Result<String, String>,
+    pub header_source: Result<HeaderOutput, String>,
     /// `[EFF-10]` — per-site safety metadata for the checks this translation
     /// unit emits. The driver writes this to the profile's inspect directory;
     /// elided-check entries are added when an elision pass provides the
     /// required proof and reason; unsupported cases remain emitted checks.
     pub safety_json: String,
+}
+
+pub struct HeaderOutput {
+    pub source: String,
+    /// True when public i128/u128 carriers need the packaged runtime header.
+    pub needs_runtime_header: bool,
 }
 
 /// `[MNG-1]` — the C symbol of a type's `drop` method.
@@ -110,10 +116,12 @@ pub fn emit(
     package_name: &str,
     has_main: bool,
     leak_check: bool,
+    library_mode: bool,
 ) -> Output {
     let bodies = mir.bodies();
     let types = mir.types();
-    let (order, structural) = plan_types(types);
+    let type_namespace = if library_mode { package_type_namespace(package_name) } else { String::new() };
+    let (order, structural) = plan_types(types, &type_namespace);
     let usize_ty = types
         .all()
         .find(|(_, k)| matches!(k, TyKind::Uint(UintTy::Usize)))
@@ -124,6 +132,8 @@ pub fn emit(
         types,
         map,
         out: String::new(),
+        library_mode,
+        type_namespace,
         line_directives: true,
         order,
         structural,
@@ -261,6 +271,8 @@ struct Emitter<'a> {
     types: &'a TypeTable,
     map: &'a SourceMap,
     out: String,
+    library_mode: bool,
+    type_namespace: String,
     line_directives: bool,
     /// Every type definition to emit, in an order where a type is defined
     /// after everything it contains by value.
@@ -2804,13 +2816,17 @@ impl Emitter<'_> {
 
     fn node_name(&self, node: TypeNode) -> String {
         match node {
-            TypeNode::Struct(id) => c_name(&self.types.struct_def(id).name.to_string()),
+            TypeNode::Struct(id) => self.c_named(&self.types.struct_def(id).name.to_string()),
             TypeNode::Class(id) => {
                 ember_branding::object_struct(&self.types.class_def(id).name.to_string())
             }
-            TypeNode::Enum(id) => c_name(&self.types.enum_def(id).name.to_string()),
+            TypeNode::Enum(id) => self.c_named(&self.types.enum_def(id).name.to_string()),
             TypeNode::Structural(ty) => self.structural_name(ty),
         }
+    }
+
+    fn c_named(&self, name: &str) -> String {
+        format!("{}{}", self.type_namespace, c_name(name))
     }
 
     /// The payload of the compiler-known `Box[T]` structural wrapper, by its
@@ -2844,15 +2860,15 @@ impl Emitter<'_> {
     }
 
     fn shared_type_info_symbol(&self, id: StructId) -> String {
-        format!("{}_type_info", c_name(&self.types.struct_def(id).name.to_string()))
+        format!("{}_type_info", self.c_named(&self.types.struct_def(id).name.to_string()))
     }
 
     fn shared_debug_edges_symbol(&self, id: StructId) -> String {
-        format!("{}_debug_edges", c_name(&self.types.struct_def(id).name.to_string()))
+        format!("{}_debug_edges", self.c_named(&self.types.struct_def(id).name.to_string()))
     }
 
     fn shared_drop_symbol(&self, id: StructId) -> String {
-        format!("{}_drop_payload", c_name(&self.types.struct_def(id).name.to_string()))
+        format!("{}_drop_payload", self.c_named(&self.types.struct_def(id).name.to_string()))
     }
 
     /// The counted-owner payload of a compiler-known `Weak[O]` wrapper. Unlike
@@ -3417,7 +3433,9 @@ impl Emitter<'_> {
         for body in bodies {
             if body.ffi_counted.is_some() {
                 self.line(&format!("extern {};", self.ffi_counted_signature(body)));
-                self.line(&format!("{};", self.signature(body)));
+                let signature = self.signature(body);
+                if self.library_mode { self.emit_internal_prototype(&signature); }
+                else { self.line(&format!("{signature};")); }
                 continue;
             }
             if body.is_extern_declaration {
@@ -3430,13 +3448,25 @@ impl Emitter<'_> {
                 continue;
             }
             let signature = self.signature(body);
-            // Not `static`: modules share one translation unit, and a private
-            // helper another module never calls would be an unused `static`
-            // function, which `-Wall` reports and `[CG-C-1]` forbids. The
-            // mangled names carry the module, so nothing can collide.
-            self.line(&format!("{signature};"));
+            if self.library_mode && body.abi.as_deref() != Some("C") {
+                self.emit_internal_prototype(&signature);
+            } else {
+                self.line(&format!("{signature};"));
+            }
         }
         self.line("");
+    }
+
+    fn emit_internal_prototype(&mut self, signature: &str) {
+        // Library objects contain private helpers from this package and std.
+        // Internal linkage avoids duplicate linker symbols when a host links
+        // two Ember archives. A private helper may be unused in this archive;
+        // mark that deliberate on compilers which warn for static functions.
+        self.line("#if defined(__GNUC__) || defined(__clang__)");
+        self.line(&format!("static {signature} __attribute__((unused));"));
+        self.line("#else");
+        self.line(&format!("static {signature};"));
+        self.line("#endif");
     }
 
     /// A capture-free native function value keeps its native entry for Ember
@@ -3564,7 +3594,8 @@ impl Emitter<'_> {
     fn emit_ffi_counted_wrapper(&mut self, body: &Body) {
         let counted = body.ffi_counted.as_ref().expect("counted wrapper metadata");
         let args: Vec<_> = body.args().map(|(id, _)| format!("_{}", id.0)).collect();
-        self.line(&format!("{} {{", self.signature(body)));
+        let linkage = if self.library_mode { "static " } else { "" };
+        self.line(&format!("{linkage}{} {{", self.signature(body)));
         let mut foreign_args = Vec::new();
         for param in &counted.abi_params {
             match param {
@@ -3652,7 +3683,8 @@ impl Emitter<'_> {
 
     fn emit_body(&mut self, body: &Body) {
         let signature = self.signature(body);
-        self.line(&format!("{signature} {{"));
+        let linkage = if self.library_mode && body.abi.as_deref() != Some("C") { "static " } else { "" };
+        self.line(&format!("{linkage}{signature} {{"));
         if body.abi.as_deref() == Some("C") {
             // `[FFI-22]` — the host may call this export on a thread that has
             // never run Ember. Attach before the body touches runtime state.
@@ -6106,7 +6138,7 @@ impl Emitter<'_> {
                 }
                 let name = match kind {
                     AggregateKind::Struct(id) => {
-                        c_name(&self.types.struct_def(*id).name.to_string())
+                        self.c_named(&self.types.struct_def(*id).name.to_string())
                     }
                     _ => self.c_type(target),
                 };
@@ -6171,7 +6203,7 @@ impl Emitter<'_> {
             return self.niche_none(&niche);
         }
         let def = self.types.enum_def(id);
-        let name = c_name(&def.name.to_string());
+        let name = self.c_named(&def.name.to_string());
         let tag = def.variants[variant].discriminant;
         if def.is_unit_only() {
             return format!("(({name}){tag})");
@@ -6401,7 +6433,7 @@ impl Emitter<'_> {
                 if *mutable { format!("{RT}mutspan") } else { format!("{RT}span") }
             }
             TyKind::Opaque(name) => format!("struct {}", name.as_str().rsplit('.').next().unwrap_or(name.as_str())),
-            TyKind::Struct(id) => c_name(&self.types.struct_def(*id).name.to_string()),
+            TyKind::Struct(id) => self.c_named(&self.types.struct_def(*id).name.to_string()),
             // Class handles are pointers to the compiler-generated object
             // struct. The name comes from the shared branding helper so a
             // future prefix change cannot create a mismatched type spelling.
@@ -6413,7 +6445,7 @@ impl Emitter<'_> {
             // object-header pointer. Its dynamic vtable is found through
             // `type_info`, never carried in this value's representation.
             TyKind::ClassInterface(_) => format!("{RT}obj_header*"),
-            TyKind::Enum(id) => c_name(&self.types.enum_def(*id).name.to_string()),
+            TyKind::Enum(id) => self.c_named(&self.types.enum_def(*id).name.to_string()),
             // `[COST-3]` — a range type is "not observable": erased to the
             // representation, with the construction site carrying the check.
             // It emits no C type of its own, so `Roughness` and `f32` are the
@@ -6493,22 +6525,23 @@ impl Emitter<'_> {
 ///
 /// `[CG-C-2]` — the walk is over the interner and the struct table in their
 /// own order, so the result is the same for the same input.
-fn plan_types(types: &TypeTable) -> (Vec<TypeNode>, BTreeMap<Ty, String>) {
+fn plan_types(types: &TypeTable, type_namespace: &str) -> (Vec<TypeNode>, BTreeMap<Ty, String>) {
     let mut planner = Planner {
         types,
+        type_namespace: type_namespace.to_string(),
         order: Vec::new(),
         names: BTreeMap::new(),
         done: BTreeSet::new(),
         active: BTreeSet::new(),
         taken: types
             .structs()
-            .map(|(_, d)| c_name(&d.name.to_string()))
+            .map(|(_, d)| format!("{type_namespace}{}", c_name(&d.name.to_string())))
             .chain(
                 types
                     .classes()
                     .map(|(_, d)| ember_branding::object_struct(&d.name.to_string())),
             )
-            .chain(types.enums().map(|(_, d)| c_name(&d.name.to_string())))
+            .chain(types.enums().map(|(_, d)| format!("{type_namespace}{}", c_name(&d.name.to_string()))))
             .collect(),
     };
     // Named types first, so the output stays close to declaration order; each
@@ -6540,6 +6573,7 @@ fn plan_types(types: &TypeTable) -> (Vec<TypeNode>, BTreeMap<Ty, String>) {
 
 struct Planner<'a> {
     types: &'a TypeTable,
+    type_namespace: String,
     order: Vec<TypeNode>,
     names: BTreeMap<Ty, String>,
     done: BTreeSet<TypeNode>,
@@ -6658,7 +6692,7 @@ impl Planner<'_> {
             TyKind::Fn { .. } => "fn_",
             _ => "arr_",
         };
-        let base = format!("{}{kind}{stem}", ember_branding::mangle_prefix());
+        let base = format!("{}{}{kind}{stem}", self.type_namespace, ember_branding::mangle_prefix());
         if self.taken.insert(base.clone()) {
             return base;
         }
@@ -6691,6 +6725,18 @@ fn identifier_from(shown: &str) -> String {
 /// dotted prefix (`math.ops.Point`), which C cannot spell.
 fn c_name(name: &str) -> String {
     ember_branding::mangled(name)
+}
+
+/// Public C type names must coexist when a host includes two static-library
+/// headers. Encode the exact package bytes so punctuation and Unicode names
+/// cannot collapse to the same C identifier (D-367).
+fn package_type_namespace(package_name: &str) -> String {
+    let mut prefix = format!("{}pkg_", ember_branding::mangle_prefix());
+    for byte in package_name.as_bytes() {
+        prefix.push_str(&format!("{byte:02x}"));
+    }
+    prefix.push('_');
+    prefix
 }
 
 /// The parameter which supplies one stable class-interface handle to this

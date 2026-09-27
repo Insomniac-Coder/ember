@@ -23,7 +23,8 @@ const USAGE: &str = "\
 ember — the Ember compiler
 
 usage:
-    ember build <file.em> [options]   compile to an executable
+    ember build [file.em|package-dir] [options]
+                                      compile a bin or staticlib package
     ember run   <file.em> [options]   compile and run
     ember check <file.em>             type-check without generating code
     ember explain <CODE>              describe a diagnostic code
@@ -41,7 +42,7 @@ options:
     --syntax-only                      lex and parse only; report E00xx/E01xx
     --backend c                        the only backend in v1
     --cc msvc|clang|gcc                override C compiler detection
-    --out-dir <dir>                    default: target/
+    --out-dir <dir>                    default: target/; staticlib archives and headers in <profile>/lib/
     --leak-check                       `run` only: report live ownership SCCs
     --json                             machine-readable diagnostics
     -D warnings                        treat warnings as errors
@@ -350,7 +351,22 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                     rest.push(arg.clone());
                 }
             }
-            let input = input.ok_or_else(|| format!("`ember {command}` needs a source file"))?;
+            let input = match input {
+                Some(input) => input,
+                None if command == "build" => {
+                    let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
+                    let mut candidate = Some(cwd.as_path());
+                    let root = loop {
+                        let Some(dir) = candidate else {
+                            return Err("`ember build` needs a source file or a package manifest in this directory or an ancestor".to_string());
+                        };
+                        if dir.join(ember_branding::MANIFEST).is_file() { break dir.to_path_buf(); }
+                        candidate = dir.parent();
+                    };
+                    root.to_string_lossy().into_owned()
+                }
+                None => return Err(format!("`ember {command}` needs a source file")),
+            };
             let options = parse_options(&rest)?;
             if options.leak_check && command != "run" {
                 return Err("`--leak-check` is only valid with `ember run`".to_string());
@@ -365,7 +381,17 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 !matches!(stage, "c" | "header")) {
                 return Err("`--emit-header` requires a normal build, `--emit c`, or `--emit header`".to_string());
             }
-            compile(Path::new(&input), command, &options)
+            let source = if command == "build" && Path::new(&input).is_dir() {
+                let root = Path::new(&input);
+                let manifest = root.join(ember_branding::MANIFEST);
+                if !manifest.is_file() {
+                    return Err(format!("package directory `{}` has no {}", root.display(), ember_branding::MANIFEST));
+                }
+                package_entry_from_manifest(root, &manifest, "build")?.0
+            } else {
+                PathBuf::from(input)
+            };
+            compile(&source, command, &options)
         }
         // `[FMT-1]` — the canonical printer. `--check` reports whether the
         // file is already formatted instead of rewriting it.
@@ -528,7 +554,7 @@ fn resolve_cycle_analysis_root(input: &Path) -> Result<(PathBuf, PathBuf), Strin
                 ember_branding::MANIFEST
             ));
         }
-        return package_entry_from_manifest(input, &manifest);
+        return package_entry_from_manifest(input, &manifest, "cycle analysis");
     }
 
     Err(format!(
@@ -541,18 +567,19 @@ fn resolve_cycle_analysis_root(input: &Path) -> Result<(PathBuf, PathBuf), Strin
 fn package_entry_from_manifest(
     package_root: &Path,
     manifest_path: &Path,
+    purpose: &str,
 ) -> Result<(PathBuf, PathBuf), String> {
     let manifest = std::fs::read_to_string(manifest_path).map_err(|error| {
         format!(
-            "cannot read cycle analysis manifest `{}`: {error}",
+            "cannot read {purpose} manifest `{}`: {error}",
             manifest_path.display()
         )
     })?;
     let source_root = package_root.join("src");
     let entry = manifest_string(&manifest, "build", "entry").map_or_else(
         || {
-            let root_name = if manifest_string(&manifest, "package", "kind").as_deref()
-                == Some("lib")
+            let root_name = if matches!(manifest_string(&manifest, "package", "kind").as_deref(),
+                Some("lib" | "staticlib" | "cdylib"))
             {
                 "lib"
             } else {
@@ -565,7 +592,7 @@ fn package_entry_from_manifest(
 
     if !entry.is_file() {
         return Err(format!(
-            "cycle analysis package `{}` has no readable entry source `{}`",
+            "{purpose} package `{}` has no readable entry source `{}`",
             package_root.display(),
             entry.display()
         ));
@@ -574,15 +601,17 @@ fn package_entry_from_manifest(
         != Some(ember_branding::SOURCE_EXT)
     {
         return Err(format!(
-            "cycle analysis package `{}` entry `{}` is not a .{} source file",
+            "{purpose} package `{}` entry `{}` is not a .{} source file",
             package_root.display(),
             entry.display(),
             ember_branding::SOURCE_EXT
         ));
     }
-    if !entry.starts_with(&source_root) {
+    let inside_source = std::fs::canonicalize(&entry).ok().zip(std::fs::canonicalize(&source_root).ok())
+        .is_some_and(|(entry, root)| entry.starts_with(root));
+    if !inside_source {
         return Err(format!(
-            "cycle analysis package `{}` entry `{}` is outside its src directory",
+            "{purpose} package `{}` entry `{}` is outside its src directory",
             package_root.display(),
             entry.display()
         ));
@@ -1952,18 +1981,8 @@ fn module_file(root: &Path, segments: &[String]) -> Option<std::path::PathBuf> {
 /// `[FFI-26]` — derive a safe single filename for the generated public header.
 /// A manifest's package name wins; a manifestless file is its own package.
 fn export_package_name(input: &Path) -> Result<String, String> {
-    let mut directory = input.parent();
-    let mut declared = None;
-    while let Some(candidate) = directory {
-        let path = candidate.join(ember_branding::MANIFEST);
-        if path.is_file() {
-            let manifest = std::fs::read_to_string(&path).map_err(|error|
-                format!("cannot read package manifest `{}`: {error}", path.display()))?;
-            declared = manifest_string(&manifest, "package", "name");
-            break;
-        }
-        directory = candidate.parent();
-    }
+    let declared = nearest_manifest_text(input)?
+        .as_deref().and_then(|manifest| manifest_string(manifest, "package", "name"));
     let name = declared.or_else(|| input.file_stem().and_then(|stem| stem.to_str()).map(str::to_owned))
         .ok_or_else(|| "cannot derive a package name for the generated header".to_string())?;
     let device_stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
@@ -1979,6 +1998,31 @@ fn export_package_name(input: &Path) -> Result<String, String> {
         return Err(format!("package name `{name}` is not a single safe header filename component"));
     }
     Ok(name)
+}
+
+fn nearest_manifest_path(input: &Path) -> Option<PathBuf> {
+    let mut directory = input.parent();
+    while let Some(candidate) = directory {
+        let path = candidate.join(ember_branding::MANIFEST);
+        if path.is_file() { return Some(path); }
+        directory = candidate.parent();
+    }
+    None
+}
+
+fn nearest_manifest_text(input: &Path) -> Result<Option<String>, String> {
+    nearest_manifest_path(input).map(|path| std::fs::read_to_string(&path).map_err(|error|
+        format!("cannot read package manifest `{}`: {error}", path.display()))).transpose()
+}
+
+fn package_source_root(input: &Path) -> PathBuf {
+    let fallback = input.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+    let Some(manifest) = nearest_manifest_path(input) else { return fallback };
+    let Some(package_root) = manifest.parent() else { return fallback };
+    let source_root = package_root.join("src");
+    let inside = std::fs::canonicalize(input).ok().zip(std::fs::canonicalize(&source_root).ok())
+        .is_some_and(|(input, source_root)| input.starts_with(source_root));
+    if inside { source_root } else { fallback }
 }
 
 fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, String> {
@@ -2015,10 +2059,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[MOD-1]` — follow the imports and load every module they reach. The
     // root module is the file named on the command line; its directory is the
     // package root until `ember.toml` is read.
-    let root_dir = input
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf();
+    let root_dir = package_source_root(input);
     let lint_settings = manifest_lint_settings(&root_dir, &mut map, &mut sink);
     let modules = load_modules(module, &root_dir, &mut map, &mut sink);
     if sink.has_errors() {
@@ -2187,22 +2228,45 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let header_requested = options.emit_header || options.emit.as_deref() == Some("header");
-    let package_name = if header_requested { export_package_name(input)? } else { module_name.clone() };
+    let manifest = nearest_manifest_text(input)?;
+    let package_kind = manifest.as_deref().and_then(|text| manifest_string(text, "package", "kind"))
+        .unwrap_or_else(|| "bin".to_string());
+    let runtime_mode = manifest.as_deref().and_then(|text| manifest_string(text, "build", "runtime"))
+        .unwrap_or_else(|| "static".to_string());
+    let staticlib = command == "build" && package_kind == "staticlib";
+    if options.emit.is_none() {
+        if command == "run" && package_kind != "bin" {
+            return Err(format!("cannot run a `{package_kind}` package; use `ember build`"));
+        }
+        if command == "build" && !matches!(package_kind.as_str(), "bin" | "staticlib") {
+            return Err(format!("package kind `{package_kind}` is not implemented for `ember build`"));
+        }
+        if matches!(command, "build" | "run") && runtime_mode != "static" {
+            return Err(format!("runtime mode `{runtime_mode}` is not implemented for this build artifact"));
+        }
+    }
+    let header_requested = options.emit_header || options.emit.as_deref() == Some("header") ||
+        (staticlib && options.emit.is_none());
+    let package_name = if header_requested || staticlib { export_package_name(input)? } else { module_name.clone() };
     let emitted = ember_codegen_c::emit(
         verified_mir,
         &map,
         &module_name,
         &package_name,
-        program.main.is_some(),
+        program.main.is_some() && !staticlib,
         options.leak_check,
+        staticlib,
     );
-    if header_requested {
-        let header = emitted.header_source.as_ref().map_err(|error| error.clone())?;
+    if header_requested && !(staticlib && options.emit.is_none()) {
         let target_dir = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target"));
         let layout = Layout::new(&target_dir, options.profile).map_err(|e| e.to_string())?;
-        std::fs::write(layout.lib.join(format!("{package_name}.h")), header)
-            .map_err(|e| e.to_string())?;
+        let header_path = layout.lib.join(format!("{package_name}.h"));
+        if header_path.is_file() { std::fs::remove_file(&header_path).map_err(|e| e.to_string())?; }
+        let header = emitted.header_source.as_ref().map_err(|error| error.clone())?;
+        if header.needs_runtime_header {
+            copy_runtime_header(&layout.lib)?;
+        }
+        std::fs::write(header_path, &header.source).map_err(|e| e.to_string())?;
     }
     if options.emit.as_deref() == Some("header") {
         return Ok(finish(&sink, &map, options));
@@ -2220,7 +2284,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         return Err(format!("unknown `--emit` stage `{other}`"));
     }
 
-    if program.main.is_none() {
+    if program.main.is_none() && !staticlib {
         return Err("this file declares no `main`, so there is nothing to run".to_string());
     }
 
@@ -2251,6 +2315,40 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let toolchain = Toolchain::detect(requested.as_deref()).map_err(|e| e.to_string())?;
     let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
     let includes = vec![runtime.join("include")];
+    if staticlib {
+        let header = emitted.header_source.as_ref().map_err(|error| error.clone())?;
+        let object_ext = if matches!(&toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
+        let package_object = layout.obj.join(format!("{module_name}.{object_ext}"));
+        let runtime_object = layout.obj.join("runtime").join(format!("{}_rt.{object_ext}", ember_branding::SYMBOL_PREFIX));
+        let package_archive = layout.lib.join(ember_build::archive_name(&toolchain, &package_name));
+        let runtime_lib = runtime_artifact_dir(&layout.lib);
+        let runtime_archive = runtime_lib.join(ember_build::archive_name(&toolchain,
+            &format!("{}_rt", ember_branding::SYMBOL_PREFIX)));
+        let package_header = layout.lib.join(format!("{package_name}.h"));
+        let runtime_header = runtime_lib.join(ember_branding::runtime_header());
+        let outputs = [&package_archive, &runtime_archive, &package_header, &runtime_header];
+        for path in outputs { if path.is_file() { std::fs::remove_file(path).map_err(|e| e.to_string())?; } }
+        let built = (|| -> Result<(), String> {
+            ember_build::compile_object(&toolchain, &c_path, &includes, &package_object, options.profile)
+                .map_err(|e| e.to_string())?;
+            ember_build::compile_object(&toolchain, &runtime_source, &includes, &runtime_object, options.profile)
+                .map_err(|e| e.to_string())?;
+            ember_build::archive_objects(&toolchain, &[package_object], &package_archive)
+                .map_err(|e| e.to_string())?;
+            ember_build::archive_objects(&toolchain, &[runtime_object], &runtime_archive)
+                .map_err(|e| e.to_string())?;
+            copy_runtime_header(&layout.lib)?;
+            std::fs::write(&package_header, &header.source).map_err(|e| e.to_string())?;
+            Ok(())
+        })();
+        if let Err(error) = built {
+            for path in outputs { let _ = std::fs::remove_file(path); }
+            return Err(error);
+        }
+        report(&sink, &map, options);
+        eprintln!("built {} and {}", package_archive.display(), runtime_archive.display());
+        return Ok(ExitCode::SUCCESS);
+    }
     // The runtime is compiled once per toolchain and profile, then linked as
     // an object; without one (MSVC), it is compiled with the program.
     let runtime_input = ember_build::runtime_object(
@@ -2420,6 +2518,23 @@ fn runtime_dir() -> Result<PathBuf, String> {
         "cannot find the {}_rt sources; set EMBER_RUNTIME_DIR",
         ember_branding::SYMBOL_PREFIX
     ))
+}
+
+fn runtime_artifact_dir(lib: &Path) -> PathBuf {
+    lib.join(format!("{}_runtime", ember_branding::SYMBOL_PREFIX))
+}
+
+/// Place the public runtime ABI header beside library artifacts under a
+/// branded subdirectory. A package named `ember_rt` can then have its own
+/// `<package>.h` without a self-include or archive-name collision (D-366).
+fn copy_runtime_header(lib: &Path) -> Result<PathBuf, String> {
+    let name = ember_branding::runtime_header();
+    let source = runtime_dir()?.join("include").join(&name);
+    let directory = runtime_artifact_dir(lib);
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let destination = directory.join(name);
+    std::fs::copy(source, &destination).map_err(|error| error.to_string())?;
+    Ok(destination)
 }
 
 /// `[TYP-8]` (0.9.9) — "Integer overflow panics in every profile", and

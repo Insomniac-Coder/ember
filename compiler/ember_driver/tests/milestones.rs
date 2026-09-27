@@ -1026,7 +1026,9 @@ fn export_headers_link_from_separate_c_and_cpp_translation_units() {
 
     let c_host = package.join("host.c");
     let c_host_source = format!(
-        "#include \"header_api.h\"\n#include \"{runtime_header}\"\n#include <stdint.h>\n\nstatic int32_t plus_one(int32_t value) {{ return value + 1; }}\nint main(void) {{\n    {rt_init}(NULL);\n    {leaf_type} leaf = {{ 19 }};\n    {envelope_type} envelope = {{ leaf, 22 }};\n    if (header_score(envelope, plus_one) != 42) return 1;\n    if (header_score(envelope, NULL) != 0) return 2;\n    if (header_creator() != 46 || header_any() != 47 || header_main() != 48) return 3;\n    const struct HeaderHandle *handle = (const struct HeaderHandle *)(uintptr_t)0x1234;\n    if (header_handle_roundtrip(handle) != handle) return 4;\n    {i128} wide = {i128_make}(0, 42);\n    if (!{i128_eq}(header_i128_identity(wide), wide)) return 5;\n    {rt_shutdown}();\n    return 0;\n}}\n",
+        "#include \"header_api.h\"\n#include \"{runtime_subdir}/{runtime_header}\"\n#include <stdint.h>\n\nstatic int32_t plus_one(int32_t value) {{ return value + 1; }}\nint main(void) {{\n    {rt_init}(NULL);\n    {leaf_type} leaf = {{ 19 }};\n    {envelope_type} envelope = {{ leaf, 22 }};\n    if (header_score(envelope, plus_one) != 42) return 1;\n    if (header_score(envelope, NULL) != 0) return 2;\n    if (header_creator() != 46 || header_any() != 47 || header_main() != 48) return 3;\n    const struct HeaderHandle *handle = (const struct HeaderHandle *)(uintptr_t)0x1234;\n    if (header_handle_roundtrip(handle) != handle) return 4;\n    {i128} wide = {i128_make}(0, 42);\n    if (!{i128_eq}(header_i128_identity(wide), wide)) return 5;\n    {rt_shutdown}();\n    return 0;\n}}\n",
+        runtime_subdir = format!("{}_runtime", ember_branding::SYMBOL_PREFIX),
+        runtime_header = runtime_header,
         rt_init = ember_branding::runtime("rt_init"),
         rt_shutdown = ember_branding::runtime("rt_shutdown"),
         i128 = ember_branding::runtime("i128"),
@@ -1037,7 +1039,9 @@ fn export_headers_link_from_separate_c_and_cpp_translation_units() {
     .expect("C header host is writable");
     let cpp_host = package.join("host.cpp");
     let cpp_host_source = format!(
-        "#include \"header_api.h\"\n#include \"{runtime_header}\"\nint main() {{ {rt_init}(nullptr); int result = header_main(); {rt_shutdown}(); return result == 48 ? 0 : 1; }}\n",
+        "#include \"header_api.h\"\n#include \"{runtime_subdir}/{runtime_header}\"\nint main() {{ {rt_init}(nullptr); int result = header_main(); {rt_shutdown}(); return result == 48 ? 0 : 1; }}\n",
+        runtime_subdir = format!("{}_runtime", ember_branding::SYMBOL_PREFIX),
+        runtime_header = runtime_header,
         rt_init = ember_branding::runtime("rt_init"),
         rt_shutdown = ember_branding::runtime("rt_shutdown"),
     );

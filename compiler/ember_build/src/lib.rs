@@ -1,12 +1,11 @@
 //! The build driver: finding a C toolchain and running it (Part XIX §3).
 //!
-//! `[BLD-5]` — output goes to `target/<profile>/{bin,c,obj}`.
+//! `[BLD-5]` — output goes to `target/<profile>/{bin,lib,c,obj,inspect}`.
 //!
-//! Phase 0 compiles one `.em` file at a time and links it with `ember_rt`.
-//! The manifest, the build graph, content-addressed caching and the
-//! Ninja-driven incremental C build (`[BLD-1]`..`[BLD-4]`) arrive with the
-//! module system in Phase 1, which is the first phase that has more than one
-//! translation unit to order.
+//! The driver emits one C translation unit for a package's reachable modules.
+//! Binaries link it with the runtime; static libraries archive package and
+//! runtime objects separately. A general build graph and Ninja-driven
+//! incremental C build (`[BLD-1]`..`[BLD-4]`) remain future work.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -326,6 +325,10 @@ pub enum BuildError {
         command: String,
         output: String,
     },
+    ArchiverFailed {
+        command: String,
+        output: String,
+    },
 }
 
 impl std::fmt::Display for BuildError {
@@ -338,6 +341,9 @@ impl std::fmt::Display for BuildError {
             BuildError::Io(e) => write!(f, "{e}"),
             BuildError::CompilerFailed { command, output } => {
                 write!(f, "the C compiler failed\n  command: {command}\n{output}")
+            }
+            BuildError::ArchiverFailed { command, output } => {
+                write!(f, "the archive tool failed\n  command: {command}\n{output}")
             }
         }
     }
@@ -424,6 +430,102 @@ pub fn compile_and_link(toolchain: &Toolchain, request: &LinkRequest) -> Result<
         }
     }
     run(command)
+}
+
+/// Compile one C translation unit for a distributable library. MSVC keeps
+/// debug data inside the object: an archive must not depend on a build-local
+/// PDB beside it (`[FFI-28]`). Profile optimisation and safety flags match
+/// ordinary executable compilation, including shipping's `/GL` on MSVC.
+pub fn compile_object(
+    toolchain: &Toolchain,
+    source: &Path,
+    include_dirs: &[PathBuf],
+    output: &Path,
+    profile: Profile,
+) -> Result<(), BuildError> {
+    if let Some(parent) = output.parent() { std::fs::create_dir_all(parent)?; }
+    let mut command = compiler_command(toolchain);
+    match toolchain {
+        Toolchain::Msvc { .. } => {
+            command.args(msvc_flags(profile).into_iter().map(|flag|
+                if flag == "/Zi" { "/Z7" } else { flag }));
+            command.arg("/c");
+            for dir in include_dirs { command.arg(format!("/I{}", dir.display())); }
+            command.arg(source).arg(format!("/Fo{}", output.display()));
+        }
+        Toolchain::Clang(_) | Toolchain::Gcc(_) => {
+            command.args(gnu_flags(profile)).arg("-c");
+            for dir in include_dirs { command.arg("-I").arg(dir); }
+            command.arg(source).arg("-o").arg(output);
+        }
+    }
+    if let Err(error) = run(command) {
+        let _ = std::fs::remove_file(output);
+        return Err(error);
+    }
+    Ok(())
+}
+
+/// The archive extension follows the C ABI toolchain, not just the host OS.
+pub fn archive_name(toolchain: &Toolchain, stem: &str) -> String {
+    match toolchain {
+        Toolchain::Msvc { .. } => format!("{stem}.lib"),
+        Toolchain::Clang(_) | Toolchain::Gcc(_) => format!("lib{stem}.a"),
+    }
+}
+
+/// Publish a fresh archive. The temporary archive starts empty, so removed
+/// objects can never survive a rebuild; a failed command leaves no final
+/// archive that a host could mistake for this build's output.
+pub fn archive_objects(
+    toolchain: &Toolchain,
+    objects: &[PathBuf],
+    output: &Path,
+) -> Result<(), BuildError> {
+    if let Some(parent) = output.parent() { std::fs::create_dir_all(parent)?; }
+    if output.is_file() { std::fs::remove_file(output)?; }
+    let file_name = output.file_name().and_then(|name| name.to_str()).unwrap_or("archive");
+    let temp = output.with_file_name(format!("{file_name}.tmp-{}", std::process::id()));
+    if temp.is_file() { std::fs::remove_file(&temp)?; }
+    let mut command = match toolchain {
+        Toolchain::Msvc { env, .. } => {
+            let mut command = Command::new("lib.exe");
+            command.envs(env);
+            command.arg("/nologo").arg("/BREPRO").arg(format!("/OUT:{}", temp.display()));
+            command
+        }
+        Toolchain::Clang(path) => {
+            let beside_clang = path.parent().map(|dir| dir.join(if cfg!(windows) { "llvm-ar.exe" } else { "llvm-ar" }));
+            let archiver = beside_clang.filter(|path| path.is_file()).unwrap_or_else(|| {
+                if tool_on_path("llvm-ar") { PathBuf::from("llvm-ar") } else { PathBuf::from("ar") }
+            });
+            let mut command = Command::new(archiver);
+            command.arg("crsD").arg(&temp);
+            command
+        }
+        Toolchain::Gcc(_) => {
+            let mut command = Command::new("ar");
+            command.arg("crsD").arg(&temp);
+            command
+        }
+    };
+    for object in objects { command.arg(object); }
+    let result = run(command).map_err(|error| match error {
+        BuildError::CompilerFailed { command, output } => BuildError::ArchiverFailed { command, output },
+        other => other,
+    });
+    if let Err(error) = result {
+        let _ = std::fs::remove_file(&temp);
+        return Err(error);
+    }
+    std::fs::rename(&temp, output).map_err(|error| {
+        let _ = std::fs::remove_file(&temp);
+        BuildError::Io(error)
+    })
+}
+
+fn tool_on_path(name: &str) -> bool {
+    Command::new(name).arg("--version").output().is_ok_and(|output| output.status.success())
 }
 
 /// The C compiler, with MSVC's environment over the inherited one.
@@ -672,6 +774,46 @@ mod tests {
         let second = build().expect("the object is built");
         assert_ne!(second, first, "a changed header kept the old object");
         assert!(second.is_file());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rebuilding_an_archive_drops_removed_objects() {
+        let requested = std::env::var(ember_branding::cc_var()).ok();
+        let toolchain = Toolchain::detect(requested.as_deref()).expect("a C toolchain");
+        let dir = std::env::temp_dir().join(format!("fresh-archive-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let extension = if matches!(&toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
+        let a_source = dir.join("a.c");
+        let b_source = dir.join("b.c");
+        let host_source = dir.join("host.c");
+        std::fs::write(&a_source, "int first(void) { return 1; }\n").unwrap();
+        std::fs::write(&b_source, "int removed(void) { return 2; }\n").unwrap();
+        std::fs::write(&host_source, "int removed(void); int main(void) { return removed() == 2 ? 0 : 1; }\n").unwrap();
+        let a = dir.join(format!("a.{extension}"));
+        let b = dir.join(format!("b.{extension}"));
+        compile_object(&toolchain, &a_source, &[], &a, Profile::Debug).unwrap();
+        compile_object(&toolchain, &b_source, &[], &b, Profile::Debug).unwrap();
+        let archive = dir.join(archive_name(&toolchain, "fresh"));
+        archive_objects(&toolchain, &[a.clone(), b], &archive).unwrap();
+        let first_exe = dir.join(if cfg!(windows) { "before.exe" } else { "before" });
+        let first_objects = dir.join("before-obj");
+        std::fs::create_dir_all(&first_objects).unwrap();
+        compile_and_link(&toolchain, &LinkRequest {
+            sources: &[host_source.clone(), archive.clone()], include_dirs: &[],
+            output: first_exe.clone(), profile: Profile::Debug, obj_dir: first_objects,
+        }).expect("the first archive includes both objects");
+        assert!(Command::new(first_exe).status().unwrap().success());
+
+        archive_objects(&toolchain, &[a], &archive).unwrap();
+        let second_exe = dir.join(if cfg!(windows) { "after.exe" } else { "after" });
+        let second_objects = dir.join("after-obj");
+        std::fs::create_dir_all(&second_objects).unwrap();
+        assert!(compile_and_link(&toolchain, &LinkRequest {
+            sources: &[host_source, archive], include_dirs: &[],
+            output: second_exe, profile: Profile::Debug, obj_dir: second_objects,
+        }).is_err(), "a removed archive member still linked after rebuild");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

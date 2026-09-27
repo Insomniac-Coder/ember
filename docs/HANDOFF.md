@@ -11092,7 +11092,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   (ODR-083), pinned in `docs/spec-source/development-target.json`. The
   spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through
   `parts-h39/` are frozen.
-* **Next numbers:** ODR-084, D-366, ADR-066.
+* **Next numbers:** ODR-084, D-368, ADR-068.
 * **The owner's simplification pass** (2026-09-26, attended; the proposal is
   `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
   Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed
@@ -11312,31 +11312,53 @@ first**; the rest of §0.355 is the running narrative behind it.
 * **Spec update:** H39 carries ODR-083, resolving the creator-thread anchor
   for static exports. The callback batch is pushed as
   `9821bbef5c0eaf93367399d525d5d1ca3b162b99`; all five CI jobs are green.
-* **Current batch:** creator policy and export-header reporting use H39/ODR-083
-  and ADR-065. Static exports implement `main`, `any`, and `creator`; the first
-  successful module initialization establishes creator authority, attachment
-  precedes enforcement, and generated header comments preserve the resolved
-  policy. Headers describe defined C-ABI exports and reachable public types,
-  including opaque types and existing 128-bit carriers, while omitting imports
-  and generated internal adapters. A reachable native-only function-pointer
-  pointee that cannot be represented yields an explicit header limitation
-  error, not a source rejection. Header CLI output does not invoke a compiler;
-  profile output and C-output compatibility follow ADR-065 and CLI-2.
-* **Verification:** full MSVC and clang-cl workspace suites passed; the full
-  annotation sweep reported `failing 0`; all 18 gates passed; H39 examples
-  reported 46 passing and `failing 0`, with the adopted master unchanged.
-  Focused creator lifecycle passed (1/1), including inherited `creator`
-  policy on a wrong-thread call. Header tests passed (3/3), including separate
-  C and C++ link/run checks, opaque and 128-bit types, native-only pointee
-  rejection, Unicode, and include guards; all three header tests were rerun
-  under both compilers after the full suites. Two stale creator rejection
-  annotations were migrated. A branding-helper cleanup was limited to the test
-  harness; no compiler or runtime changes were needed. CI for this batch is
-  pending commit. The earlier callback batch's CI remains green.
-* **Still open:** export tables, complete static reachability, static-library
-  packaging and runtime archives, shared-module lifecycle, captured callback
-  and retained-callable contracts.
-* **Next task:** static-library package and runtime archives, after lead review.
+* **Creator/header batch:** H39/ODR-083 and ADR-065 implement static export
+  policies and export-header output. `creator` is anchored to successful module
+  initialization; attachment precedes enforcement and generated header
+  comments preserve the resolved policy. Headers include defined C-ABI exports
+  and reachable public types, omit imports/internal adapters, and report a
+  native-only function-pointer limitation explicitly. The batch is pushed as
+  `fae734b49206b4fab2de230324e0eb07762f8bdd`; CI run
+  [36292117191](https://github.com/Insomniac-Coder/ember/actions/runs/36292117191)
+  passed all five jobs.
+* **Current batch complete:** static-library packaging follows ADR-066/067.
+  A `staticlib` manifest builds from the package root with `src/lib.em` or
+  `build.entry`; directory and no-input builds are supported. Output includes
+  the package archive/header and runtime archive/header under
+  `lib/ember_runtime/`. Private native functions and generated helpers have
+  internal C linkage; C exports have external linkage and the generated C has
+  no process `main`. Generated named and structural C types use an injective
+  package-byte namespace consistently in C and headers; foreign opaque tags
+  remain unchanged. Archive rebuilds start fresh. Unsupported `cdylib`,
+  shared-runtime, and native-library packaging modes reject explicitly.
+* **Verification:** full MSVC workspace suite passed in 108 seconds and full
+  clang-cl workspace suite passed in 126 seconds, both exit 0 including
+  conformance. All 18 gates passed; H39 examples reported 46 passing and
+  `failing 0`, with the adopted master unchanged. Static-library tests passed
+  3/3, including real linked C and C++ hosts that combine both package archives
+  and the runtime archive; archive freshness passed 1/1. Header tests passed
+  3/3 under both MSVC and clang-cl, covering 128-bit carriers, a package named
+  `ember_rt`, opaque types, native-only pointee rejection, Unicode, and guards.
+  The actual annotation sweep checked 285 directories and reported `failing 0`
+  (exit 0). D-367's break-test explicitly gives both packages the same used
+  native helper: disabling internal linkage fails the combined host link
+  with MSVC LNK2005/LNK1169; restoring the exact source bytes makes the same
+  test pass. No new CI result is claimed for this batch.
+* **Defects closed:** D-366 (runtime-header path collision for a package named
+  `ember_rt`) and D-367 (cross-package generated C name/linkage collisions).
+  The earlier callback batch's CI remains green.
+* **Still open:** export-table formation/protocol/per-field contracts, complete
+  static reachability, `cdylib` and shared-runtime lifecycle, and captured or
+  retained callback contracts.
+* **Owner priority (2026-09-27): finish Phases 1–3 and their dependencies
+  first.** Begin with bounded closure audits of core language,
+  ownership/borrowing, and classes/reference counting against actual H39
+  obligations, tests, and implementation, then implement the remaining gaps.
+  The 97/88/59 percentages are carried-forward estimates, not a fresh tally
+  of satisfied exit criteria. Defer further FFI expansion unless it is a
+  concrete dependency of these phases. Export-table ODR-084 is identified
+  but remains deferred and unruled/unpinned. Next ODR is 084; next D number
+  is 368; next ADR is 068. AUTOPILOT records this priority.
   Audit rows for `[CLS-2]` and `[CLS-7]` were stale: existing code and tests
   cover their stated gaps.
 * **Phase estimates (2026-09-27; engineering estimates, not test counts):**
@@ -11347,17 +11369,18 @@ first**; the rest of §0.355 is the running narrative behind it.
   | P2 | 88 |
   | P3 | 59 |
   | P4 | 13 |
-  | P5 | 12 |
+  | P5 | 14 |
   | P6 | 2 |
   | P7 | 0 |
   | 7a | 6 |
   | P8 | 16 |
   | Overall | 58 |
 
-  `python tasks/impl-0.9.9/rule_sizes.py 97 88 59 13 12 2 6` gives 57.7%,
-  rounded to 58%, with Hardened_38 weights. P5 rises from 8 to 12 for the
-  recent C contract/export batches; header import, generated headers, library
-  packaging, capturing callbacks and shared-runtime modules remain substantial.
+  `python tasks/impl-0.9.9/rule_sizes.py 97 88 59 13 14 2 6` gives 57.7%,
+  rounded to 58%, with Hardened_39 weights. P5 rises from 8 to 14 for the C
+  contract, callback, generated-header, and static-library package work.
+  Export tables, complete static reachability, capturing callbacks, and
+  shared-runtime modules remain substantial.
   Earlier progress rationale follows. P3 50 to 58 for `[EXC-1]`, `[EXC-2]`,
   `[EXC-5]`, `[EXC-15]`, `[EXC-17]`, `[EXC-18]`, `[EXC-19]` and part of
   `[EXC-16]` and `[CLS-7]`; P8 for the defects closed.

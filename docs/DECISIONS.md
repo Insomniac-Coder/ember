@@ -2079,3 +2079,38 @@ A reachable native-only function-pointer type that the C header cannot
 represent produces an explicit header limitation error; this does not reject
 the source program or emit an invalid header. These are output conventions and
 representation choices, not new language rules or ODR changes beyond ODR-083.
+
+## ADR-066 — package artifacts and runtime support use separate paths
+
+**Decided 2026-09-27.** Keep the package header and static archive flat under
+the profile's `lib/` directory. Put runtime support artifacts under the
+branded `lib/ember_runtime/` directory, deriving the subdirectory name from
+`SYMBOL_PREFIX`. A generated header that uses a 128-bit runtime carrier
+includes `ember_runtime/ember_rt.h`. Header-only and additive header emission
+copy the support header only when the generated header needs it; static-library
+output always publishes both the support header and runtime archive.
+
+This separates package names from runtime support names without reserving
+package names such as `ember_rt`. File/prototype semantics do not change, and
+the path layout requires no new hardening or ODR.
+
+## ADR-067 — static-library packages namespace generated C types
+
+**Decided 2026-09-27.** A manifest `staticlib` package takes its entry source
+from `src/lib.<SOURCE_EXT>` or `build.entry`. Directory and no-input builds
+produce a package archive and header plus the runtime support subtree from
+ADR-066. Native implementation functions and count-wrapper helpers use
+internal C linkage; declared C exports use external linkage, and the generated
+C has no process `main`.
+
+In static-library mode, generated named and structural C type names include
+an injective namespace encoding the package-name bytes. Apply the same mapping
+to generated C definitions and header declarations; leave foreign opaque tags
+unchanged. This prevents separate package archives and headers from colliding
+on record names or private standard helpers. MSVC objects embed debug data with
+`/Z7`, retaining profile checks and LTO flags; rebuilding an archive starts
+fresh so stale members cannot survive. Unsupported `cdylib`, native-library,
+and shared-runtime packaging modes fail explicitly.
+
+These are build and representation choices. File/prototype semantics do not
+change; no new ODR or hardening is required.
