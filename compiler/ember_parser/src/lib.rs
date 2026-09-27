@@ -585,9 +585,6 @@ impl<'a> Parser<'a> {
             if !matches!(value.as_str(), "main" | "any" | "creator") {
                 self.report(Diagnostic::error(codes::E0104, span,
                     "`#! threads` must be `main`, `any`, or `creator`"));
-            } else if value == "creator" {
-                self.report(Diagnostic::error(codes::E0900, span,
-                    "`#! threads creator` is not implemented yet"));
             }
         } else {
             self.report(

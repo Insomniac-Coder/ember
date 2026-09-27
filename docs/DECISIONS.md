@@ -2055,3 +2055,27 @@ grow with the number of candidate functions. The descriptor keeps native
 semantics and constant conversion cost. These are representation decisions;
 the language rules already decide the required behavior, so no ODR or new
 hardening is warranted.
+
+## ADR-065 — export headers reuse the C backend's public type plan
+
+**Decided 2026-09-27.** A generated header describes the currently defined
+C-ABI functions, including ordinary `extern "C"` definitions. It excludes
+imports and generated internal adapters. Reuse the C backend's signature,
+definition, and type-name plan, but traverse only types reachable from those
+exports so private native implementation types do not leak into the header.
+Emit standard C includes and include `ember_rt.h` only when an exported
+signature or reachable public type uses an existing 128-bit runtime carrier.
+
+`ember build --emit header` emits only the header. `--emit-header` adds a
+header to the existing build or `--emit c` output. The profile output is
+`lib/<package>.h`, using the source stem when no enclosing manifest exists and
+the enclosing manifest's `package.name` otherwise. Preserve the existing
+`--emit c` stdout behavior; with an explicit output directory, also write
+`c/<source>.c` as defined by CLI-2. Header and C emission remain available to
+no-main library targets. Packaging archives and shared libraries is separate
+follow-up work.
+
+A reachable native-only function-pointer type that the C header cannot
+represent produces an explicit header limitation error; this does not reject
+the source program or emit an invalid header. These are output conventions and
+representation choices, not new language rules or ODR changes beyond ODR-083.

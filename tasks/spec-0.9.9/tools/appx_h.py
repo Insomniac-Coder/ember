@@ -370,6 +370,8 @@ ODRS = [
      '`[TXT-5]`, `[FFI-15]`'),
     ('ODR-082', '`@ffi(immutable)` asserts a `const` C object for a hand-declared foreign static, with a matching C declaration and safe `Sync` read (Hardened_38)',
      '`[FFI-8]`'),
+    ('ODR-083', 'the `creator` thread contract of a static free-function export is anchored to successful module initialization; idempotent init does not transfer it and reinitialization after shutdown establishes a new creator (Hardened_39)',
+     '`[FFI-33]`, `[FFI-33c]`, `[GRM-37]`'),
 ]
 
 H5_HEAD = """
@@ -396,7 +398,8 @@ mutable view and C pointer; Hardened_35 adds ODR-079, the nullable counted input
 between absent and present-empty views; Hardened_36 adds ODR-080, nullable borrowed C strings and
 their null-pointer niche; Hardened_37 adds ODR-081, the fallible owned C-string conversion and
 explicit borrowed view; Hardened_38 adds ODR-082, the C qualifier asserted by an immutable
-foreign static.
+foreign static; Hardened_39 adds ODR-083, the initialization anchor for static export creator
+contracts.
 
 | ODR | Ruling | Rules |
 |---|---|---|

@@ -4032,7 +4032,7 @@ mod callable_region_metadata_tests {
             symbol: "empty".to_string(),
             is_unsafe: false,
             abi: None,
-            export_main_thread: false,
+            export_thread_policy: ember_mir::ExportThreadPolicy::Any,
             locals: vec![LocalDecl {
                 ty: common.void,
                 kind: LocalKind::Return,

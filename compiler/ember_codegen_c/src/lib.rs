@@ -26,9 +26,13 @@ use ember_span::{SourceMap, Symbol};
 use ember_types::{ClassId, EnumId, FloatTy, FnParam, FnParamMode, IntTy, Niche, StructId, Ty, TyKind, TypeTable, UintTy};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod header;
+
 pub struct Output {
     /// The single translation unit for this module.
     pub c_source: String,
+    /// The standalone C/C++ declaration surface for defined C exports.
+    pub header_source: Result<String, String>,
     /// `[EFF-10]` — per-site safety metadata for the checks this translation
     /// unit emits. The driver writes this to the profile's inspect directory;
     /// elided-check entries are added when an elision pass provides the
@@ -103,6 +107,7 @@ pub fn emit(
     mir: VerifiedMir<'_>,
     map: &SourceMap,
     module_name: &str,
+    package_name: &str,
     has_main: bool,
     leak_check: bool,
 ) -> Output {
@@ -179,8 +184,10 @@ pub fn emit(
             if *immutable { "const " } else { "" }, emitter.c_type(*ty)))
         .collect::<String>();
     emitter.out = emitter.out.replace(FOREIGN_STATIC_DECLARATIONS, &foreign_declarations);
+    let header_source = header::render(&emitter, bodies, package_name);
     Output {
         c_source: emitter.out,
+        header_source,
         safety_json: safety_json(bodies, map),
     }
 }
@@ -3650,7 +3657,10 @@ impl Emitter<'_> {
             // `[FFI-22]` — the host may call this export on a thread that has
             // never run Ember. Attach before the body touches runtime state.
             self.line(&format!("    {RT}rt_thread_attach();"));
-            if body.export_main_thread {
+            // `[FFI-33]`/ODR-083: a static free-function `creator` contract
+            // uses this module's initialization thread under the private
+            // runtime, the same guard as `main` in the current backend.
+            if body.export_thread_policy != ember_mir::ExportThreadPolicy::Any {
                 self.line(&format!("    {RT}rt_check_main_thread();"));
             }
         }

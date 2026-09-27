@@ -61,6 +61,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-080 | **CLOSED** — `Option[cstr]` has a null-pointer niche and nullable borrowed NUL-terminated inputs/results use it | Language / C interop / nullable strings | — | **No** — delegated, 2026-09-27, Hardened_36 |
 | ODR-081 | **CLOSED** — `str.to_cstring()` returns `Result[CString, NulError]`; `.as_cstr()` is an explicit owner-bound borrow | Language / C interop / owned strings | — | **No** — delegated, 2026-09-27, Hardened_37 |
 | ODR-082 | **CLOSED** — `@ffi(immutable)` on a foreign static asserts a `const` C object and emits a matching declaration | Language / C interop / foreign statics | — | **No** — delegated, 2026-09-27, Hardened_38 |
+| ODR-083 | **CLOSED** — a static free-function export's `creator` thread is anchored to successful module initialization; repeated initialization does not transfer the contract, and reinitialization after shutdown establishes a new creator | Language / C interop / export thread contracts | — | **No** — delegated, 2026-09-27, Hardened_39 |
 | ODR-071 | **CLOSED** — the type `()` is `void`; a tuple type has two or more elements (D-355) | Language / types | — | **No** — delegated, 2026-09-26 |
 | ODR-070 | **CLOSED** — every compiler accepts nesting 256 levels deep and states its own limit (this one 1,024); passing it is `E0112`, never a crash (D-331) | Language / grammar / implementation limits | — | **No** — delegated, 2026-09-26 |
 | ODR-069 | **CLOSED** — one storage rule for every owning container: `Map`, `Set` and `Array` may hold `static` views, checked at each store wherever it happens; a callee's stores are its callers' to answer for (SP-013) | Language / regions / collections | — | **Yes** — owner, 2026-09-26 |
@@ -236,6 +237,82 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-083 — static export creator-thread anchor — **CLOSED**
+
+    ID:        ODR-083
+    Status:    CLOSED — ruled 2026-09-27 under the owner's 0.9.9 delegation;
+               incorporated in 0.9.9_Hardened_39
+    Category:  LANGUAGE / C INTEROP / EXPORT THREAD CONTRACTS
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_38.md `[FFI-33]`, `[FFI-33b]`,
+               `[FFI-33c]`, `[GRM-37]`
+
+    Question:  Which thread does `threads=creator` permit to call a static
+               free-function export? No per-callable instance exists to
+               supply the anchor.
+
+    Blocks implementation:            YES — safe static export checks
+    Requires owner semantic decision:  delegated to the agent
+
+**Hardened_38 wording.** `[FFI-33]` says: “`@export(threads=any | main |
+creator)` states which threads may call an export; the default is the file's
+`#! threads` directive (`[GRM-37]`), else `any`. Under `any`, everything the
+export reaches is checked as if it ran on any thread: every static it reaches
+is `Sync` and no non-`@sync` class handle is reachable from a static
+(`E7010`).” `[GRM-37]` says: “A directive is a line beginning `#!` before the
+imports. `#! language "<version>"` is accepted only for the current version
+(`[VER-8]`, `E0006`); `#! threads main|any|creator` sets the default thread
+contract of the file's exports (`[FFI-33]`). Any other directive is `E0104`.
+`import cpp` is Annex C.” `[FFI-33b]` says:
+“`returns_owned`, `Retained` and callbacks may carry `threads(creator)`: a
+`ForeignBox` records its creating thread and, in `debug`, panics when dropped
+on another — the rule that makes GPU, GL-context and COM handles safe to hold
+in ordinary values.” `[FFI-33c]` says: “Under `threads = main`, the exported
+wrapper checks, in every profile, that the calling thread is the one that
+initialised the module, and panics otherwise; in exchange the body may use
+thread-confined state. An `@export_table` may set `threads` per field.”
+
+These clauses admit `creator` for exports and file defaults, and establish an
+initialization-thread anchor for `main`, while using a separate creation-time
+anchor for value-bearing contracts. They omit the anchor for a static
+free-function export; this is an omission, not a contradiction between rules.
+
+**Options and costs.** (a) Reject `creator` on static exports. This withdraws
+an admitted spelling. (b) Let the first caller establish the anchor; this
+grants authority to an arbitrary caller and makes the contract race-dependent.
+(c) Add a per-function factory or instance; this invents state and API absent
+from the source. (d) Anchor `creator` to successful module initialization.
+This follows the existing `main` lifecycle check and preserves the admitted
+spelling without inventing per-callable state. **(d)**.
+
+**Ruling.** For a static free-function export, `threads=creator` means the
+thread whose successful initialization established that module's callable
+export contract. Initialization establishes the contract; it does not create
+the linked function address or a per-callable instance. For a static library
+or executable using a private runtime, the anchor is the thread of the first
+successful `ember_rt_init`. For a `cdylib`, the anchor is the thread of that
+module's successful `ember_module_init`, even when the runtime is shared; the
+identity is per module, never global to the shared runtime. The wrapper
+attaches the calling thread before checking. A call before initialization or
+after shutdown panics. Repeated initialization while the module remains
+initialized does not transfer the contract. Initialization after shutdown
+establishes a new creator. In every profile the wrapper checks that the caller
+is the anchor and permits thread-confined state, as `threads=main` does under
+`[FFI-33c]`. `#! threads creator` applies this same rule to each static export
+in the file. The generated header comment preserves the resolved `creator`
+policy, including when inherited from the file directive. This ruling concerns
+static free-function exports only; it does not
+change `[FFI-33b]`'s distinct `ForeignBox`, `Retained`, or value-bearing
+callback creation contracts.
+
+**Implementation guidance.** Successful module initialization owns the
+contract anchor. This decision does not require a particular compiler
+intermediate representation. The native function address exists before
+initialization, but calls under this contract are unavailable until the
+module has been successfully initialized.
 
 ---
 

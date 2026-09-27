@@ -11013,9 +11013,10 @@ impl<'a> Checker<'a> {
                 abi: if ffi_counted.is_some() { None } else {
                     decl.abi.clone().or_else(|| has_attribute(&item.attrs, "export").then(|| "C".to_string()))
                 },
-                export_main_thread: !decl.is_foreign_decl
+                export_thread_policy: if !decl.is_foreign_decl
                     && (decl.abi.as_deref() == Some("C") || has_attribute(&item.attrs, "export"))
-                    && export_main_thread(&item.attrs, &module.directives),
+                    { export_thread_policy(&item.attrs, &module.directives) }
+                    else { hir::ExportThreadPolicy::Any },
                 params,
                 locals: std::mem::take(&mut self.locals),
                 ret: self.ret_ty,
@@ -11216,7 +11217,7 @@ impl<'a> Checker<'a> {
                     symbol: method_symbol(&self.types.symbol_name(job.owner), Symbol::intern("abstract")),
                     is_unsafe: false,
                     abi: None,
-                    export_main_thread: false,
+                    export_thread_policy: hir::ExportThreadPolicy::Any,
                     params,
                     locals,
                     ret: signature.ret,
@@ -12113,8 +12114,9 @@ impl<'a> Checker<'a> {
             symbol: format!("{}__{}", ember_branding::mangled(name.as_str()), def.0),
             is_unsafe: decl.is_unsafe,
             abi: decl.abi.clone(),
-            export_main_thread: decl.abi.as_deref() == Some("C")
-                && export_main_thread(attrs, directives),
+            export_thread_policy: if decl.abi.as_deref() == Some("C") {
+                export_thread_policy(attrs, directives)
+            } else { hir::ExportThreadPolicy::Any },
             params,
             locals: std::mem::take(&mut self.locals),
             ret: self.ret_ty,
@@ -12449,7 +12451,7 @@ impl<'a> Checker<'a> {
                     symbol: method_symbol(&self.types.symbol_name(ty), Symbol::intern("clone")),
                     is_unsafe: false,
                     abi: None,
-                    export_main_thread: false,
+                    export_thread_policy: hir::ExportThreadPolicy::Any,
                     params: vec![Param { local: self_local, mode: Mode::Borrow }],
                     locals,
                     ret: ty,
@@ -12833,7 +12835,7 @@ impl<'a> Checker<'a> {
             symbol: self.method_symbol_for(owner, name, def),
             is_unsafe: decl.is_unsafe,
             abi: decl.abi.clone(),
-            export_main_thread: false,
+            export_thread_policy: hir::ExportThreadPolicy::Any,
             params,
             locals: std::mem::take(&mut self.locals),
             ret: self.ret_ty,
@@ -24895,10 +24897,8 @@ impl<'a> Checker<'a> {
                                     self.error(codes::E0104, attr.span, "duplicate `threads` in `@export`");
                                 }
                                 saw_threads = true;
-                                match export_thread_policy(arg) {
-                                    Some("main" | "any") => {}
-                                    Some("creator") => self.error(codes::E0900, attr.span,
-                                        "`threads=creator` is not implemented for exported functions"),
+                                match export_thread_policy_arg(arg) {
+                                    Some("main" | "any" | "creator") => {}
                                     _ => self.error(codes::E0104, attr.span,
                                         "`threads` in `@export` must be `main`, `any`, or `creator`"),
                                 }
@@ -28326,7 +28326,7 @@ impl<'a> Checker<'a> {
             symbol,
             is_unsafe: false,
             abi: None,
-            export_main_thread: false,
+            export_thread_policy: hir::ExportThreadPolicy::Any,
             params: hir_params,
             locals,
             ret,
@@ -35375,7 +35375,7 @@ fn export_symbol(attrs: &[ast::Attribute]) -> Option<&str> {
     })
 }
 
-fn export_thread_policy(arg: &ast::AttrArg) -> Option<&str> {
+fn export_thread_policy_arg(arg: &ast::AttrArg) -> Option<&str> {
     let ast::AttrArg::Named { name, value } = arg else { return None };
     if !name.name.is("threads") { return None }
     let ast::ExprKind::Path { segments } = &value.kind else { return None };
@@ -35383,14 +35383,23 @@ fn export_thread_policy(arg: &ast::AttrArg) -> Option<&str> {
     Some(segments[0].name.as_str())
 }
 
-fn export_main_thread(attrs: &[ast::Attribute], directives: &[ast::Directive]) -> bool {
+fn export_thread_policy(attrs: &[ast::Attribute], directives: &[ast::Directive]) -> hir::ExportThreadPolicy {
     if let Some(attr) = attrs.iter().find(|attr|
         attr.path.len() == 1 && attr.path[0].name.is("export")) {
-        if let Some(policy) = attr.args.iter().find_map(export_thread_policy) {
-            return policy == "main";
+        if let Some(policy) = attr.args.iter().find_map(export_thread_policy_arg) {
+            return match policy {
+                "main" => hir::ExportThreadPolicy::Main,
+                "creator" => hir::ExportThreadPolicy::Creator,
+                _ => hir::ExportThreadPolicy::Any,
+            };
         }
     }
-    directives.iter().any(|directive| directive.name.name.is("threads") && directive.value == "main")
+    match directives.iter().find(|directive| directive.name.name.is("threads"))
+        .map(|directive| directive.value.as_str()) {
+        Some("main") => hir::ExportThreadPolicy::Main,
+        Some("creator") => hir::ExportThreadPolicy::Creator,
+        _ => hir::ExportThreadPolicy::Any,
+    }
 }
 
 /// `[FFI-25]` — the only permitted explicit panic policy is abort.

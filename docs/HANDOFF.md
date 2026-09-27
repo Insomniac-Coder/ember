@@ -11088,11 +11088,11 @@ first**; the rest of §0.355 is the running narrative behind it.
     semantic ambiguity and no ODR or new hardening.
 
   The five preceding CI runs, through `f529f8b`, finished green.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_38.md`
-  (ODR-082), pinned in `docs/spec-source/development-target.json`. The
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_39.md`
+  (ODR-083), pinned in `docs/spec-source/development-target.json`. The
   spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through
-  `parts-h38/` are frozen.
-* **Next numbers:** ODR-083, D-366, ADR-065.
+  `parts-h39/` are frozen.
+* **Next numbers:** ODR-084, D-366, ADR-066.
 * **The owner's simplification pass** (2026-09-26, attended; the proposal is
   `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
   Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed
@@ -11307,10 +11307,36 @@ first**; the rest of §0.355 is the running narrative behind it.
   identity. Linked C-host coverage runs in debug, release, and shipping.
 * **Verification:** full MSVC and clang-cl workspace suites passed; the full
   annotation sweep reported `failing 0`; all 18 gates passed; the milestone
-  suite passed 47/47, including the new callback test. CI for this callback
-  batch is pending.
-* **Next task:** ODR-083/Hardened_39 resolves the creator-thread anchor for
-  static exports. Then implement creator policy and export-header reporting.
+  suite passed 47/47, including the new callback test. The callback batch's
+  five CI jobs are green.
+* **Spec update:** H39 carries ODR-083, resolving the creator-thread anchor
+  for static exports. The callback batch is pushed as
+  `9821bbef5c0eaf93367399d525d5d1ca3b162b99`; all five CI jobs are green.
+* **Current batch:** creator policy and export-header reporting use H39/ODR-083
+  and ADR-065. Static exports implement `main`, `any`, and `creator`; the first
+  successful module initialization establishes creator authority, attachment
+  precedes enforcement, and generated header comments preserve the resolved
+  policy. Headers describe defined C-ABI exports and reachable public types,
+  including opaque types and existing 128-bit carriers, while omitting imports
+  and generated internal adapters. A reachable native-only function-pointer
+  pointee that cannot be represented yields an explicit header limitation
+  error, not a source rejection. Header CLI output does not invoke a compiler;
+  profile output and C-output compatibility follow ADR-065 and CLI-2.
+* **Verification:** full MSVC and clang-cl workspace suites passed; the full
+  annotation sweep reported `failing 0`; all 18 gates passed; H39 examples
+  reported 46 passing and `failing 0`, with the adopted master unchanged.
+  Focused creator lifecycle passed (1/1), including inherited `creator`
+  policy on a wrong-thread call. Header tests passed (3/3), including separate
+  C and C++ link/run checks, opaque and 128-bit types, native-only pointee
+  rejection, Unicode, and include guards; all three header tests were rerun
+  under both compilers after the full suites. Two stale creator rejection
+  annotations were migrated. A branding-helper cleanup was limited to the test
+  harness; no compiler or runtime changes were needed. CI for this batch is
+  pending commit. The earlier callback batch's CI remains green.
+* **Still open:** export tables, complete static reachability, static-library
+  packaging and runtime archives, shared-module lifecycle, captured callback
+  and retained-callable contracts.
+* **Next task:** static-library package and runtime archives, after lead review.
   Audit rows for `[CLS-2]` and `[CLS-7]` were stale: existing code and tests
   cover their stated gaps.
 * **Phase estimates (2026-09-27; engineering estimates, not test counts):**

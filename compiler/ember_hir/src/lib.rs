@@ -119,6 +119,25 @@ pub struct FfiCountSource {
     pub nullable: bool,
 }
 
+/// The resolved calling-thread contract of a defined C export (`[FFI-33]`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExportThreadPolicy {
+    #[default]
+    Any,
+    Main,
+    Creator,
+}
+
+impl ExportThreadPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Any => "any",
+            Self::Main => "main",
+            Self::Creator => "creator",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Function {
     pub def: DefId,
@@ -141,8 +160,8 @@ pub struct Function {
     /// The declared external ABI, when this definition has one. `None` means
     /// Ember's ordinary callable ABI.
     pub abi: Option<String>,
-    /// `[FFI-33c]` — check the calling thread at this C export's entry.
-    pub export_main_thread: bool,
+    /// `[FFI-33]` — resolved from the attribute or its declaration file.
+    pub export_thread_policy: ExportThreadPolicy,
     pub params: Vec<Param>,
     pub locals: Vec<LocalDecl>,
     pub ret: Ty,

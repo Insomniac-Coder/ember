@@ -413,6 +413,68 @@ fn ember(args: &[&str], root: &Path) -> Run {
     }
 }
 
+fn ember_with_env(args: &[&str], root: &Path, key: &str, value: &str) -> Run {
+    let output = Command::new(EMBER)
+        .args(args)
+        .env(key, value)
+        .current_dir(root)
+        .output()
+        .expect("the ember binary runs");
+    Run {
+        stdout: String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        stderr: String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+        exit: output.status.code().unwrap_or(-1),
+    }
+}
+
+fn compile_cpp_object(
+    toolchain: &Toolchain,
+    source: &Path,
+    object: &Path,
+    include_dirs: &[PathBuf],
+) -> Result<(), String> {
+    let mut command = match toolchain {
+        Toolchain::Msvc { cl, env } => {
+            let mut command = Command::new(cl);
+            command.envs(env);
+            command.args(["/nologo", "/TP", "/std:c++17", "/c"]);
+            for include_dir in include_dirs {
+                command.arg(format!("/I{}", include_dir.display()));
+            }
+            command.arg(source).arg(format!("/Fo{}", object.display()));
+            command
+        }
+        Toolchain::Clang(path) => {
+            let mut command = Command::new(path);
+            command.args(["-x", "c++", "-std=c++17", "-Wall", "-Wextra"]);
+            for include_dir in include_dirs {
+                command.arg("-I").arg(include_dir);
+            }
+            command.args(["-c"]).arg(source).arg("-o").arg(object);
+            command
+        }
+        Toolchain::Gcc(path) => {
+            let mut command = Command::new(path);
+            command.args(["-x", "c++", "-std=c++17", "-Wall", "-Wextra"]);
+            for include_dir in include_dirs {
+                command.arg("-I").arg(include_dir);
+            }
+            command.args(["-c"]).arg(source).arg("-o").arg(object);
+            command
+        }
+    };
+    let output = command.output().map_err(|error| format!("could not run C++ compiler: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "C++ header translation unit failed:\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        ))
+    }
+}
+
 fn temporary_directory(label: &str) -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -793,12 +855,16 @@ fn exported_thread_contracts_hold_in_every_profile() {
     let root = workspace_root();
     let directory = temporary_directory("export-thread-contracts");
     let imported = directory.join(ember_branding::source_file("thread_defaults"));
+    let creator_imported = directory.join(ember_branding::source_file("creator_defaults"));
     let entry = directory.join(ember_branding::source_file("entry"));
     std::fs::write(&imported,
-        "# Both directives apply to this imported file.\n#! language \"0.9.9\"\n#! threads main\n@export(\"default_score\")\npub fn default_value() -> i32:\n    return 43\n@export(\"override_score\", threads=any)\npub fn override_value() -> i32:\n    return 44\n")
+        "#! language \"0.9.9\"\n#! threads main\n@export(\"default_score\")\npub fn default_value() -> i32:\n    return 43\n@export(\"override_score\", threads=any)\npub fn override_value() -> i32:\n    return 44\n")
         .expect("default policy module is writable");
+    std::fs::write(&creator_imported,
+        "#! language \"0.9.9\"\n#! threads creator\n@export(\"creator_default_score\")\npub fn default_value() -> i32:\n    return 46\n@export(\"creator_override_score\", threads=any)\npub fn override_value() -> i32:\n    return 47\n")
+        .expect("creator default policy module is writable");
     std::fs::write(&entry,
-        "import thread_defaults\n@export(\"main_score\", threads=main, on_panic=abort)\npub fn main_value() -> i32:\n    return 41\n@export(\"any_score\", threads=any)\npub fn any_value() -> i32:\n    return 42\n")
+        "import thread_defaults\nimport creator_defaults\n@export(\"main_score\", threads=main, on_panic=abort)\npub fn main_value() -> i32:\n    return 41\n@export(\"creator_score\", threads=creator)\npub fn creator_value() -> i32:\n    return 45\n@export(\"any_score\", threads=any)\npub fn any_value() -> i32:\n    return 42\n")
         .expect("explicit policy module is writable");
     let entry_arg = entry.to_string_lossy().into_owned();
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/foreign_export_threads.c");
@@ -821,7 +887,18 @@ fn exported_thread_contracts_hold_in_every_profile() {
             profile,
             obj_dir: build.join("obj"),
         }).expect("thread policy exports link to C");
-        for mode in ["allowed", "wrong", "default", "reinit", "uninitialized"] {
+        for mode in [
+            "allowed",
+            "wrong",
+            "creator_wrong",
+            "default_wrong",
+            "creator_default_wrong",
+            "reinit",
+            "reinit_creator",
+            "uninitialized",
+            "uninitialized_creator",
+            "after_shutdown_creator",
+        ] {
             let run = Command::new(&output).arg(mode).output().expect("C thread host runs");
             if mode == "allowed" {
                 assert!(run.status.success(), "{} {mode}: {:?} {}", profile.name(), run.status,
@@ -838,6 +915,254 @@ fn exported_thread_contracts_hold_in_every_profile() {
             }
         }
     }
+}
+
+#[test]
+fn export_headers_link_from_separate_c_and_cpp_translation_units() {
+    let root = workspace_root();
+    let package = temporary_directory("export-header-api");
+    let source = package.join(ember_branding::source_file("api"));
+    std::fs::write(
+        package.join(MANIFEST),
+        "[package]\nname = \"header_api\"\nkind = \"lib\"\n",
+    )
+    .expect("header package manifest is writable");
+    let source_fixture = root
+        .join("tests")
+        .join("conformance")
+        .join("FFI-21")
+        .join(ember_branding::source_file("accept_export_header_api"));
+    std::fs::write(&source, std::fs::read_to_string(source_fixture).expect("header API fixture is readable"))
+    .expect("header API source is writable");
+
+    let source_arg = source.to_string_lossy().into_owned();
+    let header_only_out = package.join("header-only");
+    let header_only_out_arg = header_only_out.to_string_lossy().into_owned();
+    let header_only = ember_with_env(
+        &[
+            "build",
+            &source_arg,
+            "--emit",
+            "header",
+            "--out-dir",
+            &header_only_out_arg,
+        ],
+        &root,
+        &ember_branding::cc_var(),
+        "ember-compiler-that-does-not-exist",
+    );
+    assert_eq!(
+        header_only.exit, 0,
+        "header-only emission required a C compiler: {}",
+        header_only.stderr
+    );
+    let header_only_path = header_only_out.join("debug/lib/header_api.h");
+    assert!(header_only_path.is_file(), "header-only output was not written");
+    assert!(
+        !header_only_out.join("debug/c/api.c").exists(),
+        "header-only emission also wrote a C translation unit"
+    );
+    let header = std::fs::read_to_string(&header_only_path).expect("header is readable");
+    let leaf_type = ember_branding::mangled("HeaderLeaf");
+    let envelope_type = ember_branding::mangled("HeaderEnvelope");
+    let runtime_header = ember_branding::runtime_header();
+    for declaration in [
+        "header_score",
+        "header_handle_roundtrip",
+        "header_i128_identity",
+        "header_creator",
+        "header_any",
+        "header_main",
+        leaf_type.as_str(),
+        envelope_type.as_str(),
+        "struct HeaderHandle;",
+        "threads: creator",
+        "threads: any",
+        "threads: main",
+        "__cplusplus",
+        "extern \"C\"",
+        runtime_header.as_str(),
+    ] {
+        assert!(header.contains(declaration), "header omitted {declaration}:\n{header}");
+    }
+    let private_descriptor = ember_branding::runtime("native_fn_descriptor");
+    let private_string = ember_branding::runtime("str");
+    for private_name in [
+        private_descriptor.as_str(),
+        "private_callback_factory",
+        "private_str_length",
+        private_string.as_str(),
+    ] {
+        assert!(!header.contains(private_name), "header leaked {private_name}:\n{header}");
+    }
+
+    let combined_out = package.join("combined");
+    let combined_out_arg = combined_out.to_string_lossy().into_owned();
+    let combined = ember_with_env(
+        &[
+            "build",
+            &source_arg,
+            "--emit",
+            "c",
+            "--emit-header",
+            "--out-dir",
+            &combined_out_arg,
+        ],
+        &root,
+        &ember_branding::cc_var(),
+        "ember-compiler-that-does-not-exist",
+    );
+    assert_eq!(combined.exit, 0, "combined C/header emission failed: {}", combined.stderr);
+    assert!(combined.stdout.contains("header_score"), "combined emission lost C stdout");
+    let generated = combined_out.join("debug/c/api.c");
+    let header_path = combined_out.join("debug/lib/header_api.h");
+    assert!(generated.is_file(), "combined C output was not written");
+    assert!(header_path.is_file(), "combined header output was not written");
+    assert_eq!(
+        std::fs::read_to_string(&header_path).expect("combined header is readable"),
+        header,
+        "header-only and combined emission disagree"
+    );
+
+    let c_host = package.join("host.c");
+    let c_host_source = format!(
+        "#include \"header_api.h\"\n#include \"{runtime_header}\"\n#include <stdint.h>\n\nstatic int32_t plus_one(int32_t value) {{ return value + 1; }}\nint main(void) {{\n    {rt_init}(NULL);\n    {leaf_type} leaf = {{ 19 }};\n    {envelope_type} envelope = {{ leaf, 22 }};\n    if (header_score(envelope, plus_one) != 42) return 1;\n    if (header_score(envelope, NULL) != 0) return 2;\n    if (header_creator() != 46 || header_any() != 47 || header_main() != 48) return 3;\n    const struct HeaderHandle *handle = (const struct HeaderHandle *)(uintptr_t)0x1234;\n    if (header_handle_roundtrip(handle) != handle) return 4;\n    {i128} wide = {i128_make}(0, 42);\n    if (!{i128_eq}(header_i128_identity(wide), wide)) return 5;\n    {rt_shutdown}();\n    return 0;\n}}\n",
+        rt_init = ember_branding::runtime("rt_init"),
+        rt_shutdown = ember_branding::runtime("rt_shutdown"),
+        i128 = ember_branding::runtime("i128"),
+        i128_make = ember_branding::runtime("i128_make"),
+        i128_eq = ember_branding::runtime("i128_eq"),
+    );
+    std::fs::write(&c_host, c_host_source)
+    .expect("C header host is writable");
+    let cpp_host = package.join("host.cpp");
+    let cpp_host_source = format!(
+        "#include \"header_api.h\"\n#include \"{runtime_header}\"\nint main() {{ {rt_init}(nullptr); int result = header_main(); {rt_shutdown}(); return result == 48 ? 0 : 1; }}\n",
+        rt_init = ember_branding::runtime("rt_init"),
+        rt_shutdown = ember_branding::runtime("rt_shutdown"),
+    );
+    std::fs::write(&cpp_host, cpp_host_source)
+    .expect("C++ header host is writable");
+
+    let runtime = root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+    let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
+    let include_dirs = [runtime.join("include"), combined_out.join("debug/lib")];
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
+
+    let c_output = package.join(if cfg!(windows) { "header_c.exe" } else { "header_c" });
+    let c_objects = package.join("c-objects");
+    std::fs::create_dir_all(&c_objects).expect("C header object directory is creatable");
+    ember_build::compile_and_link(
+        &toolchain,
+        &LinkRequest {
+            sources: &[c_host.clone(), generated.clone(), runtime_source.clone()],
+            include_dirs: &include_dirs,
+            output: c_output.clone(),
+            profile: Profile::Debug,
+            obj_dir: c_objects,
+        },
+    )
+    .expect("separate C host links against the emitted header");
+    let c_run = Command::new(&c_output).output().expect("C header host runs");
+    assert!(c_run.status.success(), "C header host failed: {}", String::from_utf8_lossy(&c_run.stderr));
+
+    let cpp_object = package.join(if cfg!(windows) { "host.obj" } else { "host.o" });
+    compile_cpp_object(&toolchain, &cpp_host, &cpp_object, &include_dirs)
+        .expect("C++ header host compiles");
+    let cpp_output = package.join(if cfg!(windows) { "header_cpp.exe" } else { "header_cpp" });
+    let cpp_objects = package.join("cpp-objects");
+    std::fs::create_dir_all(&cpp_objects).expect("C++ header object directory is creatable");
+    ember_build::compile_and_link(
+        &toolchain,
+        &LinkRequest {
+            sources: &[generated, runtime_source, cpp_object],
+            include_dirs: &include_dirs,
+            output: cpp_output.clone(),
+            profile: Profile::Debug,
+            obj_dir: cpp_objects,
+        },
+    )
+    .expect("C++ host links against the C exports");
+    let cpp_run = Command::new(&cpp_output).output().expect("C++ header host runs");
+    assert!(cpp_run.status.success(), "C++ header host failed: {}", String::from_utf8_lossy(&cpp_run.stderr));
+}
+
+#[test]
+fn export_header_rejects_reachable_native_only_types_without_writing_a_header() {
+    let root = workspace_root();
+    let package = temporary_directory("export-header-native-pointer");
+    let source = package.join(ember_branding::source_file("native_pointer"));
+    std::fs::write(
+        package.join(MANIFEST),
+        "[package]\nname = \"native_pointer_header\"\nkind = \"lib\"\n",
+    )
+    .expect("negative header package manifest is writable");
+    let source_fixture = root
+        .join("tests")
+        .join("conformance")
+        .join("FFI-21")
+        .join(ember_branding::source_file("accept_header_native_callable_input"));
+    std::fs::write(&source, std::fs::read_to_string(source_fixture).expect("negative header fixture is readable"))
+    .expect("negative header source is writable");
+    let source_arg = source.to_string_lossy().into_owned();
+
+    let checked = ember(&["check", &source_arg], &root);
+    assert_eq!(checked.exit, 0, "ordinary source checking changed: {}", checked.stderr);
+
+    let out_dir = package.join("out");
+    let out_arg = out_dir.to_string_lossy().into_owned();
+    let emitted = ember(&["build", &source_arg, "--emit", "header", "--out-dir", &out_arg], &root);
+    let diagnostics = format!("{}{}", emitted.stdout, emitted.stderr);
+    assert_ne!(emitted.exit, 0, "native function pointers emitted a public header");
+    assert!(
+        diagnostics.contains("cannot emit C export header: reachable type")
+            && diagnostics.contains("has no supported public C declaration"),
+        "header rejection was not specific:\n{diagnostics}"
+    );
+    assert!(
+        !out_dir.join("debug/lib/native_pointer_header.h").exists(),
+        "failed header emission left an invalid header behind"
+    );
+}
+
+#[test]
+fn export_header_guards_distinguish_safe_names_and_unicode_paths() {
+    let root = workspace_root();
+    let source_text = "@export(\"score\")\npub fn score() -> i32:\n    return 42\n";
+    let mut guards = Vec::new();
+    for (label, package_name, source_name) in [
+        ("dash", "foo-bar", "api"),
+        ("underscore", "foo_bar", "api"),
+        ("unicode", "café.api", "π.api"),
+    ] {
+        let package = temporary_directory(&format!("header-name-{label}"));
+        std::fs::write(
+            package.join(MANIFEST),
+            format!("[package]\nname = \"{package_name}\"\nkind = \"lib\"\n"),
+        )
+        .expect("safe-name manifest is writable");
+        let source = package.join(ember_branding::source_file(source_name));
+        std::fs::write(&source, source_text).expect("safe-name source is writable");
+        let source_arg = source.to_string_lossy().into_owned();
+        let out = package.join("out");
+        let out_arg = out.to_string_lossy().into_owned();
+        let emitted = ember_with_env(
+            &["build", &source_arg, "--emit", "header", "--out-dir", &out_arg],
+            &root,
+            &ember_branding::cc_var(),
+            "ember-compiler-that-does-not-exist",
+        );
+        assert_eq!(emitted.exit, 0, "header name {package_name} failed: {}", emitted.stderr);
+        let header_path = out.join("debug/lib").join(format!("{package_name}.h"));
+        assert!(header_path.is_file(), "header path was not preserved: {}", header_path.display());
+        let header = std::fs::read_to_string(&header_path).expect("safe-name header is readable");
+        let guard = header.lines().find_map(|line| {
+            line.strip_prefix("#ifndef ").map(str::trim).map(str::to_owned)
+        }).expect("header guard exists");
+        guards.push((package_name, guard));
+    }
+    assert_ne!(guards[0].1, guards[1].1, "distinct package names collided in the header guard");
 }
 
 /// `[FN-6]`, `[FFI-9]`, `[FFI-22]` — native callable values have a C adapter,

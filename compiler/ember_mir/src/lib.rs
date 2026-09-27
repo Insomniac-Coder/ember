@@ -49,6 +49,8 @@ pub struct LocalDecl {
     pub span: Span,
 }
 
+pub use ember_hir::ExportThreadPolicy;
+
 #[derive(Debug)]
 pub struct Body {
     pub name: String,
@@ -59,8 +61,8 @@ pub struct Body {
     /// The declared external ABI, if any; `None` denotes Ember's ordinary
     /// callable ABI.
     pub abi: Option<String>,
-    /// `[FFI-33c]` — check the calling thread at this C export's entry.
-    pub export_main_thread: bool,
+    /// `[FFI-33]` — resolved calling-thread contract of a C export.
+    pub export_thread_policy: ExportThreadPolicy,
     pub locals: Vec<LocalDecl>,
     pub blocks: Vec<BasicBlock>,
     pub arg_count: usize,

@@ -36,7 +36,8 @@ usage:
 
 options:
     --profile debug|release|shipping   default: debug
-    --emit tokens|ast|hir|mir|c        print an intermediate form and stop
+    --emit tokens|ast|hir|mir|c|header emit a stage and stop; header writes a file
+    --emit-header                     write <package>.h alongside a build or C emit
     --syntax-only                      lex and parse only; report E00xx/E01xx
     --backend c                        the only backend in v1
     --cc msvc|clang|gcc                override C compiler detection
@@ -272,6 +273,7 @@ fn collect_operand_function_symbols(
 struct Options {
     profile: Profile,
     emit: Option<String>,
+    emit_header: bool,
     cc: Option<String>,
     out_dir: Option<PathBuf>,
     json: bool,
@@ -352,6 +354,16 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             let options = parse_options(&rest)?;
             if options.leak_check && command != "run" {
                 return Err("`--leak-check` is only valid with `ember run`".to_string());
+            }
+            if options.emit_header && command != "build" {
+                return Err("`--emit-header` is only valid with `ember build`".to_string());
+            }
+            if options.emit.as_deref() == Some("header") && command != "build" {
+                return Err("`--emit header` is only valid with `ember build`".to_string());
+            }
+            if options.emit_header && options.emit.as_deref().is_some_and(|stage|
+                !matches!(stage, "c" | "header")) {
+                return Err("`--emit-header` requires a normal build, `--emit c`, or `--emit header`".to_string());
             }
             compile(Path::new(&input), command, &options)
         }
@@ -1116,6 +1128,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                     .ok_or("profile must be debug, release or shipping")?
             }
             "--emit" => options.emit = Some(value(&mut index, arg)?),
+            "--emit-header" => options.emit_header = true,
             "--cc" => options.cc = Some(value(&mut index, arg)?),
             "--out-dir" => options.out_dir = Some(PathBuf::from(value(&mut index, arg)?)),
             "--backend" => {
@@ -1936,6 +1949,38 @@ fn module_file(root: &Path, segments: &[String]) -> Option<std::path::PathBuf> {
     None
 }
 
+/// `[FFI-26]` — derive a safe single filename for the generated public header.
+/// A manifest's package name wins; a manifestless file is its own package.
+fn export_package_name(input: &Path) -> Result<String, String> {
+    let mut directory = input.parent();
+    let mut declared = None;
+    while let Some(candidate) = directory {
+        let path = candidate.join(ember_branding::MANIFEST);
+        if path.is_file() {
+            let manifest = std::fs::read_to_string(&path).map_err(|error|
+                format!("cannot read package manifest `{}`: {error}", path.display()))?;
+            declared = manifest_string(&manifest, "package", "name");
+            break;
+        }
+        directory = candidate.parent();
+    }
+    let name = declared.or_else(|| input.file_stem().and_then(|stem| stem.to_str()).map(str::to_owned))
+        .ok_or_else(|| "cannot derive a package name for the generated header".to_string())?;
+    let device_stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved_device = matches!(device_stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (device_stem.len() == 4
+            && (device_stem.starts_with("COM") || device_stem.starts_with("LPT"))
+            && device_stem.as_bytes()[3].is_ascii_digit()
+            && device_stem.as_bytes()[3] != b'0');
+    if name.is_empty() || matches!(name.as_str(), "." | "..")
+        || name.ends_with('.') || name.ends_with(' ') || reserved_device
+        || name.chars().any(|ch| ch.is_control() || matches!(ch,
+            '/' | '\\' | ':' | '"' | '<' | '>' | '|' | '?' | '*')) {
+        return Err(format!("package name `{name}` is not a single safe header filename component"));
+    }
+    Ok(name)
+}
+
 fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, String> {
     let mut map = SourceMap::new();
     let file = map.load(input).map_err(|e| e.to_string())?;
@@ -2142,14 +2187,32 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
+    let header_requested = options.emit_header || options.emit.as_deref() == Some("header");
+    let package_name = if header_requested { export_package_name(input)? } else { module_name.clone() };
     let emitted = ember_codegen_c::emit(
         verified_mir,
         &map,
         &module_name,
+        &package_name,
         program.main.is_some(),
         options.leak_check,
     );
+    if header_requested {
+        let header = emitted.header_source.as_ref().map_err(|error| error.clone())?;
+        let target_dir = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target"));
+        let layout = Layout::new(&target_dir, options.profile).map_err(|e| e.to_string())?;
+        std::fs::write(layout.lib.join(format!("{package_name}.h")), header)
+            .map_err(|e| e.to_string())?;
+    }
+    if options.emit.as_deref() == Some("header") {
+        return Ok(finish(&sink, &map, options));
+    }
     if options.emit.as_deref() == Some("c") {
+        if let Some(target_dir) = &options.out_dir {
+            let layout = Layout::new(target_dir, options.profile).map_err(|e| e.to_string())?;
+            std::fs::write(layout.c.join(format!("{module_name}.c")), &emitted.c_source)
+                .map_err(|e| e.to_string())?;
+        }
         print!("{}", emitted.c_source);
         return Ok(finish(&sink, &map, options));
     }
