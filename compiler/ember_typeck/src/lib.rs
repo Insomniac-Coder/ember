@@ -267,6 +267,25 @@ pub fn check(
     functions.extend(
         std::mem::take(&mut checker.lambdas).into_iter().filter(|lambda| !opaque.contains(&lambda.def)),
     );
+    // `[FFI-26]`/`[MNG-2]` — a stable C name is an asserted linker identity.
+    // Diagnose collisions while both source locations are still available,
+    // before a backend reports only a duplicate C definition.
+    let mut emitted_symbols = HashMap::<&str, &Function>::new();
+    for function in &functions {
+        if function.is_extern_declaration {
+            continue;
+        }
+        if main.is_some() && function.abi.as_deref() == Some("C") && function.symbol == "main" {
+            checker.error(codes::E0104, function.span,
+                "C export `main` conflicts with the generated program entry point");
+        }
+        if let Some(previous) = emitted_symbols.insert(&function.symbol, function)
+            && (function.abi.as_deref() == Some("C") || previous.abi.as_deref() == Some("C")) {
+            checker.sink.emit(Diagnostic::error(codes::E0104, function.span,
+                format!("C symbol `{}` is defined by more than one Ember function", function.symbol))
+                .secondary(previous.span, "first definition is here"));
+        }
+    }
     let callable_declarations = checker.callable_declarations(modules);
     CheckOutput {
         program: Program { functions, main },
@@ -5243,7 +5262,7 @@ impl<'a> Checker<'a> {
                         self.foreign_declarations.insert(def, decl.is_safe);
                     }
                     let abi = if count_witnesses.is_empty() {
-                        decl.abi.as_deref().or_else(|| export_symbol(&item.attrs).map(|_| "C"))
+                        decl.abi.as_deref().or_else(|| has_attribute(&item.attrs, "export").then_some("C"))
                             .map(Symbol::intern)
                     } else { None };
                     self.signatures.push(Signature { params, ret, abi, is_unsafe: decl.is_unsafe, generics, borrows });
@@ -10981,6 +11000,7 @@ impl<'a> Checker<'a> {
                 Some(_) if decl.is_foreign_decl => ffi_link_name(&item.attrs)
                     .unwrap_or(decl.name.name.as_str()).to_string(),
                 Some(_) => decl.name.name.to_string(),
+                None if has_attribute(&item.attrs, "export") => decl.name.name.to_string(),
                 None => mangle(name, is_main),
             } };
             functions.push(Function {
@@ -10991,7 +11011,7 @@ impl<'a> Checker<'a> {
                 symbol,
                 is_unsafe: decl.is_unsafe,
                 abi: if ffi_counted.is_some() { None } else {
-                    decl.abi.clone().or_else(|| export_symbol(&item.attrs).map(|_| "C".to_string()))
+                    decl.abi.clone().or_else(|| has_attribute(&item.attrs, "export").then(|| "C".to_string()))
                 },
                 params,
                 locals: std::mem::take(&mut self.locals),
@@ -11370,7 +11390,7 @@ impl<'a> Checker<'a> {
     /// `[FFI-5]`, `[RNG-10b]` — a C boundary needs an FFI-safe representation;
     /// a range value must instead enter through its checked constructor.
     fn check_foreign_signature(&mut self, decl: &ast::FnDecl, def: DefId, attrs: &[ast::Attribute]) {
-        if decl.abi.is_none() && export_symbol(attrs).is_none() {
+        if decl.abi.is_none() && !has_attribute(attrs, "export") {
             return;
         }
         if !decl.is_foreign_decl
@@ -24829,14 +24849,26 @@ impl<'a> Checker<'a> {
                         self.error(codes::E0104, attr.span, "a function has only one `@export` attribute");
                     }
                     saw_export = true;
-                    let [ast::AttrArg::Expr(ast::Expr {
-                        kind: ast::ExprKind::Lit(ast::Literal::Str(symbol)), ..
-                    })] = attr.args.as_slice() else {
-                        self.error(codes::E0900, attr.span,
-                            "only `@export(\"C_identifier\")` is implemented yet");
-                        continue;
+                    let symbol = match attr.args.as_slice() {
+                        [ast::AttrArg::Expr(ast::Expr {
+                            kind: ast::ExprKind::Lit(ast::Literal::Str(symbol)), ..
+                        })] => Some(symbol.as_str()),
+                        [ast::AttrArg::Expr(ast::Expr {
+                            kind: ast::ExprKind::Lit(ast::Literal::Str(symbol)), ..
+                        }), policy] if export_abort_policy(policy) => Some(symbol.as_str()),
+                        [policy] if export_abort_policy(policy) => None,
+                        args => {
+                            let message = if args.iter().any(|arg| matches!(arg,
+                                ast::AttrArg::Named { name, .. } if name.name.is("on_panic"))) {
+                                "only `on_panic=abort` is implemented for exported functions"
+                            } else {
+                                "only `@export(\"C_identifier\")` and `on_panic=abort` are implemented yet"
+                            };
+                            self.error(codes::E0900, attr.span, message);
+                            continue;
+                        }
                     };
-                    if !c_link_identifier(symbol) {
+                    if symbol.is_some_and(|symbol| !c_link_identifier(symbol)) {
                         self.error(codes::E0900, attr.span,
                             "an export name that is not a C identifier is not implemented yet");
                     }
@@ -35295,10 +35327,17 @@ enum FfiPointerContract {
 fn export_symbol(attrs: &[ast::Attribute]) -> Option<&str> {
     let attr = attrs.iter().find(|attr|
         attr.path.len() == 1 && attr.path[0].name.is("export"))?;
-    let [ast::AttrArg::Expr(ast::Expr {
+    let ast::AttrArg::Expr(ast::Expr {
         kind: ast::ExprKind::Lit(ast::Literal::Str(symbol)), ..
-    })] = attr.args.as_slice() else { return None };
+    }) = attr.args.first()? else { return None };
     Some(symbol)
+}
+
+/// `[FFI-25]` — the only permitted explicit panic policy is abort.
+fn export_abort_policy(arg: &ast::AttrArg) -> bool {
+    let ast::AttrArg::Named { name, value } = arg else { return false };
+    name.name.is("on_panic") && matches!(&value.kind,
+        ast::ExprKind::Path { segments } if segments.len() == 1 && segments[0].name.is("abort"))
 }
 
 fn ffi_static_immutable(attrs: &[ast::Attribute]) -> bool {

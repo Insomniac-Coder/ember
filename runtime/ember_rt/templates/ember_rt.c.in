@@ -30,6 +30,24 @@ static ember_rt_config g_config;
 static bool g_initialised = false;
 static ember_alloc_stats g_stats = { 0, 0, 0 };
 
+/* `[FFI-22]`/`[FFI-31a]` — an exported body calls attach on every entry.
+ * The fast path compares one thread-local epoch with the module's current
+ * epoch. Shutdown advances it to invalidate every host thread at once,
+ * without requiring a TLS destructor from code the host may unload. */
+static uint32_t object_load_u32(const uint32_t* value);
+static uint32_t object_fetch_add_u32(uint32_t* value, uint32_t amount);
+static uint32_t g_thread_generation = 1;
+#if defined(_MSC_VER)
+#define EMBER_RT_THREAD_LOCAL __declspec(thread)
+#else
+#define EMBER_RT_THREAD_LOCAL _Thread_local
+#endif
+static EMBER_RT_THREAD_LOCAL uint32_t g_attached_generation;
+
+static bool runtime_thread_attached(void) {
+    return g_attached_generation == object_load_u32(&g_thread_generation);
+}
+
 /* `[WK-8]` is deliberately diagnostic-only: the list records live headers
  * while debug objects are enabled, and is never a collector root or a source
  * of mutation. Compiler-generated enumerators own layout knowledge. */
@@ -474,15 +492,24 @@ void ember_rt_shutdown(void) {
     }
     fflush(stdout);
     fflush(stderr);
+    ember_rt_thread_detach();
+    if (object_fetch_add_u32(&g_thread_generation, 1) == UINT32_MAX) {
+        runtime_abort();
+    }
     g_initialised = false;
 }
 
 uint32_t ember_rt_abi_version(void) { return EMBER_RT_ABI; }
 
-/* Phase 0 is single-threaded. The entry points exist so that generated
- * trampolines ([FFI-22]) can call them unconditionally from the start. */
-void ember_rt_thread_attach(void) {}
-void ember_rt_thread_detach(void) {}
+void ember_rt_thread_attach(void) {
+    if (!runtime_thread_attached()) {
+        g_attached_generation = object_load_u32(&g_thread_generation);
+    }
+}
+
+void ember_rt_thread_detach(void) {
+    g_attached_generation = 0;
+}
 
 /* -- memory ------------------------------------------------------------------
  *

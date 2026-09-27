@@ -11253,7 +11253,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   exchange borrowed C records by value, including a 24-byte carrier. The
   workspace suite, annotation sweep and gates passed locally. Its CI run
   `36285039073` finished green.
-* **Next five-feature Phase 5 batch (2026-09-27):** C-ABI definitions call
+* **Five-feature Phase 5 batch `204ed5f` (2026-09-27):** C-ABI definitions call
   the thread-attach hook on entry (`[FFI-22]`, partial: runtime registration
   still needs implementation); exported signatures reject reachable Ember
   owners with `E5015` (`[FFI-31b]`); `@export("C_identifier")` gives ordinary
@@ -11262,9 +11262,22 @@ first**; the rest of §0.355 is the running narrative behind it.
   aborts without returning through C (`[FFI-25]`). The full conformance
   sweep reported zero failures; the workspace suite and repository gates
   passed. Hardened_38 already decides these semantics, so no ODR was needed.
-* **Next task:** complete Phase 5's thread registration behind the attach
-  hook, then continue C export thread contracts, headers, and library
-  packaging. Check CI before pushing further work. Audit rows for
+* **Next five-feature Phase 5 batch, in progress:** The runtime attach hook
+  now has per-thread state, and shutdown invalidates even live host threads'
+  attachments by advancing an atomic generation (`[FFI-22]`, `[FFI-31a]`).
+  A C fixture checks idempotent attach, independent threads, detach and
+  shutdown invalidation; the first run failed against the no-op hook and
+  now passes. The compiler detects two definitions of one C export symbol
+  across the whole program and rejects an export named `main` while building
+  an executable, before C compilation. `@export(on_panic=abort)` and the
+  combined stable-name form are accepted; a non-abort policy remains `E0900`.
+  A linked C host confirms a symbol exported from an imported Ember module.
+  The full annotation sweep reported zero failures; the workspace suite and
+  all repository gates passed. The previous batch's CI run `36286071661`
+  is still running at this checkpoint.
+  Hardened_38 specifies these behaviors; no ODR was needed.
+* **Next task:** continue Phase 5 C export thread contracts, headers, and
+  library packaging after this batch is validated and pushed. Audit rows for
   `[CLS-2]` and `[CLS-7]` were stale: existing code and tests cover their
   stated gaps.
 * **Phase table after the five defects (2026-09-26 evening):**

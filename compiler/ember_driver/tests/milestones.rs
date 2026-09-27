@@ -723,6 +723,69 @@ fn exported_panic_aborts_inside_c_callback() {
     }
 }
 
+/// `[FFI-22]` — attaching is idempotent and local to the calling C thread.
+#[test]
+fn runtime_thread_attachment_is_thread_local() {
+    let root = workspace_root();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/runtime_thread_attach.c");
+    let runtime = root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+    let directory = temporary_directory("runtime-thread-attach");
+    let output = directory.join(if cfg!(windows) { "runtime_thread_attach.exe" } else { "runtime_thread_attach" });
+    let objects = directory.join("obj");
+    std::fs::create_dir_all(&objects).expect("object directory is creatable");
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
+    ember_build::compile_and_link(&toolchain, &LinkRequest {
+        sources: &[fixture],
+        include_dirs: &[runtime.join("include")],
+        output: output.clone(),
+        profile: Profile::Debug,
+        obj_dir: objects,
+    }).expect("thread attachment host links");
+    let run = Command::new(output).output().expect("thread attachment host runs");
+    assert!(run.status.success(), "thread attachment failed: {:?}\n{}",
+        run.status, String::from_utf8_lossy(&run.stderr));
+}
+
+/// `[FFI-26]` — an imported Ember module preserves its asserted linker name.
+#[test]
+fn imported_module_export_keeps_its_c_symbol() {
+    let root = workspace_root();
+    let directory = temporary_directory("imported-module-export");
+    let imported = directory.join(ember_branding::source_file("exported"));
+    let entry = directory.join(ember_branding::source_file("entry"));
+    std::fs::write(&imported,
+        "@export(\"module_score\")\npub fn score(value: i32) -> i32:\n    return value + 1\n")
+        .expect("exported module is writable");
+    std::fs::write(&entry,
+        "import exported\nunsafe extern \"C\":\n    safe fn call_module_score(value: i32) -> i32\nfn main():\n    println(call_module_score(41))\n")
+        .expect("entry is writable");
+    let entry_arg = entry.to_string_lossy().into_owned();
+    let emitted = ember(&["build", &entry_arg, "--emit", "c"], &root);
+    assert_eq!(emitted.exit, 0, "module export C emission failed: {}", emitted.stderr);
+    let generated = directory.join("program.c");
+    std::fs::write(&generated, emitted.stdout).expect("generated C is writable");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/foreign_module_export.c");
+    let runtime = root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+    let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
+    let output = directory.join(if cfg!(windows) { "module_export.exe" } else { "module_export" });
+    let objects = directory.join("obj");
+    std::fs::create_dir_all(&objects).expect("object directory is creatable");
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
+    ember_build::compile_and_link(&toolchain, &LinkRequest {
+        sources: &[generated, fixture, runtime_source],
+        include_dirs: &[runtime.join("include")],
+        output: output.clone(),
+        profile: Profile::Debug,
+        obj_dir: objects,
+    }).expect("imported Ember export links to C");
+    let run = Command::new(output).output().expect("linked program runs");
+    assert!(run.status.success(), "module export failed: {}",
+        String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "42");
+}
+
 /// `[MAN-3]` — a manifest must not silently accept configuration for a lint
 /// that the compiler does not define. The manifest lives beside an otherwise
 /// valid standalone source file so this exercises the driver's nearest-package
