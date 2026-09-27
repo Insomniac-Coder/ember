@@ -11248,12 +11248,25 @@ first**; the rest of §0.355 is the running narrative behind it.
   valid empty view whose data pointer is null. Each case failed its size
   expectation before implementation and now exercises `Some` and `None`.
   The 0.9.9 target specified every layout; no ODR was needed.
-* **Next task:** complete validation and push the borrowed-record C ABI batch,
-  then continue Phase 5 at `[FFI-22]`'s exported-function thread attachment.
-  Check its CI run before pushing further work.
-  Audit rows for
-  `[CLS-2]` and `[CLS-7]` were stale: the existing code and tests cover
-  their stated gaps.
+* **Borrowed C-record ABI batch:** `b41d35d` is on `main`; hand-declared
+  imports, exported definitions, C callbacks and function-pointer results
+  exchange borrowed C records by value, including a 24-byte carrier. The
+  workspace suite, annotation sweep and gates passed locally. Its CI run
+  `36285039073` finished green.
+* **Next five-feature Phase 5 batch (2026-09-27):** C-ABI definitions call
+  the thread-attach hook on entry (`[FFI-22]`, partial: runtime registration
+  still needs implementation); exported signatures reject reachable Ember
+  owners with `E5015` (`[FFI-31b]`); `@export("C_identifier")` gives ordinary
+  and explicit `extern "C"` definitions a stable C symbol (`[FFI-26]`);
+  and a linked C-host test proves that a panic in a nested Ember callee
+  aborts without returning through C (`[FFI-25]`). The full conformance
+  sweep reported zero failures; the workspace suite and repository gates
+  passed. Hardened_38 already decides these semantics, so no ODR was needed.
+* **Next task:** complete Phase 5's thread registration behind the attach
+  hook, then continue C export thread contracts, headers, and library
+  packaging. Check CI before pushing further work. Audit rows for
+  `[CLS-2]` and `[CLS-7]` were stale: existing code and tests cover their
+  stated gaps.
 * **Phase table after the five defects (2026-09-26 evening):**
 
   | Phase | % |

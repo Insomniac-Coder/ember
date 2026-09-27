@@ -2,7 +2,7 @@
 #$ rules: ATT-6, CLI-19
 #$ profiles: debug
 #$ error[E0900]: `@inline` is not implemented yet
-#$ error[E0900]: `@export` is not implemented yet
+#$ error[E0900]: only `@export("C_identifier")` is implemented yet
 #$ error[E0900]: `@unroll` is not implemented yet
 #$ error[E0900]: deriving `Ord` is not implemented yet
 # A listed attribute whose effect is not built is rejected with `E0900`, never
@@ -12,7 +12,7 @@
 fn twice(x: int) -> int:
     return x * 2
 
-@export("ember_twice")
+@export(on_panic=abort)
 extern "C" fn exported(x: i32) -> i32:
     return x
 

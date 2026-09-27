@@ -654,10 +654,48 @@ fn borrowed_record_export_receives_c_value() {
     let directory = temporary_directory("borrowed-record-export");
     let generated = directory.join("program.c");
     std::fs::write(&generated, emitted.stdout).expect("generated C is writable");
+    let host = directory.join("host_program.c");
+    let attach_symbol = format!("{}_rt_thread_attach", ember_branding::SYMBOL_PREFIX);
+    std::fs::write(&host,
+        format!("static int attach_calls = 0;\nvoid test_attach(void) {{ ++attach_calls; }}\n#define {attach_symbol} test_attach\n#include \"program.c\"\n#undef {attach_symbol}\nint32_t exported_attach_calls(void) {{ return attach_calls; }}\n"))
+        .expect("instrumented C host is writable");
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/foreign_record_exports.c");
     let runtime = root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
     let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
     let output = directory.join(if cfg!(windows) { "borrowed_record_export.exe" } else { "borrowed_record_export" });
+    let objects = directory.join("obj");
+    std::fs::create_dir_all(&objects).expect("object directory is creatable");
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
+    ember_build::compile_and_link(&toolchain, &LinkRequest {
+        sources: &[host, fixture, runtime_source],
+        include_dirs: &[runtime.join("include")],
+        output: output.clone(),
+        profile: Profile::Debug,
+        obj_dir: objects,
+    }).expect("borrowed record export links to C");
+    let run = Command::new(output).output().expect("linked program runs");
+    assert!(run.status.success(), "borrowed record export failed: {}",
+        String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "10\n3\n21\n10\n13\n811\n10\n19\n15\n7\n8\n");
+}
+
+/// `[FFI-25]` — a C caller cannot observe an Ember panic as a return or unwind.
+#[test]
+fn exported_panic_aborts_inside_c_callback() {
+    let root = workspace_root();
+    let source = root.join(format!("tests/conformance/FFI-25/accept_exported_panic_aborts.{SOURCE_EXT}"));
+    let source_arg = source.to_string_lossy().into_owned();
+    let emitted = ember(&["build", &source_arg, "--emit", "c"], &root);
+    assert_eq!(emitted.exit, 0, "exported panic C emission failed: {}", emitted.stderr);
+
+    let directory = temporary_directory("exported-panic-aborts");
+    let generated = directory.join("program.c");
+    std::fs::write(&generated, emitted.stdout).expect("generated C is writable");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/foreign_export_panic.c");
+    let runtime = root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+    let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
+    let output = directory.join(if cfg!(windows) { "exported_panic.exe" } else { "exported_panic" });
     let objects = directory.join("obj");
     std::fs::create_dir_all(&objects).expect("object directory is creatable");
     let requested = std::env::var(ember_branding::cc_var()).ok();
@@ -668,11 +706,21 @@ fn borrowed_record_export_receives_c_value() {
         output: output.clone(),
         profile: Profile::Debug,
         obj_dir: objects,
-    }).expect("borrowed record export links to C");
+    }).expect("exported panic program links to C");
     let run = Command::new(output).output().expect("linked program runs");
-    assert!(run.status.success(), "borrowed record export failed: {}",
-        String::from_utf8_lossy(&run.stderr));
-    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "10\n3\n21\n10\n13\n811\n10\n19\n");
+    assert!(!run.status.success(), "exported panic returned through C");
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(stdout.contains("before host call"), "C call was not reached: {stdout}");
+    assert!(!stdout.contains("after host call"), "C returned after an Ember panic: {stdout}");
+    assert!(String::from_utf8_lossy(&run.stderr).contains("panic inside an exported function"),
+        "wrong failure: {}", String::from_utf8_lossy(&run.stderr));
+    if cfg!(windows) {
+        assert_eq!(run.status.code(), Some(3), "panic did not abort: {:?}", run.status);
+    }
+    #[cfg(unix)] {
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(run.status.signal(), Some(6), "panic did not abort: {:?}", run.status);
+    }
 }
 
 /// `[MAN-3]` — a manifest must not silently accept configuration for a lint

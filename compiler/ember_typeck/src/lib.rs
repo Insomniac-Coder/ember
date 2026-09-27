@@ -5242,7 +5242,10 @@ impl<'a> Checker<'a> {
                     if decl.is_foreign_decl {
                         self.foreign_declarations.insert(def, decl.is_safe);
                     }
-                    let abi = if count_witnesses.is_empty() { decl.abi.as_deref().map(Symbol::intern) } else { None };
+                    let abi = if count_witnesses.is_empty() {
+                        decl.abi.as_deref().or_else(|| export_symbol(&item.attrs).map(|_| "C"))
+                            .map(Symbol::intern)
+                    } else { None };
                     self.signatures.push(Signature { params, ret, abi, is_unsafe: decl.is_unsafe, generics, borrows });
                     self.record_defaults(def, decl);
                 }
@@ -10971,13 +10974,15 @@ impl<'a> Checker<'a> {
             // `extern "C" fn` DEFINES a function a host links against, so its
             // symbol is the name as written — `[MNG-1]`'s module-qualified
             // mangling would make it unfindable, which defeats the point.
-            let symbol = match &decl.abi {
+            let symbol = if let Some(exported) = export_symbol(&item.attrs) {
+                exported.to_string()
+            } else { match &decl.abi {
                 Some(_) if ffi_counted.is_some() => mangle(name, false),
                 Some(_) if decl.is_foreign_decl => ffi_link_name(&item.attrs)
                     .unwrap_or(decl.name.name.as_str()).to_string(),
                 Some(_) => decl.name.name.to_string(),
                 None => mangle(name, is_main),
-            };
+            } };
             functions.push(Function {
                 def,
                 name,
@@ -10985,7 +10990,9 @@ impl<'a> Checker<'a> {
                 class_init_default_fields: Vec::new(),
                 symbol,
                 is_unsafe: decl.is_unsafe,
-                abi: if ffi_counted.is_some() { None } else { decl.abi.clone() },
+                abi: if ffi_counted.is_some() { None } else {
+                    decl.abi.clone().or_else(|| export_symbol(&item.attrs).map(|_| "C".to_string()))
+                },
                 params,
                 locals: std::mem::take(&mut self.locals),
                 ret: self.ret_ty,
@@ -11331,24 +11338,43 @@ impl<'a> Checker<'a> {
         out
     }
 
-    /// One function body, checked into a `Function` with a given `DefId`.
-    /// `[FFI-5]`, `[RNG-10b]` — what an `extern "C" fn` definition may
-    /// mention in its signature.
-    ///
-    /// A foreign ABI means the type has to have a representation the other side
-    /// agrees on, so every parameter and the return type must be FFI-safe.
-    /// A range type is called out separately because it *is* representable —
-    /// it erases to its representation — and is still refused: `[RNG-10b]` says
-    /// a value arriving from foreign code "enters at the representation type
-    /// and becomes a range value only through `[RNG-3]`", so admitting one here
-    /// would let a foreign caller manufacture a range value that never passed a
-    /// check, and `[RNG-9]` makes that undefined behaviour rather than a wrong
-    /// number.
+    /// `[FFI-31b]` — ownership remains forbidden even behind raw pointers in
+    /// an exported C signature. Track visited types through recursive records.
+    fn exported_owner_reachable(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+        if !seen.insert(ty) {
+            return false;
+        }
+        if self.types.needs_drop(ty)
+            || matches!(self.types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Vec { .. }) {
+            return true;
+        }
+        match self.types.kind(ty) {
+            TyKind::Ptr { inner, .. } | TyKind::Ref { inner, .. } =>
+                self.exported_owner_reachable(*inner, seen),
+            TyKind::Span { elem, .. } | TyKind::Array { elem, .. } =>
+                self.exported_owner_reachable(*elem, seen),
+            TyKind::Struct(id) => self.types.struct_def(*id).fields.iter()
+                .any(|field| self.exported_owner_reachable(field.ty, seen)),
+            TyKind::Enum(id) => self.types.enum_def(*id).variants.iter()
+                .any(|variant| variant.fields.iter()
+                    .any(|field| self.exported_owner_reachable(field.ty, seen))),
+            TyKind::Tuple(items) => items.iter()
+                .any(|&item| self.exported_owner_reachable(item, seen)),
+            TyKind::Fn { params, ret, .. } => params.iter()
+                .any(|param| self.exported_owner_reachable(param.ty, seen))
+                || self.exported_owner_reachable(*ret, seen),
+            _ => false,
+        }
+    }
+
+    /// `[FFI-5]`, `[RNG-10b]` — a C boundary needs an FFI-safe representation;
+    /// a range value must instead enter through its checked constructor.
     fn check_foreign_signature(&mut self, decl: &ast::FnDecl, def: DefId, attrs: &[ast::Attribute]) {
-        if decl.abi.is_none() {
+        if decl.abi.is_none() && export_symbol(attrs).is_none() {
             return;
         }
-        if !decl.is_foreign_decl && decl.abi.as_deref() != Some("C") {
+        if !decl.is_foreign_decl
+            && decl.abi.as_deref().is_some_and(|abi| abi != "C") {
             self.error(codes::E0900, decl.name.span,
                 "only the `extern \"C\"` function ABI is implemented yet");
         }
@@ -11418,6 +11444,11 @@ impl<'a> Checker<'a> {
             }
         };
         for &(name, ty, _, span) in &signature {
+            if !decl.is_foreign_decl && self.exported_owner_reachable(ty, &mut HashSet::new()) {
+                self.error(codes::E5015, span,
+                    format!("exported parameter `{name}` reaches an owning Ember value"));
+                continue;
+            }
             if decl.is_foreign_decl && decl.is_safe
                 && let Some((inner, _)) = self.foreign_nullable_ref_inner(ty) {
                 if !self.types.is_ffi_safe(inner) {
@@ -11446,7 +11477,13 @@ impl<'a> Checker<'a> {
                 check(self, ty, span, format!("`{name}` is this parameter"));
             }
         }
-        if ret != self.common.void {
+        let owning_result = !decl.is_foreign_decl
+            && self.exported_owner_reachable(ret, &mut HashSet::new());
+        if owning_result {
+            self.error(codes::E5015, decl.name.span,
+                "exported result reaches an owning Ember value");
+        }
+        if ret != self.common.void && !owning_result {
             if decl.is_foreign_decl && decl.is_safe
                 && matches!(result_contract, Some(FfiResultContract::SharedCountStatic { .. }
                     | FfiResultContract::SharedCountFrom { .. }
@@ -24784,6 +24821,31 @@ impl<'a> Checker<'a> {
         if let ast::ItemKind::Fn(decl) = &item.kind {
             self.check_safety_attribute(&item.attrs, decl.is_unsafe,
                 item.vis.kind != ast::VisKind::Private, item.span);
+            if !decl.is_foreign_decl {
+                let mut saw_export = false;
+                for attr in item.attrs.iter().filter(|attr|
+                    attr.path.len() == 1 && attr.path[0].name.is("export")) {
+                    if saw_export {
+                        self.error(codes::E0104, attr.span, "a function has only one `@export` attribute");
+                    }
+                    saw_export = true;
+                    let [ast::AttrArg::Expr(ast::Expr {
+                        kind: ast::ExprKind::Lit(ast::Literal::Str(symbol)), ..
+                    })] = attr.args.as_slice() else {
+                        self.error(codes::E0900, attr.span,
+                            "only `@export(\"C_identifier\")` is implemented yet");
+                        continue;
+                    };
+                    if !c_link_identifier(symbol) {
+                        self.error(codes::E0900, attr.span,
+                            "an export name that is not a C identifier is not implemented yet");
+                    }
+                    if !decl.generics.is_empty() {
+                        self.error(codes::E0900, attr.span,
+                            "exporting a generic function before instantiation is not implemented yet");
+                    }
+                }
+            }
         }
         if let ast::ItemKind::Fn(decl) = &item.kind && decl.is_foreign_decl {
             let mut saw_ffi = false;
@@ -24877,7 +24939,13 @@ impl<'a> Checker<'a> {
             ast::ItemKind::ExternClass(_) => "extern item",
             ast::ItemKind::Comptime(_) => "comptime block",
         };
-        self.check_attribute_list(&item.attrs, site);
+        for attr in &item.attrs {
+            if matches!(&item.kind, ast::ItemKind::Fn(decl) if !decl.is_foreign_decl)
+                && attr.path.len() == 1 && attr.path[0].name.is("export") {
+                continue;
+            }
+            self.check_attribute_list(std::slice::from_ref(attr), site);
+        }
         let members: &[ast::Member] = match &item.kind {
             ast::ItemKind::Struct(decl) => &decl.members,
             ast::ItemKind::Class(decl) => &decl.members,
@@ -35221,6 +35289,16 @@ enum FfiPointerContract {
     NullableMutOne,
     Count { witness: Symbol, exclusive: bool, nullable: bool },
     Fixed { len: u64, exclusive: bool, nullable: bool },
+}
+
+/// `[FFI-26]`/`[MNG-2]` — the stable C symbol asserted by `@export`.
+fn export_symbol(attrs: &[ast::Attribute]) -> Option<&str> {
+    let attr = attrs.iter().find(|attr|
+        attr.path.len() == 1 && attr.path[0].name.is("export"))?;
+    let [ast::AttrArg::Expr(ast::Expr {
+        kind: ast::ExprKind::Lit(ast::Literal::Str(symbol)), ..
+    })] = attr.args.as_slice() else { return None };
+    Some(symbol)
 }
 
 fn ffi_static_immutable(attrs: &[ast::Attribute]) -> bool {

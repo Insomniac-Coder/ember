@@ -1,5 +1,5 @@
 #$ test: parse-pass
-#$ rules: FFI-9
+#$ rules: FFI-9, FFI-22, FFI-26
 
 struct ForeignPair:
     left: i32
@@ -11,10 +11,16 @@ pub extern "C" fn exported_pair_score(pair: ForeignPair) -> i32:
 pub extern "C" fn exported_pair_mix(left: ForeignPair, scale: i32, right: ForeignPair) -> ForeignPair:
     return ForeignPair(left = left.left * scale + right.left, right = left.right * scale + right.right)
 
+@export("api_pair_score")
+pub fn named_pair_score(pair: ForeignPair) -> i32:
+    return pair.left + pair.right * 3
+
 unsafe extern "C":
     safe fn call_exported_pair_score() -> i32
     safe fn call_exported_pair_mix() -> i32
+    safe fn call_named_pair_export() -> i32
     fn call_pair_callback(callback: extern "C" fn(ForeignPair) -> i32) -> i32
+    safe fn exported_attach_calls() -> i32
 
 fn main():
     pair = ForeignPair(left = 3, right = 4)
@@ -30,3 +36,6 @@ fn main():
     println(callback(pair))
     unsafe:
         println(call_pair_callback(callback))
+    println(named_pair_score(pair))
+    println(call_named_pair_export())
+    println(exported_attach_calls())

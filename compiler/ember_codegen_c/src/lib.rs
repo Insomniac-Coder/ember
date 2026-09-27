@@ -3521,6 +3521,11 @@ impl Emitter<'_> {
     fn emit_body(&mut self, body: &Body) {
         let signature = self.signature(body);
         self.line(&format!("{signature} {{"));
+        if body.abi.as_deref() == Some("C") {
+            // `[FFI-22]` — the host may call this export on a thread that has
+            // never run Ember. Attach before the body touches runtime state.
+            self.line(&format!("    {RT}rt_thread_attach();"));
+        }
         if let Some(values) = self.ffi_export_value_params.get(&body.symbol).cloned() {
             for (index, (id, decl)) in body.args().enumerate() {
                 if values[index] {
