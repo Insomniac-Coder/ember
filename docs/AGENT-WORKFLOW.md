@@ -1,12 +1,12 @@
 # Multi-agent work: the owner's rules
 
 Copied from the owner's `lean-agent-workflow` skill (2026-09-25) so any session on this repository has it.
-**Owner update, 2026-09-27:** autonomous, cost-conscious delegation is authorized
-for language development. This supersedes the earlier solo-only instruction,
-per-plan approval, and mandatory phase pauses below. Keep jobs bounded, use the
-smallest suitable model, and let the lead own integration and verification
-decisions. The owner also authorized delegating test runs/checks and error
-triage: the runner reports failures, and the lead assigns fixes by complexity.
+**Owner update, 2026-09-27:** delegation is the default for separable implementation,
+tests, documentation, and routine fixes, as well as test runs/checks and failure triage.
+This supersedes the earlier solo-work, per-plan approval, and mandatory phase pauses
+below. The lead owns requirements, architecture and design, review, integration, and
+final verification. Keep jobs bounded, use the smallest suitable model, and keep one
+owner per file and run. The runner reports failures; the lead assigns fixes by complexity.
 The default is 2-3 concurrent agents, without asking again for routine splits.
 
 # Lean agent workflow

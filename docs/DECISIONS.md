@@ -2025,3 +2025,33 @@ identity. Before shared-runtime or independently initialized module packaging
 is accepted, the same authority must be scoped to each module instance;
 the runtime's initialization thread cannot stand in for every module's.
 No specification change or ODR is needed for this implementation choice.
+
+## ADR-064 — capture-free function values retain both ABI entry points
+
+**Decided 2026-09-27, with D-364 and D-365.** `[FN-6]` permits a capture-free
+function value to become a C callback. Native borrowed records arrive by
+address, while `[FFI-9]` requires their C values at the foreign boundary;
+`[FFI-22]` also requires attachment on the callback itself.
+
+A native function value is one pointer to a static descriptor containing its
+native entry and, for a supported FFI-safe signature, a C adapter entry. The
+fields are erased function pointers, cast back to the exact signature before
+calling; there is no conversion between function and data pointers. Native
+calls retain the original argument addresses. The C adapter attaches and
+adapts C record values to native borrowed addresses before calling the body.
+Already-C functions remain raw C function pointers. Captured/owned callable
+representations are unchanged.
+
+Native-to-C coercion is an explicit MIR operation, selecting the descriptor's
+C entry even when a stored value was chosen dynamically. It allocates nothing
+and performs no search. Native indirect calls still have one indirect call,
+with one metadata load; each used native function needs two static function
+pointers plus its eligible adapter. Direct-only functions need no descriptor.
+
+Retyping a raw pointer loses the ABI distinction (D-365). Changing all native
+calls to the C ABI would copy borrowed records and change their identity.
+Searching a table at each conversion would preserve semantics but make cost
+grow with the number of candidate functions. The descriptor keeps native
+semantics and constant conversion cost. These are representation decisions;
+the language rules already decide the required behavior, so no ODR or new
+hardening is warranted.

@@ -954,6 +954,8 @@ pub struct InterfaceAdapterMethod {
 
 #[derive(Clone, Debug)]
 pub enum CastKind {
+    /// `[FN-6]` — select the C entry of a capture-free native function value.
+    FnToC,
     /// `[TYP-6]` — truncation, float-to-int saturation, int-to-float rounding.
     Numeric,
     /// A lossless widening inserted implicitly (`[TYP-5]`).

@@ -11092,7 +11092,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   (ODR-082), pinned in `docs/spec-source/development-target.json`. The
   spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through
   `parts-h38/` are frozen.
-* **Next numbers:** ODR-083, D-366, ADR-064.
+* **Next numbers:** ODR-083, D-366, ADR-065.
 * **The owner's simplification pass** (2026-09-26, attended; the proposal is
   `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
   Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed
@@ -11276,7 +11276,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   all repository gates passed. CI `36286071661` finished green; all five
   jobs of this batch's CI `36286904035` also finished successfully.
   Hardened_38 specifies these behaviors; no ODR was needed.
-* **Current batch:** explicit main/any export policies, file defaults,
+* **Five-feature batch `7e2f8d1` (2026-09-27), pushed:** explicit main/any export policies, file defaults,
   per-export overrides, combined directives and lifecycle-safe main-thread
   enforcement. A real C host verifies permitted calls and rejection on the
   wrong thread, after reinitialization elsewhere, and before initialization
@@ -11290,25 +11290,29 @@ first**; the rest of §0.355 is the running narrative behind it.
   printed `ok`, without weakening the test. D-363 also fixes directives after
   comments: restoring first-line-only recognition made an earlier language
   version incorrectly pass; restoring the fix gives E0006. H38 already
-  decides the behavior, so no ODR or new hardening is needed.
-* **Workflow update (owner, 2026-09-27):** autonomous delegation by task
-  complexity replaces the older solo-only rule. A bounded Luna read mapped
-  the policy path; Sol implemented the compiler side; the lead owns design,
-  runtime and integration tests. The owner subsequently authorized delegated
-  checks and error triage; Luna owned the final clang-cl suite and toolchain
-  diagnosis. Commit cadence remains about
-  five features. See AUTOPILOT and AGENT-WORKFLOW for the persisted rules.
-* **Next task:** fix D-364 and D-365 before continuing headers/library
-  packaging. Scratch C-host probes proved that both named and capture-free
-  lambda callbacks return with attachment still false after host detach. A
-  plain Pair callback also fails C compilation: `extern C fn(Pair)` takes a
-  value but the ordinary Ember body takes `Pair*`. Native function calls must
-  preserve borrowed identity; use C boundary adapters rather than changing
-  the native calling convention. Dynamic conversion through a stored native
-  function value must work as well as a direct named function.
-  Audit rows for
-  `[CLS-2]` and `[CLS-7]` were stale: existing code and tests cover their
-  stated gaps.
+  decides the behavior, so no ODR or new hardening is needed. CI run #419 for
+  `7e2f8d16b1895e4c63cba3da531d7ca1bad2306f` passed all five jobs.
+* **Workflow update (owner, 2026-09-27):** delegation by complexity is the
+  default for separable implementation, tests, documentation, and routine
+  fixes, as well as runs/checks and triage. The lead owns requirements,
+  architecture and design, review, integration, and final verification.
+  See AUTOPILOT and AGENT-WORKFLOW for the persisted rules. Commit cadence
+  remains about five features.
+* **Callback batch complete:** D-364/D-365 use static native-function
+  descriptors and C adapters (ADR-064). Native calls preserve borrowed-record
+  identity; explicit conversion selects a C adapter that attaches on entry and
+  adapts the C ABI. Coverage includes named and lambda values, stored and
+  runtime-selected conversions, Pair and 24-byte record arguments, mutable
+  arguments, record returns, nested callbacks, void results, and native
+  identity. Linked C-host coverage runs in debug, release, and shipping.
+* **Verification:** full MSVC and clang-cl workspace suites passed; the full
+  annotation sweep reported `failing 0`; all 18 gates passed; the milestone
+  suite passed 47/47, including the new callback test. CI for this callback
+  batch is pending.
+* **Next task:** ODR-083/Hardened_39 resolves the creator-thread anchor for
+  static exports. Then implement creator policy and export-header reporting.
+  Audit rows for `[CLS-2]` and `[CLS-7]` were stale: existing code and tests
+  cover their stated gaps.
 * **Phase estimates (2026-09-27; engineering estimates, not test counts):**
 
   | Phase | % |

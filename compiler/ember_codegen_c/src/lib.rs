@@ -146,6 +146,7 @@ pub fn emit(
                 by_value.iter().any(|&value| value).then(|| (body.symbol.clone(), by_value))
             })
             .collect(),
+        native_fn_values: BTreeMap::new(),
         foreign_statics: std::cell::RefCell::new(BTreeMap::new()),
         drop_glue: std::cell::RefCell::new(Vec::new()),
         eq_fns: std::cell::RefCell::new(Vec::new()),
@@ -171,6 +172,7 @@ pub fn emit(
             })
             .collect(),
     };
+    emitter.collect_native_fn_values(bodies);
     emitter.emit_module(bodies, module_name, has_main, leak_check);
     let foreign_declarations = emitter.foreign_statics.borrow().iter()
         .map(|(symbol, (ty, immutable))| format!("extern {}{} {symbol};\n",
@@ -289,6 +291,8 @@ struct Emitter<'a> {
     /// Borrowed Ember aggregates arrive as addresses internally, but an
     /// exported C function receives their record values at the ABI boundary.
     ffi_export_value_params: BTreeMap<String, Vec<bool>>,
+    /// Capture-free native function values used by MIR, keyed by body symbol.
+    native_fn_values: BTreeMap<String, NativeFnValue>,
     /// C globals used by a generated body, collected while rendering calls.
     foreign_statics: std::cell::RefCell<BTreeMap<String, (Ty, bool)>>,
     /// D-182 — aggregate types whose drop is emitted as an out-of-line
@@ -319,6 +323,12 @@ struct Emitter<'a> {
     /// And those formatted with a spec after `!r`/`!s`, whose wrapper pads
     /// the text the conversion made.
     fmt_specs: std::cell::RefCell<Vec<Ty>>,
+}
+
+struct NativeFnValue {
+    descriptor: String,
+    adapter: Option<String>,
+    signature: Ty,
 }
 
 /// Replaced, once every body has been emitted, by the drop-glue prototypes.
@@ -449,6 +459,67 @@ impl Emitter<'_> {
         self.out.push('\n');
     }
 
+    fn collect_native_fn_values(&mut self, bodies: &[Body]) {
+        let native_bodies: BTreeSet<&str> = bodies.iter()
+            .filter(|body| body.abi.is_none() && !body.is_extern_declaration)
+            .map(|body| body.symbol.as_str())
+            .collect();
+        let mut signatures = BTreeMap::new();
+        for body in bodies {
+            for block in &body.blocks {
+                for stmt in &block.stmts {
+                    if let StmtKind::Assign {
+                        place,
+                        rvalue: Rvalue::Use(Operand::Const(Const::Fn(symbol))),
+                    } = &stmt.kind
+                        && native_bodies.contains(symbol.as_str())
+                    {
+                        let signature = self.place_ty(place, body);
+                        assert!(matches!(self.types.kind(signature), TyKind::Fn { abi: None, .. }),
+                            "native function value must have a native function type");
+                        signatures.insert(symbol.clone(), signature);
+                    }
+                }
+            }
+        }
+        let mut used: BTreeSet<String> = bodies.iter().map(|body| body.symbol.clone()).collect();
+        for body in bodies {
+            for block in &body.blocks {
+                if let Terminator::Call { func: FuncRef::Builtin { which, .. }, .. } = &block.terminator {
+                    let foreign = match which {
+                        Builtin::ForeignStaticRead { symbol, .. }
+                        | Builtin::ForeignStaticWrite { symbol }
+                        | Builtin::ForeignStaticFieldWrite { symbol, .. } => Some(symbol),
+                        _ => None,
+                    };
+                    if let Some(symbol) = foreign { used.insert(symbol.to_string()); }
+                }
+            }
+        }
+        let mut serial = 0;
+        for (symbol, signature) in signatures {
+            let TyKind::Fn { params, ret, .. } = self.types.kind(signature) else { unreachable!() };
+            let ffi_safe = params.iter().all(|param|
+                self.types.is_ffi_safe(param.ty) && !self.types.needs_drop(param.ty))
+                && self.types.is_ffi_safe(*ret) && !self.types.needs_drop(*ret);
+            let (descriptor, adapter) = loop {
+                let descriptor = format!("{RT}native_fn_value_{serial}");
+                let adapter = format!("{RT}native_fn_c_entry_{serial}");
+                serial += 1;
+                if !used.contains(&descriptor) && !used.contains(&adapter) {
+                    used.insert(descriptor.clone());
+                    used.insert(adapter.clone());
+                    break (descriptor, adapter);
+                }
+            };
+            self.native_fn_values.insert(symbol, NativeFnValue {
+                descriptor,
+                adapter: ffi_safe.then_some(adapter),
+                signature,
+            });
+        }
+    }
+
     fn emit_module(
         &mut self,
         bodies: &[Body],
@@ -474,6 +545,7 @@ impl Emitter<'_> {
         self.collect_interface_adapters(bodies);
         self.emit_interface_vtable_types();
         self.emit_prototypes(bodies);
+        self.emit_native_fn_values(bodies);
         self.line(DROP_GLUE_PROTOTYPES);
         self.line(EQ_FN_PROTOTYPES);
         self.line(CLONE_PARTS_PROTOTYPES);
@@ -1446,6 +1518,12 @@ impl Emitter<'_> {
     /// which is declaration order, so a struct's fields are always already
     /// complete types.
     fn emit_type_declarations(&mut self) {
+        if self.types.all().any(|(_, kind)| matches!(kind, TyKind::Fn { abi: None, .. })) {
+            self.line(&format!("struct {RT}native_fn_descriptor {{"));
+            self.line("    void (*native)(void);");
+            self.line("    void (*c)(void);");
+            self.line("};");
+        }
         // Foreign incomplete structs have no Ember definition. Their tag must
         // exist before any imported prototype mentions a pointer to one.
         let opaque: BTreeSet<String> = self.types.all().filter_map(|(_, kind)| match kind {
@@ -2889,6 +2967,9 @@ impl Emitter<'_> {
             // use names it.
             TypeNode::Structural(ty) if matches!(self.types.kind(ty), TyKind::Fn { .. }) => {
                 let TyKind::Fn { abi, params, ret, .. } = self.types.kind(ty) else { unreachable!() };
+                if abi.is_none() {
+                    return Definition::Alias(format!("const struct {RT}native_fn_descriptor*"));
+                }
                 let rendered: Vec<String> = params
                     .iter()
                     .map(|param| self.callable_param_c_type(*param, abi.is_some()))
@@ -3349,6 +3430,50 @@ impl Emitter<'_> {
             self.line(&format!("{signature};"));
         }
         self.line("");
+    }
+
+    /// A capture-free native function value keeps its native entry for Ember
+    /// calls and has a C entry only when its signature crosses the C ABI.
+    /// Both fields are function pointers: C11 permits casting a function
+    /// pointer to another function-pointer type and back before calling it.
+    fn emit_native_fn_values(&mut self, bodies: &[Body]) {
+        for body in bodies {
+            let Some(value) = self.native_fn_values.get(&body.symbol) else { continue };
+            let TyKind::Fn { params, ret, .. } = self.types.kind(value.signature) else { unreachable!() };
+            let params = params.clone();
+            let ret = *ret;
+            let descriptor = value.descriptor.clone();
+            let adapter = value.adapter.clone();
+            if let Some(adapter) = &adapter {
+                let declarations = params.iter().enumerate()
+                    .map(|(index, param)| format!("{} _cb{index}",
+                        self.callable_param_c_type(*param, true)))
+                    .collect::<Vec<_>>();
+                let declarations = if declarations.is_empty() { "void".to_string() }
+                    else { declarations.join(", ") };
+                self.line(&format!("static {} {adapter}({declarations}) {{", self.c_type(ret)));
+                self.line(&format!("    {RT}rt_thread_attach();"));
+                let arguments = params.iter().enumerate().map(|(index, param)| {
+                    if param.mode == FnParamMode::Borrow && self.types.passed_by_address(param.ty) {
+                        format!("&_cb{index}")
+                    } else {
+                        format!("_cb{index}")
+                    }
+                }).collect::<Vec<_>>().join(", ");
+                if self.is_void(ret) {
+                    self.line(&format!("    {}({arguments});", body.symbol));
+                } else {
+                    self.line(&format!("    return {}({arguments});", body.symbol));
+                }
+                self.line("}");
+            }
+            let c_entry = adapter.map_or_else(|| "NULL".to_string(),
+                |adapter| format!("(void (*)(void)){adapter}"));
+            self.line(&format!("static const struct {RT}native_fn_descriptor {descriptor} = {{"));
+            self.line(&format!("    (void (*)(void)){}, {c_entry}", body.symbol));
+            self.line("};");
+        }
+        if !self.native_fn_values.is_empty() { self.line(""); }
     }
 
     fn signature(&self, body: &Body) -> String {
@@ -4634,8 +4759,9 @@ impl Emitter<'_> {
                     self.c_type(*boxed),
                 )
             }
-            // `[CLO-3]` — a call through a value. In C a function value is
-            // its address, so the callee expression is called directly.
+            // `[CLO-3]` — native function values keep an erased descriptor.
+            // Cast its native field back to this call's exact signature.
+            // A C function value remains a raw C function pointer.
             FuncRef::Indirect { operand: callee, ty, .. } => {
                 let mut rendered = rendered;
                 if let TyKind::Fn { abi: Some(_), params, .. } = self.types.kind(*ty) {
@@ -4644,6 +4770,15 @@ impl Emitter<'_> {
                             *argument = format!("*({argument})");
                         }
                     }
+                } else if let TyKind::Fn { abi: None, params, ret, .. } = self.types.kind(*ty) {
+                    let parameters = params.iter()
+                        .map(|param| self.callable_param_c_type(*param, false))
+                        .collect::<Vec<_>>();
+                    let parameters = if parameters.is_empty() { "void".to_string() }
+                        else { parameters.join(", ") };
+                    let callee = self.operand(callee, body);
+                    return format!("(({} (*)({parameters}))(({callee})->native))({})",
+                        self.c_type(*ret), rendered.join(", "));
                 }
                 format!("({})({})", self.operand(callee, body), rendered.join(", "))
             }
@@ -5775,9 +5910,10 @@ impl Emitter<'_> {
                 format!("((const uint8_t*){})", c_string_literal(text))
             }
             Const::CStrLiteral(bytes) => c_bytes_literal(bytes),
-            // `[FN-6]` — a function value is its C symbol, which is its
-            // address.
-            Const::Fn(symbol) => symbol.clone(),
+            // A native value selects a static descriptor. An already-C
+            // function remains a raw C function pointer.
+            Const::Fn(symbol) => self.native_fn_values.get(symbol)
+                .map_or_else(|| symbol.clone(), |value| format!("&{}", value.descriptor)),
             Const::Void => "0".to_string(),
         }
     }
@@ -5920,6 +6056,7 @@ impl Emitter<'_> {
                     return format!("(({ty})(uintptr_t)({value}))");
                 }
                 match kind {
+                    CastKind::FnToC => format!("(({ty})(({value})->c))"),
                     CastKind::InterfaceUpcast { concrete, interfaces, .. } => {
                         let table_identity = dyn_table_identity(interfaces);
                         let table = self.interface_adapter_table(*concrete, &table_identity);

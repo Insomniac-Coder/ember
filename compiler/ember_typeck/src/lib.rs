@@ -20886,15 +20886,20 @@ impl<'a> Checker<'a> {
         {
             return Expr { ty: expected, ..expr };
         }
-        // `[FN-6]` — a plain `fn` value has no capture environment, so it
-        // can use the C calling convention when every type is FFI-safe.
+        // `[FN-6]` — conversion to a C callback crosses an ABI boundary.
+        // Retain the native function type until MIR can select its C adapter.
         if let (
                 TyKind::Fn { abi: None, latebound: false, params: found, ret: found_ret },
                 TyKind::Fn { abi: Some(abi), latebound: false, params: wanted, ret: wanted_ret },
             ) = (self.types.kind(expr.ty), self.types.kind(expected))
             && abi.is("C") && found == wanted && found_ret == wanted_ret
+            && found.iter().all(|param|
+                self.types.is_ffi_safe(param.ty) && !self.types.needs_drop(param.ty))
+            && self.types.is_ffi_safe(*found_ret) && !self.types.needs_drop(*found_ret)
         {
-            return Expr { ty: expected, ..expr };
+            let span = expr.span;
+            return Expr { ty: expected,
+                kind: ExprKind::Cast { expr: Box::new(expr), to: expected }, span };
         }
         // `!` coerces to every type (`[TYP-4]` table).
         if expr.ty == self.common.never {
@@ -27953,8 +27958,8 @@ impl<'a> Checker<'a> {
         let captured = probe.found;
 
         // A capture-free closure is "a plain value type" (`[CLO-1]`), and Part
-        // IV §9's `fn(A) -> R` is that type, so it stays a function pointer and
-        // goes everywhere one can — a `fn` local, a field, and the
+        // IV §9's `fn(A) -> R` is that type, so it can be stored in a `fn`
+        // local or field and can reach the
         // `extern "C" fn` parameter that `[CLO-3]` says accepts "only
         // capture-free closures and named functions".
         if captured.is_empty() {

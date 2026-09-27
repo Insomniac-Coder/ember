@@ -5111,6 +5111,8 @@ impl<'a> Builder<'a> {
             hir::ExprKind::Cast { expr: inner, to } => {
                 let operand = self.lower_operand(inner);
                 let kind = match (self.types.kind(inner.ty), self.types.kind(*to)) {
+                    (TyKind::Fn { abi: None, .. }, TyKind::Fn { abi: Some(abi), .. })
+                        if abi.is("C") => CastKind::FnToC,
                     (TyKind::Class(derived), TyKind::Class(base))
                         if self.types.class_is_subclass_of(*derived, *base) =>
                     {
@@ -5182,7 +5184,8 @@ impl<'a> Builder<'a> {
                     to: expr.ty,
                 }
             }
-            // `[FN-6]` — a named function as a value: its symbol.
+            // `[FN-6]` — a named function as a value: its symbol identifies
+            // the native descriptor (or the raw C entry for an extern body).
             hir::ExprKind::FnValue(def) => {
                 Rvalue::Use(Operand::Const(Const::Fn(self.program.function(*def).symbol.clone())))
             }

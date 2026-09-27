@@ -840,6 +840,38 @@ fn exported_thread_contracts_hold_in_every_profile() {
     }
 }
 
+/// `[FN-6]`, `[FFI-9]`, `[FFI-22]` — native callable values have a C adapter,
+/// while their native calls preserve the original borrowed argument.
+#[test]
+fn native_callback_adapters_preserve_abi_and_attach_host_threads() {
+    let root = workspace_root();
+    let source = root.join(format!("tests/conformance/FFI-21/accept_native_callback_adapters.{SOURCE_EXT}"));
+    let source_arg = source.to_string_lossy().into_owned();
+    let directory = temporary_directory("native-callback-adapters");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/foreign_native_callbacks.c");
+    let runtime = root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
+    for profile in [Profile::Debug, Profile::Release, Profile::Shipping] {
+        let emitted = ember(&["build", &source_arg, "--emit", "c", "--profile", profile.name()], &root);
+        assert_eq!(emitted.exit, 0, "callback adapter C emission failed: {}", emitted.stderr);
+        let build = directory.join(profile.name());
+        std::fs::create_dir_all(build.join("obj")).expect("object directory is creatable");
+        std::fs::write(build.join("program.c"), emitted.stdout).expect("generated C is writable");
+        let output = build.join(if cfg!(windows) { "callbacks.exe" } else { "callbacks" });
+        ember_build::compile_and_link(&toolchain, &LinkRequest {
+            sources: &[fixture.clone()],
+            include_dirs: &[runtime.join("include"), build.clone()],
+            output: output.clone(),
+            profile,
+            obj_dir: build.join("obj"),
+        }).expect("native callback adapters link to C");
+        let run = Command::new(output).output().expect("native callbacks run on a host thread");
+        assert!(run.status.success(), "{} callback host failed: {:?}\n{}", profile.name(),
+            run.status, String::from_utf8_lossy(&run.stderr));
+    }
+}
+
 /// `[MAN-3]` — a manifest must not silently accept configuration for a lint
 /// that the compiler does not define. The manifest lives beside an otherwise
 /// valid standalone source file so this exercises the driver's nearest-package
