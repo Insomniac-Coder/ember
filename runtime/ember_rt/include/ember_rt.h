@@ -1330,6 +1330,8 @@ uint32_t ember_rt_abi_version(void);
 /* Per-thread attach. Idempotent and cheap after the first call ([FFI-22]). */
 void ember_rt_thread_attach(void);
 void ember_rt_thread_detach(void);
+/* [FFI-33c] Panic unless called on the current module initialization thread. */
+void ember_rt_check_main_thread(void);
 
 /* -- debug facilities ------------------------------------------------------- */
 

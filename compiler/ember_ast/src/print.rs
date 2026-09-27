@@ -12,7 +12,7 @@ pub fn dump(module: &Module) -> String {
     let mut p = Printer { out: String::new(), depth: 0 };
     p.line("Module");
     p.depth += 1;
-    if let Some(d) = &module.directive {
+    for d in &module.directives {
         p.line(&format!("Directive {} = {:?}", d.name.name, d.value));
     }
     for import in &module.imports {

@@ -141,6 +141,8 @@ pub struct Function {
     /// The declared external ABI, when this definition has one. `None` means
     /// Ember's ordinary callable ABI.
     pub abi: Option<String>,
+    /// `[FFI-33c]` — check the calling thread at this C export's entry.
+    pub export_main_thread: bool,
     pub params: Vec<Param>,
     pub locals: Vec<LocalDecl>,
     pub ret: Ty,

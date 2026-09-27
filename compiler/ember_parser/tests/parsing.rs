@@ -51,6 +51,30 @@ fn only_the_current_language_may_be_named() {
     }
 }
 
+#[test]
+fn thread_directives_roundtrip_through_formatter() {
+    let source = "#! language \"0.9.9\"\n#! threads main\nfn main():\n    pass\n";
+    let mut map = SourceMap::new();
+    let file = map.add("<original>", source.to_string());
+    let mut sink = Sink::new();
+    let lexed = ember_lexer::lex(file, source, &mut sink);
+    let module = ember_parser::parse(file, source, lexed.tokens, &mut sink);
+    assert!(sink.diagnostics().is_empty(), "{}", sink.render(&map));
+    let expected = ember_ast::dump(&module);
+    let formatted = ember_fmt::format(&module, source, &lexed.comments);
+    assert!(formatted.starts_with("#! language \"0.9.9\"\n#! threads main\n"),
+        "{formatted}");
+
+    let mut formatted_map = SourceMap::new();
+    let formatted_file = formatted_map.add("<formatted>", formatted.clone());
+    let mut formatted_sink = Sink::new();
+    let formatted_tokens = ember_lexer::lex(formatted_file, &formatted, &mut formatted_sink).tokens;
+    let formatted_module = ember_parser::parse(formatted_file, &formatted,
+        formatted_tokens, &mut formatted_sink);
+    assert!(formatted_sink.diagnostics().is_empty(), "{}", formatted_sink.render(&formatted_map));
+    assert_eq!(expected, ember_ast::dump(&formatted_module));
+}
+
 // -- items -------------------------------------------------------------------
 
 #[test]

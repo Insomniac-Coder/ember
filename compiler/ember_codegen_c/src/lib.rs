@@ -3525,6 +3525,9 @@ impl Emitter<'_> {
             // `[FFI-22]` — the host may call this export on a thread that has
             // never run Ember. Attach before the body touches runtime state.
             self.line(&format!("    {RT}rt_thread_attach();"));
+            if body.export_main_thread {
+                self.line(&format!("    {RT}rt_check_main_thread();"));
+            }
         }
         if let Some(values) = self.ffi_export_value_params.get(&body.symbol).cloned() {
             for (index, (id, decl)) in body.args().enumerate() {

@@ -358,6 +358,7 @@ impl<'a> Builder<'a> {
             symbol: self.function.symbol.clone(),
             is_unsafe: self.function.is_unsafe,
             abi: self.function.abi.clone(),
+            export_main_thread: self.function.export_main_thread,
             locals: self.locals,
             blocks: self.blocks,
             arg_count: self.arg_count,

@@ -30,7 +30,7 @@ pub struct Ident {
 /// One parsed source file.
 #[derive(Clone, Debug)]
 pub struct Module {
-    pub directive: Option<Directive>,
+    pub directives: Vec<Directive>,
     pub imports: Vec<Import>,
     pub items: Vec<Item>,
     /// `[GRM-2]`, `[FN-8]` (0.9.9) — statements written at file scope. The

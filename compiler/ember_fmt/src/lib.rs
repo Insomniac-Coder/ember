@@ -129,10 +129,14 @@ impl Printer<'_> {
     // -- module --------------------------------------------------------------
 
     fn module(&mut self, module: &ast::Module) {
-        if let Some(directive) = &module.directive {
-            self.line(&format!("#! {} {:?}", directive.name.name, directive.value));
-            self.blank();
+        for directive in &module.directives {
+            if directive.name.name.is("threads") {
+                self.line(&format!("#! threads {}", directive.value));
+            } else {
+                self.line(&format!("#! {} {:?}", directive.name.name, directive.value));
+            }
         }
+        if !module.directives.is_empty() { self.blank(); }
         self.imports(&module.imports);
 
         // `[GRM-2]` (0.9.9) — a script's statements are printed where they

@@ -2003,3 +2003,25 @@ is: zero bytes in a buffer, a box or `size_of` (`c_size`, `c_align`), with every
 buffer's base (`element_pointer`); a byte as a struct member or a parameter (`c_member_type`), since
 C can declare neither as `void`; the value `0`; and `&(uint8_t){0}` where a runtime call copies
 from an address, which copies zero bytes from it.
+
+## ADR-063 — export main-thread identity follows the runtime lifetime
+
+**Decided 2026-09-27.** `[FFI-33c]` requires the module's initialization
+thread, including in shipping builds. For the current single-private-runtime
+output, initialization records the runtime generation in a separate TLS word.
+The exported body attaches first, then compares that word with the live atomic
+generation. Detach does not clear main authority; shutdown advances the
+generation, revoking every old authority before reinitialization.
+
+An OS thread identifier would require platform-specific code and protection
+against identifier reuse. A TLS address could likewise be reused after thread
+exit. A per-thread generation avoids both and costs one TLS word, one atomic
+load and comparison per checked entry. The existing generation-overflow abort
+prevents wraparound from reviving an old identity. Initialization/shutdown
+remain host-serialized lifecycle operations, as in the existing runtime.
+
+This implements the current private runtime, not shared-runtime module
+identity. Before shared-runtime or independently initialized module packaging
+is accepted, the same authority must be scoped to each module instance;
+the runtime's initialization thread cannot stand in for every module's.
+No specification change or ODR is needed for this implementation choice.

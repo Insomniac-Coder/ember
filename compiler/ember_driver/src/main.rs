@@ -1575,9 +1575,9 @@ fn module_interface_inputs(
         }
         let language_version = loaded
             .module
-            .directive
-            .as_ref()
-            .filter(|directive| directive.name.name.is("language"))
+            .directives
+            .iter()
+            .find(|directive| directive.name.name.is("language"))
             .map(|directive| directive.value.clone())
             // `[VER-8]` — the one language; a directive can only repeat it.
             .unwrap_or_else(|| ember_parser::LANGUAGE_VERSION.to_string());

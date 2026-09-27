@@ -168,6 +168,7 @@ version = "0.1.0"
 dependencies = [
  "ember_ast",
  "ember_diag",
+ "ember_fmt",
  "ember_lexer",
  "ember_span",
 ]

@@ -1,8 +1,13 @@
 # Multi-agent work: the owner's rules
 
 Copied from the owner's `lean-agent-workflow` skill (2026-09-25) so any session on this repository has it.
-It applies only when the owner is present and has approved the plan; unattended sessions work
-solo (`docs/AUTOPILOT.md` §3).
+**Owner update, 2026-09-27:** autonomous, cost-conscious delegation is authorized
+for language development. This supersedes the earlier solo-only instruction,
+per-plan approval, and mandatory phase pauses below. Keep jobs bounded, use the
+smallest suitable model, and let the lead own integration and verification
+decisions. The owner also authorized delegating test runs/checks and error
+triage: the runner reports failures, and the lead assigns fixes by complexity.
+The default is 2-3 concurrent agents, without asking again for routine splits.
 
 # Lean agent workflow
 
@@ -27,33 +32,32 @@ tokens for 262 values classified and 53 re-checked). Follow them for every multi
    - Effort: the lowest level that does the job well - low / medium for small mechanical reads,
      high for normal files, xhigh ("extra") for large or subtle ones. Unless the owner sets a cap,
      never go past what the job needs; state each agent's effort in the plan.
-   - Model: any available model except **Fable**, which needs the owner's special approval and is
-     reserved for extremely heavy reasoning and research. Scale by difficulty: **Opus 4.8** for
-     absolutely easy jobs, **Opus 5.5** for absolutely large-scale ones, something in between as the
-     job suggests. Use the model names the harness accepts; check before assuming.
+   - Model: use the harness's available names. Luna suits bounded mapping and
+     mechanical work; Sol suits implementation within a defined design; Astra
+     suits difficult ODRs and architecture. Escalate when evidence warrants it.
 
 4. **Keep concurrency at 2-3.** When the agent count is high, do not run many at once. Put a
-   limiter in the script (a small worker pool; the harness default is far higher). Ask the owner
-   whether they want everything at once or 2-3 at a time - their answer depends on how much of the
-   5-hour usage limit is left.
+   limiter in the script (a small worker pool; the harness default is far higher).
+   Reduce concurrency when independent useful work is unavailable.
 
-5. **Get the plan reviewed before launching.** Present it, wait for approval or modifications, then
-   start. Approving a shape is not approving a size: give the worst-case agent count in the question.
+5. **State the split and proceed.** The owner authorized the lead to choose
+   routine job/model assignments. Keep the user informed; pause only when the
+   owner requests it or a decision requires authority not already delegated.
 
-## Plan to present (template)
+## Brief plan to report (template)
 
 - **Goal**, one line, in plain words.
 - **Jobs**: a table - job, why it is its own job, agents, model, effort, read-only or not.
-- **Phases** in order, each ending in a pause/report (see below). Worst-case agent count per phase
+- **Phases** in order, each ending in a progress report. Worst-case agent count per phase
   and in total.
-- **Concurrency**: proposed limit (2-3) and the question "all at once or 2-3 at a time?".
+- **Concurrency**: use 2-3 as the default limit, fewer when sufficient.
 - **Outputs**: where each phase's results are saved and what the owner gets at the end.
-- **What happens between phases** (the owner may set a break length; they can waive it).
+- **What happens next**, unless the owner has requested a pause.
 
 ## Practices that made the reference run efficient
 
-- **One phase per launch.** Each phase is its own Workflow run (or a `parallel()` barrier with a
-  stop point), so it can be halted, reported and resumed from cache. Report after every phase.
+- **Bounded phases.** Keep clear completion points so work can be reviewed and
+  resumed without repeating investigation. Report progress and continue.
 - **Structured output.** Give every agent a JSON schema; enums for categories; require evidence with
   line numbers and an honest confidence.
 - **Save each phase's results to a file** (e.g. `build/<task>/phase1.json`) and let the next phase's
@@ -62,8 +66,11 @@ tokens for 262 values classified and 53 re-checked). Follow them for every multi
   the evidence is not there; they may add a clearly marked "new" item.
 - **Self-contained prompts.** Agents do not see the conversation: give the context, the owner's rules
   that apply (e.g. general solutions only), the exact target and what not to do.
-- **Read-only unless the job is to change things.** No builds or runs from agents on the owner's
-  machine without asking (runs open windows the owner can see).
+- **Read-only unless the job is to change things.** A designated verification
+  agent may own builds and checks, using the Windows safeguards in AUTOPILOT.
+  Do not launch competing builds or mutate files during the full suite. Give
+  the runner the command, timeout, output path and reporting expectations;
+  process sessions belong to the agent that launched them.
 - **Biggest jobs first** in the pool so the longest agent is not the last to start.
 - **Never kill a running phase on the owner's behalf**; if they ask to stop part of it and that is
   not possible alone, say so and let them choose.

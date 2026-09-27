@@ -11013,6 +11013,9 @@ impl<'a> Checker<'a> {
                 abi: if ffi_counted.is_some() { None } else {
                     decl.abi.clone().or_else(|| has_attribute(&item.attrs, "export").then(|| "C".to_string()))
                 },
+                export_main_thread: !decl.is_foreign_decl
+                    && (decl.abi.as_deref() == Some("C") || has_attribute(&item.attrs, "export"))
+                    && export_main_thread(&item.attrs, &module.directives),
                 params,
                 locals: std::mem::take(&mut self.locals),
                 ret: self.ret_ty,
@@ -11103,7 +11106,8 @@ impl<'a> Checker<'a> {
 
                 let quiet_before = quiet.diagnostics().len();
                 let saved = std::mem::replace(self.sink, std::mem::take(&mut quiet));
-                let function = self.check_one_function(decl, block, instance, &item.attrs, item.span);
+                let function = self.check_one_function(decl, block, instance, &item.attrs,
+                    &modules[module_index].module.directives, item.span);
                 quiet = std::mem::replace(self.sink, saved);
                 let concrete = quiet.diagnostics()[quiet_before..].to_vec();
                 self.emit_concrete_instantiation_diagnostics(concrete);
@@ -11212,6 +11216,7 @@ impl<'a> Checker<'a> {
                     symbol: method_symbol(&self.types.symbol_name(job.owner), Symbol::intern("abstract")),
                     is_unsafe: false,
                     abi: None,
+                    export_main_thread: false,
                     params,
                     locals,
                     ret: signature.ret,
@@ -12038,6 +12043,7 @@ impl<'a> Checker<'a> {
         block: &ast::Block,
         def: DefId,
         attrs: &[ast::Attribute],
+        directives: &[ast::Directive],
         span: Span,
     ) -> Function {
         self.locals = Vec::new();
@@ -12107,6 +12113,8 @@ impl<'a> Checker<'a> {
             symbol: format!("{}__{}", ember_branding::mangled(name.as_str()), def.0),
             is_unsafe: decl.is_unsafe,
             abi: decl.abi.clone(),
+            export_main_thread: decl.abi.as_deref() == Some("C")
+                && export_main_thread(attrs, directives),
             params,
             locals: std::mem::take(&mut self.locals),
             ret: self.ret_ty,
@@ -12441,6 +12449,7 @@ impl<'a> Checker<'a> {
                     symbol: method_symbol(&self.types.symbol_name(ty), Symbol::intern("clone")),
                     is_unsafe: false,
                     abi: None,
+                    export_main_thread: false,
                     params: vec![Param { local: self_local, mode: Mode::Borrow }],
                     locals,
                     ret: ty,
@@ -12824,6 +12833,7 @@ impl<'a> Checker<'a> {
             symbol: self.method_symbol_for(owner, name, def),
             is_unsafe: decl.is_unsafe,
             abi: decl.abi.clone(),
+            export_main_thread: false,
             params,
             locals: std::mem::take(&mut self.locals),
             ret: self.ret_ty,
@@ -24849,25 +24859,49 @@ impl<'a> Checker<'a> {
                         self.error(codes::E0104, attr.span, "a function has only one `@export` attribute");
                     }
                     saw_export = true;
-                    let symbol = match attr.args.as_slice() {
-                        [ast::AttrArg::Expr(ast::Expr {
-                            kind: ast::ExprKind::Lit(ast::Literal::Str(symbol)), ..
-                        })] => Some(symbol.as_str()),
-                        [ast::AttrArg::Expr(ast::Expr {
-                            kind: ast::ExprKind::Lit(ast::Literal::Str(symbol)), ..
-                        }), policy] if export_abort_policy(policy) => Some(symbol.as_str()),
-                        [policy] if export_abort_policy(policy) => None,
-                        args => {
-                            let message = if args.iter().any(|arg| matches!(arg,
-                                ast::AttrArg::Named { name, .. } if name.name.is("on_panic"))) {
-                                "only `on_panic=abort` is implemented for exported functions"
-                            } else {
-                                "only `@export(\"C_identifier\")` and `on_panic=abort` are implemented yet"
-                            };
-                            self.error(codes::E0900, attr.span, message);
-                            continue;
+                    if attr.args.is_empty() {
+                        self.error(codes::E0900, attr.span,
+                            "only a C export symbol, `on_panic=abort`, and `threads=main|any|creator` are supported");
+                    }
+                    let mut symbol = None;
+                    let mut saw_panic = false;
+                    let mut saw_threads = false;
+                    for arg in &attr.args {
+                        match arg {
+                            ast::AttrArg::Expr(ast::Expr {
+                                kind: ast::ExprKind::Lit(ast::Literal::Str(name)), ..
+                            }) => {
+                                if symbol.replace(name.as_str()).is_some() {
+                                    self.error(codes::E0104, attr.span, "duplicate export symbol");
+                                }
+                            }
+                            ast::AttrArg::Named { name, .. } if name.name.is("on_panic") => {
+                                if saw_panic {
+                                    self.error(codes::E0104, attr.span, "duplicate `on_panic` in `@export`");
+                                }
+                                saw_panic = true;
+                                if !export_abort_policy(arg) {
+                                    self.error(codes::E0900, attr.span,
+                                        "only `on_panic=abort` is implemented for exported functions");
+                                }
+                            }
+                            ast::AttrArg::Named { name, .. } if name.name.is("threads") => {
+                                if saw_threads {
+                                    self.error(codes::E0104, attr.span, "duplicate `threads` in `@export`");
+                                }
+                                saw_threads = true;
+                                match export_thread_policy(arg) {
+                                    Some("main" | "any") => {}
+                                    Some("creator") => self.error(codes::E0900, attr.span,
+                                        "`threads=creator` is not implemented for exported functions"),
+                                    _ => self.error(codes::E0104, attr.span,
+                                        "`threads` in `@export` must be `main`, `any`, or `creator`"),
+                                }
+                            }
+                            _ => self.error(codes::E0900, attr.span,
+                                "only a C export symbol, `on_panic=abort`, and `threads=main|any|creator` are supported"),
                         }
-                    };
+                    }
                     if symbol.is_some_and(|symbol| !c_link_identifier(symbol)) {
                         self.error(codes::E0900, attr.span,
                             "an export name that is not a C identifier is not implemented yet");
@@ -28287,6 +28321,7 @@ impl<'a> Checker<'a> {
             symbol,
             is_unsafe: false,
             abi: None,
+            export_main_thread: false,
             params: hir_params,
             locals,
             ret,
@@ -35327,10 +35362,30 @@ enum FfiPointerContract {
 fn export_symbol(attrs: &[ast::Attribute]) -> Option<&str> {
     let attr = attrs.iter().find(|attr|
         attr.path.len() == 1 && attr.path[0].name.is("export"))?;
-    let ast::AttrArg::Expr(ast::Expr {
-        kind: ast::ExprKind::Lit(ast::Literal::Str(symbol)), ..
-    }) = attr.args.first()? else { return None };
-    Some(symbol)
+    attr.args.iter().find_map(|arg| match arg {
+        ast::AttrArg::Expr(ast::Expr {
+            kind: ast::ExprKind::Lit(ast::Literal::Str(symbol)), ..
+        }) => Some(symbol.as_str()),
+        _ => None,
+    })
+}
+
+fn export_thread_policy(arg: &ast::AttrArg) -> Option<&str> {
+    let ast::AttrArg::Named { name, value } = arg else { return None };
+    if !name.name.is("threads") { return None }
+    let ast::ExprKind::Path { segments } = &value.kind else { return None };
+    if segments.len() != 1 { return None }
+    Some(segments[0].name.as_str())
+}
+
+fn export_main_thread(attrs: &[ast::Attribute], directives: &[ast::Directive]) -> bool {
+    if let Some(attr) = attrs.iter().find(|attr|
+        attr.path.len() == 1 && attr.path[0].name.is("export")) {
+        if let Some(policy) = attr.args.iter().find_map(export_thread_policy) {
+            return policy == "main";
+        }
+    }
+    directives.iter().any(|directive| directive.name.name.is("threads") && directive.value == "main")
 }
 
 /// `[FFI-25]` — the only permitted explicit panic policy is abort.

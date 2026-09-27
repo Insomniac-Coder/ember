@@ -11,5 +11,8 @@ ember_diag.workspace = true
 ember_lexer.workspace = true
 ember_ast.workspace = true
 
+[dev-dependencies]
+ember_fmt.workspace = true
+
 [lints]
 workspace = true

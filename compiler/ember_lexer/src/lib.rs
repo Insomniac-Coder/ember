@@ -147,8 +147,6 @@ impl<'a> Lexer<'a> {
     // -- driver -------------------------------------------------------------
 
     fn run(&mut self) {
-        self.lex_directive();
-
         while !self.at_eof() {
             if self.bracket_depth == 0 && self.at_line_start() {
                 if self.lex_indentation() {
@@ -178,10 +176,9 @@ impl<'a> Lexer<'a> {
         self.pos == 0 || self.src.as_bytes()[self.pos - 1] == b'\n'
     }
 
-    /// `#! name "value"` — recognised on the first line of a file only. `#!`
-    /// anywhere else is an ordinary comment, which is what lets test files
-    /// carry `#! error[...]` annotations that the harness reads out of band
-    /// (`[TST-1]`).
+    /// `#! name value` — a directive on an unindented line. The parser checks
+    /// that it precedes imports and declarations. Harness `#! error[...]`
+    /// annotations remain comments (`[TST-1]`).
     fn lex_directive(&mut self) {
         if !self.rest().starts_with("#!") {
             return;
@@ -250,7 +247,19 @@ impl<'a> Lexer<'a> {
                 return true;
             }
             Some('#') => {
-                self.lex_comment(true);
+                if width == 0 && self.rest().starts_with("#!")
+                    && !self.rest().starts_with("#! error[") {
+                    // A late directive is a top-level token even when the
+                    // preceding declaration ended in an indented block.
+                    // Ordinary comments still leave indentation untouched.
+                    while self.indents.len() > 1 {
+                        self.indents.pop();
+                        self.push_structural(TokenKind::Dedent, self.pos);
+                    }
+                    self.lex_directive();
+                } else {
+                    self.lex_comment(true);
+                }
                 return true;
             }
             _ => {}

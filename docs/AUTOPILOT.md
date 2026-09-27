@@ -71,9 +71,13 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   looks wrong, write a new ODR marked OPEN with the question, and move on to other work.
 - **When something truly needs the owner** (reversing his ruling, anything outside 0.9.9,
   anything touching RageV), do not block: record it as an OPEN ODR and continue with the next task.
-- **No subagents or workflows while unattended.** The owner's words: "no workflows, you go solo".
-  `docs/AGENT-WORKFLOW.md` holds his rules for multi-agent work, which apply only when he is
-  present and has approved the plan.
+- **Use efficient, bounded delegation** (owner update, 2026-09-27). The owner
+  superseded the earlier solo-work instruction: choose models by complexity,
+  use small models for bounded reads/changes, and reserve Astra for difficult
+  ODRs and architecture. Continue autonomously; avoid redundant investigation
+  and token-heavy delegation. `docs/AGENT-WORKFLOW.md` records the current rules.
+  Test runs/checks and failure triage may also be delegated; assign fixes by
+  complexity and keep a single owner for each run.
 
 ## 4. Rules of this codebase
 

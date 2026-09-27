@@ -444,6 +444,7 @@ mod tests {
             symbol: "facts".to_string(),
             is_unsafe: false,
             abi: None,
+            export_main_thread: false,
             locals: vec![
                 LocalDecl {
                     ty: common.void,

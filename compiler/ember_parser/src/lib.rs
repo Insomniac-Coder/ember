@@ -444,8 +444,18 @@ impl<'a> Parser<'a> {
 
     fn parse_module(&mut self) -> Module {
         let start = self.span();
-        let directive = self.parse_directive();
-        self.eat_newlines();
+        let mut directives = Vec::new();
+        while matches!(self.peek(), TokenKind::Directive { .. }) {
+            if let Some(directive) = self.parse_directive() {
+                if directives.iter().any(|prior: &ember_ast::Directive|
+                    prior.name.name == directive.name.name) {
+                    self.report(Diagnostic::error(codes::E0104, directive.span,
+                        format!("duplicate `#! {}` directive", directive.name.name)));
+                }
+                directives.push(directive);
+            }
+            self.eat_newlines();
+        }
 
         let mut imports = Vec::new();
         let mut items = Vec::new();
@@ -458,6 +468,12 @@ impl<'a> Parser<'a> {
             self.eat_newlines();
             if self.at_eof() {
                 break;
+            }
+            if matches!(self.peek(), TokenKind::Directive { .. }) {
+                self.report(Diagnostic::error(codes::E0104, self.span(),
+                    "a directive must appear before imports and declarations"));
+                self.bump();
+                continue;
             }
             // `[LEX-11]` — "A `##` comment that is not followed by a
             // declaration documents nothing and is **discarded in silence**".
@@ -541,7 +557,7 @@ impl<'a> Parser<'a> {
             Script { main: items.len() - 1, placement, first }
         });
 
-        Module { directive, imports, items, script, span: start.to(self.prev_span()) }
+        Module { directives, imports, items, script, span: start.to(self.prev_span()) }
     }
 
     fn parse_directive(&mut self) -> Option<ember_ast::Directive> {
@@ -565,14 +581,22 @@ impl<'a> Parser<'a> {
                     .help("delete the line"),
                 );
             }
+        } else if name.is("threads") {
+            if !matches!(value.as_str(), "main" | "any" | "creator") {
+                self.report(Diagnostic::error(codes::E0104, span,
+                    "`#! threads` must be `main`, `any`, or `creator`"));
+            } else if value == "creator" {
+                self.report(Diagnostic::error(codes::E0900, span,
+                    "`#! threads creator` is not implemented yet"));
+            }
         } else {
             self.report(
                 Diagnostic::error(
-                    codes::E0006,
+                    codes::E0104,
                     span,
                     format!("`#! {name}` is not a directive"),
                 )
-                .help("the only directive is `#! language \"<version>\"`"),
+                .help("use `#! language \"<version>\"` or `#! threads main|any|creator`"),
             );
         }
         Some(ember_ast::Directive { name: Ident { name, span }, value, span })

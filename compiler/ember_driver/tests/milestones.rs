@@ -786,6 +786,60 @@ fn imported_module_export_keeps_its_c_symbol() {
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "42");
 }
 
+/// `[FFI-33c]` — real C threads enforce explicit and imported-file policies
+/// in every profile, including after shutdown and initialization elsewhere.
+#[test]
+fn exported_thread_contracts_hold_in_every_profile() {
+    let root = workspace_root();
+    let directory = temporary_directory("export-thread-contracts");
+    let imported = directory.join(ember_branding::source_file("thread_defaults"));
+    let entry = directory.join(ember_branding::source_file("entry"));
+    std::fs::write(&imported,
+        "# Both directives apply to this imported file.\n#! language \"0.9.9\"\n#! threads main\n@export(\"default_score\")\npub fn default_value() -> i32:\n    return 43\n@export(\"override_score\", threads=any)\npub fn override_value() -> i32:\n    return 44\n")
+        .expect("default policy module is writable");
+    std::fs::write(&entry,
+        "import thread_defaults\n@export(\"main_score\", threads=main, on_panic=abort)\npub fn main_value() -> i32:\n    return 41\n@export(\"any_score\", threads=any)\npub fn any_value() -> i32:\n    return 42\n")
+        .expect("explicit policy module is writable");
+    let entry_arg = entry.to_string_lossy().into_owned();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/foreign_export_threads.c");
+    let runtime = root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+    let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
+    for profile in [Profile::Debug, Profile::Release, Profile::Shipping] {
+        let emitted = ember(&["build", &entry_arg, "--emit", "c", "--profile", profile.name()], &root);
+        assert_eq!(emitted.exit, 0, "thread contract C emission failed: {}", emitted.stderr);
+        let build = directory.join(profile.name());
+        std::fs::create_dir_all(build.join("obj")).expect("object directory is creatable");
+        let generated = build.join("program.c");
+        std::fs::write(&generated, emitted.stdout).expect("generated C is writable");
+        let output = build.join(if cfg!(windows) { "export_threads.exe" } else { "export_threads" });
+        ember_build::compile_and_link(&toolchain, &LinkRequest {
+            sources: &[generated, fixture.clone(), runtime_source.clone()],
+            include_dirs: &[runtime.join("include")],
+            output: output.clone(),
+            profile,
+            obj_dir: build.join("obj"),
+        }).expect("thread policy exports link to C");
+        for mode in ["allowed", "wrong", "default", "reinit", "uninitialized"] {
+            let run = Command::new(&output).arg(mode).output().expect("C thread host runs");
+            if mode == "allowed" {
+                assert!(run.status.success(), "{} {mode}: {:?} {}", profile.name(), run.status,
+                    String::from_utf8_lossy(&run.stderr));
+            } else {
+                assert!(!run.status.success(), "{} {mode}: prohibited export returned", profile.name());
+                assert!(String::from_utf8_lossy(&run.stderr).contains("export requires the module initialization thread"),
+                    "{} {mode}: wrong failure: {}", profile.name(), String::from_utf8_lossy(&run.stderr));
+                if cfg!(windows) { assert_eq!(run.status.code(), Some(3)); }
+                #[cfg(unix)] {
+                    use std::os::unix::process::ExitStatusExt;
+                    assert_eq!(run.status.signal(), Some(6));
+                }
+            }
+        }
+    }
+}
+
 /// `[MAN-3]` — a manifest must not silently accept configuration for a lint
 /// that the compiler does not define. The manifest lives beside an otherwise
 /// valid standalone source file so this exercises the driver's nearest-package

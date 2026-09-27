@@ -11092,7 +11092,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   (ODR-082), pinned in `docs/spec-source/development-target.json`. The
   spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through
   `parts-h38/` are frozen.
-* **Next numbers:** ODR-083, D-363, ADR-063.
+* **Next numbers:** ODR-083, D-366, ADR-064.
 * **The owner's simplification pass** (2026-09-26, attended; the proposal is
   `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
   Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed
@@ -11262,7 +11262,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   aborts without returning through C (`[FFI-25]`). The full conformance
   sweep reported zero failures; the workspace suite and repository gates
   passed. Hardened_38 already decides these semantics, so no ODR was needed.
-* **Next five-feature Phase 5 batch, in progress:** The runtime attach hook
+* **Five-feature Phase 5 batch `00f3184` (2026-09-27):** The runtime attach hook
   now has per-thread state, and shutdown invalidates even live host threads'
   attachments by advancing an atomic generation (`[FFI-22]`, `[FFI-31a]`).
   A C fixture checks idempotent attach, independent threads, detach and
@@ -11273,14 +11273,43 @@ first**; the rest of §0.355 is the running narrative behind it.
   combined stable-name form are accepted; a non-abort policy remains `E0900`.
   A linked C host confirms a symbol exported from an imported Ember module.
   The full annotation sweep reported zero failures; the workspace suite and
-  all repository gates passed. The previous batch's CI run `36286071661`
-  is still running at this checkpoint.
+  all repository gates passed. CI `36286071661` finished green; all five
+  jobs of this batch's CI `36286904035` also finished successfully.
   Hardened_38 specifies these behaviors; no ODR was needed.
-* **Next task:** continue Phase 5 C export thread contracts, headers, and
-  library packaging after this batch is validated and pushed. Audit rows for
+* **Current batch:** explicit main/any export policies, file defaults,
+  per-export overrides, combined directives and lifecycle-safe main-thread
+  enforcement. A real C host verifies permitted calls and rejection on the
+  wrong thread, after reinitialization elsewhere, and before initialization
+  in debug/release/shipping. Disabling the runtime guard makes the test fail
+  with "prohibited export returned"; the guard was restored. ADR-063 records
+  the TLS generation design and its shared-runtime limitation. Compiler and
+  runtime integration checks, the full MSVC and clang-cl workspace suites,
+  the full annotation sweep (zero failures), and all repository gates pass.
+  Plain clang.exe's only failure was its native-int128 comparison test not
+  linking compiler-rt builtins; a scratch link with the installed library
+  printed `ok`, without weakening the test. D-363 also fixes directives after
+  comments: restoring first-line-only recognition made an earlier language
+  version incorrectly pass; restoring the fix gives E0006. H38 already
+  decides the behavior, so no ODR or new hardening is needed.
+* **Workflow update (owner, 2026-09-27):** autonomous delegation by task
+  complexity replaces the older solo-only rule. A bounded Luna read mapped
+  the policy path; Sol implemented the compiler side; the lead owns design,
+  runtime and integration tests. The owner subsequently authorized delegated
+  checks and error triage; Luna owned the final clang-cl suite and toolchain
+  diagnosis. Commit cadence remains about
+  five features. See AUTOPILOT and AGENT-WORKFLOW for the persisted rules.
+* **Next task:** fix D-364 and D-365 before continuing headers/library
+  packaging. Scratch C-host probes proved that both named and capture-free
+  lambda callbacks return with attachment still false after host detach. A
+  plain Pair callback also fails C compilation: `extern C fn(Pair)` takes a
+  value but the ordinary Ember body takes `Pair*`. Native function calls must
+  preserve borrowed identity; use C boundary adapters rather than changing
+  the native calling convention. Dynamic conversion through a stored native
+  function value must work as well as a direct named function.
+  Audit rows for
   `[CLS-2]` and `[CLS-7]` were stale: existing code and tests cover their
   stated gaps.
-* **Phase table after the five defects (2026-09-26 evening):**
+* **Phase estimates (2026-09-27; engineering estimates, not test counts):**
 
   | Phase | % |
   |---|---:|
@@ -11288,15 +11317,18 @@ first**; the rest of §0.355 is the running narrative behind it.
   | P2 | 88 |
   | P3 | 59 |
   | P4 | 13 |
-  | P5 | 8 |
+  | P5 | 12 |
   | P6 | 2 |
   | P7 | 0 |
   | 7a | 6 |
   | P8 | 16 |
   | Overall | 58 |
 
-  `python3 tasks/impl-0.9.9/rule_sizes.py 97 88 58 13 8 2 6` gives 58.0%
-  (weights now from Hardened_29). P3 50 to 58 for `[EXC-1]`, `[EXC-2]`,
+  `python tasks/impl-0.9.9/rule_sizes.py 97 88 59 13 12 2 6` gives 57.7%,
+  rounded to 58%, with Hardened_38 weights. P5 rises from 8 to 12 for the
+  recent C contract/export batches; header import, generated headers, library
+  packaging, capturing callbacks and shared-runtime modules remain substantial.
+  Earlier progress rationale follows. P3 50 to 58 for `[EXC-1]`, `[EXC-2]`,
   `[EXC-5]`, `[EXC-15]`, `[EXC-17]`, `[EXC-18]`, `[EXC-19]` and part of
   `[EXC-16]` and `[CLS-7]`; P8 for the defects closed.
 

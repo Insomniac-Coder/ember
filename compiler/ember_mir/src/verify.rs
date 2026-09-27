@@ -447,6 +447,7 @@ mod tests {
             symbol: ember_branding::mangled("t"),
             is_unsafe: false,
             abi: None,
+            export_main_thread: false,
             locals: vec![LocalDecl {
                 ty: ember_types::TypeTable::new().1.void,
                 name: None,
@@ -1534,6 +1535,7 @@ mod view_invariant_tests {
             symbol: ember_branding::mangled("t"),
             is_unsafe: false,
             abi: None,
+            export_main_thread: false,
             locals: vec![
                 LocalDecl {
                     ty: env_ty,
@@ -1674,6 +1676,7 @@ mod interface_upcast_invariant_tests {
             symbol: ember_branding::mangled("upcast"),
             is_unsafe: false,
             abi: None,
+            export_main_thread: false,
             locals: vec![
                 LocalDecl {
                     ty: target,

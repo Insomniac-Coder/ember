@@ -59,6 +59,8 @@ pub struct Body {
     /// The declared external ABI, if any; `None` denotes Ember's ordinary
     /// callable ABI.
     pub abi: Option<String>,
+    /// `[FFI-33c]` — check the calling thread at this C export's entry.
+    pub export_main_thread: bool,
     pub locals: Vec<LocalDecl>,
     pub blocks: Vec<BasicBlock>,
     pub arg_count: usize,

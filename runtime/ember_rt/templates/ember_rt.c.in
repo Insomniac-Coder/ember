@@ -43,6 +43,10 @@ static uint32_t g_thread_generation = 1;
 #define EMBER_RT_THREAD_LOCAL _Thread_local
 #endif
 static EMBER_RT_THREAD_LOCAL uint32_t g_attached_generation;
+/* Identity is a TLS epoch, not an OS thread id that can be reused. It is
+ * independent of attachment: detach/attach cannot transfer main authority.
+ * The current compiler links one private runtime per program/module. */
+static EMBER_RT_THREAD_LOCAL uint32_t g_main_generation;
 
 static bool runtime_thread_attached(void) {
     return g_attached_generation == object_load_u32(&g_thread_generation);
@@ -476,6 +480,7 @@ int ember_rt_init(const ember_rt_config* cfg) {
         return 0; /* idempotent */
     }
     g_config = cfg ? *cfg : ember_rt_config_default();
+    g_main_generation = object_load_u32(&g_thread_generation);
     g_initialised = true;
     ember_rt_thread_attach();
     return 0;
@@ -509,6 +514,16 @@ void ember_rt_thread_attach(void) {
 
 void ember_rt_thread_detach(void) {
     g_attached_generation = 0;
+}
+
+void ember_rt_check_main_thread(void) {
+    /* [FFI-33c] This is mandatory even in shipping builds. Shutdown revokes
+     * all prior main identities before a later init can establish a new one. */
+    if (g_main_generation != object_load_u32(&g_thread_generation)) {
+        static const char message[] = "export requires the module initialization thread";
+        ember_loc loc = { "<export>", 0, 0 };
+        ember_panic(message, sizeof(message) - 1, loc);
+    }
 }
 
 /* -- memory ------------------------------------------------------------------
