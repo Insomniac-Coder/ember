@@ -76,7 +76,8 @@ pub struct Param {
     pub mode: Mode,
 }
 
-/// The C ABI behind a hand-declared safe `count(n)` or `fixed(N)` function.
+/// The C ABI behind a hand-declared function that needs an Ember-to-C adapter:
+/// `count(n)`, `fixed(N)`, or a borrowed aggregate passed by C value.
 /// Indices name visible Ember parameters; count witnesses have no visible
 /// parameter and are supplied from the associated span(s).
 #[derive(Debug, Clone)]
@@ -191,7 +192,7 @@ pub struct Function {
     /// A bodyless declaration in `unsafe extern`: emit a C prototype and
     /// resolve calls against the foreign linker symbol, never a C body.
     pub is_extern_declaration: bool,
-    /// ODR-074: a safe Ember wrapper around a counted C pointer signature.
+    /// ODR-074 and `[FFI-9]`: an Ember wrapper around a differing C signature.
     pub ffi_counted: Option<FfiCounted>,
 }
 

@@ -7358,10 +7358,9 @@ impl<'a> Checker<'a> {
                     return self.common.error;
                 }
                 if abi.is_some() && (self.types.needs_drop(ret)
-                    || params.iter().any(|param| self.types.needs_drop(param.ty)
-                        || (param.mode == FnParamMode::Borrow && self.types.passed_by_address(param.ty)))) {
+                    || params.iter().any(|param| self.types.needs_drop(param.ty))) {
                     self.error(codes::E0900, ty.span,
-                        "`extern \"C\" fn` pointers with drop-bearing values or borrowed aggregates are not implemented yet");
+                        "`extern \"C\" fn` pointers with drop-bearing values are not implemented yet");
                     return self.common.error;
                 }
                 self.types.intern(TyKind::Fn {
@@ -11418,7 +11417,7 @@ impl<'a> Checker<'a> {
                 );
             }
         };
-        for &(name, ty, mode, span) in &signature {
+        for &(name, ty, _, span) in &signature {
             if decl.is_foreign_decl && decl.is_safe
                 && let Some((inner, _)) = self.foreign_nullable_ref_inner(ty) {
                 if !self.types.is_ffi_safe(inner) {
@@ -11445,10 +11444,6 @@ impl<'a> Checker<'a> {
                 }
             } else {
                 check(self, ty, span, format!("`{name}` is this parameter"));
-            }
-            if mode == Mode::Borrow && self.types.is_ffi_safe(ty) && self.types.passed_by_address(ty) {
-                self.error(codes::E0900, span,
-                    "a borrowed aggregate at a C boundary needs by-value ABI lowering, which is not implemented yet");
             }
         }
         if ret != self.common.void {
@@ -11838,7 +11833,22 @@ impl<'a> Checker<'a> {
         visible: &[(Symbol, Ty, Mode, Span)],
         result_ty: Ty,
     ) -> Option<hir::FfiCounted> {
-        if !decl.is_foreign_decl || !decl.is_safe { return None; }
+        if !decl.is_foreign_decl { return None; }
+        let borrowed_aggregate = visible.iter().any(|&(_, ty, mode, _)|
+            mode == Mode::Borrow && self.types.is_ffi_safe(ty) && self.types.passed_by_address(ty));
+        // An unsafe declaration retains its written C signature. It still
+        // needs an adapter when an Ember borrow is an address but C receives
+        // the aggregate by value.
+        if !decl.is_safe {
+            if !borrowed_aggregate { return None; }
+            return Some(hir::FfiCounted {
+                foreign_symbol: ffi_link_name(attrs).unwrap_or(decl.name.name.as_str()).to_string(),
+                abi_params: visible.iter().enumerate().map(|(public_index, &(_, ty, mode, _))|
+                    hir::FfiAbiParam::Value { public_index, ty, mode }).collect(),
+                result_array: None,
+                result_span: None,
+            });
+        }
         let result_fixed = match ffi_result_contract(attrs) {
             Some(FfiResultContract::SharedFixedStatic { len }
                 | FfiResultContract::SharedFixedFrom { len, .. }) => Some((len, false, false)),
@@ -11922,7 +11932,7 @@ impl<'a> Checker<'a> {
                 source_nullable: source.nullable })
         } else { None };
         if counted.is_empty() && fixed.is_empty() && result_array.is_none()
-            && result_span.is_none() { return None; }
+            && result_span.is_none() && !borrowed_aggregate { return None; }
         let mut abi_params = Vec::new();
         for param in &decl.params {
             let ast::ParamKind::Named { name, .. } = &param.kind else { return None };

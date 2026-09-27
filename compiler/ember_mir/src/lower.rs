@@ -1294,7 +1294,7 @@ impl<'a> Builder<'a> {
         let result = self.temp_unowned(ret, cell.span);
         let next = self.new_block();
         self.terminate(Terminator::Call {
-            func: FuncRef::Indirect { operand: callee, latebound: false, sources: self.types.callable_sources(f.ty) },
+            func: FuncRef::Indirect { operand: callee, ty: f.ty, latebound: false, sources: self.types.callable_sources(f.ty) },
             args: vec![old],
             dest: Place::local(result),
             next,
@@ -1389,7 +1389,7 @@ impl<'a> Builder<'a> {
         let argument = self.pass_by_address(Operand::Copy(Place::local(old)), inner, span);
         let after_callback = self.new_block();
         self.terminate(Terminator::Call {
-            func: FuncRef::Indirect { operand: callee, latebound: false, sources: self.types.callable_sources(f.ty) },
+            func: FuncRef::Indirect { operand: callee, ty: f.ty, latebound: false, sources: self.types.callable_sources(f.ty) },
             // `fn(T) -> T` uses `[FN-2]`'s default borrowed mode. The old
             // value stays owned by this lowering temporary until statement
             // end; the callback may inspect it but cannot consume it.
@@ -1979,6 +1979,7 @@ impl<'a> Builder<'a> {
                 self.terminate(Terminator::Call {
                     func: FuncRef::Indirect {
                         operand: callee_op,
+                        ty: callee.ty,
                         latebound: *latebound,
                         sources: self.types.callable_sources(callee.ty),
                     },

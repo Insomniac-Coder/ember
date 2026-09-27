@@ -580,6 +580,101 @@ fn foreign_record_statics_exchange_values_with_c() {
     assert!(nested_readonly.stderr.contains("E1050"), "expected nested read-only field error: {}", nested_readonly.stderr);
 }
 
+/// `[FFI-9]`/`[FFI-10]` — C receives and returns a plain record by value.
+#[test]
+fn foreign_record_functions_exchange_values_with_c() {
+    let root = workspace_root();
+    let source = root.join(format!("tests/conformance/FFI-10/accept_foreign_record_function_values.{SOURCE_EXT}"));
+    let source_arg = source.to_string_lossy().into_owned();
+    let emitted = ember(&["build", &source_arg, "--emit", "c"], &root);
+    assert_eq!(emitted.exit, 0, "foreign record C emission failed: {}", emitted.stderr);
+
+    let directory = temporary_directory("foreign-record-function");
+    let generated = directory.join("program.c");
+    std::fs::write(&generated, emitted.stdout).expect("generated C is writable");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/foreign_statics.c");
+    let runtime = root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+    let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
+    let output = directory.join(if cfg!(windows) { "foreign_record_function.exe" } else { "foreign_record_function" });
+    let objects = directory.join("obj");
+    std::fs::create_dir_all(&objects).expect("object directory is creatable");
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
+    ember_build::compile_and_link(&toolchain, &LinkRequest {
+        sources: &[generated, fixture.clone(), runtime_source.clone()],
+        include_dirs: &[runtime.join("include")],
+        output: output.clone(),
+        profile: Profile::Debug,
+        obj_dir: objects,
+    }).expect("foreign record function links to the C fixture");
+    let run = Command::new(output).output().expect("linked program runs");
+    assert!(run.status.success(), "foreign record program failed: {}",
+        String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "8\n10\n17\n3\n4\n3\n13\n10\n16\n31\n22\n13\n10\n");
+
+    let imported = directory.join(ember_branding::source_file("imported"));
+    let entry = directory.join(ember_branding::source_file("entry"));
+    std::fs::write(&imported,
+        "pub struct ForeignPair:\n    pub left: i32\n    pub right: i32\nunsafe extern \"C\":\n    pub safe fn mutate_pair_copy(pair: ForeignPair) -> i32\n    @ffi(link_name=\"foreign_pair_weighted\")\n    pub fn weighted_pair(pair: ForeignPair, weight: i32) -> i32\n")
+        .expect("foreign record module is writable");
+    for (label, source) in [
+        ("from_import", "from imported import ForeignPair, mutate_pair_copy, weighted_pair\nfn main():\n    pair = ForeignPair(left = 3, right = 4)\n    println(mutate_pair_copy(pair))\n    unsafe:\n        println(weighted_pair(pair, 2))\n"),
+        ("qualified", "import imported\nfn main():\n    pair = imported.ForeignPair(left = 3, right = 4)\n    println(imported.mutate_pair_copy(pair))\n    unsafe:\n        println(imported.weighted_pair(pair, 2))\n"),
+    ] {
+        std::fs::write(&entry, source).expect("foreign record entry is writable");
+        let entry_arg = entry.to_string_lossy().into_owned();
+        let emitted = ember(&["build", &entry_arg, "--emit", "c"], &root);
+        assert_eq!(emitted.exit, 0, "{label} foreign record call failed: {}", emitted.stderr);
+        let generated = directory.join(format!("{label}.c"));
+        std::fs::write(&generated, emitted.stdout).expect("imported C is writable");
+        let executable = directory.join(if cfg!(windows) { format!("{label}.exe") } else { label.to_string() });
+        ember_build::compile_and_link(&toolchain, &LinkRequest {
+            sources: &[generated, fixture.clone(), runtime_source.clone()],
+            include_dirs: &[runtime.join("include")],
+            output: executable.clone(),
+            profile: Profile::Debug,
+            obj_dir: directory.join("obj"),
+        }).expect("imported foreign record function links to C");
+        let run = Command::new(executable).output().expect("imported record program runs");
+        assert!(run.status.success(), "{label} foreign record program failed: {}",
+            String::from_utf8_lossy(&run.stderr));
+        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "17\n10\n");
+    }
+}
+
+/// `[FFI-9]` — C calls an exported Ember function with a record value.
+#[test]
+fn borrowed_record_export_receives_c_value() {
+    let root = workspace_root();
+    let source = root.join(format!("tests/conformance/FFI-9/accept_borrowed_aggregate_export_by_value.{SOURCE_EXT}"));
+    let source_arg = source.to_string_lossy().into_owned();
+    let emitted = ember(&["build", &source_arg, "--emit", "c"], &root);
+    assert_eq!(emitted.exit, 0, "borrowed record export C emission failed: {}", emitted.stderr);
+
+    let directory = temporary_directory("borrowed-record-export");
+    let generated = directory.join("program.c");
+    std::fs::write(&generated, emitted.stdout).expect("generated C is writable");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/foreign_record_exports.c");
+    let runtime = root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+    let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
+    let output = directory.join(if cfg!(windows) { "borrowed_record_export.exe" } else { "borrowed_record_export" });
+    let objects = directory.join("obj");
+    std::fs::create_dir_all(&objects).expect("object directory is creatable");
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
+    ember_build::compile_and_link(&toolchain, &LinkRequest {
+        sources: &[generated, fixture, runtime_source],
+        include_dirs: &[runtime.join("include")],
+        output: output.clone(),
+        profile: Profile::Debug,
+        obj_dir: objects,
+    }).expect("borrowed record export links to C");
+    let run = Command::new(output).output().expect("linked program runs");
+    assert!(run.status.success(), "borrowed record export failed: {}",
+        String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "10\n3\n21\n10\n13\n811\n10\n19\n");
+}
+
 /// `[MAN-3]` — a manifest must not silently accept configuration for a lint
 /// that the compiler does not define. The manifest lives beside an otherwise
 /// valid standalone source file so this exercises the driver's nearest-package

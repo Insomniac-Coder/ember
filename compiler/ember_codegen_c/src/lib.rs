@@ -134,6 +134,18 @@ pub fn emit(
             .iter()
             .map(|body| (body.symbol.clone(), body.param_modes.clone()))
             .collect(),
+        ffi_export_value_params: bodies
+            .iter()
+            .filter(|body| body.abi.as_deref() == Some("C") && !body.is_extern_declaration)
+            .filter_map(|body| {
+                let by_value = body.args().enumerate().map(|(index, (_, decl))|
+                    body.param_modes.get(index) == Some(&ParameterMode::Borrow)
+                        && matches!(types.kind(decl.ty), TyKind::Ref { inner, .. }
+                            if types.is_ffi_safe(*inner) && types.passed_by_address(*inner)))
+                    .collect::<Vec<_>>();
+                by_value.iter().any(|&value| value).then(|| (body.symbol.clone(), by_value))
+            })
+            .collect(),
         foreign_statics: std::cell::RefCell::new(BTreeMap::new()),
         drop_glue: std::cell::RefCell::new(Vec::new()),
         eq_fns: std::cell::RefCell::new(Vec::new()),
@@ -274,6 +286,9 @@ struct Emitter<'a> {
     /// parameter creates another class-handle owner, so its retain must be
     /// emitted before the call transfers that new owner to the callee.
     direct_param_modes: BTreeMap<String, Vec<ParameterMode>>,
+    /// Borrowed Ember aggregates arrive as addresses internally, but an
+    /// exported C function receives their record values at the ABI boundary.
+    ffi_export_value_params: BTreeMap<String, Vec<bool>>,
     /// C globals used by a generated body, collected while rendering calls.
     foreign_statics: std::cell::RefCell<BTreeMap<String, (Ty, bool)>>,
     /// D-182 — aggregate types whose drop is emitted as an out-of-line
@@ -2873,10 +2888,10 @@ impl Emitter<'_> {
             // simple `T name` is wanted, so each one gets a typedef and every
             // use names it.
             TypeNode::Structural(ty) if matches!(self.types.kind(ty), TyKind::Fn { .. }) => {
-                let TyKind::Fn { params, ret, .. } = self.types.kind(ty) else { unreachable!() };
+                let TyKind::Fn { abi, params, ret, .. } = self.types.kind(ty) else { unreachable!() };
                 let rendered: Vec<String> = params
                     .iter()
-                    .map(|param| self.callable_param_c_type(*param))
+                    .map(|param| self.callable_param_c_type(*param, abi.is_some()))
                     .collect();
                 let args = if rendered.is_empty() { "void".to_string() } else { rendered.join(", ") };
                 Definition::FnPointer { ret: self.c_type(*ret), args }
@@ -3291,10 +3306,11 @@ impl Emitter<'_> {
     /// keeps `mut MutSpan[T]` by value: the move-only view itself is the
     /// exclusive access and wrapping it in another pointer would change the
     /// established call boundary.
-    fn callable_param_c_type(&self, param: FnParam) -> String {
+    fn callable_param_c_type(&self, param: FnParam, c_abi: bool) -> String {
         match param.mode {
-            // `[BRW-8]` (ODR-024) — as the function it points at declares it.
-            FnParamMode::Borrow if self.types.passed_by_address(param.ty) => {
+            // `[BRW-8]` (ODR-024) applies to native callables. `[FFI-9]`
+            // instead passes an aggregate value through a C function pointer.
+            FnParamMode::Borrow if self.types.passed_by_address(param.ty) && !c_abi => {
                 format!("{}*", self.c_type(param.ty))
             }
             FnParamMode::Borrow | FnParamMode::Owned => self.c_member_type(param.ty),
@@ -3337,9 +3353,18 @@ impl Emitter<'_> {
 
     fn signature(&self, body: &Body) -> String {
         let ret = self.c_type(body.return_ty());
+        let ffi_values = self.ffi_export_value_params.get(&body.symbol);
         let params: Vec<String> = body
             .args()
-            .map(|(id, decl)| format!("{} _{}", self.c_member_type(decl.ty), id.0))
+            .enumerate()
+            .map(|(index, (id, decl))| {
+                if ffi_values.is_some_and(|values| values.get(index) == Some(&true)) {
+                    let TyKind::Ref { inner, .. } = self.types.kind(decl.ty) else { unreachable!() };
+                    format!("{} _ffi{}", self.c_member_type(*inner), id.0)
+                } else {
+                    format!("{} _{}", self.c_member_type(decl.ty), id.0)
+                }
+            })
             .collect();
         let params = if params.is_empty() { "void".to_string() } else { params.join(", ") };
         format!("{ret} {}({params})", body.symbol)
@@ -3411,8 +3436,15 @@ impl Emitter<'_> {
         let mut foreign_args = Vec::new();
         for param in &counted.abi_params {
             match param {
-                FfiAbiParam::Value { public_index, .. } =>
-                    foreign_args.push(args[*public_index].clone()),
+                FfiAbiParam::Value { public_index, ty, mode } => {
+                    let arg = &args[*public_index];
+                    foreign_args.push(if *mode == ParameterMode::Borrow
+                        && self.types.passed_by_address(*ty) {
+                        format!("*({arg})")
+                    } else {
+                        arg.clone()
+                    });
+                }
                 FfiAbiParam::SpanPointer { public_index, elem, mutable, nullable } => {
                     let pointee = self.c_type(*elem);
                     let pointer = if *mutable { format!("{pointee}*") }
@@ -3489,10 +3521,18 @@ impl Emitter<'_> {
     fn emit_body(&mut self, body: &Body) {
         let signature = self.signature(body);
         self.line(&format!("{signature} {{"));
+        if let Some(values) = self.ffi_export_value_params.get(&body.symbol).cloned() {
+            for (index, (id, decl)) in body.args().enumerate() {
+                if values[index] {
+                    self.line(&format!("    {} _{} = &_ffi{};", self.c_type(decl.ty), id.0, id.0));
+                }
+            }
+        }
         self.interface_caches = interface_cache_plan(body);
 
-        // Locals. Parameters are already C parameters; the return slot and
-        // every other local are declared here.
+        // Locals. Parameters are already C parameters; the borrowed records
+        // above have local addresses for Ember. Declare the return slot and
+        // every other local here.
         for (index, decl) in body.locals.iter().enumerate() {
             if decl.kind == LocalKind::Arg {
                 continue;
@@ -4491,7 +4531,17 @@ impl Emitter<'_> {
     fn call_expression(&self, func: &FuncRef, args: &[Operand], body: &Body) -> String {
         let rendered: Vec<String> = args.iter().map(|a| self.operand(a, body)).collect();
         match func {
-            FuncRef::Direct { symbol, .. } => format!("{symbol}({})", rendered.join(", ")),
+            FuncRef::Direct { symbol, .. } => {
+                let mut rendered = rendered;
+                if let Some(values) = self.ffi_export_value_params.get(symbol) {
+                    for (argument, by_value) in rendered.iter_mut().zip(values) {
+                        if *by_value {
+                            *argument = format!("*({argument})");
+                        }
+                    }
+                }
+                format!("{symbol}({})", rendered.join(", "))
+            }
             FuncRef::Virtual { owner, slot, .. } => {
                 let signature = self
                     .virtual_signatures
@@ -4578,7 +4628,15 @@ impl Emitter<'_> {
             }
             // `[CLO-3]` — a call through a value. In C a function value is
             // its address, so the callee expression is called directly.
-            FuncRef::Indirect { operand: callee, .. } => {
+            FuncRef::Indirect { operand: callee, ty, .. } => {
+                let mut rendered = rendered;
+                if let TyKind::Fn { abi: Some(_), params, .. } = self.types.kind(*ty) {
+                    for (argument, param) in rendered.iter_mut().zip(params) {
+                        if param.mode == FnParamMode::Borrow && self.types.passed_by_address(param.ty) {
+                            *argument = format!("*({argument})");
+                        }
+                    }
+                }
                 format!("({})({})", self.operand(callee, body), rendered.join(", "))
             }
             FuncRef::Builtin { which, arg_ty } => {

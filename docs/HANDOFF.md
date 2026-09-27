@@ -11070,12 +11070,24 @@ first**; the rest of §0.355 is the running narrative behind it.
     immutable, missing-`unsafe`, and cross-module `pub(read)` writes reject.
     Focused annotations and C-linked integration tests pass. The final full
     annotation sweep reports zero failures, the workspace suite passes, and
-    all repository gates pass. The batch is ready to commit and push. The
-    existing rules already settle these cases, so H38 remains the target.
+    all repository gates pass. Commit `f529f8b` was pushed to `main`; CI run
+    `36280130682` passed. The existing rules already settle these cases, so
+    H38 remains the target.
+  * The next Phase 5 batch implements `[FFI-9]`'s by-value C ABI for borrowed
+    non-`Copy` C records. Hand-declared safe and unsafe functions pass a copy
+    of the borrowed record into C; an alias and both import forms retain the
+    foreign symbol. The adapter composes with a counted span and a C-returned
+    function pointer. Exported Ember functions receive C record values while
+    their bodies retain borrowed parameter semantics, including mixed scalar
+    and record parameters and record results. An `extern "C" fn` pointer now
+    has the same record-value ABI on indirect calls and when C invokes a
+    capture-free Ember callback. Linked C fixtures cover both 8-byte and
+    24-byte records and prove that the caller's borrowed value is unchanged.
+    The direct and export integration tests and focused `FFI-9/` and
+    `FFI-10/` annotations pass. H38 already specifies this ABI; there is no
+    semantic ambiguity and no ODR or new hardening.
 
-  Check CI for the newest first. H37 `36276950767`, H38 `36277984572`,
-  and scalar-write `36278807435` passed; record-global `36279355654` and
-  record-field `36279791340` were running at the last check.
+  The five preceding CI runs, through `f529f8b`, finished green.
 * **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_38.md`
   (ODR-082), pinned in `docs/spec-source/development-target.json`. The
   spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through
@@ -11236,9 +11248,9 @@ first**; the rest of §0.355 is the running narrative behind it.
   valid empty view whose data pointer is null. Each case failed its size
   expectation before implementation and now exercises `Some` and `None`.
   The 0.9.9 target specified every layout; no ODR was needed.
-* **Next task:** finish validation and push the H38 foreign-scalar-static
-  batch, then implement mutable foreign-static writes and other FFI gaps.
-  Check the newest CI run before pushing further work.
+* **Next task:** complete validation and push the borrowed-record C ABI batch,
+  then continue Phase 5 at `[FFI-22]`'s exported-function thread attachment.
+  Check its CI run before pushing further work.
   Audit rows for
   `[CLS-2]` and `[CLS-7]` were stale: the existing code and tests cover
   their stated gaps.

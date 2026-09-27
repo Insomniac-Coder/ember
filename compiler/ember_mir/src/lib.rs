@@ -117,7 +117,7 @@ pub struct Body {
     pub is_abstract: bool,
     /// See `ember_hir::Function::is_extern_declaration`.
     pub is_extern_declaration: bool,
-    /// ODR-074's mapped C parameter list for a hand-declared counted call.
+    /// ODR-074 and `[FFI-9]`'s mapped C parameters for a hand declaration.
     pub ffi_counted: Option<ember_hir::FfiCounted>,
     /// `[EXC-15]` — a class `mut self` method: its caller holds a write
     /// access to every field of `*self` (local 1) for the call, so accesses
@@ -1235,7 +1235,8 @@ pub enum FuncRef {
     /// fact and is erased before code generation.
     /// `sources` (`[LT-7]`): the callable type's source parameters, which the
     /// result may borrow; `None` when the callee's type is not a `fn` type.
-    Indirect { operand: Operand, latebound: bool, sources: Option<Vec<usize>> },
+    /// `ty` retains the callable ABI for indirect C record-value arguments.
+    Indirect { operand: Operand, ty: Ty, latebound: bool, sources: Option<Vec<usize>> },
     /// A call the compiler provides itself, lowered to an `ember_rt` entry.
     Builtin {
         which: ember_hir::Builtin,
