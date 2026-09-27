@@ -325,6 +325,10 @@ pub enum ExprKind {
         /// parameter slots in source evaluation order so MIR can lower those
         /// expressions without changing `[EXP-1]`.
         arg_eval_order: Option<Vec<usize>>,
+        /// `[FN-5]` — caller locals bound to evaluated argument slots before
+        /// an omitted default reads an earlier parameter. Present only for a
+        /// call with defaults; indices include a method receiver at slot 0.
+        default_arg_locals: Option<Vec<LocalId>>,
         args: Vec<Expr>,
         latebound: bool,
     },

@@ -11092,7 +11092,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   (ODR-083), pinned in `docs/spec-source/development-target.json`. The
   spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through
   `parts-h39/` are frozen.
-* **Next numbers:** ODR-084, D-368, ADR-068.
+* **Next numbers:** ODR-084, D-370, ADR-068.
 * **The owner's simplification pass** (2026-09-26, attended; the proposal is
   `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
   Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed
@@ -11321,7 +11321,10 @@ first**; the rest of §0.355 is the running narrative behind it.
   `fae734b49206b4fab2de230324e0eb07762f8bdd`; CI run
   [36292117191](https://github.com/Insomniac-Coder/ember/actions/runs/36292117191)
   passed all five jobs.
-* **Current batch complete:** static-library packaging follows ADR-066/067.
+* **Static-library batch complete:** static-library packaging follows ADR-066/067,
+  pushed as `c14607f563e25a74ce4eb40fd8cb52ca0c90cb19`. CI run
+  [36294227758](https://github.com/Insomniac-Coder/ember/actions/runs/36294227758)
+  passed all five jobs (specification/registry, GCC, clang, MSVC, clang-cl).
   A `staticlib` manifest builds from the package root with `src/lib.em` or
   `build.entry`; directory and no-input builds are supported. Output includes
   the package archive/header and runtime archive/header under
@@ -11343,7 +11346,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   (exit 0). D-367's break-test explicitly gives both packages the same used
   native helper: disabling internal linkage fails the combined host link
   with MSVC LNK2005/LNK1169; restoring the exact source bytes makes the same
-  test pass. No new CI result is claimed for this batch.
+  test pass. The corresponding CI run passed all five jobs.
 * **Defects closed:** D-366 (runtime-header path collision for a package named
   `ember_rt`) and D-367 (cross-package generated C name/linkage collisions).
   The earlier callback batch's CI remains green.
@@ -11356,9 +11359,28 @@ first**; the rest of §0.355 is the running narrative behind it.
   obligations, tests, and implementation, then implement the remaining gaps.
   The 97/88/59 percentages are carried-forward estimates, not a fresh tally
   of satisfied exit criteria. Defer further FFI expansion unless it is a
-  concrete dependency of these phases. Export-table ODR-084 is identified
-  but remains deferred and unruled/unpinned. Next ODR is 084; next D number
-  is 368; next ADR is 068. AUTOPILOT records this priority.
+  concrete dependency of these phases. Export-table rules remain an unnumbered
+  deferred topic. Next ODR is 084; next D number
+  is 370; next ADR is 068. AUTOPILOT records this priority.
+  The working checklist is `docs/PHASE-1-3-CLOSURE.md`. The FN-5 focused cases
+  pass, including generic-owner methods and declaration-scope defaults. The
+  alias-normalize mutation test wrongly accepts the negative default-borrow
+  case; restoring the implementation produces the expected E3021 at the call
+  site. BRW-11 overlap rejection and disjoint-field acceptance both pass.
+  D-368 and D-369 focused controls and mutation break-tests pass after
+  restoring each fix; both defects are now fixed. The final full MSVC and
+  clang-cl workspace suites exited 0 without watchdog kills, all 18 gates
+  passed, H39 examples reported 46 with `failing 0`, and the 287-directory
+  annotation sweep reported `failing 0`. The adopted-master SHA remains
+  `F8EC2010EADC6F7393E81C67C77DCB8268B8604578F419BC03EEDAD422DCC4AF`.
+  Keep first-three-phase priority and the carried-forward P1/P2/P3 estimates
+  at 97/88/59. FN-5 focused behavior passes, but its declaration arithmetic-
+  policy boundary remains pending ODR review. The next core item is TYP-8
+  saturation and module-attribute spelling, still under lead review; there is
+  no ODR ruling or H40 yet; ODR-084 is available for that ruling. Next
+  ODR/D/ADR numbers remain 084/370/068. The current default-argument/
+  destructor-lifetime batch is fully validated and awaiting its integration
+  commit.
   Audit rows for `[CLS-2]` and `[CLS-7]` were stale: existing code and tests
   cover their stated gaps.
 * **Phase estimates (2026-09-27; engineering estimates, not test counts):**

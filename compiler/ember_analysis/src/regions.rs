@@ -229,10 +229,10 @@ pub struct Regions {
     /// slot; a multi-region `@view struct` has one slot per borrowed field.
     /// Keeping this out of `Ty` preserves nominal identity and runtime erasure.
     local_regions: Vec<Vec<ViewRegionSlot>>,
-    /// View values whose destruction has a semantic action tied to their
-    /// source (notably `Ref`/`RefMut` guards) must retain their region through
-    /// that drop. Ordinary region-erased view destruction needs no such use.
-    drop_requires_regions: Vec<bool>,
+    /// [DRP-6], [DRP-7] — the places whose destructors may read a carried
+    /// region at each drop. Merely owning an unrelated field with drop glue
+    /// does not keep an ordinary view alive.
+    drop_reads: HashMap<Point, Vec<Place>>,
     /// The region variable produced by the borrow expression at each point.
     loan_region: HashMap<Point, RegionVid>,
     /// Exact field paths used by a verified capturing-closure body for a
@@ -348,7 +348,7 @@ impl Regions {
             accesses: vec![HashSet::new(); next],
             imprecise_provenance: vec![false; next],
             local_regions,
-            drop_requires_regions: body.locals.iter().map(|decl| types.needs_drop(decl.ty)).collect(),
+            drop_reads: drop_region_reads(body, types),
             loan_region,
             capture_borrow_paths: capture_borrow_paths.clone(),
             values_at: HashMap::new(),
@@ -1594,10 +1594,11 @@ impl Regions {
                         self.operand_access_event(point, lhs, &mut events);
                         self.operand_access_event(point, rhs, &mut events);
                     }
-                    StmtKind::Drop { place, .. }
-                        if self.drop_requires_regions[place.local.0 as usize] =>
-                    {
-                        events.push((point, place.clone(), RegionAccessKind::Read));
+                    StmtKind::Drop { .. } => {
+                        if let Some(places) = self.drop_reads.get(&point) {
+                            events.extend(places.iter().cloned().map(|place|
+                                (point, place, RegionAccessKind::Read)));
+                        }
                     }
                     StmtKind::StorageLive(_)
                     | StmtKind::StorageDead(_)
@@ -1605,7 +1606,6 @@ impl Regions {
                     | StmtKind::BeginAccessTransfer { .. }
                     | StmtKind::EndAccess { .. }
                     | StmtKind::EndAccessTransfer { .. }
-                    | StmtKind::Drop { .. }
                     | StmtKind::Nop => {}
                 }
             }
@@ -1880,17 +1880,14 @@ impl Regions {
                 self.operand_liveness(lhs, live);
                 self.operand_liveness(rhs, live);
             }
-            // `[LT-29]`: ordinary view destruction does not access sources.
-            // A compiler-known guard is the exception already required by
-            // `[CELL-7]`: its destructor releases runtime borrow state.
-            StmtKind::Drop { place, .. }
-                if self.drop_requires_regions[place.local.0 as usize] =>
-            {
-                self.read_place_liveness(place, live);
+            StmtKind::Drop { .. } => {
+                if let Some(places) = self.drop_reads.get(&point) {
+                    for place in places { self.read_place_liveness(place, live); }
+                }
             }
             StmtKind::BeginAccess { .. } | StmtKind::BeginAccessTransfer { .. }
             | StmtKind::EndAccess { .. } | StmtKind::EndAccessTransfer { .. }
-            | StmtKind::Drop { .. } | StmtKind::Nop => {}
+            | StmtKind::Nop => {}
             StmtKind::StorageLive(local) | StmtKind::StorageDead(local) => {
                 for slot in &self.local_regions[local.0 as usize] {
                     live.remove(&slot.region);
@@ -2179,6 +2176,67 @@ fn project_type(types: &TypeTable, ty: Ty, projection: &Projection, variant: &mu
         (Projection::Deref, TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }) => *inner,
         _ => ty,
     }
+}
+
+/// Destruction reads regions only through a destructor of its own (including
+/// compiler-known guards), or through fields with that obligation. A plain
+/// aggregate's automatic field cleanup never inspects its other view fields.
+fn drop_region_reads(body: &Body, types: &TypeTable) -> HashMap<Point, Vec<Place>> {
+    fn collect(types: &TypeTable, ty: Ty, place: Place, out: &mut Vec<Place>) {
+        if !types.is_view(ty) || !types.needs_drop(ty) { return; }
+        match types.kind(ty) {
+            TyKind::Struct(id) => {
+                let def = types.struct_def(*id);
+                if def.has_drop {
+                    out.push(place);
+                } else if def.drops_fields {
+                    for (index, field) in def.fields.iter().enumerate() {
+                        collect(types, field.ty, place.clone().field(index), out);
+                    }
+                }
+            }
+            TyKind::Enum(id) => {
+                let def = types.enum_def(*id);
+                if def.has_drop {
+                    out.push(place);
+                } else {
+                    for (variant, definition) in def.variants.iter().enumerate() {
+                        for (index, field) in definition.fields.iter().enumerate() {
+                            let field_place = project_place(&place,
+                                &[Projection::Downcast(variant), Projection::Field(index)]);
+                            collect(types, field.ty, field_place, out);
+                        }
+                    }
+                }
+            }
+            TyKind::Tuple(items) => {
+                for (index, &ty) in items.iter().enumerate() {
+                    collect(types, ty, place.clone().field(index), out);
+                }
+            }
+            TyKind::Array { elem, .. } => {
+                // Fixed arrays currently share one conservative region slot.
+                // Preserve that representation without metadata proportional
+                // to their length, but require it only if an element's drop
+                // can read a region at all.
+                let mut element_reads = Vec::new();
+                collect(types, *elem, place.clone(), &mut element_reads);
+                if !element_reads.is_empty() { out.push(place); }
+            }
+            _ => {}
+        }
+    }
+    let mut reads = HashMap::new();
+    for (block, basic) in body.blocks.iter().enumerate() {
+        for (index, stmt) in basic.stmts.iter().enumerate() {
+            if let StmtKind::Drop { place, .. } = &stmt.kind {
+                let mut places = Vec::new();
+                collect(types, place_type(body, types, place), place.clone(), &mut places);
+                if !places.is_empty() { reads.insert(Point { block, index }, places); }
+            }
+        }
+    }
+    reads
 }
 
 fn view_region_paths(types: &TypeTable, ty: Ty) -> Vec<Vec<Projection>> {

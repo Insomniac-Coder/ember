@@ -62,7 +62,7 @@ fn check(body: &Body, types: &ember_types::TypeTable, sink: &mut Sink, reported:
                 // A drop reads the value in order to destroy it, but a local
                 // that is only dropped was never *used*: that is exactly the
                 // case this lint exists to report.
-                StmtKind::Drop { place, flag } => {
+                StmtKind::Drop { place, flag, .. } => {
                     mark_place_indices(place, &mut read);
                     if let Some(flag) = flag {
                         read.insert(*flag);

@@ -29,6 +29,7 @@
 //! being true the moment the reference moved — a copy, a reborrow, or a call
 //! handing one back — and `regions.rs` is what replaced it.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use ember_diag::{Diagnostic, Sink, codes};
@@ -2437,13 +2438,30 @@ fn check_body(
                 // Dynamic class access intervals are checked by the runtime;
                 // they do not create static loans for the ordinary borrow
                 // checker to compare here.
-                // `[EXP-4]` (D-342) — a statement temporary's storage ends
-                // with its statement, as its drop would: a borrow of it that
-                // is still to be used conflicts, as with a drop.
-                StmtKind::StorageDead(local) if body.local(*local).kind == LocalKind::Temp => {
+                // [EXP-4], [DRP-7] — storage ends even for values without
+                // drop glue. Named locals end at their block boundary too.
+                StmtKind::StorageDead(local) => {
+                    let returning = matches!(block.terminator, Terminator::Return);
+                    let return_point = Point { block: block_index, index: block.stmts.len() };
                     let depending: Vec<Loan> = loans
                         .iter()
-                        .filter(|loan| loan.capability.must_not_outlive_storage())
+                        .filter(|loan| {
+                            if !loan.capability.must_not_outlive_storage() {
+                                return false;
+                            }
+                            let Some(source) = loan.capability.source_place() else { return false };
+                            // Ending a view's local slot does not end the
+                            // pointee. Its original source loans enforce that
+                            // lifetime; a reference to the slot itself still
+                            // depends on this local's storage.
+                            if source.local == *local && through_indirection(body, types, source) {
+                                return false;
+                            }
+                            // The escape checker reports a returned local
+                            // borrow once, at the return expression.
+                            !(returning && source.local == *local
+                                && in_scope(std::slice::from_ref(*loan), &regions, return_point).len() == 1)
+                        })
                         .cloned()
                         .collect();
                     check_point(
@@ -2465,7 +2483,6 @@ fn check_body(
                 | StmtKind::EndAccess { .. }
                 | StmtKind::EndAccessTransfer { .. }
                 | StmtKind::StorageLive(_)
-                | StmtKind::StorageDead(_)
                 | StmtKind::Nop => {}
             }
             check_point(
@@ -3057,6 +3074,34 @@ fn reservation_window(body: &Body, borrower: LocalId, created_at: Point) -> Hash
     if body.local(borrower).kind == LocalKind::User {
         return HashSet::new();
     }
+    if let Some(binding) = body.call_argument_bindings.iter().find(|binding| binding.source == borrower) {
+        // [FN-5] — the verified binding names the consuming call explicitly.
+        // Shared reads and reborrows in defaults do not activate it early;
+        // ordinary access checking still rejects writes or mutable reborrows.
+        let mut window = HashSet::new();
+        let mut pending = vec![(created_at.block, created_at.index + 1)];
+        let mut visited = HashSet::new();
+        while let Some((block_index, start)) = pending.pop() {
+            if !visited.insert((block_index, start)) { continue; }
+            let Some(block) = body.blocks.get(block_index) else { return HashSet::new() };
+            for index in start..block.stmts.len() {
+                window.insert(Point { block: block_index, index });
+            }
+            if block_index == binding.call_block.0 as usize { continue; }
+            window.insert(Point { block: block_index, index: block.stmts.len() });
+            match &block.terminator {
+                Terminator::Goto(next) | Terminator::Call { next, .. }
+                | Terminator::Assert { next, .. } => pending.push((next.0 as usize, 0)),
+                Terminator::SwitchInt { targets, otherwise, .. } => {
+                    pending.push((otherwise.0 as usize, 0));
+                    pending.extend(targets.iter().map(|(_, next)| (next.0 as usize, 0)));
+                }
+                Terminator::Unreachable => {}
+                Terminator::Return => return HashSet::new(),
+            }
+        }
+        return window;
+    }
     let mut window = HashSet::new();
     let mut block_index = created_at.block;
     let mut start = created_at.index + 1;
@@ -3277,7 +3322,10 @@ fn check_call_activation(
     let activated: Vec<usize> = loans
         .iter()
         .enumerate()
-        .filter(|(_, loan)| loan.capability.is_mut() && !loan.reserved_at.is_empty() && passes(loan.borrower))
+        .filter(|(_, loan)| loan.capability.is_mut() && !loan.reserved_at.is_empty()
+            && (passes(loan.borrower) || body.call_argument_bindings.iter().any(|binding|
+                binding.source == loan.borrower && binding.call_block.0 as usize == point.block
+                    && passes(binding.binding))))
         .map(|(index, _)| index)
         .collect();
 
@@ -3339,11 +3387,15 @@ fn check_point(
         return;
     }
     for (place, access) in accesses {
+        let canonical_place = call_argument_place(body, place);
+        let place = &canonical_place;
         for loan in &scope {
             let loan_place = loan
                 .capability
                 .source_place()
                 .expect("a loan has source storage");
+            let canonical_loan_place = call_argument_place(body, loan_place);
+            let loan_place = &canonical_loan_place;
             if !overlaps(loan_place, place) {
                 continue;
             }
@@ -3494,6 +3546,28 @@ fn check_point(
                 sink.emit_classified(diagnostic);
                 continue;
             }
+            // [DRP-7] — a scope exit ends the borrowed storage. This is a
+            // lifetime error, including when only a destructor keeps the loan
+            // alive. Overwrite drops retain their ordinary alias diagnostic.
+            if matches!(
+                body.blocks[point.block].stmts.get(point.index).map(|stmt| &stmt.kind),
+                Some(StmtKind::StorageDead(_) | StmtKind::Drop { scope_end: true, .. })
+            ) {
+                let mut diagnostic = Diagnostic::error(
+                    codes::E3060,
+                    loan.span,
+                    format!("`{name}` does not live long enough"),
+                )
+                .primary_label("this borrow remains live after its source's scope ends")
+                .secondary(span, format!("`{name}` ends its scope here"));
+                if let Some(later) = later {
+                    diagnostic = diagnostic.secondary(later, "borrow later used here");
+                }
+                sink.emit_classified(diagnostic
+                    .help("declare the borrowed value in an enclosing scope, or drop its borrower before leaving this scope")
+                    .note("borrowed storage must remain valid through every use, including a destructor [DRP-7]"));
+                continue;
+            }
             // `[CTL-2]` survives `for` desugaring as an explicit semantic
             // fact on the synthesized iterator local. A mutable access to the
             // iterable while that local holds this loan is E3020/B2. A
@@ -3636,6 +3710,31 @@ fn check_point(
             );
         }
     }
+}
+
+/// A default reads through a compiler-bound argument reference. Follow only
+/// verified call bindings back to their fresh borrow source, so these accesses
+/// and loans overlap the original caller place. A reference to the binding's
+/// own slot (no leading dereference) remains a distinct place.
+fn call_argument_place<'a>(body: &Body, place: &'a Place) -> Cow<'a, Place> {
+    let mut place = Cow::Borrowed(place);
+    for _ in 0..body.call_argument_bindings.len() {
+        if place.projection.first() != Some(&Projection::Deref) { break; }
+        let Some(binding) = body.call_argument_bindings.iter().find(|binding|
+            binding.binding == place.local || binding.source == place.local) else { break };
+        let borrowed = body.blocks.iter().flat_map(|block| &block.stmts).find_map(|stmt| {
+            match &stmt.kind {
+                StmtKind::Assign { place, rvalue: Rvalue::Ref { place: borrowed, mutable: true } }
+                    if place.local == binding.source && place.projection.is_empty() => Some(borrowed),
+                _ => None,
+            }
+        });
+        let Some(borrowed) = borrowed else { break };
+        let mut projection = borrowed.projection.clone();
+        projection.extend_from_slice(&place.projection[1..]);
+        place = Cow::Owned(Place { local: borrowed.local, projection });
+    }
+    place
 }
 
 /// `[CTL-2]`, shape B2 — whether a loan is retained by the compiler-created
@@ -4053,6 +4152,7 @@ mod callable_region_metadata_tests {
             emit_if_used: false,
             borrowed_params: Vec::new(),
             for_iterators: Vec::new(),
+            call_argument_bindings: Vec::new(),
             callable_regions: None,
             closure_environment: None,
             closure_captures_by_move: false,

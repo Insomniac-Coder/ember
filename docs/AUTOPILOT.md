@@ -22,8 +22,8 @@ for a go-ahead between tasks while the owner is asleep; keep going.
 
 **Current priority (owner, 2026-09-27): finish Phases 1–3 and their dependencies first.**
 Core language, ownership/borrowing, and classes/reference counting are the backbone.
-Finish the already verified static-library batch, then build a current rule-and-evidence
-checklist for those three phases and close its gaps. Other phases are eligible only where
+The static-library batch is verified; use the current rule-and-evidence checklist
+for those three phases and close its remaining gaps. Other phases are eligible only where
 they supply a concrete dependency of this work. Defer further FFI expansion, including
 export tables, until this priority is fulfilled. Keep delegating by complexity and commit
 about every five features. Progress estimates must follow verified obligations, not stale
@@ -82,13 +82,16 @@ The handoff's start-here subsection keeps this list current: tick items off ther
 - **When something truly needs the owner** (reversing his ruling, anything outside 0.9.9,
   anything touching RageV), do not block: record it as an OPEN ODR and continue with the next task.
 - **Delegate implementation by default when work splits cleanly** (owner
-  update, 2026-09-27). The lead owns requirements, architecture and design,
-  review, integration, and final verification. Delegate bounded code, tests,
-  documentation, and routine fixes by complexity; use the smallest suitable
-  model and avoid duplicate reads. Test runs, checks, and failure triage may
-  also be delegated; keep one owner per file and run. Continue autonomously;
-  ask the owner only for authority or product decisions not already delegated.
-  `docs/AGENT-WORKFLOW.md` records the current rules.
+  update, 2026-09-27). Root uses Astra for architecture, ODRs, review, and
+  subagent guidance; choose Sol or Luna dynamically by task complexity. Sol
+  handles substantive compiler behavior and deeper debugging; Luna handles
+  bounded docs, probes, routine runs, and small, well-specified mechanical code
+  changes. Reassess and escalate if scope grows. Delegate code,
+  tests, documentation, fixes, runs, checks, and failure triage by complexity.
+  Keep one owner per file and run. Preserve the five-feature commit cadence and
+  the current Phase 1–3 priority above. Continue autonomously; ask the owner only
+  for authority or product decisions not already delegated. See
+  `docs/AGENT-WORKFLOW.md` for the full assignment rules.
 
 ## 4. Rules of this codebase
 

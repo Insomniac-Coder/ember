@@ -15,7 +15,7 @@ use ember_types::{
 };
 
 use crate::{
-    AggregateKind, AssertKind, BasicBlock, BasicBlockId, BinOp, Body, CastKind, Const, FuncRef,
+    AggregateKind, AssertKind, BasicBlock, BasicBlockId, BinOp, Body, CallArgumentBinding, CastKind, Const, FuncRef,
     LocalDecl, LocalId, LocalKind, Operand, Place, Projection, RETURN_LOCAL, Rvalue, Stmt,
     StmtKind, Terminator,
 };
@@ -84,6 +84,14 @@ fn prune_unreachable(body: &mut Body) {
         kept.push(block);
     }
     body.blocks = kept;
+    body.call_argument_bindings.retain_mut(|record| {
+        if let Some(call_block) = remap.get(record.call_block.0 as usize).copied().flatten() {
+            record.call_block = call_block;
+            true
+        } else {
+            false
+        }
+    });
 }
 
 /// Whether a pattern matches every value of its type, so that testing it
@@ -175,6 +183,7 @@ struct Builder<'a> {
     /// ODR-065 — the stored handles an explicit `mut` argument was copied
     /// from, with the copy, to store back after the call.
     write_backs: Vec<(Place, LocalId)>,
+    call_argument_bindings: Vec<CallArgumentBinding>,
     /// ODR-065 — the `mut` parameters, `self` among them: each points at a
     /// caller's local or at the retained copy a caller made of a stored handle
     /// (`lower_mut_argument_with_access`), never into an object, so a borrow
@@ -311,6 +320,7 @@ impl<'a> Builder<'a> {
             plain_temps: Vec::new(),
             place_overrides: Vec::new(),
             write_backs: Vec::new(),
+            call_argument_bindings: Vec::new(),
             mut_param_locals: function
                 .params
                 .iter()
@@ -369,6 +379,7 @@ impl<'a> Builder<'a> {
             is_lambda: self.function.is_lambda,
             emit_if_used: self.function.emit_if_used,
             borrowed_params,
+            call_argument_bindings: self.call_argument_bindings,
             for_iterators,
             callable_regions: None,
             closure_environment: self.function.closure_environment,
@@ -446,7 +457,7 @@ impl<'a> Builder<'a> {
         let pending: Vec<LocalId> =
             self.statement_temps[mark..].iter().rev().copied().collect();
         for local in pending {
-            self.push(StmtKind::Drop { place: Place::local(local), flag: None });
+            self.push(StmtKind::Drop { place: Place::local(local), flag: None, scope_end: true });
         }
         self.statement_temps.truncate(mark);
     }
@@ -548,7 +559,7 @@ impl<'a> Builder<'a> {
     fn emit_write_backs(&mut self, mark: usize) {
         let pending: Vec<(Place, LocalId)> = self.write_backs.drain(mark..).collect();
         for (stored, kept) in pending {
-            self.push(StmtKind::Drop { place: stored.clone(), flag: None });
+            self.push(StmtKind::Drop { place: stored.clone(), flag: None, scope_end: false });
             self.push(StmtKind::Assign { place: stored, rvalue: Rvalue::Use(Operand::Copy(Place::local(kept))) });
         }
     }
@@ -576,15 +587,19 @@ impl<'a> Builder<'a> {
         }
         let pending: Vec<LocalId> = self.owned[mark..].iter().rev().copied().collect();
         for local in pending {
-            self.push(StmtKind::Drop { place: Place::local(local), flag: None });
+            if self.types.needs_drop(self.locals[local.0 as usize].ty) {
+                self.push(StmtKind::Drop { place: Place::local(local), flag: None, scope_end: true });
+            } else {
+                // [DRP-7] — even a scalar's storage ends with its owner.
+                // A later destructor must not read a reference into it.
+                self.push(StmtKind::StorageDead(local));
+            }
         }
     }
 
-    /// Record a local as this scope's to drop, if its type owns anything.
+    /// Record every local's scope end, including storage with no drop glue.
     fn owns(&mut self, local: LocalId) {
-        if self.types.needs_drop(self.locals[local.0 as usize].ty) {
-            self.owned.push(local);
-        }
+        self.owned.push(local);
     }
 
     /// Lower every `defer` block registered at or after `mark`, in reverse.
@@ -811,8 +826,10 @@ impl<'a> Builder<'a> {
     ) {
         let counter = self.local_map[local.0 as usize];
         let ty = self.function.local(local).ty;
+        let counter_mark = self.owned.len();
 
         self.push(StmtKind::StorageLive(counter));
+        self.owns(counter);
         self.lower_into(Place::local(counter), start);
 
         // The end is read once, so a loop cannot be changed under itself by
@@ -872,6 +889,11 @@ impl<'a> Builder<'a> {
         self.goto_if_open(exit_bb);
 
         self.current = exit_bb;
+        // The counter is shared by iterations, but its storage ends when
+        // the loop exits, including a break. Outer-loop exits and returns
+        // already discharge it through the ordinary scope stack.
+        self.emit_drops_from(counter_mark);
+        self.owned.truncate(counter_mark);
     }
 
     /// Terminate the current block with a jump, unless it already ended.
@@ -919,7 +941,7 @@ impl<'a> Builder<'a> {
         let temp = self.temp(expr.ty, expr.span);
         self.lower_into(Place::local(temp), expr);
         self.at(expr.span);
-        self.push(StmtKind::Drop { place: place.clone(), flag: None });
+        self.push(StmtKind::Drop { place: place.clone(), flag: None, scope_end: false });
         let value = self.read(Place::local(temp), expr.ty);
         self.push(StmtKind::Assign { place, rvalue: Rvalue::Use(value) });
     }
@@ -1107,7 +1129,7 @@ impl<'a> Builder<'a> {
         // cell is never torn there at all.
         if old_into.is_none() {
             if let Some(old) = old {
-                self.push(StmtKind::Drop { place: old, flag: None });
+                self.push(StmtKind::Drop { place: old, flag: None, scope_end: false });
             }
         }
     }
@@ -1409,7 +1431,7 @@ impl<'a> Builder<'a> {
             place: field,
             rvalue: Rvalue::Use(self.read(Place::local(result), inner)),
         });
-        self.push(StmtKind::Drop { place: Place::local(replaced), flag: None });
+        self.push(StmtKind::Drop { place: Place::local(replaced), flag: None, scope_end: false });
     }
 
     /// `[CELL-5]`, `[CELL-7]`, `[CELL-9]` — `c.borrow()` / `c.borrow_mut()`.
@@ -1773,7 +1795,7 @@ impl<'a> Builder<'a> {
                 });
                 self.current = next;
             }
-            hir::ExprKind::Call { callee, arg_eval_order, args, latebound } => {
+            hir::ExprKind::Call { callee, arg_eval_order, default_arg_locals, args, latebound } => {
                 let write_back_mark = self.write_backs.len();
                 let function = self.program.function(*callee);
                 let symbol = function.symbol.clone();
@@ -1794,6 +1816,7 @@ impl<'a> Builder<'a> {
                     .unwrap_or_else(|| (0..args.len()).collect::<Vec<_>>());
                 let mut lowered_args: Vec<Option<Operand>> =
                     (0..args.len()).map(|_| None).collect();
+                let mut forwarded_mut_refs = Vec::new();
                 for index in eval_order {
                     let Some(a) = args.get(index) else { continue };
                     let operand = if matches!(modes.get(index), Some(hir::Mode::Mut)) {
@@ -1808,9 +1831,49 @@ impl<'a> Builder<'a> {
                             _ => self.lower_operand_borrowed(a),
                         }
                     };
-                    lowered_args[index] = Some(operand);
+                    if let Some(binding) = default_arg_locals.as_ref().and_then(|locals| locals.get(index)) {
+                        let local = self.local_map[binding.0 as usize];
+                        let ty = self.locals[local.0 as usize].ty;
+                        // Only a compiler-created `ref mut` temporary may
+                        // retain its two-phase reservation through this
+                        // forwarding slot. A user reference is an ordinary
+                        // active loan and receives no such metadata.
+                        if matches!(&a.kind, hir::ExprKind::Ref { mutable: true, .. })
+                            && let Operand::Copy(source) = &operand
+                            && source.projection.is_empty()
+                        {
+                            forwarded_mut_refs.push((source.local, local));
+                        }
+                        self.push(StmtKind::StorageLive(local));
+                        self.push(StmtKind::Assign {
+                            place: Place::local(local),
+                            rvalue: Rvalue::Use(operand),
+                        });
+                        // The bound argument remains alive while later defaults
+                        // read it and through the call, then ends with this
+                        // expression's statement as an ordinary temporary.
+                        if self.types.needs_drop(ty) {
+                            self.statement_temps.push(local);
+                        } else if is_plain_data(self.types, ty) {
+                            self.plain_temps.push(local);
+                        }
+                        lowered_args[index] = Some(if modes[index] == hir::Mode::Owned {
+                            self.read(Place::local(local), ty)
+                        } else {
+                            Operand::Copy(Place::local(local))
+                        });
+                    } else {
+                        lowered_args[index] = Some(operand);
+                    }
                 }
                 let args: Vec<Operand> = lowered_args.into_iter().flatten().collect();
+                // Default expressions carry declaration spans while they are
+                // lowered. The activation of a reserved mutable argument is
+                // the caller's call, so its access/call diagnostic belongs
+                // at this expression's span.
+                if default_arg_locals.is_some() {
+                    self.at(expr.span);
+                }
                 for place in &class_accesses {
                     self.push(StmtKind::BeginAccess { place: place.clone(), mutable: true });
                 }
@@ -1823,12 +1886,16 @@ impl<'a> Builder<'a> {
                     },
                     _ => FuncRef::Direct { symbol, latebound: *latebound },
                 };
+                let call_block = self.current;
                 self.terminate(Terminator::Call {
                     func,
                     args,
                     dest: place,
                     next,
                 });
+                self.call_argument_bindings.extend(forwarded_mut_refs.into_iter().map(
+                    |(source, binding)| CallArgumentBinding { source, binding, call_block },
+                ));
                 self.current = next;
                 for place in class_accesses.into_iter().rev() {
                     self.push(StmtKind::EndAccess { place, mutable: true });

@@ -2,12 +2,16 @@
 
 Copied from the owner's `lean-agent-workflow` skill (2026-09-25) so any session on this repository has it.
 **Owner update, 2026-09-27:** delegation is the default for separable implementation,
-tests, documentation, and routine fixes, as well as test runs/checks and failure triage.
-This supersedes the earlier solo-work, per-plan approval, and mandatory phase pauses
-below. The lead owns requirements, architecture and design, review, integration, and
-final verification. Keep jobs bounded, use the smallest suitable model, and keep one
-owner per file and run. The runner reports failures; the lead assigns fixes by complexity.
-The default is 2-3 concurrent agents, without asking again for routine splits.
+tests, documentation, routine fixes, test runs/checks, and failure triage. This
+supersedes the earlier solo-work, per-plan approval, and mandatory phase pauses below.
+Root uses Astra for architecture, ODRs, review, and subagent guidance. Choose Sol or
+Luna dynamically by task complexity: Sol for substantive compiler behavior and deeper
+debugging; Luna for bounded docs, probes, routine runs, and small, well-specified
+mechanical code changes. Reassess and escalate when task complexity changes. The lead
+owns requirements, architecture/design, review, integration, and final
+verification. Keep jobs bounded and one owner per file and run. The runner reports
+failures; the lead assigns fixes by complexity. Default to 2–3 concurrent agents without
+asking again for routine splits.
 
 # Lean agent workflow
 
@@ -32,9 +36,10 @@ tokens for 262 values classified and 53 re-checked). Follow them for every multi
    - Effort: the lowest level that does the job well - low / medium for small mechanical reads,
      high for normal files, xhigh ("extra") for large or subtle ones. Unless the owner sets a cap,
      never go past what the job needs; state each agent's effort in the plan.
-   - Model: use the harness's available names. Luna suits bounded mapping and
-     mechanical work; Sol suits implementation within a defined design; Astra
-     suits difficult ODRs and architecture. Escalate when evidence warrants it.
+   - Model: use the harness's available names and match current task complexity. Luna
+     suits bounded mapping, probes, documentation, and routine checks; Sol suits compiler
+     implementation and deeper debugging; Astra owns difficult architecture, ODRs,
+     review, and delegation guidance. Reassess and escalate as work changes.
 
 4. **Keep concurrency at 2-3.** When the agent count is high, do not run many at once. Put a
    limiter in the script (a small worker pool; the harness default is far higher).

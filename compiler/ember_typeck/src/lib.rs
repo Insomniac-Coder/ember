@@ -586,6 +586,8 @@ struct GenericMethod {
     /// The parameters after `self`. `self` itself is not here: its type is
     /// the instantiation, which does not exist until one is built.
     params: Vec<(Symbol, Ty, Mode, Span)>,
+    /// Source defaults survive recipe registration on each concrete owner.
+    defaults: Vec<(Symbol, ast::Expr)>,
     ret: Ty,
     /// Type parameters declared by the method itself. Their `TyKind::Param`
     /// indices follow the owning generic type's parameters while this recipe
@@ -3219,6 +3221,7 @@ impl<'a> Checker<'a> {
                     has_body: true,
                     receiver,
                     params: signature.params,
+                    defaults: Self::declared_defaults(fn_decl),
                     ret: signature.ret,
                     generics: signature.generics,
                     borrows: signature.borrows,
@@ -3297,6 +3300,7 @@ impl<'a> Checker<'a> {
                     has_body: true,
                     receiver,
                     params: signature.params,
+                    defaults: Self::declared_defaults(fn_decl),
                     ret: signature.ret,
                     generics: signature.generics,
                     borrows: signature.borrows,
@@ -3385,6 +3389,7 @@ impl<'a> Checker<'a> {
                     has_body: fn_decl.body.is_some(),
                     receiver,
                     params: signature.params,
+                    defaults: Self::declared_defaults(fn_decl),
                     ret: signature.ret,
                     generics: signature.generics,
                     borrows: signature.borrows,
@@ -3469,6 +3474,7 @@ impl<'a> Checker<'a> {
                     has_body: fn_decl.body.is_some(),
                     receiver,
                     params: signature.params,
+                    defaults: Self::declared_defaults(fn_decl),
                     ret: signature.ret,
                     generics: signature.generics,
                     borrows: signature.borrows,
@@ -4416,6 +4422,9 @@ impl<'a> Checker<'a> {
             }
             None => self.register_associated(ty, method.name, signature, interface, method.span),
         }?;
+        if !method.defaults.is_empty() {
+            self.param_defaults.insert(def, (method.source.0, method.defaults.clone()));
+        }
         if base > 0 {
             self.generic_prefix.insert(def, prefix);
         }
@@ -12285,6 +12294,7 @@ impl<'a> Checker<'a> {
                 kind: ExprKind::Call {
                     callee: clone,
                     arg_eval_order: None,
+                    default_arg_locals: None,
                     args: vec![self.clone_argument(value)],
                     latebound: false,
                 },
@@ -19222,7 +19232,7 @@ impl<'a> Checker<'a> {
             let rhs = self.coerce(rhs, param);
             args.push(self.pass_argument(rhs, param, mode));
         }
-        Ok(Expr { ty: ret, kind: ExprKind::Call { callee: declaration, arg_eval_order: None, args, latebound: false }, span })
+        Ok(Expr { ty: ret, kind: ExprKind::Call { callee: declaration, arg_eval_order: None, default_arg_locals: None, args, latebound: false }, span })
     }
 
     /// `[STD-20]` (ODR-039) — the integer methods, built into every integer
@@ -20217,6 +20227,7 @@ impl<'a> Checker<'a> {
                     kind: ExprKind::Call {
                         callee: def,
                         arg_eval_order: None,
+                        default_arg_locals: None,
                         args: vec![self.pass_receiver_to(receiver, receiver_mode, def, iter.span)],
                         latebound: false,
                     },
@@ -23244,12 +23255,14 @@ impl<'a> Checker<'a> {
         }
         let params = self.signatures[def.0 as usize].params.clone();
         let slots = self.call_argument_slots(name, args, &params);
-        let (checked, slots) = self.check_call_with_defaults(def, name, args, &params, &slots, span);
+        let (checked, slots, default_arg_locals) =
+            self.check_call_with_defaults(def, name, args, &params, &slots, span, None, None);
         Expr {
             ty: ret,
             kind: ExprKind::Call {
                 callee: def,
                 arg_eval_order: Self::call_eval_order(&slots),
+                default_arg_locals,
                 args: checked,
                 latebound: false,
             },
@@ -23460,7 +23473,7 @@ impl<'a> Checker<'a> {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
 
-        if args.len() != declared.len() {
+        if !self.arity_fits(def, args.len(), declared.len()) {
             self.error(
                 codes::E2020,
                 span,
@@ -23482,7 +23495,7 @@ impl<'a> Checker<'a> {
                 solved[slot] = Some(*ty);
             }
         }
-        let mut checked_args: Vec<Option<Expr>> = (0..args.len()).map(|_| None).collect();
+        let mut checked_args: Vec<Option<Expr>> = (0..declared.len()).map(|_| None).collect();
         // Solve non-lambda arguments first. Type inference is not evaluation,
         // so this does not change source order; it lets a later ordinary
         // argument determine `T` before an earlier `fn(T) -> T` lambda needs
@@ -23611,11 +23624,10 @@ impl<'a> Checker<'a> {
             }
             checked_args[index] = Some(value);
         }
-        let checked_args = checked_args.into_iter().flatten().collect::<Vec<_>>();
         // One error per cascade ([DIA-14]): an argument that already failed
         // would be checked again below and would instantiate a body around
         // the hole.
-        if checked_args.iter().any(|arg| arg.ty == self.common.error) {
+        if checked_args.iter().flatten().any(|arg| arg.ty == self.common.error) {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
 
@@ -23683,6 +23695,7 @@ impl<'a> Checker<'a> {
         // provenance contract than the callable type alone can express.
         let mut callable_values = vec![None; generics.len()];
         for ((_, param_ty, _, _), value) in declared.iter().zip(&checked_args) {
+            let Some(value) = value else { continue };
             let TyKind::Param { index, .. } = *self.types.kind(*param_ty) else { continue };
             if generics
                 .get(index as usize)
@@ -23705,7 +23718,7 @@ impl<'a> Checker<'a> {
             .collect();
         // `hir::Expr` is not `Clone` — a checked argument is moved out of here
         // rather than copied.
-        let mut reusable: Vec<Option<Expr>> = checked_args.into_iter().map(Some).collect();
+        let mut reusable = checked_args;
         let mut checked = Vec::new();
         let mut arg_for_param = vec![None; concrete.len()];
         for (arg_index, slot) in slots.iter().copied().enumerate() {
@@ -23734,12 +23747,17 @@ impl<'a> Checker<'a> {
                 None => checked.push(self.check_argument_by(&arg.value, param_ty, mode, by_address)),
             }
         }
+        let concrete_params = declared.iter().map(|&(name, ty, mode, param_span)|
+            (name, self.substitute_ty(ty, &substitution), mode, param_span)).collect::<Vec<_>>();
+        let (checked, slots, default_arg_locals) = self.fill_default_arguments(
+            instance, name, checked, &concrete_params, &slots, span, None, None);
         let ret = self.substitute_ty(ret, &substitution);
         Expr {
             ty: ret,
             kind: ExprKind::Call {
                 callee: instance,
                 arg_eval_order: Self::call_eval_order(&slots),
+                default_arg_locals,
                 args: checked,
                 latebound: false,
             },
@@ -23788,7 +23806,7 @@ impl<'a> Checker<'a> {
             );
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        if args.len() != declared.len() {
+        if !self.arity_fits(def, args.len(), declared.len()) {
             self.error(
                 codes::E2020,
                 span,
@@ -23809,7 +23827,7 @@ impl<'a> Checker<'a> {
         for (slot, ty) in explicit.iter().enumerate() {
             solved[base + slot] = Some(*ty);
         }
-        let mut checked_args: Vec<Option<Expr>> = (0..args.len()).map(|_| None).collect();
+        let mut checked_args: Vec<Option<Expr>> = (0..declared.len()).map(|_| None).collect();
         // `[TYP-23]` — as for a generic function, an untyped literal waits
         // for the typed arguments.
         let mut deferred_literals = Vec::new();
@@ -23911,8 +23929,6 @@ impl<'a> Checker<'a> {
             }
             checked_args[index] = Some(value);
         }
-        let checked_args = checked_args.into_iter().flatten().collect::<Vec<_>>();
-
         let mut substitution = Vec::new();
         for (index, param) in generics.iter().enumerate() {
             match solved[index] {
@@ -23954,11 +23970,6 @@ impl<'a> Checker<'a> {
             &slots,
         );
 
-        let arg_eval_order = if receiver.is_some() {
-            Self::call_eval_order_with_receiver(&slots)
-        } else {
-            Self::call_eval_order(&slots)
-        };
         let instance = if instantiate {
             self.instantiate_method(def, &substitution, name, span)
         } else {
@@ -23971,8 +23982,9 @@ impl<'a> Checker<'a> {
             .iter()
             .map(|&(_, ty, mode, _)| (self.substitute_ty(ty, &substitution), mode))
             .collect::<Vec<_>>();
-        let mut reusable: Vec<Option<Expr>> = checked_args.into_iter().map(Some).collect();
+        let mut reusable = checked_args;
         let mut checked = Vec::new();
+        let has_receiver = receiver.is_some();
         if let Some((receiver, receiver_mode, receiver_span)) = receiver {
             checked.push(self.pass_receiver_to(receiver, receiver_mode, def, receiver_span));
         }
@@ -23996,12 +24008,29 @@ impl<'a> Checker<'a> {
                 None => checked.push(self.check_argument_by(&arg.value, param_ty, mode, by_address)),
             }
         }
+        let receiver_value = has_receiver.then(|| checked.remove(0));
+        let receiver_binding_ty = receiver_value.as_ref().map(|value| value.ty);
+        let concrete_params = declared.iter().map(|&(name, ty, mode, param_span)|
+            (name, self.substitute_ty(ty, &substitution), mode, param_span)).collect::<Vec<_>>();
+        let owner = signature_has_receiver.then(|| self.signatures[instance.0 as usize].params[0].1);
+        let (values, slots, default_arg_locals) = self.fill_default_arguments(
+            instance, name, checked,
+            &concrete_params, &slots, span, receiver_binding_ty, owner);
+        let mut checked = Vec::new();
+        if let Some(receiver) = receiver_value { checked.push(receiver); }
+        checked.extend(values);
+        let arg_eval_order = if receiver_binding_ty.is_some() {
+            Self::call_eval_order_with_receiver(&slots)
+        } else {
+            Self::call_eval_order(&slots)
+        };
         let ret = self.substitute_ty(ret, &substitution);
         Expr {
             ty: ret,
             kind: ExprKind::Call {
                 callee: instance,
                 arg_eval_order,
+                default_arg_locals,
                 args: checked,
                 latebound: false,
             },
@@ -24020,13 +24049,13 @@ impl<'a> Checker<'a> {
         args: &[ast::Arg],
         declared: &[(Ty, Mode)],
         generics: &[GenericParam],
-        checked_args: &[Expr],
+        checked_args: &[Option<Expr>],
         slots: &[Option<usize>],
     ) {
         for (arg_index, arg) in args.iter().enumerate() {
             let Some(param_index) = slots[arg_index] else { continue };
             let Some(&(param_ty, _)) = declared.get(param_index) else { continue };
-            let Some(value) = checked_args.get(param_index) else { continue };
+            let Some(Some(value)) = checked_args.get(param_index) else { continue };
             let TyKind::Param { index, .. } = *self.types.kind(param_ty) else {
                 continue;
             };
@@ -24103,6 +24132,7 @@ impl<'a> Checker<'a> {
             kind: ExprKind::Call {
                 callee: def,
                 arg_eval_order: None,
+                default_arg_locals: None,
                 args: call_args,
                 latebound,
             },
@@ -25278,12 +25308,14 @@ impl<'a> Checker<'a> {
         }
         let params = self.signatures[def.0 as usize].params.clone();
         let slots = self.call_argument_slots(qualified, args, &params);
-        let (checked, slots) = self.check_call_with_defaults(def, qualified, args, &params, &slots, span);
+        let (checked, slots, default_arg_locals) =
+            self.check_call_with_defaults(def, qualified, args, &params, &slots, span, None, None);
         Expr {
             ty: ret,
             kind: ExprKind::Call {
                 callee: def,
                 arg_eval_order: Self::call_eval_order(&slots),
+                default_arg_locals,
                 args: checked,
                 latebound: false,
             },
@@ -25486,12 +25518,14 @@ impl<'a> Checker<'a> {
             })
             .collect::<Vec<_>>();
         let slots = self.call_argument_slots(name.name, args, &params);
-        let (checked, slots) = self.check_call_with_defaults(def, name.name, args, &params, &slots, span);
+        let (checked, slots, default_arg_locals) = self.check_call_with_defaults(
+            def, name.name, args, &params, &slots, span, None, Some(owner));
         Expr {
             ty: ret,
             kind: ExprKind::Call {
                 callee: def,
                 arg_eval_order: Self::call_eval_order(&slots),
+                default_arg_locals,
                 args: checked,
                 latebound: false,
             },
@@ -25601,12 +25635,14 @@ impl<'a> Checker<'a> {
             })
             .collect::<Vec<_>>();
         let slots = self.call_argument_slots(name.name, args, &params);
-        let (checked, slots) = self.check_call_with_defaults(def, name.name, args, &params, &slots, span);
+        let (checked, slots, default_arg_locals) = self.check_call_with_defaults(
+            def, name.name, args, &params, &slots, span, None, Some(owner));
         Expr {
             ty: ret,
             kind: ExprKind::Call {
                 callee: def,
                 arg_eval_order: Self::call_eval_order(&slots),
+                default_arg_locals,
                 args: checked,
                 latebound: false,
             },
@@ -27462,13 +27498,16 @@ impl<'a> Checker<'a> {
         let mut checked = vec![checked_receiver];
         let params = self.signatures[def.0 as usize].params[1..].to_vec();
         let slots = self.call_argument_slots(name.name, args, &params);
-        let (values, slots) = self.check_call_with_defaults(def, name.name, args, &params, &slots, span);
+        let owner = self.signatures[def.0 as usize].params[0].1;
+        let (values, slots, default_arg_locals) = self.check_call_with_defaults(
+            def, name.name, args, &params, &slots, span, Some(checked[0].ty), Some(owner));
         checked.extend(values);
         Expr {
             ty: ret,
             kind: ExprKind::Call {
                 callee: def,
                 arg_eval_order: Self::call_eval_order_with_receiver(&slots),
+                default_arg_locals,
                 args: checked,
                 latebound: false,
             },
@@ -27607,6 +27646,7 @@ impl<'a> Checker<'a> {
             kind: ExprKind::Call {
                 callee: def,
                 arg_eval_order: Self::call_eval_order_with_receiver(&slots),
+                default_arg_locals: None,
                 args: checked,
                 latebound: false,
             },
@@ -27825,6 +27865,7 @@ impl<'a> Checker<'a> {
             kind: ExprKind::Call {
                 callee: def,
                 arg_eval_order: None,
+                default_arg_locals: None,
                 args: checked,
                 latebound,
             },
@@ -30368,14 +30409,14 @@ impl<'a> Checker<'a> {
             self.pending_methods.push(job);
         }
         let Expr { span, kind, .. } = call;
-        let ExprKind::Call { mut args, arg_eval_order, latebound, .. } = kind else { unreachable!("matched above") };
+        let ExprKind::Call { mut args, arg_eval_order, default_arg_locals, latebound, .. } = kind else { unreachable!("matched above") };
         let receiver = args.remove(0);
         let receiver_span = receiver.span;
         let ExprKind::Ref { place, .. } = receiver.kind else { unreachable!("matched above") };
         let receiver = self.pass_receiver(*place, Mode::Mut, receiver_span);
         args.insert(0, receiver);
         let ty = self.signatures[callee_mut.0 as usize].ret;
-        Expr { ty, kind: ExprKind::Call { callee: callee_mut, args, arg_eval_order, latebound }, span }
+        Expr { ty, kind: ExprKind::Call { callee: callee_mut, args, arg_eval_order, default_arg_locals, latebound }, span }
     }
 
     /// `[TYP-17]` — `c[i]` written, on a type parameter: its bound's
@@ -30394,7 +30435,7 @@ impl<'a> Checker<'a> {
         });
         let Some((bound, declaration, receiver_mode)) = found else { return call };
         let Expr { span, kind, .. } = call;
-        let ExprKind::Call { mut args, arg_eval_order, latebound, .. } = kind else { unreachable!("matched by the caller") };
+        let ExprKind::Call { mut args, arg_eval_order, default_arg_locals, latebound, .. } = kind else { unreachable!("matched by the caller") };
         let receiver = args.remove(0);
         let receiver_span = receiver.span;
         let ExprKind::Ref { place, .. } = receiver.kind else { unreachable!("matched by the caller") };
@@ -30407,7 +30448,7 @@ impl<'a> Checker<'a> {
         let saved_instance = self.assoc_instance.replace(bound);
         let ret = self.resolve_assoc(ret, concrete);
         self.assoc_instance = saved_instance;
-        Expr { ty: ret, kind: ExprKind::Call { callee: declaration, args, arg_eval_order, latebound }, span }
+        Expr { ty: ret, kind: ExprKind::Call { callee: declaration, args, arg_eval_order, default_arg_locals, latebound }, span }
     }
 
     /// `[EXP-2]` — a place evaluated once: each index that computes
@@ -32647,17 +32688,21 @@ impl<'a> Checker<'a> {
 
     /// `[FN-5]` — remember a declaration's parameter defaults.
     fn record_defaults(&mut self, def: DefId, decl: &ast::FnDecl) {
-        let defaults: Vec<(Symbol, ast::Expr)> = decl
+        let defaults = Self::declared_defaults(decl);
+        if !defaults.is_empty() {
+            self.param_defaults.insert(def, (self.current_module, defaults));
+        }
+    }
+
+    fn declared_defaults(decl: &ast::FnDecl) -> Vec<(Symbol, ast::Expr)> {
+        decl
             .params
             .iter()
             .filter_map(|p| match (&p.kind, &p.default) {
                 (ast::ParamKind::Named { name, .. }, Some(default)) => Some((name.name, default.clone())),
                 _ => None,
             })
-            .collect();
-        if !defaults.is_empty() && self.signatures[def.0 as usize].generics.is_empty() {
-            self.param_defaults.insert(def, (self.current_module, defaults));
-        }
+            .collect()
     }
 
     /// `[FN-5]` — whether `given` arguments can call `def`: no more than it
@@ -32668,40 +32713,29 @@ impl<'a> Checker<'a> {
     }
 
     /// `[FN-5]` — check each default once, where it is declared, as an
-    /// expression of its parameter's type. The names it may use are the
-    /// module's, not the body's; one that reads an earlier parameter is not
-    /// built yet.
-    fn check_declared_defaults(&mut self, def: DefId, decl: &ast::FnDecl, params: &[(Symbol, Ty, Mode, Span)]) {
-        let recorded = self.param_defaults.contains_key(&def);
-        let mut earlier = vec![Symbol::intern("self")];
+    /// expression of its parameter's type. Only preceding parameters and
+    /// declaration-module names are in scope, never a caller's locals.
+    fn check_declared_defaults(&mut self, _def: DefId, decl: &ast::FnDecl, params: &[(Symbol, Ty, Mode, Span)]) {
+        let mut earlier = HashMap::new();
         for param in &decl.params {
-            let ast::ParamKind::Named { name, .. } = &param.kind else { continue };
+            let name = match &param.kind {
+                ast::ParamKind::Named { name, .. } => name.name,
+                ast::ParamKind::Receiver { .. } => Symbol::intern("self"),
+            };
             if let Some(default) = &param.default
-                && let Some(&(_, ty, _, _)) = params.iter().find(|(n, ..)| *n == name.name)
+                && let Some(&(_, ty, _, _)) = params.iter().find(|(n, ..)| *n == name)
                 // A generic body is checked once per instance; report once.
                 && self.reported_defaults.insert(default.span)
             {
-                if !recorded {
-                    self.error(
-                        codes::E0900,
-                        default.span,
-                        "a default on a generic function's parameter is not implemented yet",
-                    );
-                } else if may_name(default, &earlier) {
-                    self.error(
-                        codes::E0900,
-                        default.span,
-                        format!("a default that reads an earlier parameter is not implemented yet (`{}`)", name.name),
-                    );
-                } else {
-                    let scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
-                    let locals = self.locals.len();
-                    self.check_expr(default, ty);
-                    self.locals.truncate(locals);
-                    self.scopes = scopes;
-                }
+                let scopes = std::mem::replace(&mut self.scopes, vec![earlier.clone()]);
+                let locals = self.locals.len();
+                self.check_expr(default, ty);
+                self.locals.truncate(locals);
+                self.scopes = scopes;
             }
-            earlier.push(name.name);
+            if let Some(local) = self.lookup(name) {
+                earlier.insert(name, local);
+            }
         }
     }
 
@@ -32718,20 +32752,59 @@ impl<'a> Checker<'a> {
         params: &[(Symbol, Ty, Mode, Span)],
         slots: &[Option<usize>],
         span: Span,
-    ) -> (Vec<Expr>, Vec<Option<usize>>) {
+        receiver_ty: Option<Ty>,
+        owner: Option<Ty>,
+    ) -> (Vec<Expr>, Vec<Option<usize>>, Option<Vec<LocalId>>) {
         self.check_direct_call_safety(def, span);
         let written = self.check_bound_call_arguments(args, params, slots, Some(def));
+        self.fill_default_arguments(def, callee, written, params, slots, span, receiver_ty, owner)
+    }
+
+    /// Materialise one caller slot per parameter when a default is omitted.
+    /// Its HIR local has the callee's *internal* parameter type: a borrowed
+    /// record keeps its original address, and a `mut` parameter keeps its
+    /// mutable reference. MIR binds the slots in source order before it
+    /// evaluates defaults, so no written expression is repeated.
+    fn fill_default_arguments(
+        &mut self,
+        def: DefId,
+        callee: Symbol,
+        written: Vec<Expr>,
+        params: &[(Symbol, Ty, Mode, Span)],
+        slots: &[Option<usize>],
+        span: Span,
+        receiver_ty: Option<Ty>,
+        owner: Option<Ty>,
+    ) -> (Vec<Expr>, Vec<Option<usize>>, Option<Vec<LocalId>>) {
         let mut given = vec![false; params.len()];
         for slot in slots.iter().flatten() {
             given[*slot] = true;
         }
-        if given.iter().all(|g| *g) || args.len() > params.len() {
-            return (written, slots.to_vec());
+        if given.iter().all(|g| *g) || slots.len() > params.len() {
+            return (written, slots.to_vec(), None);
         }
         let mut written = written.into_iter();
         let mut checked = Vec::with_capacity(params.len());
         let mut order = slots.to_vec();
-        let defaults = self.param_defaults.get(&def).cloned();
+        let source = self.generic_of.get(&def).copied().unwrap_or(def);
+        let defaults = self.param_defaults.get(&source).cloned();
+        let mut bindings = Vec::with_capacity(params.len() + usize::from(receiver_ty.is_some()));
+        if let Some(receiver_ty) = receiver_ty {
+            bindings.push(self.declare(None, receiver_ty, span));
+        }
+        for &(name, ty, mode, _) in params {
+            let local_ty = match mode {
+                Mode::Borrow => self.borrow_param_ty_of(def, name, ty),
+                Mode::Mut => self.mut_param_ty(ty),
+                Mode::Owned => ty,
+            };
+            bindings.push(self.declare(None, local_ty, span));
+        }
+        let offset = usize::from(receiver_ty.is_some());
+        let type_bindings = self.instances.iter().find_map(|(key, &instance)| {
+            (instance == def).then(|| self.signatures[source.0 as usize].generics.iter()
+                .zip(&key.args).map(|(param, &ty)| (param.name, ty)).collect::<HashMap<_, _>>())
+        });
         for (index, &(name, ty, mode, _)) in params.iter().enumerate() {
             if given[index] {
                 checked.push(written.next().expect("one checked argument per given parameter"));
@@ -32749,30 +32822,30 @@ impl<'a> Checker<'a> {
                 checked.push(Expr { ty, kind: ExprKind::Error, span });
                 continue;
             };
-            let earlier: Vec<Symbol> =
-                std::iter::once(Symbol::intern("self")).chain(params[..index].iter().map(|p| p.0)).collect();
-            let value = if may_name(&default, &earlier) {
+            let mut scope = HashMap::new();
+            if offset != 0 { scope.insert(Symbol::intern("self"), bindings[0]); }
+            for earlier in 0..index {
+                scope.insert(params[earlier].0, bindings[offset + earlier]);
+            }
+            let mark = self.sink.mark();
+            let scopes = std::mem::replace(&mut self.scopes, vec![scope]);
+            let caller_module = std::mem::replace(&mut self.current_module, module);
+            let caller_types = type_bindings.as_ref().map(|types|
+                std::mem::replace(&mut self.type_params, types.clone()));
+            let caller_owner = owner.map(|owner| self.self_ty.replace(owner));
+            let by_address = self.param_by_address(def, name, ty);
+            let value = self.check_argument_by(&default, ty, mode, by_address);
+            if let Some(previous) = caller_owner { self.self_ty = previous; }
+            if let Some(previous) = caller_types { self.type_params = previous; }
+            self.current_module = caller_module;
+            self.scopes = scopes;
+            let value = if self.sink.rollback(mark) {
                 Expr { ty, kind: ExprKind::Error, span }
-            } else {
-                let mark = self.sink.mark();
-                let scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
-                let caller_module = std::mem::replace(&mut self.current_module, module);
-                let value = self.check_expr(&default, ty);
-                self.current_module = caller_module;
-                self.scopes = scopes;
-                if self.sink.rollback(mark) {
-                    Expr { ty, kind: ExprKind::Error, span }
-                } else if mode == Mode::Borrow && self.param_by_address(def, name, ty) {
-                    // Passed as any argument would be (`[BRW-8]`, D-284).
-                    self.borrow_argument(value, ty)
-                } else {
-                    value
-                }
-            };
+            } else { value };
             checked.push(value);
             order.push(Some(index));
         }
-        (checked, order)
+        (checked, order, Some(bindings))
     }
 
     /// Return the parameter slots in source evaluation order. Positional
@@ -33451,7 +33524,7 @@ impl<'a> Checker<'a> {
         }
         let ret = self.signatures[def.0 as usize].ret;
         let receiver = self.pass_receiver_to(operand, entry.receiver, def, span);
-        Expr { ty: ret, kind: ExprKind::Call { callee: def, arg_eval_order: None, args: vec![receiver], latebound: false }, span }
+        Expr { ty: ret, kind: ExprKind::Call { callee: def, arg_eval_order: None, default_arg_locals: None, args: vec![receiver], latebound: false }, span }
     }
 
     /// `[TYP-21]` — the interface call an operator desugars to, once the
@@ -33487,6 +33560,7 @@ impl<'a> Checker<'a> {
             kind: ExprKind::Call {
                 callee: def,
                 arg_eval_order: None,
+                default_arg_locals: None,
                 args: vec![receiver, rhs],
                 latebound: false,
             },
@@ -36348,31 +36422,4 @@ struct CaptureWatch {
     /// shared borrow. This is carried across both body-check passes so capture
     /// discovery and the final body use the same representation.
     captures_by_move: bool,
-}
-
-/// `[FN-5]` — whether `expr` may name one of `names`. Anything this does not
-/// look inside counts as naming one, so the answer errs towards yes.
-fn may_name(expr: &ast::Expr, names: &[Symbol]) -> bool {
-    match &expr.kind {
-        ast::ExprKind::Lit(_) => false,
-        ast::ExprKind::Path { segments } => names.contains(&segments[0].name),
-        ast::ExprKind::SelfExpr => true,
-        ast::ExprKind::Paren(inner) | ast::ExprKind::Unary { operand: inner, .. } => may_name(inner, names),
-        ast::ExprKind::Field { base, .. } | ast::ExprKind::TupleField { base, .. } => may_name(base, names),
-        ast::ExprKind::Cast { expr, .. } => may_name(expr, names),
-        ast::ExprKind::Binary { lhs, rhs, .. } | ast::ExprKind::Logical { lhs, rhs, .. } => {
-            may_name(lhs, names) || may_name(rhs, names)
-        }
-        ast::ExprKind::Tuple(items) | ast::ExprKind::ArrayLit(items) | ast::ExprKind::SetLit(items) => {
-            items.iter().any(|e| may_name(e, names))
-        }
-        ast::ExprKind::MapLit(entries) => entries.iter().any(|(k, v)| may_name(k, names) || may_name(v, names)),
-        ast::ExprKind::Call { callee, args } => {
-            may_name(callee, names) || args.iter().any(|a| may_name(&a.value, names))
-        }
-        ast::ExprKind::MethodCall { recv, args, .. } => {
-            may_name(recv, names) || args.iter().any(|a| may_name(&a.value, names))
-        }
-        _ => true,
-    }
 }

@@ -296,6 +296,7 @@ pub fn elaborate(body: &mut Body, types: &TypeTable, sink: &mut Sink) -> usize {
                     rewritten.push(stmt);
                 }
                 DropAction::Expand(parts) => {
+                    let scope_end = matches!(stmt.kind, StmtKind::Drop { scope_end: true, .. });
                     for (place, state) in parts {
                         if state.is_moved() || !state.may_be_live() {
                             continue;
@@ -305,7 +306,7 @@ pub fn elaborate(body: &mut Body, types: &TypeTable, sink: &mut Sink) -> usize {
                         } else {
                             flags.get(&place).copied()
                         };
-                        rewritten.push(Stmt::new(StmtKind::Drop { place, flag }, stmt.span));
+                        rewritten.push(Stmt::new(StmtKind::Drop { place, flag, scope_end }, stmt.span));
                     }
                 }
             }

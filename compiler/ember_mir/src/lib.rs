@@ -49,6 +49,16 @@ pub struct LocalDecl {
     pub span: Span,
 }
 
+/// One verified forwarding edge from a fresh mutable-reference call argument
+/// to its synthetic `[FN-5]` default-argument slot. `call_block` identifies
+/// the one call that activates the reservation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CallArgumentBinding {
+    pub source: LocalId,
+    pub binding: LocalId,
+    pub call_block: BasicBlockId,
+}
+
 pub use ember_hir::ExportThreadPolicy;
 
 #[derive(Debug)]
@@ -92,6 +102,10 @@ pub struct Body {
     /// Only `Borrow` is listed: `Owned` takes ownership, and `Mut` arrives as
     /// `ref mut`, whose moves already carry a `Deref` projection.
     pub borrowed_params: Vec<LocalId>,
+    /// `[FN-5]` — compiler-created forwarding of a fresh mutable call
+    /// reservation into a default-argument slot. This grants no permission
+    /// to treat an ordinary user-written reference as a reservation.
+    pub call_argument_bindings: Vec<CallArgumentBinding>,
     /// `[CTL-2]` — iterator locals synthesized specifically for source `for`
     /// loops. HIR has already desugared those loops to ordinary control flow;
     /// retaining this semantic fact lets diagnostics distinguish E3020/B2
@@ -1071,6 +1085,10 @@ pub enum StmtKind {
     Drop {
         place: Place,
         flag: Option<LocalId>,
+        /// The owner's scope ends here, rather than its value being replaced.
+        /// Borrow diagnostics distinguish expired storage from a conflicting
+        /// overwrite; drop elaboration preserves this fact on projected drops.
+        scope_end: bool,
     },
     Nop,
 }
@@ -1465,7 +1483,7 @@ fn dump_stmt(stmt: &Stmt, types: &ember_types::TypeTable) -> String {
         ),
         StmtKind::StorageLive(l) => format!("StorageLive(_{})", l.0),
         StmtKind::StorageDead(l) => format!("StorageDead(_{})", l.0),
-        StmtKind::Drop { place, flag } => match flag {
+        StmtKind::Drop { place, flag, .. } => match flag {
             Some(flag) => format!("drop({}) if _{}", dump_place(place), flag.0),
             None => format!("drop({})", dump_place(place)),
         },

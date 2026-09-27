@@ -2222,6 +2222,67 @@ fn leak_check_reports_a_live_strong_object_cycle() {
     );
 }
 
+fn assert_reported_node_components(report: &str, expected_count: usize) {
+    let components = report.split("runtime ownership cycle:\n").skip(1).collect::<Vec<_>>();
+    assert_eq!(
+        components.len(),
+        expected_count,
+        "expected {expected_count} separate runtime SCC reports:\n{report}"
+    );
+    for component in components {
+        let objects = component
+            .lines()
+            .find(|line| line.starts_with("  objects:"))
+            .expect("component report includes its objects");
+        assert_eq!(objects.matches("Node@").count(), 3, "expected three objects in SCC:\n{component}");
+        assert!(component.contains("strong edges: 3"), "expected three internal strong edges:\n{component}");
+        assert_eq!(
+            component.lines().filter(|line| line.starts_with("    strong Node.next:")).count(),
+            3,
+            "expected each Node.next edge in the SCC:\n{component}"
+        );
+        assert!(component.contains("statically predicted: yes"), "expected static correlation:\n{component}");
+    }
+}
+
+#[test]
+fn leak_check_reports_a_three_object_strong_component() {
+    let root = workspace_root();
+    let out_dir = temporary_directory("three-node-cycle");
+    let out_dir = out_dir.to_string_lossy().into_owned();
+    let report = ember(
+        &[
+            "run",
+            "--leak-check",
+            &format!("tests/conformance/WK-8/accept_runtime_three_object_cycle.{SOURCE_EXT}"),
+            "--out-dir",
+            &out_dir,
+        ],
+        &root,
+    );
+    assert_eq!(report.exit, 0, "leak-check run failed:\n{}", report.stderr);
+    assert_reported_node_components(&report.stderr, 1);
+}
+
+#[test]
+fn leak_check_reports_two_independent_strong_components() {
+    let root = workspace_root();
+    let out_dir = temporary_directory("two-independent-node-cycles");
+    let out_dir = out_dir.to_string_lossy().into_owned();
+    let report = ember(
+        &[
+            "run",
+            "--leak-check",
+            &format!("tests/conformance/WK-8/accept_runtime_two_independent_cycles.{SOURCE_EXT}"),
+            "--out-dir",
+            &out_dir,
+        ],
+        &root,
+    );
+    assert_eq!(report.exit, 0, "leak-check run failed:\n{}", report.stderr);
+    assert_reported_node_components(&report.stderr, 2);
+}
+
 #[test]
 fn leak_check_reports_a_shared_payload_cycle_without_static_overclaim() {
     let root = workspace_root();

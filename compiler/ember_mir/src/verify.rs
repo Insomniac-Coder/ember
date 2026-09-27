@@ -13,10 +13,10 @@
 //! `[MIR-5]` retain/release only on handles) are added by the phases that
 //! introduce the constructs they govern.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::{
-    BasicBlockId, Body, Builtin, Const, FuncRef, LocalId, Operand, Place, Projection, Rvalue,
+    BasicBlockId, Body, Builtin, Const, FuncRef, LocalId, LocalKind, Operand, Place, Projection, Rvalue,
     StmtKind, Terminator,
 };
 use ember_types::{Ty, TyKind, TypeTable};
@@ -297,6 +297,95 @@ impl Verifier<'_> {
             }
         }
     }
+
+    /// `[FN-5]` — a reservation forwarding record is trusted by borrow
+    /// analysis, so its source must be one fresh mutable borrow and its
+    /// binding must be one direct copy used by the named call. Endpoints are
+    /// exclusive across records; this also rules out forwarding cycles.
+    fn call_argument_bindings(&mut self, body: &Body) {
+        let mut endpoints = BTreeSet::new();
+        for record in &body.call_argument_bindings {
+            let (Some(source), Some(binding), Some(block)) = (
+                body.locals.get(record.source.0 as usize),
+                body.locals.get(record.binding.0 as usize),
+                body.blocks.get(record.call_block.0 as usize),
+            ) else {
+                self.fail(format!(
+                    "call argument binding names invalid source _{}, binding _{}, or call bb{}",
+                    record.source.0, record.binding.0, record.call_block.0
+                ));
+                continue;
+            };
+            if record.source == record.binding
+                || !endpoints.insert(record.source)
+                || !endpoints.insert(record.binding)
+            {
+                self.fail(format!(
+                    "call argument binding from _{} to _{} repeats a local or forms a cycle",
+                    record.source.0, record.binding.0
+                ));
+                continue;
+            }
+            if source.kind != LocalKind::Temp
+                || binding.kind != LocalKind::User
+                || source.ty != binding.ty
+            {
+                self.fail(format!(
+                    "call argument binding from _{} to _{} must preserve the type of a fresh temporary",
+                    record.source.0, record.binding.0
+                ));
+            }
+            let mut source_writes = 0;
+            let mut binding_writes = 0;
+            let mut matching_source = 0;
+            let mut matching_forward = 0;
+            for block in &body.blocks {
+                for stmt in &block.stmts {
+                    if let StmtKind::Assign { place, rvalue } = &stmt.kind
+                        && place.projection.is_empty()
+                    {
+                        if place.local == record.source {
+                            source_writes += 1;
+                            if matches!(rvalue, Rvalue::Ref { mutable: true, .. }) {
+                                matching_source += 1;
+                            }
+                        }
+                        if place.local == record.binding {
+                            binding_writes += 1;
+                            if matches!(rvalue, Rvalue::Use(Operand::Copy(place))
+                                if place.projection.is_empty() && place.local == record.source)
+                            {
+                                matching_forward += 1;
+                            }
+                        }
+                    }
+                }
+                if let Terminator::Call { dest, .. } = &block.terminator {
+                    if dest.projection.is_empty() {
+                        source_writes += usize::from(dest.local == record.source);
+                        binding_writes += usize::from(dest.local == record.binding);
+                    }
+                }
+            }
+            if source_writes != 1 || matching_source != 1
+                || binding_writes != 1 || matching_forward != 1
+            {
+                self.fail(format!(
+                    "call argument binding from _{} to _{} lacks a unique mutable-reference producer and forwarding assignment",
+                    record.source.0, record.binding.0
+                ));
+            }
+            if !matches!(&block.terminator, Terminator::Call { args, .. }
+                if args.iter().filter(|arg| matches!(arg, Operand::Copy(place)
+                    if place.projection.is_empty() && place.local == record.binding)).count() == 1)
+            {
+                self.fail(format!(
+                    "call argument binding _{} does not feed exactly one argument of bb{}",
+                    record.binding.0, record.call_block.0
+                ));
+            }
+        }
+    }
 }
 
 /// Check one body. An empty result means it is well-formed.
@@ -370,7 +459,7 @@ pub fn verify(body: &Body) -> Vec<Violation> {
                     v.operand(rhs, &at);
                 }
                 StmtKind::StorageLive(l) | StmtKind::StorageDead(l) => v.local(*l, &at),
-                StmtKind::Drop { place, flag } => {
+                StmtKind::Drop { place, flag, .. } => {
                     v.place(place, &at);
                     if let Some(flag) = flag {
                         v.local(*flag, &at);
@@ -427,6 +516,7 @@ pub fn verify(body: &Body) -> Vec<Violation> {
     // produce duplicate diagnostics for malformed block references.
     v.access_intervals(body);
     v.hoisted_accesses(body);
+    v.call_argument_bindings(body);
 
     v.violations
 }
@@ -435,7 +525,7 @@ pub fn verify(body: &Body) -> Vec<Violation> {
 mod tests {
     use super::*;
     use crate::{
-        BasicBlock, HoistedAccess, HoistedAccessProof, LocalDecl, LocalKind, ParameterMode,
+        BasicBlock, CallArgumentBinding, HoistedAccess, HoistedAccessProof, LocalDecl, LocalKind, ParameterMode,
         Stmt,
     };
     use ember_span::Span;
@@ -467,6 +557,7 @@ mod tests {
             is_lambda: false,
             emit_if_used: false,
             borrowed_params: Vec::new(),
+            call_argument_bindings: Vec::new(),
             for_iterators: Vec::new(),
             callable_regions: None,
             closure_environment: None,
@@ -482,6 +573,63 @@ mod tests {
         }
     }
 
+    fn bound_call_body() -> Body {
+        let span = Span::new(ember_span::FileId(0), 0, 1);
+        let (mut types, common) = TypeTable::new();
+        let mutable_ref = types.intern(TyKind::Ref { inner: common.i32, mutable: true });
+        let mut body = body_with(Vec::new(), span);
+        body.locals.extend([
+            LocalDecl { ty: common.i32, kind: LocalKind::User, name: None, span },
+            LocalDecl { ty: mutable_ref, kind: LocalKind::Temp, name: None, span },
+            LocalDecl { ty: mutable_ref, kind: LocalKind::User, name: None, span },
+        ]);
+        body.blocks[0].stmts = vec![
+            Stmt::new(StmtKind::Assign {
+                place: Place::local(LocalId(2)),
+                rvalue: Rvalue::Ref { place: Place::local(LocalId(1)), mutable: true },
+            }, span),
+            Stmt::new(StmtKind::Assign {
+                place: Place::local(LocalId(3)),
+                rvalue: Rvalue::Use(Operand::Copy(Place::local(LocalId(2)))),
+            }, span),
+        ];
+        body.blocks[0].terminator = Terminator::Call {
+            func: FuncRef::Direct { symbol: ember_branding::mangled("called"), latebound: false },
+            args: vec![Operand::Copy(Place::local(LocalId(3)))],
+            dest: Place::local(LocalId(0)),
+            next: BasicBlockId(1),
+        };
+        body.blocks.push(BasicBlock {
+            stmts: Vec::new(),
+            terminator: Terminator::Return,
+            terminator_span: span,
+        });
+        body.call_argument_bindings.push(CallArgumentBinding {
+            source: LocalId(2), binding: LocalId(3), call_block: BasicBlockId(0),
+        });
+        body
+    }
+
+    #[test]
+    fn call_argument_binding_requires_one_fresh_ref_and_exact_call() {
+        let valid = bound_call_body();
+        assert!(verify(&valid).is_empty(), "valid binding: {:?}", verify(&valid));
+
+        let mut no_fresh_ref = bound_call_body();
+        let StmtKind::Assign { rvalue, .. } = &mut no_fresh_ref.blocks[0].stmts[0].kind else { unreachable!() };
+        *rvalue = Rvalue::Ref { place: Place::local(LocalId(1)), mutable: false };
+        assert!(verify(&no_fresh_ref).iter().any(|v| v.message.contains("unique mutable-reference producer")));
+
+        let mut wrong_call = bound_call_body();
+        let Terminator::Call { args, .. } = &mut wrong_call.blocks[0].terminator else { unreachable!() };
+        args[0] = Operand::Copy(Place::local(LocalId(2)));
+        assert!(verify(&wrong_call).iter().any(|v| v.message.contains("does not feed exactly one argument")));
+
+        let mut repeated = bound_call_body();
+        repeated.call_argument_bindings.push(repeated.call_argument_bindings[0]);
+        assert!(verify(&repeated).iter().any(|v| v.message.contains("repeats a local or forms a cycle")));
+    }
+
     /// `[CG-C-8]` — the check must actually fire. A verifier check nobody can
     /// make fail is a comment.
     #[test]
@@ -490,6 +638,7 @@ mod tests {
             StmtKind::Drop {
                 place: Place::local(LocalId(0)),
                 flag: None,
+                scope_end: true,
             },
             Span::DUMMY,
         );
@@ -1569,6 +1718,7 @@ mod view_invariant_tests {
             is_lambda: false,
             emit_if_used: false,
             borrowed_params: Vec::new(),
+            call_argument_bindings: Vec::new(),
             for_iterators: Vec::new(),
             callable_regions: None,
             closure_environment: None,
@@ -1729,6 +1879,7 @@ mod interface_upcast_invariant_tests {
             is_lambda: false,
             emit_if_used: false,
             borrowed_params: Vec::new(),
+            call_argument_bindings: Vec::new(),
             for_iterators: Vec::new(),
             callable_regions: None,
             closure_environment: None,

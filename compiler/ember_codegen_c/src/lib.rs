@@ -3880,7 +3880,7 @@ impl Emitter<'_> {
                 ));
             }
             // `[OWN-2]`, `[DRP-2]` — the value's life ends here.
-            StmtKind::Drop { place, flag } => {
+            StmtKind::Drop { place, flag, .. } => {
                 let ty = self.place_ty(place, body);
                 let mut lines = Vec::new();
                 self.drop_lines(&self.place_in(place, body), ty, &mut lines);
@@ -6883,7 +6883,7 @@ fn unread_locals(body: &Body) -> Vec<usize> {
                     read_operand(rhs, &mut read);
                 }
                 // A drop reads what it is dropping, and its flag.
-                StmtKind::Drop { place, flag } => {
+                StmtKind::Drop { place, flag, .. } => {
                     read_place(place, &mut read);
                     if let Some(flag) = flag {
                         read[flag.0 as usize] = true;
