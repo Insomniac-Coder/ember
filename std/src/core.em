@@ -165,12 +165,200 @@ pub interface Iterator:
     type Item
     fn next(mut self) -> Option[Item]
 
+    ## `[STD-19]` (ODR-089) — the adapters. Each takes this iterator and
+    ## gives a new one; nothing runs until the new one's `next` is called. A
+    ## bad count panics here, where the bug is, never partway through a loop.
+
+    ## At most `n` items.
+    fn take(owned self, n: int) -> Take[Self]:
+        if n < 0:
+            panic(f"take({n}): a count cannot be negative")
+        return Take(self, n)
+
+    ## All but the first `n` items.
+    fn skip(owned self, n: int) -> Skip[Self]:
+        if n < 0:
+            panic(f"skip({n}): a count cannot be negative")
+        return Skip(self, n)
+
+    ## The first item, then every `k`-th.
+    fn step_by(owned self, k: int) -> StepBy[Self]:
+        if k <= 0:
+            panic(f"step_by({k}): the step must be positive")
+        return StepBy(self, k - 1, false)
+
+    ## Each item with its number, counting from `start` (`[STD-26]`).
+    fn enumerate(owned self, start: int = 0) -> Enumerate[Self]:
+        return Enumerate(self, start)
+
+    ## Pairs of an item of each, until either runs out.
+    fn zip[J: Iterator](owned self, other: J) -> Zip[Self, J]:
+        return Zip(self, other)
+
+    ## `[STD-19]` — the consumers. Each takes this iterator and runs it.
+
+    ## How many items there are.
+    fn count(owned self) -> int:
+        n = 0
+        for _ in self:
+            n += 1
+        return n
+
+    ## The last item, if any.
+    fn last(owned self) -> Option[Item]:
+        found: Option[Item] = None
+        for x in self:
+            found = Some(x)
+        return found
+
+    ## The item at index `n`, if there are that many.
+    fn nth(owned self, n: int) -> Option[Item]:
+        if n < 0:
+            panic(f"nth({n}): an index cannot be negative")
+        at = 0
+        for x in self:
+            if at == n:
+                return Some(x)
+            at += 1
+        return None
+
+    ## `f(... f(f(init, a), b) ..., z)` over the items `a` to `z`.
+    fn fold[B](owned self, init: B, f: fn(B, Item) -> B) -> B:
+        acc = init
+        for x in self:
+            acc = f(acc, x)
+        return acc
+
+    ## Whether `pred` holds for some item; stops at the first.
+    fn any(owned self, pred: fn(Item) -> bool) -> bool:
+        for x in self:
+            if pred(x):
+                return true
+        return false
+
+    ## Whether `pred` holds for every item; stops at the first it does not.
+    fn all(owned self, pred: fn(Item) -> bool) -> bool:
+        for x in self:
+            if not pred(x):
+                return false
+        return true
+
+    ## The first item `pred` holds for.
+    fn find(owned self, pred: fn(Item) -> bool) -> Option[Item]:
+        for x in self:
+            if pred(x):
+                return Some(x)
+        return None
+
+    ## The index of the first item `pred` holds for.
+    fn position(owned self, pred: fn(Item) -> bool) -> Option[int]:
+        at = 0
+        for x in self:
+            if pred(x):
+                return Some(at)
+            at += 1
+        return None
+
+    ## `f` on each item, in order.
+    fn for_each(owned self, f: fn(Item)):
+        for x in self:
+            f(x)
+
+    ## The items, in order, in a new array.
+    fn to_array(owned self) -> Array[Item]:
+        out: Array[Item] = []
+        for x in self:
+            out.push(x)
+        return out
+
 ## `[CTL-1]` — what `for x in owned e:` consumes: `e.into_iter()` is the
 ## iterator, and the loop takes what its `next` gives, owned.
 pub interface IntoIterator:
     type Item
     type Iter: Iterator[Item = Item]
     fn into_iter(owned self) -> Iter
+
+## `[STD-19]` — the adapters `Iterator`'s methods above make. Each holds the
+## iterator it wraps and gives what `next` says, as that method describes.
+pub struct Take[I]:
+    inner: I
+    left: int
+
+extend[I: Iterator] Take[I] implements Iterator:
+    type Item = I.Item
+
+    fn next(mut self) -> Option[I.Item]:
+        if self.left <= 0:
+            return None
+        self.left -= 1
+        return self.inner.next()
+
+pub struct Skip[I]:
+    inner: I
+    left: int
+
+extend[I: Iterator] Skip[I] implements Iterator:
+    type Item = I.Item
+
+    fn next(mut self) -> Option[I.Item]:
+        while self.left > 0:
+            self.left -= 1
+            if self.inner.next().is_none():
+                return None
+        return self.inner.next()
+
+pub struct StepBy[I]:
+    inner: I
+    ## The items left out between two given: the step less one.
+    gap: int
+    started: bool
+
+extend[I: Iterator] StepBy[I] implements Iterator:
+    type Item = I.Item
+
+    fn next(mut self) -> Option[I.Item]:
+        if self.started:
+            left = self.gap
+            while left > 0:
+                left -= 1
+                if self.inner.next().is_none():
+                    return None
+        self.started = true
+        return self.inner.next()
+
+pub struct Enumerate[I]:
+    inner: I
+    count: int
+
+extend[I: Iterator] Enumerate[I] implements Iterator:
+    type Item = (int, I.Item)
+
+    fn next(mut self) -> Option[(int, I.Item)]:
+        match self.inner.next():
+            Some(x):
+                at = self.count
+                self.count += 1
+                return Some((at, x))
+            None:
+                return None
+
+pub struct Zip[I, J]:
+    a: I
+    b: J
+
+extend[I: Iterator, J: Iterator] Zip[I, J] implements Iterator:
+    type Item = (I.Item, J.Item)
+
+    fn next(mut self) -> Option[(I.Item, J.Item)]:
+        match self.a.next():
+            Some(x):
+                match self.b.next():
+                    Some(y):
+                        return Some((x, y))
+                    None:
+                        return None
+            None:
+                return None
 
 ## `[CTL-3]` (ODR-027) — the range types. `a..b` is a `Range`, `a..=b` a
 ## `RangeInclusive`, `a..` a `RangeFrom` and `..b` a `RangeTo`. Each is a plain

@@ -707,6 +707,20 @@ pub struct MapItems[K: Eq + Hash, V, H: Hasher + Default]:
                     pass
         return None
 
+## `[STD-19]` — each of them is an `Iterator`, with its adapters and
+## consumers.
+extend[K: Eq + Hash, V, H: Hasher + Default] MapKeys[K, V, H] implements Iterator:
+    type Item = ref K
+
+extend[K: Eq + Hash, V, H: Hasher + Default] MapValues[K, V, H] implements Iterator:
+    type Item = ref V
+
+extend[K: Eq + Hash, V, H: Hasher + Default] MapValuesMut[K, V, H] implements Iterator:
+    type Item = ref mut V
+
+extend[K: Eq + Hash, V, H: Hasher + Default] MapItems[K, V, H] implements Iterator:
+    type Item = (ref K, ref V)
+
 ## The methods that name the view types declared above.
 extend[K: Eq + Hash, V, H: Hasher + Default] Map[K, V, H]:
     pub fn entry(mut self, owned k: K) -> MapEntry[K, V, H]:
@@ -805,6 +819,9 @@ pub struct SetIter[T: Eq + Hash, H: Hasher + Default]:
                 None:
                     pass
         return None
+
+extend[T: Eq + Hash, H: Hasher + Default] SetIter[T, H] implements Iterator:
+    type Item = ref T
 
 extend[T: Eq + Hash, H: Hasher + Default] Set[T, H]:
     pub fn iter(self) -> SetIter[T, H]:
@@ -946,6 +963,20 @@ pub struct MutSpanChunks[T]:
     index: usize
     width: usize
 
+## `[STD-19]` — each is an `Iterator`, its `next` built in, with its adapters
+## and consumers.
+extend[T] SpanIter[T] implements Iterator:
+    type Item = ref T
+
+extend[T] MutSpanIter[T] implements Iterator:
+    type Item = ref mut T
+
+extend[T] SpanChunks[T] implements Iterator:
+    type Item = Span[T]
+
+extend[T] MutSpanChunks[T] implements Iterator:
+    type Item = MutSpan[T]
+
 ## `[STD-15]` (ODR-031) — `windows(n)`: every run of `n` neighbours, one step
 ## apart. Shared views only: overlapping mutable ones would alias. The fields
 ## are `SpanChunks`'s, in its order, because construction is lowered the same.
@@ -954,6 +985,9 @@ pub struct SpanWindows[T]:
     source: Span[T]
     index: usize
     width: usize
+
+extend[T] SpanWindows[T] implements Iterator:
+    type Item = Span[T]
 
 ## Occupancy is separate from the two uninitialized carriers. This lets an
 ## empty fixed-capacity map reserve all backing bytes in one Arena allocation

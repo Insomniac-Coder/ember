@@ -382,6 +382,8 @@ ODRS = [
      '`[CG-LL-1]`, `[CG-LL-2]`, `[CG-LL-3]`, `[SIMD-1]`, `[SIMD-3]`, `[BLD-6]`'),
     ('ODR-088', 'a loop that divides integers by a divisor that is not a constant, or integers of 64 bits or more by a constant that is not a power of two, is not in vectorisable form: no vector instruction set does either, so its overflow checks stay one per operation (Hardened_43)',
      '`[SIMD-5]`, `[SIMD-7]`'),
+    ('ODR-089', 'an adapter or consumer takes the iterator it wraps; `take`, `skip`, `nth` and `step_by` count in `int`, and a negative count or index, or a step of zero or less, panics when the adapter is made or the consumer called; `enumerate(start=0)` as `[STD-26]` (Hardened_44)',
+     '`[STD-19]`, `[STD-14]`, `[STD-26]`'),
 ]
 
 H5_HEAD = """
@@ -413,7 +415,7 @@ contracts; Hardened_40 adds ODR-084, module-attribute syntax and lexical integer
 Hardened_41 adds ODR-085, what the dynamic exclusivity checks cost and the packed access words;
 Hardened_42 adds ODR-086 and ODR-087, running totals checked block by block and the LLVM backend;
 Hardened_43 adds ODR-088, integer division no vector instruction set does keeps a loop out of
-vectorisable form.
+vectorisable form; Hardened_44 adds ODR-089, the iterator adapters' counts and ownership.
 
 | ODR | Ruling | Rules |
 |---|---|---|

@@ -63,6 +63,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-082 | **CLOSED** — `@ffi(immutable)` on a foreign static asserts a `const` C object and emits a matching declaration | Language / C interop / foreign statics | — | **No** — delegated, 2026-09-27, Hardened_38 |
 | ODR-083 | **CLOSED** — a static free-function export's `creator` thread is anchored to successful module initialization; repeated initialization does not transfer the contract, and reinitialization after shutdown establishes a new creator | Language / C interop / export thread contracts | — | **No** — delegated, 2026-09-27, Hardened_39 |
 | ODR-084 | **CLOSED** — `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts | Language / module attributes / arithmetic | — | **No** — delegated, 2026-09-27, Hardened_40 |
+| ODR-089 | **CLOSED** — an iterator adapter or consumer takes the iterator it wraps; `take`, `skip`, `nth` and `step_by` count in `int`, and a negative count or index, or a step of zero or less, panics when the adapter is made or the consumer called | Library / iterators | — | **Yes** — delegated, 2026-09-29, Hardened_44 |
 | ODR-088 | **CLOSED** — a loop that divides integers by a divisor that is not a constant, or integers of 64 bits or more by a constant that is not a power of two, is not in vectorisable form, so its overflow checks stay one per operation | Language / cost / vectorisation | — | **Yes** — owner, 2026-09-28, Hardened_43 |
 | ODR-087 | **CLOSED** — LLVM is restored as the reference implementation's second backend over the same MIR: begun once the C backend passes the conformance suite, the default once it also passes the performance suite; `--backend c\|llvm` | Implementation / backends | — | **Yes** — owner, 2026-09-28, Hardened_42 |
 | ODR-086 | **CLOSED** — a running total is not grouped; it is vectorised under checked arithmetic when its widths prove it safe or, for a signed total of at least 16 bits, when a run-time test over each block of 64 iterations does | Language / cost / vectorisation | — | **Yes** — owner, 2026-09-28 ("I accept the 64 block fix"), Hardened_42 |
@@ -244,6 +245,30 @@ immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
+
+## ODR-089 — the iterator adapters' counts and ownership — **CLOSED**
+
+    ID:        ODR-089
+    Status:    CLOSED — ruled under the owner's delegation, 2026-09-29;
+               incorporated in 0.9.9_Hardened_44
+    Category:  LIBRARY / ITERATORS
+    Location:  Ember_v0.9.9_Hardened_43.md [STD-19]
+
+**The question.** `[STD-19]` names every adapter and consumer but gives no signatures. Building
+them in std needs to know what a count is and what a bad one does: `take(-1)`, `skip(-1)`,
+`nth(-1)`, `step_by(0)`, and whether an adapter borrows or takes the iterator it wraps.
+
+**Options.**
+1. Counts in `usize`, as Rust: a negative count cannot be written, but every `take(n)` with an
+   `int` `n` needs a conversion, and `len` (`[STD-26]`) is an `int`.
+2. Counts in `int`, a bad one clamped (Python's `islice` raises; clamping hides the bug).
+3. Counts in `int`, a bad one panics at once, when the adapter is made or the consumer called.
+
+**Ruling: 3.** `[STD-14]` says a caller's bug panics; checking at the call puts the panic where
+the bug is, not partway through a loop, and `[CTL-3b]` already checks `step_by`'s `k` once before
+the loop. An adapter or consumer takes the iterator it wraps (`owned self`), as the lazy adapters
+of every language that has them do; `xs.enumerate()` on an `Iterable` borrows `xs` through
+`iter()` as `[STD-19]` says. `enumerate(start=0)` numbers as `[STD-26]`'s function does.
 
 ## ODR-088 — division and vectorisable form — **CLOSED**
 

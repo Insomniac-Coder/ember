@@ -991,6 +991,9 @@ struct Checker<'a> {
     /// `[IFC-4]` — the associated type names in scope while an interface
     /// declaration is read.
     assoc_scope: std::collections::BTreeSet<Symbol>,
+    /// D-381 — while one implementing type's copy of a default method is made
+    /// or checked, that type: a bare associated name (`Item`) is its value.
+    assoc_owner: Option<Ty>,
     /// What each implementing type declared its associated types to be:
     /// `(the type, the name) -> the type it stands for`.
     assoc_values: HashMap<(Ty, Symbol), Ty>,
@@ -1165,7 +1168,7 @@ struct Checker<'a> {
     /// `Self` inside another type (`fn take(owned self, n: int) -> Take[Self]`),
     /// kept until a call names it: made at once, its signature is a new
     /// instance of a type implementing the interface, whose own default is
-    /// another, without end.
+    /// another, without end. An `owned self` default waits too (ADR-071).
     deferred_defaults: HashMap<(Ty, Symbol), (Symbol, InterfaceDefault)>,
     /// Generic recipe types may be instantiated while interface declarations
     /// are still being collected.
@@ -1360,6 +1363,7 @@ impl<'a> Checker<'a> {
             captures: None,
             self_ty: None,
             assoc_scope: std::collections::BTreeSet::new(),
+            assoc_owner: None,
             assoc_values: HashMap::new(),
             instance_assoc: HashMap::new(),
             assoc_instance: None,
@@ -4088,6 +4092,16 @@ impl<'a> Checker<'a> {
         self.current_module = saved_module;
     }
 
+    /// An instance of a generic struct, enum or class.
+    fn is_generic_instance(&self, ty: Ty) -> bool {
+        match *self.types.kind(ty) {
+            TyKind::Struct(id) => self.types.struct_def(id).origin.is_some(),
+            TyKind::Enum(id) => self.types.enum_def(id).origin.is_some(),
+            TyKind::Class(id) => self.types.class_def(id).origin.is_some(),
+            _ => false,
+        }
+    }
+
     /// `[TYP-17]` — an instance over generic parameters (a generic
     /// signature's `Wrapper[T]`, or one `check_generic_type_methods` makes):
     /// it has signatures only, and nothing of it is emitted. Its arguments
@@ -5694,6 +5708,49 @@ impl<'a> Checker<'a> {
     /// `[IFC-4]` — the associated types an interface declares and those it
     /// inherits from its parents (`IndexMut`'s `Output` is `Index`'s), each
     /// with its bounds.
+    /// D-381 — the associated types a registered signature names, as
+    /// `owner`'s: its parameters, its result, and the function types of its
+    /// callable parameters (`[CLO-6]`).
+    fn resolve_signature_assoc(&mut self, def: DefId, owner: Ty) {
+        let mut signature = self.signatures[def.0 as usize].clone();
+        for (_, param, _, _) in &mut signature.params {
+            *param = self.resolve_assoc(*param, owner);
+        }
+        signature.ret = self.resolve_assoc(signature.ret, owner);
+        for generic in &mut signature.generics {
+            let Some(callable) = generic.callable.as_mut() else { continue };
+            let mut resolved = callable.clone();
+            for param in &mut resolved.params {
+                param.ty = self.resolve_assoc(param.ty, owner);
+            }
+            resolved.ret = self.resolve_assoc(resolved.ret, owner);
+            *callable = resolved;
+        }
+        self.signatures[def.0 as usize] = signature;
+    }
+
+    /// D-381 — enter one implementing type's copy of `interface`'s default
+    /// method: its associated types are in scope by their bare names, as in
+    /// the declaration, and read as `owner`'s. Give the result back to
+    /// `leave_default`.
+    fn enter_default(&mut self, interface: Symbol, owner: Ty) -> (std::collections::BTreeSet<Symbol>, Option<Ty>) {
+        let names = self.interface_assoc(interface).into_iter().map(|(name, _)| name).collect();
+        let scope = std::mem::replace(&mut self.assoc_scope, names);
+        (scope, self.assoc_owner.replace(owner))
+    }
+
+    fn leave_default(&mut self, saved: (std::collections::BTreeSet<Symbol>, Option<Ty>)) {
+        self.assoc_scope = saved.0;
+        self.assoc_owner = saved.1;
+    }
+
+    /// `enter_default` when `item` is the interface a queued body came from.
+    fn enter_default_of(&mut self, item: &ast::Item, owner: Ty) -> Option<(std::collections::BTreeSet<Symbol>, Option<Ty>)> {
+        let ast::ItemKind::Interface(decl) = &item.kind else { return None };
+        let interface = self.qualified(decl.name.name);
+        Some(self.enter_default(interface, owner))
+    }
+
     fn interface_assoc(&self, interface: Symbol) -> Vec<(Symbol, Vec<Symbol>)> {
         let mut found = Vec::new();
         let mut pending = vec![interface];
@@ -5865,6 +5922,11 @@ impl<'a> Checker<'a> {
             // `[STD-17]` — an `Array`'s and a view's indexing is built in, and
             // is its `Index.index` and `IndexMut.index_mut`.
             if implementation.is_none() && self.builtin_index_method_fits(ty, method, declaration, receiver) {
+                continue;
+            }
+            // `[STD-19]` — a view iterator's `next` is built in (`[SPN-5]`),
+            // and is its `Iterator.next`.
+            if implementation.is_none() && method.is("next") && receiver == Some(Mode::Mut) && self.span_iterator(ty).is_some() {
                 continue;
             }
             // D-379 — a default kept until a call names it is defined.
@@ -6147,12 +6209,29 @@ impl<'a> Checker<'a> {
                     if already_exists {
                         continue;
                     }
+                    // A generic instance's default that waits for a call
+                    // (ADR-071) waits here too, whichever path saw the
+                    // instance first.
+                    if self.is_generic_instance(*ty)
+                        && let Some(default) = self
+                            .interfaces
+                            .get(&interface)
+                            .and_then(|def| def.defaults.iter().find(|d| d.name == fn_decl.name.name).cloned())
+                        && (self.signature_nests_self(default.declaration) || default.receiver == Some(Mode::Owned))
+                    {
+                        if !self.deferred_defaults.contains_key(&(*ty, default.name)) {
+                            self.deferred_defaults.insert((*ty, default.name), (interface, default));
+                        }
+                        continue;
+                    }
                     let outer_self = self.self_ty.replace(*ty);
                     // The declaration already had its `L3014` (`[LT-1b]`); a
                     // copy for each implementing type repeats no lint.
                     let lint = std::mem::replace(&mut self.lint_return_intersection, false);
+                    let scope = self.enter_default(interface, *ty);
                     let signature =
                         self.method_signature(fn_decl, Some(*ty), &member.attrs, member.span, 0);
+                    self.leave_default(scope);
                     self.lint_return_intersection = lint;
                     self.self_ty = outer_self;
                     let Some((receiver, signature)) = signature else {
@@ -6177,6 +6256,9 @@ impl<'a> Checker<'a> {
                             member.span,
                         )
                     };
+                    if let Some(def) = registered {
+                        self.record_defaults(def, fn_decl);
+                    }
                     if generic {
                         if let Some(def) = registered {
                             self.generic_method_sources.insert(
@@ -6216,7 +6298,11 @@ impl<'a> Checker<'a> {
                 if already_exists {
                     continue;
                 }
-                if self.signature_nests_self(default.declaration) {
+                // An `owned self` default is never in a `dyn` table, so nothing
+                // needs it before a call names it either: an iterator's
+                // consumers are made only for the iterators a program calls
+                // them on.
+                if self.signature_nests_self(default.declaration) || default.receiver == Some(Mode::Owned) {
                     self.deferred_defaults.insert((ty, default.name), (*interface, default));
                     continue;
                 }
@@ -6278,6 +6364,19 @@ impl<'a> Checker<'a> {
                 }
                 let ret = self.substitute_self(signature.ret, ty);
                 signature.ret = self.resolve_assoc(ret, ty);
+                // D-381 — a function-typed parameter is a generic bounded by
+                // its function type (`[CLO-6]`): `fn(Item) -> bool` is there.
+                for generic in &mut signature.generics {
+                    let Some(callable) = generic.callable.as_mut() else { continue };
+                    let mut resolved = callable.clone();
+                    for param in &mut resolved.params {
+                        let substituted = self.substitute_self(param.ty, ty);
+                        param.ty = self.resolve_assoc(substituted, ty);
+                    }
+                    let substituted = self.substitute_self(resolved.ret, ty);
+                    resolved.ret = self.resolve_assoc(substituted, ty);
+                    *callable = resolved;
+                }
                 if let Some(receiver) = default.receiver {
                     signature.params.insert(0, (Symbol::intern("self"), ty, receiver, Span::DUMMY));
                 }
@@ -6288,6 +6387,9 @@ impl<'a> Checker<'a> {
                     self.register_associated(ty, default.name, signature, Some(*interface), Span::DUMMY)
                 };
                 let Some(def) = registered else { return };
+                if let Some(defaults) = self.param_defaults.get(&default.declaration).cloned() {
+                    self.param_defaults.insert(def, defaults);
+                }
                 // `[TYP-17]` — an instance over generic parameters has
                 // signatures only, as its own methods do (D-250).
                 if self.is_opaque_instance(ty) {
@@ -6467,6 +6569,9 @@ impl<'a> Checker<'a> {
                 ));
             }
             methods.push((f.name.name, def, receiver, f.body.is_some()));
+            // `[FN-5]` — a default method's parameter defaults, which each
+            // implementing type's copy takes.
+            self.record_defaults(def, f);
             if f.body.is_some() {
                 defaults.push(InterfaceDefault {
                     name: f.name.name,
@@ -7618,7 +7723,11 @@ impl<'a> Checker<'a> {
                 // A type parameter shadows everything: inside `fn f[T]`, `T`
                 // is the parameter.
                 if self.assoc_scope.contains(&name) {
-                    return self.types.intern(TyKind::Assoc { name });
+                    let assoc = self.types.intern(TyKind::Assoc { name });
+                    if let Some(owner) = self.assoc_owner {
+                        return self.project(owner, name).unwrap_or(assoc);
+                    }
+                    return assoc;
                 }
                 if let Some(&ty) = self.type_params.get(&name) {
                     return ty;
@@ -11399,9 +11508,12 @@ impl<'a> Checker<'a> {
                 let Some(block) = &decl.body else { continue };
 
                 self.current_module = module_index;
-                if let Some(function) =
-                    self.check_one_method(job.owner, decl, block, job.def, &member.attrs, member.span)
-                {
+                let scope = self.enter_default_of(item, job.owner);
+                let function = self.check_one_method(job.owner, decl, block, job.def, &member.attrs, member.span);
+                if let Some(saved) = scope {
+                    self.leave_default(saved);
+                }
+                if let Some(function) = function {
                     out.push(function);
                 }
             }
@@ -11438,6 +11550,7 @@ impl<'a> Checker<'a> {
                 let generic = self.generically_checked.contains(&source.source);
                 let quiet_before = quiet.diagnostics().len();
                 let saved = generic.then(|| std::mem::replace(self.sink, std::mem::take(&mut quiet)));
+                let scope = self.enter_default_of(item, source.owner);
                 let _ = self.check_one_method(
                     source.owner,
                     decl,
@@ -11446,6 +11559,9 @@ impl<'a> Checker<'a> {
                     &member.attrs,
                     member.span,
                 );
+                if let Some(saved) = scope {
+                    self.leave_default(saved);
+                }
                 if let Some(saved) = saved {
                     quiet = std::mem::replace(self.sink, saved);
                     let concrete: Vec<Diagnostic> = quiet.diagnostics()[quiet_before..]
@@ -11489,6 +11605,7 @@ impl<'a> Checker<'a> {
 
                 let quiet_before = quiet.diagnostics().len();
                 let saved = std::mem::replace(self.sink, std::mem::take(&mut quiet));
+                let scope = self.enter_default_of(item, source.owner);
                 let function = self.check_one_method(
                     source.owner,
                     decl,
@@ -11497,6 +11614,9 @@ impl<'a> Checker<'a> {
                     &member.attrs,
                     member.span,
                 );
+                if let Some(saved) = scope {
+                    self.leave_default(saved);
+                }
                 quiet = std::mem::replace(self.sink, saved);
                 let concrete = quiet.diagnostics()[quiet_before..].to_vec();
                 self.emit_concrete_instantiation_diagnostics(concrete);
@@ -12686,7 +12806,19 @@ impl<'a> Checker<'a> {
                 self.type_params.insert(param.name, ty);
             }
             self.current_generics = interface_params.iter().cloned().chain(own).chain(std::iter::once(self_param)).collect();
+            // D-381 — `Item` here is the opaque `Self`'s, the same type its
+            // bound gives `self.next()`.
+            let saved_owner = self.assoc_owner.replace(opaque_self);
+            self.resolve_signature_assoc(opaque, opaque_self);
+            // The body reads its callable parameters' bounds from here.
+            let resolved_own = self.signatures[opaque.0 as usize].generics.clone();
+            for (index, generic) in resolved_own.into_iter().enumerate() {
+                if let Some(slot) = self.current_generics.get_mut(interface_params.len() + index) {
+                    *slot = generic;
+                }
+            }
             let _ = self.check_one_method(opaque_self, fn_decl, block, opaque, &member.attrs, member.span);
+            self.assoc_owner = saved_owner;
             self.self_ty = saved_self;
             self.type_params = saved_params;
             self.current_generics = saved_generics;
@@ -12744,7 +12876,9 @@ impl<'a> Checker<'a> {
                     // only what that check could not see.
                     let quiet_copy = opaque.contains(&fn_decl.name.name);
                     let saved_sink = quiet_copy.then(|| std::mem::replace(self.sink, Sink::new()));
+                    let scope = self.enter_default(interface, *ty);
                     let function = self.check_default_copy(*ty, fn_decl, block, def, member);
+                    self.leave_default(scope);
                     if let Some(saved) = saved_sink {
                         let copy = std::mem::replace(self.sink, saved);
                         let concrete: Vec<Diagnostic> = copy
@@ -20434,6 +20568,26 @@ impl<'a> Checker<'a> {
                     span: iter.span,
                 },
             )
+        } else if matches!(self.types.kind(iterable.ty), TyKind::Param { .. }) {
+            // D-382 — a type parameter's `next` comes from its bound, as a
+            // method call on it does: `__it.next()`, checked as one.
+            let span = iter.span;
+            let call = ast::Expr {
+                id: ast::NodeId::DUMMY,
+                kind: ast::ExprKind::MethodCall {
+                    recv: Box::new(ast::Expr {
+                        id: ast::NodeId::DUMMY,
+                        kind: ast::ExprKind::Path { segments: vec![ast::Ident { name: Symbol::intern("__it"), span }] },
+                        span,
+                    }),
+                    name: ast::Ident { name: Symbol::intern("next"), span },
+                    generic_args: Vec::new(),
+                    args: Vec::new(),
+                },
+                span,
+            };
+            let call = self.synth_committed(&call);
+            (call.ty, call)
         } else {
             let Some(entry) = self.methods.get(&(iterable.ty, Symbol::intern("next"))) else {
                 let shown = self.types.display(iterable.ty);
@@ -24723,6 +24877,28 @@ impl<'a> Checker<'a> {
                     items.iter().map(|&t| self.resolve_assoc(t, owner)).collect();
                 self.types.intern(TyKind::Tuple(items))
             }
+            // D-381 — `fn(B, Item) -> B`, a view of `Item`, `Take[Item]`.
+            TyKind::Fn { abi, latebound, params, ret } => {
+                let params = params
+                    .iter()
+                    .map(|param| FnParam { ty: self.resolve_assoc(param.ty, owner), mode: param.mode })
+                    .collect();
+                let ret = self.resolve_assoc(ret, owner);
+                self.types.intern(TyKind::Fn { abi, latebound, params, ret })
+            }
+            TyKind::Span { elem, mutable } => {
+                let elem = self.resolve_assoc(elem, owner);
+                self.types.intern(TyKind::Span { elem, mutable })
+            }
+            TyKind::Struct(id) if !self.types.struct_def(id).name.as_str().starts_with("Option_") => {
+                let Some((name, args)) = self.types.struct_def(id).origin.clone() else { return ty };
+                let resolved: Vec<Ty> = args.iter().map(|&arg| self.resolve_assoc(arg, owner)).collect();
+                if resolved == args {
+                    return ty;
+                }
+                let Some(decl) = self.generic_structs.get(&name).cloned() else { return ty };
+                self.instantiate_struct(name, &decl, &resolved, Span::DUMMY)
+            }
             // A synthesised `Option[Self.Item]` is a distinct enum per `Item`,
             // so it has to be rebuilt rather than patched.
             TyKind::Enum(id) => {
@@ -26927,6 +27103,9 @@ impl<'a> Checker<'a> {
             receiver = self.read_through(receiver);
         }
         self.extend_instance_at_use(receiver.ty);
+        // D-379 — a default method kept until a call names it exists from
+        // here, for every path below that falls back to registered methods.
+        self.materialize_deferred_default(receiver.ty, name.name);
         let explicit = self.resolve_method_type_args(generic_args);
         if matches!(self.types.kind(receiver.ty), TyKind::Ptr { .. }) && name.name.is("is_null") {
             if !explicit.is_empty() || !args.is_empty() {
@@ -27482,7 +27661,11 @@ impl<'a> Checker<'a> {
                 span,
             );
         }
-        if let Some((elem, kind)) = self.span_iterator(receiver.ty) {
+        // `[STD-19]` — a view iterator's `next` is built in; its adapters and
+        // consumers are `Iterator`'s, registered like any other method.
+        if let Some((elem, kind)) = self.span_iterator(receiver.ty)
+            && (name.name.is("next") || self.lookup_method(receiver.ty, name.name).is_none())
+        {
             if !explicit.is_empty() {
                 self.error(
                     codes::E2020,

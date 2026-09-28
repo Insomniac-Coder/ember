@@ -2677,4 +2677,33 @@ instantiating its defaults names the next: checking never ended.
   (`[COST-1]`) and a used one is made once.
 * **Why not every default on use:** 43 places read the method tables directly; the deferral is
   kept to the defaults that can recurse, and the one path that names them materialises them.
+* **Amended the same day (`[STD-19]`):** a default with an `owned self` receiver waits too. No
+  `dyn` table can hold one, so nothing needs it before a call; `Iterator` has fifteen, and made
+  eagerly each would be built and checked for every iterator instance in every program. The
+  concrete path defers them for a generic instance as well, and method calls materialise a
+  deferred default at their start (`synth_method_call`), before any built-in method path looks.
+  Checking a two-line program costs the same with and without the fifteen (73 ms).
+
+## ADR-072 — `[STD-19]`'s adapters are written in std
+
+2026-09-29, autonomous (ODR-089, Hardened_44). `Iterator` in `std.core` gets its adapters as
+default methods returning generic structs (`fn take(owned self, n: int) -> Take[Self]`), and
+each struct implements `Iterator` in a generic extension (`extend[I: Iterator] Take[I]
+implements Iterator: type Item = I.Item`). Built: `take`, `skip`, `step_by`, `enumerate(start=0)`
+and `zip`; the consumers `count`, `last`, `nth`, `fold`, `any`, `all`, `find`, `position`,
+`for_each` and `to_array`. Every std iterator implements `Iterator`: the map and set iterators
+through their own `next`, the view iterators (`SpanIter`, `MutSpanIter`, `SpanChunks`,
+`MutSpanChunks`, `SpanWindows`) through their built-in one, which the implementation check
+accepts as `Iterator.next` as it accepts built-in indexing as `Index.index`.
+
+* **Why std, not the compiler:** `[STD-19]` puts the adapters in `std.core`, and the codebase
+  rule is that a standard-library file says what it means. It took D-379 to D-382 to make that
+  possible; each was a real gap a user's own generic code would have met.
+* **Not yet:** `map`, `filter`, `filter_map`, `take_while`, `skip_while`, `flat_map`, `inspect`
+  and `peekable` hold a closure, and a capturing closure cannot be stored yet (owned callable
+  values, `[CLO-3]`). `chain` needs `J: Iterator[Item = I.Item]` between two parameters.
+  `sum`, `product`, `min`, `max`, the `_by`/`_by_key` forms, `reduce`, `collect[C]()` and
+  `join(sep)` need bounds on `Item` in a default method. `rev` needs a double-ended iterator.
+  `copied`/`cloned` need `Item = ref T`. The `Iterable` forms (`xs.enumerate()`). `[CTL-3b]`'s
+  counted lowering of adapter chains in a `for` header: today a chain runs through `next`.
 
