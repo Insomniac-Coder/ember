@@ -2704,8 +2704,8 @@ accepts as `Iterator.next` as it accepts built-in indexing as `Index.index`.
   values, `[CLO-3]`). `chain` needs `J: Iterator[Item = I.Item]` between two parameters.
   `collect[C]()` and `join(sep)` need more than a bound on `Item` (a target collection, a
   `Display` item). `rev` needs a double-ended iterator.
-  `copied`/`cloned` need `Item = ref T`. `[CTL-3b]`'s counted lowering of adapter chains in a
-  `for` header: today a chain runs through `next`.
+  `[CTL-3b]`'s counted lowering of adapter chains in a `for` header: today a chain runs
+  through `next`.
 * **More consumers, the same day.** `max`, `min` (`where Item: Ord`; among equals `max` gives
   the last and `min` the first, as Rust's do), `max_by_key`, `min_by_key`, `max_by`, `min_by`
   and `reduce` are defaults in std. `sum` and `product` are not: an iterator over a list gives
@@ -2723,7 +2723,14 @@ accepts as `Iterator.next` as it accepts built-in indexing as `Index.index`.
   reached where each method path would report the missing method), so the collection is
   borrowed, not moved, and a collection's own method of the name comes first (`Array.join`).
   `to_array()` over a list's iterator is refused as storing its references would be
-  (ODR-069); an owned copy needs `copied`/`cloned`, not built yet.
+  (ODR-069); an owned copy takes `copied()`/`cloned()`.
+* **`copied` and `cloned`, the same day.** `std.core.Copied[I, T]` and `Cloned[I, T]` are
+  adapters written in std, `extend[T: Copy, I: Iterator[Item = ref T]] Copied[I, T] implements
+  Iterator` (the binding names `T`, so it comes first), each `next` giving the value its
+  iterator's reference reaches. The methods are the checker's (`referenced_item`,
+  `value_adapter`): `Item` being `ref T` is not a bound a default method can state, so a call
+  on an iterator whose items are references builds the adapter over it, and one on
+  non-`Copy` (or non-`Clone`) values is `E2040`.
 * **`[CTL-3b]` in `for` headers, the same day.** `(a..b).step_by(k)` is the counted loop
   `range(start, stop, step)` already was (`check_for_stepped_range`, now with a `step_by` mode):
   the values are counted once, each is computed from its index, and a `k` of zero or less

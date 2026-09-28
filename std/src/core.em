@@ -451,6 +451,37 @@ extend[I: Iterator, J: Iterator] Zip[I, J] implements Iterator:
             None:
                 return None
 
+## `[STD-19]` — `it.copied()` and `it.cloned()` over an iterator of
+## references `ref T`: the values they reach, copied or cloned, so the items
+## are `T`s a program may keep (`xs.iter().copied().to_array()`). The checker
+## makes these for an iterator whose items are references (the methods are
+## not written here because `Item` being `ref T` is not a bound it can state).
+pub struct Copied[I, T]:
+    inner: I
+
+extend[T: Copy, I: Iterator[Item = ref T]] Copied[I, T] implements Iterator:
+    type Item = T
+
+    fn next(mut self) -> Option[T]:
+        match self.inner.next():
+            Some(r):
+                return Some(r)
+            None:
+                return None
+
+pub struct Cloned[I, T]:
+    inner: I
+
+extend[T: Clone, I: Iterator[Item = ref T]] Cloned[I, T] implements Iterator:
+    type Item = T
+
+    fn next(mut self) -> Option[T]:
+        match self.inner.next():
+            Some(r):
+                return Some(r.clone())
+            None:
+                return None
+
 ## `[CTL-3]` (ODR-027) — the range types. `a..b` is a `Range`, `a..=b` a
 ## `RangeInclusive`, `a..` a `RangeFrom` and `..b` a `RangeTo`. Each is a plain
 ## value, `Copy` when its bound is, with public bounds. A `for` over one of the

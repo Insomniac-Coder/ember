@@ -5727,6 +5727,38 @@ impl<'a> Checker<'a> {
         self.types.is_numeric(number).then_some(number)
     }
 
+    /// `[STD-19]` — `T` for an iterator whose items are `ref T`.
+    fn referenced_item(&mut self, ty: Ty) -> Option<Ty> {
+        if !self.implements(ty, Symbol::intern("std.core.Iterator")) {
+            return None;
+        }
+        let item = self.project(ty, Symbol::intern("Item"))?;
+        match *self.types.kind(item) {
+            TyKind::Ref { inner, .. } => Some(inner),
+            _ => None,
+        }
+    }
+
+    /// `[STD-19]` — `it.copied()` as `std.core.Copied[I, T]` over it, `it.cloned()`
+    /// as `Cloned[I, T]`, for an iterator whose items are `ref T`, when `T` is
+    /// `Copy` or `Clone`.
+    fn value_adapter(&mut self, receiver: Expr, inner: Ty, name: ast::Ident, span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let copied = name.name.is("copied");
+        let fits = if copied { self.types.is_copy(inner) } else { self.is_cloneable(inner) };
+        if !fits {
+            let shown = self.types.display(inner);
+            let wanted = if copied { "Copy" } else { "Clone" };
+            self.error(codes::E2040, name.span, format!("`{}` needs `{shown}` to be `{wanted}`", name.name));
+            return error;
+        }
+        let generic = Symbol::intern(if copied { "std.core.Copied" } else { "std.core.Cloned" });
+        let Some(decl) = self.generic_structs.get(&generic).cloned() else { return error };
+        let adapter = self.instantiate_struct(generic, &decl, &[receiver.ty, inner], span);
+        let TyKind::Struct(struct_id) = *self.types.kind(adapter) else { return error };
+        Expr { ty: adapter, kind: ExprKind::StructLit { struct_id, fields: vec![receiver] }, span }
+    }
+
     /// `[STD-5]` — `it.sum()` / `it.product()`: the items combined left to
     /// right in `number`, from zero or one, each `+` or `*` checked as the
     /// operator is. Built as the loop the program would write:
@@ -27241,7 +27273,7 @@ impl<'a> Checker<'a> {
         if self.is_text(receiver_ty) || self.implements(receiver_ty, iterator) {
             return None;
         }
-        let iterator_has = matches!(name.name.as_str(), "sum" | "product")
+        let iterator_has = matches!(name.name.as_str(), "sum" | "product" | "copied" | "cloned")
             || self.interfaces.get(&iterator).is_some_and(|def| def.methods.iter().any(|(method, ..)| *method == name.name));
         let iterable = self.lookup_method(receiver_ty, Symbol::intern("iter")).is_some()
             || matches!(self.types.kind(receiver_ty), TyKind::Vec { text: false, .. } | TyKind::Span { .. } | TyKind::Array { .. });
@@ -27340,6 +27372,15 @@ impl<'a> Checker<'a> {
             && let Some(number) = self.iterator_number(receiver.ty)
         {
             return self.synth_iterator_total(receiver, number, name.name.is("sum"), span);
+        }
+        // `[STD-19]` — `copied()` / `cloned()` over an iterator of references.
+        if matches!(name.name.as_str(), "copied" | "cloned")
+            && args.is_empty()
+            && generic_args.is_empty()
+            && self.lookup_method(receiver.ty, name.name).is_none()
+            && let Some(inner) = self.referenced_item(receiver.ty)
+        {
+            return self.value_adapter(receiver, inner, name, span);
         }
         let explicit = self.resolve_method_type_args(generic_args);
         if matches!(self.types.kind(receiver.ty), TyKind::Ptr { .. }) && name.name.is("is_null") {

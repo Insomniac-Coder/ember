@@ -11111,7 +11111,8 @@ first**; the rest of §0.355 is the running narrative behind it.
   `Iterable` forms, `[CTL-3b]` fusion). Then `max`, `min`, the `_by`/`_by_key`
   forms and `reduce` in std, and `sum`/`product` built by the checker for any
   iterator of numbers or references to numbers, and the `Iterable` forms
-  (`xs.enumerate()`, `m.count()`, `view.min()`). Then `[CTL-3b]` in `for` headers:
+  (`xs.enumerate()`, `m.count()`, `view.min()`), and `copied()`/`cloned()`
+  (`xs.iter().copied().to_array()`). Then `[CTL-3b]` in `for` headers:
   `(a..b).step_by(k)` and `for x in mutspan` are counted loops, and the
   per-index range value is inline (it was a call per element).
 * **Speed audit: the six agreed fixes are done (2026-09-27, uncommitted;
