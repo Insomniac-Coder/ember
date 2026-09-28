@@ -378,7 +378,9 @@ const FMT_FN_PROTOTYPES: &str = "/* @@fmt-fn-prototypes@@ */";
 /// `Option[T]` it returns, the rest by the element type.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ArrayHelper {
-    Less,
+    /// `[STD-15]` — `sort`, specialised to the element type: its comparison
+    /// inline and its elements moved as values.
+    Sort,
     Pop,
     Remove,
     /// `[STD-15]` (ODR-031) — `drain`: move `lo..hi` out into a new buffer
@@ -753,6 +755,18 @@ impl Emitter<'_> {
         ember_branding::mangled(&format!("array_helper_{index}"))
     }
 
+    /// Whether two elements of `ty` that compare equal are the same value, so
+    /// no sort can show their order: numbers (a float's totalOrder is equal
+    /// only on the same bits), `bool`, `char`, and range types of them.
+    fn equal_means_identical(&self, ty: Ty) -> bool {
+        self.wide_int(ty).is_some()
+            || match self.types.kind(ty) {
+                TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char => true,
+                TyKind::Range(id) => self.equal_means_identical(self.types.range_def(*id).repr),
+                _ => false,
+            }
+    }
+
     /// `a < b` for two elements behind `const void*`, in `Ord`'s order:
     /// totalOrder for floats (`[TYP-37]`), bytes for text.
     fn less_behind_pointers(&self, ty: Ty) -> String {
@@ -789,11 +803,25 @@ impl Emitter<'_> {
             }
             for (helper, ty) in pending {
                 let symbol = ember_branding::mangled(&format!("array_helper_{emitted}"));
+                // `[STD-15]` — `sort` is stable. Where equal elements are the
+                // same value (numbers, `bool`, `char`), no order among them
+                // can be seen, so introsort; otherwise a stable merge sort.
+                if helper == ArrayHelper::Sort {
+                    prototypes.push(format!("static void {symbol}({RT}vec* v);"));
+                    if self.is_void(ty) {
+                        self.line(&format!("static void {symbol}({RT}vec* v) {{ (void)v; }}"));
+                    } else {
+                        let prefix = ember_branding::SYMBOL_PREFIX.to_uppercase();
+                        let kind = if self.equal_means_identical(ty) { "UNSTABLE" } else { "STABLE" };
+                        self.line(&format!("#define {symbol}_less(a, b) ({})", self.less_behind_pointers(ty)));
+                        self.line(&format!("{prefix}_SORT_{kind}({symbol}, {}, {symbol}_less)", self.c_type(ty)));
+                    }
+                    self.line("");
+                    emitted += 1;
+                    continue;
+                }
                 let (signature, body) = match helper {
-                    ArrayHelper::Less => (
-                        format!("static bool {symbol}(const void* a, const void* b)"),
-                        vec![format!("return {};", self.less_behind_pointers(ty))],
-                    ),
+                    ArrayHelper::Sort => unreachable!("a sort helper is emitted above"),
                     ArrayHelper::Pop => {
                         let TyKind::Enum(id) = *self.types.kind(ty) else {
                             unreachable!("`pop` returns an Option")
@@ -958,12 +986,12 @@ impl Emitter<'_> {
                     }
                     ArrayHelper::Sorted => {
                         let c = self.c_type(ty);
-                        let less = self.array_helper(ArrayHelper::Less, ty);
+                        let sort = self.array_helper(ArrayHelper::Sort, ty);
                         (
                             format!("static {RT}vec {symbol}(const void* elems, size_t count)"),
                             vec![
                                 format!("{RT}vec r = {RT}vec_from_elems({c_size}, elems, count);", c_size = c_size(&c)),
-                                format!("{RT}vec_sort(&r, {c_size}, {less});", c_size = c_size(&c)),
+                                format!("{sort}(&r);"),
                                 "return r;".to_string(),
                             ],
                         )
@@ -5473,8 +5501,8 @@ impl Emitter<'_> {
                     // array, as `push`'s does.
                     Builtin::ArraySort => {
                         let elem = self.element_of(*arg_ty);
-                        let less = self.array_helper(ArrayHelper::Less, elem);
-                        return format!("{RT}vec_sort({}, {}, {less})", rendered[0], c_size(&self.c_type(elem)));
+                        let sort = self.array_helper(ArrayHelper::Sort, elem);
+                        return format!("{sort}({})", rendered[0]);
                     }
                     Builtin::ArrayReverse => {
                         let elem = self.element_of(*arg_ty);

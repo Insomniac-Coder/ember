@@ -11189,6 +11189,23 @@ first**; the rest of §0.355 is the running narrative behind it.
     fixed order) so range facts see across the call; a counted loop's running
     total is bounded by trip count times each turn's change. Function values:
     MSVC 1.73x -> 1.01x C++; integer arithmetic: MSVC 19% faster, clang the same.
+  * **`sort` specialised per element type (2026-09-28, autonomous; ADR-070 item
+    12).** Inline comparison, elements moved as values; introsort where equal
+    means identical (numbers, `bool`, `char`), a stable merge sort for text.
+    Sorting 5 million `int`s: MSVC 1.17x -> 0.82x C++, clang 0.96x -> 0.88x.
+  * **Speed verdicts so far (2026-09-29, owner's goal 1: each slow row ends
+    "same or faster" or "slower because <valid reason>").**
+    * `mut self` method calls, MSVC 16-23%: the mandatory overflow check on
+      the counter's `+= 1` (priced: without it Ember beats C++).
+    * Generic "larger of two", clang 1.36x: the loop is instruction for
+      instruction the C++ one, except that clang proves `best` never negative,
+      turns the max unsigned and emits `cmova`, 2 micro-ops on Intel P-cores
+      against `cmovg`'s 1, on the loop's dependency chain. Open LLVM issue
+      llvm/llvm-project#113965; nothing in Ember's C decides it.
+    * Open, being worked: list loops with checks (b13/b15/b16) need element
+      ranges; particles `iter_mut` on MSVC needs the counted loop; recursion
+      on clang (one check left, the `+` of two results: to price); interface
+      calls; the class-field sum (p1); objects with 6 lists (p6).
   * **Regressions the range-facts benchmark run found, fixed (2026-09-28).**
     MSVC stopped inlining `push` once loop versioning made a function larger
     (list refill 1.0x -> 1.31x C, list copy 0.74x -> 1.0x): the runtime's

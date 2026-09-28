@@ -2552,5 +2552,24 @@ Six fixes, in the owner's order; none changes the language.
      to `xs.len()`, so it stays that function; `SIMD-5`'s per-operation test sums values
      nothing bounds.
 
+12. **`sort` specialised to the element type** (2026-09-28, autonomous, same goal). Sorting
+   numbers was 1.17x C++ on MSVC: the runtime's one merge sort compared through a function
+   pointer and moved elements with `memcpy` of a runtime size, and it always allocated a buffer.
+   * Each element type the compiler sorts itself (numbers, `bool`, `char`, text, `[STD-15]`) now
+     gets its own sort, emitted from runtime macros with the comparison inline and elements moved
+     as values: `EMBER_SORT_UNSTABLE` / `EMBER_SORT_STABLE` in `ember_rt.h`. `ember_vec_sort` is
+     gone; `sorted` uses the same helper.
+   * `sort` is stable (`[STD-15]`). Where values that compare equal are the same value
+     (integers, floats under totalOrder, `bool`, `char`, range types of them;
+     `equal_means_identical` in the C backend), no order among equals can be seen, so the sort
+     is introsort: median-of-three quicksort, insertion sort under 16 elements, heapsort past
+     twice log2(n) levels, so never worse than n log n, and no allocation. Text keeps a stable
+     sort (runs of 32 by insertion, then bottom-up merges), since equal strings can still differ
+     in capacity. Element types with an `Ord` of their own still go to std's `sort_ord` (D-256).
+   * Measured (sorting 5 million `int`s, `a12`): MSVC 1.17x -> 0.82x C++ `std::sort`, clang
+     0.96x -> 0.88x.
+   * Test: STD-15 `accept_sort_past_one_run` (a text sort and an `int` sort past one run, with
+     sorted, reversed and all-equal input; the C holds one of each macro).
+
 **Superseded by item 8:** a sum of 64-bit `int`s no longer keeps one overflow check per
 element; ODR-086 was ruled on 2026-09-28.

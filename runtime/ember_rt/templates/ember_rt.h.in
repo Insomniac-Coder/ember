@@ -1167,6 +1167,131 @@ void ember_vec_reserve(ember_vec* v, size_t elem_size, size_t want);
 /* Room for `additional` more elements: `len + additional` is checked before
  * it is formed ([HEAP-8]), so asking for too many panics and never wraps. */
 void ember_vec_reserve_more(ember_vec* v, size_t elem_size, size_t additional);
+/* The alignment a growable buffer allocates at. The compiler passes an element
+ * size but not an alignment, so the buffer uses the strictest fundamental one;
+ * over-aligning is always sound and costs at most a few bytes per buffer. */
+#define EMBER_VEC_ALIGN (sizeof(void*) * 2)
+
+/* [STD-15] — a sort specialised to its element type, with the comparison
+ * inline and elements moved as values, not bytes. `LESS(a, b)` is a strict
+ * total order over two `const T*`.
+ *
+ * EMBER_SORT_UNSTABLE is for an element type whose equal values are the same
+ * value (numbers, `bool`, `char`, unit enums, and tuples and arrays of them):
+ * there a stable sort cannot be told from any other, so it is introsort —
+ * quicksort on a median-of-three pivot, insertion sort under 16 elements,
+ * heapsort past twice log2(n) levels, so never worse than n log n.
+ * EMBER_SORT_STABLE keeps equal elements in order, as `sort` promises: runs of
+ * 32 sorted by insertion, then bottom-up merges taking from the left run
+ * unless the right element is strictly less. */
+#define EMBER_SORT_INSERTION(NAME, T, LESS)                                       \
+    static void NAME##_insertion(T* a, size_t n) {                                \
+        for (size_t i = 1; i < n; ++i) {                                           \
+            T x = a[i];                                                            \
+            size_t j = i;                                                          \
+            while (j > 0 && LESS(&x, &a[j - 1])) {                                 \
+                a[j] = a[j - 1];                                                   \
+                --j;                                                               \
+            }                                                                      \
+            a[j] = x;                                                              \
+        }                                                                          \
+    }
+
+#define EMBER_SORT_UNSTABLE(NAME, T, LESS)                                        \
+    EMBER_SORT_INSERTION(NAME, T, LESS)                                           \
+    static void NAME##_sift(T* a, size_t root, size_t n) {                        \
+        T x = a[root];                                                             \
+        for (;;) {                                                                 \
+            size_t child = 2 * root + 1;                                           \
+            if (child >= n) break;                                                 \
+            if (child + 1 < n && LESS(&a[child], &a[child + 1])) ++child;          \
+            if (!LESS(&x, &a[child])) break;                                       \
+            a[root] = a[child];                                                    \
+            root = child;                                                          \
+        }                                                                          \
+        a[root] = x;                                                               \
+    }                                                                              \
+    static void NAME##_heap(T* a, size_t n) {                                     \
+        for (size_t i = n / 2; i-- > 0;) NAME##_sift(a, i, n);                    \
+        for (size_t end = n; end-- > 1;) {                                         \
+            T t = a[0]; a[0] = a[end]; a[end] = t;                                 \
+            NAME##_sift(a, 0, end);                                                \
+        }                                                                          \
+    }                                                                              \
+    static void NAME##_intro(T* a, size_t n, unsigned depth) {                    \
+        while (n > 16) {                                                           \
+            if (depth == 0) { NAME##_heap(a, n); return; }                         \
+            --depth;                                                               \
+            {                                                                      \
+                /* Median of three: then a[0] <= pivot <= a[n - 1] stop both     \
+                 * scans without a bounds test. */                                 \
+                T* lo = a; T* mid = a + n / 2; T* hi = a + n - 1; T t;             \
+                if (LESS(mid, lo)) { t = *mid; *mid = *lo; *lo = t; }              \
+                if (LESS(hi, mid)) {                                               \
+                    t = *hi; *hi = *mid; *mid = t;                                 \
+                    if (LESS(mid, lo)) { t = *mid; *mid = *lo; *lo = t; }          \
+                }                                                                  \
+                {                                                                  \
+                    T pivot = *mid;                                                \
+                    size_t i = 0, j = n - 1;                                       \
+                    for (;;) {                                                     \
+                        do { ++i; } while (LESS(&a[i], &pivot));                   \
+                        do { --j; } while (LESS(&pivot, &a[j]));                   \
+                        if (i >= j) break;                                         \
+                        t = a[i]; a[i] = a[j]; a[j] = t;                           \
+                    }                                                              \
+                    /* [0, j] and [j + 1, n): recurse into the smaller, loop     \
+                     * on the larger, so the stack stays log n deep. */            \
+                    if (j + 1 < n - (j + 1)) {                                     \
+                        NAME##_intro(a, j + 1, depth);                             \
+                        a += j + 1; n -= j + 1;                                    \
+                    } else {                                                       \
+                        NAME##_intro(a + j + 1, n - (j + 1), depth);               \
+                        n = j + 1;                                                 \
+                    }                                                              \
+                }                                                                  \
+            }                                                                      \
+        }                                                                          \
+        NAME##_insertion(a, n);                                                    \
+    }                                                                              \
+    static void NAME(ember_vec* v) {                                              \
+        unsigned depth = 0;                                                        \
+        for (size_t k = v->len; k > 1; k >>= 1) depth += 2;                        \
+        NAME##_intro((T*)v->ptr, v->len, depth);                                   \
+    }
+
+#define EMBER_SORT_STABLE(NAME, T, LESS)                                          \
+    EMBER_SORT_INSERTION(NAME, T, LESS)                                           \
+    static void NAME(ember_vec* v) {                                              \
+        size_t n = v->len;                                                         \
+        T* a = (T*)v->ptr;                                                         \
+        T* src;                                                                    \
+        T* dst;                                                                    \
+        T* tmp;                                                                    \
+        for (size_t lo = 0; lo < n; lo += 32) {                                    \
+            NAME##_insertion(a + lo, n - lo < 32 ? n - lo : 32);                   \
+        }                                                                          \
+        if (n <= 32) return;                                                       \
+        tmp = (T*)ember_alloc(n * sizeof(T), EMBER_VEC_ALIGN);                     \
+        src = a;                                                                   \
+        dst = tmp;                                                                 \
+        for (size_t width = 32; width < n; width *= 2) {                           \
+            for (size_t lo = 0; lo < n; lo += 2 * width) {                         \
+                size_t mid = lo + width < n ? lo + width : n;                      \
+                size_t hi = lo + 2 * width < n ? lo + 2 * width : n;               \
+                size_t i = lo, j = mid, k = lo;                                    \
+                while (i < mid && j < hi) {                                        \
+                    dst[k++] = LESS(&src[j], &src[i]) ? src[j++] : src[i++];       \
+                }                                                                  \
+                while (i < mid) dst[k++] = src[i++];                               \
+                while (j < hi) dst[k++] = src[j++];                                \
+            }                                                                      \
+            { T* t = src; src = dst; dst = t; }                                    \
+        }                                                                          \
+        if (src != a) memcpy(a, src, n * sizeof(T));                               \
+        ember_free(tmp, n * sizeof(T), EMBER_VEC_ALIGN);                           \
+    }
+
 /* Append one element, copied from `value`. With room left it is a copy and a
  * length bump, inline, where the constant element size makes the copy one
  * store; only growth calls out. */
@@ -1214,10 +1339,9 @@ EMBER_VEC_PUSH_VALUE(ptr, void*)
  * them out of their fixed array, so they now belong to the result. */
 ember_vec ember_vec_from_elems(size_t elem_size, const void* elems, size_t count);
 void ember_vec_free(ember_vec* v, size_t elem_size);
-/* `[STD-15]`: a stable merge sort by `less`; reversing in place; and inserting
- * a copy of `*value` at `index` (the caller has checked `index <= len` and
- * moved the value out, so it now belongs to the array). */
-void ember_vec_sort(ember_vec* v, size_t elem_size, bool (*less)(const void*, const void*));
+/* `[STD-15]`: reversing in place, and inserting a copy of `*value` at
+ * `index` (the caller has checked `index <= len` and moved the value out, so
+ * it now belongs to the array). Sorting is EMBER_SORT_*, per element type. */
 void ember_vec_reverse(ember_vec* v, size_t elem_size);
 void ember_vec_swap(ember_vec* v, size_t elem_size, size_t i, size_t j);
 void ember_vec_insert(ember_vec* v, size_t elem_size, size_t index, const void* value);
