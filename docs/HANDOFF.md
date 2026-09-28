@@ -11108,7 +11108,9 @@ first**; the rest of §0.355 is the running narrative behind it.
   `nth`, `fold`, `any`, `all`, `find`, `position`, `for_each`, `to_array`),
   with every std iterator an `Iterator`. ADR-072 lists what is not built yet
   and why (closures stored in adapters, bounds on `Item`, `chain`, `rev`,
-  `Iterable` forms, `[CTL-3b]` fusion).
+  `Iterable` forms, `[CTL-3b]` fusion). Then `[CTL-3b]` in `for` headers:
+  `(a..b).step_by(k)` and `for x in mutspan` are counted loops, and the
+  per-index range value is inline (it was a call per element).
 * **Speed audit: the six agreed fixes are done (2026-09-27, uncommitted;
   ADR-070, D-375, deviation D7).** The owner said "do all fixes check them and
   report the final result". Each fix passed the quick check, the workspace

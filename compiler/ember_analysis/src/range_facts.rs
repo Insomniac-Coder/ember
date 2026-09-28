@@ -298,6 +298,25 @@ impl State {
     }
 
     fn forget(&mut self, var: Var) {
+        // What held through `var` still holds between the others once it is
+        // gone: `a <= var + c1` and `var <= b + c2` give `a <= b + c1 + c2`.
+        // A temporary's storage ends right after it is read, and the chain
+        // from a loop's bound to a list's length would break with it.
+        let into: Vec<(Var, i128)> =
+            self.rels.iter().filter(|((a, b), _)| *b == var && *a != var).map(|((a, _), c)| (*a, *c)).collect();
+        let out: Vec<(Var, i128)> =
+            self.rels.iter().filter(|((a, b), _)| *a == var && *b != var).map(|((_, b), c)| (*b, *c)).collect();
+        for &(a, c1) in &into {
+            for &(b, c2) in &out {
+                if a == b {
+                    continue;
+                }
+                if let Some(c) = c1.checked_add(c2) {
+                    let entry = self.rels.entry((a, b)).or_insert(c);
+                    *entry = (*entry).min(c);
+                }
+            }
+        }
         self.ranges.remove(&var);
         self.rels.retain(|(a, b), _| *a != var && *b != var);
         self.bools.retain(|_, fact| match fact {
@@ -347,6 +366,9 @@ pub(crate) struct Analysis<'a> {
     lists: Lists,
     /// Per followed list: the range of its elements, narrower than the type's.
     elements: BTreeMap<LocalId, Interval>,
+    /// Each `count = RangeCount(start, stop, step)` whose four locals are
+    /// written once: `(count, start, stop, step)`.
+    counts: Vec<(LocalId, LocalId, LocalId, LocalId)>,
     usize_range: Interval,
     /// The state on entry to each block; `None` when unreachable.
     entry: Vec<Option<State>>,
@@ -370,6 +392,7 @@ impl<'a> Analysis<'a> {
             views: Vec::new(),
             lists: Lists::default(),
             elements: BTreeMap::new(),
+            counts: Vec::new(),
             usize_range,
             entry: Vec::new(),
             seeds: Vec::new(),
@@ -377,6 +400,7 @@ impl<'a> Analysis<'a> {
         analysis.tracked = analysis.tracked_locals();
         analysis.views = analysis.collect_views();
         analysis.lists = analysis.element_lists();
+        analysis.counts = analysis.range_counts();
         analysis.solve()?;
         // Element ranges from what the stores wrote. Each round's come from
         // facts that assumed the last round's, so each is sound, and they
@@ -691,6 +715,69 @@ impl<'a> Analysis<'a> {
             }
         }
         out
+    }
+
+    /// Each `count = RangeCount(start, stop, step)` whose count, start, stop
+    /// and step are whole locals written only there and once each.
+    fn range_counts(&self) -> Vec<(LocalId, LocalId, LocalId, LocalId)> {
+        let mut writes = vec![0usize; self.body.locals.len()];
+        for block in &self.body.blocks {
+            for stmt in &block.stmts {
+                match &stmt.kind {
+                    StmtKind::Assign { place, .. } => writes[place.local.0 as usize] += 1,
+                    StmtKind::CheckedBinaryOp { dest, overflow, .. } => {
+                        writes[dest.local.0 as usize] += 1;
+                        writes[overflow.local.0 as usize] += 1;
+                    }
+                    _ => {}
+                }
+            }
+            if let Terminator::Call { dest, .. } = &block.terminator {
+                writes[dest.local.0 as usize] += 1;
+            }
+        }
+        let whole = |operand: &Operand| match operand {
+            Operand::Copy(place) | Operand::Move(place) if place.projection.is_empty() => Some(place.local),
+            _ => None,
+        };
+        let mut counts = Vec::new();
+        for block in &self.body.blocks {
+            let Terminator::Call { func: FuncRef::Builtin { which: Builtin::RangeCount, .. }, args, dest, .. } = &block.terminator
+            else {
+                continue;
+            };
+            let [start, stop, step] = args.as_slice() else { continue };
+            let (Some(start), Some(stop), Some(step)) = (whole(start), whole(stop), whole(step)) else { continue };
+            let locals = [dest.local, start, stop, step];
+            if dest.projection.is_empty()
+                && locals.iter().all(|&local| writes[local.0 as usize] == 1 && self.tracked[local.0 as usize])
+            {
+                counts.push((dest.local, start, stop, step));
+            }
+        }
+        counts
+    }
+
+    /// `RangeNth(start, step, index)`'s range and relations, when a count of
+    /// the same `start` and `step` towards `stop` bounds `index` and `step`
+    /// is positive: `start <= value <= stop - 1`.
+    fn range_nth_value(&self, state: &State, args: &[Operand]) -> Option<(Interval, Vec<(Var, i128, i128)>)> {
+        let whole = |operand: &Operand| match operand {
+            Operand::Copy(place) | Operand::Move(place) if place.projection.is_empty() => Some(place.local),
+            _ => None,
+        };
+        let [start, step, index] = args else { return None };
+        let (start, step, index) = (whole(start)?, whole(step)?, whole(index)?);
+        let &(count, _, stop, _) = self.counts.iter().find(|&&(_, s, _, k)| s == start && k == step)?;
+        if self.range(state, Var::Local(step)).lo < 1
+            || self.decide(state, BinOp::Lt, Term::Var(Var::Local(index)), Term::Var(Var::Local(count))) != Some(true)
+        {
+            return None;
+        }
+        let low = self.range(state, Var::Local(start)).lo;
+        let high = self.range(state, Var::Local(stop)).hi.checked_sub(1)?;
+        let range = Interval { lo: low, hi: high.max(low) };
+        Some((range, vec![(Var::Local(stop), -1, i128::MAX), (Var::Local(start), i128::MAX, 0)]))
     }
 
     /// Whether `place` is a list or span reached from a local through struct
@@ -1283,8 +1370,10 @@ impl<'a> Analysis<'a> {
                 for arg in args {
                     self.forget_moved(&mut state, arg);
                 }
+                // A call that only computes from its arguments changes no list.
+                let computes = matches!(func, FuncRef::Builtin { which, .. } if computes_only(which));
                 for (index, view) in self.views.iter().enumerate() {
-                    if view.lent {
+                    if view.lent && !computes {
                         state.forget(Var::Len(index));
                     }
                 }
@@ -1305,6 +1394,14 @@ impl<'a> Analysis<'a> {
                         FuncRef::Builtin { which: Builtin::TotalLess, .. } if args.len() == 2 => {
                             if let Some(fact) = self.compare(&state, BinOp::Lt, &args[0], &args[1]) {
                                 state.bools.insert(local, fact);
+                            }
+                        }
+                        // `[CTL-3b]` — the value at `index` of a count of the
+                        // values from `start` towards `stop` by a positive
+                        // `step`: at most `stop - 1`, at least `start`.
+                        FuncRef::Builtin { which: Builtin::RangeNth, .. } if self.tracked[local.0 as usize] => {
+                            if let Some((range, rels)) = self.range_nth_value(&state, args) {
+                                self.set_local(&mut state, local, Some(range), rels);
                             }
                         }
                         _ => {}
@@ -1672,6 +1769,15 @@ fn negate(fact: BoolFact) -> BoolFact {
             BoolFact::Cmp { op, lhs, rhs }
         }
     }
+}
+
+/// A built-in that computes a value from its arguments and touches no list:
+/// a stepped loop's count and value, a length, a total-order comparison.
+fn computes_only(which: &Builtin) -> bool {
+    matches!(
+        which,
+        Builtin::RangeCount | Builtin::RangeNth | Builtin::ArrayLen | Builtin::SpanLen | Builtin::StringLen | Builtin::TotalLess
+    )
 }
 
 /// A list call that only reorders, removes or reads elements, or reserves room.

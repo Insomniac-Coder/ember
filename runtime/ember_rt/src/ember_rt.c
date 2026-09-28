@@ -1589,14 +1589,6 @@ size_t ember_range_count_u64(uint64_t start, uint64_t stop, uint64_t step) {
 
 /* Wrapping 64-bit arithmetic: the true value lies between `start` and `stop`,
  * so the wrapped result is exact. */
-int64_t ember_range_nth_i64(int64_t start, int64_t step, size_t k) {
-    return (int64_t)((uint64_t)start + (uint64_t)k * (uint64_t)step);
-}
-
-uint64_t ember_range_nth_u64(uint64_t start, uint64_t step, size_t k) {
-    return start + (uint64_t)k * step;
-}
-
 size_t ember_str_char_count(ember_str s) {
     size_t count = 0;
     for (size_t i = 0; i < s.len; ++i) {

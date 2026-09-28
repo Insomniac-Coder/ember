@@ -1453,11 +1453,16 @@ bool ember_total_lt_f16(uint16_t a, uint16_t b);
 /* `[STD-26]`: Python's `range(start, stop, step)` as a count and the value at
  * each index. The caller has already refused a zero step (it panics with the
  * source location). The count is exact and no value past `stop`
- * is formed, so nothing overflows. */
+ * is formed, so nothing overflows. The value at an index is computed inline:
+ * `[CTL-3b]` allows no call per element. */
 size_t ember_range_count_i64(int64_t start, int64_t stop, int64_t step);
 size_t ember_range_count_u64(uint64_t start, uint64_t stop, uint64_t step);
-int64_t ember_range_nth_i64(int64_t start, int64_t step, size_t k);
-uint64_t ember_range_nth_u64(uint64_t start, uint64_t step, size_t k);
+EMBER_INLINED int64_t ember_range_nth_i64(int64_t start, int64_t step, size_t k) {
+    return (int64_t)((uint64_t)start + (uint64_t)k * (uint64_t)step);
+}
+EMBER_INLINED uint64_t ember_range_nth_u64(uint64_t start, uint64_t step, size_t k) {
+    return start + (uint64_t)k * step;
+}
 size_t ember_range_count_i128(ember_i128 start, ember_i128 stop, ember_i128 step);
 size_t ember_range_count_u128(ember_u128 start, ember_u128 stop, ember_u128 step);
 ember_i128 ember_range_nth_i128(ember_i128 start, ember_i128 step, size_t k);

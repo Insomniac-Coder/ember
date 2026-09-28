@@ -17014,6 +17014,16 @@ impl<'a> Checker<'a> {
                 span,
             );
         }
+        // `[CTL-3b]` — `(a..b).step_by(k)`: a counted loop over the values,
+        // `k` checked once before it (ODR-089).
+        if let ast::ExprKind::MethodCall { recv, name, generic_args, args } = &iter.kind
+            && name.name.is("step_by")
+            && generic_args.is_empty()
+            && let [ast::Arg { name: None, value: step, .. }] = args.as_slice()
+            && let ast::ExprKind::Range { lo: Some(lo), hi: Some(hi), inclusive: false } = &unparenthesized(recv).kind
+        {
+            return self.check_for_stepped_range(label, pattern, (lo, hi, step), true, body, else_block, iter.span);
+        }
         let ast::ExprKind::Range { lo: Some(lo), hi, inclusive } = &iter.kind else {
             // `[CTL-1]` — anything else is driven through `next()`.
             return self.check_for_iterator(label, pattern, iter, body, else_block, span);
@@ -17980,7 +17990,7 @@ impl<'a> Checker<'a> {
                     self.check_for(label, pattern, &as_range, body, else_block, span)
                 }
                 [start, stop, step] => {
-                    self.check_for_stepped_range(label, pattern, (start, stop, step), body, else_block, span)
+                    self.check_for_stepped_range(label, pattern, (start, stop, step), false, body, else_block, span)
                 }
                 _ => wrong(self, "one to three arguments"),
             },
@@ -18063,6 +18073,7 @@ impl<'a> Checker<'a> {
         label: Option<ast::Ident>,
         pattern: &ast::Pattern,
         (start, stop, step): (&ast::Expr, &ast::Expr, &ast::Expr),
+        step_by: bool,
         body: &ast::Block,
         else_block: &Option<ast::Block>,
         span: Span,
@@ -18083,6 +18094,9 @@ impl<'a> Checker<'a> {
         let [start, stop, step] = values;
         self.scopes.push(HashMap::new());
         let start_local = self.declare(None, ty, span);
+        // The stop lives for the loop too, so what is known of it (that it
+        // is a list's length) still bounds each value in the body.
+        let stop_local = self.declare(None, ty, span);
         let step_local = self.declare(None, ty, span);
         let count_local = self.declare(None, usize_ty, span);
         let index_local = self.declare(None, usize_ty, span);
@@ -18091,7 +18105,7 @@ impl<'a> Checker<'a> {
             ty: usize_ty,
             kind: ExprKind::Builtin {
                 which: Builtin::RangeCount,
-                args: vec![local(start_local, ty), stop, local(step_local, ty)],
+                args: vec![local(start_local, ty), local(stop_local, ty), local(step_local, ty)],
             },
             span,
         };
@@ -18115,6 +18129,42 @@ impl<'a> Checker<'a> {
         inner.extend(checked.stmts);
         let else_block = else_block.as_ref().map(|b| self.check_block(b));
         self.scopes.pop();
+        // `step_by(k)` (ODR-089): a step of zero or less panics, before the
+        // loop, as `Iterator.step_by` does, and with its words.
+        let guard = step_by.then(|| {
+            let hidden = Symbol::intern("$step");
+            self.scopes.push(HashMap::new());
+            let named = self.declare(Some(hidden), ty, span);
+            let path = || ast::Expr {
+                id: ast::NodeId::DUMMY,
+                kind: ast::ExprKind::Path { segments: vec![ast::Ident { name: hidden, span }] },
+                span,
+            };
+            let message = ast::Expr {
+                id: ast::NodeId::DUMMY,
+                kind: ast::ExprKind::FString(vec![
+                    ast::FStringPart::Text("step_by(".to_string()),
+                    ast::FStringPart::Expr { expr: Box::new(path()), format_spec: None, echo: None, conversion: None },
+                    ast::FStringPart::Text("): the step must be positive".to_string()),
+                ]),
+                span,
+            };
+            let panic = ast::Expr {
+                id: ast::NodeId::DUMMY,
+                kind: ast::ExprKind::Call {
+                    callee: Box::new(ast::Expr {
+                        id: ast::NodeId::DUMMY,
+                        kind: ast::ExprKind::Path { segments: vec![ast::Ident { name: Symbol::intern("panic"), span }] },
+                        span,
+                    }),
+                    args: vec![ast::Arg { name: None, value: message, span }],
+                },
+                span,
+            };
+            let panic = self.synth(&panic);
+            self.scopes.pop();
+            (named, panic)
+        });
         // A zero step is the caller's bug (`[ERR-13]`): an assertion, so the
         // panic names the line.
         let bool_ty = self.common.bool_;
@@ -18132,15 +18182,41 @@ impl<'a> Checker<'a> {
             kind: ExprKind::Str("range() step must not be zero".to_string()),
             span,
         };
+        let checked_step = match guard {
+            Some((named, panic)) => {
+                let positive = Expr {
+                    ty: bool_ty,
+                    kind: ExprKind::Binary {
+                        op: BinOp::Le,
+                        lhs: Box::new(local(step_local, ty)),
+                        rhs: Box::new(Expr { ty, kind: ExprKind::Int(0), span }),
+                    },
+                    span,
+                };
+                Stmt::Block(Block {
+                    stmts: vec![
+                        Stmt::Let { local: named, init: Some(local(step_local, ty)) },
+                        Stmt::If {
+                            cond: positive,
+                            then_block: Block { stmts: vec![Stmt::Expr(panic)], span },
+                            else_block: None,
+                        },
+                    ],
+                    span,
+                })
+            }
+            None => Stmt::Expr(Expr {
+                ty: self.common.void,
+                kind: ExprKind::Builtin { which: Builtin::Assert, args: vec![nonzero, message] },
+                span,
+            }),
+        };
         Some(Stmt::Block(Block {
             stmts: vec![
                 Stmt::Let { local: start_local, init: Some(start) },
+                Stmt::Let { local: stop_local, init: Some(stop) },
                 Stmt::Let { local: step_local, init: Some(step) },
-                Stmt::Expr(Expr {
-                    ty: self.common.void,
-                    kind: ExprKind::Builtin { which: Builtin::Assert, args: vec![nonzero, message] },
-                    span,
-                }),
+                checked_step,
                 Stmt::Let { local: count_local, init: Some(count) },
                 Stmt::ForRange {
                     local: index_local,
@@ -20413,6 +20489,22 @@ impl<'a> Checker<'a> {
         if self.is_text(referent) {
             let iterable = self.read_through(iterable);
             return self.check_for_text(label, pattern, iterable, body, else_block, span);
+        }
+        // `[CTL-1]`, `[CTL-3b]` — a mutable view is iterated as
+        // `view.iter_mut()`: its elements, mutably, the view reborrowed for
+        // the loop rather than moved into it.
+        if matches!(self.types.kind(iterable.ty), TyKind::Span { mutable: true, .. }) {
+            let call = ast::Expr {
+                id: ast::NodeId::DUMMY,
+                kind: ast::ExprKind::MethodCall {
+                    recv: Box::new(iter.clone()),
+                    name: ast::Ident { name: Symbol::intern("iter_mut"), span: iter.span },
+                    generic_args: Vec::new(),
+                    args: Vec::new(),
+                },
+                span: iter.span,
+            };
+            return self.check_for_iterator(label, pattern, &call, body, else_block, span);
         }
         // `[CTL-3]`'s spirit for a collection: iterating an `Array[T]` is a
         // counted loop over its indices, with no iterator object at all.
@@ -36969,4 +37061,12 @@ struct CaptureWatch {
     /// shared borrow. This is carried across both body-check passes so capture
     /// discovery and the final body use the same representation.
     captures_by_move: bool,
+}
+
+/// An expression without the parentheses around it: `(0..10)` is `0..10`.
+fn unparenthesized(expr: &ast::Expr) -> &ast::Expr {
+    match &expr.kind {
+        ast::ExprKind::Paren(inner) => unparenthesized(inner),
+        _ => expr,
+    }
 }

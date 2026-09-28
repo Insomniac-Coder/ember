@@ -2706,4 +2706,29 @@ accepts as `Iterator.next` as it accepts built-in indexing as `Index.index`.
   `join(sep)` need bounds on `Item` in a default method. `rev` needs a double-ended iterator.
   `copied`/`cloned` need `Item = ref T`. The `Iterable` forms (`xs.enumerate()`). `[CTL-3b]`'s
   counted lowering of adapter chains in a `for` header: today a chain runs through `next`.
+* **`[CTL-3b]` in `for` headers, the same day.** `(a..b).step_by(k)` is the counted loop
+  `range(start, stop, step)` already was (`check_for_stepped_range`, now with a `step_by` mode):
+  the values are counted once, each is computed from its index, and a `k` of zero or less
+  panics before the loop with `Iterator.step_by`'s words (a guard built as source, over a hidden
+  local). `for x in view` over a `MutSpan` is `view.iter_mut()`, a counted loop, the view
+  reborrowed rather than moved. The per-index value (`ember_range_nth_*`) is inline in the
+  header now: `[CTL-3b]` allows no call per element, and `range(a, b, k)` made one. Not yet:
+  `a..=b` with `step_by`, and fusing `take`/`skip`/`enumerate`/`zip` chains in a header.
+* **`[RNG-4]` for stepped loops, measured and chased (the owner's rule).** Summing every third
+  element of a million, 300 times, was 1.17x C on MSVC and 1.11x on clang, a bounds check on
+  `xs[i]` in each turn among the cost. Range facts now know a stepped value: `RangeNth(start,
+  step, index)` with `index` below a `RangeCount(start, stop, step)` of the same once-written
+  locals and `step >= 1` lies between `start` and `stop - 1` (`range_counts`,
+  `range_nth_value`). Three general fixes let the chain from the value to the list's length
+  survive: a relation through a local that is forgotten (a temporary's storage ends right after
+  it is read) is kept between the others (`a <= x + c1`, `x <= b + c2` give `a <= b + c1 +
+  c2`); built-ins that only compute (`RangeCount`, `RangeNth`, the lengths, `TotalLess`) no
+  longer forget a lent list's length; and the loop keeps its `stop` in a local that lives for
+  the loop, as it did its `start` and `step`, which also evaluates the three left to right as
+  Python does. Measured: MSVC 1.14x, clang 1.07x C. The rest, priced by hand-edited C: the
+  overflow check on the running total, which the language requires (the total is not bounded
+  across the two loops), and filling the list by `push` against the C's one `malloc`; without
+  both checks the loop is 0.062 s against the C's 0.059 s. Tests: RNG-4
+  `accept_a_stepped_loop_needs_no_bounds_check`,
+  `run_fail_a_stepped_loop_past_the_list_keeps_its_check`.
 
