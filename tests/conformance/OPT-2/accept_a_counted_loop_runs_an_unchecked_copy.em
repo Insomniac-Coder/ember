@@ -26,10 +26,16 @@ class Bag:
     fn init(mut self):
         self.items = []
 
+# Lent to a function, a list holds values the range facts cannot know
+# (`[RNG-4]`), so the checks this test looks at stay.
+fn unknown[T](mut xs: Array[T]):
+    pass
+
 fn main():
     xs: Array[int] = []
     for i in 0..100:
         xs.push(i)
+    unknown(xs)
 
     total = 0
     for i in 0..len(xs):

@@ -98,32 +98,34 @@ would make Ember look faster than it is.
 
 | What the program does | With MSVC | With clang |
 |---|---|---|
-| Map of numbers: 1 million inserts, then 5 million lookups | 2.3 times faster | 2.4 times faster |
-| Build a long string (16 million appends), then count one letter in it | 31% faster | 21% faster |
-| Copy a 1,000-number list into another, one item at a time, 100,000 times | 27% faster | same speed |
-| Sort 5 million numbers | 19% faster | 13% faster |
+| Map of numbers: 1 million inserts, then 5 million lookups | 2.2 times faster | 2.3 times faster |
+| Build a long string (16 million appends), then count one letter in it | 31% faster | 20% faster |
+| Copy a 1,000-number list into another, one item at a time, 100,000 times | 28% faster | same speed |
 | Integer arithmetic: 50 million rounds of multiply, divide and remainder | 18% faster | same speed |
-| Change every number twice, reading back what it wrote, overflow checks off | same speed | same speed |
-| Add up a list of 1,000 numbers, 300,000 times, overflow checks off | same speed | same speed |
+| Sort 5 million numbers | 18% faster | 12% faster |
+| Change every number twice, reading back what it wrote, overflow checks on | same speed | same speed |
 | Change every number twice, writing to a separate list, overflow checks off | same speed | same speed |
+| Change every number twice, reading back what it wrote, overflow checks off | same speed | same speed |
+| Start and stop an empty program | same speed | same speed |
+| Add up a list of 1,000 numbers, 300,000 times, overflow checks off | same speed | same speed |
+| Change every number using a second list, 20,000 rounds, overflow checks on | same speed | same speed |
 | Change every number using a second list, 20,000 rounds, overflow checks off | same speed | same speed |
-| Add one list into another, 2,000 rounds, overflow checks off | same speed | same speed |
+| Change every number twice, writing to a separate list, overflow checks on | same speed | same speed |
 | Decimal arithmetic: the Mandelbrot set, 1,000 × 1,000 points | same speed | same speed |
+| Clear and refill a list while 1 other list is being viewed | same speed | same speed |
+| Add one list into another, 2,000 rounds, overflow checks on | same speed | same speed |
+| Two lists of 100,000 decimal numbers, add one into the other 5,000 times | same speed | same speed |
 | Call a function passed as a value, 200 million times | same speed | same speed |
-| 1 million objects with a name and a list, each read 40 times | same speed | same speed |
-| Add two lists plus the round number into a third, overflow checks off | same speed | same speed |
+| Add one list into another, 2,000 rounds, overflow checks off | same speed | same speed |
 
 ### Close to C: up to 10% slower with one of the compilers
 
 | What the program does | With MSVC | With clang |
 |---|---|---|
-| Two lists of 100,000 decimal numbers, add one into the other 5,000 times | 6% slower | 7% slower |
-| Start and stop an empty program | same speed | 6% slower |
-| Clear and refill a list while 1 other list is being viewed | same speed | 6% slower |
-| Clear and refill a list while 4 other lists are being viewed | same speed | 9% slower |
+| 1 million objects with a name and a list, each read 40 times | 6% slower | 5% slower |
 | Clear and refill a list while 16 other lists are being viewed | same speed | 7% slower |
-| Add one list into another, 2,000 rounds, overflow checks on | 9% slower | same speed |
-| Enum with `match`: area of 1 million shapes, 100 times | 15% faster | 9% slower |
+| Add two lists plus the round number into a third, overflow checks off | 6% slower | same speed |
+| 1 million objects holding 6 lists, each read 40 times | 9% slower | 9% slower |
 
 ### More than 10% slower than C with at least one compiler
 
@@ -131,18 +133,16 @@ would make Ember look faster than it is.
 
 | What the program does | With MSVC | With clang |
 |---|---|---|
-| Change every number twice, reading back what it wrote, overflow checks on | 1.8 times slower | 1.6 times slower |
-| Change every number twice, writing to a separate list, overflow checks on | 1.7 times slower | 1.6 times slower |
-| Move 100,000 particles 2,000 times, changing each in place | 1.7 times slower | same speed |
 | Recursion: Fibonacci of 38, the slow way | 5% slower | 1.7 times slower |
 | Calls through an interface: area of 1 million shapes, 20 times | 1.6 times slower | 1.6 times slower |
 | Add up a list of 1,000 numbers, 300,000 times, overflow checks on | 35% slower | 1.6 times slower |
-| A generic function ("larger of two"), 200 million times | same speed | 36% slower |
+| Move 100,000 particles 2,000 times, changing each in place | 43% slower | same speed |
+| A generic function ("larger of two"), 200 million times | same speed | 35% slower |
 | Call a method that changes an object taken from a list, 100 million times (object holding 6 lists) | 23% slower | same speed |
-| Call a method that changes an object taken from a list, 100 million times (object holding 1 list) | 17% slower | same speed |
-| Call a method that changes an object taken from a list, and the method calls another function, 100 million times | 16% slower | same speed |
-| 1 million objects holding 6 lists, each read 40 times | 11% slower | 7% slower |
-| Change every number using a second list, 20,000 rounds, overflow checks on | 10% slower | same speed |
+| Call a method that changes an object taken from a list, 100 million times (object holding 1 list) | 19% slower | same speed |
+| Call a method that changes an object taken from a list, and the method calls another function, 100 million times | 19% slower | same speed |
+| Enum with `match`: area of 1 million shapes, 100 times | 15% faster | 13% slower |
+| Clear and refill a list while 4 other lists are being viewed | same speed | 11% slower |
 
 ## Examples
 

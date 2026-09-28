@@ -7,10 +7,16 @@
 # multiply and shift, so a loop doing it stays in vectorisable form and its
 # overflow check is grouped (`[SIMD-7]`), 32 iterations at a time.
 
+# Lent to a function, a list holds values the range facts cannot know
+# (`[RNG-4]`), so the checks this test looks at stay.
+fn unknown[T](mut xs: Array[T]):
+    pass
+
 fn main():
     xs: Array[i32] = []
     for i in 0..10000:
         xs.push(i as i32)
+    unknown(xs)
     ys: Array[i32] = []
     for i in 0..10000:
         ys.push(0)

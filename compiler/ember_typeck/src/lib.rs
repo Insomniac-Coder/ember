@@ -17800,13 +17800,17 @@ impl<'a> Checker<'a> {
                             vec![parts[1]],
                             Some((parts[0], start)),
                             false,
+                            false,
+                            None,
                             body,
                             else_block,
                             span,
                         )
                     }
-                    "zip" => self.check_for_indexed(label, sources, parts, None, false, body, else_block, span),
-                    _ => self.check_for_indexed(label, sources, parts, None, true, body, else_block, span),
+                    "zip" => {
+                        self.check_for_indexed(label, sources, parts, None, false, false, None, body, else_block, span)
+                    }
+                    _ => self.check_for_indexed(label, sources, parts, None, true, false, None, body, else_block, span),
                 }
             }
             _ => unreachable!("check_for_builtin is called for four names"),
@@ -17926,10 +17930,13 @@ impl<'a> Checker<'a> {
         patterns: Vec<&ast::Pattern>,
         counter: Option<(&ast::Pattern, Expr)>,
         reversed: bool,
+        mutable: bool,
+        from: Option<Expr>,
         body: &ast::Block,
         else_block: &Option<ast::Block>,
         span: Span,
     ) -> Option<Stmt> {
+        debug_assert!(!(reversed && from.is_some()), "a reversed loop counts from its end");
         let incoming_class_init = self.class_init.clone();
         let usize_ty = self.common.usize;
         let int_ty = self.common.i64;
@@ -17939,9 +17946,9 @@ impl<'a> Checker<'a> {
         let mut views = Vec::new();
         for (value, elem) in sources {
             let value = self.keep_alive(value, &mut outer);
-            let span_ty = self.types.intern(TyKind::Span { elem, mutable: false });
+            let span_ty = self.types.intern(TyKind::Span { elem, mutable });
             let view = if matches!(self.types.kind(value.ty), TyKind::Vec { .. }) {
-                self.view_of(value, span_ty, false, Builtin::SpanFrom { mutable: false })
+                self.view_of(value, span_ty, mutable, Builtin::SpanFrom { mutable })
             } else {
                 self.coerce(value, span_ty)
             };
@@ -18019,7 +18026,7 @@ impl<'a> Checker<'a> {
             });
         }
         for (&(xs, span_ty, elem), pattern) in views.iter().zip(&patterns) {
-            let item_ty = self.types.intern(TyKind::Ref { mutable: false, inner: elem });
+            let item_ty = self.types.intern(TyKind::Ref { mutable, inner: elem });
             let simple = matches!(pattern.kind, ast::PatternKind::Bind { .. });
             let item = self.declare(simple.then(|| binding_name(pattern)).flatten(), item_ty, pattern.span);
             self.locals[item.0 as usize].loop_borrowed_handle = simple && self.is_counted_owner_handle(elem);
@@ -18036,7 +18043,7 @@ impl<'a> Checker<'a> {
                             },
                             span,
                         }),
-                        mutable: false,
+                        mutable,
                     },
                     span,
                 }),
@@ -18059,7 +18066,7 @@ impl<'a> Checker<'a> {
         self.scopes.pop();
         outer.push(Stmt::ForRange {
             local: index_local,
-            start: Expr { ty: usize_ty, kind: ExprKind::Int(0), span },
+            start: from.unwrap_or(Expr { ty: usize_ty, kind: ExprKind::Int(0), span }),
             end: local(length_local, usize_ty),
             inclusive: false,
             body: Block { stmts: inner, span },
@@ -20186,6 +20193,8 @@ impl<'a> Checker<'a> {
                 vec![pattern],
                 None,
                 false,
+                false,
+                None,
                 body,
                 else_block,
                 span,
@@ -20203,6 +20212,53 @@ impl<'a> Checker<'a> {
         } else {
             iterable
         };
+        // `[CTL-3]`'s spirit for a view's element iterator (`iter()`,
+        // `iter_mut()`): `next` gives `&source[index]` and moves `index` on
+        // until it reaches the view's length, so the loop is a counted one
+        // from the cursor to that length, with no `Option` and no done flag.
+        // The iterator stays the loop's hidden local (`[CTL-2]`'s loan, the
+        // iterable's temporaries); its view moves to the counted loop's own.
+        if let Some((elem, SpanIteratorKind::Elements { mutable })) = self.span_iterator(iterable.ty) {
+            let TyKind::Struct(id) = *self.types.kind(iterable.ty) else { unreachable!("a span iterator is a struct") };
+            let field = |this: &Self, name: &str| {
+                let fields = &this.types.struct_def(id).fields;
+                let at = fields.iter().position(|f| f.name.is(name)).expect("a span iterator's fields");
+                (at, fields[at].ty)
+            };
+            let (source_at, source_ty) = field(self, "source");
+            let (cursor_at, cursor_ty) = field(self, "index");
+            let iterable_ty = iterable.ty;
+            self.scopes.push(HashMap::new());
+            let it = self.declare(Some(Symbol::intern("__it")), iterable_ty, iter.span);
+            self.locals[it.0 as usize].for_iterator = true;
+            let iterator = |ty| Expr { ty, kind: ExprKind::Local(it), span: iter.span };
+            let project = |at, ty| Expr {
+                ty,
+                kind: ExprKind::Field { base: Box::new(iterator(iterable_ty)), index: at },
+                span: iter.span,
+            };
+            let cursor = self.declare(None, cursor_ty, iter.span);
+            let mut stmts = vec![
+                Stmt::Let { local: it, init: Some(iterable) },
+                Stmt::Let { local: cursor, init: Some(project(cursor_at, cursor_ty)) },
+            ];
+            let from = Expr { ty: cursor_ty, kind: ExprKind::Local(cursor), span: iter.span };
+            let counted = self.check_for_indexed(
+                label,
+                vec![(project(source_at, source_ty), elem)],
+                vec![pattern],
+                None,
+                false,
+                mutable,
+                Some(from),
+                body,
+                else_block,
+                span,
+            );
+            self.scopes.pop();
+            stmts.extend(counted);
+            return Some(Stmt::Block(Block { stmts, span }));
+        }
         // The iterator itself is a local, because `next` mutates it.
         self.scopes.push(HashMap::new());
         let it_local = self.declare(Some(Symbol::intern("__it")), iterable.ty, iter.span);

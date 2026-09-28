@@ -11193,6 +11193,12 @@ first**; the rest of §0.355 is the running narrative behind it.
     12).** Inline comparison, elements moved as values; introsort where equal
     means identical (numbers, `bool`, `char`), a stable merge sort for text.
     Sorting 5 million `int`s: MSVC 1.17x -> 0.82x C++, clang 0.96x -> 0.88x.
+  * **Counted view-iterator loops; element ranges (2026-09-29, autonomous;
+    ADR-070 items 13-14).** `for p in xs.iter_mut()` / `.iter()` is a counted
+    loop from the iterator's cursor (particles MSVC 1.69x -> 1.45x). Range
+    facts follow what a list the function fills can hold, and widen at a loop
+    header only what that loop writes: the list loops with checks on are at C
+    speed (b15 1.8x -> 0.93x MSVC, 1.6x -> 0.97x clang; b16 and b13 likewise).
   * **Speed verdicts so far (2026-09-29, owner's goal 1: each slow row ends
     "same or faster" or "slower because <valid reason>").**
     * `mut self` method calls, MSVC 16-23%: the mandatory overflow check on
@@ -11202,10 +11208,27 @@ first**; the rest of §0.355 is the running narrative behind it.
       turns the max unsigned and emits `cmova`, 2 micro-ops on Intel P-cores
       against `cmovg`'s 1, on the loop's dependency chain. Open LLVM issue
       llvm/llvm-project#113965; nothing in Ember's C decides it.
-    * Open, being worked: list loops with checks (b13/b15/b16) need element
-      ranges; particles `iter_mut` on MSVC needs the counted loop; recursion
-      on clang (one check left, the `+` of two results: to price); interface
-      calls; the class-field sum (p1); objects with 6 lists (p6).
+    * Particles on MSVC, 1.45x: MSVC swaps the C twin's loops (each particle
+      in registers for all 2,000 steps) only for a perfect nest; Ember's
+      outer loop rebuilds the view each step. Open: hoist loop-invariant view
+      construction in the MIR (ADR-070 item 13 has the hand tests).
+    * Recursion (Fibonacci) on clang, 1.7x: the mandatory overflow check on
+      `fib(n - 1) + fib(n - 2)`, whose values nothing bounds. Priced: without
+      it 0.112 s against C's 0.118 s; with it 0.184 s, since clang cannot turn
+      the second call into a loop around a checked add.
+    * Sum of a list held in a class field, with checks (p1), MSVC 1.35x,
+      clang 1.6x: the mandatory overflow check on the running total, already
+      done block by block (ADR-070 item 8); the same program with checks off
+      runs at C speed. Proving it away would need element ranges for class
+      fields across the program and totals bounded across nested loops.
+    * Enum `match` on clang, 1.09x: filling the list is 0.035 s against the
+      C twin's 0.022 s, because the C allocates the million shapes at once
+      and Ember's program grows its list push by push (as a C++ vector
+      would); the two matching loops are within 3.5%, clang ordering the tag
+      tests differently.
+    * Open: interface calls (next: try the implementing classes directly
+      before the table search, [DSP-3], with the search as the fallback);
+      objects with 6 lists (p6).
   * **Regressions the range-facts benchmark run found, fixed (2026-09-28).**
     MSVC stopped inlining `push` once loop versioning made a function larger
     (list refill 1.0x -> 1.31x C, list copy 0.74x -> 1.0x): the runtime's

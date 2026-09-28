@@ -18,6 +18,12 @@
 //! unsigned `/` or `%` when both sides are non-negative. Every removal is
 //! recorded for the safety side table (`[EFF-10]`).
 //!
+//! The elements of a list the function makes empty itself, and changes only
+//! in ways it can see (element writes, `push`, `insert`, and calls that only
+//! reorder or remove), hold only values it stored: their range is the hull
+//! of every stored value's, read back through `xs[i]`, a shared view's
+//! `v[i]` or a shared element reference.
+//!
 //! A local whose address is taken mutably is not tracked, since a write
 //! through the reference would be invisible. A list's length is forgotten
 //! at anything that can change the list: a write to it or a place holding it,
@@ -25,7 +31,7 @@
 //! anywhere in the function — every call. A list reached through a shared
 //! reference cannot change while the reference lives (`[UNS-4]`).
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use ember_mir::{
     AssertKind, BinOp, Body, Builtin, CastKind, CheckKind, CheckProof, Const, FuncRef, LocalId, Operand, Place,
@@ -257,14 +263,21 @@ impl State {
     }
 
     /// `join`, with any bound that moved pushed to the type's end, and any
-    /// relation that loosened dropped: a loop header reaches a fixpoint.
-    fn widen(&self, next: &State, analysis: &Analysis) -> State {
+    /// relation that loosened dropped: a loop header reaches a fixpoint. Only
+    /// a local the loop itself writes is widened (`changed`); any other grew
+    /// on the way in, from an enclosing loop that widens it, and is joined, so
+    /// an outer counter keeps its range inside an inner loop.
+    fn widen(&self, next: &State, analysis: &Analysis, changed: &HashSet<LocalId>) -> State {
         let mut ranges = BTreeMap::new();
         for (var, old) in &self.ranges {
             let Some(new) = next.ranges.get(var) else { continue };
             let full = analysis.var_range(*var);
-            let lo = if new.lo < old.lo { full.lo } else { old.lo };
-            let hi = if new.hi > old.hi { full.hi } else { old.hi };
+            let widened = match var {
+                Var::Local(local) => changed.contains(local),
+                Var::Len(_) => true,
+            };
+            let lo = if new.lo < old.lo { if widened { full.lo } else { new.lo } } else { old.lo };
+            let hi = if new.hi > old.hi { if widened { full.hi } else { new.hi } } else { old.hi };
             if (Interval { lo, hi }) != full {
                 ranges.insert(*var, Interval { lo, hi });
             }
@@ -303,12 +316,37 @@ struct View {
     lent: bool,
 }
 
+/// Where values go into the elements of a list whose elements are followed.
+#[derive(Clone, Copy, Debug)]
+enum Store {
+    /// Statement `.1` of block `.0` writes one element.
+    Element(usize, usize),
+    /// The call ending block `.0` adds its argument `.1` (`push`, `insert`).
+    Added(usize, usize),
+    /// A call adds elements from elsewhere (`extend`): any value.
+    Unknown,
+}
+
+/// The integer lists whose elements the facts follow, and what reads them.
+#[derive(Default)]
+struct Lists {
+    /// Per list: every store into its elements.
+    stores: BTreeMap<LocalId, Vec<Store>>,
+    /// A shared view of a list (`as_span`): the list.
+    views: BTreeMap<LocalId, LocalId>,
+    /// A shared reference to one element of a list or of such a view.
+    items: BTreeMap<LocalId, LocalId>,
+}
+
 pub(crate) struct Analysis<'a> {
     body: &'a Body,
     types: &'a TypeTable,
     /// Per local: a whole integer local no reference can write.
     tracked: Vec<bool>,
     views: Vec<View>,
+    lists: Lists,
+    /// Per followed list: the range of its elements, narrower than the type's.
+    elements: BTreeMap<LocalId, Interval>,
     usize_range: Interval,
     /// The state on entry to each block; `None` when unreachable.
     entry: Vec<Option<State>>,
@@ -330,13 +368,27 @@ impl<'a> Analysis<'a> {
             types,
             tracked: Vec::new(),
             views: Vec::new(),
+            lists: Lists::default(),
+            elements: BTreeMap::new(),
             usize_range,
             entry: Vec::new(),
             seeds: Vec::new(),
         };
         analysis.tracked = analysis.tracked_locals();
         analysis.views = analysis.collect_views();
+        analysis.lists = analysis.element_lists();
         analysis.solve()?;
+        // Element ranges from what the stores wrote. Each round's come from
+        // facts that assumed the last round's, so each is sound, and they
+        // only narrow; a second round reaches a store that reads its own list.
+        for _ in 0..2 {
+            let elements = analysis.element_ranges();
+            if elements == analysis.elements {
+                break;
+            }
+            analysis.elements = elements;
+            analysis.solve()?;
+        }
         // Widening loses a running total's range; the loop's trip count
         // gives it back, and a second solve uses it.
         let seeds = analysis.accumulator_bounds();
@@ -393,6 +445,252 @@ impl<'a> Analysis<'a> {
                 Some(View { lent: !frozen && self.lent(&place), place })
             })
             .collect()
+    }
+
+    /// The integer lists whose elements the facts can follow. A list local
+    /// (not a parameter) qualifies when every value it holds is one this
+    /// function stored: it is only ever made by `Array()`, written by element
+    /// (`xs[i] = v`), and lent mutably only to `push`, `insert`, `extend` and
+    /// the calls that only reorder or remove (`sort`, `pop`, ...), each
+    /// through a reference written once and used for nothing else. A copy of
+    /// its header, any other mutable borrow, or any other way in, and it is
+    /// not followed. Its shared views and element references read it.
+    fn element_lists(&self) -> Lists {
+        let body = self.body;
+        let mut stores: BTreeMap<LocalId, Vec<Store>> = BTreeMap::new();
+        for (index, decl) in body.locals.iter().enumerate().skip(body.arg_count + 1) {
+            if let TyKind::Vec { elem, text: false } = *self.types.kind(decl.ty) {
+                if type_range(self.types, elem).is_some() {
+                    stores.insert(LocalId(index as u32), Vec::new());
+                }
+            }
+        }
+        if stores.is_empty() {
+            return Lists::default();
+        }
+        // How many times each local is written whole.
+        let mut writes = vec![0usize; body.locals.len()];
+        let mut count = |place: &Place| {
+            if place.projection.is_empty() {
+                writes[place.local.0 as usize] += 1;
+            }
+        };
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                match &stmt.kind {
+                    StmtKind::Assign { place, .. } => count(place),
+                    StmtKind::CheckedBinaryOp { dest, overflow, .. } => {
+                        count(dest);
+                        count(overflow);
+                    }
+                    _ => {}
+                }
+            }
+            if let Terminator::Call { dest, .. } = &block.terminator {
+                count(dest);
+            }
+        }
+        let once = |local: LocalId| writes[local.0 as usize] == 1;
+        let element = |place: &Place| matches!(place.projection.as_slice(), [Projection::Index(_) | Projection::ConstIndex(_)]);
+        let mut bad: BTreeSet<LocalId> = BTreeSet::new();
+        // `t = &mut xs` (a lender) and `t = &xs`, each `t` written once.
+        let mut lenders: BTreeMap<LocalId, LocalId> = BTreeMap::new();
+        let mut shared: BTreeMap<LocalId, LocalId> = BTreeMap::new();
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                let StmtKind::Assign { place, rvalue: Rvalue::Ref { place: target, mutable } } = &stmt.kind else { continue };
+                if !stores.contains_key(&target.local) {
+                    continue;
+                }
+                let whole = target.projection.is_empty() && place.projection.is_empty() && once(place.local);
+                match (*mutable, whole) {
+                    (true, true) => {
+                        lenders.insert(place.local, target.local);
+                    }
+                    (true, false) => {
+                        bad.insert(target.local);
+                    }
+                    (false, true) => {
+                        shared.insert(place.local, target.local);
+                    }
+                    (false, false) => {}
+                }
+            }
+        }
+        // Shared views `v = as_span(t)`, then element references `r = &xs[i]`
+        // or `r = &v[i]`.
+        let mut views: BTreeMap<LocalId, LocalId> = BTreeMap::new();
+        for block in &body.blocks {
+            if let Terminator::Call { func: FuncRef::Builtin { which: Builtin::SpanFrom { mutable: false }, .. }, args, dest, .. } =
+                &block.terminator
+                && let [Operand::Copy(source) | Operand::Move(source)] = args.as_slice()
+                && let Some(&list) = shared.get(&source.local)
+                && source.projection.is_empty()
+                && dest.projection.is_empty()
+                && once(dest.local)
+            {
+                views.insert(dest.local, list);
+            }
+        }
+        let mut items: BTreeMap<LocalId, LocalId> = BTreeMap::new();
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                let StmtKind::Assign { place, rvalue: Rvalue::Ref { place: target, mutable: false } } = &stmt.kind else { continue };
+                let list = if stores.contains_key(&target.local) { Some(target.local) } else { views.get(&target.local).copied() };
+                if let Some(list) = list
+                    && element(target)
+                    && place.projection.is_empty()
+                    && once(place.local)
+                {
+                    items.insert(place.local, list);
+                }
+            }
+        }
+        // Every way in.
+        for (b, block) in body.blocks.iter().enumerate() {
+            for (s, stmt) in block.stmts.iter().enumerate() {
+                let defines_lender = matches!(&stmt.kind,
+                    StmtKind::Assign { place, rvalue: Rvalue::Ref { mutable: true, .. } } if lenders.contains_key(&place.local));
+                if !defines_lender {
+                    for_each_place(stmt, &mut |place: &Place| {
+                        if let Some(&list) = lenders.get(&place.local) {
+                            bad.insert(list);
+                        }
+                    });
+                }
+                match &stmt.kind {
+                    StmtKind::Assign { place, rvalue } => {
+                        if let Some(list) = stores.get_mut(&place.local) {
+                            if element(place) {
+                                list.push(Store::Element(b, s));
+                            } else {
+                                bad.insert(place.local);
+                            }
+                        }
+                        for operand in rvalue_operands(rvalue) {
+                            if let Operand::Copy(read) = operand
+                                && read.projection.is_empty()
+                                && stores.contains_key(&read.local)
+                            {
+                                bad.insert(read.local);
+                            }
+                        }
+                    }
+                    StmtKind::CheckedBinaryOp { dest, overflow, .. } => {
+                        if let Some(list) = stores.get_mut(&dest.local) {
+                            if element(dest) {
+                                list.push(Store::Element(b, s));
+                            } else {
+                                bad.insert(dest.local);
+                            }
+                        }
+                        if stores.contains_key(&overflow.local) {
+                            bad.insert(overflow.local);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            match &block.terminator {
+                Terminator::Call { func, args, dest, .. } => {
+                    let which = match func {
+                        FuncRef::Builtin { which, .. } => Some(which),
+                        _ => None,
+                    };
+                    if stores.contains_key(&dest.local)
+                        && !(dest.projection.is_empty() && matches!(which, Some(Builtin::ArrayNew)))
+                    {
+                        bad.insert(dest.local);
+                    }
+                    if let Some(&list) = lenders.get(&dest.local) {
+                        bad.insert(list);
+                    }
+                    for (k, arg) in args.iter().enumerate() {
+                        let (Operand::Copy(place) | Operand::Move(place)) = arg else { continue };
+                        if let Some(&list) = lenders.get(&place.local) {
+                            let store = match which {
+                                _ if k != 0 || !place.projection.is_empty() => Err(()),
+                                Some(Builtin::ArrayPush | Builtin::ArrayInsert) => Ok(Some(Store::Added(b, 1))),
+                                Some(Builtin::ArrayExtend) => Ok(Some(Store::Unknown)),
+                                Some(which) if reorders_or_removes(which) => Ok(None),
+                                _ => Err(()),
+                            };
+                            match store {
+                                Ok(Some(store)) => stores.get_mut(&list).expect("a lender's list").push(store),
+                                Ok(None) => {}
+                                Err(()) => {
+                                    bad.insert(list);
+                                }
+                            }
+                        } else if matches!(arg, Operand::Copy(_))
+                            && place.projection.is_empty()
+                            && stores.contains_key(&place.local)
+                            && !matches!(which, Some(Builtin::ArrayLen | Builtin::ArrayCapacity))
+                        {
+                            bad.insert(place.local);
+                        }
+                    }
+                }
+                Terminator::SwitchInt { discr: operand, .. } | Terminator::Assert { cond: operand, .. } => {
+                    if let Operand::Copy(place) | Operand::Move(place) = operand
+                        && let Some(&list) = lenders.get(&place.local)
+                    {
+                        bad.insert(list);
+                    }
+                }
+                _ => {}
+            }
+        }
+        stores.retain(|list, _| !bad.contains(list));
+        views.retain(|_, list| stores.contains_key(list));
+        items.retain(|_, list| stores.contains_key(list));
+        Lists { stores, views, items }
+    }
+
+    /// Per followed list, the hull of every value its stores write under the
+    /// current facts, met with the last round's.
+    fn element_ranges(&self) -> BTreeMap<LocalId, Interval> {
+        let mut out = BTreeMap::new();
+        for (&list, stores) in &self.lists.stores {
+            let TyKind::Vec { elem, .. } = *self.types.kind(self.body.local(list).ty) else { continue };
+            let Some(full) = type_range(self.types, elem) else { continue };
+            let mut range: Option<Interval> = None;
+            for store in stores {
+                // A block the facts show no run reaches stores nothing.
+                let value = match *store {
+                    Store::Element(block, index) => {
+                        let Some(state) = self.state_before(block, index) else { continue };
+                        match &self.body.blocks[block].stmts[index].kind {
+                            StmtKind::Assign { rvalue, .. } => self.value(&state, rvalue, elem).0,
+                            // Stored only if its check passes: a failing one
+                            // ends the program before anything reads it.
+                            StmtKind::CheckedBinaryOp { op, lhs, rhs, .. } => {
+                                self.arithmetic_value(&state, *op, lhs, rhs, full, true).0
+                            }
+                            _ => None,
+                        }
+                    }
+                    Store::Added(block, arg) => {
+                        let data = &self.body.blocks[block];
+                        let Some(state) = self.state_before(block, data.stmts.len()) else { continue };
+                        let Terminator::Call { args, .. } = &data.terminator else { continue };
+                        self.operand_range(&state, &args[arg])
+                    }
+                    Store::Unknown => None,
+                };
+                let value = value.and_then(|value| value.meet(full)).unwrap_or(full);
+                range = Some(range.map_or(value, |range| range.hull(value)));
+            }
+            // With no store the list is always empty: nothing is read from it.
+            let Some(mut range) = range else { continue };
+            if let Some(old) = self.elements.get(&list) {
+                range = range.meet(*old).unwrap_or(range);
+            }
+            if range != full {
+                out.insert(list, range);
+            }
+        }
+        out
     }
 
     /// Whether `place` is a list or span reached from a local through struct
@@ -480,10 +778,25 @@ impl<'a> Analysis<'a> {
         }
         match operand {
             Operand::Copy(place) | Operand::Move(place) => {
-                type_range(self.types, place_type(self.body, self.types, place))
+                let full = type_range(self.types, place_type(self.body, self.types, place))?;
+                Some(self.element_range(place).and_then(|range| range.meet(full)).unwrap_or(full))
             }
             _ => None,
         }
+    }
+
+    /// What an element read can hold: `xs[i]` of a followed list or of a
+    /// shared view of one, or `*r` of a shared reference to such an element.
+    fn element_range(&self, place: &Place) -> Option<Interval> {
+        let list = match place.projection.as_slice() {
+            [Projection::Index(_) | Projection::ConstIndex(_)] => match self.lists.stores.contains_key(&place.local) {
+                true => place.local,
+                false => *self.lists.views.get(&place.local)?,
+            },
+            [Projection::Deref] => *self.lists.items.get(&place.local)?,
+            _ => return None,
+        };
+        self.elements.get(&list).copied()
     }
 
     fn operand_ty(&self, operand: &Operand) -> Option<Ty> {
@@ -1025,6 +1338,8 @@ impl<'a> Analysis<'a> {
         let n = self.body.blocks.len();
         let order = reverse_postorder(self.body);
         let headers = loop_headers(self.body, &order);
+        let loop_writes = loop_writes(self.body, &order, &headers);
+        let unchanged = HashSet::new();
         let mut entry: Vec<Option<State>> = vec![None; n];
         entry[0] = Some(State::default());
         let mut visits = vec![0usize; n];
@@ -1047,7 +1362,7 @@ impl<'a> Analysis<'a> {
                         Some(old) => {
                             let joined = old.join(&incoming);
                             if headers.contains(&target) && visits[target] > 1 {
-                                old.widen(&joined, self)
+                                old.widen(&joined, self, loop_writes.get(&target).unwrap_or(&unchanged))
                             } else {
                                 joined
                             }
@@ -1359,6 +1674,25 @@ fn negate(fact: BoolFact) -> BoolFact {
     }
 }
 
+/// A list call that only reorders, removes or reads elements, or reserves room.
+fn reorders_or_removes(which: &Builtin) -> bool {
+    matches!(
+        which,
+        Builtin::ArraySort
+            | Builtin::ArrayReverse
+            | Builtin::ArrayClear
+            | Builtin::ArrayPop { .. }
+            | Builtin::ArrayRemove
+            | Builtin::ArrayDrain
+            | Builtin::ArrayReserve
+            | Builtin::ArrayTruncate
+            | Builtin::ArraySwapRemove
+            | Builtin::ArraySwap
+            | Builtin::ArrayLen
+            | Builtin::ArrayCapacity
+    )
+}
+
 fn is_len(which: &Builtin) -> bool {
     matches!(which, Builtin::ArrayLen | Builtin::SpanLen | Builtin::StringLen)
 }
@@ -1467,6 +1801,64 @@ fn loop_headers(body: &Body, order: &[usize]) -> HashSet<usize> {
         }
     }
     headers
+}
+
+/// Per loop header, every local its loop writes: the blocks that reach a
+/// back edge into the header without passing it, and the header.
+fn loop_writes(body: &Body, order: &[usize], headers: &HashSet<usize>) -> HashMap<usize, HashSet<LocalId>> {
+    let position: HashMap<usize, usize> = order.iter().enumerate().map(|(i, &b)| (b, i)).collect();
+    let mut preds: HashMap<usize, Vec<usize>> = HashMap::new();
+    for &block in order {
+        for succ in crate::long_access_lint::successors(&body.blocks[block].terminator) {
+            preds.entry(succ).or_default().push(block);
+        }
+    }
+    let mut blocks: HashMap<usize, HashSet<usize>> = HashMap::new();
+    for &latch in order {
+        for header in crate::long_access_lint::successors(&body.blocks[latch].terminator) {
+            if !headers.contains(&header) || position.get(&header).is_none_or(|&p| p > position[&latch]) {
+                continue;
+            }
+            let inside = blocks.entry(header).or_insert_with(|| HashSet::from([header]));
+            let mut work = vec![latch];
+            while let Some(block) = work.pop() {
+                if inside.insert(block) {
+                    work.extend(preds.get(&block).into_iter().flatten().copied());
+                }
+            }
+        }
+    }
+    blocks
+        .into_iter()
+        .map(|(header, inside)| {
+            let mut writes = HashSet::new();
+            for block in inside {
+                let data = &body.blocks[block];
+                for stmt in &data.stmts {
+                    match &stmt.kind {
+                        StmtKind::Assign { place, .. } => {
+                            writes.insert(place.local);
+                        }
+                        StmtKind::CheckedBinaryOp { dest, overflow, .. } => {
+                            writes.insert(dest.local);
+                            writes.insert(overflow.local);
+                        }
+                        StmtKind::Drop { place, .. } => {
+                            writes.insert(place.local);
+                        }
+                        StmtKind::StorageLive(local) | StmtKind::StorageDead(local) => {
+                            writes.insert(*local);
+                        }
+                        _ => {}
+                    }
+                }
+                if let Terminator::Call { dest, .. } = &data.terminator {
+                    writes.insert(dest.local);
+                }
+            }
+            (header, writes)
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------

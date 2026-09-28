@@ -2571,5 +2571,47 @@ Six fixes, in the owner's order; none changes the language.
    * Test: STD-15 `accept_sort_past_one_run` (a text sort and an `int` sort past one run, with
      sorted, reversed and all-equal input; the C holds one of each macro).
 
+13. **A `for` over a view's element iterator is a counted loop** (2026-09-29, autonomous, same
+   goal). `for p in ps.iter_mut()` ran `next` each turn: an `Option` built from a null-or-element
+   pointer, a switch on it and a done flag, which MSVC does not simplify (moving 100,000
+   particles 2,000 times: 1.69x C). Now any `for` over a `SpanIter`/`MutSpanIter` (`iter()`,
+   `iter_mut()`, of a list, a view or a fixed array, or an iterator already moved on) keeps the
+   iterator as the loop's hidden local and counts from its cursor to its view's length,
+   yielding `&source[i]` (`&mut` for `iter_mut`) exactly as `next` would (`check_for_indexed`,
+   given a mutability and a first index). Measured: MSVC 1.69x -> 1.45x C, clang 1.03x -> 0.98x.
+   What is left on MSVC is not in the loop: MSVC swaps the C twin's two loops and keeps each
+   particle in registers for all 2,000 steps, which it does only for a perfect nest (nothing
+   between the two loop headers). Ember's outer loop rebuilds the view each step, so it is not
+   one. Tested by hand: the same nest with the view set up before the outer loop gets the swap
+   (0.085 s, the C's 0.084 s); a C twin that keeps its particles in a growable-list struct, as
+   Ember and `std::vector` do, takes 0.392 s, 3x Ember's. Open: hoisting loop-invariant view
+   construction out of loops in the MIR. Test: CTL-1 `accept_a_view_iterator_loop_is_counted`.
+
+14. **Element ranges; widening only what a loop writes** (2026-09-29, autonomous, same goal).
+   A list loop with overflow checks on was 1.5-1.8x C (`out[i] = ((out[i] ^ round) + a[i] - 7)
+   & 1023`): nothing bounded what a list held, so every `+` kept its check.
+   * `[RNG-4]` element ranges (`element_lists`, `element_ranges`): an integer list local this
+     function makes with `Array()` and changes only by element writes, `push`, `insert`,
+     `extend` (any value) and calls that only reorder or remove (`sort`, `pop`, `clear`, ...),
+     each through a `&mut` written once and used for nothing else, holds only values it stored.
+     Its elements' range is the hull of every store's value range; reads through `xs[i]`, a
+     shared view's `v[i]` and a shared element reference (`for x in xs`) get it. A copy of its
+     header, a parameter, any other mutable borrow or way in, and the list is not followed. The
+     facts are solved again with the ranges, twice at most: each round's come from facts that
+     assumed the last round's, so each is sound, and they only narrow. A store by a checked
+     operation counts its exact result: a failing check ends the program first.
+   * Widening at a loop header now pushes to the type's end only the locals that loop writes;
+     any other grew on the way in, from an enclosing loop that widens it, and is joined. Before,
+     an outer counter (`round`) lost its range inside the inner loop, and narrowing could not
+     bring it back through the inner back edge.
+   * Measured (against clang's C, as the README compares list loops): b15 MSVC 0.93x, clang
+     0.97x (was 1.8x / 1.6x); b16 0.98x / 1.02x (was 1.7x / 1.6x); b13 0.96x / 1.00x (was
+     1.27x on MSVC). A total over `for x in xs` keeps its check: the list's length is not
+     bounded, so neither is the total.
+   * Tests: RNG-4 `accept_list_elements_hold_what_was_stored` (no check left),
+     `run_fail_a_list_element_near_the_top_keeps_its_check`,
+     `run_fail_a_list_changed_by_a_call_keeps_its_checks`,
+     `run_fail_a_list_doubling_its_own_elements_keeps_its_check`.
+
 **Superseded by item 8:** a sum of 64-bit `int`s no longer keeps one overflow check per
 element; ODR-086 was ruled on 2026-09-28.

@@ -7,6 +7,11 @@
 # limits but never past them: each group finds no overflow and every result
 # is exact. 100 iterations: three groups, then four checked one at a time.
 
+# Lent to a function, a list holds values the range facts cannot know
+# (`[RNG-4]`), so the checks this test looks at stay.
+fn unknown[T](mut xs: Array[T]):
+    pass
+
 fn main():
     a: Array[i32] = []
     b: Array[i32] = []
@@ -33,6 +38,14 @@ fn main():
         o2.push(0 as u8)
         o3.push(0 as u64)
         o4.push(0 as i16)
+    unknown(a)
+    unknown(b)
+    unknown(c)
+    unknown(d)
+    unknown(e)
+    unknown(f)
+    unknown(g)
+    unknown(h)
     for i in 0..100:
         o1[i] = a[i] + b[i]
     for i in 0..100:
