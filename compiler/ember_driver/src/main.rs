@@ -2191,6 +2191,17 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[EXC-3]`/`[EXC-3a]` — last, once every held interval is final: remove
     // the checks that nothing held anywhere in the program could make fail.
     ember_analysis::remove_never_firing_checks_all(&mut bodies, &types);
+    // `[CLO-3]` — a known function passed to a callable parameter gets the
+    // callee's own copy, calling it directly; first, so every copy is
+    // optimised like any other body.
+    ember_analysis::specialize_callable_arguments_all(&mut bodies);
+    // A function called from one place is inlined there, so the analyses
+    // below see what its caller knows.
+    ember_analysis::inline_single_calls_all(&mut bodies, &types);
+    // Both passes above change bodies after `[MIR-REG-1]`'s summaries were
+    // made (a call through a parameter became a direct call; a call became
+    // its callee's body): make them again from the MIR as it now is.
+    ember_analysis::install_callable_regions_all(&mut bodies, &types);
     // `[RNG-4]` — on the final checks: remove every check the range facts
     // prove cannot fail, before the loop passes group what is left.
     ember_analysis::remove_proven_checks_all(&mut bodies, &types, &common);

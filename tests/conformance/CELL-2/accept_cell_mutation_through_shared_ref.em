@@ -1,7 +1,7 @@
 #$ test: run-pass
 #$ rules: CELL-1, CELL-2, TYP-14
 #$ profiles: debug, release, shipping
-#$ stdout: 42
+#$ stdout: 43
 #$ assert-c: contains("(*((em_Cell_i32*)_1)).value = ")
 #$ assert-c: !contains("ember_cell")
 
@@ -13,5 +13,6 @@ fn bump(cell: ref Cell[i32]):
 
 fn main():
     cell: Cell[i32] = Cell(41)
+    bump(ref cell)
     bump(ref cell)
     println(cell.get())

@@ -50,7 +50,11 @@ pub fn mark_uncounted_handles_all(bodies: &mut [Body], types: &TypeTable) -> usi
             .filter(|&local| uncounted(body, types, &callees, local))
             .collect();
         marked += handles.len();
-        body.uncounted_handles = handles;
+        for handle in handles {
+            if !body.uncounted_handles.contains(&handle) {
+                body.uncounted_handles.push(handle);
+            }
+        }
     }
     marked
 }

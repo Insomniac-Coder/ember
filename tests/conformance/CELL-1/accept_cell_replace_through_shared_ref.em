@@ -3,6 +3,7 @@
 #$ profiles: debug, release, shipping
 #$ stdout: 7
 #$ 42
+#$ 42
 #$ assert-c: contains("(*((em_Cell_i32*)_1)).value = ")
 #$ assert-c: !contains("ember_cell")
 
@@ -15,3 +16,4 @@ fn main():
     cell: Cell[i32] = Cell(7)
     println(replace(ref cell))
     println(cell.get())
+    println(replace(ref cell))

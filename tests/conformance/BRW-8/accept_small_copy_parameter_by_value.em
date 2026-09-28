@@ -2,6 +2,7 @@
 #$ rules: BRW-8
 #$ profiles: debug, release, shipping
 #$ stdout: 42
+#$ 43
 #$ assert-c: contains(int32_t em_add_by_value(int32_t _1, int32_t _2))
 #$ assert-c: !contains(const int32_t* em_add_by_value)
 
@@ -14,3 +15,4 @@ fn add_by_value(left: i32, right: i32) -> i32:
 fn main():
     value: i32 = 20
     println(add_by_value(value, 22))
+    println(add_by_value(value, 23))

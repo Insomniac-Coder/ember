@@ -5,6 +5,7 @@
 #$ 42
 #$ 7
 #$ 11
+#$ 6 8
 #$ assert-c: contains("int32_t em_id__")
 #$ assert-c: contains("int32_t em_pick__")
 #$ assert-c: contains("em_Holder_i32")
@@ -32,3 +33,5 @@ fn main():
     arena = Arena.with_capacity(16)
     slot: ref mut i32 = arena.alloc(11)
     println(slot)
+    again: i32 = id(6)
+    println(again, pick(seven, 8))

@@ -312,6 +312,9 @@ pub(crate) struct Analysis<'a> {
     usize_range: Interval,
     /// The state on entry to each block; `None` when unreachable.
     entry: Vec<Option<State>>,
+    /// Ranges known at a loop header whatever the path in: each counted
+    /// loop's running totals (`accumulator_bounds`).
+    seeds: Vec<(usize, Var, Interval)>,
 }
 
 /// Rounds before a body is left without facts: a guard, since widening
@@ -322,11 +325,25 @@ impl<'a> Analysis<'a> {
     /// The facts of `body`, or `None` when they did not settle.
     pub(crate) fn run(body: &'a Body, types: &'a TypeTable, common: &CommonTypes) -> Option<Analysis<'a>> {
         let usize_range = type_range(types, common.usize)?;
-        let mut analysis =
-            Analysis { body, types, tracked: Vec::new(), views: Vec::new(), usize_range, entry: Vec::new() };
+        let mut analysis = Analysis {
+            body,
+            types,
+            tracked: Vec::new(),
+            views: Vec::new(),
+            usize_range,
+            entry: Vec::new(),
+            seeds: Vec::new(),
+        };
         analysis.tracked = analysis.tracked_locals();
         analysis.views = analysis.collect_views();
         analysis.solve()?;
+        // Widening loses a running total's range; the loop's trip count
+        // gives it back, and a second solve uses it.
+        let seeds = analysis.accumulator_bounds();
+        if !seeds.is_empty() {
+            analysis.seeds = seeds;
+            analysis.solve()?;
+        }
         Some(analysis)
     }
 
@@ -1036,6 +1053,7 @@ impl<'a> Analysis<'a> {
                             }
                         }
                     };
+                    let merged = self.seeded(target, merged);
                     if entry[target].as_ref() != Some(&merged) {
                         entry[target] = Some(merged);
                         visits[target] += 1;
@@ -1061,10 +1079,11 @@ impl<'a> Analysis<'a> {
                     if target == 0 {
                         continue;
                     }
-                    next[target] = Some(match &next[target] {
+                    let joined = match &next[target] {
                         None => incoming,
                         Some(old) => old.join(&incoming),
-                    });
+                    };
+                    next[target] = Some(self.seeded(target, joined));
                 }
             }
             if entry[0].is_some() {
@@ -1074,6 +1093,164 @@ impl<'a> Analysis<'a> {
         }
         self.entry = entry;
         Some(())
+    }
+
+    /// `state` with the ranges known at loop header `block` whatever the path.
+    fn seeded(&self, block: usize, mut state: State) -> State {
+        for (header, var, range) in &self.seeds {
+            if *header == block {
+                if let Some(narrowed) = self.range(&state, *var).meet(*range) {
+                    state.ranges.insert(*var, narrowed);
+                }
+            }
+        }
+        state
+    }
+
+    /// The state just before statement `index` of `block`.
+    fn state_before(&self, block: usize, index: usize) -> Option<State> {
+        let data = &self.body.blocks[block];
+        let mut state = self.entry.get(block)?.clone()?;
+        for stmt in data.stmts.iter().take(index) {
+            self.step(&mut state, stmt, false);
+        }
+        Some(state)
+    }
+
+    /// `[RNG-4]` — the range of each running total of a counted loop at its
+    /// header. A local the loop changes only by one chain of checked `+` and
+    /// `-` back to itself (`total = total + a + b - c`) changes each turn by
+    /// the sum of its terms' ranges; the loop turns at most as many times as
+    /// its limit less its counter's start allow; so at the header it lies
+    /// between its value on entry and that plus every turn's change. The
+    /// chain is checked, so no turn can wrap: an overflow ends the program
+    /// before the next. Only a range within the total's type is kept.
+    fn accumulator_bounds(&self) -> Vec<(usize, Var, Interval)> {
+        let mut seeds = Vec::new();
+        let headers = loop_headers(self.body, &reverse_postorder(self.body));
+        for header in 0..self.body.blocks.len() {
+            if self.entry[header].is_none() {
+                continue;
+            }
+            let Some(shape) = crate::loop_version::counted_loop(self.body, self.types, header) else { continue };
+            let mut inside: Vec<usize> = shape.region.clone();
+            inside.push(header);
+            // Every place a local is written in the loop: (block, statement).
+            let mut writes: HashMap<LocalId, Vec<(usize, usize)>> = HashMap::new();
+            let mut called: HashSet<LocalId> = HashSet::new();
+            for &block in &inside {
+                for (index, stmt) in self.body.blocks[block].stmts.iter().enumerate() {
+                    let place = match &stmt.kind {
+                        StmtKind::Assign { place, .. } => place,
+                        StmtKind::CheckedBinaryOp { dest, .. } => dest,
+                        StmtKind::StorageLive(local) | StmtKind::StorageDead(local) => {
+                            called.insert(*local);
+                            continue;
+                        }
+                        _ => continue,
+                    };
+                    writes.entry(place.local).or_default().push((block, index));
+                }
+                if let Terminator::Call { dest, .. } = &self.body.blocks[block].terminator {
+                    called.insert(dest.local);
+                }
+            }
+            let counter_writes = writes.get(&shape.counter).map_or(0, Vec::len);
+            if writes.contains_key(&shape.limit)
+                || called.contains(&shape.limit)
+                || called.contains(&shape.counter)
+                || counter_writes != 1
+            {
+                continue;
+            }
+            // The state on entry from outside the loop.
+            let mut outside: Option<State> = None;
+            for pred in 0..self.body.blocks.len() {
+                if inside.contains(&pred) {
+                    continue;
+                }
+                if self.branch_only(pred, &headers) {
+                    continue;
+                }
+                let Some(state) = self.entry[pred].clone() else { continue };
+                for (target, state) in self.successors_through_branches(pred, self.exit_state(pred, state), &headers) {
+                    if target == header {
+                        outside = Some(match outside {
+                            None => state,
+                            Some(old) => old.join(&state),
+                        });
+                    }
+                }
+            }
+            let Some(outside) = outside else { continue };
+            let (start, limit) = (self.range(&outside, Var::Local(shape.counter)), self.range(&outside, Var::Local(shape.limit)));
+            let Some(turns) = limit.hi.checked_sub(start.lo).and_then(|n| n.checked_add(i128::from(shape.inclusive))) else {
+                continue;
+            };
+            let turns = turns.max(0);
+            for (&acc, places) in &writes {
+                let [(block, index)] = places.as_slice() else { continue };
+                if acc == shape.counter || acc == shape.limit || !self.tracked[acc.0 as usize] || called.contains(&acc) {
+                    continue;
+                }
+                let Some(change) = self.chain_change(acc, *block, *index, &writes, 0) else { continue };
+                let entry = self.range(&outside, Var::Local(acc));
+                let low = turns.checked_mul(change.lo.min(0)).and_then(|d| entry.lo.checked_add(d));
+                let high = turns.checked_mul(change.hi.max(0)).and_then(|d| entry.hi.checked_add(d));
+                let (Some(lo), Some(hi)) = (low, high) else { continue };
+                let bound = Interval { lo, hi };
+                if bound.within(self.var_range(Var::Local(acc))) {
+                    seeds.push((header, Var::Local(acc), bound));
+                }
+            }
+        }
+        seeds
+    }
+
+    /// The change one turn makes to `acc`, written at statement `index` of
+    /// `block`: a checked `+` or `-` whose one side is `acc` itself or a
+    /// local the loop sets once by such an operation from it.
+    fn chain_change(
+        &self,
+        acc: LocalId,
+        block: usize,
+        index: usize,
+        writes: &HashMap<LocalId, Vec<(usize, usize)>>,
+        depth: usize,
+    ) -> Option<Interval> {
+        if depth > 16 {
+            return None;
+        }
+        let StmtKind::CheckedBinaryOp { op: op @ (BinOp::Add | BinOp::Sub), lhs, rhs, .. } =
+            &self.body.blocks[block].stmts[index].kind
+        else {
+            return None;
+        };
+        let before = self.state_before(block, index)?;
+        // The side that carries the total, and the term the other adds.
+        let carried = |operand: &Operand| -> Option<Interval> {
+            let (Operand::Copy(place) | Operand::Move(place)) = operand else { return None };
+            if !place.projection.is_empty() {
+                return None;
+            }
+            if place.local == acc {
+                return Some(Interval::exact(0));
+            }
+            let [(b, i)] = writes.get(&place.local)?.as_slice() else { return None };
+            self.chain_change(acc, *b, *i, writes, depth + 1)
+        };
+        let term = |operand: &Operand| self.operand_range(&before, operand);
+        let (so_far, added) = match (carried(lhs), op) {
+            (Some(so_far), _) => (so_far, term(rhs)?),
+            (None, BinOp::Add) => (carried(rhs)?, term(lhs)?),
+            _ => return None,
+        };
+        let added = if *op == BinOp::Sub {
+            Interval { lo: added.hi.checked_neg()?, hi: added.lo.checked_neg()? }
+        } else {
+            added
+        };
+        Some(Interval { lo: so_far.lo.checked_add(added.lo)?, hi: so_far.hi.checked_add(added.hi)? })
     }
 
     /// A block that only sets `bool`s and branches on one, outside any loop
@@ -1306,9 +1483,42 @@ fn remove_proven_checks(body: &mut Body, types: &TypeTable, common: &CommonTypes
     let removals: Vec<Removal> = {
         let Some(analysis) = Analysis::run(body, types, common) else { return 0 };
         let mut removals = Vec::new();
+        let reached: HashSet<usize> = reverse_postorder(body).into_iter().collect();
         for block in 0..body.blocks.len() {
-            let Some(entry) = analysis.entry[block].clone() else { continue };
             let data = &body.blocks[block];
+            // A check in a block no run reaches (every way in contradicts the
+            // facts) can never fail. Branch-only blocks keep no state; they
+            // end in a switch, not a check.
+            let Some(entry) = analysis.entry[block].clone() else {
+                if reached.contains(&block) {
+                    if let Terminator::Assert { msg, cond: Operand::Copy(cond), .. } = &data.terminator {
+                        // A checked operation's own check goes with it, made
+                        // plain over its operands' whole types.
+                        let checked = match data.stmts.last().map(|stmt| &stmt.kind) {
+                            Some(StmtKind::CheckedBinaryOp { overflow, lhs, rhs, .. }) if overflow == cond => {
+                                let whole = |operand: &Operand| {
+                                    analysis.operand_ty(operand).and_then(|ty| type_range(types, representation(types, ty)))
+                                };
+                                whole(lhs).zip(whole(rhs))
+                            }
+                            _ => None,
+                        };
+                        let kind = match msg {
+                            AssertKind::Bounds { .. } => Some(CheckKind::Bounds),
+                            AssertKind::DivisionByZero => Some(CheckKind::DivisionByZero),
+                            AssertKind::ShiftTooLarge => Some(CheckKind::ShiftRange),
+                            AssertKind::Overflow(_) | AssertKind::SignedDivisionOverflow if checked.is_some() => {
+                                Some(CheckKind::Overflow)
+                            }
+                            _ => None,
+                        };
+                        if let Some(kind) = kind {
+                            removals.push(Removal { block, kind, checked });
+                        }
+                    }
+                }
+                continue;
+            };
             let Terminator::Assert { cond: Operand::Copy(cond), expected, msg, .. } = &data.terminator else {
                 continue;
             };
@@ -1398,8 +1608,23 @@ fn make_plain(body: &mut Body, types: &TypeTable, common: &CommonTypes, block: u
                 (BinOp::FloorRem, Some(_)) => vec![assign(binary(BinOp::BitAnd, lhs, int(b.lo - 1)))],
                 // Both sides non-negative: C's unsigned operators, which the
                 // C compiler need not correct for a sign.
+                // Both sides non-negative: C's truncating operators give the
+                // floor. By a constant, a C compiler multiplies by a magic
+                // number: unsigned when that number fits the width (two
+                // instructions), else C's signed operator, as hand-written C
+                // gets (an unsigned divisor such as 7 costs a five-instruction
+                // correction), in the operands' own width either way, so
+                // `[SIMD-5]` sees the division it is (ODR-088). By a variable,
+                // which no vector unit divides by, unsigned: 32-bit when both
+                // fit, which every processor divides several times faster.
+                _ if a.lo >= 0 && b.lo > 0 && b.lo == b.hi && !unsigned_magic_fits(b.lo as u128, width_of(types, ty)) => {
+                    let plain = if op == BinOp::FloorDiv { BinOp::Div } else { BinOp::Rem };
+                    vec![assign(binary(plain, lhs, rhs))]
+                }
                 _ if a.lo >= 0 && b.lo > 0 => {
-                    let unsigned = unsigned_of(types, common, ty);
+                    let fits_32 = b.lo != b.hi && a.hi <= i128::from(u32::MAX) && b.hi <= i128::from(u32::MAX)
+                        && ember_types::bit_width(types, ty).is_some_and(|w| w > 32);
+                    let unsigned = if fits_32 { common.u32 } else { unsigned_of(types, common, ty) };
                     let temp = |body: &mut Body| {
                         body.locals.push(ember_mir::LocalDecl {
                             ty: unsigned,
@@ -1471,6 +1696,33 @@ fn make_plain(body: &mut Body, types: &TypeTable, common: &CommonTypes, block: u
     body.blocks[block].stmts.extend(stmts);
 }
 
+fn width_of(types: &TypeTable, ty: Ty) -> u32 {
+    ember_types::bit_width(types, ty).unwrap_or(64) as u32
+}
+
+/// Whether unsigned division by the constant `d` at `width` bits is a
+/// multiply by a magic number that fits the width, and a shift (Hacker's
+/// Delight, 10-10): the smallest `p >= width` with
+/// `2^p > nc * (d - 1 - (2^p - 1) mod d)` gives `M = (2^p + d - 1 - (2^p - 1) mod d) / d`;
+/// when `M` needs `width + 1` bits the compiler adds a correction sequence.
+fn unsigned_magic_fits(d: u128, width: u32) -> bool {
+    if d < 2 || width == 0 || width > 64 || d >= (1u128 << width) {
+        return false;
+    }
+    let two_n = 1u128 << width;
+    let nc = two_n - 1 - (two_n - d) % d;
+    for p in width..(2 * width).min(127) {
+        let two_p = 1u128 << p;
+        let r = (two_p - 1) % d;
+        let Some(product) = nc.checked_mul(d - 1 - r) else { continue };
+        if two_p > product {
+            let magic = (two_p + d - 1 - r) / d;
+            return magic < two_n;
+        }
+    }
+    false
+}
+
 /// The unsigned integer type of `ty`'s width.
 fn unsigned_of(types: &TypeTable, common: &CommonTypes, ty: Ty) -> Ty {
     match types.kind(ty) {
@@ -1539,5 +1791,22 @@ fn drop_unread_condition(body: &mut Body, block: usize, cond: LocalId) {
             stmt.kind = StmtKind::Nop;
             return;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unsigned_magic_fits;
+
+    /// The divisors whose unsigned magic numbers are known: 3, 5, 13 and
+    /// 10 fit 64 bits; 7 does not, at 64 or at 32 bits.
+    #[test]
+    fn unsigned_magic_numbers_match_the_known_ones() {
+        for d in [3u128, 5, 10, 13] {
+            assert!(unsigned_magic_fits(d, 64), "{d}");
+        }
+        assert!(!unsigned_magic_fits(7, 64));
+        assert!(!unsigned_magic_fits(7, 32));
+        assert!(unsigned_magic_fits(3, 32));
     }
 }

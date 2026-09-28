@@ -6,11 +6,13 @@
 //! helpers.
 
 pub mod borrows;
+pub mod callable_arguments;
 pub mod cycles;
 pub mod access;
 pub mod definite_init;
 pub mod drops;
 pub mod facts;
+pub mod inline;
 pub mod loop_access;
 pub mod loop_version;
 pub mod long_access_lint;
@@ -30,6 +32,8 @@ pub use loop_access::hoist_loop_accesses_all;
 pub use loop_version::version_bounds_checked_loops_all;
 pub use uncounted_handles::mark_uncounted_handles_all;
 pub use range_facts::remove_proven_checks_all;
+pub use callable_arguments::specialize_callable_arguments_all;
+pub use inline::inline_single_calls_all;
 pub use long_access_lint::lint_long_term_access_across_dynamic_calls_all;
 pub use cycles::{
     inspect_ownership_graph, lint_strong_cycles, OwnershipCycle, OwnershipEdge, OwnershipEdgeKind,

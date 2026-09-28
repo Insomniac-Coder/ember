@@ -130,6 +130,14 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   4. repeat until every option is tried. What is left must be a cost the language requires (a
      check the spec keeps) or one only an ODR could remove: record which, with its numbers, in
      `docs/HANDOFF.md`, and raise an ODR where the owner's ruling could remove it.
+
+  The owner, 2026-09-28: "keep investigating until the final answer is either same/faster than C
+  or can't get any faster because <valid reason> and that valid reason can be something like
+  'mandatory safety checks'". So every benchmark ends in one of two answers, and no other: **the
+  same speed as C/C++ or faster**, or **slower because of a named, valid reason**, measured to be
+  the whole of the gap (for example: the overflow check the language requires on `count += 1`,
+  priced by timing the program without it). "Still slower, cause unknown" is not an answer; it
+  means the investigation is not finished.
 - **Research online when stuck.** The owner, 2026-09-28: "you are allowed to do online research to
   find solutions to problems that you get stuck on". Before giving up on a problem (a slowdown with
   no known cause, a C compiler's behaviour, a design with no clear answer), search how other

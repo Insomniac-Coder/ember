@@ -61,7 +61,7 @@ pub struct CallArgumentBinding {
 
 pub use ember_hir::ExportThreadPolicy;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Body {
     pub name: String,
     /// The mangled C symbol (`[MNG-1]`).

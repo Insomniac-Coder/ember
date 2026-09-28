@@ -1356,17 +1356,17 @@ fn group_size(mode: Mode) -> u64 {
 const TOTAL_TRIPS: i128 = 1 << 31;
 
 /// The canonical shape `lower_for_range` emits.
-struct CountedLoop {
-    header: usize,
+pub(crate) struct CountedLoop {
+    pub(crate) header: usize,
     entry: usize,
     step: usize,
-    region: Vec<usize>,
-    counter: LocalId,
-    limit: LocalId,
-    inclusive: bool,
+    pub(crate) region: Vec<usize>,
+    pub(crate) counter: LocalId,
+    pub(crate) limit: LocalId,
+    pub(crate) inclusive: bool,
 }
 
-fn counted_loop(body: &Body, types: &TypeTable, header: usize) -> Option<CountedLoop> {
+pub(crate) fn counted_loop(body: &Body, types: &TypeTable, header: usize) -> Option<CountedLoop> {
     let head = body.blocks.get(header)?;
     let Terminator::SwitchInt { discr: Operand::Copy(discr), targets, otherwise } = &head.terminator else {
         return None;

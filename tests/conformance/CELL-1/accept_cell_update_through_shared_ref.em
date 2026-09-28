@@ -1,7 +1,7 @@
 #$ test: run-pass
 #$ rules: CELL-1, CELL-2, TYP-14
 #$ profiles: debug, release, shipping
-#$ stdout: 42
+#$ stdout: 44
 #$ assert-c: contains("(*((em_Cell_i32*)_1)).value = ")
 #$ assert-c: !contains("ember_cell")
 
@@ -15,5 +15,6 @@ fn update(cell: ref Cell[i32]):
 
 fn main():
     cell: Cell[i32] = Cell(40)
+    update(ref cell)
     update(ref cell)
     println(cell.get())

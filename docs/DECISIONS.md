@@ -2517,5 +2517,40 @@ Six fixes, in the owner's order; none changes the language.
      and 3 OPT-2 tests: loops the facts now prove are no longer copied, so their bodies (and
      retains) appear once.
 
+11. **Across calls: `[CLO-3]` copies, inlining, running totals, division forms** (2026-09-28,
+   autonomous, the owner's goal "address the other slow operations"). Calling a function passed
+   as a value was 1.73x C++ on MSVC; MSVC calls through the function-value descriptor and does
+   not inline the target.
+   * `[CLO-3]` built (`callable_arguments.rs`): a call passing a known Ember function (named, a
+     lambda, or a local that only ever holds it) to a callable parameter goes to the callee's
+     copy for that function, in which calls through the parameter are direct; the signature is
+     unchanged, and a copy that passes the parameter on specialises the next callee (memoised).
+   * Inlining in the MIR (`inline.rs`), after `[CLO-3]` and before `[RNG-4]`: a function called
+     from exactly one place is inlined there (the code does not grow), bottom-up and in a fixed
+     order (a function only once nothing it calls is waiting; hash order once made the output
+     vary between builds). A borrowed argument's parameter joins `uncounted_handles` (no retain
+     in, none out). Not inlined: methods (`self`; tables and drop glue find them by type),
+     implicit derives, closures with an environment, bodies with access transfers, `[FN-5]`
+     bindings, hoisted intervals, interface or `dyn` parameters (their itable cache), foreign
+     and exported functions, recursion. An inlined function nothing else names is not emitted.
+   * `[RNG-4]` running totals: a local a counted loop changes only by one chain of checked `+`/`-`
+     back to itself is bounded at the header by its entry range plus the most turns times each
+     turn's change (the terms' ranges); seeded when it fits the type, then the analysis solves
+     again. Checks in blocks the facts show never run go too.
+   * Division by a positive constant of a non-negative value: unsigned when the unsigned magic
+     number fits the width (`unsigned_magic_fits`, Hacker's Delight 10-10: two instructions),
+     else C's signed operator, in the operands' width either way (so `[SIMD-5]` sees the division
+     it is); by a variable, unsigned, 32-bit when both fit. A 32-bit narrowing of constant
+     divisions was tried and dropped: it put loops C compilers do not vectorise into vectorisable
+     form, whose grouped checks then cost more (MSVC 1.06x -> 1.62x on function values).
+   * Measured: function values MSVC 1.73x -> 1.01x C++, clang 1.01x; integer arithmetic MSVC
+     19% faster than C, clang the same speed (all its checks gone, the running total's included).
+   * Tests: CLO-3 `accept_a_function_argument_is_called_directly`; RNG-4
+     `accept_a_function_called_once_is_inlined_for_range_facts`,
+     `run_fail_a_running_total_that_can_overflow_is_checked`, `range_facts` unit test of the
+     magic numbers. Seven tests that inspect one function's C now call it twice, or run a loop
+     to `xs.len()`, so it stays that function; `SIMD-5`'s per-operation test sums values
+     nothing bounds.
+
 **Superseded by item 8:** a sum of 64-bit `int`s no longer keeps one overflow check per
 element; ODR-086 was ruled on 2026-09-28.

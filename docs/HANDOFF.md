@@ -11183,6 +11183,12 @@ first**; the rest of §0.355 is the running narrative behind it.
     Removals are in the `[EFF-10]` side table. Method-call loop on MSVC 2.0x ->
     1.15-1.34x C++. Not done: emitted bounds/overflow checks are still missing
     from the side table (older gap).
+  * **`[CLO-3]` copies, MIR inlining, running-total bounds (2026-09-28, autonomous;
+    ADR-070 item 11).** A known function passed to a callable parameter gets the
+    callee's copy with a direct call; a function called once is inlined (bottom-up,
+    fixed order) so range facts see across the call; a counted loop's running
+    total is bounded by trip count times each turn's change. Function values:
+    MSVC 1.73x -> 1.01x C++; integer arithmetic: MSVC 19% faster, clang the same.
   * **Regressions the range-facts benchmark run found, fixed (2026-09-28).**
     MSVC stopped inlining `push` once loop versioning made a function larger
     (list refill 1.0x -> 1.31x C, list copy 0.74x -> 1.0x): the runtime's
