@@ -71,4 +71,6 @@ Current bounded evidence:
 * `RC-4`: atomic selection alone does not prove concurrent retain/release or
   weak-upgrade CAS behavior; these runtime probes remain open.
 * `EXC-10`: current loop hoisting covers canonical single loops; nested-loop
-  access reuse remains an implementation gap.
+  access reuse remains an implementation gap. A check (an access begun and
+  ended at once) is now hoisted out of any loop, nested or not, that changes
+  no access and runs no Ember code (ADR-070 item 16); a held access is not.

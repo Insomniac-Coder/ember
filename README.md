@@ -103,6 +103,8 @@ would make Ember look faster than it is.
 | Copy a 1,000-number list into another, one item at a time, 100,000 times | 28% faster | same speed |
 | Integer arithmetic: 50 million rounds of multiply, divide and remainder | 18% faster | same speed |
 | Sort 5 million numbers | 18% faster | 12% faster |
+| Clear and refill a list while 4 other lists are being viewed | 6% faster | same speed |
+| Clear and refill a list while 1 other list is being viewed | same speed | 5% faster |
 | Change every number twice, reading back what it wrote, overflow checks on | same speed | same speed |
 | Change every number twice, writing to a separate list, overflow checks off | same speed | same speed |
 | Change every number twice, reading back what it wrote, overflow checks off | same speed | same speed |
@@ -112,7 +114,7 @@ would make Ember look faster than it is.
 | Change every number using a second list, 20,000 rounds, overflow checks off | same speed | same speed |
 | Change every number twice, writing to a separate list, overflow checks on | same speed | same speed |
 | Decimal arithmetic: the Mandelbrot set, 1,000 × 1,000 points | same speed | same speed |
-| Clear and refill a list while 1 other list is being viewed | same speed | same speed |
+| Clear and refill a list while 16 other lists are being viewed | same speed | same speed |
 | Add one list into another, 2,000 rounds, overflow checks on | same speed | same speed |
 | Two lists of 100,000 decimal numbers, add one into the other 5,000 times | same speed | same speed |
 | Call a function passed as a value, 200 million times | same speed | same speed |
@@ -123,7 +125,6 @@ would make Ember look faster than it is.
 | What the program does | With MSVC | With clang |
 |---|---|---|
 | 1 million objects with a name and a list, each read 40 times | 6% slower | 5% slower |
-| Clear and refill a list while 16 other lists are being viewed | same speed | 7% slower |
 | Add two lists plus the round number into a third, overflow checks off | 6% slower | same speed |
 | 1 million objects holding 6 lists, each read 40 times | 9% slower | 9% slower |
 
@@ -142,7 +143,6 @@ would make Ember look faster than it is.
 | Call a method that changes an object taken from a list, 100 million times (object holding 1 list) | 19% slower | same speed |
 | Call a method that changes an object taken from a list, and the method calls another function, 100 million times | 19% slower | same speed |
 | Enum with `match`: area of 1 million shapes, 100 times | 15% faster | 13% slower |
-| Clear and refill a list while 4 other lists are being viewed | same speed | 11% slower |
 
 ## Examples
 

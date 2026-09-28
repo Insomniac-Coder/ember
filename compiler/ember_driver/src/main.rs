@@ -2210,6 +2210,10 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // then `[SIMD-7]` groups the overflow checks of every loop in
     // vectorisable form.
     ember_analysis::version_bounds_checked_loops_all(&mut bodies, &types, &common);
+    // `[EXC-8]` — a dynamic exclusivity check every turn of a loop makes on
+    // an unchanged handle, where nothing in the loop can change an access,
+    // runs once before it; after versioning, so each copy of a loop is done.
+    ember_analysis::hoist_invariant_checks_all(&mut bodies, &types);
     // `[RC-3]` — on the final MIR: a handle copied from a list element that
     // the list keeps alive for the handle's whole life is not counted.
     ember_analysis::mark_uncounted_handles_all(&mut bodies, &types);

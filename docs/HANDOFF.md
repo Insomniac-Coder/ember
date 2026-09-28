@@ -11229,6 +11229,8 @@ first**; the rest of §0.355 is the running narrative behind it.
     * Interface calls, 1.26x MSVC / 1.21x clang (was 1.65x; ADR-070 item
       15): the loop matches C++; the C++ twin never deletes its million
       shapes (Ember frees them, 0.019 s) and the 24-byte header is `[OBJ-1]`'s.
+    * Refilling a list while others are viewed (p4): at C speed since
+      ADR-070 item 16 (each `push`'s access check runs once before the loop).
     * 1 million objects holding 6 lists (p6), 1.09x both: Ember frees the
       million objects when the list's scope ends; the C++ twin never deletes
       them. Without that loop Ember is faster (0.292 s against 0.319 s).

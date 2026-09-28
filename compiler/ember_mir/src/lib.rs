@@ -238,12 +238,16 @@ pub struct HoistedAccess {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HoistedAccessProof {
     StableReceiverDirectCall,
+    /// A check every turn makes on a handle the loop never changes, in a
+    /// loop that begins and ends no access and runs no Ember code.
+    NoAccessInLoop,
 }
 
 impl HoistedAccessProof {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::StableReceiverDirectCall => "stable_receiver_direct_call",
+            Self::NoAccessInLoop => "no_access_in_loop",
         }
     }
 }

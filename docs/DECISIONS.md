@@ -2634,5 +2634,25 @@ Six fixes, in the owner's order; none changes the language.
    * Test: DSP-3 `accept_interface_calls_try_the_implementing_classes_first` (three classes,
      one inheriting the interface and overriding the method; five classes keep the search).
 
+16. **A loop's invariant access check runs once, before the loop** (2026-09-29, autonomous,
+   same goal). Refilling a list while other lists are viewed was 1.07-1.11x C on clang: each
+   `push` checked that no access to `sink.items` was active (`[EXC-19]`), every turn. The
+   existing hoister (`loop_access.rs`) moves a whole-object access around one direct call; this
+   one (`check_hoisting.rs`, after loop versioning) moves a check, an access begun and ended
+   back to back, which reads the access word and changes nothing. In a loop that begins and
+   ends no access but such checks, drops nothing and calls only built-ins that run no Ember
+   code (list and text growth and reads, printing, clearing plain values), on a handle local
+   the loop never writes and nothing lends mutably, every turn's check reads the same word. When
+   the check is also the first thing a turn does that anything could see (only pure local
+   statements before it, on the one path in), it moves to a guard before the loop: the loop's
+   test computed again into fresh locals and, when the loop will run, the check. A loop that
+   runs no turn checks nothing, as before; one whose check fails panics at the same point, with
+   the same output before it (`[PHIL-5]`). Recorded in the side table as
+   `DYNAMIC_HOISTED_LOOP`, proof `no_access_in_loop`.
+   * Measured: the three refill programs 0.95-1.04x C on both compilers (were up to 1.11x);
+     removing the check by hand gave the same.
+   * Tests: EXC-19 `accept_a_loop_check_runs_once_before_the_loop` (a zero-turn loop on a
+     viewed list does not panic), `run_fail_a_loop_check_before_the_loop_still_panics`.
+
 **Superseded by item 8:** a sum of 64-bit `int`s no longer keeps one overflow check per
 element; ODR-086 was ruled on 2026-09-28.

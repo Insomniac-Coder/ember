@@ -1766,7 +1766,7 @@ fn cannot_overflow(types: &TypeTable, op: BinOp, a: Interval, b: Interval, exact
     }
 }
 
-fn reverse_postorder(body: &Body) -> Vec<usize> {
+pub(crate) fn reverse_postorder(body: &Body) -> Vec<usize> {
     let n = body.blocks.len();
     let mut seen = vec![false; n];
     let mut order = Vec::new();
@@ -1790,7 +1790,7 @@ fn reverse_postorder(body: &Body) -> Vec<usize> {
 }
 
 /// Blocks entered by a back edge: a successor earlier in reverse postorder.
-fn loop_headers(body: &Body, order: &[usize]) -> HashSet<usize> {
+pub(crate) fn loop_headers(body: &Body, order: &[usize]) -> HashSet<usize> {
     let position: HashMap<usize, usize> = order.iter().enumerate().map(|(i, &b)| (b, i)).collect();
     let mut headers = HashSet::new();
     for &block in order {
@@ -1803,9 +1803,9 @@ fn loop_headers(body: &Body, order: &[usize]) -> HashSet<usize> {
     headers
 }
 
-/// Per loop header, every local its loop writes: the blocks that reach a
-/// back edge into the header without passing it, and the header.
-fn loop_writes(body: &Body, order: &[usize], headers: &HashSet<usize>) -> HashMap<usize, HashSet<LocalId>> {
+/// Per loop header, the blocks of its loop: those that reach a back edge
+/// into the header without passing it, and the header.
+pub(crate) fn natural_loops(body: &Body, order: &[usize], headers: &HashSet<usize>) -> HashMap<usize, HashSet<usize>> {
     let position: HashMap<usize, usize> = order.iter().enumerate().map(|(i, &b)| (b, i)).collect();
     let mut preds: HashMap<usize, Vec<usize>> = HashMap::new();
     for &block in order {
@@ -1829,6 +1829,11 @@ fn loop_writes(body: &Body, order: &[usize], headers: &HashSet<usize>) -> HashMa
         }
     }
     blocks
+}
+
+/// Per loop header, every local its loop writes.
+fn loop_writes(body: &Body, order: &[usize], headers: &HashSet<usize>) -> HashMap<usize, HashSet<LocalId>> {
+    natural_loops(body, order, headers)
         .into_iter()
         .map(|(header, inside)| {
             let mut writes = HashSet::new();

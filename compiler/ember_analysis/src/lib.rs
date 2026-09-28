@@ -7,6 +7,7 @@
 
 pub mod borrows;
 pub mod callable_arguments;
+pub mod check_hoisting;
 pub mod cycles;
 pub mod access;
 pub mod definite_init;
@@ -29,6 +30,7 @@ pub use borrows::{
 };
 pub use access::{elide_static_accesses_all, remove_never_firing_checks_all};
 pub use loop_access::hoist_loop_accesses_all;
+pub use check_hoisting::hoist_invariant_checks_all;
 pub use loop_version::version_bounds_checked_loops_all;
 pub use uncounted_handles::mark_uncounted_handles_all;
 pub use range_facts::remove_proven_checks_all;
