@@ -1161,6 +1161,12 @@ struct Checker<'a> {
     abstract_methods: HashSet<DefId>,
     /// Default interface methods materialized for instantiated generic structs.
     pending_default_methods: Vec<PendingDefaultMethod>,
+    /// D-379 — a generic instance's default method whose signature holds
+    /// `Self` inside another type (`fn take(owned self, n: int) -> Take[Self]`),
+    /// kept until a call names it: made at once, its signature is a new
+    /// instance of a type implementing the interface, whose own default is
+    /// another, without end.
+    deferred_defaults: HashMap<(Ty, Symbol), (Symbol, InterfaceDefault)>,
     /// Generic recipe types may be instantiated while interface declarations
     /// are still being collected.
     pending_generic_implements: Vec<PendingGenericImplements>,
@@ -1403,6 +1409,7 @@ impl<'a> Checker<'a> {
             pending_abstract_methods: Vec::new(),
             abstract_methods: HashSet::new(),
             pending_default_methods: Vec::new(),
+            deferred_defaults: HashMap::new(),
             pending_generic_implements: Vec::new(),
             checked_default_methods: HashSet::new(),
             generic_method_sources: HashMap::new(),
@@ -5823,6 +5830,10 @@ impl<'a> Checker<'a> {
             if implementation.is_none() && self.builtin_index_method_fits(ty, method, declaration, receiver) {
                 continue;
             }
+            // D-379 — a default kept until a call names it is defined.
+            if implementation.is_none() && self.deferred_defaults.contains_key(&(ty, method)) {
+                continue;
+            }
             let Some((implementation, actual_receiver)) = implementation else {
                 self.error(
                     codes::E2040,
@@ -6168,6 +6179,61 @@ impl<'a> Checker<'a> {
                 if already_exists {
                     continue;
                 }
+                if self.signature_nests_self(default.declaration) {
+                    self.deferred_defaults.insert((ty, default.name), (*interface, default));
+                    continue;
+                }
+                self.register_instantiated_default(ty, *interface, default);
+            }
+        }
+    }
+
+    /// Whether a declaration's signature holds `Self` inside another type:
+    /// in a nominal type's arguments, a tuple, an array, a view or a function
+    /// type.
+    fn signature_nests_self(&self, declaration: DefId) -> bool {
+        let signature = &self.signatures[declaration.0 as usize];
+        signature.params.iter().any(|(_, ty, _, _)| self.nests_self(*ty, false)) || self.nests_self(signature.ret, false)
+    }
+
+    fn nests_self(&self, ty: Ty, inside: bool) -> bool {
+        let args = |origin: &Option<(Symbol, Vec<Ty>)>| origin.as_ref().map(|(_, args)| args.clone()).unwrap_or_default();
+        match self.types.kind(ty) {
+            TyKind::Param { index, .. } => inside && *index == ember_types::SELF_PARAM,
+            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => self.nests_self(*inner, inside),
+            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => self.nests_self(*elem, true),
+            TyKind::Tuple(items) => items.iter().any(|&item| self.nests_self(item, true)),
+            TyKind::Fn { params, ret, .. } => {
+                params.iter().any(|param| self.nests_self(param.ty, true)) || self.nests_self(*ret, true)
+            }
+            TyKind::Struct(id) => args(&self.types.struct_def(*id).origin).into_iter().any(|arg| self.nests_self(arg, true)),
+            TyKind::Class(id) => args(&self.types.class_def(*id).origin).into_iter().any(|arg| self.nests_self(arg, true)),
+            TyKind::Enum(id) => args(&self.types.enum_def(*id).origin).into_iter().any(|arg| self.nests_self(arg, true)),
+            _ => false,
+        }
+    }
+
+    /// D-379 — make the deferred default `name` of `ty`, or of a class it
+    /// inherits from, when a call names it.
+    fn materialize_deferred_default(&mut self, ty: Ty, name: Symbol) {
+        let mut current = Some(ty);
+        while let Some(owner) = current {
+            if let Some((interface, default)) = self.deferred_defaults.remove(&(owner, name)) {
+                self.register_instantiated_default(owner, interface, default);
+                return;
+            }
+            current = match *self.types.kind(owner) {
+                TyKind::Class(id) => self.types.class_def(id).base.and_then(|base| self.class_ty(base)),
+                TyKind::Ref { inner, .. } if inner != owner => Some(inner),
+                _ => None,
+            };
+        }
+    }
+
+    fn register_instantiated_default(&mut self, ty: Ty, interface: Symbol, default: InterfaceDefault) {
+        {
+            {
+                let interface = &interface;
                 let mut signature = self.signatures[default.declaration.0 as usize].clone();
                 for (_, param, _, _) in &mut signature.params {
                     let substituted = self.substitute_self(*param, ty);
@@ -6184,11 +6250,11 @@ impl<'a> Checker<'a> {
                 } else {
                     self.register_associated(ty, default.name, signature, Some(*interface), Span::DUMMY)
                 };
-                let Some(def) = registered else { continue };
+                let Some(def) = registered else { return };
                 // `[TYP-17]` — an instance over generic parameters has
                 // signatures only, as its own methods do (D-250).
                 if self.is_opaque_instance(ty) {
-                    continue;
+                    return;
                 }
                 if generic {
                     self.generic_method_sources.insert(
@@ -27552,6 +27618,7 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> Expr {
         let named = self.named_interface_call.filter(|(_, at)| *at == span).map(|(interface, _)| interface);
+        self.materialize_deferred_default(receiver.ty, name.name);
         let found = match named {
             Some(interface) => {
                 let found = self.interface_methods.get(&(receiver.ty, interface, name.name)).copied();

@@ -11094,7 +11094,18 @@ first**; the rest of §0.355 is the running narrative behind it.
   ODR-087, the LLVM backend restored as §XVIII.7), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h43/` are frozen.
-* **Next numbers:** ODR-089, D-379, ADR-071, ERR-056.
+* **Next numbers:** ODR-089, D-380, ADR-072, ERR-056.
+* **Goal 2, implementation (2026-09-29, autonomous):** next is `[STD-19]`'s
+  iterator adapters and `[CTL-3b]`'s counted lowering of adapter chains (the
+  audit's `CTL-3b` gap; `for x in mutspan`, `.take/.skip/.enumerate/.zip/
+  .step_by/.copied/.rev` are all `E1010` or `E2040` today). Done first: D-379
+  (ADR-071), which made any adapter written in std hang the checker. Still
+  blocking std adapters: a generic `extend[I: Iterator] Take[I] implements
+  Iterator:` cannot name `I.Item` in `type Item = I.Item` or in a signature
+  (`E2040 I has no associated type Item`), though a generic function can
+  (`declare_projections` / `project`'s lazy D-345 path are not used for an
+  extension's own parameters). Adapter signatures need an ODR (what
+  `take(-1)` and `step_by(0)` do).
 * **Speed audit: the six agreed fixes are done (2026-09-27, uncommitted;
   ADR-070, D-375, deviation D7).** The owner said "do all fixes check them and
   report the final result". Each fix passed the quick check, the workspace

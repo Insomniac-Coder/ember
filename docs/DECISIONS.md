@@ -2656,3 +2656,25 @@ Six fixes, in the owner's order; none changes the language.
 
 **Superseded by item 8:** a sum of 64-bit `int`s no longer keeps one overflow check per
 element; ODR-086 was ruled on 2026-09-28.
+
+## ADR-071 — a default method that builds a type from `Self` is made on use
+
+2026-09-29, autonomous (D-379). Registering a generic instance's interfaces instantiated every
+default method of every interface it implements. A default whose signature holds `Self` inside
+another type (`fn take(owned self, n: int) -> Take[Self]`) names a new instance when it is
+instantiated, and when that instance implements the interface too, as an iterator adapter does,
+instantiating its defaults names the next: checking never ended.
+
+* **Decision.** Such a default (`signature_nests_self`: `Self` in a nominal type's arguments, a
+  tuple, an array, a view or a function type) is not made for a generic instance until a method
+  call names it (`deferred_defaults`, made by `materialize_deferred_default` in
+  `synth_registered_method`, the path every method call and every `Interface.method(x)` call
+  takes). The implementation check counts a deferred default as defined. Every other default
+  is still made at once, so nothing that worked changes.
+* **Why not a depth limit** (Rust's `recursion_limit` for instantiation): every program with
+  such an interface would build the limit's worth of instances of each adapter over each type
+  and fail on the first chain longer than it; made on use, an unused adapter costs nothing
+  (`[COST-1]`) and a used one is made once.
+* **Why not every default on use:** 43 places read the method tables directly; the deferral is
+  kept to the defaults that can recurse, and the one path that names them materialises them.
+
