@@ -63,6 +63,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-082 | **CLOSED** — `@ffi(immutable)` on a foreign static asserts a `const` C object and emits a matching declaration | Language / C interop / foreign statics | — | **No** — delegated, 2026-09-27, Hardened_38 |
 | ODR-083 | **CLOSED** — a static free-function export's `creator` thread is anchored to successful module initialization; repeated initialization does not transfer the contract, and reinitialization after shutdown establishes a new creator | Language / C interop / export thread contracts | — | **No** — delegated, 2026-09-27, Hardened_39 |
 | ODR-084 | **CLOSED** — `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts | Language / module attributes / arithmetic | — | **No** — delegated, 2026-09-27, Hardened_40 |
+| ODR-088 | **CLOSED** — a loop that divides integers by a divisor that is not a constant, or integers of 64 bits or more by a constant that is not a power of two, is not in vectorisable form, so its overflow checks stay one per operation | Language / cost / vectorisation | — | **Yes** — owner, 2026-09-28, Hardened_43 |
 | ODR-087 | **CLOSED** — LLVM is restored as the reference implementation's second backend over the same MIR: begun once the C backend passes the conformance suite, the default once it also passes the performance suite; `--backend c\|llvm` | Implementation / backends | — | **Yes** — owner, 2026-09-28, Hardened_42 |
 | ODR-086 | **CLOSED** — a running total is not grouped; it is vectorised under checked arithmetic when its widths prove it safe or, for a signed total of at least 16 bits, when a run-time test over each block of 64 iterations does | Language / cost / vectorisation | — | **Yes** — owner, 2026-09-28 ("I accept the 64 block fix"), Hardened_42 |
 | ODR-085 | **CLOSED** — an access that is not held is checked but not counted; a `mut self` call to a quiet function is only checked; a check nothing held anywhere could fail may be removed; each class's access words are packed before its fields | Language / exclusivity / object layout / cost | — | **Yes** — the owner approved, 2026-09-27, Hardened_41 |
@@ -243,6 +244,27 @@ immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
+
+## ODR-088 — division and vectorisable form — **CLOSED**
+
+    ID:        ODR-088
+    Status:    CLOSED — the owner, 2026-09-28: "yes make the change";
+               incorporated in 0.9.9_Hardened_43
+    Category:  LANGUAGE / COST / VECTORISATION
+    Location:  Ember_v0.9.9_Hardened_42.md [SIMD-5], [SIMD-7]
+
+**What happened.** Range facts (`[RNG-4]`) removed every check but the running total's from the
+integer-arithmetic benchmark's loop (`total + (i * 7) % 13 + i // 3 - i % 5`), which made it
+vectorisable form by `[SIMD-5]`'s clauses, so `[SIMD-7]` required its checks grouped. No vector
+instruction set divides 64-bit integers by 3, 5 or 13 (there is no 64-bit vector multiply-high;
+clang confirmed: the 32-bit form vectorises eight at a time, the 64-bit form not at all), so the
+loop runs one iteration at a time and grouping only added work: 1.25x C on MSVC and 1.82x on
+clang, against 14% faster and 8% slower with one check per operation.
+
+**Ruling.** Hardened_43 adds a clause to `[SIMD-5]`: no integer division or remainder in the body
+is by a divisor that is not a constant, nor, at 64 bits or more, by a constant that is not a
+power of two. A 32-bit division by a constant (a vector multiply and shift), a float division and
+a power-of-two divisor leave a loop in vectorisable form as before.
 
 ## ODR-087 — the LLVM backend — **CLOSED**
 

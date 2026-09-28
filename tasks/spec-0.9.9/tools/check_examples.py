@@ -1,10 +1,12 @@
 """End check 4: run `ember check --syntax-only` on every ```ember block of the built document.
 
-Prints each failing block with its heading and the source line of each diagnostic, so a failure can be
-classified as syntax new in 0.9.9 (which the 0.9.8-era parser lacks) or a mistake in the example.
+A block that does not compile is sorted into one of two kinds, and called by that kind:
+- **unbuilt features**: it compiles once the constructs the compiler does not have yet (`NEW_SYNTAX`)
+  are rewritten into ones it has, so it only shows features still to be built; they are named;
+- **errors**: it still does not compile, so the example is wrong or something built is broken.
+Each such block is printed with its heading and the source line of each diagnostic.
 
---desugar rewrites the constructs new in 0.9.9 into 0.9.8-parser equivalents first, so the rest of each
-block is checked instead of hiding behind the first new construct.
+--desugar checks only the rewritten form of every block.
 
 Usage: check_examples.py <ember.exe> [document] [--desugar]
 """
@@ -18,21 +20,22 @@ DOC = ARGS[1] if len(ARGS) > 1 else os.path.join(
 LOC = re.compile(r'--> .*:(\d+):(\d+)\s*$')
 
 OPERAND = r'[\w.\[\]()]+'
+# Each construct the compiler does not build yet: its rewrite into one it has, and its name.
 NEW_SYNTAX = [
-    (re.compile(r' // '), ' / '),                                   # floor division
-    (re.compile(r'-> some '), '-> '),                               # opaque return
-    (re.compile(r'comptime\('), '('),                               # comptime(e)
-    (re.compile(r'^(import c .*\)) as \w+'), r'\1'),                # import c … as name
-    (re.compile(r'^\) as \w+'), ')'),
-    (re.compile(r'\[[^\[\]]* for [^\[\]]*\]'), '[]'),               # list comprehension
-    (re.compile(r'\{[^{}]* for [^{}]*\}'), 'Map()'),                # map/set comprehension
-    (re.compile(r'= \{\}'), '= Map()'),                             # empty map literal
-    (re.compile(r'\(\{\}\)'), '(Map())'),
-    (re.compile(r'= \{[^{}:]*\}'), '= Set()'),                      # set literal
+    (re.compile(r' // '), ' / ', 'floor division'),
+    (re.compile(r'-> some '), '-> ', 'opaque return types (`-> some I`)'),
+    (re.compile(r'comptime\('), '(', 'compile-time calls (`comptime(e)`)'),
+    (re.compile(r'^(import c .*\)) as \w+'), r'\1', 'C header import (`import c`)'),
+    (re.compile(r'^\) as \w+'), ')', 'C header import (`import c`)'),
+    (re.compile(r'\[[^\[\]]* for [^\[\]]*\]'), '[]', 'list comprehensions'),
+    (re.compile(r'\{[^{}]* for [^{}]*\}'), 'Map()', 'map and set comprehensions'),
+    (re.compile(r'= \{\}'), '= Map()', 'empty map literals'),
+    (re.compile(r'\(\{\}\)'), '(Map())', 'empty map literals'),
+    (re.compile(r'= \{[^{}:]*\}'), '= Set()', 'set literals'),
     (re.compile(r'(' + OPERAND + r') (<=|<|>=|>) (' + OPERAND + r') (<=|<|>=|>) (' + OPERAND + r')'),
-     r'\1 \2 \3 and \3 \4 \5'),                                     # chained comparison
-    (re.compile(r'^(\s+)safe fn '), r'\1fn '),                      # safe fn in an extern block
-    (re.compile(r'\(([^()]*\([^()]*\))*[^()]* for [^()]*\)'), '([])'),  # generator expression
+     r'\1 \2 \3 and \3 \4 \5', 'chained comparisons'),
+    (re.compile(r'^(\s+)safe fn '), r'\1fn ', '`safe fn` in an extern block'),
+    (re.compile(r'\(([^()]*\([^()]*\))*[^()]* for [^()]*\)'), '([])', 'generator expressions'),
 ]
 
 ITEM = re.compile(r'(fn|gen|once|class|open|abstract|struct|enum|interface|import|from|pub|@|#|static|'
@@ -51,12 +54,18 @@ def lift_script(body):
     return '\n'.join(items + ['fn main():'] + ['    ' + s if s.strip() else s for s in stmts]) + '\n'
 
 
-def desugar(body):
+def desugar(body, used=None, keep=None):
+    """The block with every unbuilt construct rewritten, except those named `keep`; the names of
+    those it had go in `used`."""
     out = []
     for line in body.split('\n'):
         code, sep, comment = line.partition('  #')
-        for pat, rep in NEW_SYNTAX:
-            code = pat.sub(rep, code)
+        for pat, rep, name in NEW_SYNTAX:
+            if name == keep:
+                continue
+            code, n = pat.subn(rep, code)
+            if n and used is not None and name not in used:
+                used.append(name)
         out.append(code + sep + comment)
     return lift_script('\n'.join(out))
 
@@ -79,24 +88,38 @@ def blocks(text):
     return out
 
 
+def check(body, path):
+    open(path, 'w', encoding='utf-8', newline='\n').write(body)
+    return subprocess.run([EMBER, 'check', '--syntax-only', path], capture_output=True, text=True,
+                          encoding='utf-8')
+
+
 def main():
     bl = blocks(open(DOC, encoding='utf-8').read())
     tmp = tempfile.mkdtemp()
-    fails = 0
+    unbuilt, errors, features = 0, 0, []
     for n, (heading, tag, body) in enumerate(bl):
         if tag in ('ignore', 'overlay'):
             continue
         if '--desugar' in sys.argv:
             body = desugar(body)
         path = os.path.join(tmp, f'b{n:02d}.em')
-        open(path, 'w', encoding='utf-8', newline='\n').write(body)
-        r = subprocess.run([EMBER, 'check', '--syntax-only', path], capture_output=True, text=True,
-                           encoding='utf-8')
+        r = check(body, path)
         if r.returncode == 0:
             continue
-        fails += 1
+        used = []
+        if check(desugar(body, used), path).returncode == 0 and used:
+            # Only the constructs the compiler really lacks: a rewrite the block also compiles
+            # without is of something already built.
+            used = [name for name in used if check(desugar(body, keep=name), path).returncode != 0]
+            unbuilt += 1
+            features += [name for name in used if name not in features]
+            kind = 'unbuilt features: ' + ', '.join(used)
+        else:
+            errors += 1
+            kind = 'ERROR'
         src = body.split('\n')
-        print(f'--- block {n} ({tag}) under "{heading}"')
+        print(f'--- block {n} ({tag}) under "{heading}": {kind}')
         msg = None
         for line in (r.stdout + r.stderr).split('\n'):
             if line.startswith('error['):
@@ -106,7 +129,8 @@ def main():
                 k = int(m.group(1))
                 print(f'  {msg}\n    L{k}: {src[k - 1] if k <= len(src) else ""}')
                 msg = None
-    print(f'blocks {len(bl)}, failing {fails}')
+    print(f'blocks {len(bl)}: {len(bl) - unbuilt - errors} compile, {unbuilt} show unbuilt features'
+          f' ({", ".join(features) or "none"}), {errors} errors')
 
 
 if __name__ == '__main__':

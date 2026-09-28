@@ -571,6 +571,8 @@ mod tests {
             mut_self: false,
             elided_accesses: Vec::new(),
             hoisted_accesses: Vec::new(),
+            uncounted_handles: Vec::new(),
+            removed_checks: Vec::new(),
         }
     }
 
@@ -1733,6 +1735,8 @@ mod view_invariant_tests {
             mut_self: false,
             elided_accesses: Vec::new(),
             hoisted_accesses: Vec::new(),
+            uncounted_handles: Vec::new(),
+            removed_checks: Vec::new(),
         };
         (body, types)
     }
@@ -1895,6 +1899,8 @@ mod interface_upcast_invariant_tests {
             mut_self: false,
             elided_accesses: Vec::new(),
             hoisted_accesses: Vec::new(),
+            uncounted_handles: Vec::new(),
+            removed_checks: Vec::new(),
         };
         (body, types)
     }

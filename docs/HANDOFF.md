@@ -11088,12 +11088,13 @@ first**; the rest of §0.355 is the running narrative behind it.
     semantic ambiguity and no ODR or new hardening.
 
   The five preceding CI runs, through `f529f8b`, finished green.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_42.md`
-  (ODR-086: running totals block by block; ODR-087: the LLVM backend restored as
-  §XVIII.7), pinned in `docs/spec-source/development-target.json`. The
-  spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through
-  `parts-h42/` are frozen.
-* **Next numbers:** ODR-088, D-377, ADR-071, ERR-056.
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_43.md`
+  (ODR-088: a division no vector instruction set does keeps a loop out of
+  vectorisable form; H42 carried ODR-086, running totals block by block, and
+  ODR-087, the LLVM backend restored as §XVIII.7), pinned in
+  `docs/spec-source/development-target.json`. The spec's working sources are
+  `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h43/` are frozen.
+* **Next numbers:** ODR-089, D-379, ADR-071, ERR-056.
 * **Speed audit: the six agreed fixes are done (2026-09-27, uncommitted;
   ADR-070, D-375, deviation D7).** The owner said "do all fixes check them and
   report the final result". Each fix passed the quick check, the workspace
@@ -11166,19 +11167,54 @@ first**; the rest of §0.355 is the running narrative behind it.
     each block's start, every added value noted in a size word, the block
     re-run checked when the note fails. Adding into an unsigned copy of the
     total (when nothing else reads it) is what lets MSVC vectorise it.
+  * **A handle copied from a list uses the list's count (2026-09-28, owner: "okay
+    build it"; `[RC-3]`, ADR-070 item 9).** `t = things[i]` is not retained, and
+    `t`'s end not released, when nothing can take the object out of `things` while
+    `t` lives and `t` stays the same handle (`uncounted_handles.rs`,
+    `Body::uncounted_handles`). The `mut self` call benchmarks: clang 3.3× → same
+    speed as C++; MSVC 3.0× → 2.0×, the rest being the loop's bounds, overflow and
+    remainder-sign checks, which stop MSVC unrolling it.
+  * **Range facts (2026-09-28, owner: "proceed with range facts"; `[RNG-4]`,
+    ADR-070 item 10).** `range_facts.rs`: intervals and `a <= b + c` relations
+    over the MIR remove every overflow, bounds, division-by-zero, `MIN // -1` and
+    shift check they prove cannot fail, and make floor `//`/`%` plain (shift,
+    mask, unsigned, or the flag-free runtime helper). `[OPT-2]` versions any
+    index the facts bound (a constant, or an unwritten local plus a constant).
+    Removals are in the `[EFF-10]` side table. Method-call loop on MSVC 2.0x ->
+    1.15-1.34x C++. Not done: emitted bounds/overflow checks are still missing
+    from the side table (older gap).
+  * **Regressions the range-facts benchmark run found, fixed (2026-09-28).**
+    MSVC stopped inlining `push` once loop versioning made a function larger
+    (list refill 1.0x -> 1.31x C, list copy 0.74x -> 1.0x): the runtime's
+    per-operation fast paths are now `EMBER_INLINED` (`__forceinline` /
+    `always_inline`). A floor `%` by a known-positive divisor of unknown-sign
+    dividend is C's `%` plus the remainder's sign bit (`r + ((r >> 63) & d)`),
+    not the runtime helper (function values back to 1.72x on MSVC). ODR-088
+    (Hardened_43): 64-bit division keeps a loop out of vectorisable form
+    (integer arithmetic back from 1.25x/1.82x). `check_examples` now sorts the
+    spec's examples into compiling, unbuilt features (named) and errors.
+  * **D-378 fixed (2026-09-28).** `[HEAP-8]` built: list capacity past
+    `PTRDIFF_MAX` bytes panics `capacity overflow` instead of wrapping into a
+    tiny buffer (`ember_vec_reserve`, new `ember_vec_reserve_more` for
+    `reserve(n)` and `extend`). Found while building range facts.
+  * **D-377 fixed (2026-09-28, owner: "fix this first").** The 128-bit self-test
+    now links clang's own runtime library on Windows (`-rtlib=compiler-rt`); the
+    clang suite on Windows is 305 of 305, no longer 304 with a known failure.
   * **E9012 dropped (2026-09-28, owner).** Hardened_41 retires it; the rule-index
     gate skips codes the pinned target retires; D4 closed.
   * **Open, not started.**
     * D-376: 67 test programs' C warns under clang `-Wall -Wextra`.
-    * Two checks on a list read and written run each group twice (1.6 times
-      C on clang). A single run would need the group's 16 elements saved
-      before it and restored for the checked re-run; the owner's call.
+    * Two checks on a list read and written: one pass since 2026-09-28 (the
+      group's elements saved and restored for the checked re-run), still 1.6
+      times C on clang; the cost is two overflow formulas per number.
     * The 24-byte header is fixed by `[OBJ-1]`, so shrinking it is the
       owner's ODR.
     * `iter_mut` loops compile to an iterator state machine, and C compilers
       do not vectorise them (a05 is 1.7× on MSVC).
     * MSVC does not inline a function value's body (a08).
-    * `mut self` calls p3/p7 are still about 3×.
+    * `mut self` calls p3/p7: same speed as C++ on clang, 1.15-1.34× on MSVC
+      after range facts (ADR-070 item 10); the rest is `count += 1`'s overflow
+      check and MSVC not batching a loop with an exit.
     * clang recursion a10 is 1.7×.
     * `[OPT-2]` and `[SIMD-7]` are complete (the owner: "fix the slow loop
       half assed implementation"); ADR-070 item 5. ODR-086 closed
@@ -12409,7 +12445,7 @@ unless named otherwise):
      `tools/appx_h.py` and `tools/appx_i.py`.
   3. `cat parts/p*.md > ../../docs/spec-source/Ember_v0.9.9_Hardened_N.md`
   4. Run `check_ids`, `check_citations`, `split_inline` (EFF-17 and CXX-1
-     are the known flags) and `check_examples <ember.exe> <doc>` (9 are known
+     are the known flags) and `check_examples <ember.exe> <doc>` (4 are known
      to fail).
   5. `cp -r parts parts-hN`
   6. Re-pin `development-target.json`: the SHA-256 of the file's LF bytes,

@@ -2431,5 +2431,91 @@ Six fixes, in the owner's order; none changes the language.
      `run_fail_a_subtracted_total_that_overflows_is_reported`,
      `run_fail_a_32_bit_total_that_overflows_is_reported`.
 
+9. **A handle copied from a list uses the list's count** (2026-09-28, `[RC-3]`, owner: "okay
+   build it"). `t = things[i]; t.bump()` spent two thirds of its time retaining and releasing
+   `t`: the loop was 3× C++ on both compilers, and deleting those two lines from the emitted C
+   by hand made it match C++ on clang.
+   * `uncounted_handles.rs` marks a class-handle local whose every assignment copies an
+     element of a list (`Array` or fixed array of handles) that a user-written local or an
+     `owned` parameter holds, never a bitwise copy of another place. On every path from each
+     copy to the local's drop, the function must neither write, move nor drop the list (a
+     field of an element's object may be written) nor take a mutable reference to it. Then
+     nothing can take the object out of the list while the local lives: the borrow checker
+     allows no mutable reference to the list across the copy, and a raw pointer may not be
+     used after its reference's region (`[UNS-4]`). The list's count keeps the object alive,
+     so the retain and release cancel and removing them moves no `drop`, no `Weak.upgrade`
+     outcome and no foreign release.
+   * The local must stay the same handle: never moved, never assigned anything else, every
+     drop unconditional, and lent mutably only to a `mut self` receiver (`E2103` forbids
+     assigning `self`) or a parameter that is not `mut`, through a call that returns no
+     reference. Copies of it count themselves as usual.
+   * The mark is `Body::uncounted_handles`, set on the final MIR (after `[OPT-2]`/`[SIMD-7]`);
+     the C backend emits no retain for a copy into such a local and no release at its drop.
+   * Measured, a `mut self` method on an object taken from a list, 100 million times: clang
+     3.3× → same speed as C++ (all three programs); MSVC 3.0× → 2.0–2.1×. MSVC's rest is the
+     loop's checks, not counting: C++ has no bounds or overflow check and uses `i & 1` for
+     `i % 2`, and MSVC unrolls it five times; Ember's loop keeps the list-bounds check, the
+     overflow check and the floor remainder's sign test, and is not unrolled.
+   * Tests: RC-3 `accept_a_handle_copied_from_a_list_uses_the_lists_count` (retains counted),
+     `accept_a_handle_outlives_its_list_being_cleared`,
+     `accept_a_handle_outlives_its_list_cleared_by_a_call`,
+     `accept_a_handle_outlives_its_list_element_being_replaced`,
+     `accept_a_handle_repointed_by_a_mut_parameter_keeps_its_count` (each keeps the count;
+     a wrong elision prints a `drop` early).
+
+10. **Range facts over the MIR** (2026-09-28, `[RNG-4]`, owner: "proceed with range facts",
+   after rejecting two pattern fixes as case-specific: "always suggest a general and optimised
+   solution"). `[RNG-4]` says the compiler tracks known ranges and uses them to remove overflow
+   and bounds checks; only its range-type use was built (in the type checker, D-141..D-150).
+   * `range_facts.rs` computes, for every whole-number local no reference can write and the
+     length of every list or span reached from a local through struct fields and references,
+     an interval at each point and relations `a <= b + c`. Facts come from constants, types
+     (a range type's declared range), arithmetic, copies and conversions (a conversion of a
+     non-negative value is at most its source), `len()`, the arm of a comparison or `min`'s
+     `TotalLess`, and a check that passed. Loop headers widen, then two narrowing rounds. A
+     block that only sets `bool`s and branches is followed per incoming path, so `and`, `or`
+     and `not` keep what each path knew. A list's length is forgotten at a write, move or
+     mutable borrow of it or a place holding it, and at every call when some mutable borrow
+     of it exists in the function; through a shared reference it cannot change (`[UNS-4]`).
+   * Removed where the facts decide the check: overflow (the exact result, bounded for `a - b`
+     by what is known between `a` and `b`, fits), bounds, division by zero, `MIN // -1`, shift
+     range. A floor `//`/`%` made plain becomes a shift or mask for a power-of-two divisor, C's
+     unsigned operators when both sides are non-negative, else the runtime's new flag-free
+     `ember_floordiv_*`/`ember_floorrem_*` (the backend wrote C's `/` for an unchecked signed
+     floor op, never reached before). Runs after the access passes, before `[OPT-2]`.
+   * `[OPT-2]` now versions a loop for any index whose largest value the facts bound: a
+     constant (`i % 4`, a mask, an inner counter, which the outer loop's test then covers), or
+     `v + c` for a local the loop does not write (`n - 1 - i`); the `i + c` form is unchanged.
+     A loop whose checks the facts remove outright is not copied.
+   * `[RC-3]`'s list-element handles follow the header copy an unchecked loop reads through
+     back to its list, so the method-call loop keeps both skips.
+   * `[EFF-10]`: `Body::removed_checks`; the side table lists each as `STATIC_ELIDED` (range
+     facts) or `DYNAMIC_HOISTED_LOOP` (loop entry test). Emitted bounds and overflow checks
+     are still not listed there (older than this work).
+   * Measured, a method on an object taken from a list 100 million times: MSVC 2.0-2.1x ->
+     1.15-1.34x C++ (the floor `%` sign fix and the per-turn bounds check gone); clang the same
+     speed as C++ before and after. The rest on MSVC is the language's overflow check on
+     `count += 1` and MSVC not batching loops that have an exit.
+   * Three regressions the first benchmark run found, fixed the general way: MSVC stopped
+     inlining `push` once loop versioning made a function larger, so the runtime's
+     per-operation fast paths (checked arithmetic, floor forms, push, reference counts, field
+     checks) are `EMBER_INLINED`, forced inline on every C compiler; a floor `%`/`//` by a
+     known-positive divisor with an unknown-sign dividend is C's operator corrected by the
+     remainder's sign bit, with no branch; and ODR-088 (Hardened_43) keeps a loop whose integer
+     division no vector instruction set does out of vectorisable form, so its checks are not
+     grouped (`scalar_only` in `loop_version.rs`).
+   * Tests: SIMD-5 `accept_a_loop_dividing_64_bit_integers_keeps_a_check_per_operation`,
+     `accept_a_loop_dividing_32_bit_integers_by_a_constant_is_grouped`; RNG-4
+     `accept_range_facts_remove_overflow_checks`,
+     `accept_range_facts_remove_bounds_checks`, `accept_range_facts_make_floor_division_plain`,
+     `accept_range_facts_remove_division_and_shift_checks`, and eight `run_fail_*` where a
+     check must stay (a list emptied in the loop, by a call, in an object; a negative index;
+     overflow, zero divisor, shift past the width, `MIN // -1` outside the facts); OPT-2
+     `accept_an_index_bounded_by_range_facts_is_checked_once`,
+     `run_fail_an_entry_test_that_fails_runs_the_checked_loop`,
+     `run_fail_a_reversed_index_past_the_end_still_panics`. Counts updated in 15 RC-2e tests
+     and 3 OPT-2 tests: loops the facts now prove are no longer copied, so their bodies (and
+     retains) appear once.
+
 **Superseded by item 8:** a sum of 64-bit `int`s no longer keeps one overflow check per
 element; ODR-086 was ruled on 2026-09-28.

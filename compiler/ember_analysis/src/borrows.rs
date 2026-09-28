@@ -4526,6 +4526,8 @@ mod callable_region_metadata_tests {
             mut_self: false,
             elided_accesses: Vec::new(),
             hoisted_accesses: Vec::new(),
+            uncounted_handles: Vec::new(),
+            removed_checks: Vec::new(),
         }
     }
 

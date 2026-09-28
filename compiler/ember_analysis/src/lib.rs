@@ -14,8 +14,10 @@ pub mod facts;
 pub mod loop_access;
 pub mod loop_version;
 pub mod long_access_lint;
+pub mod range_facts;
 pub mod regions;
 pub mod stores;
+pub mod uncounted_handles;
 pub mod unused;
 
 pub use borrows::{
@@ -26,6 +28,8 @@ pub use borrows::{
 pub use access::{elide_static_accesses_all, remove_never_firing_checks_all};
 pub use loop_access::hoist_loop_accesses_all;
 pub use loop_version::version_bounds_checked_loops_all;
+pub use uncounted_handles::mark_uncounted_handles_all;
+pub use range_facts::remove_proven_checks_all;
 pub use long_access_lint::lint_long_term_access_across_dynamic_calls_all;
 pub use cycles::{
     inspect_ownership_graph, lint_strong_cycles, OwnershipCycle, OwnershipEdge, OwnershipEdgeKind,

@@ -864,6 +864,12 @@ mod tests {
         if !cfg!(windows) {
             command.arg("-lm");
         }
+        // clang for Windows compiles `__int128` division and conversions to
+        // calls (`__divti3` and others) into its own runtime library, which
+        // it links only when asked (D-377).
+        if cfg!(windows) && matches!(toolchain, Toolchain::Clang(_)) {
+            command.arg("-rtlib=compiler-rt");
+        }
         run(command).expect("the test program compiles");
         let output = Command::new(&program).output().expect("the test program runs");
         let _ = std::fs::remove_dir_all(&dir);

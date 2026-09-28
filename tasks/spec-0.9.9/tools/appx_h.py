@@ -380,6 +380,8 @@ ODRS = [
      '`[SIMD-5]`, `[SIMD-7]`'),
     ('ODR-087', 'LLVM is restored as the reference implementation\'s second backend over the same MIR, begun once the C backend passes the conformance suite and the default once it also passes the performance suite; `--backend c|llvm` (Hardened_42)',
      '`[CG-LL-1]`, `[CG-LL-2]`, `[CG-LL-3]`, `[SIMD-1]`, `[SIMD-3]`, `[BLD-6]`'),
+    ('ODR-088', 'a loop that divides integers by a divisor that is not a constant, or integers of 64 bits or more by a constant that is not a power of two, is not in vectorisable form: no vector instruction set does either, so its overflow checks stay one per operation (Hardened_43)',
+     '`[SIMD-5]`, `[SIMD-7]`'),
 ]
 
 H5_HEAD = """
@@ -409,7 +411,9 @@ explicit borrowed view; Hardened_38 adds ODR-082, the C qualifier asserted by an
 foreign static; Hardened_39 adds ODR-083, the initialization anchor for static export creator
 contracts; Hardened_40 adds ODR-084, module-attribute syntax and lexical integer overflow policy;
 Hardened_41 adds ODR-085, what the dynamic exclusivity checks cost and the packed access words;
-Hardened_42 adds ODR-086 and ODR-087, running totals checked block by block and the LLVM backend.
+Hardened_42 adds ODR-086 and ODR-087, running totals checked block by block and the LLVM backend;
+Hardened_43 adds ODR-088, integer division no vector instruction set does keeps a loop out of
+vectorisable form.
 
 | ODR | Ruling | Rules |
 |---|---|---|

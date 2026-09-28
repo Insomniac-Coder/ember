@@ -242,6 +242,20 @@ fn safety_json(bodies: &[Body], map: &SourceMap) -> String {
                 json_string(elided.reason.as_str()),
             ));
         }
+        // `[RNG-4]` removals, and `[OPT-2]` checks moved to a loop's entry test.
+        for removed in &body.removed_checks {
+            let (source, function, kind) =
+                (json_string(&map.location(removed.span)), json_string(&body.name), json_string(removed.kind.as_str()));
+            entries.push(match &removed.proof {
+                ember_mir::CheckProof::RangeFacts => format!(
+                    "{{\"kind\":{kind},\"source\":{source},\"function\":{function},\"mechanism\":\"range facts\",\"classification\":\"STATIC_ELIDED\",\"reason\":\"range_facts\",\"status\":\"elided\"}}"
+                ),
+                ember_mir::CheckProof::LoopEntryTest { loop_span } => format!(
+                    "{{\"kind\":{kind},\"source\":{source},\"function\":{function},\"mechanism\":\"loop versioning\",\"classification\":\"DYNAMIC_HOISTED_LOOP\",\"reason\":\"inherent_to_mechanism\",\"proof\":\"loop_entry_test\",\"loop\":{},\"check_site\":\"preheader\",\"protected_interval\":\"loop\",\"status\":\"emitted\"}}",
+                    json_string(&map.location(*loop_span)),
+                ),
+            });
+        }
     }
     format!("{{\"schema\":1,\"checks\":[{}]}}\n", entries.join(","))
 }
@@ -879,14 +893,14 @@ impl Emitter<'_> {
                         format!("static void {symbol}({RT}vec* v, const void* elems, size_t count)"),
                         vec![
                             "(void)elems;".to_string(),
-                            format!("{RT}vec_reserve(v, 0, v->len + count);"),
+                            format!("{RT}vec_reserve_more(v, 0, count);"),
                             "v->len += count;".to_string(),
                         ],
                     ),
                     ArrayHelper::Extend => {
                         let c = self.c_type(ty);
                         let mut body = vec![
-                            format!("{RT}vec_reserve(v, {c_size}, v->len + count);", c_size = c_size(&c)),
+                            format!("{RT}vec_reserve_more(v, {c_size}, count);", c_size = c_size(&c)),
                             format!("{c}* to = ({c}*)v->ptr + v->len;"),
                             format!("memcpy(to, elems, count * {c_size});", c_size = c_size(&c)),
                         ];
@@ -3969,7 +3983,10 @@ impl Emitter<'_> {
                 // reference-count semantics.  The walk is recursive so a
                 // copied aggregate cannot silently duplicate an owned handle.
                 let mut retains = Vec::new();
-                self.retain_lines_for_rvalue(rvalue, ty, body, &mut retains);
+                // `[RC-3]` — an uncounted handle borrows the list's count.
+                if !(place.projection.is_empty() && body.uncounted_handles.contains(&place.local)) {
+                    self.retain_lines_for_rvalue(rvalue, ty, body, &mut retains);
+                }
                 for line in retains {
                     self.line(&format!("    {line}"));
                 }
@@ -4048,6 +4065,9 @@ impl Emitter<'_> {
             }
             // `[OWN-2]`, `[DRP-2]` — the value's life ends here.
             StmtKind::Drop { place, flag, .. } => {
+                if place.projection.is_empty() && body.uncounted_handles.contains(&place.local) {
+                    return;
+                }
                 let ty = self.place_ty(place, body);
                 let mut lines = Vec::new();
                 self.drop_lines(&self.place_in(place, body), ty, &mut lines);
@@ -5499,11 +5519,11 @@ impl Emitter<'_> {
                     }
                     Builtin::ArrayReserve => {
                         let elem = self.element_of(*arg_ty);
+                        // `[HEAP-8]` — `len + n` is checked, never formed to wrap.
                         return format!(
-                            "{RT}vec_reserve({}, {}, ({})->len + ({}))",
+                            "{RT}vec_reserve_more({}, {}, {})",
                             rendered[0],
                             c_size(&self.c_type(elem)),
-                            rendered[0],
                             rendered[1]
                         );
                     }
@@ -6327,6 +6347,22 @@ impl Emitter<'_> {
                 };
                 format!(
                     "{RT}{stem}_{suffix}({}, {})",
+                    self.operand(lhs, body),
+                    self.operand(rhs, body)
+                )
+            }
+            // `[TYP-28]` — a signed integer floor division or modulo whose
+            // overflow check a range fact removed (`[RNG-4]`): C's operators
+            // round toward zero, so the runtime's floor forms.
+            Rvalue::BinaryOp {
+                op: op @ (ember_mir::BinOp::FloorDiv | ember_mir::BinOp::FloorRem),
+                lhs,
+                rhs,
+            } if matches!(self.types.kind(target), TyKind::Int(_)) => {
+                let stem = if *op == ember_mir::BinOp::FloorDiv { "floordiv" } else { "floorrem" };
+                format!(
+                    "{RT}{stem}_{}({}, {})",
+                    self.checked_suffix(target),
                     self.operand(lhs, body),
                     self.operand(rhs, body)
                 )

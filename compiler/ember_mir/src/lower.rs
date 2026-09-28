@@ -394,6 +394,8 @@ impl<'a> Builder<'a> {
             mut_self: self.class_access.is_some(),
             elided_accesses: Vec::new(),
             hoisted_accesses: Vec::new(),
+            uncounted_handles: Vec::new(),
+            removed_checks: Vec::new(),
         }
     }
 

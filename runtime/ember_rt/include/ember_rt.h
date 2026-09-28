@@ -197,16 +197,31 @@ static inline ember_loc ember_loc_unknown(void) { return ember_loc_at(NULL, 0, 0
 #define EMBER_SMIN(BITS) (-EMBER_SMAX(BITS) - 1)
 #define EMBER_UMAX(BITS) ((BITS) == 64 ? UINT64_MAX : ((((uint64_t)1) << (BITS)) - 1))
 
+/* The per-operation fast paths (checked arithmetic, floor division and
+ * modulo, push, reference counts, field checks) are forced inline: a C
+ * compiler's per-function inlining budget must never turn one into a call
+ * inside a hot loop, as MSVC once did when loop versioning made a function
+ * larger. Each slow path is a function of its own, so each fast path is a few
+ * instructions. The name is as long as `static inline`, so macros stay
+ * aligned. */
+#if defined(_MSC_VER) && !defined(__clang__)
+#define EMBER_INLINED static __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+#define EMBER_INLINED static inline __attribute__((always_inline))
+#else
+#define EMBER_INLINED static inline
+#endif
+
 #if defined(__GNUC__) || defined(__clang__)
 
 #define EMBER_CHECKED_OPS(SUFFIX, TYPE)                                      \
-    static inline bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         return __builtin_add_overflow(a, b, out);                            \
     }                                                                        \
-    static inline bool ember_ck_sub_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_sub_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         return __builtin_sub_overflow(a, b, out);                            \
     }                                                                        \
-    static inline bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         return __builtin_mul_overflow(a, b, out);                            \
     }
 
@@ -215,33 +230,33 @@ static inline ember_loc ember_loc_unknown(void) { return ember_loc_at(NULL, 0, 0
 /* Narrow signed types: compute in int64_t, which cannot itself overflow for
  * operands of 32 bits or fewer, then range-check. */
 #define EMBER_CHECKED_OPS_SNARROW(SUFFIX, TYPE, BITS)                        \
-    static inline bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         int64_t wide = (int64_t)a + (int64_t)b;                              \
         *out = (TYPE)wide;                                                   \
         return wide < EMBER_SMIN(BITS) || wide > EMBER_SMAX(BITS);           \
     }                                                                        \
-    static inline bool ember_ck_sub_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_sub_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         int64_t wide = (int64_t)a - (int64_t)b;                              \
         *out = (TYPE)wide;                                                   \
         return wide < EMBER_SMIN(BITS) || wide > EMBER_SMAX(BITS);           \
     }                                                                        \
-    static inline bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         int64_t wide = (int64_t)a * (int64_t)b;                              \
         *out = (TYPE)wide;                                                   \
         return wide < EMBER_SMIN(BITS) || wide > EMBER_SMAX(BITS);           \
     }
 
 #define EMBER_CHECKED_OPS_UNARROW(SUFFIX, TYPE, BITS)                        \
-    static inline bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         uint64_t wide = (uint64_t)a + (uint64_t)b;                           \
         *out = (TYPE)wide;                                                   \
         return wide > EMBER_UMAX(BITS);                                      \
     }                                                                        \
-    static inline bool ember_ck_sub_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_sub_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         *out = (TYPE)((uint64_t)a - (uint64_t)b);                            \
         return a < b;                                                        \
     }                                                                        \
-    static inline bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         uint64_t wide = (uint64_t)a * (uint64_t)b;                           \
         *out = (TYPE)wide;                                                   \
         return wide > EMBER_UMAX(BITS);                                      \
@@ -265,28 +280,28 @@ static inline ember_loc ember_loc_unknown(void) { return ember_loc_at(NULL, 0, 0
 #endif
 #if defined(EMBER_MSVC_OVERFLOW)
 #define EMBER_CHECKED_OPS_S64(SUFFIX, TYPE)                                  \
-    static inline bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         return _add_overflow_i64(0, a, b, (__int64*)out) != 0;               \
     }                                                                        \
-    static inline bool ember_ck_sub_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_sub_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         return _sub_overflow_i64(0, a, b, (__int64*)out) != 0;               \
     }                                                                        \
-    static inline bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         return _mul_overflow_i64(a, b, (__int64*)out) != 0;                  \
     }
 #else
 #define EMBER_CHECKED_OPS_S64(SUFFIX, TYPE)                                  \
-    static inline bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         TYPE sum = (TYPE)((uint64_t)a + (uint64_t)b);                        \
         *out = sum;                                                          \
         return ((a ^ sum) & (b ^ sum)) < 0;                                  \
     }                                                                        \
-    static inline bool ember_ck_sub_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_sub_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         TYPE difference = (TYPE)((uint64_t)a - (uint64_t)b);                 \
         *out = difference;                                                   \
         return ((a ^ b) & (a ^ difference)) < 0;                             \
     }                                                                        \
-    static inline bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         EMBER_CHECKED_MUL_S64_BODY(TYPE, a, b, out)                          \
     }
 #endif
@@ -306,15 +321,15 @@ static inline ember_loc ember_loc_unknown(void) { return ember_loc_at(NULL, 0, 0
 #endif
 
 #define EMBER_CHECKED_OPS_U64(SUFFIX, TYPE)                                  \
-    static inline bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         *out = (TYPE)(a + b);                                                \
         return *out < a;                                                     \
     }                                                                        \
-    static inline bool ember_ck_sub_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_sub_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         *out = (TYPE)(a - b);                                                \
         return a < b;                                                        \
     }                                                                        \
-    static inline bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         EMBER_CHECKED_MUL_U64_BODY(a, b, out)                                \
     }
 
@@ -349,12 +364,12 @@ EMBER_CHECKED_OPS_U64(usize, size_t)
  * representable ([TYP-8]). Unsigned division cannot overflow and never gets
  * here. */
 #define EMBER_CHECKED_DIV(SUFFIX, TYPE, MINVAL)                              \
-    static inline bool ember_ck_div_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_div_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         if (a == (TYPE)(MINVAL) && b == (TYPE)-1) { *out = a; return true; } \
         *out = (TYPE)(a / b);                                                \
         return false;                                                        \
     }                                                                        \
-    static inline bool ember_ck_rem_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_rem_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         if (a == (TYPE)(MINVAL) && b == (TYPE)-1) { *out = 0; return true; } \
         *out = (TYPE)(a % b);                                                \
         return false;                                                        \
@@ -371,7 +386,7 @@ EMBER_CHECKED_DIV(isize, ptrdiff_t, INT64_MIN)
  * been checked. T.MIN // -1 overflows; T.MIN % -1 is 0 and does not.
  * Unsigned operands use C's operators, which agree with floor there. */
 #define EMBER_CHECKED_FLOOR(SUFFIX, TYPE, MINVAL)                                 \
-    static inline bool ember_ck_floordiv_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_floordiv_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         TYPE q;                                                                   \
         if (a == (TYPE)(MINVAL) && b == (TYPE)-1) { *out = a; return true; }      \
         q = (TYPE)(a / b);                                                        \
@@ -379,7 +394,7 @@ EMBER_CHECKED_DIV(isize, ptrdiff_t, INT64_MIN)
         *out = q;                                                                 \
         return false;                                                             \
     }                                                                             \
-    static inline bool ember_ck_floorrem_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+    EMBER_INLINED bool ember_ck_floorrem_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         TYPE r;                                                                   \
         if (b == (TYPE)-1) { *out = 0; return false; }                            \
         r = (TYPE)(a % b);                                                        \
@@ -393,6 +408,16 @@ EMBER_CHECKED_FLOOR(i16, int16_t, INT16_MIN)
 EMBER_CHECKED_FLOOR(i32, int32_t, INT32_MIN)
 EMBER_CHECKED_FLOOR(i64, int64_t, INT64_MIN)
 EMBER_CHECKED_FLOOR(isize, ptrdiff_t, INT64_MIN)
+
+/* The same where the compiler has proved `T.MIN // -1` cannot occur ([RNG-4]):
+ * no flag, and the correction for the sign is arithmetic, not a branch. */
+#define EMBER_FLOOR(SUFFIX, TYPE)                                                     EMBER_INLINED TYPE ember_floordiv_##SUFFIX(TYPE a, TYPE b) {                          TYPE q = (TYPE)(a / b);                                                           return (TYPE)(q - (TYPE)(((TYPE)(a % b) != 0) & ((a < 0) != (b < 0))));       }                                                                                 EMBER_INLINED TYPE ember_floorrem_##SUFFIX(TYPE a, TYPE b) {                          TYPE r;                                                                           if (b == (TYPE)-1) { return 0; }                                                  r = (TYPE)(a % b);                                                                return (TYPE)(r + (b & (TYPE)-(TYPE)((r != 0) & ((r < 0) != (b < 0)))));      }
+
+EMBER_FLOOR(i8, int8_t)
+EMBER_FLOOR(i16, int16_t)
+EMBER_FLOOR(i32, int32_t)
+EMBER_FLOOR(i64, int64_t)
+EMBER_FLOOR(isize, ptrdiff_t)
 
 /* [TYP-29] as ruled by ODR-021 (0.9.9_Hardened_3): float `//` and `%` are
  * Python's. The remainder is the exact floor modulo rounded once (fmod is
@@ -684,17 +709,17 @@ static inline ember_u128 ember_u128_rem(ember_u128 a, ember_u128 b) {
     return r;
 }
 
-static inline bool ember_ck_add_u128(ember_u128 a, ember_u128 b, ember_u128* out) {
+EMBER_INLINED bool ember_ck_add_u128(ember_u128 a, ember_u128 b, ember_u128* out) {
     *out = ember_u128_add(a, b);
     return ember_u128_lt(*out, a);
 }
-static inline bool ember_ck_sub_u128(ember_u128 a, ember_u128 b, ember_u128* out) {
+EMBER_INLINED bool ember_ck_sub_u128(ember_u128 a, ember_u128 b, ember_u128* out) {
     *out = ember_u128_sub(a, b);
     return ember_u128_lt(a, b);
 }
 /* Out of range when both high halves are set, or when the one cross product
  * (or its sum with the low product's high half) passes 64 bits. */
-static inline bool ember_ck_mul_u128(ember_u128 a, ember_u128 b, ember_u128* out) {
+EMBER_INLINED bool ember_ck_mul_u128(ember_u128 a, ember_u128 b, ember_u128* out) {
     ember_u128 low = ember_u128_mul64(a.lo, b.lo);
     ember_u128 cross = a.hi != 0 ? ember_u128_mul64(a.hi, b.lo) : ember_u128_mul64(a.lo, b.hi);
     *out = ember_u128_mul(a, b);
@@ -703,17 +728,17 @@ static inline bool ember_ck_mul_u128(ember_u128 a, ember_u128 b, ember_u128* out
 }
 /* Signed: out of range when the operands' signs call for one sign and the
  * wrapped result has the other. */
-static inline bool ember_ck_add_i128(ember_i128 a, ember_i128 b, ember_i128* out) {
+EMBER_INLINED bool ember_ck_add_i128(ember_i128 a, ember_i128 b, ember_i128* out) {
     *out = ember_u128_to_i128(ember_u128_add(ember_i128_to_u128(a), ember_i128_to_u128(b)));
     return ((~(a.hi ^ b.hi) & (a.hi ^ out->hi)) & EMBER_I128_SIGN) != 0;
 }
-static inline bool ember_ck_sub_i128(ember_i128 a, ember_i128 b, ember_i128* out) {
+EMBER_INLINED bool ember_ck_sub_i128(ember_i128 a, ember_i128 b, ember_i128* out) {
     *out = ember_u128_to_i128(ember_u128_sub(ember_i128_to_u128(a), ember_i128_to_u128(b)));
     return (((a.hi ^ b.hi) & (a.hi ^ out->hi)) & EMBER_I128_SIGN) != 0;
 }
 /* The magnitudes' product must fit, and be at most 2^127 - 1 (2^127 when the
  * result is negative). */
-static inline bool ember_ck_mul_i128(ember_i128 a, ember_i128 b, ember_i128* out) {
+EMBER_INLINED bool ember_ck_mul_i128(ember_i128 a, ember_i128 b, ember_i128* out) {
     bool na = (a.hi & EMBER_I128_SIGN) != 0, nb = (b.hi & EMBER_I128_SIGN) != 0;
     ember_u128 ua = ember_i128_to_u128(a), ub = ember_i128_to_u128(b), p;
     ember_u128 zero = ember_u128_make(0, 0);
@@ -799,22 +824,22 @@ static inline ember_i128 ember_i128_floorrem(ember_i128 a, ember_i128 b) {
 static inline bool ember_i128_is_min_by_minus_one(ember_i128 a, ember_i128 b) {
     return ember_i128_eq(a, ember_i128_make(EMBER_I128_SIGN, 0)) && ember_i128_eq(b, ember_i128_make(UINT64_MAX, UINT64_MAX));
 }
-static inline bool ember_ck_div_i128(ember_i128 a, ember_i128 b, ember_i128* out) {
+EMBER_INLINED bool ember_ck_div_i128(ember_i128 a, ember_i128 b, ember_i128* out) {
     if (ember_i128_is_min_by_minus_one(a, b)) { *out = a; return true; }
     *out = ember_i128_div(a, b);
     return false;
 }
-static inline bool ember_ck_rem_i128(ember_i128 a, ember_i128 b, ember_i128* out) {
+EMBER_INLINED bool ember_ck_rem_i128(ember_i128 a, ember_i128 b, ember_i128* out) {
     if (ember_i128_is_min_by_minus_one(a, b)) { *out = ember_i128_make(0, 0); return true; }
     *out = ember_i128_rem(a, b);
     return false;
 }
-static inline bool ember_ck_floordiv_i128(ember_i128 a, ember_i128 b, ember_i128* out) {
+EMBER_INLINED bool ember_ck_floordiv_i128(ember_i128 a, ember_i128 b, ember_i128* out) {
     if (ember_i128_is_min_by_minus_one(a, b)) { *out = a; return true; }
     *out = ember_i128_floordiv(a, b);
     return false;
 }
-static inline bool ember_ck_floorrem_i128(ember_i128 a, ember_i128 b, ember_i128* out) {
+EMBER_INLINED bool ember_ck_floorrem_i128(ember_i128 a, ember_i128 b, ember_i128* out) {
     *out = ember_i128_floorrem(a, b);
     return false;
 }
@@ -1026,7 +1051,7 @@ static inline const void* ember_itable_lookup(const ember_type_info* type, const
  * empty handle, a panic, the last release, which deinitialises, and a Sync
  * object's atomic count) goes through the out-of-line functions above,
  * unchanged. */
-static inline void ember_retain_plain(ember_obj_header* object) {
+EMBER_INLINED void ember_retain_plain(ember_obj_header* object) {
     if (object != NULL && (object->flags & EMBER_OBJ_DEINITIALISING) == 0
         && object->strong - 1u < UINT32_MAX - 1u) {
         object->strong += 1;
@@ -1035,7 +1060,7 @@ static inline void ember_retain_plain(ember_obj_header* object) {
     ember_obj_retain(object);
 }
 
-static inline void ember_release_plain(ember_obj_header* object) {
+EMBER_INLINED void ember_release_plain(ember_obj_header* object) {
     if (object != NULL && object->strong > 1) {
         object->strong -= 1;
         return;
@@ -1044,7 +1069,7 @@ static inline void ember_release_plain(ember_obj_header* object) {
 }
 
 /* Any handle: the type information says whether the counts are atomic. */
-static inline void ember_retain(ember_obj_header* object) {
+EMBER_INLINED void ember_retain(ember_obj_header* object) {
     if (object != NULL && object->ti != NULL && (object->ti->flags & EMBER_TI_SYNC) == 0) {
         ember_retain_plain(object);
         return;
@@ -1052,7 +1077,7 @@ static inline void ember_retain(ember_obj_header* object) {
     ember_obj_retain(object);
 }
 
-static inline void ember_release(ember_obj_header* object) {
+EMBER_INLINED void ember_release(ember_obj_header* object) {
     if (object != NULL && object->ti != NULL && (object->ti->flags & EMBER_TI_SYNC) == 0) {
         ember_release_plain(object);
         return;
@@ -1140,11 +1165,14 @@ typedef struct ember_vec {
 /* Make room for at least `want` elements. Growth doubles, so appending in a
  * loop stays linear ([ALC-1]). */
 void ember_vec_reserve(ember_vec* v, size_t elem_size, size_t want);
+/* Room for `additional` more elements: `len + additional` is checked before
+ * it is formed ([HEAP-8]), so asking for too many panics and never wraps. */
+void ember_vec_reserve_more(ember_vec* v, size_t elem_size, size_t additional);
 /* Append one element, copied from `value`. With room left it is a copy and a
  * length bump, inline, where the constant element size makes the copy one
  * store; only growth calls out. */
 void ember_vec_push_slow(ember_vec* v, size_t elem_size, const void* value);
-static inline void ember_vec_push(ember_vec* v, size_t elem_size, const void* value) {
+EMBER_INLINED void ember_vec_push(ember_vec* v, size_t elem_size, const void* value) {
     if (v->len < v->cap) {
         memcpy((unsigned char*)v->ptr + v->len * elem_size, value, elem_size);
         v->len += 1;
@@ -1156,7 +1184,7 @@ static inline void ember_vec_push(ember_vec* v, size_t elem_size, const void* va
  * copied to memory only on the growth path, so the caller never takes the
  * address of what it pushes and a pushed loop counter stays in a register. */
 #define EMBER_VEC_PUSH_VALUE(NAME, TYPE)                                     \
-    static inline void ember_vec_push_##NAME(ember_vec* v, TYPE value) {     \
+    EMBER_INLINED void ember_vec_push_##NAME(ember_vec* v, TYPE value) {     \
         if (v->len < v->cap) {                                               \
             ((TYPE*)v->ptr)[v->len] = value;                                 \
             v->len += 1;                                                     \
@@ -1403,13 +1431,13 @@ static inline void ember_field_end_write(uint32_t* word, const char* what, ember
  * while it is active and no other access begins) is only checked, never
  * counted: nothing could observe the count. A read checks that no write is
  * active; a write, that no access is. */
-static inline void ember_field_check_read(uint32_t* word, const char* what, ember_loc loc) {
+EMBER_INLINED void ember_field_check_read(uint32_t* word, const char* what, ember_loc loc) {
     if ((*word & EMBER_ACCESS_WRITER) != 0) {
         EMBER_FIELD_CONFLICT(false, word, what, loc);
     }
 }
 
-static inline void ember_field_check_write(uint32_t* word, const char* what, ember_loc loc) {
+EMBER_INLINED void ember_field_check_write(uint32_t* word, const char* what, ember_loc loc) {
     if (*word != 0) {
         EMBER_FIELD_CONFLICT(true, word, what, loc);
     }

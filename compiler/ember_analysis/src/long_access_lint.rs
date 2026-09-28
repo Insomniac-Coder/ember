@@ -192,7 +192,7 @@ fn access_name(body: &Body, place: &Place) -> String {
         .unwrap_or_else(|| "this class object".to_string())
 }
 
-fn successors(terminator: &Terminator) -> Vec<usize> {
+pub(crate) fn successors(terminator: &Terminator) -> Vec<usize> {
     match terminator {
         Terminator::Goto(target) => vec![target.0 as usize],
         Terminator::SwitchInt {

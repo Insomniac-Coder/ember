@@ -152,6 +152,48 @@ pub struct Body {
     /// This is MIR metadata only: it neither creates a source-level value nor
     /// changes the Ember aliasing model.
     pub hoisted_accesses: Vec<HoistedAccess>,
+    /// `[RC-3]` — class-handle locals whose every value is a copy of an
+    /// element of a list that keeps holding the object for the local's whole
+    /// life: the copy into one is not retained and its drop is not released.
+    pub uncounted_handles: Vec<LocalId>,
+    /// `[EFF-10]` — the checks a proof removed from this body or moved to a
+    /// loop's entry test (`[RNG-4]`, `[OPT-2]`), for the safety side table.
+    pub removed_checks: Vec<RemovedCheck>,
+}
+
+/// One check a proof removed or moved (`[EFF-10]`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemovedCheck {
+    pub span: Span,
+    pub kind: CheckKind,
+    pub proof: CheckProof,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheckKind {
+    Bounds,
+    Overflow,
+    DivisionByZero,
+    ShiftRange,
+}
+
+impl CheckKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Bounds => "Bounds",
+            Self::Overflow => "Overflow",
+            Self::DivisionByZero => "DivisionByZero",
+            Self::ShiftRange => "ShiftRange",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CheckProof {
+    /// `[RNG-4]` — the known ranges show the check cannot fail.
+    RangeFacts,
+    /// `[OPT-2]` — one test before the loop covers every iteration's check.
+    LoopEntryTest { loop_span: Span },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

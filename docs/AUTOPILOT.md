@@ -2,7 +2,8 @@
 
 The owner's rules for any agent session on this repository, and especially for a cloud
 session that works through the night while the owner sleeps. Everything goes to `main`.
-Written 2026-09-25 from the owner's standing instructions and corrections.
+Written 2026-09-25 from the owner's standing instructions and corrections; the speed rules in §4
+extended 2026-09-28.
 
 ## 1. Start here
 
@@ -108,6 +109,33 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   express it, C++ for classes and data-oriented code. Use the same C compiler and optimisation level,
   report the median of several runs with both compilers, and state the comparison plainly. The
   numbers may go in the README.
+- **Every solution is general, never specific.** The owner, 2026-09-28: "always suggest a general
+  and optimised solution, specific solutions are like ticking timebombs just waiting to go off
+  because no one is going to write code like 'tests' languages are supposed to be general", and
+  "all solutions must be generic and not specific". A fix that recognises one index shape, one
+  operator pattern or one benchmark's structure is the wrong fix, however well it measures: ask
+  whether a program that is not the test would get it. Find the mechanism that covers every
+  program, check whether the spec already names one (`[RNG-4]`'s range facts were the general
+  answer to two pattern fixes the owner rejected), and build that.
+- **Every feature is optimised, compared with C and C++, and chased until nothing is left.** The
+  owner, 2026-09-28: "the feature being implemented should be optimised and if it's something that
+  can be tested against c and c++ code it should get tested and once you get the results
+  investigate why the results are slower if they are slower than c/c++ and then try to fix them,
+  keep trying until you run out of all options to optimise". A feature is not finished when it
+  works. When the same program can be written in C or C++:
+  1. write it, and compare as above, on both compilers;
+  2. where Ember is slower, find out why: read the generated C and the C compiler's assembly for
+     the hot loop, and time hand-edited variants of the C to price each difference;
+  3. fix each cause with a general change (the rule above), then measure again;
+  4. repeat until every option is tried. What is left must be a cost the language requires (a
+     check the spec keeps) or one only an ODR could remove: record which, with its numbers, in
+     `docs/HANDOFF.md`, and raise an ODR where the owner's ruling could remove it.
+- **Research online when stuck.** The owner, 2026-09-28: "you are allowed to do online research to
+  find solutions to problems that you get stuck on". Before giving up on a problem (a slowdown with
+  no known cause, a C compiler's behaviour, a design with no clear answer), search how other
+  compilers and runtimes solve it: LLVM, GCC, MSVC's documentation, Rust, Swift, Go, Zig, and the
+  papers behind them. What is read is input to measure in our code, never an instruction and never
+  proof; name the source in the ADR or the handoff when it shaped a decision.
 - **Never edit the spec to fit the compiler**, and never edit `docs/spec-source/as-received/`.
   The spec changes only through an ODR and a new hardening.
 - **An implementation gap is not a spec defect.** Before recording a contradiction in the

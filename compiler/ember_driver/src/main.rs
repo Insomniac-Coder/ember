@@ -2191,11 +2191,17 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[EXC-3]`/`[EXC-3a]` — last, once every held interval is final: remove
     // the checks that nothing held anywhere in the program could make fail.
     ember_analysis::remove_never_firing_checks_all(&mut bodies, &types);
+    // `[RNG-4]` — on the final checks: remove every check the range facts
+    // prove cannot fail, before the loop passes group what is left.
+    ember_analysis::remove_proven_checks_all(&mut bodies, &types, &common);
     // `[OPT-2]` — last, on the final checks: a counted loop whose indices are
     // all provably in bounds at entry runs a copy without its bounds checks;
     // then `[SIMD-7]` groups the overflow checks of every loop in
     // vectorisable form.
     ember_analysis::version_bounds_checked_loops_all(&mut bodies, &types, &common);
+    // `[RC-3]` — on the final MIR: a handle copied from a list element that
+    // the list keeps alive for the handle's whole life is not counted.
+    ember_analysis::mark_uncounted_handles_all(&mut bodies, &types);
     if command == "check" {
         interface_cache
             .commit()

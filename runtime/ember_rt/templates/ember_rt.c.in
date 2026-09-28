@@ -1366,20 +1366,49 @@ void* ember_fixed_arena_alloc_copy(
  * over-aligning is always sound and costs at most a few bytes per buffer. */
 #define EMBER_VEC_ALIGN (sizeof(void*) * 2)
 
+/* [HEAP-8]: the most elements a buffer holds, so that its size in bytes, and
+ * every offset into it, fits a `ptrdiff_t` (no allocator gives more). Elements
+ * of no size are counted to the same limit, so no length computation wraps. */
+static size_t vec_max_elems(size_t elem_size) {
+    return elem_size == 0 ? (size_t)PTRDIFF_MAX : (size_t)PTRDIFF_MAX / elem_size;
+}
+
+static void vec_capacity_overflow(void) {
+    ember_loc loc = { "<array>", 0, 0 };
+    ember_panic("capacity overflow", 17, loc);
+}
+
 void ember_vec_reserve(ember_vec* v, size_t elem_size, size_t want) {
     if (want <= v->cap) {
         return;
     }
+    size_t limit = vec_max_elems(elem_size);
+    if (want > limit) {
+        vec_capacity_overflow();
+    }
     /* Doubling keeps a loop of pushes linear ([ALC-1]); the floor of four
      * stops a one-element array from reallocating on its second push. A
      * request past double the capacity gets exactly what it asked for, so
-     * `reserve(n)` and `with_capacity(n)` hold `n`, not the next power of two. */
+     * `reserve(n)` and `with_capacity(n)` hold `n`, not the next power of two.
+     * The capacity is at most the limit, so doubling it cannot wrap, and the
+     * double is cut back to the limit. */
     size_t cap = v->cap < 2 ? 4 : v->cap * 2;
+    if (cap > limit) {
+        cap = limit;
+    }
     if (cap < want) {
         cap = want;
     }
     v->ptr = ember_realloc(v->ptr, v->cap * elem_size, cap * elem_size, EMBER_VEC_ALIGN);
     v->cap = cap;
+}
+
+void ember_vec_reserve_more(ember_vec* v, size_t elem_size, size_t additional) {
+    size_t limit = vec_max_elems(elem_size);
+    if (v->len > limit || additional > limit - v->len) {
+        vec_capacity_overflow();
+    }
+    ember_vec_reserve(v, elem_size, v->len + additional);
 }
 
 void ember_vec_sort(ember_vec* v, size_t elem_size, bool (*less)(const void*, const void*)) {
@@ -1475,7 +1504,7 @@ void ember_vec_extend(ember_vec* v, const void* bytes, size_t count) {
     if (count == 0) {
         return;
     }
-    ember_vec_reserve(v, 1, v->len + count);
+    ember_vec_reserve_more(v, 1, count);
     memcpy((unsigned char*)v->ptr + v->len, bytes, count);
     v->len += count;
 }

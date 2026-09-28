@@ -1,19 +1,24 @@
 #$ test: run-pass
-#$ rules: OPT-2, OPT-3
+#$ rules: OPT-2, OPT-3, RNG-4
 #$ profiles: debug, release, shipping
 #$ stdout: 4950
 #$ stdout: 9801
 #$ stdout: 5050
 #$ stdout: 4950
-#$ assert-c-count: contains("ember_panic_bounds(") == 6
-#$ assert-c-count: contains("ember_ck_add_i64(") == 15
+#$ assert-c-count: contains("ember_panic_bounds(") == 5
+#$ assert-c-count: contains("ember_ck_add_i64(") == 12
 #$ assert-c-count: contains("ember_vec_push_i64(") == 4
 # Each loop that indexes indexes a view at `i + c` whose base and length it
-# cannot change, so each gets an entry test and an unchecked copy: its body
-# appears twice and its bounds checks once. Seven `+` sit in those loops and
-# one outside (8 + 7 = 15). Pushing to `ys` while reading `bag.items` changes
-# only `ys`, so that loop is copied too (3 + 1 = 4 pushes); the loops that
-# only push have no index and are left alone.
+# cannot change. The first loop's own test keeps `i` below `len(xs)`, which
+# the range facts see (`[RNG-4]`): its check goes and the loop is not copied.
+# Each other one gets an entry test and an unchecked copy: its body appears
+# twice and its bounds checks once (2 + 1 + 1 + 1 = 5). Checked `+`: one in
+# the first loop, two in each copy of the second and of the third (there the
+# `- 1` after a checked `+ 1`, and the `+ 0`, cannot overflow), one in each
+# copy of the last, and one outside (1 + 4 + 4 + 2 + 1 = 12). Pushing to `ys`
+# while reading `bag.items` changes only `ys`, so that loop is copied too
+# (3 + 1 = 4 pushes); the loops that only push have no index and are left
+# alone.
 
 class Bag:
     items: Array[int]
