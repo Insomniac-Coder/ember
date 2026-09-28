@@ -11226,9 +11226,12 @@ first**; the rest of §0.355 is the running narrative behind it.
       and Ember's program grows its list push by push (as a C++ vector
       would); the two matching loops are within 3.5%, clang ordering the tag
       tests differently.
-    * Open: interface calls (next: try the implementing classes directly
-      before the table search, [DSP-3], with the search as the fallback);
-      objects with 6 lists (p6).
+    * Interface calls, 1.26x MSVC / 1.21x clang (was 1.65x; ADR-070 item
+      15): the loop matches C++; the C++ twin never deletes its million
+      shapes (Ember frees them, 0.019 s) and the 24-byte header is `[OBJ-1]`'s.
+    * 1 million objects holding 6 lists (p6), 1.09x both: Ember frees the
+      million objects when the list's scope ends; the C++ twin never deletes
+      them. Without that loop Ember is faster (0.292 s against 0.319 s).
   * **Regressions the range-facts benchmark run found, fixed (2026-09-28).**
     MSVC stopped inlining `push` once loop versioning made a function larger
     (list refill 1.0x -> 1.31x C, list copy 0.74x -> 1.0x): the runtime's

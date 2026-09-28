@@ -101,6 +101,10 @@ fn interface_id_symbol(interface: &str) -> String {
     ember_branding::mangled(&format!("interface_id_{interface}"))
 }
 
+/// `[DSP-3]` — at most this many implementing classes are tried directly
+/// before an interface call searches the table.
+const MAX_DEVIRTUALISED: usize = 4;
+
 fn class_itable_symbol(class: &str) -> String {
     ember_branding::mangled(&format!("itables_{class}"))
 }
@@ -1977,6 +1981,30 @@ impl Emitter<'_> {
     /// it does not replace, nearest base first. The runtime's inline lookup
     /// scans only the object's own list, so the base walk is never taken for a
     /// class this program emitted; the tables are the ones the walk would find.
+    /// `[DSP-3]` — every class of this program whose table list holds
+    /// `interface`, as its type information and the adapter function of
+    /// `slot`; empty when any of them has no function in that slot.
+    fn interface_implementers(&self, interface: &str, slot: usize) -> Vec<(String, String)> {
+        let mut known = Vec::new();
+        for (id, def) in self.types.runtime_classes() {
+            let Some((_, concrete)) = self.class_itable_entries(id).into_iter().find(|(name, _)| name == interface)
+            else {
+                continue;
+            };
+            let key = (interface.to_string(), self.interface_adapter_concrete_name(concrete));
+            let has_slot = self
+                .interface_adapters
+                .get(&key)
+                .is_some_and(|adapter| adapter.implementations.get(slot).is_some_and(Option::is_some));
+            if !has_slot {
+                return Vec::new();
+            }
+            let table = self.interface_adapter_table(concrete, interface);
+            known.push((ember_branding::type_info(&def.name.to_string()), format!("{table}_slot{slot}")));
+        }
+        known
+    }
+
     fn class_itable_entries(&self, id: ClassId) -> Vec<(String, Ty)> {
         let mut entries: Vec<(String, Ty)> = Vec::new();
         let mut current = Some(id);
@@ -5091,16 +5119,33 @@ impl Emitter<'_> {
                     } else {
                         format!("{receiver}, {call_args}")
                     };
-                    let table_pointer = self.interface_cache_for_call(func, args, body).unwrap_or_else(|| {
+                    let cached = self.interface_cache_for_call(func, args, body);
+                    let table_pointer = cached.clone().unwrap_or_else(|| {
                         format!(
                             "{}(((const {RT}obj_header*)({receiver}))->ti, &{})",
                             ember_branding::runtime("itable_lookup"),
                             interface_id_symbol(&interface.to_string()),
                         )
                     });
-                    return format!(
+                    let mut call = format!(
                         "(((const struct {table}*){table_pointer})->slot{slot})({call_args})",
                     );
+                    // `[DSP-3]` — the classes of this program that implement
+                    // the interface, when there are few, are tried first by
+                    // their type information and called directly through their
+                    // adapter, which the C compiler can inline; the table
+                    // search stays for any other class (one loaded from
+                    // elsewhere, or a reloaded type). The same method runs.
+                    if cached.is_none() && interfaces.len() == 1 {
+                        let known = self.interface_implementers(&interface.to_string(), *slot);
+                        if (1..=MAX_DEVIRTUALISED).contains(&known.len()) {
+                            let info = format!("((const {RT}obj_header*)({receiver}))->ti");
+                            for (type_info, adapter) in known.iter().rev() {
+                                call = format!("({info} == &{type_info} ? {adapter}({call_args}) : {call})");
+                            }
+                        }
+                    }
+                    return call;
                 }
                 let call_args = if call_args.is_empty() {
                     format!("{receiver}.data")

@@ -134,10 +134,10 @@ would make Ember look faster than it is.
 | What the program does | With MSVC | With clang |
 |---|---|---|
 | Recursion: Fibonacci of 38, the slow way | 5% slower | 1.7 times slower |
-| Calls through an interface: area of 1 million shapes, 20 times | 1.6 times slower | 1.6 times slower |
 | Add up a list of 1,000 numbers, 300,000 times, overflow checks on | 35% slower | 1.6 times slower |
 | Move 100,000 particles 2,000 times, changing each in place | 43% slower | same speed |
 | A generic function ("larger of two"), 200 million times | same speed | 35% slower |
+| Calls through an interface: area of 1 million shapes, 20 times | 26% slower | 21% slower |
 | Call a method that changes an object taken from a list, 100 million times (object holding 6 lists) | 23% slower | same speed |
 | Call a method that changes an object taken from a list, 100 million times (object holding 1 list) | 19% slower | same speed |
 | Call a method that changes an object taken from a list, and the method calls another function, 100 million times | 19% slower | same speed |

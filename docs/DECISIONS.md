@@ -2613,5 +2613,26 @@ Six fixes, in the owner's order; none changes the language.
      `run_fail_a_list_changed_by_a_call_keeps_its_checks`,
      `run_fail_a_list_doubling_its_own_elements_keeps_its_check`.
 
+15. **Interface calls try the implementing classes first** (2026-09-29, autonomous, same goal).
+   Calls through an interface were 1.65x C++ on both compilers: each went object header, type
+   information, table list, matching entry, method slot, then an indirect call, twice the
+   dependent loads of a C++ virtual call. `[DSP-3]` fixes the representation (a class handle
+   and a searched per-class list; `[OBJ-1]`/`[VER-4]` freeze the layouts), so fat pointers
+   would need a spec change. Inside it: an interface call on a class handle, when the program
+   has at most four classes whose table list holds the interface, first compares the object's
+   type information with each (`interface_implementers`, `MAX_DEVIRTUALISED`) and calls that
+   class's adapter directly, which the C compiler can inline; the table search stays as the
+   fallback for any other class (one from elsewhere, a reloaded type). The adapter is the
+   function the table holds, and it already reaches an override through the object's own class
+   table (D-375), so the same method runs: `[PHIL-5]`, optimisation never changes observable
+   behaviour. Not applied where `[DSP-3]`'s hidden-local cache already serves the call, or to
+   a table of several interfaces.
+   * Measured: MSVC 1.65x -> 1.26x, clang 1.64x -> 1.21x. The loop itself now matches C++
+     (0.062 s both, zero-round runs subtracted). The rest is setup: the C++ twin never deletes
+     its million shapes, while Ember frees them when the list's scope ends (0.019 s), and
+     Ember's objects are larger (the 24-byte header `[OBJ-1]` fixes; 0.005 s).
+   * Test: DSP-3 `accept_interface_calls_try_the_implementing_classes_first` (three classes,
+     one inheriting the interface and overriding the method; five classes keep the search).
+
 **Superseded by item 8:** a sum of 64-bit `int`s no longer keeps one overflow check per
 element; ODR-086 was ruled on 2026-09-28.
