@@ -11108,7 +11108,9 @@ first**; the rest of §0.355 is the running narrative behind it.
   `nth`, `fold`, `any`, `all`, `find`, `position`, `for_each`, `to_array`),
   with every std iterator an `Iterator`. ADR-072 lists what is not built yet
   and why (closures stored in adapters, bounds on `Item`, `chain`, `rev`,
-  `Iterable` forms, `[CTL-3b]` fusion). Then `[CTL-3b]` in `for` headers:
+  `Iterable` forms, `[CTL-3b]` fusion). Then `max`, `min`, the `_by`/`_by_key`
+  forms and `reduce` in std, and `sum`/`product` built by the checker for any
+  iterator of numbers or references to numbers. Then `[CTL-3b]` in `for` headers:
   `(a..b).step_by(k)` and `for x in mutspan` are counted loops, and the
   per-index range value is inline (it was a call per element).
 * **Speed audit: the six agreed fixes are done (2026-09-27, uncommitted;

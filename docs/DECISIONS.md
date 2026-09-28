@@ -2702,10 +2702,20 @@ accepts as `Iterator.next` as it accepts built-in indexing as `Index.index`.
 * **Not yet:** `map`, `filter`, `filter_map`, `take_while`, `skip_while`, `flat_map`, `inspect`
   and `peekable` hold a closure, and a capturing closure cannot be stored yet (owned callable
   values, `[CLO-3]`). `chain` needs `J: Iterator[Item = I.Item]` between two parameters.
-  `sum`, `product`, `min`, `max`, the `_by`/`_by_key` forms, `reduce`, `collect[C]()` and
-  `join(sep)` need bounds on `Item` in a default method. `rev` needs a double-ended iterator.
+  `collect[C]()` and `join(sep)` need more than a bound on `Item` (a target collection, a
+  `Display` item). `rev` needs a double-ended iterator.
   `copied`/`cloned` need `Item = ref T`. The `Iterable` forms (`xs.enumerate()`). `[CTL-3b]`'s
   counted lowering of adapter chains in a `for` header: today a chain runs through `next`.
+* **More consumers, the same day.** `max`, `min` (`where Item: Ord`; among equals `max` gives
+  the last and `min` the first, as Rust's do), `max_by_key`, `min_by_key`, `max_by`, `min_by`
+  and `reduce` are defaults in std. `sum` and `product` are not: an iterator over a list gives
+  references, and `[STD-5]` sums "in the element type", so the sum of `ref int`s is an `int`,
+  which no bound on `Item` can say without references implementing the operator interfaces.
+  The checker builds them (`synth_iterator_total`) for any `Iterator` whose items are numbers or
+  references to numbers, as the loop a program would write (`total = 0; for x in it: total +=
+  x`), so each `+` is checked as the operator is and floats add left to right; a type's own
+  `sum` method comes first. A default method can now also call through its interface's
+  associated type (`Item.default()`), as it names it in types (D-381).
 * **`[CTL-3b]` in `for` headers, the same day.** `(a..b).step_by(k)` is the counted loop
   `range(start, stop, step)` already was (`check_for_stepped_range`, now with a `step_by` mode):
   the values are counted once, each is computed from its index, and a `k` of zero or less

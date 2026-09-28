@@ -264,6 +264,97 @@ pub interface Iterator:
         for x in self:
             f(x)
 
+    ## The largest item; the last of equal largest ones. `None` when empty.
+    fn max(owned self) -> Option[Item] where Item: Ord:
+        best: Option[Item] = None
+        for x in self:
+            match best:
+                Some(b):
+                    if not (x < b):
+                        best = Some(x)
+                None:
+                    best = Some(x)
+        return best
+
+    ## The smallest item; the first of equal smallest ones. `None` when empty.
+    fn min(owned self) -> Option[Item] where Item: Ord:
+        best: Option[Item] = None
+        for x in self:
+            match best:
+                Some(b):
+                    if x < b:
+                        best = Some(x)
+                None:
+                    best = Some(x)
+        return best
+
+    ## The item whose `key` is largest; the last of equal ones.
+    fn max_by_key[K: Ord](owned self, key: fn(Item) -> K) -> Option[Item]:
+        best: Option[Item] = None
+        best_key: Option[K] = None
+        for x in self:
+            k = key(x)
+            match best_key:
+                Some(b):
+                    if not (k < b):
+                        best = Some(x)
+                        best_key = Some(k)
+                None:
+                    best = Some(x)
+                    best_key = Some(k)
+        return best
+
+    ## The item whose `key` is smallest; the first of equal ones.
+    fn min_by_key[K: Ord](owned self, key: fn(Item) -> K) -> Option[Item]:
+        best: Option[Item] = None
+        best_key: Option[K] = None
+        for x in self:
+            k = key(x)
+            match best_key:
+                Some(b):
+                    if k < b:
+                        best = Some(x)
+                        best_key = Some(k)
+                None:
+                    best = Some(x)
+                    best_key = Some(k)
+        return best
+
+    ## The largest item by `cmp`; the last of equal ones.
+    fn max_by(owned self, cmp: fn(Item, Item) -> Ordering) -> Option[Item]:
+        best: Option[Item] = None
+        for x in self:
+            match best:
+                Some(b):
+                    if cmp(x, b) != Ordering.Less:
+                        best = Some(x)
+                None:
+                    best = Some(x)
+        return best
+
+    ## The smallest item by `cmp`; the first of equal ones.
+    fn min_by(owned self, cmp: fn(Item, Item) -> Ordering) -> Option[Item]:
+        best: Option[Item] = None
+        for x in self:
+            match best:
+                Some(b):
+                    if cmp(x, b) == Ordering.Less:
+                        best = Some(x)
+                None:
+                    best = Some(x)
+        return best
+
+    ## `f(... f(f(a, b), c) ..., z)` over the items; `None` when empty.
+    fn reduce(owned self, f: fn(Item, Item) -> Item) -> Option[Item]:
+        acc: Option[Item] = None
+        for x in self:
+            match acc:
+                Some(a):
+                    acc = Some(f(a, x))
+                None:
+                    acc = Some(x)
+        return acc
+
     ## The items, in order, in a new array.
     fn to_array(owned self) -> Array[Item]:
         out: Array[Item] = []

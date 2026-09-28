@@ -5708,6 +5708,77 @@ impl<'a> Checker<'a> {
     /// `[IFC-4]` — the associated types an interface declares and those it
     /// inherits from its parents (`IndexMut`'s `Output` is `Index`'s), each
     /// with its bounds.
+    /// `[STD-19]` — the number type an iterator's items are, or reach through
+    /// a reference: `int` for an iterator of `int`s or of `ref int`s.
+    fn iterator_number(&mut self, ty: Ty) -> Option<Ty> {
+        if !self.implements(ty, Symbol::intern("std.core.Iterator")) {
+            return None;
+        }
+        let item = self.project(ty, Symbol::intern("Item"))?;
+        let number = match *self.types.kind(item) {
+            TyKind::Ref { inner, .. } => inner,
+            _ => item,
+        };
+        self.types.is_numeric(number).then_some(number)
+    }
+
+    /// `[STD-5]` — `it.sum()` / `it.product()`: the items combined left to
+    /// right in `number`, from zero or one, each `+` or `*` checked as the
+    /// operator is. Built as the loop the program would write:
+    /// `total = 0; for x in it: total += x`.
+    fn synth_iterator_total(&mut self, receiver: Expr, number: Ty, summing: bool, span: Span) -> Expr {
+        let (it_name, total_name, item_name) =
+            (Symbol::intern("$total_it"), Symbol::intern("$total"), Symbol::intern("$total_item"));
+        self.scopes.push(HashMap::new());
+        let receiver_ty = receiver.ty;
+        let it = self.declare(Some(it_name), receiver_ty, span);
+        let total = self.declare(Some(total_name), number, span);
+        let start = if self.types.is_float(number) {
+            ExprKind::Float(if summing { 0.0 } else { 1.0 })
+        } else {
+            ExprKind::Int(if summing { 0 } else { 1 })
+        };
+        let path = |name| ast::Expr {
+            id: ast::NodeId::DUMMY,
+            kind: ast::ExprKind::Path { segments: vec![ast::Ident { name, span }] },
+            span,
+        };
+        let body = ast::Block {
+            id: ast::NodeId::DUMMY,
+            stmts: vec![ast::Stmt {
+                id: ast::NodeId::DUMMY,
+                attrs: Vec::new(),
+                kind: ast::StmtKind::Assign {
+                    targets: vec![path(total_name)],
+                    op: Some(if summing { ast::BinOp::Add } else { ast::BinOp::Mul }),
+                    value: path(item_name),
+                },
+                span,
+            }],
+            span,
+        };
+        let pattern = ast::Pattern {
+            id: ast::NodeId::DUMMY,
+            kind: ast::PatternKind::Bind { name: ast::Ident { name: item_name, span }, by_ref: false, mutable: false, sub: None },
+            span,
+        };
+        let looped = self.check_for(None, &pattern, &path(it_name), &body, &None, span);
+        self.scopes.pop();
+        let mut stmts = vec![
+            Stmt::Let { local: it, init: Some(receiver) },
+            Stmt::Let { local: total, init: Some(Expr { ty: number, kind: start, span }) },
+        ];
+        stmts.extend(looped);
+        Expr {
+            ty: number,
+            kind: ExprKind::Block {
+                block: Block { stmts, span },
+                value: Box::new(Expr { ty: number, kind: ExprKind::Local(total), span }),
+            },
+            span,
+        }
+    }
+
     /// D-381 — the associated types a registered signature names, as
     /// `owner`'s: its parameters, its result, and the function types of its
     /// callable parameters (`[CLO-6]`).
@@ -25951,6 +26022,15 @@ impl<'a> Checker<'a> {
                 if self.lookup(name).is_some() {
                     return None;
                 }
+                // D-381 — `Item.default()` in a default method: the
+                // interface's associated type, as in a type position.
+                if self.assoc_scope.contains(&name) {
+                    let assoc = self.types.intern(TyKind::Assoc { name });
+                    return Some(match self.assoc_owner {
+                        Some(owner) => self.project(owner, name).unwrap_or(assoc),
+                        None => assoc,
+                    });
+                }
                 self.type_params
                     .get(&name)
                     .copied()
@@ -27198,6 +27278,16 @@ impl<'a> Checker<'a> {
         // D-379 — a default method kept until a call names it exists from
         // here, for every path below that falls back to registered methods.
         self.materialize_deferred_default(receiver.ty, name.name);
+        // `[STD-19]`, `[STD-5]` — an iterator's `sum` and `product`: of its
+        // numbers, or of the numbers its references reach, in that type.
+        if matches!(name.name.as_str(), "sum" | "product")
+            && args.is_empty()
+            && generic_args.is_empty()
+            && self.lookup_method(receiver.ty, name.name).is_none()
+            && let Some(number) = self.iterator_number(receiver.ty)
+        {
+            return self.synth_iterator_total(receiver, number, name.name.is("sum"), span);
+        }
         let explicit = self.resolve_method_type_args(generic_args);
         if matches!(self.types.kind(receiver.ty), TyKind::Ptr { .. }) && name.name.is("is_null") {
             if !explicit.is_empty() || !args.is_empty() {
