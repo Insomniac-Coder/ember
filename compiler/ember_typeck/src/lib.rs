@@ -3473,7 +3473,32 @@ impl<'a> Checker<'a> {
                 self.report_foreign_extension(&shown, decl.target.span);
                 continue;
             }
-            let params = self.declare_generics(&decl.generics);
+            let mut params = self.declare_generics(&decl.generics);
+            // D-380 — `P.Name` in the block (`type Item = I.Item`, a method
+            // returning `Option[I.Item]`) is one hidden parameter after the
+            // written ones, as in a generic function's signature (`[IFC-4]`);
+            // applying the extension binds it to what the matched type says
+            // `Name` is.
+            if decl.blanket.is_empty() {
+                let mut named: Vec<&ast::TypeExpr> = Vec::new();
+                for member in &decl.members {
+                    match &member.kind {
+                        ast::MemberKind::Fn(fn_decl) => {
+                            for param in &fn_decl.params {
+                                match &param.kind {
+                                    ast::ParamKind::Named { ty, .. } => named.push(ty),
+                                    ast::ParamKind::Receiver { ty: Some(ty) } => named.push(ty),
+                                    ast::ParamKind::Receiver { ty: None } => {}
+                                }
+                            }
+                            named.extend(fn_decl.ret.as_ref());
+                        }
+                        ast::MemberKind::TypeAlias(alias) => named.extend(alias.value.as_ref()),
+                        _ => {}
+                    }
+                }
+                self.declare_projections(&named, &mut params, 0);
+            }
             let mut target_args = Vec::with_capacity(args.len());
             for arg in args {
                 let ast::GenericArg::Type(arg) = arg else {
@@ -3522,6 +3547,7 @@ impl<'a> Checker<'a> {
                 // methods declare them.
                 self.record_blanket(decl, params.clone(), item.span);
                 self.type_params.clear();
+                self.projection_params.clear();
                 self.generic_extensions.entry(name).or_default().push(GenericExtension {
                     params,
                     target_args,
@@ -3536,6 +3562,7 @@ impl<'a> Checker<'a> {
                 continue;
             }
             self.type_params.clear();
+            self.projection_params.clear();
             let interfaces: Vec<Symbol> =
                 decl.implements.iter().filter_map(interface_name).map(|name| self.resolve_name(name)).collect();
             let interface = interfaces.first().copied();
@@ -4254,7 +4281,14 @@ impl<'a> Checker<'a> {
         // its first method call; an inherent one's methods (never in a
         // vtable) are emitted only if called.
         let builtin = self.builtin_generic_origin(ty).is_some();
-        for (index, extension, bindings) in matching {
+        for (index, extension, mut bindings) in matching {
+            // D-380 — each hidden `P.Name` is what the type bound to `P` says.
+            for param in &extension.params[bindings.len()..] {
+                let Some((base, assoc)) = param.projection else { continue };
+                let arg = bindings.get(base as usize).map(|&(_, arg)| arg);
+                let value = arg.and_then(|arg| self.project(arg, assoc)).unwrap_or(self.common.error);
+                bindings.push((param.name, value));
+            }
             self.applied_extensions.insert((ty, index));
             let mut declared = Vec::new();
             for method in &extension.methods {
@@ -4528,7 +4562,10 @@ impl<'a> Checker<'a> {
         if extension.target_args.len() != args.len() {
             return None;
         }
-        let mut bindings = vec![None; extension.params.len()];
+        // The written parameters; the hidden ones for `P.Name` follow them
+        // and are bound when the extension is applied (D-380).
+        let written = extension.params.iter().take_while(|param| param.projection.is_none()).count();
+        let mut bindings = vec![None; written];
         for (&pattern, &actual) in extension.target_args.iter().zip(args) {
             if !self.match_generic_extension_type(pattern, actual, &mut bindings) {
                 return None;
