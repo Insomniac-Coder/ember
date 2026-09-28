@@ -1,12 +1,15 @@
 #$ test: run-pass
-#$ rules: RC-1, RC-2e, CTL-1, CTL-2, FN-1, TYP-14, DSP-2
+#$ rules: RC-1, RC-2e, CTL-1, CTL-2, FN-1, TYP-14, DSP-2, OPT-2
 #$ profiles: debug, release, shipping
-#$ assert-c-count: contains("ember_retain((ember_obj_header*)") == 3
+#$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 4
+#$ assert-c-count: contains("ember_retain((ember_obj_header*)") == 0
 #$ stdout: 7
 
 # Virtual dispatch preserves an `owned` parameter mode, so a loop-yielded
 # class handle retains at the virtual call boundary. The third retain is the
 # independent Worker-to-Consumer class upcast used to select that dispatch.
+# The loop is versioned (`[OPT-2]`): its body, and the retains in it, appear
+# once in each copy, and each iteration runs one of them.
 class Token:
     value: i32
 

@@ -533,12 +533,19 @@ void ember_rt_check_main_thread(void) {
  * whose emitted C contains no call to these symbols.
  */
 
+/* What every malloc block is aligned to (glibc, the Windows CRT, macOS and
+ * musl all give two pointers' worth). A block needing no more is a plain
+ * malloc block: no aligned-allocation prefix, and realloc can grow it in
+ * place. Allocation and free choose by the same `align`, which every caller
+ * passes to both. */
+#define EMBER_MALLOC_ALIGN (2 * sizeof(void*))
+
 static void* raw_alloc(size_t size, size_t align) {
     if (size == 0) {
         size = 1;
     }
-    if (align < sizeof(void*)) {
-        align = sizeof(void*);
+    if (align <= EMBER_MALLOC_ALIGN) {
+        return malloc(size);
     }
 #if defined(_MSC_VER)
     return _aligned_malloc(size, align);
@@ -549,8 +556,12 @@ static void* raw_alloc(size_t size, size_t align) {
 #endif
 }
 
-static void raw_free(void* p) {
+static void raw_free(void* p, size_t align) {
     if (p == NULL) {
+        return;
+    }
+    if (align <= EMBER_MALLOC_ALIGN) {
+        free(p);
         return;
     }
 #if defined(_MSC_VER)
@@ -581,14 +592,13 @@ void* ember_alloc(size_t size, size_t align) {
 }
 
 void ember_free(void* p, size_t size, size_t align) {
-    (void)align;
     if (p == NULL) {
         return;
     }
     if (g_config.free) {
         g_config.free(p, size, align);
     } else {
-        raw_free(p);
+        raw_free(p, align);
     }
     if (g_stats.live_bytes >= (uint64_t)size) {
         g_stats.live_bytes -= (uint64_t)size;
@@ -605,6 +615,20 @@ void* ember_box_new_copy(size_t size, size_t align, const void* value) {
 }
 
 void* ember_realloc(void* p, size_t old_size, size_t new_size, size_t align) {
+    /* The default allocator's plain blocks grow in place when they can; the
+     * counts move as the allocate-copy-free below would move them. */
+    if (p != NULL && g_config.alloc == NULL && g_config.free == NULL && align <= EMBER_MALLOC_ALIGN) {
+        void* grown = realloc(p, new_size == 0 ? 1 : new_size);
+        if (grown == NULL) {
+            ember_loc loc = { "<allocator>", 0, 0 };
+            ember_panic("out of memory", 13, loc);
+        }
+        g_stats.live_bytes += (uint64_t)new_size;
+        g_stats.live_bytes = g_stats.live_bytes >= (uint64_t)old_size ? g_stats.live_bytes - (uint64_t)old_size : 0;
+        g_stats.total_allocations += 1;
+        g_stats.total_frees += 1;
+        return grown;
+    }
     void* fresh = ember_alloc(new_size, align);
     if (p != NULL) {
         size_t copy = old_size < new_size ? old_size : new_size;
@@ -909,7 +933,7 @@ void* ember_downcast(ember_obj_header* object, const ember_type_info* target) {
     return NULL;
 }
 
-const void* ember_itable_lookup(const ember_type_info* type, const void* interface_id) {
+const void* ember_itable_lookup_slow(const ember_type_info* type, const void* interface_id) {
     if (interface_id == NULL) {
         return NULL;
     }
@@ -1047,6 +1071,39 @@ void ember_object_end_read(ember_obj_header* object, ember_loc loc) {
         *word -= 1;
         EMBER_FIELD_TRACK_END(word, false, loc);
     }
+}
+
+void ember_object_check_write(ember_obj_header* object, ember_loc loc) {
+    object_require_plain_access(object);
+    const ember_type_info* type = object->ti;
+    for (uint32_t i = 0; i < type->field_count; ++i) {
+        uint32_t* word = field_word(object, &type->fields[i]);
+        if (*word != 0) {
+            char name[256];
+            EMBER_FIELD_CONFLICT(true, word, field_name(object, &type->fields[i], name, sizeof name), loc);
+        }
+    }
+}
+
+void ember_object_check_read(ember_obj_header* object, ember_loc loc) {
+    object_require_plain_access(object);
+    const ember_type_info* type = object->ti;
+    for (uint32_t i = 0; i < type->field_count; ++i) {
+        uint32_t* word = field_word(object, &type->fields[i]);
+        if ((*word & EMBER_ACCESS_WRITER) != 0) {
+            char name[256];
+            EMBER_FIELD_CONFLICT(false, word, field_name(object, &type->fields[i], name, sizeof name), loc);
+        }
+    }
+}
+
+void ember_object_check_failed(ember_obj_header* object, bool writing, ember_loc loc) {
+    if (writing) {
+        ember_object_check_write(object, loc);
+    } else {
+        ember_object_check_read(object, loc);
+    }
+    object_panic_text("an object check failed with no field in conflict");
 }
 
 /* -- arenas -----------------------------------------------------------------
@@ -1314,10 +1371,12 @@ void ember_vec_reserve(ember_vec* v, size_t elem_size, size_t want) {
         return;
     }
     /* Doubling keeps a loop of pushes linear ([ALC-1]); the floor of four
-     * stops a one-element array from reallocating on its second push. */
-    size_t cap = v->cap < 4 ? 4 : v->cap;
-    while (cap < want) {
-        cap *= 2;
+     * stops a one-element array from reallocating on its second push. A
+     * request past double the capacity gets exactly what it asked for, so
+     * `reserve(n)` and `with_capacity(n)` hold `n`, not the next power of two. */
+    size_t cap = v->cap < 2 ? 4 : v->cap * 2;
+    if (cap < want) {
+        cap = want;
     }
     v->ptr = ember_realloc(v->ptr, v->cap * elem_size, cap * elem_size, EMBER_VEC_ALIGN);
     v->cap = cap;
@@ -1406,7 +1465,7 @@ ember_vec ember_vec_from_elems(size_t elem_size, const void* elems, size_t count
     return v;
 }
 
-void ember_vec_push(ember_vec* v, size_t elem_size, const void* value) {
+void ember_vec_push_slow(ember_vec* v, size_t elem_size, const void* value) {
     ember_vec_reserve(v, elem_size, v->len + 1);
     memcpy((unsigned char*)v->ptr + v->len * elem_size, value, elem_size);
     v->len += 1;

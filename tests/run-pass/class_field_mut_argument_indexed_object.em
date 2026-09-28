@@ -1,9 +1,11 @@
 #$ test: run-pass
 #$ rules: CLS-1, EXC-1, FN-2a
 #$ profiles: debug, release, shipping
-#$ assert-c: contains(ember_field_begin_write)
-#$ assert-c: contains(ember_field_end_write)
+#$ assert-c: !contains(ember_field_begin_write)
+#$ assert-c: !contains(ember_field_end_write)
 #$ stdout: 1
+# ODR-085: nothing in this program holds `Holder.items` while other code runs,
+# so its checks can never fail and are removed (`[EXC-3]`).
 
 class Inner:
     value: i32

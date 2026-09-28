@@ -15,6 +15,8 @@ uncompilable. The owner ruled on 2026-09-10 that the worked example governs;
 `[FN-1a]` records that clarification and the closed entry below preserves the
 history. There is no current owner standoff in this file.
 
+**Features waiting on another feature are not here.** A spec feature the compiler does not have yet because a feature it needs does not exist yet is listed in `docs/NOT-IMPLEMENTED.md` (the former D1, D3 and D6 moved there on 2026-09-27).
+
 **What does not belong here.** A rule with nothing built against it is a *gap*,
 not a deviation — the document states on the order of 820 rules and 37 have
 conformance directories, so
@@ -26,21 +28,6 @@ a deviation nobody can write a program to detect costs nothing until the feature
 that would expose it lands, and the entry says which feature that is.
 
 ---
-
-## D1 — `[RNG-5a1]` operators are a type-checker rule, not generated impls
-
-| | |
-|---|---|
-| **Rule** | `[RNG-5a1]` |
-| **Normative behaviour** | for every range type `T` over `R`, the compiler *generates* the impls `T: Add[T, Output = R]`, `T: Add[R, Output = R]`, `R: Add[T, Output = R]` and the `Sub`/`Mul`/`Div`/`Rem`/`Neg`/`PartialEq`/`PartialOrd` forms, in `T`'s declaring module |
-| **Current behaviour** | operators on range types are decided in the type checker. No impls exist |
-| **Soundness impact** | none |
-| **Observable today** | **no** — and only because no operator interface exists at all. There is no `Add` in `std`, so nothing can bound a generic on it and nothing can observe whether the impls are there |
-| **Behavioural agreement** | complete. `r + 0.25` yields `f32`, `Roughness + Metallic` is `E2214` by "ordinary overload resolution" as the rule requires, and `tests/conformance/RNG-5a1/` holds the pair |
-| **Reason** | operator interfaces over scalars are not built. Generating impls into a table nothing reads would be scaffolding with no consumer |
-| **Fix plan** | implement it *before* exposing operator interfaces to user generics, not after. The day `Add` is declarable, a user writing `fn sum[T: Add[T]]` will expect a range type to satisfy it, and it will not |
-| **Owner** | ADR-016 |
-| **Target** | with operator interfaces (Phase 3, block D) |
 
 ## D2 — `[CLO-6]`'s `owned f: fn(A) -> R` — **CLOSED 2026-09-14**
 
@@ -68,21 +55,6 @@ that would expose it lands, and the entry says which feature that is.
 | **Owner** | — |
 | **Target** | **done** — current checkpoint, `tests/conformance/CLO-6/` |
 
-## D3 — `extern class` parses and is refused
-
-| | |
-|---|---|
-| **Rule** | `[FFI-39]`, and the production added as amendment A9 |
-| **Normative behaviour** | a declared foreign base: sized, known layout, implicitly `open`, inheritable under `@ffi(trampoline, virtuals=[…])` |
-| **Current behaviour** | parses, then `E1010` "not supported yet in this phase" |
-| **Soundness impact** | none |
-| **Observable today** | **yes**, as a rejection |
-| **Reason** | the C++ importer, the thunks and the trampoline are Phase 7. None exists |
-| **Why refused rather than ignored** | a declaration that parses, is stored, and is ignored by every later stage is the shape of three defects already found in this compiler. For a base class it would be the worst of them: the program would link and be wrong |
-| **Fix plan** | Phase 7, with the importer |
-| **Owner** | ERR-037 |
-| **Target** | Phase 7 |
-
 ## D4 — `E9012` is registered and never emitted
 
 | | |
@@ -95,20 +67,6 @@ that would expose it lands, and the entry says which feature that is.
 | **Fix plan** | nothing to fix. It stops being unemitted when a rule claims it |
 | **Owner** | ERR-039 |
 | **Target** | — |
-
-## D6 — `[ERR-4]`'s callbacks are `fn(…)`, not `once fn`
-
-| | |
-|---|---|
-| **Rule** | `[ERR-4]` (ODR-025): `map`, `map_err`, `and_then`, `or_else`, `unwrap_or_else`, `ok_or_else` and `filter` take `f: once fn(…)` |
-| **Normative behaviour** | a `once fn` accepts a closure that gives away a capture (it is called at most once), and a lambda written at the call site keeps the captures it infers |
-| **Current behaviour** | the `std.core` helpers take `f: fn(…)`, `[CLO-3]`'s bound: captures are as inferred, but a closure that moves a capture out is `E3030` (with a help that names the method) |
-| **Soundness impact** | none: the compiler refuses more, never less |
-| **Observable today** | **yes** — `name.map(owned fn(s) => join(s, tail))` is `E3030` |
-| **Reason** | `once fn` in a parameter type is not built. Treating it as `owned f: fn(…)` (the only at-most-once bound built) is wrong both ways: that bound refuses a closure that borrows (`E3063`), which `[CLO-6]` says `once fn` accepts |
-| **Fix plan** | build `once fn` parameter types: a bound that consumes the callee value on call without `owned`'s storage rule, carried to MIR so `check_owned_closure_argument_regions` does not apply; then change the helpers' `fn(` to `once fn(` |
-| **Owner** | ODR-025 |
-| **Target** | M1 |
 
 ## D5 — a `mut` parameter whose type is itself a borrow — **CLOSED 2026-09-10**
 
@@ -149,6 +107,7 @@ one might last.
 
 | | Rule | Closed by |
 |---|---|---|
+| **D7** | `[OPT-2]`, `[SIMD-7]` | **closed 2026-09-27 by compiler implementation, the day it was opened.** It recorded loop versioning for innermost loops only and no grouped overflow checks. Every counted loop is now versioned, its invariance read through calls and drops (`loop_version.rs`), and every loop in vectorisable form groups its overflow checks. What waits on unbuilt features is N4 and N5 in `NOT-IMPLEMENTED.md`; the reading of running totals is ODR-086 |
 | **D5** | `[FN-1]` | **closed 2026-09-10 by owner ruling on ERR-041.** Part VII §7's worked example governs: a `mut` parameter at a view type takes the view value, and the place requirement applies to what the view was taken of. Amendment S4, `[FN-1a]`. No code moved — the compiler was right — and `tests/conformance/FN-1a/` now pins it. The full entry is above, kept because it was open for two revisions and nobody guessed |
 | **D2** | `[CLO-6]` | **closed 2026-09-14 by compiler implementation.** An `owned f: fn(A) -> R` parameter is a `CallableOnce` generic; its indirect call now moves the callee binding and the second call is E3040. The full entry above preserves why a temporary refusal was safer than an incorrect `Callable` approximation |
 | **ADR-018** | `[CLO-3]` | `fn(A) -> R` in parameter position is now an implicit generic bounded by `Callable`, monomorphised per argument type; a capturing lambda is an anonymous struct of its `[CLO-2]` captures. It had been a C function pointer, which erases the environment, so every capturing lambda was rejected |

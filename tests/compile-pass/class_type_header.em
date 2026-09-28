@@ -5,8 +5,8 @@
 #$ assert-c: contains("Entity")
 #$ assert-c: contains("Player")
 #$ assert-c: contains(&em_ti_Entity)
-#$ assert-c: contains(ember_retain((ember_obj_header*)
-#$ assert-c: contains(ember_release((ember_obj_header*)
+#$ assert-c: contains("ember_retain_plain((ember_obj_header*")
+#$ assert-c: contains("ember_release_plain((ember_obj_header*")
 
 # Class declarations are now collected into the nominal type table.  The
 # runtime and source-level construction/lowering path is still a later slice.

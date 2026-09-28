@@ -74,6 +74,14 @@ pub fn mangled(name: &str) -> String {
     format!("{}{}", mangle_prefix(), name.replace('.', "_"))
 }
 
+/// A type's user-written `drop` function: `drop_function("Noisy")` is
+/// `em_Noisy_drop`. `owner` is the class name or the type's symbol name; any
+/// character that is not ASCII alphanumeric becomes `_`.
+pub fn drop_function(owner: &str) -> String {
+    let owner: String = owner.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+    mangled(&format!("{}_drop", owner.trim_matches('_')))
+}
+
 /// A runtime entry point: `runtime("alloc")` is `ember_alloc`.
 pub fn runtime(symbol: &str) -> String {
     format!("{SYMBOL_PREFIX}_{symbol}")

@@ -163,12 +163,16 @@ pub struct ElidedAccess {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AccessElisionReason {
     UniqueHandle,
+    /// `[EXC-3]`'s whole-program case: nothing held anywhere in the program
+    /// could make the check fail.
+    NoConflictingHold,
 }
 
 impl AccessElisionReason {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::UniqueHandle => "unique_handle",
+            Self::NoConflictingHold => "no_conflicting_hold",
         }
     }
 }
@@ -909,6 +913,12 @@ pub enum Const {
     Fn(String),
     /// The unit value.
     Void,
+    /// `[SIMD-7]` — a `u64` shift: how far a group with several overflow
+    /// checks moves each operation's overflow word down before ORing it into
+    /// the group's flag (`per_word`), or the flag before testing it (the rest
+    /// of 63). It differs by C compiler (`EMBER_OVERFLOW_SHIFT` in the runtime
+    /// header): each runs these loops fastest one way (ADR-070 item 7).
+    OverflowShift { per_word: bool },
 }
 
 #[derive(Clone, Debug)]
@@ -1521,6 +1531,9 @@ fn dump_operand(operand: &Operand, types: &ember_types::TypeTable) -> String {
             Const::CStrLiteral(bytes) => format!("const cstr {bytes:?}"),
             Const::Fn(symbol) => format!("const fn {symbol}"),
             Const::Void => "const ()".to_string(),
+            Const::OverflowShift { per_word } => {
+                format!("const overflow_shift({})", if *per_word { "word" } else { "flag" })
+            }
         },
     }
 }

@@ -1435,8 +1435,10 @@ fn l3013_ignores_dynamic_calls_from_a_final_class() {
 #[test]
 fn dynamic_access_safety_side_table_is_written() {
     let root = workspace_root();
+    // A program whose one `mut self` call must stay checked (ODR-085 removes
+    // the check from a program where nothing held could make it fail).
     let source = format!(
-        "tests/run-pass/class_mut_method_access.{SOURCE_EXT}"
+        "tests/run-pass/class_mut_method_access_kept.{SOURCE_EXT}"
     );
     let out_dir = std::env::temp_dir().join(format!(
         "ember-safety-side-table-{}",
@@ -1456,7 +1458,7 @@ fn dynamic_access_safety_side_table_is_written() {
     let side_table = out_dir
         .join("debug")
         .join("inspect")
-        .join("class_mut_method_access.safety.json");
+        .join("class_mut_method_access_kept.safety.json");
     let json = std::fs::read_to_string(&side_table)
         .unwrap_or_else(|error| panic!("{}: {error}", side_table.display()));
     assert!(json.contains("\"schema\":1"), "missing side-table schema: {json}");
@@ -1747,6 +1749,68 @@ fn static_access_elision_is_recorded_in_the_safety_side_table() {
         json.contains("\"status\":\"elided\""),
         "missing elided status: {json}"
     );
+}
+
+/// `[EXC-3]`, `[EXC-3a]` — a check that nothing held anywhere in the program
+/// could make fail is removed, and recorded in the safety side table.
+#[test]
+fn a_check_nothing_held_could_fail_is_removed_and_recorded() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/EXC-3/accept_a_check_nothing_held_could_fail_is_removed.{SOURCE_EXT}");
+    let out_dir = std::env::temp_dir().join(format!("ember-no-conflicting-hold-{}", std::process::id()));
+    let run = ember(&["build", &source, "--out-dir", &out_dir.to_string_lossy()], &root);
+    assert_eq!(run.exit, 0, "build failed:
+{}", run.stderr);
+    let side_table = out_dir
+        .join("debug")
+        .join("inspect")
+        .join("accept_a_check_nothing_held_could_fail_is_removed.safety.json");
+    let json = std::fs::read_to_string(&side_table)
+        .unwrap_or_else(|error| panic!("{}: {error}", side_table.display()));
+    assert!(json.contains("\"reason\":\"no_conflicting_hold\""), "missing removed checks: {json}");
+    let emitted = ember(&["build", &source, "--emit", "c"], &root);
+    assert_eq!(emitted.exit, 0, "C emission failed: {}", emitted.stderr);
+    assert!(!emitted.stdout.contains("field_check_"), "a check nothing could fail survived");
+}
+
+/// `[EXC-19]` — an access nothing can overlap is one check, not a counted
+/// begin and end. Here a write held elsewhere keeps the read's check.
+#[test]
+fn an_access_nothing_can_overlap_is_only_checked() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/EXC-3/run_fail_a_read_during_a_write_held_elsewhere.{SOURCE_EXT}");
+    let emitted = ember(&["build", &source, "--emit", "c"], &root);
+    assert_eq!(emitted.exit, 0, "C emission failed: {}", emitted.stderr);
+    assert!(emitted.stdout.contains("field_check_read("), "the read is not a check");
+    assert!(!emitted.stdout.contains("field_begin_read("), "the read is still counted");
+}
+
+/// `[EXC-15]`, `[EXC-19]` — a `mut self` call to a quiet method is one check
+/// of the object's words; nothing marks them for the call.
+#[test]
+fn a_quiet_mut_self_call_is_only_checked() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/EXC-19/run_fail_a_quiet_mut_self_call_while_a_field_is_viewed.{SOURCE_EXT}");
+    let emitted = ember(&["build", &source, "--emit", "c"], &root);
+    assert_eq!(emitted.exit, 0, "C emission failed: {}", emitted.stderr);
+    assert!(emitted.stdout.contains("object_check_failed("), "the call is not a check");
+    assert!(!emitted.stdout.contains("object_begin_write("), "the call still marks the object");
+}
+
+/// `[EXC-19]`, `[OBJ-1]` — each class level's access words stand side by side
+/// before its fields, a zero word after an odd count.
+#[test]
+fn access_words_are_packed_before_their_fields() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/EXC-19/accept_packed_access_words_in_a_base_and_a_derived_class.{SOURCE_EXT}");
+    let emitted = ember(&["build", &source, "--emit", "c"], &root);
+    assert_eq!(emitted.exit, 0, "C emission failed: {}", emitted.stderr);
+    assert!(emitted.stdout.contains("    uint32_t _access_a;
+    uint32_t _access_pad0;
+"), "base words not packed");
+    assert!(emitted.stdout.contains("    uint32_t _access_b;
+    uint32_t _access_c;
+"), "derived words not packed");
 }
 
 #[test]

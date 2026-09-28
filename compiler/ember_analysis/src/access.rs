@@ -6,11 +6,17 @@
 //! one compiler-created `ref mut Shared[T]` temporary; that temporary can be
 //! traced back to its one local owner. Anything involving an indexed/projection
 //! root, or an unknown handle use remains dynamic and therefore fail-closed.
+//!
+//! A second pass (`[EXC-3]`'s whole-program case) removes the checks that
+//! nothing held anywhere in the program could make fail.
+
+use std::collections::HashSet;
 
 use ember_mir::{
-    AccessElisionReason, Body, ElidedAccess, Operand, Place, Rvalue, StmtKind, Terminator,
+    AccessElisionReason, Body, ElidedAccess, FuncRef, Operand, Place, Projection, Rvalue, Stmt, StmtKind,
+    Terminator,
 };
-use ember_types::{TyKind, TypeTable};
+use ember_types::{ClassId, TyKind, TypeTable};
 
 /// Remove only accesses for which `[EXC-3]`'s `unique_handle` condition is
 /// directly established.  The removed sites are retained on the MIR body so
@@ -295,4 +301,149 @@ fn terminator_uses_root(
         }
         Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => false,
     }
+}
+
+/// `[EXC-3]`, `[EXC-3a]` — remove every check (an access begun and ended back
+/// to back, `[EXC-19]`) that nothing held anywhere in the program could make
+/// fail, and record each. An access is held when other code runs between its
+/// begin and its end. A held access is recorded against the field it covers
+/// (the class declaring it, and its name) or, for a whole object, against the
+/// object's class family: its dynamic class is its static class or one
+/// derived from it, and a family shares the root of its base chain. A read
+/// check needs no held write that could cover it; a write check, no held
+/// access. A `dyn` or interface anywhere in the program turns the pass off:
+/// those reach accesses taken on concrete classes the pass cannot see.
+pub fn remove_never_firing_checks_all(bodies: &mut [Body], types: &TypeTable) -> usize {
+    let mut held_write: HashSet<(ClassId, String)> = HashSet::new();
+    let mut held_any: HashSet<(ClassId, String)> = HashSet::new();
+    let mut held_write_family: HashSet<ClassId> = HashSet::new();
+    let mut held_any_family: HashSet<ClassId> = HashSet::new();
+    let mut object_write_family: HashSet<ClassId> = HashSet::new();
+    let mut object_any_family: HashSet<ClassId> = HashSet::new();
+    for body in bodies.iter() {
+        for basic_block in &body.blocks {
+            if let Terminator::Call { func: FuncRef::Interface { .. } | FuncRef::DynBoxNew { .. }, .. } = basic_block.terminator {
+                return 0;
+            }
+            for (index, stmt) in basic_block.stmts.iter().enumerate() {
+                let StmtKind::BeginAccess { place, mutable } = &stmt.kind else { continue };
+                let target = access_target(body, types, place);
+                if matches!(target, AccessTarget::Unknown) {
+                    return 0;
+                }
+                if is_check(&basic_block.stmts, index) {
+                    continue;
+                }
+                match target {
+                    AccessTarget::Field { key, family } => {
+                        if *mutable {
+                            held_write.insert(key.clone());
+                            held_write_family.insert(family);
+                        }
+                        held_any.insert(key);
+                        held_any_family.insert(family);
+                    }
+                    AccessTarget::Object { family } => {
+                        if *mutable {
+                            object_write_family.insert(family);
+                        }
+                        object_any_family.insert(family);
+                    }
+                    AccessTarget::Unknown | AccessTarget::Other => {}
+                }
+            }
+        }
+    }
+    let mut removed = 0;
+    for body in bodies.iter_mut() {
+        for block in 0..body.blocks.len() {
+            let mut index = 0;
+            while index < body.blocks[block].stmts.len() {
+                if !is_check(&body.blocks[block].stmts, index) {
+                    index += 1;
+                    continue;
+                }
+                let stmt = &body.blocks[block].stmts[index];
+                let StmtKind::BeginAccess { place, mutable } = &stmt.kind else { unreachable!("a check begins") };
+                let (mutable, span) = (*mutable, stmt.span);
+                let never_fires = match access_target(body, types, place) {
+                    AccessTarget::Field { key, family } if mutable => {
+                        !held_any.contains(&key) && !object_any_family.contains(&family)
+                    }
+                    AccessTarget::Field { key, family } => {
+                        !held_write.contains(&key) && !object_write_family.contains(&family)
+                    }
+                    AccessTarget::Object { family } if mutable => {
+                        !held_any_family.contains(&family) && !object_any_family.contains(&family)
+                    }
+                    AccessTarget::Object { family } => {
+                        !held_write_family.contains(&family) && !object_write_family.contains(&family)
+                    }
+                    AccessTarget::Unknown | AccessTarget::Other => false,
+                };
+                if never_fires {
+                    body.blocks[block].stmts.drain(index..index + 2);
+                    body.elided_accesses.push(ElidedAccess { span, reason: AccessElisionReason::NoConflictingHold });
+                    removed += 1;
+                } else {
+                    index += 2;
+                }
+            }
+        }
+    }
+    removed
+}
+
+/// An access begun and ended back to back: `[EXC-19]`'s check.
+fn is_check(stmts: &[Stmt], index: usize) -> bool {
+    let StmtKind::BeginAccess { place, mutable } = &stmts[index].kind else { return false };
+    matches!(stmts.get(index + 1).map(|next| &next.kind),
+        Some(StmtKind::EndAccess { place: end, mutable: end_mutable }) if end == place && end_mutable == mutable)
+}
+
+/// What an access is to: a class field, keyed by the class declaring it and
+/// its name; a whole class object, by its family; something whose class the
+/// pass cannot know (a `dyn` or interface); or neither (a `Shared` payload).
+enum AccessTarget {
+    Field { key: (ClassId, String), family: ClassId },
+    Object { family: ClassId },
+    Unknown,
+    Other,
+}
+
+fn access_target(body: &Body, types: &TypeTable, place: &Place) -> AccessTarget {
+    match types.kind(crate::regions::place_type(body, types, place)) {
+        TyKind::Class(id) => return AccessTarget::Object { family: class_family(types, *id) },
+        TyKind::ClassInterface(_) | TyKind::Dyn { .. } => return AccessTarget::Unknown,
+        TyKind::Ref { inner, .. } if matches!(types.kind(*inner), TyKind::Dyn { .. }) => return AccessTarget::Unknown,
+        TyKind::Struct(id) if matches!(&types.struct_def(*id).origin, Some((name, _)) if name.is("Box")) => {
+            return AccessTarget::Unknown;
+        }
+        _ => {}
+    }
+    let Some((Projection::Field(index), prefix)) = place.projection.split_last() else { return AccessTarget::Other };
+    let handle = Place { local: place.local, projection: prefix.to_vec() };
+    let TyKind::Class(id) = *types.kind(crate::regions::place_type(body, types, &handle)) else {
+        return AccessTarget::Other;
+    };
+    // A field without its own word (a `Shared[T]`) is its payload's access.
+    if !types.class_field_has_access_word(id, *index) {
+        return AccessTarget::Other;
+    }
+    match types.class_field_at_info(id, *index) {
+        Some((owner, field)) => {
+            AccessTarget::Field { key: (owner, field.name.to_string()), family: class_family(types, owner) }
+        }
+        None => AccessTarget::Unknown,
+    }
+}
+
+/// The root of `id`'s base chain: every class an object of static class `id`
+/// can dynamically be shares it.
+pub(crate) fn class_family(types: &TypeTable, id: ClassId) -> ClassId {
+    let mut family = id;
+    while let Some(base) = types.class_def(family).base {
+        family = base;
+    }
+    family
 }

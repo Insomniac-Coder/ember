@@ -2149,3 +2149,259 @@ incomplete independently of this policy field. They must be included before
 reusing such code across source changes. This decision does not claim that
 broader cache work is complete or introduce unrelated private source text into
 every public interface hash.
+
+## ADR-069 — the dynamic exclusivity checks cost what they must
+
+**Decided 2026-09-27 (ODR-085, owner-approved; Hardened_41).** The owner asked for the
+`[EXC-19]` counters to be measured against a Swift-style per-thread list, then for the code to
+come as close to C speed as possible. Four changes carry the measured design; each was first
+built in a scratch copy behind a switch, measured against a no-check build on MSVC and clang, and
+tested against every annotated test.
+
+1. **Check-only accesses.** `insert_shared_accesses` asks of each class-field access whether it is
+   *held*: whether code other than the access runs while it is active. It is not held when:
+   * no statement in its interval is a drop whose type's drop can run program code
+     (`drop_is_quiet`);
+   * no terminator is a call other than a built-in that calls no code back (`quiet_builtin`, a
+     closed list, conservative by default);
+   * no other access begins at any of its points, including its own.
+
+   Such an access is placed as its begin immediately followed by its end, and the C backend
+   lowers that pair to `ember_field_check_read/write`: a load and a compare. The same-point rule
+   keeps every verdict identical; dropping it breaks `EXC-1/run_fail_pushing_while_iterating_the_field.em`.
+2. **Quiet functions.** `quiet_functions` is a greatest fixpoint over every body. It starts from
+   all of them and removes any body that:
+   * calls anything but a quiet built-in or another quiet function;
+   * drops noisily;
+   * touches a class field with a word, apart from its own covered `self` fields;
+   * borrows a `Shared` payload;
+   * returns a view.
+
+   `convert_quiet_calls` moves the lowering's end of the caller's whole-object write to directly
+   after its begin, but only when that access alone begins before the call and nothing begins
+   after it. The conversion runs after `[EXC-8]` hoisting (`convert_quiet_calls_all` in the
+   driver), so a loop's repeated counted writes on one receiver first become one checked interval,
+   as the EXC-8 tests expect. For a final class the backend reads the object's packed words in place, eight bytes
+   at a time. Any other class goes through `ember_object_check_read/write` over the dynamic
+   class's type info. Treating every function as quiet breaks
+   `EXC-2/run_fail_a_read_while_a_mut_self_call_writes.em`.
+3. **Packed words.** Each class level's access words stand side by side before that level's own
+   fields, with a zero `_access_padN` word after an odd count (objects are zeroed at allocation).
+   A word then costs 4 bytes instead of 8, and a base class's layout stays a prefix. Type-info
+   offsets come from `offsetof`, so the runtime's whole-object loops are unchanged.
+4. **Checks nothing held could fail** (`access.rs`, `remove_never_firing_checks_all`, run last,
+   after `[EXC-8]` hoisting).
+   * Every access that is not a check is recorded as held: a field access by (declaring class,
+     field name), a whole-object access by its class family, the root of the base chain.
+   * A read check survives only if a write to its field or to its family's whole objects is held
+     somewhere. A write check survives only if any such access is held. Every other check is
+     removed and recorded as `no_conflicting_hold` (`[EXC-3a]`).
+   * A `dyn` or interface call, or a `dyn`/interface place, turns the pass off, because the dyn
+     adapters' accesses are made by the backend, out of the pass's sight.
+   * Two tests break when their held writes are ignored:
+     `EXC-3/run_fail_a_read_during_a_field_write_held_by_a_call.em` (field-level) and
+     `EXC-3/run_fail_a_read_during_a_write_held_elsewhere.em` (object-level).
+
+**Measured** (median of 7, the benchmarks in the handoff): every benchmark is within 0–4% of the
+same program with no exclusivity checks, on MSVC and on clang. Before:
+
+| Benchmark | MSVC before | clang before |
+|---|---|---|
+| Read loop | +52% | +1% |
+| Walks over a million objects | +36–49% | +47–56% |
+| `mut self` calls | up to +181% | up to +345% |
+
+With six list fields per object, a million objects take 242 MB, against 275 MB before and 225 MB
+without words.
+
+**Rejected, measured:**
+* A per-thread list of live accesses: slower in 6 of 8 benchmarks even with these changes, and
+  up to +451% with 16 accesses live.
+* A per-thread held-count gate: Windows TLS reads are not hoisted; clang's read loop became 52%
+  slower.
+* One-byte counters in the header's spare `access` word: they would move the check to the
+  object's first cache line, away from the field.
+
+**Tests.**
+
+* **New run-fail tests:**
+  * `EXC-19/run_fail_a_quiet_mut_self_call_while_a_field_is_viewed.em` and
+    `run_fail_a_method_that_only_calls_quiet_functions_is_still_checked.em`;
+  * `EXC-19/run_fail_a_derived_mut_self_call_while_a_base_field_is_viewed.em` (packing with a
+    base class);
+  * `EXC-3/run_fail_a_read_during_a_write_held_elsewhere.em` and
+    `run_fail_a_read_during_a_field_write_held_by_a_call.em`.
+* **New run-pass tests:** `EXC-19/accept_packed_access_words_in_a_base_and_a_derived_class.em`
+  and `EXC-3/accept_a_check_nothing_held_could_fail_is_removed.em`.
+* **New milestone tests** assert the check-only lowering, the quiet call, the packed layout and
+  the `no_conflicting_hold` record.
+* **Updated tests.** Seven run-pass programs asserted the old emitted `ember_object_begin_write`
+  or `ember_field_begin_write`. Where nothing in the program can conflict, they now assert the
+  calls are gone. The interface test counts the adapter's own call, since the `dyn` table's
+  `access` entry also names the function (`[EXC-18]`).
+* **EXC-8 test programs.** The two EXC-8 "keeps dynamic check" programs gained a `report` helper
+  that holds a `Counter` across other code. The checks can then fail somewhere and stay, so those
+  programs still test the hoisting boundary.
+* **Safety-report test.** The safety side-table milestone builds
+  `run-pass/class_mut_method_access_kept.em`, whose `mut self` method prints, so exactly one
+  check stays.
+
+**Limits.** Separately compiled Ember modules are outside the removal pass's view (it trusts
+one compilation's bodies). Programs that use `dyn` or interfaces keep all checks the other
+changes leave.
+
+## ADR-070 — the speed audit's six fixes
+
+**Decided 2026-09-27 (owner: "do all fixes check them and report the final result").** The
+audit measured every Ember program in the set against a hand-written C program doing the same
+work (C++ for classes and data-oriented code), built with Ember's own C flags, on MSVC and clang.
+Six fixes, in the owner's order; none changes the language.
+
+1. **Reference counts inline.** `ember_retain`/`ember_release` do the common case in the
+   header; a class that is not `@sync` gets `ember_retain_plain`/`ember_release_plain`
+   (`[THR-1]`: a class family has one Sync-ness). The last release, panics and atomic counts
+   stay out of line.
+2. **MSVC checked arithmetic.** 64-bit `+`, `-` and `*` use `_add_overflow_i64`,
+   `_sub_overflow_i64` and `_mul_overflow_i64` on x64 from VS 2022 17.3 (`_MSC_VER` 1933), one
+   flag test as clang's builtins give; `__mulh`/`__umulh` and a branch-free sign test otherwise.
+   The old multiply found overflow with a division. Checked against the previous code on edge
+   values and 20 million random pairs: no difference.
+3. **Interface calls.** `ember_itable_lookup` is inline and scans the object's own entries; a
+   class's list now carries its bases' entries too (`class_itable_entries`), so the out-of-line
+   walk up the base chain (`ember_itable_lookup_slow`) is only a fallback. `[OBJ-2]` keeps an
+   interface handle one pointer, so this is the lookup `[DSP-3]` describes, without the loop and
+   the call. Found and fixed on the way: D-375.
+4. **Push inline.** `ember_vec_push` stores in place when there is room; only growth calls out.
+   A scalar or a handle is pushed by value (`ember_vec_push_i64`, `_f64`, `_ptr`, …), copied to
+   memory only on the growth path. Passing `&local` had made every pushed local, a loop counter
+   included, live in memory for the whole function; on clang, where that store landed decided
+   whether p4 ran at 0.07 s or 0.10 s from run to run (4K aliasing against the length field).
+5. **`[OPT-2]` loop versioning and `[SIMD-7]` grouped overflow checks** (`loop_version.rs`,
+   run last).
+   * Every counted loop whose bounds checks index a view at `i + c`, the view's base and length
+     unchanged by the loop, gets an entry test and an unchecked copy, outer loops first, so the
+     loops inside each copy are versioned in turn. The original blocks stay the checked loop.
+   * Invariance is read through everything the loop runs: its statements; every call, through a
+     summary of what each function (and everything it calls) can write that its caller sees —
+     class fields by family, writes through each reference parameter, or anywhere — joined per
+     symbol and computed to a fixpoint (a virtual call reads every override, an interface or
+     indirect call and a built-in that runs program code the union of all); and every drop,
+     through the `drop` functions it can run. A reference parameter and a class handle are never
+     the same place as far as a loop can observe: a lent class field is held for the call. A
+     `Sync` object is never invariant.
+   * Every operation in the entry test is proved not to overflow by the tests before it. In the
+     unchecked copy each view's header is read once into a local nothing else reaches, and the
+     comparison that fed each removed check goes with it, so the C compiler keeps the base in a
+     register; that is what let clang vectorise a11.
+   * Vectorisable form (`[SIMD-5]`) is computed here: a counted loop with one exit, no bounds
+     check left, every memory access a local or a view held in a local at the counter plus a
+     constant, each written view at one offset and disjoint from every other view, no call (N4),
+     no drop that runs anything, no check but integer overflow, no floating-point running total
+     (N5). Such a loop runs in groups of 16. Each checked `+`/`-` computes its wrapped result
+     and overflow bit in plain arithmetic, which clang vectorises. When no view the loop writes
+     is also read in it, one flag per group: on a set flag the carried locals (found by a
+     liveness pass) are restored and the loop as it was re-runs the group, so it panics at the
+     first overflow exactly. Otherwise one bit per check and iteration, and the first set bit
+     reports. The masks are tested before any access check and any inner loop in a group, so an
+     earlier overflow is never overtaken. (Item 7 replaced the bits in most loops.)
+   * A running total of at most 32-bit elements into a 64-bit total gets a copy with no check
+     when the trip count is at most 2³¹ and the total starts within 2⁶² − 1 of zero. A running
+     total the widths cannot prove safe keeps its checks one per operation: whether `[SIMD-7]`
+     requires grouping it is ODR-086 (ERR-055), and nothing moves until the owner rules.
+   * Tests: `tests/conformance/OPT-2/` (10) and `tests/conformance/SIMD-7/` (5), each checked
+     against the previous compiler's output. Fifteen RC-2e retain counts grew because a
+     versioned loop holds its retains once per copy.
+   * D7 (recorded, then closed the same day) is in `DEVIATIONS.md`'s closed table.
+6. **Memory.** A block whose alignment malloc already gives (two pointers' worth) is a plain
+   `malloc` block, not `_aligned_malloc`'s, which added a prefix to every object; growth uses
+   `realloc`, which can grow in place; `reserve(n)` and `with_capacity(n)` hold `n`, not the next
+   power of two (pushes still double). `[OBJ-1]` fixes the 24-byte header, so shrinking it is
+   the owner's decision (proposal in the audit report), not done here.
+
+7. **Loops MSVC vectorises** (2026-09-28, owner: "just fix that msvc issue"). MSVC vectorised
+   none of Ember's loops: it takes only a C `for` loop, and every Ember loop was labels and
+   `goto`s. Three changes, each found with MSVC's own report (`/Qvec-report:2`):
+   * **`for` loops.** A counted loop whose body is one chain of blocks (no `if` inside) is
+     written as `for (; i < n; ++i) { … }` (`for_loops`, `emit_for_loop` in the C backend). A
+     128-bit counter keeps the `goto` form (on MSVC it is a runtime struct). A loop whose body
+     branches is not a `for` loop, so MSVC does not vectorise it; `[SIMD-6]` makes the C
+     compiler's vectorisation evidence only, and clang takes such loops as before.
+   * **Loop-private locals.** MSVC refused a loop that sets a function-wide temporary, since it
+     cannot prove the value dead after the loop (reason 1104). A local that every `for` loop
+     naming it sets before reading, in every iteration, and also reads, and that nothing
+     outside a loop body names, is declared inside each such loop (`loop_scoped_locals`).
+   * **No comparison in a group.** MSVC counts a comparison turned into a value
+     (`overflow = x < 0`) as control flow (reason 1100). A grouped `+`/`-` computes an overflow
+     word with shifts and masks only (`wrapping_form`): a `u64` whose top bit is set when it
+     overflowed. The group's flag is those words OR-ed; its top bit is tested once, after the
+     loop. Moving each word's bit down first (the first version) cost MSVC 11% on a list loop:
+     clang merges those shifts itself, MSVC does not.
+   * **Group size**, measured on list loops: 32 iterations for a loop with one check, 16 with
+     several (`group_size`). With one check, 32 was the fastest on both compilers (at 16 MSVC
+     spent 5% more than clang setting up each group: it keeps a small inner loop and re-tests
+     that the lists do not overlap for every group, where clang unrolls the group). With
+     several, 16 kept the slower compiler fastest.
+   * **How a group reports** (`group_overflow_checks`):
+     - *Report*, when the loop has one overflow check: the group runs once, storing as it goes;
+       a set flag panics at the group's end with that check's message and location, which are
+       the first overflow's whatever iteration it was. This is `[SIMD-7]`'s own description:
+       the stores after the overflow are never read, because the process aborts.
+     - *Re-run*, several checks: as item 5. When the loop also reads a view it writes, each
+       group's elements of that view are copied aside at its start and put back before the
+       re-run (`undo_saves`, `element_copies`), so the group runs once (owner, 2026-09-28:
+       "make the last loop run in one pass"). That needs the loop to access the view on every
+       iteration: then every element the group will touch is known to exist.
+     - *Detect, then commit*, several checks and a view read and written but not on every
+       iteration: each group runs twice. The first run stores nothing (each written view's element is a local, loaded
+       where the iteration first needs its value; access checks are left to the second run;
+       assignments nothing in it reads are dropped) and only sets the flag; the carried locals
+       are then restored. A set flag re-runs the group checked on unchanged memory, which panics
+       at the first overflow exactly; a clear one runs the group again for real with no check.
+     - *Bits*, only where detect-then-commit cannot place its loads either (an element written
+       on one path through the body and read after it on another): as item 5.
+   * **Measured**, a list of 100,000 numbers, 20,000 rounds, against hand-written C with the
+     same flags. MSVC does not vectorise the hand-written C of these loops (reason 1203), so
+     its row compares Ember with checks on against Ember with checks off.
+
+     | Loop | clang, checks on | MSVC, checks on |
+     |---|---|---|
+     | `out[i] = ((out[i] ^ round) + a[i]) & 1023` (one check) | 3% slower than C | 5% slower than clang (was 17%) |
+     | `out[i] = (((out[i] ^ round) + a[i]) - 7) & 1023` (two checks, `out` read back) | 1.6 times C's time | 16% slower than clang (was 34%) |
+     | `out[i] = (((a[i] ^ round) + b[i]) - 7) & 1023` (two checks, `out` not read) | 1.5 times C's time | 10% slower than clang |
+     | Any of them with `@overflow(wrap)` | same as C | same as clang or faster |
+
+     With several checks the compilers pull opposite ways, so the C says which form each gets
+     (owner, 2026-09-28: "make ember write different C for each compiler"). The shift is
+     `Const::OverflowShift`, written `EMBER_OVERFLOW_SHIFT`, which the runtime header sets to
+     0 for MSVC (whole words ORed, the flag moved down once) and 63 for clang and GCC (each
+     bit moved down first). Each compiler then runs its faster form: on the second loop of the
+     table MSVC 0.68 s against 0.73 s the other way, clang 0.62 s against 0.68 s. MSVC's
+     fastest form still trails clang's there: it spends more instructions on the same
+     arithmetic.
+
+     Running the second loop of the table in one pass instead of two took MSVC from 0.835 s
+     to 0.754 s and clang from 0.665 s to 0.649 s. The second pass was not most of the cost:
+     computing two overflow checks for every number is, which C does not do.
+
+     Before this item the shorter version of the first loop (2,000 rounds) was 12% slower than C
+     on clang and 3.4 times C on MSVC; it is now C's time on clang. A group of 64 or 256 instead
+     of 16 was no faster (clang slower at 256). The p-set and a00–a12 are unchanged within
+     noise, except a01 on MSVC (1.2 → 1.0 times C) and a11 on MSVC (0.83 → 0.53).
+   * Checked: the quick check, the workspace suite on MSVC (305) and on clang (304; the one
+     failure is `the_128_bit_halves_agree_with_int128`, whose runtime self-test cannot link on
+     Windows clang: no `__divti3`), the gates, and clang `-Wall -Wextra -Werror` on every
+     SIMD-7 and OPT-2 test. A sweep of every test program under clang found D-376, older than
+     this work.
+   * Tests: SIMD-7 gains `accept_a_rewritten_element_is_read_back_within_the_iteration`,
+     `run_fail_an_overflow_after_a_rewrite_in_the_iteration_is_found`,
+     `run_fail_a_rewritten_view_reports_the_first_overflow_by_iteration` and
+     `run_fail_a_conditionally_written_view_reports_the_first_overflow`,
+     `run_fail_a_view_accessed_in_a_branch_runs_each_group_twice`,
+     `run_fail_a_view_written_on_one_path_keeps_a_bit_per_iteration`, and for the overflow
+     words of every width `accept_grouped_checks_of_every_width` and
+     `run_fail_a_grouped_{u8_add_overflow,u16_sub_borrow,i32_sub_overflow,u64_add_carry,u64_sub_borrow}_is_reported`;
+     `run_fail_a_read_then_written_view_reports_the_first_overflow` now proves the report mode.
+
+**Not changed:** a sum of 64-bit `int`s keeps one overflow check per element. The widths cannot
+prove it safe, and ODR-086 asks whether it must be grouped (measured: grouping would make it
+slower). The sum loop p1 stays 2.5× (MSVC) and 3.3× (clang) of C's unchecked sum.

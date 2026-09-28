@@ -12,6 +12,15 @@ class Counter:
     fn bump(mut self):
         self.value = self.value + 1
 
+    fn print_plus(mut self, extra: i32):
+        println(self.value + extra)
+
+# `report` holds a `Counter` while other code (the printing) runs, so a check
+# on a `Counter` can fail somewhere and each stays (`[EXC-3]`, ODR-085);
+# without it they would all be removed and this loop would show no check.
+fn report(mut counter: Counter, extra: i32):
+    counter.print_plus(extra)
+
 fn main():
     left = Counter(0)
     right = Counter(0)
@@ -20,4 +29,4 @@ fn main():
     for i in 0..3:
         left.bump()
         right.bump()
-    println(left_alias.value + right_alias.value)
+    report(left_alias, right_alias.value)

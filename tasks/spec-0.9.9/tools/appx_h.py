@@ -374,6 +374,8 @@ ODRS = [
      '`[FFI-33]`, `[FFI-33c]`, `[GRM-37]`'),
     ('ODR-084', '`#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts (Hardened_40)',
      '`[GRM-37]`, `[ATT-4]`, `[TYP-8]`, `[TYP-28]`, `[FN-5]`, `[CT-4]`, `[STD-20]`'),
+    ('ODR-085', 'an access that is not held is checked but not counted; a `mut self` call to a quiet function is only checked; a check that nothing held anywhere could fail may be removed; each class\'s access words stand side by side before its fields, a zero word after an odd count (Hardened_41)',
+     '`[EXC-3]`, `[EXC-19]`, `[OBJ-1]`, `[COST-3]`'),
 ]
 
 H5_HEAD = """
@@ -401,7 +403,8 @@ between absent and present-empty views; Hardened_36 adds ODR-080, nullable borro
 their null-pointer niche; Hardened_37 adds ODR-081, the fallible owned C-string conversion and
 explicit borrowed view; Hardened_38 adds ODR-082, the C qualifier asserted by an immutable
 foreign static; Hardened_39 adds ODR-083, the initialization anchor for static export creator
-contracts; Hardened_40 adds ODR-084, module-attribute syntax and lexical integer overflow policy.
+contracts; Hardened_40 adds ODR-084, module-attribute syntax and lexical integer overflow policy;
+Hardened_41 adds ODR-085, what the dynamic exclusivity checks cost and the packed access words.
 
 | ODR | Ruling | Rules |
 |---|---|---|

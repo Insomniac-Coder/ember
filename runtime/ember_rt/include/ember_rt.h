@@ -19,6 +19,14 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>  /* [STD-15]: the generated Array helpers move bytes */
+#if defined(_MSC_VER) && !defined(__clang__) && (defined(_M_X64) || defined(_M_ARM64))
+#include <intrin.h>  /* __mulh, __umulh: a 64-bit product's high half */
+#define EMBER_MSVC_MULH 1
+#endif
+#if defined(EMBER_MSVC_MULH) && defined(_M_X64) && _MSC_VER >= 1933
+/* _add_overflow_i64 & co. (x64, VS 2022 17.3+): the flag test the builtins give */
+#define EMBER_MSVC_OVERFLOW 1
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -48,6 +56,17 @@ extern "C" {
 #define EMBER_UNREACHABLE() __builtin_unreachable()
 #define EMBER_NORETURN __attribute__((noreturn))
 #define EMBER_INLINE __attribute__((always_inline)) inline
+#endif
+
+/* [SIMD-7] A group of iterations with several overflow checks ORs each
+ * check's overflow word (its top bit set on overflow), shifted down by
+ * EMBER_OVERFLOW_SHIFT, into the group's flag, and tests the flag shifted
+ * down by the rest of 63. MSVC runs such loops fastest ORing whole words,
+ * clang and GCC moving each bit down first (measured; ADR-070 item 7). */
+#if defined(_MSC_VER) && !defined(__clang__)
+#define EMBER_OVERFLOW_SHIFT 0
+#else
+#define EMBER_OVERFLOW_SHIFT 63
 #endif
 
 /* Infinity and NaN in the emitted C, built from their IEEE bits: MSVC
@@ -167,8 +186,8 @@ static inline ember_loc ember_loc_unknown(void) { return ember_loc_at(NULL, 0, 0
  * defined on both paths — and returns whether the true result was out of range.
  *
  * Clang and GCC have __builtin_*_overflow, which lowers to a single flag test.
- * MSVC has no equivalent, so the fallbacks compute in a wider type and
- * range-check. Both are exact; only the code size differs.
+ * MSVC x64 has _add_overflow_i64 & co. for 64 bits; the other fallbacks compute
+ * in a wider type and range-check. All are exact; only the code size differs.
  *
  * Signed arithmetic goes through the unsigned type of the same width, because
  * conversion is modular and signed overflow is undefined behaviour in C.
@@ -228,25 +247,63 @@ static inline ember_loc ember_loc_unknown(void) { return ember_loc_at(NULL, 0, 0
         return wide > EMBER_UMAX(BITS);                                      \
     }
 
-/* 64-bit: nothing wider to compute in, so check the operands directly. */
+/* 64-bit: nothing wider to compute in. An add or subtract overflows exactly
+ * when the result's sign differs from both operands' (add) or from the left
+ * operand's while the operands' signs differ (subtract): a branch-free test.
+ * A multiply overflows exactly when the 128-bit product's high half is not the
+ * sign extension of its low half; without the high-half intrinsic, the
+ * quotient test stands in. */
+#if defined(EMBER_MSVC_MULH)
+#define EMBER_CHECKED_MUL_U64_BODY(a, b, out)                                \
+        *out = (a) * (b);                                                    \
+        return __umulh((a), (b)) != 0;
+#else
+#define EMBER_CHECKED_MUL_U64_BODY(a, b, out)                                \
+        *out = (a) * (b);                                                    \
+        if ((a) == 0) { return false; }                                      \
+        return *out / (a) != (b);
+#endif
+#if defined(EMBER_MSVC_OVERFLOW)
 #define EMBER_CHECKED_OPS_S64(SUFFIX, TYPE)                                  \
     static inline bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
-        *out = (TYPE)((uint64_t)a + (uint64_t)b);                            \
-        return (b > 0 && a > (TYPE)(INT64_MAX - b))                          \
-            || (b < 0 && a < (TYPE)(INT64_MIN - b));                         \
+        return _add_overflow_i64(0, a, b, (__int64*)out) != 0;               \
     }                                                                        \
     static inline bool ember_ck_sub_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
-        *out = (TYPE)((uint64_t)a - (uint64_t)b);                            \
-        return (b < 0 && a > (TYPE)(INT64_MAX + b))                          \
-            || (b > 0 && a < (TYPE)(INT64_MIN + b));                         \
+        return _sub_overflow_i64(0, a, b, (__int64*)out) != 0;               \
     }                                                                        \
     static inline bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
-        *out = (TYPE)((uint64_t)a * (uint64_t)b);                            \
-        if (a == 0 || b == 0) { return false; }                              \
-        if (a == (TYPE)-1) { return b == (TYPE)INT64_MIN; }                  \
-        if (b == (TYPE)-1) { return a == (TYPE)INT64_MIN; }                  \
-        return (TYPE)(*out) / b != a;                                        \
+        return _mul_overflow_i64(a, b, (__int64*)out) != 0;                  \
     }
+#else
+#define EMBER_CHECKED_OPS_S64(SUFFIX, TYPE)                                  \
+    static inline bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        TYPE sum = (TYPE)((uint64_t)a + (uint64_t)b);                        \
+        *out = sum;                                                          \
+        return ((a ^ sum) & (b ^ sum)) < 0;                                  \
+    }                                                                        \
+    static inline bool ember_ck_sub_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        TYPE difference = (TYPE)((uint64_t)a - (uint64_t)b);                 \
+        *out = difference;                                                   \
+        return ((a ^ b) & (a ^ difference)) < 0;                             \
+    }                                                                        \
+    static inline bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        EMBER_CHECKED_MUL_S64_BODY(TYPE, a, b, out)                          \
+    }
+#endif
+
+#if defined(EMBER_MSVC_MULH)
+#define EMBER_CHECKED_MUL_S64_BODY(TYPE, a, b, out)                          \
+        TYPE low = (TYPE)((uint64_t)(a) * (uint64_t)(b));                    \
+        *out = low;                                                          \
+        return (TYPE)__mulh((a), (b)) != (low >> 63);
+#else
+#define EMBER_CHECKED_MUL_S64_BODY(TYPE, a, b, out)                          \
+        *out = (TYPE)((uint64_t)(a) * (uint64_t)(b));                        \
+        if ((a) == 0 || (b) == 0) { return false; }                          \
+        if ((a) == (TYPE)-1) { return (b) == (TYPE)INT64_MIN; }              \
+        if ((b) == (TYPE)-1) { return (a) == (TYPE)INT64_MIN; }              \
+        return (TYPE)(*out) / (b) != (a);
+#endif
 
 #define EMBER_CHECKED_OPS_U64(SUFFIX, TYPE)                                  \
     static inline bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
@@ -258,9 +315,7 @@ static inline ember_loc ember_loc_unknown(void) { return ember_loc_at(NULL, 0, 0
         return a < b;                                                        \
     }                                                                        \
     static inline bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
-        *out = (TYPE)(a * b);                                                \
-        if (a == 0) { return false; }                                        \
-        return *out / a != b;                                                \
+        EMBER_CHECKED_MUL_U64_BODY(a, b, out)                                \
     }
 
 #endif /* builtin overflow */
@@ -950,13 +1005,58 @@ void ember_weak_release(ember_obj_header* object);
 ember_obj_header* ember_weak_upgrade(ember_obj_header* object);
 void ember_rt_deinit(ember_obj_header* object);
 void* ember_downcast(ember_obj_header* object, const ember_type_info* target);
-const void* ember_itable_lookup(const ember_type_info* type, const void* interface_id);
+const void* ember_itable_lookup_slow(const ember_type_info* type, const void* interface_id);
 
+/* `[DSP-3]` — an interface call's table search, inline: the object's own
+ * entries, which for a class this program emitted also carry its bases'
+ * interfaces, so the out-of-line walk up the base chain is only the fallback. */
+static inline const void* ember_itable_lookup(const ember_type_info* type, const void* interface_id) {
+    const ember_itable_entry* entry = type->itables;
+    for (uint32_t left = type->itable_count; left != 0; --left, ++entry) {
+        if (entry->interface_id == interface_id) {
+            return entry->table;
+        }
+    }
+    return ember_itable_lookup_slow(type->base, interface_id);
+}
+
+/* `[RC-4]` — the counts of an object that is not Sync are plain integers,
+ * so the common case is done here, without a call: a retain of a live object
+ * whose count can grow, a release that is not the last. Everything else (an
+ * empty handle, a panic, the last release, which deinitialises, and a Sync
+ * object's atomic count) goes through the out-of-line functions above,
+ * unchanged. */
+static inline void ember_retain_plain(ember_obj_header* object) {
+    if (object != NULL && (object->flags & EMBER_OBJ_DEINITIALISING) == 0
+        && object->strong - 1u < UINT32_MAX - 1u) {
+        object->strong += 1;
+        return;
+    }
+    ember_obj_retain(object);
+}
+
+static inline void ember_release_plain(ember_obj_header* object) {
+    if (object != NULL && object->strong > 1) {
+        object->strong -= 1;
+        return;
+    }
+    ember_obj_release(object);
+}
+
+/* Any handle: the type information says whether the counts are atomic. */
 static inline void ember_retain(ember_obj_header* object) {
+    if (object != NULL && object->ti != NULL && (object->ti->flags & EMBER_TI_SYNC) == 0) {
+        ember_retain_plain(object);
+        return;
+    }
     ember_obj_retain(object);
 }
 
 static inline void ember_release(ember_obj_header* object) {
+    if (object != NULL && object->ti != NULL && (object->ti->flags & EMBER_TI_SYNC) == 0) {
+        ember_release_plain(object);
+        return;
+    }
     ember_obj_release(object);
 }
 
@@ -976,6 +1076,12 @@ void ember_object_begin_write(ember_obj_header* object, ember_loc loc);
 void ember_object_end_write(ember_obj_header* object, ember_loc loc);
 void ember_object_begin_read(ember_obj_header* object, ember_loc loc);
 void ember_object_end_read(ember_obj_header* object, ember_loc loc);
+/* `[EXC-19]` — a whole-object access nothing can overlap: only its check. A
+ * final class's words are read by the generated code, which calls
+ * ember_object_check_failed when one is taken. */
+void ember_object_check_write(ember_obj_header* object, ember_loc loc);
+void ember_object_check_read(ember_obj_header* object, ember_loc loc);
+EMBER_NORETURN void ember_object_check_failed(ember_obj_header* object, bool writing, ember_loc loc);
 
 /* -- arenas ---------------------------------------------------------------
  *
@@ -1034,8 +1140,48 @@ typedef struct ember_vec {
 /* Make room for at least `want` elements. Growth doubles, so appending in a
  * loop stays linear ([ALC-1]). */
 void ember_vec_reserve(ember_vec* v, size_t elem_size, size_t want);
-/* Append one element, copied from `value`. */
-void ember_vec_push(ember_vec* v, size_t elem_size, const void* value);
+/* Append one element, copied from `value`. With room left it is a copy and a
+ * length bump, inline, where the constant element size makes the copy one
+ * store; only growth calls out. */
+void ember_vec_push_slow(ember_vec* v, size_t elem_size, const void* value);
+static inline void ember_vec_push(ember_vec* v, size_t elem_size, const void* value) {
+    if (v->len < v->cap) {
+        memcpy((unsigned char*)v->ptr + v->len * elem_size, value, elem_size);
+        v->len += 1;
+        return;
+    }
+    ember_vec_push_slow(v, elem_size, value);
+}
+/* A scalar or a handle pushed by value: stored straight into the buffer, and
+ * copied to memory only on the growth path, so the caller never takes the
+ * address of what it pushes and a pushed loop counter stays in a register. */
+#define EMBER_VEC_PUSH_VALUE(NAME, TYPE)                                     \
+    static inline void ember_vec_push_##NAME(ember_vec* v, TYPE value) {     \
+        if (v->len < v->cap) {                                               \
+            ((TYPE*)v->ptr)[v->len] = value;                                 \
+            v->len += 1;                                                     \
+            return;                                                          \
+        }                                                                    \
+        {                                                                    \
+            TYPE copy = value;                                               \
+            ember_vec_push_slow(v, sizeof(TYPE), &copy);                     \
+        }                                                                    \
+    }
+EMBER_VEC_PUSH_VALUE(bool, bool)
+EMBER_VEC_PUSH_VALUE(i8, int8_t)
+EMBER_VEC_PUSH_VALUE(i16, int16_t)
+EMBER_VEC_PUSH_VALUE(i32, int32_t)
+EMBER_VEC_PUSH_VALUE(i64, int64_t)
+EMBER_VEC_PUSH_VALUE(isize, ptrdiff_t)
+EMBER_VEC_PUSH_VALUE(u8, uint8_t)
+EMBER_VEC_PUSH_VALUE(u16, uint16_t)
+EMBER_VEC_PUSH_VALUE(u32, uint32_t)
+EMBER_VEC_PUSH_VALUE(u64, uint64_t)
+EMBER_VEC_PUSH_VALUE(usize, size_t)
+EMBER_VEC_PUSH_VALUE(f32, float)
+EMBER_VEC_PUSH_VALUE(f64, double)
+EMBER_VEC_PUSH_VALUE(ptr, void*)
+#undef EMBER_VEC_PUSH_VALUE
 /* [TYP-38] (0.9.9): an Array built from a list literal. One allocation holding
  * exactly `count` elements, copied bitwise from `elems`; the caller has moved
  * them out of their fixed array, so they now belong to the result. */
@@ -1251,6 +1397,30 @@ static inline void ember_field_end_write(uint32_t* word, const char* what, ember
     }
     *word = 0;
     EMBER_FIELD_TRACK_END(word, true, loc);
+}
+
+/* `[EXC-19]` — an access nothing can overlap (no code of the program runs
+ * while it is active and no other access begins) is only checked, never
+ * counted: nothing could observe the count. A read checks that no write is
+ * active; a write, that no access is. */
+static inline void ember_field_check_read(uint32_t* word, const char* what, ember_loc loc) {
+    if ((*word & EMBER_ACCESS_WRITER) != 0) {
+        EMBER_FIELD_CONFLICT(false, word, what, loc);
+    }
+}
+
+static inline void ember_field_check_write(uint32_t* word, const char* what, ember_loc loc) {
+    if (*word != 0) {
+        EMBER_FIELD_CONFLICT(true, word, what, loc);
+    }
+}
+
+/* Two neighbouring access words in one read: a final class's whole-object
+ * check reads its packed words this way (`[EXC-19]`). */
+static inline uint64_t ember_load_u64(const void* p) {
+    uint64_t v;
+    memcpy(&v, p, sizeof v);
+    return v;
 }
 EMBER_NORETURN void ember_panic_unwrap(const char* what, ember_loc loc);
 /* `[CELL-5]` — `RefCell` contention panics with the conflicting borrow's

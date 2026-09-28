@@ -817,15 +817,15 @@ nested generic/compiler-known types, including generic-owner return
 provenance. All three were compiler defects against clear rules, are fixed with
 adversarial executable cases, and required no specification change.
 
-**Open deviations — three, in `docs/DEVIATIONS.md`.** (D2, D5, and D6 are closed:
-unbuilt machinery is a gap, not a deviation — see below.)
-
-| # | What | Status |
-|---|---|---|
-| **D1** | `[RNG-5a1]`'s generated operator impls are a type-checker rule instead; no impls exist | open; not observable until operator interfaces exist. ADR-016 |
-| **D2** | `[CLO-6]` `owned f: fn(A) -> R` | **closed 2026-09-14.** A `CallableOnce` indirect call moves its callee; reuse is E3040 |
-| **D3** | `extern class` parses and is then refused by name (the C++ importer is Phase 7) | open. ERR-037 |
-| **D4** | `E9012` is registered and never emitted | open |
+**Open deviation, in `docs/DEVIATIONS.md`:** D4 (`E9012` registered and never
+emitted; the current spec retires it, but `rule_index.py` still reads the 0.8.5
+`ember-spec.md`, which names it — the owner was asked whether to change that check and
+drop the code). **Features waiting on another feature**, in `docs/NOT-IMPLEMENTED.md`:
+N1 (`[RNG-5a1]` operator impls, needs the operator interfaces), N2 (`extern class`, needs
+the Phase 7 C++ importer), N3 (`once fn` callbacks, needs `once fn` parameter types), N4
+(calls in vectorisable form, need `[CG-C-3]`'s inline header), N5 (float running totals in
+vectorisable form, need `@fastmath`/`@parallel`). N1–N3 were D1, D3 and D6 until
+2026-09-27; the owner ruled they are not deviations. D7 was opened and closed that day.
 
 **`[CLO-3]` / ADR-018 is CLOSED, not open.** The owner ruled that the rule
 stands and the compiler catches up — *"Do not change the Ember spec to
@@ -11088,11 +11088,96 @@ first**; the rest of §0.355 is the running narrative behind it.
     semantic ambiguity and no ODR or new hardening.
 
   The five preceding CI runs, through `f529f8b`, finished green.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_40.md`
-  (ODR-084), pinned in `docs/spec-source/development-target.json`. The
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_41.md`
+  (ODR-085), pinned in `docs/spec-source/development-target.json`. The
   spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through
-  `parts-h40/` are frozen.
-* **Next numbers:** ODR-085, D-374, ADR-069.
+  `parts-h41/` are frozen.
+* **Next numbers:** ODR-087, D-377, ADR-071, ERR-056.
+* **Speed audit: the six agreed fixes are done (2026-09-27, uncommitted;
+  ADR-070, D-375, deviation D7).** The owner said "do all fixes check them and
+  report the final result". Each fix passed the quick check, the workspace
+  suite (305 tests) and the gates, and was measured against hand-written C/C++.
+  * **Benchmark set.** It lives in the session scratchpad: `bench/`, the p-set
+    with `cref/` twins, and `audit/`, a00–a12 with `.c`/`.cpp` twins. The
+    harnesses are `compare_c.py` and `compare.py`, and they use Ember's own C
+    flags.
+  * **What changed.**
+    1. Inline reference counts, with a `_plain` pair for classes that are not
+       `@sync`.
+    2. MSVC 64-bit `+ - *` use `_add/_sub/_mul_overflow_i64` (VS 2022 17.3+).
+    3. The interface lookup is inline over the object's own entries, and a
+       class's list carries its bases' entries. D-375 was fixed on the way:
+       an interface call ran the base method, not the override.
+    4. Push is inline, and a scalar or handle is pushed by value
+       (`ember_vec_push_i64` etc.).
+    5. `[OPT-2]` loop versioning (`loop_version.rs`). The unchecked copy reads
+       each list header once.
+    6. Plain `malloc`/`realloc` for blocks malloc already aligns, and
+       `reserve(n)` holds exactly `n`.
+  * **Final ratios, Ember to C/C++ (MSVC | clang).**
+    * `mut self` calls p3/p7: 9/5 → 3.0/3.2.
+    * Push loops p2/p4: 2.5–3.9 → 0.73–1.02 | 1.0–1.1.
+    * Interface calls a07: 2.0 → 1.67 | 1.62.
+    * Int maths a01: 1.82 → 1.21 | 1.10.
+    * Function values a08: 2.62 → 1.75 | 0.93.
+    * Generics a09: 2.26 → 1.45 | 1.00.
+    * SoA loop a11: 1.21/2.35 → 0.84 | 1.02.
+    * 1M objects p5/p6: 1.1–1.14.
+    * Sum loop p1: 2.5 | 3.3. This is the per-element overflow check that
+      `[SIMD-7]` keeps on a 64-bit reduction.
+    * Memory: a07 76 → 61 MB (C++ 44); a03 204 → 154 MB (C++ 171); p5
+      126 → 110 MB (C++ 93).
+  * **MSVC loops (2026-09-28, owner: "just fix that msvc issue"; ADR-070
+    item 7, uncommitted).** MSVC vectorised no Ember loop: it takes only a C
+    `for` loop.
+    * A counted loop whose body has no `if` is a C `for` loop (`for_loops`,
+      `emit_for_loop`); a loop whose body branches keeps labels, and MSVC does
+      not vectorise it (clang does).
+    * Each `for` loop declares inside itself the temporaries only it uses
+      (`loop_scoped_locals`); MSVC refused loops that set a function-wide one.
+    * A grouped `+`/`-` finds overflow with no comparison (`wrapping_form`
+      returns a `u64` whose top bit is the overflow); the flag ORs them and
+      its top bit is tested after the loop. Groups are 32 iterations with one
+      check, 16 with several (`group_size`).
+    * A group reports in one of four ways (`group_overflow_checks`): one
+      check panics at the group's end; several checks re-run, a list both
+      read and written having the group's elements copied aside first (one
+      run per group, owner 2026-09-28); detect then commit (two runs per
+      group) only when such a list is not accessed on every iteration; bits
+      only where detect cannot place its loads either.
+    * With several checks MSVC and clang want the flag built differently,
+      so the C says which (owner, 2026-09-28): `Const::OverflowShift`,
+      written `EMBER_OVERFLOW_SHIFT`, 0 for MSVC and 63 for clang and GCC in
+      the runtime header.
+    * Measured (100,000 numbers, 20,000 rounds), checks on: one check, MSVC
+      and clang the same, at C's speed; two checks on a list read and
+      written (one run per group), clang 1.6 times C, MSVC 16% slower than
+      clang (was 34%); two
+      checks, list only written, clang 1.5 times C, MSVC 10% slower than
+      clang. Checks off: C's speed on both. MSVC does not vectorise the
+      hand-written C (reason 1203), so Ember beats it.
+    * Checked: quick check, suite on MSVC (305) and clang (304, the failure a
+      runtime self-test that cannot link on Windows clang), gates, clang
+      `-Werror` on every SIMD-7/OPT-2 test. D-376 found, older than this.
+  * **Open, not started.**
+    * D-376: 67 test programs' C warns under clang `-Wall -Wextra`.
+    * Two checks on a list read and written run each group twice (1.6 times
+      C on clang). A single run would need the group's 16 elements saved
+      before it and restored for the checked re-run; the owner's call.
+    * The 24-byte header is fixed by `[OBJ-1]`, so shrinking it is the
+      owner's ODR.
+    * `iter_mut` loops compile to an iterator state machine, and C compilers
+      do not vectorise them (a05 is 1.7× on MSVC).
+    * MSVC does not inline a function value's body (a08).
+    * `mut self` calls p3/p7 are still about 3×.
+    * clang recursion a10 is 1.7×.
+    * `[OPT-2]` and `[SIMD-7]` are complete (the owner: "fix the slow loop
+      half assed implementation"); ADR-070 item 5. Open: ODR-086, whether a
+      running total the widths cannot prove safe must be grouped.
+* **Next job (owner, 2026-09-27): a speed audit before new features.**
+  `docs/AUTOPILOT.md` §2 has his words and §4 the rule. Every speed claim is
+  measured against a hand-written C program doing the same work, or C++ for
+  classes and data-oriented code, and the numbers may go in the README.
 * **The owner's simplification pass** (2026-09-26, attended; the proposal is
   `docs/proposals/Ember_Simplification_Pass_Revised.md`). Adopted and done:
   Part I and SP-014, SP-017 (ODR-049 to ODR-064, one per item; SP-025 needed
@@ -11292,12 +11377,95 @@ first**; the rest of §0.355 is the running narrative behind it.
   version incorrectly pass; restoring the fix gives E0006. H38 already
   decides the behavior, so no ODR or new hardening is needed. CI run #419 for
   `7e2f8d16b1895e4c63cba3da531d7ca1bad2306f` passed all five jobs.
-* **Workflow update (owner, 2026-09-27):** delegation by complexity is the
-  default for separable implementation, tests, documentation, and routine
-  fixes, as well as runs/checks and triage. The lead owns requirements,
-  architecture and design, review, integration, and final verification.
-  See AUTOPILOT and AGENT-WORKFLOW for the persisted rules. Commit cadence
-  remains about five features.
+* **Agent rules (owner, 2026-09-27):** the owner did not make the
+  "delegation by default" change an earlier session recorded here, in
+  `docs/AUTOPILOT.md` and in `docs/AGENT-WORKFLOW.md`; it was reverted. Any
+  multi-agent work needs the owner's approval of the plan, with its
+  worst-case agent count, before launch; unattended sessions work solo.
+  Commit cadence remains about five features.
+* **Exclusivity speed (owner, 2026-09-27, attended). Built into the real
+  compiler (ODR-085, Hardened_41, ADR-069; D-374 found and fixed on the way),
+  uncommitted; the record of how it was reached follows.** The
+  owner's rule, now in `docs/AUTOPILOT.md` §4: generated code comes as close
+  to C speed as possible. He asked for the `[EXC-19]` counters to be measured
+  against a Swift-style per-thread list. The measurement used a scratch copy of
+  the compiler, never `main`, and eight benchmarks, each built with no checks,
+  with counters and with the list. Findings:
+  * The counters were faster in every benchmark but one: a `mut self` call on
+    an object with six list fields.
+  * The list saves memory: each counter costs 8 bytes, because a 4-byte word
+    in front of an 8-aligned field brings 4 bytes of padding.
+  * The two designs gave identical verdicts on the 61 exclusivity run tests.
+
+  Three ideas came out of it:
+  * **Idea 1, built and measured in the scratch copy.** A short access that
+    nothing of the program can run during checks the word without adding to
+    or subtracting from it. This covers reading an element, `len`, and a push,
+    which runs no Ember code. Nothing could observe the count, so behaviour is
+    identical, and it needs no spec change.
+    * Rule: while the access is active, no Drop runs, no call runs except
+      quiet builtins, and no other access begins.
+    * Lowering: the analysis places a begin and its end back to back, and a
+      codegen peephole emits `ember_field_check_read/write`.
+    * Tests: all annotated tests pass with it.
+    * Speed: reads, pushes and held views went from +4–51% over no checks to
+      +0–1% on MSVC, and to +0–4% on clang. The million-object walk went from
+      +37% to +23%.
+    * The remaining +23% is cache, not object size. A build that keeps the
+      words but runs no checks runs at no-check speed. The check's load of a
+      word 16 bytes before the field often needs one more cache line.
+    * `mut self` calls are unchanged by idea 1.
+  * **Idea 1b, built and measured in the scratch copy.** A quiet function
+    calls only quiet builtins, drops only what frees memory alone, touches no
+    other object's field that has a word, and returns no view. The
+    whole-object access its caller holds around a direct call to one becomes
+    a check before the call. For a final class, that check ORs the class's
+    words directly.
+    * Tests: all annotated tests pass.
+    * Speed: `mut self` calls went from +11% to +1% with one list field and
+      from +181% to +1% with six on MSVC. On clang they went from +92% to +2%
+      and from +342% to +27%; the six separate words cost that 27%.
+    * Memory is unchanged by ideas 1 and 1b: 8 bytes per list field. A
+      million objects take 126 MB against 142 MB with two list fields, and
+      225 MB against 275 MB with six.
+  * **Then, at the owner's request (scratch copy):**
+    * **Packing (`EMBER_PACK=1`).** Each class level's words sit side by
+      side, with a zero pad word when their count is odd. This needs an ODR,
+      because VIII.1 says each word is "in front of the field". A million
+      objects take 126 MB with two list fields, the same as no counters, and
+      242 MB with six (275 MB today). Clang's six-field `mut self` check fell
+      from +28% to +10%.
+    * **A per-thread gate, rejected.** The checks read a thread-local held
+      count first. Windows TLS reads are not hoisted by either compiler: clang
+      tight loops got 52% slower.
+    * **Level 3 (`EMBER_QUICK=3`, no ODR).**
+      * Quiet functions are transitive: a greatest fixpoint.
+      * `remove_never_firing_checks` drops every check that nothing held
+        anywhere in the program could fail. Holds are keyed per field (the
+        declaring class and the name) or per object family (the root of the
+        base chain).
+      * Any dyn or interface use turns the removal off for that program.
+      * Tests: all annotated tests pass.
+      * Speed, with packing: every benchmark is within 0–4% of no checks on
+        MSVC and clang. The million-object walks are at about 0%; they were
+        +23–35%. A `mut self` method that calls a function costs 0%; it was
+        +181% on MSVC and +339% on clang.
+    * **Found while building level 3.** In `borrows.rs`, `place_ty` has no
+      `(Field, Class)` arm and returns the class type for `h.field`. Check its
+      consumers on main, e.g. `is_shared_owner` for a `Shared` field inside a
+      class.
+  * **Idea 2, proposed and not approved.** One-byte counters, four of them in
+    the header's `access` word, which `[OBJ-1]`'s table says class objects
+    leave unused. A `mut self` call then checks and marks all four at once,
+    and objects with up to four such fields pay no extra memory. It needs an
+    ODR, because VIII.1 and `[EXC-19]` fix the layout. Caveat found while
+    measuring idea 1: on objects bigger than a cache line, a check would
+    reach the header as well as the field. Measure it on walks before
+    recommending it.
+  * **Later.** Hoist checks out of loops, as bounds checks are hoisted.
+
+  Review-fix work (F1–F5, B1, D1, the A1 question) stays uncommitted in the
+  working tree meanwhile.
 * **Callback batch complete:** D-364/D-365 use static native-function
   descriptors and C adapters (ADR-064). Native calls preserve borrowed-record
   identity; explicit conversion selects a C adapter that attaches on entry and
@@ -12027,7 +12195,7 @@ in `docs/AUTOPILOT.md` §2):
 2. The other open defects in `docs/DEFECTS.md`: D-270, D-273, D-218 (needs `[EXC-18]`), D-220,
    D-202 (needs per-field access words, M2), D-201 (`String` and `Array[u8]` are one type), D-198.
 3. The coroutine transform, generator expressions and adapters with `[CTL-3b]` fusion.
-4. Owned callables: `DEVIATIONS.md` D6 (`once fn` parameter types) and `[CLO-3]` owned callable
+4. Owned callables: `NOT-IMPLEMENTED.md` N3 (`once fn` parameter types) and `[CLO-3]` owned callable
    values.
 5. Declare `Display`, `Debug` and `Copy` in std (needs `Formatter`, `FmtError`, user-written
    `Display`); the table answers them today.

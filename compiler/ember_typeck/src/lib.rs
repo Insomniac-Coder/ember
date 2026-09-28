@@ -8378,6 +8378,7 @@ impl<'a> Checker<'a> {
             );
             return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
         }
+        self.reject_repointing_self(&first, args[0].value.span);
         let first = self.pass_receiver(first, Mode::Mut, args[0].value.span);
 
         let result = match operation {
@@ -8431,6 +8432,7 @@ impl<'a> Checker<'a> {
                     );
                     return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
                 }
+                self.reject_repointing_self(&second, args[1].value.span);
                 let second = self.pass_receiver(second, Mode::Mut, args[1].value.span);
                 Expr {
                     ty: self.common.void,
@@ -14189,6 +14191,24 @@ impl<'a> Checker<'a> {
                         },
                         span: stmt.span,
                     }));
+                    return;
+                }
+
+                // D1 — an element of an array inside a foreign static is C
+                // storage too. Writing it went to a copy of the static and was
+                // lost; until it is written in place it is refused.
+                if let Some(binding) = self.foreign_static_element_assignment_root(target) {
+                    if !binding.is_mut {
+                        self.error(codes::E2140, target.span, "a foreign static without `mut` cannot be assigned");
+                    } else if !self.in_unsafe {
+                        self.error(codes::E5002, target.span, "writing a foreign static requires `unsafe`");
+                    } else {
+                        self.error(
+                            codes::E0900,
+                            target.span,
+                            "writing an element of an array inside a foreign static is not implemented yet",
+                        );
+                    }
                     return;
                 }
 
@@ -24881,6 +24901,28 @@ impl<'a> Checker<'a> {
         None
     }
 
+    /// A write to an element of an array inside a foreign static
+    /// (`table.values[i] = v`, `table.rows[i].x = v`): the static, when the
+    /// target's path reaches one through an index.
+    fn foreign_static_element_assignment_root(&self, target: &ast::Expr) -> Option<ForeignStatic> {
+        let mut current = target;
+        let mut indexed = false;
+        loop {
+            match &current.kind {
+                ast::ExprKind::Field { base, .. } => current = base,
+                ast::ExprKind::IndexOrInstantiate { base, .. } => {
+                    indexed = true;
+                    current = base;
+                }
+                _ => break,
+            }
+            if indexed && let Some(binding) = self.foreign_static_assignment_target(current) {
+                return Some(binding);
+            }
+        }
+        None
+    }
+
     /// A checked field expression supplies both the names and their order;
     /// its innermost base must still be the foreign object we resolved.
     fn foreign_static_field_path(&self, field: &Expr, symbol: Symbol) -> Option<Symbol> {
@@ -26089,6 +26131,30 @@ impl<'a> Checker<'a> {
                 _ => return false,
             }
         }
+    }
+
+    /// `[CLS-7]` (ODR-072) — `self`'s handle, the whole of it, handed where it
+    /// could be re-pointed: a `mut` handle parameter, or `mem.swap`,
+    /// `mem.replace` or `mem.take`. Its fields are ordinary places (F5).
+    fn reject_repointing_self(&mut self, place: &Expr, span: Span) -> bool {
+        let local = match &place.kind {
+            ExprKind::Local(local) => *local,
+            ExprKind::Deref(inner) => match inner.kind {
+                ExprKind::Local(local) => local,
+                _ => return false,
+            },
+            _ => return false,
+        };
+        if !self.class_handle_self(local) {
+            return false;
+        }
+        self.sink.emit(
+            Diagnostic::error(codes::E2103, span, "cannot re-point `self` in a class method")
+                .primary_label("this could make `self` name another object")
+                .help("pass the object's fields, or take the handle as a `mut` parameter of a function [FN-9]")
+                .note("a `mut self` method holds every field of its object until it returns [EXC-15]"),
+        );
+        true
     }
 
     /// Whether `local` is a class method's `self`: a class handle, taken by
@@ -33041,6 +33107,7 @@ impl<'a> Checker<'a> {
         if let Some(interface) = class_interface
             && let Some(implementations) = self.dyn_concrete_adapter(source.ty, &[interface])
         {
+            self.reject_repointing_self(&source, arg.span);
             self.reject_readonly_write_in_mut_argument(&source, arg.span);
             let through_shared_ref = self.reject_write_through_shared_ref(&source, arg.span);
             if !through_shared_ref {
@@ -33074,6 +33141,7 @@ impl<'a> Checker<'a> {
             };
         }
         let place = self.check_expr(arg, param_ty);
+        self.reject_repointing_self(&place, arg.span);
         // `[MOD-7]` — "passing `h.value` to a `mut` parameter or `mut self`
         // method" is a write.
         self.reject_readonly_write_in_mut_argument(&place, arg.span);

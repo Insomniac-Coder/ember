@@ -104,6 +104,7 @@ ERR-008) is worth being able to read again.
 | ERR-051 | H10 `[ARN-10]` with `[PAN-1]` and `Default.default() -> Self` | **DECIDED by the owner 2026-09-13.** 0.9.6_Hardened_1 clarifies that v1 `Default` has no recoverable failure path and panic terminates through `abort()`, so no post-panic Arena state is observable and no unwinding/rollback is required. Rollback applies only when a separate API explicitly defines both recoverable failure and transactional rollback. ODR-010 closed; H10 unchanged |
 | ERR-052 | H1 `[ARN-5]` and the Part XII §1 library table | **DECIDED.** ODR-011/ADR-031/HC-096-02 define the complete fixed-capacity Arena-backed collection contract in 0.9.6_Hardened_2; no semantics were inferred by the implementation |
 | ERR-053 | H2 `Hash.hash(self, mut h: Hasher)` with `[ARN-5d]` / `[TST-24]` | **DECIDED by the owner 2026-09-13.** H3 defines the public `Hash`/`Hasher` protocol, `DefaultHasher`, Eq/hash coherence, read-only resident keys, and algorithm-flexibility boundary. ODR-012 closed; H2 unchanged |
+| ERR-055 | H41 `[SIMD-5]` with `[SIMD-7]`'s reduction sentence | **OPEN** — owner question ODR-086: whether a running total the widths cannot prove safe leaves its loop in vectorisable form |
 | ERR-054 | H3 `[HASH-1]` with `[TYP-22]` | **DECIDED by the owner 2026-09-13.** H4 uses static `fn hash[H: Hasher](self, mut h: H)`, confirms `DefaultHasher implements Hasher`, and introduces no mandatory dynamic dispatch. ODR-013 closed; H3 unchanged |
 
 ---
@@ -2413,3 +2414,24 @@ intentional `dyn Hasher` API must specify its representation separately. H4
 normalizes transport angle brackets around the ordinary parameter list to
 Ember's existing parenthesized syntax. ADR-033 and HC-096-04 preserve the
 decision. H3 remains frozen.
+
+---
+
+## ERR-055 — does an unprovable running total leave its loop in vectorisable form?
+
+**Status: open. Owner question ODR-086.**
+
+**Where.** `[SIMD-5]`: a loop is in vectorisable form when "every
+`RuntimeCheck(Arithmetic)` is removed, or is one `[SIMD-7]` permits grouping (grouping
+is then required)". `[SIMD-7]`: grouping is permitted in any loop without `Sync`, `Io`,
+`FFI`, `Unsafe` and `Block`; "an integer reduction (`total += xs[i]`) is vectorised under
+checked arithmetic only when no partial sum can overflow in any grouping".
+
+**The two readings.** Either every overflow check is one `[SIMD-7]` permits grouping, a
+running total's included (the loop is in vectorisable form and grouping is required), or
+a running total without the width proof is not (the loop is not, and its checks stay one
+per operation). ODR-086 has the measurements.
+
+**Meanwhile.** Neither moves: the compiler keeps checking such a total one operation at a
+time, as it did before `[SIMD-7]` was built.
+

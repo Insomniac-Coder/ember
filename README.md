@@ -22,8 +22,8 @@ pages, and the records that keep them consistent.
 
 | | |
 |---|---|
-| Language version being implemented | **0.9.9**, specification `Ember_v0.9.9_Hardened_40` |
-| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.9_Hardened_40.md`](docs/spec-source/Ember_v0.9.9_Hardened_40.md) |
+| Language version being implemented | **0.9.9**, specification `Ember_v0.9.9_Hardened_41` |
+| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.9_Hardened_41.md`](docs/spec-source/Ember_v0.9.9_Hardened_41.md) |
 | Specification sources | [`tasks/spec-0.9.9/parts/`](tasks/spec-0.9.9/parts/), one file per Part; each `Hardened_N` is their concatenation and is never edited afterwards |
 | Last adopted normative specification | [`docs/spec-source/ember-spec.md`](docs/spec-source/ember-spec.md), 0.8.5_Hardened_1 (0.9.9 is adopted when its gates pass and the owner installs it) |
 | Tests | Rust unit and integration suites; Ember run and conformance suites in [`tests/`](tests/) |
@@ -82,6 +82,65 @@ Not built yet (rejected with `E0900`): most of effects and compile-time evaluati
 derives (`Default`, `Ord`, `Serialize`), the FFI beyond the basics, threads and jobs, SIMD and
 ECS facilities, C++ interop, the interpreter, and hot reload. The open defects are listed in
 [`docs/DEFECTS.md`](docs/DEFECTS.md).
+
+## Benchmarks
+
+Each program below was written twice, in Ember and by hand in C (C++ for the programs that use
+objects, strings, maps or sorting), built by the same C compiler with the same optimisation flags,
+and timed on one Windows x64 machine on 2026-09-28, once with MSVC and once with clang. Overflow
+checks are on unless a row says they are off (`@overflow(wrap)`). "Same speed" means within 5%.
+
+The loops over lists are compared with the C built by clang in both columns. On the hand-written C
+of those loops MSVC either skips most of the rounds or does not vectorise the loop at all, which
+would make Ember look faster than it is.
+
+### As fast as C or faster
+
+| What the program does | With MSVC | With clang |
+|---|---|---|
+| Map of numbers: 1 million inserts, then 5 million lookups | 2.1 times faster | 2.4 times faster |
+| Build a long string (16 million appends), then count one letter in it | 32% faster | 24% faster |
+| Copy a 1,000-number list into another, one item at a time, 100,000 times | 26% faster | 8% faster |
+| Two lists of 100,000 decimal numbers, add one into the other 5,000 times | 10% faster | same speed |
+| Start and stop an empty program | same speed | same speed |
+| Decimal arithmetic: the Mandelbrot set, 1,000 × 1,000 points | same speed | same speed |
+| 1 million objects with a name and a list, each read 40 times | same speed | same speed |
+| Clear and refill a list while 1 or 4 other lists are being viewed | same speed | same speed |
+| Add up a list of 1,000 numbers, 300,000 times, overflow checks off | same speed | same speed |
+| Add one list into another, 2,000 rounds, overflow checks on | same speed | same speed |
+| The same, overflow checks off | same speed | same speed |
+| Change every number using a second list, 20,000 rounds, overflow checks off | same speed | same speed |
+| Change every number twice (reading back, or into a separate list), overflow checks off | same speed | same speed |
+| Add two lists plus the round number into a third, overflow checks off | same speed | same speed |
+
+### Close to C: up to 10% slower with one of the compilers
+
+| What the program does | With MSVC | With clang |
+|---|---|---|
+| Clear and refill a list while 16 other lists are being viewed | same speed | 10% slower |
+| Enum with `match`: area of 1 million shapes, 100 times | 12% faster | 8% slower |
+| Integer arithmetic: 50 million rounds of multiply, divide and remainder | same speed | 7% slower |
+| Change every number using a second list, 20,000 rounds, overflow checks on | 7% slower | same speed |
+
+### More than 10% slower than C with at least one compiler
+
+> Development is in progress, and attempts will be made to speed the language up in these areas.
+
+| What the program does | With MSVC | With clang |
+|---|---|---|
+| Add up a list of 1,000 numbers, 300,000 times, overflow checks on | 2.5 times slower | 3.4 times slower |
+| Call a method that changes an object taken from a list, and the method calls another function, 100 million times | 3.0 times slower | 3.3 times slower |
+| Call a method that changes an object taken from a list, 100 million times (object holding 1 list) | 3.1 times slower | 3.3 times slower |
+| The same, object holding 6 lists | 3.1 times slower | 3.2 times slower |
+| Change every number twice, reading back what it wrote, overflow checks on | 1.9 times slower | 1.6 times slower |
+| Call a function passed as a value, 200 million times | 1.7 times slower | 7% faster |
+| Move 100,000 particles 2,000 times, changing each in place | 1.7 times slower | 6% slower |
+| Change every number twice, writing to a separate list, overflow checks on | 1.7 times slower | 1.6 times slower |
+| Recursion: Fibonacci of 38, the slow way | 5% slower | 1.7 times slower |
+| Calls through an interface: area of 1 million shapes, 20 times | 1.7 times slower | 1.6 times slower |
+| A generic function ("larger of two"), 200 million times | 46% slower | same speed |
+| Sort 5 million numbers | 16% slower | 6% faster |
+| 1 million objects holding 6 lists, each read 40 times | 12% slower | 9% slower |
 
 ## Examples
 

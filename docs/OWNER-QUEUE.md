@@ -63,6 +63,8 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-082 | **CLOSED** — `@ffi(immutable)` on a foreign static asserts a `const` C object and emits a matching declaration | Language / C interop / foreign statics | — | **No** — delegated, 2026-09-27, Hardened_38 |
 | ODR-083 | **CLOSED** — a static free-function export's `creator` thread is anchored to successful module initialization; repeated initialization does not transfer the contract, and reinitialization after shutdown establishes a new creator | Language / C interop / export thread contracts | — | **No** — delegated, 2026-09-27, Hardened_39 |
 | ODR-084 | **CLOSED** — `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts | Language / module attributes / arithmetic | — | **No** — delegated, 2026-09-27, Hardened_40 |
+| ODR-086 | **OPEN** — is a loop with a running total the widths cannot prove safe in vectorisable form? | Language / cost / vectorisation | **P2** | **Yes** |
+| ODR-085 | **CLOSED** — an access that is not held is checked but not counted; a `mut self` call to a quiet function is only checked; a check nothing held anywhere could fail may be removed; each class's access words are packed before its fields | Language / exclusivity / object layout / cost | — | **Yes** — the owner approved, 2026-09-27, Hardened_41 |
 | ODR-071 | **CLOSED** — the type `()` is `void`; a tuple type has two or more elements (D-355) | Language / types | — | **No** — delegated, 2026-09-26 |
 | ODR-070 | **CLOSED** — every compiler accepts nesting 256 levels deep and states its own limit (this one 1,024); passing it is `E0112`, never a crash (D-331) | Language / grammar / implementation limits | — | **No** — delegated, 2026-09-26 |
 | ODR-069 | **CLOSED** — one storage rule for every owning container: `Map`, `Set` and `Array` may hold `static` views, checked at each store wherever it happens; a callee's stores are its callers' to answer for (SP-013) | Language / regions / collections | — | **Yes** — owner, 2026-09-26 |
@@ -238,6 +240,112 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-086 — running totals and vectorisable form — **OPEN**
+
+    ID:        ODR-086
+    Status:    OPEN — raised 2026-09-27 while building [SIMD-7]
+    Category:  LANGUAGE / COST / VECTORISATION
+    Priority:  P2
+    Location:  Ember_v0.9.9_Hardened_41.md [SIMD-5], [SIMD-7]
+
+    Question:  Is a loop whose overflow checks include a running total
+               (`total = total + x`) that the element and total widths cannot
+               prove safe in vectorisable form, so that its checks MUST be
+               grouped?
+
+    Blocks implementation:            NO — both readings are built and measured
+    Requires owner semantic decision:  YES
+
+**The two sentences.** `[SIMD-5]` puts a loop in vectorisable form when "every
+`RuntimeCheck(Arithmetic)` is removed, or is one `[SIMD-7]` permits grouping (grouping
+is then required)". `[SIMD-7]` permits grouping in any loop without `Sync`, `Io`,
+`FFI`, `Unsafe` and `Block`, and then says an integer reduction "is vectorised under
+checked arithmetic only when no partial sum can overflow in any grouping".
+
+**Reading A.** Grouping is permitted for every overflow check, a running total's
+included, so such a loop is in vectorisable form and its checks MUST be grouped. A
+running total is one chain; grouping it cannot let it vectorise. Measured on the sum
+loop p1 (a 64-bit total): 2.5× C becomes 3.3× on MSVC and 3.8× on clang.
+
+**Reading B.** A running total is vectorised under checked arithmetic only with the
+width proof; without it, its check is not one `[SIMD-7]` permits grouping, so the loop
+is not in vectorisable form and its checks stay one per operation. p1 stays at 2.5×.
+
+**What is built meanwhile.** Nothing moves until the owner rules, so the compiler keeps
+what it did before: a running total the widths cannot prove safe is checked one
+operation at a time. A running total the widths do prove safe (at most 32-bit elements
+into a 64-bit total, at most 2³¹ iterations, the total starting within 2⁶² − 1 of zero)
+gets a copy with no check. Loops whose checks are independent from one iteration to the
+next are grouped. Both readings agree on those.
+
+## ODR-085 — what the dynamic exclusivity checks cost, and packed access words — **CLOSED**
+
+    ID:        ODR-085
+    Status:    CLOSED — the owner approved the measured design on 2026-09-27
+               ("yes bring all three in"); incorporated in 0.9.9_Hardened_41
+    Category:  LANGUAGE / EXCLUSIVITY / OBJECT LAYOUT / COST
+    Priority:  —
+    Location:  Ember_v0.9.9_Hardened_40.md [EXC-3], [EXC-19], [OBJ-1] (VIII.1),
+               [COST-3], I.4
+
+    Question:  How cheap can the dynamic exclusivity checks of `[EXC-19]` be,
+               and where do the access words sit?
+
+    Blocks implementation:            NO — a cost and layout ruling
+    Requires owner semantic decision:  YES — the owner asked for C speed
+
+**The measurement that raised it.** On 2026-09-27 the owner asked for the per-field access
+words to be measured against a Swift-style per-thread list of live accesses. Each design was
+built three ways (no checks, words, list) and run on eight programs. The words won every
+measurement but one, but they still cost up to +181% over no checks:
+
+* a `mut self` call on an object with six list fields: +181%;
+* a read loop over a list field: +52%;
+* a walk over a million objects: +37%.
+
+Each word also cost 8 bytes of memory, because a 4-byte word placed in front of an 8-aligned
+field brings 4 bytes of padding. The owner then set the rule that generated code comes as close
+to C speed as possible (`docs/AUTOPILOT.md` §4).
+
+**Options and costs.**
+
+* **The Swift-style list.** No memory in objects, but every check scans the thread's live
+  accesses. It lost 6 of 8 measurements even with the refinements below. REJECTED.
+* **One-byte counters in the header's unused `access` word.** No memory for up to four fields.
+  But a check on a large object would then read the object's first cache line as well as the
+  field's. NOT PURSUED.
+* **A per-thread count of held accesses as a gate before the word.** Windows thread-local reads
+  are not hoisted by either compiler, so clang's tight loops became 52% slower. REJECTED.
+* **The ruling's four parts, measured together:** every benchmark within 0–4% of no checks, on
+  MSVC and on clang. The million-object walks dropped from +23–35% to about 0%. The `mut self`
+  calls dropped from as much as +339% to 0%. Memory for a million objects with six list fields
+  fell from 275 MB to 242 MB (225 MB without words). All annotated tests pass.
+
+**Ruling.**
+
+* An access is **held** when code other than the access itself runs between its beginning and
+  its end.
+* An access that is not held — no code of the program runs while it is active and no other
+  access begins inside it — is checked but not counted: a read checks that no write is active, a
+  write that no access is.
+* The whole-object write of a `mut self` call to a **quiet** function is likewise only checked.
+  A quiet function begins no access, drops nothing whose drop runs code of the program, and calls
+  only built-ins that call no code back and other quiet functions.
+* `[EXC-3]` gains a second way to remove a check. When no access that could make it fail is held
+  anywhere in the program, the check may be removed:
+  * a read needs no held write to its field, or to a whole object of its class family;
+  * a write needs no held access to either.
+
+  The whole program must be in view, so a program that calls through `dyn` or an interface keeps
+  these checks. `[EXC-3a]` records each removal as `no_conflicting_hold`.
+* The access words of each class's own fields stand side by side before those fields, with a zero
+  word after an odd count. A base class's layout stays a prefix of every derived class's.
+
+Behaviour is unchanged: every program that panicked with an exclusivity violation still panics,
+with the same message. Implementation: ADR-069.
 
 ---
 

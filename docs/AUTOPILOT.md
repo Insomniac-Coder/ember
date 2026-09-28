@@ -20,6 +20,13 @@ next session needs to know goes into `docs/HANDOFF.md`, in the start-here subsec
 Implement Ember 0.9.9 in the compiler until it is done, or until the owner says stop. Do not wait
 for a go-ahead between tasks while the owner is asleep; keep going.
 
+**Next job (the owner, 2026-09-27): a speed audit before any new feature.** His words: "as far the
+further development of this language is concerned, rather than building more features first I need
+you to go through existing implementation and find out places that could be slowing things down
+and improve those areas. That is going to be our next job". Go through the compiler's generated
+code, the runtime and the standard library for what makes Ember programs slower than the same
+program in C, and fix it, measured (§4). This comes before the priority paragraph below.
+
 **Current priority (owner, 2026-09-27): finish Phases 1–3 and their dependencies first.**
 Core language, ownership/borrowing, and classes/reference counting are the backbone.
 The static-library batch is verified; use the current rule-and-evidence checklist
@@ -56,7 +63,7 @@ Historical order (2026-09-25):
 2. The other open defects in `docs/DEFECTS.md`: D-270, D-273, D-218 (needs `[EXC-18]`), D-220,
    D-202 (needs per-field access words, M2), D-201 (`String` and `Array[u8]` are one type), D-198.
 3. The coroutine transform, generator expressions and adapters with `[CTL-3b]` fusion.
-4. Owned callables: `DEVIATIONS.md` D6 (`once fn` parameter types) and `[CLO-3]` owned callable
+4. Owned callables: `NOT-IMPLEMENTED.md` N3 (`once fn` parameter types) and `[CLO-3]` owned callable
    values.
 5. Declare `Display`, `Debug` and `Copy` in std (needs `Formatter`, `FmtError`, user-written
    `Display`); the table answers them today.
@@ -81,20 +88,26 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   looks wrong, write a new ODR marked OPEN with the question, and move on to other work.
 - **When something truly needs the owner** (reversing his ruling, anything outside 0.9.9,
   anything touching RageV), do not block: record it as an OPEN ODR and continue with the next task.
-- **Delegate implementation by default when work splits cleanly** (owner
-  update, 2026-09-27). Root uses Astra for architecture, ODRs, review, and
-  subagent guidance; choose Sol or Luna dynamically by task complexity. Sol
-  handles substantive compiler behavior and deeper debugging; Luna handles
-  bounded docs, probes, routine runs, and small, well-specified mechanical code
-  changes. Reassess and escalate if scope grows. Delegate code,
-  tests, documentation, fixes, runs, checks, and failure triage by complexity.
-  Keep one owner per file and run. Preserve the five-feature commit cadence and
-  the current Phase 1–3 priority above. Continue autonomously; ask the owner only
-  for authority or product decisions not already delegated. See
-  `docs/AGENT-WORKFLOW.md` for the full assignment rules.
+- **No subagents or workflows while unattended.** The owner's words: "no workflows, you go solo".
+  `docs/AGENT-WORKFLOW.md` holds his rules for multi-agent work, which apply only when he is
+  present and has approved the plan.
 
 ## 4. Rules of this codebase
 
+- **Generated code runs as close to C speed as possible.** The owner, 2026-09-27: "since we are
+  building a language that is supposed to run as fast as C, writes like python but has memory
+  safety of rust you also need to make sure that the code you come up with comes as close as
+  possible to C speeds wherever possible". Price every check or piece of machinery the compiler or
+  runtime adds against the same program with it removed. Keep the safety at the lowest run-time
+  cost, and measure before claiming a speed.
+- **Speed is verified against real C and C++.** The owner, 2026-09-27: "as the part of development
+  process I would like you to actually verify things by comparing the speed to a similar C code if
+  possible, compare things that are possible in C with ember and for the oops and DOD stuff compare
+  it with C++ and we can even use those numbers in readme to actually show that the language is close
+  or equally fast". Each benchmark gets a hand-written program doing the same work: C where C can
+  express it, C++ for classes and data-oriented code. Use the same C compiler and optimisation level,
+  report the median of several runs with both compilers, and state the comparison plainly. The
+  numbers may go in the README.
 - **Never edit the spec to fit the compiler**, and never edit `docs/spec-source/as-received/`.
   The spec changes only through an ODR and a new hardening.
 - **An implementation gap is not a spec defect.** Before recording a contradiction in the

@@ -16,7 +16,7 @@ use std::fmt::Write as _;
 // resolves to it through Rust's implicit format arguments.
 use ember_branding::RUNTIME_PREFIX as RT;
 use ember_mir::{
-    AggregateKind, AssertKind, Body, Builtin, CastKind, Const, FfiAbiParam, FuncRef, LocalKind, Operand, Place,
+    AggregateKind, AssertKind, Body, Builtin, CastKind, Const, FfiAbiParam, FuncRef, LocalId, LocalKind, Operand, Place,
     ParameterMode, Projection, RETURN_LOCAL, Rvalue, Stmt, StmtKind, Terminator,
 };
 use ember_mir::verify::VerifiedMir;
@@ -53,11 +53,7 @@ pub struct HeaderOutput {
 /// silently stops the destructor being found by the other. The
 /// `tests/conformance/OWN-2/` cases are what would notice.
 fn drop_symbol(owner: &str) -> String {
-    let owner: String = owner
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect();
-    ember_branding::mangled(&format!("{}_drop", owner.trim_matches('_')))
+    ember_branding::drop_function(owner)
 }
 
 fn class_drop_fields_symbol(owner: &str) -> String {
@@ -570,8 +566,9 @@ impl Emitter<'_> {
         self.line(CLONE_PARTS_PROTOTYPES);
         self.line(ARRAY_HELPER_PROTOTYPES);
         self.line(FMT_FN_PROTOTYPES);
-        self.emit_interface_adapters();
+        // Class tables first: an interface adapter can call through one (D-375).
         self.emit_virtual_tables();
+        self.emit_interface_adapters();
         self.emit_class_drop_adapters();
         self.emit_class_field_drop_glue();
         // `[WK-8]` is an opt-in diagnostic mode.  Do not grow ordinary
@@ -703,8 +700,13 @@ impl Emitter<'_> {
                         for (variant_index, variant) in def.variants.iter().enumerate() {
                             self.line(&format!("    case {}:", variant.discriminant));
                             self.line("        memset(dst, 0, sizeof *dst);");
-                            if self.types.option_niche(id).is_none() {
-                                self.line(&format!("        dst->tag = {};", variant.discriminant));
+                            match self.types.option_niche(id) {
+                                None => self.line(&format!("        dst->tag = {};", variant.discriminant)),
+                                // A niche `Option`'s `None` is its niche value (B1).
+                                Some(niche) if variant.fields.is_empty() => {
+                                    self.line(&format!("        *dst = {};", self.niche_none(&niche)));
+                                }
+                                Some(_) => {}
                             }
                             for (field_index, field) in variant.fields.iter().enumerate() {
                                 let source = self.enum_member(id, "(*src)", variant_index, field_index);
@@ -787,12 +789,12 @@ impl Emitter<'_> {
                         let elem = some.fields[0].ty;
                         let (option, elem_c) = (self.c_type(ty), self.c_type(elem));
                         let last = format!("(unsigned char*)v->ptr + v->len * {elem_c_size}, {elem_c_size}", elem_c_size = c_size(&elem_c));
-                        // `[TYP-13]` — a niche `Option` is its payload, and
-                        // its `None` is zero bytes.
-                        let body = if self.types.option_niche(id).is_some() {
+                        // `[TYP-13]` — a niche `Option` is its payload, and its
+                        // `None` is the niche value, which is zero bytes only
+                        // for some payloads (B1).
+                        let body = if let Some(niche) = self.types.option_niche(id) {
                             vec![
-                                format!("{option} r;"),
-                                "memset(&r, 0, sizeof r);".to_string(),
+                                format!("{option} r = {};", self.niche_none(&niche)),
                                 "if (v->len == 0) return r;".to_string(),
                                 "v->len -= 1;".to_string(),
                                 format!("memcpy(&r, {last});"),
@@ -1929,6 +1931,24 @@ impl Emitter<'_> {
         }
     }
 
+    /// `[DSP-3]` — a class's interface entries: its own, then each base's that
+    /// it does not replace, nearest base first. The runtime's inline lookup
+    /// scans only the object's own list, so the base walk is never taken for a
+    /// class this program emitted; the tables are the ones the walk would find.
+    fn class_itable_entries(&self, id: ClassId) -> Vec<(String, Ty)> {
+        let mut entries: Vec<(String, Ty)> = Vec::new();
+        let mut current = Some(id);
+        while let Some(class) = current {
+            for (interface, concrete) in self.class_interface_tables.get(&class).into_iter().flatten() {
+                if !entries.iter().any(|(seen, _)| seen == interface) {
+                    entries.push((interface.clone(), *concrete));
+                }
+            }
+            current = self.types.class_def(class).base;
+        }
+        entries
+    }
+
     fn register_interface_adapter(
         &mut self,
         concrete: Ty,
@@ -1972,6 +1992,7 @@ impl Emitter<'_> {
             self.line("    void (*drop)(void*);");
             self.line("    size_t size;");
             self.line("    size_t align;");
+            self.line(&format!("    void (*access)(void*, int, {RT}loc);"));
             self.line("};");
         }
         let class_handle_interfaces = self
@@ -1993,6 +2014,9 @@ impl Emitter<'_> {
             self.line("    void (*drop)(void*);");
             self.line("    size_t size;");
             self.line("    size_t align;");
+            // `[EXC-18]` — a class concrete's whole-object access, for a view a
+            // `dyn` call returns; NULL for any other concrete (F4).
+            self.line(&format!("    void (*access)(void*, int, {RT}loc);"));
             for (slot, method) in methods.into_iter().enumerate() {
                 let Some(method) = method else {
                     self.line(&format!("    void (*slot{slot})(void*);"));
@@ -2126,6 +2150,13 @@ impl Emitter<'_> {
                 self.line(&format!("static {} {name}({params}) {{", self.c_type(signature.ret)));
                 let mut args = Vec::with_capacity(signature.params.len() + 1);
                 match implementation.receiver {
+                    // D-218 — a view-returning method takes its class receiver
+                    // by address (`[LT-1]` rule 1, `[BRW-8]`), as its callers
+                    // pass it (F3).
+                    ParameterMode::Borrow if class_handle && self.types.is_view(signature.ret) => {
+                        self.line(&format!("    {receiver_ty} receiver = ({receiver_ty})_0;"));
+                        args.push("&receiver".to_string());
+                    }
                     ParameterMode::Borrow if class_handle => {
                         args.push(format!("({receiver_ty})_0"));
                     }
@@ -2155,27 +2186,67 @@ impl Emitter<'_> {
                 let object_write = matches!(implementation.receiver, ParameterMode::Mut) && class_handle;
                 let object = format!("(({}*)receiver)", ember_branding::runtime("obj_header"));
                 let nowhere = format!("({}loc){{ NULL, 0, 0 }}", RT);
+                // D-375, `[DSP-2]` — a virtual implementation on a class that
+                // can be subclassed is called through the object's own table,
+                // so a subclass's override runs.
+                let callee = match self.types.kind(adapter.concrete) {
+                    TyKind::Class(class)
+                        if self.types.class_def(*class).openness != ember_types::ClassOpenness::Final =>
+                    {
+                        self.virtual_tables
+                            .get(class)
+                            .and_then(|slots| {
+                                slots.iter().position(|method| {
+                                    method.as_ref().is_some_and(|method| {
+                                        !method.is_abstract && method.symbol == implementation.symbol
+                                    })
+                                })
+                            })
+                            .map(|slot| {
+                                let table = ember_branding::vtable(&self.types.class_def(*class).name.to_string());
+                                format!("(((const struct {table}*)(((const {RT}obj_header*)_0)->ti->vtable))->slot{slot})")
+                            })
+                    }
+                    _ => None,
+                }
+                .unwrap_or_else(|| implementation.symbol.clone());
                 if object_write {
                     self.line(&format!("    {RT}object_begin_write({object}, {nowhere});"));
                 }
                 if self.is_void(signature.ret) {
-                    self.line(&format!("    {}({args});", implementation.symbol));
+                    self.line(&format!("    {callee}({args});"));
                     if object_write {
                         self.line(&format!("    {RT}object_end_write({object}, {nowhere});"));
                     }
                 } else if object_write {
-                    self.line(&format!("    {} result = {}({args});", self.c_type(signature.ret), implementation.symbol));
+                    self.line(&format!("    {} result = {callee}({args});", self.c_type(signature.ret)));
                     self.line(&format!("    {RT}object_end_write({object}, {nowhere});"));
                     self.line("    return result;");
                 } else {
-                    self.line(&format!("    return {}({args});", implementation.symbol));
+                    self.line(&format!("    return {callee}({args});"));
                 }
                 self.line("}");
             }
+            let access = if class_handle {
+                let name = format!("{table}_access");
+                let object = format!("(({RT}obj_header*)_0)");
+                self.line(&format!("static void {name}(void* _0, int operation, {RT}loc loc) {{"));
+                self.line("    switch (operation) {");
+                self.line(&format!("    case {DYN_BEGIN_READ}: {RT}object_begin_read({object}, loc); break;"));
+                self.line(&format!("    case {DYN_END_READ}: {RT}object_end_read({object}, loc); break;"));
+                self.line(&format!("    case {DYN_BEGIN_WRITE}: {RT}object_begin_write({object}, loc); break;"));
+                self.line(&format!("    default: {RT}object_end_write({object}, loc); break;"));
+                self.line("    }");
+                self.line("}");
+                name
+            } else {
+                "NULL".to_string()
+            };
             self.line(&format!("static const struct {table_type} {table} = {{"));
             self.line(&format!("    {drop},"));
             self.line(&format!("    {size},"));
             self.line(&format!("    {align},"));
+            self.line(&format!("    {access},"));
             for (slot, implementation) in adapter.implementations.iter().enumerate() {
                 let value = if implementation.is_some() {
                     format!("{table}_slot{slot}")
@@ -2371,7 +2442,7 @@ impl Emitter<'_> {
             ));
         }
         for id in &classes {
-            let Some(tables) = self.class_interface_tables.get(id).cloned() else { continue };
+            let tables = self.class_itable_entries(*id);
             if tables.is_empty() {
                 continue;
             }
@@ -2466,11 +2537,8 @@ impl Emitter<'_> {
             } else {
                 self.line("    NULL,");
             }
-            if let Some(table_count) = self
-                .class_interface_tables
-                .get(&id)
-                .map(|tables| tables.len())
-                .filter(|count| *count != 0)
+            if let Some(table_count) =
+                Some(self.class_itable_entries(id).len()).filter(|count| *count != 0)
             {
                 self.line(&format!(
                     "    {},",
@@ -2928,15 +2996,21 @@ impl Emitter<'_> {
                 // is followed by base fields and then derived fields. The
                 // flattened member list matches the single-inheritance
                 // layout while keeping field projections deterministic.
+                // `[EXC-19]`, `[OBJ-1]` — each class level's access words stand
+                // side by side before that level's fields, a zero word after an
+                // odd count, so a word wastes no alignment padding and a base
+                // class's layout stays a prefix of its derived classes'.
                 let mut members = vec![format!("{RT}obj_header _header")];
-                for index in 0..self.types.class_field_count(id) {
-                    if let Some(field) = self.types.class_field_at(id, index) {
-                        // `[EXC-19]` — a non-`Copy` field's access word stands
-                        // in front of it.
-                        if self.types.class_field_has_access_word(id, index) {
-                            members.push(format!("uint32_t {}", access_word_member(&field.name.to_string())));
+                for (start, end, words) in self.access_word_groups(id) {
+                    let odd = words.len() % 2 == 1;
+                    members.extend(words.iter().map(|word| format!("uint32_t {word}")));
+                    if odd {
+                        members.push(format!("uint32_t _access_pad{start}"));
+                    }
+                    for index in start..end {
+                        if let Some(field) = self.types.class_field_at(id, index) {
+                            members.push(format!("{} {}", self.c_member_type(field.ty), field.name));
                         }
-                        members.push(format!("{} {}", self.c_member_type(field.ty), field.name));
                     }
                 }
                 Definition::Struct(members)
@@ -3070,7 +3144,7 @@ impl Emitter<'_> {
             TyKind::Class(_) | TyKind::ClassInterface(_) => {
                 out.push(format!(
                     "{}(({}*){access});",
-                    ember_branding::runtime("release"),
+                    self.count_function("release", ty),
                     ember_branding::runtime("obj_header")
                 ));
             }
@@ -3704,22 +3778,39 @@ impl Emitter<'_> {
             }
         }
         self.interface_caches = interface_cache_plan(body);
+        // A 128-bit counter is a runtime struct on MSVC: C's `<` and `++`
+        // are for plain integers only.
+        let mut for_loops = for_loops(body);
+        for_loops.retain(|_, counted| {
+            let ty = body.locals[counted.counter.0 as usize].ty;
+            self.types.is_integral(ty) && self.wide_int(ty).is_none()
+        });
+        let hidden_tests: BTreeSet<usize> = for_loops.values().map(|l| l.test.0 as usize).collect();
+        let unread_all = unread_locals(body);
+        // A local that every `for` loop naming it sets before reading, and
+        // nothing else names, is declared inside each of those loops: MSVC
+        // vectorises no loop that sets a function-wide scalar, which it
+        // cannot prove dead after the loop.
+        let scoped = loop_scoped_locals(body, &for_loops, &|local| {
+            let decl = &body.locals[local];
+            matches!(decl.kind, LocalKind::User | LocalKind::Temp)
+                && !self.is_void(decl.ty)
+                && !hidden_tests.contains(&local)
+                && !unread_all.contains(&local)
+        });
+        let in_loop_bodies: BTreeSet<usize> = scoped.values().flatten().copied().collect();
 
         // Locals. Parameters are already C parameters; the borrowed records
         // above have local addresses for Ember. Declare the return slot and
         // every other local here.
         for (index, decl) in body.locals.iter().enumerate() {
-            if decl.kind == LocalKind::Arg {
+            if decl.kind == LocalKind::Arg || hidden_tests.contains(&index) || in_loop_bodies.contains(&index) {
                 continue;
             }
             if self.is_void(decl.ty) {
                 continue;
             }
-            let comment = match &decl.name {
-                Some(name) => format!("  /* {name} */"),
-                None => String::new(),
-            };
-            self.line(&format!("    {} _{index};{comment}", self.c_type(decl.ty)));
+            self.line(&self.local_declaration(index, decl));
         }
         if body.locals.iter().any(|d| d.kind != LocalKind::Arg && !self.is_void(d.ty)) {
             self.line("");
@@ -3754,9 +3845,9 @@ impl Emitter<'_> {
         // `-Wunused-but-set-variable`. `[CG-C-1]` requires warning-free output,
         // so each such local is discarded once, explicitly.
         // A `void` local is never declared, so it cannot be discarded either.
-        let unread: Vec<usize> = unread_locals(body)
+        let unread: Vec<usize> = unread_all
             .into_iter()
-            .filter(|index| !self.is_void(body.locals[*index].ty))
+            .filter(|index| !self.is_void(body.locals[*index].ty) && !hidden_tests.contains(index))
             .collect();
         if !unread.is_empty() {
             let discards: Vec<String> =
@@ -3768,22 +3859,98 @@ impl Emitter<'_> {
         // Only blocks something actually jumps to get a label: an unreferenced
         // label is a warning under `-Wall` and MSVC's C4102, and `[CG-C-1]`
         // requires the emitted C to compile without warnings.
-        let referenced = referenced_blocks(body);
+        // A counted loop is written as a C `for` loop, its body's blocks
+        // inline with no labels.
+        let in_loops: BTreeSet<usize> = for_loops.values().flat_map(|l| l.chain.iter().copied()).collect();
+        let referenced = referenced_labels(body, &for_loops, &in_loops);
         for (index, block) in body.blocks.iter().enumerate() {
+            if in_loops.contains(&index) {
+                continue;
+            }
             if referenced.contains(&index) {
                 // A label with no statement after it is a syntax error in C,
                 // so every label is followed by at least `;`.
                 self.line(&format!("bb{index}: ;"));
             }
-            for stmt in &block.stmts {
-                self.emit_stmt(stmt, body);
+            if let Some(counted) = for_loops.get(&index) {
+                self.emit_for_loop(counted, body, scoped.get(&index).map_or(&[], Vec::as_slice));
+                continue;
             }
+            self.emit_block_stmts(&block.stmts, body);
             self.emit_terminator(&block.terminator, body, index);
         }
 
         self.line("}");
         self.line("");
         self.interface_caches.clear();
+    }
+
+    fn emit_block_stmts(&mut self, stmts: &[Stmt], body: &Body) {
+        let mut stmts = stmts.iter().peekable();
+        while let Some(stmt) = stmts.next() {
+            // `[EXC-19]` — an access begun and ended back to back is one
+            // check: nothing between could observe a count.
+            if let StmtKind::BeginAccess { place, mutable } = &stmt.kind
+                && let Some(next) = stmts.peek()
+                && matches!(&next.kind, StmtKind::EndAccess { place: end, mutable: end_mutable }
+                    if end == place && end_mutable == mutable)
+                && let Some(check) = self
+                    .field_check_call(place, *mutable, stmt.span, body)
+                    .or_else(|| self.object_check_call(place, *mutable, stmt.span, body))
+            {
+                self.emit_line_directive(stmt.span);
+                self.line(&format!("    {check};"));
+                stmts.next();
+                continue;
+            }
+            self.emit_stmt(stmt, body);
+        }
+    }
+
+    /// A counted loop as a C `for` loop: MSVC vectorises only a `for` loop
+    /// whose counter steps by one in its header; clang takes any loop. The
+    /// body's blocks follow one another with no jump, their checks inline.
+    fn emit_for_loop(&mut self, counted: &ForLoop, body: &Body, locals: &[usize]) {
+        let test = if counted.inclusive { "<=" } else { "<" };
+        self.line(&format!(
+            "    for (; _{counter} {test} _{limit}; ++_{counter}) {{",
+            counter = counted.counter.0,
+            limit = counted.limit.0,
+        ));
+        for &local in locals {
+            self.line(&self.local_declaration(local, &body.locals[local]));
+        }
+        for (position, &block) in counted.chain.iter().enumerate() {
+            let data = &body.blocks[block];
+            if position + 1 == counted.chain.len() {
+                // The step: every statement but the counter's increment,
+                // which the loop header performs.
+                let stmts: Vec<Stmt> = data
+                    .stmts
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| *index != counted.increment)
+                    .map(|(_, stmt)| stmt.clone())
+                    .collect();
+                self.emit_block_stmts(&stmts, body);
+                continue;
+            }
+            self.emit_block_stmts(&data.stmts, body);
+            if let Terminator::Assert { next, .. } = &data.terminator {
+                // The check itself, falling through to the next block.
+                self.emit_terminator(&data.terminator, body, (next.0 as usize).wrapping_sub(1));
+            }
+        }
+        self.line("    }");
+        self.line(&format!("    goto bb{};", counted.exit));
+    }
+
+    fn local_declaration(&self, index: usize, decl: &ember_mir::LocalDecl) -> String {
+        let comment = match &decl.name {
+            Some(name) => format!("  /* {name} */"),
+            None => String::new(),
+        };
+        format!("    {} _{index};{comment}", self.c_type(decl.ty))
     }
 
     fn emit_stmt(&mut self, stmt: &Stmt, body: &Body) {
@@ -3916,6 +4083,27 @@ impl Emitter<'_> {
     /// word (`[HEAP-5]`).
     fn access_call(&self, place: &Place, operation: &str, span: ember_span::Span, body: &Body) -> String {
         let location = self.location(span);
+        // `[EXC-18]` — a `dyn` receiver's object, through its table's `access`
+        // entry, which only a class concrete has (F4).
+        let dyn_place = match self.types.kind(self.place_ty(place, body)) {
+            TyKind::Dyn { .. } => true,
+            TyKind::Ref { inner, .. } => matches!(self.types.kind(*inner), TyKind::Dyn { .. }),
+            TyKind::Struct(id) => self.box_inner_id(*id).is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. })),
+            _ => false,
+        };
+        if dyn_place {
+            let fat = self.place_in(place, body);
+            let header = ember_branding::mangled("dyn_vtable_header");
+            let code = match operation {
+                "begin_read" => DYN_BEGIN_READ,
+                "end_read" => DYN_END_READ,
+                "begin_write" => DYN_BEGIN_WRITE,
+                _ => DYN_END_WRITE,
+            };
+            return format!(
+                "if (((const struct {header}*)({fat}).vtable)->access) ((const struct {header}*)({fat}).vtable)->access(({fat}).data, {code}, {location})"
+            );
+        }
         // A class-typed place is the object, even when it is a field holding
         // a handle (`holder.child`), which has no word of its own.
         if matches!(self.types.kind(self.place_ty(place, body)), TyKind::Class(_) | TyKind::ClassInterface(_)) {
@@ -3935,12 +4123,107 @@ impl Emitter<'_> {
         format!("{RT}access_{operation}({}, {what}, {location})", self.access_object(place, body))
     }
 
+    /// `[RC-4]` — the runtime function that retains or releases (`operation`) a
+    /// handle of type `ty`. A class that is not `@sync` has plain counts, and
+    /// so has every class of its family (`[THR-1]`), so its handle takes the
+    /// `_plain` pair, whose common case is inline arithmetic; any other handle
+    /// takes the pair that reads the type information first.
+    fn count_function(&self, operation: &str, ty: Ty) -> String {
+        match self.types.kind(ty) {
+            TyKind::Class(id) if !self.types.class_def(*id).is_sync => {
+                ember_branding::runtime(&format!("{operation}_plain"))
+            }
+            _ => ember_branding::runtime(operation),
+        }
+    }
+
+    /// `[EXC-19]` — the check for an access to a class field nothing can
+    /// overlap: that no write (for a read) or no access (for a write) is held.
+    fn field_check_call(&self, place: &Place, mutable: bool, span: ember_span::Span, body: &Body) -> Option<String> {
+        let (object, field) = self.class_field_of_place(place, body)?;
+        let def = self.types.class_def(object);
+        let what = c_string_literal(&format!("{}.{}", def.name, field));
+        let location = self.location(span);
+        let handle = Place { local: place.local, projection: place.projection[..place.projection.len() - 1].to_vec() };
+        let operation = if mutable { "check_write" } else { "check_read" };
+        Some(format!(
+            "{RT}field_{operation}(&({})->{}, {what}, {location})",
+            self.place_in(&handle, body),
+            access_word_member(&field)
+        ))
+    }
+
+    /// `[EXC-15]`, `[EXC-19]` — the check for a whole-object access nothing
+    /// can overlap (a `mut self` call to a quiet function). A final class's
+    /// words are known and packed, so they are read in place, two at a time;
+    /// any other class's come from its dynamic class's type info.
+    fn object_check_call(&self, place: &Place, mutable: bool, span: ember_span::Span, body: &Body) -> Option<String> {
+        let ty = self.place_ty(place, body);
+        if !matches!(self.types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_)) {
+            return None;
+        }
+        let location = self.location(span);
+        let object = self.access_object(place, body);
+        if let TyKind::Class(id) = *self.types.kind(ty)
+            && self.types.class_def(id).openness == ember_types::ClassOpenness::Final
+        {
+            let handle = self.place_in(place, body);
+            // An odd level's last read takes its zero pad word too.
+            let pairs: Vec<String> = self
+                .access_word_groups(id)
+                .into_iter()
+                .flat_map(|(_, _, words)| words.into_iter().step_by(2).collect::<Vec<_>>())
+                .map(|word| format!("{RT}load_u64(&({handle})->{word})"))
+                .collect();
+            if pairs.is_empty() {
+                return Some("((void)0)".to_string());
+            }
+            let all = pairs.join(" | ");
+            let test = if mutable {
+                format!("({all}) != 0")
+            } else {
+                format!("(({all}) & UINT64_C(0x8000000080000000)) != 0")
+            };
+            return Some(format!("if ({test}) {RT}object_check_failed({object}, {mutable}, {location})"));
+        }
+        let operation = if mutable { "check_write" } else { "check_read" };
+        Some(format!("{RT}object_{operation}({object}, {location})"))
+    }
+
+    /// `[EXC-19]` — each class level's fields, bases first, as `(first index,
+    /// end index, access word names)`.
+    fn access_word_groups(&self, id: ClassId) -> Vec<(usize, usize, Vec<String>)> {
+        let count = self.types.class_field_count(id);
+        let owner = |index: usize| self.types.class_field_at_info(id, index).map(|(owner, _)| owner);
+        let mut groups = Vec::new();
+        let mut start = 0;
+        while start < count {
+            let mut end = start + 1;
+            while end < count && owner(end) == owner(start) {
+                end += 1;
+            }
+            let words = (start..end)
+                .filter(|&index| self.types.class_field_has_access_word(id, index))
+                .filter_map(|index| self.types.class_field_at(id, index))
+                .map(|field| access_word_member(&field.name.to_string()))
+                .collect();
+            groups.push((start, end, words));
+            start = end;
+        }
+        groups
+    }
+
     /// When `place` is a class handle's field (`h.f`), the class and the
     /// field's name.
     fn class_field_of_place(&self, place: &Place, body: &Body) -> Option<(ClassId, String)> {
         let (Projection::Field(index), prefix) = place.projection.split_last()? else { return None };
         let handle = Place { local: place.local, projection: prefix.to_vec() };
         let TyKind::Class(id) = *self.types.kind(self.place_ty(&handle, body)) else { return None };
+        // Only a field with its own word (`[EXC-19]`). A `Shared[T]` held in a
+        // class field has none: its access is its payload's header word (D-374).
+        if !self.types.class_field_has_access_word(id, *index) {
+            return None;
+        }
         Some((id, self.types.class_field_at(id, *index)?.name.to_string()))
     }
 
@@ -3976,7 +4259,7 @@ impl Emitter<'_> {
             TyKind::Class(_) | TyKind::ClassInterface(_) => {
                 out.push(format!(
                     "{}(({}*){});",
-                    ember_branding::runtime("retain"),
+                    self.count_function("retain", ty),
                     ember_branding::runtime("obj_header"),
                     access
                 ));
@@ -4115,7 +4398,7 @@ impl Emitter<'_> {
             Rvalue::Cast { kind: CastKind::ClassUpcast, operand: Operand::Copy(place), .. } => {
                 out.push(format!(
                     "{}(({}*){});",
-                    ember_branding::runtime("retain"),
+                    self.count_function("retain", self.place_ty(place, body)),
                     ember_branding::runtime("obj_header"),
                     self.place_in(place, body)
                 ));
@@ -4127,7 +4410,7 @@ impl Emitter<'_> {
             } => {
                 out.push(format!(
                     "{}(({}*){});",
-                    ember_branding::runtime("retain"),
+                    self.count_function("retain", self.place_ty(place, body)),
                     ember_branding::runtime("obj_header"),
                     self.place_in(place, body)
                 ));
@@ -5389,6 +5672,32 @@ impl Emitter<'_> {
                     }
                     Builtin::ArrayPush => {
                         let elem = self.element_of(*arg_ty);
+                        // A scalar or a handle is pushed by value, so the
+                        // caller never takes its address: a loop counter
+                        // pushed on every pass stays in a register instead of
+                        // living in memory for the whole function.
+                        let by_value = match self.types.kind(elem) {
+                            TyKind::Class(_) => Some("ptr"),
+                            _ => match self.c_type(elem).as_str() {
+                                "bool" => Some("bool"),
+                                "int8_t" => Some("i8"),
+                                "int16_t" => Some("i16"),
+                                "int32_t" => Some("i32"),
+                                "int64_t" => Some("i64"),
+                                "ptrdiff_t" => Some("isize"),
+                                "uint8_t" => Some("u8"),
+                                "uint16_t" => Some("u16"),
+                                "uint32_t" => Some("u32"),
+                                "uint64_t" => Some("u64"),
+                                "size_t" => Some("usize"),
+                                "float" => Some("f32"),
+                                "double" => Some("f64"),
+                                _ => None,
+                            },
+                        };
+                        if let Some(suffix) = by_value {
+                            return format!("{RT}vec_push_{suffix}({}, {})", rendered[0], rendered[1]);
+                        }
                         return format!(
                             "{RT}vec_push({}, {}, {})",
                             rendered[0],
@@ -5957,6 +6266,10 @@ impl Emitter<'_> {
             Const::Fn(symbol) => self.native_fn_values.get(symbol)
                 .map_or_else(|| symbol.clone(), |value| format!("&{}", value.descriptor)),
             Const::Void => "0".to_string(),
+            Const::OverflowShift { per_word } => {
+                let shift = format!("{}_OVERFLOW_SHIFT", ember_branding::SYMBOL_PREFIX.to_uppercase());
+                if *per_word { shift } else { format!("(63 - {shift})") }
+            }
         }
     }
 
@@ -6931,18 +7244,347 @@ fn unread_locals(body: &Body) -> Vec<usize> {
         .collect()
 }
 
-/// Which blocks are the target of a `goto` in the emitted C.
-///
-/// This must agree exactly with `emit_terminator`'s fallthrough rule: a jump
-/// to the next block in order emits no `goto`, so it does not make that block
-/// referenced.
-fn referenced_blocks(body: &Body) -> std::collections::BTreeSet<usize> {
-    let mut referenced = std::collections::BTreeSet::new();
+/// A counted loop the C backend writes as a `for` loop.
+struct ForLoop {
+    /// The body's blocks in order, the step last.
+    chain: Vec<usize>,
+    counter: LocalId,
+    limit: LocalId,
+    inclusive: bool,
+    /// The header's comparison, which the `for` header replaces.
+    test: LocalId,
+    /// The step's `counter = counter + 1`.
+    increment: usize,
+    exit: usize,
+}
+
+/// Every counted loop of the shape `lower_for_range` emits whose body is one
+/// chain of blocks, each reached only from the one before, ending in the step
+/// `counter = counter + 1` and its jump back to the header. Keyed by header.
+fn for_loops(body: &Body) -> BTreeMap<usize, ForLoop> {
+    let mut predecessors = vec![0usize; body.blocks.len()];
+    for block in &body.blocks {
+        let targets: Vec<usize> = match &block.terminator {
+            Terminator::Goto(t) | Terminator::Call { next: t, .. } | Terminator::Assert { next: t, .. } => vec![t.0 as usize],
+            Terminator::SwitchInt { targets, otherwise, .. } => {
+                targets.iter().map(|(_, t)| t.0 as usize).chain(std::iter::once(otherwise.0 as usize)).collect()
+            }
+            Terminator::Return | Terminator::Unreachable => Vec::new(),
+        };
+        for target in targets {
+            predecessors[target] += 1;
+        }
+    }
+    let quiet = |stmt: &Stmt| matches!(stmt.kind, StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop);
+    let mut found = BTreeMap::new();
+    for (header, head) in body.blocks.iter().enumerate() {
+        let Terminator::SwitchInt { discr: Operand::Copy(discr), targets, otherwise } = &head.terminator else { continue };
+        let [(0, exit)] = targets.as_slice() else { continue };
+        if !discr.projection.is_empty() {
+            continue;
+        }
+        let mut test = None;
+        let mut clean = true;
+        for stmt in &head.stmts {
+            match &stmt.kind {
+                StmtKind::Assign {
+                    place,
+                    rvalue:
+                        Rvalue::BinaryOp {
+                            op: op @ (ember_mir::BinOp::Lt | ember_mir::BinOp::Le),
+                            lhs: Operand::Copy(lhs),
+                            rhs: Operand::Copy(rhs),
+                        },
+                } if *place == Place::local(discr.local)
+                    && lhs.projection.is_empty()
+                    && rhs.projection.is_empty()
+                    && test.is_none() =>
+                {
+                    test = Some((*op == ember_mir::BinOp::Le, lhs.local, rhs.local));
+                }
+                _ if quiet(stmt) => {}
+                _ => clean = false,
+            }
+        }
+        let (Some((inclusive, counter, limit)), true) = (test, clean) else { continue };
+        // The chain.
+        let mut chain = Vec::new();
+        let mut current = otherwise.0 as usize;
+        let step = loop {
+            if current == header || chain.contains(&current) || predecessors[current] != 1 || chain.len() > 256 {
+                break None;
+            }
+            chain.push(current);
+            match &body.blocks[current].terminator {
+                Terminator::Goto(target) if target.0 as usize == header => break Some(current),
+                Terminator::Goto(target) | Terminator::Assert { next: target, .. } => current = target.0 as usize,
+                _ => break None,
+            }
+        };
+        let Some(step) = step else { continue };
+        // The step's increment; nothing after it reads the counter, and
+        // nothing else in the loop writes the counter or the limit.
+        let step_stmts = &body.blocks[step].stmts;
+        let Some(increment) = step_stmts.iter().position(|stmt| {
+            matches!(&stmt.kind,
+                StmtKind::Assign {
+                    place,
+                    rvalue: Rvalue::BinaryOp {
+                        op: ember_mir::BinOp::Add,
+                        lhs: Operand::Copy(lhs),
+                        rhs: Operand::Const(ember_mir::Const::Int { value: 1, .. }),
+                    },
+                } if *place == Place::local(counter) && *lhs == Place::local(counter))
+        }) else {
+            continue;
+        };
+        if step_stmts[increment + 1..].iter().any(|stmt| stmt_mentions(stmt, counter)) {
+            continue;
+        }
+        let writes_counter_or_limit = chain.iter().any(|&block| {
+            body.blocks[block].stmts.iter().enumerate().any(|(index, stmt)| {
+                (block != step || index != increment) && (stmt_writes(stmt, counter) || stmt_writes(stmt, limit))
+            })
+        });
+        if writes_counter_or_limit {
+            continue;
+        }
+        found.insert(header, ForLoop { chain, counter, limit, inclusive, test: discr.local, increment, exit: exit.0 as usize });
+    }
+    // A header's comparison is left out only when nothing else that is
+    // written out names it (a storage marker writes nothing).
+    let tests: Vec<(usize, LocalId)> = found.iter().map(|(h, l)| (*h, l.test)).collect();
+    for (header, test) in tests {
+        let named_elsewhere = body.blocks.iter().enumerate().any(|(index, block)| {
+            !found.contains_key(&index)
+                && (block.stmts.iter().any(|stmt| !quiet(stmt) && stmt_mentions(stmt, test))
+                    || terminator_mentions(&block.terminator, test))
+        });
+        if named_elsewhere {
+            found.remove(&header);
+        }
+    }
+    found
+}
+
+fn stmt_writes(stmt: &Stmt, local: LocalId) -> bool {
+    match &stmt.kind {
+        StmtKind::Assign { place, rvalue } => {
+            place.local == local || matches!(rvalue, Rvalue::Ref { place, mutable: true } if place.local == local)
+        }
+        StmtKind::CheckedBinaryOp { dest, overflow, .. } => dest.local == local || overflow.local == local,
+        StmtKind::Drop { place, .. } => place.local == local,
+        _ => false,
+    }
+}
+
+fn stmt_mentions(stmt: &Stmt, local: LocalId) -> bool {
+    let mut named = Vec::new();
+    stmt_locals(stmt, &mut named);
+    named.contains(&local)
+}
+
+fn terminator_mentions(terminator: &Terminator, local: LocalId) -> bool {
+    let mut named = Vec::new();
+    terminator_locals(terminator, &mut named);
+    named.contains(&local)
+}
+
+fn place_locals(place: &Place, out: &mut Vec<LocalId>) {
+    out.push(place.local);
+    for projection in &place.projection {
+        if let Projection::Index(local) = projection {
+            out.push(*local);
+        }
+    }
+}
+
+fn operand_locals(operand: &Operand, out: &mut Vec<LocalId>) {
+    if let Operand::Copy(place) | Operand::Move(place) = operand {
+        place_locals(place, out);
+    }
+}
+
+fn rvalue_locals(rvalue: &Rvalue, out: &mut Vec<LocalId>) {
+    match rvalue {
+        Rvalue::Use(o) | Rvalue::UnaryOp { operand: o, .. } | Rvalue::Cast { operand: o, .. } => operand_locals(o, out),
+        Rvalue::BinaryOp { lhs, rhs, .. } => {
+            operand_locals(lhs, out);
+            operand_locals(rhs, out);
+        }
+        Rvalue::Aggregate { operands, .. } => operands.iter().for_each(|o| operand_locals(o, out)),
+        Rvalue::Repeat { value, .. } => operand_locals(value, out),
+        Rvalue::Discriminant(place) | Rvalue::Ref { place, .. } => place_locals(place, out),
+    }
+}
+
+/// Every local a statement names, its places' index locals included.
+fn stmt_locals(stmt: &Stmt, out: &mut Vec<LocalId>) {
+    match &stmt.kind {
+        StmtKind::Assign { place, rvalue } => {
+            place_locals(place, out);
+            rvalue_locals(rvalue, out);
+        }
+        StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
+            place_locals(dest, out);
+            place_locals(overflow, out);
+            operand_locals(lhs, out);
+            operand_locals(rhs, out);
+        }
+        StmtKind::Drop { place, .. }
+        | StmtKind::BeginAccess { place, .. }
+        | StmtKind::BeginAccessTransfer { place, .. }
+        | StmtKind::EndAccess { place, .. }
+        | StmtKind::EndAccessTransfer { place, .. } => place_locals(place, out),
+        StmtKind::StorageLive(l) | StmtKind::StorageDead(l) => out.push(*l),
+        StmtKind::Nop => {}
+    }
+}
+
+/// Every local a terminator names.
+fn terminator_locals(terminator: &Terminator, out: &mut Vec<LocalId>) {
+    match terminator {
+        Terminator::SwitchInt { discr, .. } => operand_locals(discr, out),
+        Terminator::Call { args, dest, func, .. } => {
+            args.iter().for_each(|a| operand_locals(a, out));
+            place_locals(dest, out);
+            if let FuncRef::Indirect { operand, .. } = func {
+                operand_locals(operand, out);
+            }
+        }
+        Terminator::Assert { cond, msg, .. } => {
+            operand_locals(cond, out);
+            match msg {
+                AssertKind::Bounds { len, index } => {
+                    operand_locals(len, out);
+                    operand_locals(index, out);
+                }
+                AssertKind::RefCellBorrow { file, line } => {
+                    operand_locals(file, out);
+                    operand_locals(line, out);
+                }
+                AssertKind::Panic { message } => operand_locals(message, out),
+                _ => {}
+            }
+        }
+        Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => {}
+    }
+}
+
+/// Whether a statement sets the whole of `local` without reading it first.
+fn sets_whole(stmt: &Stmt, local: LocalId) -> bool {
+    let whole = |place: &Place| *place == Place::local(local);
+    let mut read = Vec::new();
+    match &stmt.kind {
+        StmtKind::Assign { place, rvalue } if whole(place) => rvalue_locals(rvalue, &mut read),
+        StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } if whole(dest) || whole(overflow) => {
+            operand_locals(lhs, &mut read);
+            operand_locals(rhs, &mut read);
+            for place in [dest, overflow] {
+                if !whole(place) {
+                    place_locals(place, &mut read);
+                }
+            }
+        }
+        _ => return false,
+    }
+    !read.contains(&local)
+}
+
+/// The locals each `for` loop (by header) declares inside its body: those
+/// every loop naming them sets before reading, in every iteration, and reads
+/// (a local only set would be a warning), that nothing outside a loop's body
+/// names and whose address is never taken, and that `candidate` accepts. Such
+/// a local holds nothing from one iteration to the next or past the loop.
+fn loop_scoped_locals(
+    body: &Body,
+    for_loops: &BTreeMap<usize, ForLoop>,
+    candidate: &dyn Fn(usize) -> bool,
+) -> BTreeMap<usize, Vec<usize>> {
+    let quiet = |stmt: &Stmt| matches!(stmt.kind, StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop);
+    let in_loops: BTreeSet<usize> = for_loops.values().flat_map(|l| l.chain.iter().copied()).collect();
+    let mut excluded = vec![false; body.locals.len()];
     for (index, block) in body.blocks.iter().enumerate() {
+        let mut named = Vec::new();
+        for stmt in &block.stmts {
+            if let StmtKind::Assign { rvalue: Rvalue::Ref { place, .. }, .. } = &stmt.kind {
+                named.push(place.local);
+            }
+            if !in_loops.contains(&index) && !quiet(stmt) {
+                stmt_locals(stmt, &mut named);
+            }
+        }
+        if !in_loops.contains(&index) {
+            terminator_locals(&block.terminator, &mut named);
+        }
+        for local in named {
+            excluded[local.0 as usize] = true;
+        }
+    }
+    let mut named_by_loop = Vec::new();
+    for (&header, counted) in for_loops {
+        // Each local the loop names, and whether its first touch in an
+        // iteration sets the whole of it; the locals it reads.
+        let mut first: BTreeMap<usize, bool> = BTreeMap::new();
+        let mut read: BTreeSet<usize> = BTreeSet::new();
+        let step = counted.chain.len() - 1;
+        for (position, &block) in counted.chain.iter().enumerate() {
+            let data = &body.blocks[block];
+            for (index, stmt) in data.stmts.iter().enumerate() {
+                if quiet(stmt) || (position == step && index == counted.increment) {
+                    continue;
+                }
+                let mut named = Vec::new();
+                stmt_locals(stmt, &mut named);
+                for local in named {
+                    let sets = sets_whole(stmt, local);
+                    first.entry(local.0 as usize).or_insert(sets);
+                    if !sets {
+                        read.insert(local.0 as usize);
+                    }
+                }
+            }
+            if position != step {
+                let mut named = Vec::new();
+                terminator_locals(&data.terminator, &mut named);
+                for local in named {
+                    first.entry(local.0 as usize).or_insert(false);
+                    read.insert(local.0 as usize);
+                }
+            }
+        }
+        for (&local, &set_first) in &first {
+            if !set_first || !read.contains(&local) {
+                excluded[local] = true;
+            }
+        }
+        named_by_loop.push((header, first.into_keys().collect::<Vec<_>>()));
+    }
+    named_by_loop
+        .into_iter()
+        .map(|(header, named)| (header, named.into_iter().filter(|&l| !excluded[l] && candidate(l)).collect::<Vec<_>>()))
+        .filter(|(_, locals)| !locals.is_empty())
+        .collect()
+}
+
+/// The labels the emitted C jumps to: every jump of a block written out as a
+/// block, and each `for` loop's exit. A block inside a `for` loop has none.
+fn referenced_labels(
+    body: &Body,
+    for_loops: &BTreeMap<usize, ForLoop>,
+    in_loops: &BTreeSet<usize>,
+) -> BTreeSet<usize> {
+    let mut referenced = BTreeSet::new();
+    for (index, block) in body.blocks.iter().enumerate() {
+        if in_loops.contains(&index) {
+            continue;
+        }
+        if let Some(counted) = for_loops.get(&index) {
+            referenced.insert(counted.exit);
+            continue;
+        }
         match &block.terminator {
-            Terminator::Goto(target)
-            | Terminator::Call { next: target, .. }
-            | Terminator::Assert { next: target, .. } => {
+            Terminator::Goto(target) | Terminator::Call { next: target, .. } | Terminator::Assert { next: target, .. } => {
                 if target.0 as usize != index + 1 {
                     referenced.insert(target.0 as usize);
                 }
@@ -7023,6 +7665,12 @@ fn element_pointer(pointer: &str, elem_c: &str, index: &str, mutable: bool) -> S
 fn c_align(c: &str) -> String {
     if c == "void" { "1".to_string() } else { format!("_Alignof({c})") }
 }
+
+/// The operations a `dyn` table's `access` entry performs (`[EXC-18]`, F4).
+const DYN_BEGIN_READ: u8 = 0;
+const DYN_END_READ: u8 = 1;
+const DYN_BEGIN_WRITE: u8 = 2;
+const DYN_END_WRITE: u8 = 3;
 
 /// `[EXC-19]` — the C member holding a class field's access word.
 fn access_word_member(field: &str) -> String {

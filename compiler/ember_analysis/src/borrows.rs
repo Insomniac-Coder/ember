@@ -367,13 +367,14 @@ fn field_return_accesses(
                 add(resolve_ref_temps(body, owner), *mutable);
             }
         }
-        let Terminator::Call { dest, .. } = &basic_block.terminator else { continue };
-        let Some(region) = regions.local_region(dest.local) else { continue };
-        if !region_reaches_return(body, regions, region) {
+        if !matches!(basic_block.terminator, Terminator::Call { .. }) {
             continue;
         }
-        for (owner, mutable) in call_result_accesses(body, types, &basic_block.terminator, summaries) {
-            add(owner, mutable);
+        for (owner, mutable, argument) in call_result_accesses(body, types, &basic_block.terminator, summaries) {
+            let held = result_access_regions(body, regions, &basic_block.terminator, argument);
+            if held.iter().any(|&region| region_reaches_return(body, regions, region)) {
+                add(owner, mutable);
+            }
         }
     }
     found
@@ -389,7 +390,7 @@ fn call_result_accesses(
     types: &TypeTable,
     terminator: &Terminator,
     summaries: &FieldReturns,
-) -> Vec<(Place, bool)> {
+) -> Vec<(Place, bool, usize)> {
     let Terminator::Call { func, args, dest, .. } = terminator else { return Vec::new() };
     match func {
         FuncRef::Direct { symbol, .. } => summaries
@@ -402,24 +403,75 @@ fn call_result_accesses(
                 };
                 let mut place = argument.clone();
                 place.projection.extend(access.projection.iter().cloned());
-                Some((resolve_ref_temps(body, place), access.mutable))
+                Some((resolve_ref_temps(body, place), access.mutable, access.argument))
             })
             .collect(),
         FuncRef::Virtual { .. } | FuncRef::Interface { .. } if types.is_view(place_ty(body, types, dest)) => {
             let Some(Operand::Copy(receiver) | Operand::Move(receiver)) = args.first() else { return Vec::new() };
             let object = match types.kind(place_ty(body, types, receiver)) {
-                TyKind::Class(_) | TyKind::ClassInterface(_) => receiver.clone(),
+                TyKind::Class(_) | TyKind::ClassInterface(_) => resolve_ref_temps(body, receiver.clone()),
                 TyKind::Ref { inner, .. } if matches!(types.kind(*inner), TyKind::Class(_) | TyKind::ClassInterface(_)) => {
                     let mut object = receiver.clone();
                     object.projection.push(Projection::Deref);
-                    object
+                    resolve_ref_temps(body, object)
+                }
+                // A `dyn` receiver: the object behind it, if its concrete is a
+                // class, through its table's `access` entry (F4). The fat
+                // pointer itself names it.
+                TyKind::Dyn { .. } => receiver.clone(),
+                TyKind::Ref { inner, .. } if matches!(types.kind(*inner), TyKind::Dyn { .. }) => receiver.clone(),
+                TyKind::Struct(id)
+                    if types.compiler_box_inner(*id).is_some_and(|inner| matches!(types.kind(inner), TyKind::Dyn { .. })) =>
+                {
+                    receiver.clone()
                 }
                 _ => return Vec::new(),
             };
-            vec![(resolve_ref_temps(body, object), false)]
+            // A mutable view is a write to what it views.
+            let mutable = matches!(
+                types.kind(place_ty(body, types, dest)),
+                TyKind::Span { mutable: true, .. } | TyKind::Ref { mutable: true, .. }
+            );
+            vec![(object, mutable, 0)]
         }
         _ => Vec::new(),
     }
+}
+
+/// The region of the loan an argument was made from, when the argument is a
+/// temporary assigned once as `&p` or `&mut p` (a receiver or a borrowed
+/// parameter passed by address). A result that borrows that parameter is
+/// held by this loan wherever the result, or any copy of it, is used.
+fn argument_loan_region(body: &Body, regions: &Regions, operand: &Operand) -> Option<RegionVid> {
+    let (Operand::Copy(argument) | Operand::Move(argument)) = operand else { return None };
+    if !argument.projection.is_empty() || body.local(argument.local).kind != LocalKind::Temp {
+        return None;
+    }
+    let mut found = None;
+    for (block, basic_block) in body.blocks.iter().enumerate() {
+        for (index, stmt) in basic_block.stmts.iter().enumerate() {
+            if let StmtKind::Assign { place, rvalue } = &stmt.kind
+                && place.local == argument.local
+                && place.projection.is_empty()
+            {
+                if found.is_some() || !matches!(rvalue, Rvalue::Ref { .. }) {
+                    return None;
+                }
+                found = regions.loan_region(Point { block, index });
+            }
+        }
+    }
+    found
+}
+
+/// The regions a call's result holds its carried accesses for: the loan of
+/// the argument the access came from, else every view region of the result.
+fn result_access_regions(body: &Body, regions: &Regions, terminator: &Terminator, argument: usize) -> Vec<RegionVid> {
+    let Terminator::Call { args, dest, .. } = terminator else { return Vec::new() };
+    if let Some(region) = args.get(argument).and_then(|operand| argument_loan_region(body, regions, operand)) {
+        return vec![region];
+    }
+    regions.local_regions(dest.local).iter().map(|slot| slot.region).collect()
 }
 
 /// `(*t).f`, where the temporary `t` is assigned once, as `&p` or `&mut p`,
@@ -609,10 +661,11 @@ struct SharedAccess {
     created_at: Point,
     owner: Place,
     mutable: bool,
-    /// The loan's region; `None` for an access that lasts only the statement
-    /// or call at `created_at` (a read or write through a class field without
-    /// a loan).
-    region: Option<RegionVid>,
+    /// The loan's regions: the access is live while any of them is (a value
+    /// holding several views has one per view). Empty for an access that
+    /// lasts only the statement or call at `created_at` (a read or write
+    /// through a class field without a loan).
+    regions: Vec<RegionVid>,
     span: Span,
     start: SharedAccessStart,
     end: SharedAccessEnd,
@@ -635,11 +688,26 @@ enum SharedAccessEnd {
 enum AccessEvent {
     Begin { place: Place, mutable: bool, transfer: bool, span: Span },
     End { place: Place, mutable: bool, transfer: bool, span: Span },
+    /// `[EXC-19]` — an access nothing can overlap: its begin and its end back
+    /// to back, which the C backend lowers to one check.
+    Check { place: Place, mutable: bool, span: Span },
 }
 
 impl AccessEvent {
     fn is_end(&self) -> bool {
         matches!(self, Self::End { .. })
+    }
+
+    fn is_check(&self) -> bool {
+        matches!(self, Self::Check { .. })
+    }
+
+    fn check_stmts(&self) -> [Stmt; 2] {
+        let Self::Check { place, mutable, span } = self else { unreachable!("not a check") };
+        [
+            Stmt::new(StmtKind::BeginAccess { place: place.clone(), mutable: *mutable }, *span),
+            Stmt::new(StmtKind::EndAccess { place: place.clone(), mutable: *mutable }, *span),
+        ]
     }
 
     fn into_stmt(self) -> Stmt {
@@ -656,6 +724,7 @@ impl AccessEvent {
             Self::End { place, mutable, transfer: true, span } => {
                 Stmt::new(StmtKind::EndAccessTransfer { place, mutable }, span)
             }
+            Self::Check { .. } => unreachable!("a check is two statements"),
         }
     }
 }
@@ -711,7 +780,7 @@ fn insert_shared_accesses(
                 created_at,
                 owner,
                 mutable: *mutable,
-                region: Some(region),
+                regions: vec![region],
                 span: stmt.span,
                 start: if reaches_return {
                     SharedAccessStart::Transfer
@@ -756,7 +825,7 @@ fn insert_shared_accesses(
             created_at: Point { block: next.0 as usize, index: 0 },
             owner,
             mutable: summary.mutable,
-            region: Some(region),
+            regions: vec![region],
             span: basic_block.terminator_span,
             start: SharedAccessStart::Normal,
             end: SharedAccessEnd::Normal,
@@ -792,7 +861,7 @@ fn insert_shared_accesses(
             created_at: Point { block: next.0 as usize, index: 0 },
             owner: payload,
             mutable,
-            region: Some(region),
+            regions: vec![region],
             span: basic_block.terminator_span,
             start: SharedAccessStart::None,
             end: SharedAccessEnd::Transfer,
@@ -802,14 +871,19 @@ fn insert_shared_accesses(
     // `[EXC-18]` — a call's result that borrows a class field holds the
     // field's access from the call's return to the result's last use.
     for basic_block in body.blocks.iter().take(original_blocks) {
-        let Terminator::Call { dest, next, .. } = &basic_block.terminator else { continue };
-        let Some(region) = regions.local_region(dest.local) else { continue };
-        for (owner, mutable) in call_result_accesses(body, types, &basic_block.terminator, field_returns) {
+        let Terminator::Call { next, .. } = &basic_block.terminator else { continue };
+        for (owner, mutable, argument) in call_result_accesses(body, types, &basic_block.terminator, field_returns) {
+            // Held while the result, or anything it was copied into, is used
+            // (F2: a tuple of views, a view copied to another variable).
+            let held = result_access_regions(body, regions, &basic_block.terminator, argument);
+            if held.is_empty() {
+                continue;
+            }
             accesses.push(SharedAccess {
                 created_at: Point { block: next.0 as usize, index: 0 },
                 owner,
                 mutable,
-                region: Some(region),
+                regions: held,
                 span: basic_block.terminator_span,
                 start: SharedAccessStart::Normal,
                 end: SharedAccessEnd::Normal,
@@ -820,12 +894,31 @@ fn insert_shared_accesses(
         return 0;
     }
 
+    // `[EXC-19]` — which accesses nothing can overlap.
+    let mut begins: HashMap<(usize, usize), usize> = HashMap::new();
+    for access in &accesses {
+        if access.start != SharedAccessStart::None {
+            *begins.entry((access.created_at.block, access.created_at.index)).or_default() += 1;
+        }
+    }
+    let quick: Vec<bool> = accesses
+        .iter()
+        .map(|access| quick_access(body, types, regions, access, &begins, original_blocks))
+        .collect();
     let mut inline: HashMap<(usize, usize), Vec<AccessEvent>> = HashMap::new();
     let mut edge_ends = HashMap::new();
-    for access in &accesses {
+    for (number, access) in accesses.iter().enumerate() {
+        if quick[number] {
+            inline.entry((access.created_at.block, access.created_at.index)).or_default().push(AccessEvent::Check {
+                place: access.owner.clone(),
+                mutable: access.mutable,
+                span: access.span,
+            });
+            continue;
+        }
         // A statement's or a call's own access: begun before it, ended after
         // it (on each edge out of a call).
-        if access.region.is_none() {
+        if access.regions.is_empty() {
             let Point { block, index } = access.created_at;
             inline.entry((block, index)).or_default().push(AccessEvent::Begin {
                 place: access.owner.clone(),
@@ -842,15 +935,18 @@ fn insert_shared_accesses(
             }
             continue;
         }
-        // An access that begins before a terminator and ends there (a call's
-        // result returned at once) has nothing between to protect; its end
-        // would come first in that slot. Its caller begins its own.
+        // An access that begins before a terminator other than a call and
+        // ends there (a call's result returned at once) has nothing between
+        // to protect; its end would come first in that slot. Its caller begins
+        // its own. Before a call, the call is what it protects (below).
         let Point { block: at, index } = access.created_at;
         if access.start == SharedAccessStart::Normal
             && index == body.blocks[at].stmts.len()
-            && access_successors(&body.blocks[at].terminator)
-                .iter()
-                .all(|successor| !access_active(access, regions, Point { block: successor.0 as usize, index: 0 }))
+            && !matches!(body.blocks[at].terminator, Terminator::Call { .. })
+            && access_successors(&body.blocks[at].terminator).iter().all(|&successor| {
+                let target = through_bridges(body, successor, original_blocks);
+                !access_active(access, regions, Point { block: target.0 as usize, index: 0 })
+            })
         {
             continue;
         }
@@ -888,12 +984,25 @@ fn insert_shared_accesses(
             if !access_active(access, regions, terminal) {
                 continue;
             }
-            let successors = access_successors(&body.blocks[block].terminator);
-            if successors.is_empty()
-                || successors.iter().all(|successor| {
-                    !access_active(access, regions, Point { block: successor.0 as usize, index: 0 })
-                })
-            {
+            // A successor may already be a bridge block an earlier access put on
+            // the edge; liveness is the original target's.
+            let successors: Vec<(BasicBlockId, BasicBlockId)> = access_successors(&body.blocks[block].terminator)
+                .into_iter()
+                .map(|successor| (successor, through_bridges(body, successor, original_blocks)))
+                .collect();
+            let live_in = |target: BasicBlockId| access_active(access, regions, Point { block: target.0 as usize, index: 0 });
+            let ends_here = successors.is_empty() || successors.iter().all(|&(_, target)| !live_in(target));
+            // A loan whose last use is a call (a view or `ref mut` passed as
+            // an argument) is live for the whole call: it ends on the way out
+            // of the call, never before it. Otherwise the callee could free
+            // what the loan points into through another handle (F1).
+            if ends_here && matches!(body.blocks[block].terminator, Terminator::Call { .. }) {
+                for (successor, _) in successors {
+                    append_edge_end(body, block, successor, end_event(access), &mut edge_ends);
+                }
+                continue;
+            }
+            if ends_here {
                 if !(matches!(body.blocks[block].terminator, Terminator::Return)
                     && access.start == SharedAccessStart::Transfer)
                 {
@@ -904,12 +1013,8 @@ fn insert_shared_accesses(
                 }
                 continue;
             }
-            for successor in successors {
-                if access_active(
-                    access,
-                    regions,
-                    Point { block: successor.0 as usize, index: 0 },
-                ) {
+            for (successor, target) in successors {
+                if live_in(target) {
                     continue;
                 }
                 append_edge_end(
@@ -929,22 +1034,12 @@ fn insert_shared_accesses(
         let original_len = original.len();
         for (index, stmt) in original.into_iter().enumerate() {
             if let Some(events) = inline.get(&(block, index)) {
-                for event in events.iter().filter(|event| event.is_end()) {
-                    rewritten.push(event.clone().into_stmt());
-                }
-                for event in events.iter().filter(|event| !event.is_end()) {
-                    rewritten.push(event.clone().into_stmt());
-                }
+                push_events(&mut rewritten, events);
             }
             rewritten.push(stmt);
         }
         if let Some(events) = inline.get(&(block, original_len)) {
-            for event in events.iter().filter(|event| event.is_end()) {
-                rewritten.push(event.clone().into_stmt());
-            }
-            for event in events.iter().filter(|event| !event.is_end()) {
-                rewritten.push(event.clone().into_stmt());
-            }
+            push_events(&mut rewritten, events);
         }
         basic_block.stmts = rewritten;
     }
@@ -966,7 +1061,7 @@ fn field_accesses(body: &Body, types: &TypeTable, regions: &Regions) -> Vec<Shar
                 created_at,
                 owner,
                 mutable,
-                region: None,
+                regions: Vec::new(),
                 span,
                 start: SharedAccessStart::Normal,
                 end: SharedAccessEnd::Normal,
@@ -985,7 +1080,7 @@ fn field_accesses(body: &Body, types: &TypeTable, regions: &Regions) -> Vec<Shar
                             created_at,
                             owner,
                             mutable: *mutable,
-                            region: Some(region),
+                            regions: vec![region],
                             span: stmt.span,
                             start: SharedAccessStart::Normal,
                             end: SharedAccessEnd::Normal,
@@ -1110,8 +1205,289 @@ fn is_shared_owner(body: &Body, types: &TypeTable, owner: &Place) -> bool {
         .is_some_and(|(name, args)| name.is("Shared") && args.len() == 1)
 }
 
+/// The events at one point, in order: every end (an earlier access ending
+/// where a new one begins), then every begin, then every check.
+fn push_events(rewritten: &mut Vec<Stmt>, events: &[AccessEvent]) {
+    for event in events.iter().filter(|event| event.is_end()) {
+        rewritten.push(event.clone().into_stmt());
+    }
+    for event in events.iter().filter(|event| !event.is_end() && !event.is_check()) {
+        rewritten.push(event.clone().into_stmt());
+    }
+    for event in events.iter().filter(|event| event.is_check()) {
+        rewritten.extend(event.check_stmts());
+    }
+}
+
+/// `[EXC-19]` — whether access to a class field is one nothing can overlap,
+/// so its count could never be observed and its check alone keeps every
+/// verdict: while it is active no code of the program runs (no call but a
+/// built-in that never calls back, no drop that can run a `drop`) and no other
+/// access begins, not even at its own point.
+fn quick_access(
+    body: &Body,
+    types: &TypeTable,
+    regions: &Regions,
+    access: &SharedAccess,
+    begins: &HashMap<(usize, usize), usize>,
+    original_blocks: usize,
+) -> bool {
+    if access.start != SharedAccessStart::Normal || !matches!(access.end, SharedAccessEnd::Normal) {
+        return false;
+    }
+    let Some((Projection::Field(field), prefix)) = access.owner.projection.split_last() else { return false };
+    let handle = Place { local: access.owner.local, projection: prefix.to_vec() };
+    let TyKind::Class(class) = *types.kind(place_ty(body, types, &handle)) else { return false };
+    if !types.class_field_has_access_word(class, *field) {
+        return false;
+    }
+    // A statement's or a call's own access is active at its point only.
+    let blocks = if access.regions.is_empty() {
+        access.created_at.block..access.created_at.block + 1
+    } else {
+        0..original_blocks
+    };
+    for block in blocks {
+        let count = body.blocks[block].stmts.len();
+        for index in 0..=count {
+            let point = Point { block, index };
+            if !access_active(access, regions, point) {
+                continue;
+            }
+            let own = usize::from(point == access.created_at);
+            if begins.get(&(block, index)).copied().unwrap_or(0) > own {
+                return false;
+            }
+            let quiet = if index < count {
+                match &body.blocks[block].stmts[index].kind {
+                    StmtKind::Drop { place, .. } => drop_is_quiet(types, place_ty(body, types, place)),
+                    _ => true,
+                }
+            } else {
+                quiet_terminator(types, &body.blocks[block].terminator)
+            };
+            if !quiet {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// A terminator that runs no code of the program.
+fn quiet_terminator(types: &TypeTable, terminator: &Terminator) -> bool {
+    match terminator {
+        Terminator::Goto(_) | Terminator::SwitchInt { .. } | Terminator::Assert { .. } => true,
+        Terminator::Call { func: FuncRef::Builtin { which, arg_ty }, .. } => quiet_builtin(types, which, *arg_ty),
+        _ => false,
+    }
+}
+
+/// A built-in that never calls back into Ember code: it allocates, moves
+/// bits, reads a length or text, or drops only elements whose drop runs none.
+pub(crate) fn quiet_builtin(types: &TypeTable, which: &Builtin, arg_ty: Ty) -> bool {
+    match which {
+        Builtin::ArrayPush
+        | Builtin::ArrayNew
+        | Builtin::ArrayFromLiteral
+        | Builtin::StringNew
+        | Builtin::ArrayLen
+        | Builtin::ArrayCapacity
+        | Builtin::ArrayReserve
+        | Builtin::ArrayPop { .. }
+        | Builtin::ArraySwap
+        | Builtin::SpanLen
+        | Builtin::SpanGet
+        | Builtin::SpanGetUnchecked
+        | Builtin::SpanFrom { .. }
+        | Builtin::SpanIterNext { .. }
+        | Builtin::SpanReborrow
+        | Builtin::SpanSharedReborrow
+        | Builtin::StringLen
+        | Builtin::StringPush
+        | Builtin::StringPushChar
+        | Builtin::StringAsStr
+        | Builtin::Slice { .. }
+        | Builtin::StrCharCount
+        | Builtin::StrStartsWith
+        | Builtin::StrEndsWith
+        | Builtin::StrFind { .. }
+        | Builtin::StrCount
+        | Builtin::StrContains
+        | Builtin::StrContainsChar
+        | Builtin::StrCharAt
+        | Builtin::StrIsCharBoundary
+        | Builtin::StrAsBytes
+        | Builtin::StrSliceOk
+        | Builtin::Utf8Valid
+        | Builtin::SpanToStr => true,
+        Builtin::ArrayClear | Builtin::ArrayTruncate => {
+            let mut ty = arg_ty;
+            while let TyKind::Ref { inner, .. } = *types.kind(ty) {
+                ty = inner;
+            }
+            matches!(*types.kind(ty), TyKind::Vec { elem, .. } if drop_is_quiet(types, elem))
+        }
+        _ => false,
+    }
+}
+
+/// Whether dropping a `ty` can never run code of the program: it frees memory
+/// only. A class handle's release may run a `drop`; so may a `dyn`, a counted
+/// `Shared` or `Weak`, and anything with a `drop` of its own.
+pub(crate) fn drop_is_quiet(types: &TypeTable, ty: Ty) -> bool {
+    match types.kind(ty) {
+        TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Dyn { .. } => false,
+        TyKind::Struct(id) => {
+            let def = types.struct_def(*id);
+            !def.has_drop
+                && !matches!(&def.origin, Some((name, _)) if name.is("Weak") || name.is("Shared"))
+                && def.fields.iter().all(|field| drop_is_quiet(types, field.ty))
+        }
+        TyKind::Enum(id) => {
+            let def = types.enum_def(*id);
+            !def.has_drop && def.variants.iter().all(|v| v.fields.iter().all(|f| drop_is_quiet(types, f.ty)))
+        }
+        TyKind::Tuple(items) => items.iter().all(|&item| drop_is_quiet(types, item)),
+        TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } => drop_is_quiet(types, *elem),
+        _ => !types.needs_drop(ty),
+    }
+}
+
+/// `[EXC-19]` — a quiet function: no access can begin while it runs. It
+/// calls only quiet built-ins and other quiet functions, drops only what
+/// frees memory alone, touches no class field that has an access word (its
+/// own `self` fields in a `mut self` method are covered by its caller's
+/// access), borrows no `Shared` payload and returns no view.
+fn quiet_body(body: &Body, types: &TypeTable, quiet: &HashSet<String>) -> bool {
+    if types.is_view(body.local(LocalId(0)).ty) {
+        return false;
+    }
+    let untouched = |place: &Place| field_boundaries(body, types, place, true).is_empty();
+    let operand_untouched = |operand: &Operand| match operand {
+        Operand::Copy(place) | Operand::Move(place) => untouched(place),
+        Operand::Const(_) => true,
+    };
+    for basic_block in &body.blocks {
+        for stmt in &basic_block.stmts {
+            let quiet_stmt = match &stmt.kind {
+                StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => true,
+                StmtKind::Assign { place, rvalue: Rvalue::Ref { place: borrowed, .. } } => {
+                    untouched(place) && untouched(borrowed) && shared_owner_of_payload(body, types, borrowed).is_none()
+                }
+                StmtKind::Assign { place, rvalue } => untouched(place) && rvalue_places(rvalue).into_iter().all(untouched),
+                StmtKind::CheckedBinaryOp { .. } => true,
+                StmtKind::Drop { place, .. } => untouched(place) && drop_is_quiet(types, place_ty(body, types, place)),
+                _ => false,
+            };
+            if !quiet_stmt {
+                return false;
+            }
+        }
+        let quiet_terminator = match &basic_block.terminator {
+            Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => true,
+            Terminator::SwitchInt { discr, .. } => operand_untouched(discr),
+            Terminator::Assert { cond, .. } => operand_untouched(cond),
+            Terminator::Call { func: FuncRef::Builtin { which, arg_ty }, args, dest, .. } => {
+                quiet_builtin(types, which, *arg_ty) && args.iter().all(operand_untouched) && untouched(dest)
+            }
+            Terminator::Call { func: FuncRef::Direct { symbol, .. }, args, dest, .. } if quiet.contains(symbol) => {
+                args.iter().all(operand_untouched) && untouched(dest)
+            }
+            Terminator::Call { .. } => false,
+        };
+        if !quiet_terminator {
+            return false;
+        }
+    }
+    true
+}
+
+/// `[EXC-15]`, `[EXC-19]` — make the whole-object write of each direct call to
+/// a quiet function a check. Runs after `[EXC-8]` hoisting, which turns a
+/// loop's repeated counted writes into one checked interval first, and
+/// before the removal of checks nothing held could fail.
+pub fn convert_quiet_calls_all(bodies: &mut [Body], types: &TypeTable) {
+    let quiet = quiet_functions(bodies, types);
+    for body in bodies.iter_mut() {
+        convert_quiet_calls(body, types, &quiet);
+    }
+}
+
+/// Every quiet function in the program: all start quiet, and each round drops
+/// those that break the rule given the rest, so functions that only call each
+/// other stay quiet.
+fn quiet_functions(bodies: &[Body], types: &TypeTable) -> HashSet<String> {
+    let mut quiet: HashSet<String> = bodies.iter().map(|body| body.symbol.clone()).collect();
+    loop {
+        let next: HashSet<String> = bodies
+            .iter()
+            .filter(|body| quiet.contains(&body.symbol) && quiet_body(body, types, &quiet))
+            .map(|body| body.symbol.clone())
+            .collect();
+        if next.len() == quiet.len() {
+            return quiet;
+        }
+        quiet = next;
+    }
+}
+
+/// `[EXC-15]`, `[EXC-19]` — the whole-object write a caller holds around a
+/// direct call to a quiet function is only checked: nothing can begin while
+/// the callee runs, so marking the words could never be observed. Its end
+/// moves to right after its begin, before the call. Only when that access
+/// alone begins before the call, and nothing begins after the call before its
+/// end.
+fn convert_quiet_calls(body: &mut Body, types: &TypeTable, quiet: &HashSet<String>) {
+    let mut predecessors = vec![0usize; body.blocks.len()];
+    for basic_block in &body.blocks {
+        for successor in access_successors(&basic_block.terminator) {
+            predecessors[successor.0 as usize] += 1;
+        }
+    }
+    let storage = |kind: &StmtKind| matches!(kind, StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop);
+    for block in 0..body.blocks.len() {
+        let Terminator::Call { func: FuncRef::Direct { symbol, .. }, dest, next, .. } = &body.blocks[block].terminator
+        else {
+            continue;
+        };
+        if !quiet.contains(symbol) || types.is_view(place_ty(body, types, dest)) {
+            continue;
+        }
+        let next = next.0 as usize;
+        if predecessors[next] != 1 {
+            continue;
+        }
+        let stmts = &body.blocks[block].stmts;
+        let Some(position) = stmts.iter().rposition(|stmt| !storage(&stmt.kind)) else { continue };
+        let StmtKind::BeginAccess { place: object, mutable: true } = &stmts[position].kind else { continue };
+        if position > 0 && matches!(stmts[position - 1].kind, StmtKind::BeginAccess { .. } | StmtKind::BeginAccessTransfer { .. }) {
+            continue;
+        }
+        if !matches!(types.kind(place_ty(body, types, object)), TyKind::Class(_) | TyKind::ClassInterface(_)) {
+            continue;
+        }
+        let object = object.clone();
+        let mut end = None;
+        for (index, stmt) in body.blocks[next].stmts.iter().enumerate() {
+            match &stmt.kind {
+                StmtKind::EndAccess { place, mutable: true } if *place == object => {
+                    end = Some(index);
+                    break;
+                }
+                StmtKind::EndAccess { .. } | StmtKind::EndAccessTransfer { .. } => {}
+                kind if storage(kind) => {}
+                _ => break,
+            }
+        }
+        let Some(end) = end else { continue };
+        let moved = body.blocks[next].stmts.remove(end);
+        body.blocks[block].stmts.insert(position + 1, moved);
+    }
+}
+
 fn access_active(access: &SharedAccess, regions: &Regions, point: Point) -> bool {
-    point == access.created_at || access.region.is_some_and(|region| regions.contains(region, point))
+    point == access.created_at || access.regions.iter().any(|&region| regions.contains(region, point))
 }
 
 fn access_successors(terminator: &Terminator) -> Vec<BasicBlockId> {
@@ -1127,6 +1503,18 @@ fn access_successors(terminator: &Terminator) -> Vec<BasicBlockId> {
         Terminator::Call { next, .. } | Terminator::Assert { next, .. } => vec![*next],
         Terminator::Return | Terminator::Unreachable => Vec::new(),
     }
+}
+
+/// Where `block` leads once the bridge blocks an access put on an edge (each
+/// one a `Goto`, numbered from `original_blocks` on) are passed through.
+fn through_bridges(body: &Body, mut block: BasicBlockId, original_blocks: usize) -> BasicBlockId {
+    while block.0 as usize >= original_blocks {
+        match body.blocks[block.0 as usize].terminator {
+            Terminator::Goto(target) => block = target,
+            _ => break,
+        }
+    }
+    block
 }
 
 fn append_edge_end(
@@ -1147,6 +1535,7 @@ fn append_edge_end(
         terminator_span: match event {
             AccessEvent::End { span, .. } => span,
             AccessEvent::Begin { span, .. } => span,
+            AccessEvent::Check { span, .. } => span,
         },
     });
     let terminator = &mut body.blocks[source].terminator;
@@ -4020,42 +4409,14 @@ fn through_indirection(body: &Body, types: &TypeTable, place: &Place) -> bool {
     })
 }
 
-/// The type of a place, following its projections. A projection that does not
-/// apply leaves the type alone (the type checker has already rejected such a
-/// program; the borrow checker only has to stay on its feet).
+/// The type of a place, following its projections, class fields included. A
+/// projection that does not apply leaves the type alone (the type checker has
+/// already rejected such a program; the borrow checker only has to stay on
+/// its feet). D-374: this was a second copy of the walk with no class-field
+/// step, so `h.field` had the class's type and a `Shared[T]` stored in a
+/// class field began no access at all.
 fn place_ty(body: &Body, types: &TypeTable, place: &Place) -> Ty {
-    let mut ty = body.local(place.local).ty;
-    let mut variant = None;
-    for projection in &place.projection {
-        match (projection, types.kind(ty)) {
-            (Projection::Downcast(v), TyKind::Enum(_)) => variant = Some(*v),
-            (Projection::Field(i), TyKind::Enum(id)) => {
-                let Some(v) = variant else { continue };
-                let fields = &types.enum_def(*id).variants[v].fields;
-                ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
-                variant = None;
-            }
-            (Projection::Field(i), TyKind::Struct(id)) => {
-                let fields = &types.struct_def(*id).fields;
-                ty = fields.get(*i).map(|f| f.ty).unwrap_or(ty);
-            }
-            (Projection::Field(i), TyKind::Tuple(items)) => {
-                ty = items.get(*i).copied().unwrap_or(ty);
-            }
-            (
-                Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
-                TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. },
-            ) => ty = *elem,
-            (
-                Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
-                TyKind::Ptr { inner, .. },
-            ) => ty = *inner,
-            (Projection::Deref, TyKind::Ref { inner, .. }) => ty = *inner,
-            (Projection::Deref, TyKind::Ptr { inner, .. }) => ty = *inner,
-            _ => {}
-        }
-    }
-    ty
+    crate::regions::place_type(body, types, place)
 }
 
 /// Whether a struct type is a compiler-known `RefCell[T]` (by name prefix,

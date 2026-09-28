@@ -16,6 +16,7 @@ context for the 0.9.5 intake and original phase order.
 |---|---|
 | `docs/DEFECTS.md` | every compiler defect, its status, **and how the fix was verified**. Its header carries the four-way sort below |
 | `docs/DEVIATIONS.md` | where the compiler knowingly differs from the document, and why |
+| `docs/NOT-IMPLEMENTED.md` | spec features not built yet because they need another feature first |
 | `docs/spec-amendments.md` | every difference between the owner's file and the normative copy, each with a class |
 | `docs/spec-errata.md` | defects in the *document*, and the reading taken |
 | `docs/DECISIONS.md` | ADR-001..036 |
@@ -57,7 +58,7 @@ live Git state.
 
  133 top-level conformance rule directories, 479 `.em` files including support
  modules. 125 defects recorded, **none open**.
-**3 open deviations** (D1, D3, and D4; D2 is closed, D5 and D6 are historical).
+**Open deviation:** D4 (`docs/DEVIATIONS.md`). Features waiting on another feature are N1–N5 in `docs/NOT-IMPLEMENTED.md` (N1–N3 were D1, D3, D6).
 **D-126 through D-128 are fixed:** EMIF decoding recomputes the cache key from
 the artifact's identity inputs and rejects self-inconsistent metadata,
 including an empty explicit `@borrows` contract, before consumption; source
@@ -692,10 +693,10 @@ requires the same explicit root resolution as `ember inspect --cycle <path>`.
   deterministic generator check. The generated outputs are validated as
   outputs, while hand-authored compiler/runtime sources remain covered by the
   branding scan. Strict C11 compilation and the full workspace regression pass.
-* **Three open deviations**: D1 (`[RNG-5a1]`'s generated operator impls), D3
-  (`extern class` parses and is refused), and D4 (`E9012` registered and never
-  emitted). D2 (`[CLO-6]`'s `owned f`) is closed by the current compiler
-  checkpoint; D5 and D6 are historical closed/withdrawn entries.
+* **Open deviation: D4** (`docs/DEVIATIONS.md`). Features waiting on
+  another feature are N1–N5 in `docs/NOT-IMPLEMENTED.md`: the former D1
+  (`[RNG-5a1]` operator impls), D3 (`extern class`) and D6 (`once fn`
+  callbacks), and N4/N5 (calls and float totals in vectorisable form).
 
 ## 8. Traps paid for
 

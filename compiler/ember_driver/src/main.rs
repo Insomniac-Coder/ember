@@ -2185,6 +2185,17 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // intervals, conservatively turn a canonical stable class loop into one
     // checked preheader/postheader interval. Unknown loops remain per-access.
     ember_analysis::hoist_loop_accesses_all(&mut bodies, &types);
+    // `[EXC-19]` — a `mut self` call to a quiet function is only checked. After
+    // hoisting, which keeps a loop's repeated writes as one checked interval.
+    ember_analysis::convert_quiet_calls_all(&mut bodies, &types);
+    // `[EXC-3]`/`[EXC-3a]` — last, once every held interval is final: remove
+    // the checks that nothing held anywhere in the program could make fail.
+    ember_analysis::remove_never_firing_checks_all(&mut bodies, &types);
+    // `[OPT-2]` — last, on the final checks: a counted loop whose indices are
+    // all provably in bounds at entry runs a copy without its bounds checks;
+    // then `[SIMD-7]` groups the overflow checks of every loop in
+    // vectorisable form.
+    ember_analysis::version_bounds_checked_loops_all(&mut bodies, &types, &common);
     if command == "check" {
         interface_cache
             .commit()
