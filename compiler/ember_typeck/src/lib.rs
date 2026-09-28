@@ -1164,6 +1164,10 @@ struct Checker<'a> {
     abstract_methods: HashSet<DefId>,
     /// Default interface methods materialized for instantiated generic structs.
     pending_default_methods: Vec<PendingDefaultMethod>,
+    /// `[STD-19]` — the source receiver of each method call being checked,
+    /// innermost last: an adapter or consumer called on an `Iterable` is
+    /// checked again as `recv.iter().name(…)`.
+    method_receivers: Vec<ast::Expr>,
     /// D-379 — a generic instance's default method whose signature holds
     /// `Self` inside another type (`fn take(owned self, n: int) -> Take[Self]`),
     /// kept until a call names it: made at once, its signature is a new
@@ -1414,6 +1418,7 @@ impl<'a> Checker<'a> {
             abstract_methods: HashSet::new(),
             pending_default_methods: Vec::new(),
             deferred_defaults: HashMap::new(),
+            method_receivers: Vec::new(),
             pending_generic_implements: Vec::new(),
             checked_default_methods: HashSet::new(),
             generic_method_sources: HashMap::new(),
@@ -27222,6 +27227,54 @@ impl<'a> Checker<'a> {
         args: &[ast::Arg],
         span: Span,
     ) -> Expr {
+        self.method_receivers.push(recv.clone());
+        let call = self.synth_method_call_on(recv, name, generic_args, args, span);
+        self.method_receivers.pop();
+        call
+    }
+
+    /// `[STD-19]` — `xs.enumerate()` is `xs.iter().enumerate()`: a name no
+    /// method of the receiver's type has, that `Iterator` has, on a receiver
+    /// with an `iter()`, is that. `None` otherwise, to report as usual.
+    fn iterable_form(&mut self, receiver_ty: Ty, name: ast::Ident, args: &[ast::Arg], span: Span) -> Option<Expr> {
+        let iterator = Symbol::intern("std.core.Iterator");
+        if self.is_text(receiver_ty) || self.implements(receiver_ty, iterator) {
+            return None;
+        }
+        let iterator_has = matches!(name.name.as_str(), "sum" | "product")
+            || self.interfaces.get(&iterator).is_some_and(|def| def.methods.iter().any(|(method, ..)| *method == name.name));
+        let iterable = self.lookup_method(receiver_ty, Symbol::intern("iter")).is_some()
+            || matches!(self.types.kind(receiver_ty), TyKind::Vec { text: false, .. } | TyKind::Span { .. } | TyKind::Array { .. });
+        if !iterator_has || !iterable || name.name.is("next") {
+            return None;
+        }
+        let recv = self.method_receivers.last()?.clone();
+        let iter = ast::Expr {
+            id: ast::NodeId::DUMMY,
+            kind: ast::ExprKind::MethodCall {
+                recv: Box::new(recv),
+                name: ast::Ident { name: Symbol::intern("iter"), span: name.span },
+                generic_args: Vec::new(),
+                args: Vec::new(),
+            },
+            span,
+        };
+        let call = ast::Expr {
+            id: ast::NodeId::DUMMY,
+            kind: ast::ExprKind::MethodCall { recv: Box::new(iter), name, generic_args: Vec::new(), args: args.to_vec() },
+            span,
+        };
+        Some(self.synth(&call))
+    }
+
+    fn synth_method_call_on(
+        &mut self,
+        recv: &ast::Expr,
+        name: ast::Ident,
+        generic_args: &[ast::GenericArg],
+        args: &[ast::Arg],
+        span: Span,
+    ) -> Expr {
         let expected = self.method_expectation.take();
         let receiver = self.synth_committed(recv);
         if receiver.ty == self.common.error {
@@ -28045,6 +28098,9 @@ impl<'a> Checker<'a> {
             if explicit.is_empty() && self.has_callable_field(receiver.ty, name.name) {
                 let callee = self.field_of(receiver, name, name.span);
                 return self.call_value(callee, args, span);
+            }
+            if explicit.is_empty() && named.is_none() && let Some(call) = self.iterable_form(receiver.ty, name, args, span) {
+                return call;
             }
             let shown = self.types.display(receiver.ty);
             let mut diagnostic = Diagnostic::error(
@@ -32777,6 +32833,9 @@ impl<'a> Checker<'a> {
             if self.lookup_method(receiver.ty, name.name).is_some() {
                 return self.synth_registered_method(receiver, recv_span, name, args, Vec::new(), span);
             }
+            if let Some(call) = self.iterable_form(receiver.ty, name, args, span) {
+                return call;
+            }
             let shown = self.types.display(receiver.ty);
             self.error(
                 codes::E2020,
@@ -33078,6 +33137,9 @@ impl<'a> Checker<'a> {
             // one is registered (`[TYP-24]`: the inherent method comes first).
             if self.lookup_method(receiver.ty, name.name).is_some() {
                 return self.synth_registered_method(receiver, recv_span, name, args, Vec::new(), span);
+            }
+            if let Some(call) = self.iterable_form(receiver.ty, name, args, span) {
+                return call;
             }
             let shown = self.types.display(receiver.ty);
             let diagnostic =

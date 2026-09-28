@@ -431,7 +431,7 @@ pub fn prepare_interface_cache(
     let mut report = InterfaceCacheReport::default();
     for artifact in fresh {
         let path = artifact_path(directory, &artifact.module);
-        match std::fs::read(&path) {
+        match read_record(&path) {
             Ok(bytes) => {
                 let existing = match ModuleInterfaceArtifact::from_bytes(&bytes) {
                     Ok(existing) => existing,
@@ -479,6 +479,14 @@ pub fn prepare_interface_cache(
                 writes.push((path, artifact.to_bytes()?));
                 artifacts.push(artifact.clone());
             }
+            // D-383 — on Windows a record another compilation is renaming into
+            // place can refuse a reader for a moment, past `read_record`'s
+            // retries. The fresh record is complete and current: this
+            // compilation uses it and leaves the file to the other one.
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                report.invalidated += 1;
+                artifacts.push(artifact.clone());
+            }
             Err(source) => return Err(InterfaceArtifactError::Io { path, source }),
         }
     }
@@ -487,6 +495,22 @@ pub fn prepare_interface_cache(
         writes,
         report,
     })
+}
+
+/// A stored record's bytes. D-383 — while another compilation renames its
+/// record into place, Windows refuses a reader (`PermissionDenied`) for a
+/// moment; the read is tried again a few times before that is believed.
+fn read_record(path: &Path) -> std::io::Result<Vec<u8>> {
+    let mut tries = 0;
+    loop {
+        match std::fs::read(path) {
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied && tries < 5 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            result => return result,
+        }
+    }
 }
 
 /// Keep different source-package roots from contending for a logical `root`
@@ -1279,6 +1303,22 @@ mod tests {
             .find(|artifact| artifact.module == "root")
             .unwrap();
         assert_ne!(before_root.cache_key, after_root.cache_key);
+    }
+
+    /// D-383 — a record the reader is refused (on Windows, one another
+    /// compilation is renaming into place; here, a directory where the file
+    /// would be) is not an internal error: the fresh record is used.
+    #[cfg(windows)]
+    #[test]
+    fn a_record_the_reader_is_refused_uses_the_fresh_one() {
+        let directory = std::env::temp_dir().join(format!("ember-interface-refused-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let fresh = build_artifacts(&[input("root", "root", &[], 0)], "test").unwrap();
+        let path = artifact_path(&directory, &fresh[0].module);
+        std::fs::create_dir_all(&path).unwrap();
+        let prepared = prepare_interface_cache(&directory, &fresh).unwrap();
+        assert_eq!(prepared.artifacts(), fresh.as_slice());
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     #[test]

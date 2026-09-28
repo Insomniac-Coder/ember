@@ -2704,8 +2704,8 @@ accepts as `Iterator.next` as it accepts built-in indexing as `Index.index`.
   values, `[CLO-3]`). `chain` needs `J: Iterator[Item = I.Item]` between two parameters.
   `collect[C]()` and `join(sep)` need more than a bound on `Item` (a target collection, a
   `Display` item). `rev` needs a double-ended iterator.
-  `copied`/`cloned` need `Item = ref T`. The `Iterable` forms (`xs.enumerate()`). `[CTL-3b]`'s
-  counted lowering of adapter chains in a `for` header: today a chain runs through `next`.
+  `copied`/`cloned` need `Item = ref T`. `[CTL-3b]`'s counted lowering of adapter chains in a
+  `for` header: today a chain runs through `next`.
 * **More consumers, the same day.** `max`, `min` (`where Item: Ord`; among equals `max` gives
   the last and `min` the first, as Rust's do), `max_by_key`, `min_by_key`, `max_by`, `min_by`
   and `reduce` are defaults in std. `sum` and `product` are not: an iterator over a list gives
@@ -2716,6 +2716,14 @@ accepts as `Iterator.next` as it accepts built-in indexing as `Index.index`.
   x`), so each `+` is checked as the operator is and floats add left to right; a type's own
   `sum` method comes first. A default method can now also call through its interface's
   associated type (`Item.default()`), as it names it in types (D-381).
+* **The `Iterable` forms, the same day.** A method call whose name no method of the receiver's
+  type has, but `Iterator` has (or `sum`/`product`), on a receiver with an `iter()` (a list, a
+  view, a fixed array, a map, a set, any type with one) that is not itself an iterator nor
+  text, is checked as `recv.iter().name(…)` from the receiver's source (`iterable_form`,
+  reached where each method path would report the missing method), so the collection is
+  borrowed, not moved, and a collection's own method of the name comes first (`Array.join`).
+  `to_array()` over a list's iterator is refused as storing its references would be
+  (ODR-069); an owned copy needs `copied`/`cloned`, not built yet.
 * **`[CTL-3b]` in `for` headers, the same day.** `(a..b).step_by(k)` is the counted loop
   `range(start, stop, step)` already was (`check_for_stepped_range`, now with a `step_by` mode):
   the values are counted once, each is computed from its index, and a `k` of zero or less
