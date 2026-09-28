@@ -365,13 +365,6 @@ codes! {
     E9002 = (Error, 9002, Build, "[BLD-4]", "the C toolchain could not be found or failed");
     E9003 = (Error, 9003, Build, "[CLI-1]", "invalid command line");
 
-    // Registered, never emitted: XX §6 names `E9012` under "manifest sections"
-    // and no rule assigns it. `[MAN-3]` was given it here for a while, because
-    // `[DIA-6a]` wants one code per rule and `E9010` was already `[TYP-9c]`'s
-    // — but `[MAN-3]` says `E9010` in as many words, and the document decides
-    // (errata ERR-039). It is kept in the registry because XX §6 names it and
-    // `[DIA-6a]` requires every named code to be registered.
-    E9012 = (Error, 9012, Build, "[MAN-3]", "reserved for a manifest section");
     E9013 = (Error, 9013, Build, "[MAN-5]", "invalid `[ffi]` manifest section");
     E9030 = (Error, 9030, Build, "[HR-18]", "hot reload refused");
     E9031 = (Error, 9031, Build, "[MAN-7]", "invalid `reload` value");

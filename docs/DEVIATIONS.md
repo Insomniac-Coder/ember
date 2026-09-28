@@ -55,7 +55,13 @@ that would expose it lands, and the entry says which feature that is.
 | **Owner** | — |
 | **Target** | **done** — current checkpoint, `tests/conformance/CLO-6/` |
 
-## D4 — `E9012` is registered and never emitted
+## D4 — `E9012` is registered and never emitted — **CLOSED 2026-09-28**
+
+> **Closed: `E9012` is gone.** The development target, 0.9.9_Hardened_41, lists it under
+> "Retired codes". The owner said to drop it (2026-09-28). `tools/rule_index.py` no longer
+> requires a code the pinned development target retires, though the adopted 0.8.5 document
+> still names it (`retired_codes`, with a test in `tools/test_rule_index.py`); the registry
+> entry is removed and the gate baseline shrank.
 
 | | |
 |---|---|

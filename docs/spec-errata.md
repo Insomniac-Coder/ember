@@ -104,7 +104,7 @@ ERR-008) is worth being able to read again.
 | ERR-051 | H10 `[ARN-10]` with `[PAN-1]` and `Default.default() -> Self` | **DECIDED by the owner 2026-09-13.** 0.9.6_Hardened_1 clarifies that v1 `Default` has no recoverable failure path and panic terminates through `abort()`, so no post-panic Arena state is observable and no unwinding/rollback is required. Rollback applies only when a separate API explicitly defines both recoverable failure and transactional rollback. ODR-010 closed; H10 unchanged |
 | ERR-052 | H1 `[ARN-5]` and the Part XII §1 library table | **DECIDED.** ODR-011/ADR-031/HC-096-02 define the complete fixed-capacity Arena-backed collection contract in 0.9.6_Hardened_2; no semantics were inferred by the implementation |
 | ERR-053 | H2 `Hash.hash(self, mut h: Hasher)` with `[ARN-5d]` / `[TST-24]` | **DECIDED by the owner 2026-09-13.** H3 defines the public `Hash`/`Hasher` protocol, `DefaultHasher`, Eq/hash coherence, read-only resident keys, and algorithm-flexibility boundary. ODR-012 closed; H2 unchanged |
-| ERR-055 | H41 `[SIMD-5]` with `[SIMD-7]`'s reduction sentence | **OPEN** — owner question ODR-086: whether a running total the widths cannot prove safe leaves its loop in vectorisable form |
+| ERR-055 | H41 `[SIMD-5]` with `[SIMD-7]`'s reduction sentence | **DECIDED by the owner 2026-09-28** (ODR-086): a running total is not grouped; it is proved safe from its widths or block by block at run time. Hardened_42 |
 | ERR-054 | H3 `[HASH-1]` with `[TYP-22]` | **DECIDED by the owner 2026-09-13.** H4 uses static `fn hash[H: Hasher](self, mut h: H)`, confirms `DefaultHasher implements Hasher`, and introduces no mandatory dynamic dispatch. ODR-013 closed; H3 unchanged |
 
 ---
@@ -2419,7 +2419,9 @@ decision. H3 remains frozen.
 
 ## ERR-055 — does an unprovable running total leave its loop in vectorisable form?
 
-**Status: open. Owner question ODR-086.**
+**Status: decided by the owner, 2026-09-28 (ODR-086). Hardened_42 says a running total is
+not grouped; it is vectorised when its widths prove it safe or, for a signed total of at
+least 16 bits, when a run-time test over each block of 64 iterations does.**
 
 **Where.** `[SIMD-5]`: a loop is in vectorisable form when "every
 `RuntimeCheck(Arithmetic)` is removed, or is one `[SIMD-7]` permits grouping (grouping

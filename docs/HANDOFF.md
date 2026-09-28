@@ -11088,11 +11088,12 @@ first**; the rest of §0.355 is the running narrative behind it.
     semantic ambiguity and no ODR or new hardening.
 
   The five preceding CI runs, through `f529f8b`, finished green.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_41.md`
-  (ODR-085), pinned in `docs/spec-source/development-target.json`. The
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_42.md`
+  (ODR-086: running totals block by block; ODR-087: the LLVM backend restored as
+  §XVIII.7), pinned in `docs/spec-source/development-target.json`. The
   spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through
-  `parts-h41/` are frozen.
-* **Next numbers:** ODR-087, D-377, ADR-071, ERR-056.
+  `parts-h42/` are frozen.
+* **Next numbers:** ODR-088, D-377, ADR-071, ERR-056.
 * **Speed audit: the six agreed fixes are done (2026-09-27, uncommitted;
   ADR-070, D-375, deviation D7).** The owner said "do all fixes check them and
   report the final result". Each fix passed the quick check, the workspace
@@ -11159,6 +11160,14 @@ first**; the rest of §0.355 is the running narrative behind it.
     * Checked: quick check, suite on MSVC (305) and clang (304, the failure a
       runtime self-test that cannot link on Windows clang), gates, clang
       `-Werror` on every SIMD-7/OPT-2 test. D-376 found, older than this.
+  * **Running totals block by block (2026-09-28, owner: "I accept the 64 block
+    fix"; ODR-086, Hardened_42, ADR-070 item 8).** A signed running total the
+    widths cannot prove safe runs in blocks of 64: the total tested small at
+    each block's start, every added value noted in a size word, the block
+    re-run checked when the note fails. Adding into an unsigned copy of the
+    total (when nothing else reads it) is what lets MSVC vectorise it.
+  * **E9012 dropped (2026-09-28, owner).** Hardened_41 retires it; the rule-index
+    gate skips codes the pinned target retires; D4 closed.
   * **Open, not started.**
     * D-376: 67 test programs' C warns under clang `-Wall -Wextra`.
     * Two checks on a list read and written run each group twice (1.6 times
@@ -11172,8 +11181,9 @@ first**; the rest of §0.355 is the running narrative behind it.
     * `mut self` calls p3/p7 are still about 3×.
     * clang recursion a10 is 1.7×.
     * `[OPT-2]` and `[SIMD-7]` are complete (the owner: "fix the slow loop
-      half assed implementation"); ADR-070 item 5. Open: ODR-086, whether a
-      running total the widths cannot prove safe must be grouped.
+      half assed implementation"); ADR-070 item 5. ODR-086 closed
+      (2026-09-28): running totals are proved safe block by block, ADR-070
+      item 8; the sum loop is 1.5× C on MSVC and 1.6× on clang (was 2.5×/3.4×).
 * **Next job (owner, 2026-09-27): a speed audit before new features.**
   `docs/AUTOPILOT.md` §2 has his words and §4 the rule. Every speed claim is
   measured against a hand-written C program doing the same work, or C++ for

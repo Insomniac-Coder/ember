@@ -1218,10 +1218,14 @@ fn rewrite_places(block: &mut BasicBlock, f: &impl Fn(&mut Place)) {
 // exclusivity check) or run long (an inner loop), the masks are tested first,
 // so an earlier overflow is never overtaken.
 //
-// An integer running total (`total = total + x`, `x` an integer of at most 32
-// bits widened into a 64-bit total) additionally gets a copy with no overflow
-// check at all, taken when the trip count and the total's value at entry prove
-// no partial sum can overflow in any grouping.
+// An integer running total (`total = total ± x`) is not grouped (ODR-086). A
+// total of at most 32-bit elements widened into a 64-bit total gets a copy with
+// no overflow check at all, taken when the trip count and the total's value at
+// entry prove no partial sum can overflow in any grouping. Otherwise a signed
+// total of at least 16 bits is proved safe at run time, block by block: in
+// blocks of 64 iterations, the total checked small enough at the block's start
+// and every value it adds checked small enough during the block
+// (`block_totals`).
 //
 // Vectorisable form, computed here and never delegated to the C compiler:
 // - a counted loop whose trip count is known at entry, with one exit;
@@ -1339,17 +1343,28 @@ fn group_overflow_checks(body: &mut Body, types: &TypeTable, common: &CommonType
             if let Some(entry) = unchecked_totals(body, types, common, &shape, &checks, BasicBlockId(shape.header as u32)) {
                 enter_through(body, &shape, entry);
                 count += 1;
+                continue;
             }
+            // Otherwise the totals are proved safe block by block at run time
+            // (ODR-086), the other checks grouped beside them; a total that
+            // cannot be keeps a check on every operation.
+            let (Some(totals), Some(saves)) =
+                (block_totals(body, types, &shape, &checks), undo_saves(body, types, &shape, &written))
+            else {
+                continue;
+            };
+            group(body, types, common, &shape, &checks, Mode::Rerun, &saves, &totals);
+            count += 1;
             continue;
         }
         if checks.len() == 1 {
-            group(body, types, common, &shape, &checks, Mode::Report, &[]);
+            group(body, types, common, &shape, &checks, Mode::Report, &[], &[]);
         } else if let Some(saves) = undo_saves(body, types, &shape, &written) {
-            group(body, types, common, &shape, &checks, Mode::Rerun, &saves);
+            group(body, types, common, &shape, &checks, Mode::Rerun, &saves, &[]);
         } else {
             let origins: Vec<Place> = written.iter().map(|view| view.origin.clone()).collect();
             if !detect_then_commit(body, types, common, &shape, &checks, &origins) {
-                group(body, types, common, &shape, &checks, Mode::Bits, &[]);
+                group(body, types, common, &shape, &checks, Mode::Bits, &[], &[]);
             }
         }
         count += 1;
@@ -1761,13 +1776,15 @@ fn int(value: i128, ty: Ty) -> Operand {
 
 /// Statements computing whether an overflow is pending: whether any bit of
 /// the masks is set, after moving it down by `flag_shift` for flag words (see
-/// `flag_shifts`).
+/// `flag_shifts`), or whether a running total's size word (`BlockTotal`) has
+/// a bit at or above its limit.
 fn pending_overflow(
     body: &mut Body,
     build: &Build,
     common: &CommonTypes,
     masks: &[LocalId],
     flag_shift: &Option<Operand>,
+    sizes: &[(LocalId, u32)],
 ) -> (Vec<Stmt>, LocalId) {
     let word = body.local(masks[0]).ty;
     let mut stmts = Vec::new();
@@ -1782,8 +1799,15 @@ fn pending_overflow(
         stmts.push(build.set(top, binary(BinOp::Shr, copy(any), shift.clone())));
         any = top;
     }
-    let pending = build.temp(body, common.bool_);
+    let mut pending = build.temp(body, common.bool_);
     stmts.push(build.set(pending, binary(BinOp::Ne, copy(any), int(0, word))));
+    for &(size, limit) in sizes {
+        let (high, over, either) = (build.temp(body, common.u64), build.temp(body, common.bool_), build.temp(body, common.bool_));
+        stmts.push(build.set(high, binary(BinOp::Shr, copy(size), int(limit as i128, common.u64))));
+        stmts.push(build.set(over, binary(BinOp::Ne, copy(high), int(0, common.u64))));
+        stmts.push(build.set(either, binary(BinOp::BitOr, copy(pending), copy(over))));
+        pending = either;
+    }
     (stmts, pending)
 }
 
@@ -1848,9 +1872,11 @@ fn group(
     checks: &[OverflowCheck],
     mode: Mode,
     saves: &[Save],
+    totals: &[BlockTotal],
 ) {
     let flag = mode != Mode::Bits;
-    let size = group_size(mode);
+    // A group with running totals is the block their run-time proof covers.
+    let size = if totals.is_empty() { group_size(mode) } else { TOTAL_BLOCK };
     let (word_shift, flag_shift) = flag_shifts(mode, common);
     let build = Build { span: body.blocks[shape.header].terminator_span };
     let word = |value: u64| int(value as i128, common.usize);
@@ -1876,6 +1902,13 @@ fn group(
 
     // The report, laid out first so every later block can name it.
     let mut saved: Vec<(LocalId, LocalId)> = Vec::new();
+    // One size word per running total: every value it adds, offset so that a
+    // small one has no bit at or above the limit, ORed.
+    let sizes: Vec<(LocalId, u32)> =
+        totals.iter().map(|total| (build.temp(body, common.u64), total.width - 8)).collect();
+    // The unsigned copy of each total that has one.
+    let copies: Vec<Option<LocalId>> =
+        totals.iter().map(|total| total.copied.then(|| build.temp(body, common.u64))).collect();
     // One slot per saved view and group position.
     let slots: Vec<Vec<LocalId>> =
         saves.iter().map(|save| (0..size).map(|_| build.temp(body, save.ty)).collect()).collect();
@@ -1891,7 +1924,7 @@ fn group(
         restore.extend(saved.iter().map(|(local, save)| build.set(*local, Rvalue::Use(copy(*save)))));
         build.block(body, restore, Terminator::Goto(header))
     } else if mode == Mode::Report {
-        let (stmts, pending) = pending_overflow(body, &build, common, &flags, &flag_shift);
+        let (stmts, pending) = pending_overflow(body, &build, common, &flags, &flag_shift, &sizes);
         let report = BasicBlockId(body.blocks.len() as u32);
         let check = &checks[0];
         body.blocks.push(BasicBlock {
@@ -1962,6 +1995,31 @@ fn group(
             unreachable!("a check ends in its assert")
         };
         let original = clones[slot].stmts[check.stmt].clone();
+        // A running total: its operation in wrapping arithmetic, and the value
+        // it adds noted in its size word.
+        if let Some(position) = totals.iter().position(|total| total.check == index) {
+            let total = &totals[position];
+            let (value, offset) = (build.temp(body, common.u64), build.temp(body, common.u64));
+            let size = sizes[position].0;
+            let mut stmts = Vec::new();
+            stmts.push(build.set(value, numeric(total.operand.clone(), common.u64)));
+            match copies[position] {
+                Some(copy_of_total) => {
+                    let StmtKind::CheckedBinaryOp { op, .. } = &original.kind else { unreachable!("a total is a checked operation") };
+                    stmts.push(build.set(copy_of_total, binary(*op, copy(copy_of_total), copy(value))));
+                }
+                None => {
+                    let (wrapped, _) =
+                        wrapping_form(body, types, common, &build, &original).expect("a total is a `+` or `-` of at most 64 bits");
+                    stmts.splice(0..0, wrapped);
+                }
+            }
+            stmts.push(build.set(offset, binary(BinOp::Add, copy(value), int(1i128 << (total.width - 9), common.u64))));
+            stmts.push(build.set(size, binary(BinOp::BitOr, copy(size), copy(offset))));
+            clones[slot].stmts.splice(check.stmt..=check.stmt, stmts);
+            clones[slot].terminator = Terminator::Goto(next);
+            continue;
+        }
         let (stmts, bit) = overflow_bit(body, types, common, &build, &original, &overflow);
         clones[slot].stmts.splice(check.stmt..=check.stmt, stmts);
         if flag {
@@ -1998,7 +2056,14 @@ fn group(
     };
     build.branch(body, vec![build.set(more, inside_group)], more, group_end, body_entry);
     // group end: a pending overflow reports; otherwise the next group.
-    let (stmts, pending) = pending_overflow(body, &build, common, &flags, &flag_shift);
+    let (mut stmts, pending) = pending_overflow(body, &build, common, &flags, &flag_shift, &sizes);
+    // Each copied total written back (a re-run restores it anyway).
+    for (total, copy_of_total) in totals.iter().zip(&copies) {
+        if let Some(copy_of_total) = copy_of_total {
+            let ty = body.local(total.acc).ty;
+            stmts.insert(0, build.set(total.acc, numeric(copy(*copy_of_total), ty)));
+        }
+    }
     build.branch(body, stmts, pending, next_group, report);
     // start: the group's end (at least a group's worth remains, so it cannot
     // overflow) or position cleared, the flags cleared.
@@ -2010,19 +2075,28 @@ fn group(
         for (save, slots) in saves.iter().zip(&slots) {
             clear.extend(element_copies(body, &build, common, counter_ty, shape.counter, save, slots, true));
         }
+        clear.extend(sizes.iter().map(|&(size, _)| build.set(size, Rvalue::Use(int(0, common.u64)))));
+        for (total, copy_of_total) in totals.iter().zip(&copies) {
+            if let Some(copy_of_total) = copy_of_total {
+                clear.push(build.set(*copy_of_total, numeric(copy(total.acc), common.u64)));
+            }
+        }
         clear
     } else {
         let mut clear = vec![build.set(position, Rvalue::Use(word(0)))];
         clear.extend(flags.iter().map(|flag| build.set(*flag, Rvalue::Use(word(0)))));
         clear
     };
-    let entry = group_entry(body, &build, common, shape, size, clear, &saved, group_head);
+    // Each running total small enough at the block's start, or the loop as it
+    // was runs the rest.
+    let guard = totals_start_test(body, &build, common, totals);
+    let entry = group_entry(body, &build, common, shape, size, guard, clear, &saved, group_head);
     debug_assert_eq!(entry, next_group);
 
     // Nothing in a group that could panic another way or run long is reached
     // with an overflow pending.
     let grouped: Vec<usize> = (base as usize..base as usize + shape.region.len()).collect();
-    flush_before(body, &build, common, &grouped, report, &flags, &flag_shift);
+    flush_before(body, &build, common, &grouped, report, &flags, &flag_shift, &sizes);
 
     for block in entering {
         retarget(&mut body.blocks[block].terminator, |target| if target == header { next_group } else { target });
@@ -2061,10 +2135,10 @@ fn saved_locals(body: &mut Body, build: &Build, shape: &CountedLoop) -> Vec<(Loc
 }
 
 /// The blocks a grouped loop is entered through, laid out from the next free
-/// block: `next group` goes on to another group when the loop runs and at
-/// least a group's worth (`size` iterations) remains, and otherwise to the
-/// loop as it was, which finishes the rest; `start` runs `clear`, saves
-/// `saved` and goes to `first`. Returns `next group`.
+/// block: `next group` goes on to another group when the loop runs, at least
+/// a group's worth (`size` iterations) remains and `guard`'s condition holds,
+/// and otherwise to the loop as it was, which finishes the rest; `start` runs
+/// `clear`, saves `saved` and goes to `first`. Returns `next group`.
 #[allow(clippy::too_many_arguments)]
 fn group_entry(
     body: &mut Body,
@@ -2072,6 +2146,7 @@ fn group_entry(
     common: &CommonTypes,
     shape: &CountedLoop,
     size: u64,
+    guard: Option<(Vec<Stmt>, LocalId)>,
     mut clear: Vec<Stmt>,
     saved: &[(LocalId, LocalId)],
     first: BasicBlockId,
@@ -2079,7 +2154,8 @@ fn group_entry(
     let header = BasicBlockId(shape.header as u32);
     let next_group = BasicBlockId(body.blocks.len() as u32);
     let room = BasicBlockId(next_group.0 + 1);
-    let start = BasicBlockId(next_group.0 + 2);
+    let guarded = BasicBlockId(next_group.0 + 2);
+    let start = BasicBlockId(next_group.0 + if guard.is_some() { 3 } else { 2 });
     let runs = build.temp(body, common.bool_);
     let continues = if shape.inclusive { BinOp::Le } else { BinOp::Lt };
     build.branch(body, vec![build.set(runs, binary(continues, copy(shape.counter), copy(shape.limit)))], runs, header, room);
@@ -2096,8 +2172,11 @@ fn group_entry(
         ],
         full,
         header,
-        start,
+        if guard.is_some() { guarded } else { start },
     );
+    if let Some((stmts, holds)) = guard {
+        build.branch(body, stmts, holds, header, start);
+    }
     clear.extend(saved.iter().map(|(local, save)| build.set(*save, Rvalue::Use(copy(*local)))));
     let start_id = build.block(body, clear, Terminator::Goto(first));
     debug_assert_eq!(start_id, start);
@@ -2381,7 +2460,7 @@ fn detect_then_commit(
     );
     debug_assert_eq!(head, detect_head);
     // detect end: the locals restored; a set flag re-runs the group checked.
-    let (test, pending) = pending_overflow(body, &build, common, &[flag], &flag_shift);
+    let (test, pending) = pending_overflow(body, &build, common, &[flag], &flag_shift, &[]);
     build.branch(body, restore.into_iter().chain(test).collect(), pending, commit_head, header);
     body.blocks.extend(commit);
     let more = build.temp(body, common.bool_);
@@ -2399,13 +2478,13 @@ fn detect_then_commit(
         build.set(group_end, binary(BinOp::Add, copy(shape.counter), int(group_size(Mode::Rerun) as i128, counter_ty))),
         build.set(flag, Rvalue::Use(int(0, common.u64))),
     ];
-    let entry = group_entry(body, &build, common, shape, group_size(Mode::Rerun), clear, &saved, detect_head);
+    let entry = group_entry(body, &build, common, shape, group_size(Mode::Rerun), None, clear, &saved, detect_head);
     debug_assert_eq!(entry, next_group);
 
     // An inner loop is not entered with an overflow pending: detect's end
     // re-runs the group first.
     let detected: Vec<usize> = (detect_base as usize..(detect_base + n) as usize).collect();
-    flush_before(body, &build, common, &detected, detect_end, &[flag], &flag_shift);
+    flush_before(body, &build, common, &detected, detect_end, &[flag], &flag_shift, &[]);
 
     for block in entering {
         retarget(&mut body.blocks[block].terminator, |target| if target == header { next_group } else { target });
@@ -2559,6 +2638,116 @@ fn element_copies(
     stmts
 }
 
+/// Iterations in a block whose running totals are proved safe at run time.
+const TOTAL_BLOCK: u64 = 64;
+
+/// A running total proved safe block by block (`[SIMD-7]`, ODR-086): the check
+/// (its index among the loop's), the total, its width `w`, and the value each
+/// operation adds or subtracts. Before a block the total must lie in
+/// [−2^(w−2), 2^(w−2)), and every value the block adds in [−2^(w−9),
+/// 2^(w−9)): 64 of them move the total by at most 2^(w−3), so no partial sum
+/// leaves the type in any order.
+///
+/// When nothing else in the loop reads the total, a block adds into an
+/// unsigned copy of it, written back at the block's end: MSVC recognises only
+/// that form as a sum it can vectorise (reason 1105 otherwise).
+struct BlockTotal {
+    check: usize,
+    acc: LocalId,
+    width: u32,
+    operand: Operand,
+    copied: bool,
+}
+
+/// The running totals of a loop's checks, each proved safe block by block;
+/// `None` when a total cannot be: not signed, narrower than 16 bits, written
+/// anywhere else in the loop, or adding something that names the total.
+fn block_totals(body: &Body, types: &TypeTable, shape: &CountedLoop, checks: &[OverflowCheck]) -> Option<Vec<BlockTotal>> {
+    let mut totals = Vec::new();
+    for (index, check) in checks.iter().enumerate() {
+        let stmt = &body.blocks[check.block].stmts[check.stmt];
+        if !running_total(stmt) {
+            continue;
+        }
+        let StmtKind::CheckedBinaryOp { dest, op, lhs, rhs, .. } = &stmt.kind else { return None };
+        let acc = dest.local;
+        let is_acc = |operand: &Operand| matches!(operand, Operand::Copy(place) if *place == Place::local(acc));
+        let operand = match op {
+            BinOp::Add if is_acc(lhs) => rhs,
+            BinOp::Add if is_acc(rhs) => lhs,
+            BinOp::Sub if is_acc(lhs) => rhs,
+            _ => return None,
+        };
+        if matches!(operand, Operand::Copy(place) | Operand::Move(place) if place.local == acc
+            || place.projection.iter().any(|p| matches!(p, Projection::Index(local) if *local == acc)))
+        {
+            return None;
+        }
+        let ty = body.local(acc).ty;
+        let width = ember_types::bit_width(types, ty)?;
+        if ember_types::is_signed(types, ty) != Some(true) || !(16..=64).contains(&width) {
+            return None;
+        }
+        let writes = shape
+            .region
+            .iter()
+            .flat_map(|&b| body.blocks[b].stmts.iter())
+            .filter(|stmt| match &stmt.kind {
+                StmtKind::Assign { place, .. } => place.local == acc,
+                StmtKind::CheckedBinaryOp { dest, overflow, .. } => dest.local == acc || overflow.local == acc,
+                _ => false,
+            })
+            .count();
+        if writes != 1 {
+            return None;
+        }
+        // Read nowhere but by its own operation.
+        let mentions = |named: &mut dyn FnMut(&Place)| {
+            for &b in &shape.region {
+                let data = &body.blocks[b];
+                for stmt in &data.stmts {
+                    if !std::ptr::eq(stmt, &body.blocks[check.block].stmts[check.stmt]) {
+                        visit_stmt(stmt, &mut |place: &Place, _: bool, _: bool| named(place));
+                    }
+                }
+                visit_terminator(&data.terminator, &mut |place: &Place, _: bool, _: bool| named(place));
+            }
+        };
+        let mut read_elsewhere = false;
+        mentions(&mut |place: &Place| {
+            read_elsewhere |= place.local == acc
+                || place.projection.iter().any(|p| matches!(p, Projection::Index(local) if *local == acc));
+        });
+        totals.push(BlockTotal { check: index, acc, width: width as u32, operand: operand.clone(), copied: !read_elsewhere });
+    }
+    Some(totals)
+}
+
+/// The test before a block of running totals: every total in [−2^(w−2),
+/// 2^(w−2)), tested as the total plus 2^(w−2) having no bit at or above
+/// w − 1. `None` when there are no totals.
+fn totals_start_test(body: &mut Body, build: &Build, common: &CommonTypes, totals: &[BlockTotal]) -> Option<(Vec<Stmt>, LocalId)> {
+    let mut stmts = Vec::new();
+    let mut holds: Option<LocalId> = None;
+    for total in totals {
+        let (value, offset, high, small) =
+            (build.temp(body, common.u64), build.temp(body, common.u64), build.temp(body, common.u64), build.temp(body, common.bool_));
+        stmts.push(build.set(value, numeric(copy(total.acc), common.u64)));
+        stmts.push(build.set(offset, binary(BinOp::Add, copy(value), int(1i128 << (total.width - 2), common.u64))));
+        stmts.push(build.set(high, binary(BinOp::Shr, copy(offset), int(total.width as i128 - 1, common.u64))));
+        stmts.push(build.set(small, binary(BinOp::Eq, copy(high), int(0, common.u64))));
+        holds = Some(match holds {
+            None => small,
+            Some(earlier) => {
+                let both = build.temp(body, common.bool_);
+                stmts.push(build.set(both, binary(BinOp::BitAnd, copy(earlier), copy(small))));
+                both
+            }
+        });
+    }
+    holds.map(|holds| (stmts, holds))
+}
+
 /// Whether a checked operation is a running total: its result is one of its
 /// operands.
 fn running_total(stmt: &Stmt) -> bool {
@@ -2590,6 +2779,7 @@ fn flush_before(
     report: BasicBlockId,
     masks: &[LocalId],
     flag_shift: &Option<Operand>,
+    sizes: &[(LocalId, u32)],
 ) {
     // Inner loop headers, found before any block is split.
     let inside: HashSet<usize> = grouped.iter().copied().collect();
@@ -2633,7 +2823,7 @@ fn flush_before(
         // The check itself.
         body.blocks.push(BasicBlock { stmts: rest, terminator: Terminator::Goto(after), terminator_span: span });
         let check = BasicBlockId(body.blocks.len() as u32 - 1);
-        let (stmts, pending) = pending_overflow(body, build, common, masks, flag_shift);
+        let (stmts, pending) = pending_overflow(body, build, common, masks, flag_shift, sizes);
         body.blocks[block].stmts.extend(stmts);
         body.blocks[block].terminator =
             Terminator::SwitchInt { discr: copy(pending), targets: vec![(0, check)], otherwise: report };
@@ -2644,7 +2834,7 @@ fn flush_before(
 
     // Inner loops: a test on every edge into their header.
     for inner in headers {
-        let (stmts, pending) = pending_overflow(body, build, common, masks, flag_shift);
+        let (stmts, pending) = pending_overflow(body, build, common, masks, flag_shift, sizes);
         let flush = build.branch(body, stmts, pending, BasicBlockId(inner as u32), report);
         for &block in &all_grouped {
             retarget(&mut body.blocks[block].terminator, |t| if t.0 as usize == inner { flush } else { t });

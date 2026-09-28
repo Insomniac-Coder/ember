@@ -311,6 +311,17 @@ class DevelopmentTargetBridge(unittest.TestCase):
                 ),
             )
 
+    def test_target_lists_its_retired_codes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self.make_target(
+                root,
+                "**Retired codes.**\n\n| Code | Why |\n|---|---|\n| `E9012` | reserved |\n"
+                "| `W2220` | folded |\n\nAfter the table `E1234` is named.\n",
+            )
+            target = rule_index.load_development_target(manifest, root)
+            self.assertEqual({"E9012", "W2220"}, target["retired"])
+
     def test_hash_mismatch_is_a_hard_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

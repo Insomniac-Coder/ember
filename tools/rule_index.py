@@ -13,7 +13,9 @@ compiler drift apart. This is that tool. It runs six checks:
    check costs four lines and catches the next one on the day it lands.
 3. **Rule has a conformance directory** (`[TST-4]`).
 4. **Every code named in the document is in the registry**, and every registry
-   entry cites a rule that exists (`[DIA-6a]`, both directions).
+   entry cites a rule that exists (`[DIA-6a]`, both directions). A code the
+   hash-pinned development target lists under "Retired codes" need not be
+   registered, though the adopted document still names it.
    During an adoption migration, a registry citation may instead resolve in
    the hash-pinned frozen development target, but only when that target also
    names the diagnostic code. All other checks still use the adopted source.
@@ -323,6 +325,17 @@ def codes_named_in_spec(text):
     return sorted({f"{k}{n}" for k, n in CODE.findall(stripped)})
 
 
+RETIRED_TABLE = re.compile(r"\*\*Retired codes\.\*\*\s*\n\s*\n((?:\|.*\n?)+)")
+
+
+def retired_codes(text):
+    """The codes a document lists in its "Retired codes" table."""
+    table = RETIRED_TABLE.search(text)
+    if not table:
+        return set()
+    return {m.group(1) for m in re.finditer(r"^\|\s*`([EWL]\d{4})`", table.group(1), re.M)}
+
+
 def load_development_target(manifest_path=DEVELOPMENT_TARGET_MANIFEST, root=ROOT):
     """Load and authenticate the optional frozen development target.
 
@@ -375,6 +388,7 @@ def load_development_target(manifest_path=DEVELOPMENT_TARGET_MANIFEST, root=ROOT
         "sha256": actual.upper(),
         "rules": set(all_rule_ids(text)),
         "codes": set(codes_named_in_spec(text)),
+        "retired": retired_codes(text),
     }
 
 
@@ -484,7 +498,10 @@ def main():
     # --- 4/5/6. codes ------------------------------------------------------
     registry = registry_entries()
     named = codes_named_in_spec(text)
-    not_in_registry = sorted(c for c in named if c not in registry)
+    # A code the development target retires stays out of the registry even
+    # while the adopted document still names it (`E9012`, D4).
+    retired = development_target["retired"] if development_target else set()
+    not_in_registry = sorted(c for c in named if c not in registry and c not in retired)
     pages = {p.stem for p in ERROR_PAGES.glob("*.md")} if ERROR_PAGES.exists() else set()
     missing_pages = sorted(c for c in registry if c not in pages)
 

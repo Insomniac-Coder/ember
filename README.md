@@ -22,8 +22,8 @@ pages, and the records that keep them consistent.
 
 | | |
 |---|---|
-| Language version being implemented | **0.9.9**, specification `Ember_v0.9.9_Hardened_41` |
-| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.9_Hardened_41.md`](docs/spec-source/Ember_v0.9.9_Hardened_41.md) |
+| Language version being implemented | **0.9.9**, specification `Ember_v0.9.9_Hardened_42` |
+| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.9_Hardened_42.md`](docs/spec-source/Ember_v0.9.9_Hardened_42.md) |
 | Specification sources | [`tasks/spec-0.9.9/parts/`](tasks/spec-0.9.9/parts/), one file per Part; each `Hardened_N` is their concatenation and is never edited afterwards |
 | Last adopted normative specification | [`docs/spec-source/ember-spec.md`](docs/spec-source/ember-spec.md), 0.8.5_Hardened_1 (0.9.9 is adopted when its gates pass and the owner installs it) |
 | Tests | Rust unit and integration suites; Ember run and conformance suites in [`tests/`](tests/) |
@@ -128,7 +128,6 @@ would make Ember look faster than it is.
 
 | What the program does | With MSVC | With clang |
 |---|---|---|
-| Add up a list of 1,000 numbers, 300,000 times, overflow checks on | 2.5 times slower | 3.4 times slower |
 | Call a method that changes an object taken from a list, and the method calls another function, 100 million times | 3.0 times slower | 3.3 times slower |
 | Call a method that changes an object taken from a list, 100 million times (object holding 1 list) | 3.1 times slower | 3.3 times slower |
 | The same, object holding 6 lists | 3.1 times slower | 3.2 times slower |
@@ -138,6 +137,7 @@ would make Ember look faster than it is.
 | Change every number twice, writing to a separate list, overflow checks on | 1.7 times slower | 1.6 times slower |
 | Recursion: Fibonacci of 38, the slow way | 5% slower | 1.7 times slower |
 | Calls through an interface: area of 1 million shapes, 20 times | 1.7 times slower | 1.6 times slower |
+| Add up a list of 1,000 numbers, 300,000 times, overflow checks on | 42% slower | 1.6 times slower |
 | A generic function ("larger of two"), 200 million times | 46% slower | same speed |
 | Sort 5 million numbers | 16% slower | 6% faster |
 | 1 million objects holding 6 lists, each read 40 times | 12% slower | 9% slower |

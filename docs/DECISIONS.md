@@ -125,6 +125,10 @@ already named in Part XVIII.6 (`ember_i128`, `ember_ck_*` for checked
 arithmetic, `_Alignas` handling). Console toolchains remain reachable.
 Optimisation reports, PGO and precise vectorisation wait for v2.
 
+**2026-09-28.** The 0.9.9 rewrite dropped every mention of LLVM with the other
+implementation-plan rules; ODR-087 restores it in Hardened_42 as `[CG-LL-1]`–`[CG-LL-3]`,
+with this decision's order unchanged.
+
 ---
 
 ## ADR-007 — Reference cycles leak, with tooling rather than a collector
@@ -2402,6 +2406,30 @@ Six fixes, in the owner's order; none changes the language.
      `run_fail_a_grouped_{u8_add_overflow,u16_sub_borrow,i32_sub_overflow,u64_add_carry,u64_sub_borrow}_is_reported`;
      `run_fail_a_read_then_written_view_reports_the_first_overflow` now proves the report mode.
 
-**Not changed:** a sum of 64-bit `int`s keeps one overflow check per element. The widths cannot
-prove it safe, and ODR-086 asks whether it must be grouped (measured: grouping would make it
-slower). The sum loop p1 stays 2.5× (MSVC) and 3.3× (clang) of C's unchecked sum.
+8. **Running totals block by block** (2026-09-28, ODR-086, owner: "for now I accept the 64
+   block fix"). Neither reading of ERR-055 gave speed: grouping a running total's checks
+   cannot vectorise it, and checking every addition left the sum 2.5× (MSVC) and 3.4× (clang)
+   of C. Measured first in hand-written C: blocks of 64 were the fastest of six shapes.
+   * A signed running total of at least 16 bits that the widths cannot prove safe
+     (`block_totals`) runs in groups of 64 (`TOTAL_BLOCK`). Before each, the total must lie in
+     [−2^(w−2), 2^(w−2)) (`totals_start_test`, a guard in `group_entry`), else the loop as it
+     was runs the rest. In the group each value the total adds, offset by 2^(w−9), is ORed
+     into a size word; a bit at or above w − 8 at the group's end means a value was too big,
+     and the group re-runs checked from its start like any `Rerun` group. When the test
+     passes no partial sum can leave the type in any order.
+   * When nothing else in the loop reads the total, the group adds into an unsigned copy,
+     written back at the group's end: MSVC vectorises only that form as a sum (reason 1105
+     otherwise). Where the loop reads it, the total itself is added in wrapping arithmetic.
+   * Measured, adding up 1,000 numbers 300,000 times: MSVC 2.5× → 1.5× C, clang 3.4× → 1.6×.
+     The rest is the size test: three operations per number against C's one.
+   * Tests: SIMD-7 `accept_a_sum_is_checked_block_by_block`,
+     `accept_a_sum_with_a_huge_value_runs_its_block_checked`,
+     `accept_a_32_bit_total_is_checked_block_by_block`,
+     `accept_a_total_read_inside_the_loop_is_checked_block_by_block`,
+     `run_fail_a_sum_that_overflows_in_a_block_is_reported`,
+     `run_fail_a_total_that_starts_large_is_checked`,
+     `run_fail_a_subtracted_total_that_overflows_is_reported`,
+     `run_fail_a_32_bit_total_that_overflows_is_reported`.
+
+**Superseded by item 8:** a sum of 64-bit `int`s no longer keeps one overflow check per
+element; ODR-086 was ruled on 2026-09-28.

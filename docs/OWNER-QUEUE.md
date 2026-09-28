@@ -63,7 +63,8 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-082 | **CLOSED** — `@ffi(immutable)` on a foreign static asserts a `const` C object and emits a matching declaration | Language / C interop / foreign statics | — | **No** — delegated, 2026-09-27, Hardened_38 |
 | ODR-083 | **CLOSED** — a static free-function export's `creator` thread is anchored to successful module initialization; repeated initialization does not transfer the contract, and reinitialization after shutdown establishes a new creator | Language / C interop / export thread contracts | — | **No** — delegated, 2026-09-27, Hardened_39 |
 | ODR-084 | **CLOSED** — `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts | Language / module attributes / arithmetic | — | **No** — delegated, 2026-09-27, Hardened_40 |
-| ODR-086 | **OPEN** — is a loop with a running total the widths cannot prove safe in vectorisable form? | Language / cost / vectorisation | **P2** | **Yes** |
+| ODR-087 | **CLOSED** — LLVM is restored as the reference implementation's second backend over the same MIR: begun once the C backend passes the conformance suite, the default once it also passes the performance suite; `--backend c\|llvm` | Implementation / backends | — | **Yes** — owner, 2026-09-28, Hardened_42 |
+| ODR-086 | **CLOSED** — a running total is not grouped; it is vectorised under checked arithmetic when its widths prove it safe or, for a signed total of at least 16 bits, when a run-time test over each block of 64 iterations does | Language / cost / vectorisation | — | **Yes** — owner, 2026-09-28 ("I accept the 64 block fix"), Hardened_42 |
 | ODR-085 | **CLOSED** — an access that is not held is checked but not counted; a `mut self` call to a quiet function is only checked; a check nothing held anywhere could fail may be removed; each class's access words are packed before its fields | Language / exclusivity / object layout / cost | — | **Yes** — the owner approved, 2026-09-27, Hardened_41 |
 | ODR-071 | **CLOSED** — the type `()` is `void`; a tuple type has two or more elements (D-355) | Language / types | — | **No** — delegated, 2026-09-26 |
 | ODR-070 | **CLOSED** — every compiler accepts nesting 256 levels deep and states its own limit (this one 1,024); passing it is `E0112`, never a crash (D-331) | Language / grammar / implementation limits | — | **No** — delegated, 2026-09-26 |
@@ -243,10 +244,37 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
-## ODR-086 — running totals and vectorisable form — **OPEN**
+## ODR-087 — the LLVM backend — **CLOSED**
+
+    ID:        ODR-087
+    Status:    CLOSED — the owner, 2026-09-28: "yes put LLVM back in the spec";
+               incorporated in 0.9.9_Hardened_42
+    Category:  IMPLEMENTATION / BACKENDS
+    Location:  Ember_v0.9.9_Hardened_41.md XVIII, [SIMD-1], [SIMD-3], XVII.1, XVII.2
+
+**What happened.** From 0.5 through 0.9.8 the specification said "two backends over one MIR:
+a C11 backend for bootstrap and portability, LLVM for optimisation control. C backend
+first", and ADR-006 (owner-confirmed, 2026-09-07) put LLVM in v2. Writing 0.9.9, the
+feature-parity pass classed the old implementation-plan rules as "out of the language
+document", and every mention of LLVM went with them; no decision about LLVM itself was
+taken. The owner asked whether generating assembly would be faster, recalled that LLVM
+was the plan, and ruled it back in.
+
+**Ruling.** Hardened_42 restores LLVM as `[CG-LL-1]`–`[CG-LL-3]` (a new §XVIII.7): the
+second backend over the same MIR, begun once the C backend passes the full conformance
+suite and the default once it also passes the performance suite; until then
+`--backend llvm` and `backend = "llvm"` are refused. It meets Part XVIII's requirements
+that are not about C, classifies the C ABI itself, lowers `std.simd` to LLVM vectors,
+passes the borrow checker's facts as `noalias` and friends under `[SIMD-3]`'s rule, and
+brings debug information, profile-guided optimisation and ThinLTO. `--backend c|llvm`
+and `backend = "c"  # c | llvm` are back in XVII. The compiler already refuses
+`--backend llvm` ("the only backend in v1 is `c`; LLVM is v2").
+
+## ODR-086 — running totals and vectorisable form — **CLOSED**
 
     ID:        ODR-086
-    Status:    OPEN — raised 2026-09-27 while building [SIMD-7]
+    Status:    CLOSED — the owner, 2026-09-28: "for now I accept the 64 block fix";
+               incorporated in 0.9.9_Hardened_42 (raised 2026-09-27 while building [SIMD-7])
     Category:  LANGUAGE / COST / VECTORISATION
     Priority:  P2
     Location:  Ember_v0.9.9_Hardened_41.md [SIMD-5], [SIMD-7]
@@ -258,6 +286,17 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
     Blocks implementation:            NO — both readings are built and measured
     Requires owner semantic decision:  YES
+
+**Ruling.** Neither reading: a running total is not grouped, since grouping one cannot
+make it faster (both readings measured 2.5× C and slower). It is vectorised under checked
+arithmetic when its widths prove it safe, as before, or, for a signed total of at least
+16 bits, when a run-time test over each block of 64 iterations does: the total within
+±2^(w−2) at the block's start and every value it adds within ±2^(w−9), so no partial sum
+can leave the type in any order. A block that fails runs checked, and so does the rest of
+the loop. A total proved safe neither way keeps a check on every operation, and its loop
+is not in vectorisable form. The owner asked for more speed than either reading gave;
+this was measured first in hand-written C (blocks of 64 the fastest of six shapes).
+Built: ADR-070 item 8. The sum benchmark: 2.5× → 1.5× C on MSVC, 3.4× → 1.6× on clang.
 
 **The two sentences.** `[SIMD-5]` puts a loop in vectorisable form when "every
 `RuntimeCheck(Arithmetic)` is removed, or is one `[SIMD-7]` permits grouping (grouping

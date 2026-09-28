@@ -376,6 +376,10 @@ ODRS = [
      '`[GRM-37]`, `[ATT-4]`, `[TYP-8]`, `[TYP-28]`, `[FN-5]`, `[CT-4]`, `[STD-20]`'),
     ('ODR-085', 'an access that is not held is checked but not counted; a `mut self` call to a quiet function is only checked; a check that nothing held anywhere could fail may be removed; each class\'s access words stand side by side before its fields, a zero word after an odd count (Hardened_41)',
      '`[EXC-3]`, `[EXC-19]`, `[OBJ-1]`, `[COST-3]`'),
+    ('ODR-086', 'a running total is not grouped; it is vectorised under checked arithmetic when its widths prove it safe or, for a signed total of at least 16 bits, when a run-time test over each block of 64 iterations does; a block that fails the test runs checked, and so does the rest of the loop (Hardened_42)',
+     '`[SIMD-5]`, `[SIMD-7]`'),
+    ('ODR-087', 'LLVM is restored as the reference implementation\'s second backend over the same MIR, begun once the C backend passes the conformance suite and the default once it also passes the performance suite; `--backend c|llvm` (Hardened_42)',
+     '`[CG-LL-1]`, `[CG-LL-2]`, `[CG-LL-3]`, `[SIMD-1]`, `[SIMD-3]`, `[BLD-6]`'),
 ]
 
 H5_HEAD = """
@@ -404,7 +408,8 @@ their null-pointer niche; Hardened_37 adds ODR-081, the fallible owned C-string 
 explicit borrowed view; Hardened_38 adds ODR-082, the C qualifier asserted by an immutable
 foreign static; Hardened_39 adds ODR-083, the initialization anchor for static export creator
 contracts; Hardened_40 adds ODR-084, module-attribute syntax and lexical integer overflow policy;
-Hardened_41 adds ODR-085, what the dynamic exclusivity checks cost and the packed access words.
+Hardened_41 adds ODR-085, what the dynamic exclusivity checks cost and the packed access words;
+Hardened_42 adds ODR-086 and ODR-087, running totals checked block by block and the LLVM backend.
 
 | ODR | Ruling | Rules |
 |---|---|---|
