@@ -2281,6 +2281,22 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             .collect();
         retain_referenced_standard_bodies(&mut bodies, &standard_files);
     }
+    let module_name = input
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let manifest = nearest_manifest_text(input)?;
+    let package_kind = manifest.as_deref().and_then(|text| manifest_string(text, "package", "kind"))
+        .unwrap_or_else(|| "bin".to_string());
+    let runtime_mode = manifest.as_deref().and_then(|text| manifest_string(text, "build", "runtime"))
+        .unwrap_or_else(|| "static".to_string());
+    let staticlib = command == "build" && package_kind == "staticlib";
+    // At the end of a program's `main` the process ends: a drop there that
+    // only frees memory changes nothing observable (`[PHIL-5]`). Debug
+    // builds keep every drop, which their leak check counts.
+    if program.main.is_some() && !staticlib && options.profile != Profile::Debug && !options.leak_check {
+        ember_analysis::skip_exit_drops_all(&mut bodies, &types, &ember_branding::mangled("main"));
+    }
     verify_callable_regions_or_panic(&bodies, &types);
     // `[IMP-7]` / `[VERIFY-3]` — verified MIR is a type-enforced backend
     // boundary. This check is unconditional and follows the final body-pruning
@@ -2299,16 +2315,6 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     interface_cache
         .commit()
         .map_err(|error| error.to_string())?;
-    let module_name = input
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let manifest = nearest_manifest_text(input)?;
-    let package_kind = manifest.as_deref().and_then(|text| manifest_string(text, "package", "kind"))
-        .unwrap_or_else(|| "bin".to_string());
-    let runtime_mode = manifest.as_deref().and_then(|text| manifest_string(text, "build", "runtime"))
-        .unwrap_or_else(|| "static".to_string());
-    let staticlib = command == "build" && package_kind == "staticlib";
     if options.emit.is_none() {
         if command == "run" && package_kind != "bin" {
             return Err(format!("cannot run a `{package_kind}` package; use `ember build`"));

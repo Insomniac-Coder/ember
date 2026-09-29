@@ -461,8 +461,14 @@ pub(crate) fn stmt_reads(stmt: &Stmt, read: &mut [bool]) {
         StmtKind::BeginAccess { place, .. }
         | StmtKind::EndAccess { place, .. }
         | StmtKind::BeginAccessTransfer { place, .. }
-        | StmtKind::EndAccessTransfer { place, .. }
-        | StmtKind::Drop { place, .. } => place_reads(place, read),
+        | StmtKind::EndAccessTransfer { place, .. } => place_reads(place, read),
+        // A drop reads its flag: whether the value is still there.
+        StmtKind::Drop { place, flag, .. } => {
+            place_reads(place, read);
+            if let Some(flag) = flag {
+                read[flag.0 as usize] = true;
+            }
+        }
         StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
     }
 }

@@ -11094,7 +11094,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   set does keeps a loop out of vectorisable form), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h44/` are frozen.
-* **Next numbers:** ODR-090, D-388, ADR-076, ERR-056.
+* **Next numbers:** ODR-090, D-389, ADR-077, ERR-056.
 * **Goal 2, implementation (2026-09-29, autonomous):** next is `[STD-19]`'s
   iterator adapters and `[CTL-3b]`'s counted lowering of adapter chains (the
   audit's `CTL-3b` gap; `for x in mutspan`, `.take/.skip/.enumerate/.zip/
@@ -11245,6 +11245,11 @@ first**; the rest of §0.355 is the running narrative behind it.
       and a hoist that keeps nests perfect leave nothing between the loops,
       so MSVC swaps them. What is left is filling the list push by push
       against the C twin's single `malloc` (as for the enum `match` row).
+    * Interface calls: 1.02x MSVC, 1.05x clang since ADR-076 (was 1.24x /
+      1.15x); the calls were at C++ speed, the cost was freeing a million
+      objects at the end of `main`, which the twins never free. Still to do:
+      the full-set A/B for ADR-076 (only the three rows it moves were
+      measured), and D-388 (CI gcc double free, fixed) needs CI green.
     * Recursion (Fibonacci) on clang, 1.7x: the mandatory overflow check on
       `fib(n - 1) + fib(n - 2)`, whose values nothing bounds. Priced: without
       it 0.112 s against C's 0.118 s; with it 0.184 s, since clang cannot turn

@@ -4,6 +4,7 @@
 #$ assert-c-count: contains("ember_weak_retain(") == 2
 #$ assert-c-count: contains("ember_weak_release(") == 2
 #$ stdout: 7
+#$ stdout: end
 
 # A normal closure keeps the loop's borrowed Weak[Shared[T]] handle by
 # reference. `upgrade` must see the same Shared allocation without a third weak
@@ -11,7 +12,11 @@
 struct Token:
     value: i32
 
-fn main():
+# `program` holds the test, so its values die before `main`'s last
+# statement: at the end of `main` a release build leaves what only frees
+# memory to the operating system (`[PHIL-5]`), and the drops read here
+# would go with it.
+fn program():
     owner = Shared(Token(7))
     weak: Weak[Shared[Token]] = Weak(owner)
     copies: Array[Weak[Shared[Token]]] = Array[Weak[Shared[Token]]]()
@@ -25,3 +30,7 @@ fn main():
                 None:
                     return 0
         println(task())
+
+fn main():
+    program()
+    println("end")

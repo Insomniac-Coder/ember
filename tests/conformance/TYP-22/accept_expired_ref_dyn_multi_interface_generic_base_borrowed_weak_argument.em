@@ -2,6 +2,7 @@
 #$ rules: TYP-16, TYP-22, IFC-1, CLS-2, CLS-4, DRP-6, HEAP-3, HEAP-4, HEAP-5, HEAP-6, HEAP-7, WK-11, WK-12, WK-13, TST-26
 #$ profiles: debug, release, shipping
 #$ stdout: 1
+#$ stdout: end
 #$ assert-c: contains("em_vt_dyn_multi__Observe__Bump_Holder_bool_slot0")
 #$ assert-c: contains("em_vt_dyn_multi__Observe__Bump_Holder_bool_slot1")
 #$ assert-c: contains("ember_weak_retain(")
@@ -48,6 +49,14 @@ fn expired() -> Weak[Shared[Token]]:
 fn inspect(value: ref dyn Observe + Bump, weak: Weak[Shared[Token]]) -> i32:
     return value.observe(weak) + value.bump()
 
-fn main():
+# `program` holds the test, so its values die before `main`'s last
+# statement: at the end of `main` a release build leaves what only frees
+# memory to the operating system (`[PHIL-5]`), and the drops read here
+# would go with it.
+fn program():
     holder = Holder[bool](true)
     println(inspect(ref holder, expired()))
+
+fn main():
+    program()
+    println("end")

@@ -4,6 +4,7 @@
 #$ stdout: 1
 #$ stdout: 42
 #$ stdout: 2
+#$ stdout: end
 #$ assert-c: contains(ember_obj_new_copy)
 #$ assert-c: contains(ember_weak_retain)
 #$ assert-c: contains(ember_weak_upgrade)
@@ -16,7 +17,11 @@ fn expired() -> Weak[Shared[Token]]:
     shared = Shared(Token(7))
     return Weak(shared)
 
-fn main():
+# `program` holds the test, so its values die before `main`'s last
+# statement: at the end of `main` a release build leaves what only frees
+# memory to the operating system (`[PHIL-5]`), and the drops read here
+# would go with it.
+fn program():
     empty: Weak[Shared[Token]] = Weak[Shared[Token]].empty()
     match empty.upgrade():
         Some(_):
@@ -40,3 +45,7 @@ fn main():
             println(0)
         None:
             println(2)
+
+fn main():
+    program()
+    println("end")

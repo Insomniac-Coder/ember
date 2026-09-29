@@ -2946,3 +2946,30 @@ their test (the last prints 111 and 212 for 11 and 12). `SIMD-7/run_fail_a_view_
 now sets one `c` element to 0: with every element 1 the facts fold its `if`, and `xs[i]` is then
 accessed on every iteration, which is not what the test is about.
 
+## ADR-076 — at the end of `main`, a drop that only frees memory is left to the operating system
+
+2026-09-29, autonomous (goal 1). Calls through an interface ran 1.24x C++ on MSVC and 1.15x on
+clang, but the call loop itself was at C++'s speed (0.051 s against 0.054 s): 21 of the 27 ms were
+`main` freeing its million objects one by one at the end, which the C++ twin (like the twins of
+the two million-objects rows) leaves to the operating system. `[PHIL-5]` forbids only changing
+observable behaviour, and freeing memory the process is about to give back is not observable.
+
+`skip_exit_drops_all` (`exit_drops.rs`), run just before C emission in release and shipping
+builds of a program with a `main` (not a static library, not `--leak-check`): from each return of
+`main` back, the drops that end it go while each can only free memory: no `drop` method anywhere
+in what it reaches (a class handle may point at any class derived from its class, an interface
+value at any class of the program), no `@sync` class or `SyncShared` another thread could hold,
+`Shared` and `Box` judged by what they hold, `Weak` never dropping its target. The first drop that
+runs a `drop` method, or any other statement, stops the walk. Debug builds keep every drop for
+their leak check.
+
+Measured: interface calls 1.02x C++ on MSVC, 1.05x on clang; 1 million objects with a name and a
+list 0.88x / 0.90x (was 1.06x / 1.05x); with 6 lists 0.91x / 0.91x (was 1.09x). Tests:
+`DRP-2/accept_drops_at_the_end_of_main` (a `drop` that prints still runs, alone and through an
+interface a class with a `drop` implements) and the milestone
+`exit_drops_that_only_free_memory_go_in_release` (release frees one list fewer than debug in
+`main`; break-tested with the pass off and with every type judged memory-only). Nineteen tests
+that read weak releases and drop glue in `main`'s C now hold their program in `fn program()`, so
+its values die before `main`'s last statement. The full benchmark A/B against the pushed compiler
+is still to run.
+

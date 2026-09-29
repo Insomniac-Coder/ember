@@ -1629,6 +1629,38 @@ fn stable_class_loop_access_is_reported_as_hoisted() {
     }
 }
 
+/// `[PHIL-5]` — at the end of `main` the process ends: release and shipping
+/// builds leave the list of objects with no `drop` to the operating system
+/// (one `free` fewer in `main`), and keep every drop that runs a `drop`
+/// method; debug builds free everything, for their leak check.
+#[test]
+fn exit_drops_that_only_free_memory_go_in_release() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/DRP-2/accept_drops_at_the_end_of_main.{SOURCE_EXT}");
+    let main_symbol = ember_branding::mangled("main");
+    let vec_free = format!("{}(", ember_branding::runtime("vec_free"));
+    let mut frees = Vec::new();
+    for profile in ["debug", "release", "shipping"] {
+        let out_dir = std::env::temp_dir().join(format!("ember-exit-drops-{profile}-{}", std::process::id()));
+        let run = ember(&["build", &source, "--profile", profile, "--out-dir", &out_dir.to_string_lossy()], &root);
+        assert_eq!(run.exit, 0, "{profile} build failed:
+{}", run.stderr);
+        let c_path = out_dir.join(profile).join("c").join("accept_drops_at_the_end_of_main.c");
+        let c = std::fs::read_to_string(&c_path).unwrap_or_else(|error| panic!("{}: {error}", c_path.display()));
+        let start = c.find(&format!("void {main_symbol}(void) {{")).expect("main is emitted");
+        let main_c = &c[start..start + c[start..].find("
+}
+").expect("main ends")];
+        // The interface list's elements are released: `Loud` has a `drop`.
+        assert!(main_c.contains("_di0"), "{profile} main lost a drop that runs a `drop` method:
+{main_c}");
+        frees.push(main_c.matches(&vec_free).count());
+        let _ = std::fs::remove_dir_all(&out_dir);
+    }
+    assert_eq!(frees[1] + 1, frees[0], "release frees one list fewer than debug: {frees:?}");
+    assert_eq!(frees[2], frees[1], "shipping drops what release drops: {frees:?}");
+}
+
 /// `[EXC-9]` / `[EXC-13]` / `[TST-15]` — the two proved loop forms hoist
 /// exactly one caller check. Publishing a handle, dynamic dispatch, and two
 /// receiver identities each deliberately retain their individual checks.

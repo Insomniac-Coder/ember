@@ -103,6 +103,8 @@ would make Ember look faster than it is.
 | Copy a 1,000-number list into another, one item at a time, 100,000 times | 28% faster | same speed |
 | Integer arithmetic: 50 million rounds of multiply, divide and remainder | 18% faster | same speed |
 | Sort 5 million numbers | 18% faster | 12% faster |
+| 1 million objects with a name and a list, each read 40 times | 12% faster | 10% faster |
+| 1 million objects holding 6 lists, each read 40 times | 9% faster | 9% faster |
 | Clear and refill a list while 4 other lists are being viewed | 6% faster | same speed |
 | Clear and refill a list while 1 other list is being viewed | same speed | 5% faster |
 | Change every number twice, reading back what it wrote, overflow checks on | same speed | same speed |
@@ -126,13 +128,12 @@ would make Ember look faster than it is.
 
 | What the program does | With MSVC | With clang |
 |---|---|---|
-| 1 million objects with a name and a list, each read 40 times | 6% slower | 5% slower |
 | Add two lists plus the round number into a third, overflow checks off | 6% slower | same speed |
-| 1 million objects holding 6 lists, each read 40 times | 9% slower | 9% slower |
 | Walk two 1-million-number lists side by side, changing one (`zip`), 300 times | same speed | 9% slower |
 | Every third number of a list, after skipping some, at most 300,000 of them (`skip`, `step_by`, `take`), 300 times | same speed | 5% slower |
 | Number the items of a list past a starting point, as copies (`copied`, `enumerate`, `skip`), 300 times | 8% slower | 5% slower |
 | Number each item of a 1-million-number list while changing it (`enumerate`), 300 times | 8% slower | 6% slower |
+| Calls through an interface: area of 1 million shapes, 20 times | same speed | 5% slower |
 
 ### More than 10% slower than C with at least one compiler
 
@@ -143,7 +144,6 @@ would make Ember look faster than it is.
 | Recursion: Fibonacci of 38, the slow way | 5% slower | 1.7 times slower |
 | Add up a list of 1,000 numbers, 300,000 times, overflow checks on | 35% slower | 1.6 times slower |
 | A generic function ("larger of two"), 200 million times | same speed | 35% slower |
-| Calls through an interface: area of 1 million shapes, 20 times | 26% slower | 21% slower |
 | Call a method that changes an object taken from a list, 100 million times (object holding 6 lists) | 23% slower | same speed |
 | Call a method that changes an object taken from a list, 100 million times (object holding 1 list) | 19% slower | same speed |
 | Call a method that changes an object taken from a list, and the method calls another function, 100 million times | 19% slower | same speed |

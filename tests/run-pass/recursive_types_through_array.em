@@ -4,6 +4,7 @@
 #$ stdout: 1
 #$ 3
 #$ 2
+#$ end
 #$ assert-c: contains("em_drop_glue_0(&")
 # D-182 — a type that owns itself through an `Array` (a struct tree, and the
 # Part VIII class with a list of children) compiles and drops every level. The
@@ -21,7 +22,11 @@ class Node:
     fn add(mut self, child: Node):
         self.children.push(child)
 
-fn main():
+# `program` holds the test, so its values die before `main`'s last
+# statement: at the end of `main` a release build leaves what only frees
+# memory to the operating system (`[PHIL-5]`), and the drops read here
+# would go with it.
+fn program():
     tree = Tree(1, Array())
     tree.kids.push(Tree(2, Array()))
     tree.kids[0].kids.push(Tree(3, Array()))
@@ -31,3 +36,7 @@ fn main():
     root.add(Node(2, Array()))
     root.add(Node(3, Array()))
     println(root.children.len())
+
+fn main():
+    program()
+    println("end")

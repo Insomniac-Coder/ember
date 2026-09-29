@@ -4,13 +4,18 @@
 #$ assert-c-count: contains("ember_weak_retain(") == 1
 #$ assert-c-count: contains("ember_weak_release(") == 2
 #$ stdout: 42
+#$ stdout: end
 
 # An empty Weak[Shared[T]] remains empty when copied. The copy is a weak-handle
 # operation, never a construction of a Shared control block or strong owner.
 struct Token:
     value: i32
 
-fn main():
+# `program` holds the test, so its values die before `main`'s last
+# statement: at the end of `main` a release build leaves what only frees
+# memory to the operating system (`[PHIL-5]`), and the drops read here
+# would go with it.
+fn program():
     empty: Weak[Shared[Token]] = Weak[Shared[Token]].empty()
     copy = empty
     match copy.upgrade():
@@ -18,3 +23,7 @@ fn main():
             println(0)
         None:
             println(42)
+
+fn main():
+    program()
+    println("end")

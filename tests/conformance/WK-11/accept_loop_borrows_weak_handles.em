@@ -4,6 +4,7 @@
 #$ assert-c-count: contains("ember_weak_retain(") == 2
 #$ assert-c-count: contains("ember_weak_release(") == 2
 #$ stdout: 7
+#$ stdout: end
 
 # A loop over `Array[Weak[Token]]` borrows the Weak handle stored in the
 # Array. Construction and insertion retain the weak count; iteration itself
@@ -11,7 +12,11 @@
 class Token:
     value: i32
 
-fn main():
+# `program` holds the test, so its values die before `main`'s last
+# statement: at the end of `main` a release build leaves what only frees
+# memory to the operating system (`[PHIL-5]`), and the drops read here
+# would go with it.
+fn program():
     token = Token(7)
     weak: Weak[Token] = Weak(token)
     copies: Array[Weak[Token]] = Array[Weak[Token]]()
@@ -22,3 +27,7 @@ fn main():
                 println(owner.value)
             None:
                 println(0)
+
+fn main():
+    program()
+    println("end")
