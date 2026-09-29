@@ -1399,6 +1399,66 @@ void ember_vec_reserve(ember_vec* v, size_t elem_size, size_t want) {
     v->cap = cap;
 }
 
+/* A hint from a counted loop that pushes at least `per_turn` elements on
+ * every one of its `turns` turns: room for them all at once, where the room
+ * would otherwise come by doubling, copy after copy. It never fails: when the
+ * count is past the limit, or the memory is not there, the buffer is left as
+ * it was and grows as it would have, failing (if at all) where it would have.
+ * It acts only when the pushes would grow the buffer more than once: one
+ * growth (the first push's four slots, or a doubling) the pushes make as
+ * they always did, so a short loop allocates exactly as before. Growth at
+ * least doubles the capacity, as `ember_vec_reserve` does, so a hint given
+ * again on each turn of an outer loop stays amortised. */
+/* `ember_realloc` that reports failure as NULL, the old block untouched: the
+ * default allocator's plain blocks still grow in place when they can. */
+static void* try_realloc(void* p, size_t old_size, size_t new_size, size_t align) {
+    if (p != NULL && g_config.alloc == NULL && g_config.free == NULL && align <= EMBER_MALLOC_ALIGN) {
+        void* grown = realloc(p, new_size == 0 ? 1 : new_size);
+        if (grown == NULL) {
+            return NULL;
+        }
+        g_stats.live_bytes += (uint64_t)new_size;
+        g_stats.live_bytes = g_stats.live_bytes >= (uint64_t)old_size ? g_stats.live_bytes - (uint64_t)old_size : 0;
+        g_stats.total_allocations += 1;
+        g_stats.total_frees += 1;
+        return grown;
+    }
+    void* fresh = ember_try_alloc(new_size, align);
+    if (fresh == NULL) {
+        return NULL;
+    }
+    if (p != NULL) {
+        memcpy(fresh, p, old_size < new_size ? old_size : new_size);
+        ember_free(p, old_size, align);
+    }
+    return fresh;
+}
+
+void ember_vec_reserve_hint(ember_vec* v, size_t elem_size, uint64_t turns, size_t per_turn) {
+    size_t limit = vec_max_elems(elem_size);
+    if (per_turn == 0 || turns > (uint64_t)(limit / per_turn)) {
+        return;
+    }
+    size_t additional = (size_t)turns * per_turn;
+    if (v->len > limit || additional > limit - v->len) {
+        return;
+    }
+    size_t want = v->len + additional;
+    size_t next = v->cap < 2 ? 4 : v->cap * 2;
+    if (next > limit) {
+        next = limit;
+    }
+    if (want <= next) {
+        return;
+    }
+    void* grown = try_realloc(v->ptr, v->cap * elem_size, want * elem_size, EMBER_VEC_ALIGN);
+    if (grown == NULL) {
+        return;
+    }
+    v->ptr = grown;
+    v->cap = want;
+}
+
 void ember_vec_reserve_more(ember_vec* v, size_t elem_size, size_t additional) {
     size_t limit = vec_max_elems(elem_size);
     if (v->len > limit || additional > limit - v->len) {

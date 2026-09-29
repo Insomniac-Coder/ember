@@ -1168,6 +1168,8 @@ void ember_vec_reserve(ember_vec* v, size_t elem_size, size_t want);
 /* Room for `additional` more elements: `len + additional` is checked before
  * it is formed ([HEAP-8]), so asking for too many panics and never wraps. */
 void ember_vec_reserve_more(ember_vec* v, size_t elem_size, size_t additional);
+/* Best-effort room for a counted loop's pushes; never fails (see the C). */
+void ember_vec_reserve_hint(ember_vec* v, size_t elem_size, uint64_t turns, size_t per_turn);
 /* The alignment a growable buffer allocates at. The compiler passes an element
  * size but not an alignment, so the buffer uses the strictest fundamental one;
  * over-aligning is always sound and costs at most a few bytes per buffer. */

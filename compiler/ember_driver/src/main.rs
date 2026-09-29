@@ -2245,6 +2245,10 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // inner loop iterates) runs once, before the loop.
     ember_analysis::propagate_copies_all(&mut bodies, &types);
     ember_analysis::hoist_invariant_views_all(&mut bodies, &types);
+    // A counted loop that pushes onto a list on every turn asks for the room
+    // before it, as a hint that changes nothing but the capacity (never done
+    // in a program that asks a list for its `capacity()`).
+    ember_analysis::reserve_pushed_lists_all(&mut bodies, &types);
     // Last, for C: a value a counted loop computes from its counter each
     // turn (`k * step + skip`) gets a running value of its own, as
     // hand-written C keeps one. clang and gcc vectorise such a loop at C's

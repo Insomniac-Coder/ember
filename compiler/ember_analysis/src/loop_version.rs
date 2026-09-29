@@ -1371,7 +1371,7 @@ const TOTAL_TRIPS: i128 = 1 << 31;
 /// The canonical shape `lower_for_range` emits.
 pub(crate) struct CountedLoop {
     pub(crate) header: usize,
-    entry: usize,
+    pub(crate) entry: usize,
     pub(crate) step: usize,
     pub(crate) region: Vec<usize>,
     pub(crate) counter: LocalId,

@@ -904,6 +904,12 @@ pub enum Builtin {
     ArrayCapacity,
     /// `[STD-15]` — `xs.reserve(n)`: room for `n` more without reallocating.
     ArrayReserve,
+    /// Never written: the room a counted loop's pushes will need, asked for
+    /// before it (`reserve_pushed_lists_all`). Its operands are the list,
+    /// the loop's counter and its limit; the turns are `limit - counter`
+    /// (one more when `inclusive`), each pushing `per_turn` at least. A hint
+    /// that never fails and changes nothing but the capacity.
+    ArrayReserveHint { per_turn: u32, inclusive: bool },
     /// `[STD-15]` — `xs.truncate(n)`: the elements from `n` on dropped.
     ArrayTruncate,
     /// `[STD-15]` — `xs.swap_remove(i)`: the element at `i`, the last one
@@ -1286,6 +1292,7 @@ impl Builtin {
             Builtin::ArrayInsert => "insert",
             Builtin::ArrayCapacity => "capacity",
             Builtin::ArrayReserve => "reserve",
+            Builtin::ArrayReserveHint { .. } => "reserve_hint",
             Builtin::ArrayTruncate => "truncate",
             Builtin::ArraySwapRemove => "swap_remove",
             Builtin::ArraySwap => "swap",

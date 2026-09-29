@@ -11094,7 +11094,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   set does keeps a loop out of vectorisable form), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h44/` are frozen.
-* **Next numbers:** ODR-090, D-389, ADR-077, ERR-056.
+* **Next numbers:** ODR-090, D-389, ADR-078, ERR-056.
 * **Goal 2, implementation (2026-09-29, autonomous):** next is `[STD-19]`'s
   iterator adapters and `[CTL-3b]`'s counted lowering of adapter chains (the
   audit's `CTL-3b` gap; `for x in mutspan`, `.take/.skip/.enumerate/.zip/
@@ -11247,9 +11247,8 @@ first**; the rest of §0.355 is the running narrative behind it.
       against the C twin's single `malloc` (as for the enum `match` row).
     * Interface calls: 1.02x MSVC, 1.05x clang since ADR-076 (was 1.24x /
       1.15x); the calls were at C++ speed, the cost was freeing a million
-      objects at the end of `main`, which the twins never free. Still to do:
-      the full-set A/B for ADR-076 (only the three rows it moves were
-      measured), and D-388 (CI gcc double free, fixed) needs CI green.
+      objects at the end of `main`, which the twins never free. The full-set
+      A/B for ADR-076 is done: only those rows moved.
     * Recursion (Fibonacci) on clang, 1.7x: the mandatory overflow check on
       `fib(n - 1) + fib(n - 2)`, whose values nothing bounds. Priced: without
       it 0.112 s against C's 0.118 s; with it 0.184 s, since clang cannot turn
@@ -11259,25 +11258,21 @@ first**; the rest of §0.355 is the running narrative behind it.
       done block by block (ADR-070 item 8); the same program with checks off
       runs at C speed. Proving it away would need element ranges for class
       fields across the program and totals bounded across nested loops.
-    * Enum `match` on clang, 1.09x: filling the list is 0.035 s against the
-      C twin's 0.022 s, because the C allocates the million shapes at once
-      and Ember's program grows its list push by push (as a C++ vector
-      would); the two matching loops are within 3.5%, clang ordering the tag
-      tests differently.
-    * Interface calls, 1.26x MSVC / 1.21x clang (was 1.65x; ADR-070 item
-      15): the loop matches C++; the C++ twin never deletes its million
-      shapes (Ember frees them, 0.019 s) and the 24-byte header is `[OBJ-1]`'s.
+    * Enum `match` on clang: 1.00x since ADR-077 (was 1.13x; the fill grew
+      its list push by push against the C twin's single allocation): a
+      counted loop that pushes on every turn asks for its room first (a hint
+      that never fails, only in programs that never read `capacity()`).
+    * Interface calls: 1.02x MSVC / 1.05x clang since ADR-076 (was 1.26x /
+      1.21x): the loop matched C++ already; the million frees at the end of
+      `main` are left to the operating system. The 24-byte header is
+      `[OBJ-1]`'s.
     * Refilling a list while others are viewed (p4): at C speed since
       ADR-070 item 16 (each `push`'s access check runs once before the loop).
     * Adapter chains in a `for` header (ADR-073, scratchpad `chain/`): at C's
-      speed but for filling each list by `push` (a few percent; the range chain,
-      with no list, is 0.99x / 0.98x) and MSVC's `enumerate` row, 1.48x, where
-      MSVC swaps the C twin's loops (the particles item). clang reached it only
-      with running values for counter-derived indices (`strength_reduce`), which
-      MSVC's C does not get: they stop its vectoriser.
-    * 1 million objects holding 6 lists (p6), 1.09x both: Ember frees the
-      million objects when the list's scope ends; the C++ twin never deletes
-      them. Without that loop Ember is faster (0.292 s against 0.319 s).
+      speed; MSVC's `enumerate` row 1.08x since ADR-075 (perfect nest), and
+      the lists they fill ask for their room first since ADR-077.
+    * 1 million objects holding 6 lists (p6): 0.91x both since ADR-076 (the
+      frees at the end of `main` go; the C++ twin never deletes them).
   * **Regressions the range-facts benchmark run found, fixed (2026-09-28).**
     MSVC stopped inlining `push` once loop versioning made a function larger
     (list refill 1.0x -> 1.31x C, list copy 0.74x -> 1.0x): the runtime's

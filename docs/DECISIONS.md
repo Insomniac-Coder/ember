@@ -2971,5 +2971,52 @@ interface a class with a `drop` implements) and the milestone
 `main`; break-tested with the pass off and with every type judged memory-only). Nineteen tests
 that read weak releases and drop glue in `main`'s C now hold their program in `fn program()`, so
 its values die before `main`'s last statement. The full benchmark A/B against the pushed compiler
-is still to run.
+(the pass off against on, interleaved runs): interface calls 0.84x to 0.85x the old time, the two
+million-objects rows 0.84x to 0.88x, every other row within noise (the six that first read 1.04x to
+1.09x: 0.98x to 1.02x over 21 runs).
+
+## ADR-077 — a counted loop that pushes on every turn asks for its room first
+
+2026-09-29, autonomous (goal 1). The enum `match` row ran 1.13x C on clang: filling a list of a
+million shapes push by push (doubling, about twenty copies and every page touched twice) against
+the C twin's single `malloc`. Hand-edited C with the room reserved first ran 1.03x (0.111 s ->
+0.102 s, C 0.099 s), and faster than C on MSVC.
+
+`reserve_pushed_lists_all` (`reserve_pushes.rs`, after the view hoisting): a counted loop with no
+early exit (every block of it goes back to its header or on inside it), whose counter moves only in
+its step and whose limit not at all, and that pushes onto a local list at least `k` times on every
+path through a turn (the fewest pushes on any path, inner loops' back edges dropped), gets a block
+before it that makes a reference to the list and calls the new built-in
+`ArrayReserveHint { per_turn: k, inclusive }` with the counter and the limit. The list is the local
+each push's reference was made from (`r = &xs`, made once, on each branch, or on each copy of a loop
+that `[OPT-2]` versioned: every value the reference is given is `&` of that one local); in the loop the list
+is not assigned, dropped or moved, every mutable reference to it is one the pushes use, the pushes'
+references are used for nothing else, and nothing in the loop takes elements away (`pop`, `clear`,
+`remove`, `drain`, `truncate`, `swap_remove`). C: `counter < limit ? ember_vec_reserve_hint(list,
+size, limit - counter, k) : (void)0`, the difference taken in `uint64_t`.
+
+`ember_vec_reserve_hint` never fails: a count past `[HEAP-8]`'s limit, or no memory (a
+`realloc` that reports failure, growing in place when it can, as `ember_realloc` does), leaves the
+list as it was, to grow and fail (if at all) where it would have
+(`[PHIL-11]`). It acts only when the pushes would grow the buffer more than once (one growth, the
+first push's four slots or a doubling, the pushes make as before), and it grows at least by
+doubling, so a hint on each turn of an outer loop stays amortised. The capacity is the only thing it
+changes, so the pass runs only in a program that never asks a list for its `capacity()`
+(`[PHIL-5]`); std never does. A loop whose turns are constants and whose pushes fit in the first
+growth gets no hint at all: a two-object fill (the `mut self` rows) kept its C byte for byte, where
+an idle hint moved MSVC's hot loop (1.08x to 1.13x, layout alone).
+
+Measured: enum `match` 1.00x C on clang (was 1.13x), 0.85x on MSVC, with C's memory (24.8 MB, was
+more from doubling). The full set against the pushed compiler (A/B, interleaved): sort 0.91x the old time on both compilers, enum `match` 0.95x on clang (0.91x on MSVC in the first run), the chain rows 0.93x to 0.96x, every other row within noise (the one row that first read 1.10x: 0.99x over 31 runs, its C byte for byte the same). Tests:
+`STD-15/accept_a_loop_that_pushes_on_every_turn_asks_for_its_room_first` (exactly three hints:
+a push a turn, a push on each branch, an inner loop; none for a push on one branch only, a
+`break`, or three pushes in all), `STD-15/accept_a_hint_counts_the_turns_of_any_counted_range`
+(`a..=b`, a negative start, two pushes a turn, two lists in one loop, a range of no turn, a
+versioned loop's two copies), `STD-15/accept_a_program_that_asks_for_capacity_sees_the_list_grow`
+and `STD-15/accept_capacity_read_anywhere_keeps_every_list_growing_as_written` (`capacity()` read in
+another function: 8 and 16, no hint anywhere). Break-tested: the `capacity()` gate off, "most"
+pushes for "fewest", early exits allowed, and one reference definition only each fail a test. A
+read-only review (three reviewers, a skeptic per finding) found no unsoundness; it found the
+versioned loops missed, the hint's copy where `realloc` grows in place, and the test gaps above, all
+fixed.
 

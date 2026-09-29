@@ -5650,6 +5650,17 @@ impl Emitter<'_> {
                             rendered[1]
                         );
                     }
+                    Builtin::ArrayReserveHint { per_turn, inclusive } => {
+                        let elem = self.element_of(*arg_ty);
+                        let (list, counter, limit) = (&rendered[0], &rendered[1], &rendered[2]);
+                        let (test, more) = if *inclusive { ("<=", " + 1u") } else { ("<", "") };
+                        // No turn when the counter starts past the limit; the
+                        // difference of the two as `uint64_t` is exact below it.
+                        return format!(
+                            "(({counter}) {test} ({limit}) ? {RT}vec_reserve_hint({list}, {}, (uint64_t)({limit}) - (uint64_t)({counter}){more}, {per_turn}u) : (void)0)",
+                            c_size(&self.c_type(elem)),
+                        );
+                    }
                     Builtin::ArraySwap => {
                         let elem = self.element_of(*arg_ty);
                         return format!(

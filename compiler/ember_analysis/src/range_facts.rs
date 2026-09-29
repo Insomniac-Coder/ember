@@ -131,7 +131,7 @@ fn representation(types: &TypeTable, ty: Ty) -> Ty {
 }
 
 /// A constant's bits as a number of type `ty`.
-fn constant(types: &TypeTable, value: u128, ty: Ty) -> Option<i128> {
+pub(crate) fn constant(types: &TypeTable, value: u128, ty: Ty) -> Option<i128> {
     let ty = representation(types, ty);
     let width = ember_types::bit_width(types, ty)?;
     let signed = ember_types::is_signed(types, ty)?;

@@ -417,7 +417,7 @@ fn written(stmt: &Stmt) -> Vec<LocalId> {
     }
 }
 
-fn operand_reads(operand: &Operand, read: &mut [bool]) {
+pub(crate) fn operand_reads(operand: &Operand, read: &mut [bool]) {
     if let Operand::Copy(place) | Operand::Move(place) = operand {
         place_reads(place, read);
     }
