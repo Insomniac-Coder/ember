@@ -159,6 +159,10 @@ pub struct Body {
     /// `[EFF-10]` — the checks a proof removed from this body or moved to a
     /// loop's entry test (`[RNG-4]`, `[OPT-2]`), for the safety side table.
     pub removed_checks: Vec<RemovedCheck>,
+    /// A loop moved into a function of its own for MSVC (`kernels.rs`): its
+    /// view parameters are distinct lists, and each reaches C as a
+    /// `restrict` pointer and a length, so MSVC may reorder the loop.
+    pub restrict_views: bool,
 }
 
 /// One check a proof removed or moved (`[EFF-10]`).

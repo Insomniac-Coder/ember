@@ -151,6 +151,20 @@ pub fn emit(
             .iter()
             .map(|body| (body.symbol.clone(), body.param_modes.clone()))
             .collect(),
+        restrict_kernels: bodies
+            .iter()
+            .filter(|body| body.restrict_views)
+            .map(|body| {
+                let views = body
+                    .args()
+                    .map(|(_, decl)| match types.kind(decl.ty) {
+                        TyKind::Span { elem, .. } => Some(*elem),
+                        _ => None,
+                    })
+                    .collect();
+                (body.symbol.clone(), views)
+            })
+            .collect(),
         ffi_export_value_params: bodies
             .iter()
             .filter(|body| body.abi.as_deref() == Some("C") && !body.is_extern_declaration)
@@ -332,6 +346,9 @@ struct Emitter<'a> {
     /// parameter creates another class-handle owner, so its retain must be
     /// emitted before the call transfers that new owner to the callee.
     direct_param_modes: BTreeMap<String, Vec<ParameterMode>>,
+    /// ADR-079: the bodies whose views are passed as `restrict` element
+    /// pointers, with each parameter's element type when it is a view.
+    restrict_kernels: BTreeMap<String, Vec<Option<Ty>>>,
     /// Borrowed Ember aggregates arrive as addresses internally, but an
     /// exported C function receives their record values at the ABI boundary.
     ffi_export_value_params: BTreeMap<String, Vec<bool>>,
@@ -3670,6 +3687,19 @@ impl Emitter<'_> {
 
     fn signature(&self, body: &Body) -> String {
         let ret = self.c_type(body.return_ty());
+        if body.restrict_views {
+            // ADR-079: each view is its elements' `restrict` pointer; the
+            // lengths the loop reads are parameters of their own.
+            let params: Vec<String> = body
+                .args()
+                .map(|(id, decl)| match self.types.kind(decl.ty) {
+                    TyKind::Span { elem, .. } => format!("{}* restrict _{}_ptr", self.c_type(*elem), id.0),
+                    _ => format!("{} _{}", self.c_member_type(decl.ty), id.0),
+                })
+                .collect();
+            let params = if params.is_empty() { "void".to_string() } else { params.join(", ") };
+            return format!("EMBER_NOINLINE {ret} {}({params})", body.symbol);
+        }
         let ffi_values = self.ffi_export_value_params.get(&body.symbol);
         let params: Vec<String> = body
             .args()
@@ -3874,6 +3904,22 @@ impl Emitter<'_> {
             .map(|(local, elem)| (local, self.c_type(elem)))
             .filter(|(_, c)| c != "void")
             .collect();
+        // ADR-079: a view parameter of such a body *is* its pointer, and
+        // every element access goes through it.
+        let mut restrict_params: BTreeSet<usize> = BTreeSet::new();
+        if body.restrict_views {
+            let views: Vec<(usize, String)> = body
+                .args()
+                .filter_map(|(id, decl)| match self.types.kind(decl.ty) {
+                    TyKind::Span { elem, .. } => Some((id.0 as usize, self.c_type(*elem))),
+                    _ => None,
+                })
+                .collect();
+            for (local, elem) in views {
+                self.view_pointers.insert(local, elem);
+                restrict_params.insert(local);
+            }
+        }
         let unread_all = unread_locals(body);
         // A local that every `for` loop naming it sets before reading, and
         // nothing else names, is declared inside each of those loops: MSVC
@@ -3901,14 +3947,16 @@ impl Emitter<'_> {
             self.line(&self.local_declaration(index, decl));
         }
         for (local, elem) in self.view_pointers.clone() {
-            self.line(&format!("    {elem}* _{local}_ptr;"));
+            if !restrict_params.contains(&local) {
+                self.line(&format!("    {elem}* _{local}_ptr;"));
+            }
         }
         if body.locals.iter().any(|d| d.kind != LocalKind::Arg && !self.is_void(d.ty)) {
             self.line("");
         }
         // A parameter view's pointer is set once, on entry.
         for (local, elem) in self.view_pointers.clone() {
-            if body.locals[local].kind == LocalKind::Arg {
+            if body.locals[local].kind == LocalKind::Arg && !restrict_params.contains(&local) {
                 self.line(&format!("    _{local}_ptr = ({elem}*)_{local}.ptr;"));
             }
         }
@@ -5117,6 +5165,14 @@ impl Emitter<'_> {
         match func {
             FuncRef::Direct { symbol, .. } => {
                 let mut rendered = rendered;
+                // ADR-079: a view goes to such a body as its element pointer.
+                if let Some(views) = self.restrict_kernels.get(symbol) {
+                    for (argument, view) in rendered.iter_mut().zip(views) {
+                        if let Some(elem) = view {
+                            *argument = format!("({}*)({argument}).ptr", self.c_type(*elem));
+                        }
+                    }
+                }
                 if let Some(values) = self.ffi_export_value_params.get(symbol) {
                     for (argument, by_value) in rendered.iter_mut().zip(values) {
                         if *by_value {

@@ -1629,6 +1629,29 @@ fn stable_class_loop_access_is_reported_as_hoisted() {
     }
 }
 
+/// ADR-079 — for MSVC, a loop nest that writes separate lists it never reads
+/// runs in a function of its own whose list parameters are `restrict`, the
+/// counts the program fixes written in; for clang the nest stays in place.
+#[test]
+fn loop_nests_over_separate_lists_get_restrict_functions_for_msvc() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/OPT-2/accept_a_loop_nest_over_separate_lists_keeps_its_results.{SOURCE_EXT}");
+    let main_loop = format!("{}_loop0(", ember_branding::mangled("main"));
+    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
+    assert_eq!(msvc.exit, 0, "msvc C failed:
+{}", msvc.stderr);
+    assert!(msvc.stdout.contains(&format!("EMBER_NOINLINE void {main_loop}")), "no loop function for MSVC:
+{}", msvc.stdout);
+    assert!(msvc.stdout.contains("* restrict _1_ptr"), "the loop function's lists are not restrict:
+{}", msvc.stdout);
+    assert_eq!(msvc.stdout.matches("EMBER_NOINLINE void").count(), 4, "two nests move (prototype and definition each)");
+    let clang = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    assert_eq!(clang.exit, 0, "clang C failed:
+{}", clang.stderr);
+    assert!(!clang.stdout.contains(&main_loop), "clang keeps the nest in place:
+{}", clang.stdout);
+}
+
 /// `[PHIL-5]` — at the end of `main` the process ends: release and shipping
 /// builds leave the list of objects with no `drop` to the operating system
 /// (one `free` fewer in `main`), and keep every drop that runs a `drop`

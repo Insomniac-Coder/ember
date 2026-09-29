@@ -98,8 +98,8 @@ tables say how.
 
 | What the program does | With MSVC | With clang |
 |---|---|---|
-| Change every number twice, writing to a separate list, overflow checks off ² | 16.8 times faster | same speed |
-| Change every number twice, writing to a separate list, overflow checks on ² | 12.1 times faster | same speed |
+| Change every number twice, writing to a separate list, overflow checks off ² | 71.0 times faster | same speed |
+| Change every number twice, writing to a separate list, overflow checks on ² | 60.7 times faster | same speed |
 | Change every number using a second list, 20,000 rounds, overflow checks on ² | 3.1 times faster | same speed |
 | Change every number using a second list, 20,000 rounds, overflow checks off ² | 3.1 times faster | same speed |
 | Change every number twice, reading back what it wrote, overflow checks on ² | 3.1 times faster | same speed |
@@ -119,6 +119,8 @@ tables say how.
 | Start and stop an empty program | same speed | same speed |
 | Add up a list of 1,000 numbers, 300,000 times, overflow checks off | same speed | same speed |
 | Number every second value of a range of 2 million (`step_by`, `enumerate`), 300 times | same speed | same speed |
+| Add two lists plus the round number into a third, overflow checks off | same speed | same speed |
+| Add two lists plus the round number into a third, overflow checks on | same speed | same speed |
 | Number each item of a 1-million-number list while changing it (`enumerate`), 300 times | same speed | same speed |
 | Every third number of a list, after skipping some, at most 300,000 of them (`skip`, `step_by`, `take`), 300 times | same speed | same speed |
 | Number the items of a list past a starting point, as copies (`copied`, `enumerate`, `skip`), 300 times | same speed | same speed |
@@ -139,8 +141,6 @@ tables say how.
 
 | What the program does | With MSVC | With clang |
 |---|---|---|
-| Add two lists plus the round number into a third, overflow checks off ¹ | 3.1 times slower | same speed |
-| Add two lists plus the round number into a third, overflow checks on ¹ | 3.0 times slower | same speed |
 | Add one list into another, 2,000 rounds, overflow checks off ¹ | 22% slower | same speed |
 | Add one list into another, 2,000 rounds, overflow checks on ¹ | 20% slower | same speed |
 | Recursion: Fibonacci of 38, the slow way | 5% slower | 1.7 times slower |
@@ -153,7 +153,7 @@ tables say how.
 ¹ With MSVC, the hand-written C of this program runs faster than the same C built with clang. MSVC
 turns its two loops around: it goes through the lists once and does all the rounds on each number in
 turn, so each number is read from memory once instead of once per round. MSVC does not do this to
-the C that Ember produces.
+the C that Ember produces for this program.
 
 ² With MSVC, the hand-written C of this program runs much slower than the same C built with clang.
 MSVC turns its two loops around here too, but then each number goes through all its rounds one after

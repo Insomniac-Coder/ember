@@ -211,6 +211,17 @@ static inline ember_loc ember_loc_unknown(void) { return ember_loc_at(NULL, 0, 0
 #define EMBER_INLINED static inline
 #endif
 
+/* A loop the compiler moved into a function of its own so its list
+ * parameters can be `restrict` (ADR-079): the C compiler must keep it a
+ * function, since pasting it back into its caller loses the promise. */
+#if defined(_MSC_VER) && !defined(__clang__)
+#define EMBER_NOINLINE __declspec(noinline)
+#elif defined(__GNUC__) || defined(__clang__)
+#define EMBER_NOINLINE __attribute__((noinline))
+#else
+#define EMBER_NOINLINE
+#endif
+
 #if defined(__GNUC__) || defined(__clang__)
 
 #define EMBER_CHECKED_OPS(SUFFIX, TYPE)                                      \

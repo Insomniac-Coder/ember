@@ -396,6 +396,7 @@ impl<'a> Builder<'a> {
             hoisted_accesses: Vec::new(),
             uncounted_handles: Vec::new(),
             removed_checks: Vec::new(),
+            restrict_views: false,
         }
     }
 

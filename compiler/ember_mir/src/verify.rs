@@ -573,6 +573,7 @@ mod tests {
             hoisted_accesses: Vec::new(),
             uncounted_handles: Vec::new(),
             removed_checks: Vec::new(),
+            restrict_views: false,
         }
     }
 
@@ -1737,6 +1738,7 @@ mod view_invariant_tests {
             hoisted_accesses: Vec::new(),
             uncounted_handles: Vec::new(),
             removed_checks: Vec::new(),
+            restrict_views: false,
         };
         (body, types)
     }
@@ -1901,6 +1903,7 @@ mod interface_upcast_invariant_tests {
             hoisted_accesses: Vec::new(),
             uncounted_handles: Vec::new(),
             removed_checks: Vec::new(),
+            restrict_views: false,
         };
         (body, types)
     }

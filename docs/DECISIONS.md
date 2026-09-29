@@ -3047,3 +3047,52 @@ Measured: the full set against the pushed compiler (A/B, interleaved): every row
 it came from changed in the loop, the loop versioned: 25 and 9; break-tested: with the writes of the
 source ignored it prints 16 and 4).
 
+## ADR-079 — for MSVC, a loop nest that writes separate lists it never reads runs in a `restrict` function
+
+2026-09-29, owner-approved ("go ahead with restrict, measure it first", then "yes build it"; "I
+don't think it's a good idea to hard code numbers unless they are actually constant"). With MSVC,
+"Add two lists plus the round number into a third" ran 0.043 s against the hand-written C's
+0.014 s: MSVC turns the C twin's two loops around (each element read and written once, its rounds in
+a register), which it does only because the twin's lists carry `restrict`. Measured by hand first
+(scratchpad `wrap/demo/`): `restrict` written into Ember's C around the loop, on locals, in a block,
+or on pointers taken from a list's header changes nothing; MSVC acts on it only on the parameters of
+a function it keeps separate (`noinline`), or on pointers set straight from `malloc`. In such a
+function Ember's loop ran 0.027 s, and 0.014 s once the round count and the round counter's start,
+both constants in the program, were written in; the hand-written C in such a function with a count
+known only at run time also runs 0.026 s.
+
+`outline_list_kernels_all` (`kernels.rs`, MSVC only, after the view hoisting and the reserve hint):
+a counted loop whose turn holds another, that calls nothing and leaves only through its header,
+whose lists are locals it reaches only by index (or reads the length of), that writes at least one
+list and reads at least one other, and that **never reads a list it writes**, moves into a body of
+its own (`restrict_views`). Its parameters: a view per list, each length it reads, and each value it
+reads before writing; a value that is a constant when the nest starts (set once to a constant, or,
+for one the nest changes such as a counter, set to a constant on the single path into it) is written
+in as that constant, so a count the program fixes stays fixed and one known only at run time stays a
+parameter. A value the nest sets that is read after it keeps the nest where it is. The C generator
+gives such a body's views as `T* restrict` element pointers (`EMBER_NOINLINE`, new in the runtime
+header), and the caller passes each view's pointer.
+
+The write-only condition is measured, not assumed: with it absent, "Change every number using a
+second list" and "...reading back what it wrote" ran 2.2x slower and the decimal lists 2x: where a
+round reads back what the last one wrote, the turned-around order makes each element's rounds a
+chain no vector instruction can share (the same happens to MSVC's build of the C twins, README note
+2). `restrict` is true for the views: two list locals never share elements, except two borrowed
+parameters, which the nest can only read, where `restrict` promises nothing; the compiler's own
+header copies of a list (`_45 = _4`, from `[OPT-2]`) are followed back to the list, and a written
+list must share its root with no other.
+
+Measured with MSVC: "Add two lists plus the round number into a third" 0.014 s against the C twin's
+0.014 s, checks off and on (was 3.1x and 3.0x slower); "Change every number twice, writing to a
+separate list" 0.086 s (was 0.39 s; MSVC's build of the C twin takes 5.2 s to 6.2 s, README note 2).
+Every other row: identical C or within noise (the two that first read 1.07x to 1.09x were clang
+rows with byte-identical C: 0.95x and 0.98x over 21 runs). clang is untouched. Tests:
+`OPT-2/accept_a_loop_nest_over_separate_lists_keeps_its_results` (fixed counts and run-time counts
+move; a value read after the nest and a nest reading back what it writes stay; same results on every
+compiler), `OPT-2/run_fail_a_check_in_a_loop_nest_over_separate_lists_names_its_line` (a division by
+zero in a moved nest names its line), and the milestone
+`loop_nests_over_separate_lists_get_restrict_functions_for_msvc` (two moved nests, `restrict`
+pointers, nothing for clang). Break-tested: with the value-read-after rule off `last` prints 0, and
+with the pass off the milestone fails. A nest whose checks are grouped (`[SIMD-7]`) may leave its
+loop other than through the header and is not moved; that is a limit of this pass, not a defect.
+

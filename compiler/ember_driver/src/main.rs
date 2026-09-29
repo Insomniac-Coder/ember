@@ -2249,6 +2249,14 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // before it, as a hint that changes nothing but the capacity (never done
     // in a program that asks a list for its `capacity()`).
     ember_analysis::reserve_pushed_lists_all(&mut bodies, &types);
+    // For MSVC: a loop nest over separate lists goes into a function of its
+    // own whose list parameters are `restrict` (ADR-079); MSVC reorders such
+    // a nest only then. clang and gcc reorder it where it is.
+    if command != "check" && c_for_msvc(&options)
+        && ember_analysis::outline_list_kernels_all(&mut bodies, &mut types, &common) > 0
+    {
+        ember_analysis::install_callable_regions_all(&mut bodies, &types);
+    }
     // Last, for C: a value a counted loop computes from its counter each
     // turn (`k * step + skip`) gets a running value of its own, as
     // hand-written C keeps one. clang and gcc vectorise such a loop at C's
