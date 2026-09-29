@@ -2855,3 +2855,41 @@ ran through each adapter's `next`.
   `a..` (no count) or a 128-bit range, and `SoA` columns (`[SOA-*]` is not built); these run
   through `next`.
 
+## ADR-074 — a view an outer loop leaves alone is made once; MSVC gets its perfect nest
+
+2026-09-29, autonomous (goal 1, the owner's ">30% slower first"). Moving 100,000 particles 2,000
+times ran 1.43x to 1.6x C on MSVC and at C's speed on clang: MSVC turns the C twin's two loops
+around (each particle held in registers for all 2,000 steps), which it does only for a perfect
+nest, and Ember's outer loop rebuilt the list's view and iterator before its inner loop every
+step. Hand-edited C (scratchpad `nest/`) found what the nest needs, each alone doing nothing:
+
+* **The view made before the outer loop** (`hoist_invariant_views_all`, in `loop_version.rs`
+  beside `[OPT-2]`, after the other loop passes): out of every counted loop, the pure work each
+  turn begins with whose inputs the loop cannot change moves to a block before it, rounds
+  repeating so a view hoisted out of an inner loop moves on out of the outer one. Movable: the
+  address of a local, a copy, a cast, `+ - *` and comparisons, a struct literal, a field read, a
+  read through a reference whose target no write in the loop can reach (`loop_writes`,
+  `may_alias`, with calls read through their summaries), and the view built-ins (`SpanFrom`,
+  the reborrows, the lengths). Its result is set once in the loop, needs no drop, is read
+  nowhere outside the loop and not earlier in the turn; an access check, a drop, a checked
+  operation or a call ends the movable run. A division or shift stays (it could trap where the
+  loop would not have run). The writes analysis also learned that making a view, reborrowing
+  one or reading a length writes nothing through its argument: what is later written through
+  the view is an element, which no header is (it counted `&mut list` given to `SpanFrom` as a
+  write of the list, so no view was invariant).
+* **A branch's comparison written into the `if`** (`folded_tests`): a comparison held in a
+  temporary nothing else names is emitted as `if (!(i < n))` rather than through a
+  function-wide `bool`, as the structured loops already did; MSVC did not take the loop for a
+  canonical one otherwise.
+* **A view's elements through a pointer of its own** (`view_pointers`): a view local set only
+  whole, never inside a loop (the control-flow graph's cycles, by Tarjan's components) and
+  never borrowed (an element reference leaves the view alone) gets `T* _N_ptr`, set wherever
+  the view is and on entry for a parameter, and `view[i]` is `_N_ptr[i]`; MSVC re-read the
+  struct field and would not reorder.
+
+Measured: particles 1.02x C on MSVC (was 1.43x to 1.6x), 0.99x on clang. The full README set
+with these changes: every other row within noise of the pushed compiler (A/B, interleaved
+runs: 0.94x to 1.04x). Test: `OPT-2/accept_a_view_an_outer_loop_leaves_alone_is_made_once`
+(an outer loop that pushes to its list, or rebinds it, makes the view again each turn and
+sees the change; break-tested: with the loop's writes ignored it prints a stale total).
+

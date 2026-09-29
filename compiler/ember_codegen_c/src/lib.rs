@@ -145,6 +145,8 @@ pub fn emit(
         class_interface_tables: BTreeMap::new(),
         class_interface_call_interfaces: BTreeSet::new(),
         interface_caches: BTreeMap::new(),
+        folded_tests: BTreeMap::new(),
+        view_pointers: BTreeMap::new(),
         direct_param_modes: bodies
             .iter()
             .map(|body| (body.symbol.clone(), body.param_modes.clone()))
@@ -317,6 +319,15 @@ struct Emitter<'a> {
     /// Per-body hidden caches for repeated interface calls through an
     /// unchanged class-interface parameter.
     interface_caches: BTreeMap<InterfaceCacheKey, String>,
+    /// A branch's comparison, by the temporary nothing else names: written
+    /// into the `if` itself rather than into a function-wide `bool`, which
+    /// keeps MSVC from taking the loop it tests for a canonical one.
+    folded_tests: BTreeMap<usize, (Rvalue, Ty)>,
+    /// A view never set inside a loop nor borrowed, by local, with its
+    /// element's C type: its elements are reached through a typed pointer of
+    /// its own (`_N_ptr`), set wherever the view is, which MSVC keeps in a
+    /// register where it re-reads a struct field.
+    view_pointers: BTreeMap<usize, String>,
     /// Direct-call ownership modes. A `Copy` operand passed to an `owned`
     /// parameter creates another class-handle owner, so its retain must be
     /// emitted before the call transfers that new owner to the callee.
@@ -3855,7 +3866,14 @@ impl Emitter<'_> {
             let ty = body.locals[counted.counter.0 as usize].ty;
             self.types.is_integral(ty) && self.wide_int(ty).is_none()
         });
-        let hidden_tests: BTreeSet<usize> = for_loops.values().map(|l| l.test.0 as usize).collect();
+        let mut hidden_tests: BTreeSet<usize> = for_loops.values().map(|l| l.test.0 as usize).collect();
+        self.folded_tests = folded_tests(body, &for_loops, self.types);
+        hidden_tests.extend(self.folded_tests.keys().copied());
+        self.view_pointers = view_pointers(body, self.types)
+            .into_iter()
+            .map(|(local, elem)| (local, self.c_type(elem)))
+            .filter(|(_, c)| c != "void")
+            .collect();
         let unread_all = unread_locals(body);
         // A local that every `for` loop naming it sets before reading, and
         // nothing else names, is declared inside each of those loops: MSVC
@@ -3882,8 +3900,17 @@ impl Emitter<'_> {
             }
             self.line(&self.local_declaration(index, decl));
         }
+        for (local, elem) in self.view_pointers.clone() {
+            self.line(&format!("    {elem}* _{local}_ptr;"));
+        }
         if body.locals.iter().any(|d| d.kind != LocalKind::Arg && !self.is_void(d.ty)) {
             self.line("");
+        }
+        // A parameter view's pointer is set once, on entry.
+        for (local, elem) in self.view_pointers.clone() {
+            if body.locals[local].kind == LocalKind::Arg {
+                self.line(&format!("    _{local}_ptr = ({elem}*)_{local}.ptr;"));
+            }
         }
 
         // `[DSP-3]` — a repeated call through an unchanged class-interface
@@ -4015,6 +4042,17 @@ impl Emitter<'_> {
         self.line(&format!("    goto bb{};", counted.exit));
     }
 
+    /// After a view with a pointer of its own is set, its pointer is too.
+    fn set_view_pointer(&mut self, place: &Place) {
+        if !place.projection.is_empty() {
+            return;
+        }
+        let local = place.local.0 as usize;
+        if let Some(elem) = self.view_pointers.get(&local).cloned() {
+            self.line(&format!("    _{local}_ptr = ({elem}*)_{local}.ptr;"));
+        }
+    }
+
     fn local_declaration(&self, index: usize, decl: &ember_mir::LocalDecl) -> String {
         let comment = match &decl.name {
             Some(name) => format!("  /* {name} */"),
@@ -4025,6 +4063,8 @@ impl Emitter<'_> {
 
     fn emit_stmt(&mut self, stmt: &Stmt, body: &Body) {
         match &stmt.kind {
+            StmtKind::Assign { place, .. }
+                if place.projection.is_empty() && self.folded_tests.contains_key(&(place.local.0 as usize)) => {}
             StmtKind::Assign { place, rvalue } => {
                 let ty = self.place_ty(place, body);
                 if self.is_void(ty) {
@@ -4073,6 +4113,7 @@ impl Emitter<'_> {
                 }
                 let rhs = self.rvalue(rvalue, body, ty);
                 self.line(&format!("    {lhs} = {rhs};"));
+                self.set_view_pointer(place);
             }
             StmtKind::BeginAccess { place, mutable } => {
                 self.emit_line_directive(stmt.span);
@@ -4537,6 +4578,14 @@ impl Emitter<'_> {
                         None => value.to_string(),
                     })
                     .collect();
+                if let (Operand::Copy(place), [(0, target)]) = (discr, targets.as_slice())
+                    && place.projection.is_empty()
+                    && let Some((rvalue, bool_ty)) = self.folded_tests.get(&(place.local.0 as usize)).cloned()
+                {
+                    let cond = self.rvalue(&rvalue, body, bool_ty);
+                    self.line(&format!("    if (!({cond})) {{ goto bb{}; }} else {{ goto bb{}; }}", target.0, otherwise.0));
+                    return;
+                }
                 let discr = self.operand(discr, body);
                 // Phase 0 only produces two-way branches on a boolean.
                 if let [(_, target)] = targets.as_slice() {
@@ -4748,6 +4797,7 @@ impl Emitter<'_> {
                 } else {
                     let dest_text = self.place_in(dest, body);
                     self.line(&format!("    {dest_text} = {call};"));
+                    self.set_view_pointer(dest);
                 }
                 if next.0 as usize == index + 1 {
                     self.line("    /* fallthrough */");
@@ -6142,8 +6192,12 @@ impl Emitter<'_> {
     fn place_in(&self, place: &Place, body: &Body) -> String {
         let mut out = format!("_{}", place.local.0);
         let mut at = Cursor { ty: body.local(place.local).ty, variant: None };
-        for projection in &place.projection {
+        for (position, projection) in place.projection.iter().enumerate() {
             match projection {
+                // A view with a pointer of its own indexes through it.
+                Projection::Index(local) if position == 0 && self.view_pointers.contains_key(&(place.local.0 as usize)) => {
+                    out = format!("_{}_ptr[_{}]", place.local.0, local.0);
+                }
                 Projection::Field(index) => match (at.variant, self.types.kind(at.ty)) {
                     // After a downcast, a field is that variant's payload; a
                     // niche `Option`'s `Some` holds it as the whole value.
@@ -7353,6 +7407,169 @@ fn unread_locals(body: &Body) -> Vec<usize> {
         .filter(|(index, decl)| decl.kind != LocalKind::Return && !read[*index])
         .map(|(index, _)| index)
         .collect()
+}
+
+/// A branch on a comparison held in a temporary that nothing else names:
+/// the block's last statement sets it and its terminator tests it. Keyed by
+/// the temporary, with the comparison and its type.
+fn folded_tests(body: &Body, for_loops: &BTreeMap<usize, ForLoop>, types: &TypeTable) -> BTreeMap<usize, (Rvalue, Ty)> {
+    let in_loops: BTreeSet<usize> =
+        for_loops.values().flat_map(|l| l.chain.iter().copied()).chain(for_loops.keys().copied()).collect();
+    // A storage marker writes nothing, so it names nothing here.
+    let quiet = |stmt: &Stmt| matches!(stmt.kind, StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop);
+    let mut mentions: BTreeMap<LocalId, usize> = BTreeMap::new();
+    for block in &body.blocks {
+        let mut named = Vec::new();
+        for stmt in block.stmts.iter().filter(|stmt| !quiet(stmt)) {
+            stmt_locals(stmt, &mut named);
+        }
+        terminator_locals(&block.terminator, &mut named);
+        for local in named {
+            *mentions.entry(local).or_default() += 1;
+        }
+    }
+    let mut found = BTreeMap::new();
+    for (index, block) in body.blocks.iter().enumerate() {
+        if in_loops.contains(&index) {
+            continue;
+        }
+        let Terminator::SwitchInt { discr: Operand::Copy(discr), targets, .. } = &block.terminator else { continue };
+        if !discr.projection.is_empty() || !matches!(targets.as_slice(), [(0, _)]) {
+            continue;
+        }
+        let Some(stmt) = block.stmts.iter().rev().find(|stmt| !quiet(stmt)) else { continue };
+        let StmtKind::Assign { place, rvalue: rvalue @ Rvalue::BinaryOp { op, .. } } = &stmt.kind else { continue };
+        let ty = body.local(place.local).ty;
+        if *place != Place::local(discr.local) || !op.is_comparison() || !matches!(types.kind(ty), TyKind::Bool) {
+            continue;
+        }
+        // Named by the one statement and the one test only.
+        if mentions.get(&discr.local) == Some(&2) {
+            found.insert(discr.local.0 as usize, (rvalue.clone(), ty));
+        }
+    }
+    found
+}
+
+/// The views that get a typed pointer of their own: a view local set only
+/// whole, never inside a loop, and never borrowed. Keyed by the local, with
+/// its element type.
+fn view_pointers(body: &Body, types: &TypeTable) -> BTreeMap<usize, Ty> {
+    let in_cycles = blocks_in_cycles(body);
+    let mut candidates: BTreeMap<usize, Ty> = body
+        .locals
+        .iter()
+        .enumerate()
+        .filter_map(|(index, decl)| match types.kind(decl.ty) {
+            TyKind::Span { elem, .. } if matches!(decl.kind, LocalKind::Arg | LocalKind::User | LocalKind::Temp) => {
+                Some((index, *elem))
+            }
+            _ => None,
+        })
+        .collect();
+    let reject = |local: LocalId, candidates: &mut BTreeMap<usize, Ty>| {
+        candidates.remove(&(local.0 as usize));
+    };
+    for (index, block) in body.blocks.iter().enumerate() {
+        for stmt in &block.stmts {
+            match &stmt.kind {
+                StmtKind::Assign { place, rvalue } => {
+                    if !place.projection.is_empty() || in_cycles[index] {
+                        reject(place.local, &mut candidates);
+                    }
+                    // A reference to the view itself, or to its fields; one to
+                    // an element leaves the view alone.
+                    if let Rvalue::Ref { place: target, .. } = rvalue
+                        && !matches!(target.projection.first(), Some(Projection::Index(_) | Projection::ConstIndex(_)))
+                    {
+                        reject(target.local, &mut candidates);
+                    }
+                }
+                StmtKind::CheckedBinaryOp { dest, overflow, .. } => {
+                    reject(dest.local, &mut candidates);
+                    reject(overflow.local, &mut candidates);
+                }
+                StmtKind::Drop { place, .. } => reject(place.local, &mut candidates),
+                _ => {}
+            }
+        }
+        if let Terminator::Call { dest, .. } = &block.terminator
+            && (in_cycles[index] || !dest.projection.is_empty())
+        {
+            reject(dest.local, &mut candidates);
+        }
+    }
+    candidates
+}
+
+/// Whether each block lies on a cycle of the control-flow graph: Tarjan's
+/// strongly connected components, iteratively.
+fn blocks_in_cycles(body: &Body) -> Vec<bool> {
+    let n = body.blocks.len();
+    let successors = |block: usize| -> Vec<usize> {
+        match &body.blocks[block].terminator {
+            Terminator::Goto(t) | Terminator::Call { next: t, .. } | Terminator::Assert { next: t, .. } => vec![t.0 as usize],
+            Terminator::SwitchInt { targets, otherwise, .. } => {
+                targets.iter().map(|(_, t)| t.0 as usize).chain(std::iter::once(otherwise.0 as usize)).collect()
+            }
+            Terminator::Return | Terminator::Unreachable => Vec::new(),
+        }
+    };
+    let mut index_of = vec![usize::MAX; n];
+    let mut low = vec![0usize; n];
+    let mut on_stack = vec![false; n];
+    let mut stack: Vec<usize> = Vec::new();
+    let mut result = vec![false; n];
+    let mut next_index = 0;
+    for root in 0..n {
+        if index_of[root] != usize::MAX {
+            continue;
+        }
+        let mut work: Vec<(usize, usize)> = vec![(root, 0)];
+        index_of[root] = next_index;
+        low[root] = next_index;
+        next_index += 1;
+        stack.push(root);
+        on_stack[root] = true;
+        while let Some(&(block, child)) = work.last() {
+            let next = successors(block);
+            if child < next.len() {
+                work.last_mut().expect("the block being walked").1 += 1;
+                let succ = next[child];
+                if index_of[succ] == usize::MAX {
+                    index_of[succ] = next_index;
+                    low[succ] = next_index;
+                    next_index += 1;
+                    stack.push(succ);
+                    on_stack[succ] = true;
+                    work.push((succ, 0));
+                } else if on_stack[succ] {
+                    low[block] = low[block].min(index_of[succ]);
+                }
+            } else {
+                work.pop();
+                if let Some(&(parent, _)) = work.last() {
+                    low[parent] = low[parent].min(low[block]);
+                }
+                if low[block] == index_of[block] {
+                    let mut members = Vec::new();
+                    loop {
+                        let member = stack.pop().expect("the component's blocks are on the stack");
+                        on_stack[member] = false;
+                        members.push(member);
+                        if member == block {
+                            break;
+                        }
+                    }
+                    let cyclic = members.len() > 1 || successors(block).contains(&block);
+                    for member in members {
+                        result[member] = cyclic;
+                    }
+                }
+            }
+        }
+    }
+    result
 }
 
 /// A counted loop the C backend writes as a `for` loop.

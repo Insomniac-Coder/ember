@@ -40,7 +40,7 @@
 use std::collections::{HashMap, HashSet};
 
 use ember_mir::{
-    AssertKind, BasicBlock, BasicBlockId, BinOp, Body, CastKind, CheckKind, CheckProof, Const, FuncRef, LocalDecl,
+    AssertKind, BasicBlock, BasicBlockId, BinOp, Body, Builtin, CastKind, CheckKind, CheckProof, Const, FuncRef, LocalDecl,
     LocalId, LocalKind, Operand, Place, Projection, RemovedCheck, Rvalue, Stmt, StmtKind, Terminator, UnOp,
 };
 use ember_types::{ClassId, CommonTypes, Ty, TyKind, TypeTable};
@@ -580,6 +580,19 @@ fn block_writes(
                     mutable_referents(out);
                 }
             },
+            // Making a view of a list, reborrowing one, or reading a length
+            // writes nothing through its argument; what is later written
+            // through the view is an element, which no header is.
+            FuncRef::Builtin {
+                which:
+                    Builtin::SpanFrom { .. }
+                    | Builtin::SpanReborrow
+                    | Builtin::SpanSharedReborrow
+                    | Builtin::SpanLen
+                    | Builtin::ArrayLen
+                    | Builtin::StringLen,
+                ..
+            } => {}
             FuncRef::Builtin { which, arg_ty } if quiet_builtin(types, which, *arg_ty) => mutable_referents(out),
             FuncRef::DynBoxNew { .. } => mutable_referents(out),
             FuncRef::Builtin { .. } | FuncRef::Interface { .. } | FuncRef::Indirect { .. } => {
@@ -3339,4 +3352,289 @@ fn carried_locals(body: &Body, shape: &CountedLoop) -> HashSet<LocalId> {
         }
     }
     live_in.remove(&shape.header).unwrap_or_default()
+}
+
+// ---------------------------------------------------------------------------
+// Loop-invariant views.
+
+/// Hoist, out of every counted loop, the pure work each turn begins with
+/// whose inputs the loop cannot change: the view a loop inside it iterates
+/// (`&list`, the view of it, its iterator's fields, its length), when nothing
+/// the loop writes can change the list's header. A loop whose turn is then
+/// only its inner loop is a perfect nest, which MSVC reorders as it does the
+/// C twin's (the particles benchmark: 1.5x C, and C's speed with it); every
+/// compiler is spared rebuilding the view each turn. Returns how many
+/// computations moved.
+pub fn hoist_invariant_views_all(bodies: &mut [Body], types: &TypeTable) -> usize {
+    let summaries = Summaries::compute(bodies, types);
+    bodies.iter_mut().map(|body| hoist_views(body, types, &summaries)).sum()
+}
+
+fn hoist_views(body: &mut Body, types: &TypeTable, summaries: &Summaries) -> usize {
+    // A view hoisted out of an inner loop stands at the start of the outer
+    // loop's turn, which a later round hoists on.
+    let mut total = 0;
+    for _ in 0..8 {
+        let mut moved = 0;
+        for header in 0..body.blocks.len() {
+            if let Some(shape) = counted_loop(body, types, header) {
+                moved += hoist_from(body, types, summaries, &shape);
+            }
+        }
+        total += moved;
+        if moved == 0 {
+            break;
+        }
+    }
+    total
+}
+
+/// One computation that moves: a statement, or a block's built-in call.
+#[derive(Clone, Copy, PartialEq)]
+enum Hoisted {
+    Stmt(usize, usize),
+    Call(usize),
+}
+
+fn deref_of(place: &Place) -> Place {
+    let mut projection = place.projection.clone();
+    projection.push(Projection::Deref);
+    Place { local: place.local, projection }
+}
+
+fn hoist_from(body: &mut Body, types: &TypeTable, summaries: &Summaries, shape: &CountedLoop) -> usize {
+    let facts = BodyFacts::new(body, types);
+    let mut inside = shape.region.clone();
+    inside.push(shape.header);
+    let inside_set: HashSet<usize> = inside.iter().copied().collect();
+    let written = loop_writes(body, types, summaries, &facts, &inside);
+    // Values each local is given in the loop, and the locals whose storage
+    // begins or ends in it.
+    let mut writes: HashMap<LocalId, usize> = HashMap::new();
+    let mut scoped: HashSet<LocalId> = HashSet::new();
+    for &block in &inside {
+        for stmt in &body.blocks[block].stmts {
+            match &stmt.kind {
+                StmtKind::Assign { place, .. } => *writes.entry(place.local).or_default() += 1,
+                StmtKind::CheckedBinaryOp { dest, overflow, .. } => {
+                    *writes.entry(dest.local).or_default() += 1;
+                    *writes.entry(overflow.local).or_default() += 1;
+                }
+                StmtKind::Drop { place, .. } => *writes.entry(place.local).or_default() += 1,
+                StmtKind::StorageLive(local) | StmtKind::StorageDead(local) => {
+                    scoped.insert(*local);
+                }
+                _ => {}
+            }
+        }
+        if let Terminator::Call { dest, .. } = &body.blocks[block].terminator {
+            *writes.entry(dest.local).or_default() += 1;
+        }
+    }
+    // What is read outside the loop.
+    let mut outside: HashSet<LocalId> = HashSet::new();
+    for (index, block) in body.blocks.iter().enumerate() {
+        if inside_set.contains(&index) {
+            continue;
+        }
+        visit_places(block, &mut |place: &Place, written: bool, _| {
+            if !written || !place.projection.is_empty() {
+                outside.insert(place.local);
+            }
+        });
+    }
+    let predecessors = predecessors(body);
+    let mut hoisted_locals: HashSet<LocalId> = HashSet::new();
+    let mut items: Vec<Hoisted> = Vec::new();
+    // Read so far in the turn: a value read before it is computed keeps its
+    // place.
+    let mut read_so_far: HashSet<LocalId> = HashSet::new();
+    visit_places(&body.blocks[shape.header], &mut |place: &Place, written: bool, _| {
+        if !written {
+            read_so_far.insert(place.local);
+        }
+    });
+
+    let unchanged_local = |local: LocalId, hoisted: &HashSet<LocalId>| {
+        hoisted.contains(&local) || (!writes.contains_key(&local) && !scoped.contains(&local))
+    };
+    // A place the loop cannot change: an unchanged local, its fields, and
+    // memory through a reference no write in the loop can reach.
+    let unchanged_place = |place: &Place, hoisted: &HashSet<LocalId>| -> bool {
+        if !unchanged_local(place.local, hoisted) {
+            return false;
+        }
+        if place.projection.iter().any(|step| !matches!(step, Projection::Field(_) | Projection::Deref)) {
+            return false;
+        }
+        if !place.projection.contains(&Projection::Deref) {
+            return true;
+        }
+        match locate(body, types, &facts.origins, place, 0) {
+            Some(loc) => loc.root != Root::Anywhere && !written.iter().any(|(w, _)| may_alias(w, &loc, &facts)),
+            None => false,
+        }
+    };
+    let unchanged_operand = |operand: &Operand, hoisted: &HashSet<LocalId>| match operand {
+        Operand::Const(_) => true,
+        Operand::Copy(place) | Operand::Move(place) => unchanged_place(place, hoisted),
+    };
+    let movable_dest = |place: &Place, read_so_far: &HashSet<LocalId>| {
+        place.projection.is_empty()
+            && writes.get(&place.local) == Some(&1)
+            && !types.needs_drop(body.local(place.local).ty)
+            && !read_so_far.contains(&place.local)
+            && !outside.contains(&place.local)
+    };
+
+    let mut block = shape.entry;
+    'chain: loop {
+        if block == shape.header || block == shape.step || !inside_set.contains(&block) || predecessors[block].len() != 1 {
+            break;
+        }
+        let data = &body.blocks[block];
+        for (index, stmt) in data.stmts.iter().enumerate() {
+            match &stmt.kind {
+                StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => continue,
+                StmtKind::Assign { place, rvalue } => {
+                    let pure = match rvalue {
+                        Rvalue::Use(operand) | Rvalue::Cast { operand, .. } | Rvalue::UnaryOp { operand, .. } => {
+                            Some(unchanged_operand(operand, &hoisted_locals))
+                        }
+                        // A division or shift stays where the loop has it:
+                        // done before the loop, it could trap when the loop
+                        // would not have run.
+                        Rvalue::BinaryOp { op, lhs, rhs } => Some(
+                            !matches!(op, BinOp::Div | BinOp::Rem | BinOp::FloorDiv | BinOp::FloorRem | BinOp::Shl | BinOp::Shr)
+                                && unchanged_operand(lhs, &hoisted_locals)
+                                && unchanged_operand(rhs, &hoisted_locals),
+                        ),
+                        Rvalue::Aggregate { operands, .. } => {
+                            Some(operands.iter().all(|operand| unchanged_operand(operand, &hoisted_locals)))
+                        }
+                        Rvalue::Discriminant(read) => Some(unchanged_place(read, &hoisted_locals)),
+                        // The address of a place the loop does not rebind.
+                        Rvalue::Ref { place: target, .. } => Some(
+                            unchanged_local(target.local, &hoisted_locals)
+                                && target.projection.iter().all(|step| matches!(step, Projection::Field(_))),
+                        ),
+                        Rvalue::Repeat { .. } => None,
+                    };
+                    match pure {
+                        Some(true) if movable_dest(place, &read_so_far) => {
+                            items.push(Hoisted::Stmt(block, index));
+                            hoisted_locals.insert(place.local);
+                        }
+                        Some(_) => {
+                            visit_stmt(stmt, &mut |read: &Place, written: bool, _| {
+                                if !written {
+                                    read_so_far.insert(read.local);
+                                }
+                            });
+                        }
+                        None => break 'chain,
+                    }
+                }
+                // An access check, a drop or a checked operation: the turn's
+                // movable work ends here.
+                _ => break 'chain,
+            }
+        }
+        match &data.terminator {
+            Terminator::Goto(next) => block = next.0 as usize,
+            Terminator::Call {
+                func:
+                    FuncRef::Builtin {
+                        which:
+                            Builtin::SpanFrom { .. }
+                            | Builtin::SpanReborrow
+                            | Builtin::SpanSharedReborrow
+                            | Builtin::SpanLen
+                            | Builtin::ArrayLen
+                            | Builtin::StringLen,
+                        ..
+                    },
+                args,
+                dest,
+                next,
+            } => {
+                // It reads the header its argument is, or refers to.
+                let reads_unchanged = args.iter().all(|arg| match arg {
+                    Operand::Const(_) => true,
+                    Operand::Copy(place) | Operand::Move(place) => {
+                        unchanged_place(place, &hoisted_locals)
+                            && (!matches!(types.kind(place_type(body, types, place)), TyKind::Ref { .. })
+                                || unchanged_place(&deref_of(place), &hoisted_locals))
+                    }
+                });
+                if reads_unchanged && movable_dest(dest, &read_so_far) {
+                    items.push(Hoisted::Call(block));
+                    hoisted_locals.insert(dest.local);
+                } else {
+                    for arg in args {
+                        if let Operand::Copy(place) | Operand::Move(place) = arg {
+                            read_so_far.insert(place.local);
+                        }
+                    }
+                }
+                block = next.0 as usize;
+            }
+            _ => break,
+        }
+    }
+    if items.is_empty() {
+        return 0;
+    }
+
+    // Before the loop, in the order the turn had them: statements gathered
+    // into a block, each call ending one.
+    let span = body.blocks[shape.header].terminator_span;
+    let first = body.blocks.len();
+    let mut blocks: Vec<BasicBlock> = Vec::new();
+    let mut stmts: Vec<Stmt> = Vec::new();
+    for item in &items {
+        match *item {
+            Hoisted::Stmt(block, index) => stmts.push(body.blocks[block].stmts[index].clone()),
+            Hoisted::Call(block) => {
+                let Terminator::Call { func, args, dest, .. } = body.blocks[block].terminator.clone() else {
+                    unreachable!("a hoisted call")
+                };
+                let next = BasicBlockId((first + blocks.len() + 1) as u32);
+                blocks.push(BasicBlock {
+                    stmts: std::mem::take(&mut stmts),
+                    terminator: Terminator::Call { func, args, dest, next },
+                    terminator_span: body.blocks[block].terminator_span,
+                });
+            }
+        }
+    }
+    blocks.push(BasicBlock { stmts, terminator: Terminator::Goto(BasicBlockId(shape.header as u32)), terminator_span: span });
+    // Out of the loop, with the storage markers of what moved.
+    for item in &items {
+        match *item {
+            Hoisted::Stmt(block, index) => body.blocks[block].stmts[index].kind = StmtKind::Nop,
+            Hoisted::Call(block) => {
+                let Terminator::Call { next, .. } = body.blocks[block].terminator else { unreachable!("a hoisted call") };
+                body.blocks[block].terminator = Terminator::Goto(next);
+            }
+        }
+    }
+    for &block in &inside {
+        for stmt in &mut body.blocks[block].stmts {
+            if let StmtKind::StorageLive(local) | StmtKind::StorageDead(local) = stmt.kind
+                && hoisted_locals.contains(&local)
+            {
+                stmt.kind = StmtKind::Nop;
+            }
+        }
+    }
+    let header = BasicBlockId(shape.header as u32);
+    let preheader = BasicBlockId(first as u32);
+    for block in 0..first {
+        if !inside_set.contains(&block) {
+            retarget(&mut body.blocks[block].terminator, |target| if target == header { preheader } else { target });
+        }
+    }
+    body.blocks.extend(blocks);
+    items.len()
 }

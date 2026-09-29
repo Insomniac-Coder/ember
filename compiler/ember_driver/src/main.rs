@@ -2234,6 +2234,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[RC-3]` — on the final MIR: a handle copied from a list element that
     // the list keeps alive for the handle's whole life is not counted.
     ember_analysis::mark_uncounted_handles_all(&mut bodies, &types);
+    // The pure work a loop's turn begins with whose inputs the loop cannot
+    // change (the view an inner loop iterates) runs once, before the loop.
+    ember_analysis::hoist_invariant_views_all(&mut bodies, &types);
     // Last, for C: a value a counted loop computes from its counter each
     // turn (`k * step + skip`) gets a running value of its own, as
     // hand-written C keeps one. clang and gcc vectorise such a loop at C's

@@ -113,6 +113,7 @@ would make Ember look faster than it is.
 | Change every number using a second list, 20,000 rounds, overflow checks on | same speed | same speed |
 | Number every second value of a range of 2 million (`step_by`, `enumerate`), 300 times | same speed | same speed |
 | Change every number using a second list, 20,000 rounds, overflow checks off | same speed | same speed |
+| Move 100,000 particles 2,000 times, changing each in place | same speed | same speed |
 | Change every number twice, writing to a separate list, overflow checks on | same speed | same speed |
 | Decimal arithmetic: the Mandelbrot set, 1,000 × 1,000 points | same speed | same speed |
 | Clear and refill a list while 16 other lists are being viewed | same speed | same speed |
@@ -141,7 +142,6 @@ would make Ember look faster than it is.
 | Recursion: Fibonacci of 38, the slow way | 5% slower | 1.7 times slower |
 | Add up a list of 1,000 numbers, 300,000 times, overflow checks on | 35% slower | 1.6 times slower |
 | Number each item of a 1-million-number list while changing it (`enumerate`), 300 times | 48% slower | 8% slower |
-| Move 100,000 particles 2,000 times, changing each in place | 43% slower | same speed |
 | A generic function ("larger of two"), 200 million times | same speed | 35% slower |
 | Calls through an interface: area of 1 million shapes, 20 times | 26% slower | 21% slower |
 | Call a method that changes an object taken from a list, 100 million times (object holding 6 lists) | 23% slower | same speed |
