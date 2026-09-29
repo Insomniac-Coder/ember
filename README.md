@@ -87,18 +87,25 @@ ECS facilities, C++ interop, the interpreter, and hot reload. The open defects a
 
 Each program below was written twice, in Ember and by hand in C (C++ for the programs that use
 objects, strings, maps or sorting), built by the same C compiler with the same optimisation flags,
-and timed on one Windows x64 machine on 2026-09-28, once with MSVC and once with clang. Overflow
+and timed on one Windows x64 machine on 2026-09-28 and 2026-09-29, once with MSVC and once with clang. Overflow
 checks are on unless a row says they are off (`@overflow(wrap)`). "Same speed" means within 5%.
 
-The loops over lists are compared with the C built by clang in both columns. On the hand-written C
-of those loops MSVC either skips most of the rounds or does not vectorise the loop at all, which
-would make Ember look faster than it is.
+Each column compares Ember with the hand-written C built by the same compiler. On the rows marked ¹ or
+², MSVC rearranges the hand-written C's loops, which changes that C's time a lot; the notes under the
+tables say how.
 
 ### As fast as C or faster
 
 | What the program does | With MSVC | With clang |
 |---|---|---|
+| Change every number twice, writing to a separate list, overflow checks off ² | 16.8 times faster | same speed |
+| Change every number twice, writing to a separate list, overflow checks on ² | 12.1 times faster | same speed |
+| Change every number using a second list, 20,000 rounds, overflow checks on ² | 3.1 times faster | same speed |
+| Change every number using a second list, 20,000 rounds, overflow checks off ² | 3.1 times faster | same speed |
+| Change every number twice, reading back what it wrote, overflow checks on ² | 3.1 times faster | same speed |
+| Change every number twice, reading back what it wrote, overflow checks off ² | 3.1 times faster | same speed |
 | Map of numbers: 1 million inserts, then 5 million lookups | 2.2 times faster | 2.3 times faster |
+| Two lists of 100,000 decimal numbers, add one into the other 5,000 times ² | 1.9 times faster | same speed |
 | Build a long string (16 million appends), then count one letter in it | 31% faster | 20% faster |
 | Copy a 1,000-number list into another, one item at a time, 100,000 times | 28% faster | same speed |
 | Sort 5 million numbers | 25% faster | 20% faster |
@@ -109,31 +116,21 @@ would make Ember look faster than it is.
 | Walk two 1-million-number lists side by side, changing one (`zip`), 300 times | 8% faster | same speed |
 | Clear and refill a list while 4 other lists are being viewed | 6% faster | same speed |
 | Clear and refill a list while 1 other list is being viewed | same speed | 5% faster |
-| Change every number twice, reading back what it wrote, overflow checks on | same speed | same speed |
-| Change every number twice, writing to a separate list, overflow checks off | same speed | same speed |
-| Change every number twice, reading back what it wrote, overflow checks off | same speed | same speed |
 | Start and stop an empty program | same speed | same speed |
 | Add up a list of 1,000 numbers, 300,000 times, overflow checks off | same speed | same speed |
-| Change every number using a second list, 20,000 rounds, overflow checks on | same speed | same speed |
 | Number every second value of a range of 2 million (`step_by`, `enumerate`), 300 times | same speed | same speed |
 | Number each item of a 1-million-number list while changing it (`enumerate`), 300 times | same speed | same speed |
 | Every third number of a list, after skipping some, at most 300,000 of them (`skip`, `step_by`, `take`), 300 times | same speed | same speed |
 | Number the items of a list past a starting point, as copies (`copied`, `enumerate`, `skip`), 300 times | same speed | same speed |
-| Change every number using a second list, 20,000 rounds, overflow checks off | same speed | same speed |
 | Move 100,000 particles 2,000 times, changing each in place | same speed | same speed |
-| Change every number twice, writing to a separate list, overflow checks on | same speed | same speed |
 | Decimal arithmetic: the Mandelbrot set, 1,000 × 1,000 points | same speed | same speed |
 | Clear and refill a list while 16 other lists are being viewed | same speed | same speed |
-| Add one list into another, 2,000 rounds, overflow checks on | same speed | same speed |
-| Two lists of 100,000 decimal numbers, add one into the other 5,000 times | same speed | same speed |
 | Call a function passed as a value, 200 million times | same speed | same speed |
-| Add one list into another, 2,000 rounds, overflow checks off | same speed | same speed |
 
 ### Close to C: up to 10% slower with one of the compilers
 
 | What the program does | With MSVC | With clang |
 |---|---|---|
-| Add two lists plus the round number into a third, overflow checks off | 6% slower | same speed |
 | Calls through an interface: area of 1 million shapes, 20 times | same speed | 5% slower |
 
 ### More than 10% slower than C with at least one compiler
@@ -142,12 +139,25 @@ would make Ember look faster than it is.
 
 | What the program does | With MSVC | With clang |
 |---|---|---|
+| Add two lists plus the round number into a third, overflow checks off ¹ | 3.1 times slower | same speed |
+| Add two lists plus the round number into a third, overflow checks on ¹ | 3.0 times slower | same speed |
+| Add one list into another, 2,000 rounds, overflow checks off ¹ | 22% slower | same speed |
+| Add one list into another, 2,000 rounds, overflow checks on ¹ | 20% slower | same speed |
 | Recursion: Fibonacci of 38, the slow way | 5% slower | 1.7 times slower |
 | Add up a list of 1,000 numbers, 300,000 times, overflow checks on | 35% slower | 1.6 times slower |
 | A generic function ("larger of two"), 200 million times | same speed | 35% slower |
 | Call a method that changes an object taken from a list, 100 million times (object holding 6 lists) | 23% slower | same speed |
 | Call a method that changes an object taken from a list, 100 million times (object holding 1 list) | 19% slower | same speed |
 | Call a method that changes an object taken from a list, and the method calls another function, 100 million times | 19% slower | same speed |
+
+¹ With MSVC, the hand-written C of this program runs faster than the same C built with clang. MSVC
+turns its two loops around: it goes through the lists once and does all the rounds on each number in
+turn, so each number is read from memory once instead of once per round. MSVC does not do this to
+the C that Ember produces.
+
+² With MSVC, the hand-written C of this program runs much slower than the same C built with clang.
+MSVC turns its two loops around here too, but then each number goes through all its rounds one after
+another, where clang's build works on several numbers at once.
 
 ## Examples
 

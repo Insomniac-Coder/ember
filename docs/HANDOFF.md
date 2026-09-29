@@ -11258,6 +11258,15 @@ first**; the rest of §0.355 is the running narrative behind it.
       done block by block (ADR-070 item 8); the same program with checks off
       runs at C speed. Proving it away would need element ranges for class
       fields across the program and totals bounded across nested loops.
+    * **README benchmark method (owner, 2026-09-29):** every row compares like
+      with like, Ember with MSVC against the C twin built with MSVC and the
+      same for clang. Until then ten list-loop rows had silently compared
+      MSVC against clang's C. On those rows (and w13's new checks-on row)
+      MSVC turns the twin's two loops around (checked in its machine code):
+      faster than clang's C for "add one list into another" and w13 (note
+      1), much slower for the "change every number" rows and the decimal
+      lists (note 2). The notes say so under the tables. Scratchpad
+      `readme_tables.py` no longer swaps in clang's C.
     * Adding two lists plus the round into a third (w13), MSVC: the C twin's
       `restrict` lets MSVC turn its loops around (0.014 s against Ember's
       0.043 s). Measured (ADR-078): Ember's loop in its own `noinline`
