@@ -2559,6 +2559,19 @@ impl<'a> Builder<'a> {
                 });
                 self.current = next;
             }
+            // `[SPN-2]` — `get_unchecked(i)` is the element's place, borrowed,
+            // with no check: `[UNS-4]` makes the bound the caller's (a fused
+            // `[CTL-3b]` loop's indices are below the length by construction).
+            // A place rather than a call, so the loop stays a plain one.
+            hir::ExprKind::Builtin { which: hir::Builtin::SpanGetUnchecked, args } => {
+                let view = self.lower_place(&args[0]);
+                let at = self.lower_operand(&args[1]);
+                let slot = self.temp(self.usize_ty, expr.span);
+                self.push(StmtKind::StorageLive(slot));
+                self.push(StmtKind::Assign { place: Place::local(slot), rvalue: Rvalue::Use(at) });
+                let mutable = matches!(self.types.kind(expr.ty), TyKind::Ref { mutable: true, .. });
+                self.push(StmtKind::Assign { place, rvalue: Rvalue::Ref { place: view.index(slot), mutable } });
+            }
             hir::ExprKind::Builtin { which, args } => {
                 // `arg_ty` is what the backend picks its implementation from.
                 // For most builtins that is the first argument; `alloc` takes

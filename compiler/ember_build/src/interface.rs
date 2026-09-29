@@ -435,20 +435,19 @@ pub fn prepare_interface_cache(
             Ok(bytes) => {
                 let existing = match ModuleInterfaceArtifact::from_bytes(&bytes) {
                     Ok(existing) => existing,
-                    // A recognized but superseded schema is an ordinary cache
-                    // invalidation, not malformed semantic metadata. It is
-                    // never consumed and cannot become an unknown summary.
-                    Err(InterfaceArtifactError::UnsupportedSchema(_)) => {
+                    // A superseded schema, or bytes that are not a record at
+                    // all (D-387: a file a crash or power loss left half
+                    // written), is an ordinary cache invalidation: the fresh
+                    // record replaces it. It is never consumed, so it cannot
+                    // become an unknown summary; encoding and decoding agree
+                    // on every compilation (`round_trip_artifacts`), so bytes
+                    // that do not decode are damage, not a compiler fault. A
+                    // record that decodes and disagrees is still fatal below.
+                    Err(_) => {
                         report.invalidated += 1;
                         writes.push((path, artifact.to_bytes()?));
                         artifacts.push(artifact.clone());
                         continue;
-                    }
-                    Err(error) => {
-                        return Err(InterfaceArtifactError::StoredArtifact {
-                            path: path.clone(),
-                            error: Box::new(error),
-                        });
                     }
                 };
                 if existing.module != artifact.module {
@@ -1041,10 +1040,6 @@ pub enum InterfaceArtifactError {
         expected: String,
         found: String,
     },
-    StoredArtifact {
-        path: PathBuf,
-        error: Box<InterfaceArtifactError>,
-    },
 }
 
 impl std::fmt::Display for InterfaceArtifactError {
@@ -1107,13 +1102,6 @@ impl std::fmt::Display for InterfaceArtifactError {
                 "{} stores interface `{found}`, expected `{expected}`",
                 path.display()
             ),
-            Self::StoredArtifact { path, error } => {
-                write!(
-                    f,
-                    "{}: invalid stored module interface: {error}",
-                    path.display()
-                )
-            }
         }
     }
 }
@@ -1318,6 +1306,27 @@ mod tests {
         std::fs::create_dir_all(&path).unwrap();
         let prepared = prepare_interface_cache(&directory, &fresh).unwrap();
         assert_eq!(prepared.artifacts(), fresh.as_slice());
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// D-387 — a record a crash left damaged (here: not a record at all, and
+    /// a truncated one) is replaced by the fresh record, not an internal
+    /// error.
+    #[test]
+    fn a_damaged_record_is_replaced_by_the_fresh_one() {
+        let directory = std::env::temp_dir().join(format!("ember-interface-damaged-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let fresh = build_artifacts(&[input("root", "root", &[], 0)], "test").unwrap();
+        let path = artifact_path(&directory, &fresh[0].module);
+        let whole = fresh[0].to_bytes().unwrap();
+        for damaged in [vec![0u8; 64], whole[..whole.len() / 2].to_vec()] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, &damaged).unwrap();
+            let prepared = prepare_interface_cache(&directory, &fresh).unwrap();
+            assert_eq!(prepared.artifacts(), fresh.as_slice());
+            assert_eq!(prepared.commit().unwrap().invalidated, 1);
+            assert_eq!(std::fs::read(&path).unwrap(), whole);
+        }
         let _ = std::fs::remove_dir_all(&directory);
     }
 

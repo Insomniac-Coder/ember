@@ -5837,9 +5837,11 @@ impl Emitter<'_> {
                     // before this representation-level extraction. The
                     // iterator's monotonic cursor is the disjointness proof
                     // for mutable items.
-                    Builtin::SpanIterNext { elem, mutable } => {
+                    // D-386 — the item is a `ref T`, which is `T*` in C for a
+                    // shared view too (`c_type`); a `const T*` drew C4090.
+                    Builtin::SpanIterNext { elem, .. } => {
                         let elem = self.c_type(*elem);
-                        return element_pointer(&format!("({}).ptr", rendered[0]), &elem, &rendered[1], *mutable);
+                        return element_pointer(&format!("({}).ptr", rendered[0]), &elem, &rendered[1], true);
                     }
                     // `[SPN-6]` — MIR computed the bounded, non-zero advance;
                     // C emission only forms the half-open subview and avoids

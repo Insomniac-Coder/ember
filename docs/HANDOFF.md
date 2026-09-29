@@ -11094,7 +11094,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   set does keeps a loop out of vectorisable form), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h44/` are frozen.
-* **Next numbers:** ODR-090, D-381, ADR-072, ERR-056.
+* **Next numbers:** ODR-090, D-388, ADR-074, ERR-056.
 * **Goal 2, implementation (2026-09-29, autonomous):** next is `[STD-19]`'s
   iterator adapters and `[CTL-3b]`'s counted lowering of adapter chains (the
   audit's `CTL-3b` gap; `for x in mutspan`, `.take/.skip/.enumerate/.zip/
@@ -11114,7 +11114,14 @@ first**; the rest of §0.355 is the running narrative behind it.
   (`xs.enumerate()`, `m.count()`, `view.min()`), and `copied()`/`cloned()`
   (`xs.iter().copied().to_array()`). Then `[CTL-3b]` in `for` headers:
   `(a..b).step_by(k)` and `for x in mutspan` are counted loops, and the
-  per-index range value is inline (it was a call per element).
+  per-index range value is inline (it was a call per element). Then ADR-073:
+  a `for` over any chain of `enumerate`/`zip`/`take`/`skip`/`step_by`/`copied`
+  over a view's or a range's iterator is one counted loop (Python's
+  `enumerate(xs)`/`zip(xs, ys)` too), ranges are `Iterable`, `enumerate`'s
+  numbers are checked once after the loop, D-384 to D-387. Reviewed before
+  commit by an adversarial workflow the owner approved (four findings, all
+  fixed). Not built: `rev`, `cloned` fused, chains over `a..` or 128-bit
+  ranges (they run through `next`).
 * **Speed audit: the six agreed fixes are done (2026-09-27, uncommitted;
   ADR-070, D-375, deviation D7).** The owner said "do all fixes check them and
   report the final result". Each fix passed the quick check, the workspace
@@ -11251,6 +11258,12 @@ first**; the rest of §0.355 is the running narrative behind it.
       shapes (Ember frees them, 0.019 s) and the 24-byte header is `[OBJ-1]`'s.
     * Refilling a list while others are viewed (p4): at C speed since
       ADR-070 item 16 (each `push`'s access check runs once before the loop).
+    * Adapter chains in a `for` header (ADR-073, scratchpad `chain/`): at C's
+      speed but for filling each list by `push` (a few percent; the range chain,
+      with no list, is 0.99x / 0.98x) and MSVC's `enumerate` row, 1.48x, where
+      MSVC swaps the C twin's loops (the particles item). clang reached it only
+      with running values for counter-derived indices (`strength_reduce`), which
+      MSVC's C does not get: they stop its vectoriser.
     * 1 million objects holding 6 lists (p6), 1.09x both: Ember frees the
       million objects when the list's scope ends; the C++ twin never deletes
       them. Without that loop Ember is faster (0.292 s against 0.319 s).
@@ -11699,20 +11712,34 @@ first**; the rest of §0.355 is the running narrative behind it.
   unverified. Pause development after it is pushed, as requested.
   Audit rows for `[CLS-2]` and `[CLS-7]` were stale: existing code and tests
   cover their stated gaps.
-* **Phase estimates (2026-09-27; engineering estimates, not test counts):**
+* **Phase estimates (2026-09-29; engineering estimates, not test counts):**
 
   | Phase | % |
   |---|---:|
-  | P1 | 97 |
-  | P2 | 88 |
-  | P3 | 59 |
+  | P1 | 98 |
+  | P2 | 89 |
+  | P3 | 60 |
   | P4 | 13 |
   | P5 | 14 |
-  | P6 | 2 |
+  | P6 | 4 |
   | P7 | 0 |
   | 7a | 6 |
-  | P8 | 16 |
-  | Overall | 58 |
+  | P8 | 17 |
+  | Overall | 59 |
+
+  `python tasks/impl-0.9.9/rule_sizes.py 98 89 60 13 14 4 6` gives 58.50%,
+  rounded to 59%, with Hardened_44 weights. The owner asked (2026-09-29) for
+  this table and the README's to be brought up to date before every commit
+  and push. Since 2026-09-27: P1 97 to 98 for `[CTL-3b]`'s adapter chains
+  (ADR-073), the lexical overflow policies, parameter defaults completed,
+  D-379 to D-385 and `[EXP-4]`'s view temporaries; P2 88 to 89 for the
+  destructor lifetimes and D-386; P3 59 to 60 for `[DSP-3]`'s devirtualised
+  interface calls and `[EXC-19]`'s loop-invariant access checks; P6 2 to 4 for
+  `[SIMD-7]`'s grouped overflow checks and block-proved sums (ODR-086, ODR-088);
+  P8 16 to 17 for Hardened_41 to 44 and D-375 to D-387.
+
+  The 2026-09-27 table (P1 97, P2 88, P3 59, P4 13, P5 14, P6 2, P7 0, 7a 6,
+  P8 16; overall 58):
 
   `python tasks/impl-0.9.9/rule_sizes.py 97 88 59 13 14 2 6` gives 57.7%,
   rounded to 58%, with Hardened_39 weights. P5 rises from 8 to 14 for the C

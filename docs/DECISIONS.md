@@ -2704,8 +2704,7 @@ accepts as `Iterator.next` as it accepts built-in indexing as `Index.index`.
   values, `[CLO-3]`). `chain` needs `J: Iterator[Item = I.Item]` between two parameters.
   `collect[C]()` and `join(sep)` need more than a bound on `Item` (a target collection, a
   `Display` item). `rev` needs a double-ended iterator.
-  `[CTL-3b]`'s counted lowering of adapter chains in a `for` header: today a chain runs
-  through `next`.
+  `[CTL-3b]`'s counted lowering of adapter chains in a `for` header came next (ADR-073).
 * **More consumers, the same day.** `max`, `min` (`where Item: Ord`; among equals `max` gives
   the last and `min` the first, as Rust's do), `max_by_key`, `min_by_key`, `max_by`, `min_by`
   and `reduce` are defaults in std. `sum` and `product` are not: an iterator over a list gives
@@ -2737,8 +2736,8 @@ accepts as `Iterator.next` as it accepts built-in indexing as `Index.index`.
   panics before the loop with `Iterator.step_by`'s words (a guard built as source, over a hidden
   local). `for x in view` over a `MutSpan` is `view.iter_mut()`, a counted loop, the view
   reborrowed rather than moved. The per-index value (`ember_range_nth_*`) is inline in the
-  header now: `[CTL-3b]` allows no call per element, and `range(a, b, k)` made one. Not yet:
-  `a..=b` with `step_by`, and fusing `take`/`skip`/`enumerate`/`zip` chains in a header.
+  header now: `[CTL-3b]` allows no call per element, and `range(a, b, k)` made one. The
+  chains of adapters followed (ADR-073).
 * **`[RNG-4]` for stepped loops, measured and chased (the owner's rule).** Summing every third
   element of a million, 300 times, was 1.17x C on MSVC and 1.11x on clang, a bounds check on
   `xs[i]` in each turn among the cost. Range facts now know a stepped value: `RangeNth(start,
@@ -2756,4 +2755,103 @@ accepts as `Iterator.next` as it accepts built-in indexing as `Index.index`.
   both checks the loop is 0.062 s against the C's 0.059 s. Tests: RNG-4
   `accept_a_stepped_loop_needs_no_bounds_check`,
   `run_fail_a_stepped_loop_past_the_list_keeps_its_check`.
+
+## ADR-073 — a `for` over a chain of adapters is one counted loop
+
+2026-09-29, autonomous (goal 2). `[CTL-3b]` is a MUST: a `for` over ranges or views with
+`enumerate`, `zip`, `take`, `skip`, `step_by` and `copied` composed over them compiles to an
+induction-variable loop, with no iterator object and no call per element. Until now such a chain
+ran through each adapter's `next`.
+
+* **Read off the checked iterator, not the source text.** `check_for_iterator` looks at the
+  iterator expression after it is checked (`fused_shape`): calls of `Iterator`'s own `take`,
+  `skip`, `step_by`, `enumerate` and `zip` (recorded by `DefId` when the default is made,
+  `iterator_adapters`; a generic one, `zip`, through its instance's source), `Copied` literals,
+  and at the bottom a view's element iterator (`SpanIter`, `MutSpanIter`) or a range's
+  (`RangeIter`, `RangeInclusiveIter`, over integers of 64 bits or fewer). A type's own method of
+  one of those names is not std's, so it is never taken for one. The pattern must bind what the
+  chain gives: names and `_` anywhere, tuples over pairs, anything through a borrowed element
+  (`fused_pattern_fits`); otherwise the loop runs through `next` as before.
+* **The loop.** The chain's iterators and arguments are evaluated once, in the order the calls
+  would have, each count checked where its adapter checks it, with its words (ODR-089;
+  `adapter_count_guard`, shared with `(a..b).step_by(k)`). The number of turns is computed from
+  the lengths and counts (`take` a minimum, `skip` a difference, `step_by` `(n - 1) // k + 1`,
+  `zip` a minimum). Each turn computes each element from the counter: an index `k * step + skip`
+  per adapter above it, then `xs[cursor + index]` read with no bounds check, since every index is
+  below the view's length by construction, or `start + index` for a range's value. The read is
+  `get_unchecked`, which MIR now lowers to the element's place (`&view[i]`) rather than a built-in
+  call, so the loop is the plain loop a C compiler sees as one. That
+  arithmetic never leaves `0..len`, so it wraps rather than checks. A range `a..=b` over 64-bit
+  integers may hold 2^64 values, which no 64-bit count holds; its count is kept as "any, and the
+  last index" and the loop is `0..=last`, so `int.MIN..=int.MAX` is exact.
+* **Python's `enumerate(xs)` and `zip(xs, ys)` take the same path** (`[STD-26]`), so they gain
+  what follows; `check_for_indexed` keeps only `for x in view` and `reversed`. A single name now
+  binds `enumerate`'s pair (`for p in enumerate(xs)`), which was "needs two names, for now".
+* **`enumerate`'s numbers, exactly as std's.** An item's number is `start + k`, and one past
+  `int`'s top panics. A check on every turn kept the loop from vectorising (2.1x C on clang), so
+  the loop takes only the turns whose numbers fit, with no check, and, when it runs to its end,
+  panics there if std's adapters would have by then (`fused_numbers`, `fused_pulls`); the number
+  is added as `usize`s and read back, since a C signed `+` that wraps is undefined. std's
+  `skip` and `step_by` pull the items they pass over through `Enumerate.next`, which numbers
+  them, and the call that finds a chain exhausted pulls the rest of `step_by`'s gap and one item
+  past a `zip`'s shorter side; the end check follows those pulls down the chain. A differential
+  test ran 17 chains at 8 starts near `int`'s top, fused and through `next` (136 programs, 57 of
+  which panic): the same output and the same panic every time. std's `Enumerate` now holds the
+  next number and whether the last one given was `int.MAX`, so the item numbered `int.MAX` is
+  given and only the one after it panics; it panicked on giving the item numbered `int.MAX` (its
+  `+ 1` for the next), and a count of items given would itself overflow after 2^63 items.
+* **Ranges are `Iterable`,** as Python's `range` is: `r.iter()` (std's `RangeIter`,
+  `RangeInclusiveIter`, `RangeFromIter`, generic over the integer types through std's private
+  `Integer`, which gained `successor`), so `(a..b).skip(1)` is `(a..b).iter().skip(1)` by the
+  `Iterable` forms, outside a `for` header too. `a..=b` ends with a `done` flag, so a range ending
+  at its type's top never steps past it. D-384 came out of this.
+* **A `_` still reads its element** into a hidden local, so the view, and the list it borrows,
+  stays in use for every turn: `for _ in xs.iter().take(2): xs.push(0)` is `E3020`, as
+  `for _ in xs` is (`[CTL-2]`). **A view that is not a variable is evaluated in the loop's own
+  hidden binding** (`__xs`, a `for_iterator` one), so the temporaries it borrows live until the
+  loop ends (`[EXP-4]`): `for x in head(make()).iter().take(2)`, and the plain
+  `for x in head(make())`, which was `E3020` since before 0.9.9, now run.
+* **Reviewed before it was committed** (the owner asked; an adversarial review, three reviewers
+  and a skeptic per finding): four findings, all real, all fixed as the two bullets above and
+  the unsigned number and std's `Enumerate` say. The reviewers found the evaluation order, the
+  counts over every integer width and the pulls model sound.
+* **Withdrawn: loops with calls as C `for` loops.** The first version kept the element read a
+  built-in call and taught the C backend to write a counted loop with calls in it as a C `for`
+  loop. MSVC then stopped inlining a `mut self` method called in such a loop (the method-call
+  benchmarks went from 1.19x to 2.5x C: the same statements, a different inlining choice). The
+  read became a place instead and the backend change was withdrawn.
+* **Running values for clang and gcc** (`ember_analysis::strength_reduce`, the last MIR pass).
+  In a counted loop, a value computed each turn as the counter times a number the loop does not
+  change, plus another (`k * step + skip`, `start + k`, a stepped range's value; through `+`, `-`,
+  `*`, casts between 64-bit types and `RangeNth`), gets a running value: set in a new block
+  before the loop from the counter's value there, advanced by its stride in the loop's step
+  (which a `continue` runs too), and read where the value was computed; the steps that computed
+  it, now unread, are removed. Only 64-bit values, in 64-bit unsigned arithmetic, so a running
+  value is exactly the value, and the step past the last turn cannot overflow; a checked
+  operation is never touched (one the range facts proved safe is plain arithmetic by then).
+  Hand-edited C showed clang rebuilding such a value from the counter in every vector lane
+  (a multiply and an add), 1.26x C, and at C's speed with a running value. MSVC's vectoriser takes
+  no second running value (reason 1104, the `enumerate` chains went 1.5x to 2.3x), so C for
+  MSVC keeps the computed form: the pass runs when the C is not for `cl` (`c_for_msvc`: `--cc`,
+  `EMBER_CC`, else the compiler the build finds), under the owner's rule allowing C written for
+  each compiler. `SIMD-7/accept_independent_checks_are_grouped` now counts the grouped `+`'s two
+  element casts, which the pass's own casts no longer disturb under clang. Test:
+  `CTL-3b/accept_a_value_kept_running_is_the_same_value` (`continue`, `break`, nesting, `a..=b`,
+  a value read after the loop, `@overflow(wrap)` arithmetic), its output the same from both
+  compilers; break-tested (a wrong stride fails five `CTL-3b` tests under clang).
+* **Measured** (`scratchpad/chain`, 1 million elements, 300 rounds, against hand-written C at
+  the same optimisation; MSVC / clang): `xs.iter_mut().enumerate(start=round)` 1.48x / 1.08x;
+  `xs.iter_mut().zip(ys.iter())` 0.98x / 1.09x; `xs.iter().skip(round).step_by(3).take(n)` 1.00x /
+  1.05x; `xs.iter().copied().enumerate().skip(round)` 1.08x / 1.05x; `(round..n).step_by(2).enumerate()`
+  0.99x / 0.98x. The few percent on the list rows is filling the list by `push` against the C's one
+  `malloc` (17 ms against 12 ms for the two lists of the `zip` program); the range row, with no
+  list, is at C's speed on both. The full README set was run too: every row within noise of the
+  pushed compiler (A/B, interleaved runs). MSVC's 1.48x is not the loop: MSVC swaps
+  the C's two loops (rounds inside, the element in a register), which it does only for a perfect
+  nest; it is the open item particles already has (HANDOFF's speed verdicts). The first
+  version of these benchmarks XORed into one total, and MSVC folded the C's rounds away, so they
+  were rewritten to change the list each round.
+* **Not yet:** `rev` (no iterator runs backwards yet), `cloned` (a clone is a call), a chain over
+  `a..` (no count) or a 128-bit range, and `SoA` columns (`[SOA-*]` is not built); these run
+  through `next`.
 

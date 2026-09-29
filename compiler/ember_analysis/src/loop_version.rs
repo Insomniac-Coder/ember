@@ -939,7 +939,7 @@ fn successors(terminator: &Terminator) -> Vec<BasicBlockId> {
     }
 }
 
-fn retarget(terminator: &mut Terminator, map: impl Fn(BasicBlockId) -> BasicBlockId) {
+pub(crate) fn retarget(terminator: &mut Terminator, map: impl Fn(BasicBlockId) -> BasicBlockId) {
     match terminator {
         Terminator::Goto(target) => *target = map(*target),
         Terminator::SwitchInt { targets, otherwise, .. } => {
@@ -1359,7 +1359,7 @@ const TOTAL_TRIPS: i128 = 1 << 31;
 pub(crate) struct CountedLoop {
     pub(crate) header: usize,
     entry: usize,
-    step: usize,
+    pub(crate) step: usize,
     pub(crate) region: Vec<usize>,
     pub(crate) counter: LocalId,
     pub(crate) limit: LocalId,
@@ -2776,7 +2776,7 @@ struct BlockTotal {
 /// constant that is not a power of two (no 64-bit vector multiply-high to
 /// divide by it). Such a loop runs one iteration at a time whatever its
 /// checks, so it is not in vectorisable form and its checks are not grouped.
-fn scalar_only(body: &Body, types: &TypeTable, shape: &CountedLoop) -> bool {
+pub(crate) fn scalar_only(body: &Body, types: &TypeTable, shape: &CountedLoop) -> bool {
     let divides = |op: &BinOp, rhs: &Operand, ty: Ty| {
         if !matches!(op, BinOp::Div | BinOp::Rem | BinOp::FloorDiv | BinOp::FloorRem) || types.is_float(ty) {
             return false;

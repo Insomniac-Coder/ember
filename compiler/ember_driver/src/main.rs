@@ -1941,6 +1941,23 @@ fn module_identity(path: &[String]) -> String {
     }
 }
 
+/// Whether the C is for MSVC's `cl`: `--cc`, else the variable `cc_var()`
+/// names, else the compiler the build would find first.
+fn c_for_msvc(options: &Options) -> bool {
+    let requested = options
+        .cc
+        .clone()
+        .or_else(|| std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty()));
+    match requested.as_deref() {
+        Some("msvc") => true,
+        Some("clang" | "clang-cl" | "gcc") => false,
+        requested => {
+            matches!(ember_build::Toolchain::detect(requested), Ok(ember_build::Toolchain::Msvc { cl, .. })
+                if cl.file_stem().is_some_and(|stem| stem.eq_ignore_ascii_case("cl")))
+        }
+    }
+}
+
 /// `[MOD-1]`, `[MOD-3]` — where a module path's file is.
 ///
 /// A path beginning `std` names the standard library package, whose sources
@@ -2217,6 +2234,15 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[RC-3]` — on the final MIR: a handle copied from a list element that
     // the list keeps alive for the handle's whole life is not counted.
     ember_analysis::mark_uncounted_handles_all(&mut bodies, &types);
+    // Last, for C: a value a counted loop computes from its counter each
+    // turn (`k * step + skip`) gets a running value of its own, as
+    // hand-written C keeps one. clang and gcc vectorise such a loop at C's
+    // speed only then; MSVC's vectoriser takes no second running value, so C
+    // for MSVC keeps the value computed from the counter (the owner allows C
+    // written for each compiler, 2026-09-28).
+    if command != "check" && options.emit.as_deref() != Some("mir") && !c_for_msvc(&options) {
+        ember_analysis::reduce_induction_values_all(&mut bodies, &types, &common);
+    }
     if command == "check" {
         interface_cache
             .commit()

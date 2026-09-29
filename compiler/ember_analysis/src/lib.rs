@@ -20,6 +20,7 @@ pub mod long_access_lint;
 pub mod range_facts;
 pub mod regions;
 pub mod stores;
+pub mod strength_reduce;
 pub mod uncounted_handles;
 pub mod unused;
 
@@ -32,6 +33,7 @@ pub use access::{elide_static_accesses_all, remove_never_firing_checks_all};
 pub use loop_access::hoist_loop_accesses_all;
 pub use check_hoisting::hoist_invariant_checks_all;
 pub use loop_version::version_bounds_checked_loops_all;
+pub use strength_reduce::reduce_induction_values_all;
 pub use uncounted_handles::mark_uncounted_handles_all;
 pub use range_facts::remove_proven_checks_all;
 pub use callable_arguments::specialize_callable_arguments_all;

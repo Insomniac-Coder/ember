@@ -31,21 +31,21 @@ pages, and the records that keep them consistent.
 | Language decisions | Current owner decisions (ODRs) in [`docs/OWNER-QUEUE.md`](docs/OWNER-QUEUE.md) |
 | CI | Linux (Clang, GCC) and Windows (MSVC, clang-cl); every push to `main` |
 
-Phase estimates against 0.9.9 (2026-09-27; weighted by the size of each phase's rules;
+Phase estimates against 0.9.9 (2026-09-29; weighted by the size of each phase's rules;
 method in [`docs/HANDOFF.md`](docs/HANDOFF.md)):
 
 | Phase | Scope | Done |
 |---|---|---:|
-| 1 | Core language (Parts II–VI) | 97% |
-| 2 | Ownership, borrowing, regions | 88% |
-| 3 | Classes, reference counting, exclusivity | 59% |
+| 1 | Core language (Parts II–VI) | 98% |
+| 2 | Ownership, borrowing, regions | 89% |
+| 3 | Classes, reference counting, exclusivity | 60% |
 | 4 | Effects, compile time, reflection, derives | 13% |
 | 5 | C interoperability | 14% |
-| 6 | Concurrency and data-oriented design | 2% |
+| 6 | Concurrency and data-oriented design | 4% |
 | 7 | C++ interoperability and the interpreter | 0% |
 | 7a | Iteration, determinism, cost control | 6% |
-| 8 | Hardening and 1.0 | 16% |
-| | Overall | 58% |
+| 8 | Hardening and 1.0 | 17% |
+| | Overall | 59% |
 
 The latest language work includes the owner's simplification pass
 ([`docs/proposals/Ember_Simplification_Pass_Revised.md`](docs/proposals/Ember_Simplification_Pass_Revised.md));
@@ -111,6 +111,7 @@ would make Ember look faster than it is.
 | Start and stop an empty program | same speed | same speed |
 | Add up a list of 1,000 numbers, 300,000 times, overflow checks off | same speed | same speed |
 | Change every number using a second list, 20,000 rounds, overflow checks on | same speed | same speed |
+| Number every second value of a range of 2 million (`step_by`, `enumerate`), 300 times | same speed | same speed |
 | Change every number using a second list, 20,000 rounds, overflow checks off | same speed | same speed |
 | Change every number twice, writing to a separate list, overflow checks on | same speed | same speed |
 | Decimal arithmetic: the Mandelbrot set, 1,000 × 1,000 points | same speed | same speed |
@@ -127,6 +128,9 @@ would make Ember look faster than it is.
 | 1 million objects with a name and a list, each read 40 times | 6% slower | 5% slower |
 | Add two lists plus the round number into a third, overflow checks off | 6% slower | same speed |
 | 1 million objects holding 6 lists, each read 40 times | 9% slower | 9% slower |
+| Walk two 1-million-number lists side by side, changing one (`zip`), 300 times | same speed | 9% slower |
+| Every third number of a list, after skipping some, at most 300,000 of them (`skip`, `step_by`, `take`), 300 times | same speed | 5% slower |
+| Number the items of a list past a starting point, as copies (`copied`, `enumerate`, `skip`), 300 times | 8% slower | 5% slower |
 
 ### More than 10% slower than C with at least one compiler
 
@@ -136,6 +140,7 @@ would make Ember look faster than it is.
 |---|---|---|
 | Recursion: Fibonacci of 38, the slow way | 5% slower | 1.7 times slower |
 | Add up a list of 1,000 numbers, 300,000 times, overflow checks on | 35% slower | 1.6 times slower |
+| Number each item of a 1-million-number list while changing it (`enumerate`), 300 times | 48% slower | 8% slower |
 | Move 100,000 particles 2,000 times, changing each in place | 43% slower | same speed |
 | A generic function ("larger of two"), 200 million times | same speed | 35% slower |
 | Calls through an interface: area of 1 million shapes, 20 times | 26% slower | 21% slower |

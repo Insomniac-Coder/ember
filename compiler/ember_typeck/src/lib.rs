@@ -396,6 +396,97 @@ enum SpanIteratorKind {
     Windows,
 }
 
+/// `[CTL-3b]` — a `for` over a chain of `Iterator`'s adapters, read off the
+/// checked iterator: the source iterator, then each adapter, innermost first.
+struct FusedChain {
+    source: Expr,
+    links: Vec<FusedLink>,
+}
+
+enum FusedLink {
+    Take(Expr),
+    Skip(Expr),
+    StepBy(Expr),
+    Enumerate(Expr),
+    Zip(FusedChain),
+    Copied,
+}
+
+/// What a fusable chain gives: a reference into a view, a value, or a pair.
+#[derive(Clone, PartialEq)]
+enum FusedShape {
+    Ref,
+    Value,
+    Pair(Box<FusedShape>, Box<FusedShape>),
+}
+
+/// One value a fused loop computes from its counter `k`, after the steps
+/// that map `k` to the index this node counts in (outermost last).
+struct FusedNode {
+    kind: FusedNodeKind,
+    steps: Vec<FusedStep>,
+}
+
+enum FusedNodeKind {
+    /// `xs[cursor + index]`, borrowed.
+    View { xs: LocalId, span_ty: Ty, elem: Ty, mutable: bool, cursor: Option<LocalId> },
+    /// The `index`th value from `at`.
+    Range { at: LocalId, bound: Ty },
+    /// `enumerate`'s number, `start + index`.
+    Counter { start: LocalId },
+}
+
+#[derive(Clone, Copy)]
+enum FusedStep {
+    /// `skip`: the index is this far on.
+    Skip(LocalId),
+    /// `step_by`: the index is this many times on.
+    StepBy(LocalId),
+}
+
+enum FusedItem {
+    Node { node: usize, copied: bool },
+    Pair(Box<FusedItem>, Box<FusedItem>),
+}
+
+/// `[CTL-3b]` — one adapter of a fused chain, as far as what it pulls from
+/// the iterator below it goes: which items an `enumerate` below it numbers.
+enum FusedLevel {
+    Take { by: LocalId },
+    Skip { by: LocalId, below: FusedCount },
+    StepBy { by: LocalId, below: FusedCount },
+    Enumerate { node: usize },
+    Zip { mine: FusedCount, theirs: Vec<FusedLevel> },
+}
+
+/// What a chain's loop has pulled from one level when it has run to its end:
+/// whether any items, the last one's index, and whether a last call found
+/// the level exhausted.
+#[derive(Clone, Copy)]
+struct FusedPulls {
+    any: LocalId,
+    last: LocalId,
+    probed: LocalId,
+}
+
+/// How many turns a fused loop takes: `n`, or, when a range may hold 2^64
+/// values (`a..=b` over 64-bit integers), whether there are any and the
+/// last index. `wide` says `last + 1` may not fit.
+#[derive(Clone, Copy)]
+enum FusedCount {
+    Exact(LocalId),
+    Last { nonempty: LocalId, last: LocalId, wide: bool },
+}
+
+
+fn is_literal_argument(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::OverflowScope { expr, .. } => is_literal_argument(expr),
+        ExprKind::Int(_) | ExprKind::Bool(_) => true,
+        _ => false,
+    }
+}
+
 /// `[TYP-16]` — a struct declared with type parameters. Its fields are
 /// resolved once with the parameters opaque, so instantiating one is a
 /// substitution rather than another walk of the declaration.
@@ -1174,6 +1265,9 @@ struct Checker<'a> {
     /// instance of a type implementing the interface, whose own default is
     /// another, without end. An `owned self` default waits too (ADR-071).
     deferred_defaults: HashMap<(Ty, Symbol), (Symbol, InterfaceDefault)>,
+    /// `[CTL-3b]` — the copies of `Iterator`'s adapters a `for` header can
+    /// fuse (`take`, `skip`, `step_by`, `enumerate`, `zip`), by name.
+    iterator_adapters: HashMap<DefId, Symbol>,
     /// Generic recipe types may be instantiated while interface declarations
     /// are still being collected.
     pending_generic_implements: Vec<PendingGenericImplements>,
@@ -1418,6 +1512,7 @@ impl<'a> Checker<'a> {
             abstract_methods: HashSet::new(),
             pending_default_methods: Vec::new(),
             deferred_defaults: HashMap::new(),
+            iterator_adapters: HashMap::new(),
             method_receivers: Vec::new(),
             pending_generic_implements: Vec::new(),
             checked_default_methods: HashSet::new(),
@@ -6495,6 +6590,11 @@ impl<'a> Checker<'a> {
                     self.register_associated(ty, default.name, signature, Some(*interface), Span::DUMMY)
                 };
                 let Some(def) = registered else { return };
+                if interface.is("std.core.Iterator")
+                    && matches!(default.name.as_str(), "take" | "skip" | "step_by" | "enumerate" | "zip")
+                {
+                    self.iterator_adapters.insert(def, default.name);
+                }
                 if let Some(defaults) = self.param_defaults.get(&default.declaration).cloned() {
                     self.param_defaults.insert(def, defaults);
                 }
@@ -13962,6 +14062,17 @@ impl<'a> Checker<'a> {
         (vis, declared.unwrap_or(module))
     }
 
+    /// `[MOD-2]` (D-384) — whether an interface's methods may be called from
+    /// here: a private interface's only in its own module. One that may not
+    /// neither answers a method call here nor makes it ambiguous (`E2070`).
+    fn interface_visible_here(&self, interface: Symbol) -> bool {
+        match self.member_visibility(Some(interface), ast::VisKind::Private, self.current_module) {
+            (ast::VisKind::Private, module) => module == self.current_module,
+            (ast::VisKind::Package, module) => self.same_package(module, self.current_module),
+            _ => true,
+        }
+    }
+
     /// `[MOD-2]` (D-328) — `E1052` for a method or associated function that
     /// is not visible here.
     fn check_method_visible(&mut self, def: DefId, owner: Ty, name: ast::Ident) {
@@ -18128,45 +18239,54 @@ impl<'a> Checker<'a> {
                         }
                     }
                 }
-                // `for i, x in enumerate(xs)` and `for a, b in zip(xs, ys)`
-                // bind a pair.
-                let parts: Vec<&ast::Pattern> = match (&pattern.kind, name) {
-                    (_, "reversed") => vec![pattern],
-                    (ast::PatternKind::Tuple(items), _) if items.len() == 2 => items.iter().collect(),
-                    _ => {
+                // `[CTL-3b]` — `enumerate(xs)` and `zip(xs, ys)` are
+                // `xs.iter().enumerate()` and `xs.iter().zip(ys.iter())`:
+                // one counted loop.
+                if name != "reversed" {
+                    let shape = match name {
+                        "enumerate" => FusedShape::Pair(Box::new(FusedShape::Value), Box::new(FusedShape::Ref)),
+                        _ => FusedShape::Pair(Box::new(FusedShape::Ref), Box::new(FusedShape::Ref)),
+                    };
+                    if !Self::fused_pattern_fits(pattern, &shape) {
                         self.error(
                             codes::E0900,
                             pattern.span,
-                            format!("`{name}` needs two names here, as in `for a, b in {name}(…)`, for now"),
+                            format!("`{name}` gives pairs: bind one name, or two, as in `for a, b in {name}(…)`"),
                         );
                         return None;
                     }
-                };
-                match name {
-                    "enumerate" => {
+                    let mut stmts = Vec::new();
+                    let mut chains = Vec::new();
+                    for (value, elem) in sources {
+                        let span_ty = self.types.intern(TyKind::Span { elem, mutable: false });
+                        let view = if matches!(self.types.kind(value.ty), TyKind::Vec { .. }) {
+                            self.view_of(value, span_ty, false, Builtin::SpanFrom { mutable: false })
+                        } else {
+                            self.coerce(value, span_ty)
+                        };
+                        let iterator = self.instantiate_named_generic("std.collections.SpanIter", &[elem], iter.span);
+                        let TyKind::Struct(struct_id) = *self.types.kind(iterator) else { return None };
+                        let cursor = Expr { ty: self.common.usize, kind: ExprKind::Int(0), span: iter.span };
+                        let source = Expr { ty: iterator, kind: ExprKind::StructLit { struct_id, fields: vec![view, cursor] }, span: iter.span };
+                        chains.push(FusedChain { source, links: Vec::new() });
+                    }
+                    let mut chain = chains.remove(0);
+                    if name == "enumerate" {
                         let int_ty = self.common.i64;
                         let start = match named("start").map(|a| &a.value).or(positional.get(1).copied()) {
                             Some(start) => self.check_expr(start, int_ty),
                             None => Expr { ty: int_ty, kind: ExprKind::Int(0), span: iter.span },
                         };
-                        self.check_for_indexed(
-                            label,
-                            sources,
-                            vec![parts[1]],
-                            Some((parts[0], start)),
-                            false,
-                            false,
-                            None,
-                            body,
-                            else_block,
-                            span,
-                        )
+                        chain.links.push(FusedLink::Enumerate(start));
+                    } else {
+                        chain.links.push(FusedLink::Zip(chains.remove(0)));
                     }
-                    "zip" => {
-                        self.check_for_indexed(label, sources, parts, None, false, false, None, body, else_block, span)
-                    }
-                    _ => self.check_for_indexed(label, sources, parts, None, true, false, None, body, else_block, span),
+                    let fused = self.check_for_fused(label, pattern, chain, body, else_block, span)?;
+                    stmts.push(fused);
+                    return Some(Stmt::Block(Block { stmts, span }));
                 }
+                // `for x in reversed(xs)`.
+                self.check_for_indexed(label, sources.remove(0), pattern, true, false, None, body, else_block, span)
             }
             _ => unreachable!("check_for_builtin is called for four names"),
         }
@@ -18339,17 +18459,15 @@ impl<'a> Checker<'a> {
         }))
     }
 
-    /// A counted loop over one or more views at once: `for x in view`,
-    /// `enumerate`, `zip` (the shorter length) and `reversed`. Each element
-    /// is borrowed, as `[CTL-1]` requires; `counter` is `enumerate`'s name and
-    /// start.
+    /// A counted loop over a view: `for x in view`, and `reversed` (from its
+    /// end). Each element is borrowed, as `[CTL-1]` requires; `from` is a
+    /// view iterator's cursor.
     #[allow(clippy::too_many_arguments)]
     fn check_for_indexed(
         &mut self,
         label: Option<ast::Ident>,
-        sources: Vec<(Expr, Ty)>,
-        patterns: Vec<&ast::Pattern>,
-        counter: Option<(&ast::Pattern, Expr)>,
+        (value, elem): (Expr, Ty),
+        pattern: &ast::Pattern,
         reversed: bool,
         mutable: bool,
         from: Option<Expr>,
@@ -18360,43 +18478,25 @@ impl<'a> Checker<'a> {
         debug_assert!(!(reversed && from.is_some()), "a reversed loop counts from its end");
         let incoming_class_init = self.class_init.clone();
         let usize_ty = self.common.usize;
-        let int_ty = self.common.i64;
         let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
         let mut outer = Vec::new();
         self.scopes.push(HashMap::new());
-        let mut views = Vec::new();
-        for (value, elem) in sources {
-            let value = self.keep_alive(value, &mut outer);
-            let span_ty = self.types.intern(TyKind::Span { elem, mutable });
-            let view = if matches!(self.types.kind(value.ty), TyKind::Vec { .. }) {
-                self.view_of(value, span_ty, mutable, Builtin::SpanFrom { mutable })
-            } else {
-                self.coerce(value, span_ty)
-            };
-            let xs = self.declare(Some(Symbol::intern("__xs")), span_ty, span);
-            self.locals[xs.0 as usize].for_iterator = true;
-            outer.push(Stmt::Let { local: xs, init: Some(view) });
-            views.push((xs, span_ty, elem));
-        }
-        let lengths: Vec<Expr> = views
-            .iter()
-            .map(|&(xs, span_ty, _)| Expr {
-                ty: usize_ty,
-                kind: ExprKind::Builtin { which: Builtin::SpanLen, args: vec![local(xs, span_ty)] },
-                span,
-            })
-            .collect();
+        let span_ty = self.types.intern(TyKind::Span { elem, mutable });
+        let view = if matches!(self.types.kind(value.ty), TyKind::Vec { .. }) {
+            self.view_of(value, span_ty, mutable, Builtin::SpanFrom { mutable })
+        } else {
+            self.coerce(value, span_ty)
+        };
+        // `[EXP-4]` — evaluated in `__xs`'s own binding, a `for_iterator`
+        // one, so a temporary the view borrows (`tail(make())`) lives until
+        // the loop ends; a container under a view is bound in this block.
+        let view = self.keep_viewed_alive(view, &mut outer);
+        let xs = self.declare(Some(Symbol::intern("__xs")), span_ty, span);
+        self.locals[xs.0 as usize].for_iterator = true;
+        outer.push(Stmt::Let { local: xs, init: Some(view) });
         let length_local = self.declare(None, usize_ty, span);
-        let length = lengths
-            .into_iter()
-            .reduce(|shorter, next| self.pick_less(shorter, next, span))
-            .expect("at least one view");
+        let length = Expr { ty: usize_ty, kind: ExprKind::Builtin { which: Builtin::SpanLen, args: vec![local(xs, span_ty)] }, span };
         outer.push(Stmt::Let { local: length_local, init: Some(length) });
-        let counter = counter.map(|(pattern, start)| {
-            let start_local = self.declare(None, int_ty, span);
-            outer.push(Stmt::Let { local: start_local, init: Some(start) });
-            (pattern, start_local)
-        });
         let index_local = self.declare(None, usize_ty, span);
 
         self.scopes.push(HashMap::new());
@@ -18426,52 +18526,30 @@ impl<'a> Checker<'a> {
             local(index_local, usize_ty)
         };
         inner.push(Stmt::Let { local: at_local, init: Some(at) });
-        if let Some((pattern, start_local)) = &counter {
-            let counted = self.declare(binding_name(pattern), int_ty, pattern.span);
-            let index = Expr {
-                ty: int_ty,
-                kind: ExprKind::Cast { expr: Box::new(local(index_local, usize_ty)), to: int_ty },
+        let item_ty = self.types.intern(TyKind::Ref { mutable, inner: elem });
+        let simple = matches!(pattern.kind, ast::PatternKind::Bind { .. });
+        let item = self.declare(simple.then(|| binding_name(pattern)).flatten(), item_ty, pattern.span);
+        self.locals[item.0 as usize].loop_borrowed_handle = simple && self.is_counted_owner_handle(elem);
+        inner.push(Stmt::Let {
+            local: item,
+            init: Some(Expr {
+                ty: item_ty,
+                kind: ExprKind::Ref {
+                    place: Box::new(Expr {
+                        ty: elem,
+                        kind: ExprKind::Index {
+                            base: Box::new(local(xs, span_ty)),
+                            index: Box::new(local(at_local, usize_ty)),
+                        },
+                        span,
+                    }),
+                    mutable,
+                },
                 span,
-            };
-            inner.push(Stmt::Let {
-                local: counted,
-                init: Some(Expr {
-                    ty: int_ty,
-                    kind: ExprKind::Binary {
-                        op: BinOp::Add,
-                        lhs: Box::new(local(*start_local, int_ty)),
-                        rhs: Box::new(index),
-                    },
-                    span,
-                }),
-            });
-        }
-        for (&(xs, span_ty, elem), pattern) in views.iter().zip(&patterns) {
-            let item_ty = self.types.intern(TyKind::Ref { mutable, inner: elem });
-            let simple = matches!(pattern.kind, ast::PatternKind::Bind { .. });
-            let item = self.declare(simple.then(|| binding_name(pattern)).flatten(), item_ty, pattern.span);
-            self.locals[item.0 as usize].loop_borrowed_handle = simple && self.is_counted_owner_handle(elem);
-            inner.push(Stmt::Let {
-                local: item,
-                init: Some(Expr {
-                    ty: item_ty,
-                    kind: ExprKind::Ref {
-                        place: Box::new(Expr {
-                            ty: elem,
-                            kind: ExprKind::Index {
-                                base: Box::new(local(xs, span_ty)),
-                                index: Box::new(local(at_local, usize_ty)),
-                            },
-                            span,
-                        }),
-                        mutable,
-                    },
-                    span,
-                }),
-            });
-            if !simple {
-                self.bind_borrowed_loop_pattern(pattern, item, item_ty, &mut inner);
-            }
+            }),
+        });
+        if !simple {
+            self.bind_borrowed_loop_pattern(pattern, item, item_ty, &mut inner);
         }
         self.loop_labels.push(label.map(|l| l.name));
         let checked = self.check_block(body);
@@ -18494,6 +18572,765 @@ impl<'a> Checker<'a> {
             else_block,
         });
         Some(Stmt::Block(Block { stmts: outer, span }))
+    }
+
+    /// `[CTL-3b]` — the shape of what `iterable` gives when it is a chain of
+    /// std's adapters (`take`, `skip`, `step_by`, `enumerate`, `zip`,
+    /// `copied`) over a view's element iterator or a range's iterator, which
+    /// a counted loop can run; `None` otherwise.
+    fn fused_shape(&self, e: &Expr) -> Option<FusedShape> {
+        match &e.kind {
+            // A filled-in default (`enumerate`'s `start = 0`) is a literal,
+            // which reads none of the call's other arguments.
+            ExprKind::Call { callee, args, default_arg_locals, latebound: false, .. }
+                if args.len() == 2
+                    && self.adapter_name(*callee).is_some()
+                    && (default_arg_locals.is_none() || is_literal_argument(&args[1])) =>
+            {
+                let inner = self.fused_shape(&args[0])?;
+                Some(match self.adapter_name(*callee).expect("an adapter").as_str() {
+                    "zip" => FusedShape::Pair(Box::new(inner), Box::new(self.fused_shape(&args[1])?)),
+                    "enumerate" => FusedShape::Pair(Box::new(FusedShape::Value), Box::new(inner)),
+                    _ => inner,
+                })
+            }
+            ExprKind::StructLit { fields, .. }
+                if fields.len() == 1 && self.struct_origin(e.ty).is_some_and(|o| o.is("std.core.Copied")) =>
+            {
+                (self.fused_shape(&fields[0])? == FusedShape::Ref).then_some(FusedShape::Value)
+            }
+            _ if matches!(self.span_iterator(e.ty), Some((_, SpanIteratorKind::Elements { .. }))) => Some(FusedShape::Ref),
+            _ if self.range_iterator(e.ty).is_some() => Some(FusedShape::Value),
+            _ => None,
+        }
+    }
+
+    /// `[CTL-3b]` — a `for` pattern the fused loop can bind: names and `_`
+    /// anywhere, tuples over pairs, and any pattern over a borrowed element
+    /// (bound through the reference, as `for x in view` binds it).
+    fn fused_pattern_fits(pattern: &ast::Pattern, shape: &FusedShape) -> bool {
+        match (&pattern.kind, shape) {
+            (ast::PatternKind::Bind { .. } | ast::PatternKind::Wild, _) => true,
+            (_, FusedShape::Ref) => true,
+            (ast::PatternKind::Tuple(items), FusedShape::Pair(a, b)) => {
+                items.len() == 2 && Self::fused_pattern_fits(&items[0], a) && Self::fused_pattern_fits(&items[1], b)
+            }
+            _ => false,
+        }
+    }
+
+    /// Which of `Iterator`'s fusable adapters `callee` is, for a generic one
+    /// (`zip`) through the instance's source.
+    fn adapter_name(&self, callee: DefId) -> Option<Symbol> {
+        let source = self.generic_of.get(&callee).copied().unwrap_or(callee);
+        self.iterator_adapters.get(&source).copied()
+    }
+
+    fn struct_origin(&self, ty: Ty) -> Option<Symbol> {
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
+        self.types.struct_def(id).origin.as_ref().map(|(origin, _)| *origin)
+    }
+
+    /// `[CTL-3b]` — std's `RangeIter[T]` or `RangeInclusiveIter[T]` over an
+    /// integer of at most 64 bits: its bound and whether it is inclusive.
+    fn range_iterator(&self, ty: Ty) -> Option<(Ty, bool)> {
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
+        let (origin, args) = self.types.struct_def(id).origin.as_ref()?;
+        let inclusive = match origin.as_str() {
+            "std.core.RangeIter" => false,
+            "std.core.RangeInclusiveIter" => true,
+            _ => return None,
+        };
+        let narrow = matches!(
+            self.types.kind(*args.first()?),
+            TyKind::Int(ember_types::IntTy::I8 | ember_types::IntTy::I16 | ember_types::IntTy::I32 | ember_types::IntTy::I64 | ember_types::IntTy::Isize)
+                | TyKind::Uint(UintTy::U8 | UintTy::U16 | UintTy::U32 | UintTy::U64 | UintTy::Usize)
+        );
+        narrow.then_some((args[0], inclusive))
+    }
+
+    /// `[CTL-3b]` — the chain `fused_shape` accepted, taken apart.
+    fn take_fused_chain(&self, e: Expr) -> FusedChain {
+        let Expr { ty, kind, span } = e;
+        match kind {
+            ExprKind::Call { callee, mut args, .. } if self.adapter_name(callee).is_some() => {
+                let arg = args.pop().expect("an adapter's argument");
+                let receiver = args.pop().expect("an adapter's receiver");
+                let mut chain = self.take_fused_chain(receiver);
+                chain.links.push(match self.adapter_name(callee).expect("an adapter").as_str() {
+                    "take" => FusedLink::Take(arg),
+                    "skip" => FusedLink::Skip(arg),
+                    "step_by" => FusedLink::StepBy(arg),
+                    "enumerate" => FusedLink::Enumerate(arg),
+                    _ => FusedLink::Zip(self.take_fused_chain(arg)),
+                });
+                chain
+            }
+            ExprKind::StructLit { mut fields, .. } if self.struct_origin(ty).is_some_and(|o| o.is("std.core.Copied")) => {
+                let mut chain = self.take_fused_chain(fields.pop().expect("the adapted iterator"));
+                chain.links.push(FusedLink::Copied);
+                chain
+            }
+            kind => FusedChain { source: Expr { ty, kind, span }, links: Vec::new() },
+        }
+    }
+
+    /// ODR-089 — `if n < 0: panic(f"take({n}): a count cannot be negative")`
+    /// for `value`, or `k <= 0` and "the step must be positive" for
+    /// `step_by`: the adapter's own test and words, built as source so the
+    /// message is formatted as its is.
+    fn adapter_count_guard(&mut self, value: Expr, adapter: &str, span: Span) -> Stmt {
+        let ty = value.ty;
+        let hidden = Symbol::intern("$count");
+        self.scopes.push(HashMap::new());
+        let named = self.declare(Some(hidden), ty, span);
+        let path = ast::Expr {
+            id: ast::NodeId::DUMMY,
+            kind: ast::ExprKind::Path { segments: vec![ast::Ident { name: hidden, span }] },
+            span,
+        };
+        let (test, words) =
+            if adapter == "step_by" { (BinOp::Le, "the step must be positive") } else { (BinOp::Lt, "a count cannot be negative") };
+        let message = ast::Expr {
+            id: ast::NodeId::DUMMY,
+            kind: ast::ExprKind::FString(vec![
+                ast::FStringPart::Text(format!("{adapter}(")),
+                ast::FStringPart::Expr { expr: Box::new(path), format_spec: None, echo: None, conversion: None },
+                ast::FStringPart::Text(format!("): {words}")),
+            ]),
+            span,
+        };
+        let panic = ast::Expr {
+            id: ast::NodeId::DUMMY,
+            kind: ast::ExprKind::Call {
+                callee: Box::new(ast::Expr {
+                    id: ast::NodeId::DUMMY,
+                    kind: ast::ExprKind::Path { segments: vec![ast::Ident { name: Symbol::intern("panic"), span }] },
+                    span,
+                }),
+                args: vec![ast::Arg { name: None, value: message, span }],
+            },
+            span,
+        };
+        let panic = self.synth(&panic);
+        self.scopes.pop();
+        let bad = Expr {
+            ty: self.common.bool_,
+            kind: ExprKind::Binary {
+                op: test,
+                lhs: Box::new(Expr { ty, kind: ExprKind::Local(named), span }),
+                rhs: Box::new(Expr { ty, kind: ExprKind::Int(0), span }),
+            },
+            span,
+        };
+        Stmt::Block(Block {
+            stmts: vec![
+                Stmt::Let { local: named, init: Some(value) },
+                Stmt::If { cond: bad, then_block: Block { stmts: vec![Stmt::Expr(panic)], span }, else_block: None },
+            ],
+            span,
+        })
+    }
+
+    /// `[CTL-3b]` — `for pattern in <chain>:` as one counted loop: the chain's
+    /// iterators and arguments are evaluated once, in order, before it, each
+    /// count checked where its adapter would check it (ODR-089); the number
+    /// of turns is computed from the lengths and counts; and each turn
+    /// computes the element it binds from its counter, reading a view with
+    /// no bounds check because every index is below the view's length by
+    /// construction. No iterator object is left and nothing is called per
+    /// element.
+    #[allow(clippy::too_many_arguments)]
+    fn check_for_fused(
+        &mut self,
+        label: Option<ast::Ident>,
+        pattern: &ast::Pattern,
+        chain: FusedChain,
+        body: &ast::Block,
+        else_block: &Option<ast::Block>,
+        span: Span,
+    ) -> Option<Stmt> {
+        let incoming_class_init = self.class_init.clone();
+        let usize_ty = self.common.usize;
+        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        self.scopes.push(HashMap::new());
+        let mut outer = Vec::new();
+        let mut nodes = Vec::new();
+        let (count, item, levels) = self.fuse_chain(chain, &mut nodes, &mut outer, span);
+        let (count, end_check) = self.fused_numbers(count, &levels, &nodes, &mut outer, span);
+        let (start, end, inclusive) = match count {
+            FusedCount::Exact(n) => (Expr { ty: usize_ty, kind: ExprKind::Int(0), span }, local(n, usize_ty), false),
+            FusedCount::Last { nonempty, last, wide: false } => {
+                let one = Expr { ty: usize_ty, kind: ExprKind::Int(1), span };
+                let turns = self.wrapping(BinOp::Add, local(last, usize_ty), one, span);
+                let zero = Expr { ty: usize_ty, kind: ExprKind::Int(0), span };
+                let n = self.if_value(local(nonempty, self.common.bool_), turns, zero, usize_ty, span);
+                let n = self.hold_value(n, &mut outer);
+                (Expr { ty: usize_ty, kind: ExprKind::Int(0), span }, n, false)
+            }
+            // `0..=last`, or `1..=0` when there is nothing: an inclusive
+            // loop's end may be the top of `usize`.
+            FusedCount::Last { nonempty, last, wide: true } => {
+                let int = |value| Expr { ty: usize_ty, kind: ExprKind::Int(value), span };
+                let bool_ty = self.common.bool_;
+                let from = self.if_value(local(nonempty, bool_ty), int(0), int(1), usize_ty, span);
+                let to = self.if_value(local(nonempty, bool_ty), local(last, usize_ty), int(0), usize_ty, span);
+                let from = self.hold_value(from, &mut outer);
+                let to = self.hold_value(to, &mut outer);
+                (from, to, true)
+            }
+        };
+        let index_local = self.declare(None, usize_ty, span);
+
+        self.scopes.push(HashMap::new());
+        let mut inner = Vec::new();
+        let values: Vec<Expr> =
+            nodes.iter().map(|node| self.fused_node_value(node, index_local, span)).collect();
+        let mut values: Vec<Option<Expr>> = values.into_iter().map(Some).collect();
+        self.bind_fused_item(pattern, item, &mut values, &mut inner, span);
+        self.loop_labels.push(label.map(|l| l.name));
+        let checked = self.check_block(body);
+        self.loop_labels.pop();
+        self.scopes.pop();
+        inner.extend(checked.stmts);
+
+        let body_class_init = self.class_init.clone();
+        if else_block.is_some() && incoming_class_init.is_some() {
+            self.class_init = Self::merge_class_init_paths(incoming_class_init, body_class_init);
+        }
+        let else_block = else_block.as_ref().map(|b| self.check_block(b));
+        let else_block = match (end_check.is_empty(), else_block) {
+            (true, else_block) => else_block,
+            (false, None) => Some(Block { stmts: end_check, span }),
+            (false, Some(block)) => Some(Block { stmts: end_check.into_iter().chain(block.stmts).collect(), span: block.span }),
+        };
+        self.scopes.pop();
+        outer.push(Stmt::ForRange { local: index_local, start, end, inclusive, body: Block { stmts: inner, span }, else_block });
+        Some(Stmt::Block(Block { stmts: outer, span }))
+    }
+
+    /// `value` in a new hidden local.
+    fn hold_local(&mut self, value: Expr, stmts: &mut Vec<Stmt>) -> LocalId {
+        let ExprKind::Local(held) = self.hold_value(value, stmts).kind else { unreachable!("a held value is a local") };
+        held
+    }
+
+    /// `a op b` in the `usize` arithmetic of a fused loop's counts and
+    /// indices, which never leaves `0..=len`: wrapping, so no check.
+    fn wrapping(&self, op: BinOp, a: Expr, b: Expr, span: Span) -> Expr {
+        let ty = a.ty;
+        let value = Expr { ty, kind: ExprKind::Binary { op, lhs: Box::new(a), rhs: Box::new(b) }, span };
+        Expr { ty, kind: ExprKind::OverflowScope { policy: OverflowPolicy::Wrap, expr: Box::new(value) }, span }
+    }
+
+    /// `[CTL-3b]` — evaluate one chain's iterators and arguments into
+    /// hidden locals, in order, and say how many turns it takes and what
+    /// each gives. Its nodes are `nodes[first..]`, which each later
+    /// `skip` or `step_by` maps.
+    fn fuse_chain(
+        &mut self,
+        chain: FusedChain,
+        nodes: &mut Vec<FusedNode>,
+        outer: &mut Vec<Stmt>,
+        span: Span,
+    ) -> (FusedCount, FusedItem, Vec<FusedLevel>) {
+        let (usize_ty, int_ty, bool_ty) = (self.common.usize, self.common.i64, self.common.bool_);
+        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        let first = nodes.len();
+        let mut levels = Vec::new();
+        let (mut count, mut item) = self.fuse_source(chain.source, nodes, outer, span);
+        for link in chain.links {
+            let adapter = match &link {
+                FusedLink::Take(_) => "take",
+                FusedLink::Skip(_) => "skip",
+                _ => "step_by",
+            };
+            match link {
+                FusedLink::Take(n) | FusedLink::Skip(n) | FusedLink::StepBy(n) => {
+                    let n = self.hold_local(n, outer);
+                    let guard = self.adapter_count_guard(local(n, int_ty), adapter, span);
+                    outer.push(guard);
+                    let by = Expr { ty: usize_ty, kind: ExprKind::Cast { expr: Box::new(local(n, int_ty)), to: usize_ty }, span };
+                    let by = self.hold_local(by, outer);
+                    levels.push(match adapter {
+                        "take" => FusedLevel::Take { by },
+                        "skip" => FusedLevel::Skip { by, below: count },
+                        _ => FusedLevel::StepBy { by, below: count },
+                    });
+                    count = match (adapter, count) {
+                        ("take", FusedCount::Exact(turns)) => {
+                            let fewer = self.pick_less(local(turns, usize_ty), local(by, usize_ty), span);
+                            FusedCount::Exact(self.hold_local(fewer, outer))
+                        }
+                        ("take", FusedCount::Last { nonempty, last, .. }) => {
+                            let zero = Expr { ty: int_ty, kind: ExprKind::Int(0), span };
+                            let some = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::Gt, lhs: Box::new(local(n, int_ty)), rhs: Box::new(zero) }, span };
+                            let both = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(local(nonempty, bool_ty)), rhs: Box::new(some) }, span };
+                            let one = Expr { ty: usize_ty, kind: ExprKind::Int(1), span };
+                            let final_index = self.wrapping(BinOp::Sub, local(by, usize_ty), one, span);
+                            let fewer = self.pick_less(local(last, usize_ty), final_index, span);
+                            FusedCount::Last { nonempty: self.hold_local(both, outer), last: self.hold_local(fewer, outer), wide: false }
+                        }
+                        ("skip", FusedCount::Exact(turns)) => {
+                            let skipped = self.pick_less(local(turns, usize_ty), local(by, usize_ty), span);
+                            let skipped = self.hold_local(skipped, outer);
+                            let left = self.wrapping(BinOp::Sub, local(turns, usize_ty), local(skipped, usize_ty), span);
+                            nodes[first..].iter_mut().for_each(|node| node.steps.push(FusedStep::Skip(skipped)));
+                            FusedCount::Exact(self.hold_local(left, outer))
+                        }
+                        ("skip", FusedCount::Last { nonempty, last, wide }) => {
+                            let within = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::Le, lhs: Box::new(local(by, usize_ty)), rhs: Box::new(local(last, usize_ty)) }, span };
+                            let both = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(local(nonempty, bool_ty)), rhs: Box::new(within) }, span };
+                            let left = self.wrapping(BinOp::Sub, local(last, usize_ty), local(by, usize_ty), span);
+                            nodes[first..].iter_mut().for_each(|node| node.steps.push(FusedStep::Skip(by)));
+                            FusedCount::Last { nonempty: self.hold_local(both, outer), last: self.hold_local(left, outer), wide }
+                        }
+                        // `n` items give `(n - 1) // k + 1`, and none give none.
+                        (_, FusedCount::Exact(turns)) => {
+                            let int = |value| Expr { ty: usize_ty, kind: ExprKind::Int(value), span };
+                            let empty = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::Eq, lhs: Box::new(local(turns, usize_ty)), rhs: Box::new(int(0)) }, span };
+                            let before = self.wrapping(BinOp::Sub, local(turns, usize_ty), int(1), span);
+                            let steps = self.wrapping(BinOp::Div, before, local(by, usize_ty), span);
+                            let taken = self.wrapping(BinOp::Add, steps, int(1), span);
+                            let taken = self.if_value(empty, int(0), taken, usize_ty, span);
+                            nodes[first..].iter_mut().for_each(|node| node.steps.push(FusedStep::StepBy(by)));
+                            FusedCount::Exact(self.hold_local(taken, outer))
+                        }
+                        (_, FusedCount::Last { nonempty, last, wide }) => {
+                            let steps = self.wrapping(BinOp::Div, local(last, usize_ty), local(by, usize_ty), span);
+                            nodes[first..].iter_mut().for_each(|node| node.steps.push(FusedStep::StepBy(by)));
+                            FusedCount::Last { nonempty, last: self.hold_local(steps, outer), wide }
+                        }
+                    };
+                }
+                FusedLink::Enumerate(start) => {
+                    let start = self.hold_local(start, outer);
+                    nodes.push(FusedNode { kind: FusedNodeKind::Counter { start }, steps: Vec::new() });
+                    levels.push(FusedLevel::Enumerate { node: nodes.len() - 1 });
+                    item = FusedItem::Pair(Box::new(FusedItem::Node { node: nodes.len() - 1, copied: false }), Box::new(item));
+                }
+                FusedLink::Zip(other) => {
+                    let (theirs, their_item, their_levels) = self.fuse_chain(other, nodes, outer, span);
+                    levels.push(FusedLevel::Zip { mine: count, theirs: their_levels });
+                    count = match (count, theirs) {
+                        (FusedCount::Exact(a), FusedCount::Exact(b)) => {
+                            let fewer = self.pick_less(local(a, usize_ty), local(b, usize_ty), span);
+                            FusedCount::Exact(self.hold_local(fewer, outer))
+                        }
+                        (a, b) => {
+                            let (a_some, a_last, a_wide) = self.fused_last(a, outer, span);
+                            let (b_some, b_last, b_wide) = self.fused_last(b, outer, span);
+                            let both = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(local(a_some, bool_ty)), rhs: Box::new(local(b_some, bool_ty)) }, span };
+                            let fewer = self.pick_less(local(a_last, usize_ty), local(b_last, usize_ty), span);
+                            FusedCount::Last { nonempty: self.hold_local(both, outer), last: self.hold_local(fewer, outer), wide: a_wide && b_wide }
+                        }
+                    };
+                    item = FusedItem::Pair(Box::new(item), Box::new(their_item));
+                }
+                FusedLink::Copied => {
+                    let FusedItem::Node { node, .. } = item else { unreachable!("`fused_shape` copies only a view's elements") };
+                    item = FusedItem::Node { node, copied: true };
+                }
+            }
+        }
+        (count, item, levels)
+    }
+
+    /// `[CTL-3b]` — how far below `MAX` an `enumerate` starting at `start`
+    /// can count: `int.MAX - start`, exact as a `usize`.
+    fn counter_room(&mut self, start: LocalId, outer: &mut Vec<Stmt>, span: Span) -> LocalId {
+        let (usize_ty, int_ty) = (self.common.usize, self.common.i64);
+        let top = Expr { ty: usize_ty, kind: ExprKind::Int(i64::MAX as u128), span };
+        let start = Expr { ty: usize_ty, kind: ExprKind::Cast { expr: Box::new(Expr { ty: int_ty, kind: ExprKind::Local(start), span }), to: usize_ty }, span };
+        let room = self.wrapping(BinOp::Sub, top, start, span);
+        self.hold_local(room, outer)
+    }
+
+    /// `[CTL-3b]`, `[TYP-8]` — the panic an `enumerate` number past `int`'s
+    /// top raises, with the words an overflowing `+` has.
+    fn number_overflow(&mut self, span: Span) -> Stmt {
+        let panic = ast::Expr {
+            id: ast::NodeId::DUMMY,
+            kind: ast::ExprKind::Call {
+                callee: Box::new(ast::Expr {
+                    id: ast::NodeId::DUMMY,
+                    kind: ast::ExprKind::Path { segments: vec![ast::Ident { name: Symbol::intern("panic"), span }] },
+                    span,
+                }),
+                args: vec![ast::Arg {
+                    name: None,
+                    value: ast::Expr {
+                        id: ast::NodeId::DUMMY,
+                        kind: ast::ExprKind::Lit(ast::Literal::Str("integer overflow in `+`".to_string())),
+                        span,
+                    },
+                    span,
+                }],
+            },
+            span,
+        };
+        Stmt::Expr(self.synth(&panic))
+    }
+
+    /// `[CTL-3b]` — the numbers of a fused loop's `enumerate`s without a
+    /// check on each: the loop takes only the turns whose numbers fit, and,
+    /// if it runs to its end, panics there when std's adapters would have
+    /// numbered an item past `int`'s top by then. They number every item
+    /// they pull: those `skip` and `step_by` pass over, and, on the call that
+    /// finds the chain exhausted, the rest of `step_by`'s gap and one item
+    /// past a `zip`'s shorter side. Returns the loop's count and the check
+    /// for its end.
+    fn fused_numbers(
+        &mut self,
+        count: FusedCount,
+        levels: &[FusedLevel],
+        nodes: &[FusedNode],
+        outer: &mut Vec<Stmt>,
+        span: Span,
+    ) -> (FusedCount, Vec<Stmt>) {
+        let (usize_ty, bool_ty) = (self.common.usize, self.common.bool_);
+        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        let counters: Vec<(usize, LocalId)> = nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(at, node)| match node.kind {
+                FusedNodeKind::Counter { start } => Some((at, start)),
+                _ => None,
+            })
+            .collect();
+        if counters.is_empty() {
+            return (count, Vec::new());
+        }
+        let rooms: HashMap<usize, LocalId> =
+            counters.iter().map(|&(at, start)| (at, self.counter_room(start, outer, span))).collect();
+        // What each `enumerate` has numbered when the loop has run to its end.
+        let (any, last, _) = self.fused_last(count, outer, span);
+        let probed = self.hold_local(Expr { ty: bool_ty, kind: ExprKind::Bool(true), span }, outer);
+        let mut pulled = Vec::new();
+        self.fused_pulls(levels, FusedPulls { any, last, probed }, &mut pulled, outer, span);
+        let mut end_check = Vec::new();
+        for &(at, _) in &counters {
+            let (any, last) = pulled.iter().find(|(node, ..)| *node == at).map(|&(_, any, last)| (any, last)).expect("each enumerate is pulled");
+            let past = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::Gt, lhs: Box::new(local(last, usize_ty)), rhs: Box::new(local(rooms[&at], usize_ty)) }, span };
+            let both = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(local(any, bool_ty)), rhs: Box::new(past) }, span };
+            let panic = self.number_overflow(span);
+            end_check.push(Stmt::If { cond: both, then_block: Block { stmts: vec![panic], span }, else_block: None });
+        }
+        // The turns whose numbers all fit: for each `enumerate`, the turns
+        // whose index into its items is at most its room.
+        let mut count = count;
+        for &(at, _) in &counters {
+            let mut bound = rooms[&at];
+            let mut fits = self.hold_local(Expr { ty: bool_ty, kind: ExprKind::Bool(true), span }, outer);
+            for step in &nodes[at].steps {
+                match *step {
+                    FusedStep::Skip(by) => {
+                        let enough = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::Ge, lhs: Box::new(local(bound, usize_ty)), rhs: Box::new(local(by, usize_ty)) }, span };
+                        let both = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(local(fits, bool_ty)), rhs: Box::new(enough) }, span };
+                        fits = self.hold_local(both, outer);
+                        let less = self.wrapping(BinOp::Sub, local(bound, usize_ty), local(by, usize_ty), span);
+                        bound = self.hold_local(less, outer);
+                    }
+                    FusedStep::StepBy(by) => {
+                        let fewer = self.wrapping(BinOp::Div, local(bound, usize_ty), local(by, usize_ty), span);
+                        bound = self.hold_local(fewer, outer);
+                    }
+                }
+            }
+            count = match count {
+                FusedCount::Exact(turns) => {
+                    let int = |value| Expr { ty: usize_ty, kind: ExprKind::Int(value), span };
+                    let all = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::Ge, lhs: Box::new(local(bound, usize_ty)), rhs: Box::new(local(turns, usize_ty)) }, span };
+                    let some = self.wrapping(BinOp::Add, local(bound, usize_ty), int(1), span);
+                    let ok = self.if_value(all, local(turns, usize_ty), some, usize_ty, span);
+                    let ok = self.if_value(local(fits, bool_ty), ok, int(0), usize_ty, span);
+                    FusedCount::Exact(self.hold_local(ok, outer))
+                }
+                FusedCount::Last { nonempty, last, wide } => {
+                    let both = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(local(nonempty, bool_ty)), rhs: Box::new(local(fits, bool_ty)) }, span };
+                    let fewer = self.pick_less(local(last, usize_ty), local(bound, usize_ty), span);
+                    FusedCount::Last { nonempty: self.hold_local(both, outer), last: self.hold_local(fewer, outer), wide }
+                }
+            };
+        }
+        (count, end_check)
+    }
+
+    /// `[CTL-3b]` — follow what the loop pulls down a chain's levels,
+    /// outermost first, noting for each `enumerate` what it has numbered.
+    fn fused_pulls(
+        &mut self,
+        levels: &[FusedLevel],
+        mut state: FusedPulls,
+        pulled: &mut Vec<(usize, LocalId, LocalId)>,
+        outer: &mut Vec<Stmt>,
+        span: Span,
+    ) {
+        let (usize_ty, bool_ty) = (self.common.usize, self.common.bool_);
+        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        let int = |value| Expr { ty: usize_ty, kind: ExprKind::Int(value), span };
+        let binary = |op, lhs: Expr, rhs: Expr| Expr { ty: bool_ty, kind: ExprKind::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) }, span };
+        for level in levels.iter().rev() {
+            match level {
+                // A last call reaches below only while fewer than `n` were given.
+                FusedLevel::Take { by } => {
+                    let one_more = self.wrapping(BinOp::Add, local(state.last, usize_ty), int(1), span);
+                    let given_all = self.if_value(
+                        local(state.any, bool_ty),
+                        binary(BinOp::Eq, one_more, local(*by, usize_ty)),
+                        binary(BinOp::Eq, local(*by, usize_ty), int(0)),
+                        bool_ty,
+                        span,
+                    );
+                    let probed = binary(BinOp::And, local(state.probed, bool_ty), Expr {
+                        ty: bool_ty,
+                        kind: ExprKind::Unary { op: UnOp::Not, operand: Box::new(given_all) },
+                        span,
+                    });
+                    state.probed = self.hold_local(probed, outer);
+                }
+                // The `n` passed over, then those given; with none given, a
+                // last call passed over as many as there were, up to `n`.
+                FusedLevel::Skip { by, below } => {
+                    let (below_any, below_last, _) = self.fused_last(*below, outer, span);
+                    let some_below = binary(BinOp::And, binary(BinOp::Gt, local(*by, usize_ty), int(0)), local(below_any, bool_ty));
+                    let tried = binary(BinOp::And, local(state.probed, bool_ty), some_below);
+                    let any = binary(BinOp::Or, local(state.any, bool_ty), tried);
+                    let through = self.wrapping(BinOp::Add, local(*by, usize_ty), local(state.last, usize_ty), span);
+                    let before = self.wrapping(BinOp::Sub, local(*by, usize_ty), int(1), span);
+                    let passed = self.pick_less(local(below_last, usize_ty), before, span);
+                    let last = self.if_value(local(state.any, bool_ty), through, passed, usize_ty, span);
+                    state.any = self.hold_local(any, outer);
+                    state.last = self.hold_local(last, outer);
+                }
+                // A last call passes over the rest; before it, the last item
+                // given is the last pulled.
+                FusedLevel::StepBy { by, below } => {
+                    let (below_any, below_last, _) = self.fused_last(*below, outer, span);
+                    let any = self.if_value(local(state.probed, bool_ty), local(below_any, bool_ty), local(state.any, bool_ty), bool_ty, span);
+                    let given = self.wrapping(BinOp::Mul, local(state.last, usize_ty), local(*by, usize_ty), span);
+                    let last = self.if_value(local(state.probed, bool_ty), local(below_last, usize_ty), given, usize_ty, span);
+                    state.any = self.hold_local(any, outer);
+                    state.last = self.hold_local(last, outer);
+                }
+                FusedLevel::Enumerate { node } => pulled.push((*node, state.any, state.last)),
+                // A last call asks this side first: if it is not exhausted,
+                // one more item is pulled from it and the other side is asked.
+                FusedLevel::Zip { mine, theirs } => {
+                    let not = |operand: Expr| Expr { ty: bool_ty, kind: ExprKind::Unary { op: UnOp::Not, operand: Box::new(operand) }, span };
+                    let (mine_any, mine_last, _) = self.fused_last(*mine, outer, span);
+                    let same_any = binary(BinOp::Eq, local(mine_any, bool_ty), local(state.any, bool_ty));
+                    let same_last = binary(BinOp::Eq, local(mine_last, usize_ty), local(state.last, usize_ty));
+                    let exhausted = binary(BinOp::And, same_any, binary(BinOp::Or, not(local(state.any, bool_ty)), same_last));
+                    let exhausted = self.hold_local(exhausted, outer);
+                    let extra = binary(BinOp::And, local(state.probed, bool_ty), not(local(exhausted, bool_ty)));
+                    let extra = self.hold_local(extra, outer);
+                    self.fused_pulls(theirs, FusedPulls { any: state.any, last: state.last, probed: extra }, pulled, outer, span);
+                    let any = binary(BinOp::Or, local(state.any, bool_ty), local(extra, bool_ty));
+                    let one_more = self.wrapping(BinOp::Add, local(state.last, usize_ty), int(1), span);
+                    let next = self.if_value(local(state.any, bool_ty), one_more, int(0), usize_ty, span);
+                    let last = self.if_value(local(extra, bool_ty), next, local(state.last, usize_ty), usize_ty, span);
+                    let probed = binary(BinOp::And, local(state.probed, bool_ty), local(exhausted, bool_ty));
+                    state = FusedPulls {
+                        any: self.hold_local(any, outer),
+                        last: self.hold_local(last, outer),
+                        probed: self.hold_local(probed, outer),
+                    };
+                }
+            }
+        }
+    }
+
+
+    /// A count as whether there are any turns and the last index.
+    fn fused_last(&mut self, count: FusedCount, outer: &mut Vec<Stmt>, span: Span) -> (LocalId, LocalId, bool) {
+        match count {
+            FusedCount::Last { nonempty, last, wide } => (nonempty, last, wide),
+            FusedCount::Exact(turns) => {
+                let (usize_ty, bool_ty) = (self.common.usize, self.common.bool_);
+                let turns = |_: ()| Expr { ty: usize_ty, kind: ExprKind::Local(turns), span };
+                let zero = Expr { ty: usize_ty, kind: ExprKind::Int(0), span };
+                let one = Expr { ty: usize_ty, kind: ExprKind::Int(1), span };
+                let some = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::Ne, lhs: Box::new(turns(())), rhs: Box::new(zero) }, span };
+                let last = self.wrapping(BinOp::Sub, turns(()), one, span);
+                (self.hold_local(some, outer), self.hold_local(last, outer), false)
+            }
+        }
+    }
+
+    /// `[CTL-3b]` — a chain's source: a view's element iterator (its view
+    /// and cursor) or a range's iterator (its next value, end and, for
+    /// `a..=b`, whether it is done).
+    fn fuse_source(&mut self, source: Expr, nodes: &mut Vec<FusedNode>, outer: &mut Vec<Stmt>, span: Span) -> (FusedCount, FusedItem) {
+        let (usize_ty, bool_ty) = (self.common.usize, self.common.bool_);
+        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        let source_ty = source.ty;
+        let field = |this: &Self, name: &str| {
+            let TyKind::Struct(id) = *this.types.kind(source_ty) else { unreachable!("an iterator is a struct") };
+            let fields = &this.types.struct_def(id).fields;
+            let at = fields.iter().position(|f| f.name.is(name)).expect("the iterator's fields");
+            (at, fields[at].ty)
+        };
+        if let Some((elem, SpanIteratorKind::Elements { mutable })) = self.span_iterator(source_ty) {
+            let span_ty = self.types.intern(TyKind::Span { elem, mutable });
+            // `xs.iter()` is a literal with its cursor at 0; any other
+            // iterator is held and taken apart.
+            let (view, cursor) = match source.kind {
+                ExprKind::StructLit { mut fields, .. } if fields.len() == 2 => {
+                    let cursor = fields.pop().expect("the cursor");
+                    let view = fields.pop().expect("the view");
+                    let cursor = (!matches!(cursor.kind, ExprKind::Int(0))).then_some(cursor);
+                    // `[EXP-4]` — evaluated in `__xs`'s own binding, a
+                    // `for_iterator` one, so the temporaries a view borrows
+                    // (`head(make())`) live until the loop ends.
+                    (self.keep_viewed_alive(view, outer), cursor)
+                }
+                kind => {
+                    let it = self.declare(Some(Symbol::intern("__it")), source_ty, span);
+                    self.locals[it.0 as usize].for_iterator = true;
+                    outer.push(Stmt::Let { local: it, init: Some(Expr { ty: source_ty, kind, span }) });
+                    let (view_at, view_ty) = field(self, "source");
+                    let (cursor_at, cursor_ty) = field(self, "index");
+                    let project = |at, ty| Expr { ty, kind: ExprKind::Field { base: Box::new(local(it, source_ty)), index: at }, span };
+                    (project(view_at, view_ty), Some(project(cursor_at, cursor_ty)))
+                }
+            };
+            let xs = self.declare(Some(Symbol::intern("__xs")), span_ty, span);
+            self.locals[xs.0 as usize].for_iterator = true;
+            outer.push(Stmt::Let { local: xs, init: Some(view) });
+            let len = Expr { ty: usize_ty, kind: ExprKind::Builtin { which: Builtin::SpanLen, args: vec![local(xs, span_ty)] }, span };
+            let cursor = cursor.map(|cursor| self.hold_local(cursor, outer));
+            let turns = match cursor {
+                None => len,
+                Some(cursor) => {
+                    let len_again = Expr { ty: usize_ty, kind: ExprKind::Builtin { which: Builtin::SpanLen, args: vec![local(xs, span_ty)] }, span };
+                    let passed = self.pick_less(local(cursor, usize_ty), len_again, span);
+                    self.wrapping(BinOp::Sub, len, passed, span)
+                }
+            };
+            let turns = self.hold_local(turns, outer);
+            nodes.push(FusedNode { kind: FusedNodeKind::View { xs, span_ty, elem, mutable, cursor }, steps: Vec::new() });
+            return (FusedCount::Exact(turns), FusedItem::Node { node: nodes.len() - 1, copied: false });
+        }
+        let (bound, inclusive) = self.range_iterator(source_ty).expect("`fused_shape` accepted the source");
+        let it = self.hold_local(source, outer);
+        self.locals[it.0 as usize].for_iterator = true;
+        let project = |this: &Self, name: &str| {
+            let (index, ty) = field(this, name);
+            Expr { ty, kind: ExprKind::Field { base: Box::new(local(it, source_ty)), index }, span }
+        };
+        let at = project(self, "at");
+        let at = self.hold_local(at, outer);
+        let end = project(self, "end");
+        let end = self.hold_local(end, outer);
+        let one = Expr { ty: bound, kind: ExprKind::Int(1), span };
+        // `end - at` values from `at`, or 0 when `at >= end`, exact in 64 bits.
+        let distance = Expr {
+            ty: usize_ty,
+            kind: ExprKind::Builtin { which: Builtin::RangeCount, args: vec![local(at, bound), local(end, bound), one] },
+            span,
+        };
+        let distance = self.hold_local(distance, outer);
+        nodes.push(FusedNode { kind: FusedNodeKind::Range { at, bound }, steps: Vec::new() });
+        let item = FusedItem::Node { node: nodes.len() - 1, copied: false };
+        if !inclusive {
+            return (FusedCount::Exact(distance), item);
+        }
+        // `a..=b` has `b - a + 1` values unless it is done or empty; the last
+        // is at index `b - a`, which is `distance`.
+        let done = project(self, "done");
+        let fresh = Expr { ty: bool_ty, kind: ExprKind::Unary { op: UnOp::Not, operand: Box::new(done) }, span };
+        let ordered = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::Le, lhs: Box::new(local(at, bound)), rhs: Box::new(local(end, bound)) }, span };
+        let nonempty = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(fresh), rhs: Box::new(ordered) }, span };
+        let nonempty = self.hold_local(nonempty, outer);
+        let wide = matches!(
+            self.types.kind(bound),
+            TyKind::Int(ember_types::IntTy::I64 | ember_types::IntTy::Isize) | TyKind::Uint(UintTy::U64 | UintTy::Usize)
+        );
+        (FusedCount::Last { nonempty, last: distance, wide }, item)
+    }
+
+    /// `[CTL-3b]` — what one node gives on the turn `index`.
+    fn fused_node_value(&mut self, node: &FusedNode, index: LocalId, span: Span) -> Expr {
+        let (usize_ty, int_ty) = (self.common.usize, self.common.i64);
+        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        let mut at = local(index, usize_ty);
+        for step in node.steps.iter().rev() {
+            at = match *step {
+                FusedStep::StepBy(k) => self.wrapping(BinOp::Mul, at, local(k, usize_ty), span),
+                FusedStep::Skip(s) => self.wrapping(BinOp::Add, at, local(s, usize_ty), span),
+            };
+        }
+        match node.kind {
+            FusedNodeKind::View { xs, span_ty, elem, mutable, cursor } => {
+                let at = match cursor {
+                    Some(cursor) => self.wrapping(BinOp::Add, local(cursor, usize_ty), at, span),
+                    None => at,
+                };
+                let ty = self.types.intern(TyKind::Ref { mutable, inner: elem });
+                Expr { ty, kind: ExprKind::Builtin { which: Builtin::SpanGetUnchecked, args: vec![local(xs, span_ty), at] }, span }
+            }
+            FusedNodeKind::Range { at: from, bound } => {
+                let one = Expr { ty: bound, kind: ExprKind::Int(1), span };
+                Expr { ty: bound, kind: ExprKind::Builtin { which: Builtin::RangeNth, args: vec![local(from, bound), one, at] }, span }
+            }
+            // `start + index`, which fits: the loop takes only the turns whose
+            // numbers do (`fused_numbers`).
+            // Added as `usize`s, whose wrapping C defines, and read back as an
+            // `int`: exact, since the number fits.
+            FusedNodeKind::Counter { start } => {
+                let start = Expr { ty: usize_ty, kind: ExprKind::Cast { expr: Box::new(local(start, int_ty)), to: usize_ty }, span };
+                let number = self.wrapping(BinOp::Add, start, at, span);
+                Expr { ty: int_ty, kind: ExprKind::Cast { expr: Box::new(number), to: int_ty }, span }
+            }
+        }
+    }
+
+    /// `[CTL-3b]` — bind `pattern` to what the item gives: a pair through a
+    /// tuple pattern part by part, a name to the whole (a pair as a tuple),
+    /// and any other pattern through a borrowed element.
+    fn bind_fused_item(&mut self, pattern: &ast::Pattern, item: FusedItem, values: &mut [Option<Expr>], inner: &mut Vec<Stmt>, span: Span) {
+        match (&pattern.kind, item) {
+            (ast::PatternKind::Tuple(items), FusedItem::Pair(a, b)) if items.len() == 2 => {
+                self.bind_fused_item(&items[0], *a, values, inner, span);
+                self.bind_fused_item(&items[1], *b, values, inner, span);
+            }
+            // A `_` still reads its element into a hidden local, so a view the
+            // loop holds stays in use (and its list borrowed) for every turn,
+            // as `for _ in xs` keeps it (`[CTL-2]`).
+            (ast::PatternKind::Wild, item) => {
+                let value = self.fused_item_value(item, values, span);
+                let held = self.declare(None, value.ty, pattern.span);
+                inner.push(Stmt::Let { local: held, init: Some(value) });
+            }
+            (kind, item) => {
+                let value = self.fused_item_value(item, values, span);
+                let simple = matches!(kind, ast::PatternKind::Bind { .. });
+                let ty = value.ty;
+                let bound = self.declare(simple.then(|| binding_name(pattern)).flatten(), ty, pattern.span);
+                self.locals[bound.0 as usize].loop_borrowed_handle = simple
+                    && matches!(*self.types.kind(ty), TyKind::Ref { inner, .. } if self.is_counted_owner_handle(inner));
+                inner.push(Stmt::Let { local: bound, init: Some(value) });
+                if !simple {
+                    self.bind_borrowed_loop_pattern(pattern, bound, ty, inner);
+                }
+            }
+        }
+    }
+
+    fn fused_item_value(&mut self, item: FusedItem, values: &mut [Option<Expr>], span: Span) -> Expr {
+        match item {
+            FusedItem::Node { node, copied } => {
+                let value = values[node].take().expect("each node is bound once");
+                if copied { self.read_through(value) } else { value }
+            }
+            FusedItem::Pair(a, b) => {
+                let a = self.fused_item_value(*a, values, span);
+                let b = self.fused_item_value(*b, values, span);
+                let ty = self.types.intern(TyKind::Tuple(vec![a.ty, b.ty]));
+                Expr { ty, kind: ExprKind::TupleLit(vec![a, b]), span }
+            }
+        }
     }
 
     /// `[GRM-27]`, `[GRM-38]` — a comprehension is its loop nest: each `for`
@@ -20624,20 +21461,18 @@ impl<'a> Checker<'a> {
         if let TyKind::Array { elem, .. } | TyKind::Span { elem, mutable: false } =
             *self.types.kind(iterable.ty)
         {
-            return self.check_for_indexed(
-                label,
-                vec![(iterable, elem)],
-                vec![pattern],
-                None,
-                false,
-                false,
-                None,
-                body,
-                else_block,
-                span,
-            );
+            return self.check_for_indexed(label, (iterable, elem), pattern, false, false, None, body, else_block, span);
         }
 
+        // `[CTL-3b]` — a chain of adapters over a view's or a range's
+        // iterator is one counted loop.
+        if let Some(shape) = self.fused_shape(&iterable)
+            && self.span_iterator(iterable.ty).is_none()
+            && Self::fused_pattern_fits(pattern, &shape)
+        {
+            let chain = self.take_fused_chain(iterable);
+            return self.check_for_fused(label, pattern, chain, body, else_block, span);
+        }
         // `[CTL-1]` — a type that is `Iterable` rather than an iterator is
         // borrowed for the loop and iterated through `iter()`: `for k in m:`.
         let iterable = if self.lookup_method(referent, Symbol::intern("next")).is_none()
@@ -20682,9 +21517,8 @@ impl<'a> Checker<'a> {
             let from = Expr { ty: cursor_ty, kind: ExprKind::Local(cursor), span: iter.span };
             let counted = self.check_for_indexed(
                 label,
-                vec![(project(source_at, source_ty), elem)],
-                vec![pattern],
-                None,
+                (project(source_at, source_ty), elem),
+                pattern,
                 false,
                 mutable,
                 Some(from),
@@ -22610,7 +23444,11 @@ impl<'a> Checker<'a> {
                             if let Some(echo) = echo {
                                 checked.push(hir::FStringPart::Text(echo.clone()));
                             }
+                            // D-385 — a reference is written as what it
+                            // reaches, as a `ref` name is (`p.1` of a
+                            // `(int, ref int)` was given to C as text).
                             let value = self.synth_committed(expr);
+                            let value = self.read_through(value);
                             // D-194 — a `String` is written as the `str` it
                             // borrows, as `print` writes it (D-191).
                             let value = if matches!(*self.types.kind(value.ty), TyKind::Vec { text: true, .. }) {
@@ -27156,6 +27994,20 @@ impl<'a> Checker<'a> {
     /// Find an inherent/interface method on a class or one of its bases.
     /// Dispatch remains a later Phase 3 consumer; this lookup only preserves
     /// the source-level fact that a derived handle sees inherited methods.
+    /// D-384 — the method a call here names: an interface's the caller cannot
+    /// see gives way to one it can, of another interface the type implements.
+    fn visible_interface_method(&self, ty: Ty, name: Symbol, entry: MethodEntry) -> MethodEntry {
+        let Some(interface) = entry.from_interface else { return entry };
+        if self.interface_visible_here(interface) {
+            return entry;
+        }
+        self.implemented
+            .iter()
+            .filter(|(t, i, _)| *t == ty && *i != interface && self.interface_visible_here(*i))
+            .find_map(|(_, i, _)| self.interface_methods.get(&(ty, *i, name)).copied())
+            .unwrap_or(entry)
+    }
+
     fn lookup_method(&self, ty: Ty, name: Symbol) -> Option<MethodEntry> {
         if let Some(entry) = self.methods.get(&(ty, name)) {
             return Some(*entry);
@@ -28131,6 +28983,7 @@ impl<'a> Checker<'a> {
             }
             None => self
                 .lookup_method(receiver.ty, name.name)
+                .map(|entry| self.visible_interface_method(receiver.ty, name.name, entry))
                 .map(|entry| self.choose_instance_method(receiver.ty, name.name, entry, args)),
         };
         let Some(entry) = found else {
@@ -28213,6 +29066,7 @@ impl<'a> Checker<'a> {
                 .iter()
                 .filter(|(t, i, _)| *t == receiver.ty && *i != interface)
                 .filter(|(_, i, _)| own_origin.is_none() || origin(self, *i) != own_origin)
+                .filter(|(_, i, _)| self.interface_visible_here(*i))
                 .filter(|(_, i, _)| {
                     self.interfaces
                         .get(i)

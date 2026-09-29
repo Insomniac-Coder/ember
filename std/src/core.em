@@ -189,7 +189,7 @@ pub interface Iterator:
 
     ## Each item with its number, counting from `start` (`[STD-26]`).
     fn enumerate(owned self, start: int = 0) -> Enumerate[Self]:
-        return Enumerate(self, start)
+        return Enumerate(self, start, false)
 
     ## Pairs of an item of each, until either runs out.
     fn zip[J: Iterator](owned self, other: J) -> Zip[Self, J]:
@@ -417,9 +417,13 @@ extend[I: Iterator] StepBy[I] implements Iterator:
         self.started = true
         return self.inner.next()
 
+## Item `k` is numbered `start + k`, so a number past `int`'s top panics, and
+## only then; a `for` over it counts the same way (`[CTL-3b]`). `number` is the
+## next item's, and `past` says the last one given was numbered `int.MAX`.
 pub struct Enumerate[I]:
     inner: I
-    count: int
+    number: int
+    past: bool
 
 extend[I: Iterator] Enumerate[I] implements Iterator:
     type Item = (int, I.Item)
@@ -427,8 +431,13 @@ extend[I: Iterator] Enumerate[I] implements Iterator:
     fn next(mut self) -> Option[(int, I.Item)]:
         match self.inner.next():
             Some(x):
-                at = self.count
-                self.count += 1
+                at = self.number
+                if self.past:
+                    at += 1
+                elif at < int.MAX:
+                    self.number = at + 1
+                else:
+                    self.past = true
                 return Some((at, x))
             None:
                 return None
@@ -504,6 +513,70 @@ pub struct RangeFrom[T]:
 @derive(Copy)
 pub struct RangeTo[T]:
     pub end: T
+
+## `[STD-19]`, `[CTL-3b]` — a range of integers is `Iterable`, as Python's
+## `range` is: `r.iter()` counts through a copy of its bounds, so the range is
+## left as it was, and `(a..b).skip(1)` is `(a..b).iter().skip(1)`. A `for`
+## over a chain of adapters on one is a counted loop.
+extend[T: Integer] Range[T]:
+    pub fn iter(self) -> RangeIter[T]:
+        return RangeIter(self.start, self.end)
+
+extend[T: Integer] RangeInclusive[T]:
+    pub fn iter(self) -> RangeInclusiveIter[T]:
+        return RangeInclusiveIter(self.start, self.end, self.end < self.start)
+
+extend[T: Integer] RangeFrom[T]:
+    pub fn iter(self) -> RangeFromIter[T]:
+        return RangeFromIter(self.start)
+
+## The values from `at` up to, not including, `end`.
+pub struct RangeIter[T]:
+    at: T
+    end: T
+
+extend[T: Integer] RangeIter[T] implements Iterator:
+    type Item = T
+
+    fn next(mut self) -> Option[T]:
+        if self.at < self.end:
+            here = self.at
+            self.at = here.successor()
+            return Some(here)
+        return None
+
+## The values from `at` up to and including `end`; `done` once `end` is
+## given, so a range ending at the type's top never steps past it.
+pub struct RangeInclusiveIter[T]:
+    at: T
+    end: T
+    done: bool
+
+extend[T: Integer] RangeInclusiveIter[T] implements Iterator:
+    type Item = T
+
+    fn next(mut self) -> Option[T]:
+        if self.done:
+            return None
+        here = self.at
+        if here < self.end:
+            self.at = here.successor()
+        else:
+            self.done = true
+        return Some(here)
+
+## The values from `at` on; stepping past the type's top panics, as a `for`
+## over `a..` does (`[CTL-3]`).
+pub struct RangeFromIter[T]:
+    at: T
+
+extend[T: Integer] RangeFromIter[T] implements Iterator:
+    type Item = T
+
+    fn next(mut self) -> Option[T]:
+        here = self.at
+        self.at = here.successor()
+        return Some(here)
 
 ## Part IV §8 also declares `Hash`, `Display`, `Debug`, and the operator
 ## interfaces; they remain staged with their dependent surface.
@@ -949,46 +1022,60 @@ extend f64 implements Add, Sub, Mul, Div, FloorDiv, Rem, Pow, Neg, \
 
 ## -- `NonZero` (`[STD-4]`) -----------------------------------------------------
 
-## The integer types, which `NonZero` takes. The interface is private, so no
-## other type can join them.
-interface Integer: Hash + Default:
-    pass
+## The integer types, which `NonZero` and the range iterators take. The
+## interface is private, so no other type can join them, and its method is
+## std's own.
+interface Integer: Hash + Default + Ord + Copy:
+    ## The next integer; past the type's top it panics, as `+ 1` does.
+    fn successor(self) -> Self
 
 extend i8 implements Integer:
-    pass
+    fn successor(self) -> i8:
+        return self + 1
 
 extend i16 implements Integer:
-    pass
+    fn successor(self) -> i16:
+        return self + 1
 
 extend i32 implements Integer:
-    pass
+    fn successor(self) -> i32:
+        return self + 1
 
 extend i64 implements Integer:
-    pass
+    fn successor(self) -> i64:
+        return self + 1
 
 extend i128 implements Integer:
-    pass
+    fn successor(self) -> i128:
+        return self + 1
 
 extend isize implements Integer:
-    pass
+    fn successor(self) -> isize:
+        return self + 1
 
 extend u8 implements Integer:
-    pass
+    fn successor(self) -> u8:
+        return self + 1
 
 extend u16 implements Integer:
-    pass
+    fn successor(self) -> u16:
+        return self + 1
 
 extend u32 implements Integer:
-    pass
+    fn successor(self) -> u32:
+        return self + 1
 
 extend u64 implements Integer:
-    pass
+    fn successor(self) -> u64:
+        return self + 1
 
 extend u128 implements Integer:
-    pass
+    fn successor(self) -> u128:
+        return self + 1
 
 extend usize implements Integer:
-    pass
+    fn successor(self) -> usize:
+        return self + 1
 
 ## `[STD-4]` — an integer that is not zero, made by `NonZero.new`. Since no
 ## `NonZero` holds 0, `Option[NonZero[T]]` stores `None` as 0 and is the size
