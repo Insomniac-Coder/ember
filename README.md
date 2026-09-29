@@ -132,6 +132,7 @@ would make Ember look faster than it is.
 | Walk two 1-million-number lists side by side, changing one (`zip`), 300 times | same speed | 9% slower |
 | Every third number of a list, after skipping some, at most 300,000 of them (`skip`, `step_by`, `take`), 300 times | same speed | 5% slower |
 | Number the items of a list past a starting point, as copies (`copied`, `enumerate`, `skip`), 300 times | 8% slower | 5% slower |
+| Number each item of a 1-million-number list while changing it (`enumerate`), 300 times | 8% slower | 6% slower |
 
 ### More than 10% slower than C with at least one compiler
 
@@ -141,7 +142,6 @@ would make Ember look faster than it is.
 |---|---|---|
 | Recursion: Fibonacci of 38, the slow way | 5% slower | 1.7 times slower |
 | Add up a list of 1,000 numbers, 300,000 times, overflow checks on | 35% slower | 1.6 times slower |
-| Number each item of a 1-million-number list while changing it (`enumerate`), 300 times | 48% slower | 8% slower |
 | A generic function ("larger of two"), 200 million times | same speed | 35% slower |
 | Calls through an interface: area of 1 million shapes, 20 times | 26% slower | 21% slower |
 | Call a method that changes an object taken from a list, 100 million times (object holding 6 lists) | 23% slower | same speed |

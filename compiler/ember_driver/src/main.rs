@@ -2221,7 +2221,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     ember_analysis::install_callable_regions_all(&mut bodies, &types);
     // `[RNG-4]` — on the final checks: remove every check the range facts
     // prove cannot fail, before the loop passes group what is left.
-    ember_analysis::remove_proven_checks_all(&mut bodies, &types, &common);
+    // A branch they decide goes one way, and what only the other way read
+    // is gone: `[MIR-REG-1]`'s summaries are made again from what is left.
+    let (_, folds) = ember_analysis::remove_proven_checks_all(&mut bodies, &types, &common);
+    if folds > 0 {
+        ember_analysis::install_callable_regions_all(&mut bodies, &types);
+    }
     // `[OPT-2]` — last, on the final checks: a counted loop whose indices are
     // all provably in bounds at entry runs a copy without its bounds checks;
     // then `[SIMD-7]` groups the overflow checks of every loop in
@@ -2234,8 +2239,11 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[RC-3]` — on the final MIR: a handle copied from a list element that
     // the list keeps alive for the handle's whole life is not counted.
     ember_analysis::mark_uncounted_handles_all(&mut bodies, &types);
-    // The pure work a loop's turn begins with whose inputs the loop cannot
-    // change (the view an inner loop iterates) runs once, before the loop.
+    // A hidden local that only copies another is read from that one, so no
+    // copy stands between the loops of a nest; then the pure work a loop's
+    // turn begins with whose inputs the loop cannot change (the view an
+    // inner loop iterates) runs once, before the loop.
+    ember_analysis::propagate_copies_all(&mut bodies, &types);
     ember_analysis::hoist_invariant_views_all(&mut bodies, &types);
     // Last, for C: a value a counted loop computes from its counter each
     // turn (`k * step + skip`) gets a running value of its own, as

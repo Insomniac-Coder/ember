@@ -2893,3 +2893,56 @@ runs: 0.94x to 1.04x). Test: `OPT-2/accept_a_view_an_outer_loop_leaves_alone_is_
 (an outer loop that pushes to its list, or rebinds it, makes the view again each turn and
 sees the change; break-tested: with the loop's writes ignored it prints a stale total).
 
+## ADR-075 — branches the range facts decide are folded; `enumerate(start=round)` gets its perfect nest
+
+2026-09-29, autonomous (goal 1, the owner's ">30% slower first"). Numbering each item of a
+1-million-number list while changing it, 300 rounds (`xs.iter_mut().enumerate(start=round)`), ran
+1.47x C on MSVC and 1.07x on clang. MSVC turns the C twin's loops around (each element held in a
+register for all 300 rounds), which it does only for a perfect nest. Ember's outer loop computed,
+each round, how many numbers fit below `int`'s top (the room above `round`), cut the inner loop's
+count to it and checked after the loop; and it held `start` in a hidden local. Hand-edited C
+(scratchpad `en/`) found what the nest needs: with only the inner loop left, still 0.064 s, as
+long as anything stood between the two loops; the round's counter read directly in the inner
+loop, 0.047 s (C 0.043 s). Dead stores between the loops made no difference. Five changes:
+
+* **One guard over the number machinery** (`fused_numbers`, typeck): no number can pass the top
+  when every `enumerate` has no more items below it than its room, a single `safe` test; the loop
+  then keeps its count and has no end check, both chosen by `safe`.
+* **A length bounded by its element size** (`range_facts.rs`, `len_ranges`): a view's length is at
+  most `PTRDIFF_MAX / size`, since no list holds more bytes (`[HEAP-8]`, the runtime's
+  `vec_max_elems`) and no C object is larger; the element's size is taken at its fewest bytes
+  (scalars' widths summed through structs, tuples and fixed arrays), elements of no size counting
+  as one byte as the runtime counts them. With `round` below 300 and 8-byte items, `safe` is
+  decided.
+* **Branches the facts decide are folded** (`decided_branches`): a switch every run reaching it
+  takes one way becomes a jump. A block that only branches has no state of its own (the solve
+  follows edges through it), so each is judged on the states of the edges reaching it. The blocks
+  no run reaches then are emptied, and temporaries nothing reads are removed. A fold can remove
+  what a function reads (`for i in 0..0` over `self`), so `[MIR-REG-1]`'s summaries are made again
+  after any fold, as after inlining.
+* **Copy propagation** (`copies.rs`, before the view hoisting): a hidden scalar local set once as a
+  plain copy of another local, whose address is never taken, is read from that local wherever the
+  local still holds the value copied (a must-analysis: every path in passes the copy, and no write
+  of the source nor its storage beginning or ending comes after); the copy goes once nothing reads
+  it. Locals the programmer named keep their reads, for the debugger.
+* **Hoisting keeps a nest perfect** (`hoist_from`): a computation from locals alone, which every C
+  compiler moves itself, leaves a loop only when it leaves every loop around it too (nothing on a
+  cycle through the loop's header changes its inputs). Moved into an outer loop's turn it made the
+  nest imperfect (the round's `(usize)round`). Reads through references and the view built-ins are
+  hoisted as before (ADR-074).
+
+Measured: the `enumerate` row 1.09x C on MSVC (was 1.47x), 1.07x on clang (unchanged); what is
+left is filling the list push by push against the C twin's single `malloc`. The full README set
+against the pushed compiler (A/B, interleaved runs): every other row within noise (0.98x to 1.03x after re-running the three that first read 1.04x to 1.06x with 21 runs). The differential test (136 fused
+chains against their unfused loops) shows no difference on either compiler.
+
+Tests: `RNG-4/accept_a_length_is_bounded_by_its_element_size` (`len() * 8` of a view of `int` has
+no check; of `u8` keeps one), `RNG-4/accept_a_branch_the_facts_decide_goes_one_way` (the code only
+the other way reached is gone from the C),
+`CTL-3b/accept_a_provably_safe_enumerate_checks_no_number` (no end check),
+`CTL-3b/accept_a_start_changed_in_the_loop_keeps_its_first_value` (the copy is not read past a
+write of its source). Break-tested: sizes ignored, folds off and copy kills ignored each fail
+their test (the last prints 111 and 212 for 11 and 12). `SIMD-7/run_fail_a_view_accessed_in_a_branch_runs_each_group_twice`
+now sets one `c` element to 0: with every element 1 the facts fold its `if`, and `xs[i]` is then
+accessed on every iteration, which is not what the test is about.
+

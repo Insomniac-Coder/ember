@@ -42,8 +42,13 @@ use ember_types::{Bound, CommonTypes, Ty, TyKind, TypeTable};
 use crate::regions::place_type;
 
 /// Remove every check the range facts prove cannot fail; returns how many.
-pub fn remove_proven_checks_all(bodies: &mut [Body], types: &TypeTable, common: &CommonTypes) -> usize {
-    bodies.iter_mut().map(|body| remove_proven_checks(body, types, common)).sum()
+/// Returns how many checks went and how many branches were folded; a fold
+/// can remove what a body reads, so its callable summary is made again.
+pub fn remove_proven_checks_all(bodies: &mut [Body], types: &TypeTable, common: &CommonTypes) -> (usize, usize) {
+    bodies.iter_mut().fold((0, 0), |(checks, folds), body| {
+        let (more_checks, more_folds) = remove_proven_checks(body, types, common);
+        (checks + more_checks, folds + more_folds)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -97,6 +102,23 @@ pub(crate) fn type_range(types: &TypeTable, ty: Ty) -> Option<Interval> {
             repr.meet(Interval { lo, hi })
         }
         _ => None,
+    }
+}
+
+/// The fewest bytes a value of `ty` takes: its scalars' widths, summed
+/// through structs, tuples and fixed arrays; none for what has no known
+/// width, so the answer is never more than the C type's size.
+fn min_size(types: &TypeTable, ty: Ty) -> u64 {
+    match types.kind(ty) {
+        TyKind::Bool => 1,
+        TyKind::Char => 4,
+        TyKind::Float(ember_types::FloatTy::F16) => 2,
+        TyKind::Float(ember_types::FloatTy::F32) => 4,
+        TyKind::Float(ember_types::FloatTy::F64) => 8,
+        TyKind::Struct(id) => types.struct_def(*id).fields.iter().map(|field| min_size(types, field.ty)).fold(0, u64::saturating_add),
+        TyKind::Tuple(items) => items.iter().map(|&item| min_size(types, item)).fold(0, u64::saturating_add),
+        TyKind::Array { elem, len } => min_size(types, *elem).saturating_mul(*len),
+        _ => ember_types::bit_width(types, representation(types, ty)).map_or(0, |bits| bits / 8),
     }
 }
 
@@ -369,7 +391,12 @@ pub(crate) struct Analysis<'a> {
     /// Each `count = RangeCount(start, stop, step)` whose four locals are
     /// written once: `(count, start, stop, step)`.
     counts: Vec<(LocalId, LocalId, LocalId, LocalId)>,
-    usize_range: Interval,
+    /// Each view's length range: its elements' bytes are at most
+    /// `PTRDIFF_MAX`, as no list holds more (`[HEAP-8]`'s limit,
+    /// `vec_max_elems`) and no C object is larger; a view is of a list, a
+    /// fixed array or a slice of one. Elements of no size count as one byte,
+    /// as the runtime counts them.
+    len_ranges: Vec<Interval>,
     /// The state on entry to each block; `None` when unreachable.
     entry: Vec<Option<State>>,
     /// Ranges known at a loop header whatever the path in: each counted
@@ -384,7 +411,7 @@ const MAX_ROUNDS: usize = 200;
 impl<'a> Analysis<'a> {
     /// The facts of `body`, or `None` when they did not settle.
     pub(crate) fn run(body: &'a Body, types: &'a TypeTable, common: &CommonTypes) -> Option<Analysis<'a>> {
-        let usize_range = type_range(types, common.usize)?;
+        let isize_max = type_range(types, common.isize)?.hi;
         let mut analysis = Analysis {
             body,
             types,
@@ -393,12 +420,23 @@ impl<'a> Analysis<'a> {
             lists: Lists::default(),
             elements: BTreeMap::new(),
             counts: Vec::new(),
-            usize_range,
+            len_ranges: Vec::new(),
             entry: Vec::new(),
             seeds: Vec::new(),
         };
         analysis.tracked = analysis.tracked_locals();
         analysis.views = analysis.collect_views();
+        analysis.len_ranges = analysis
+            .views
+            .iter()
+            .map(|view| {
+                let size = match types.kind(place_type(body, types, &view.place)) {
+                    TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => min_size(types, *elem).max(1),
+                    _ => 1,
+                };
+                Interval { lo: 0, hi: isize_max / i128::from(size) }
+            })
+            .collect();
         analysis.lists = analysis.element_lists();
         analysis.counts = analysis.range_counts();
         analysis.solve()?;
@@ -829,7 +867,7 @@ impl<'a> Analysis<'a> {
     fn var_range(&self, var: Var) -> Interval {
         match var {
             Var::Local(local) => type_range(self.types, self.body.local(local).ty).expect("a tracked local is an integer"),
-            Var::Len(_) => self.usize_range,
+            Var::Len(index) => self.len_ranges[index],
         }
     }
 
@@ -1684,6 +1722,45 @@ impl<'a> Analysis<'a> {
             })
     }
 
+    /// The branches every run reaching them takes one way, each with that
+    /// way. A branch-only block has no state of its own (the solve follows
+    /// the edges through it), so each is judged on the states of the edges
+    /// reaching it.
+    fn decided_branches(&self) -> Vec<(usize, ember_mir::BasicBlockId)> {
+        let order = reverse_postorder(self.body);
+        let headers = loop_headers(self.body, &order);
+        let mut taken: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
+        for block in 0..self.body.blocks.len() {
+            let Some(state) = self.entry[block].clone() else { continue };
+            let mut work = vec![(block, self.exit_state(block, state))];
+            while let Some((at, exit)) = work.pop() {
+                let branch = matches!(self.body.blocks[at].terminator, Terminator::SwitchInt { .. });
+                if branch {
+                    taken.entry(at).or_default();
+                }
+                for (target, state) in self.edges(at, exit) {
+                    if branch {
+                        taken.entry(at).or_default().insert(target);
+                    }
+                    if self.branch_only(target, &headers) {
+                        work.push((target, self.exit_state(target, state)));
+                    }
+                }
+            }
+        }
+        taken
+            .into_iter()
+            .filter_map(|(block, targets)| {
+                let Terminator::SwitchInt { targets: ways, otherwise, .. } = &self.body.blocks[block].terminator else {
+                    unreachable!("a branch ends in a switch")
+                };
+                let ways: BTreeSet<usize> = ways.iter().map(|(_, way)| way.0 as usize).chain([otherwise.0 as usize]).collect();
+                let [way] = *targets.iter().collect::<Vec<_>>().as_slice() else { return None };
+                (ways.len() > 1).then_some((block, ember_mir::BasicBlockId(*way as u32)))
+            })
+            .collect()
+    }
+
     /// `edges(block)`, with each edge into a branch-only block followed
     /// through it on the edge's own state. The recursion ends at a loop
     /// header, since a cycle passes through one.
@@ -1975,7 +2052,7 @@ fn loop_writes(body: &Body, order: &[usize], headers: &HashSet<usize>) -> HashMa
 // ---------------------------------------------------------------------------
 // Removing the checks.
 
-fn remove_proven_checks(body: &mut Body, types: &TypeTable, common: &CommonTypes) -> usize {
+fn remove_proven_checks(body: &mut Body, types: &TypeTable, common: &CommonTypes) -> (usize, usize) {
     // What to change, found on the unchanged body.
     struct Removal {
         block: usize,
@@ -1984,7 +2061,7 @@ fn remove_proven_checks(body: &mut Body, types: &TypeTable, common: &CommonTypes
         checked: Option<(Interval, Interval)>,
     }
     let removals: Vec<Removal> = {
-        let Some(analysis) = Analysis::run(body, types, common) else { return 0 };
+        let Some(analysis) = Analysis::run(body, types, common) else { return (0, 0) };
         let mut removals = Vec::new();
         let reached: HashSet<usize> = reverse_postorder(body).into_iter().collect();
         for block in 0..body.blocks.len() {
@@ -2068,6 +2145,8 @@ fn remove_proven_checks(body: &mut Body, types: &TypeTable, common: &CommonTypes
         }
         removals
     };
+    // A branch whose test the facts decide goes one way.
+    let folds = Analysis::run(body, types, common).map_or_else(Vec::new, |analysis| analysis.decided_branches());
     for removal in &removals {
         let span = body.blocks[removal.block].terminator_span;
         let Terminator::Assert { next, cond, .. } = body.blocks[removal.block].terminator.clone() else {
@@ -2081,7 +2160,71 @@ fn remove_proven_checks(body: &mut Body, types: &TypeTable, common: &CommonTypes
             drop_unread_condition(body, removal.block, cond.local);
         }
     }
-    removals.len()
+    for &(block, target) in &folds {
+        body.blocks[block].terminator = Terminator::Goto(target);
+    }
+    if !folds.is_empty() {
+        clear_dead_code(body);
+    }
+    (removals.len(), folds.len())
+}
+
+/// After branches are folded: the blocks no run reaches now are emptied (so
+/// nothing they read stays alive), then the temporaries nothing reads, set
+/// by a computation over locals alone, are removed, in rounds.
+fn clear_dead_code(body: &mut Body) {
+    let mut reached = vec![false; body.blocks.len()];
+    let mut work = vec![0usize];
+    while let Some(block) = work.pop() {
+        if block >= reached.len() || reached[block] {
+            continue;
+        }
+        reached[block] = true;
+        match &body.blocks[block].terminator {
+            Terminator::Goto(next) | Terminator::Call { next, .. } | Terminator::Assert { next, .. } => work.push(next.0 as usize),
+            Terminator::SwitchInt { targets, otherwise, .. } => {
+                work.extend(targets.iter().map(|(_, target)| target.0 as usize));
+                work.push(otherwise.0 as usize);
+            }
+            Terminator::Return | Terminator::Unreachable => {}
+        }
+    }
+    for (block, data) in body.blocks.iter_mut().enumerate() {
+        if !reached[block] {
+            data.stmts.clear();
+            data.terminator = Terminator::Unreachable;
+        }
+    }
+    loop {
+        let mut read = vec![false; body.locals.len()];
+        for data in &body.blocks {
+            data.stmts.iter().for_each(|stmt| crate::strength_reduce::stmt_reads(stmt, &mut read));
+            crate::strength_reduce::terminator_reads(&data.terminator, &mut read);
+        }
+        let plain = |operand: &Operand| match operand {
+            Operand::Const(_) => true,
+            Operand::Copy(place) | Operand::Move(place) => place.projection.is_empty(),
+        };
+        let mut removed = false;
+        for data in &mut body.blocks {
+            for stmt in &mut data.stmts {
+                let StmtKind::Assign { place, rvalue } = &stmt.kind else { continue };
+                let pure = match rvalue {
+                    Rvalue::Use(operand) | Rvalue::Cast { operand, .. } | Rvalue::UnaryOp { operand, .. } => plain(operand),
+                    Rvalue::BinaryOp { lhs, rhs, .. } => plain(lhs) && plain(rhs),
+                    _ => false,
+                };
+                let local = place.local.0 as usize;
+                if pure && place.projection.is_empty() && !read[local] && body.locals[local].kind == ember_mir::LocalKind::Temp {
+                    stmt.kind = StmtKind::Nop;
+                    removed = true;
+                }
+            }
+        }
+        if !removed {
+            return;
+        }
+    }
 }
 
 /// Replace the checked operation ending `block`, whose check is gone, with the

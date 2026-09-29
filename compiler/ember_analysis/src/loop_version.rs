@@ -3444,6 +3444,35 @@ fn hoist_from(body: &mut Body, types: &TypeTable, summaries: &Summaries, shape: 
         });
     }
     let predecessors = predecessors(body);
+    // A computation from locals alone the C compiler moves itself. Moved
+    // here, it would stand in an outer loop's turn before this loop, and a
+    // nest with work between its loops is not perfect: MSVC reorders only a
+    // perfect nest (`enumerate(start=round)`, 1.5x C). It moves only when
+    // it leaves every loop around this one, so when nothing on a cycle
+    // through this loop's header changes its inputs.
+    let forward: HashSet<usize> = reach_order(body, shape.header, usize::MAX).into_iter().collect();
+    let mut cycle: HashSet<usize> = HashSet::new();
+    let mut work = vec![shape.header];
+    while let Some(block) = work.pop() {
+        for &from in &predecessors[block] {
+            if forward.contains(&from) && cycle.insert(from) {
+                work.push(from);
+            }
+        }
+    }
+    let mut cycle_writes: HashSet<LocalId> = HashSet::new();
+    for &block in &cycle {
+        visit_places(&body.blocks[block], &mut |place: &Place, written: bool, _| {
+            if written {
+                cycle_writes.insert(place.local);
+            }
+        });
+        for stmt in &body.blocks[block].stmts {
+            if let StmtKind::StorageLive(local) | StmtKind::StorageDead(local) = stmt.kind {
+                cycle_writes.insert(local);
+            }
+        }
+    }
     let mut hoisted_locals: HashSet<LocalId> = HashSet::new();
     let mut items: Vec<Hoisted> = Vec::new();
     // Read so far in the turn: a value read before it is computed keeps its
@@ -3479,6 +3508,14 @@ fn hoist_from(body: &mut Body, types: &TypeTable, summaries: &Summaries, shape: 
         Operand::Const(_) => true,
         Operand::Copy(place) | Operand::Move(place) => unchanged_place(place, hoisted),
     };
+    let leaves_nest = |operands: &[&Operand], hoisted: &HashSet<LocalId>| {
+        operands.iter().all(|operand| match operand {
+            Operand::Const(_) => true,
+            Operand::Copy(place) | Operand::Move(place) => {
+                !place.projection.is_empty() || hoisted.contains(&place.local) || !cycle_writes.contains(&place.local)
+            }
+        })
+    };
     let movable_dest = |place: &Place, read_so_far: &HashSet<LocalId>| {
         place.projection.is_empty()
             && writes.get(&place.local) == Some(&1)
@@ -3499,7 +3536,7 @@ fn hoist_from(body: &mut Body, types: &TypeTable, summaries: &Summaries, shape: 
                 StmtKind::Assign { place, rvalue } => {
                     let pure = match rvalue {
                         Rvalue::Use(operand) | Rvalue::Cast { operand, .. } | Rvalue::UnaryOp { operand, .. } => {
-                            Some(unchanged_operand(operand, &hoisted_locals))
+                            Some(unchanged_operand(operand, &hoisted_locals) && leaves_nest(&[operand], &hoisted_locals))
                         }
                         // A division or shift stays where the loop has it:
                         // done before the loop, it could trap when the loop
@@ -3507,11 +3544,13 @@ fn hoist_from(body: &mut Body, types: &TypeTable, summaries: &Summaries, shape: 
                         Rvalue::BinaryOp { op, lhs, rhs } => Some(
                             !matches!(op, BinOp::Div | BinOp::Rem | BinOp::FloorDiv | BinOp::FloorRem | BinOp::Shl | BinOp::Shr)
                                 && unchanged_operand(lhs, &hoisted_locals)
-                                && unchanged_operand(rhs, &hoisted_locals),
+                                && unchanged_operand(rhs, &hoisted_locals)
+                                && leaves_nest(&[lhs, rhs], &hoisted_locals),
                         ),
-                        Rvalue::Aggregate { operands, .. } => {
-                            Some(operands.iter().all(|operand| unchanged_operand(operand, &hoisted_locals)))
-                        }
+                        Rvalue::Aggregate { operands, .. } => Some(
+                            operands.iter().all(|operand| unchanged_operand(operand, &hoisted_locals))
+                                && leaves_nest(&operands.iter().collect::<Vec<_>>(), &hoisted_locals),
+                        ),
                         Rvalue::Discriminant(read) => Some(unchanged_place(read, &hoisted_locals)),
                         // The address of a place the loop does not rebind.
                         Rvalue::Ref { place: target, .. } => Some(

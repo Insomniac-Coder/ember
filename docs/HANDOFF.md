@@ -11094,7 +11094,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   set does keeps a loop out of vectorisable form), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h44/` are frozen.
-* **Next numbers:** ODR-090, D-388, ADR-075, ERR-056.
+* **Next numbers:** ODR-090, D-388, ADR-076, ERR-056.
 * **Goal 2, implementation (2026-09-29, autonomous):** next is `[STD-19]`'s
   iterator adapters and `[CTL-3b]`'s counted lowering of adapter chains (the
   audit's `CTL-3b` gap; `for x in mutspan`, `.take/.skip/.enumerate/.zip/
@@ -11239,13 +11239,12 @@ first**; the rest of §0.355 is the running narrative behind it.
       the C twin's loops only for a perfect nest: the view is now made before
       the outer loop, the loop test is written into its `if`, and the view is
       read through a pointer of its own; each alone did nothing.
-    * `enumerate(start=round)` on MSVC, 1.5x: the same loop swap, but each
-      round asks how many numbers fit before `int`'s top, which depends on
-      `round`, so the inner trip count changes and no swap is possible. Next
-      (owner: rows over 30% first): range facts that fold a branch they
-      decide, list lengths bounded by `PTRDIFF_MAX` ([HEAP-8]), a single
-      `count <= room` guard over the number machinery, and dead temporaries
-      removed, so a provably safe `enumerate` leaves only the inner loop.
+    * `enumerate(start=round)` on MSVC: 1.09x since ADR-075 (was 1.47x).
+      The number machinery is one `safe` guard, which range facts decide
+      (lengths bounded by `PTRDIFF_MAX / size`) and fold; copy propagation
+      and a hoist that keeps nests perfect leave nothing between the loops,
+      so MSVC swaps them. What is left is filling the list push by push
+      against the C twin's single `malloc` (as for the enum `match` row).
     * Recursion (Fibonacci) on clang, 1.7x: the mandatory overflow check on
       `fib(n - 1) + fib(n - 2)`, whose values nothing bounds. Priced: without
       it 0.112 s against C's 0.118 s; with it 0.184 s, since clang cannot turn

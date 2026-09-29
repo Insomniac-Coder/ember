@@ -455,7 +455,7 @@ enum FusedLevel {
     Take { by: LocalId },
     Skip { by: LocalId, below: FusedCount },
     StepBy { by: LocalId, below: FusedCount },
-    Enumerate { node: usize },
+    Enumerate { node: usize, below: FusedCount },
     Zip { mine: FusedCount, theirs: Vec<FusedLevel> },
 }
 
@@ -18906,7 +18906,7 @@ impl<'a> Checker<'a> {
                 FusedLink::Enumerate(start) => {
                     let start = self.hold_local(start, outer);
                     nodes.push(FusedNode { kind: FusedNodeKind::Counter { start }, steps: Vec::new() });
-                    levels.push(FusedLevel::Enumerate { node: nodes.len() - 1 });
+                    levels.push(FusedLevel::Enumerate { node: nodes.len() - 1, below: count });
                     item = FusedItem::Pair(Box::new(FusedItem::Node { node: nodes.len() - 1, copied: false }), Box::new(item));
                 }
                 FusedLink::Zip(other) => {
@@ -19003,6 +19003,32 @@ impl<'a> Checker<'a> {
         }
         let rooms: HashMap<usize, LocalId> =
             counters.iter().map(|&(at, start)| (at, self.counter_room(start, outer, span))).collect();
+        // No number can pass the top when every `enumerate` has no more items
+        // below it than its room: the loop then keeps its count and needs no
+        // check at its end. One test, which the range facts decide when they
+        // know the start (a round's counter) and the length.
+        let mut below = HashMap::new();
+        Self::enumerate_counts(levels, &mut below);
+        let mut safe: Option<Expr> = None;
+        for &(at, _) in &counters {
+            let room = local(rooms[&at], usize_ty);
+            let this = match below[&at] {
+                FusedCount::Exact(n) => {
+                    Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::Le, lhs: Box::new(local(n, usize_ty)), rhs: Box::new(room) }, span }
+                }
+                FusedCount::Last { nonempty, last, .. } => {
+                    let none = Expr { ty: bool_ty, kind: ExprKind::Unary { op: UnOp::Not, operand: Box::new(local(nonempty, bool_ty)) }, span };
+                    let within = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::Le, lhs: Box::new(local(last, usize_ty)), rhs: Box::new(room) }, span };
+                    Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::Or, lhs: Box::new(none), rhs: Box::new(within) }, span }
+                }
+            };
+            safe = Some(match safe {
+                None => this,
+                Some(before) => Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(before), rhs: Box::new(this) }, span },
+            });
+        }
+        let safe = self.hold_local(safe.expect("at least one enumerate"), outer);
+        let uncut = count;
         // What each `enumerate` has numbered when the loop has run to its end.
         let (any, last, _) = self.fused_last(count, outer, span);
         let probed = self.hold_local(Expr { ty: bool_ty, kind: ExprKind::Bool(true), span }, outer);
@@ -19053,7 +19079,35 @@ impl<'a> Checker<'a> {
                 }
             };
         }
+        // When no number can pass the top, the count as it was.
+        let count = match (uncut, count) {
+            (FusedCount::Exact(whole), FusedCount::Exact(cut)) => {
+                let turns = self.if_value(local(safe, bool_ty), local(whole, usize_ty), local(cut, usize_ty), usize_ty, span);
+                FusedCount::Exact(self.hold_local(turns, outer))
+            }
+            (FusedCount::Last { nonempty: a_any, last: a_last, wide }, FusedCount::Last { nonempty: b_any, last: b_last, .. }) => {
+                let any = self.if_value(local(safe, bool_ty), local(a_any, bool_ty), local(b_any, bool_ty), bool_ty, span);
+                let last = self.if_value(local(safe, bool_ty), local(a_last, usize_ty), local(b_last, usize_ty), usize_ty, span);
+                FusedCount::Last { nonempty: self.hold_local(any, outer), last: self.hold_local(last, outer), wide }
+            }
+            _ => unreachable!("cutting a count keeps its form"),
+        };
+        let unsafe_ = Expr { ty: bool_ty, kind: ExprKind::Unary { op: UnOp::Not, operand: Box::new(local(safe, bool_ty)) }, span };
+        let end_check = vec![Stmt::If { cond: unsafe_, then_block: Block { stmts: end_check, span }, else_block: None }];
         (count, end_check)
+    }
+
+    /// The count below each `enumerate` of a chain, by its node.
+    fn enumerate_counts(levels: &[FusedLevel], out: &mut HashMap<usize, FusedCount>) {
+        for level in levels {
+            match level {
+                FusedLevel::Enumerate { node, below } => {
+                    out.insert(*node, *below);
+                }
+                FusedLevel::Zip { theirs, .. } => Self::enumerate_counts(theirs, out),
+                _ => {}
+            }
+        }
     }
 
     /// `[CTL-3b]` — follow what the loop pulls down a chain's levels,
@@ -19113,7 +19167,7 @@ impl<'a> Checker<'a> {
                     state.any = self.hold_local(any, outer);
                     state.last = self.hold_local(last, outer);
                 }
-                FusedLevel::Enumerate { node } => pulled.push((*node, state.any, state.last)),
+                FusedLevel::Enumerate { node, .. } => pulled.push((*node, state.any, state.last)),
                 // A last call asks this side first: if it is not exhausted,
                 // one more item is pulled from it and the other side is asked.
                 FusedLevel::Zip { mine, theirs } => {

@@ -433,7 +433,7 @@ fn place_reads(place: &Place, read: &mut [bool]) {
 }
 
 /// Every local a statement reads, or names in a place it writes through.
-fn stmt_reads(stmt: &Stmt, read: &mut [bool]) {
+pub(crate) fn stmt_reads(stmt: &Stmt, read: &mut [bool]) {
     match &stmt.kind {
         StmtKind::Assign { place, rvalue } => {
             if !place.projection.is_empty() {
@@ -467,7 +467,7 @@ fn stmt_reads(stmt: &Stmt, read: &mut [bool]) {
     }
 }
 
-fn terminator_reads(terminator: &Terminator, read: &mut [bool]) {
+pub(crate) fn terminator_reads(terminator: &Terminator, read: &mut [bool]) {
     match terminator {
         Terminator::SwitchInt { discr, .. } => operand_reads(discr, read),
         Terminator::Call { func, args, dest, .. } => {
