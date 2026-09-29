@@ -21,8 +21,8 @@ fn propagate_copies(body: &mut Body, types: &TypeTable) -> usize {
     // A copy of a copy reads the first source after a second round.
     for _ in 0..4 {
         let mut replaced = 0;
-        for (copy, block, index) in candidates(body, types) {
-            replaced += propagate(body, copy, block, index);
+        for (copy, defs) in candidates(body, types) {
+            replaced += propagate(body, copy, &defs);
         }
         total += replaced;
         if replaced == 0 {
@@ -39,12 +39,14 @@ fn scalar(types: &TypeTable, body: &Body, local: LocalId) -> bool {
     )
 }
 
-/// The hidden scalar locals set once, as `copy = source` with a scalar
+/// The hidden scalar locals given only copies of one local, `copy = source`
+/// (once, or on each copy of a loop that versioning made), with a scalar
 /// source of the same type whose address is never taken, and named nowhere
 /// but as a value read; each with where it is set.
-fn candidates(body: &Body, types: &TypeTable) -> Vec<(LocalId, usize, usize)> {
+fn candidates(body: &Body, types: &TypeTable) -> Vec<(LocalId, Vec<(usize, usize)>)> {
     let n = body.locals.len();
-    let mut def: Vec<Option<(usize, usize, LocalId)>> = vec![None; n];
+    let mut source_of: Vec<Option<LocalId>> = vec![None; n];
+    let mut defs: Vec<Vec<(usize, usize)>> = vec![Vec::new(); n];
     let mut other = vec![false; n];
     let mut taken = vec![false; n];
     for (block, data) in body.blocks.iter().enumerate() {
@@ -54,9 +56,12 @@ fn candidates(body: &Body, types: &TypeTable) -> Vec<(LocalId, usize, usize)> {
                     let local = place.local.0 as usize;
                     match rvalue {
                         Rvalue::Use(Operand::Copy(source) | Operand::Move(source))
-                            if place.projection.is_empty() && source.projection.is_empty() && def[local].is_none() =>
+                            if place.projection.is_empty()
+                                && source.projection.is_empty()
+                                && source_of[local].is_none_or(|seen| seen == source.local) =>
                         {
-                            def[local] = Some((block, index, source.local));
+                            source_of[local] = Some(source.local);
+                            defs[local].push((block, index));
                         }
                         _ => other[local] = true,
                     }
@@ -86,7 +91,7 @@ fn candidates(body: &Body, types: &TypeTable) -> Vec<(LocalId, usize, usize)> {
             let decl = body.local(copy);
             let hidden = matches!(decl.kind, LocalKind::Temp)
                 || (matches!(decl.kind, LocalKind::User) && decl.name.as_deref().is_none_or(str::is_empty));
-            let (block, index, source) = def[local]?;
+            let source = source_of[local]?;
             let fits = hidden
                 && !other[local]
                 && !taken[local]
@@ -95,25 +100,26 @@ fn candidates(body: &Body, types: &TypeTable) -> Vec<(LocalId, usize, usize)> {
                 && !taken[source.0 as usize]
                 && body.local(source).ty == decl.ty
                 && scalar(types, body, copy);
-            fits.then_some((copy, block, index))
+            fits.then(|| (copy, defs[local].clone()))
         })
         .collect()
 }
 
-/// Replaces the reads of `copy`, set by statement `def_index` of block
-/// `def_block`, by its source where the source still holds the value copied;
-/// removes the copy once nothing reads it. Returns how many reads changed.
-fn propagate(body: &mut Body, copy: LocalId, def_block: usize, def_index: usize) -> usize {
-    // An earlier copy's reads, replaced this round, may have changed the source.
-    let StmtKind::Assign { rvalue: Rvalue::Use(Operand::Copy(source) | Operand::Move(source)), .. } =
-        &body.blocks[def_block].stmts[def_index].kind
-    else {
-        return 0;
+/// Replaces the reads of `copy`, set by the statements `defs` (block,
+/// index), by its source where the source still holds the value copied;
+/// removes the copies once nothing reads it. Returns how many reads changed.
+fn propagate(body: &mut Body, copy: LocalId, defs: &[(usize, usize)]) -> usize {
+    // An earlier copy's reads, replaced this round, may have changed a
+    // source: every statement must still copy the same one.
+    let source_at = |(block, index): (usize, usize)| match &body.blocks[block].stmts[index].kind {
+        StmtKind::Assign { rvalue: Rvalue::Use(Operand::Copy(source) | Operand::Move(source)), .. } => Some(source.local),
+        _ => None,
     };
-    let source = source.local;
-    if source == copy {
+    let Some(source) = defs.first().and_then(|&def| source_at(def)) else { return 0 };
+    if source == copy || defs.iter().any(|&def| source_at(def) != Some(source)) {
         return 0;
     }
+    let is_def = |block: usize, index: usize| defs.contains(&(block, index));
 
     // Where `copy == source` holds: after the copy, until the source is
     // written or its storage begins or ends. A must-analysis: every path in.
@@ -133,7 +139,7 @@ fn propagate(body: &mut Body, copy: LocalId, def_block: usize, def_index: usize)
     };
     let out_of = |block: usize, mut holds: bool| {
         for (index, stmt) in body.blocks[block].stmts.iter().enumerate() {
-            if block == def_block && index == def_index {
+            if is_def(block, index) {
                 holds = true;
             } else if kills(&stmt.kind) {
                 holds = false;
@@ -201,7 +207,7 @@ fn propagate(body: &mut Body, copy: LocalId, def_block: usize, def_index: usize)
                 swap(lhs, &mut replaced);
                 swap(rhs, &mut replaced);
             }
-            if block == def_block && index == def_index {
+            if is_def(block, index) {
                 holds = true;
             } else if kills(&stmt.kind) {
                 holds = false;
@@ -223,7 +229,9 @@ fn propagate(body: &mut Body, copy: LocalId, def_block: usize, def_index: usize)
         }
     }
     if replaced > 0 && !read_anywhere(body, copy) {
-        body.blocks[def_block].stmts[def_index].kind = StmtKind::Nop;
+        for &(block, index) in defs {
+            body.blocks[block].stmts[index].kind = StmtKind::Nop;
+        }
     }
     replaced
 }

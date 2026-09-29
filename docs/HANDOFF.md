@@ -11094,7 +11094,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   set does keeps a loop out of vectorisable form), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h44/` are frozen.
-* **Next numbers:** ODR-090, D-389, ADR-078, ERR-056.
+* **Next numbers:** ODR-090, D-389, ADR-079, ERR-056.
 * **Goal 2, implementation (2026-09-29, autonomous):** next is `[STD-19]`'s
   iterator adapters and `[CTL-3b]`'s counted lowering of adapter chains (the
   audit's `CTL-3b` gap; `for x in mutspan`, `.take/.skip/.enumerate/.zip/
@@ -11258,6 +11258,11 @@ first**; the rest of §0.355 is the running narrative behind it.
       done block by block (ADR-070 item 8); the same program with checks off
       runs at C speed. Proving it away would need element ranges for class
       fields across the program and totals bounded across nested loops.
+    * Adding two lists plus the round into a third (w13), MSVC: the C twin's
+      `restrict` lets MSVC turn its loops around (0.014 s against Ember's
+      0.043 s). Measured (ADR-078): Ember's loop in its own `noinline`
+      function with `restrict` list parameters and its constant round count
+      written in reaches 0.014 s. The owner approved building it.
     * Enum `match` on clang: 1.00x since ADR-077 (was 1.13x; the fill grew
       its list push by push against the C twin's single allocation): a
       counted loop that pushes on every turn asks for its room first (a hint

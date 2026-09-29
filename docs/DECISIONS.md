@@ -3020,3 +3020,30 @@ read-only review (three reviewers, a skeptic per finding) found no unsoundness; 
 versioned loops missed, the hint's copy where `realloc` grows in place, and the test gaps above, all
 fixed.
 
+## ADR-078 — copy propagation sees every copy of a versioned loop
+
+2026-09-29, autonomous (goal 1). ADR-075's copy propagation took a hidden local given one value,
+`copy = source`. Loop versioning (`[OPT-2]`) copies a loop's blocks, and with them the statement
+that holds a range's limit (`_22 = n` in the round loop of "Add two lists plus the round number into a third"), so the local is
+given the same copy two or three times and was left alone, as ADR-077's pass first missed the
+reference each copy makes. `copies.rs` now takes a local whose every value is a copy of the same
+source: each of those statements starts the stretch where the local and its source agree, a write of
+the source or its storage beginning or ending ends it, and all of them go once nothing reads the
+local.
+
+The adding-two-lists-plus-the-round row (w13) on MSVC loses its per-round copy but not its time:
+the C twin runs in 0.014 s on MSVC (Ember 0.043 s, clang's C 0.045 s). Its machine code shows why:
+MSVC turns the two loops around, so each position is read and written once and its 2,000 rounds run
+in a register; it may do that only because the twin's lists carry `restrict`. Measured by hand
+(scratchpad `wrap/demo/`): `restrict` added to Ember's C around the loop changes nothing, because
+MSVC acts on it only on the parameters of a function it keeps separate (or on pointers set straight
+from `malloc`); the loop moved into its own `noinline` function with `restrict` list parameters runs
+0.027 s, and 0.014 s (the twin's time) with the round count, a constant in the program, written into
+that function; the twin itself with a run-time count runs 0.026 s. The owner approved building that
+(next ADR).
+
+Measured: the full set against the pushed compiler (A/B, interleaved): every row within noise (the three that first read 1.06x to 1.09x: 0.99x to 1.01x over 31 to 41 runs; one of them had byte-identical C). Test:
+`OPT-2/accept_a_range_limit_is_read_once_in_every_copy_of_a_loop` (a limit held once, the variable
+it came from changed in the loop, the loop versioned: 25 and 9; break-tested: with the writes of the
+source ignored it prints 16 and 4).
+
