@@ -375,8 +375,10 @@ struct Lists {
     stores: BTreeMap<LocalId, Vec<Store>>,
     /// A shared view of a list (`as_span`): the list.
     views: BTreeMap<LocalId, LocalId>,
-    /// A shared reference to one element of a list or of such a view.
-    items: BTreeMap<LocalId, LocalId>,
+    /// A shared reference to one element of a list or of such a view: the
+    /// lists its writes reach (more than one when `a.chain(b)`'s loops share
+    /// it, ADR-083).
+    items: BTreeMap<LocalId, BTreeSet<LocalId>>,
 }
 
 pub(crate) struct Analysis<'a> {
@@ -594,20 +596,88 @@ impl<'a> Analysis<'a> {
                 views.insert(dest.local, list);
             }
         }
-        let mut items: BTreeMap<LocalId, LocalId> = BTreeMap::new();
+        // A local every whole write of which is `&xs[i]`, `&v[i]` or a copy of
+        // such a local: the lists those reach. A write of anything else, or
+        // a partial one, leaves it out.
+        let mut sources: BTreeMap<LocalId, Vec<Result<LocalId, LocalId>>> = BTreeMap::new();
+        let mut excluded: BTreeSet<LocalId> = BTreeSet::new();
         for block in &body.blocks {
             for stmt in &block.stmts {
-                let StmtKind::Assign { place, rvalue: Rvalue::Ref { place: target, mutable: false } } = &stmt.kind else { continue };
-                let list = if stores.contains_key(&target.local) { Some(target.local) } else { views.get(&target.local).copied() };
-                if let Some(list) = list
-                    && element(target)
-                    && place.projection.is_empty()
-                    && once(place.local)
-                {
-                    items.insert(place.local, list);
+                match &stmt.kind {
+                    StmtKind::Assign { place, rvalue } if place.projection.is_empty() => {
+                        let source = match rvalue {
+                            Rvalue::Ref { place: target, mutable: false } if element(target) => {
+                                if stores.contains_key(&target.local) {
+                                    Some(Ok(target.local))
+                                } else {
+                                    views.get(&target.local).map(|&list| Ok(list))
+                                }
+                            }
+                            Rvalue::Use(Operand::Copy(from) | Operand::Move(from))
+                                if from.projection.is_empty()
+                                    && matches!(self.types.kind(body.local(from.local).ty), TyKind::Ref { mutable: false, .. }) =>
+                            {
+                                Some(Err(from.local))
+                            }
+                            _ => None,
+                        };
+                        match source {
+                            Some(source) => sources.entry(place.local).or_default().push(source),
+                            None => {
+                                excluded.insert(place.local);
+                            }
+                        }
+                    }
+                    StmtKind::Assign { place, .. } => {
+                        excluded.insert(place.local);
+                    }
+                    StmtKind::CheckedBinaryOp { dest, overflow, .. } => {
+                        excluded.insert(dest.local);
+                        excluded.insert(overflow.local);
+                    }
+                    _ => {}
                 }
             }
+            if let Terminator::Call { dest, .. } = &block.terminator {
+                excluded.insert(dest.local);
+            }
         }
+        sources.retain(|local, _| !excluded.contains(local));
+        let mut items: BTreeMap<LocalId, BTreeSet<LocalId>> = BTreeMap::new();
+        // A copy's lists are its source's: settle them until nothing changes;
+        // a copy of a local that is not an item leaves the copy out.
+        loop {
+            let mut changed = false;
+            for (&local, writes) in &sources {
+                let mut lists = BTreeSet::new();
+                let mut known = true;
+                for source in writes {
+                    match source {
+                        Ok(list) => {
+                            lists.insert(*list);
+                        }
+                        Err(from) => match items.get(from) {
+                            Some(from_lists) => lists.extend(from_lists.iter().copied()),
+                            None => known = false,
+                        },
+                    }
+                }
+                if known && items.get(&local) != Some(&lists) {
+                    items.insert(local, lists);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        // Copies of copies that never settled (a copy of a non-item) stay out.
+        items.retain(|local, _| {
+            sources[local].iter().all(|source| match source {
+                Ok(_) => true,
+                Err(from) => sources.contains_key(from),
+            })
+        });
         // Every way in.
         for (b, block) in body.blocks.iter().enumerate() {
             for (s, stmt) in block.stmts.iter().enumerate() {
@@ -705,7 +775,7 @@ impl<'a> Analysis<'a> {
         }
         stores.retain(|list, _| !bad.contains(list));
         views.retain(|_, list| stores.contains_key(list));
-        items.retain(|_, list| stores.contains_key(list));
+        items.retain(|_, lists| lists.iter().all(|list| stores.contains_key(list)));
         Lists { stores, views, items }
     }
 
@@ -918,7 +988,15 @@ impl<'a> Analysis<'a> {
                 true => place.local,
                 false => *self.lists.views.get(&place.local)?,
             },
-            [Projection::Deref] => *self.lists.items.get(&place.local)?,
+            // Every list the reference may point into: the hull of theirs.
+            [Projection::Deref] => {
+                let mut hull: Option<Interval> = None;
+                for list in self.lists.items.get(&place.local)? {
+                    let range = *self.elements.get(list)?;
+                    hull = Some(hull.map_or(range, |hull| hull.hull(range)));
+                }
+                return hull;
+            }
             _ => return None,
         };
         self.elements.get(&list).copied()

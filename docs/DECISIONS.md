@@ -3173,3 +3173,49 @@ C, which writes two loops). Tests: `STD-19/accept_chain_gives_one_iterator_then_
 ranges, copies, empty either side, a first iterator that panics if asked again, adapters and
 `fold` after it) and `STD-19/reject_chain_of_a_different_item_type`.
 
+## ADR-083 — a `for` over `a.chain(b)` is one counted loop per part
+
+2026-09-30, autonomous (the owner: "resume the work", then "autonomous mode"). `[CTL-3b]`: a `for`
+over a chain of adapters is a counted loop with no iterator object. `chain` (ADR-082) ran through
+`Chain.next`: with one list of 1 million numbers chained to another, 300 rounds of
+`total ^= x + round`, Ember took 3.7x the C twin's time with MSVC and 2.3x with clang (the twin
+writes two loops).
+
+* **The loops.** `check_for_chained`: when every part of `a.chain(b)` (any number of them,
+  `a.chain(b).chain(c)` or `a.chain(b.chain(c))`) is a chain `fused_shape` accepts, and all give
+  the same shape, the `for` is one `ForRange` per part, each the next one's `else`. A `break` in a
+  part ends its loop and skips its `else`, so the rest never run, as `Chain` never asks `b` then;
+  `continue` goes on in the same part; the written `else` is the last part's, so it runs only when
+  no part breaks. Break depths are relative, and a `for`'s `else` is lowered after its loop leaves
+  the loop stack, so the body's `break` and `continue` mean the same in every part. Every part's
+  iterators and counts are evaluated first, in the order the calls make them (so a bad count in `b`
+  panics before `a` runs, as it does when `b.take(n)` is made). Each loop reads its item, leaf by
+  leaf, into hidden locals every loop shares; the pattern is bound from them and the body is
+  checked once, and each loop runs a copy (the checked program's statements are now `Clone`). A
+  `chain` under another adapter (`a.chain(b).enumerate()`, a `zip` over a chain) is not one loop,
+  and runs through `next` as before.
+* **Range facts through element references.** An element read through such a loop is `*r` with
+  `r = &v[i]` of a view of a list; `r` is written once per part, from a different list each, and
+  the pattern's name is a copy of it. `[RNG-4]`'s element ranges followed only a reference written
+  once from one list, so `x + round`, which cannot overflow, kept its check and the loop did not
+  vectorise (clang 1.8x). A local every whole write of which is an element reference or a copy of
+  one now reaches every list those do, and holds the hull of their element ranges. This holds for
+  every fused loop over a view, not only `chain`.
+* **Measured** (11 to 21 runs, the middle one), `total ^= x + round`, overflow checks on: clang
+  1.83x -> 1.03x, and 1.02x with checks off. The first version of the benchmark, `total ^= x ^
+  round`, read 1.16x with clang only because the twin's constant count let clang see that an even
+  number of `^ round` cancel; `+ round` compares the same work. With MSVC it stays 1.8x: MSVC does
+  not treat the running `total` as a reduction in a function where a list's header was passed to
+  a call (`push`), whatever the loop's form (a loop-carried dependence, reason 1200; a
+  block-local total, a `restrict` local and `#pragma loop(ivdep)` do not change that). Moved by
+  hand into a function of its own taking the view's pointer, the same loops run 0.117 s against the
+  twin's 0.116 s. That is the next change (MSVC only).
+* **Tests:** `CTL-3b/accept_a_for_over_a_chain_is_one_loop_per_part` (every part in order,
+  `break` in either part with and without `else`, `continue`, a labelled `break` from an inner
+  loop, adapted parts, ranges, copies, writing through `iter_mut`, `_`, and a `zip` over a chain
+  that runs through `next`), `CTL-3b/accept_a_for_over_a_chain_makes_no_iterator` (no `Chain.next`
+  in the C, two `for` loops; with the fusion off it finds `next` three times),
+  `RNG-4/accept_an_element_read_through_an_adapter_keeps_its_range` (no check left; two without
+  this change) and `RNG-4/run_fail_an_element_through_an_adapter_that_can_overflow_is_checked` (a
+  part holding `int.MAX` keeps the check and panics).
+

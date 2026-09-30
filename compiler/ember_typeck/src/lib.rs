@@ -6658,7 +6658,7 @@ impl<'a> Checker<'a> {
                 };
                 let Some(def) = registered else { return };
                 if interface.is("std.core.Iterator")
-                    && matches!(default.name.as_str(), "take" | "skip" | "step_by" | "enumerate" | "zip")
+                    && matches!(default.name.as_str(), "take" | "skip" | "step_by" | "enumerate" | "zip" | "chain")
                 {
                     self.iterator_adapters.insert(def, default.name);
                 }
@@ -18699,6 +18699,9 @@ impl<'a> Checker<'a> {
             {
                 let inner = self.fused_shape(&args[0])?;
                 Some(match self.adapter_name(*callee).expect("an adapter").as_str() {
+                    // Two loops, one after the other (`check_for_chained`):
+                    // under another adapter it is not one loop.
+                    "chain" => return None,
                     "zip" => FusedShape::Pair(Box::new(inner), Box::new(self.fused_shape(&args[1])?)),
                     "enumerate" => FusedShape::Pair(Box::new(FusedShape::Value), Box::new(inner)),
                     _ => inner,
@@ -18862,34 +18865,12 @@ impl<'a> Checker<'a> {
     ) -> Option<Stmt> {
         let incoming_class_init = self.class_init.clone();
         let usize_ty = self.common.usize;
-        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
         self.scopes.push(HashMap::new());
         let mut outer = Vec::new();
         let mut nodes = Vec::new();
         let (count, item, levels) = self.fuse_chain(chain, &mut nodes, &mut outer, span);
         let (count, end_check) = self.fused_numbers(count, &levels, &nodes, &mut outer, span);
-        let (start, end, inclusive) = match count {
-            FusedCount::Exact(n) => (Expr { ty: usize_ty, kind: ExprKind::Int(0), span }, local(n, usize_ty), false),
-            FusedCount::Last { nonempty, last, wide: false } => {
-                let one = Expr { ty: usize_ty, kind: ExprKind::Int(1), span };
-                let turns = self.wrapping(BinOp::Add, local(last, usize_ty), one, span);
-                let zero = Expr { ty: usize_ty, kind: ExprKind::Int(0), span };
-                let n = self.if_value(local(nonempty, self.common.bool_), turns, zero, usize_ty, span);
-                let n = self.hold_value(n, &mut outer);
-                (Expr { ty: usize_ty, kind: ExprKind::Int(0), span }, n, false)
-            }
-            // `0..=last`, or `1..=0` when there is nothing: an inclusive
-            // loop's end may be the top of `usize`.
-            FusedCount::Last { nonempty, last, wide: true } => {
-                let int = |value| Expr { ty: usize_ty, kind: ExprKind::Int(value), span };
-                let bool_ty = self.common.bool_;
-                let from = self.if_value(local(nonempty, bool_ty), int(0), int(1), usize_ty, span);
-                let to = self.if_value(local(nonempty, bool_ty), local(last, usize_ty), int(0), usize_ty, span);
-                let from = self.hold_value(from, &mut outer);
-                let to = self.hold_value(to, &mut outer);
-                (from, to, true)
-            }
-        };
+        let (start, end, inclusive) = self.fused_bounds(count, &mut outer, span);
         let index_local = self.declare(None, usize_ty, span);
 
         self.scopes.push(HashMap::new());
@@ -18917,6 +18898,172 @@ impl<'a> Checker<'a> {
         self.scopes.pop();
         outer.push(Stmt::ForRange { local: index_local, start, end, inclusive, body: Block { stmts: inner, span }, else_block });
         Some(Stmt::Block(Block { stmts: outer, span }))
+    }
+
+    /// `[CTL-3b]` — a fused loop's counter's first and last values: `0..n`,
+    /// or `0..=last` when a range may hold 2^64 values (`1..=0` when it holds
+    /// none: an inclusive loop's end may be the top of `usize`).
+    fn fused_bounds(&mut self, count: FusedCount, outer: &mut Vec<Stmt>, span: Span) -> (Expr, Expr, bool) {
+        let usize_ty = self.common.usize;
+        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        match count {
+            FusedCount::Exact(n) => (Expr { ty: usize_ty, kind: ExprKind::Int(0), span }, local(n, usize_ty), false),
+            FusedCount::Last { nonempty, last, wide: false } => {
+                let one = Expr { ty: usize_ty, kind: ExprKind::Int(1), span };
+                let turns = self.wrapping(BinOp::Add, local(last, usize_ty), one, span);
+                let zero = Expr { ty: usize_ty, kind: ExprKind::Int(0), span };
+                let n = self.if_value(local(nonempty, self.common.bool_), turns, zero, usize_ty, span);
+                let n = self.hold_value(n, outer);
+                (Expr { ty: usize_ty, kind: ExprKind::Int(0), span }, n, false)
+            }
+            FusedCount::Last { nonempty, last, wide: true } => {
+                let int = |value| Expr { ty: usize_ty, kind: ExprKind::Int(value), span };
+                let bool_ty = self.common.bool_;
+                let from = self.if_value(local(nonempty, bool_ty), int(0), int(1), usize_ty, span);
+                let to = self.if_value(local(nonempty, bool_ty), local(last, usize_ty), int(0), usize_ty, span);
+                let from = self.hold_value(from, outer);
+                let to = self.hold_value(to, outer);
+                (from, to, true)
+            }
+        }
+    }
+
+    /// `[CTL-3b]` — the parts of a `chain` a `for` runs (ADR-083):
+    /// `a.chain(b)` is `a`'s parts, then `b`'s, in the order the calls
+    /// evaluate them, when each part is a chain one counted loop can run;
+    /// `None` otherwise.
+    fn chained_parts(&self, e: &Expr) -> Option<Vec<FusedShape>> {
+        match &e.kind {
+            ExprKind::Call { callee, args, latebound: false, .. }
+                if args.len() == 2 && self.adapter_name(*callee).is_some_and(|name| name.is("chain")) =>
+            {
+                let mut parts = self.chained_parts(&args[0])?;
+                parts.extend(self.chained_parts(&args[1])?);
+                Some(parts)
+            }
+            _ => Some(vec![self.fused_shape(e)?]),
+        }
+    }
+
+    /// `[CTL-3b]` — the chains `chained_parts` accepted, taken apart.
+    fn take_chained_parts(&self, e: Expr, parts: &mut Vec<FusedChain>) {
+        let Expr { ty, kind, span } = e;
+        match kind {
+            ExprKind::Call { callee, mut args, .. } if self.adapter_name(callee).is_some_and(|name| name.is("chain")) => {
+                let second = args.pop().expect("`chain`'s argument");
+                let first = args.pop().expect("`chain`'s receiver");
+                self.take_chained_parts(first, parts);
+                self.take_chained_parts(second, parts);
+            }
+            kind => parts.push(self.take_fused_chain(Expr { ty, kind, span })),
+        }
+    }
+
+    /// `[CTL-3b]` — `for pattern in a.chain(b):` as one counted loop per
+    /// part, each the next one's `for ... else` (ADR-083): a `break` in one
+    /// leaves the rest unrun, as `Chain` never asks `b` then, and the written
+    /// `else` is the last loop's. Every part's iterators and counts are
+    /// evaluated first, in order, as the calls make them. Each loop reads its
+    /// item into hidden locals every loop shares; the pattern is bound from
+    /// them and the body checked once, and each loop runs a copy.
+    #[allow(clippy::too_many_arguments)]
+    fn check_for_chained(
+        &mut self,
+        label: Option<ast::Ident>,
+        pattern: &ast::Pattern,
+        parts: Vec<FusedChain>,
+        body: &ast::Block,
+        else_block: &Option<ast::Block>,
+        span: Span,
+    ) -> Option<Stmt> {
+        let incoming_class_init = self.class_init.clone();
+        let usize_ty = self.common.usize;
+        self.scopes.push(HashMap::new());
+        let mut outer = Vec::new();
+        let mut segments = Vec::new();
+        for chain in parts {
+            let mut nodes = Vec::new();
+            let (count, item, levels) = self.fuse_chain(chain, &mut nodes, &mut outer, span);
+            let (count, end_check) = self.fused_numbers(count, &levels, &nodes, &mut outer, span);
+            let bounds = self.fused_bounds(count, &mut outer, span);
+            let index = self.declare(None, usize_ty, span);
+            segments.push((nodes, item, end_check, bounds, index));
+        }
+
+        self.scopes.push(HashMap::new());
+        let mut held: Vec<(LocalId, Ty)> = Vec::new();
+        let mut shared_item = None;
+        let mut loops = Vec::new();
+        for (nodes, item, end_check, bounds, index) in segments {
+            let mut values: Vec<Option<Expr>> =
+                nodes.iter().map(|node| Some(self.fused_node_value(node, index, span))).collect();
+            if shared_item.is_none() {
+                shared_item = Some(Self::fused_leaves_renumbered(&item, &mut 0));
+            }
+            let mut leaves = Vec::new();
+            self.fused_item_leaves(item, &mut values, &mut leaves);
+            if held.is_empty() {
+                held = leaves.iter().map(|leaf| (self.declare(None, leaf.ty, span), leaf.ty)).collect();
+            }
+            debug_assert!(leaves.len() == held.len() && leaves.iter().zip(&held).all(|(leaf, &(_, ty))| leaf.ty == ty));
+            let prefix: Vec<Stmt> =
+                held.iter().zip(leaves).map(|(&(local, _), leaf)| Stmt::Let { local, init: Some(leaf) }).collect();
+            loops.push((index, bounds, prefix, end_check));
+        }
+        let mut body_stmts = Vec::new();
+        let mut values: Vec<Option<Expr>> =
+            held.iter().map(|&(local, ty)| Some(Expr { ty, kind: ExprKind::Local(local), span })).collect();
+        self.bind_fused_item(pattern, shared_item.expect("a chain has parts"), &mut values, &mut body_stmts, span);
+        self.loop_labels.push(label.map(|l| l.name));
+        let checked = self.check_block(body);
+        self.loop_labels.pop();
+        self.scopes.pop();
+        body_stmts.extend(checked.stmts);
+
+        let body_class_init = self.class_init.clone();
+        if else_block.is_some() && incoming_class_init.is_some() {
+            self.class_init = Self::merge_class_init_paths(incoming_class_init, body_class_init);
+        }
+        let mut tail: Vec<Stmt> = else_block.as_ref().map(|b| self.check_block(b).stmts).unwrap_or_default();
+        self.scopes.pop();
+        for (index, (start, end, inclusive), prefix, end_check) in loops.into_iter().rev() {
+            let otherwise: Vec<Stmt> = end_check.into_iter().chain(tail).collect();
+            let else_block = (!otherwise.is_empty()).then(|| Block { stmts: otherwise, span });
+            let mut stmts = prefix;
+            stmts.extend(body_stmts.iter().cloned());
+            tail = vec![Stmt::ForRange { local: index, start, end, inclusive, body: Block { stmts, span }, else_block }];
+        }
+        outer.extend(tail);
+        Some(Stmt::Block(Block { stmts: outer, span }))
+    }
+
+    /// A fused item's values, leaf by leaf, left to right (a copied one
+    /// copied).
+    fn fused_item_leaves(&mut self, item: FusedItem, values: &mut [Option<Expr>], out: &mut Vec<Expr>) {
+        match item {
+            FusedItem::Node { node, copied } => {
+                let value = values[node].take().expect("each node is bound once");
+                out.push(if copied { self.read_through(value) } else { value });
+            }
+            FusedItem::Pair(a, b) => {
+                self.fused_item_leaves(*a, values, out);
+                self.fused_item_leaves(*b, values, out);
+            }
+        }
+    }
+
+    /// The same tree over its leaves numbered left to right from `next`.
+    fn fused_leaves_renumbered(item: &FusedItem, next: &mut usize) -> FusedItem {
+        match item {
+            FusedItem::Node { .. } => {
+                *next += 1;
+                FusedItem::Node { node: *next - 1, copied: false }
+            }
+            FusedItem::Pair(a, b) => FusedItem::Pair(
+                Box::new(Self::fused_leaves_renumbered(a, next)),
+                Box::new(Self::fused_leaves_renumbered(b, next)),
+            ),
+        }
     }
 
     /// `value` in a new hidden local.
@@ -21628,6 +21775,16 @@ impl<'a> Checker<'a> {
             return self.check_for_indexed(label, (iterable, elem), pattern, false, false, None, body, else_block, span);
         }
 
+        // `[CTL-3b]` — `a.chain(b)` over such chains is one counted loop for
+        // each part (ADR-083), when every part gives the same shape.
+        if let Some(parts) = self.chained_parts(&iterable)
+            && parts.len() > 1
+            && parts.iter().all(|shape| *shape == parts[0] && Self::fused_pattern_fits(pattern, shape))
+        {
+            let mut chains = Vec::new();
+            self.take_chained_parts(iterable, &mut chains);
+            return self.check_for_chained(label, pattern, chains, body, else_block, span);
+        }
         // `[CTL-3b]` — a chain of adapters over a view's or a range's
         // iterator is one counted loop.
         if let Some(shape) = self.fused_shape(&iterable)

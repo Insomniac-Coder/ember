@@ -223,13 +223,13 @@ impl Function {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Block {
     pub stmts: Vec<Stmt>,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Stmt {
     /// Bring a local into scope, optionally initialised.
     Let { local: LocalId, init: Option<Expr> },
@@ -265,13 +265,13 @@ pub enum Stmt {
     Continue { depth: usize },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum DestructureBinding {
     Let { local: LocalId, value: Expr },
     Assign { place: Expr, value: Expr },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Expr {
     pub ty: Ty,
     pub kind: ExprKind,
@@ -297,7 +297,7 @@ pub struct InterfaceAdapterSlot {
     pub receiver: Mode,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ExprKind {
     /// An integer literal, already narrowed to `ty`.
     Int(u128),
@@ -464,7 +464,7 @@ pub enum ExprKind {
 }
 
 /// One piece of an f-string: literal text, or a value to format into it.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum FStringPart {
     Text(String),
     /// A value, and how `{x:spec}`, `{x!r}` or `{x=}` asks for it to be
@@ -585,7 +585,7 @@ impl FormatSpec {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct MatchArm {
     pub pattern: Pattern,
     /// `case p if c:` — a guard runs after the pattern matches, and a guard
@@ -597,21 +597,21 @@ pub struct MatchArm {
 
 /// `[GRM-10]` — statement arms are blocks, expression arms are expressions.
 /// One `match` never mixes them; the parser rejects that with `E0103`.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum MatchArmBody {
     Block(Block),
     Expr(Expr),
 }
 
 /// A pattern with its type resolved and its bindings already given locals.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Pattern {
     pub ty: Ty,
     pub kind: PatternKind,
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum PatternKind {
     /// `_`, and anything that always matches.
     Wild,
