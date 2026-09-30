@@ -11154,8 +11154,8 @@ first**; the rest of §0.355 is the running narrative behind it.
   MSVC and clang; through `next` it was 10x C under MSVC). `[ERR-4]`'s
   `Option.take`/`replace` added (std, `mem.replace`); `as_ref`, `as_mut`,
   `iter` and `filter` of a borrowing lambda remain (Part XIII). Blocked:
-  `flat_map`, `flatten`, `peekable`, `collect[C]()` and `join` hit five
-  associated-type limits, D-407 (open, with a proposed design; ask the
+  `flat_map`, `flatten`, `peekable`, `collect[C]()` and `join` hit six
+  limits, D-407 (the first fixed; open, with a proposed design; ask the
   owner before changing how generic types are instantiated; `collect` and
   `peekable`'s API also need a ruling, ODR-094). Then `[CLO-3]`'s owned
   callable values. **Review wanted (2026-10-01):**

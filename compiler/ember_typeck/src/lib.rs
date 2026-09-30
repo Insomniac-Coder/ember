@@ -4803,7 +4803,11 @@ impl<'a> Checker<'a> {
         // methods) has signatures only: its bodies are checked once for the
         // type itself (`check_generic_type_methods`), with the right bounds
         // in scope, and again for each concrete instance. D-250.
-        let opaque = owner_bindings.iter().any(|&(_, bound)| self.types.is_generic(bound));
+        // D-407 — so is one over an associated type not yet read as a
+        // type's (`Wrap[Ints, Self.Item]`, made while a default's signature
+        // is compared before its `Item` is resolved): its bodies would be
+        // checked against `Self.Item`.
+        let opaque = owner_bindings.iter().any(|&(_, bound)| self.types.is_generic(bound) || self.mentions_assoc(bound));
         if !opaque && let Some(owner) = self.opaque_owner(ty) {
             let mut declared = Vec::new();
             if method.receiver.is_some() {
@@ -8361,6 +8365,12 @@ impl<'a> Checker<'a> {
             ),
             _ => (TyShape::Leaf(ty), Vec::new()),
         }
+    }
+
+    /// Whether `ty` mentions an associated type not yet read as a type's
+    /// (`Self.Item` in a default method's signature).
+    fn mentions_assoc(&self, ty: Ty) -> bool {
+        matches!(self.types.kind(ty), TyKind::Assoc { .. }) || self.ty_shape(ty).1.iter().any(|&arg| self.mentions_assoc(arg))
     }
 
     /// What `ty`, read on `side`, stands for: a parameter already made

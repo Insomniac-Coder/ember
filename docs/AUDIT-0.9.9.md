@@ -29,10 +29,10 @@ are migrated or retired with the construct, each named in the progress log.
 
 | Rule | Part | Rule text (Appendix I) | Status | Notes |
 |---|---|---|---|---|
-| `[VER-1]` | ? |  | not yet probed | |
-| `[TIER-1]` | I | Safe code MUST NOT invoke an operation with an unverifiable … | not yet probed | |
-| `[PHIL-2]` | I | No heap allocation happens that the source does not show. The … | not yet probed | |
-| `[PHIL-10]` | I | A program containing no `unsafe` block, no `unsafe fn` and no false … | not yet probed | |
+| `[VER-1]` | front | Three version numbers exist and move independently: language, compiler, runtime ABI | compliant | probed 2026-10-01: `ember --version` is the compiler's (0.1.0); the language version is `ember_parser::LANGUAGE_VERSION` (the `#! language` check); the runtime's is `ember_rt_abi_version()` |
+| `[TIER-1]` | I | Safe code MUST NOT invoke an operation with an unverifiable … | compliant (by the rows it rests on) | a principle, probed through its rules rather than on its own: `[UNS-1]`'s `unsafe` for raw memory (`std.mem.alloc` and the rest need it), `[FFI-10]`'s `unsafe extern`, `[GRM-35]`'s overlays; no attribute or profile adds a boundary |
+| `[PHIL-2]` | I | No heap allocation happens that the source does not show. The … | gap | probed 2026-10-01: the allocating forms are the ones listed (collections, f-strings, `String` literals at a `String` site, growth); `ember inspect --alloc` does not exist (`unknown inspect option`), and the `Alloc` effect waits for the effect system (Phase 4) |
+| `[PHIL-10]` | I | A program containing no `unsafe` block, no `unsafe fn` and no false … | compliant (by the rows it rests on) | the invariant of the ownership, borrow, bounds, range (`[RNG-9]`: D-392 and D-398 closed two ways safe code made an invalid range value), initialisation and overflow rows; each defect that broke it is in `docs/DEFECTS.md` |
 | `[LEX-2]` | II | Line endings are LF or CRLF, both normalised to LF before … | ok | probed 2026-09-25: a CRLF file compiles and runs |
 | `[LEX-10]` | II | There are no block comments. A line beginning `#!` before the first … | ok | probed 2026-09-25: a `#!` line after the first item is a comment |
 | `[LEX-11]` | II | A `##` comment attaches to the next declaration, ignoring blank … | ok | probed 2026-09-25: a `##` comment before nothing, and one ending a code line, are silent |
