@@ -3379,3 +3379,33 @@ lambda's constant and the `clamp` case added to the tests above and a grouping n
 definition, the float-fact rule, the relaxed flags, the `[SIMD-5]` admission, the lambda's mode,
 the class defaults' strictness, the bodyless-method check or the finite-math exclusion, its test
 fails.
+
+## ADR-086 — for MSVC, a counted loop runs on block-local copies of the numbers it sets
+
+2026-09-30. ADR-085's strict dot product (two lists of 4 million numbers, 300 rounds, scratchpad
+`fpbench/`) ran 1.17x its C twin with MSVC (1.119 s against 0.954 s) and 1.05x with clang. Both
+loops are one multiply and one add per element on one register chain; MSVC unrolled the C loop
+four times (ten when the C `dot` is inlined into `main`, as ADR-081 inlines Ember's) and Ember's
+not at all. Reduced by hand (`fpbench/unroll_variants.py`, assembly only): its own counter or one
+index copy changed nothing; loading the list pointers once before the loop, or keeping the total
+in a block-local copy, each made MSVC unroll it four times. Ember's total is a variable of the
+whole function, set in the loop and read after it: MSVC does not unroll a loop that sets one, as
+ADR-070 item 7 found it does not vectorise one.
+
+`emit_for_loop` now wraps a counted loop that sets such a variable, for MSVC:
+`{ T _7_in = _7; { T _7 = _7_in; for (...) {...} _7_in = _7; } _7 = _7_in; }`. The inner block
+redeclares the name, so the loop's C is unchanged. The variables are the integer and float
+locals the loop's statements set whole, other than the counter and the loop's own temporaries,
+whose address the function never takes (no reference could reach the copy instead), that are not
+parameters, view pointers or folded tests (`carried_scalars`).
+
+Measured, median of 15: MSVC 1.119 s -> 0.967 s, 1.01x the C twin (0.954 s). The 39 benchmark
+programs with MSVC: 0.97x to 1.03x, the same outputs. With clang the copies were not neutral:
+`a01_int_math` ran 1.25x slower (21 runs), because clang then used 64-bit division by 3 and 5
+where the loop's counter had let it use 32-bit ones, and `w13_checked` 1.12x. clang unrolls
+either form, so its C keeps the totals where they are (`emit`'s `for_msvc`, from the driver's
+`c_for_msvc`), and its C is byte for byte what it was. Tests:
+`CTL-3b/accept_a_running_total_keeps_its_results` (five totals: float, integer, two in one loop,
+one read after a loop reading it inside; the results on every compiler) and the milestone
+`loop_totals_are_block_local_copies_for_msvc` (ten copy lines for MSVC, none for clang);
+break-tested (without the copies the milestone fails).

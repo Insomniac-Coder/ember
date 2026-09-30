@@ -11094,7 +11094,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   adapters' counts), pinned in `docs/spec-source/development-target.json`.
   The spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/`
   through `parts-h45/` are frozen.
-* **Next numbers:** ODR-091, D-394, ADR-086, ERR-056.
+* **Next numbers:** ODR-091, D-394, ADR-087, ERR-056.
 * **`[TYP-9]` `@fastmath` and `@fp(contract)` (2026-09-30, ADR-085, ODR-090,
   Hardened_45).** Built for programs: a C unit per float mode, compiled with
   its flags (`[CG-C-11]`); lambdas take their function's mode; a default
@@ -11115,9 +11115,12 @@ first**; the rest of §0.355 is the running narrative behind it.
   unchanged). D-392 is **fixed** (next commit after ADR-085's): a float
   range type held NaN through a comparison's false arm and infinity through a
   one-sided fact; float facts now come only from a comparison's true arm
-  (`[RNG-4a]`). **Next:** the strict MSVC dot product (scratchpad `fpbench/`, 1.25x C, cause not found: ADR-081
-  inlines `dot` into `main`, where MSVC does not unroll it, and C inlined the
-  same way runs 0.80 s against Ember's 1.10 s); then the goal-2 list below.
+  (`[RNG-4a]`). The strict MSVC dot product is at C's speed (ADR-086: MSVC
+  did not unroll a loop setting a function-wide total, so the loop runs on a
+  block-local copy; 1.17x -> 1.01x). **Next:** `rev` (`[STD-19]` "where the
+  iterator can run backwards" needs a ruling first, ODR-091: which iterators
+  run backwards, and `[CTL-3b]` needs `rev` over ranges and views as counted
+  loops); then the goal-2 list below.
 * **Goal 2, implementation (2026-09-29, autonomous):** next is `[STD-19]`'s
   iterator adapters and `[CTL-3b]`'s counted lowering of adapter chains (the
   audit's `CTL-3b` gap; `for x in mutspan`, `.take/.skip/.enumerate/.zip/

@@ -2353,6 +2353,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         program.main.is_some() && !staticlib,
         options.leak_check,
         staticlib,
+        c_for_msvc(&options),
     );
     if header_requested && !(staticlib && options.emit.is_none()) {
         let target_dir = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target"));

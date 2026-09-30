@@ -122,6 +122,7 @@ pub fn emit(
     has_main: bool,
     leak_check: bool,
     library_mode: bool,
+    for_msvc: bool,
 ) -> Output {
     let bodies = mir.bodies();
     let types = mir.types();
@@ -146,6 +147,7 @@ pub fn emit(
         out: String::new(),
         unit,
         split,
+        for_msvc,
         library_mode,
         type_namespace,
         line_directives: true,
@@ -346,6 +348,9 @@ struct Emitter<'a> {
     unit: Option<FpMode>,
     /// `[CG-C-11]` — the program has relaxed units besides the main one.
     split: bool,
+    /// The C is for MSVC, whose loop optimiser wants some shapes clang and
+    /// gcc do not (`carried_scalars`).
+    for_msvc: bool,
     library_mode: bool,
     type_namespace: String,
     line_directives: bool,
@@ -4172,6 +4177,22 @@ impl Emitter<'_> {
     /// whose counter steps by one in its header; clang takes any loop. The
     /// body's blocks follow one another with no jump, their checks inline.
     fn emit_for_loop(&mut self, counted: &ForLoop, body: &Body, locals: &[usize]) {
+        // A function-wide scalar the loop sets (a running total) is copied
+        // into a block-local of the same name for the loop and back after
+        // it: MSVC does not unroll a loop setting a function-wide variable.
+        // An inner block may redeclare a name, so the body's C is unchanged.
+        // For MSVC only: clang then lost a range it had used (ADR-086).
+        let carried = self.carried_scalars(counted, body, locals);
+        if !carried.is_empty() {
+            self.line("    {");
+            for &local in &carried {
+                self.line(&format!("    {} _{local}_in = _{local};", self.c_type(body.locals[local].ty)));
+            }
+            self.line("    {");
+            for &local in &carried {
+                self.line(&format!("    {} _{local} = _{local}_in;", self.c_type(body.locals[local].ty)));
+            }
+        }
         let test = if counted.inclusive { "<=" } else { "<" };
         self.line(&format!(
             "    for (; _{counter} {test} _{limit}; ++_{counter}) {{",
@@ -4203,7 +4224,63 @@ impl Emitter<'_> {
             }
         }
         self.line("    }");
+        if !carried.is_empty() {
+            for &local in &carried {
+                self.line(&format!("    _{local}_in = _{local};"));
+            }
+            self.line("    }");
+            for &local in &carried {
+                self.line(&format!("    _{local} = _{local}_in;"));
+            }
+            self.line("    }");
+        }
         self.line(&format!("    goto bb{};", counted.exit));
+    }
+
+    /// The function-wide scalars `counted` sets, whose address the function
+    /// never takes (no reference could see the copy instead of the local).
+    /// Not the counter, which the `for` header steps, nor a local the loop
+    /// declares itself (`locals`).
+    fn carried_scalars(&self, counted: &ForLoop, body: &Body, locals: &[usize]) -> Vec<usize> {
+        if !self.for_msvc {
+            return Vec::new();
+        }
+        let mut set = BTreeSet::new();
+        for &block in &counted.chain {
+            for stmt in &body.blocks[block].stmts {
+                let place = match &stmt.kind {
+                    StmtKind::Assign { place, .. } => place,
+                    StmtKind::CheckedBinaryOp { dest, .. } => dest,
+                    _ => continue,
+                };
+                if place.projection.is_empty() {
+                    set.insert(place.local.0 as usize);
+                }
+            }
+        }
+        let referenced: BTreeSet<usize> = body
+            .blocks
+            .iter()
+            .flat_map(|block| &block.stmts)
+            .filter_map(|stmt| match &stmt.kind {
+                StmtKind::Assign { rvalue: Rvalue::Ref { place, .. }, .. } => Some(place.local.0 as usize),
+                _ => None,
+            })
+            .collect();
+        set.into_iter()
+            .filter(|&local| {
+                local != counted.counter.0 as usize
+                    && !locals.contains(&local)
+                    && !referenced.contains(&local)
+                    && !self.view_pointers.contains_key(&local)
+                    && !self.folded_tests.contains_key(&local)
+                    && body.locals[local].kind != LocalKind::Arg
+                    && matches!(
+                        self.types.kind(body.locals[local].ty),
+                        TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(FloatTy::F32 | FloatTy::F64)
+                    )
+            })
+            .collect()
     }
 
     /// After a view with a pointer of its own is set, its pointer is too.

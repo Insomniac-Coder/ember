@@ -1700,6 +1700,27 @@ fn loop_nests_carrying_a_running_value_get_their_own_function_for_msvc() {
     assert!(!clang.stdout.contains(&main_loop), "clang keeps every loop in place:\n{}", clang.stdout);
 }
 
+/// ADR-086 — for MSVC, which does not unroll a loop setting a variable of the
+/// whole function, a counted loop runs on a block-local copy of each number it
+/// sets (`double _7 = _7_in;` inside, `_7 = _7_in;` after): five totals, two
+/// lines each. clang lost a range it had used with the copies, so its C keeps
+/// the totals where they are.
+#[test]
+fn loop_totals_are_block_local_copies_for_msvc() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/CTL-3b/accept_a_running_total_keeps_its_results.{SOURCE_EXT}");
+    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
+    assert_eq!(msvc.exit, 0, "msvc C failed:
+{}", msvc.stderr);
+    assert_eq!(msvc.stdout.lines().filter(|line| line.ends_with("_in;")).count(), 10, "five totals copied in and back:
+{}", msvc.stdout);
+    let clang = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    assert_eq!(clang.exit, 0, "clang C failed:
+{}", clang.stderr);
+    assert!(!clang.stdout.lines().any(|line| line.ends_with("_in;")), "clang keeps the totals in place:
+{}", clang.stdout);
+}
+
 /// `[PHIL-5]` — at the end of `main` the process ends: release and shipping
 /// builds leave the list of objects with no `drop` to the operating system
 /// (one `free` fewer in `main`), and keep every drop that runs a `drop`
