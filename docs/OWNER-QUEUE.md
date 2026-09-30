@@ -63,6 +63,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-082 | **CLOSED** — `@ffi(immutable)` on a foreign static asserts a `const` C object and emits a matching declaration | Language / C interop / foreign statics | — | **No** — delegated, 2026-09-27, Hardened_38 |
 | ODR-083 | **CLOSED** — a static free-function export's `creator` thread is anchored to successful module initialization; repeated initialization does not transfer the contract, and reinitialization after shutdown establishes a new creator | Language / C interop / export thread contracts | — | **No** — delegated, 2026-09-27, Hardened_39 |
 | ODR-084 | **CLOSED** — `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts | Language / module attributes / arithmetic | — | **No** — delegated, 2026-09-27, Hardened_40 |
+| ODR-091 | **CLOSED** — an iterator runs backwards when it implements `DoubleEndedIterator` (`next_back`), whose method `rev` is; `ExactSizeIterator` gives `len`; ranges with an end, the views' element iterators, and the adapters over them where they can tell their last item | Library / iterators | — | **Yes** — delegated, 2026-10-01, Hardened_46 |
 | ODR-090 | **CLOSED** — a float mode is lexical, as the overflow policy is: a lambda takes its function's mode; a parameter default keeps its declaration's and a field default is strict wherever evaluated; inside `@fastmath` no range fact about a float is derived, and integer facts are unaffected; neither mode relaxes what the language defines exactly for NaN and infinity | Language / floating point / range facts | — | **Yes** — delegated, 2026-09-30, Hardened_45 |
 | ODR-089 | **CLOSED** — an iterator adapter or consumer takes the iterator it wraps; `take`, `skip`, `nth` and `step_by` count in `int`, and a negative count or index, or a step of zero or less, panics when the adapter is made or the consumer called | Library / iterators | — | **Yes** — delegated, 2026-09-29, Hardened_44 |
 | ODR-088 | **CLOSED** — a loop that divides integers by a divisor that is not a constant, or integers of 64 bits or more by a constant that is not a power of two, is not in vectorisable form, so its overflow checks stay one per operation | Language / cost / vectorisation | — | **Yes** — owner, 2026-09-28, Hardened_43 |
@@ -246,6 +247,39 @@ immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
+
+## ODR-091 — which iterators run backwards — **CLOSED**
+
+    ID:        ODR-091
+    Status:    CLOSED — ruled under the owner's delegation, 2026-10-01;
+               incorporated in 0.9.9_Hardened_46
+    Category:  LIBRARY / ITERATORS
+    Location:  Ember_v0.9.9_Hardened_45.md [STD-19], [CTL-3b], [MOD-5]
+
+**The question.** `[STD-19]` gives `rev` "where the iterator can run backwards" and `[CTL-3b]`
+makes `rev` over ranges and views a counted loop, but nothing says which iterators can, how a
+program or a bound says so, or what `enumerate`, `zip`, `take`, `skip` and `step_by` give
+backwards.
+
+**Options.**
+1. `rev` on every iterator, collecting the items first. It allocates, which `[STD-19]` forbids an
+   adapter ("allocate nothing themselves"), and never ends on an endless iterator.
+2. `rev` on the built-in iterators only (ranges, views), answered by the checker. A user's
+   iterator could never run backwards, and a generic function could not ask for one.
+3. An interface, as the operator interfaces are: `DoubleEndedIterator` (`next_back`, `rev` its
+   method) and `ExactSizeIterator` (`len`), implemented by std for what can, in the file. The
+   length is what lets an adapter find its last item: `take(3)`'s last is the third, which only a
+   known length locates from the back.
+
+**Ruling: 3**, with Rust's semantics for the adapters, which every language with double-ended
+iterators shares: `copied`, `cloned` and `chain` run backwards when what they wrap does; `take`,
+`skip`, `step_by`, `enumerate` and `zip` when it also knows its length, giving the items `next`
+would, last first. The ranges with an end and the views' element iterators are both; an endless
+range, a view's chunks and windows, and the map and set iterators are neither (a later ruling may
+add chunks and windows). Run backwards, `enumerate` numbers its last item first, so a number past
+`int`'s top panics at the first item, as `enumerate` forwards panics at the item that passes it
+(ODR-089). The interfaces are `std.core`'s, not prelude names: `[MOD-5]`'s list is the only
+definition, and a program calls `rev` without naming either.
 
 ## ODR-090 — where a float mode holds — **CLOSED**
 

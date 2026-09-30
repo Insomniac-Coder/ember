@@ -190,8 +190,10 @@ pub fn check(
     }
     // Interfaces must be available before ordinary function signatures are
     // resolved: `ref dyn I` names an interface in the signature itself, not
-    // only in a later method/implementation body.
-    for (index, loaded) in modules.iter().enumerate() {
+    // only in a later method/implementation body. Dependencies first, as the
+    // recipes above: a child interface names its parents' associated types
+    // (`[IFC-3]`, D-394), so a parent is collected before it.
+    for (index, loaded) in modules.iter().enumerate().rev() {
         checker.current_module = index;
         checker.collect_interfaces(&loaded.module);
     }
@@ -421,6 +423,8 @@ enum FusedLink {
     Enumerate(Expr),
     Zip(FusedChain),
     Copied,
+    /// ODR-091 — the items below, last first.
+    Rev,
 }
 
 /// What a fusable chain gives: a reference into a view, a value, or a pair.
@@ -453,6 +457,9 @@ enum FusedStep {
     Skip(LocalId),
     /// `step_by`: the index is this many times on.
     StepBy(LocalId),
+    /// ODR-091 — `rev`: the index is counted down from this one, the last
+    /// below it.
+    Rev(LocalId),
 }
 
 enum FusedItem {
@@ -5697,9 +5704,50 @@ impl<'a> Checker<'a> {
     /// `[MOD-4]` allows import cycles inside a package, so there is no order
     /// that would have made it work — the pass has to be whole-program, as the
     /// name pass above it already is.
+    /// A parent in the same module is collected before its children,
+    /// whatever their order in the file (D-394): each round collects the
+    /// interfaces whose parents here are all collected.
     fn collect_interfaces(&mut self, module: &ast::Module) {
+        let here: HashSet<Symbol> = module
+            .items
+            .iter()
+            .filter_map(|item| match &item.kind {
+                ast::ItemKind::Interface(decl) => Some(decl.name.name),
+                _ => None,
+            })
+            .collect();
+        let mut done: HashSet<Symbol> = HashSet::new();
+        loop {
+            let mut progress = false;
+            for (item_index, item) in module.items.iter().enumerate() {
+                let ast::ItemKind::Interface(decl) = &item.kind else { continue };
+                if done.contains(&decl.name.name) {
+                    continue;
+                }
+                let waits = decl.supertraits.iter().any(|parent| match &parent.kind {
+                    ast::TypeKind::Path { segments, .. } => matches!(segments.as_slice(),
+                        [segment] if segment.name != decl.name.name
+                            && here.contains(&segment.name)
+                            && !done.contains(&segment.name)),
+                    _ => false,
+                });
+                if waits {
+                    continue;
+                }
+                self.collect_interface(decl, item.span, item.vis.kind, item_index);
+                done.insert(decl.name.name);
+                progress = true;
+            }
+            if !progress {
+                break;
+            }
+        }
+        // A cycle of parents: collected as written, where the cycle is
+        // reported.
         for (item_index, item) in module.items.iter().enumerate() {
-            if let ast::ItemKind::Interface(decl) = &item.kind {
+            if let ast::ItemKind::Interface(decl) = &item.kind
+                && !done.contains(&decl.name.name)
+            {
                 self.collect_interface(decl, item.span, item.vis.kind, item_index);
             }
         }
@@ -6179,6 +6227,13 @@ impl<'a> Checker<'a> {
             // `[STD-19]` — a view iterator's `next` is built in (`[SPN-5]`),
             // and is its `Iterator.next`.
             if implementation.is_none() && method.is("next") && receiver == Some(Mode::Mut) && self.span_iterator(ty).is_some() {
+                continue;
+            }
+            // ODR-091 — so are an element iterator's `next_back` and `len`.
+            if implementation.is_none()
+                && ((method.is("next_back") && receiver == Some(Mode::Mut)) || (method.is("len") && receiver == Some(Mode::Borrow)))
+                && matches!(self.span_iterator(ty), Some((_, SpanIteratorKind::Elements { .. })))
+            {
                 continue;
             }
             // D-379 — a default kept until a call names it is defined.
@@ -6686,8 +6741,9 @@ impl<'a> Checker<'a> {
                     self.register_associated(ty, default.name, signature, Some(*interface), Span::DUMMY)
                 };
                 let Some(def) = registered else { return };
-                if interface.is("std.core.Iterator")
-                    && matches!(default.name.as_str(), "take" | "skip" | "step_by" | "enumerate" | "zip" | "chain")
+                if (interface.is("std.core.Iterator")
+                    && matches!(default.name.as_str(), "take" | "skip" | "step_by" | "enumerate" | "zip" | "chain"))
+                    || (interface.is("std.core.DoubleEndedIterator") && default.name.is("rev"))
                 {
                     self.iterator_adapters.insert(def, default.name);
                 }
@@ -18765,6 +18821,7 @@ impl<'a> Checker<'a> {
             {
                 let inner = self.fused_shape(&args[0])?;
                 Some(match self.adapter_name(*callee).expect("an adapter").as_str() {
+                    "rev" => return None,
                     // Two loops, one after the other (`check_for_chained`):
                     // under another adapter it is not one loop.
                     "chain" => return None,
@@ -18777,6 +18834,12 @@ impl<'a> Checker<'a> {
                 if fields.len() == 1 && self.struct_origin(e.ty).is_some_and(|o| o.is("std.core.Copied")) =>
             {
                 (self.fused_shape(&fields[0])? == FusedShape::Ref).then_some(FusedShape::Value)
+            }
+            // ODR-091 — `rev` gives what it runs backwards over.
+            ExprKind::Call { callee, args, latebound: false, .. }
+                if args.len() == 1 && self.adapter_name(*callee).is_some_and(|name| name.is("rev")) =>
+            {
+                self.fused_shape(&args[0])
             }
             _ if matches!(self.span_iterator(e.ty), Some((_, SpanIteratorKind::Elements { .. }))) => Some(FusedShape::Ref),
             _ if self.range_iterator(e.ty).is_some() => Some(FusedShape::Value),
@@ -18832,6 +18895,13 @@ impl<'a> Checker<'a> {
     fn take_fused_chain(&self, e: Expr) -> FusedChain {
         let Expr { ty, kind, span } = e;
         match kind {
+            ExprKind::Call { callee, mut args, .. }
+                if args.len() == 1 && self.adapter_name(callee).is_some_and(|name| name.is("rev")) =>
+            {
+                let mut chain = self.take_fused_chain(args.pop().expect("`rev`'s receiver"));
+                chain.links.push(FusedLink::Rev);
+                chain
+            }
             ExprKind::Call { callee, mut args, .. } if self.adapter_name(callee).is_some() => {
                 let arg = args.pop().expect("an adapter's argument");
                 let receiver = args.pop().expect("an adapter's receiver");
@@ -19254,6 +19324,13 @@ impl<'a> Checker<'a> {
                     let FusedItem::Node { node, .. } = item else { unreachable!("`fused_shape` copies only a view's elements") };
                     item = FusedItem::Node { node, copied: true };
                 }
+                // ODR-091 — the same items, the last first: turn `k` takes the
+                // item `last - k` below. The count is unchanged, and so is
+                // what the loop pulls.
+                FusedLink::Rev => {
+                    let (_, last, _) = self.fused_last(count, outer, span);
+                    nodes[first..].iter_mut().for_each(|node| node.steps.push(FusedStep::Rev(last)));
+                }
             }
         }
         (count, item, levels)
@@ -19313,11 +19390,47 @@ impl<'a> Checker<'a> {
     ) -> (FusedCount, Vec<Stmt>) {
         let (usize_ty, bool_ty) = (self.common.usize, self.common.bool_);
         let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        // ODR-091 — an `enumerate` run backwards gives its greatest number
+        // first, as `Enumerate.next_back` does (`number + len - 1`): when
+        // that is past `int`'s top the first item panics, before the body,
+        // so the check is before the loop, and the count stays.
+        let reversed: Vec<(usize, LocalId)> = nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(at, node)| match node.kind {
+                FusedNodeKind::Counter { start } if node.steps.iter().any(|step| matches!(step, FusedStep::Rev(_))) => Some((at, start)),
+                _ => None,
+            })
+            .collect();
+        if !reversed.is_empty() {
+            let mut below = HashMap::new();
+            Self::enumerate_counts(levels, &mut below);
+            let (turns, _, _) = self.fused_last(count, outer, span);
+            for &(at, start) in &reversed {
+                let room = self.counter_room(start, outer, span);
+                // The greatest number is `start + (n - 1)`; the loop runs a turn
+                // only when there is an item below (`turns`).
+                let past = match below[&at] {
+                    FusedCount::Exact(n) => {
+                        let one = Expr { ty: usize_ty, kind: ExprKind::Int(1), span };
+                        let last = self.wrapping(BinOp::Sub, local(n, usize_ty), one, span);
+                        Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::Gt, lhs: Box::new(last), rhs: Box::new(local(room, usize_ty)) }, span }
+                    }
+                    FusedCount::Last { nonempty, last, .. } => {
+                        let within = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::Gt, lhs: Box::new(local(last, usize_ty)), rhs: Box::new(local(room, usize_ty)) }, span };
+                        Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(local(nonempty, bool_ty)), rhs: Box::new(within) }, span }
+                    }
+                };
+                let both = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(local(turns, bool_ty)), rhs: Box::new(past) }, span };
+                let panic = self.number_overflow(span);
+                outer.push(Stmt::If { cond: both, then_block: Block { stmts: vec![panic], span }, else_block: None });
+            }
+        }
         let counters: Vec<(usize, LocalId)> = nodes
             .iter()
             .enumerate()
             .filter_map(|(at, node)| match node.kind {
-                FusedNodeKind::Counter { start } => Some((at, start)),
+                FusedNodeKind::Counter { start } if !node.steps.iter().any(|step| matches!(step, FusedStep::Rev(_))) => Some((at, start)),
                 _ => None,
             })
             .collect();
@@ -19384,6 +19497,7 @@ impl<'a> Checker<'a> {
                         let fewer = self.wrapping(BinOp::Div, local(bound, usize_ty), local(by, usize_ty), span);
                         bound = self.hold_local(fewer, outer);
                     }
+                    FusedStep::Rev(_) => unreachable!("a reversed enumerate is checked before the loop"),
                 }
             }
             count = match count {
@@ -19636,6 +19750,7 @@ impl<'a> Checker<'a> {
             at = match *step {
                 FusedStep::StepBy(k) => self.wrapping(BinOp::Mul, at, local(k, usize_ty), span),
                 FusedStep::Skip(s) => self.wrapping(BinOp::Add, at, local(s, usize_ty), span),
+                FusedStep::Rev(last) => self.wrapping(BinOp::Sub, local(last, usize_ty), at, span),
             };
         }
         match node.kind {
@@ -28540,7 +28655,8 @@ impl<'a> Checker<'a> {
         if self.is_text(receiver_ty) || self.implements(receiver_ty, iterator) {
             return None;
         }
-        let iterator_has = matches!(name.name.as_str(), "sum" | "product" | "copied" | "cloned")
+        // ODR-091 — and `rev`, `DoubleEndedIterator`'s: `(0..=n).rev()`.
+        let iterator_has = matches!(name.name.as_str(), "sum" | "product" | "copied" | "cloned" | "rev")
             || self.interfaces.get(&iterator).is_some_and(|def| def.methods.iter().any(|(method, ..)| *method == name.name));
         let iterable = self.lookup_method(receiver_ty, Symbol::intern("iter")).is_some()
             || matches!(self.types.kind(receiver_ty), TyKind::Vec { text: false, .. } | TyKind::Span { .. } | TyKind::Array { .. });
@@ -29207,7 +29323,10 @@ impl<'a> Checker<'a> {
         // `[STD-19]` — a view iterator's `next` is built in; its adapters and
         // consumers are `Iterator`'s, registered like any other method.
         if let Some((elem, kind)) = self.span_iterator(receiver.ty)
-            && (name.name.is("next") || self.lookup_method(receiver.ty, name.name).is_none())
+            && (name.name.is("next")
+                || (matches!(kind, SpanIteratorKind::Elements { .. })
+                    && (name.name.is("next_back") || name.name.is("len")))
+                || self.lookup_method(receiver.ty, name.name).is_none())
         {
             if !explicit.is_empty() {
                 self.error(
@@ -29418,6 +29537,12 @@ impl<'a> Checker<'a> {
                 format!("`{shown}` has no method named `{}`", name.name),
             );
             diagnostic = self.note_unmet_extension_bound(diagnostic, receiver.ty, name.name);
+            // ODR-091 — `rev` is an iterator's only where it can run backwards.
+            if name.name.is("rev") && self.lookup_method(receiver.ty, Symbol::intern("next")).is_some() {
+                diagnostic = diagnostic.note(
+                    "`rev` needs an iterator that can run backwards (`DoubleEndedIterator`): a range with an end, a view's elements, or an adapter over one [STD-19]",
+                );
+            }
             // `[STR-5]`, ODR-026 — say why a struct or enum is not `Clone`.
             if name.name.is("clone") && matches!(self.types.kind(receiver.ty), TyKind::Struct(_) | TyKind::Enum(_)) {
                 diagnostic = if self.has_own_drop(receiver.ty) {
@@ -32972,7 +33097,9 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        if !name.name.is("next") {
+        let back = matches!(kind, SpanIteratorKind::Elements { .. })
+            && (name.name.is("next_back") || name.name.is("len"));
+        if !name.name.is("next") && !back {
             self.error(
                 codes::E1010,
                 name.span,
@@ -32988,9 +33115,17 @@ impl<'a> Checker<'a> {
             self.error(
                 codes::E2020,
                 span,
-                format!("`next` takes no arguments, found {}", args.len()),
+                format!("`{}` takes no arguments, found {}", name.name, args.len()),
             );
             return error;
+        }
+        // ODR-091 — the items left, which reads the iterator.
+        if name.name.is("len") {
+            return Expr {
+                ty: self.common.i64,
+                kind: ExprKind::Builtin { which: Builtin::SpanIterLen, args: vec![receiver] },
+                span,
+            };
         }
         self.reject_readonly_write(&receiver, span);
         let through_shared_ref = self.reject_write_through_shared_ref(&receiver, span);
@@ -32998,10 +33133,14 @@ impl<'a> Checker<'a> {
             self.reject_borrowed_parameter_write(&receiver, span, false);
         }
         if !is_place(&receiver.kind) {
-            self.error(codes::E2140, span, "`next` needs an iterator variable to advance");
+            self.error(codes::E2140, span, format!("`{}` needs an iterator variable to advance", name.name));
             return error;
         }
         let (item, which) = match kind {
+            SpanIteratorKind::Elements { mutable } if name.name.is("next_back") => (
+                self.types.intern(TyKind::Ref { mutable, inner: elem }),
+                Builtin::SpanIterNextBack { elem, mutable },
+            ),
             SpanIteratorKind::Elements { mutable } => (
                 self.types.intern(TyKind::Ref { mutable, inner: elem }),
                 Builtin::SpanIterNext { elem, mutable },

@@ -2156,6 +2156,15 @@ impl<'a> Builder<'a> {
                 );
             }
             hir::ExprKind::Builtin {
+                which: hir::Builtin::SpanIterNextBack { elem, mutable },
+                args,
+            } => {
+                self.lower_span_iter_next_back(place, &args[0], *elem, *mutable, expr.ty, expr.span);
+            }
+            hir::ExprKind::Builtin { which: hir::Builtin::SpanIterLen, args } => {
+                self.lower_span_iter_len(place, &args[0], expr.ty, expr.span);
+            }
+            hir::ExprKind::Builtin {
                 which: hir::Builtin::SpanIterNext { elem, mutable },
                 args,
             } => {
@@ -4321,6 +4330,114 @@ impl<'a> Builder<'a> {
         self.terminate(Terminator::Goto(join_bb));
 
         self.current = join_bb;
+    }
+
+    /// `[STD-19]` (ODR-091) — take a named Span element iterator's last item:
+    /// the source view held in the iterator loses its last element, which is
+    /// the item. The cursor and the length meet, so `next` and `next_back`
+    /// never give one element twice, and mutable items stay disjoint.
+    fn lower_span_iter_next_back(
+        &mut self,
+        dest: Place,
+        receiver: &'a hir::Expr,
+        elem: Ty,
+        mutable: bool,
+        result_ty: Ty,
+        span: ember_span::Span,
+    ) {
+        let TyKind::Struct(iterator_id) = *self.types.kind(receiver.ty) else {
+            unreachable!("a Span iterator is a public struct")
+        };
+        let source_ty = self.types.struct_def(iterator_id).fields[0].ty;
+        let iterator = self.lower_place(receiver);
+        let source = iterator.clone().field(0);
+        let has_item = self.temp(self.bool_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(has_item),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Lt,
+                lhs: Operand::Copy(iterator.clone().field(1)),
+                rhs: Operand::Copy(source.clone().field(1)),
+            },
+        });
+        let TyKind::Enum(option) = *self.types.kind(result_ty) else {
+            unreachable!("a Span iterator returns Option")
+        };
+        let (none, some) = self.option_variants(option);
+        let some_bb = self.new_block();
+        let none_bb = self.new_block();
+        let join = self.new_block();
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(has_item)),
+            targets: vec![(0, none_bb)],
+            otherwise: some_bb,
+        });
+
+        self.current = some_bb;
+        let last = self.temp(self.usize_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(last),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Sub,
+                lhs: Operand::Copy(source.clone().field(1)),
+                rhs: Operand::Const(Const::Int { value: 1, ty: self.usize_ty }),
+            },
+        });
+        self.push(StmtKind::Assign {
+            place: source.clone().field(1),
+            rvalue: Rvalue::Use(Operand::Copy(Place::local(last))),
+        });
+        let item_ty = self.types.enum_def(option).variants[some].fields[0].ty;
+        let item = self.temp(item_ty, span);
+        let next = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Builtin {
+                which: hir::Builtin::SpanIterNext { elem, mutable },
+                arg_ty: source_ty,
+            },
+            args: vec![Operand::Copy(source), Operand::Copy(Place::local(last))],
+            dest: Place::local(item),
+            next,
+        });
+        self.current = next;
+        self.push(StmtKind::Assign {
+            place: dest.clone(),
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(option, some),
+                operands: vec![Operand::Move(Place::local(item))],
+            },
+        });
+        self.terminate(Terminator::Goto(join));
+
+        self.current = none_bb;
+        self.push(StmtKind::Assign {
+            place: dest,
+            rvalue: Rvalue::Aggregate {
+                kind: AggregateKind::Enum(option, none),
+                operands: Vec::new(),
+            },
+        });
+        self.terminate(Terminator::Goto(join));
+        self.current = join;
+    }
+
+    /// `[STD-19]` (ODR-091) — a Span element iterator's items left: the source
+    /// view's length less the cursor, which never passes it.
+    fn lower_span_iter_len(&mut self, dest: Place, receiver: &'a hir::Expr, int_ty: Ty, span: ember_span::Span) {
+        let iterator = self.lower_place(receiver);
+        let left = self.temp(self.usize_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(left),
+            rvalue: Rvalue::BinaryOp {
+                op: BinOp::Sub,
+                lhs: Operand::Copy(iterator.clone().field(0).field(1)),
+                rhs: Operand::Copy(iterator.field(1)),
+            },
+        });
+        self.push(StmtKind::Assign {
+            place: dest,
+            rvalue: Rvalue::Cast { kind: CastKind::Numeric, operand: Operand::Copy(Place::local(left)), to: int_ty },
+        });
     }
 
     /// `[SPN-5]` — advance a named Span iterator. The public `next(mut self)`

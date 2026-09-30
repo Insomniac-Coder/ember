@@ -368,6 +368,25 @@ pub interface Iterator:
 
 ## `[CTL-1]` — what `for x in owned e:` consumes: `e.into_iter()` is the
 ## iterator, and the loop takes what its `next` gives, owned.
+## `[STD-19]` (ODR-091) — an iterator that can run backwards: `next_back`
+## gives the last item not yet given from either end, so with `next` the two
+## ends meet and no item comes twice. `rev` is its: `rev` exists exactly
+## where an iterator can run backwards. The ranges of integers and the
+## element iterators of the views are ones, and so is each adapter over
+## ones, where it can tell which item is last (below).
+pub interface DoubleEndedIterator: Iterator:
+    fn next_back(mut self) -> Option[Item]
+
+    ## The items, last first.
+    fn rev(owned self) -> Rev[Self]:
+        return Rev(self)
+
+## `[STD-19]` (ODR-091) — an iterator that knows exactly how many items it has
+## left (`len`), without giving them: the ranges of integers, the views'
+## iterators, and the adapters over ones.
+pub interface ExactSizeIterator: Iterator:
+    fn len(self) -> int
+
 pub interface IntoIterator:
     type Item
     type Iter: Iterator[Item = Item]
@@ -514,6 +533,171 @@ extend[T: Clone, I: Iterator[Item = ref T]] Cloned[I, T] implements Iterator:
             None:
                 return None
 
+## `[STD-19]` (ODR-091) — an iterator run backwards: its `next` is the one it
+## wraps's `next_back`, and the other way round.
+pub struct Rev[I]:
+    inner: I
+
+extend[I: DoubleEndedIterator] Rev[I] implements Iterator:
+    type Item = I.Item
+
+    fn next(mut self) -> Option[I.Item]:
+        return self.inner.next_back()
+
+extend[I: DoubleEndedIterator] Rev[I] implements DoubleEndedIterator:
+    fn next_back(mut self) -> Option[I.Item]:
+        return self.inner.next()
+
+extend[I: DoubleEndedIterator + ExactSizeIterator] Rev[I] implements ExactSizeIterator:
+    fn len(self) -> int:
+        return self.inner.len()
+
+## ODR-091 — which adapters run backwards, and know their length. One whose
+## last item depends on how many there are (`take`, `skip`, `step_by`,
+## `enumerate`, `zip`) runs backwards when the iterator below it knows its
+## length; `copied`, `cloned` and `chain` run backwards when theirs do.
+extend[I: ExactSizeIterator] Take[I] implements ExactSizeIterator:
+    fn len(self) -> int:
+        left = self.inner.len()
+        return left if left < self.left else max(self.left, 0)
+
+extend[I: DoubleEndedIterator + ExactSizeIterator] Take[I] implements DoubleEndedIterator:
+    fn next_back(mut self) -> Option[I.Item]:
+        if self.left <= 0:
+            return None
+        extra = self.inner.len() - self.left
+        while extra > 0:
+            extra -= 1
+            if self.inner.next_back().is_none():
+                return None
+        self.left -= 1
+        return self.inner.next_back()
+
+extend[I: ExactSizeIterator] Skip[I] implements ExactSizeIterator:
+    fn len(self) -> int:
+        return max(self.inner.len() - self.left, 0)
+
+extend[I: DoubleEndedIterator + ExactSizeIterator] Skip[I] implements DoubleEndedIterator:
+    fn next_back(mut self) -> Option[I.Item]:
+        if self.inner.len() - self.left <= 0:
+            return None
+        return self.inner.next_back()
+
+## The items a `step_by(k)` gives are at `0, k, 2k, …` of those left before
+## the first, then at `k - 1, 2k - 1, …` after it (`gap` is `k - 1`).
+extend[I: ExactSizeIterator] StepBy[I] implements ExactSizeIterator:
+    fn len(self) -> int:
+        left = self.inner.len()
+        step = self.gap + 1
+        if self.started:
+            return left // step
+        if left == 0:
+            return 0
+        return 1 + (left - 1) // step
+
+extend[I: DoubleEndedIterator + ExactSizeIterator] StepBy[I] implements DoubleEndedIterator:
+    fn next_back(mut self) -> Option[I.Item]:
+        left = self.inner.len()
+        step = self.gap + 1
+        if self.started:
+            if left < step:
+                return None
+            extra = left % step
+        else:
+            if left == 0:
+                return None
+            extra = (left - 1) % step
+        while extra > 0:
+            extra -= 1
+            self.inner.next_back()
+        return self.inner.next_back()
+
+extend[I: ExactSizeIterator] Enumerate[I] implements ExactSizeIterator:
+    fn len(self) -> int:
+        return self.inner.len()
+
+## The last item left is numbered the next one's number plus the items
+## between: a number past `int`'s top panics here too.
+extend[I: DoubleEndedIterator + ExactSizeIterator] Enumerate[I] implements DoubleEndedIterator:
+    fn next_back(mut self) -> Option[(int, I.Item)]:
+        left = self.inner.len()
+        match self.inner.next_back():
+            Some(x):
+                at = self.number + (left - 1)
+                if self.past:
+                    at += 1
+                return Some((at, x))
+            None:
+                return None
+
+extend[I: ExactSizeIterator, J: ExactSizeIterator] Zip[I, J] implements ExactSizeIterator:
+    fn len(self) -> int:
+        return min(self.a.len(), self.b.len())
+
+## The longer is cut to the shorter's length from the back first, so the
+## pairs are the ones `next` would make.
+extend[I: DoubleEndedIterator + ExactSizeIterator, J: DoubleEndedIterator + ExactSizeIterator] Zip[I, J] implements DoubleEndedIterator:
+    fn next_back(mut self) -> Option[(I.Item, J.Item)]:
+        mine = self.a.len()
+        theirs = self.b.len()
+        while mine > theirs:
+            mine -= 1
+            self.a.next_back()
+        while theirs > mine:
+            theirs -= 1
+            self.b.next_back()
+        match self.a.next_back():
+            Some(x):
+                match self.b.next_back():
+                    Some(y):
+                        return Some((x, y))
+                    None:
+                        return None
+            None:
+                return None
+
+extend[I: ExactSizeIterator, J: ExactSizeIterator[Item = I.Item]] Chain[I, J] implements ExactSizeIterator:
+    fn len(self) -> int:
+        if self.done:
+            return self.other.len()
+        return self.first.len() + self.other.len()
+
+## Backwards the second runs first; the first is not asked once it said
+## `None` from the front.
+extend[I: DoubleEndedIterator, J: DoubleEndedIterator[Item = I.Item]] Chain[I, J] implements DoubleEndedIterator:
+    fn next_back(mut self) -> Option[I.Item]:
+        match self.other.next_back():
+            Some(x):
+                return Some(x)
+            None:
+                if self.done:
+                    return None
+                return self.first.next_back()
+
+extend[T: Copy, I: ExactSizeIterator[Item = ref T]] Copied[I, T] implements ExactSizeIterator:
+    fn len(self) -> int:
+        return self.inner.len()
+
+extend[T: Copy, I: DoubleEndedIterator[Item = ref T]] Copied[I, T] implements DoubleEndedIterator:
+    fn next_back(mut self) -> Option[T]:
+        match self.inner.next_back():
+            Some(r):
+                return Some(r)
+            None:
+                return None
+
+extend[T: Clone, I: ExactSizeIterator[Item = ref T]] Cloned[I, T] implements ExactSizeIterator:
+    fn len(self) -> int:
+        return self.inner.len()
+
+extend[T: Clone, I: DoubleEndedIterator[Item = ref T]] Cloned[I, T] implements DoubleEndedIterator:
+    fn next_back(mut self) -> Option[T]:
+        match self.inner.next_back():
+            Some(r):
+                return Some(r.clone())
+            None:
+                return None
+
 ## `[CTL-3]` (ODR-027) — the range types. `a..b` is a `Range`, `a..=b` a
 ## `RangeInclusive`, `a..` a `RangeFrom` and `..b` a `RangeTo`. Each is a plain
 ## value, `Copy` when its bound is, with public bounds. A `for` over one of the
@@ -568,6 +752,20 @@ extend[T: Integer] RangeIter[T] implements Iterator:
             return Some(here)
         return None
 
+## ODR-091 — backwards from `end`, which moves down to meet `at`.
+extend[T: Integer] RangeIter[T] implements DoubleEndedIterator:
+    fn next_back(mut self) -> Option[T]:
+        if self.at < self.end:
+            self.end = self.end.predecessor()
+            return Some(self.end)
+        return None
+
+extend[T: Integer] RangeIter[T] implements ExactSizeIterator:
+    fn len(self) -> int:
+        if self.at < self.end:
+            return self.at.distance_to(self.end)
+        return 0
+
 ## The values from `at` up to and including `end`; `done` once `end` is
 ## given, so a range ending at the type's top never steps past it.
 pub struct RangeInclusiveIter[T]:
@@ -587,6 +785,25 @@ extend[T: Integer] RangeInclusiveIter[T] implements Iterator:
         else:
             self.done = true
         return Some(here)
+
+## ODR-091 — backwards from `end`; `done` once the two meet, so a range
+## starting at the type's bottom never steps below it.
+extend[T: Integer] RangeInclusiveIter[T] implements DoubleEndedIterator:
+    fn next_back(mut self) -> Option[T]:
+        if self.done:
+            return None
+        here = self.end
+        if self.at < here:
+            self.end = here.predecessor()
+        else:
+            self.done = true
+        return Some(here)
+
+extend[T: Integer] RangeInclusiveIter[T] implements ExactSizeIterator:
+    fn len(self) -> int:
+        if self.done:
+            return 0
+        return self.at.distance_to(self.end) + 1
 
 ## The values from `at` on; stepping past the type's top panics, as a `for`
 ## over `a..` does (`[CTL-3]`).
@@ -1052,53 +1269,144 @@ interface Integer: Hash + Default + Ord + Copy:
     ## The next integer; past the type's top it panics, as `+ 1` does.
     fn successor(self) -> Self
 
+    ## The integer before; past the type's bottom it panics, as `- 1` does.
+    fn predecessor(self) -> Self
+
+    ## How many integers from this one up to, not including, `end`, which is
+    ## not below it: a range's length. One of more than `int.MAX` panics.
+    fn distance_to(self, end: Self) -> int
+
 extend i8 implements Integer:
     fn successor(self) -> i8:
         return self + 1
+
+    fn predecessor(self) -> i8:
+        return self - 1
+
+    fn distance_to(self, end: i8) -> int:
+        return (end as int) - (self as int)
 
 extend i16 implements Integer:
     fn successor(self) -> i16:
         return self + 1
 
+    fn predecessor(self) -> i16:
+        return self - 1
+
+    fn distance_to(self, end: i16) -> int:
+        return (end as int) - (self as int)
+
 extend i32 implements Integer:
     fn successor(self) -> i32:
         return self + 1
+
+    fn predecessor(self) -> i32:
+        return self - 1
+
+    fn distance_to(self, end: i32) -> int:
+        return (end as int) - (self as int)
 
 extend i64 implements Integer:
     fn successor(self) -> i64:
         return self + 1
 
+    fn predecessor(self) -> i64:
+        return self - 1
+
+    fn distance_to(self, end: i64) -> int:
+        return (end - self) as int
+
 extend i128 implements Integer:
     fn successor(self) -> i128:
         return self + 1
+
+    fn predecessor(self) -> i128:
+        return self - 1
+
+    fn distance_to(self, end: i128) -> int:
+        gap = end - self
+        if gap > 9223372036854775807:
+            panic("a range of more than int.MAX values has no length")
+        return gap as int
 
 extend isize implements Integer:
     fn successor(self) -> isize:
         return self + 1
 
+    fn predecessor(self) -> isize:
+        return self - 1
+
+    fn distance_to(self, end: isize) -> int:
+        return (end - self) as int
+
 extend u8 implements Integer:
     fn successor(self) -> u8:
         return self + 1
+
+    fn predecessor(self) -> u8:
+        return self - 1
+
+    fn distance_to(self, end: u8) -> int:
+        return (end as int) - (self as int)
 
 extend u16 implements Integer:
     fn successor(self) -> u16:
         return self + 1
 
+    fn predecessor(self) -> u16:
+        return self - 1
+
+    fn distance_to(self, end: u16) -> int:
+        return (end as int) - (self as int)
+
 extend u32 implements Integer:
     fn successor(self) -> u32:
         return self + 1
+
+    fn predecessor(self) -> u32:
+        return self - 1
+
+    fn distance_to(self, end: u32) -> int:
+        return (end as int) - (self as int)
 
 extend u64 implements Integer:
     fn successor(self) -> u64:
         return self + 1
 
+    fn predecessor(self) -> u64:
+        return self - 1
+
+    fn distance_to(self, end: u64) -> int:
+        gap = end - self
+        if gap > 9223372036854775807:
+            panic("a range of more than int.MAX values has no length")
+        return gap as int
+
 extend u128 implements Integer:
     fn successor(self) -> u128:
         return self + 1
 
+    fn predecessor(self) -> u128:
+        return self - 1
+
+    fn distance_to(self, end: u128) -> int:
+        gap = end - self
+        if gap > 9223372036854775807:
+            panic("a range of more than int.MAX values has no length")
+        return gap as int
+
 extend usize implements Integer:
     fn successor(self) -> usize:
         return self + 1
+
+    fn predecessor(self) -> usize:
+        return self - 1
+
+    fn distance_to(self, end: usize) -> int:
+        gap = end - self
+        if gap > 9223372036854775807:
+            panic("a range of more than int.MAX values has no length")
+        return gap as int
 
 ## `[STD-4]` — an integer that is not zero, made by `NonZero.new`. Since no
 ## `NonZero` holds 0, `Option[NonZero[T]]` stores `None` as 0 and is the size

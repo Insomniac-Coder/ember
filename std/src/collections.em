@@ -8,6 +8,7 @@
 ## the Arena or their backing bytes.
 
 import std.mem
+from std.core import DoubleEndedIterator, ExactSizeIterator
 
 ## `[HASH-1]` — the protocol is static at the `Hash.hash` boundary. A concrete
 ## hasher supplies `H`; no bare-interface conversion or mandatory dynamic
@@ -970,6 +971,14 @@ extend[T] SpanIter[T] implements Iterator:
 
 extend[T] MutSpanIter[T] implements Iterator:
     type Item = ref mut T
+
+## ODR-091 — an element iterator runs backwards and knows its length, both
+## built in: `next_back` takes the last element of the view it holds.
+extend[T] SpanIter[T] implements DoubleEndedIterator, ExactSizeIterator:
+    pass
+
+extend[T] MutSpanIter[T] implements DoubleEndedIterator, ExactSizeIterator:
+    pass
 
 extend[T] SpanChunks[T] implements Iterator:
     type Item = Span[T]

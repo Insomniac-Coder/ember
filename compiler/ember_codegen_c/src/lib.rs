@@ -5568,6 +5568,8 @@ impl Emitter<'_> {
                     | Builtin::SpanChunksNew { .. }
                     | Builtin::SpanWindowsNew { .. }
                     | Builtin::SpanWindowsNext { .. }
+                    | Builtin::SpanIterNextBack { .. }
+                    | Builtin::SpanIterLen
                     | Builtin::ClassSuperInit { .. } => {
                         unreachable!(
                             "`{}` is lowered to field accesses in MIR and never reaches the backend",

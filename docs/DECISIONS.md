@@ -3409,3 +3409,56 @@ either form, so its C keeps the totals where they are (`emit`'s `for_msvc`, from
 one read after a loop reading it inside; the results on every compiler) and the milestone
 `loop_totals_are_block_local_copies_for_msvc` (ten copy lines for MSVC, none for clang);
 break-tested (without the copies the milestone fails).
+
+## ADR-087 — `rev`: iterators that run backwards, and `rev` in a counted loop
+
+2026-10-01, autonomous (the owner: "continue working autonomously but solo"). ODR-091
+(Hardened_46) ruled which iterators run backwards; this is how it is built.
+
+**In std** (`std/src/core.em`, `collections.em`). `DoubleEndedIterator: Iterator` declares
+`next_back` and the default `rev`, which makes a `Rev[I]` whose `next` is `next_back` and the other
+way round; `ExactSizeIterator: Iterator` declares `len`. The ranges' iterators implement both
+(`RangeIter` moves its `end` down; `RangeInclusiveIter` sets `done` when the two ends meet, so a
+range at a type's bottom never steps below it); `std`'s private `Integer` gains `predecessor` and
+`distance_to` (a length as an `int`, panicking past `int.MAX`). `Copied`, `Cloned` and `Chain` run
+backwards over what runs backwards; `Take`, `Skip`, `StepBy`, `Enumerate` and `Zip` over what also
+knows its length, each written as Rust's is: `take` and `zip` trim from the back to the length
+`next` would give, `step_by` finds its last item from the length and whether its first was taken,
+`enumerate` numbers the back item `number + len - 1`. `(0..=n).rev()` on a range, and `xs.rev()` on
+a list, are `iter().rev()` as the other adapters' `Iterable` forms are.
+
+**Built in.** A view's element iterator (`SpanIter`, `MutSpanIter`) runs backwards by shrinking the
+view it holds: `next_back` lowers to `len -= 1` and the element at the new length
+(`lower_span_iter_next_back`, reusing `SpanIterNext`'s extraction); `len` is the view's length less
+the cursor. The two ends meet, so mutable items stay disjoint. Both are declared in std with no
+body (`pass`), as `next` is.
+
+**In a `for` (`[CTL-3b]`).** `rev` is one more link of a fused chain: every node below it gets the
+step `Rev(last)`, which maps the loop's counter `k` to `last - k` before the steps below apply, and
+the count is unchanged. So `rev` anywhere in a chain of `take`, `skip`, `step_by`, `enumerate`,
+`zip` and `copied` over a range or a view is a counted loop with no iterator and no `next_back`
+(`xs.iter().skip(2).rev()` reads `last - k + 2`). An `enumerate` below a `rev` gives its greatest
+number first, so the loop cannot cut its count to the numbers that fit as it does forwards
+(ODR-089): the check is before the loop, `start + n - 1 > int.MAX` panics when the loop has a turn,
+as `Enumerate.next_back` panics at its first call.
+
+**Measured** against C twins counting down (`for (i = n; i-- > 0;)`), 10 million elements, 60
+rounds, median of 11: a float sum 0.332 s against 0.366 s with MSVC (0.91x) and 0.336 s against
+0.317 s with clang (1.06x); a store `out[i] = i * 3 + r` 0.314 s against 0.325 s (0.97x) and 0.333 s
+against 0.322 s (1.03x). The clang sum's difference is all in building the list: with no rounds
+Ember takes 0.028 s (10 million `push`es) and C 0.009 s (stores into `malloc`'s block); the loops
+themselves take 0.305 s and 0.310 s.
+
+**Found on the way.** D-394: a child interface could not name its parent's associated type when
+the parent was collected after it, as std's `Iterator` was for any user module (interfaces were
+collected importers first) or a parent later in the same file. Interfaces are now collected
+dependencies first, and a parent before its children within a module.
+
+**Tests.** `STD-19/accept_rev_runs_an_iterator_backwards` (each adapter backwards, `next` and
+`next_back` meeting, `len`, ranges at a type's top and bottom),
+`CTL-3b/accept_a_for_over_rev_is_a_counted_loop` (every position of `rev`, a mutable view, and
+`(0..=n).rev()`; no `next_back` in the C), `STD-19/reject_rev_of_an_iterator_that_cannot_run_backwards`
+(an endless range; the error says why), `STD-19/run_fail_a_reversed_enumerate_past_the_top_panics_first`
+and `STD-19/accept_a_reversed_enumerate_at_the_top_fits` (both the loop and `to_array`; the second
+caught an off-by-one in the loop's check), and `IFC-3/accept_a_child_interface_names_its_parents_associated_type`
+(D-394).

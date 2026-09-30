@@ -11088,13 +11088,13 @@ first**; the rest of §0.355 is the running narrative behind it.
     semantic ambiguity and no ODR or new hardening.
 
   The five preceding CI runs, through `f529f8b`, finished green.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_45.md`
-  (ODR-090: a float mode is lexical, as the overflow policy is; inside
-  `@fastmath` no range fact about a float; H44 carried ODR-089, the iterator
-  adapters' counts), pinned in `docs/spec-source/development-target.json`.
-  The spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/`
-  through `parts-h45/` are frozen.
-* **Next numbers:** ODR-091, D-394, ADR-087, ERR-056.
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_46.md`
+  (ODR-091: which iterators run backwards, `DoubleEndedIterator` and
+  `ExactSizeIterator`; H45 carried ODR-090, where a float mode holds),
+  pinned in `docs/spec-source/development-target.json`. The spec's working
+  sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h46/`
+  are frozen.
+* **Next numbers:** ODR-092, D-395, ADR-088, ERR-056.
 * **`[TYP-9]` `@fastmath` and `@fp(contract)` (2026-09-30, ADR-085, ODR-090,
   Hardened_45).** Built for programs: a C unit per float mode, compiled with
   its flags (`[CG-C-11]`); lambdas take their function's mode; a default
@@ -11117,10 +11117,16 @@ first**; the rest of §0.355 is the running narrative behind it.
   one-sided fact; float facts now come only from a comparison's true arm
   (`[RNG-4a]`). The strict MSVC dot product is at C's speed (ADR-086: MSVC
   did not unroll a loop setting a function-wide total, so the loop runs on a
-  block-local copy; 1.17x -> 1.01x). **Next:** `rev` (`[STD-19]` "where the
-  iterator can run backwards" needs a ruling first, ODR-091: which iterators
-  run backwards, and `[CTL-3b]` needs `rev` over ranges and views as counted
-  loops); then the goal-2 list below.
+  block-local copy; 1.17x -> 1.01x). `rev` is built (2026-10-01, ADR-087,
+  ODR-091, Hardened_46): `DoubleEndedIterator`/`ExactSizeIterator` in std,
+  `next_back`/`len` built in for view iterators, and `rev` in a `for` is a
+  counted loop at C's speed; D-394 (a child interface naming its parent's
+  `Item`) found and fixed. **Next:** the closure-holding adapters (`map`,
+  `filter`, ...), which need `[CLO-3]`'s owned callable values; then the
+  goal-2 list below. **For the owner (review wanted, 2026-10-01):** the
+  `rev` work was reviewed solo (the owner: review solo while unattended);
+  an adversarial review of ADR-087's fused `Rev` step and the reversed
+  `enumerate` check is worth running when he approves one.
 * **Goal 2, implementation (2026-09-29, autonomous):** next is `[STD-19]`'s
   iterator adapters and `[CTL-3b]`'s counted lowering of adapter chains (the
   audit's `CTL-3b` gap; `for x in mutspan`, `.take/.skip/.enumerate/.zip/
@@ -11794,7 +11800,7 @@ first**; the rest of §0.355 is the running narrative behind it.
 
   | Phase | % |
   |---|---:|
-  | P1 | 98 |
+  | P1 | 99 |
   | P2 | 89 |
   | P3 | 60 |
   | P4 | 13 |
@@ -11805,6 +11811,9 @@ first**; the rest of §0.355 is the running narrative behind it.
   | P8 | 17 |
   | Overall | 59 |
 
+  2026-10-01, with `rev` (ADR-087): P1 98 to 99, `[CTL-3b]`'s list of
+  adapters in a counted loop complete; `python tasks/impl-0.9.9/rule_sizes.py
+  99 89 60 13 14 4 6` gives 59.1% with Hardened_46 weights, 59% rounded.
   Checked again 2026-09-30 before ADR-085's commit: the same table, 58.6%
   with Hardened_45 weights, 59% rounded. P1 gains `[TYP-9]`'s float controls
   (ADR-085) and `[RNG-4a]` (D-392, fixed in the next commit), short of 99%

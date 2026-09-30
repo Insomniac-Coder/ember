@@ -1065,6 +1065,12 @@ pub enum Builtin {
     /// `[SPN-5]` — advance a named Span element iterator and yield the next
     /// shared or mutable element reference.
     SpanIterNext { elem: Ty, mutable: bool },
+    /// `[STD-19]` (ODR-091) — take a Span element iterator's last item left:
+    /// the source view's length goes down by one and the item is there.
+    SpanIterNextBack { elem: Ty, mutable: bool },
+    /// `[STD-19]` (ODR-091) — how many items a Span element iterator has
+    /// left, as an `int`.
+    SpanIterLen,
     /// `[SPN-6]`, `[SPN-7]` — check a non-zero width and construct the named
     /// shared or mutable chunk iterator. `iterator` is the ordinary public
     /// library struct type receiving the source/cursor/width fields.
@@ -1355,6 +1361,8 @@ impl Builtin {
             Builtin::SpanReborrow => "reborrow",
             Builtin::SpanSharedReborrow => "reborrow",
             Builtin::SpanIterNext { .. } => "next",
+            Builtin::SpanIterNextBack { .. } => "next_back",
+            Builtin::SpanIterLen => "len",
             Builtin::SpanChunksNew { mutable, .. } => {
                 if mutable { "chunks_mut" } else { "chunks" }
             }
