@@ -11094,7 +11094,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   set does keeps a loop out of vectorisable form), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h44/` are frozen.
-* **Next numbers:** ODR-090, D-391, ADR-083, ERR-056.
+* **Next numbers:** ODR-090, D-392, ADR-083, ERR-056.
 * **Goal 2, implementation (2026-09-29, autonomous):** next is `[STD-19]`'s
   iterator adapters and `[CTL-3b]`'s counted lowering of adapter chains (the
   audit's `CTL-3b` gap; `for x in mutspan`, `.take/.skip/.enumerate/.zip/
@@ -11131,6 +11131,10 @@ first**; the rest of §0.355 is the running narrative behind it.
   Next here: `rev` (needs a spec ruling on running backwards), then the
   closure-holding adapters (`map`, `filter`, ...), which need `[CLO-3]`'s
   owned callable values.
+* **Owner, 2026-09-30: look into D-391 later** (an interface cache written
+  by an earlier compiler build stopped a later build with `[LT-40]`'s
+  "cached callable-region metadata disagrees"; open, not investigated; the
+  row in `docs/DEFECTS.md` has what was seen and where to start).
 * **Speed audit: the six agreed fixes are done (2026-09-27, uncommitted;
   ADR-070, D-375, deviation D7).** The owner said "do all fixes check them and
   report the final result". Each fix passed the quick check, the workspace
