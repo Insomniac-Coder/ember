@@ -448,8 +448,13 @@ pub fn compile_relaxed_object(
     if let Some(parent) = output.parent() { std::fs::create_dir_all(parent)?; }
     let mut command = compiler_command(toolchain);
     match toolchain {
-        Toolchain::Msvc { .. } => {
-            command.args(relaxed_msvc_flags(profile, fast)).arg("/c");
+        Toolchain::Msvc { cl, .. } => {
+            if is_clang_cl(cl) {
+                command.args(relaxed_clang_cl_flags(profile, fast));
+            } else {
+                command.args(relaxed_msvc_flags(profile, fast));
+            }
+            command.arg("/c");
             for dir in include_dirs { command.arg(format!("/I{}", dir.display())); }
             command.arg(source).arg(format!("/Fo{}", output.display()));
         }
@@ -473,6 +478,34 @@ fn relaxed_msvc_flags(profile: Profile, fast: bool) -> Vec<&'static str> {
         .flat_map(|flag| match flag {
             "/fp:precise" if fast => vec!["/fp:fast"],
             "/fp:precise" => vec!["/fp:precise", "/fp:contract"],
+            "/Zi" => vec!["/Z7"],
+            "/GL" => vec![],
+            other => vec![other],
+        })
+        .collect()
+}
+
+/// Whether an MSVC-style compiler is clang's driver for it, which reads
+/// `/fp:fast` as all of `-ffast-math`.
+fn is_clang_cl(cl: &Path) -> bool {
+    cl.file_stem().is_some_and(|stem| stem.eq_ignore_ascii_case("clang-cl"))
+}
+
+/// `[CG-C-11]` — clang-cl's relaxed flags: MSVC's for the profile with
+/// clang's relaxations passed through `/clang:`, as `relaxed_gnu_flags`
+/// gives them, and never `/fp:fast`, which is clang's `-ffast-math` with the
+/// finite-only assumption that makes a NaN argument undefined behaviour.
+fn relaxed_clang_cl_flags(profile: Profile, fast: bool) -> Vec<&'static str> {
+    msvc_flags(profile)
+        .into_iter()
+        .flat_map(|flag| match flag {
+            "/fp:precise" if fast => vec![
+                "/fp:precise",
+                "/clang:-ffp-contract=fast",
+                "/clang:-funsafe-math-optimizations",
+                "/clang:-fno-math-errno",
+            ],
+            "/fp:precise" => vec!["/fp:precise", "/clang:-ffp-contract=fast"],
             "/Zi" => vec!["/Z7"],
             "/GL" => vec![],
             other => vec![other],
@@ -993,6 +1026,9 @@ mod tests {
             assert_eq!(msvc.contains(&"/fp:contract"), !fast, "{msvc:?}");
             assert_eq!(msvc.contains(&"/fp:precise"), !fast, "{msvc:?}");
             assert!(!msvc.contains(&"/GL"), "{msvc:?}");
+            let clang_cl = relaxed_clang_cl_flags(Profile::Shipping, fast);
+            assert!(!clang_cl.contains(&"/fp:fast") && clang_cl.contains(&"/clang:-ffp-contract=fast"), "{clang_cl:?}");
+            assert_eq!(clang_cl.contains(&"/clang:-funsafe-math-optimizations"), fast, "{clang_cl:?}");
         }
         if !cfg!(target_arch = "x86_64") {
             return;

@@ -3277,7 +3277,9 @@ mode is lexical, as ODR-084 made the overflow policy.
   `-ffast-math` but the assumption that no value is NaN or infinite, under which clang makes such an
   argument undefined behaviour (it marks the parameters `nofpclass(nan inf)` and then folds even a
   test of the bits; a `@fastmath` function called with a NaN could drop a bounds check, which
-  `[PHIL-10]` forbids). MSVC gets `/fp:precise /fp:contract`, or `/fp:fast`, with `/Z7` for `/Zi`
+  `[PHIL-10]` forbids). clang-cl, which reads `/fp:fast` as all of `-ffast-math`, gets
+  `/fp:precise` and clang's relaxations through `/clang:` (CI's clang-cl job caught it: the NaN
+  test answered as under `-ffast-math`). MSVC gets `/fp:precise /fp:contract`, or `/fp:fast`, with `/Z7` for `/Zi`
   and no `/GL`, because link-time code generation could inline across the two modes (MSVC's
   documentation does not say it keeps them apart, so the object is finished code). The program
   links with the strict flags, so the fast-math link step, which sets flush-to-zero for the whole
