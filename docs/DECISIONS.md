@@ -3462,3 +3462,42 @@ dependencies first, and a parent before its children within a module.
 and `STD-19/accept_a_reversed_enumerate_at_the_top_fits` (both the loop and `to_array`; the second
 caught an off-by-one in the loop's check), and `IFC-3/accept_a_child_interface_names_its_parents_associated_type`
 (D-394).
+
+## ADR-088 — overlapping implementations are found where they are declared
+
+2026-10-01, autonomous (the owner: "continue working autonomously but solo"). ODR-092
+(Hardened_47) ruled when two implementations overlap; this is how the checker finds them.
+
+**One pass, after every implementation is collected** (`check_overlapping_implementations`, run
+once the bounds are known). Every implementation is a record: the type it is for, split into a
+shape and arguments (`Pair` and `[T, int]`; a reference, a view, a tuple, a function type and a
+fixed array are shapes of their own; any other type is only itself), the interface's name and
+arguments, and the type parameters it is over, with their bounds. The records come from the generic
+extensions, a generic type's own `implements`, the blanket implementations, and the concrete
+implementations collected. Two records of one interface overlap when their arguments unify, each
+side's parameters kept apart from the other's even when they share a name (`T` in two `extend`
+blocks is two variables), with an occurs check; an associated type unifies with anything. Then each
+parameter the unification made a type with no parameter left must meet its bounds; a parameter
+left open, or made a type that still has one, meets any (ODR-092). An overlap is `E2041` at the
+later implementation, naming the earlier, once per implementation.
+
+**What a generic recipe's interface is.** A generic extension keeps its `implements` as written, to
+resolve at each instance. The pass resolves it once over the extension's own parameters (the
+recipe's instance over them for `Self`, found, never made); what that resolution reports is rolled
+back, as applying the recipe reports it.
+
+**The old check stays for two concrete implementations** (`collect_implements`: the same type and
+interface twice), now naming the first. When either implementation of a collision there comes from a
+generic recipe, the pass reports it instead, so an overlap is reported once where it is declared,
+not at every instance that meets both. A concrete implementation refused there because a recipe's
+already gave the type the interface is set aside for the pass (`set_aside`).
+
+**Cost.** Pairs are compared only within one interface; a trivial program checks in the same time
+(0.043 s against 0.042 s, median of seven).
+
+**Tests.** `TYP-19/reject_overlapping_implementations_are_found_where_declared` (five overlaps no
+program uses: parameters named apart and bounded apart, `Pair[T, int]` against `Pair[str, U]`, a
+nested instance, a type's own `implements` against an extension, a generic against a concrete; each
+compiled before), `TYP-19/accept_implementations_that_cannot_meet_are_both_kept` (a bound a named
+type misses, different interface arguments, different shapes), and
+`TYP-20/reject_two_implementations_of_one_interface_name_both`.

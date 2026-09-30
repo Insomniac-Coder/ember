@@ -241,6 +241,7 @@ pub fn check(
             }
         }
     }
+    checker.check_overlapping_implementations();
     // Conformance is a whole-program question. Checking it inside the loop
     // reports the same missing or mismatched member once per loaded module
     // and can run before a later module's extension has been collected.
@@ -669,6 +670,37 @@ struct BlanketImpl {
     span: Span,
 }
 
+/// `[TYP-19]` (ODR-092) — one implementation, as the overlap check reads
+/// it: the type it is for, split into its shape and arguments, and the
+/// interface's name and arguments, both over `params` (none for a
+/// concrete implementation).
+struct ImplRecord {
+    shape: TyShape,
+    args: Vec<Ty>,
+    interface: Symbol,
+    interface_args: Vec<Ty>,
+    instance: Symbol,
+    params: Vec<GenericParam>,
+    shown: String,
+    span: Span,
+}
+
+/// What two types must share to be one type, beside their arguments.
+#[derive(Clone, PartialEq)]
+enum TyShape {
+    /// A generic type by name (`Wrap`, `Array`, `Option`).
+    Named(Symbol),
+    Ref(bool),
+    Ptr(bool),
+    Span(bool),
+    Array(u64),
+    Vec(bool),
+    Tuple,
+    Fn(Option<Symbol>, bool, Vec<ember_types::FnParamMode>),
+    /// Any other type: equal only to itself.
+    Leaf(Ty),
+}
+
 /// An `extend[P] T[...P...]` recipe, for a generic struct, enum or class
 /// `T` (`[GRM-34]`). The extension's binders belong to the extension rather
 /// than the type's declaration, so each materialization matches its concrete
@@ -1035,6 +1067,10 @@ struct Checker<'a> {
     /// Which interfaces each type implements, for `[TYP-20]` coherence and to
     /// report a missing method against the right interface.
     implemented: Vec<(Ty, Symbol, Span)>,
+    /// `[TYP-19]` — concrete implementations not recorded because a generic
+    /// recipe's already gave the type the interface: the overlap check
+    /// reports them (`check_overlapping_implementations`).
+    set_aside: Vec<(Ty, Symbol, Span)>,
     /// `[TYP-24]` — each interface's methods for each type, beside
     /// `methods` (which keeps one per name), for `I.m(recv)`.
     interface_methods: HashMap<(Ty, Symbol, Symbol), MethodEntry>,
@@ -1466,6 +1502,7 @@ impl<'a> Checker<'a> {
             associated: HashMap::new(),
             interfaces: HashMap::new(),
             implemented: Vec::new(),
+            set_aside: Vec::new(),
             constants: HashMap::new(),
             foreign_statics: HashMap::new(),
             prefixes: vec![String::new()],
@@ -6177,6 +6214,9 @@ impl<'a> Checker<'a> {
 
     fn check_implementation_of(&mut self, ty: Ty, interface: Symbol, span: Span) {
         self.fill_assoc_defaults(ty, interface);
+        // D-397 — the interface as the source writes it (`Conv[int]`), not
+        // its instance's name.
+        let named = self.interface_shown(interface);
         let Some(def) = self.interfaces.get(&interface) else { return };
         let required = def.methods.clone();
         let supertraits = def.supertraits.clone();
@@ -6244,7 +6284,7 @@ impl<'a> Checker<'a> {
                 self.error(
                     codes::E2040,
                     span,
-                    format!("`{shown}` implements `{interface}` but does not define `{method}`"),
+                    format!("`{shown}` implements `{named}` but does not define `{method}`"),
                 );
                 continue;
             };
@@ -6255,7 +6295,7 @@ impl<'a> Checker<'a> {
                     codes::E2040,
                     span,
                     format!(
-                        "`{shown}.{method}` does not match the signature required by `{interface}`"
+                        "`{shown}.{method}` does not match the signature required by `{named}`"
                     ),
                 );
             }
@@ -6268,7 +6308,7 @@ impl<'a> Checker<'a> {
                     Diagnostic::error(
                         codes::E2040,
                         span,
-                        format!("`{shown}` implements `{interface}` but does not say what `{name}` is"),
+                        format!("`{shown}` implements `{named}` but does not say what `{name}` is"),
                     )
                     .help(format!("add `type {name} = …` to the `extend` block")),
                 );
@@ -6294,10 +6334,11 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let shown = self.types.display(ty);
+            let parent = self.interface_shown(parent);
             self.error(
                 codes::E2040,
                 span,
-                format!("`{interface}` requires `{parent}`, which `{shown}` does not implement"),
+                format!("`{named}` requires `{parent}`, which `{shown}` does not implement"),
             );
         }
     }
@@ -7931,14 +7972,23 @@ impl<'a> Checker<'a> {
             // Recorded under the name the interface is registered by, so that
             // a bound written `T: Ord` on an imported `Ord` matches the
             // implementation written `implements Ord` in another module.
-            // `[TYP-19]` — the same interface implemented twice for one type.
-            if self.implemented.iter().any(|(t, i, _)| *t == ty && *i == name) {
-                let shown = self.types.display(ty);
-                self.error(
-                    codes::E2041,
-                    entry.span,
-                    format!("`{shown}` already implements `{written}`"),
-                );
+            // `[TYP-19]` — the same interface implemented twice for one type;
+            // `[TYP-20]`: the error names both. When either is a generic
+            // recipe's, the overlap was (or will be) reported where the two
+            // are declared (`check_overlapping_implementations`, ODR-092),
+            // whether or not an instance ever meets both.
+            if let Some(&(_, _, first)) = self.implemented.iter().find(|(t, i, _)| *t == ty && *i == name) {
+                match (self.from_generic_recipe(first), self.from_generic_recipe(entry.span)) {
+                    (false, false) => {
+                        let shown = self.types.display(ty);
+                        self.sink.emit(
+                            Diagnostic::error(codes::E2041, entry.span, format!("`{shown}` already implements `{written}`"))
+                                .secondary(first, "the first implementation is here"),
+                        );
+                    }
+                    (true, false) => self.set_aside.push((ty, name, entry.span)),
+                    _ => {}
+                }
                 continue;
             }
             // The required methods are checked once everything is collected:
@@ -7947,6 +7997,292 @@ impl<'a> Checker<'a> {
             self.implemented.push((ty, name, entry.span));
         }
         let _ = (members, span);
+    }
+
+    /// Whether `span` is an `implements` of a generic type's declaration or
+    /// of a generic extension, or a blanket implementation: an
+    /// implementation over type parameters.
+    fn from_generic_recipe(&self, span: Span) -> bool {
+        let written = |implements: &[ast::TypeExpr]| implements.iter().any(|entry| entry.span == span);
+        self.generic_extensions.values().flatten().any(|extension| written(&extension.implements))
+            || self.generic_structs.values().any(|recipe| written(&recipe.implements))
+            || self.generic_enums.values().any(|recipe| written(&recipe.implements))
+            || self.generic_classes.values().any(|recipe| written(&recipe.implements))
+            || self.blankets.iter().any(|blanket| blanket.span == span)
+    }
+
+    /// `[TYP-19]`, `[TYP-20]` (ODR-092) — two implementations of one
+    /// interface whose types could be one type are `E2041`, found where they
+    /// are declared: an implementation over type parameters stands for every
+    /// type they can be, so two can overlap though no instance meets both.
+    /// A bound separates two only where the type it bounds is written out in
+    /// full and does not meet it; a bound on a type left open never does, as
+    /// a type meeting both bounds can be declared later, in another package.
+    /// Two concrete implementations are compared as they are collected
+    /// (`collect_implements`).
+    fn check_overlapping_implementations(&mut self) {
+        let mut records = Vec::new();
+        let mut recipes: Vec<(Symbol, Vec<GenericParam>, Vec<Ty>, Vec<ast::TypeExpr>, usize)> = Vec::new();
+        for (&name, extensions) in &self.generic_extensions {
+            for extension in extensions {
+                recipes.push((name, extension.params.clone(), extension.target_args.clone(), extension.implements.clone(), extension.declaring_module));
+            }
+        }
+        let declared: Vec<(Symbol, Vec<GenericParam>, Vec<ast::TypeExpr>, usize)> = self
+            .generic_structs
+            .iter()
+            .map(|(&name, recipe)| (name, recipe.generic_params.clone(), recipe.implements.clone(), recipe.declaring_module))
+            .chain(self.generic_enums.iter().map(|(&name, recipe)| (name, recipe.generic_params.clone(), recipe.implements.clone(), recipe.declaring_module)))
+            .chain(self.generic_classes.iter().map(|(&name, recipe)| (name, recipe.generic_params.clone(), recipe.implements.clone(), recipe.declaring_module)))
+            .collect();
+        for (name, params, implements, module) in declared {
+            let args: Vec<Ty> = params
+                .iter()
+                .enumerate()
+                .map(|(index, param)| self.types.intern(TyKind::Param { index: index as u32, name: param.name }))
+                .collect();
+            recipes.push((name, params, args, implements, module));
+        }
+        for (name, params, args, implements, module) in recipes {
+            if implements.is_empty() {
+                continue;
+            }
+            let owner = match BUILTIN_GENERICS.contains(&name.as_str()) {
+                true => None,
+                false => self.named_types.get(&self.generic_instance_name(name, &args)).copied(),
+            };
+            let shown = match owner {
+                Some(owner) => self.types.display(owner),
+                None => {
+                    let args: Vec<String> = args.iter().map(|&ty| self.types.display(ty)).collect();
+                    let written = name.as_str().rsplit('.').next().unwrap_or_default().to_string();
+                    format!("{written}[{}]", args.join(", "))
+                }
+            };
+            for entry in &implements {
+                let Some(instance) = self.recipe_interface(entry, &params, owner, module) else { continue };
+                let (interface, interface_args) =
+                    self.open_interface_origin.get(&instance).cloned().unwrap_or((instance, Vec::new()));
+                records.push(ImplRecord {
+                    shape: TyShape::Named(name),
+                    args: args.clone(),
+                    interface,
+                    interface_args,
+                    instance,
+                    params: params.clone(),
+                    shown: shown.clone(),
+                    span: entry.span,
+                });
+            }
+        }
+        for blanket in self.blankets.clone() {
+            let (shape, args) = self.ty_shape(blanket.target);
+            let shown = self.types.display(blanket.target);
+            for (interface, interface_args) in blanket.interfaces {
+                records.push(ImplRecord {
+                    shape: shape.clone(),
+                    args: args.clone(),
+                    interface,
+                    interface_args,
+                    instance: interface,
+                    params: blanket.params.clone(),
+                    shown: shown.clone(),
+                    span: blanket.span,
+                });
+            }
+        }
+        let generic: HashSet<Span> = records.iter().map(|record| record.span).collect();
+        let concrete: Vec<(Ty, Symbol, Span)> = self
+            .implemented
+            .iter()
+            .chain(&self.set_aside)
+            .copied()
+            .filter(|&(ty, _, span)| !generic.contains(&span) && !self.types.is_generic(ty))
+            .collect();
+        for (ty, instance, span) in concrete {
+            let (shape, args) = self.ty_shape(ty);
+            let (interface, interface_args) =
+                self.open_interface_origin.get(&instance).cloned().unwrap_or((instance, Vec::new()));
+            records.push(ImplRecord {
+                shape,
+                args,
+                interface,
+                interface_args,
+                instance,
+                params: Vec::new(),
+                shown: self.types.display(ty),
+                span,
+            });
+        }
+        records.sort_by_key(|record| (record.span.file, record.span.start));
+        let mut by_interface: HashMap<Symbol, Vec<usize>> = HashMap::new();
+        for (at, record) in records.iter().enumerate() {
+            by_interface.entry(record.interface).or_default().push(at);
+        }
+        let mut reported = HashSet::new();
+        for later in 0..records.len() {
+            for &earlier in by_interface[&records[later].interface].iter().take_while(|&&earlier| earlier < later) {
+                let (a, b) = (&records[earlier], &records[later]);
+                if a.shape != b.shape
+                    || a.args.len() != b.args.len()
+                    || a.interface_args.len() != b.interface_args.len()
+                    || (a.params.is_empty() && b.params.is_empty())
+                    || a.span == b.span
+                    || reported.contains(&b.span)
+                {
+                    continue;
+                }
+                let mut bound = HashMap::new();
+                let one = a.args.iter().chain(&a.interface_args).zip(b.args.iter().chain(&b.interface_args)).all(|(&x, &y)| self.unify_sides(x, 0, y, 1, &mut bound));
+                if !one || !self.known_bounds_hold(&a.params, 0, &bound) || !self.known_bounds_hold(&b.params, 1, &bound) {
+                    continue;
+                }
+                reported.insert(b.span);
+                let interface = self.interface_shown(b.instance);
+                let message = match a.shown == b.shown {
+                    true => format!("`{}` already implements `{interface}`", b.shown),
+                    false => format!("`{}` and `{}` can be one type, and both implement `{interface}`", b.shown, a.shown),
+                };
+                self.sink.emit(
+                    Diagnostic::error(codes::E2041, b.span, message)
+                        .secondary(a.span, "the other implementation is here")
+                        .note("two implementations of one interface may not apply to one type [TYP-19]"),
+                );
+            }
+        }
+    }
+
+    /// The interface instance a generic recipe's `implements` entry names,
+    /// over the recipe's own parameters, or `None` when it names none. What
+    /// resolving it reports is dropped: applying the recipe reports it.
+    fn recipe_interface(&mut self, entry: &ast::TypeExpr, params: &[GenericParam], owner: Option<Ty>, module: usize) -> Option<Symbol> {
+        let mark = self.sink.mark();
+        let scope: HashMap<Symbol, Ty> = params
+            .iter()
+            .enumerate()
+            .map(|(index, param)| (param.name, self.types.intern(TyKind::Param { index: index as u32, name: param.name })))
+            .collect();
+        let saved_params = std::mem::replace(&mut self.type_params, scope);
+        let saved_module = std::mem::replace(&mut self.current_module, module);
+        let instance = match owner {
+            Some(owner) => self.resolve_interface_use_for(entry, owner),
+            None => self.resolve_interface_use(entry),
+        };
+        self.type_params = saved_params;
+        self.current_module = saved_module;
+        if self.sink.mark() != mark {
+            self.sink.rollback(mark);
+            return None;
+        }
+        instance
+    }
+
+    /// A type's shape and arguments, as `check_overlapping_implementations`
+    /// compares them.
+    fn ty_shape(&self, ty: Ty) -> (TyShape, Vec<Ty>) {
+        let origin = match *self.types.kind(ty) {
+            TyKind::Struct(id) => self.types.struct_def(id).origin.clone(),
+            TyKind::Class(id) => self.types.class_def(id).origin.clone(),
+            TyKind::Enum(id) => self.types.enum_def(id).origin.clone().or_else(|| self.builtin_generic_origin(ty)),
+            _ => self.builtin_generic_origin(ty),
+        };
+        if let Some((name, args)) = origin {
+            return (TyShape::Named(name), args);
+        }
+        match self.types.kind(ty).clone() {
+            TyKind::Ref { mutable, inner } => (TyShape::Ref(mutable), vec![inner]),
+            TyKind::Ptr { mutable, inner } => (TyShape::Ptr(mutable), vec![inner]),
+            TyKind::Span { elem, mutable } => (TyShape::Span(mutable), vec![elem]),
+            TyKind::Array { elem, len } => (TyShape::Array(len), vec![elem]),
+            TyKind::Vec { elem, text } => (TyShape::Vec(text), vec![elem]),
+            TyKind::Tuple(items) => (TyShape::Tuple, items),
+            TyKind::Fn { abi, latebound, params, ret } => (
+                TyShape::Fn(abi, latebound, params.iter().map(|param| param.mode).collect()),
+                params.iter().map(|param| param.ty).chain([ret]).collect(),
+            ),
+            _ => (TyShape::Leaf(ty), Vec::new()),
+        }
+    }
+
+    /// What `ty`, read on `side`, stands for: a parameter already made
+    /// something is that thing.
+    fn walk_side(&self, mut ty: Ty, mut side: u8, bound: &HashMap<(u8, u32), (Ty, u8)>) -> (Ty, u8) {
+        while let TyKind::Param { index, .. } = *self.types.kind(ty)
+            && index != ember_types::SELF_PARAM
+            && let Some(&(to, to_side)) = bound.get(&(side, index))
+        {
+            (ty, side) = (to, to_side);
+        }
+        (ty, side)
+    }
+
+    /// Whether `a` on side `sa` and `b` on side `sb` can be one type, each
+    /// side's parameters standing for any type and kept apart from the other
+    /// side's even when they share a name. An associated type can be
+    /// anything.
+    fn unify_sides(&self, a: Ty, sa: u8, b: Ty, sb: u8, bound: &mut HashMap<(u8, u32), (Ty, u8)>) -> bool {
+        let (a, sa) = self.walk_side(a, sa, bound);
+        let (b, sb) = self.walk_side(b, sb, bound);
+        if a == b && (sa == sb || !self.types.is_generic(a)) {
+            return true;
+        }
+        let param = |ty: Ty| match *self.types.kind(ty) {
+            TyKind::Param { index, .. } if index != ember_types::SELF_PARAM => Some(index),
+            _ => None,
+        };
+        if let Some(index) = param(a) {
+            if self.occurs_on_side((sa, index), b, sb, bound) {
+                return false;
+            }
+            bound.insert((sa, index), (b, sb));
+            return true;
+        }
+        if let Some(index) = param(b) {
+            if self.occurs_on_side((sb, index), a, sa, bound) {
+                return false;
+            }
+            bound.insert((sb, index), (a, sa));
+            return true;
+        }
+        if matches!(self.types.kind(a), TyKind::Assoc { .. }) || matches!(self.types.kind(b), TyKind::Assoc { .. }) {
+            return true;
+        }
+        let (shape_a, args_a) = self.ty_shape(a);
+        let (shape_b, args_b) = self.ty_shape(b);
+        shape_a == shape_b
+            && args_a.len() == args_b.len()
+            && args_a.iter().zip(&args_b).all(|(&x, &y)| self.unify_sides(x, sa, y, sb, bound))
+    }
+
+    fn occurs_on_side(&self, var: (u8, u32), ty: Ty, side: u8, bound: &HashMap<(u8, u32), (Ty, u8)>) -> bool {
+        let (ty, side) = self.walk_side(ty, side, bound);
+        match *self.types.kind(ty) {
+            TyKind::Param { index, .. } => (side, index) == var,
+            _ => self.ty_shape(ty).1.iter().any(|&arg| self.occurs_on_side(var, arg, side, bound)),
+        }
+    }
+
+    /// Whether every bound of `params` (on `side`) holds of what the
+    /// parameter was made, where that is written out in full; a parameter
+    /// left open, or made a type that still has one, may meet any bound.
+    fn known_bounds_hold(&self, params: &[GenericParam], side: u8, bound: &HashMap<(u8, u32), (Ty, u8)>) -> bool {
+        for (index, param) in params.iter().enumerate() {
+            let Some(&(ty, to_side)) = bound.get(&(side, index as u32)) else { continue };
+            let (ty, _) = self.walk_side(ty, to_side, bound);
+            if self.types.is_generic(ty) {
+                continue;
+            }
+            for &interface in &param.bounds {
+                let open = self
+                    .open_interface_origin
+                    .get(&interface)
+                    .is_some_and(|(_, args)| args.iter().any(|&arg| self.types.is_generic(arg)));
+                if !open && !self.implements(ty, interface) {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     fn resolve_type(&mut self, ty: &ast::TypeExpr) -> Ty {

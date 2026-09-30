@@ -63,6 +63,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-082 | **CLOSED** — `@ffi(immutable)` on a foreign static asserts a `const` C object and emits a matching declaration | Language / C interop / foreign statics | — | **No** — delegated, 2026-09-27, Hardened_38 |
 | ODR-083 | **CLOSED** — a static free-function export's `creator` thread is anchored to successful module initialization; repeated initialization does not transfer the contract, and reinitialization after shutdown establishes a new creator | Language / C interop / export thread contracts | — | **No** — delegated, 2026-09-27, Hardened_39 |
 | ODR-084 | **CLOSED** — `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts | Language / module attributes / arithmetic | — | **No** — delegated, 2026-09-27, Hardened_40 |
+| ODR-092 | **CLOSED** — two implementations overlap where one type could be both, each one's type parameters standing for any type, found where they are declared; a bound separates two only where the type it bounds is written out in full and does not meet it | Types / implementations | — | **Yes** — delegated, 2026-10-01, Hardened_47 |
 | ODR-091 | **CLOSED** — an iterator runs backwards when it implements `DoubleEndedIterator` (`next_back`), whose method `rev` is; `ExactSizeIterator` gives `len`; ranges with an end, the views' element iterators, and the adapters over them where they can tell their last item | Library / iterators | — | **Yes** — delegated, 2026-10-01, Hardened_46 |
 | ODR-090 | **CLOSED** — a float mode is lexical, as the overflow policy is: a lambda takes its function's mode; a parameter default keeps its declaration's and a field default is strict wherever evaluated; inside `@fastmath` no range fact about a float is derived, and integer facts are unaffected; neither mode relaxes what the language defines exactly for NaN and infinity | Language / floating point / range facts | — | **Yes** — delegated, 2026-09-30, Hardened_45 |
 | ODR-089 | **CLOSED** — an iterator adapter or consumer takes the iterator it wraps; `take`, `skip`, `nth` and `step_by` count in `int`, and a negative count or index, or a step of zero or less, panics when the adapter is made or the consumer called | Library / iterators | — | **Yes** — delegated, 2026-09-29, Hardened_44 |
@@ -247,6 +248,41 @@ immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
+
+## ODR-092 — when two implementations overlap — **CLOSED**
+
+    ID:        ODR-092
+    Status:    CLOSED — ruled under the owner's delegation, 2026-10-01;
+               incorporated in 0.9.9_Hardened_47
+    Category:  TYPES / IMPLEMENTATIONS
+    Location:  Ember_v0.9.9_Hardened_46.md [TYP-19], [TYP-20]
+
+**The question.** `[TYP-19]` makes "two implementations whose applicable types overlap" `E2041`,
+and `[TYP-20]` says two implementations of one interface for one type "anywhere in a program" are
+`E2041`. An implementation over type parameters (`extend[T: Copy] Wrap[T] implements Named`)
+applies to every type its parameters and bounds admit. Is an overlap the types the two could both
+apply to, or only those some program forms? And does a bound separate two implementations whose
+targets are otherwise alike (`extend[T: Copy] Wrap[T]` and `extend[U: Clone] Wrap[U]`)? The
+compiler found an overlap only when an instance both applied to was made, reported it at that use,
+once per instance, and accepted a pair no program met.
+
+**Options.**
+1. An overlap is an instance the program makes that both apply to. A library with two overlapping
+   implementations compiles, and a later package that makes the instance fails at code it cannot
+   change.
+2. Two overlap when their targets and interface arguments could be one type, each side's
+   parameters standing for any type, and bounds are ignored (Rust's coherence). `extend[T: Copy]
+   Pair[T, int]` and `extend Pair[String, int]` would overlap though `String` is not `Copy`, and
+   whether `String` is `Copy` is known.
+3. As 2, but a bound separates two where the type it bounds is written out in full and does not
+   meet it.
+
+**Ruling: 3.** Found where the two are declared, whether or not any instance meets both. A bound on
+a type left open never separates two: a type meeting both bounds can be declared later, in another
+package, where neither implementation could change (`[TYP-20]`'s reason for coherence). A type
+written out in full is one whose implementations are all known where it and the bound's interface
+are, so the answer does not change later. A later ruling may let an interface whose
+implementations are all in view (a private interface, `Float`) separate two bounds.
 
 ## ODR-091 — which iterators run backwards — **CLOSED**
 
