@@ -3253,3 +3253,127 @@ list and a single loop stay; the same results on every compiler) and the milesto
 `loop_nests_carrying_a_running_value_get_their_own_function_for_msvc`; break-tested (with the mode
 off no nest moves).
 
+## ADR-085 — `@fastmath` and `@fp(contract)`: a C unit per float mode
+
+2026-09-30, autonomous. `[TYP-9]` relaxes floating point within a function marked `@fastmath`
+(every relaxation) or `@fp(contract)` (a multiply and an add may fuse, and nothing else), and
+`[CG-C-11]` builds such a function "in a separate translation unit compiled with the relaxed
+flags", so strict code keeps its own. ODR-090 (Hardened_45) ruled what the text left open: a float
+mode is lexical, as ODR-084 made the overflow policy.
+
+**What was built.**
+- The checker reads the attributes (`FpMode` on signatures, HIR functions and MIR bodies). `@fp`
+  names `contract` and nothing else, `@fastmath` takes no arguments (`E0104`, once where the
+  attribute is written, however many types take an interface default carrying it). Either on a
+  method with no body (an interface's, an abstract one) is `E0104`: it would govern nothing. A
+  lambda takes the mode of the function it is written in.
+- The backend writes the main unit and one unit per relaxed mode the program uses
+  (`<module>.contract.c`, `<module>.fastmath.c`). Every unit declares every function and defines
+  only those of its own mode; the entry point and the type information are in the main unit.
+  `--emit c` prints the main unit, then each relaxed one.
+- `ember_build::compile_relaxed_object` builds each relaxed unit with the profile's flags,
+  relaxed: `-ffp-contract=fast` for `-ffp-contract=off` (clang, gcc), and under `@fastmath`
+  `-funsafe-math-optimizations -fno-math-errno` for `-fno-fast-math`: every relaxation of
+  `-ffast-math` but the assumption that no value is NaN or infinite, under which clang makes such an
+  argument undefined behaviour (it marks the parameters `nofpclass(nan inf)` and then folds even a
+  test of the bits; a `@fastmath` function called with a NaN could drop a bounds check, which
+  `[PHIL-10]` forbids). MSVC gets `/fp:precise /fp:contract`, or `/fp:fast`, with `/Z7` for `/Zi`
+  and no `/GL`, because link-time code generation could inline across the two modes (MSVC's
+  documentation does not say it keeps them apart, so the object is finished code). The program
+  links with the strict flags, so the fast-math link step, which sets flush-to-zero for the whole
+  process, never runs. `@fp(contract)` permits fusing; the build targets baseline x86-64, which
+  has no fused multiply-add instruction, so no x86-64 build fuses today (`math.fma` and
+  `mul_add` are the single rounding that always holds, `[STD-3]`).
+- What the language defines exactly for NaN and infinity holds in every mode (ODR-090):
+  `is_nan`, `is_finite` and `is_infinite` test the bits (the runtime's `ember_f64_is_*`, in every
+  unit); `x as int` finds NaN and the infinities by the bits before any comparison
+  (`EMBER_FLOAT_TO_INT`); and a range value never holds NaN: in a relaxed function a float
+  range's `checked` test (`RangeContains`, a new built-in the lowering uses there) and `clamped`
+  call the runtime's `ember_range_contains_*` and `ember_range_clamp_*`, compiled strict and out of
+  line. Before this, in a `@fastmath` function, `nan as int` was `-9223372036854775808` with
+  MSVC and clang and `x.is_nan()` was `false` with clang.
+- What a program has one of and compares by address is defined once, in the main unit, and
+  declared `extern` in each relaxed one: an interface's id (the interface lookup compares it), a
+  function value's descriptor (function values compare by it) and a `Shared` type's information.
+  Written once per unit, a function value made in the `@fastmath` file was unequal to the same
+  function made in the main file.
+- The MIR inliner never inlines across modes (ADR-081's pass).
+- A parameter default of another mode than the calling function's is checked as written first;
+  if it does float work (`float_work`: float arithmetic, a comparison or conversion of floats, a
+  built-in taking or giving one; a call's callee keeps its own mode), it is instead the body of a
+  closure of its declaration's mode, called at the call, with `self` and the earlier parameters
+  passed to it borrowed, as a closure does not capture `self`. A field default, a struct's or a
+  class's, is strict the same way. Where no closure can hold it (a `mut` parameter's place, a
+  mutating default), the call is `E0900` (NOT-IMPLEMENTED N7); a default is never evaluated in
+  the wrong mode, and never silently: a first version re-checked a failed closure in the caller's
+  scope and could leave the call an empty argument with no error.
+- Class field defaults are now checked as a struct's are (`check_field_default`): in the declaring
+  module, with the constructing function's locals out of scope, once per default however many
+  constructions evaluate it (`[STR-2]`, `[DIA-14]`). D-393, found by the review: a class default
+  saw the caller's locals, so `k: int = scale * 2` took `main`'s `scale`.
+- `[RNG-4]`: inside `@fastmath` no fact about a float is taken from a comparison or from `min`,
+  `max` or `clamp`, and inside either relaxed mode none from a float operation's result. Integer
+  facts are unchanged.
+- `[SIMD-5]`: a float running total no longer keeps a `@fastmath` function's loop out of
+  vectorisable form (NOT-IMPLEMENTED N5, now waiting on `@parallel` only), so its integer checks
+  are grouped (`[SIMD-7]`).
+- A static library with a relaxed function is `E0900` (NOT-IMPLEMENTED N6): a library keeps its
+  functions internal to its one unit, which a relaxed unit could not call.
+
+**Found on the way: MSVC's reductions.** Compared with C (a dot product of two lists of 4 million
+numbers, 300 rounds, scratchpad `fpbench/`), the `@fastmath` version ran 1.43x C with MSVC: MSVC
+vectorised the C loop and not Ember's (reason 1105, an unrecognised reduction). Reduced by hand
+(`fpbench/variants.py`): hoisting the list pointers, a counter of the loop's own, a local total
+and a block around it changed nothing; writing `_3 = _3 + _8;` for the backend's
+`_3 = (_3 + _8);` alone made MSVC vectorise it. MSVC finds a reduction only in the form
+`x = x + e;`. An assigned binary operation is now written without its outer parentheses (`=`
+binds loosest, so they never mattered). Fifteen tests whose C needles ended in that parenthesis
+(`" >> 56ULL)"` and the like, in `SIMD-7/`, `RNG-4/` and `CTL-1/`) now end in the assignment's
+`;`, each checked to count the same in every profile. The 39 benchmark programs: MSVC 0.98x to 1.05x
+(`test/now`, where above 1 is faster now), every output the same; clang 0.98x to 1.13x, every output the same, and the three lowest
+at 0.98x to 1.01x timed again 21 times (clang reads the two forms alike).
+
+**Reviewed before commit** by an adversarial workflow the owner approved (three read-only
+reviewers, then one skeptic per finding whose truth turned on the spec's reading; results in
+`build/review-typ9/`). Seventeen findings, fifteen distinct. Fixed: the silent default (above),
+class field defaults (not strict, and D-393), a `mut` default (now `E0900`), NaN and infinity in
+relaxed files (above), the attribute on a bodyless method, the repeated `E0104`, `min`/`max`/
+`clamp` facts inside `@fastmath`, defaults doing no float work made closures anyway, two test
+gaps and three stale records. Refuted: that `@fp(contract)` breaks `[TYP-9b]` because x86-64 has
+no FMA instruction (it is a permission; noted above), and that `min`/`max`/`clamp` facts are
+unsound in `@fastmath` (they compare by totalOrder in the strict runtime; gated anyway, to match
+the rule's words).
+
+**Measured** (median of 21 runs; clang of 7; with the review's flags, 11 runs: clang 0.793 s
+against 0.806 s, 0.98x; MSVC 0.802 s against 0.776 s, 1.03x):
+
+| | C | Ember | Ember ÷ C |
+|---|---|---|---|
+| MSVC `@fastmath` | 0.754 s | 0.751 s | 1.00x (was 1.43x) |
+| clang `@fastmath` | 0.712 s | 0.724 s | 1.02x |
+| MSVC strict | 0.879 s | 1.095 s | 1.25x |
+| clang strict | 0.863 s | 0.899 s | 1.04x |
+
+The strict MSVC gap was 1.24x before this change too, and its cause is not found yet: in
+that build ADR-081's inliner puts `dot` in `main`, where MSVC does not unroll the loop, and C with
+the same inlining runs 0.80 s. It is the next speed item in the handoff.
+
+**Tests.** `TYP-9/accept_a_relaxed_function_is_built_in_its_own_unit` (each relaxed function
+defined once, in its unit; the interface id defined once and declared twice; a function value
+equal across units; a lambda in its function's unit), `TYP-9/reject_a_float_mode_that_is_not_one`,
+`TYP-9/accept_a_default_keeps_its_declarations_float_mode` (each default's arithmetic in the
+right unit), `RNG-4/reject_a_float_fact_inside_fastmath` (the integer fact and the `@fp(contract)`
+comparison stay), `SIMD-5/accept_a_float_total_in_fastmath_is_in_vectorisable_form`,
+`SIMD-5/run_fail_a_float_total_in_fastmath_reports_its_first_overflow`, `ember_build`'s
+`a_relaxed_unit_is_compiled_to_fuse` (the relaxed flags let clang fuse `a * b + c`), `staticlib.rs`'s
+`a_static_library_with_a_relaxed_function_is_refused` and `ember_codegen_c`'s
+`only_parentheses_around_the_whole_are_dropped`; from the review,
+`TYP-9/accept_nan_and_infinity_keep_their_meaning_in_fastmath` (fails with clang under
+`-ffast-math`), `TYP-9/reject_a_float_mode_on_a_method_without_a_body`,
+`TYP-9/reject_a_mut_default_doing_float_work_from_another_mode` and
+`STR-2/reject_a_class_default_does_not_see_the_constructors_locals`, with a class default, a
+lambda's constant and the `clamp` case added to the tests above and a grouping needle to the
+`SIMD-5` run-fail one. Break-tested: without the closures for defaults, the unit split, the single
+definition, the float-fact rule, the relaxed flags, the `[SIMD-5]` admission, the lambda's mode,
+the class defaults' strictness, the bodyless-method check or the finite-math exclusion, its test
+fails.

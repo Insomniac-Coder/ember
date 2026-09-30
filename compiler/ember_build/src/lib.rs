@@ -432,6 +432,73 @@ pub fn compile_and_link(toolchain: &Toolchain, request: &LinkRequest) -> Result<
     run(command)
 }
 
+/// `[CG-C-11]` — compile a relaxed floating-point unit: the profile's flags
+/// with strict IEEE arithmetic replaced by `@fp(contract)`'s fused
+/// multiply-add (`-ffp-contract=fast`; MSVC `/fp:contract`) or, with `fast`,
+/// by every relaxation `@fastmath` allows (`-ffast-math`; MSVC `/fp:fast`).
+/// The object is linked with the program's.
+pub fn compile_relaxed_object(
+    toolchain: &Toolchain,
+    source: &Path,
+    include_dirs: &[PathBuf],
+    output: &Path,
+    profile: Profile,
+    fast: bool,
+) -> Result<(), BuildError> {
+    if let Some(parent) = output.parent() { std::fs::create_dir_all(parent)?; }
+    let mut command = compiler_command(toolchain);
+    match toolchain {
+        Toolchain::Msvc { .. } => {
+            command.args(relaxed_msvc_flags(profile, fast)).arg("/c");
+            for dir in include_dirs { command.arg(format!("/I{}", dir.display())); }
+            command.arg(source).arg(format!("/Fo{}", output.display()));
+        }
+        Toolchain::Clang(_) | Toolchain::Gcc(_) => {
+            command.args(relaxed_gnu_flags(profile, fast)).arg("-c");
+            for dir in include_dirs { command.arg("-I").arg(dir); }
+            command.arg(source).arg("-o").arg(output);
+        }
+    }
+    run(command)
+}
+
+/// `[CG-C-11]` — the profile's MSVC flags with `/fp:precise` relaxed:
+/// `/fp:contract` added, or `/fp:fast` in its place. `/Z7` keeps the debug
+/// information in the object, as no program database is named for it. No
+/// `/GL`: link-time code generation could inline across the two modes, so
+/// the relaxed object is finished code the linker only places.
+fn relaxed_msvc_flags(profile: Profile, fast: bool) -> Vec<&'static str> {
+    msvc_flags(profile)
+        .into_iter()
+        .flat_map(|flag| match flag {
+            "/fp:precise" if fast => vec!["/fp:fast"],
+            "/fp:precise" => vec!["/fp:precise", "/fp:contract"],
+            "/Zi" => vec!["/Z7"],
+            "/GL" => vec![],
+            other => vec![other],
+        })
+        .collect()
+}
+
+/// `[CG-C-11]` — the profile's clang and gcc flags with contraction on
+/// (`-ffp-contract=fast`) and, for `@fastmath`, every relaxation of
+/// `-ffast-math` but one: reassociation, reciprocals, signed zeros, traps and
+/// `errno` (`-funsafe-math-optimizations -fno-math-errno`), not the
+/// assumption that no value is NaN or infinite (`-ffinite-math-only`). Under
+/// it clang makes a NaN argument undefined behaviour, and a `@fastmath`
+/// function called with one could then skip a bounds check, which a Safe
+/// program never may (`[PHIL-10]`, ODR-090).
+fn relaxed_gnu_flags(profile: Profile, fast: bool) -> Vec<&'static str> {
+    gnu_flags(profile)
+        .into_iter()
+        .flat_map(|flag| match flag {
+            "-ffp-contract=off" => vec!["-ffp-contract=fast"],
+            "-fno-fast-math" if fast => vec!["-funsafe-math-optimizations", "-fno-math-errno"],
+            other => vec![other],
+        })
+        .collect()
+}
+
 /// Compile one C translation unit for a distributable library. MSVC keeps
 /// debug data inside the object: an archive must not depend on a build-local
 /// PDB beside it (`[FFI-28]`). Profile optimisation and safety flags match
@@ -906,6 +973,45 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert!(control.contains("vfmadd"), "the control compile did not fuse, so the check sees nothing:\n{control}");
         assert!(!strict.contains("vfmadd"), "the build's flags let the C compiler fuse:\n{strict}");
+    }
+
+    /// `[CG-C-11]`, `[TYP-9b]` — a relaxed unit's flags let the C compiler
+    /// fuse, for `@fp(contract)` and `@fastmath` alike, and change nothing
+    /// else a strict unit is compiled with.
+    #[test]
+    fn a_relaxed_unit_is_compiled_to_fuse() {
+        for fast in [false, true] {
+            let gnu = relaxed_gnu_flags(Profile::Shipping, fast);
+            assert!(gnu.contains(&"-ffp-contract=fast") && !gnu.contains(&"-ffp-contract=off"), "{gnu:?}");
+            assert_eq!(gnu.contains(&"-funsafe-math-optimizations"), fast, "{gnu:?}");
+            assert_eq!(gnu.contains(&"-fno-fast-math"), !fast, "{gnu:?}");
+            // Never the finite-only assumption: a NaN must stay a value.
+            assert!(!gnu.iter().any(|flag| *flag == "-ffast-math" || flag.contains("finite-math")), "{gnu:?}");
+            assert_eq!(gnu.len(), gnu_flags(Profile::Shipping).len() + usize::from(fast), "{gnu:?}");
+            let msvc = relaxed_msvc_flags(Profile::Shipping, fast);
+            assert_eq!(msvc.contains(&"/fp:fast"), fast, "{msvc:?}");
+            assert_eq!(msvc.contains(&"/fp:contract"), !fast, "{msvc:?}");
+            assert_eq!(msvc.contains(&"/fp:precise"), !fast, "{msvc:?}");
+            assert!(!msvc.contains(&"/GL"), "{msvc:?}");
+        }
+        if !cfg!(target_arch = "x86_64") {
+            return;
+        }
+        let requested = std::env::var(ember_branding::cc_var()).ok();
+        let toolchain = Toolchain::detect(requested.as_deref()).expect("a C toolchain");
+        let (Toolchain::Clang(cc) | Toolchain::Gcc(cc)) = &toolchain else { return };
+        let dir = std::env::temp_dir().join(format!("fp-relaxed-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("the test directory is creatable");
+        let source = dir.join("fused.c");
+        std::fs::write(&source, "double fused(double a, double b, double c) { return a * b + c; }\n")
+            .expect("the source is writable");
+        let output = dir.join("fused.s");
+        let mut command = Command::new(cc);
+        command.args(relaxed_gnu_flags(Profile::Shipping, false)).arg("-mfma").arg("-S").arg(&source).arg("-o").arg(&output);
+        run(command).expect("the source compiles");
+        let assembly = std::fs::read_to_string(&output).expect("the assembly is readable");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(assembly.contains("vfmadd"), "a relaxed unit's flags did not let the C compiler fuse:\n{assembly}");
     }
 
     #[test]

@@ -63,6 +63,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-082 | **CLOSED** — `@ffi(immutable)` on a foreign static asserts a `const` C object and emits a matching declaration | Language / C interop / foreign statics | — | **No** — delegated, 2026-09-27, Hardened_38 |
 | ODR-083 | **CLOSED** — a static free-function export's `creator` thread is anchored to successful module initialization; repeated initialization does not transfer the contract, and reinitialization after shutdown establishes a new creator | Language / C interop / export thread contracts | — | **No** — delegated, 2026-09-27, Hardened_39 |
 | ODR-084 | **CLOSED** — `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts | Language / module attributes / arithmetic | — | **No** — delegated, 2026-09-27, Hardened_40 |
+| ODR-090 | **CLOSED** — a float mode is lexical, as the overflow policy is: a lambda takes its function's mode; a parameter default keeps its declaration's and a field default is strict wherever evaluated; inside `@fastmath` no range fact about a float is derived, and integer facts are unaffected; neither mode relaxes what the language defines exactly for NaN and infinity | Language / floating point / range facts | — | **Yes** — delegated, 2026-09-30, Hardened_45 |
 | ODR-089 | **CLOSED** — an iterator adapter or consumer takes the iterator it wraps; `take`, `skip`, `nth` and `step_by` count in `int`, and a negative count or index, or a step of zero or less, panics when the adapter is made or the consumer called | Library / iterators | — | **Yes** — delegated, 2026-09-29, Hardened_44 |
 | ODR-088 | **CLOSED** — a loop that divides integers by a divisor that is not a constant, or integers of 64 bits or more by a constant that is not a power of two, is not in vectorisable form, so its overflow checks stay one per operation | Language / cost / vectorisation | — | **Yes** — owner, 2026-09-28, Hardened_43 |
 | ODR-087 | **CLOSED** — LLVM is restored as the reference implementation's second backend over the same MIR: begun once the C backend passes the conformance suite, the default once it also passes the performance suite; `--backend c\|llvm` | Implementation / backends | — | **Yes** — owner, 2026-09-28, Hardened_42 |
@@ -245,6 +246,59 @@ immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
+
+## ODR-090 — where a float mode holds — **CLOSED**
+
+    ID:        ODR-090
+    Status:    CLOSED — ruled under the owner's delegation, 2026-09-30;
+               incorporated in 0.9.9_Hardened_45
+    Category:  LANGUAGE / FLOATING POINT / RANGE FACTS
+    Location:  Ember_v0.9.9_Hardened_44.md [TYP-9], [TYP-9b], [RNG-4], [CG-C-11]
+
+**The question.** `[TYP-9]` relaxes floating point "within" a `@fastmath` or `@fp(contract)`
+function, and `[CG-C-11]` builds such a function in a translation unit of its own. Neither says
+which mode holds for code that is written in one function and runs in another: a lambda written
+inside a relaxed function, a parameter default (`[FN-5]` evaluates it at the call, in the
+caller's body), a field default (evaluated where the struct is built). `[RNG-4]` says a fact is
+derived "never inside `@fastmath`", which read literally also drops integer facts, among them
+the one that carries a range loop's `a <= i`.
+
+**Options for the boundary.**
+1. Where the code runs: a default takes the calling function's mode. Nothing to build, but a
+   strict declaration's default becomes relaxed when a `@fastmath` function calls it, so the
+   caller changes what the declaration means — what ODR-084 refused for the overflow policy.
+2. Where the code is written, as ODR-084 rules for overflow: a lambda takes its function's mode;
+   a default keeps its declaration's. The backend must then evaluate a default of another mode
+   outside the caller's translation unit: the default becomes a closure of its declaration's
+   mode, called at the call (one call, only where the two modes differ and the default computes
+   something).
+
+**Options for `[RNG-4]`.**
+1. No fact at all inside `@fastmath`: a relaxed function keeps every bounds and overflow check
+   the same function would lose if strict, including the range loop's, which `[RNG-4]` says the
+   loop carries. No float relaxation changes an integer operation, so this costs time and buys
+   nothing.
+2. No fact about a float inside `@fastmath`, where the function may be compiled as if no value
+   were NaN (a comparison's arm then proves nothing); integer facts as anywhere else.
+
+**What neither mode may relax** (found by the review before commit). `-ffast-math` includes
+the assumption that no value is NaN or infinite, and under it clang makes a NaN or infinite
+argument undefined behaviour: a `@fastmath` function called with one could then drop a bounds
+check. Options: (1) take every relaxation, `@fastmath` then being unsafe; (2) relax the function's
+own arithmetic (reassociation, contraction, reciprocals, signed zeros) and never what the language
+defines exactly for NaN and infinity: a range value in its range, `x as T`, the classifications
+`is_nan`, `is_finite`, `is_infinite`, and defined behaviour for every value.
+
+**Ruling: 2, 2 and 2.** A float mode is lexical: a lambda takes the mode of the function it is
+written in; a parameter default keeps its declaring function's mode and a field default is
+strict, wherever either is evaluated; instantiation, inlining and calls keep each function's
+own. Inside `@fastmath` no fact about a float is derived; integer facts are unaffected. Neither
+mode relaxes what the language defines exactly for NaN and infinity, and neither ever makes a
+program's behaviour undefined (`[PHIL-10]`). The implementation also derives no fact from a float
+operation's result inside `@fp(contract)`, whose fused result the interval of its operands does
+not bound; `[RNG-4a]` already derives float facts only from comparisons. A default doing float
+work that its mode's closure cannot hold (a `mut` parameter's place) is `E0900` for now
+(NOT-IMPLEMENTED N7).
 
 ## ODR-089 — the iterator adapters' counts and ownership — **CLOSED**
 

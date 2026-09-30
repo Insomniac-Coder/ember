@@ -370,6 +370,7 @@ impl<'a> Builder<'a> {
             is_unsafe: self.function.is_unsafe,
             abi: self.function.abi.clone(),
             overflow: self.function.overflow,
+            fp: self.function.fp,
             export_thread_policy: self.function.export_thread_policy,
             locals: self.locals,
             blocks: self.blocks,
@@ -4825,29 +4826,42 @@ impl<'a> Builder<'a> {
         let lo = self.bound_operand(def.lo, repr);
         let hi = self.bound_operand(def.hi, repr);
 
-        let above_lo = self.temp(self.bool_ty, span);
-        self.push(StmtKind::Assign {
-            place: Place::local(above_lo),
-            rvalue: Rvalue::BinaryOp { op: BinOp::Ge, lhs: value.clone(), rhs: lo },
-        });
-        let below_hi = self.temp(self.bool_ty, span);
-        self.push(StmtKind::Assign {
-            place: Place::local(below_hi),
-            rvalue: Rvalue::BinaryOp {
-                op: if def.inclusive { BinOp::Le } else { BinOp::Lt },
-                lhs: value.clone(),
-                rhs: hi,
-            },
-        });
         let in_range = self.temp(self.bool_ty, span);
-        self.push(StmtKind::Assign {
-            place: Place::local(in_range),
-            rvalue: Rvalue::BinaryOp {
-                op: BinOp::BitAnd,
-                lhs: Operand::Copy(Place::local(above_lo)),
-                rhs: Operand::Copy(Place::local(below_hi)),
-            },
-        });
+        if self.function.fp != ember_types::FpMode::Strict && self.types.is_float(repr) {
+            // A relaxed function's C file may compile a comparison as if no
+            // value were NaN, so the test is the runtime's, done strictly.
+            let next = self.new_block();
+            self.terminate(Terminator::Call {
+                func: FuncRef::Builtin { which: hir::Builtin::RangeContains(id), arg_ty: repr },
+                args: vec![value.clone()],
+                dest: Place::local(in_range),
+                next,
+            });
+            self.current = next;
+        } else {
+            let above_lo = self.temp(self.bool_ty, span);
+            self.push(StmtKind::Assign {
+                place: Place::local(above_lo),
+                rvalue: Rvalue::BinaryOp { op: BinOp::Ge, lhs: value.clone(), rhs: lo },
+            });
+            let below_hi = self.temp(self.bool_ty, span);
+            self.push(StmtKind::Assign {
+                place: Place::local(below_hi),
+                rvalue: Rvalue::BinaryOp {
+                    op: if def.inclusive { BinOp::Le } else { BinOp::Lt },
+                    lhs: value.clone(),
+                    rhs: hi,
+                },
+            });
+            self.push(StmtKind::Assign {
+                place: Place::local(in_range),
+                rvalue: Rvalue::BinaryOp {
+                    op: BinOp::BitAnd,
+                    lhs: Operand::Copy(Place::local(above_lo)),
+                    rhs: Operand::Copy(Place::local(below_hi)),
+                },
+            });
+        }
 
         // `Result[T, RangeError]` — `Ok` is variant 0 and `Err` variant 1, in
         // the order `result_of` builds them.

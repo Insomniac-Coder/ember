@@ -2,7 +2,7 @@
 #$ rules: SIMD-7
 #$ profiles: debug, release, shipping
 #$ panics: integer overflow in `-`
-#$ assert-c: contains(" >> 56ULL)")
+#$ assert-c: contains(" >> 56ULL;")
 # `total = total - x` is a running total too: at iteration 60 it goes below
 # the least `int`, and the checked block stops there.
 

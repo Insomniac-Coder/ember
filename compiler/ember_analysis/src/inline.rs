@@ -64,7 +64,10 @@ pub fn inline_single_calls_all(bodies: &mut Vec<Body>, types: &TypeTable, only_c
                     return None;
                 }
                 let &callee = index.get(symbol)?;
+                // `[TYP-9]` — a body keeps its own floating point: one of
+                // another mode stays a call (`[CG-C-11]` compiles it apart).
                 (callee != *caller
+                    && bodies[callee].fp == bodies[*caller].fp
                     && inlinable(&bodies[callee], types)
                     && !calls_itself(&bodies[callee])
                     && (!only_checked || holds_a_check(&bodies[callee])))

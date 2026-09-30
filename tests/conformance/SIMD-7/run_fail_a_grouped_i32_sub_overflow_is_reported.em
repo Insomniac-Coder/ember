@@ -2,7 +2,7 @@
 #$ rules: SIMD-7
 #$ profiles: debug, release, shipping
 #$ panics: integer overflow in `-`
-#$ assert-c-count: contains(" >> 63ULL)") == 2
+#$ assert-c-count: contains(" >> 63ULL;") == 2
 # An `i32` `-` below its least value at iteration 50, in the second group: the group reports it.
 
 fn main():

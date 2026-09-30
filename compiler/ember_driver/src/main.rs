@@ -2373,8 +2373,16 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             let layout = Layout::new(target_dir, options.profile).map_err(|e| e.to_string())?;
             std::fs::write(layout.c.join(format!("{module_name}.c")), &emitted.c_source)
                 .map_err(|e| e.to_string())?;
+            for (mode, source) in &emitted.relaxed_units {
+                std::fs::write(layout.c.join(format!("{module_name}.{}.c", mode.name())), source)
+                    .map_err(|e| e.to_string())?;
+            }
         }
         print!("{}", emitted.c_source);
+        // `[CG-C-11]` — each relaxed unit after the main one.
+        for (_, source) in &emitted.relaxed_units {
+            print!("{source}");
+        }
         return Ok(finish(&sink, &map, options));
     }
     if let Some(other) = &options.emit {
@@ -2412,6 +2420,11 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let toolchain = Toolchain::detect(requested.as_deref()).map_err(|e| e.to_string())?;
     let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
     let includes = vec![runtime.join("include")];
+    // `[CG-C-11]` — a relaxed unit calls the package's other functions,
+    // which a library keeps internal to its own unit.
+    if staticlib && !emitted.relaxed_units.is_empty() {
+        return Err("error[E0900]: `@fastmath` and `@fp(contract)` in a static library are not built yet".to_string());
+    }
     if staticlib {
         let header = emitted.header_source.as_ref().map_err(|error| error.clone())?;
         let object_ext = if matches!(&toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
@@ -2457,7 +2470,24 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     )
     .map_err(|e| e.to_string())?
     .unwrap_or(runtime_source);
-    let sources = vec![c_path.clone(), runtime_input];
+    let mut sources = vec![c_path.clone(), runtime_input];
+    // `[CG-C-11]` — each relaxed unit compiled with its own flags.
+    let object_ext = if matches!(&toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
+    for (mode, source) in &emitted.relaxed_units {
+        let unit = layout.c.join(format!("{module_name}.{}.c", mode.name()));
+        std::fs::write(&unit, source).map_err(|e| e.to_string())?;
+        let object = layout.obj.join(format!("{module_name}.{}.{object_ext}", mode.name()));
+        ember_build::compile_relaxed_object(
+            &toolchain,
+            &unit,
+            &includes,
+            &object,
+            options.profile,
+            *mode == ember_types::FpMode::Fast,
+        )
+        .map_err(|e| e.to_string())?;
+        sources.push(object);
+    }
     ember_build::compile_and_link(
         &toolchain,
         &LinkRequest {

@@ -2,7 +2,7 @@
 #$ rules: SIMD-7, SIMD-5, OPT-2
 #$ profiles: debug, release, shipping
 #$ stdout: 591 594
-#$ assert-c: contains(" >> 56ULL)")
+#$ assert-c: contains(" >> 56ULL;")
 # The loop reads the running total as well as adding to it, so the block adds
 # into the total itself rather than into an unsigned copy; the blocks are
 # still proved safe at run time and every value comes out exact.

@@ -26,7 +26,7 @@ use ember_hir::{
     LocalId, MatchArm, MatchArmBody, Mode, Param, Pattern, PatternKind, Program, Stmt, UnOp,
 };
 use ember_span::{Span, Symbol};
-use ember_types::{
+use ember_types::{FpMode, 
     Bound, ClassDef, ClassId, ClassOpenness, CommonTypes, EnumDef, EnumId, FieldDef, FieldVis,
     OverflowPolicy, RangeDef, StructDef, StructId, Ty, TyKind, TypeTable, UintTy, VariantDef,
     FnParam, FnParamMode, int_max,
@@ -304,6 +304,8 @@ struct Signature {
     is_unsafe: bool,
     /// Effective policy at the declaration, retained through instantiation.
     overflow: OverflowPolicy,
+    /// `[TYP-9]` — `@fastmath` or `@fp(contract)` at the declaration.
+    fp: FpMode,
     /// `[LT-1a]` — the parameter positions `@borrows(…)` names, when it is
     /// written. Part of the public contract (`[VER-2]`), so it travels with
     /// the signature rather than being re-read from the attributes later.
@@ -384,6 +386,15 @@ struct ClosureCall {
     /// A closure that moves a non-`Copy` capture out of its owned environment
     /// implements `CallableOnce`, not `Callable` (`[CLO-2]`/`[CLO-6]`).
     once: bool,
+}
+
+/// Whose field default `check_field_default` checks.
+#[derive(Copy, Clone)]
+enum DefaultOwner {
+    /// A constant's value, folded while compiling.
+    Constant,
+    Struct(StructId),
+    Class(ClassId),
 }
 
 /// The four owner-approved `[SPN-4]` iterator identities share one lowering
@@ -478,6 +489,13 @@ enum FusedCount {
     Last { nonempty: LocalId, last: LocalId, wide: bool },
 }
 
+
+/// `@fp(contract)`, the one form `[TYP-9b]` gives `@fp`.
+fn fp_names_contract(attr: &ast::Attribute) -> bool {
+    matches!(attr.args.as_slice(), [ast::AttrArg::Expr(ast::Expr {
+        kind: ast::ExprKind::Path { segments }, ..
+    })] if segments.len() == 1 && segments[0].name.is("contract"))
+}
 
 fn is_literal_argument(e: &Expr) -> bool {
     match &e.kind {
@@ -691,6 +709,7 @@ struct GenericMethod {
     generics: Vec<GenericParam>,
     borrows: Option<Vec<usize>>,
     overflow: OverflowPolicy,
+    fp: FpMode,
     /// Module, item and member index of the declaration.
     source: (usize, usize, usize),
     /// `[MOD-2]` (D-328) — as written: `pub fn`, or private to its module.
@@ -1402,6 +1421,9 @@ struct Checker<'a> {
     module_overflow: Vec<OverflowPolicy>,
     /// The lexical policy while checking a body or an inserted default.
     active_overflow: OverflowPolicy,
+    /// `[TYP-9]` — the float mode of the function being checked, which a
+    /// lambda in it takes.
+    active_fp: FpMode,
     lint_return_intersection: bool,
     /// `[ATT-6]` — statement attributes already reported, so a generic body
     /// checked once per instance reports each once.
@@ -1561,6 +1583,7 @@ impl<'a> Checker<'a> {
             default_overflow: OverflowPolicy::default(),
             module_overflow: Vec::new(),
             active_overflow: OverflowPolicy::default(),
+            active_fp: FpMode::Strict,
             lint_return_intersection: false,
             reported_stmt_attrs: HashSet::new(),
             debug_assertions: true,
@@ -3372,6 +3395,7 @@ impl<'a> Checker<'a> {
                     generics: signature.generics,
                     borrows: signature.borrows,
                     overflow: signature.overflow,
+                    fp: signature.fp,
                     source: (self.current_module, item_index, member_index),
                     vis: member.vis.kind,
                     span: member.span,
@@ -3452,6 +3476,7 @@ impl<'a> Checker<'a> {
                     generics: signature.generics,
                     borrows: signature.borrows,
                     overflow: signature.overflow,
+                    fp: signature.fp,
                     source: (self.current_module, item_index, member_index),
                     vis: member.vis.kind,
                     span: member.span,
@@ -3542,6 +3567,7 @@ impl<'a> Checker<'a> {
                     generics: signature.generics,
                     borrows: signature.borrows,
                     overflow: signature.overflow,
+                    fp: signature.fp,
                     source: (self.current_module, item_index, member_index),
                     vis: member.vis.kind,
                     span: member.span,
@@ -3653,6 +3679,7 @@ impl<'a> Checker<'a> {
                     generics: signature.generics,
                     borrows: signature.borrows,
                     overflow: signature.overflow,
+                    fp: signature.fp,
                     source: (self.current_module, item_index, member_index),
                     vis: member.vis.kind,
                     span: member.span,
@@ -3822,7 +3849,7 @@ impl<'a> Checker<'a> {
         if self.types.is_untyped_literal(ty) {
             return ExprConst { value: value.clone(), module, ok: true, public: true, folded: None };
         }
-        let checked = self.check_field_default(value, ty, module, None);
+        let checked = self.check_field_default(value, ty, module, DefaultOwner::Constant);
         if self.sink.error_count() != before {
             return refused();
         }
@@ -4611,6 +4638,7 @@ impl<'a> Checker<'a> {
             abi: None,
             is_unsafe: false,
             overflow: method.overflow,
+            fp: method.fp,
             generics,
             borrows: method.borrows.clone(),
         };
@@ -5477,7 +5505,8 @@ impl<'a> Checker<'a> {
                             .map(Symbol::intern)
                     } else { None };
                     let overflow = self.overflow_policy(&item.attrs, item.span);
-                    self.signatures.push(Signature { params, ret, abi, is_unsafe: decl.is_unsafe, overflow, generics, borrows });
+                    let fp = self.fp_mode(&item.attrs);
+                    self.signatures.push(Signature { params, ret, abi, is_unsafe: decl.is_unsafe, overflow, fp, generics, borrows });
                     self.record_defaults(def, decl);
                 }
                 _ => {}
@@ -7069,7 +7098,7 @@ impl<'a> Checker<'a> {
                 .map(|param| self.substitute_generic_param(param, &combined))
                 .collect();
             let instance_declaration = DefId(self.signatures.len() as u32);
-            self.signatures.push(Signature { params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, overflow: signature.overflow, generics, borrows: signature.borrows });
+            self.signatures.push(Signature { params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, overflow: signature.overflow, fp: signature.fp, generics, borrows: signature.borrows });
             declarations.insert(*declaration, instance_declaration);
             methods.push((*method, instance_declaration, *receiver, *has_body));
         }
@@ -7461,7 +7490,8 @@ impl<'a> Checker<'a> {
         }
         self.type_params = saved_type_params;
         let overflow = self.overflow_policy(attrs, span);
-        Some((receiver, Signature { params, ret, abi: decl.abi.as_deref().map(Symbol::intern), is_unsafe: decl.is_unsafe, overflow, generics, borrows }))
+        let fp = self.fp_mode(attrs);
+        Some((receiver, Signature { params, ret, abi: decl.abi.as_deref().map(Symbol::intern), is_unsafe: decl.is_unsafe, overflow, fp, generics, borrows }))
     }
 
     /// Register every method in a type body or `extend` block.
@@ -7769,6 +7799,7 @@ impl<'a> Checker<'a> {
                 abi: None,
                 is_unsafe: false,
                 overflow: self.module_overflow.get(self.current_module).copied().unwrap_or(self.default_overflow),
+                fp: FpMode::Strict,
                 generics: Vec::new(),
                 borrows: None,
             };
@@ -11410,6 +11441,7 @@ impl<'a> Checker<'a> {
             let Some(&def) = self.fn_ids.get(&self.qualified(decl.name.name)) else { continue };
             let outer_overflow = std::mem::replace(&mut self.active_overflow,
                 self.signatures[def.0 as usize].overflow);
+        let outer_fp = std::mem::replace(&mut self.active_fp, self.signatures[def.0 as usize].fp);
             if decl.is_safe && !decl.is_foreign_decl {
                 self.error(codes::E0104, decl.name.span, "`safe fn` is only valid inside `unsafe extern` declarations");
             }
@@ -11492,6 +11524,7 @@ impl<'a> Checker<'a> {
                 self.type_params.clear();
                 self.current_generics.clear();
                 self.active_overflow = outer_overflow;
+                self.active_fp = outer_fp;
                 continue;
             }
 
@@ -11558,6 +11591,7 @@ impl<'a> Checker<'a> {
                 main = Some(def);
             }
             let overflow = self.signatures[def.0 as usize].overflow;
+            let fp = self.signatures[def.0 as usize].fp;
             let ffi_counted = self.foreign_counted_metadata(decl, &item.attrs, &signature_params, self.ret_ty);
             // `extern "C" fn` DEFINES a function a host links against, so its
             // symbol is the name as written — `[MNG-1]`'s module-qualified
@@ -11592,6 +11626,7 @@ impl<'a> Checker<'a> {
                 body,
                 span: item.span,
                 overflow,
+                fp,
                 borrows: self.declared_borrows(def),
                 sources: self.declared_sources(def),
                 is_lambda: false,
@@ -11605,6 +11640,7 @@ impl<'a> Checker<'a> {
                 ffi_counted,
             });
             self.active_overflow = outer_overflow;
+            self.active_fp = outer_fp;
         }
 
         functions.extend(self.check_method_bodies(module));
@@ -11794,6 +11830,7 @@ impl<'a> Checker<'a> {
                     body: hir::Block { stmts: Vec::new(), span: job.span },
                     span: job.span,
                     overflow: signature.overflow,
+                    fp: signature.fp,
                     borrows: signature.borrows.clone().or_else(|| self.declared_borrows(job.def)),
                     sources: self.declared_sources(job.def),
                     is_lambda: false,
@@ -12642,6 +12679,7 @@ impl<'a> Checker<'a> {
         self.ret_ty = self.signatures[def.0 as usize].ret;
         let outer_overflow = std::mem::replace(&mut self.active_overflow,
             self.signatures[def.0 as usize].overflow);
+        let outer_fp = std::mem::replace(&mut self.active_fp, self.signatures[def.0 as usize].fp);
         let outer_static_safe = self.in_static_safe;
         let outer_static_safe_reported = self.static_safe_unsafe_cell_reported;
         self.in_static_safe = has_attribute(attrs, "static_safe");
@@ -12688,7 +12726,9 @@ impl<'a> Checker<'a> {
         let body = self.complete_function_end(body, decl.name.span);
         self.in_unsafe = outer_unsafe;
         let overflow = self.signatures[def.0 as usize].overflow;
+        let fp = self.signatures[def.0 as usize].fp;
         self.active_overflow = outer_overflow;
+        self.active_fp = outer_fp;
         self.in_static_safe = outer_static_safe;
         self.static_safe_unsafe_cell_reported = outer_static_safe_reported;
         // `[MONO-1]` — the symbol carries the instantiation, so two of them
@@ -12711,6 +12751,7 @@ impl<'a> Checker<'a> {
             body,
             span,
             overflow,
+            fp,
             borrows: self.declared_borrows(def),
             sources: self.declared_sources(def),
             is_lambda: false,
@@ -13047,6 +13088,7 @@ impl<'a> Checker<'a> {
                     body: Block { stmts: vec![Stmt::Return(Some(value))], span },
                     span,
                     overflow: OverflowPolicy::default(),
+                    fp: FpMode::Strict,
                     borrows: None,
                     sources: self.sources_of(&[(Symbol::intern("self"), ty, Mode::Borrow, span)]),
                     is_lambda: false,
@@ -13111,7 +13153,7 @@ impl<'a> Checker<'a> {
                 .collect();
             let ret = self.substitute_self(signature.ret, opaque_self);
             let opaque = DefId(self.signatures.len() as u32);
-            self.signatures.push(Signature { params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, overflow: signature.overflow, generics: own.clone(), borrows: signature.borrows.clone() });
+            self.signatures.push(Signature { params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, overflow: signature.overflow, fp: signature.fp, generics: own.clone(), borrows: signature.borrows.clone() });
             let saved_self = self.self_ty.replace(opaque_self);
             let saved_params = std::mem::take(&mut self.type_params);
             let saved_generics = std::mem::take(&mut self.current_generics);
@@ -13271,6 +13313,7 @@ impl<'a> Checker<'a> {
         self.ret_ty = self.signatures[def.0 as usize].ret;
         let outer_overflow = std::mem::replace(&mut self.active_overflow,
             self.signatures[def.0 as usize].overflow);
+        let outer_fp = std::mem::replace(&mut self.active_fp, self.signatures[def.0 as usize].fp);
         let outer_static_safe = self.in_static_safe;
         let outer_static_safe_reported = self.static_safe_unsafe_cell_reported;
         self.in_static_safe = has_attribute(attrs, "static_safe");
@@ -13429,7 +13472,9 @@ impl<'a> Checker<'a> {
         self.class_method_receiver = outer_class_method_receiver;
         self.self_ty = outer_self;
         let overflow = self.signatures[def.0 as usize].overflow;
+        let fp = self.signatures[def.0 as usize].fp;
         self.active_overflow = outer_overflow;
+        self.active_fp = outer_fp;
         self.in_static_safe = outer_static_safe;
         self.static_safe_unsafe_cell_reported = outer_static_safe_reported;
         let name = decl.name.name;
@@ -13448,6 +13493,7 @@ impl<'a> Checker<'a> {
             body,
             span,
             overflow,
+            fp,
             borrows: self.declared_borrows(def),
             sources: self.declared_sources(def),
             is_lambda: false,
@@ -13896,6 +13942,26 @@ impl<'a> Checker<'a> {
             *status = ClassFieldInit::Init;
         }
         state.base_initialized = true;
+    }
+
+    /// `[TYP-9]` — `@fastmath` relaxes every strict-IEEE rule within the
+    /// function, `@fp(contract)` only fusing a multiply and an add; the
+    /// default is strict. `@fp` names `contract` and nothing else.
+    /// The attributes' arguments are checked where they are written
+    /// (`check_attribute_list`), once; this runs for each copy of a method.
+    fn fp_mode(&mut self, attrs: &[ast::Attribute]) -> FpMode {
+        let mut mode = FpMode::Strict;
+        for attr in attrs {
+            if attr.path.len() != 1 {
+                continue;
+            }
+            if attr.path[0].name.is("fastmath") {
+                mode = FpMode::Fast;
+            } else if attr.path[0].name.is("fp") && fp_names_contract(attr) {
+                mode = mode.max(FpMode::Contract);
+            }
+        }
+        mode
     }
 
     /// `[TYP-8]` — a function attribute overrides its declaring module.
@@ -22204,7 +22270,9 @@ impl<'a> Checker<'a> {
                 (BinOp::Ne, false) => Some((Bound::Int(bound), Bound::Int(bound))),
                 _ => None,
             },
-            Bound::Float(bound) if bound.is_finite() => {
+            // `[RNG-4]`, ODR-090 — never inside `@fastmath`, which may
+            // compile a comparison as if no operand were NaN.
+            Bound::Float(bound) if bound.is_finite() && self.active_fp != FpMode::Fast => {
                 // A strict float comparison has no portable predecessor or
                 // successor in this interval lattice.  Widening it to the
                 // adjacent closed bound remains sound: `x < c` implies
@@ -23102,7 +23170,7 @@ impl<'a> Checker<'a> {
             ExprKind::Unary { op, operand } => {
                 let value = self.range_of(operand)?;
                 let (lo, hi) = unary_interval(*op, value)?;
-                self.fits_repr(expr.ty, lo, hi).then_some((lo, hi))
+                (self.float_facts_hold(expr.ty) && self.fits_repr(expr.ty, lo, hi)).then_some((lo, hi))
             }
             // The erasure `[TYP-5]` inserts. The value is the representation's
             // now, and what is known about it is the range it came from.
@@ -23124,17 +23192,26 @@ impl<'a> Checker<'a> {
                 // `debug` and `release` and `[PRF-1]` forbids the set of checks
                 // from depending on that difference. So a derived interval is
                 // kept only where it provably fits the representation.
-                self.fits_repr(expr.ty, lo, hi).then_some((lo, hi))
+                (self.float_facts_hold(expr.ty) && self.fits_repr(expr.ty, lo, hi)).then_some((lo, hi))
             }
             // The prelude's `min`, `max` and `clamp` (`picked_ranges`).
             // `[RNG-4a]` applies to them as to operators: a fact is kept only
             // where its endpoints fit the result type in every profile.
-            ExprKind::Block { .. } => {
+            // ODR-090: none about a float inside `@fastmath`.
+            ExprKind::Block { .. } if !(self.types.is_float(expr.ty) && self.active_fp == FpMode::Fast) => {
                 let (lo, hi) = *self.picked_ranges.get(&expr.span)?;
                 self.fits_repr(expr.ty, lo, hi).then_some((lo, hi))
             }
             _ => None,
         }
+    }
+
+    /// `[RNG-4]`, ODR-090 — whether a float operation's result here is the
+    /// one its operands' interval bounds: not inside `@fastmath` or
+    /// `@fp(contract)`, whose fused, reassociated or NaN-free result is not.
+    /// An integer operation is the same in every float mode.
+    fn float_facts_hold(&self, ty: Ty) -> bool {
+        !self.types.is_float(ty) || self.active_fp == FpMode::Strict
     }
 
     /// Whether an interval lies inside what `repr` can hold. A float
@@ -26456,6 +26533,7 @@ impl<'a> Checker<'a> {
             abi: self.signatures[def.0 as usize].abi,
             is_unsafe: self.signatures[def.0 as usize].is_unsafe,
             overflow: self.signatures[def.0 as usize].overflow,
+            fp: self.signatures[def.0 as usize].fp,
             generics: Vec::new(),
             borrows,
         });
@@ -26514,6 +26592,7 @@ impl<'a> Checker<'a> {
             abi: self.signatures[def.0 as usize].abi,
             is_unsafe: self.signatures[def.0 as usize].is_unsafe,
             overflow: self.signatures[def.0 as usize].overflow,
+            fp: self.signatures[def.0 as usize].fp,
             generics: Vec::new(),
             borrows,
         });
@@ -26903,6 +26982,24 @@ impl<'a> Checker<'a> {
             if let ast::MemberKind::Fn(decl) = &member.kind {
                 self.check_safety_attribute(&member.attrs, decl.is_unsafe,
                     member.vis.kind != ast::VisKind::Private, member.span);
+                // `[TYP-9]` — a float mode governs the body it is written on.
+                // A method with none (an interface's, an abstract one, a
+                // foreign class's) would ignore it, which `[ATT-6]` never
+                // allows; each implementation or override carries its own.
+                if decl.body.is_none() {
+                    for attr in &member.attrs {
+                        if attr.path.len() == 1 && (attr.path[0].name.is("fastmath") || attr.path[0].name.is("fp")) {
+                            self.sink.emit(
+                                Diagnostic::error(
+                                    codes::E0104,
+                                    attr.span,
+                                    format!("`@{}` applies to a method with a body", attr.path[0].name),
+                                )
+                                .note("a float mode governs the body it is written on; an implementation or override carries its own [TYP-9]"),
+                            );
+                        }
+                    }
+                }
             }
             let site = match &member.kind {
                 ast::MemberKind::Field(_) => "field",
@@ -26995,6 +27092,16 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let built = built && !(name == "repr" && site == "struct");
+            // `[TYP-9]` — `@fastmath` takes no arguments and `@fp` names
+            // `contract`, checked once where the attribute is written.
+            if name == "fastmath" && !attr.args.is_empty() {
+                self.error(codes::E0104, attr.span, "`@fastmath` takes no arguments");
+                continue;
+            }
+            if name == "fp" && !fp_names_contract(attr) {
+                self.error(codes::E0104, attr.span, "`@fp` needs `contract`: `@fp(contract)`");
+                continue;
+            }
             if !built {
                 self.sink.emit(
                     Diagnostic::error(
@@ -30315,6 +30422,7 @@ impl<'a> Checker<'a> {
             abi: None,
             is_unsafe: false,
             overflow: self.active_overflow,
+            fp: self.active_fp,
             borrows: None,
             generics: Vec::new(),
         });
@@ -30334,6 +30442,7 @@ impl<'a> Checker<'a> {
             body,
             span,
             overflow: self.active_overflow,
+            fp: self.active_fp,
             borrows: None,
             sources,
             is_lambda: true,
@@ -34797,6 +34906,7 @@ impl<'a> Checker<'a> {
                 scope.insert(params[earlier].0, bindings[offset + earlier]);
             }
             let mark = self.sink.mark();
+            let errors_before = self.sink.error_count();
             let scopes = std::mem::replace(&mut self.scopes, vec![scope]);
             let caller_module = std::mem::replace(&mut self.current_module, module);
             let policy = self.signatures[source.0 as usize].overflow;
@@ -34805,13 +34915,43 @@ impl<'a> Checker<'a> {
                 std::mem::replace(&mut self.type_params, types.clone()));
             let caller_owner = owner.map(|owner| self.self_ty.replace(owner));
             let by_address = self.param_by_address(def, name, ty);
-            let value = self.check_argument_by(&default, ty, mode, by_address);
+            let mut value = self.check_argument_by(&default, ty, mode, by_address);
+            // `[TYP-9]`, ODR-090 — a default keeps its declaration's float
+            // mode, whatever the calling function's: one doing float work is
+            // the body of a closure of that mode. If the closure cannot hold
+            // it, or it is a `mut` parameter's place, that is said
+            // (`not_in_mode`); it is never evaluated in the wrong mode.
+            let fp = self.signatures[source.0 as usize].fp;
+            let mut not_in_mode = false;
+            if fp != self.active_fp && self.sink.error_count() == errors_before && self.float_work(&value) {
+                let closure_mark = self.sink.mark();
+                if mode == Mode::Mut {
+                    not_in_mode = true;
+                } else {
+                    let closure = self.in_float_mode(&default, ty, fp);
+                    if self.sink.rollback(closure_mark) {
+                        not_in_mode = true;
+                    } else {
+                        value = if mode == Mode::Borrow && by_address { self.borrow_argument(closure, ty) } else { closure };
+                    }
+                }
+            }
             if let Some(previous) = caller_owner { self.self_ty = previous; }
             if let Some(previous) = caller_types { self.type_params = previous; }
             self.current_module = caller_module;
             self.active_overflow = caller_policy;
             self.scopes = scopes;
             let value = if self.sink.rollback(mark) {
+                Expr { ty, kind: ExprKind::Error, span }
+            } else if not_in_mode {
+                self.error(
+                    codes::E0900,
+                    span,
+                    format!(
+                        "the default of `{name}` does float work in its function's `{}` mode, which a call from here cannot keep yet",
+                        fp.name()
+                    ),
+                );
                 Expr { ty, kind: ExprKind::Error, span }
             } else {
                 Expr {
@@ -35021,7 +35161,7 @@ impl<'a> Checker<'a> {
                             // One mistake in a default is one error, however
                             // many constructions evaluate it (`[DIA-14]`).
                             let quiet = (!self.reported_defaults.insert(default.span)).then(|| self.sink.mark());
-                            let value = self.check_field_default(&default, *field_ty, module, Some(id));
+                            let value = self.check_field_default(&default, *field_ty, module, DefaultOwner::Struct(id));
                             if let Some(mark) = quiet {
                                 self.sink.rollback(mark);
                             }
@@ -35153,6 +35293,7 @@ impl<'a> Checker<'a> {
                 (callee, values, arg_eval_order)
             };
             let defaults = self.class_default_exprs_for_layout(id);
+            let owners = self.class_default_owners_for_layout(id);
             let field_count = self.types.class_field_count(id);
             let layout_fields: Vec<(Ty, Span, Symbol, bool)> = (0..field_count)
                 .filter_map(|index| {
@@ -35181,7 +35322,16 @@ impl<'a> Checker<'a> {
                     default_fields.push(None);
                     continue;
                 };
-                default_fields.push(Some(self.check_expr(default_expr, field_ty)));
+                let owner = owners[index];
+                let module = self.types.class_def(owner).declaring_module;
+                // One mistake in a default is one error, however many
+                // constructions evaluate it (`[DIA-14]`).
+                let quiet = (!self.reported_defaults.insert(default_expr.span)).then(|| self.sink.mark());
+                let value = self.check_field_default(default_expr, field_ty, module, DefaultOwner::Class(owner));
+                if let Some(mark) = quiet {
+                    self.sink.rollback(mark);
+                }
+                default_fields.push(Some(value));
             }
             if invalid_default {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
@@ -35227,6 +35377,7 @@ impl<'a> Checker<'a> {
         } else {
             (fields, self.class_default_exprs.get(&id).cloned())
         };
+        let owners = if has_base { self.class_default_owners_for_layout(id) } else { vec![id; fields.len()] };
         // `[CLS-3]` — a memberwise class constructor follows the same
         // positional/named field binding as a struct constructor. Keep the
         // user-defined `init` path separate: its parameter names and defaults
@@ -35265,7 +35416,13 @@ impl<'a> Checker<'a> {
                 invalid = true;
                 continue;
             };
-            values.push(self.check_expr(default_expr, field.ty));
+            let owner = owners[index];
+            let module = self.types.class_def(owner).declaring_module;
+            let quiet = (!self.reported_defaults.insert(default_expr.span)).then(|| self.sink.mark());
+            values.push(self.check_field_default(default_expr, field.ty, module, DefaultOwner::Class(owner)));
+            if let Some(mark) = quiet {
+                self.sink.rollback(mark);
+            }
         }
         if invalid {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
@@ -35276,6 +35433,15 @@ impl<'a> Checker<'a> {
             kind: ExprKind::Builtin { which: Builtin::ClassNew { class_id: id, init: None }, args: values },
             span,
         }
+    }
+
+    /// The class declaring each field, in `class_default_exprs_for_layout`'s
+    /// order: its default is read as that class's declaration reads.
+    fn class_default_owners_for_layout(&self, id: ClassId) -> Vec<ClassId> {
+        let def = self.types.class_def(id);
+        let mut owners = def.base.map(|base| self.class_default_owners_for_layout(base)).unwrap_or_default();
+        owners.extend((0..def.fields.len()).map(|_| id));
+        owners
     }
 
     /// Return source defaults in the physical object-layout order used by
@@ -35301,7 +35467,7 @@ impl<'a> Checker<'a> {
     /// function's locals are not in scope.
     /// A generic struct's default names its parameters (D-267), which mean
     /// the instance's arguments.
-    fn check_field_default(&mut self, default: &ast::Expr, ty: Ty, module: usize, owner: Option<StructId>) -> Expr {
+    fn check_field_default(&mut self, default: &ast::Expr, ty: Ty, module: usize, owner: DefaultOwner) -> Expr {
         let scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
         let caller = self.current_module;
         if module != usize::MAX {
@@ -35309,12 +35475,40 @@ impl<'a> Checker<'a> {
         }
         let policy = self.module_overflow.get(self.current_module).copied().unwrap_or(self.default_overflow);
         let caller_policy = std::mem::replace(&mut self.active_overflow, policy);
-        let bindings: HashMap<Symbol, Ty> = owner
-            .and_then(|id| self.types.struct_def(id).origin.clone())
-            .and_then(|(name, args)| self.generic_structs.get(&name).map(|decl| decl.params.iter().copied().zip(args).collect()))
-            .unwrap_or_default();
+        let bindings: HashMap<Symbol, Ty> = match owner {
+            DefaultOwner::Constant => None,
+            DefaultOwner::Struct(id) => self.types.struct_def(id).origin.clone().and_then(|(name, args)| {
+                self.generic_structs.get(&name).map(|decl| decl.params.iter().copied().zip(args).collect())
+            }),
+            DefaultOwner::Class(id) => self.types.class_def(id).origin.clone().and_then(|(name, args)| {
+                self.generic_classes.get(&name).map(|decl| decl.params.iter().copied().zip(args).collect())
+            }),
+        }
+        .unwrap_or_default();
         let outer = (!bindings.is_empty()).then(|| std::mem::replace(&mut self.type_params, bindings));
-        let value = self.check_expr(default, ty);
+        let errors_before = self.sink.error_count();
+        let mut value = self.check_expr(default, ty);
+        // `[TYP-9]`, ODR-090 — a construction's field default is strict IEEE
+        // in whichever function builds the value: one doing float work is the
+        // body of a strict closure. (A constant's is folded while compiling.)
+        if !matches!(owner, DefaultOwner::Constant)
+            && self.active_fp != FpMode::Strict
+            && self.sink.error_count() == errors_before
+            && self.float_work(&value)
+        {
+            let closure_mark = self.sink.mark();
+            let closure = self.in_float_mode(default, ty, FpMode::Strict);
+            if self.sink.rollback(closure_mark) {
+                self.error(
+                    codes::E0900,
+                    default.span,
+                    "this field default does float work, which a construction in a `@fastmath` or `@fp(contract)` function cannot keep strict yet",
+                );
+                value = Expr { ty, kind: ExprKind::Error, span: default.span };
+            } else {
+                value = closure;
+            }
+        }
         if let Some(outer) = outer {
             self.type_params = outer;
         }
@@ -35325,6 +35519,106 @@ impl<'a> Checker<'a> {
             ty: value.ty,
             span: value.span,
             kind: ExprKind::OverflowScope { policy, expr: Box::new(value) },
+        }
+    }
+
+    /// `[TYP-9]`, ODR-090 — `default` evaluated in float mode `fp` from a
+    /// function of another: it is the body of a closure of that mode, called
+    /// here. Each mode is compiled with its own flags (`[CG-C-11]`), so the
+    /// closure is where the mode holds. What the default can name (`self` and
+    /// the earlier parameters) is passed to it, borrowed, under the same
+    /// names: a closure does not capture `self`.
+    fn in_float_mode(&mut self, default: &ast::Expr, ty: Ty, fp: FpMode) -> Expr {
+        let span = default.span;
+        let mut names: Vec<(Symbol, LocalId)> =
+            self.scopes.iter().flat_map(|scope| scope.iter().map(|(name, local)| (*name, *local))).collect();
+        names.sort_by_key(|(_, local)| local.0);
+        let params = names
+            .iter()
+            .map(|(_, local)| FnParam { ty: self.locals[local.0 as usize].ty, mode: FnParamMode::Borrow })
+            .collect();
+        let fn_ty = self.types.intern(TyKind::Fn { abi: None, latebound: false, params, ret: ty });
+        let ident = |name: Symbol| ast::Ident { name, span };
+        let lambda = ast::Lambda {
+            is_owned: false,
+            params: names
+                .iter()
+                .map(|(name, _)| ast::Param {
+                    id: ast::NodeId::DUMMY,
+                    mode: ast::Mode::Borrow,
+                    kind: ast::ParamKind::Named {
+                        name: ident(*name),
+                        ty: ast::TypeExpr { id: ast::NodeId::DUMMY, kind: ast::TypeKind::Infer, span },
+                    },
+                    default: None,
+                    span,
+                })
+                .collect(),
+            ret: None,
+            body: ast::LambdaBody::Expr(Box::new(default.clone())),
+        };
+        let caller_fp = std::mem::replace(&mut self.active_fp, fp);
+        let closure = self.synth_lambda(&lambda, Some(fn_ty), span);
+        self.active_fp = caller_fp;
+        let args: Vec<ast::Arg> = names
+            .iter()
+            .map(|(name, _)| ast::Arg {
+                name: None,
+                value: ast::Expr {
+                    id: ast::NodeId::DUMMY,
+                    kind: if name.is("self") {
+                        ast::ExprKind::SelfExpr
+                    } else {
+                        ast::ExprKind::Path { segments: vec![ident(*name)] }
+                    },
+                    span,
+                },
+                span,
+            })
+            .collect();
+        self.call_value(closure, &args, span)
+    }
+
+    /// `[TYP-9]`, ODR-090 — whether evaluating `e` does work a float mode
+    /// could change: arithmetic, a comparison or a conversion on a float, or
+    /// a built-in operation taking or giving one. A call runs in its callee's
+    /// own mode, so only its arguments count. What is not listed counts as
+    /// such work.
+    fn float_work(&self, e: &Expr) -> bool {
+        let float = |ty: Ty| self.types.is_float(ty);
+        match &e.kind {
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Str(_)
+            | ExprKind::CStr(_)
+            | ExprKind::Local(_)
+            | ExprKind::FnValue(_)
+            | ExprKind::Error => false,
+            ExprKind::Field { base, .. }
+            | ExprKind::EnumField { base, .. }
+            | ExprKind::Deref(base)
+            | ExprKind::Ref { place: base, .. }
+            | ExprKind::EraseRange(base)
+            | ExprKind::OverflowScope { expr: base, .. }
+            | ExprKind::ArrayRepeat { value: base, .. } => self.float_work(base),
+            ExprKind::Index { base, index } => self.float_work(base) || self.float_work(index),
+            ExprKind::Binary { lhs, rhs, .. } => {
+                float(lhs.ty) || float(rhs.ty) || self.float_work(lhs) || self.float_work(rhs)
+            }
+            ExprKind::Unary { operand, .. } => float(operand.ty) || self.float_work(operand),
+            ExprKind::Cast { expr, to } | ExprKind::Widen { expr, to } => {
+                float(expr.ty) || float(*to) || self.float_work(expr)
+            }
+            ExprKind::Call { args, .. } => args.iter().any(|arg| self.float_work(arg)),
+            ExprKind::Builtin { args, .. } => {
+                float(e.ty) || args.iter().any(|arg| float(arg.ty) || self.float_work(arg))
+            }
+            ExprKind::StructLit { fields, .. }
+            | ExprKind::TupleLit(fields)
+            | ExprKind::ArrayLit(fields)
+            | ExprKind::EnumLit { fields, .. } => fields.iter().any(|field| self.float_work(field)),
+            _ => true,
         }
     }
 
@@ -37317,7 +37611,10 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["noalloc", "nosync", "noblock", "noio", "nolock", "nopanic", "realtime"], &["fn"], false),
     (&["deterministic"], &["fn", "module"], false),
     (&["overflow"], &["fn", "module"], true),
-    (&["fastmath", "fp", "inline", "noinline", "cold", "hot"], &["fn"], false),
+    // `[TYP-9]`, `[CG-C-11]` — a relaxed function has a translation unit of
+    // its own.
+    (&["fastmath", "fp"], &["fn"], true),
+    (&["inline", "noinline", "cold", "hot"], &["fn"], false),
     (&["must_use"], &["fn", "struct", "enum", "class", "type"], false),
     (&["deprecated", "allow"], &["item"], false),
     (&["export"], &["fn", "static"], false),

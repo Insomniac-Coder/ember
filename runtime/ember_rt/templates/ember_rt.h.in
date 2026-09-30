@@ -118,6 +118,41 @@ static inline bool ember_f64_is_nan(double value) {
         && (bits & UINT64_C(0x000FFFFFFFFFFFFF)) != 0;
 }
 
+/* `is_infinite` and `is_finite` by the bits too: a `@fastmath` C file
+ * ([CG-C-11]) is compiled as if no value were infinite or NaN, and would
+ * decide a floating-point test away. */
+static inline bool ember_f16_is_infinite(uint16_t bits) {
+    return (bits & UINT16_C(0x7FFF)) == UINT16_C(0x7C00);
+}
+
+static inline bool ember_f16_is_finite(uint16_t bits) {
+    return (bits & UINT16_C(0x7C00)) != UINT16_C(0x7C00);
+}
+
+static inline bool ember_f32_is_infinite(float value) {
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof bits);
+    return (bits & UINT32_C(0x7FFFFFFF)) == UINT32_C(0x7F800000);
+}
+
+static inline bool ember_f32_is_finite(float value) {
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof bits);
+    return (bits & UINT32_C(0x7F800000)) != UINT32_C(0x7F800000);
+}
+
+static inline bool ember_f64_is_infinite(double value) {
+    uint64_t bits;
+    memcpy(&bits, &value, sizeof bits);
+    return (bits & UINT64_C(0x7FFFFFFFFFFFFFFF)) == UINT64_C(0x7FF0000000000000);
+}
+
+static inline bool ember_f64_is_finite(double value) {
+    uint64_t bits;
+    memcpy(&bits, &value, sizeof bits);
+    return (bits & UINT64_C(0x7FF0000000000000)) != UINT64_C(0x7FF0000000000000);
+}
+
 /* -- str ------------------------------------------------------------------ */
 
 /* [LEX-20] A string literal has type `str`: a view over UTF-8 bytes with the
@@ -503,14 +538,26 @@ static inline double ember_fdiv_f64(double a, double b) { return a / b; }
  * T's range, so the bounds are tested first. Every integer bound below is
  * exactly representable as a double or rounds to the next power of two, and
  * the comparisons are ordered so the in-range conversion is always defined.
- * An `f32` operand converts to `double` exactly. */
+ * An `f32` operand converts to `double` exactly. NaN and the infinities are
+ * found by the bits: a `@fastmath` C file ([CG-C-11]) is compiled as if
+ * neither occurred, and would drop a floating-point test for them, leaving
+ * the conversion undefined. What reaches the comparisons is finite. */
 #define EMBER_FLOAT_TO_INT(SUFFIX, TYPE, MINV, MAXV)                              \
     static inline TYPE ember_ftoi_##SUFFIX(double v) {                            \
-        if (v != v) { return 0; }                                                 \
+        if (ember_f64_is_nan(v)) { return 0; }                                    \
+        if (ember_f64_is_infinite(v)) {                                           \
+            return ember_f64_sign_bit(v) ? (TYPE)(MINV) : (TYPE)(MAXV);           \
+        }                                                                         \
         if (v <= (double)(MINV)) { return (TYPE)(MINV); }                         \
         if (v >= (double)(MAXV)) { return (TYPE)(MAXV); }                         \
         return (TYPE)v;                                                           \
     }
+
+static inline bool ember_f64_sign_bit(double value) {
+    uint64_t bits;
+    memcpy(&bits, &value, sizeof bits);
+    return (bits >> 63) != 0;
+}
 
 EMBER_FLOAT_TO_INT(i8, int8_t, INT8_MIN, INT8_MAX)
 EMBER_FLOAT_TO_INT(i16, int16_t, INT16_MIN, INT16_MAX)
@@ -1461,6 +1508,15 @@ ember_vec ember_str_to_lower(ember_str s);
 bool ember_total_lt_f64(double a, double b);
 bool ember_total_lt_f32(float a, float b);
 bool ember_total_lt_f16(uint16_t a, uint16_t b);
+
+/* [RNG-3], [RNG-3a] for a `@fastmath` or `@fp(contract)` function: its C
+ * file's relaxed flags ([CG-C-11]) must not decide what a range value holds
+ * (`[RNG-9]`, `[PHIL-10]`), so the range test and the clamp are here,
+ * compiled strict and out of line. NaN is in no range and clamps to `lo`. */
+bool ember_range_contains_f64(double v, double lo, double hi, bool inclusive);
+bool ember_range_contains_f32(float v, float lo, float hi, bool inclusive);
+double ember_range_clamp_f64(double v, double lo, double hi);
+float ember_range_clamp_f32(float v, float lo, float hi);
 
 /* `[STD-26]`: Python's `range(start, stop, step)` as a count and the value at
  * each index. The caller has already refused a zero step (it panics with the

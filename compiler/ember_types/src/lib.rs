@@ -2119,6 +2119,29 @@ impl OverflowPolicy {
     }
 }
 
+/// `[TYP-9]` — how a function's floating point may be compiled: strict IEEE
+/// 754 (the default), with a multiply and an add fused (`@fp(contract)`), or
+/// with every relaxation `@fastmath` allows. `[CG-C-11]` emits each relaxed
+/// function in a translation unit of its own, compiled with the matching
+/// flags.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+pub enum FpMode {
+    #[default]
+    Strict,
+    Contract,
+    Fast,
+}
+
+impl FpMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            FpMode::Strict => "strict",
+            FpMode::Contract => "contract",
+            FpMode::Fast => "fastmath",
+        }
+    }
+}
+
 /// Whether an integer type is signed. `None` for anything that is not an
 /// integer.
 pub fn is_signed(table: &TypeTable, ty: Ty) -> Option<bool> {

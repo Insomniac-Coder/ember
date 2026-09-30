@@ -15,7 +15,7 @@
 //! the full one so that later phases add cases rather than reshaping it.
 
 use ember_span::{Span, Symbol};
-use ember_types::{ClassId, EnumId, OverflowPolicy, RangeId, StructId, Ty};
+use ember_types::{ClassId, EnumId, FpMode, OverflowPolicy, RangeId, StructId, Ty};
 
 /// A resolved item: a function, a struct, a constant.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -170,6 +170,9 @@ pub struct Function {
     /// `[TYP-8]` — from `@overflow(...)` on this function, or the profile's
     /// default when the attribute is absent.
     pub overflow: OverflowPolicy,
+    /// `[TYP-9]` — from `@fastmath` or `@fp(contract)`; a lambda's is its
+    /// enclosing function's.
+    pub fp: FpMode,
     /// `[LT-1a]` — the parameter *positions* `@borrows(…)` names, when the
     /// attribute is written. `None` means elision decides (`[LT-1]`).
     ///
@@ -1083,6 +1086,10 @@ pub enum Builtin {
     /// branch; the `Ok` payload is the value unchanged, because `[COST-3]`
     /// makes a range type its representation's bits.
     RangeChecked(RangeId),
+    /// `[RNG-3]` — whether a float `v` is in the range, NaN never: the test
+    /// `RangeChecked` makes in a `@fastmath` or `@fp(contract)` function,
+    /// which the runtime does strictly (`[CG-C-11]`, ODR-090).
+    RangeContains(RangeId),
     /// `[RNG-3a]` — `T.clamped(v) -> T`, **total**: no failure mode, no
     /// `Panic`, no `RuntimeCheck(k)`. "On the C backend it lowers to two
     /// compares or the target's `min`/`max` instruction pair, strictly cheaper
@@ -1358,6 +1365,7 @@ impl Builtin {
                 if mutable { "as_mut_ptr" } else { "as_ptr" }
             }
             Builtin::RangeChecked(_) => "checked",
+            Builtin::RangeContains(_) => "contains",
             Builtin::RangeClamped(_) => "clamped",
             Builtin::RangeNewUnchecked(_) => "new_unchecked",
             Builtin::CellSet => "set",

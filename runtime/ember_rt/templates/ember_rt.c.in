@@ -1570,6 +1570,18 @@ bool ember_total_lt_f64(double a, double b) { return total_key_f64(a) < total_ke
 bool ember_total_lt_f32(float a, float b) { return total_key_f32(a) < total_key_f32(b); }
 bool ember_total_lt_f16(uint16_t a, uint16_t b) { return total_key_f16(a) < total_key_f16(b); }
 
+/* Strict IEEE here: NaN fails both comparisons and `fmax(NaN, lo)` is `lo`. */
+bool ember_range_contains_f64(double v, double lo, double hi, bool inclusive) {
+    return v >= lo && (inclusive ? v <= hi : v < hi);
+}
+
+bool ember_range_contains_f32(float v, float lo, float hi, bool inclusive) {
+    return v >= lo && (inclusive ? v <= hi : v < hi);
+}
+
+double ember_range_clamp_f64(double v, double lo, double hi) { return fmin(fmax(v, lo), hi); }
+float ember_range_clamp_f32(float v, float lo, float hi) { return fminf(fmaxf(v, lo), hi); }
+
 /* D-316: rounding a `double` to the nearest `f16`, ties to even, from its
  * bits. The value is `significand * 2^(e - 52)`; the `f16` quantum is
  * `2^(e - 10)` for a normal result and `2^-24` for a subnormal one, and the

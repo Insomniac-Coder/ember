@@ -1354,8 +1354,9 @@ fn rewrite_places(block: &mut BasicBlock, f: &impl Fn(&mut Place)) {
 //   the inline header, and that header is not built (`docs/NOT-IMPLEMENTED.md`);
 // - no drop that runs anything, no explicit panic, and no check but an
 //   integer overflow check;
-// - no floating-point running total (`@fastmath` and `@parallel(reduce=…)`,
-//   which would declare one, are not built).
+// - no floating-point running total, unless the function is `@fastmath`,
+//   whose C file lets the C compiler reorder it (`@parallel(reduce=…)`, the
+//   other declaration, is not built).
 
 /// Iterations per group, measured on list loops (ADR-070 item 7). With one
 /// check, 32 was the fastest on MSVC and on clang (at 16 MSVC spent 5% more
@@ -1560,6 +1561,7 @@ fn vectorisable(
                     if types.is_float(place_type(body, types, place))
                         && place.projection.is_empty()
                         && rvalue_reads_local(rvalue, place.local)
+                        && body.fp != ember_types::FpMode::Fast
                     {
                         return None;
                     }

@@ -58,7 +58,7 @@ live Git state.
 
  133 top-level conformance rule directories, 479 `.em` files including support
  modules. 125 defects recorded, **none open**.
-**Open deviation:** D4 (`docs/DEVIATIONS.md`). Features waiting on another feature are N1–N5 in `docs/NOT-IMPLEMENTED.md` (N1–N3 were D1, D3, D6).
+**Open deviation:** D4 (`docs/DEVIATIONS.md`). Features waiting on another feature are N1–N7 in `docs/NOT-IMPLEMENTED.md` (N1–N3 were D1, D3, D6).
 **D-126 through D-128 are fixed:** EMIF decoding recomputes the cache key from
 the artifact's identity inputs and rejects self-inconsistent metadata,
 including an empty explicit `@borrows` contract, before consumption; source
@@ -694,9 +694,11 @@ requires the same explicit root resolution as `ember inspect --cycle <path>`.
   outputs, while hand-authored compiler/runtime sources remain covered by the
   branding scan. Strict C11 compilation and the full workspace regression pass.
 * **Open deviation: D4** (`docs/DEVIATIONS.md`). Features waiting on
-  another feature are N1–N5 in `docs/NOT-IMPLEMENTED.md`: the former D1
+  another feature are N1–N7 in `docs/NOT-IMPLEMENTED.md`: the former D1
   (`[RNG-5a1]` operator impls), D3 (`extern class`) and D6 (`once fn`
-  callbacks), and N4/N5 (calls and float totals in vectorisable form).
+  callbacks), N4 (calls in vectorisable form), N5 (a float total declared by
+  `@parallel`), N6 (`@fastmath` in a static library) and N7 (a default doing
+  float work that its mode's closure cannot hold).
 
 ## 8. Traps paid for
 

@@ -445,6 +445,7 @@ mod tests {
             is_unsafe: false,
             abi: None,
             overflow: ember_types::OverflowPolicy::Panic,
+            fp: ember_types::FpMode::Strict,
             export_thread_policy: ember_mir::ExportThreadPolicy::Any,
             locals: vec![
                 LocalDecl {

@@ -73,6 +73,9 @@ pub struct Body {
     pub abi: Option<String>,
     /// Effective lexical arithmetic policy of this callable's declaration.
     pub overflow: OverflowPolicy,
+    /// `[TYP-9]` — its floating point's relaxation; `[CG-C-11]` emits a
+    /// relaxed body in a translation unit of its own.
+    pub fp: ember_types::FpMode,
     /// `[FFI-33]` — resolved calling-thread contract of a C export.
     pub export_thread_policy: ExportThreadPolicy,
     pub locals: Vec<LocalDecl>,

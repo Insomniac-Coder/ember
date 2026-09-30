@@ -2,7 +2,7 @@
 #$ rules: SIMD-7
 #$ profiles: debug, release, shipping
 #$ panics: integer overflow in `+`
-#$ assert-c: contains(" >> 56ULL)")
+#$ assert-c: contains(" >> 56ULL;")
 # The 101st addition overflows, inside the second block: the block fails the
 # test and runs checked, which stops at that addition.
 

@@ -384,6 +384,8 @@ ODRS = [
      '`[SIMD-5]`, `[SIMD-7]`'),
     ('ODR-089', 'an adapter or consumer takes the iterator it wraps; `take`, `skip`, `nth` and `step_by` count in `int`, and a negative count or index, or a step of zero or less, panics when the adapter is made or the consumer called; `enumerate(start=0)` as `[STD-26]` (Hardened_44)',
      '`[STD-19]`, `[STD-14]`, `[STD-26]`'),
+    ('ODR-090', 'a float mode is lexical, as the overflow policy is: a lambda takes its function\'s; a parameter default keeps its declaration\'s and a field default is strict wherever evaluated; inside `@fastmath` no range fact about a float is derived, and integer facts are unaffected; neither mode relaxes range values, `as`, the float classifications, or makes a NaN undefined behaviour (Hardened_45)',
+     '`[TYP-9]`, `[TYP-9b]`, `[RNG-4]`, `[CG-C-11]`'),
 ]
 
 H5_HEAD = """
@@ -415,7 +417,8 @@ contracts; Hardened_40 adds ODR-084, module-attribute syntax and lexical integer
 Hardened_41 adds ODR-085, what the dynamic exclusivity checks cost and the packed access words;
 Hardened_42 adds ODR-086 and ODR-087, running totals checked block by block and the LLVM backend;
 Hardened_43 adds ODR-088, integer division no vector instruction set does keeps a loop out of
-vectorisable form; Hardened_44 adds ODR-089, the iterator adapters' counts and ownership.
+vectorisable form; Hardened_44 adds ODR-089, the iterator adapters' counts and ownership;
+Hardened_45 adds ODR-090, where a float mode holds.
 
 | ODR | Ruling | Rules |
 |---|---|---|

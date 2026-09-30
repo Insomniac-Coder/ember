@@ -1,7 +1,7 @@
 #$ test: run-pass
 #$ rules: CTL-1, CTL-3, CTL-4, SPN-5
 #$ profiles: debug, release, shipping
-#$ assert-c-count: contains(".index = (") == 1
+#$ assert-c-count: contains(".index = ") == 1
 #$ stdout:
 #$ 510
 #$ [6, 7, 8]

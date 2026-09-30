@@ -62,8 +62,29 @@ followed.
 |---|---|
 | **Rule** | `[SIMD-5]`: "every floating-point reduction is declared by `@parallel(reduce=…)` or the function is `@fastmath`" |
 | **The feature** | a loop keeping a floating-point running total is in vectorisable form when it declares the reduction |
-| **Requires** | `@parallel` and `@fastmath`, which are not built (`[ATT-6]` rejects both with `E0900`) |
-| **Meanwhile** | such a loop is not in vectorisable form; it has no integer overflow check to group unless it also does integer arithmetic, which stays checked one operation at a time |
+| **Requires** | `@parallel(reduce=…)`, which is not built (`[ATT-6]` rejects it with `E0900`). `@fastmath` is built (ADR-085) and admits the loop |
+| **Meanwhile** | outside `@fastmath` such a loop is not in vectorisable form; it has no integer overflow check to group unless it also does integer arithmetic, which stays checked one operation at a time |
 | **Can a program notice** | no, except as speed |
-| **Plan** | admit the declared reduction once either attribute is built |
+| **Plan** | admit the declared reduction once `@parallel` is built |
 
+## N6 — `@fastmath` and `@fp(contract)` in a static library
+
+| | |
+|---|---|
+| **Rule** | `[CG-C-11]`: "A `@fastmath` or `@fp(contract)` function is emitted in a separate translation unit compiled with the relaxed flags" |
+| **The feature** | a static library whose package has a relaxed function |
+| **Requires** | library builds of more than one C unit: a library keeps its functions internal to its one unit (`static`), so two Ember libraries linked into one host cannot clash, and a relaxed unit could not call them. Package-private external names are the missing piece; the owner deferred further FFI work (`docs/AUTOPILOT.md` §2) |
+| **Meanwhile** | such a library is `E0900` (`staticlib.rs`'s `a_static_library_with_a_relaxed_function_is_refused`); the attribute is never dropped. Programs build as `[CG-C-11]` says |
+| **Can a program notice** | yes: the library does not build |
+| **Plan** | name a library's functions with its package prefix (as its public types are, `package_type_namespace`) and give the ones a relaxed unit shares external linkage; then build the relaxed objects into the archive |
+
+## N7 — a default doing float work that its mode's closure cannot hold
+
+| | |
+|---|---|
+| **Rule** | `[TYP-9]` (ODR-090): "a parameter default keeps its declaring function's mode ... wherever ... evaluated" |
+| **The feature** | a default of another float mode than the calling function's that does float work and cannot be the body of a closure: a `mut` parameter's default (a place, which a closure cannot hand back), or one using `self` or an earlier parameter in a way a borrowed closure parameter cannot (a `mut self` method) |
+| **Requires** | evaluating a place, or a mutating default, out of line in another C unit: a function of the declaration's mode taking the earlier parameters in their own modes |
+| **Meanwhile** | `E0900` at the call, naming the parameter and the mode (`TYP-9/reject_a_mut_default_doing_float_work_from_another_mode`); a default doing no float work, or called from its own mode, is not affected |
+| **Can a program notice** | yes: such a call does not compile |
+| **Plan** | give each such default a function of its declaration's mode whose parameters take the earlier parameters' modes |

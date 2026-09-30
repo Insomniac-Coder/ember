@@ -196,6 +196,34 @@ fn staticlib_archives_and_headers_link_from_separate_c_and_cpp_hosts() {
     }
 }
 
+/// `[CG-C-11]` — a static library with a `@fastmath` or `@fp(contract)`
+/// function is refused rather than built with the attribute lost: its
+/// relaxed unit would call functions the library keeps internal to its main
+/// unit (`docs/NOT-IMPLEMENTED.md`).
+#[test]
+fn a_static_library_with_a_relaxed_function_is_refused() {
+    let dir = scratch();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src").join(ember_branding::source_file("lib")),
+        "@fastmath
+fn scaled(x: f64) -> f64:
+    return x * 2.0
+
+pub extern \"C\" fn relaxed_value(x: f64) -> f64:
+    return scaled(x)
+").unwrap();
+    std::fs::write(dir.join(ember_branding::MANIFEST),
+        "[package]
+name = \"relaxed_api\"
+kind = \"staticlib\"
+").unwrap();
+    let output = build(&["build"], &dir);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "a static library with a relaxed function was built:
+{stderr}");
+    assert!(stderr.contains("error[E0900]: `@fastmath` and `@fp(contract)` in a static library are not built yet"), "{stderr}");
+}
+
 #[test]
 fn requested_unsupported_package_modes_fail_before_linking() {
     let dir = scratch();

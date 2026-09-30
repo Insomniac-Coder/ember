@@ -11088,13 +11088,36 @@ first**; the rest of §0.355 is the running narrative behind it.
     semantic ambiguity and no ODR or new hardening.
 
   The five preceding CI runs, through `f529f8b`, finished green.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_44.md`
-  (ODR-089: the iterator adapters' counts are `int`s, a bad one panics when
-  the adapter is made; H43 carried ODR-088, a division no vector instruction
-  set does keeps a loop out of vectorisable form), pinned in
-  `docs/spec-source/development-target.json`. The spec's working sources are
-  `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h44/` are frozen.
-* **Next numbers:** ODR-090, D-392, ADR-085, ERR-056.
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_45.md`
+  (ODR-090: a float mode is lexical, as the overflow policy is; inside
+  `@fastmath` no range fact about a float; H44 carried ODR-089, the iterator
+  adapters' counts), pinned in `docs/spec-source/development-target.json`.
+  The spec's working sources are `tasks/spec-0.9.9/parts/`; `parts-h30/`
+  through `parts-h45/` are frozen.
+* **Next numbers:** ODR-091, D-394, ADR-086, ERR-056.
+* **`[TYP-9]` `@fastmath` and `@fp(contract)` (2026-09-30, ADR-085, ODR-090,
+  Hardened_45).** Built for programs: a C unit per float mode, compiled with
+  its flags (`[CG-C-11]`); lambdas take their function's mode; a default
+  keeps its declaration's mode through a closure of that mode; what a
+  program compares by address is defined once, in the main unit; no float
+  range fact inside `@fastmath`; a `@fastmath` float total is in vectorisable
+  form; what the language defines for NaN and infinity holds in both modes
+  (clang and gcc get `-funsafe-math-optimizations`, never the finite-only
+  assumption, which makes a NaN argument undefined behaviour). Reviewed
+  before commit by an approved workflow (17 findings; `build/review-typ9/`),
+  which also found D-393 (class field defaults saw the caller's locals;
+  fixed). Not built: a static library with a relaxed function (`E0900`,
+  NOT-IMPLEMENTED N6; needs package-private external names, FFI work the
+  owner deferred), and a default doing float work that no closure of its
+  mode can hold (`E0900`, N7). Found on the way and fixed: MSVC recognises a reduction
+  only as `x = x + e;`, so assigned operations lost their outer parentheses
+  (the `@fastmath` dot product went from 1.43x C to 1.00x; the 39 programs
+  unchanged). **Next, in order:** D-392 (open: a float range type can hold
+  NaN through a comparison's false arm, and float facts come from
+  arithmetic, both against `[RNG-4a]`; the row says where); then the strict
+  MSVC dot product (scratchpad `fpbench/`, 1.25x C, cause not found: ADR-081
+  inlines `dot` into `main`, where MSVC does not unroll it, and C inlined the
+  same way runs 0.80 s against Ember's 1.10 s); then the goal-2 list below.
 * **Goal 2, implementation (2026-09-29, autonomous):** next is `[STD-19]`'s
   iterator adapters and `[CTL-3b]`'s counted lowering of adapter chains (the
   audit's `CTL-3b` gap; `for x in mutspan`, `.take/.skip/.enumerate/.zip/
@@ -11778,6 +11801,11 @@ first**; the rest of §0.355 is the running narrative behind it.
   | 7a | 6 |
   | P8 | 17 |
   | Overall | 59 |
+
+  Checked again 2026-09-30 before ADR-085's commit: the same table, 58.6%
+  with Hardened_45 weights, 59% rounded. P1 gains `[TYP-9]`'s float controls
+  (ADR-085) and loses what D-392 found open in `[RNG-4a]`; P6's `[SIMD-5]`
+  admits a `@fastmath` float total, too little to move it.
 
   `python tasks/impl-0.9.9/rule_sizes.py 98 89 60 13 14 4 6` gives 58.50%,
   rounded to 59%, with Hardened_44 weights. The owner asked (2026-09-29) for
