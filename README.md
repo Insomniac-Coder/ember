@@ -31,7 +31,7 @@ pages, and the records that keep them consistent.
 | Language decisions | Current owner decisions (ODRs) in [`docs/OWNER-QUEUE.md`](docs/OWNER-QUEUE.md) |
 | CI | Linux (Clang, GCC) and Windows (MSVC, clang-cl); every push to `main` |
 
-Phase estimates against 0.9.9 (2026-09-29; weighted by the size of each phase's rules;
+Phase estimates against 0.9.9 (2026-09-30; weighted by the size of each phase's rules;
 method in [`docs/HANDOFF.md`](docs/HANDOFF.md)):
 
 | Phase | Scope | Done |

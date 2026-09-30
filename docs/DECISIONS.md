@@ -3157,3 +3157,19 @@ programs changed C (map of numbers, enum `match`), the same speed over 31 runs (
 full suite passes with MSVC and clang, `RNG-4`'s inlining test and `CLO-3`'s lambda copies included
 (a lambda holding a checked `-` is still inlined).
 
+## ADR-082 — `[STD-19]`'s `chain` takes an iterator of the same items
+
+2026-09-30, autonomous (the owner: "work on the implementation, just features that you can finish
+in one hour"). `fn chain[J: Iterator[Item = Item]](owned self, other: J) -> Chain[Self, J]` in
+`std.core`'s `Iterator`, and `extend[I: Iterator, J: Iterator[Item = I.Item]] Chain[I, J] implements
+Iterator`: the first iterator's items, then `other`'s. A `done` flag stops asking the first once it
+has said `None`, which an iterator need not keep saying. `other` is an `Iterator`, as `zip`'s is;
+the spec lists `chain` among the adapters without saying more, and `[STD-19]`'s `Iterable` forms are
+about the receiver (`xs.chain(ys.iter())`), so a range is chained as `(7..9).iter()`. Items of two
+types are `E2040` at the call, naming both. It needed D-389 (the bound naming `I.Item` and the
+binding naming the interface's own `Item`). Not built: `[CTL-3b]`'s counted lowering of a `chain`
+in a `for` header (it runs through `next`, as `rev` and a fused `cloned` would; not yet compared with
+C, which writes two loops). Tests: `STD-19/accept_chain_gives_one_iterator_then_the_other` (views,
+ranges, copies, empty either side, a first iterator that panics if asked again, adapters and
+`fold` after it) and `STD-19/reject_chain_of_a_different_item_type`.
+

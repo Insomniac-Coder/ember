@@ -728,6 +728,9 @@ struct PendingDefaultMethod {
     def: DefId,
     owner: Ty,
     source: (usize, usize, usize),
+    /// D-390 — a generic interface's parameters, as the instance the owner
+    /// implements gives them (`T` is `int` for `Pair[int]`).
+    bindings: Vec<(Symbol, Ty)>,
 }
 
 /// An implementation reached while generic recipes are collected, before
@@ -2182,6 +2185,10 @@ impl<'a> Checker<'a> {
         index_base: usize,
     ) -> Vec<GenericParam> {
         let mut declared = Vec::new();
+        // The bounds whose `[Name = type]` bindings are read once every
+        // parameter is declared: (the parameter's place, the bound, its
+        // interface instance).
+        let mut pending: Vec<(usize, &ast::TypeExpr, Symbol)> = Vec::new();
         for (index, param) in params.iter().enumerate() {
             // A const generic is a value, not a type; `[TYP-16]`'s type
             // parameters are what this phase handles.
@@ -2206,7 +2213,7 @@ impl<'a> Checker<'a> {
             // resolve to nothing and report `[TYP-17]`'s "its bounds do not
             // provide one" about a bound that did.
             let mut bounds = Vec::new();
-            let mut bindings = Vec::new();
+            let bindings = Vec::new();
             for bound in &param.bounds {
                 match interface_name(bound) {
                     // Part IV §8 — a generic interface named bare takes its
@@ -2226,14 +2233,27 @@ impl<'a> Checker<'a> {
                     None if matches!(&bound.kind, ast::TypeKind::Path { args, .. } if !args.is_empty()) => {
                         let Some(instance) = self.bound_interface(bound, ty) else { continue };
                         bounds.push(instance);
-                        bindings.extend(self.bound_bindings(bound, instance));
+                        pending.push((declared.len(), bound, instance));
                     }
                     None => {}
                 }
             }
-            self.close_bounds(&mut bounds, &mut bindings);
             let default = param.default.as_ref().map(|default| self.resolve_type(default));
             declared.push(GenericParam { name: param.name.name, bounds, callable: None, default, projection: None, bindings });
+        }
+        // `[GRM-8c]` — a binding may name another parameter's associated
+        // type (`J: Iterator[Item = I.Item]`, `[STD-19]`'s `chain`): each
+        // `T.Name` the bounds mention gets its hidden parameter first, once
+        // every parameter and its interfaces are known, and the bindings are
+        // read after.
+        let mentioned: Vec<&ast::TypeExpr> = pending.iter().map(|(_, bound, _)| *bound).collect();
+        self.declare_projections(&mentioned, &mut declared, index_base);
+        for (at, bound, instance) in pending {
+            let found = self.bound_bindings(bound, instance);
+            declared[at].bindings.extend(found);
+        }
+        for param in declared.iter_mut().filter(|param| param.projection.is_none()) {
+            self.close_bounds(&mut param.bounds, &mut param.bindings);
         }
         declared
     }
@@ -6476,6 +6496,35 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
+            // D-390 — a type implementing an instance of this generic
+            // interface (`P implements Pair[int]`, recorded as `Pair_i64`)
+            // gets that instance's defaults, their types the instance's.
+            let instances: Vec<(Ty, Symbol)> = implementations
+                .iter()
+                .filter(|(_, implemented, _)| {
+                    self.open_interface_origin.get(implemented).is_some_and(|(origin, _)| *origin == interface)
+                })
+                .map(|(ty, implemented, _)| (*ty, *implemented))
+                .collect();
+            for (ty, instance) in instances {
+                let defaults = self.interfaces.get(&instance).map(|def| def.defaults.clone()).unwrap_or_default();
+                for default in defaults {
+                    let already_exists = match default.receiver {
+                        Some(_) => self.methods.contains_key(&(ty, default.name)),
+                        None => self.associated.contains_key(&(ty, default.name)),
+                    };
+                    if already_exists {
+                        continue;
+                    }
+                    if self.is_generic_instance(ty)
+                        && (self.signature_nests_self(default.declaration) || default.receiver == Some(Mode::Owned))
+                    {
+                        self.deferred_defaults.entry((ty, default.name)).or_insert((instance, default));
+                        continue;
+                    }
+                    self.register_instantiated_default(ty, instance, default);
+                }
+            }
         }
     }
 
@@ -6556,6 +6605,15 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// D-390 — a generic interface's parameters with the arguments an
+    /// instance of it was made with (`[(T, int)]` for `Pair_i64`); none for
+    /// an interface that is not an instance.
+    fn interface_instance_bindings(&self, interface: Symbol) -> Vec<(Symbol, Ty)> {
+        let Some((origin, args)) = self.open_interface_origin.get(&interface) else { return Vec::new() };
+        let Some(def) = self.interfaces.get(origin) else { return Vec::new() };
+        def.generic_params.iter().map(|param| param.name).zip(args.iter().copied()).collect()
+    }
+
     fn register_instantiated_default(&mut self, ty: Ty, interface: Symbol, default: InterfaceDefault) {
         {
             {
@@ -6580,6 +6638,15 @@ impl<'a> Checker<'a> {
                     resolved.ret = self.resolve_assoc(substituted, ty);
                     *callable = resolved;
                 }
+                // D-389 — a bound's binding may name `Self`'s associated
+                // types: `chain[J: Iterator[Item = Item]]` in `Iterator`
+                // (`[STD-19]`) wants the implementing type's `Item`.
+                for generic in &mut signature.generics {
+                    for binding in &mut generic.bindings {
+                        let substituted = self.substitute_self(binding.2, ty);
+                        binding.2 = self.resolve_assoc(substituted, ty);
+                    }
+                }
                 if let Some(receiver) = default.receiver {
                     signature.params.insert(0, (Symbol::intern("self"), ty, receiver, Span::DUMMY));
                 }
@@ -6603,10 +6670,14 @@ impl<'a> Checker<'a> {
                 if self.is_opaque_instance(ty) {
                     return;
                 }
+                // D-390 — the body of an instance's default names the
+                // generic interface's parameters, which are the instance's
+                // arguments here.
+                let bindings = self.interface_instance_bindings(*interface);
                 if generic {
                     self.generic_method_sources.insert(
                         def,
-                        MethodSource { owner: ty, source: default.source, owner_bindings: Vec::new() },
+                        MethodSource { owner: ty, source: default.source, owner_bindings: bindings },
                     );
                     self.pending_generic_method_validations.push(def);
                 } else {
@@ -6614,6 +6685,7 @@ impl<'a> Checker<'a> {
                         def,
                         owner: ty,
                         source: default.source,
+                        bindings,
                     });
                 }
             }
@@ -6950,23 +7022,51 @@ impl<'a> Checker<'a> {
         if self.interfaces.contains_key(&instance) {
             return Some(instance);
         }
+        // D-390 — a method of the interface may be bounded by this same
+        // instance (`fn same[U: Pair[T]]` in `Pair[T]`): making its signature
+        // asks for the instance again. It is entered now, its associated
+        // types known and its methods to come, so that request is answered by
+        // name instead of starting over.
+        self.interfaces.insert(
+            instance,
+            InterfaceDef {
+                generic_params: Vec::new(),
+                methods: Vec::new(),
+                defaults: Vec::new(),
+                supertraits: Vec::new(),
+                assoc_defaults: Vec::new(),
+                supertrait_exprs: Vec::new(),
+                ..definition.clone()
+            },
+        );
 
         let mut declarations = HashMap::new();
         let mut methods = Vec::with_capacity(definition.methods.len());
         for (method, declaration, receiver, has_body) in &definition.methods {
             let signature = self.signatures[declaration.0 as usize].clone();
+            // D-390 — a method's own parameters follow the interface's in the
+            // declaration; the instance has none of its own, so they become
+            // its first, as a generic type's methods' do when it is made.
+            let mut combined = args.to_vec();
+            combined.extend(
+                signature
+                    .generics
+                    .iter()
+                    .enumerate()
+                    .map(|(index, param)| self.types.intern(TyKind::Param { index: index as u32, name: param.name })),
+            );
             let params = signature
                 .params
                 .iter()
                 .map(|(name, ty, mode, parameter_span)| {
-                    (*name, self.substitute_ty(*ty, args), *mode, *parameter_span)
+                    (*name, self.substitute_ty(*ty, &combined), *mode, *parameter_span)
                 })
                 .collect();
-            let ret = self.substitute_ty(signature.ret, args);
+            let ret = self.substitute_ty(signature.ret, &combined);
             let generics = signature
                 .generics
                 .iter()
-                .map(|param| self.substitute_generic_param(param, args))
+                .map(|param| self.substitute_generic_param(param, &combined))
                 .collect();
             let instance_declaration = DefId(self.signatures.len() as u32);
             self.signatures.push(Signature { params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, overflow: signature.overflow, generics, borrows: signature.borrows });
@@ -9289,6 +9389,12 @@ impl<'a> Checker<'a> {
     /// positions, so an instance over parameters is numbered rather than
     /// named by them, and remembered so a use can substitute it (D-261).
     fn interface_instance_name(&mut self, name: Symbol, args: &[Ty]) -> Symbol {
+        // An interface with no type arguments is its own only instance
+        // (`J: Iterator[Item = Item]` written inside `Iterator`, read before
+        // `Iterator` is registered, is `Iterator` itself, D-389).
+        if args.is_empty() {
+            return name;
+        }
         let key = (name, args.to_vec());
         if let Some(&instance) = self.open_interfaces.get(&key) {
             return instance;
@@ -11716,6 +11822,10 @@ impl<'a> Checker<'a> {
                 let Some(block) = &decl.body else { continue };
 
                 self.current_module = module_index;
+                self.type_params.clear();
+                for (name, ty) in &job.bindings {
+                    self.type_params.insert(*name, *ty);
+                }
                 let scope = self.enter_default_of(item, job.owner);
                 let function = self.check_one_method(job.owner, decl, block, job.def, &member.attrs, member.span);
                 if let Some(saved) = scope {

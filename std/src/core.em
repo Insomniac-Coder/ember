@@ -195,6 +195,10 @@ pub interface Iterator:
     fn zip[J: Iterator](owned self, other: J) -> Zip[Self, J]:
         return Zip(self, other)
 
+    ## This iterator's items, then `other`'s, which are of the same type.
+    fn chain[J: Iterator[Item = Item]](owned self, other: J) -> Chain[Self, J]:
+        return Chain(self, other, false)
+
     ## `[STD-19]` — the consumers. Each takes this iterator and runs it.
 
     ## How many items there are.
@@ -459,6 +463,25 @@ extend[I: Iterator, J: Iterator] Zip[I, J] implements Iterator:
                         return None
             None:
                 return None
+
+## `other` runs only once the first has run out (`done`), and the first is
+## not asked again after it said `None`.
+pub struct Chain[I, J]:
+    first: I
+    other: J
+    done: bool
+
+extend[I: Iterator, J: Iterator[Item = I.Item]] Chain[I, J] implements Iterator:
+    type Item = I.Item
+
+    fn next(mut self) -> Option[I.Item]:
+        if not self.done:
+            match self.first.next():
+                Some(x):
+                    return Some(x)
+                None:
+                    self.done = true
+        return self.other.next()
 
 ## `[STD-19]` — `it.copied()` and `it.cloned()` over an iterator of
 ## references `ref T`: the values they reach, copied or cloned, so the items

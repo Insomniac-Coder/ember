@@ -11094,7 +11094,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   set does keeps a loop out of vectorisable form), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h44/` are frozen.
-* **Next numbers:** ODR-090, D-389, ADR-082, ERR-056.
+* **Next numbers:** ODR-090, D-391, ADR-083, ERR-056.
 * **Goal 2, implementation (2026-09-29, autonomous):** next is `[STD-19]`'s
   iterator adapters and `[CTL-3b]`'s counted lowering of adapter chains (the
   audit's `CTL-3b` gap; `for x in mutspan`, `.take/.skip/.enumerate/.zip/
@@ -11121,7 +11121,16 @@ first**; the rest of §0.355 is the running narrative behind it.
   numbers are checked once after the loop, D-384 to D-387. Reviewed before
   commit by an adversarial workflow the owner approved (four findings, all
   fixed). Not built: `rev`, `cloned` fused, chains over `a..` or 128-bit
-  ranges (they run through `next`).
+  ranges (they run through `next`). Then (2026-09-30) `chain` (ADR-082),
+  which needed D-389 (a bound naming another parameter's `I.Item`, or its
+  own interface's `Item`); `chain` in a `for` header is not fused yet and
+  not yet compared with C. D-390, found on the way, is **fixed**: an
+  interface with type parameters now gives its defaults to an instance's
+  implementers, a method's own parameters are renumbered in the instance,
+  and a method bounded by the same instance no longer overflows the stack.
+  Next here: `rev` (needs a spec ruling on running backwards), then the
+  closure-holding adapters (`map`, `filter`, ...), which need `[CLO-3]`'s
+  owned callable values.
 * **Speed audit: the six agreed fixes are done (2026-09-27, uncommitted;
   ADR-070, D-375, deviation D7).** The owner said "do all fixes check them and
   report the final result". Each fix passed the quick check, the workspace
