@@ -3219,3 +3219,37 @@ writes two loops).
   this change) and `RNG-4/run_fail_an_element_through_an_adapter_that_can_overflow_is_checked` (a
   part holding `int.MAX` keeps the check and panics).
 
+## ADR-084 — for MSVC, a loop nest carrying one running value over views runs in a function of its own
+
+2026-09-30, autonomous. After ADR-083, 300 rounds over two chained lists of 1 million numbers
+(`total ^= x + round`) ran at the C twin's speed with clang and 1.8x with MSVC. Both inner loops were
+plain C `for` loops that MSVC did not vectorise (reason 1200, a loop-carried dependence), where it
+vectorised the twin's. Reduced by hand in the scratchpad (`chain/tiny*.c`): the same loops vectorise
+in a function of their own, and stop vectorising once a list's header has been passed to a call
+(`push(&a, ...)`, as Ember's lists are filled) in the same function; a block-local total, a
+`restrict` local pointer and `#pragma loop(ivdep)` change nothing. The loops moved by hand into a
+`noinline` function taking the view's pointer ran 0.117 s against the twin's 0.116 s.
+
+`outline_list_kernels_all` (ADR-079) now also moves a nest whose lists may be views (`Span`
+locals, passed to the new function as they are, as `restrict` element pointers) when it carries one
+running value: a scalar set in the nest and read after it. The function returns it; the caller
+assigns the call's result to it. Such a nest must write no memory (no element, field or write
+through a reference, no mutable reference), so its turns share nothing through memory and
+`restrict` on the views promises nothing false; the value comes in as a parameter when it is not a
+constant at the nest's start (ADR-079's rule). Two running values, or a nest that writes a list and
+carries a value, stay.
+
+A first version also moved single loops carrying a value; measured over the 39 programs it gained
+nothing and cost two: a final summing loop moved out of `main` made MSVC compile a loop that did not
+move with two `xor`s on its running value's chain instead of one ("Number each item ... while
+changing it", 1.31x), and an inner loop MSVC already vectorised in place ran 1.11x slower in a
+function called each round. So only nests move, as ADR-079's do.
+
+Measured with MSVC: the chained benchmark 0.210 s -> 0.117 s (the twin 0.116 s), checks on and off;
+clang unchanged (1.01x). The 39 benchmark programs: the same C. Tests:
+`OPT-2/accept_a_loop_carrying_a_running_value_keeps_its_results` (three nests move, over two views,
+over one view with the value coming in, and a decimal one; two running values, a nest writing a
+list and a single loop stay; the same results on every compiler) and the milestone
+`loop_nests_carrying_a_running_value_get_their_own_function_for_msvc`; break-tested (with the mode
+off no nest moves).
+

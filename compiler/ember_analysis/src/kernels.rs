@@ -13,8 +13,10 @@
 //! that writes only lists it never reads (where a round reads back what the
 //! last one wrote, the reordering makes each element's rounds a chain and
 //! is slower), or reads back only a list every round adds the same whole
-//! number to (MSVC then adds several rounds at once, ADR-080), is moved into
-//! a body of its own (`restrict_views`): each list
+//! number to (MSVC then adds several rounds at once, ADR-080), or writes no
+//! memory and carries one running value, which it returns (ADR-084; its
+//! lists may be views), is moved into a body of its own (`restrict_views`):
+//! each list
 //! a view parameter, each length it reads and each value it reads before
 //! writing a parameter, and a value that is a constant when the nest starts
 //! written in as that constant (a count or a start the program fixes stays
@@ -184,11 +186,12 @@ fn try_outline(
         });
     }
 
-    // The lists: locals of a list type reached only by index or length.
+    // The lists: locals of a list type, or views (ADR-084: a fused loop
+    // reads its list through one), reached only by index or length.
     let mut lists: Vec<LocalId> = Vec::new();
     for (&local, use_) in &uses {
         let ty = body.locals[local as usize].ty;
-        if matches!(types.kind(ty), TyKind::Vec { .. }) {
+        if matches!(types.kind(ty), TyKind::Vec { .. } | TyKind::Span { .. }) {
             if use_.whole || use_.other {
                 return None;
             }
@@ -204,7 +207,7 @@ fn try_outline(
         }
     }
     let written: Vec<LocalId> = lists.iter().copied().filter(|l| uses[&l.0].element_written).collect();
-    if lists.len() < 2 || written.is_empty() {
+    if lists.is_empty() {
         return None;
     }
     // A list the nest writes it never reads: then no round builds on an
@@ -270,6 +273,7 @@ fn try_outline(
     let live_in = live_on_entry(body, &inside, shape.header);
     let mut passed: Vec<LocalId> = Vec::new();
     let mut constants: Vec<(LocalId, Operand)> = Vec::new();
+    let mut results: Vec<LocalId> = Vec::new();
     for &local in &others {
         let decl = &body.locals[local.0 as usize];
         if decl.kind == LocalKind::Return || types.needs_drop(decl.ty) {
@@ -277,7 +281,7 @@ fn try_outline(
         }
         let written_inside = writes_in(body, &inside, local);
         if written_inside && live_after(body, exit, local) {
-            return None;
+            results.push(local);
         }
         if live_in.contains(&local) {
             if !scalar(types, decl.ty) {
@@ -295,11 +299,35 @@ fn try_outline(
         }
     }
 
+    // ADR-084 — a nest that carries one running value (set in it and read
+    // after it) and writes no memory moves too, the value returned: MSVC
+    // took no running value over two views as a reduction in a function
+    // where a list's header was passed to a call (`push`), and does in a
+    // function of its own. Otherwise, as ADR-079: a nest over two lists or
+    // more, writing at least one, with nothing it sets read after it.
+    let result = match results.as_slice() {
+        [] => None,
+        [one] if scalar(types, body.locals[one.0 as usize].ty) => Some(*one),
+        _ => return None,
+    };
+    match result {
+        Some(_) => {
+            if !written.is_empty() || writes_memory(body, &inside) {
+                return None;
+            }
+        }
+        None => {
+            if lists.len() < 2 || written.is_empty() {
+                return None;
+            }
+        }
+    }
+
     // The new body: views, then lengths, then values; then its own locals.
     let span = body.blocks[shape.header].terminator_span;
     let lengths: Vec<LocalId> = lists.iter().copied().filter(|l| uses[&l.0].length).collect();
-    let mut kernel_locals: Vec<LocalDecl> =
-        vec![LocalDecl { ty: common.void, kind: LocalKind::Return, name: None, span }];
+    let returned = result.map_or(common.void, |result| body.locals[result.0 as usize].ty);
+    let mut kernel_locals: Vec<LocalDecl> = vec![LocalDecl { ty: returned, kind: LocalKind::Return, name: None, span }];
     let mut map: HashMap<LocalId, LocalId> = HashMap::new();
     let mut view_of: HashMap<LocalId, LocalId> = HashMap::new();
     let mut length_of: HashMap<LocalId, LocalId> = HashMap::new();
@@ -308,7 +336,11 @@ fn try_outline(
         LocalId(locals.len() as u32 - 1)
     };
     for &list in &lists {
-        let view_ty = types.intern(TyKind::Span { elem: elem_of(types, body.locals[list.0 as usize].ty), mutable: written.contains(&list) });
+        let list_ty = body.locals[list.0 as usize].ty;
+        let view_ty = match types.kind(list_ty) {
+            TyKind::Span { .. } => list_ty,
+            _ => types.intern(TyKind::Span { elem: elem_of(types, list_ty), mutable: written.contains(&list) }),
+        };
         let name = body.locals[list.0 as usize].name.clone();
         view_of.insert(list, push(&mut kernel_locals, view_ty, LocalKind::Arg, name));
     }
@@ -357,7 +389,14 @@ fn try_outline(
         crate::loop_version::retarget(&mut terminator, remap_block);
         blocks.push(BasicBlock { stmts, terminator, terminator_span: data.terminator_span });
     }
-    blocks.push(BasicBlock { stmts: Vec::new(), terminator: Terminator::Return, terminator_span: span });
+    let give = result
+        .map(|result| {
+            let value = Rvalue::Use(Operand::Copy(Place::local(map[&result])));
+            Stmt::new(StmtKind::Assign { place: Place::local(LocalId(0)), rvalue: value }, span)
+        })
+        .into_iter()
+        .collect();
+    blocks.push(BasicBlock { stmts: give, terminator: Terminator::Return, terminator_span: span });
 
     let symbol = format!("{}_loop{made}", body.symbol);
     let mut kernel = body.clone();
@@ -400,6 +439,10 @@ fn try_outline(
     for &list in &lists {
         let mutable = written.contains(&list);
         let list_ty = body.locals[list.0 as usize].ty;
+        if matches!(types.kind(list_ty), TyKind::Span { .. }) {
+            args.push(Operand::Copy(Place::local(list)));
+            continue;
+        }
         let ref_ty = types.intern(TyKind::Ref { mutable, inner: list_ty });
         let view_ty = types.intern(TyKind::Span { elem: elem_of(types, list_ty), mutable });
         let reference = new_local(body, ref_ty);
@@ -433,7 +476,10 @@ fn try_outline(
         args.push(Operand::Copy(Place::local(length)));
     }
     args.extend(passed.iter().map(|&local| Operand::Copy(Place::local(local))));
-    let dest = new_local(body, common.void);
+    let dest = match result {
+        Some(result) => result,
+        None => new_local(body, common.void),
+    };
     chain.push(BasicBlock {
         stmts: last_stmts,
         terminator: Terminator::Call {
@@ -678,9 +724,25 @@ fn adds_the_same_each_round(
 
 fn elem_of(types: &TypeTable, ty: Ty) -> Ty {
     match types.kind(ty) {
-        TyKind::Vec { elem, .. } => *elem,
-        _ => unreachable!("a list"),
+        TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => *elem,
+        _ => unreachable!("a list or a view"),
     }
+}
+
+/// Whether the loop writes memory: an element, a field, or through a
+/// reference, or takes a mutable reference (ADR-084: a loop that carries a
+/// value moves only when it writes none, so no turn reads what another
+/// wrote through memory).
+fn writes_memory(body: &Body, inside: &BTreeSet<usize>) -> bool {
+    inside.iter().any(|&block| {
+        body.blocks[block].stmts.iter().any(|stmt| match &stmt.kind {
+            StmtKind::Assign { place, rvalue } => {
+                !place.projection.is_empty() || matches!(rvalue, Rvalue::Ref { mutable: true, .. })
+            }
+            StmtKind::CheckedBinaryOp { dest, overflow, .. } => !dest.projection.is_empty() || !overflow.projection.is_empty(),
+            _ => false,
+        })
+    })
 }
 
 fn note_place(uses: &mut BTreeMap<u32, Uses>, place: &Place, write: bool) {

@@ -1680,6 +1680,26 @@ fn loop_nests_adding_the_same_each_round_get_restrict_functions_for_msvc() {
 {}", clang.stdout);
 }
 
+/// ADR-084 — for MSVC, a loop nest carrying one running value over views runs
+/// in a function of its own that returns it: the nest over two views, the
+/// nest whose value comes in from before it, and the decimal one. Two running
+/// values, a nest that writes a list, and a single loop stay; clang keeps
+/// every loop.
+#[test]
+fn loop_nests_carrying_a_running_value_get_their_own_function_for_msvc() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/OPT-2/accept_a_loop_carrying_a_running_value_keeps_its_results.{SOURCE_EXT}");
+    let main_loop = format!("{}_loop", ember_branding::mangled("main"));
+    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
+    assert_eq!(msvc.exit, 0, "msvc C failed:\n{}", msvc.stderr);
+    assert_eq!(msvc.stdout.matches(&format!("EMBER_NOINLINE int64_t {main_loop}")).count(), 4, "two whole-number nests move (prototype and definition each):\n{}", msvc.stdout);
+    assert_eq!(msvc.stdout.matches(&format!("EMBER_NOINLINE double {main_loop}")).count(), 2, "the decimal nest moves:\n{}", msvc.stdout);
+    assert_eq!(msvc.stdout.matches("EMBER_NOINLINE ").count(), 6, "nothing else moves:\n{}", msvc.stdout);
+    let clang = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    assert_eq!(clang.exit, 0, "clang C failed:\n{}", clang.stderr);
+    assert!(!clang.stdout.contains(&main_loop), "clang keeps every loop in place:\n{}", clang.stdout);
+}
+
 /// `[PHIL-5]` — at the end of `main` the process ends: release and shipping
 /// builds leave the list of objects with no `drop` to the operating system
 /// (one `free` fewer in `main`), and keep every drop that runs a `drop`

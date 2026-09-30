@@ -11094,7 +11094,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   set does keeps a loop out of vectorisable form), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h44/` are frozen.
-* **Next numbers:** ODR-090, D-392, ADR-084, ERR-056.
+* **Next numbers:** ODR-090, D-392, ADR-085, ERR-056.
 * **Goal 2, implementation (2026-09-29, autonomous):** next is `[STD-19]`'s
   iterator adapters and `[CTL-3b]`'s counted lowering of adapter chains (the
   audit's `CTL-3b` gap; `for x in mutspan`, `.take/.skip/.enumerate/.zip/
@@ -11125,11 +11125,11 @@ first**; the rest of §0.355 is the running narrative behind it.
   which needed D-389 (a bound naming another parameter's `I.Item`, or its
   own interface's `Item`), and ADR-083: a `for` over `a.chain(b)` is one
   counted loop per part, and element references keep their range facts.
-  Measured against C (scratchpad `chain/s6_chain_xor`): clang 1.03x; MSVC
-  1.8x, because MSVC does not vectorise a running total in a function where
-  a list's header was passed to `push`; the loop moved by hand into a
-  function of its own runs at the twin's speed. Next: that move, for MSVC
-  (a generalisation of ADR-079's kernels to a loop that carries a value).
+  Measured against C (scratchpad `chain/s6_chain_xor`): clang 1.03x, and
+  MSVC 1.00x since ADR-084 (a nest carrying one running value over views
+  runs in a function of its own for MSVC; it was 1.8x: MSVC does not
+  vectorise such a running total in a function where a list's header was
+  passed to `push`). The chained benchmark is not in the README yet.
   D-390, found on the way, is **fixed**: an
   interface with type parameters now gives its defaults to an instance's
   implementers, a method's own parameters are renumbered in the instance,
