@@ -6,6 +6,8 @@
 ## standard library write them"); this module holds what can already be
 ## written, and grows as the compiler does.
 
+import std.mem
+
 ## `[ENM-3]` — a unit-only enum, so `Copy`, `Eq`, `Hash` and `Debug` come free
 ## and it converts to its repr with `as`.
 pub enum Ordering:
@@ -1131,6 +1133,16 @@ extend[T] Array[T] implements Default:
 extend[T] Option[T] implements Default:
     fn default() -> Option[T]:
         return None
+
+## `[ERR-4]` — `take` and `replace`, written in Ember with `mem.replace`.
+extend[T] Option[T]:
+    ## The payload, leaving `None`.
+    pub fn take(mut self) -> Option[T]:
+        return mem.replace(self, None)
+
+    ## The payload, leaving `Some(value)`.
+    pub fn replace(mut self, owned value: T) -> Option[T]:
+        return mem.replace(self, Some(value))
 
 ## `[STD-15]` — the `Array` methods written in Ember (`[GRM-34]`). A method
 ## the compiler knows by a name comes first (`[TYP-24]`); these are found

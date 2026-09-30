@@ -11093,7 +11093,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   implementations overlap), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h48/` are frozen.
-* **Next numbers:** ODR-094, D-407, ADR-092, ERR-056.
+* **Next numbers:** ODR-094, D-408, ADR-092, ERR-056.
 * **`[TYP-9]` `@fastmath` and `@fp(contract)` (2026-09-30, ADR-085, ODR-090,
   Hardened_45).** Built for programs: a C unit per float mode, compiled with
   its flags (`[CG-C-11]`); lambdas take their function's mode; a default
@@ -11151,10 +11151,14 @@ first**; the rest of §0.355 is the running narrative behind it.
   are built without owned callable values (ADR-091: each holds its lambda
   by value through a `[CLO-14]` bound, which was not built, D-406) and are
   stages of a fused `for` (fused `map` equals the hand-written loop under
-  MSVC and clang; through `next` it was 10x C under MSVC). Next:
-  `flat_map`, `flatten`, `peekable`; then `[CLO-3]`'s owned callable
-  values (fields and locals of type `fn(A) -> R` holding a capturing
-  lambda). **Review wanted (2026-10-01):**
+  MSVC and clang; through `next` it was 10x C under MSVC). `[ERR-4]`'s
+  `Option.take`/`replace` added (std, `mem.replace`); `as_ref`, `as_mut`,
+  `iter` and `filter` of a borrowing lambda remain (Part XIII). Blocked:
+  `flat_map`, `flatten`, `peekable`, `collect[C]()` and `join` hit five
+  associated-type limits, D-407 (open, with a proposed design; ask the
+  owner before changing how generic types are instantiated; `collect` and
+  `peekable`'s API also need a ruling, ODR-094). Then `[CLO-3]`'s owned
+  callable values. **Review wanted (2026-10-01):**
   ADR-088's unification, the D-398..D-402 fixes and ADR-089 were reviewed
   solo.
 * **Goal 2, implementation (2026-09-29, autonomous):** next is `[STD-19]`'s
