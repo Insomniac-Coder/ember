@@ -26975,6 +26975,18 @@ impl<'a> Checker<'a> {
         {
             return self.types.unify_with_fixed(inner, actual, solved, fixed);
         }
+        // D-408, `[TYP-5]` rule 6 — an `Array[T]` or a `[T; N]` argument
+        // becomes a view of its elements, so inference reads the element
+        // type: `pick(ys)` for `pick[T](xs: Span[T])` is `T = int`.
+        if let TyKind::Span { elem, .. } = *self.types.kind(declared) {
+            let mut seen = actual;
+            while let TyKind::Ref { inner, .. } = *self.types.kind(seen) {
+                seen = inner;
+            }
+            if let TyKind::Vec { elem: have, text: false } | TyKind::Array { elem: have, .. } = *self.types.kind(seen) {
+                return self.types.unify_with_fixed(elem, have, solved, fixed);
+            }
+        }
         // D-257 — a callable parameter passed on arrives borrowed (`ref F`),
         // and the callee's `fn(A) -> R` parameter is borrowed too: `F` solves
         // its hidden generic. Solving it with `ref F` left a value the callee
