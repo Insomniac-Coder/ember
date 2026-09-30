@@ -11112,10 +11112,10 @@ first**; the rest of §0.355 is the running narrative behind it.
   mode can hold (`E0900`, N7). Found on the way and fixed: MSVC recognises a reduction
   only as `x = x + e;`, so assigned operations lost their outer parentheses
   (the `@fastmath` dot product went from 1.43x C to 1.00x; the 39 programs
-  unchanged). **Next, in order:** D-392 (open: a float range type can hold
-  NaN through a comparison's false arm, and float facts come from
-  arithmetic, both against `[RNG-4a]`; the row says where); then the strict
-  MSVC dot product (scratchpad `fpbench/`, 1.25x C, cause not found: ADR-081
+  unchanged). D-392 is **fixed** (next commit after ADR-085's): a float
+  range type held NaN through a comparison's false arm and infinity through a
+  one-sided fact; float facts now come only from a comparison's true arm
+  (`[RNG-4a]`). **Next:** the strict MSVC dot product (scratchpad `fpbench/`, 1.25x C, cause not found: ADR-081
   inlines `dot` into `main`, where MSVC does not unroll it, and C inlined the
   same way runs 0.80 s against Ember's 1.10 s); then the goal-2 list below.
 * **Goal 2, implementation (2026-09-29, autonomous):** next is `[STD-19]`'s
@@ -11804,7 +11804,8 @@ first**; the rest of §0.355 is the running narrative behind it.
 
   Checked again 2026-09-30 before ADR-085's commit: the same table, 58.6%
   with Hardened_45 weights, 59% rounded. P1 gains `[TYP-9]`'s float controls
-  (ADR-085) and loses what D-392 found open in `[RNG-4a]`; P6's `[SIMD-5]`
+  (ADR-085) and `[RNG-4a]` (D-392, fixed in the next commit), short of 99%
+  (comptime calls, `[CTL-3b]`'s `rev`, the closure adapters); P6's `[SIMD-5]`
   admits a `@fastmath` float total, too little to move it.
 
   `python tasks/impl-0.9.9/rule_sizes.py 98 89 60 13 14 4 6` gives 58.50%,

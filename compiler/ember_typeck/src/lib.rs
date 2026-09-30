@@ -22279,13 +22279,12 @@ impl<'a> Checker<'a> {
                 // `x <= c`, and `x > c` implies `x >= c`.  The widened fact
                 // may reject an optimisation opportunity, but it cannot make
                 // an out-of-branch value appear proven in-range.
+                // `[RNG-4a]` (D-392) — only the true arm: NaN makes every
+                // comparison false, so a false arm proves nothing about it.
                 match (op, truth) {
                     (BinOp::Eq, true) => Some((Bound::Float(bound), Bound::Float(bound))),
                     (BinOp::Le | BinOp::Lt, true) => Some((lo, Bound::Float(bound))),
                     (BinOp::Ge | BinOp::Gt, true) => Some((Bound::Float(bound), hi)),
-                    (BinOp::Le | BinOp::Lt, false) => Some((Bound::Float(bound), hi)),
-                    (BinOp::Ge | BinOp::Gt, false) => Some((lo, Bound::Float(bound))),
-                    (BinOp::Ne, false) => Some((Bound::Float(bound), Bound::Float(bound))),
                     _ => None,
                 }
             }
@@ -22313,14 +22312,10 @@ impl<'a> Checker<'a> {
                     Some((Bound::Int(0), Bound::Int(max)))
                 }
             }
-            TyKind::Float(kind) => {
-                let max = match kind {
-                    ember_types::FloatTy::F16 => 65_504.0,
-                    ember_types::FloatTy::F32 => f32::MAX as f64,
-                    ember_types::FloatTy::F64 => f64::MAX,
-                };
-                Some((Bound::Float(-max), Bound::Float(max)))
-            }
+            // D-392 — a float may be infinite, so its unknown range has
+            // infinite ends: one comparison leaves an end unknown, which no
+            // range type contains (`fits_repr` wants both ends finite).
+            TyKind::Float(_) => Some((Bound::Float(f64::NEG_INFINITY), Bound::Float(f64::INFINITY))),
             _ => None,
         }
     }
@@ -23170,7 +23165,7 @@ impl<'a> Checker<'a> {
             ExprKind::Unary { op, operand } => {
                 let value = self.range_of(operand)?;
                 let (lo, hi) = unary_interval(*op, value)?;
-                (self.float_facts_hold(expr.ty) && self.fits_repr(expr.ty, lo, hi)).then_some((lo, hi))
+                (!self.types.is_float(expr.ty) && self.fits_repr(expr.ty, lo, hi)).then_some((lo, hi))
             }
             // The erasure `[TYP-5]` inserts. The value is the representation's
             // now, and what is known about it is the range it came from.
@@ -23192,26 +23187,18 @@ impl<'a> Checker<'a> {
                 // `debug` and `release` and `[PRF-1]` forbids the set of checks
                 // from depending on that difference. So a derived interval is
                 // kept only where it provably fits the representation.
-                (self.float_facts_hold(expr.ty) && self.fits_repr(expr.ty, lo, hi)).then_some((lo, hi))
+                (!self.types.is_float(expr.ty) && self.fits_repr(expr.ty, lo, hi)).then_some((lo, hi))
             }
             // The prelude's `min`, `max` and `clamp` (`picked_ranges`).
             // `[RNG-4a]` applies to them as to operators: a fact is kept only
             // where its endpoints fit the result type in every profile.
-            // ODR-090: none about a float inside `@fastmath`.
-            ExprKind::Block { .. } if !(self.types.is_float(expr.ty) && self.active_fp == FpMode::Fast) => {
+            // `[RNG-4a]` (D-392): none about a float.
+            ExprKind::Block { .. } if !self.types.is_float(expr.ty) => {
                 let (lo, hi) = *self.picked_ranges.get(&expr.span)?;
                 self.fits_repr(expr.ty, lo, hi).then_some((lo, hi))
             }
             _ => None,
         }
-    }
-
-    /// `[RNG-4]`, ODR-090 — whether a float operation's result here is the
-    /// one its operands' interval bounds: not inside `@fastmath` or
-    /// `@fp(contract)`, whose fused, reassociated or NaN-free result is not.
-    /// An integer operation is the same in every float mode.
-    fn float_facts_hold(&self, ty: Ty) -> bool {
-        !self.types.is_float(ty) || self.active_fp == FpMode::Strict
     }
 
     /// Whether an interval lies inside what `repr` can hold. A float
