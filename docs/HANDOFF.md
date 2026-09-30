@@ -11088,12 +11088,12 @@ first**; the rest of §0.355 is the running narrative behind it.
     semantic ambiguity and no ODR or new hardening.
 
   The five preceding CI runs, through `f529f8b`, finished green.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_47.md`
-  (ODR-092: when two implementations overlap; H46 carried ODR-091, which
-  iterators run backwards), pinned in
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_48.md`
+  (ODR-093: what a range type implements; H47 carried ODR-092, when two
+  implementations overlap), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
-  `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h47/` are frozen.
-* **Next numbers:** ODR-093, D-403, ADR-089, ERR-056.
+  `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h48/` are frozen.
+* **Next numbers:** ODR-094, D-403, ADR-090, ERR-056.
 * **`[TYP-9]` `@fastmath` and `@fp(contract)` (2026-09-30, ADR-085, ODR-090,
   Hardened_45).** Built for programs: a C unit per float mode, compiled with
   its flags (`[CG-C-11]`); lambdas take their function's mode; a default
@@ -11137,12 +11137,14 @@ first**; the rest of §0.355 is the running narrative behind it.
   where the type is known) and D-402 (a call two sibling instances both fit
   took the last; `Conv[bool].conv(w)` now names one). Probed compliant:
   `[LEX-19]`, `[LEX-20]`, `[OWN-6]`, `[BRW-4]`, `[SPN-5]`, `[DRP-4]`,
-  `[ATT-1]`. **Next here:** N1, the range types' generated operator
-  implementations, is now observable (`fn twice[T: Add[T]]` refuses a
-  `Unit`), and printing a range value is `E0900` with no rule saying which
-  of `Display`/`Debug` a range type has: one ruling (ODR-093) for both, then
-  build them. **Review wanted (2026-10-01):** ADR-088's unification and the
-  D-398..D-402 fixes were reviewed solo.
+  `[ATT-1]`. N1 is built (ADR-089: a range type's generated operator
+  implementations, answered by rule) with ODR-093 (Hardened_48: a range type
+  is `Clone`/`Hash`/`Display`/`Debug` as its representation, never
+  `Default`; a range value prints as its representation). Noted, not
+  pursued: a bound naming a later type parameter (`fn f[A: Add[B], B]`) is
+  `E1010`; the spec says nothing either way. **Review wanted (2026-10-01):**
+  ADR-088's unification, the D-398..D-402 fixes and ADR-089 were reviewed
+  solo.
 * **Goal 2, implementation (2026-09-29, autonomous):** next is `[STD-19]`'s
   iterator adapters and `[CTL-3b]`'s counted lowering of adapter chains (the
   audit's `CTL-3b` gap; `for x in mutspan`, `.take/.skip/.enumerate/.zip/

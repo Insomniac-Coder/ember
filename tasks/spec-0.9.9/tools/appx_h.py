@@ -390,6 +390,8 @@ ODRS = [
      '`[STD-19]`, `[CTL-3b]`, `[MOD-5]`'),
     ('ODR-092', 'two implementations overlap where one type could be both, each one\'s type parameters standing for any type, found where they are declared; a bound separates two only where the type it bounds is written out in full and does not meet it (Hardened_47)',
      '`[TYP-19]`, `[TYP-20]`'),
+    ('ODR-093', 'a range type is `Clone`, `Hash`, `Display` and `Debug` when its representation is, its `Eq` and `Ord` are its representation\'s, and a range value shows as its representation\'s value; it is never `Default` (Hardened_48)',
+     '`[RNG-8]`, `[RNG-5a1]`, `[TYP-39]`'),
 ]
 
 H5_HEAD = """
@@ -423,7 +425,8 @@ Hardened_42 adds ODR-086 and ODR-087, running totals checked block by block and 
 Hardened_43 adds ODR-088, integer division no vector instruction set does keeps a loop out of
 vectorisable form; Hardened_44 adds ODR-089, the iterator adapters' counts and ownership;
 Hardened_45 adds ODR-090, where a float mode holds; Hardened_46 adds ODR-091, which iterators
-run backwards; Hardened_47 adds ODR-092, when two implementations overlap.
+run backwards; Hardened_47 adds ODR-092, when two implementations overlap; Hardened_48 adds
+ODR-093, what a range type implements.
 
 | ODR | Ruling | Rules |
 |---|---|---|

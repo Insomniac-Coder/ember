@@ -6228,7 +6228,63 @@ impl<'a> Checker<'a> {
     }
 
     fn implementation_assoc(&self, ty: Ty, interface: Symbol, name: Symbol) -> Option<Ty> {
-        self.instance_assoc.get(&(ty, interface, name)).or_else(|| self.assoc_values.get(&(ty, name))).copied()
+        self.instance_assoc
+            .get(&(ty, interface, name))
+            .or_else(|| self.assoc_values.get(&(ty, name)))
+            .copied()
+            .or_else(|| self.range_operator_output(ty, Some(interface), name))
+    }
+
+    /// `[RNG-5a1]` (N1) — the operators whose implementations the compiler
+    /// generates for a range type, by their interfaces' names.
+    const RANGE_OPERATORS: [&'static str; 7] =
+        ["std.core.Add", "std.core.Sub", "std.core.Mul", "std.core.Div", "std.core.FloorDiv", "std.core.Rem", "std.core.Neg"];
+
+    /// `[RNG-5a1]` (N1) — whether one of a range type's generated operator
+    /// implementations is `ty: interface`, `None` when `interface` is not an
+    /// operator's or no range type is in it. For each operator its
+    /// representation `R` has, a range type `T` over `R` has `T: Op[T]`,
+    /// `T: Op[R]` and `R: Op[T]` (and `T: Neg`), each with `Output = R`: the
+    /// operator erases each operand to `R` and applies `R`'s (`[RNG-5]`).
+    fn range_operator_implements(&self, ty: Ty, interface: Symbol) -> Option<bool> {
+        let (origin, args) = self.open_interface_origin.get(&interface).cloned().unwrap_or((interface, Vec::new()));
+        if !Self::RANGE_OPERATORS.contains(&origin.as_str()) {
+            return None;
+        }
+        let range_repr = |this: &Self, ty: Ty| match *this.types.kind(ty) {
+            TyKind::Range(id) => Some(this.types.range_def(id).repr),
+            _ => None,
+        };
+        let repr = match (range_repr(self, ty), args.as_slice()) {
+            (Some(repr), []) => repr,
+            (Some(repr), [arg]) if *arg == ty || *arg == repr => repr,
+            (None, [arg]) if range_repr(self, *arg) == Some(ty) => ty,
+            _ => return None,
+        };
+        // What `R` has: its own implementation, over itself.
+        Some(self.implemented.iter().any(|&(t, i, _)| {
+            t == repr
+                && match self.open_interface_origin.get(&i) {
+                    Some((o, a)) => *o == origin && a.as_slice() == [repr],
+                    None => i == origin,
+                }
+        }))
+    }
+
+    /// `[RNG-5a1]` (N1) — a generated operator implementation's `Output`: the
+    /// representation. `interface` is the implementation's when known.
+    fn range_operator_output(&self, ty: Ty, interface: Option<Symbol>, name: Symbol) -> Option<Ty> {
+        if !name.is("Output") {
+            return None;
+        }
+        let repr = match *self.types.kind(ty) {
+            TyKind::Range(id) => self.types.range_def(id).repr,
+            _ => ty,
+        };
+        match interface {
+            Some(interface) => (self.range_operator_implements(ty, interface) == Some(true)).then_some(repr),
+            None => matches!(self.types.kind(ty), TyKind::Range(_)).then_some(repr),
+        }
     }
 
     fn check_implementation_of(&mut self, ty: Ty, interface: Symbol, span: Span) {
@@ -8822,6 +8878,8 @@ impl<'a> Checker<'a> {
     fn has_display(&self, ty: Ty) -> bool {
         match self.types.kind(ty) {
             TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Str => true,
+            // ODR-093 — a range value shows as its representation's value.
+            TyKind::Range(id) => self.has_display(self.types.range_def(*id).repr),
             TyKind::Error => true,
             TyKind::Vec { .. } | TyKind::Span { .. } | TyKind::Array { .. } | TyKind::Tuple(_) => {
                 self.is_formattable(ty)
@@ -8838,6 +8896,7 @@ impl<'a> Checker<'a> {
     fn formattable_in(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
         match self.types.kind(ty) {
             TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Str => true,
+            TyKind::Range(id) => self.formattable_in(self.types.range_def(*id).repr, seen),
             // `[TYP-39]` — collections, tuples, `Option` and `Result` show as
             // Python's `str()` shows them, each element by its `Debug`. The
             // built-in types' `Debug` is their `Display` with text quoted, so
@@ -21735,6 +21794,9 @@ impl<'a> Checker<'a> {
         match *self.types.kind(ty) {
             // `[TYP-36]` — `void` is `Ord`: its one value equals itself (D-355).
             TyKind::Void | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Char | TyKind::Bool => true,
+            // `[RNG-5a1]` — a range type's generated `Ord` is its
+            // representation's.
+            TyKind::Range(id) => self.totally_ordered(self.types.range_def(id).repr),
             // `[TYP-17]` — a parameter bounded by `Ord`, or `Float` (`[STD-27]`).
             TyKind::Param { index, .. } => self.param_bound_named(index, &["Ord"]) || self.float_param(ty),
             _ => false,
@@ -24320,6 +24382,7 @@ impl<'a> Checker<'a> {
                             // `(int, ref int)` was given to C as text).
                             let value = self.synth_committed(expr);
                             let value = self.read_through(value);
+                            let value = self.range_as_repr(value);
                             // D-194 — a `String` is written as the `str` it
                             // borrows, as `print` writes it (D-191).
                             let value = if matches!(*self.types.kind(value.ty), TyKind::Vec { text: true, .. }) {
@@ -26769,6 +26832,9 @@ impl<'a> Checker<'a> {
         if let Some(&value) = self.assoc_values.get(&(ty, name)) {
             return Some(value);
         }
+        if let Some(value) = self.range_operator_output(ty, self.assoc_instance, name) {
+            return Some(value);
+        }
         let TyKind::Param { index, name: base_name } = *self.types.kind(ty) else { return None };
         // `[TYP-17]` — `T: Add[Output = T]` says what `T`'s `Output` is.
         if let Some(param) = self.current_generics.get(index as usize)
@@ -26940,6 +27006,9 @@ impl<'a> Checker<'a> {
         }
         if self.implemented.iter().any(|(t, i, _)| *t == ty && *i == interface) {
             return true;
+        }
+        if let Some(holds) = self.range_operator_implements(ty, interface) {
+            return holds;
         }
         if self.builtin_extension_implements(ty, interface) {
             return true;
@@ -29490,6 +29559,20 @@ impl<'a> Checker<'a> {
             && !self.method_claims_operator(receiver.ty, name.name, args)
         {
             return self.synth_number_operator_method(receiver, op, name, args, span);
+        }
+        // `[RNG-5a1]` (N1) — so is a range value's, through its generated
+        // implementations: `r.add(x)` is `r + x`, in the representation.
+        if let TyKind::Range(id) = *self.types.kind(receiver.ty)
+            && explicit.is_empty()
+            && matches!(name.name.as_str(), "add" | "sub" | "mul" | "div" | "floordiv" | "rem" | "neg")
+            && let Some((op, false)) = operator_method_named(name.name.as_str())
+            && !self.methods.contains_key(&(receiver.ty, name.name))
+        {
+            let repr = self.types.range_def(id).repr;
+            if number_has_operator(self.types, repr, op) {
+                let receiver = self.erase_operand(receiver, repr);
+                return self.synth_number_operator_method(receiver, op, name, args, span);
+            }
         }
         // `[STD-20]` (ODR-039) — an integer's methods, built in as a float's are.
         if matches!(self.types.kind(receiver.ty), TyKind::Int(_) | TyKind::Uint(_))
@@ -36516,6 +36599,18 @@ impl<'a> Checker<'a> {
         Some(RangeBinary::ToRepr(repr))
     }
 
+    /// ODR-093 — a range value printed or formatted is its representation's
+    /// value: `0.25`, and `{r:.1f}` applies to the `f64`.
+    fn range_as_repr(&mut self, value: Expr) -> Expr {
+        match *self.types.kind(value.ty) {
+            TyKind::Range(id) => {
+                let repr = self.types.range_def(id).repr;
+                self.erase_operand(value, repr)
+            }
+            _ => value,
+        }
+    }
+
     /// Erase one operand of a range-typed operator to the representation.
     /// `[RNG-5a1]` defines the generated impls "by erasing each operand to
     /// `R` and applying `R`'s operator", which is this.
@@ -36731,6 +36826,7 @@ impl<'a> Checker<'a> {
                 None => {
                     let value = self.synth_committed(&arg.value);
                     let value = self.read_through(value);
+                    let value = self.range_as_repr(value);
                     let value = if matches!(*self.types.kind(value.ty), TyKind::Vec { text: true, .. })
                     {
                         self.coerce(value, str_ty)

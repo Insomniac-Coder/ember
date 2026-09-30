@@ -63,6 +63,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-082 | **CLOSED** — `@ffi(immutable)` on a foreign static asserts a `const` C object and emits a matching declaration | Language / C interop / foreign statics | — | **No** — delegated, 2026-09-27, Hardened_38 |
 | ODR-083 | **CLOSED** — a static free-function export's `creator` thread is anchored to successful module initialization; repeated initialization does not transfer the contract, and reinitialization after shutdown establishes a new creator | Language / C interop / export thread contracts | — | **No** — delegated, 2026-09-27, Hardened_39 |
 | ODR-084 | **CLOSED** — `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts | Language / module attributes / arithmetic | — | **No** — delegated, 2026-09-27, Hardened_40 |
+| ODR-093 | **CLOSED** — a range type is `Clone`, `Hash`, `Display` and `Debug` when its representation is, its `Eq` and `Ord` are its representation's, and a range value shows as its representation's value; never `Default` | Types / range types | — | **Yes** — delegated, 2026-10-01, Hardened_48 |
 | ODR-092 | **CLOSED** — two implementations overlap where one type could be both, each one's type parameters standing for any type, found where they are declared; a bound separates two only where the type it bounds is written out in full and does not meet it | Types / implementations | — | **Yes** — delegated, 2026-10-01, Hardened_47 |
 | ODR-091 | **CLOSED** — an iterator runs backwards when it implements `DoubleEndedIterator` (`next_back`), whose method `rev` is; `ExactSizeIterator` gives `len`; ranges with an end, the views' element iterators, and the adapters over them where they can tell their last item | Library / iterators | — | **Yes** — delegated, 2026-10-01, Hardened_46 |
 | ODR-090 | **CLOSED** — a float mode is lexical, as the overflow policy is: a lambda takes its function's mode; a parameter default keeps its declaration's and a field default is strict wherever evaluated; inside `@fastmath` no range fact about a float is derived, and integer facts are unaffected; neither mode relaxes what the language defines exactly for NaN and infinity | Language / floating point / range facts | — | **Yes** — delegated, 2026-09-30, Hardened_45 |
@@ -248,6 +249,33 @@ immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
+
+## ODR-093 — what a range type implements — **CLOSED**
+
+    ID:        ODR-093
+    Status:    CLOSED — ruled under the owner's delegation, 2026-10-01;
+               incorporated in 0.9.9_Hardened_48
+    Category:  TYPES / RANGE TYPES
+    Location:  Ember_v0.9.9_Hardened_47.md [RNG-8], [RNG-5a1], [TYP-39]
+
+**The question.** `[RNG-8]` makes a range type `Copy` when its representation is, and `[RNG-5a1]`
+generates its operators, `Eq` and `Ord`. Nothing says whether it is `Clone`, `Hash`, `Default`,
+`Display` or `Debug`, so whether `println(r)`, `f"{r:.2f}"`, a `Map[Level, V]` or a bound
+`T: Display` accepts one is unsaid, and `[TYP-39]`'s table has no row for range types. The compiler
+refused printing one (`E0900`, "not implemented yet") and answered `Hash` from the representation.
+
+**Options.**
+1. None of them: a program writes `extend Unit implements Display` for each range type, and prints
+   a range value only after converting it.
+2. All of them as the representation, `Default` included. `type Percent = u8 in 1 ..= 100` would
+   default to 0, a value outside its range, which `[RNG-9]` makes invalid.
+3. As the representation for `Clone`, `Hash`, `Display` and `Debug` (with `Copy`, `Eq` and `Ord`
+   already so), never `Default`.
+
+**Ruling: 3.** A range value is a number that is known to be in a range; showing and hashing it as
+the number loses nothing. A default is a value made without a construction, which `[RNG-10]` does
+not allow; a program that wants one writes `Default` for its type, constructing the value. A float
+range type is not `Hash`, as its representation is not.
 
 ## ODR-092 — when two implementations overlap — **CLOSED**
 

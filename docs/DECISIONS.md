@@ -3501,3 +3501,31 @@ nested instance, a type's own `implements` against an extension, a generic again
 compiled before), `TYP-19/accept_implementations_that_cannot_meet_are_both_kept` (a bound a named
 type misses, different interface arguments, different shapes), and
 `TYP-20/reject_two_implementations_of_one_interface_name_both`.
+
+## ADR-089 — N1 built: a range type's generated implementations are answered by rule
+
+2026-10-01, autonomous. Closes ADR-016's deviation and NOT-IMPLEMENTED N1: the operator interfaces
+exist (ODR-040), so a bound can ask for a range type's generated implementations, and
+`fn twice[T: Add[T]]` refused a `Unit`.
+
+**How.** The implementations are not written anywhere: `implements` answers them by rule
+(`range_operator_implements`). For each of `Add`, `Sub`, `Mul`, `Div`, `FloorDiv`, `Rem` that the
+representation `R` has over itself, a range type `T` over `R` has `Op[T]` and `Op[R]`, and `R` has
+`Op[T]`; `T` has `Neg` when `R` does. Each one's `Output` is `R` (`range_operator_output`, read by
+`implementation_assoc` and `project`, so `T.Output` of a bound is `R`). `Ord` is the
+representation's (`totally_ordered`); `Eq` and `Hash` already were. A call through a bound checked
+again on a range value is the built-in operator, as `[RNG-5]` defines it, and so is the method form:
+`r.add(x)` erases `r` to `R` and is `R`'s `+`, where a `Unit` argument coerces. Answering by rule
+rather than recording implementations in the declaring module has the same observable content:
+`[TYP-20]` asks where an implementation may be written, and these are written nowhere, by the
+compiler, for types of the declaring package.
+
+**ODR-093, built with it.** A range value printed, formatted or shown inside an aggregate is its
+representation's value (`range_as_repr` at `print` and f-strings; codegen's `builtin_suffix` for an
+element), and `Display`/`Debug` bounds hold as the representation's. `Default` does not.
+
+**Tests.** `RNG-5a1/accept_generated_implementations_meet_bounds` (`Add[T]`, `Add[f64]`, `f64: Add[Unit]`,
+`Neg`, `Ord`, `Display`, `T.Output`, `r.add(x)`, a `Map[Level, int]`; `E2040` before),
+`RNG-5a1/reject_what_a_range_type_does_not_implement` (`Default`, `Add` of another range type, an
+integer's `Div`, a float range as a `Map` key), `RNG-8/accept_a_range_value_shows_as_its_representation`
+(`println`, f-string specs, inside an `Array`; `E0900` before).

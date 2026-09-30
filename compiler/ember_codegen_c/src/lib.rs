@@ -6466,6 +6466,10 @@ impl Emitter<'_> {
     }
 
     fn builtin_suffix(&self, ty: ember_types::Ty) -> &'static str {
+        // ODR-093 — a range value formats as its representation.
+        if let TyKind::Range(id) = *self.types.kind(ty) {
+            return self.builtin_suffix(self.types.range_def(id).repr);
+        }
         if let Some(suffix) = self.wide_int(ty) {
             return suffix;
         }

@@ -58,7 +58,7 @@ live Git state.
 
  133 top-level conformance rule directories, 479 `.em` files including support
  modules. 125 defects recorded, **none open**.
-**Open deviation:** D4 (`docs/DEVIATIONS.md`). Features waiting on another feature are N1–N7 in `docs/NOT-IMPLEMENTED.md` (N1–N3 were D1, D3, D6).
+**Open deviation:** D4 (`docs/DEVIATIONS.md`). Features waiting on another feature are N2–N7 in `docs/NOT-IMPLEMENTED.md` (N2 and N3 were D3 and D6; N1, the former D1, was built 2026-10-01, ADR-089).
 **D-126 through D-128 are fixed:** EMIF decoding recomputes the cache key from
 the artifact's identity inputs and rejects self-inconsistent metadata,
 including an empty explicit `@borrows` contract, before consumption; source
