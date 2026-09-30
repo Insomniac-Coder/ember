@@ -1652,6 +1652,34 @@ fn loop_nests_over_separate_lists_get_restrict_functions_for_msvc() {
 {}", clang.stdout);
 }
 
+/// ADR-080 — a loop nest reading back the list it writes moves for MSVC only
+/// where every round adds the same whole number to each element: of the
+/// four nests, only the one adding `a[i]` each round (the sum kept below
+/// 1024) moves; mixing in the round, keeping the sum below 1000, and an
+/// addition with its overflow check stay in place.
+#[test]
+fn loop_nests_adding_the_same_each_round_get_restrict_functions_for_msvc() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/OPT-2/accept_a_loop_nest_adding_the_same_each_round_keeps_its_results.{SOURCE_EXT}");
+    let main_loop = format!("{}_loop0(", ember_branding::mangled("main"));
+    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
+    assert_eq!(msvc.exit, 0, "msvc C failed:
+{}", msvc.stderr);
+    assert_eq!(msvc.stdout.matches("EMBER_NOINLINE void").count(), 2, "one nest moves (prototype and definition):
+{}", msvc.stdout);
+    let start = msvc.stdout.rfind(&format!("EMBER_NOINLINE void {main_loop}")).expect("the loop function is defined");
+    let kernel = &msvc.stdout[start..start + msvc.stdout[start..].find("
+}
+").expect("the loop function ends")];
+    assert!(kernel.contains("& 1023LL") && !kernel.contains(" ^ ") && !kernel.contains("& 1000LL"), "the wrong nest moved:
+{kernel}");
+    let clang = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    assert_eq!(clang.exit, 0, "clang C failed:
+{}", clang.stderr);
+    assert!(!clang.stdout.contains(&main_loop), "clang keeps the nest in place:
+{}", clang.stdout);
+}
+
 /// `[PHIL-5]` — at the end of `main` the process ends: release and shipping
 /// builds leave the list of objects with no `drop` to the operating system
 /// (one `free` fewer in `main`), and keep every drop that runs a `drop`

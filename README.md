@@ -88,74 +88,33 @@ ECS facilities, C++ interop, the interpreter, and hot reload. The open defects a
 Each program below was written twice, in Ember and by hand in C (C++ for the programs that use
 objects, strings, maps or sorting), built by the same C compiler with the same optimisation flags,
 and timed on one Windows x64 machine on 2026-09-30, once with MSVC and once with clang. Overflow
-checks are on unless a row says they are off (`@overflow(wrap)`). Each cell shows Ember's time
-(the middle of 11 or more runs), then Ember's time divided by the hand-written C's: ×1.00 is the same speed,
-above 1 is slower, below 1 is faster.
+checks are on unless a row says they are off (`@overflow(wrap)`). Each table shows, for MSVC and for
+clang, the hand-written C's time, Ember's time (each the middle of 11 or more runs), and Ember's
+time divided by the C's: ×1.00 is the same speed, above 1 is slower, below 1 is faster. Green is under
+×1.05 (less than 5% slower than C, or faster), amber ×1.05 to ×1.10, red over ×1.10.
 
-Each column compares Ember with the hand-written C built by the same compiler. On the rows marked ¹ or
-², MSVC rearranges the hand-written C's loops, which changes that C's time a lot; the notes under the
-tables say how.
+Each compiler's columns compare Ember with the hand-written C built by that compiler. On the rows
+marked ¹ or ², MSVC rearranges the hand-written C's loops, which changes that C's time a lot; the
+notes under the tables say how.
 
 ### As fast as C or faster
 
-| What the program does | With MSVC | With clang |
-|---|---|---|
-| Change every number twice, writing to a separate list, overflow checks on ² | 87 ms ×0.01 | 397 ms ×0.99 |
-| Change every number twice, writing to a separate list, overflow checks off ² | 86 ms ×0.01 | 406 ms ×0.97 |
-| Change every number using a second list, 20,000 rounds, overflow checks on ² | 365 ms ×0.31 | 393 ms ×1.01 |
-| Change every number using a second list, 20,000 rounds, overflow checks off ² | 379 ms ×0.32 | 391 ms ×1.00 |
-| Change every number twice, reading back what it wrote, overflow checks on ² | 394 ms ×0.33 | 391 ms ×1.00 |
-| Change every number twice, reading back what it wrote, overflow checks off ² | 388 ms ×0.33 | 394 ms ×0.99 |
-| Map of numbers: 1 million inserts, then 5 million lookups | 154 ms ×0.44 | 134 ms ×0.42 |
-| Two lists of 100,000 decimal numbers, add one into the other 5,000 times ² | 98 ms ×0.49 | 96 ms ×1.00 |
-| Build a long string (16 million appends), then count one letter in it | 99 ms ×0.66 | 99 ms ×0.79 |
-| Copy a 1,000-number list into another, one item at a time, 100,000 times | 47 ms ×0.72 | 48 ms ×0.92 |
-| Sort 5 million numbers | 228 ms ×0.75 | 232 ms ×0.80 |
-| Integer arithmetic: 50 million rounds of multiply, divide and remainder | 54 ms ×0.80 | 46 ms ×1.02 |
-| Enum with `match`: area of 1 million shapes, 100 times | 109 ms ×0.85 | 115 ms ×0.99 |
-| 1 million objects with a name and a list, each read 40 times | 214 ms ×0.90 | 209 ms ×0.90 |
-| 1 million objects holding 6 lists, each read 40 times | 279 ms ×0.91 | 282 ms ×0.91 |
-| Clear and refill a list while 16 other lists are being viewed | 45 ms ×1.00 | 45 ms ×0.93 |
-| Clear and refill a list while 1 other list is being viewed | 45 ms ×1.00 | 45 ms ×0.94 |
-| Clear and refill a list while 4 other lists are being viewed | 45 ms ×0.94 | 44 ms ×0.94 |
-| Walk two 1-million-number lists side by side, changing one (`zip`), 300 times | 113 ms ×0.95 | 112 ms ×1.01 |
-| Add up a list of 1,000 numbers, 300,000 times, overflow checks off | 22 ms ×0.97 | 16 ms ×0.99 |
-| Add two lists plus the round number into a third, overflow checks off | 14 ms ×1.00 | 43 ms ×0.99 |
-| Every third number of a list, after skipping some, at most 300,000 of them (`skip`, `step_by`, `take`), 300 times | 53 ms ×0.99 | 52 ms ×1.02 |
-| Decimal arithmetic: the Mandelbrot set, 1,000 × 1,000 points | 95 ms ×1.00 | 94 ms ×1.00 |
-| Add two lists plus the round number into a third, overflow checks on | 14 ms ×1.01 | 44 ms ×1.00 |
-| Calls through an interface: area of 1 million shapes, 20 times | 98 ms ×1.00 | 99 ms ×1.01 |
-| Move 100,000 particles 2,000 times, changing each in place | 83 ms ×1.00 | 89 ms ×1.01 |
-| Number every second value of a range of 2 million (`step_by`, `enumerate`), 300 times | 64 ms ×1.00 | 42 ms ×1.01 |
-| Call a function passed as a value, 200 million times | 100 ms ×1.01 | 119 ms ×1.01 |
-| Number the items of a list past a starting point, as copies (`copied`, `enumerate`, `skip`), 300 times | 66 ms ×1.02 | 60 ms ×1.01 |
-| Start and stop an empty program | 5.0 ms ×1.03 | 4.0 ms ×1.02 |
-| Number each item of a 1-million-number list while changing it (`enumerate`), 300 times | 44 ms ×1.02 | 59 ms ×1.02 |
+![Programs within 5% of C or faster, with MSVC and clang: C time, Ember time, Ember divided by C](docs/benchmarks/as-fast-as-c.svg)
 
 ### Close to C: up to 10% slower with one of the compilers
 
-None in this run: every program is either within 5% of C with both compilers or more than 10% slower
-with one.
+![Programs 5% to 10% slower than C with one compiler: C time, Ember time, Ember divided by C](docs/benchmarks/close-to-c.svg)
 
 ### More than 10% slower than C with at least one compiler
 
 > Development is in progress, and attempts will be made to speed the language up in these areas.
 
-| What the program does | With MSVC | With clang |
-|---|---|---|
-| Recursion: Fibonacci of 38, the slow way | 109 ms ×1.06 | 111 ms ×1.81 |
-| Add up a list of 1,000 numbers, 300,000 times, overflow checks on | 33 ms ×1.43 | 29 ms ×1.75 |
-| A generic function ("larger of two"), 200 million times | 113 ms ×0.93 | 141 ms ×1.36 |
-| Call a method that changes an object taken from a list, 100 million times (object holding 6 lists) | 40 ms ×1.29 | 24 ms ×1.00 |
-| Add one list into another, 2,000 rounds, overflow checks on ¹ | 43 ms ×1.20 | 43 ms ×1.00 |
-| Add one list into another, 2,000 rounds, overflow checks off ¹ | 43 ms ×1.19 | 43 ms ×1.00 |
-| Call a method that changes an object taken from a list, and the method calls another function, 100 million times | 35 ms ×1.15 | 24 ms ×1.00 |
-| Call a method that changes an object taken from a list, 100 million times (object holding 1 list) | 35 ms ×1.14 | 25 ms ×1.01 |
+![Programs more than 10% slower than C with one compiler: C time, Ember time, Ember divided by C](docs/benchmarks/slower-than-c.svg)
 
 ¹ With MSVC, the hand-written C of this program runs faster than the same C built with clang. MSVC
 turns its two loops around: it goes through the lists once and does all the rounds on each number in
-turn, so each number is read from memory once instead of once per round. MSVC does not do this to
-the C that Ember produces for this program.
+turn, so each number is read from memory once instead of once per round, and it adds five rounds'
+worth at a time. Ember's C for this program is written so that MSVC does the same.
 
 ² With MSVC, the hand-written C of this program runs much slower than the same C built with clang.
 MSVC turns its two loops around here too, but then each number goes through all its rounds one after

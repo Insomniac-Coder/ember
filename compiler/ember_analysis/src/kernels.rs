@@ -12,7 +12,9 @@
 //! through its header, whose lists are locals it reaches only by index, and
 //! that writes only lists it never reads (where a round reads back what the
 //! last one wrote, the reordering makes each element's rounds a chain and
-//! is slower), is moved into a body of its own (`restrict_views`): each list
+//! is slower), or reads back only a list every round adds the same whole
+//! number to (MSVC then adds several rounds at once, ADR-080), is moved into
+//! a body of its own (`restrict_views`): each list
 //! a view parameter, each length it reads and each value it reads before
 //! writing a parameter, and a value that is a constant when the nest starts
 //! written in as that constant (a count or a start the program fixes stays
@@ -21,7 +23,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use ember_mir::{
-    AssertKind, BasicBlock, BasicBlockId, Body, Builtin, Const, FuncRef, LocalDecl, LocalId, LocalKind, Operand,
+    AssertKind, BasicBlock, BasicBlockId, BinOp, Body, Builtin, Const, FuncRef, LocalDecl, LocalId, LocalKind, Operand,
     ParameterMode, Place, Projection, Rvalue, Stmt, StmtKind, Terminator,
 };
 use ember_types::{CommonTypes, Ty, TyKind, TypeTable};
@@ -211,7 +213,12 @@ fn try_outline(
     // reads back what the last one wrote, the reordering makes each
     // element's rounds a chain no vector instruction can share: measured 2x
     // slower (changing every number using a second list; decimal lists).
-    if written.iter().any(|l| uses[&l.0].element_read) {
+    // Except where every round adds the same whole number to each element:
+    // then MSVC adds several rounds at once (ADR-080).
+    if written
+        .iter()
+        .any(|&l| uses[&l.0].element_read && !adds_the_same_each_round(body, types, &inside, shape, l, &written))
+    {
         return None;
     }
     // Distinct lists: follow the compiler's header copies (`_45 = _4`) back
@@ -450,6 +457,223 @@ fn try_outline(
     }
     body.blocks.extend(chain);
     Some(kernel)
+}
+
+/// Whether every round of the nest adds the same whole number to each
+/// element of `list`, a list it both reads and writes (ADR-080): its one
+/// element read and its one element write are at the inner loop's counter;
+/// the value written is that element plus a number no round changes, with no
+/// overflow check left on the addition, and at most kept below a power of
+/// two (`& 1023`); and a turn takes no branch but the loops' own tests.
+/// MSVC then adds several rounds at once (adding `a[i]` five times is adding
+/// `5 * a[i]` once). Where a round adds something different (`^ round`), or
+/// decimals, whose rounding makes five additions differ from one, it cannot,
+/// and the reordering is 2x slower.
+fn adds_the_same_each_round(
+    body: &Body,
+    types: &TypeTable,
+    inside: &BTreeSet<usize>,
+    outer: &CountedLoop,
+    list: LocalId,
+    written: &[LocalId],
+) -> bool {
+    if !matches!(types.kind(elem_of(types, body.locals[list.0 as usize].ty)), TyKind::Int(_) | TyKind::Uint(_)) {
+        return false;
+    }
+    let inner: Vec<CountedLoop> = outer.region.iter().filter_map(|&block| counted_loop(body, types, block)).collect();
+    let [inner] = inner.as_slice() else { return false };
+    if inside.iter().any(|&block| {
+        matches!(body.blocks[block].terminator, Terminator::SwitchInt { .. }) && block != outer.header && block != inner.header
+    }) {
+        return false;
+    }
+    let mut inner_inside: BTreeSet<usize> = inner.region.iter().copied().collect();
+    inner_inside.insert(inner.header);
+    // A value one turn (or round) leaves for the next is not the same in
+    // every round; one set earlier in the same turn (or round) is.
+    let carried_in_turn = live_on_entry(body, &inner_inside, inner.header);
+    let carried_in_round = live_on_entry(body, inside, outer.header);
+    // The one statement inside the nest giving `local` its whole value,
+    // made before it is read in the same turn or round.
+    let definition = |local: LocalId| -> Option<&Rvalue> {
+        let mut found = None;
+        for &block in inside {
+            for stmt in &body.blocks[block].stmts {
+                match &stmt.kind {
+                    StmtKind::Assign { place, rvalue } if place.local == local => {
+                        if found.is_some() || !place.projection.is_empty() {
+                            return None;
+                        }
+                        found = Some((block, rvalue));
+                    }
+                    StmtKind::CheckedBinaryOp { dest, overflow, .. } if dest.local == local || overflow.local == local => {
+                        return None;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let (block, rvalue) = found?;
+        let carried = if inner_inside.contains(&block) { &carried_in_turn } else { &carried_in_round };
+        (!carried.contains(&local)).then_some(rvalue)
+    };
+    // The index is the inner counter itself, or a copy or cast of it.
+    fn at_counter<'a>(local: LocalId, counter: LocalId, definition: &dyn Fn(LocalId) -> Option<&'a Rvalue>, depth: usize) -> bool {
+        if local == counter {
+            return true;
+        }
+        if depth == 0 {
+            return false;
+        }
+        match definition(local) {
+            Some(Rvalue::Use(Operand::Copy(from) | Operand::Move(from)))
+            | Some(Rvalue::Cast { operand: Operand::Copy(from) | Operand::Move(from), .. })
+                if from.projection.is_empty() =>
+            {
+                at_counter(from.local, counter, definition, depth - 1)
+            }
+            _ => false,
+        }
+    }
+    struct Same<'a, 'b> {
+        body: &'a Body,
+        inside: &'a BTreeSet<usize>,
+        inner: LocalId,
+        outer: LocalId,
+        list: LocalId,
+        written: &'a [LocalId],
+        definition: &'b dyn Fn(LocalId) -> Option<&'a Rvalue>,
+    }
+    impl Same<'_, '_> {
+        fn local(&self, local: LocalId, depth: usize) -> bool {
+            if local == self.inner {
+                return true;
+            }
+            if local == self.outer || depth == 0 {
+                return false;
+            }
+            if !writes_in(self.body, self.inside, local) {
+                return true;
+            }
+            (self.definition)(local).is_some_and(|rvalue| self.rvalue(rvalue, depth - 1))
+        }
+        fn operand(&self, operand: &Operand, depth: usize) -> bool {
+            match operand {
+                Operand::Const(_) => true,
+                Operand::Copy(place) | Operand::Move(place) if place.projection.is_empty() => self.local(place.local, depth),
+                Operand::Copy(place) | Operand::Move(place) => {
+                    // A part of a value the nest never changes: an element of
+                    // a list it only reads, at an index no round changes.
+                    place.local != self.list
+                        && !self.written.contains(&place.local)
+                        && !writes_in(self.body, self.inside, place.local)
+                        && place.projection.iter().all(|step| match step {
+                            Projection::Index(index) => self.local(*index, depth),
+                            Projection::Field(_) => true,
+                            _ => false,
+                        })
+                }
+            }
+        }
+        fn rvalue(&self, rvalue: &Rvalue, depth: usize) -> bool {
+            match rvalue {
+                Rvalue::Use(value) | Rvalue::Cast { operand: value, .. } | Rvalue::UnaryOp { operand: value, .. } => {
+                    self.operand(value, depth)
+                }
+                Rvalue::BinaryOp { lhs, rhs, .. } => self.operand(lhs, depth) && self.operand(rhs, depth),
+                _ => false,
+            }
+        }
+    }
+    let same = Same { body, inside, inner: inner.counter, outer: outer.counter, list, written, definition: &definition };
+
+    // The list's one element read and one element write.
+    let mut reads = Vec::new();
+    let mut writes = Vec::new();
+    for &block in inside {
+        let data = &body.blocks[block];
+        for stmt in &data.stmts {
+            match &stmt.kind {
+                StmtKind::Assign { place, rvalue } => {
+                    if place.local == list {
+                        let [Projection::Index(index)] = place.projection.as_slice() else { return false };
+                        writes.push((*index, rvalue));
+                    }
+                    let mut other = false;
+                    for_each_rvalue_place(rvalue, &mut |place, is_ref| {
+                        if place.local == list {
+                            match place.projection.as_slice() {
+                                [Projection::Index(index)] if !is_ref => reads.push(*index),
+                                [Projection::Field(1)] if !is_ref => {}
+                                _ => other = true,
+                            }
+                        }
+                    });
+                    if other {
+                        return false;
+                    }
+                }
+                StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
+                    let names = |operand: &Operand| {
+                        matches!(operand, Operand::Copy(place) | Operand::Move(place)
+                            if place.local == list && !place.projection.is_empty() && place.projection != [Projection::Field(1)])
+                    };
+                    if dest.local == list || overflow.local == list || names(lhs) || names(rhs) {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut element = false;
+        for_each_terminator_operand(&data.terminator, &mut |operand| {
+            if let Operand::Copy(place) | Operand::Move(place) = operand
+                && place.local == list
+                && place.projection != [Projection::Field(1)]
+            {
+                element = true;
+            }
+        });
+        if element {
+            return false;
+        }
+    }
+    let ([read], [(write, value)]) = (reads.as_slice(), writes.as_slice()) else { return false };
+    if !at_counter(*read, inner.counter, &definition, 8) || !at_counter(*write, inner.counter, &definition, 8) {
+        return false;
+    }
+    // The value written: the element plus a number no round changes, the
+    // sum at most kept below a power of two.
+    let mut value: &Rvalue = value;
+    for _ in 0..4 {
+        let Rvalue::Use(Operand::Copy(from) | Operand::Move(from)) = value else { break };
+        match definition(from.local) {
+            Some(next) if from.projection.is_empty() => value = next,
+            _ => break,
+        }
+    }
+    if let Rvalue::BinaryOp { op: BinOp::BitAnd, lhs, rhs } = value {
+        let (sum, mask) = match (lhs, rhs) {
+            (Operand::Copy(sum) | Operand::Move(sum), Operand::Const(Const::Int { value: bits, .. }))
+            | (Operand::Const(Const::Int { value: bits, .. }), Operand::Copy(sum) | Operand::Move(sum)) => (sum, *bits),
+            _ => return false,
+        };
+        if !sum.projection.is_empty() || !mask.checked_add(1).is_some_and(u128::is_power_of_two) {
+            return false;
+        }
+        let Some(rvalue) = definition(sum.local) else { return false };
+        value = rvalue;
+    }
+    let Rvalue::BinaryOp { op: BinOp::Add, lhs, rhs } = value else { return false };
+    let element = |operand: &Operand| {
+        matches!(operand, Operand::Copy(place) | Operand::Move(place)
+            if place.local == list && place.projection == [Projection::Index(*read)])
+    };
+    match (element(lhs), element(rhs)) {
+        (true, false) => same.operand(rhs, 16),
+        (false, true) => same.operand(lhs, 16),
+        _ => false,
+    }
 }
 
 fn elem_of(types: &TypeTable, ty: Ty) -> Ty {

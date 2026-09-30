@@ -2213,8 +2213,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // optimised like any other body.
     ember_analysis::specialize_callable_arguments_all(&mut bodies);
     // A function called from one place is inlined there, so the analyses
-    // below see what its caller knows.
-    ember_analysis::inline_single_calls_all(&mut bodies, &types);
+    // below see what its caller knows. For clang and gcc, only a function
+    // holding a check the caller's facts could remove: they inline the rest
+    // themselves, and given a generic `larger` already inlined, clang picks
+    // the slower unsigned `max` (`cmovbe`) for values it proves non-negative
+    // (ADR-081). MSVC's inliner is weaker, so for it every such function.
+    ember_analysis::inline_single_calls_all(&mut bodies, &types, !c_for_msvc(&options));
     // Both passes above change bodies after `[MIR-REG-1]`'s summaries were
     // made (a call through a parameter became a direct call; a call became
     // its callee's body): make them again from the MIR as it now is.

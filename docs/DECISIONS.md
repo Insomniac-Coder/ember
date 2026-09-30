@@ -3096,3 +3096,64 @@ pointers, nothing for clang). Break-tested: with the value-read-after rule off `
 with the pass off the milestone fails. A nest whose checks are grouped (`[SIMD-7]`) may leave its
 loop other than through the header and is not moved; that is a limit of this pass, not a defect.
 
+## ADR-080 — for MSVC, a loop nest that adds the same whole number to each element every round moves too
+
+2026-09-30, owner-approved after the explanation ("okay go ahead with all 3"). With MSVC, "Add one
+list into another" (`out[i] = (out[i] + a[i]) & 1023`, 2,000 rounds over 100,000 numbers) ran 46 ms
+against the hand-written C's 36 ms. ADR-079 leaves such a nest in place because it reads back the
+list it writes. MSVC's build of the C twin turns its loops around and then adds five rounds at once
+(`x = (x + 5 * a[i]) & 1023`, 400 steps per number instead of 2,000; read in its machine code): adding
+the same number five times is adding five times it once, and `& 1023` keeps that true. Where a round
+adds something different (`^ round`), or decimals, whose rounding makes five additions differ from
+one, nothing merges, and the turned-around loop takes each number's rounds one after another where
+the loop as written adds to two numbers per instruction: 2x slower (the reason for ADR-079's rule).
+
+`adds_the_same_each_round` (`kernels.rs`) lets such a nest move when the list it both reads and
+writes holds whole numbers; its one element read and its one element write are at the inner loop's
+counter (a copy or cast of it); the value written is that element plus a number no round changes
+(built from constants, the inner counter, values the nest never writes, and elements of lists it
+only reads), with no overflow check left on the addition, and at most `& (2^k - 1)` on the sum; the
+nest has one inner loop, and no branch but the two loops' tests. A value the nest sets is the same
+in every round only if each turn (or round) sets it before reading it: one carried from the last
+turn (or round) does not count.
+
+Measured with MSVC (11 runs each, the middle one): "Add one list into another" 0.048 s -> 0.039 s
+with checks on and 0.047 s -> 0.039 s with checks off; side by side over 31 runs, 0.046 s -> 0.036 s
+against the C twin's 0.036 s. The earlier estimate of about 0.030 s came from a noisy run; the build
+of the first test compiler, which moved every read-back nest, also takes 0.037 s side by side. Every
+other program of the 39: the same C. Staying in place, as measured to need: "Change every number
+using a second list" and "...reading back what it wrote" (a different number each round), the
+decimal lists; and the test programs multiplying by 3, adding the round, and xor. clang is
+untouched. Tests: `OPT-2/accept_a_loop_nest_adding_the_same_each_round_keeps_its_results` (four
+nests over the same lists; same results on every compiler and profile) and the milestone
+`loop_nests_adding_the_same_each_round_get_restrict_functions_for_msvc` (only the nest adding `a[i]`
+under `& 1023` moves; `^ round`, `& 1000` and an addition keeping its overflow check stay).
+Break-tested: accepting any mask moves the `& 1000` nest too, and the rule off moves none; the
+milestone fails both ways. Limits of this rule, not defects: a nest reading its list more than once
+per turn, an addition whose overflow check stays, and subtraction or xor steps are left in place
+unmeasured.
+
+## ADR-081 — for clang and gcc, only a function holding a check is inlined before the C compiler
+
+2026-09-30, owner-approved ("test the narrower larger of two", after the first version was stopped).
+With clang, "A generic function (larger of two)" ran 0.143 s against C++'s 0.105 s. Ember inlines a
+function called from one place in the MIR (`inline.rs`); with `larger` already inlined, clang proves
+both values non-negative and turns the signed `max` into an unsigned one (`cmovbe`, two micro-ops on
+this processor against `cmovle`'s one; LLVM issue 113965). Left a function of its own, clang inlines
+it itself and keeps the signed form: 0.103 s by hand, 0.104 s built.
+
+The first version left every such function to clang and gcc. All 39 benchmark programs agreed (5
+changed C, none slower), but `RNG-4/accept_a_function_called_once_is_inlined_for_range_facts`
+failed: Ember inlines a function so its caller's range facts reach the function's checks (`scale(i)`
+with `i` below 1,000 cannot overflow `x * 3 + 1`), which a C compiler cannot do for checks already
+written. So `inline_single_calls_all(.., only_checked)` inlines, for clang and gcc, only a function
+holding a check (an `Assert` terminator or a checked operation), bottom-up as before: a function
+whose callee brought a check in is inlined in the next round. A function with none is left to the C
+compiler, which inlines as well by itself. For MSVC, whose inliner is weaker, nothing changes.
+
+Measured with clang (11 runs each, the middle one): "larger of two" 0.147 s -> 0.109 s; two other
+programs changed C (map of numbers, enum `match`), the same speed over 31 runs (0.139 s -> 0.140 s,
+0.119 s -> 0.116 s); the other 36 programs have the same C. MSVC's C is the same for all 39. The
+full suite passes with MSVC and clang, `RNG-4`'s inlining test and `CLO-3`'s lambda copies included
+(a lambda holding a checked `-` is still inlined).
+

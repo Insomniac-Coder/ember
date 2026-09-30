@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="997" height="266" viewBox="0 0 997 266" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14">
+<rect width="997" height="266" fill="#0d1117" rx="6"/>
+<text x="16" y="46" fill="#9198a1" font-size="12">What the program does</text>
+<text x="606.0" y="22" fill="#e6edf3" font-weight="600" text-anchor="middle">MSVC</text>
+<line x1="495" y1="30" x2="717" y2="30" stroke="#30363d"/>
+<text x="559" y="46" fill="#9198a1" font-size="12" text-anchor="end">C</text>
+<text x="637" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember</text>
+<text x="715" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember ÷ C</text>
+<text x="864.0" y="22" fill="#e6edf3" font-weight="600" text-anchor="middle">clang</text>
+<line x1="753" y1="30" x2="975" y2="30" stroke="#30363d"/>
+<text x="817" y="46" fill="#9198a1" font-size="12" text-anchor="end">C</text>
+<text x="895" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember</text>
+<text x="973" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember ÷ C</text>
+<line x1="0" y1="57" x2="997" y2="57" stroke="#30363d"/>
+<text x="16" y="83" fill="#e6edf3" xml:space="preserve">Add up a list of 1,000 numbers, 300,000 times, overflow checks on</text>
+<text x="559" y="83.0" fill="#9198a1" text-anchor="end">23 ms</text>
+<text x="637" y="83.0" fill="#e6edf3" text-anchor="end">32 ms</text>
+<text x="715" y="83.0" fill="#f85149" text-anchor="end" font-weight="600">×1.43</text>
+<text x="817" y="83.0" fill="#9198a1" text-anchor="end">16 ms</text>
+<text x="895" y="83.0" fill="#e6edf3" text-anchor="end">29 ms</text>
+<text x="973" y="83.0" fill="#f85149" text-anchor="end" font-weight="600">×1.78</text>
+<rect x="0" y="98" width="997" height="40" fill="#151b23"/>
+<text x="16" y="123" fill="#e6edf3" xml:space="preserve">Recursion: Fibonacci of 38, the slow way</text>
+<text x="559" y="123.0" fill="#9198a1" text-anchor="end">105 ms</text>
+<text x="637" y="123.0" fill="#e6edf3" text-anchor="end">110 ms</text>
+<text x="715" y="123.0" fill="#d29922" text-anchor="end" font-weight="600">×1.05</text>
+<text x="817" y="123.0" fill="#9198a1" text-anchor="end">64 ms</text>
+<text x="895" y="123.0" fill="#e6edf3" text-anchor="end">112 ms</text>
+<text x="973" y="123.0" fill="#f85149" text-anchor="end" font-weight="600">×1.75</text>
+<text x="16" y="163" fill="#e6edf3" xml:space="preserve">Call a method that changes an object taken from a list, 100 million times</text>
+<text x="16" y="183" fill="#e6edf3" xml:space="preserve">(object holding 6 lists)</text>
+<text x="559" y="173.0" fill="#9198a1" text-anchor="end">31 ms</text>
+<text x="637" y="173.0" fill="#e6edf3" text-anchor="end">36 ms</text>
+<text x="715" y="173.0" fill="#f85149" text-anchor="end" font-weight="600">×1.17</text>
+<text x="817" y="173.0" fill="#9198a1" text-anchor="end">26 ms</text>
+<text x="895" y="173.0" fill="#e6edf3" text-anchor="end">25 ms</text>
+<text x="973" y="173.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
+<rect x="0" y="198" width="997" height="60" fill="#151b23"/>
+<text x="16" y="223" fill="#e6edf3" xml:space="preserve">Call a method that changes an object taken from a list, and the method calls</text>
+<text x="16" y="243" fill="#e6edf3" xml:space="preserve">another function, 100 million times</text>
+<text x="559" y="233.0" fill="#9198a1" text-anchor="end">32 ms</text>
+<text x="637" y="233.0" fill="#e6edf3" text-anchor="end">36 ms</text>
+<text x="715" y="233.0" fill="#f85149" text-anchor="end" font-weight="600">×1.13</text>
+<text x="817" y="233.0" fill="#9198a1" text-anchor="end">25 ms</text>
+<text x="895" y="233.0" fill="#e6edf3" text-anchor="end">25 ms</text>
+<text x="973" y="233.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.02</text>
+</svg>

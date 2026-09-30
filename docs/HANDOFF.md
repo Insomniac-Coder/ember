@@ -11094,7 +11094,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   set does keeps a loop out of vectorisable form), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h44/` are frozen.
-* **Next numbers:** ODR-090, D-389, ADR-080, ERR-056.
+* **Next numbers:** ODR-090, D-389, ADR-082, ERR-056.
 * **Goal 2, implementation (2026-09-29, autonomous):** next is `[STD-19]`'s
   iterator adapters and `[CTL-3b]`'s counted lowering of adapter chains (the
   audit's `CTL-3b` gap; `for x in mutspan`, `.take/.skip/.enumerate/.zip/
@@ -11230,11 +11230,20 @@ first**; the rest of §0.355 is the running narrative behind it.
     "same or faster" or "slower because <valid reason>").**
     * `mut self` method calls, MSVC 16-23%: the mandatory overflow check on
       the counter's `+= 1` (priced: without it Ember beats C++).
-    * Generic "larger of two", clang 1.36x: the loop is instruction for
-      instruction the C++ one, except that clang proves `best` never negative,
-      turns the max unsigned and emits `cmova`, 2 micro-ops on Intel P-cores
-      against `cmovg`'s 1, on the loop's dependency chain. Open LLVM issue
-      llvm/llvm-project#113965; nothing in Ember's C decides it.
+    * Generic "larger of two", clang: at C++'s speed since ADR-081 (0.109 s,
+      was 0.147 s). With `larger` inlined in the MIR, clang proved `best`
+      never negative, turned the max unsigned and emitted `cmova`, 2
+      micro-ops on Intel P-cores against `cmovg`'s 1 (open LLVM issue
+      llvm/llvm-project#113965). For clang and gcc Ember now inlines only a
+      function holding a check (for the range facts); clang inlines `larger`
+      itself and keeps the signed max.
+    * "Add one list into another", MSVC: at the C twin's speed since ADR-080
+      (0.036 s, was 0.046 s).
+    * The loop test written after the body (a bottom-tested loop), measured
+      2026-09-30 and left out by the owner: with checks off MSVC unrolls the
+      method-call loop 4x (0.284 s -> 0.203 s for 1 billion calls, C++
+      0.258 s), but with checks on it stops inlining `bump` and the three
+      method-call rows run 1.9x-2x slower; clang unchanged.
     * Particles on MSVC: at C's speed since ADR-074 (was 1.45x). MSVC swaps
       the C twin's loops only for a perfect nest: the view is now made before
       the outer loop, the loop test is written into its `if`, and the view is
@@ -11271,9 +11280,11 @@ first**; the rest of §0.355 is the running narrative behind it.
       twin's speed since ADR-079 (0.014 s, was 0.043 s): a write-only loop
       nest over separate lists runs in a `noinline` function with `restrict`
       list parameters, constant counts and starts written in. "Add one list
-      into another" (b13, note 1 in the README) reads back what it writes,
-      so it is not moved (for such loops the turned-around order is usually
-      2x slower); its 20% with MSVC is open.
+      into another" (b13, note 1 in the README) reads back what it writes;
+      since ADR-080 it moves too, because every round adds the same whole
+      number (0.036 s side by side with the C twin's 0.036 s, was 0.046 s).
+      Read-back nests that add something different each round, or decimals,
+      stay (the turned-around order is 2x slower for them).
     * Enum `match` on clang: 1.00x since ADR-077 (was 1.13x; the fill grew
       its list push by push against the C twin's single allocation): a
       counted loop that pushes on every turn asks for its room first (a hint

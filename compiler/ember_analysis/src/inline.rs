@@ -29,8 +29,13 @@ use ember_mir::{
 };
 
 /// Inline every function called from exactly one place into that place;
-/// returns how many calls were inlined.
-pub fn inline_single_calls_all(bodies: &mut Vec<Body>, types: &TypeTable) -> usize {
+/// returns how many calls were inlined. With `only_checked`, only a function
+/// holding a check (a runtime assertion or a checked operation): the reason
+/// to inline one before the C compiler does is that the caller's facts can
+/// remove its checks (ADR-081). A function with none is left to a C compiler
+/// that inlines as well itself (clang, gcc): given an inlined generic
+/// `larger`, clang picks the slower unsigned `max`.
+pub fn inline_single_calls_all(bodies: &mut Vec<Body>, types: &TypeTable, only_checked: bool) -> usize {
     let mut inlined = 0;
     let mut folded: HashSet<String> = HashSet::new();
     // Bottom-up, in a fixed order: a function is inlined only once nothing
@@ -59,7 +64,10 @@ pub fn inline_single_calls_all(bodies: &mut Vec<Body>, types: &TypeTable) -> usi
                     return None;
                 }
                 let &callee = index.get(symbol)?;
-                (callee != *caller && inlinable(&bodies[callee], types) && !calls_itself(&bodies[callee]))
+                (callee != *caller
+                    && inlinable(&bodies[callee], types)
+                    && !calls_itself(&bodies[callee])
+                    && (!only_checked || holds_a_check(&bodies[callee])))
                     .then_some((symbol, (*caller, *block, callee)))
             })
             .collect();
@@ -91,6 +99,15 @@ pub fn inline_single_calls_all(bodies: &mut Vec<Body>, types: &TypeTable) -> usi
     let named = named_symbols(bodies);
     bodies.retain(|body| !folded.contains(&body.symbol) || named.contains(&body.symbol));
     inlined
+}
+
+/// Whether a body holds a check the range facts could remove: an assertion
+/// (bounds, overflow, division by zero, ...) or a checked operation.
+fn holds_a_check(body: &Body) -> bool {
+    body.blocks.iter().any(|data| {
+        matches!(data.terminator, Terminator::Assert { .. })
+            || data.stmts.iter().any(|stmt| matches!(stmt.kind, StmtKind::CheckedBinaryOp { .. }))
+    })
 }
 
 /// Every symbol a body names: calls, function values, interface adapters.
