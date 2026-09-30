@@ -11094,7 +11094,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   pinned in `docs/spec-source/development-target.json`. The spec's working
   sources are `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h46/`
   are frozen.
-* **Next numbers:** ODR-092, D-395, ADR-088, ERR-056.
+* **Next numbers:** ODR-092, D-396, ADR-088, ERR-056.
 * **`[TYP-9]` `@fastmath` and `@fp(contract)` (2026-09-30, ADR-085, ODR-090,
   Hardened_45).** Built for programs: a C unit per float mode, compiled with
   its flags (`[CG-C-11]`); lambdas take their function's mode; a default

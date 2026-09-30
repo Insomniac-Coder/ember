@@ -23444,6 +23444,14 @@ impl<'a> Checker<'a> {
                 let operand = Box::new(self.adopt_literal(*operand, expected));
                 Expr { ty: expected, kind: ExprKind::Unary { op, operand }, span }
             }
+            // D-395 — a shift of an untyped literal by a typed amount: the
+            // shifted value takes the type; the amount keeps its own.
+            ExprKind::Binary { op: op @ (BinOp::Shl | BinOp::Shr), lhs, rhs }
+                if self.types.is_untyped_literal(lhs.ty) && !self.types.is_untyped_literal(rhs.ty) =>
+            {
+                let lhs = Box::new(self.adopt_literal(*lhs, expected));
+                Expr { ty: expected, kind: ExprKind::Binary { op, lhs, rhs }, span }
+            }
             ExprKind::Binary { op, lhs, rhs }
                 if !op.is_comparison()
                     && self.types.is_untyped_literal(lhs.ty)
@@ -36817,7 +36825,13 @@ impl<'a> Checker<'a> {
         // other side's type.
         let lhs_untyped = self.types.is_untyped_literal(lhs.ty);
         let rhs_untyped = self.types.is_untyped_literal(rhs.ty);
+        // `[TYP-10]` (D-395) — a shift's amount has a type of its own: the
+        // shifted literal takes its type from where the shift is used, never
+        // from the amount (`1 << z` with `z: u8` is an `int`), and an amount
+        // literal that does not fit the shifted type is an `int`.
+        let shift = matches!(hir_op, BinOp::Shl | BinOp::Shr);
         match (lhs_untyped, rhs_untyped) {
+            (true, false) if shift => {}
             (true, false) => {
                 let target = rhs.ty;
                 if self.literal_fits(&lhs, target) {
@@ -36828,6 +36842,9 @@ impl<'a> Checker<'a> {
                 let target = lhs.ty;
                 if self.literal_fits(&rhs, target) {
                     rhs = self.adopt_literal(rhs, target);
+                } else if shift && self.types.is_integral(target) {
+                    let int_ty = self.common.i64;
+                    rhs = self.adopt_literal(rhs, int_ty);
                 }
             }
             // Both untyped: `1 + 2` stays untyped and is defaulted later.
@@ -36860,9 +36877,8 @@ impl<'a> Checker<'a> {
         // `[TYP-10]` (D-308) — a shift's amount may be any integer type; the
         // result has the shifted value's type.
         let shift_by_another_integer = matches!(hir_op, BinOp::Shl | BinOp::Shr)
-            && self.types.is_integral(lhs.ty)
+            && (self.types.is_integral(lhs.ty) || lhs.ty == self.common.int_lit)
             && self.types.is_integral(rhs.ty)
-            && !self.types.is_untyped_literal(lhs.ty)
             && !self.types.is_untyped_literal(rhs.ty);
         if lhs.ty != rhs.ty && !shift_by_another_integer && lhs.ty != self.common.error && rhs.ty != self.common.error {
             let left = self.types.display(lhs.ty);
