@@ -11093,7 +11093,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   iterators run backwards), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h47/` are frozen.
-* **Next numbers:** ODR-093, D-398, ADR-089, ERR-056.
+* **Next numbers:** ODR-093, D-403, ADR-089, ERR-056.
 * **`[TYP-9]` `@fastmath` and `@fp(contract)` (2026-09-30, ADR-085, ODR-090,
   Hardened_45).** Built for programs: a C unit per float mode, compiled with
   its flags (`[CG-C-11]`); lambdas take their function's mode; a default
@@ -11130,12 +11130,19 @@ first**; the rest of §0.355 is the running narrative behind it.
   Parts IV-IX, one program each. D-395 (a shifted literal took the amount's
   type) and D-396 (overlapping implementations found only at a use; ODR-092,
   Hardened_47, ADR-088: one pass after collection unifies each pair) and
-  D-397 (`E2040` printed `Conv_i64`) are fixed. Found and not yet fixed: a
-  generic extension implementing a generic interface (`Conv[Array[T]]` and
-  `Conv[int]` on one `Wrap[T]`) registers its methods as the type's own, so
-  the two clash (`E1030`), where concrete types (`V: Add[int] + Add[V]`)
-  work. **Review wanted (2026-10-01):** ADR-088's unification was reviewed
-  solo.
+  D-397 (`E2040` printed `Conv_i64`) are fixed; then D-398 (`-r` of a
+  range value kept the range type: a `Unit` held -0.25), D-399 (`E2214`'s
+  help named `x as f32`, which `as` refuses), D-400 (a generic extension's
+  methods of `Conv[Array[T]]` were the type's own), D-401 (`Weak.empty()`
+  where the type is known) and D-402 (a call two sibling instances both fit
+  took the last; `Conv[bool].conv(w)` now names one). Probed compliant:
+  `[LEX-19]`, `[LEX-20]`, `[OWN-6]`, `[BRW-4]`, `[SPN-5]`, `[DRP-4]`,
+  `[ATT-1]`. **Next here:** N1, the range types' generated operator
+  implementations, is now observable (`fn twice[T: Add[T]]` refuses a
+  `Unit`), and printing a range value is `E0900` with no rule saying which
+  of `Display`/`Debug` a range type has: one ruling (ODR-093) for both, then
+  build them. **Review wanted (2026-10-01):** ADR-088's unification and the
+  D-398..D-402 fixes were reviewed solo.
 * **Goal 2, implementation (2026-09-29, autonomous):** next is `[STD-19]`'s
   iterator adapters and `[CTL-3b]`'s counted lowering of adapter chains (the
   audit's `CTL-3b` gap; `for x in mutspan`, `.take/.skip/.enumerate/.zip/

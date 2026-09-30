@@ -4495,6 +4495,19 @@ impl<'a> Checker<'a> {
                 bindings.push((param.name, value));
             }
             self.applied_extensions.insert((ty, index));
+            // D-400 — the interfaces the block implements, as this instance
+            // has them (`Conv[Array[T]]` at `Wrap[i64]` is `Conv[Array[i64]]`):
+            // a method is the interface's that declares it, else the first's,
+            // as a concrete block's are (D-313), so two instances of one
+            // generic interface may share method names.
+            let block = {
+                let owner_params = std::mem::replace(&mut self.type_params, bindings.iter().copied().collect());
+                let owner_module = std::mem::replace(&mut self.current_module, extension.declaring_module);
+                let block = self.block_interfaces_of(&extension.implements, ty);
+                self.type_params = owner_params;
+                self.current_module = owner_module;
+                block
+            };
             let mut declared = Vec::new();
             for method in &extension.methods {
                 if class.is_some()
@@ -4505,9 +4518,15 @@ impl<'a> Checker<'a> {
                     self.error(codes::E2110, method.span, "override of a method that is not virtual");
                 }
                 let deferred = builtin && extension.interface.is_none();
-                let Some(def) =
-                    self.register_recipe_method(ty, name, method, &bindings, extension.interface, deferred)
-                else {
+                let interface = block
+                    .iter()
+                    .copied()
+                    .find(|interface| {
+                        self.interfaces.get(interface).is_some_and(|def| def.methods.iter().any(|(name, ..)| *name == method.name))
+                    })
+                    .or(block.first().copied())
+                    .or(extension.interface);
+                let Some(def) = self.register_recipe_method(ty, name, method, &bindings, interface, deferred) else {
                     continue;
                 };
                 if deferred {
@@ -14586,6 +14605,14 @@ impl<'a> Checker<'a> {
 
     /// `[TYP-24]` — the interface a bare name refers to, unless a local of
     /// that name hides it.
+    /// D-402 — `Conv[bool]` on the left of a call: a generic interface and
+    /// the arguments written for it.
+    fn interface_instance_named<'e>(&self, expr: &'e ast::Expr) -> Option<(Symbol, &'e [ast::TypeOrExpr])> {
+        let ast::ExprKind::IndexOrInstantiate { base, args } = &expr.kind else { return None };
+        let origin = self.interface_named(base)?;
+        self.interfaces.get(&origin).is_some_and(|def| !def.generic_params.is_empty()).then_some((origin, args.as_slice()))
+    }
+
     fn interface_named(&self, expr: &ast::Expr) -> Option<Symbol> {
         let ast::ExprKind::Path { segments } = &expr.kind else { return None };
         let [single] = segments.as_slice() else { return None };
@@ -24398,6 +24425,32 @@ impl<'a> Checker<'a> {
             // and range constructors.
             // `[TYP-24]` — `I.m(recv, …)` calls interface `I`'s `m` on `recv`:
             // how two interfaces offering one name are told apart.
+            // D-402 — `Conv[bool].conv(w)` names one instance of a generic
+            // interface.
+            ast::ExprKind::MethodCall { recv, name, generic_args, args }
+                if !args.is_empty() && self.interface_instance_named(recv).is_some() =>
+            {
+                let (origin, written) = self.interface_instance_named(recv).expect("just checked");
+                let types: Vec<Ty> = written
+                    .iter()
+                    .map(|arg| match arg {
+                        ast::TypeOrExpr::Type(ty) => self.resolve_type(ty),
+                        ast::TypeOrExpr::Expr(expr) => self.type_from_expr(expr),
+                        ast::TypeOrExpr::Binding { name, .. } => {
+                            self.error(codes::E2173, name.span, "an interface named in a call takes types, not an associated-type binding");
+                            self.common.error
+                        }
+                    })
+                    .collect();
+                let definition = self.interfaces.get(&origin).cloned().expect("an interface");
+                let Some(interface) = self.instantiate_interface(origin, &definition, &types, recv.span) else {
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                };
+                let outer = self.named_interface_call.replace((interface, span));
+                let call = self.synth_method_call(&args[0].value, *name, generic_args, &args[1..], span);
+                self.named_interface_call = outer;
+                call
+            }
             ast::ExprKind::MethodCall { recv, name, generic_args, args }
                 if !args.is_empty() && self.interface_named(recv).is_some() =>
             {
@@ -24428,6 +24481,23 @@ impl<'a> Checker<'a> {
                 if is_single_path(recv, "Arena") && self.lookup(Symbol::intern("Arena")).is_none() =>
             {
                 self.synth_arena_construction(*name, generic_args, args, span)
+            }
+
+            // D-401, `[WK-11]` — `Weak.empty()` where the type is known is
+            // `Weak[O].empty()` of the `Weak[O]` expected.
+            ast::ExprKind::MethodCall { recv, name, generic_args, args }
+                if is_single_path(recv, "Weak") && self.lookup(Symbol::intern("Weak")).is_none() =>
+            {
+                match expected.filter(|&ty| self.weak_inner(ty).is_some()) {
+                    Some(ty) => self.synth_weak_construction(ty, *name, generic_args, args, span),
+                    None => {
+                        self.sink.emit(
+                            Diagnostic::error(codes::E2060, recv.span, "cannot infer which `Weak` this is")
+                                .help(format!("name it, `Weak[T].{}()`, or give the place a type", name.name)),
+                        );
+                        Expr { ty: self.common.error, kind: ExprKind::Error, span }
+                    }
+                }
             }
 
             // `[RNG-10]`'s construction set: `Roughness.checked(x)`,
@@ -24567,6 +24637,13 @@ impl<'a> Checker<'a> {
                         );
                         return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                     }
+                }
+                // D-398, `[RNG-5]` — arithmetic on a range value yields its
+                // representation: `-r` of a `Unit` is an `f64`, which becomes a
+                // `Unit` again only by a construction (`[RNG-10]`).
+                if *op != ast::UnOp::Not && let TyKind::Range(id) = *self.types.kind(operand.ty) {
+                    let repr = self.types.range_def(id).repr;
+                    operand = self.erase_operand(operand, repr);
                 }
                 let (hir_op, ty) = match op {
                     ast::UnOp::Neg => (UnOp::Neg, operand.ty),
@@ -29762,7 +29839,8 @@ impl<'a> Checker<'a> {
     /// a name. A call takes the one whose parameters the arguments' types
     /// match; with none or several, the entry found stands and the call
     /// reports what is wrong.
-    fn choose_instance_method(&mut self, ty: Ty, name: Symbol, entry: MethodEntry, args: &[ast::Arg]) -> MethodEntry {
+    fn choose_instance_method(&mut self, ty: Ty, ident: ast::Ident, entry: MethodEntry, args: &[ast::Arg]) -> MethodEntry {
+        let name = ident.name;
         let Some(interface) = entry.from_interface else { return entry };
         let Some((origin, _)) = self.open_interface_origin.get(&interface).cloned() else { return entry };
         let candidates: Vec<MethodEntry> = self
@@ -29790,7 +29868,40 @@ impl<'a> Checker<'a> {
             .collect();
         self.sink.rollback(quiet);
         let found: Vec<&Expr> = found.iter().collect();
+        // D-402, `[TYP-24]` — arguments that fit two instances choose
+        // neither: the call names one (`Conv[bool].conv(w)`).
+        let fitting = self.fitting(&candidates, &found);
+        if let [first, second, ..] = fitting.as_slice() {
+            let shown = |this: &Self, entry: &MethodEntry| this.interface_shown(entry.from_interface.expect("an instance's method"));
+            let (a, b) = (shown(self, first), shown(self, second));
+            self.sink.emit(
+                Diagnostic::error(codes::E2070, ident.span, format!("`{name}` is offered by both `{a}` and `{b}`"))
+                    .help(format!("name the one to call: `{b}.{name}(…)` with the receiver first"))
+                    .note("two instances of one interface are told apart by their arguments, and these fit both [TYP-24]"),
+            );
+            return *first;
+        }
         self.choose_among(candidates, entry, &found)
+    }
+
+    /// The candidates whose parameters `found`'s types fit, in declaration
+    /// order (the candidates come from a map).
+    fn fitting(&self, candidates: &[MethodEntry], found: &[&Expr]) -> Vec<MethodEntry> {
+        let mut candidates = candidates.to_vec();
+        candidates.sort_by_key(|candidate| candidate.def.0);
+        candidates
+            .into_iter()
+            .filter(|candidate| {
+                // A method's first parameter is its receiver.
+                let params = &self.signatures[candidate.def.0 as usize].params[1..];
+                params.len() == found.len()
+                    && params.iter().zip(found.iter()).all(|((_, want, _, _), have)| {
+                        have.ty == *want
+                            || (self.types.is_untyped_literal(have.ty) && self.literal_fits(have, *want))
+                            || self.types.widens_to(have.ty, *want)
+                    })
+            })
+            .collect()
     }
 
     /// D-313 — as `choose_instance_method`, for arguments already checked.
@@ -29815,19 +29926,7 @@ impl<'a> Checker<'a> {
 
     /// The one candidate whose parameters `found`'s types fit, else `entry`.
     fn choose_among(&self, candidates: Vec<MethodEntry>, entry: MethodEntry, found: &[&Expr]) -> MethodEntry {
-        let matching: Vec<MethodEntry> = candidates
-            .into_iter()
-            .filter(|candidate| {
-                // A method's first parameter is its receiver.
-                let params = &self.signatures[candidate.def.0 as usize].params[1..];
-                params.len() == found.len()
-                    && params.iter().zip(found.iter()).all(|((_, want, _, _), have)| {
-                        have.ty == *want
-                            || (self.types.is_untyped_literal(have.ty) && self.literal_fits(have, *want))
-                            || self.types.widens_to(have.ty, *want)
-                    })
-            })
-            .collect();
+        let matching = self.fitting(&candidates, found);
         match matching.as_slice() {
             [only] => *only,
             _ => entry,
@@ -29862,7 +29961,7 @@ impl<'a> Checker<'a> {
             None => self
                 .lookup_method(receiver.ty, name.name)
                 .map(|entry| self.visible_interface_method(receiver.ty, name.name, entry))
-                .map(|entry| self.choose_instance_method(receiver.ty, name.name, entry, args)),
+                .map(|entry| self.choose_instance_method(receiver.ty, name, entry, args)),
         };
         let Some(entry) = found else {
             // `[CLO-11]` — with no method of that name, a field of callable
@@ -36373,7 +36472,7 @@ impl<'a> Checker<'a> {
                     )
                     .primary_label("these are two different range types".to_string())
                     .help(format!(
-                        "convert one side explicitly: `x as {repr}`"
+                        "convert one side to `{repr}` at a place of that type first, as `x: {repr} = a` does [RNG-2]"
                     ))
                     .note(
                         "arithmetic on a range type yields its representation, and two \

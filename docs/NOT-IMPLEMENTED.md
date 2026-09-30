@@ -20,7 +20,7 @@ followed.
 | **The feature** | for every range type `T` over `R`, the compiler generates `T: Add[T, Output = R]`, `T: Add[R, Output = R]`, `R: Add[T, Output = R]` and the `Sub`/`Mul`/`Div`/`Rem`/`Neg`/`PartialEq`/`PartialOrd` forms, in `T`'s declaring module |
 | **Requires** | the operator interfaces (`Add`, `Sub`, …) in `std`, which do not exist yet |
 | **Meanwhile** | operators on range types are decided in the type checker, with the results the rule requires: `r + 0.25` is `f32`, `Roughness + Metallic` is `E2214` (`tests/conformance/RNG-5a1/`) |
-| **Can a program notice** | no: with no operator interface, nothing can ask for the implementations |
+| **Can a program notice** | yes, since the operator interfaces exist (ODR-040): `fn twice[T: Add[T]](x: T)` refuses a `Unit` with `E2040` (probed 2026-10-01) |
 | **Plan** | build it together with the operator interfaces, before user generics can be bounded on them (Phase 3, block D). ADR-016 |
 
 ## N2 — `extern class` (formerly D3)
