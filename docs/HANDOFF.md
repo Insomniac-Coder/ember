@@ -11157,8 +11157,10 @@ first**; the rest of §0.355 is the running narrative behind it.
   `flat_map`, `flatten`, `peekable`, `collect[C]()` and `join` hit six
   limits, D-407 (the first fixed; open, with a proposed design; ask the
   owner before changing how generic types are instantiated; `collect` and
-  `peekable`'s API also need a ruling, ODR-094). Then `[CLO-3]`'s owned
-  callable values. **Review wanted (2026-10-01):**
+  `peekable`'s API also need a ruling, ODR-094). `[CLO-3]`'s owned
+  callable values: a design waits for the owner's three answers
+  (`docs/proposals/CLO-3-owned-callable-values.md`); `[CLO-4]` and
+  `[CLO-6a]` wait on it. **Review wanted (2026-10-01):**
   ADR-088's unification, the D-398..D-402 fixes and ADR-089 were reviewed
   solo.
 * **Goal 2, implementation (2026-09-29, autonomous):** next is `[STD-19]`'s
