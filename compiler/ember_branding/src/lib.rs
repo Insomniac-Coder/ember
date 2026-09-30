@@ -136,6 +136,13 @@ pub fn cc_var() -> String {
 pub fn std_root() -> Option<std::path::PathBuf> {
     if let Ok(path) = std::env::var(std_path_var()) {
         let path = std::path::PathBuf::from(path);
+        // D-404 — the variable may name the package (`std/`) as well as its
+        // sources (`std/src/`): a package directory taken as the sources
+        // held no module, and every `std` import was one not written yet.
+        let sources = path.join("src");
+        if sources.join(source_file("core")).is_file() {
+            return Some(sources);
+        }
         if path.is_dir() {
             return Some(path);
         }

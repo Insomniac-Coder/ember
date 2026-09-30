@@ -241,6 +241,7 @@ pub fn check(
             }
         }
     }
+    checker.report_unresolved_bounds();
     checker.check_overlapping_implementations();
     // Conformance is a whole-program question. Checking it inside the loop
     // reports the same missing or mismatched member once per loaded module
@@ -1421,6 +1422,10 @@ struct Checker<'a> {
     /// then a generic struct named with concrete arguments has its bounds
     /// checked later, from `pending_struct_bounds` (D-301).
     bounds_known: bool,
+    /// D-403 — bounds naming no declared interface, as (the name resolved,
+    /// as written, where), checked once every interface is collected.
+    unresolved_bounds: Vec<(Symbol, Symbol, Span)>,
+    reported_unresolved_bounds: HashSet<Span>,
     pending_struct_bounds: Vec<(Symbol, Vec<GenericParam>, Vec<Ty>, Span)>,
     /// Instances found to miss a bound after they were made: their methods
     /// are not checked, which would only repeat the error inside them.
@@ -1610,6 +1615,8 @@ impl<'a> Checker<'a> {
             picked_ranges: HashMap::new(),
             generic_prefix: HashMap::new(),
             bounds_known: false,
+            unresolved_bounds: Vec::new(),
+            reported_unresolved_bounds: HashSet::new(),
             pending_struct_bounds: Vec::new(),
             unmet_instances: HashSet::new(),
             hash_derived: HashSet::new(),
@@ -2294,7 +2301,16 @@ impl<'a> Checker<'a> {
                     {
                         bounds.extend(self.resolve_interface_use_for(bound, ty));
                     }
-                    Some(name) => bounds.push(self.resolve_name(name)),
+                    Some(name) => {
+                        let resolved = self.resolve_name(name);
+                        if !self.interfaces.contains_key(&resolved) {
+                            self.unresolved_bounds.push((resolved, name, bound.span));
+                            if self.bounds_known {
+                                self.report_unresolved_bounds();
+                            }
+                        }
+                        bounds.push(resolved);
+                    }
                     // D-261 — `Q: AsKey[K]` names an instance of a generic
                     // interface, over the parameters declared before it.
                     None if matches!(&bound.kind, ast::TypeKind::Path { args, .. } if !args.is_empty()) => {
@@ -8072,6 +8088,21 @@ impl<'a> Checker<'a> {
             self.implemented.push((ty, name, entry.span));
         }
         let _ = (members, span);
+    }
+
+    /// D-403, `[TYP-17]` — a bound naming an interface nothing declares is
+    /// `E1010`; it was taken as met by every type. `Display`, `Debug`,
+    /// `Copy` and `Zeroable` are answered from the table without a
+    /// declaration (`implements`). A type's bounds are read before the
+    /// interfaces are collected, so the names wait until they are.
+    fn report_unresolved_bounds(&mut self) {
+        for (resolved, written, span) in std::mem::take(&mut self.unresolved_bounds) {
+            let tabled = matches!(written.as_str(), "Display" | "Debug" | "Copy" | "Zeroable");
+            if self.interfaces.contains_key(&resolved) || tabled || !self.reported_unresolved_bounds.insert(span) {
+                continue;
+            }
+            self.error(codes::E1010, span, format!("cannot find interface `{written}` in this scope"));
+        }
     }
 
     /// Whether `span` is an `implements` of a generic type's declaration or

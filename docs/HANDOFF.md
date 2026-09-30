@@ -11093,7 +11093,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   implementations overlap), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h48/` are frozen.
-* **Next numbers:** ODR-094, D-403, ADR-090, ERR-056.
+* **Next numbers:** ODR-094, D-405, ADR-090, ERR-056.
 * **`[TYP-9]` `@fastmath` and `@fp(contract)` (2026-09-30, ADR-085, ODR-090,
   Hardened_45).** Built for programs: a C unit per float mode, compiled with
   its flags (`[CG-C-11]`); lambdas take their function's mode; a default
@@ -11142,7 +11142,11 @@ first**; the rest of §0.355 is the running narrative behind it.
   is `Clone`/`Hash`/`Display`/`Debug` as its representation, never
   `Default`; a range value prints as its representation). Noted, not
   pursued: a bound naming a later type parameter (`fn f[A: Add[B], B]`) is
-  `E1010`; the spec says nothing either way. **Review wanted (2026-10-01):**
+  `E1010`; the spec says nothing either way. D-403 (a bound naming no
+  interface was met by every type) and D-404 (`EMBER_STD=std/` loaded no
+  std; three tests ran std-less) fixed. Probed: `[LT-4]`, `[LT-6]`,
+  `[HASH-3]` compliant; `[HASH-2]`'s `RandomState` does not exist (next:
+  SipHash-1-3 keyed by a per-process OS key, a runtime function). **Review wanted (2026-10-01):**
   ADR-088's unification, the D-398..D-402 fixes and ADR-089 were reviewed
   solo.
 * **Goal 2, implementation (2026-09-29, autonomous):** next is `[STD-19]`'s
