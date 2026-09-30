@@ -199,6 +199,32 @@ pub interface Iterator:
     fn chain[J: Iterator[Item = Item]](owned self, other: J) -> Chain[Self, J]:
         return Chain(self, other, false)
 
+    ## What `f` makes of each item. The adapter holds `f` itself, not a
+    ## pointer to it, so nothing is allocated and each call is direct
+    ## (`[CLO-14]`).
+    fn map[R, F: fn(Item) -> R](owned self, f: F) -> Map[Self, R, F]:
+        return Map(self, f)
+
+    ## The items `pred` holds for.
+    fn filter[F: fn(Item) -> bool](owned self, pred: F) -> Filter[Self, F]:
+        return Filter(self, pred)
+
+    ## What `f` gives for each item it gives something for.
+    fn filter_map[R, F: fn(Item) -> Option[R]](owned self, f: F) -> FilterMap[Self, R, F]:
+        return FilterMap(self, f)
+
+    ## The items before the first one `pred` does not hold for.
+    fn take_while[F: fn(Item) -> bool](owned self, pred: F) -> TakeWhile[Self, F]:
+        return TakeWhile(self, pred, false)
+
+    ## The items from the first one `pred` does not hold for.
+    fn skip_while[F: fn(Item) -> bool](owned self, pred: F) -> SkipWhile[Self, F]:
+        return SkipWhile(self, pred, false)
+
+    ## The items, each given to `f` first.
+    fn inspect[F: fn(Item)](owned self, f: F) -> Inspect[Self, F]:
+        return Inspect(self, f)
+
     ## `[STD-19]` — the consumers. Each takes this iterator and runs it.
 
     ## How many items there are.
@@ -530,6 +556,118 @@ extend[T: Clone, I: Iterator[Item = ref T]] Cloned[I, T] implements Iterator:
         match self.inner.next():
             Some(r):
                 return Some(r.clone())
+            None:
+                return None
+
+## `[STD-19]` — the adapters that hold a callable: `map`, `filter`,
+## `filter_map`, `take_while`, `skip_while` and `inspect`. Each keeps the
+## callable it was given by value, as `[CLO-14]`'s bound makes it, so a
+## lambda that borrows keeps its borrows, and the adapter is a view while it
+## does (`[TYP-15]`).
+pub struct Map[I, R, F]:
+    inner: I
+    f: F
+
+extend[I: Iterator, R, F: fn(I.Item) -> R] Map[I, R, F] implements Iterator:
+    type Item = R
+
+    fn next(mut self) -> Option[R]:
+        match self.inner.next():
+            Some(x):
+                return Some(self.f(x))
+            None:
+                return None
+
+pub struct Filter[I, F]:
+    inner: I
+    pred: F
+
+extend[I: Iterator, F: fn(I.Item) -> bool] Filter[I, F] implements Iterator:
+    type Item = I.Item
+
+    fn next(mut self) -> Option[I.Item]:
+        while true:
+            match self.inner.next():
+                Some(x):
+                    if self.pred(x):
+                        return Some(x)
+                None:
+                    return None
+        return None
+
+pub struct FilterMap[I, R, F]:
+    inner: I
+    f: F
+
+extend[I: Iterator, R, F: fn(I.Item) -> Option[R]] FilterMap[I, R, F] implements Iterator:
+    type Item = R
+
+    fn next(mut self) -> Option[R]:
+        while true:
+            match self.inner.next():
+                Some(x):
+                    match self.f(x):
+                        Some(y):
+                            return Some(y)
+                        None:
+                            pass
+                None:
+                    return None
+        return None
+
+pub struct TakeWhile[I, F]:
+    inner: I
+    pred: F
+    done: bool
+
+extend[I: Iterator, F: fn(I.Item) -> bool] TakeWhile[I, F] implements Iterator:
+    type Item = I.Item
+
+    fn next(mut self) -> Option[I.Item]:
+        if self.done:
+            return None
+        match self.inner.next():
+            Some(x):
+                if self.pred(x):
+                    return Some(x)
+                self.done = true
+                return None
+            None:
+                return None
+
+pub struct SkipWhile[I, F]:
+    inner: I
+    pred: F
+    started: bool
+
+extend[I: Iterator, F: fn(I.Item) -> bool] SkipWhile[I, F] implements Iterator:
+    type Item = I.Item
+
+    fn next(mut self) -> Option[I.Item]:
+        if self.started:
+            return self.inner.next()
+        while true:
+            match self.inner.next():
+                Some(x):
+                    if not self.pred(x):
+                        self.started = true
+                        return Some(x)
+                None:
+                    return None
+        return None
+
+pub struct Inspect[I, F]:
+    inner: I
+    f: F
+
+extend[I: Iterator, F: fn(I.Item)] Inspect[I, F] implements Iterator:
+    type Item = I.Item
+
+    fn next(mut self) -> Option[I.Item]:
+        match self.inner.next():
+            Some(x):
+                self.f(x)
+                return Some(x)
             None:
                 return None
 

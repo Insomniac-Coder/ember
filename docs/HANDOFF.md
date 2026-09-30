@@ -11093,7 +11093,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   implementations overlap), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h48/` are frozen.
-* **Next numbers:** ODR-094, D-406, ADR-091, ERR-056.
+* **Next numbers:** ODR-094, D-407, ADR-092, ERR-056.
 * **`[TYP-9]` `@fastmath` and `@fp(contract)` (2026-09-30, ADR-085, ODR-090,
   Hardened_45).** Built for programs: a C unit per float mode, compiled with
   its flags (`[CG-C-11]`); lambdas take their function's mode; a default
@@ -11120,9 +11120,8 @@ first**; the rest of §0.355 is the running narrative behind it.
   ODR-091, Hardened_46): `DoubleEndedIterator`/`ExactSizeIterator` in std,
   `next_back`/`len` built in for view iterators, and `rev` in a `for` is a
   counted loop at C's speed; D-394 (a child interface naming its parent's
-  `Item`) found and fixed. **Next:** the closure-holding adapters (`map`,
-  `filter`, ...), which need `[CLO-3]`'s owned callable values; then the
-  goal-2 list below. **For the owner (review wanted, 2026-10-01):** the
+  `Item`) found and fixed. The closure-holding adapters followed
+  (ADR-091, below); then the goal-2 list below. **For the owner (review wanted, 2026-10-01):** the
   `rev` work was reviewed solo (the owner: review solo while unattended);
   an adversarial review of ADR-087's fused `Rev` step and the reversed
   `enumerate` check is worth running when he approves one.
@@ -11147,7 +11146,15 @@ first**; the rest of §0.355 is the running narrative behind it.
   std; three tests ran std-less) fixed. Probed: `[LT-4]`, `[LT-6]`,
   `[HASH-3]` compliant. `[HASH-2]`'s `RandomState` is built (ADR-090:
   SipHash-1-3 keyed once per process from the OS, `ember_process_key`),
-  with D-405 (a byte tail's length went unhashed). **Review wanted (2026-10-01):**
+  with D-405 (a byte tail's length went unhashed). The closure adapters
+  (`map`, `filter`, `filter_map`, `take_while`, `skip_while`, `inspect`)
+  are built without owned callable values (ADR-091: each holds its lambda
+  by value through a `[CLO-14]` bound, which was not built, D-406) and are
+  stages of a fused `for` (fused `map` equals the hand-written loop under
+  MSVC and clang; through `next` it was 10x C under MSVC). Next:
+  `flat_map`, `flatten`, `peekable`; then `[CLO-3]`'s owned callable
+  values (fields and locals of type `fn(A) -> R` holding a capturing
+  lambda). **Review wanted (2026-10-01):**
   ADR-088's unification, the D-398..D-402 fixes and ADR-089 were reviewed
   solo.
 * **Goal 2, implementation (2026-09-29, autonomous):** next is `[STD-19]`'s
@@ -11189,9 +11196,8 @@ first**; the rest of §0.355 is the running narrative behind it.
   interface with type parameters now gives its defaults to an instance's
   implementers, a method's own parameters are renumbered in the instance,
   and a method bounded by the same instance no longer overflows the stack.
-  Next here: `rev` (needs a spec ruling on running backwards), then the
-  closure-holding adapters (`map`, `filter`, ...), which need `[CLO-3]`'s
-  owned callable values.
+  `rev` (ODR-091, ADR-087) and the closure-holding adapters (ADR-091)
+  followed.
 * **Owner, 2026-09-30: look into D-391 later** (an interface cache written
   by an earlier compiler build stopped a later build with `[LT-40]`'s
   "cached callable-region metadata disagrees"; open, not investigated; the

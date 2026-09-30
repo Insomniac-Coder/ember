@@ -416,6 +416,35 @@ enum SpanIteratorKind {
 struct FusedChain {
     source: Expr,
     links: Vec<FusedLink>,
+    /// The closure adapters above every link, innermost first, each with the
+    /// callable it was given (ADR-091).
+    stages: Vec<(FusedStage, Expr)>,
+}
+
+/// `[CTL-3b]` (ADR-091) — an adapter that holds a callable, run inside the
+/// fused loop's turn on the item the links below give.
+#[derive(Clone, Copy, PartialEq)]
+enum FusedStage {
+    Map,
+    Filter,
+    FilterMap,
+    TakeWhile,
+    SkipWhile,
+    Inspect,
+}
+
+impl FusedStage {
+    fn named(name: &str) -> Option<FusedStage> {
+        Some(match name {
+            "map" => FusedStage::Map,
+            "filter" => FusedStage::Filter,
+            "filter_map" => FusedStage::FilterMap,
+            "take_while" => FusedStage::TakeWhile,
+            "skip_while" => FusedStage::SkipWhile,
+            "inspect" => FusedStage::Inspect,
+            _ => return None,
+        })
+    }
 }
 
 enum FusedLink {
@@ -2263,6 +2292,9 @@ impl<'a> Checker<'a> {
         // parameter is declared: (the parameter's place, the bound, its
         // interface instance).
         let mut pending: Vec<(usize, &ast::TypeExpr, Symbol)> = Vec::new();
+        // D-406 — the callable bounds, read once every parameter and its
+        // projections are declared: `F: fn(I.Item) -> R` names `I`'s `Item`.
+        let mut callables: Vec<(usize, &ast::TypeExpr)> = Vec::new();
         for (index, param) in params.iter().enumerate() {
             // A const generic is a value, not a type; `[TYP-16]`'s type
             // parameters are what this phase handles.
@@ -2318,7 +2350,20 @@ impl<'a> Checker<'a> {
                         bounds.push(instance);
                         pending.push((declared.len(), bound, instance));
                     }
-                    None => {}
+                    // D-406, `[CLO-14]` — `F: fn(A) -> R` is the parameter
+                    // form's bound written out: a parameter of type `F` is
+                    // called like a function. It was dropped, so `F` was
+                    // bounded by nothing and could not be called.
+                    None if matches!(&bound.kind, ast::TypeKind::Fn { abi: None, .. }) => {
+                        if callables.iter().any(|&(at, _)| at == declared.len()) {
+                            self.error(codes::E2020, bound.span, "a parameter has one callable bound");
+                            continue;
+                        }
+                        callables.push((declared.len(), bound));
+                    }
+                    None => {
+                        self.error(codes::E2020, bound.span, "a bound is an interface or a callable type (`fn(A) -> R`)");
+                    }
                 }
             }
             let default = param.default.as_ref().map(|default| self.resolve_type(default));
@@ -2329,11 +2374,18 @@ impl<'a> Checker<'a> {
         // `T.Name` the bounds mention gets its hidden parameter first, once
         // every parameter and its interfaces are known, and the bindings are
         // read after.
-        let mentioned: Vec<&ast::TypeExpr> = pending.iter().map(|(_, bound, _)| *bound).collect();
+        let mentioned: Vec<&ast::TypeExpr> =
+            pending.iter().map(|(_, bound, _)| *bound).chain(callables.iter().map(|&(_, bound)| bound)).collect();
         self.declare_projections(&mentioned, &mut declared, index_base);
         for (at, bound, instance) in pending {
             let found = self.bound_bindings(bound, instance);
             declared[at].bindings.extend(found);
+        }
+        for (at, bound) in callables {
+            let resolved = self.resolve_type(bound);
+            if let TyKind::Fn { abi: None, latebound, params, ret } = self.types.kind(resolved).clone() {
+                declared[at].callable = Some(CallableBound { params, ret, once: false, latebound });
+            }
         }
         for param in declared.iter_mut().filter(|param| param.projection.is_none()) {
             self.close_bounds(&mut param.bounds, &mut param.bindings);
@@ -6874,7 +6926,8 @@ impl<'a> Checker<'a> {
                 };
                 let Some(def) = registered else { return };
                 if (interface.is("std.core.Iterator")
-                    && matches!(default.name.as_str(), "take" | "skip" | "step_by" | "enumerate" | "zip" | "chain"))
+                    && (matches!(default.name.as_str(), "take" | "skip" | "step_by" | "enumerate" | "zip" | "chain")
+                        || FusedStage::named(default.name.as_str()).is_some()))
                     || (interface.is("std.core.DoubleEndedIterator") && default.name.is("rev"))
                 {
                     self.iterator_adapters.insert(def, default.name);
@@ -18970,7 +19023,7 @@ impl<'a> Checker<'a> {
                         let TyKind::Struct(struct_id) = *self.types.kind(iterator) else { return None };
                         let cursor = Expr { ty: self.common.usize, kind: ExprKind::Int(0), span: iter.span };
                         let source = Expr { ty: iterator, kind: ExprKind::StructLit { struct_id, fields: vec![view, cursor] }, span: iter.span };
-                        chains.push(FusedChain { source, links: Vec::new() });
+                        chains.push(FusedChain { source, links: Vec::new(), stages: Vec::new() });
                     }
                     let mut chain = chains.remove(0);
                     if name == "enumerate" {
@@ -19282,6 +19335,27 @@ impl<'a> Checker<'a> {
     /// a counted loop can run; `None` otherwise.
     fn fused_shape(&self, e: &Expr) -> Option<FusedShape> {
         match &e.kind {
+            // ADR-091 — a closure adapter above every link is a stage of the
+            // turn; `map` and `filter_map` give what their callable does.
+            ExprKind::Call { callee, args, latebound: false, .. } if args.len() == 2 && self.fused_stage(*callee).is_some() => {
+                let below = self.fused_shape(&args[0])?;
+                Some(match self.fused_stage(*callee).expect("just checked") {
+                    FusedStage::Map | FusedStage::FilterMap => FusedShape::Value,
+                    _ => below,
+                })
+            }
+            _ => self.fused_links_shape(e),
+        }
+    }
+
+    /// Which closure adapter `callee` is, if any.
+    fn fused_stage(&self, callee: DefId) -> Option<FusedStage> {
+        self.adapter_name(callee).and_then(|name| FusedStage::named(name.as_str()))
+    }
+
+    /// `fused_shape` below every stage: the links, over a source.
+    fn fused_links_shape(&self, e: &Expr) -> Option<FusedShape> {
+        match &e.kind {
             // A filled-in default (`enumerate`'s `start = 0`) is a literal,
             // which reads none of the call's other arguments.
             ExprKind::Call { callee, args, default_arg_locals, latebound: false, .. }
@@ -19289,13 +19363,18 @@ impl<'a> Checker<'a> {
                     && self.adapter_name(*callee).is_some()
                     && (default_arg_locals.is_none() || is_literal_argument(&args[1])) =>
             {
-                let inner = self.fused_shape(&args[0])?;
+                // A stage below a link would run for items the link leaves
+                // out (`skip`, `zip`), which the counted loop never reads.
+                if self.fused_stage(*callee).is_some() {
+                    return None;
+                }
+                let inner = self.fused_links_shape(&args[0])?;
                 Some(match self.adapter_name(*callee).expect("an adapter").as_str() {
                     "rev" => return None,
                     // Two loops, one after the other (`check_for_chained`):
                     // under another adapter it is not one loop.
                     "chain" => return None,
-                    "zip" => FusedShape::Pair(Box::new(inner), Box::new(self.fused_shape(&args[1])?)),
+                    "zip" => FusedShape::Pair(Box::new(inner), Box::new(self.fused_links_shape(&args[1])?)),
                     "enumerate" => FusedShape::Pair(Box::new(FusedShape::Value), Box::new(inner)),
                     _ => inner,
                 })
@@ -19303,13 +19382,13 @@ impl<'a> Checker<'a> {
             ExprKind::StructLit { fields, .. }
                 if fields.len() == 1 && self.struct_origin(e.ty).is_some_and(|o| o.is("std.core.Copied")) =>
             {
-                (self.fused_shape(&fields[0])? == FusedShape::Ref).then_some(FusedShape::Value)
+                (self.fused_links_shape(&fields[0])? == FusedShape::Ref).then_some(FusedShape::Value)
             }
             // ODR-091 — `rev` gives what it runs backwards over.
             ExprKind::Call { callee, args, latebound: false, .. }
                 if args.len() == 1 && self.adapter_name(*callee).is_some_and(|name| name.is("rev")) =>
             {
-                self.fused_shape(&args[0])
+                self.fused_links_shape(&args[0])
             }
             _ if matches!(self.span_iterator(e.ty), Some((_, SpanIteratorKind::Elements { .. }))) => Some(FusedShape::Ref),
             _ if self.range_iterator(e.ty).is_some() => Some(FusedShape::Value),
@@ -19365,6 +19444,13 @@ impl<'a> Checker<'a> {
     fn take_fused_chain(&self, e: Expr) -> FusedChain {
         let Expr { ty, kind, span } = e;
         match kind {
+            ExprKind::Call { callee, mut args, .. } if args.len() == 2 && self.fused_stage(callee).is_some() => {
+                let stage = self.fused_stage(callee).expect("just checked");
+                let callable = args.pop().expect("the adapter's callable");
+                let mut chain = self.take_fused_chain(args.pop().expect("the adapter's receiver"));
+                chain.stages.push((stage, callable));
+                chain
+            }
             ExprKind::Call { callee, mut args, .. }
                 if args.len() == 1 && self.adapter_name(callee).is_some_and(|name| name.is("rev")) =>
             {
@@ -19390,7 +19476,7 @@ impl<'a> Checker<'a> {
                 chain.links.push(FusedLink::Copied);
                 chain
             }
-            kind => FusedChain { source: Expr { ty, kind, span }, links: Vec::new() },
+            kind => FusedChain { source: Expr { ty, kind, span }, links: Vec::new(), stages: Vec::new() },
         }
     }
 
@@ -19471,10 +19557,43 @@ impl<'a> Checker<'a> {
     ) -> Option<Stmt> {
         let incoming_class_init = self.class_init.clone();
         let usize_ty = self.common.usize;
+        let bool_ty = self.common.bool_;
         self.scopes.push(HashMap::new());
         let mut outer = Vec::new();
         let mut nodes = Vec::new();
+        let mut chain = chain;
+        let stages = std::mem::take(&mut chain.stages);
         let (count, item, levels) = self.fuse_chain(chain, &mut nodes, &mut outer, span);
+        // ADR-091 — each stage's callable is evaluated once, after the links'
+        // iterators and counts and in the order the calls make them, and is
+        // called by its hidden name in the turn. `skip_while` keeps whether it
+        // has started; a `take_while` that ends a loop with an `else` says so.
+        let mut staged = Vec::new();
+        for (at, (stage, callable)) in stages.into_iter().enumerate() {
+            // A function named, or a lambda that captures nothing, is called
+            // by name: no pointer is held, so the call is direct (and can be
+            // inlined) whatever the C compiler.
+            let name = match callable.kind {
+                ExprKind::FnValue(def) => Symbol::intern(&format!("$direct{}", def.0)),
+                _ => {
+                    let name = Symbol::intern(&format!("$stage{at}"));
+                    let held = self.declare(Some(name), callable.ty, span);
+                    outer.push(Stmt::Let { local: held, init: Some(callable) });
+                    name
+                }
+            };
+            let flag = (stage == FusedStage::SkipWhile).then(|| {
+                let flag = self.declare(None, bool_ty, span);
+                outer.push(Stmt::Let { local: flag, init: Some(Expr { ty: bool_ty, kind: ExprKind::Bool(false), span }) });
+                flag
+            });
+            staged.push((stage, name, flag));
+        }
+        let ended = (else_block.is_some() && staged.iter().any(|&(stage, ..)| stage == FusedStage::TakeWhile)).then(|| {
+            let ended = self.declare(None, bool_ty, span);
+            outer.push(Stmt::Let { local: ended, init: Some(Expr { ty: bool_ty, kind: ExprKind::Bool(false), span }) });
+            ended
+        });
         let (count, end_check) = self.fused_numbers(count, &levels, &nodes, &mut outer, span);
         let (start, end, inclusive) = self.fused_bounds(count, &mut outer, span);
         let index_local = self.declare(None, usize_ty, span);
@@ -19484,18 +19603,37 @@ impl<'a> Checker<'a> {
         let values: Vec<Expr> =
             nodes.iter().map(|node| self.fused_node_value(node, index_local, span)).collect();
         let mut values: Vec<Option<Expr>> = values.into_iter().map(Some).collect();
-        self.bind_fused_item(pattern, item, &mut values, &mut inner, span);
-        self.loop_labels.push(label.map(|l| l.name));
-        let checked = self.check_block(body);
-        self.loop_labels.pop();
+        if staged.is_empty() {
+            self.bind_fused_item(pattern, item, &mut values, &mut inner, span);
+            self.loop_labels.push(label.map(|l| l.name));
+            let checked = self.check_block(body);
+            self.loop_labels.pop();
+            inner.extend(checked.stmts);
+        } else {
+            let value = self.fused_item_value(item, &mut values, span);
+            let first = Symbol::intern("$item0");
+            let held = self.declare(Some(first), value.ty, span);
+            inner.push(Stmt::Let { local: held, init: Some(value) });
+            let turn = self.fused_stages(&staged, 0, first, ended, pattern, body, label, span);
+            inner.extend(turn);
+        }
         self.scopes.pop();
-        inner.extend(checked.stmts);
 
         let body_class_init = self.class_init.clone();
         if else_block.is_some() && incoming_class_init.is_some() {
             self.class_init = Self::merge_class_init_paths(incoming_class_init, body_class_init);
         }
         let else_block = else_block.as_ref().map(|b| self.check_block(b));
+        // A `take_while` that ended the loop ran it to its end: the `else`
+        // runs, and nothing below it was found exhausted.
+        let after = match (ended, &else_block) {
+            (Some(ended), Some(block)) => Some(Stmt::If {
+                cond: Expr { ty: bool_ty, kind: ExprKind::Local(ended), span },
+                then_block: block.clone(),
+                else_block: None,
+            }),
+            _ => None,
+        };
         let else_block = match (end_check.is_empty(), else_block) {
             (true, else_block) => else_block,
             (false, None) => Some(Block { stmts: end_check, span }),
@@ -19503,7 +19641,156 @@ impl<'a> Checker<'a> {
         };
         self.scopes.pop();
         outer.push(Stmt::ForRange { local: index_local, start, end, inclusive, body: Block { stmts: inner, span }, else_block });
+        outer.extend(after);
         Some(Stmt::Block(Block { stmts: outer, span }))
+    }
+
+    /// `[CTL-3b]` (ADR-091) — one turn of a fused loop from stage `at` on,
+    /// over the item held as `item`: each stage as its adapter's `next` runs
+    /// it on the item the one below gives (`filter` goes on to the next turn
+    /// where it would ask again; `take_while` ends the loop where it would
+    /// end), then the pattern bound and the body. `filter_map`'s rest of the
+    /// turn is its `Some` arm.
+    #[allow(clippy::too_many_arguments)]
+    fn fused_stages(
+        &mut self,
+        staged: &[(FusedStage, Symbol, Option<LocalId>)],
+        at: usize,
+        item: Symbol,
+        ended: Option<LocalId>,
+        pattern: &ast::Pattern,
+        body: &ast::Block,
+        label: Option<ast::Ident>,
+        span: Span,
+    ) -> Vec<Stmt> {
+        let bool_ty = self.common.bool_;
+        let mut out = Vec::new();
+        let Some(&(stage, callable, flag)) = staged.get(at) else {
+            let local = self.lookup(item).expect("the held item");
+            let value = Expr { ty: self.locals[local.0 as usize].ty, kind: ExprKind::Local(local), span };
+            self.bind_fused_value(pattern, value, &mut out);
+            self.loop_labels.push(label.map(|l| l.name));
+            let checked = self.check_block(body);
+            self.loop_labels.pop();
+            out.extend(checked.stmts);
+            return out;
+        };
+        let call = self.call_held(callable, item, span);
+        let not = |call: Expr| Expr { ty: bool_ty, kind: ExprKind::Unary { op: UnOp::Not, operand: Box::new(call) }, span };
+        let next_turn = || Block { stmts: vec![Stmt::Continue { depth: 0 }], span };
+        match stage {
+            FusedStage::Map => {
+                let name = Symbol::intern(&format!("$item{}", at + 1));
+                let held = self.declare(Some(name), call.ty, span);
+                out.push(Stmt::Let { local: held, init: Some(call) });
+                out.extend(self.fused_stages(staged, at + 1, name, ended, pattern, body, label, span));
+            }
+            FusedStage::Inspect => {
+                out.push(Stmt::Expr(call));
+                out.extend(self.fused_stages(staged, at + 1, item, ended, pattern, body, label, span));
+            }
+            FusedStage::Filter => {
+                out.push(Stmt::If { cond: not(call), then_block: next_turn(), else_block: None });
+                out.extend(self.fused_stages(staged, at + 1, item, ended, pattern, body, label, span));
+            }
+            FusedStage::TakeWhile => {
+                let mut stop = Vec::new();
+                if let Some(ended) = ended {
+                    stop.push(Stmt::Assign {
+                        place: Expr { ty: bool_ty, kind: ExprKind::Local(ended), span },
+                        value: Expr { ty: bool_ty, kind: ExprKind::Bool(true), span },
+                    });
+                }
+                stop.push(Stmt::Break { depth: 0 });
+                out.push(Stmt::If { cond: not(call), then_block: Block { stmts: stop, span }, else_block: None });
+                out.extend(self.fused_stages(staged, at + 1, item, ended, pattern, body, label, span));
+            }
+            FusedStage::SkipWhile => {
+                let flag = flag.expect("`skip_while` keeps whether it has started");
+                let started = Expr { ty: bool_ty, kind: ExprKind::Local(flag), span };
+                let start = Stmt::Assign { place: started.clone(), value: Expr { ty: bool_ty, kind: ExprKind::Bool(true), span } };
+                let leading = Stmt::If { cond: call, then_block: next_turn(), else_block: None };
+                out.push(Stmt::If { cond: not(started), then_block: Block { stmts: vec![leading, start], span }, else_block: None });
+                out.extend(self.fused_stages(staged, at + 1, item, ended, pattern, body, label, span));
+            }
+            FusedStage::FilterMap => {
+                let TyKind::Enum(id) = *self.types.kind(call.ty) else {
+                    // The bound says `Option[R]`; anything else was reported.
+                    out.push(Stmt::Expr(call));
+                    return out;
+                };
+                let payload = self.types.enum_def(id).variants[1].fields[0].ty;
+                self.scopes.push(HashMap::new());
+                let name = Symbol::intern(&format!("$item{}", at + 1));
+                let bound = self.declare(Some(name), payload, span);
+                let rest = self.fused_stages(staged, at + 1, name, ended, pattern, body, label, span);
+                self.scopes.pop();
+                let scrutinee_ty = call.ty;
+                let arm = |variant: usize, fields: Vec<hir::Pattern>, stmts: Vec<Stmt>| hir::MatchArm {
+                    pattern: hir::Pattern { ty: scrutinee_ty, kind: hir::PatternKind::Variant { enum_id: id, variant, fields }, span },
+                    guard: None,
+                    body: hir::MatchArmBody::Block(Block { stmts, span }),
+                    span,
+                };
+                let some = arm(
+                    1,
+                    vec![hir::Pattern { ty: payload, kind: hir::PatternKind::Bind { local: bound, sub: None, by_ref: None }, span }],
+                    rest,
+                );
+                let none = arm(0, Vec::new(), vec![Stmt::Continue { depth: 0 }]);
+                let void = self.common.void;
+                out.push(Stmt::Expr(Expr {
+                    ty: void,
+                    kind: ExprKind::Match { scrutinee: Box::new(call), arms: vec![some, none] },
+                    span,
+                }));
+            }
+        }
+        out
+    }
+
+    /// `callable(item)`, both held under hidden names: checked as the call
+    /// `$stage0($item0)` is, so its argument's mode and borrows are the
+    /// adapter's.
+    fn call_held(&mut self, callable: Symbol, item: Symbol, span: Span) -> Expr {
+        let path = |name: Symbol| ast::Expr {
+            id: ast::NodeId::DUMMY,
+            kind: ast::ExprKind::Path { segments: vec![ast::Ident { name, span }] },
+            span,
+        };
+        if let Some(def) = callable.as_str().strip_prefix("$direct").and_then(|def| def.parse::<u32>().ok()) {
+            return self.synth_known_function_call(DefId(def), &[ast::Arg { name: None, value: path(item), span }], span, false);
+        }
+        let call = ast::Expr {
+            id: ast::NodeId::DUMMY,
+            kind: ast::ExprKind::Call { callee: Box::new(path(callable)), args: vec![ast::Arg { name: None, value: path(item), span }] },
+            span,
+        };
+        self.synth(&call)
+    }
+
+    /// The `for` pattern bound to a stage's item, as `bind_fused_item` binds
+    /// one of the links'.
+    fn bind_fused_value(&mut self, pattern: &ast::Pattern, value: Expr, inner: &mut Vec<Stmt>) {
+        // A tuple the stages made (`enumerate` below a `filter`) binds each
+        // part by its field, as `bind_fused_item` binds a pair's parts.
+        if let ast::PatternKind::Tuple(items) = &pattern.kind
+            && let TyKind::Tuple(fields) = self.types.kind(value.ty).clone()
+            && fields.len() == items.len()
+        {
+            for (index, (item, ty)) in items.iter().zip(fields).enumerate() {
+                let part = Expr { ty, kind: ExprKind::Field { base: Box::new(value.clone()), index }, span: value.span };
+                self.bind_fused_value(item, part, inner);
+            }
+            return;
+        }
+        let simple = matches!(pattern.kind, ast::PatternKind::Bind { .. });
+        let ty = value.ty;
+        let bound = self.declare(simple.then(|| binding_name(pattern)).flatten(), ty, pattern.span);
+        inner.push(Stmt::Let { local: bound, init: Some(value) });
+        if !simple && !matches!(pattern.kind, ast::PatternKind::Wild) {
+            self.bind_borrowed_loop_pattern(pattern, bound, ty, inner);
+        }
     }
 
     /// `[CTL-3b]` — a fused loop's counter's first and last values: `0..n`,
@@ -19547,7 +19834,7 @@ impl<'a> Checker<'a> {
                 parts.extend(self.chained_parts(&args[1])?);
                 Some(parts)
             }
-            _ => Some(vec![self.fused_shape(e)?]),
+            _ => Some(vec![self.fused_links_shape(e)?]),
         }
     }
 

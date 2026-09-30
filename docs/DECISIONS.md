@@ -3556,3 +3556,51 @@ it is Phase 4's (`[EFF-*]`, `[DET-2]`).
 RandomState]` in insertion order; one key, one hash within a run),
 `HASH-2/accept_bytes_differing_in_their_tail_hash_apart` (D-405, both hashers), and
 `random_state_is_keyed_per_process` in `milestones.rs` (one program run twice hashes a key two ways).
+
+## ADR-091 — the closure adapters, and their stages in a counted loop
+
+2026-10-01, autonomous. `[STD-19]` lists `map`, `filter`, `filter_map`, `take_while`, `skip_while`
+and `inspect`; none existed, as they need an adapter that holds a callable, and the handoff had them
+waiting on `[CLO-3]`'s owned callable values.
+
+**They do not need owned callable values.** `[STD-19]` says adapters "allocate nothing themselves",
+and an owned callable value may allocate (`[CLO-10]`). So each adapter holds the callable by value,
+as a type parameter bounded by the callable type: `fn map[R, F: fn(Item) -> R](owned self, f: F) ->
+Map[Self, R, F]`, `struct Map[I, R, F]: inner: I; f: F`. A lambda's value is its environment, so the
+adapter is monomorphised per lambda, each call direct, and a lambda that borrows makes the adapter
+a view (`[TYP-15]`). This is `[CLO-14]`'s explicit bound, which was not built: D-406. The bound's
+`I.Item` is a projection read once every parameter is declared, as an interface bound's bindings
+are.
+
+**In a `for` (`[CTL-3b]`).** A chain is now links (the counted ones: `take`, `skip`, `step_by`,
+`enumerate`, `zip`, `copied`, `rev`) under stages (these six). The stages must all be above every
+link: under `skip`, `step_by` or `zip` a stage would run for items the link leaves out, which the
+counted loop never computes, so such a chain runs through `next` (a `take`, `enumerate` or `rev`
+over a `map` could be fused exactly; not done). Each stage's callable is evaluated once, after the
+links' iterators and counts, in call order, into a hidden local (a function, or a lambda that
+captures nothing, is called by name instead, so the call is direct under every C compiler). Each
+turn materialises the links' item and runs the stages on it as their `next` would: `map` makes the
+next item, `inspect` calls, `filter` goes on to the next turn, `filter_map`'s rest of the turn is its
+`Some` arm, `skip_while` keeps whether it has started, and `take_while` ends the loop; a loop with an
+`else` then runs it (the loop did run to its end) without the links' exhaustion checks (nothing
+below was exhausted), and a `break` still skips it. A tuple item binds its parts by field. The
+calls are checked as source calls on the hidden names, so modes and borrows are the adapter's:
+`inspect(fn(v) => seen.push(v))` holds `seen` for the loop, and reading it in the body is `E3021`.
+
+**Measured** (10 million `int`s, 60 rounds, median of 11). `for y in xs.iter().map(fn(x) => x * 3 +
+1): total += y`: through `next` 3.063 s with MSVC and 0.422 s with clang; fused 0.363 s and 0.371 s,
+against the same loop written by hand in Ember 0.379 s and 0.390 s, and C 0.299 s and 0.382 s (the
+difference from C is the overflow checks, as for the hand-written loop). `filter` (`x % 2 == 0`):
+through `next` 0.776 s and 0.372 s; fused 0.472-0.512 s and 0.433 s, by hand 0.431 s and 0.451 s, C
+0.264 s and 0.324 s. The C of the fused and hand-written `filter` loops differs by a copied pointer
+and a negated `bool`; moving the inlined predicate's block beside its caller changed nothing
+(0.518 s against 0.510 s), so MSVC's remaining 10-19 % there is not the layout.
+
+**Not built.** The stages are not double-ended (ODR-091 lists the adapters that run backwards, and
+these did not exist; a ruling would add them); `flat_map`, `flatten` and `peekable`.
+
+**Tests.** `STD-19/accept_the_closure_adapters` (each adapter through consumers and the `Iterable`
+form), `CTL-3b/accept_closure_adapters_are_stages_of_a_counted_loop` (each stage in a `for`, an
+`enumerate` pair through a `filter`, a `take_while` `else`, a `break` past a mapped `rev().skip()`;
+no `next` in the C), `CLO-14/accept_an_explicit_callable_bound_is_called_like_a_function` and
+`CLO-14/reject_a_bound_that_is_no_interface_or_callable` (D-406).
