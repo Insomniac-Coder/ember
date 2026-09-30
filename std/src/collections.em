@@ -177,18 +177,10 @@ pub struct DefaultHasher implements Hasher:
     fn write_bytes(mut self, bytes: Span[u8]):
         index = 0
         while index + 8 <= bytes.len():
-            word: u64 = 0
-            for k in range(8):
-                word = word | ((bytes[index + k] as u64) << ((8 * k) as u64))
-            self.mix(word)
+            self.mix(full_word(bytes, index))
             index = index + 8
         if index < bytes.len():
-            word: u64 = 0
-            k = 0
-            while index + k < bytes.len():
-                word = word | ((bytes[index + k] as u64) << ((8 * k) as u64))
-                k = k + 1
-            self.mix(word)
+            self.mix(tail_word(bytes, index))
 
     fn write_u8(mut self, x: u8):
         self.mix(x as u64)
@@ -226,6 +218,129 @@ pub struct DefaultHasher implements Hasher:
 extend DefaultHasher implements Default:
     fn default() -> DefaultHasher:
         return DefaultHasher.new()
+
+## The last one to seven bytes of `bytes`, from `index`, as one word, with
+## their count in its top byte (D-405): without it `"a"` and `"a\0"` gave one
+## word, so they hashed alike under every key.
+fn tail_word(bytes: Span[u8], index: int) -> u64:
+    word: u64 = 0
+    k = 0
+    while index + k < bytes.len():
+        word = word | ((bytes[index + k] as u64) << ((8 * k) as u64))
+        k = k + 1
+    return word | ((k as u64) << 56)
+
+## Every word of `bytes`, eight bytes to a word, then the tail's.
+fn full_word(bytes: Span[u8], index: int) -> u64:
+    word: u64 = 0
+    for k in range(8):
+        word = word | ((bytes[index + k] as u64) << ((8 * k) as u64))
+    return word
+
+## `[HASH-2]` — a per-process randomly seeded hasher, for maps keyed by
+## untrusted input: SipHash-1-3, keyed by 128 bits the process draws once from
+## the operating system, so which keys collide cannot be known outside it.
+## Its values differ from run to run and are never seen: a
+## `Map[K, V, RandomState]` iterates in insertion order (`[STD-11]`). Each
+## write is one 64-bit word of the message, bytes eight to a word as
+## `DefaultHasher` takes them; the result is SipHash-1-3 of the words'
+## little-endian bytes. No `Copy` derive is present: this state is moved.
+pub struct RandomState implements Hasher:
+    v0: u64
+    v1: u64
+    v2: u64
+    v3: u64
+    words: u64
+
+    pub fn new() -> RandomState:
+        k0 = process_key(0)
+        k1 = process_key(1)
+        return RandomState(k0 ^ 0x736f6d6570736575, k1 ^ 0x646f72616e646f6d, k0 ^ 0x6c7967656e657261, k1 ^ 0x7465646279746573, 0)
+
+    @overflow(wrap)
+    fn round(mut self):
+        self.v0 = self.v0 + self.v1
+        self.v1 = (self.v1 << 13) | (self.v1 >> 51)
+        self.v1 = self.v1 ^ self.v0
+        self.v0 = (self.v0 << 32) | (self.v0 >> 32)
+        self.v2 = self.v2 + self.v3
+        self.v3 = (self.v3 << 16) | (self.v3 >> 48)
+        self.v3 = self.v3 ^ self.v2
+        self.v0 = self.v0 + self.v3
+        self.v3 = (self.v3 << 21) | (self.v3 >> 43)
+        self.v3 = self.v3 ^ self.v0
+        self.v2 = self.v2 + self.v1
+        self.v1 = (self.v1 << 17) | (self.v1 >> 47)
+        self.v1 = self.v1 ^ self.v2
+        self.v2 = (self.v2 << 32) | (self.v2 >> 32)
+
+    @overflow(wrap)
+    fn mix(mut self, word: u64):
+        self.v3 = self.v3 ^ word
+        self.round()
+        self.v0 = self.v0 ^ word
+        self.words = self.words + 1
+
+    fn write_bytes(mut self, bytes: Span[u8]):
+        index = 0
+        while index + 8 <= bytes.len():
+            self.mix(full_word(bytes, index))
+            index = index + 8
+        if index < bytes.len():
+            self.mix(tail_word(bytes, index))
+
+    fn write_u8(mut self, x: u8):
+        self.mix(x as u64)
+
+    fn write_u16(mut self, x: u16):
+        self.mix(x as u64)
+
+    fn write_u32(mut self, x: u32):
+        self.mix(x as u64)
+
+    fn write_u64(mut self, x: u64):
+        self.mix(x)
+
+    fn write_i8(mut self, x: i8):
+        self.mix(x as u64)
+
+    fn write_i16(mut self, x: i16):
+        self.mix(x as u64)
+
+    fn write_i32(mut self, x: i32):
+        self.mix(x as u64)
+
+    fn write_i64(mut self, x: i64):
+        self.mix(x as u64)
+
+    fn write_usize(mut self, x: usize):
+        self.mix(x as u64)
+
+    fn write_isize(mut self, x: isize):
+        self.mix(x as u64)
+
+    @overflow(wrap)
+    fn finish(owned self) -> u64:
+        s = self
+        last: u64 = ((s.words * 8) & 0xff) << 56
+        s.v3 = s.v3 ^ last
+        s.round()
+        s.v0 = s.v0 ^ last
+        s.v2 = s.v2 ^ 0xff
+        s.round()
+        s.round()
+        s.round()
+        return s.v0 ^ s.v1 ^ s.v2 ^ s.v3
+
+extend RandomState implements Default:
+    fn default() -> RandomState:
+        return RandomState.new()
+
+## `[HASH-2]` — word `which` (0 or 1) of the process's hash key, which the
+## runtime draws from the operating system at the first call. The compiler
+## makes a call the runtime's `process_key`; this staging body never runs.
+fn process_key(which: int) -> u64:
+    return 0
 
 ## One entry: its hash, kept so growing never hashes again, its key and its
 ## value.

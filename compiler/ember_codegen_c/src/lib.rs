@@ -5964,6 +5964,9 @@ impl Emitter<'_> {
                     Builtin::CloneParts { .. } => {
                         unreachable!("CloneParts writes directly into its MIR destination")
                     }
+                    Builtin::ProcessKey => {
+                        return format!("{RT}process_key({})", rendered[0]);
+                    }
                     Builtin::StrContainsChar => {
                         return format!("{RT}str_contains_char({}, {})", rendered[0], rendered[1]);
                     }

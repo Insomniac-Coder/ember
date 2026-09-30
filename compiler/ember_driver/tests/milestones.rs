@@ -809,6 +809,36 @@ fn runtime_thread_attachment_is_thread_local() {
         run.status, String::from_utf8_lossy(&run.stderr));
 }
 
+/// `[HASH-2]` — a `RandomState` is keyed once per process from the operating
+/// system: one program run twice hashes one key two ways, and within a run
+/// one way.
+#[test]
+fn random_state_is_keyed_per_process() {
+    let root = workspace_root();
+    let directory = temporary_directory("random-state");
+    let program = directory.join(ember_branding::source_file("seeded"));
+    std::fs::write(&program,
+        "from std.collections import RandomState
+
+fn seeded(s: str) -> u64:
+    h = RandomState.new()
+    s.hash(h)
+    return h.finish()
+
+fn main():
+    println(seeded(\"key\") == seeded(\"key\"), seeded(\"key\"))
+")
+        .expect("the program is writable");
+    let program = program.to_string_lossy().into_owned();
+    let out = directory.join("target").to_string_lossy().into_owned();
+    let first = ember(&["run", &program, "--out-dir", &out], &root);
+    let second = ember(&["run", &program, "--out-dir", &out], &root);
+    assert_eq!(first.exit, 0, "the first run failed: {}", first.stderr);
+    assert_eq!(second.exit, 0, "the second run failed: {}", second.stderr);
+    assert!(first.stdout.starts_with("true "), "one key hashed two ways in one run: {}", first.stdout);
+    assert_ne!(first.stdout, second.stdout, "two runs drew one key");
+}
+
 /// `[FFI-26]` — an imported Ember module preserves its asserted linker name.
 #[test]
 fn imported_module_export_keeps_its_c_symbol() {

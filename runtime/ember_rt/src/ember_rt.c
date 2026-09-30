@@ -730,6 +730,65 @@ static bool object_compare_exchange_u32(uint32_t* value, uint32_t* expected, uin
 }
 #endif
 
+/* -- [HASH-2] the process's hash key ------------------------------------ */
+
+/* 128 bits from the operating system's generator: `rand_s` (the CRT's call
+ * to RtlGenRandom, no extra library) on Windows, `getrandom` on Linux and
+ * `arc4random_buf` elsewhere. A source that fails leaves the time, the
+ * key's own address and a counter, which still differ from run to run.
+ * The first caller draws the key; any other waits until it is published. */
+#if defined(_WIN32)
+int __cdecl rand_s(unsigned int* value);
+#elif defined(__linux__)
+#include <sys/random.h>
+#endif
+#include <time.h>
+
+static uint64_t g_process_key[2];
+static uint32_t g_process_key_state; /* 0 not drawn, 1 drawing, 2 ready */
+
+static void process_key_draw(uint64_t key[2]) {
+    unsigned char bytes[16];
+    bool drawn = false;
+#if defined(_WIN32)
+    drawn = true;
+    for (int i = 0; i < 4; i++) {
+        unsigned int word = 0;
+        if (rand_s(&word) != 0) {
+            drawn = false;
+            break;
+        }
+        memcpy(bytes + 4 * i, &word, 4);
+    }
+#elif defined(__linux__)
+    drawn = getrandom(bytes, sizeof bytes, 0) == (ssize_t)sizeof bytes;
+#else
+    arc4random_buf(bytes, sizeof bytes);
+    drawn = true;
+#endif
+    if (drawn) {
+        memcpy(key, bytes, sizeof bytes);
+        return;
+    }
+    key[0] = (uint64_t)time(NULL) * 0x9E3779B97F4A7C15ull ^ (uint64_t)(uintptr_t)key;
+    key[1] = (uint64_t)clock() * 0xC2B2AE3D27D4EB4Full ^ (uint64_t)(uintptr_t)&drawn;
+}
+
+uint64_t ember_process_key(int64_t which) {
+    if (object_load_u32(&g_process_key_state) != 2) {
+        uint32_t expected = 0;
+        if (object_compare_exchange_u32(&g_process_key_state, &expected, 1)) {
+            process_key_draw(g_process_key);
+            expected = 1;
+            object_compare_exchange_u32(&g_process_key_state, &expected, 2);
+        } else {
+            while (object_load_u32(&g_process_key_state) != 2) {
+            }
+        }
+    }
+    return g_process_key[which & 1];
+}
+
 static bool object_is_sync(const ember_obj_header* object) {
     return object->ti != NULL && (object->ti->flags & EMBER_TI_SYNC) != 0;
 }

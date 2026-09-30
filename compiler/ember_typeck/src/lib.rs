@@ -9512,6 +9512,23 @@ impl<'a> Checker<'a> {
         if let Some(built) = self.synth_mem_ownership_builtin(name, args, explicit, span) {
             return Some(built);
         }
+        // `[HASH-2]` — `std.collections`'s own `process_key(which)`, the
+        // process's hash key, which the runtime draws.
+        if self.resolve_name(name).is("std.collections.process_key") {
+            let int_ty = self.common.i64;
+            let which = match args {
+                [arg] if arg.name.is_none() => self.check_expr(&arg.value, int_ty),
+                _ => {
+                    self.error(codes::E2020, span, "`process_key` takes 1 argument");
+                    return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+                }
+            };
+            return Some(Expr {
+                ty: self.common.u64,
+                kind: ExprKind::Builtin { which: Builtin::ProcessKey, args: vec![which] },
+                span,
+            });
+        }
         let usize_ty = self.common.usize;
         let void = self.common.void;
         let resolved = self.resolve_name(name);

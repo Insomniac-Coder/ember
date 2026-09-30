@@ -3529,3 +3529,30 @@ element), and `Display`/`Debug` bounds hold as the representation's. `Default` d
 `RNG-5a1/reject_what_a_range_type_does_not_implement` (`Default`, `Add` of another range type, an
 integer's `Div`, a float range as a `Map` key), `RNG-8/accept_a_range_value_shows_as_its_representation`
 (`println`, f-string specs, inside an `Array`; `E0900` before).
+
+## ADR-090 — `RandomState`: SipHash-1-3 keyed once per process from the operating system
+
+2026-10-01, autonomous. `[HASH-2]` names `std.collections.RandomState`, "a per-process randomly
+seeded hasher for maps keyed by untrusted input"; it did not exist.
+
+**The hash.** SipHash-1-3, the keyed hash Rust's `RandomState` uses for the same purpose: which
+keys collide depends on a 128-bit key an attacker does not know. The message is the hasher's writes,
+each one 64-bit word (bytes eight to a word, as `DefaultHasher` takes them), and the result is
+SipHash-1-3 of those words' little-endian bytes, checked against a reference that reproduces the
+published SipHash-2-4 vectors (four inputs, equal to the bit). `write_bytes` ends with the tail's
+byte count in the tail word's top byte (D-405), so no two byte strings give one message.
+
+**The key.** Drawn at the first `RandomState.new()` by the runtime's `ember_process_key`: `rand_s`
+on Windows (the CRT's call to `RtlGenRandom`, so no library to link), `getrandom` on Linux and
+`arc4random_buf` elsewhere; should the source fail, the time, a clock reading and two addresses. The
+first caller draws it and publishes it with a release compare-exchange; any other waits for that.
+std reaches it through a private `process_key(which)` whose call the checker makes the built-in
+(`Builtin::ProcessKey`), as `std.mem`'s staged functions are.
+
+**Not built:** ODR-033 makes creating a `RandomState` `Nondet`; the effect system that would record
+it is Phase 4's (`[EFF-*]`, `[DET-2]`).
+
+**Tests.** `HASH-2/accept_a_random_state_map_keeps_insertion_order` (a `Map[String, int,
+RandomState]` in insertion order; one key, one hash within a run),
+`HASH-2/accept_bytes_differing_in_their_tail_hash_apart` (D-405, both hashers), and
+`random_state_is_keyed_per_process` in `milestones.rs` (one program run twice hashes a key two ways).

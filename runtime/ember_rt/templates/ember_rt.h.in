@@ -1459,6 +1459,10 @@ void ember_vec_push_char(ember_vec* out, uint32_t c);
  * encoding. */
 bool ember_str_contains(ember_str text, ember_str needle);
 bool ember_str_contains_char(ember_str text, uint32_t needle);
+/* [HASH-2] Word `which` (0 or 1) of the process's 128-bit hash key, drawn
+ * from the operating system at the first call and the same for the rest of
+ * the process. */
+uint64_t ember_process_key(int64_t which);
 /* `[TXT-10]` — searches by bytes over valid UTF-8, so a needle matches only
  * whole characters. `find`/`rfind` give a byte offset, or -1; `count` counts
  * non-overlapping matches (an empty needle matches between characters, as
