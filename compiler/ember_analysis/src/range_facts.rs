@@ -7,7 +7,12 @@
 //! `[RNG-9]`), arithmetic on known ranges, copies and conversions, the arm of
 //! a comparison a branch took, a check that passed, and a list's `len()`.
 //! Loops are handled by widening at their headers and then narrowing once, so
-//! a `for i in a..b` counter carries `a <= i < b` in its body.
+//! a `for i in a..b` counter carries `a <= i < b` in its body. A bound that
+//! moves is first widened to the nearest constant the loop holds (or one
+//! either side of it), and only past the last to its type's end: a value the
+//! loop only raises towards a limit it computes (`best = larger(best, x % m)`)
+//! keeps that limit. A call to a function that only ever returns one of its
+//! parameters unchanged gives one of those arguments (`returned_arguments`).
 //!
 //! What the facts show can never fail is removed: an overflow check whose
 //! exact result fits its type (`[TYP-8]`), a bounds check whose index is below
@@ -45,8 +50,9 @@ use crate::regions::place_type;
 /// Returns how many checks went and how many branches were folded; a fold
 /// can remove what a body reads, so its callable summary is made again.
 pub fn remove_proven_checks_all(bodies: &mut [Body], types: &TypeTable, common: &CommonTypes) -> (usize, usize) {
+    let returns = returned_arguments(bodies);
     bodies.iter_mut().fold((0, 0), |(checks, folds), body| {
-        let (more_checks, more_folds) = remove_proven_checks(body, types, common);
+        let (more_checks, more_folds) = remove_proven_checks(body, types, common, &returns);
         (checks + more_checks, folds + more_folds)
     })
 }
@@ -289,7 +295,7 @@ impl State {
     /// a local the loop itself writes is widened (`changed`); any other grew
     /// on the way in, from an enclosing loop that widens it, and is joined, so
     /// an outer counter keeps its range inside an inner loop.
-    fn widen(&self, next: &State, analysis: &Analysis, changed: &HashSet<LocalId>) -> State {
+    fn widen(&self, next: &State, analysis: &Analysis, changed: &HashSet<LocalId>, thresholds: &[i128]) -> State {
         let mut ranges = BTreeMap::new();
         for (var, old) in &self.ranges {
             let Some(new) = next.ranges.get(var) else { continue };
@@ -298,8 +304,11 @@ impl State {
                 Var::Local(local) => changed.contains(local),
                 Var::Len(_) => true,
             };
-            let lo = if new.lo < old.lo { if widened { full.lo } else { new.lo } } else { old.lo };
-            let hi = if new.hi > old.hi { if widened { full.hi } else { new.hi } } else { old.hi };
+            // The nearest threshold past the moved bound, else the type's end.
+            let up = || thresholds.iter().copied().find(|&t| t >= new.hi && t < full.hi).unwrap_or(full.hi);
+            let down = || thresholds.iter().rev().copied().find(|&t| t <= new.lo && t > full.lo).unwrap_or(full.lo);
+            let lo = if new.lo < old.lo { if widened { down() } else { new.lo } } else { old.lo };
+            let hi = if new.hi > old.hi { if widened { up() } else { new.hi } } else { old.hi };
             if (Interval { lo, hi }) != full {
                 ranges.insert(*var, Interval { lo, hi });
             }
@@ -404,15 +413,86 @@ pub(crate) struct Analysis<'a> {
     /// Ranges known at a loop header whatever the path in: each counted
     /// loop's running totals (`accumulator_bounds`).
     seeds: Vec<(usize, Var, Interval)>,
+    /// Per function symbol, the parameters (by position) it may return: it
+    /// returns nothing else, and changes none of them.
+    returns: &'a HashMap<String, Vec<usize>>,
+}
+
+/// Per function symbol, the parameters (by position) every value it returns
+/// is one of, unchanged: no parameter is written or lent mutably, and the
+/// return place is only ever a copy of one and never lent mutably. Bodies sharing a symbol must
+/// agree, or the symbol has no entry.
+pub(crate) fn returned_arguments(bodies: &[Body]) -> HashMap<String, Vec<usize>> {
+    let mut found: HashMap<String, Option<Vec<usize>>> = HashMap::new();
+    for body in bodies {
+        let summary = arguments_returned(body);
+        found
+            .entry(body.symbol.clone())
+            .and_modify(|seen| {
+                if *seen != summary {
+                    *seen = None;
+                }
+            })
+            .or_insert(summary);
+    }
+    found.into_iter().filter_map(|(symbol, summary)| Some((symbol, summary?))).collect()
+}
+
+fn arguments_returned(body: &Body) -> Option<Vec<usize>> {
+    let ret = LocalId(0);
+    let is_param = |local: LocalId| (1..=body.arg_count).contains(&(local.0 as usize));
+    let mut returned = BTreeSet::new();
+    for data in &body.blocks {
+        for stmt in &data.stmts {
+            match &stmt.kind {
+                StmtKind::Assign { place, rvalue } => {
+                    if place.local == ret {
+                        let Rvalue::Use(Operand::Copy(source) | Operand::Move(source)) = rvalue else { return None };
+                        if !place.projection.is_empty() || !source.projection.is_empty() || !is_param(source.local) {
+                            return None;
+                        }
+                        returned.insert(source.local.0 as usize - 1);
+                    } else if is_param(place.local) {
+                        return None;
+                    }
+                    if let Rvalue::Ref { place: target, mutable: true } = rvalue
+                        && (target.local == ret || is_param(target.local))
+                    {
+                        return None;
+                    }
+                }
+                StmtKind::CheckedBinaryOp { dest, overflow, .. } => {
+                    if [dest.local, overflow.local].iter().any(|&local| local == ret || is_param(local)) {
+                        return None;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Terminator::Call { dest, .. } = &data.terminator
+            && (dest.local == ret || is_param(dest.local))
+        {
+            return None;
+        }
+    }
+    (!returned.is_empty()).then(|| returned.into_iter().collect())
 }
 
 /// Rounds before a body is left without facts: a guard, since widening
 /// bounds every chain.
 const MAX_ROUNDS: usize = 200;
 
+/// The most thresholds one loop's widening tries.
+const MAX_THRESHOLDS: usize = 64;
+
 impl<'a> Analysis<'a> {
     /// The facts of `body`, or `None` when they did not settle.
-    pub(crate) fn run(body: &'a Body, types: &'a TypeTable, common: &CommonTypes) -> Option<Analysis<'a>> {
+    pub(crate) fn run(
+        body: &'a Body,
+        types: &'a TypeTable,
+        common: &CommonTypes,
+        returns: &'a HashMap<String, Vec<usize>>,
+    ) -> Option<Analysis<'a>> {
         let isize_max = type_range(types, common.isize)?.hi;
         let mut analysis = Analysis {
             body,
@@ -425,6 +505,7 @@ impl<'a> Analysis<'a> {
             len_ranges: Vec::new(),
             entry: Vec::new(),
             seeds: Vec::new(),
+            returns,
         };
         analysis.tracked = analysis.tracked_locals();
         analysis.views = analysis.collect_views();
@@ -1483,6 +1564,16 @@ impl<'a> Analysis<'a> {
                 out
             }
             Terminator::Call { func, args, dest, next } => {
+                // A function that returns one of its parameters unchanged
+                // gives one of those arguments.
+                let returned = match func {
+                    FuncRef::Direct { symbol, .. } => self.returns.get(symbol).and_then(|params| {
+                        let ranges: Option<Vec<Interval>> =
+                            params.iter().map(|&p| args.get(p).and_then(|arg| self.operand_range(&state, arg))).collect();
+                        ranges?.into_iter().reduce(Interval::hull)
+                    }),
+                    _ => None,
+                };
                 for arg in args {
                     self.forget_moved(&mut state, arg);
                 }
@@ -1520,6 +1611,9 @@ impl<'a> Analysis<'a> {
                                 self.set_local(&mut state, local, Some(range), rels);
                             }
                         }
+                        FuncRef::Direct { .. } if returned.is_some() && self.tracked[local.0 as usize] => {
+                            self.set_local(&mut state, local, returned, Vec::new());
+                        }
                         _ => {}
                     }
                 }
@@ -1547,12 +1641,76 @@ impl<'a> Analysis<'a> {
         state
     }
 
+    /// The facts, widening with thresholds; if that does not settle within
+    /// the rounds allowed, without them, so a body never loses facts it had.
     fn solve(&mut self) -> Option<()> {
+        self.solve_with(true).or_else(|| self.solve_with(false))
+    }
+
+    /// Per loop header, the thresholds its widening tries: every integer
+    /// constant the loop holds and one either side of it, at most
+    /// `MAX_THRESHOLDS` of them, nearest zero first.
+    fn thresholds(&self, order: &[usize], headers: &HashSet<usize>) -> HashMap<usize, Vec<i128>> {
+        let mut out = HashMap::new();
+        for (header, inside) in natural_loops(self.body, order, headers) {
+            let mut values = BTreeSet::new();
+            let mut cases: Vec<i128> = Vec::new();
+            let mut add = |operand: &Operand| {
+                if let Operand::Const(Const::Int { value, ty }) = operand
+                    && let Some(value) = constant(self.types, *value, *ty)
+                {
+                    values.extend([value.saturating_sub(1), value, value.saturating_add(1)]);
+                }
+            };
+            for &block in &inside {
+                let data = &self.body.blocks[block];
+                for stmt in &data.stmts {
+                    match &stmt.kind {
+                        StmtKind::Assign { rvalue, .. } => match rvalue {
+                            Rvalue::Use(a) | Rvalue::UnaryOp { operand: a, .. } | Rvalue::Cast { operand: a, .. } => add(a),
+                            Rvalue::BinaryOp { lhs, rhs, .. } => {
+                                add(lhs);
+                                add(rhs);
+                            }
+                            Rvalue::Aggregate { operands, .. } => operands.iter().for_each(&mut add),
+                            Rvalue::Repeat { value, .. } => add(value),
+                            Rvalue::Discriminant(_) | Rvalue::Ref { .. } => {}
+                        },
+                        StmtKind::CheckedBinaryOp { lhs, rhs, .. } => {
+                            add(lhs);
+                            add(rhs);
+                        }
+                        _ => {}
+                    }
+                }
+                match &data.terminator {
+                    Terminator::Call { args, .. } => args.iter().for_each(&mut add),
+                    Terminator::SwitchInt { targets, .. } => {
+                        for (value, _) in targets {
+                            cases.extend([value.saturating_sub(1), *value, value.saturating_add(1)]);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            values.extend(cases);
+            let mut values: Vec<i128> = values.into_iter().collect();
+            values.sort_by_key(|value| value.unsigned_abs());
+            values.truncate(MAX_THRESHOLDS);
+            values.sort();
+            out.insert(header, values);
+        }
+        out
+    }
+
+    fn solve_with(&mut self, use_thresholds: bool) -> Option<()> {
         let n = self.body.blocks.len();
         let order = reverse_postorder(self.body);
         let headers = loop_headers(self.body, &order);
         let loop_writes = loop_writes(self.body, &order, &headers);
+        let thresholds = if use_thresholds { self.thresholds(&order, &headers) } else { HashMap::new() };
         let unchanged = HashSet::new();
+        let none: Vec<i128> = Vec::new();
         let mut entry: Vec<Option<State>> = vec![None; n];
         entry[0] = Some(State::default());
         let mut visits = vec![0usize; n];
@@ -1575,7 +1733,12 @@ impl<'a> Analysis<'a> {
                         Some(old) => {
                             let joined = old.join(&incoming);
                             if headers.contains(&target) && visits[target] > 1 {
-                                old.widen(&joined, self, loop_writes.get(&target).unwrap_or(&unchanged))
+                                old.widen(
+                                    &joined,
+                                    self,
+                                    loop_writes.get(&target).unwrap_or(&unchanged),
+                                    thresholds.get(&target).unwrap_or(&none),
+                                )
                             } else {
                                 joined
                             }
@@ -2130,7 +2293,12 @@ fn loop_writes(body: &Body, order: &[usize], headers: &HashSet<usize>) -> HashMa
 // ---------------------------------------------------------------------------
 // Removing the checks.
 
-fn remove_proven_checks(body: &mut Body, types: &TypeTable, common: &CommonTypes) -> (usize, usize) {
+fn remove_proven_checks(
+    body: &mut Body,
+    types: &TypeTable,
+    common: &CommonTypes,
+    returns: &HashMap<String, Vec<usize>>,
+) -> (usize, usize) {
     // What to change, found on the unchanged body.
     struct Removal {
         block: usize,
@@ -2139,7 +2307,7 @@ fn remove_proven_checks(body: &mut Body, types: &TypeTable, common: &CommonTypes
         checked: Option<(Interval, Interval)>,
     }
     let removals: Vec<Removal> = {
-        let Some(analysis) = Analysis::run(body, types, common) else { return (0, 0) };
+        let Some(analysis) = Analysis::run(body, types, common, returns) else { return (0, 0) };
         let mut removals = Vec::new();
         let reached: HashSet<usize> = reverse_postorder(body).into_iter().collect();
         for block in 0..body.blocks.len() {
@@ -2224,7 +2392,7 @@ fn remove_proven_checks(body: &mut Body, types: &TypeTable, common: &CommonTypes
         removals
     };
     // A branch whose test the facts decide goes one way.
-    let folds = Analysis::run(body, types, common).map_or_else(Vec::new, |analysis| analysis.decided_branches());
+    let folds = Analysis::run(body, types, common, returns).map_or_else(Vec::new, |analysis| analysis.decided_branches());
     for removal in &removals {
         let span = body.blocks[removal.block].terminator_span;
         let Terminator::Assert { next, cond, .. } = body.blocks[removal.block].terminator.clone() else {

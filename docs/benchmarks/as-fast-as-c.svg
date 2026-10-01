@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1164" height="1666" viewBox="0 0 1164 1666" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14">
-<rect width="1164" height="1666" fill="#0d1117" rx="6"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1164" height="1706" viewBox="0 0 1164 1706" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14">
+<rect width="1164" height="1706" fill="#0d1117" rx="6"/>
 <text x="16" y="46" fill="#9198a1" font-size="12">What the program does</text>
 <text x="545.0" y="22" fill="#e6edf3" font-weight="600" text-anchor="middle">MSVC</text>
 <line x1="440" y1="30" x2="650" y2="30" stroke="#30363d"/>
@@ -248,125 +248,135 @@
 <text x="992" y="1103.0" fill="#9198a1" text-anchor="end">263 ms</text>
 <text x="1066" y="1103.0" fill="#e6edf3" text-anchor="end">261 ms</text>
 <text x="1140" y="1103.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
-<rect x="0" y="1118" width="1164" height="60" fill="#151b23"/>
-<text x="16" y="1143" fill="#e6edf3" xml:space="preserve">Walk two 1-million-number lists side by side, changing one (<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">zip</tspan>),</text>
-<text x="16" y="1163" fill="#e6edf3" xml:space="preserve">300 times</text>
-<text x="500" y="1153.0" fill="#9198a1" text-anchor="end">127 ms</text>
-<text x="574" y="1153.0" fill="#e6edf3" text-anchor="end">118 ms</text>
-<text x="648" y="1153.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.93</text>
-<text x="746" y="1153.0" fill="#9198a1" text-anchor="end">117 ms</text>
-<text x="820" y="1153.0" fill="#e6edf3" text-anchor="end">117 ms</text>
-<text x="894" y="1153.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<text x="992" y="1153.0" fill="#9198a1" text-anchor="end">114 ms</text>
-<text x="1066" y="1153.0" fill="#e6edf3" text-anchor="end">114 ms</text>
-<text x="1140" y="1153.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<text x="16" y="1203" fill="#e6edf3" xml:space="preserve">Every third number of a list, after skipping some, at most 300,000 of</text>
-<text x="16" y="1223" fill="#e6edf3" xml:space="preserve">them (<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">skip</tspan>, <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">step_by</tspan>, <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">take</tspan>), 300 times</text>
-<text x="500" y="1213.0" fill="#9198a1" text-anchor="end">61 ms</text>
-<text x="574" y="1213.0" fill="#e6edf3" text-anchor="end">60 ms</text>
-<text x="648" y="1213.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
-<text x="746" y="1213.0" fill="#9198a1" text-anchor="end">55 ms</text>
-<text x="820" y="1213.0" fill="#e6edf3" text-anchor="end">54 ms</text>
-<text x="894" y="1213.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
-<text x="992" y="1213.0" fill="#9198a1" text-anchor="end">48 ms</text>
-<text x="1066" y="1213.0" fill="#e6edf3" text-anchor="end">46 ms</text>
-<text x="1140" y="1213.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.96</text>
-<rect x="0" y="1238" width="1164" height="40" fill="#151b23"/>
-<text x="16" y="1263" fill="#e6edf3" xml:space="preserve">Add one list into another, 2,000 rounds, overflow checks on ¹</text>
-<text x="500" y="1263.0" fill="#9198a1" text-anchor="end">40 ms</text>
-<text x="574" y="1263.0" fill="#e6edf3" text-anchor="end">40 ms</text>
-<text x="648" y="1263.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
-<text x="746" y="1263.0" fill="#9198a1" text-anchor="end">48 ms</text>
-<text x="820" y="1263.0" fill="#e6edf3" text-anchor="end">47 ms</text>
-<text x="894" y="1263.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.98</text>
-<text x="992" y="1263.0" fill="#9198a1" text-anchor="end">37 ms</text>
-<text x="1066" y="1263.0" fill="#e6edf3" text-anchor="end">36 ms</text>
-<text x="1140" y="1263.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.97</text>
-<text x="16" y="1303" fill="#e6edf3" xml:space="preserve">Call a function passed as a value, 200 million times</text>
-<text x="500" y="1303.0" fill="#9198a1" text-anchor="end">103 ms</text>
-<text x="574" y="1303.0" fill="#e6edf3" text-anchor="end">105 ms</text>
-<text x="648" y="1303.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.02</text>
-<text x="746" y="1303.0" fill="#9198a1" text-anchor="end">125 ms</text>
-<text x="820" y="1303.0" fill="#e6edf3" text-anchor="end">125 ms</text>
-<text x="894" y="1303.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<text x="992" y="1303.0" fill="#9198a1" text-anchor="end">91 ms</text>
-<text x="1066" y="1303.0" fill="#e6edf3" text-anchor="end">88 ms</text>
+<rect x="0" y="1118" width="1164" height="40" fill="#151b23"/>
+<text x="16" y="1143" fill="#e6edf3" xml:space="preserve">A generic function (&quot;larger of two&quot;), 200 million times</text>
+<text x="500" y="1143.0" fill="#9198a1" text-anchor="end">125 ms</text>
+<text x="574" y="1143.0" fill="#e6edf3" text-anchor="end">117 ms</text>
+<text x="648" y="1143.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.93</text>
+<text x="746" y="1143.0" fill="#9198a1" text-anchor="end">108 ms</text>
+<text x="820" y="1143.0" fill="#e6edf3" text-anchor="end">108 ms</text>
+<text x="894" y="1143.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="992" y="1143.0" fill="#9198a1" text-anchor="end">101 ms</text>
+<text x="1066" y="1143.0" fill="#e6edf3" text-anchor="end">99 ms</text>
+<text x="1140" y="1143.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.98</text>
+<text x="16" y="1183" fill="#e6edf3" xml:space="preserve">Walk two 1-million-number lists side by side, changing one (<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">zip</tspan>),</text>
+<text x="16" y="1203" fill="#e6edf3" xml:space="preserve">300 times</text>
+<text x="500" y="1193.0" fill="#9198a1" text-anchor="end">127 ms</text>
+<text x="574" y="1193.0" fill="#e6edf3" text-anchor="end">118 ms</text>
+<text x="648" y="1193.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.93</text>
+<text x="746" y="1193.0" fill="#9198a1" text-anchor="end">117 ms</text>
+<text x="820" y="1193.0" fill="#e6edf3" text-anchor="end">117 ms</text>
+<text x="894" y="1193.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="992" y="1193.0" fill="#9198a1" text-anchor="end">114 ms</text>
+<text x="1066" y="1193.0" fill="#e6edf3" text-anchor="end">114 ms</text>
+<text x="1140" y="1193.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<rect x="0" y="1218" width="1164" height="60" fill="#151b23"/>
+<text x="16" y="1243" fill="#e6edf3" xml:space="preserve">Every third number of a list, after skipping some, at most 300,000 of</text>
+<text x="16" y="1263" fill="#e6edf3" xml:space="preserve">them (<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">skip</tspan>, <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">step_by</tspan>, <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">take</tspan>), 300 times</text>
+<text x="500" y="1253.0" fill="#9198a1" text-anchor="end">61 ms</text>
+<text x="574" y="1253.0" fill="#e6edf3" text-anchor="end">60 ms</text>
+<text x="648" y="1253.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
+<text x="746" y="1253.0" fill="#9198a1" text-anchor="end">55 ms</text>
+<text x="820" y="1253.0" fill="#e6edf3" text-anchor="end">54 ms</text>
+<text x="894" y="1253.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
+<text x="992" y="1253.0" fill="#9198a1" text-anchor="end">48 ms</text>
+<text x="1066" y="1253.0" fill="#e6edf3" text-anchor="end">46 ms</text>
+<text x="1140" y="1253.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.96</text>
+<text x="16" y="1303" fill="#e6edf3" xml:space="preserve">Add one list into another, 2,000 rounds, overflow checks on ¹</text>
+<text x="500" y="1303.0" fill="#9198a1" text-anchor="end">40 ms</text>
+<text x="574" y="1303.0" fill="#e6edf3" text-anchor="end">40 ms</text>
+<text x="648" y="1303.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
+<text x="746" y="1303.0" fill="#9198a1" text-anchor="end">48 ms</text>
+<text x="820" y="1303.0" fill="#e6edf3" text-anchor="end">47 ms</text>
+<text x="894" y="1303.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.98</text>
+<text x="992" y="1303.0" fill="#9198a1" text-anchor="end">37 ms</text>
+<text x="1066" y="1303.0" fill="#e6edf3" text-anchor="end">36 ms</text>
 <text x="1140" y="1303.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.97</text>
-<rect x="0" y="1318" width="1164" height="60" fill="#151b23"/>
-<text x="16" y="1343" fill="#e6edf3" xml:space="preserve">Number the items of a list past a starting point, as copies (<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">copied</tspan>,</text>
-<text x="16" y="1363" fill="#e6edf3" xml:space="preserve"><tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">enumerate</tspan>, <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">skip</tspan>), 300 times</text>
-<text x="500" y="1353.0" fill="#9198a1" text-anchor="end">71 ms</text>
-<text x="574" y="1353.0" fill="#e6edf3" text-anchor="end">73 ms</text>
-<text x="648" y="1353.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.03</text>
-<text x="746" y="1353.0" fill="#9198a1" text-anchor="end">63 ms</text>
-<text x="820" y="1353.0" fill="#e6edf3" text-anchor="end">63 ms</text>
-<text x="894" y="1353.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
-<text x="992" y="1353.0" fill="#9198a1" text-anchor="end">54 ms</text>
-<text x="1066" y="1353.0" fill="#e6edf3" text-anchor="end">52 ms</text>
-<text x="1140" y="1353.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.97</text>
-<text x="16" y="1403" fill="#e6edf3" xml:space="preserve">Add up a list of 1,000 numbers, 300,000 times, overflow checks off</text>
-<text x="500" y="1403.0" fill="#9198a1" text-anchor="end">30 ms</text>
-<text x="574" y="1403.0" fill="#e6edf3" text-anchor="end">29 ms</text>
-<text x="648" y="1403.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.98</text>
-<text x="746" y="1403.0" fill="#9198a1" text-anchor="end">20 ms</text>
-<text x="820" y="1403.0" fill="#e6edf3" text-anchor="end">20 ms</text>
-<text x="894" y="1403.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
-<text x="992" y="1403.0" fill="#9198a1" text-anchor="end">26 ms</text>
-<text x="1066" y="1403.0" fill="#e6edf3" text-anchor="end">26 ms</text>
-<text x="1140" y="1403.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<rect x="0" y="1318" width="1164" height="40" fill="#151b23"/>
+<text x="16" y="1343" fill="#e6edf3" xml:space="preserve">Call a function passed as a value, 200 million times</text>
+<text x="500" y="1343.0" fill="#9198a1" text-anchor="end">103 ms</text>
+<text x="574" y="1343.0" fill="#e6edf3" text-anchor="end">105 ms</text>
+<text x="648" y="1343.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.02</text>
+<text x="746" y="1343.0" fill="#9198a1" text-anchor="end">125 ms</text>
+<text x="820" y="1343.0" fill="#e6edf3" text-anchor="end">125 ms</text>
+<text x="894" y="1343.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="992" y="1343.0" fill="#9198a1" text-anchor="end">91 ms</text>
+<text x="1066" y="1343.0" fill="#e6edf3" text-anchor="end">88 ms</text>
+<text x="1140" y="1343.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.97</text>
+<text x="16" y="1383" fill="#e6edf3" xml:space="preserve">Number the items of a list past a starting point, as copies (<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">copied</tspan>,</text>
+<text x="16" y="1403" fill="#e6edf3" xml:space="preserve"><tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">enumerate</tspan>, <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">skip</tspan>), 300 times</text>
+<text x="500" y="1393.0" fill="#9198a1" text-anchor="end">71 ms</text>
+<text x="574" y="1393.0" fill="#e6edf3" text-anchor="end">73 ms</text>
+<text x="648" y="1393.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.03</text>
+<text x="746" y="1393.0" fill="#9198a1" text-anchor="end">63 ms</text>
+<text x="820" y="1393.0" fill="#e6edf3" text-anchor="end">63 ms</text>
+<text x="894" y="1393.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
+<text x="992" y="1393.0" fill="#9198a1" text-anchor="end">54 ms</text>
+<text x="1066" y="1393.0" fill="#e6edf3" text-anchor="end">52 ms</text>
+<text x="1140" y="1393.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.97</text>
 <rect x="0" y="1418" width="1164" height="40" fill="#151b23"/>
-<text x="16" y="1443" fill="#e6edf3" xml:space="preserve">Add two lists plus the round number into a third, overflow checks on</text>
-<text x="500" y="1443.0" fill="#9198a1" text-anchor="end">19 ms</text>
-<text x="574" y="1443.0" fill="#e6edf3" text-anchor="end">19 ms</text>
-<text x="648" y="1443.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
-<text x="746" y="1443.0" fill="#9198a1" text-anchor="end">49 ms</text>
-<text x="820" y="1443.0" fill="#e6edf3" text-anchor="end">50 ms</text>
-<text x="894" y="1443.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.02</text>
-<text x="992" y="1443.0" fill="#9198a1" text-anchor="end">40 ms</text>
-<text x="1066" y="1443.0" fill="#e6edf3" text-anchor="end">39 ms</text>
-<text x="1140" y="1443.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.98</text>
-<text x="16" y="1483" fill="#e6edf3" xml:space="preserve">Decimal arithmetic: the Mandelbrot set, 1,000 × 1,000 points</text>
-<text x="500" y="1483.0" fill="#9198a1" text-anchor="end">101 ms</text>
-<text x="574" y="1483.0" fill="#e6edf3" text-anchor="end">102 ms</text>
-<text x="648" y="1483.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
-<text x="746" y="1483.0" fill="#9198a1" text-anchor="end">99 ms</text>
-<text x="820" y="1483.0" fill="#e6edf3" text-anchor="end">101 ms</text>
+<text x="16" y="1443" fill="#e6edf3" xml:space="preserve">Add up a list of 1,000 numbers, 300,000 times, overflow checks off</text>
+<text x="500" y="1443.0" fill="#9198a1" text-anchor="end">30 ms</text>
+<text x="574" y="1443.0" fill="#e6edf3" text-anchor="end">29 ms</text>
+<text x="648" y="1443.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.98</text>
+<text x="746" y="1443.0" fill="#9198a1" text-anchor="end">20 ms</text>
+<text x="820" y="1443.0" fill="#e6edf3" text-anchor="end">20 ms</text>
+<text x="894" y="1443.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
+<text x="992" y="1443.0" fill="#9198a1" text-anchor="end">26 ms</text>
+<text x="1066" y="1443.0" fill="#e6edf3" text-anchor="end">26 ms</text>
+<text x="1140" y="1443.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="16" y="1483" fill="#e6edf3" xml:space="preserve">Add two lists plus the round number into a third, overflow checks on</text>
+<text x="500" y="1483.0" fill="#9198a1" text-anchor="end">19 ms</text>
+<text x="574" y="1483.0" fill="#e6edf3" text-anchor="end">19 ms</text>
+<text x="648" y="1483.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
+<text x="746" y="1483.0" fill="#9198a1" text-anchor="end">49 ms</text>
+<text x="820" y="1483.0" fill="#e6edf3" text-anchor="end">50 ms</text>
 <text x="894" y="1483.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.02</text>
-<text x="992" y="1483.0" fill="#9198a1" text-anchor="end">91 ms</text>
-<text x="1066" y="1483.0" fill="#e6edf3" text-anchor="end">92 ms</text>
-<text x="1140" y="1483.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="992" y="1483.0" fill="#9198a1" text-anchor="end">40 ms</text>
+<text x="1066" y="1483.0" fill="#e6edf3" text-anchor="end">39 ms</text>
+<text x="1140" y="1483.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.98</text>
 <rect x="0" y="1498" width="1164" height="40" fill="#151b23"/>
-<text x="16" y="1523" fill="#e6edf3" xml:space="preserve">Add two lists plus the round number into a third, overflow checks off</text>
-<text x="500" y="1523.0" fill="#9198a1" text-anchor="end">19 ms</text>
-<text x="574" y="1523.0" fill="#e6edf3" text-anchor="end">20 ms</text>
+<text x="16" y="1523" fill="#e6edf3" xml:space="preserve">Decimal arithmetic: the Mandelbrot set, 1,000 × 1,000 points</text>
+<text x="500" y="1523.0" fill="#9198a1" text-anchor="end">101 ms</text>
+<text x="574" y="1523.0" fill="#e6edf3" text-anchor="end">102 ms</text>
 <text x="648" y="1523.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
-<text x="746" y="1523.0" fill="#9198a1" text-anchor="end">49 ms</text>
-<text x="820" y="1523.0" fill="#e6edf3" text-anchor="end">49 ms</text>
-<text x="894" y="1523.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
-<text x="992" y="1523.0" fill="#9198a1" text-anchor="end">40 ms</text>
-<text x="1066" y="1523.0" fill="#e6edf3" text-anchor="end">40 ms</text>
+<text x="746" y="1523.0" fill="#9198a1" text-anchor="end">99 ms</text>
+<text x="820" y="1523.0" fill="#e6edf3" text-anchor="end">101 ms</text>
+<text x="894" y="1523.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.02</text>
+<text x="992" y="1523.0" fill="#9198a1" text-anchor="end">91 ms</text>
+<text x="1066" y="1523.0" fill="#e6edf3" text-anchor="end">92 ms</text>
 <text x="1140" y="1523.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<text x="16" y="1563" fill="#e6edf3" xml:space="preserve">Number each item of a 1-million-number list while changing it</text>
-<text x="16" y="1583" fill="#e6edf3" xml:space="preserve">(<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">enumerate</tspan>), 300 times</text>
-<text x="500" y="1573.0" fill="#9198a1" text-anchor="end">49 ms</text>
-<text x="574" y="1573.0" fill="#e6edf3" text-anchor="end">49 ms</text>
-<text x="648" y="1573.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
-<text x="746" y="1573.0" fill="#9198a1" text-anchor="end">62 ms</text>
-<text x="820" y="1573.0" fill="#e6edf3" text-anchor="end">64 ms</text>
-<text x="894" y="1573.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.03</text>
-<text x="992" y="1573.0" fill="#9198a1" text-anchor="end">58 ms</text>
-<text x="1066" y="1573.0" fill="#e6edf3" text-anchor="end">58 ms</text>
-<text x="1140" y="1573.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<rect x="0" y="1598" width="1164" height="60" fill="#151b23"/>
-<text x="16" y="1623" fill="#e6edf3" xml:space="preserve">Number every second value of a range of 2 million (<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">step_by</tspan>,</text>
-<text x="16" y="1643" fill="#e6edf3" xml:space="preserve"><tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">enumerate</tspan>), 300 times</text>
-<text x="500" y="1633.0" fill="#9198a1" text-anchor="end">70 ms</text>
-<text x="574" y="1633.0" fill="#e6edf3" text-anchor="end">70 ms</text>
-<text x="648" y="1633.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<text x="746" y="1633.0" fill="#9198a1" text-anchor="end">47 ms</text>
-<text x="820" y="1633.0" fill="#e6edf3" text-anchor="end">47 ms</text>
-<text x="894" y="1633.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<text x="992" y="1633.0" fill="#9198a1" text-anchor="end">60 ms</text>
-<text x="1066" y="1633.0" fill="#e6edf3" text-anchor="end">60 ms</text>
-<text x="1140" y="1633.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="16" y="1563" fill="#e6edf3" xml:space="preserve">Add two lists plus the round number into a third, overflow checks off</text>
+<text x="500" y="1563.0" fill="#9198a1" text-anchor="end">19 ms</text>
+<text x="574" y="1563.0" fill="#e6edf3" text-anchor="end">20 ms</text>
+<text x="648" y="1563.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
+<text x="746" y="1563.0" fill="#9198a1" text-anchor="end">49 ms</text>
+<text x="820" y="1563.0" fill="#e6edf3" text-anchor="end">49 ms</text>
+<text x="894" y="1563.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
+<text x="992" y="1563.0" fill="#9198a1" text-anchor="end">40 ms</text>
+<text x="1066" y="1563.0" fill="#e6edf3" text-anchor="end">40 ms</text>
+<text x="1140" y="1563.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<rect x="0" y="1578" width="1164" height="60" fill="#151b23"/>
+<text x="16" y="1603" fill="#e6edf3" xml:space="preserve">Number each item of a 1-million-number list while changing it</text>
+<text x="16" y="1623" fill="#e6edf3" xml:space="preserve">(<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">enumerate</tspan>), 300 times</text>
+<text x="500" y="1613.0" fill="#9198a1" text-anchor="end">49 ms</text>
+<text x="574" y="1613.0" fill="#e6edf3" text-anchor="end">49 ms</text>
+<text x="648" y="1613.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
+<text x="746" y="1613.0" fill="#9198a1" text-anchor="end">62 ms</text>
+<text x="820" y="1613.0" fill="#e6edf3" text-anchor="end">64 ms</text>
+<text x="894" y="1613.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.03</text>
+<text x="992" y="1613.0" fill="#9198a1" text-anchor="end">58 ms</text>
+<text x="1066" y="1613.0" fill="#e6edf3" text-anchor="end">58 ms</text>
+<text x="1140" y="1613.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="16" y="1663" fill="#e6edf3" xml:space="preserve">Number every second value of a range of 2 million (<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">step_by</tspan>,</text>
+<text x="16" y="1683" fill="#e6edf3" xml:space="preserve"><tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">enumerate</tspan>), 300 times</text>
+<text x="500" y="1673.0" fill="#9198a1" text-anchor="end">70 ms</text>
+<text x="574" y="1673.0" fill="#e6edf3" text-anchor="end">70 ms</text>
+<text x="648" y="1673.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="746" y="1673.0" fill="#9198a1" text-anchor="end">47 ms</text>
+<text x="820" y="1673.0" fill="#e6edf3" text-anchor="end">47 ms</text>
+<text x="894" y="1673.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="992" y="1673.0" fill="#9198a1" text-anchor="end">60 ms</text>
+<text x="1066" y="1673.0" fill="#e6edf3" text-anchor="end">60 ms</text>
+<text x="1140" y="1673.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
 </svg>

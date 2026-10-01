@@ -11094,6 +11094,9 @@ first**; the rest of §0.355 is the running narrative behind it.
     Hardened_50), `4ce5975` (D-407 (2)-(4) and (6), ADR-095) and `8efd1a2`
     (D-407 (5)); then this handoff. CI was green on each through `4ce5975`
     and still running on `8efd1a2` when this was written.
+  * The gcc and speed work of 2026-10-01/02 (below): `fa40f25` (ADR-098,
+    D-445, D-446), `723800f` (ADR-099, the README's gcc columns), `065fd5b`
+    (ADR-100, the `Map`; CI green on each), then ADR-101's commit.
 * **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_51.md`
   (ODR-094, the owner's: `collect`'s target, `peekable`'s methods, `Option`'s
   `as_ref`/`as_mut`, and `Box` and `Cell` show as what they hold; H50 carried
@@ -11101,7 +11104,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h51/` are frozen.
-* **Next numbers:** ODR-098, D-449, ADR-101, ERR-056.
+* **Next numbers:** ODR-098, D-449, ADR-102, ERR-056.
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
@@ -11280,10 +11283,15 @@ first**; the rest of §0.355 is the running narrative behind it.
       in the README. Open from it: text keys are 1.56x-1.71x the C++ with MSVC
       and clang (not the placement, not looked into), and D-448 (a test copy of
       std made a printing test generate invalid C).
-    * **Waiting for the owner's go:** the generic `larger` with gcc (1.75x): the
-      overflow check on `total` is the whole cost, and the range analysis could
-      prove it away if a value a loop only raises were bounded by the limits in
-      the loop (widening to thresholds; `best` never passes 100,002).
+    * **ADR-101 (the owner's go: "add this feature and see whether it
+      works"):** the range facts widen a moving bound to the nearest constant
+      of its loop (or one either side of one; at most 64) before its type's
+      end, and a call to a function that only ever returns one of its
+      parameters unchanged gets those arguments' range. The generic `larger`
+      with gcc: 1.76x → 0.98x (MSVC 0.93x, clang 1.00x); of the 45 Windows
+      benchmark programs only its C changed. With gcc, 2 of the 43 programs are
+      now more than 10% slower than the C: the empty program (1.14x) and the
+      million objects (1.14x).
     * **D-447 (open):** with MSVC, the three `mut self` programs are 1.20x to
       1.30x the C++ (21 runs, twice), against 1.10x to 1.17x in the README's
       2026-09-30 run. Not today's work: with D-446 switched off they are slower
@@ -11298,9 +11306,8 @@ first**; the rest of §0.355 is the running narrative behind it.
       to the list pass had the particles at 1.08x and numbering past a starting
       point at 1.07x; this one 1.00x and 0.97x (not checked which it was).
     * **Leads the owner has not yet said go for** (the owner, 2026-10-01: halt
-      after the gcc fix and the README benchmarks): the generic `larger` (gcc
-      computes each turn twice; marking the panics cold is the first test,
-      `scratchpad/wsl/a09_forms.py`); an allocator packing objects of one size
+      after the gcc fix and the README benchmarks): an allocator packing objects
+      of one size
       side by side (`malloc` puts a 32-byte object in a 48-byte slot, a 16-byte
       C++ object in a 32-byte one; check the spec's allocation rules first); the
       empty program's start-up; a smaller object header (`[OBJ-1]`, an ODR; the
@@ -12070,6 +12077,10 @@ first**; the rest of §0.355 is the running narrative behind it.
   | 7a | 6 |
   | P8 | 17 |
   | Overall | 59 |
+
+  2026-10-02, before ADR-101's commit: the same table (59%). The range facts
+  are `[RNG-4]`, already counted in P1; ADR-098 to ADR-101 are speed work
+  that no phase counts.
 
   2026-10-01, with `rev` (ADR-087): P1 98 to 99, `[CTL-3b]`'s list of
   adapters in a counted loop complete; `python tasks/impl-0.9.9/rule_sizes.py

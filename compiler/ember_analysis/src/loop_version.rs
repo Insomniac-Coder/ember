@@ -55,16 +55,23 @@ use crate::regions::place_type;
 /// how many loops were versioned and how many grouped.
 pub fn version_bounds_checked_loops_all(bodies: &mut [Body], types: &TypeTable, common: &CommonTypes) -> (usize, usize) {
     let summaries = Summaries::compute(bodies, types);
+    let returns = crate::range_facts::returned_arguments(bodies);
     let mut versioned = 0;
     let mut grouped = 0;
     for body in bodies.iter_mut() {
-        versioned += version_loops(body, types, common, &summaries);
+        versioned += version_loops(body, types, common, &summaries, &returns);
         grouped += group_overflow_checks(body, types, common);
     }
     (versioned, grouped)
 }
 
-fn version_loops(body: &mut Body, types: &TypeTable, common: &CommonTypes, summaries: &Summaries) -> usize {
+fn version_loops(
+    body: &mut Body,
+    types: &TypeTable,
+    common: &CommonTypes,
+    summaries: &Summaries,
+    returns: &HashMap<String, Vec<usize>>,
+) -> usize {
     // Outer loops first: a loop's copies then carry the loops inside it, and
     // each of those is versioned in turn. A header that does not qualify
     // never starts to, so it is not looked at again.
@@ -72,7 +79,7 @@ fn version_loops(body: &mut Body, types: &TypeTable, common: &CommonTypes, summa
     let mut count = 0;
     loop {
         let facts = BodyFacts::new(body, types);
-        let ranges = Analysis::run(body, types, common);
+        let ranges = Analysis::run(body, types, common, returns);
         let mut best: Option<Plan> = None;
         for header in 0..body.blocks.len() {
             if settled.contains(&header) {

@@ -3557,6 +3557,69 @@ RandomState]` in insertion order; one key, one hash within a run),
 `HASH-2/accept_bytes_differing_in_their_tail_hash_apart` (D-405, both hashers), and
 `random_state_is_keyed_per_process` in `milestones.rs` (one program run twice hashes a key two ways).
 
+## ADR-101 — range facts: a moving bound widens to the loop's own constants first; a call that returns one of its arguments keeps their range
+
+2026-10-02, the owner's go ("add this feature and see whether it works if it doesn't use your
+autonomy to remove it"). With gcc the generic `larger` benchmark ran 1.76x its C++ twin:
+
+```ember
+for i in 0..200000000:
+    best = larger(best, (i * 7919) % 100003)
+    total = total + best
+```
+
+The whole gap was the overflow check on `total` (gcc computed each turn twice around it; with
+`#! module overflow(wrap)` the program ran as fast as the C++). `[RNG-4]`'s range facts could not
+remove it, for two reasons:
+
+* `best` only grows, and widening moved a growing bound straight to the end of its type, so
+  nothing bounded what `total` adds each turn.
+* `best`'s new value comes from a call, and a call's result had no range unless the callee was a
+  built-in the analysis knows.
+
+**Built** (`compiler/ember_analysis/src/range_facts.rs`):
+
+* **Widening with thresholds.** At a loop's header, a bound that moved goes first to the nearest
+  integer constant written in that loop, or one either side of one (at most 64 of them, those
+  nearest zero), and to its type's end only past the last. `best`'s upper bound stops at 100,002
+  (one below the `% 100003`), and the next round confirms it. If a body's facts do not settle
+  within the rounds allowed this way, it is solved again without thresholds, so no body loses a
+  fact it had. Widening with thresholds is the standard refinement of interval widening (Blanchet
+  et al., "A static analyzer for large safety-critical software", PLDI 2003, the Astrée analyser).
+* **Returned arguments.** Each function is summarised first: if every value it returns is one of
+  its parameters, unchanged (its return place is only ever a copy of a parameter and is never lent
+  mutably, and no parameter is written, lent mutably or given a call's or a checked operation's
+  result), the summary lists those parameters. At a direct call to it, the result's range is the
+  union of those arguments' ranges. `larger(a, b)` returns `a` or `b`, so `best`'s new value lies
+  within `best`'s range or the remainder's. Bodies that share a symbol must agree, or the symbol
+  has no summary.
+* With `best` between 0 and 100,002 and the loop counted (200,000,000 turns), the running-total
+  rule (`accumulator_bounds`) bounds `total` below 200,000,000 × 100,002, which fits an `int`: its
+  check goes. The loop versioning pass (`loop_version.rs`) runs the same analysis and gets both.
+
+**Measured** (median of 21; Ember's time over the C++ twin's, each built by the same compiler):
+
+| Compiler | before | after |
+|---|---|---|
+| gcc 15.2 (WSL) | 0.177 s, 1.76x | 0.099 s, 0.98x |
+| MSVC | 0.117 s, 0.94x | 0.117 s, 0.93x |
+| clang | 0.110 s, 0.99x | 0.108 s, 1.00x |
+
+Of the 45 Windows benchmark programs, built by the previous commit's compiler and by this one with
+MSVC and with clang, only this program's C changed. The analysis runs before every
+compiler-specific pass, so the same holds for gcc. Compile time (`ember build --emit c`, median of
+7): 1% to 3% on the benchmark programs, within noise; 12% (0.210 s to 0.234 s) on
+`GRM-39/accept_256_levels_of_nesting`, whose 256 nested calls of `id(x)` now each carry a range.
+
+**Tests.** `RNG-4/accept_a_value_a_loop_raises_towards_a_limit_keeps_it` (the loop written out: no
+overflow check left in the C; fails with thresholds off),
+`RNG-4/accept_a_call_returning_one_of_its_arguments_keeps_their_range` (the same through a generic
+`larger` called from two places, so the C compiler does not inline it away first; fails with
+thresholds off and with the call rule off), and
+`RNG-4/reject_a_value_doubled_past_every_constant_keeps_its_check` (a value doubled every turn
+passes every constant of its loop: its check stays and fires). The quick check, the full suite with
+MSVC and with clang, and the conformance suite with gcc pass.
+
 ## ADR-100 — `Map`: a number key at its own remainder, a prime-length table, the multiply only when keys pile up; 4-byte entry numbers
 
 2026-10-01/02, the owner's go. With gcc the `Map` benchmark (a million keys `i * 7`, then five

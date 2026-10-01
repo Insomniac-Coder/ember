@@ -31,7 +31,7 @@ pages, and the records that keep them consistent.
 | Language decisions | Current owner decisions (ODRs) in [`docs/OWNER-QUEUE.md`](docs/OWNER-QUEUE.md) |
 | CI | Linux (Clang, GCC) and Windows (MSVC, clang-cl); every push to `main` |
 
-Phase estimates against 0.9.9 (2026-09-30; weighted by the size of each phase's rules;
+Phase estimates against 0.9.9 (2026-10-02; weighted by the size of each phase's rules;
 method in [`docs/HANDOFF.md`](docs/HANDOFF.md)):
 
 | Phase | Scope | Done |
@@ -87,7 +87,7 @@ ECS facilities, C++ interop, the interpreter, and hot reload. The open defects a
 
 Each program below was written twice, in Ember and by hand in C (C++ for the programs that use
 objects, strings, maps or sorting), built by the same C compiler with the same optimisation flags,
-and timed on one Windows x64 machine on 2026-10-01: with MSVC and with clang on Windows, and with
+and timed on one Windows x64 machine on 2026-10-01 and 02: with MSVC and with clang on Windows, and with
 gcc 15.2 under WSL (Ubuntu) on the same machine. Overflow checks are on unless a row says they are
 off (`@overflow(wrap)`). Each table shows, for each compiler, the hand-written C's time, Ember's time
 (each the middle of 11 or more runs), and Ember's time divided by the C's: ×1.00 is the same speed,
@@ -112,7 +112,7 @@ notes under the tables say how. With gcc, both programs are built with
 
 > Development is in progress, and attempts will be made to speed the language up in these areas.
 
-More than 10% slower than C: 5 of the 43 programs with MSVC, 3 with clang, 3 with gcc; none with all
+More than 10% slower than C: 5 of the 43 programs with MSVC, 3 with clang, 2 with gcc; none with all
 three.
 
 ![Programs more than 10% slower than C with one compiler: C time, Ember time, Ember divided by C](docs/benchmarks/slower-than-c.svg)
