@@ -10703,7 +10703,7 @@ formal 1/9 count or Phase 2's estimate.
 
 ### 0.355 0.9.9 implementation, on `main` — 2026-09-23
 
-#### Start here after a context reset — state at 2026-09-27 IST
+#### Start here after a context reset — state at 2026-10-01
 
 The previous batches are committed and pushed on `main`; the newest batch is
 described below and committed with this checkpoint. **Read this subsection
@@ -11088,13 +11088,19 @@ first**; the rest of §0.355 is the running narrative behind it.
     semantic ambiguity and no ODR or new hardening.
 
   The five preceding CI runs, through `f529f8b`, finished green.
+  * The autonomous session of 2026-10-01 (below), stopped by the owner after
+    D-407: `4a9f9eb` (the review's first batch, ODR-096, Hardened_49),
+    `4153105` (the second), `3eb9e0c` (the third: ODR-095, ODR-097,
+    Hardened_50), `4ce5975` (D-407 (2)-(4) and (6), ADR-095) and `8efd1a2`
+    (D-407 (5)); then this handoff. CI was green on each through `4ce5975`
+    and still running on `8efd1a2` when this was written.
 * **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_50.md`
   (ODR-095, which operators a range value has, and ODR-097, where an
   implementation may be written; H49 carried ODR-096, how a call chooses
   between two instances of one generic interface), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h50/` are frozen.
-* **Next numbers:** ODR-098, D-437, ADR-096, ERR-056. ODR-094 is the owner's
+* **Next numbers:** ODR-098, D-438, ADR-096, ERR-056. ODR-094 is the owner's
   (ruled, not yet in the spec or built).
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
@@ -11149,10 +11155,45 @@ first**; the rest of §0.355 is the running narrative behind it.
     where an implementation is compared with the interface; and the type
     expected of a method call is a hint for a generic parameter only its
     result names (`b: Bag = s.gather()`), as at a function's call.
-  * **Next:** ODR-094 (`FromIterator`/`collect`, `peekable` over `as_ref`,
-    `Box` and `Cell` printing; spec text in the next hardening, with
-    `as_ref`/`as_mut`), then `[CLO-3]` with D-422 (how the closure adapters
-    take their callable).
+  * **Stopped here on the owner's instruction (2026-10-01):** "Please don't
+    work on further fixes D-407 is the last one after that I need you to
+    stop, update the hand off and commit + push". Nothing after D-407 was
+    committed; the tree is clean at this handoff. The phase table is
+    unchanged: the session fixed defects and added no new rule coverage.
+  * **Benchmarks were not performed in this session, because of the cloud
+    constraints:** timings in a cloud container vary from run to run and
+    machine to machine, so the owner held them off (AUTOPILOT §4). No
+    benchmark was run, even to check speed, and the README's numbers (one
+    Windows x64 machine, MSVC and clang, 2026-09-30) are unchanged.
+  * **D-437, found and open** (`docs/DEFECTS.md`): a generic method of an
+    interface called through a type parameter's bound read `Self` as `Self`
+    (`it.zip(other)` was a `Zip[Self, J]`; `M.make(3)` "expected `M`, found
+    `Self`"), and an instance over the caller's own parameter numbered the
+    method's own parameters into the caller's slots (`C.gather(it)` with
+    `C: Gather[T]`; a correct `Fill[T]` implementation was `E2040`). Found
+    writing ODR-094's `collect`, which needs it. A fix passed its five tests
+    but not the full checks and was not kept; its design is in the row.
+  * **Next, when the owner says go:** D-437 first; then ODR-094; then
+    `[CLO-3]` with D-422 (how the closure adapters take their callable).
+    ODR-094 as planned: `pub interface FromIterator[T]: fn
+    from_iter[I: Iterator[Item = T]](owned it: I) -> Self` in `std.core`
+    (not a prelude name, as ODR-091's interfaces are not), implemented by
+    `Array[T]`, `Set[T]`, `Map[K, V]` from `(K, V)` pairs and `String` from
+    `char` and `String`; `Iterator.collect[C: FromIterator[Item]](owned
+    self) -> C: return C.from_iter(self)`, `C` written or from the expected
+    type (D-407 (5)'s hint); `peekable(owned self) -> Peekable[Self]`, with
+    `struct Peekable[I: Iterator]: inner: I, peeked: Option[I.Item],
+    looked: bool` (no nested `Option`): `next` gives `peeked.take()` when
+    `looked`, `peek` and `peek_mut` fill `peeked` once and return
+    `peeked.as_ref()`/`as_mut()`, `next_if(pred)` and `next_if_eq(v)` go
+    through `peek`; `Box[T]` and `Cell[T]` print as what they hold through
+    one `printed_as` in the checker (`has_display`, `formattable_in`,
+    `fstring_spec`) and one `printed_payload` in the C backend (`debug_stmt`,
+    and the print and format calls); the spec text (`[STD-19]`, `[ERR-4]`'s
+    `as_ref`/`as_mut` signatures, `[TYP-39]`) goes in Hardened_51. Also
+    worth doing with it: the checker carries a method call's expected type
+    twice (the old one-step `method_expectation` and D-407 (5)'s scoped
+    `method_call_expected`); one field, scoped, can serve both.
   * **Still to ask the owner:** whether to run the agent inspection of the
     2026-09-26 five defect fixes (D-358, D-355, D-201, D-202, D-218) the
     owner asked about; it was raised again at the start of this session and
