@@ -3557,6 +3557,57 @@ RandomState]` in insertion order; one key, one hash within a run),
 `HASH-2/accept_bytes_differing_in_their_tail_hash_apart` (D-405, both hashers), and
 `random_state_is_keyed_per_process` in `milestones.rs` (one program run twice hashes a key two ways).
 
+## ADR-099 — gcc unrolls loops; a list a loop only pushes onto lives in a local; an interface call's fallback search is out of line
+
+2026-10-01, the owner's choice ("turn it on, option A"), after the gcc comparison of ADR-098. The
+gcc build of the benchmarks against their twins built by the same gcc with the same flags (median
+of 11 or 21 interleaved runs, WSL Ubuntu, gcc 15.2).
+
+**`-funroll-loops` for gcc's release build** (`gcc_flags`; the twins get it too). gcc unrolls no
+loop at `-O2`; clang does. A loop whose turn adds one to an object's field under the overflow check
+waits on the `jo` of each add before the next turn's add to the same field can retire (measured by
+hand-written variants of Ember's C: the check written into the field, into a local, as a compare
+with `MAX - 1`, and the add-to-memory form clang emits, all 0.060 to 0.067 s; no check 0.029 s, the
+C++ 0.030 s). clang unrolls by two, so each add instruction always meets the same object: at C's
+speed. With unrolling, gcc does the same: the three `mut self` programs 1.98x, 1.91x, 1.91x before,
+0.98x, 0.99x, 0.98x after; the checked sum 1.31x to 1.04x. Two programs fall behind the C instead:
+the interface calls (1.00x to 1.18x) and the million objects (0.89x to 1.14x). Ember is no slower
+in either; the twin gains more. The interface-call gap is the object header (`[OBJ-1]`'s 24 bytes):
+the C++ shapes padded by 16 bytes to Ember's 32 run at Ember's speed (0.99x). The million-object
+gap is half that and half the running total's overflow check (1.06x with `overflow(wrap)`). The
+owner chose the trade (option A) over keeping it off. Shipping (`-O3`) is unchanged: not measured.
+
+**For clang and gcc, a list an innermost loop only pushes onto is kept in a local for the loop**
+(`list_locals.rs`).
+The C compiler cannot tell a list's buffer from its header when the runtime made both, so after
+each pushed element it read the length and the buffer from memory again (the C twin's buffer comes
+from `realloc`, which it knows is memory of its own). The pass reads the list into a local before
+the loop and writes it back on every edge out; nothing else in the loop may reach the list (no call
+but the built-ins, no other use of it or of what holds it, no handle of any class mentioned when it
+is in an object, no reference that could point at it when it is a local), and each push's reference
+gets its value in the loop. A panic leaves the list as the loop found it, which nothing sees
+(`[PAN-1]`: a panic aborts). The push's growth (`ember_vec_grown`, cold) now takes and returns the
+list by value, so the local's address never escapes and the C compiler keeps it in registers. The
+view-held benchmark: 1.03x the C before, 0.47x after (0.39x unrolled); the three views-alive
+programs 1.01x to 1.09x before, 0.38x after; the shape priced by hand first (0.42x); with clang
+0.50x and 0.44x. Not for MSVC (the driver's `c_for_msvc`): MSVC keeps the local list in memory, and
+the views-alive program ran 0.386 s with the pass and the by-value growth, 0.058 s with the pass and
+the old growth, 0.050 s without the pass (either growth), the C twin 0.050 s.
+
+**An interface call's fallback search is the runtime's out-of-line one** behind the tests of the
+classes the program knows (`[DSP-3]`), and the out-of-line search is `EMBER_COLD`: the inline search
+is a loop, and a loop inside the caller's loop kept gcc from unrolling the caller's (it unrolled the
+never-taken search eight times instead); cold, gcc lays the known classes' calls on the straight
+path. The interface calls unrolled: 1.24x before, 1.14x after.
+
+**Tests.** `gcc_release_asks_for_the_cheap_vectoriser_model_and_unrolling`,
+`a_list_a_loop_only_pushes_onto_is_kept_in_a_local`, `a_devirtualised_interface_call_searches_out_of_line`
+(each fails with its change undone), and `OPT-2/accept_a_list_a_loop_only_pushes_onto_keeps_every_push`
+(a list in an object left by `break` and by the loop's end, two lists in one loop, a loop where
+another handle reads the list and one where a function does, a versioned loop, pushed tuples; it
+fails when the pass ignores what else reaches the list). `CTL-3b`'s `for`-`else` caught a wrong
+write-back numbering before it shipped.
+
 ## ADR-098 — gcc: `restrict` loop functions, and the vectoriser model that takes a tail
 
 2026-10-01, autonomous, the owner's request: "build the gcc version of ember on wsl and test how it

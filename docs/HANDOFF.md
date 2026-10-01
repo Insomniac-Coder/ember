@@ -11101,7 +11101,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h51/` are frozen.
-* **Next numbers:** ODR-098, D-447, ADR-099, ERR-056.
+* **Next numbers:** ODR-098, D-448, ADR-100, ERR-056.
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
@@ -11267,8 +11267,34 @@ first**; the rest of §0.355 is the running narrative behind it.
       taken. And the recursion row, where gcc turns Ember's `fib` into a loop
       (0.03x, correct output). D-446 costs nothing measured: no row slower with
       gcc (all 39), MSVC or clang (the wrapping, list and checked-sum rows).
-    * **Not done yet:** the README's gcc columns. The owner's rule is a render
-      first, then the table format changes.
+    * **Then (ADR-099, the owner's option A):** gcc's release build unrolls
+      loops (`-funroll-loops`, the twins too); for clang and gcc, a list an
+      innermost loop only pushes onto is kept in a local (`list_locals.rs`,
+      with the push's growth by value; not for MSVC, 8 times slower there); an
+      interface call's fallback search is out of line and cold.
+    * **D-447 (open):** with MSVC, the three `mut self` programs are 1.20x to
+      1.30x the C++ (21 runs, twice), against 1.10x to 1.17x in the README's
+      2026-09-30 run. Not today's work: with D-446 switched off they are slower
+      (0.050 s against 0.046 s), and with the runtime of `fa40f25` too (0.0505
+      s against 0.047 s). One of the ~30 commits since `2a75810`; not bisected
+      (the owner said to halt after the gcc work).
+      With gcc, of the 39 programs (`scratchpad/wsl/final_gcc.log`): 5 more
+      than 10% slower than the C (Map of numbers 2.02x, the generic `larger`
+      1.75x, interface calls 1.18x, the empty program 1.15x, the million
+      objects 1.14x), none at 5-10%, 3 within 5%, 31 the same or faster (the
+      start of the day: 21 more than 10% slower). A run before the last change
+      to the list pass had the particles at 1.08x and numbering past a starting
+      point at 1.07x; this one 1.00x and 0.97x (not checked which it was).
+    * **Leads the owner has not yet said go for** (the owner, 2026-10-01: halt
+      after the gcc fix and the README benchmarks): the generic `larger` (gcc
+      computes each turn twice; marking the panics cold is the first test,
+      `scratchpad/wsl/a09_forms.py`); an allocator packing objects of one size
+      side by side (`malloc` puts a 32-byte object in a 48-byte slot, a 16-byte
+      C++ object in a 32-byte one; check the spec's allocation rules first); the
+      empty program's start-up; a smaller object header (`[OBJ-1]`, an ODR; the
+      interface calls and half the million objects); the running total's check
+      in the million objects; the Map's number keys stored unmixed (a design
+      choice for the owner: it makes some key patterns very slow).
     * **Trap:** the quick check runs `target/debug/ember.exe` unless `EMBER` is
       set. A debug build left over from days before fails nearly every test
       (stack overflow, 1955 failures on 2026-10-01): set

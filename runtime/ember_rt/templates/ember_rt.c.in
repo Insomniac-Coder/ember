@@ -1575,10 +1575,9 @@ ember_vec ember_vec_from_elems(size_t elem_size, const void* elems, size_t count
     return v;
 }
 
-void ember_vec_push_slow(ember_vec* v, size_t elem_size, const void* value) {
-    ember_vec_reserve(v, elem_size, v->len + 1);
-    memcpy((unsigned char*)v->ptr + v->len * elem_size, value, elem_size);
-    v->len += 1;
+ember_vec ember_vec_grown(ember_vec v, size_t elem_size) {
+    ember_vec_reserve(&v, elem_size, v.len + 1);
+    return v;
 }
 
 void ember_vec_extend(ember_vec* v, const void* bytes, size_t count) {

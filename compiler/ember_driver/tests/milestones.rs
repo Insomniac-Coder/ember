@@ -1682,6 +1682,39 @@ fn loop_nests_over_separate_lists_get_restrict_functions_for_msvc() {
 {}", clang.stdout);
 }
 
+/// ADR-099 — for clang and gcc, a list an innermost loop only pushes onto is
+/// kept in a local for the loop and written back on every way out
+/// (`list_locals.rs`): the C writes the object's list back from a local. Not
+/// for MSVC, which keeps the local in memory (8 times slower). (The
+/// conformance test checks the results, including loops where something else
+/// reads the list.)
+#[test]
+fn a_list_a_loop_only_pushes_onto_is_kept_in_a_local() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/OPT-2/accept_a_list_a_loop_only_pushes_onto_keeps_every_push.{SOURCE_EXT}");
+    let gcc = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "gcc"], &root);
+    assert_eq!(gcc.exit, 0, "C failed:\n{}", gcc.stderr);
+    assert!(gcc.stdout.contains("->items = _"), "no list is written back from a local:\n{}", gcc.stdout);
+    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
+    assert_eq!(msvc.exit, 0, "C failed:\n{}", msvc.stderr);
+    assert!(!msvc.stdout.contains("->items = _"), "a list is kept in a local for MSVC:\n{}", msvc.stdout);
+}
+
+/// ADR-099 — behind the tests of the classes a program knows, an interface
+/// call's table search is the runtime's out-of-line one: the inline search
+/// is a loop, and a loop inside the caller's kept gcc from unrolling it.
+#[test]
+fn a_devirtualised_interface_call_searches_out_of_line() {
+    let root = workspace_root();
+    let source = format!("tests/run-pass/class_interface_handle.{SOURCE_EXT}");
+    let c = ember(&["build", &source, "--emit", "c", "--profile", "release"], &root);
+    assert_eq!(c.exit, 0, "C failed:\n{}", c.stderr);
+    let out_of_line = format!("{}(", ember_branding::runtime("itable_lookup_slow"));
+    let inline = format!("{}(", ember_branding::runtime("itable_lookup"));
+    assert!(c.stdout.contains(&out_of_line), "the fallback is not out of line:\n{}", c.stdout);
+    assert!(!c.stdout.contains(&inline), "an inline table search remains:\n{}", c.stdout);
+}
+
 /// D-446 — `[CG-C-1]`: a signed `+`, `-` or `*` (negation is `0 - x`) reaching C
 /// unchecked is done in its width's unsigned type, so wrapping is never C's
 /// undefined signed overflow (gcc -O2 miscompiled a wrapping `i * k` in a

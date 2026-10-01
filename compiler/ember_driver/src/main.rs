@@ -2285,6 +2285,14 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     {
         ember_analysis::install_callable_regions_all(&mut bodies, &types);
     }
+    // For clang and gcc: a list an innermost loop only pushes onto is kept in
+    // a local for the loop and written back after it, so the C compiler keeps
+    // its buffer and length in registers: it cannot see that the runtime's
+    // buffer is apart from the list's own header (ADR-099). MSVC keeps such a
+    // local in memory: the views-alive benchmark ran 8 times slower with it.
+    if command != "check" && !c_for_msvc(&options) && ember_analysis::keep_pushed_lists_in_locals_all(&mut bodies, &types) > 0 {
+        ember_analysis::install_callable_regions_all(&mut bodies, &types);
+    }
     // Last, for C: a value a counted loop computes from its counter each
     // turn (`k * step + skip`) gets a running value of its own, as
     // hand-written C keeps one. clang and gcc vectorise such a loop at C's

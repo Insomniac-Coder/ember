@@ -87,19 +87,22 @@ ECS facilities, C++ interop, the interpreter, and hot reload. The open defects a
 
 Each program below was written twice, in Ember and by hand in C (C++ for the programs that use
 objects, strings, maps or sorting), built by the same C compiler with the same optimisation flags,
-and timed on one Windows x64 machine on 2026-09-30, once with MSVC and once with clang. Overflow
-checks are on unless a row says they are off (`@overflow(wrap)`). Each table shows, for MSVC and for
-clang, the hand-written C's time, Ember's time (each the middle of 11 or more runs), and Ember's
-time divided by the C's: ×1.00 is the same speed, above 1 is slower, below 1 is faster. Green is under
-×1.05 (less than 5% slower than C, or faster), amber ×1.05 to ×1.10, red over ×1.10.
+and timed on one Windows x64 machine on 2026-10-01: with MSVC and with clang on Windows, and with
+gcc 15.2 under WSL (Ubuntu) on the same machine. Overflow checks are on unless a row says they are
+off (`@overflow(wrap)`). Each table shows, for each compiler, the hand-written C's time, Ember's time
+(each the middle of 11 or more runs), and Ember's time divided by the C's: ×1.00 is the same speed,
+above 1 is slower, below 1 is faster. Green is under ×1.05 (less than 5% slower than C, or faster),
+amber ×1.05 to ×1.10, red over ×1.10. A program goes in the table of its slowest compiler.
 
 Each compiler's columns compare Ember with the hand-written C built by that compiler. On the rows
-marked ¹ or ², MSVC rearranges the hand-written C's loops, which changes that C's time a lot; the
-notes under the tables say how.
+marked ¹ or ², MSVC rearranges the hand-written C's loops, which changes that C's time a lot; on the
+rows marked ³ or ⁴, gcc does something to one of the two programs that the other cannot match; the
+notes under the tables say how. With gcc, both programs are built with
+`-O2 -fvect-cost-model=cheap -funroll-loops`, the flags of Ember's release build with gcc.
 
 ### As fast as C or faster
 
-![Programs within 5% of C or faster, with MSVC and clang: C time, Ember time, Ember divided by C](docs/benchmarks/as-fast-as-c.svg)
+![Programs within 5% of C or faster, with MSVC, clang and gcc: C time, Ember time, Ember divided by C](docs/benchmarks/as-fast-as-c.svg)
 
 ### Close to C: up to 10% slower with one of the compilers
 
@@ -108,6 +111,9 @@ notes under the tables say how.
 ### More than 10% slower than C with at least one compiler
 
 > Development is in progress, and attempts will be made to speed the language up in these areas.
+
+More than 10% slower than C: 4 of the 39 programs with MSVC, 2 with clang, 5 with gcc; none with all
+three.
 
 ![Programs more than 10% slower than C with one compiler: C time, Ember time, Ember divided by C](docs/benchmarks/slower-than-c.svg)
 
@@ -119,6 +125,16 @@ worth at a time. Ember's C for this program is written so that MSVC does the sam
 ² With MSVC, the hand-written C of this program runs much slower than the same C built with clang.
 MSVC turns its two loops around here too, but then each number goes through all its rounds one after
 another, where clang's build works on several numbers at once.
+
+³ gcc rewrites Ember's recursive `fib` far more than the hand-written C's: it puts the function
+inside itself and makes each repeated call once (to get `fib(38)`, Ember's build calls `fib` of 35,
+34, 33 and 32 once each, where the plain recursion makes eight calls at that depth). The answer is
+the same; with gcc this row does not measure what a call costs.
+
+⁴ With gcc, the C++ `unordered_map` (from gcc's C++ library) uses a number as its own hash, so this
+program's keys 0, 1, 2 … sit next to each other in memory and each lookup finds its key already in
+the processor's cache. Ember's `Map` mixes a key's bits first, as MSVC's C++ library does. With the
+keys scrambled, so that neither keeps neighbours together, Ember takes 0.22 s and the C++ 0.28 s.
 
 ## Examples
 

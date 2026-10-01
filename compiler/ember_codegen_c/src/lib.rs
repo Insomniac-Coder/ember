@@ -5486,29 +5486,37 @@ impl Emitter<'_> {
                         format!("{receiver}, {call_args}")
                     };
                     let cached = self.interface_cache_for_call(func, args, body);
-                    let table_pointer = cached.clone().unwrap_or_else(|| {
-                        format!(
-                            "{}(((const {RT}obj_header*)({receiver}))->ti, &{})",
-                            ember_branding::runtime("itable_lookup"),
-                            interface_id_symbol(&interface.to_string()),
-                        )
-                    });
-                    let mut call = format!(
-                        "(((const struct {table}*){table_pointer})->slot{slot})({call_args})",
-                    );
                     // `[DSP-3]` — the classes of this program that implement
                     // the interface, when there are few, are tried first by
                     // their type information and called directly through their
                     // adapter, which the C compiler can inline; the table
                     // search stays for any other class (one loaded from
                     // elsewhere, or a reloaded type). The same method runs.
-                    if cached.is_none() && interfaces.len() == 1 {
-                        let known = self.interface_implementers(&interface.to_string(), *slot);
-                        if (1..=MAX_DEVIRTUALISED).contains(&known.len()) {
-                            let info = format!("((const {RT}obj_header*)({receiver}))->ti");
-                            for (type_info, adapter) in known.iter().rev() {
-                                call = format!("({info} == &{type_info} ? {adapter}({call_args}) : {call})");
-                            }
+                    let known = if cached.is_none() && interfaces.len() == 1 {
+                        self.interface_implementers(&interface.to_string(), *slot)
+                    } else {
+                        Vec::new()
+                    };
+                    let guarded = (1..=MAX_DEVIRTUALISED).contains(&known.len());
+                    // Behind those tests the search is the rare path, so it is
+                    // the runtime's out-of-line one: the inline search is a
+                    // loop, and a loop inside the caller's loop keeps gcc from
+                    // unrolling the caller's (it unrolls innermost loops only).
+                    let lookup = if guarded { "itable_lookup_slow" } else { "itable_lookup" };
+                    let table_pointer = cached.clone().unwrap_or_else(|| {
+                        format!(
+                            "{}(((const {RT}obj_header*)({receiver}))->ti, &{})",
+                            ember_branding::runtime(lookup),
+                            interface_id_symbol(&interface.to_string()),
+                        )
+                    });
+                    let mut call = format!(
+                        "(((const struct {table}*){table_pointer})->slot{slot})({call_args})",
+                    );
+                    if guarded {
+                        let info = format!("((const {RT}obj_header*)({receiver}))->ti");
+                        for (type_info, adapter) in known.iter().rev() {
+                            call = format!("({info} == &{type_info} ? {adapter}({call_args}) : {call})");
                         }
                     }
                     return call;

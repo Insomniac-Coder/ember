@@ -1,31 +1,30 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="997" height="166" viewBox="0 0 997 166" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14">
-<rect width="997" height="166" fill="#0d1117" rx="6"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1164" height="106" viewBox="0 0 1164 106" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14">
+<rect width="1164" height="106" fill="#0d1117" rx="6"/>
 <text x="16" y="46" fill="#9198a1" font-size="12">What the program does</text>
-<text x="606.0" y="22" fill="#e6edf3" font-weight="600" text-anchor="middle">MSVC</text>
-<line x1="495" y1="30" x2="717" y2="30" stroke="#30363d"/>
-<text x="559" y="46" fill="#9198a1" font-size="12" text-anchor="end">C</text>
-<text x="637" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember</text>
-<text x="715" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember ÷ C</text>
-<text x="864.0" y="22" fill="#e6edf3" font-weight="600" text-anchor="middle">clang</text>
-<line x1="753" y1="30" x2="975" y2="30" stroke="#30363d"/>
-<text x="817" y="46" fill="#9198a1" font-size="12" text-anchor="end">C</text>
-<text x="895" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember</text>
-<text x="973" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember ÷ C</text>
-<line x1="0" y1="57" x2="997" y2="57" stroke="#30363d"/>
-<text x="16" y="83" fill="#e6edf3" xml:space="preserve">Clear and refill a list while 4 other lists are being viewed</text>
-<text x="559" y="83.0" fill="#9198a1" text-anchor="end">49 ms</text>
-<text x="637" y="83.0" fill="#e6edf3" text-anchor="end">47 ms</text>
-<text x="715" y="83.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.96</text>
-<text x="817" y="83.0" fill="#9198a1" text-anchor="end">48 ms</text>
-<text x="895" y="83.0" fill="#e6edf3" text-anchor="end">51 ms</text>
-<text x="973" y="83.0" fill="#d29922" text-anchor="end" font-weight="600">×1.05</text>
-<rect x="0" y="98" width="997" height="60" fill="#151b23"/>
-<text x="16" y="123" fill="#e6edf3" xml:space="preserve">Call a method that changes an object taken from a list, 100 million times</text>
-<text x="16" y="143" fill="#e6edf3" xml:space="preserve">(object holding 1 list)</text>
-<text x="559" y="133.0" fill="#9198a1" text-anchor="end">31 ms</text>
-<text x="637" y="133.0" fill="#e6edf3" text-anchor="end">34 ms</text>
-<text x="715" y="133.0" fill="#d29922" text-anchor="end" font-weight="600">×1.10</text>
-<text x="817" y="133.0" fill="#9198a1" text-anchor="end">26 ms</text>
-<text x="895" y="133.0" fill="#e6edf3" text-anchor="end">26 ms</text>
-<text x="973" y="133.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="545.0" y="22" fill="#e6edf3" font-weight="600" text-anchor="middle">MSVC</text>
+<line x1="440" y1="30" x2="650" y2="30" stroke="#30363d"/>
+<text x="500" y="46" fill="#9198a1" font-size="12" text-anchor="end">C</text>
+<text x="574" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember</text>
+<text x="648" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember ÷ C</text>
+<text x="791.0" y="22" fill="#e6edf3" font-weight="600" text-anchor="middle">clang</text>
+<line x1="686" y1="30" x2="896" y2="30" stroke="#30363d"/>
+<text x="746" y="46" fill="#9198a1" font-size="12" text-anchor="end">C</text>
+<text x="820" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember</text>
+<text x="894" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember ÷ C</text>
+<text x="1037.0" y="22" fill="#e6edf3" font-weight="600" text-anchor="middle">gcc (Linux)</text>
+<line x1="932" y1="30" x2="1142" y2="30" stroke="#30363d"/>
+<text x="992" y="46" fill="#9198a1" font-size="12" text-anchor="end">C</text>
+<text x="1066" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember</text>
+<text x="1140" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember ÷ C</text>
+<line x1="0" y1="57" x2="1164" y2="57" stroke="#30363d"/>
+<text x="16" y="83" fill="#e6edf3" xml:space="preserve">Add one list into another, 2,000 rounds, overflow checks off ¹</text>
+<text x="500" y="83.0" fill="#9198a1" text-anchor="end">42 ms</text>
+<text x="574" y="83.0" fill="#e6edf3" text-anchor="end">42 ms</text>
+<text x="648" y="83.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
+<text x="746" y="83.0" fill="#9198a1" text-anchor="end">47 ms</text>
+<text x="820" y="83.0" fill="#e6edf3" text-anchor="end">50 ms</text>
+<text x="894" y="83.0" fill="#d29922" text-anchor="end" font-weight="600">×1.05</text>
+<text x="992" y="83.0" fill="#9198a1" text-anchor="end">36 ms</text>
+<text x="1066" y="83.0" fill="#e6edf3" text-anchor="end">36 ms</text>
+<text x="1140" y="83.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
 </svg>

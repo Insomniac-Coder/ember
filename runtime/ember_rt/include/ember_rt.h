@@ -58,6 +58,14 @@ extern "C" {
 #define EMBER_INLINE __attribute__((always_inline)) inline
 #endif
 
+/* A function only a rare path calls: gcc and clang lay the paths that
+ * reach it out of line, so the common path falls through. */
+#if defined(__GNUC__) || defined(__clang__)
+#define EMBER_COLD __attribute__((cold))
+#else
+#define EMBER_COLD
+#endif
+
 /* [SIMD-7] A group of iterations with several overflow checks ORs each
  * check's overflow word (its top bit set on overflow), shifted down by
  * EMBER_OVERFLOW_SHIFT, into the group's flag, and tests the flag shifted
@@ -1088,7 +1096,7 @@ void ember_weak_release(ember_obj_header* object);
 ember_obj_header* ember_weak_upgrade(ember_obj_header* object);
 void ember_rt_deinit(ember_obj_header* object);
 void* ember_downcast(ember_obj_header* object, const ember_type_info* target);
-const void* ember_itable_lookup_slow(const ember_type_info* type, const void* interface_id);
+EMBER_COLD const void* ember_itable_lookup_slow(const ember_type_info* type, const void* interface_id);
 
 /* `[DSP-3]` — an interface call's table search, inline: the object's own
  * entries, which for a class this program emitted also carry its bases'
@@ -1355,30 +1363,28 @@ void ember_vec_reserve_hint(ember_vec* v, size_t elem_size, uint64_t turns, size
 
 /* Append one element, copied from `value`. With room left it is a copy and a
  * length bump, inline, where the constant element size makes the copy one
- * store; only growth calls out. */
-void ember_vec_push_slow(ember_vec* v, size_t elem_size, const void* value);
+ * store; only growth calls out. The growth takes the list and gives it back
+ * by value, so the list's address never leaves the caller: a list a loop
+ * keeps in a local (`list_locals.rs`) stays in registers, and the C compiler
+ * sees the length only ever go up by one. */
+EMBER_COLD ember_vec ember_vec_grown(ember_vec v, size_t elem_size);
 EMBER_INLINED void ember_vec_push(ember_vec* v, size_t elem_size, const void* value) {
-    if (v->len < v->cap) {
-        memcpy((unsigned char*)v->ptr + v->len * elem_size, value, elem_size);
-        v->len += 1;
-        return;
+    if (v->len == v->cap) {
+        *v = ember_vec_grown(*v, elem_size);
     }
-    ember_vec_push_slow(v, elem_size, value);
+    memcpy((unsigned char*)v->ptr + v->len * elem_size, value, elem_size);
+    v->len += 1;
 }
-/* A scalar or a handle pushed by value: stored straight into the buffer, and
- * copied to memory only on the growth path, so the caller never takes the
- * address of what it pushes and a pushed loop counter stays in a register. */
+/* A scalar or a handle pushed by value: stored straight into the buffer, so
+ * the caller never takes the address of what it pushes and a pushed loop
+ * counter stays in a register. */
 #define EMBER_VEC_PUSH_VALUE(NAME, TYPE)                                     \
     EMBER_INLINED void ember_vec_push_##NAME(ember_vec* v, TYPE value) {     \
-        if (v->len < v->cap) {                                               \
-            ((TYPE*)v->ptr)[v->len] = value;                                 \
-            v->len += 1;                                                     \
-            return;                                                          \
+        if (v->len == v->cap) {                                              \
+            *v = ember_vec_grown(*v, sizeof(TYPE));                          \
         }                                                                    \
-        {                                                                    \
-            TYPE copy = value;                                               \
-            ember_vec_push_slow(v, sizeof(TYPE), &copy);                     \
-        }                                                                    \
+        ((TYPE*)v->ptr)[v->len] = value;                                     \
+        v->len += 1;                                                         \
     }
 EMBER_VEC_PUSH_VALUE(bool, bool)
 EMBER_VEC_PUSH_VALUE(i8, int8_t)

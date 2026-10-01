@@ -675,9 +675,13 @@ fn gnu_flags(profile: Profile) -> Vec<&'static str> {
 /// loop: `-fvect-cost-model=cheap` asks gcc for the same (measured: walking a
 /// list with `enumerate`, 1.45x the hand-written C built with the same flags,
 /// and 0.99x with it). `-O3` already uses a model at least as permissive.
+/// ADR-099 — and `-funroll-loops`: gcc unrolls no loop at `-O2` (clang does),
+/// and a loop whose turn adds to an object's field with its overflow check,
+/// the `jo` on each add waiting for the last add's value, runs at half speed
+/// rolled (`mut self` calls: 1.98x the C++ built alike, 0.98x unrolled).
 fn gcc_flags(toolchain: &Toolchain, profile: Profile) -> &'static [&'static str] {
     match (toolchain, profile) {
-        (Toolchain::Gcc(_), Profile::Release) => &["-fvect-cost-model=cheap"],
+        (Toolchain::Gcc(_), Profile::Release) => &["-fvect-cost-model=cheap", "-funroll-loops"],
         _ => &[],
     }
 }
@@ -859,10 +863,10 @@ mod tests {
     /// takes a loop with a scalar tail; clang (which does by default), the
     /// other profiles and MSVC get nothing extra.
     #[test]
-    fn gcc_release_asks_for_the_cheap_vectoriser_model() {
+    fn gcc_release_asks_for_the_cheap_vectoriser_model_and_unrolling() {
         let gcc = Toolchain::Gcc(PathBuf::from("gcc"));
         let clang = Toolchain::Clang(PathBuf::from("clang"));
-        assert_eq!(gcc_flags(&gcc, Profile::Release), ["-fvect-cost-model=cheap"]);
+        assert_eq!(gcc_flags(&gcc, Profile::Release), ["-fvect-cost-model=cheap", "-funroll-loops"]);
         assert!(gcc_flags(&gcc, Profile::Debug).is_empty());
         assert!(gcc_flags(&gcc, Profile::Shipping).is_empty());
         assert!(gcc_flags(&clang, Profile::Release).is_empty());
