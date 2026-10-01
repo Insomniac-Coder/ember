@@ -958,6 +958,11 @@ struct InterfaceDef {
     /// `[IFC-4]` — each associated type (`type Real: Float`) with the
     /// interfaces its value must implement.
     assoc: Vec<(Symbol, Vec<Symbol>)>,
+    /// D-407 — the bindings an associated type's bounds write (`type Iter:
+    /// Iterator[Item = Item]`), as a parameter's are kept: the instance, the
+    /// name bound, and its value, read with the interface's own associated
+    /// names abstract (`Self.Item`).
+    assoc_bindings: Vec<(Symbol, Vec<(Symbol, Symbol, Ty)>)>,
     /// SP-003 (ODR-049) — each associated type's default (`type Out =
     /// Self`), read with `Self` and the other associated names abstract: what
     /// an implementation that does not state it takes.
@@ -1513,6 +1518,11 @@ struct Checker<'a> {
     /// module and item index: one named by an earlier declaration's field or
     /// method is collected on demand.
     pending_generic_structs: HashMap<Symbol, (usize, usize, ast::Item)>,
+    /// D-407 — each interface's associated types by name, and its parents'
+    /// names, read before any generic type is collected: a generic type's
+    /// field or an interface's method may name `U.Iter` of an interface
+    /// collected after it.
+    noted_assoc: HashMap<Symbol, (Vec<Symbol>, Vec<Symbol>)>,
     /// The loops currently open, innermost last, each with its label if it has
     /// one. `break`/`continue` index into this to find their target.
     loop_labels: Vec<Option<Symbol>>,
@@ -1700,6 +1710,7 @@ impl<'a> Checker<'a> {
             pending_bound_interfaces: Vec::new(),
             collecting_generic: None,
             pending_generic_structs: HashMap::new(),
+            noted_assoc: HashMap::new(),
             loop_labels: Vec::new(),
             in_defer: false,
             in_unsafe: false,
@@ -2493,10 +2504,19 @@ impl<'a> Checker<'a> {
     /// parameter's bounds, and each method's own, are closed again.
     fn close_recipe_bounds(&mut self) {
         let close = |this: &Self, generics: &mut [GenericParam]| {
+            this.close_projection_bounds(generics);
             for param in generics {
                 this.close_bounds(&mut param.bounds, &mut param.bindings);
             }
         };
+        // D-407 — an interface method's hidden parameters too.
+        let defs: Vec<DefId> =
+            self.interfaces.values().flat_map(|def| def.methods.iter().map(|&(_, def, _, _)| def)).collect();
+        for def in defs {
+            let mut generics = std::mem::take(&mut self.signatures[def.0 as usize].generics);
+            self.close_projection_bounds(&mut generics);
+            self.signatures[def.0 as usize].generics = generics;
+        }
         let mut structs = std::mem::take(&mut self.generic_structs);
         for recipe in structs.values_mut() {
             close(self, &mut recipe.generic_params);
@@ -2637,7 +2657,7 @@ impl<'a> Checker<'a> {
                             &mut declarations,
                             qualified,
                             &generic.generic_params,
-                            generic.params.len(),
+                            generic.generic_params.len(),
                             &generic.methods,
                             &decl.members,
                         );
@@ -3489,6 +3509,71 @@ impl<'a> Checker<'a> {
                 self.pending_generic_structs.insert(name, (self.current_module, item_index, item.clone()));
             }
         }
+        // D-407 — and each interface's associated types (`noted_assoc`).
+        for item in &module.items {
+            let ast::ItemKind::Interface(decl) = &item.kind else { continue };
+            let name = self.qualified(decl.name.name);
+            let assoc: Vec<Symbol> = decl
+                .members
+                .iter()
+                .filter_map(|member| match &member.kind {
+                    ast::MemberKind::TypeAlias(alias) => Some(alias.name.name),
+                    _ => None,
+                })
+                .collect();
+            let parents: Vec<Symbol> = decl
+                .supertraits
+                .iter()
+                .filter_map(|parent| match &parent.kind {
+                    ast::TypeKind::Path { segments, .. } if segments.len() == 1 => Some(self.resolve_name(segments[0].name)),
+                    _ => None,
+                })
+                .collect();
+            self.noted_assoc.insert(name, (assoc, parents));
+        }
+    }
+
+    /// D-407 — the bounds of the associated type `assoc` that `interface`
+    /// (or a parent) declares: from the interface once it is collected,
+    /// none yet from what was noted before (`close_projection_bounds` fills
+    /// them in). `None` when it declares no `assoc`.
+    fn assoc_bounds_of(&self, interface: Symbol, assoc: Symbol) -> Option<Vec<Symbol>> {
+        if self.interfaces.contains_key(&interface) {
+            return self.interface_assoc(interface).into_iter().find(|(name, _)| *name == assoc).map(|(_, bounds)| bounds);
+        }
+        let origin = self.open_interface_origin.get(&interface).map_or(interface, |(origin, _)| *origin);
+        if self.interfaces.contains_key(&origin) {
+            return self.interface_assoc(origin).into_iter().find(|(name, _)| *name == assoc).map(|(_, bounds)| bounds);
+        }
+        let mut pending = vec![origin];
+        let mut seen = HashSet::new();
+        while let Some(interface) = pending.pop() {
+            if !seen.insert(interface) {
+                continue;
+            }
+            let Some((names, parents)) = self.noted_assoc.get(&interface) else { continue };
+            if names.contains(&assoc) {
+                return Some(Vec::new());
+            }
+            pending.extend(parents.iter().copied());
+        }
+        None
+    }
+
+    /// D-407 — a hidden parameter's bounds, where its interface was not yet
+    /// collected when it was declared: as the base's bound declares the
+    /// associated type. In order, so a chain's base is closed first.
+    fn close_projection_bounds(&self, generics: &mut [GenericParam]) {
+        for index in 0..generics.len() {
+            let Some((base, assoc)) = generics[index].projection else { continue };
+            if !generics[index].bounds.is_empty() {
+                continue;
+            }
+            let bounds = generics.get(base as usize).map(|param| param.bounds.clone()).unwrap_or_default();
+            if let Some(found) = bounds.iter().find_map(|&bound| self.assoc_bounds_of(bound, assoc)) {
+                generics[index].bounds = found;
+            }
+        }
     }
 
     /// D-279 — collect the generic struct `name` now, if it is declared and
@@ -3525,8 +3610,30 @@ impl<'a> Checker<'a> {
         {
             let ast::ItemKind::Struct(decl) = &item.kind else { return };
             let name = self.qualified(decl.name.name);
-            let generic_params = self.declare_generics(&decl.generics);
+            let mut generic_params = self.declare_generics(&decl.generics);
             let params: Vec<Symbol> = generic_params.iter().map(|g| g.name).collect();
+            // D-407 — `U.Iter` in a field or a method's signature is one
+            // hidden parameter after the written ones, bounded as `Iter` is
+            // declared and filled from the arguments at instantiation (as
+            // D-380 does for an extension).
+            let saved_projections = std::mem::take(&mut self.projection_params);
+            let mut mentioned: Vec<&ast::TypeExpr> = Vec::new();
+            for member in &decl.members {
+                match &member.kind {
+                    ast::MemberKind::Field(field) => mentioned.push(&field.ty),
+                    ast::MemberKind::Fn(fn_decl) => {
+                        for param in &fn_decl.params {
+                            match &param.kind {
+                                ast::ParamKind::Named { ty, .. } | ast::ParamKind::Receiver { ty: Some(ty) } => mentioned.push(ty),
+                                ast::ParamKind::Receiver { ty: None } => {}
+                            }
+                        }
+                        mentioned.extend(fn_decl.ret.as_ref());
+                    }
+                    _ => {}
+                }
+            }
+            self.declare_projections(&mentioned, &mut generic_params, 0);
             let fields = decl
                 .members
                 .iter()
@@ -3556,11 +3663,13 @@ impl<'a> Checker<'a> {
                 if fn_decl.body.is_none() {
                     continue;
                 }
+                // D-407 — a method's own parameters come after the
+                // hidden ones.
                 let Some((receiver, signature)) = self.generic_method_signature(
                     fn_decl,
                     &member.attrs,
                     member.span,
-                    params.len(),
+                    generic_params.len(),
                 ) else {
                     continue;
                 };
@@ -3583,6 +3692,7 @@ impl<'a> Checker<'a> {
             }
             self.collecting_generic = None;
             self.type_params.clear();
+            self.projection_params = saved_projections;
             if has_derive(&item.attrs, "Hash") {
                 self.hash_derived.insert(name);
             }
@@ -3846,6 +3956,13 @@ impl<'a> Checker<'a> {
             {
                 target_args = filled;
             }
+            // D-407 — the target's own hidden parameters (`U.Iter` of
+            // `struct Each[U: IntoIterator]`) are the extension's too where
+            // the target's argument is one of its parameters: its methods
+            // read the field as its own `U.Iter`, bounded as declared.
+            if decl.blanket.is_empty() {
+                self.declare_target_projections(name, &target_args, &mut params, decl.target.span);
+            }
             let mut methods = Vec::new();
             for (member_index, member) in decl.members.iter().enumerate() {
                 let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
@@ -3927,10 +4044,36 @@ impl<'a> Checker<'a> {
     }
 
     /// The type parameters of the generic struct, enum or class `name`.
+    /// D-407 — the hidden parameters a generic struct's recipe has, as the
+    /// extension `params` over `target_args` names them.
+    fn declare_target_projections(&mut self, target: Symbol, target_args: &[Ty], params: &mut Vec<GenericParam>, span: Span) {
+        let Some(recipe) = self.generic_structs.get(&target) else { return };
+        let recipe_params = recipe.generic_params.clone();
+        let written = recipe.params.len();
+        let mut names: Vec<Option<Symbol>> = target_args
+            .iter()
+            .take(written)
+            .map(|&arg| match *self.types.kind(arg) {
+                TyKind::Param { name, .. } => Some(name),
+                _ => None,
+            })
+            .collect();
+        for param in &recipe_params[written.min(recipe_params.len())..] {
+            let Some((base, assoc)) = param.projection else { break };
+            let Some(base_name) = names.get(base as usize).copied().flatten() else {
+                names.push(None);
+                continue;
+            };
+            self.declare_one_projection(base_name, ast::Ident { name: assoc, span }, params, 0);
+            names.push(Some(Symbol::intern(&format!("{base_name}.{assoc}"))));
+        }
+    }
+
     fn recipe_generic_params(&self, name: Symbol) -> Option<Vec<GenericParam>> {
+        // D-407 — the written ones: a struct's hidden parameters follow them.
         self.generic_structs
             .get(&name)
-            .map(|recipe| recipe.generic_params.clone())
+            .map(|recipe| recipe.generic_params.iter().filter(|param| param.projection.is_none()).cloned().collect())
             .or_else(|| self.generic_enums.get(&name).map(|recipe| recipe.generic_params.clone()))
             .or_else(|| self.generic_classes.get(&name).map(|recipe| recipe.generic_params.clone()))
     }
@@ -6375,6 +6518,101 @@ impl<'a> Checker<'a> {
         found
     }
 
+    /// D-407 — the bindings `interface`'s (or a parent's) associated type
+    /// `name` writes in its bounds, `Self.Item` standing for its own names.
+    fn interface_assoc_bindings(&self, interface: Symbol, name: Symbol) -> Vec<(Symbol, Symbol, Ty)> {
+        let mut pending = vec![interface];
+        let mut seen = HashSet::new();
+        while let Some(interface) = pending.pop() {
+            if !seen.insert(interface) {
+                continue;
+            }
+            let Some(def) = self.interfaces.get(&interface) else { continue };
+            if let Some((_, bindings)) = def.assoc_bindings.iter().find(|(assoc, _)| *assoc == name) {
+                return bindings.clone();
+            }
+            pending.extend(def.supertraits.iter().copied());
+        }
+        Vec::new()
+    }
+
+    /// D-407 — a hidden parameter `base.name`'s bindings, as its interface's
+    /// bounds write them: `Self.Item` there is the base's `Item`, a hidden
+    /// parameter of its own (declared on the way if it is not yet).
+    fn projection_bindings(
+        &mut self,
+        bounds_of_base: &[Symbol],
+        base: Symbol,
+        name: Symbol,
+        generics: &mut Vec<GenericParam>,
+        index_base: usize,
+        span: Span,
+    ) -> Vec<(Symbol, Symbol, Ty)> {
+        let Some(declaring) = bounds_of_base.iter().copied().find(|&bound| self.interface_has_assoc(bound, name)) else {
+            return Vec::new();
+        };
+        let mut found = Vec::new();
+        for (instance, assoc, value) in self.interface_assoc_bindings(declaring, name) {
+            let value = self.assoc_to_projection(value, base, generics, index_base, span);
+            found.push((instance, assoc, value));
+        }
+        found
+    }
+
+    /// `value` with each `Self.X` the hidden parameter `base.X`.
+    fn assoc_to_projection(&mut self, value: Ty, base: Symbol, generics: &mut Vec<GenericParam>, index_base: usize, span: Span) -> Ty {
+        let mut mentioned = Vec::new();
+        self.assoc_names_in(value, &mut mentioned);
+        if mentioned.is_empty() {
+            return value;
+        }
+        let mut map = HashMap::new();
+        for name in mentioned {
+            self.declare_one_projection(base, ast::Ident { name, span }, generics, index_base);
+            if let Some(&hidden) = self.projection_params.get(&(base, name)) {
+                map.insert(name, hidden);
+            }
+        }
+        self.replace_assoc(value, &map)
+    }
+
+    /// The `Self.X` names `ty` mentions.
+    fn assoc_names_in(&self, ty: Ty, out: &mut Vec<Symbol>) {
+        if let TyKind::Assoc { name } = *self.types.kind(ty) {
+            if !out.contains(&name) {
+                out.push(name);
+            }
+            return;
+        }
+        for arg in self.ty_shape(ty).1 {
+            self.assoc_names_in(arg, out);
+        }
+    }
+
+    /// `ty` with each `Self.X` in `map` replaced.
+    fn replace_assoc(&mut self, ty: Ty, map: &HashMap<Symbol, Ty>) -> Ty {
+        match self.types.kind(ty).clone() {
+            TyKind::Assoc { name } => map.get(&name).copied().unwrap_or(ty),
+            TyKind::Ref { mutable, inner } => {
+                let inner = self.replace_assoc(inner, map);
+                self.types.intern(TyKind::Ref { mutable, inner })
+            }
+            TyKind::Vec { elem, text } => {
+                let elem = self.replace_assoc(elem, map);
+                self.types.intern(TyKind::Vec { elem, text })
+            }
+            TyKind::Span { elem, mutable } => {
+                let elem = self.replace_assoc(elem, map);
+                self.types.intern(TyKind::Span { elem, mutable })
+            }
+            TyKind::Tuple(items) => {
+                let items = items.into_iter().map(|item| self.replace_assoc(item, map)).collect();
+                self.types.intern(TyKind::Tuple(items))
+            }
+            _ => ty,
+        }
+    }
+
     /// SP-003 (ODR-049) — the defaults of the associated types an interface
     /// declares and inherits, the nearest declaration's first.
     fn interface_assoc_defaults(&self, interface: Symbol) -> Vec<(Symbol, Ty)> {
@@ -7307,6 +7545,37 @@ impl<'a> Checker<'a> {
         }
         let cyclic = self.cyclic_assoc_defaults(decl, name);
         assoc_defaults.retain(|(assoc, _)| !cyclic.contains(assoc));
+        // `[IFC-4]` — each associated type's bounds; an implementation
+        // records what each one stands for. D-407 — a bound writing bindings
+        // (`type Iter: Iterator[Item = Item]`) names its interface (it was
+        // dropped, so `u.into_iter().next()` found no `next`), and its
+        // bindings are kept, read while the associated names are in scope.
+        let mut assoc_bounds = Vec::new();
+        let mut assoc_bindings = Vec::new();
+        for member in &decl.members {
+            if let ast::MemberKind::TypeAlias(alias) = &member.kind {
+                let mut bounds = Vec::new();
+                let mut bindings = Vec::new();
+                for bound in &alias.bounds {
+                    let ast::TypeKind::Path { segments, args } = &bound.kind else { continue };
+                    let [segment] = segments.as_slice() else { continue };
+                    let positional = args.iter().any(|arg| !matches!(arg, ast::GenericArg::Assoc { .. }));
+                    let instance = match positional {
+                        false => self.resolve_name(segment.name),
+                        true => match self.resolve_interface_use(bound) {
+                            Some(instance) => instance,
+                            None => continue,
+                        },
+                    };
+                    bounds.push(instance);
+                    if args.iter().any(|arg| matches!(arg, ast::GenericArg::Assoc { .. })) {
+                        bindings.extend(self.bound_bindings(bound, instance));
+                    }
+                }
+                assoc_bounds.push((alias.name.name, bounds));
+                assoc_bindings.push((alias.name.name, bindings));
+            }
+        }
         let mut methods = Vec::new();
         let mut defaults = Vec::new();
         let mut dyn_sized_defaults = HashSet::new();
@@ -7385,16 +7654,6 @@ impl<'a> Checker<'a> {
         let _ = span;
         self.assoc_scope = saved_assoc;
         self.type_params = saved_type_params;
-        // `[IFC-4]` — the associated names were in scope while the
-        // signatures were read, which is all the declaration needs them for;
-        // an implementation records what each one stands for.
-        let mut assoc_bounds = Vec::new();
-        for member in &decl.members {
-            if let ast::MemberKind::TypeAlias(alias) = &member.kind {
-                let bounds = alias.bounds.iter().filter_map(interface_name).map(|name| self.resolve_name(name)).collect();
-                assoc_bounds.push((alias.name.name, bounds));
-            }
-        }
         let _ = &assoc;
         self.interfaces.insert(
             name,
@@ -7404,6 +7663,7 @@ impl<'a> Checker<'a> {
                 defaults,
                 supertraits,
                 assoc: assoc_bounds,
+                assoc_bindings,
                 assoc_defaults,
                 supertrait_exprs: decl.supertraits.clone(),
                 declaring_module: self.current_module,
@@ -7630,6 +7890,7 @@ impl<'a> Checker<'a> {
                 defaults,
                 supertraits,
                 assoc: definition.assoc.clone(),
+                assoc_bindings: definition.assoc_bindings.clone(),
                 assoc_defaults,
                 supertrait_exprs: Vec::new(),
                 declaring_module: definition.declaring_module,
@@ -7923,9 +8184,39 @@ impl<'a> Checker<'a> {
         span: Span,
         generic_index_base: usize,
     ) -> Option<(Option<Mode>, Signature)> {
+        // D-407 — a method's own projections are its own: the owner's stay.
+        let saved_projections = self.projection_params.clone();
+        let signature = self.method_signature_inner(decl, self_ty, attrs, span, generic_index_base);
+        self.projection_params = saved_projections;
+        signature
+    }
+
+    fn method_signature_inner(
+        &mut self,
+        decl: &ast::FnDecl,
+        self_ty: Option<Ty>,
+        attrs: &[ast::Attribute],
+        span: Span,
+        generic_index_base: usize,
+    ) -> Option<(Option<Mode>, Signature)> {
         let saved_type_params = self.type_params.clone();
         let mut generics =
             self.declare_generics_from(&decl.generics, generic_index_base);
+        // D-407 — `U.Elem` in the signature, `U` one of the method's own
+        // parameters, is a hidden parameter, as in a function's (`[IFC-4]`);
+        // its interface may be one collected after this one.
+        if !decl.generics.is_empty() {
+            let mentioned: Vec<&ast::TypeExpr> = decl
+                .params
+                .iter()
+                .filter_map(|param| match &param.kind {
+                    ast::ParamKind::Named { ty, .. } => Some(ty),
+                    ast::ParamKind::Receiver { .. } => None,
+                })
+                .chain(decl.ret.as_ref())
+                .collect();
+            self.declare_projections(&mentioned, &mut generics, generic_index_base);
+        }
         let mut receiver = None;
         let mut params = Vec::new();
         for param in &decl.params {
@@ -8984,9 +9275,9 @@ impl<'a> Checker<'a> {
             }
             // `[IFC-4]` — `T.Real`: an associated type of a type parameter.
             ast::TypeKind::Path { segments, args }
-                if args.is_empty() && segments.len() == 2 && self.type_params.contains_key(&segments[0].name) =>
+                if args.is_empty() && segments.len() >= 2 && self.type_params.contains_key(&segments[0].name) =>
             {
-                self.resolve_projection(segments[0], segments[1])
+                self.resolve_projection_chain(segments)
             }
             // `[MOD-3]` — `m.T` names the type `T` of the module `import` bound
             // to `m` (`import a.b.m`), with any arguments: `m.Pair[int]`.
@@ -10926,7 +11217,9 @@ impl<'a> Checker<'a> {
             );
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        let mut solved: Vec<Option<Ty>> = vec![None; decl.params.len()];
+        // D-407 — a slot for each hidden parameter too, which a field's
+        // value may meet; only the written ones are passed on.
+        let mut solved: Vec<Option<Ty>> = vec![None; decl.generic_params.len()];
         for (slot, ty) in explicit.iter().enumerate() {
             if slot < solved.len() {
                 solved[slot] = Some(*ty);
@@ -10940,7 +11233,7 @@ impl<'a> Checker<'a> {
                 && let TyKind::Struct(id) = *self.types.kind(expected)
                 && let Some((origin, hinted)) = self.types.struct_def(id).origin.clone()
                 && origin == name
-                && hinted.len() == solved.len()
+                && hinted.len() == decl.params.len()
             {
                 for (slot, hint) in solved.iter_mut().zip(hinted) {
                     if slot.is_none() {
@@ -10949,7 +11242,7 @@ impl<'a> Checker<'a> {
                 }
             }
             self.fill_solved_defaults(&decl.generic_params, &mut solved);
-            let Some(substitution) = solved.iter().copied().collect::<Option<Vec<Ty>>>() else {
+            let Some(substitution) = solved[..decl.params.len()].iter().copied().collect::<Option<Vec<Ty>>>() else {
                 // The annotation already failed and said so ([DIA-14]).
                 if expected != Some(self.common.error) {
                     self.error(codes::E2060, span, format!("cannot tell `{name}`'s type arguments here; write `{name}[...](...)`"));
@@ -10962,6 +11255,22 @@ impl<'a> Checker<'a> {
             };
             if let Some(built) = self.construct_through_init(id, args, span) {
                 return built;
+            }
+        }
+        // D-407 — the type expected says the written parameters, and so the
+        // hidden ones a field may name (`it: U.Iter`).
+        if decl.generic_params.len() > decl.params.len()
+            && let Some(expected) = expected
+            && let TyKind::Struct(id) = *self.types.kind(expected)
+            && let Some((origin, hinted)) = self.types.struct_def(id).origin.clone()
+            && origin == name
+            && hinted.len() == decl.params.len()
+        {
+            let full = self.with_projections(&decl.generic_params, &hinted);
+            for (slot, hint) in solved.iter_mut().zip(full) {
+                if slot.is_none() {
+                    *slot = Some(hint);
+                }
             }
         }
         // Unify each declared field type with the value given for it.
@@ -11179,8 +11488,15 @@ impl<'a> Checker<'a> {
         args: &[Ty],
         span: Span,
     ) -> Ty {
+        // D-407 — the hidden parameters come with the arguments (an opaque
+        // instance's, every parameter its own) or are computed from them.
+        let written = decl.params.len();
+        let (args, hidden_given) = match args.len() == decl.generic_params.len() && args.len() > written {
+            true => (&args[..written], Some(args[written..].to_vec())),
+            false => (args, None),
+        };
         let filled = match args.len() < decl.params.len() {
-            true => self.with_type_defaults(&decl.generic_params, args),
+            true => self.with_type_defaults(&decl.generic_params[..written], args),
             false => None,
         };
         let args = filled.as_deref().unwrap_or(args);
@@ -11212,7 +11528,19 @@ impl<'a> Checker<'a> {
                 return self.common.error;
             }
         }
-        let instance = self.generic_instance_name(name, args);
+        // D-407 — with hidden parameters, an instance is named by them too:
+        // an opaque `Each[U]` means a different `U.Iter` in each generic body
+        // that makes one (a struct's own, an extension's), and a concrete
+        // one's are fixed by its arguments.
+        let full: Vec<Ty> = match hidden_given {
+            Some(hidden) => args.iter().copied().chain(hidden).collect(),
+            None if decl.generic_params.len() > written => self.with_projections(&decl.generic_params, args),
+            None => args.to_vec(),
+        };
+        let instance = match decl.generic_params.len() > written {
+            true => self.generic_instance_name(name, &full),
+            false => self.generic_instance_name(name, args),
+        };
         if let Some(&ty) = self.named_types.get(&instance) {
             return ty;
         }
@@ -11240,7 +11568,7 @@ impl<'a> Checker<'a> {
             .fields
             .iter()
             .map(|field| {
-                let ty = self.substitute_ty(field.ty, args);
+                let ty = self.substitute_ty(field.ty, &full);
                 let ty = self.reject_unsized_by_value(ty, field.ty_span, "a field");
                 FieldDef {
                     name: field.name,
@@ -11259,7 +11587,7 @@ impl<'a> Checker<'a> {
         // The methods are substituted the same way, each getting a `DefId` of
         // its own.
         let bindings: Vec<(Symbol, Ty)> =
-            decl.params.iter().copied().zip(args.iter().copied()).collect();
+            decl.generic_params.iter().map(|param| param.name).zip(full.iter().copied()).collect();
         for method in &decl.methods {
             self.register_recipe_method(ty, name, method, &bindings, None, false);
         }
@@ -11311,6 +11639,34 @@ impl<'a> Checker<'a> {
         self.type_params = saved_interface_params;
         self.apply_generic_extensions(ty, name, args);
         ty
+    }
+
+    /// D-407 — `args` and after them the hidden parameters of `params`, each
+    /// an argument's associated type through the bound declaring it.
+    fn with_projections(&mut self, params: &[GenericParam], args: &[Ty]) -> Vec<Ty> {
+        let mut full = args.to_vec();
+        for param in &params[args.len().min(params.len())..] {
+            let Some((base, assoc)) = param.projection else { break };
+            let solved: Vec<Option<Ty>> = full.iter().map(|&ty| Some(ty)).collect();
+            let bounds = params.get(base as usize).map(|base| base.bounds.clone()).unwrap_or_default();
+            // A parameter's projection the signature or the type being
+            // collected declared is that hidden parameter, where `project`
+            // could not find it (no body's generics are in scope yet).
+            let declared = full.get(base as usize).and_then(|&arg| match *self.types.kind(arg) {
+                TyKind::Param { name, .. } => self.projection_params.get(&(name, assoc)).copied(),
+                _ => None,
+            });
+            if let Some(declared) = declared {
+                full.push(declared);
+                continue;
+            }
+            let instance = self.projection_bound_instance(&bounds, assoc, params, &solved);
+            let saved = std::mem::replace(&mut self.assoc_instance, instance);
+            let value = full.get(base as usize).copied().and_then(|arg| self.project(arg, assoc));
+            self.assoc_instance = saved;
+            full.push(value.unwrap_or(self.common.error));
+        }
+        full
     }
 
     /// `[TYP-16]` — materialise one enum for a concrete type-argument list.
@@ -17824,6 +18180,40 @@ impl<'a> Checker<'a> {
         };
         // `Option` is `None` then `Some(T)`; `Result` is `Ok(T)` then `Err(E)`.
         let payload = |index: usize| def.variants[index].fields.first().map(|f| f.ty);
+        // D-407 (owner's decision, 2026-10-01) — `as_ref` and `as_mut` look
+        // into the place without consuming it: `Some(x)` is `Some` of a
+        // reference to `x`, whatever `x`'s type (`[GRM-13]` would bind a
+        // `Copy` payload by value), so `Peekable.peek` is written over them.
+        if matches!(method, "as_ref" | "as_mut") {
+            let inner = payload(1).expect("Some");
+            let mutable = method == "as_mut";
+            let mut receiver = receiver;
+            if mutable {
+                // The same write as `ref mut x` in a pattern (D-295).
+                receiver = self.index_place_for_write(receiver);
+                let at = receiver.span;
+                self.reject_readonly_write(&receiver, at);
+                if !self.reject_write_through_shared_ref(&receiver, at) {
+                    self.reject_borrowed_parameter_write(&receiver, at, true);
+                }
+            }
+            let reference = self.types.intern(TyKind::Ref { mutable, inner });
+            let result = self.option_of(reference);
+            let TyKind::Enum(result_id) = *self.types.kind(result) else { unreachable!("Option is an enum") };
+            let bound = self.declare(None, reference, span);
+            let bind = hir::Pattern { ty: inner, kind: hir::PatternKind::Bind { local: bound, sub: None, by_ref: Some(mutable) }, span };
+            let some = Expr {
+                ty: result,
+                kind: ExprKind::EnumLit {
+                    enum_id: result_id,
+                    variant: 1,
+                    fields: vec![Expr { ty: reference, kind: ExprKind::Local(bound), span }],
+                },
+                span,
+            };
+            let none = Expr { ty: result, kind: ExprKind::EnumLit { enum_id: result_id, variant: 0, fields: Vec::new() }, span };
+            return matching(receiver, vec![arm(variant(1, vec![bind]), some), arm(wild(ty), none)], result);
+        }
         match method {
             "is_some" | "is_none" | "is_ok" | "is_err" => {
                 let (index, fields) = match method {
@@ -27398,6 +27788,22 @@ impl<'a> Checker<'a> {
             }
             checked_args[index] = Some(value);
         }
+        // D-407 — `U.Elem` is what `U`'s type says its `Elem` is, as at a
+        // function's call (`[IFC-4]`): a method's own projections.
+        for index in 0..generics.len() {
+            let Some((base, assoc)) = generics[index].projection else { continue };
+            if solved[index].is_some() {
+                continue;
+            }
+            if let Some(base_ty) = solved.get(base as usize).copied().flatten() {
+                let bounds = generics[base as usize].bounds.clone();
+                let instance = self.projection_bound_instance(&bounds, assoc, &generics, &solved);
+                let saved = std::mem::replace(&mut self.assoc_instance, instance);
+                let value = self.project(base_ty, assoc);
+                self.assoc_instance = saved;
+                solved[index] = Some(value.unwrap_or(self.common.error));
+            }
+        }
         let mut substitution = Vec::new();
         for (index, param) in generics.iter().enumerate() {
             match solved[index] {
@@ -27873,31 +28279,98 @@ impl<'a> Checker<'a> {
         for ty in types {
             collect_projection_paths(ty, &mut named);
         }
+        // D-407 — and the hidden parameters of the generic structs named
+        // over these parameters (`Each[U]` for `struct Each[U:
+        // IntoIterator]: it: U.Iter`), so the signature's `Each[U]` and the
+        // body's are one instance.
+        for ty in types {
+            self.induced_projections(ty, &mut named);
+        }
         for (base, assoc) in named {
-            let Some(base_index) = generics.iter().position(|param| param.name == base.name && param.projection.is_none())
-            else {
-                continue;
-            };
-            if self.projection_params.contains_key(&(base.name, assoc.name)) {
-                continue;
+            self.declare_one_projection(base, assoc, generics, index_base);
+        }
+    }
+
+    /// D-407 — `base.assoc` for each hidden parameter of a generic struct
+    /// `ty` names, where the argument it projects is a parameter (or one of
+    /// its projections) written as a path.
+    fn induced_projections(&self, ty: &ast::TypeExpr, out: &mut Vec<(Symbol, ast::Ident)>) {
+        match &ty.kind {
+            ast::TypeKind::Path { segments, args } => {
+                if let [segment] = segments.as_slice()
+                    && let Some(recipe) = self.generic_structs.get(&self.resolve_name(segment.name))
+                    && recipe.generic_params.len() > recipe.params.len()
+                {
+                    let written = recipe.params.len();
+                    let mut names: Vec<Option<String>> = args
+                        .iter()
+                        .take(written)
+                        .map(|arg| match arg {
+                            ast::GenericArg::Type(arg) => match &arg.kind {
+                                ast::TypeKind::Path { segments, args } if args.is_empty() => {
+                                    Some(segments.iter().map(|segment| segment.name.as_str()).collect::<Vec<_>>().join("."))
+                                }
+                                _ => None,
+                            },
+                            _ => None,
+                        })
+                        .collect();
+                    for param in &recipe.generic_params[written..] {
+                        let Some((base, assoc)) = param.projection else { break };
+                        match names.get(base as usize).cloned().flatten() {
+                            Some(base_name) => {
+                                out.push((Symbol::intern(&base_name), ast::Ident { name: assoc, span: ty.span }));
+                                names.push(Some(format!("{base_name}.{assoc}")));
+                            }
+                            None => names.push(None),
+                        }
+                    }
+                }
+                for arg in args {
+                    if let ast::GenericArg::Type(inner) | ast::GenericArg::Assoc { ty: inner, .. } = arg {
+                        self.induced_projections(inner, out);
+                    }
+                }
             }
-            let declared = generics[base_index].bounds.iter().find_map(|bound| {
-                self.interfaces
-                    .get(bound)
-                    .map(|_| self.interface_assoc(*bound))
-                    .and_then(|found| found.into_iter().find(|(name, _)| *name == assoc.name).map(|(_, bounds)| bounds))
-            });
+            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } => self.induced_projections(inner, out),
+            ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
+                items.iter().for_each(|item| self.induced_projections(item, out))
+            }
+            ast::TypeKind::Fn { params, ret, .. } => {
+                params.iter().for_each(|param| self.induced_projections(&param.ty, out));
+                if let Some(ret) = ret {
+                    self.induced_projections(ret, out);
+                }
+            }
+            ast::TypeKind::Array { elem, .. } => self.induced_projections(elem, out),
+            _ => {}
+        }
+    }
+
+    /// One of `declare_projections`'s: `base.assoc`'s hidden parameter.
+    /// D-407 — a chain (`S.Item.Iter`) names a hidden parameter's own
+    /// associated type, so a base may be one declared just before; and an
+    /// interface not collected yet declares what was noted of it.
+    fn declare_one_projection(&mut self, base: Symbol, assoc: ast::Ident, generics: &mut Vec<GenericParam>, index_base: usize) {
+        {
+            let Some(base_index) = generics.iter().position(|param| param.name == base) else {
+                return;
+            };
+            if self.projection_params.contains_key(&(base, assoc.name)) {
+                return;
+            }
+            let declared = generics[base_index].bounds.iter().find_map(|&bound| self.assoc_bounds_of(bound, assoc.name));
             let Some(bounds) = declared else {
                 self.error(
                     codes::E2040,
                     assoc.span,
-                    format!("`{}` has no associated type `{}`; its bounds declare none", base.name, assoc.name),
+                    format!("`{base}` has no associated type `{}`; its bounds declare none", assoc.name),
                 );
                 let error = self.common.error;
-                self.projection_params.insert((base.name, assoc.name), error);
-                continue;
+                self.projection_params.insert((base, assoc.name), error);
+                return;
             };
-            let name = Symbol::intern(&format!("{}.{}", base.name, assoc.name));
+            let name = Symbol::intern(&format!("{base}.{}", assoc.name));
             let index = (index_base + generics.len()) as u32;
             let ty = self.types.intern(TyKind::Param { index, name });
             generics.push(GenericParam {
@@ -27908,7 +28381,13 @@ impl<'a> Checker<'a> {
                 projection: Some(((index_base + base_index) as u32, assoc.name)),
                 bindings: Vec::new(),
             });
-            self.projection_params.insert((base.name, assoc.name), ty);
+            self.projection_params.insert((base, assoc.name), ty);
+            // D-407 — and the bindings its bounds write (`Iter: Iterator[Item
+            // = Item]`: `U.Iter`'s `Item` is `U.Item`).
+            let base_bounds = generics[base_index].bounds.clone();
+            let slot = index as usize - index_base;
+            let bindings = self.projection_bindings(&base_bounds, base, assoc.name, generics, index_base, assoc.span);
+            generics[slot].bindings = bindings;
         }
     }
 
@@ -27957,6 +28436,31 @@ impl<'a> Checker<'a> {
         self.common.error
     }
 
+    /// D-407 — `S.Item.Iter`: each name the associated type of what the
+    /// path before it is, a hidden parameter where one stands for it.
+    fn resolve_projection_chain(&mut self, segments: &[ast::Ident]) -> Ty {
+        let mut ty = self.resolve_projection(segments[0], segments[1]);
+        let mut base = format!("{}.{}", segments[0].name, segments[1].name);
+        for assoc in &segments[2..] {
+            if ty == self.common.error {
+                return ty;
+            }
+            ty = match self.projection_params.get(&(Symbol::intern(&base), assoc.name)) {
+                Some(&hidden) => hidden,
+                None => match self.project(ty, assoc.name) {
+                    Some(found) => found,
+                    None => {
+                        let shown = self.types.display(ty);
+                        self.error(codes::E2040, assoc.span, format!("`{shown}` has no associated type `{}`", assoc.name));
+                        return self.common.error;
+                    }
+                },
+            };
+            base = format!("{base}.{}", assoc.name);
+        }
+        ty
+    }
+
     /// What `ty.name` is: the implementation's `type name = …`, or for a type
     /// parameter the hidden parameter standing for it.
     fn project(&mut self, ty: Ty, name: Symbol) -> Option<Ty> {
@@ -28003,10 +28507,13 @@ impl<'a> Checker<'a> {
             return None;
         }
         let base = self.current_generics.get(index as usize)?;
-        if base.name != base_name || base.projection.is_some() {
+        // D-407 — a projection's own associated type too (`S.Item.Iter`),
+        // to a depth no program writes.
+        if base.name != base_name || base_name.as_str().matches('.').count() >= 8 {
             return None;
         }
-        let bounds = base.bounds.clone().into_iter().find_map(|bound| {
+        let base_bounds = base.bounds.clone();
+        let bounds = base_bounds.clone().into_iter().find_map(|bound| {
             self.interface_assoc(bound).into_iter().find(|(assoc, _)| *assoc == name).map(|(_, bounds)| bounds)
         })?;
         let slot = self.current_generics.len();
@@ -28019,6 +28526,23 @@ impl<'a> Checker<'a> {
             projection: Some((index, name)),
             bindings: Vec::new(),
         });
+        // D-407 — and the bindings its bounds write: `U.Iter`'s `Item` is
+        // `U.Item` (`type Iter: Iterator[Item = Item]`).
+        if let Some(declaring) = base_bounds.iter().copied().find(|&bound| self.interface_has_assoc(bound, name)) {
+            let mut bindings = Vec::new();
+            for (instance, assoc, value) in self.interface_assoc_bindings(declaring, name) {
+                let mut mentioned = Vec::new();
+                self.assoc_names_in(value, &mut mentioned);
+                let mut map = HashMap::new();
+                for other in mentioned {
+                    if let Some(found) = self.project(ty, other) {
+                        map.insert(other, found);
+                    }
+                }
+                bindings.push((instance, assoc, self.replace_assoc(value, &map)));
+            }
+            self.current_generics[slot].bindings = bindings;
+        }
         Some(self.types.intern(TyKind::Param { index: slot as u32, name: param_name }))
     }
 
@@ -30857,7 +31381,7 @@ impl<'a> Checker<'a> {
         {
             return self.synth_wrapper_callback(receiver, prefix, name, args, expected, span);
         }
-        if (self.is_option(receiver.ty) && matches!(name.name.as_str(), "is_some" | "is_none" | "unwrap_or_default" | "ok_or")
+        if (self.is_option(receiver.ty) && matches!(name.name.as_str(), "is_some" | "is_none" | "unwrap_or_default" | "ok_or" | "as_ref" | "as_mut")
             || self.is_result(receiver.ty)
                 && matches!(name.name.as_str(), "is_ok" | "is_err" | "unwrap" | "expect" | "unwrap_or" | "ok" | "err"))
             && !self.methods.contains_key(&(receiver.ty, name.name))
@@ -39429,13 +39953,18 @@ fn has_self_sized_bound(bounds: &[ast::Bound]) -> bool {
 /// `[EXP-5]` applies to an assignment target and to a `mut` argument.
 /// `[IFC-4]` — every two-segment path with no arguments in a written type
 /// (`T.Real`), as a candidate associated type of a type parameter.
-fn collect_projection_paths(ty: &ast::TypeExpr, out: &mut Vec<(ast::Ident, ast::Ident)>) {
+fn collect_projection_paths(ty: &ast::TypeExpr, out: &mut Vec<(Symbol, ast::Ident)>) {
     match &ty.kind {
         ast::TypeKind::Path { segments, args } => {
-            if let [base, assoc] = segments.as_slice()
-                && args.is_empty()
-            {
-                out.push((*base, *assoc));
+            // `T.Name`, and D-407's chain `S.Item.Iter`: `S.Item`'s `Iter`.
+            // A module path (`m.T`) is one too, and is dropped where its
+            // first segment is no type parameter.
+            if segments.len() >= 2 && args.is_empty() {
+                let mut base = segments[0].name.to_string();
+                for assoc in &segments[1..] {
+                    out.push((Symbol::intern(&base), *assoc));
+                    base = format!("{base}.{}", assoc.name);
+                }
             }
             for arg in args {
                 match arg {

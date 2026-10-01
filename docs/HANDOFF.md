@@ -11094,7 +11094,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   between two instances of one generic interface), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h50/` are frozen.
-* **Next numbers:** ODR-098, D-437, ADR-095, ERR-056. ODR-094 is the owner's
+* **Next numbers:** ODR-098, D-437, ADR-096, ERR-056. ODR-094 is the owner's
   (ruled, not yet in the spec or built).
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
@@ -11138,10 +11138,17 @@ first**; the rest of §0.355 is the running narrative behind it.
     included), D-413 (ODR-097, Hardened_50: `[TYP-20]`'s placement rule,
     Rust's coherence rule, `E2121`; the D-411 swap for std collisions was
     removed with it, as no program implementation can meet std's now).
-  * **Next:** the review's last open defect, D-422 (how the closure adapters
-    take their callable; a value holding a `ref mut` capture is affine), goes
-    with `[CLO-3]`'s owned callable values; then D-407, ODR-094 and
-    `[CLO-3]` as the owner decided them.
+  * **D-407 (2)-(4) and (6), built (ADR-095):** hidden parameters for a
+    generic struct's projections, interfaces' associated types noted before
+    generic types, a method's own projections, chains, an associated type's
+    bound with a binding kept (`IntoIterator.Iter`), and the compiler's
+    `Option.as_ref`/`as_mut`.
+  * **Next:** D-407 (5) (a default method formatting a `Self.Item` under
+    `where Item: Display`; a default method bounded `C: Build[Item]`), then
+    ODR-094 (`FromIterator`/`collect`, `peekable` over `as_ref`, `Box` and
+    `Cell` printing; spec text in the next hardening, with `as_ref`/`as_mut`),
+    then `[CLO-3]` with D-422 (how the closure adapters take their
+    callable).
   * **Still to ask the owner:** whether to run the agent inspection of the
     2026-09-26 five defect fixes (D-358, D-355, D-201, D-202, D-218) the
     owner asked about; it was raised again at the start of this session and

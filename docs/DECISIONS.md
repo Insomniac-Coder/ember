@@ -3557,6 +3557,42 @@ RandomState]` in insertion order; one key, one hash within a run),
 `HASH-2/accept_bytes_differing_in_their_tail_hash_apart` (D-405, both hashers), and
 `random_state_is_keyed_per_process` in `milestones.rs` (one program run twice hashes a key two ways).
 
+## ADR-095 — projections in generic types, interfaces' associated types first
+
+2026-10-01, the owner's design for D-407 (2)-(4) and (6), built autonomously. `[STD-19]`'s
+`flat_map`, `flatten`, `peekable`, `collect` and `join` need a generic type to hold an associated
+type of its parameter (`current: Option[U.Iter]`), an interface's method to name one of an
+interface declared after it (`Iterator.flat_map`'s `U.Iter`), chains (`Item.Iter`), and a reference
+into a held `Option` (`peek`).
+
+**Hidden parameters for a generic struct.** As D-380 does for an extension, each `U.Name` a
+generic struct's fields or method signatures mention is one hidden parameter after the written
+ones, bounded as `Name` is declared (with the bindings its bounds write). Where a type is made the
+hidden ones are filled from the arguments, through the bound that declares the name (D-417); an
+opaque instance passes them with its own. Instances of such a struct are named by the hidden
+arguments too: an opaque `Each[U]` means a different `U.Iter` in each generic body that makes one,
+and a concrete one's are fixed by its arguments, so the name stays a function of the type. A
+signature or an extension that names `Each[U]` over its own `U` declares the same hidden parameters,
+so its signature and its body meet one instance. The written parameters alone are what a program
+writes and what a type shows (`Each[Array[int]]`).
+
+**Interfaces' associated types first.** Generic types are collected before interfaces (an
+interface's methods name generic types), so before either, each interface's associated type names
+and its parents are noted; a projection through an interface not collected yet is declared with no
+bounds, closed once interfaces are. A method's own projections are declared in its signature, as a
+function's are, and filled at its call. Chains are declared in order, each base a parameter or a
+projection declared before it; a body may project a projection.
+
+**An associated type's bound with a binding.** `type Iter: Iterator[Item = Item]` named no bound
+at all (the binding made it no plain name), so `u.into_iter().next()` failed in every generic body.
+The bound is kept, and its binding read with the interface's own names abstract; a hidden parameter
+for `U.Iter` takes it with `Self.Item` as `U.Item`.
+
+**`Option.as_ref` and `as_mut`** (the owner's choice over a by-reference pattern or a built-in
+`peek`) are the compiler's: a match on the place binding the payload by reference, so a `Copy`
+payload is referenced where `[GRM-13]` would copy it; `as_mut` is the write `ref mut` in a pattern
+is (D-295).
+
 ## ADR-094 — a label in another file is shown under that file's own header
 
 2026-10-01, autonomous; D-411, found by the 2026-10-01 agent review (G1-4, G1-N2). XIX §6's
