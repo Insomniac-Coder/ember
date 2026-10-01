@@ -3557,6 +3557,33 @@ RandomState]` in insertion order; one key, one hash within a run),
 `HASH-2/accept_bytes_differing_in_their_tail_hash_apart` (D-405, both hashers), and
 `random_state_is_keyed_per_process` in `milestones.rs` (one program run twice hashes a key two ways).
 
+## ADR-092 — an instance is named by its arguments' structure, once
+
+2026-10-01, autonomous; D-412, found by the 2026-10-01 agent review (G1-5). An instance of a generic
+type, of a generic interface or of a compiler-known wrapper is a nominal type kept in `named_types`
+under a name, and the name is also its C name. It was the constructor and each argument's symbol
+name with every run of punctuation made `_` (`type_stem`), so `Wrap[*int]` and `Wrap[int]` were
+both `Wrap_i64`, `Pair[(int, int), int]` and `Pair[int, (int, int)]` both `Pair_i64_i64_i64`, and
+whichever was made first was the other as well: the second took the first's fields.
+
+**Two layers, one function.** `unique_instance_name(constructor, args)` names every instance:
+
+1. **The spelling keeps the structure** (`instance_stem`): a pointer is `ptr_T` (`ptr_mut_T`), a
+   tuple `tupN_A_B`, a fixed array `arrN_T`, a function type `fnN` with its parameters' modes, its
+   ABI and its return (`fn1_i64_i64`). Everything `type_stem` already told apart is spelled as it
+   was (`i64`, a declared type, another instance, `Array_T`, `Span_T`, `ref_T`, `ref_mut_T`), so
+   the names programs and tests see do not move. The spelling is a function of the type alone, the
+   same in every compilation, which a name in a C header or a library needs.
+2. **A name is never shared.** The name is recorded against its (constructor, arguments); asked
+   again, the same name comes back. A spelling already held by another instance, a declared type
+   or an interface (a program may declare `struct Wrap_i64`, or `struct ptr_i64`) gets `_2`, `_3`,
+   … after it. So identity never rests on a spelling, even where a declared name mimics one.
+
+The alternative of a hash of the full symbol name on every instance was priced and not taken: it
+changes every instance's C name (tests pin some), reads worse, and still needs the second layer for
+exactness. Prefixes are kept (`Option_`, `Cell_`, `RefCell_`), which `ember_types` and the C
+backend test.
+
 ## ADR-091 — the closure adapters, and their stages in a counted loop
 
 2026-10-01, autonomous. `[STD-19]` lists `map`, `filter`, `filter_map`, `take_while`, `skip_while`

@@ -11088,12 +11088,44 @@ first**; the rest of §0.355 is the running narrative behind it.
     semantic ambiguity and no ODR or new hardening.
 
   The five preceding CI runs, through `f529f8b`, finished green.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_48.md`
-  (ODR-093: what a range type implements; H47 carried ODR-092, when two
-  implementations overlap), pinned in
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_49.md`
+  (ODR-096: how a call chooses between two instances of one generic
+  interface; H48 carried ODR-093, what a range type implements), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
-  `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h48/` are frozen.
-* **Next numbers:** ODR-094, D-409, ADR-092, ERR-056.
+  `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h49/` are frozen.
+* **Next numbers:** ODR-097, D-435, ADR-093, ERR-056. ODR-094 is the owner's
+  (ruled, not yet in the spec or built); ODR-095 is reserved for D-420 (what
+  a range value's bitwise operators and `**` do), not yet written.
+* **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
+  understand the status and activate autonomous development mode"; solo, no
+  agents).** Taken as the go for everything waiting on it: the review's
+  findings, D-407, ODR-094 and `[CLO-3]`. Order: the review's findings, worst
+  first; then D-407; then ODR-094; then `[CLO-3]`.
+  * **Triage.** `docs/REVIEW-2026-10-01.md`'s 37 findings are D-409 to D-434
+    (shared roots share a number; the table is in the review file), all in
+    `docs/DEFECTS.md`.
+  * **First batch, fixed:** D-426 (one value moved twice in one expression
+    freed twice: `(s, s)`, `two(u, u)`; operands now move in order,
+    `consume_in_order` in `drops.rs`), D-409 (the overlap pass dropped
+    implementations whose interface named `Self` on a built-in generic or an
+    associated type, and the overlap reached C as a function defined twice;
+    plus an instance-time `E2041` backstop), D-412 (instance names were not
+    unique: `Wrap[*int]` was `Wrap[int]`; ADR-092), D-428 (an operator took
+    the last-registered instance; ODR-096, Hardened_49: an exact match goes
+    before a coerced one, for every type, and both forms choose through
+    `choose_instance`), D-429 (D-400 for generic classes, and the generic body
+    check found methods by name; `apply_extension_bindings`,
+    `recipe_method_defs`).
+  * **Owner, 2026-10-01: no README benchmark numbers from a cloud
+    container** (AUTOPILOT §4); benchmarks there only guide optimisation.
+  * **Next:** the remaining review defects (D-410, D-411, D-413 to D-425,
+    D-427, D-430 to D-434; D-420 needs ODR-095 and D-422 a choice about how
+    adapters take their callable, see its row), then D-407, ODR-094 and
+    `[CLO-3]` as the owner decided them.
+  * **Still to ask the owner when he is back:** whether to run the agent
+    inspection of the 2026-09-26 five defect fixes (D-358, D-355, D-201,
+    D-202, D-218) he asked about; it was raised again at the start of this
+    session and not answered.
 * **`[TYP-9]` `@fastmath` and `@fp(contract)` (2026-09-30, ADR-085, ODR-090,
   Hardened_45).** Built for programs: a C unit per float mode, compiled with
   its flags (`[CG-C-11]`); lambdas take their function's mode; a default
@@ -12246,6 +12278,12 @@ cloud session through the night); read it first. The list below is the short for
   (ODR-030 did this for `extend`).
 * Answer plainly.
 * Phase-status requests get the table first.
+* No README benchmark numbers from a cloud container (the owner,
+  2026-10-01): "you can still use benchmarks to find whether the
+  implementation is optimised or not but you cannot use it for the
+  benchmarks section of readme". Timings vary in a cloud container, so
+  they guide optimisation only; the README's tables stay as measured on
+  the owner's machine. `docs/AUTOPILOT.md` §4 has the rule.
 
 **Done after the reset: test speedups A, B and C** (owner-approved on
 2026-09-25, "yes go ahead with A, B and C"). Measured on 24 cores:

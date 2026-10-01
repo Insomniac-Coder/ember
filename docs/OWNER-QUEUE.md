@@ -63,6 +63,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-082 | **CLOSED** — `@ffi(immutable)` on a foreign static asserts a `const` C object and emits a matching declaration | Language / C interop / foreign statics | — | **No** — delegated, 2026-09-27, Hardened_38 |
 | ODR-083 | **CLOSED** — a static free-function export's `creator` thread is anchored to successful module initialization; repeated initialization does not transfer the contract, and reinitialization after shutdown establishes a new creator | Language / C interop / export thread contracts | — | **No** — delegated, 2026-09-27, Hardened_39 |
 | ODR-084 | **CLOSED** — `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts | Language / module attributes / arithmetic | — | **No** — delegated, 2026-09-27, Hardened_40 |
+| ODR-096 | **CLOSED** — of two instances of one generic interface that a call's or an operator's arguments fit, the one whose parameter types are the arguments' own (an untyped literal as its default type) is chosen before one reached through a coercion, for every type; two that fit equally are `E2070`; an operator chooses as its method does | Types / interface resolution | — | **No** — delegated, 2026-10-01, Hardened_49 |
 | ODR-094 | **RULED** — `collect[C]()` builds any `C: FromIterator[Item]` (a new library interface), `C` written or taken from the expected type; `peekable` offers `peek`, `peek_mut`, `next_if`, `next_if_eq`; `Box` and `Cell` print as what they hold | Library / iterators / printing | — | **Yes** — the owner, 2026-10-01; not yet in the spec, not built |
 | ODR-093 | **CLOSED** — a range type is `Clone`, `Hash`, `Display` and `Debug` when its representation is, its `Eq` and `Ord` are its representation's, and a range value shows as its representation's value; never `Default` | Types / range types | — | **Yes** — delegated, 2026-10-01, Hardened_48 |
 | ODR-092 | **CLOSED** — two implementations overlap where one type could be both, each one's type parameters standing for any type, found where they are declared; a bound separates two only where the type it bounds is written out in full and does not meet it | Types / implementations | — | **Yes** — delegated, 2026-10-01, Hardened_47 |
@@ -250,6 +251,40 @@ immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
+
+## ODR-096 — how a call chooses between two instances of one interface — **CLOSED**
+
+    ID:        ODR-096
+    Status:    CLOSED — ruled under the owner's delegation, 2026-10-01;
+               incorporated in 0.9.9_Hardened_49
+    Category:  TYPES / INTERFACE RESOLUTION
+    Location:  Ember_v0.9.9_Hardened_48.md [TYP-24], [RNG-5a2], [TYP-21]
+
+**The question.** A type may implement two instances of one generic interface (`V` implements
+`Add[i64]` and `Add[i32]`). D-402 made a call whose arguments fit both `E2070`; but an `i32`
+argument fits `Add[i64]` too, by widening, so `v.add(s)` with `s: i32` was ambiguous though
+`Add[i32]` is its own type, while the operator `v + s` took whichever instance was registered last
+(D-428, found by the 2026-10-01 agent review, G4-1 and G4-9). `[RNG-5a2]` says "overload resolution
+picks an implementation matching the operand types exactly before considering any coercion", but
+sits among the range-type rules, and 0.9.9's wording lost 0.9.8's "`[TYP-24]`'s resolution". Does it
+hold for every type? What is an untyped literal's exact type? Does an operator choose as its method
+does?
+
+**Options.**
+1. `[RNG-5a2]` for range types only: between other instances any two that fit are `E2070`;
+   `v.add(s)` needs `Add[i32].add(v, s)`, and `v + 1` is `E2070` too.
+2. `[RNG-5a2]` for every type: an instance whose parameter types are the arguments' own goes before
+   one they reach through a coercion; an untyped literal is exact for no type, so `v + 1` is still
+   `E2070`.
+3. As 2, with an untyped literal exact for its default type (`int`, `f64`), as it is everywhere
+   else nothing gives it a type: `v + 1` is `Add[i64]`'s.
+
+**Ruling: 3**, and an operator chooses as its method's call does. 0.8.3 and 0.9.8 state the rule as
+`[TYP-24]`'s resolution, with range types as its example, so the general reading is the original
+one. An untyped literal takes its default type wherever nothing asks for another, and two instances
+asking for different types ask for nothing in particular. Ambiguity remains where two fit equally:
+two coercions (`i32` to `i64` or to `i128`), or no arguments at all (`w.conv()` with `Conv[bool]`
+and `Conv[Array[int]]`, D-402). The compiler's `choose_instance` serves both forms.
 
 ## ODR-094 — `collect`, `peekable`, and how `Box` and `Cell` print — **RULED**
 

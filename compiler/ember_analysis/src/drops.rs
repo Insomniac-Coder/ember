@@ -1222,72 +1222,79 @@ fn step_terminator(
         return;
     };
 
-    let mut read = Vec::new();
-    let mut push = |place: &Place| read.push(place.clone());
-    if let ember_mir::FuncRef::Indirect { operand: callee, .. } = func {
-        read_by_operand(callee, &mut push);
-    }
-    for arg in args {
-        read_by_operand(arg, &mut push);
-    }
-    if let Some(reporter) = reporter {
-        for place in &read {
+    let callee = match func {
+        ember_mir::FuncRef::Indirect { operand, .. } => Some(operand),
+        _ => None,
+    };
+    consume_in_order(callee.into_iter().chain(args), state, reporter, span, body, paths);
+    paths.initialise(dest, state);
+}
+
+/// `[OWN-3]` — an instruction's operands are evaluated in order, so a place
+/// one operand moves is gone for every operand after it: `(s, s)`,
+/// `two(u, u)`, `P(v, v)` and `[w, w]` each move one value twice (D-426).
+/// Each operand's read is checked against the state the operands before it
+/// left, and then its move is applied. The fixpoint and the reporting pass
+/// both come through here, so the state they reach is the same.
+fn consume_in_order<'o>(
+    operands: impl IntoIterator<Item = &'o Operand>,
+    state: &mut [Owned],
+    mut reporter: Option<&mut Reporter>,
+    span: Span,
+    body: &Body,
+    paths: &MovePaths,
+) {
+    let mut moved_here: Vec<&Place> = Vec::new();
+    for operand in operands {
+        let place = match operand {
+            Operand::Copy(place) | Operand::Move(place) => place,
+            Operand::Const(_) => continue,
+        };
+        if let Some(reporter) = reporter.as_deref_mut() {
             let owned = paths.state(place, state);
             if !owned.is_live() {
-                reporter.report(place, owned, span, body);
+                let again = moved_here.iter().any(|moved| paths_overlap(moved, place));
+                reporter.report(place, owned, span, body, again);
             }
         }
+        if let Operand::Move(place) = operand {
+            paths.move_out(place, state);
+            moved_here.push(place);
+        }
     }
-    let mut moved = Vec::new();
-    if let ember_mir::FuncRef::Indirect { operand: callee, .. } = func {
-        moved_by_operand(callee, &mut moved);
+}
+
+/// The operands of an rvalue in evaluation order.
+fn operands_of(rvalue: &Rvalue) -> Vec<&Operand> {
+    match rvalue {
+        Rvalue::Use(o) | Rvalue::UnaryOp { operand: o, .. } => vec![o],
+        Rvalue::Cast { operand, .. } => vec![operand],
+        Rvalue::BinaryOp { lhs, rhs, .. } => vec![lhs, rhs],
+        Rvalue::Aggregate { operands, .. } => operands.iter().collect(),
+        Rvalue::Repeat { value, .. } => vec![value],
+        Rvalue::Discriminant(_) | Rvalue::Ref { .. } => Vec::new(),
     }
-    for arg in args {
-        moved_by_operand(arg, &mut moved);
-    }
-    for place in moved {
-        paths.move_out(&place, state);
-    }
-    paths.initialise(dest, state);
 }
 
 fn step(
     stmt: &Stmt,
     state: &mut [Owned],
-    reporter: Option<&mut Reporter>,
+    mut reporter: Option<&mut Reporter>,
     body: &Body,
     paths: &MovePaths,
 ) {
     match &stmt.kind {
         StmtKind::Assign { place, rvalue } => {
-            // `[OWN-3]` — reading a moved value is `E3040`.
-            let mut read = Vec::new();
-            read_by_rvalue(rvalue, &mut read);
-            // `[BRW-7]` — a borrow does not consume, so it is not in `read`,
+            // `[BRW-7]` — a borrow does not consume, so it has no operand,
             // but a reference into memory that was moved out of dangles.
-            let borrowed = match rvalue {
-                Rvalue::Ref { place, .. } => Some(place),
-                _ => None,
-            };
-            if let Some(reporter) = reporter {
-                for place in &read {
-                    let owned = paths.state(place, state);
-                    if !owned.is_live() {
-                        reporter.report(place, owned, stmt.span, body);
-                    }
-                }
-                if let Some(place) = borrowed {
-                    let owned = paths.state(place, state);
-                    if !owned.is_live() {
-                        reporter.report_borrow(place, owned, stmt.span, body);
-                    }
+            if let (Rvalue::Ref { place, .. }, Some(reporter)) = (rvalue, reporter.as_deref_mut()) {
+                let owned = paths.state(place, state);
+                if !owned.is_live() {
+                    reporter.report_borrow(place, owned, stmt.span, body);
                 }
             }
-            let mut moved = Vec::new();
-            moved_by_rvalue(rvalue, &mut moved);
-            for moved in moved {
-                paths.move_out(&moved, state);
-            }
+            // `[OWN-3]` — reading a moved value is `E3040`.
+            consume_in_order(operands_of(rvalue), state, reporter, stmt.span, body, paths);
             paths.initialise(place, state);
         }
         // `[TYP-8]` — checked arithmetic writes its result through its own
@@ -1296,24 +1303,7 @@ fn step(
         // reported as a use after move. Every integer `a * b` bound to a
         // local went through here.
         StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
-            let mut read = Vec::new();
-            let mut push = |place: &Place| read.push(place.clone());
-            read_by_operand(lhs, &mut push);
-            read_by_operand(rhs, &mut push);
-            if let Some(reporter) = reporter {
-                for place in &read {
-                    let owned = paths.state(place, state);
-                    if !owned.is_live() {
-                        reporter.report(place, owned, stmt.span, body);
-                    }
-                }
-            }
-            let mut moved = Vec::new();
-            moved_by_operand(lhs, &mut moved);
-            moved_by_operand(rhs, &mut moved);
-            for moved in moved {
-                paths.move_out(&moved, state);
-            }
+            consume_in_order([lhs, rhs], state, reporter, stmt.span, body, paths);
             for place in [dest, overflow] {
                 paths.initialise(place, state);
             }
@@ -1348,32 +1338,6 @@ fn moved_by_rvalue(rvalue: &Rvalue, out: &mut Vec<Place>) {
 fn moved_by_operand(operand: &Operand, out: &mut Vec<Place>) {
     if let Operand::Move(place) = operand {
         out.push(place.clone());
-    }
-}
-
-/// Which places an rvalue reads, whether by copy or by move.
-fn read_by_rvalue(rvalue: &Rvalue, out: &mut Vec<Place>) {
-    let mut push = |place: &Place| out.push(place.clone());
-    match rvalue {
-        Rvalue::Use(o) | Rvalue::UnaryOp { operand: o, .. } => read_by_operand(o, &mut push),
-        Rvalue::Cast { operand, .. } => read_by_operand(operand, &mut push),
-        Rvalue::BinaryOp { lhs, rhs, .. } => {
-            read_by_operand(lhs, &mut push);
-            read_by_operand(rhs, &mut push);
-        }
-        Rvalue::Aggregate { operands, .. } => {
-            operands.iter().for_each(|o| read_by_operand(o, &mut push))
-        }
-        Rvalue::Repeat { value, .. } => read_by_operand(value, &mut push),
-        // Reading a tag or taking an address does not consume.
-        Rvalue::Discriminant(_) | Rvalue::Ref { .. } => {}
-    }
-}
-
-fn read_by_operand(operand: &Operand, push: &mut impl FnMut(&Place)) {
-    match operand {
-        Operand::Copy(place) | Operand::Move(place) => push(place),
-        Operand::Const(_) => {}
     }
 }
 
@@ -1512,7 +1476,7 @@ struct Reporter<'a> {
 }
 
 impl Reporter<'_> {
-    fn report(&mut self, place: &Place, state: Owned, span: Span, body: &Body) {
+    fn report(&mut self, place: &Place, state: Owned, span: Span, body: &Body, again: bool) {
         let local = place.local;
         let index = local.0 as usize;
         if self.reported[index] {
@@ -1526,13 +1490,28 @@ impl Reporter<'_> {
         }
         // A local no move reaches was never given a value on that path:
         // definite initialisation reports that read (`E3050`), and one error
-        // is enough ([DIA-14]).
-        if !state.is_partial() && moves_reaching(body, local, self.point).is_empty() {
+        // is enough ([DIA-14]). A move by an earlier operand of this same
+        // instruction reaches it, though no earlier statement moved it.
+        if !again && !state.is_partial() && moves_reaching(body, local, self.point).is_empty() {
             return;
         }
         self.reported[index] = true;
         self.errors += 1;
         let name = decl.name.clone().unwrap_or_else(|| format!("_{}", local.0));
+        if again && !state.is_partial() {
+            // D-426 — `(s, s)`, `f(s, s)`: the second operand finds the value
+            // the first one took.
+            self.sink.emit_classified(
+                Diagnostic::error(codes::E3040, span, format!("`{name}` is moved twice in one expression"))
+                    .primary_label("a part of this expression before it already moved the value")
+                    .note(concat!(
+                        "the parts of a call, a tuple, a list or a constructor are evaluated left to ",
+                        "right, and the first that takes the value by move gives it away [OWN-3]"
+                    ))
+                    .help("clone it for one of the two, or borrow it where the callee does not need to own it"),
+            );
+            return;
+        }
         if state.is_partial() {
             self.sink.emit_classified(
                 Diagnostic::error(

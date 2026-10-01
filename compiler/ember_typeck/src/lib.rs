@@ -236,7 +236,8 @@ pub fn check(
     checker.bounds_known = true;
     for (name, params, args, span) in std::mem::take(&mut checker.pending_struct_bounds) {
         if !checker.struct_bounds_met(name, &params, &args, span) {
-            if let Some(&ty) = checker.named_types.get(&checker.generic_instance_name(name, &args)) {
+            let instance = checker.generic_instance_name(name, &args);
+            if let Some(&ty) = checker.named_types.get(&instance) {
                 checker.unmet_instances.insert(ty);
             }
         }
@@ -1101,6 +1102,27 @@ struct Checker<'a> {
     /// recipe's already gave the type the interface: the overlap check
     /// reports them (`check_overlapping_implementations`).
     set_aside: Vec<(Ty, Symbol, Span)>,
+    /// D-409, `[TYP-19]` — collisions met when an instance took its
+    /// implementations, one of the two from a generic recipe: (the instance,
+    /// the interface instance, the first implementation, the second). The
+    /// overlap pass reports such a pair where the two are declared; a pair
+    /// it did not report is reported at the instance, never left to reach C
+    /// as a function defined twice.
+    instance_collisions: Vec<(Ty, Symbol, Span, Span)>,
+    /// D-412, `[TYP-16]` — the name given each instance, by its constructor
+    /// and arguments, and the reverse: one name per distinct instance.
+    instance_names: HashMap<(String, Vec<Ty>), Symbol>,
+    /// D-429 — the definition each recipe method (by its place in the
+    /// source) got on each instance, so a generic body is checked as the
+    /// method it is, not as another of its name.
+    recipe_method_defs: HashMap<(Ty, (usize, usize, usize)), DefId>,
+    instance_name_owner: HashMap<Symbol, (String, Vec<Ty>)>,
+    /// The pairs of implementations reported as overlapping, in both orders,
+    /// and each implementation reported as the later of a pair.
+    overlaps_reported: HashSet<(Span, Span)>,
+    overlap_reported_at: HashSet<Span>,
+    /// Whether `check_overlapping_implementations` has run.
+    overlaps_checked: bool,
     /// `[TYP-24]` — each interface's methods for each type, beside
     /// `methods` (which keeps one per name), for `I.m(recv)`.
     interface_methods: HashMap<(Ty, Symbol, Symbol), MethodEntry>,
@@ -1537,6 +1559,13 @@ impl<'a> Checker<'a> {
             interfaces: HashMap::new(),
             implemented: Vec::new(),
             set_aside: Vec::new(),
+            instance_collisions: Vec::new(),
+            instance_names: HashMap::new(),
+            recipe_method_defs: HashMap::new(),
+            instance_name_owner: HashMap::new(),
+            overlaps_reported: HashSet::new(),
+            overlap_reported_at: HashSet::new(),
+            overlaps_checked: false,
             constants: HashMap::new(),
             foreign_statics: HashMap::new(),
             prefixes: vec![String::new()],
@@ -4423,13 +4452,19 @@ impl<'a> Checker<'a> {
             if !method.has_body {
                 continue;
             }
-            let def = match (method.receiver, interface) {
-                (Some(_), Some(interface)) => {
-                    self.interface_methods.get(&(owner, interface, method.name)).map(|entry| entry.def)
+            // D-429 — the method this source registered on the owner: two
+            // blocks implementing `Add[int]` and `Add[bool]` each have an
+            // `add`, and a lookup by name checked one's body against the
+            // other's signature.
+            let def = self.recipe_method_defs.get(&(owner, method.source)).copied().or_else(|| {
+                match (method.receiver, interface) {
+                    (Some(_), Some(interface)) => {
+                        self.interface_methods.get(&(owner, interface, method.name)).map(|entry| entry.def)
+                    }
+                    (Some(_), None) => self.methods.get(&(owner, method.name)).map(|entry| entry.def),
+                    (None, _) => self.associated.get(&(owner, method.name)).map(|entry| entry.def),
                 }
-                (Some(_), None) => self.methods.get(&(owner, method.name)).map(|entry| entry.def),
-                (None, _) => self.associated.get(&(owner, method.name)).map(|entry| entry.def),
-            };
+            });
             let Some(def) = def else { continue };
             let (module_index, item_index, member_index) = method.source;
             let item = &modules[module_index].module.items[item_index];
@@ -4555,29 +4590,10 @@ impl<'a> Checker<'a> {
         // vtable) are emitted only if called.
         let builtin = self.builtin_generic_origin(ty).is_some();
         for (index, extension, mut bindings) in matching {
-            // D-380 — each hidden `P.Name` is what the type bound to `P` says.
-            for param in &extension.params[bindings.len()..] {
-                let Some((base, assoc)) = param.projection else { continue };
-                let arg = bindings.get(base as usize).map(|&(_, arg)| arg);
-                let value = arg.and_then(|arg| self.project(arg, assoc)).unwrap_or(self.common.error);
-                bindings.push((param.name, value));
-            }
             self.applied_extensions.insert((ty, index));
-            // D-400 — the interfaces the block implements, as this instance
-            // has them (`Conv[Array[T]]` at `Wrap[i64]` is `Conv[Array[i64]]`):
-            // a method is the interface's that declares it, else the first's,
-            // as a concrete block's are (D-313), so two instances of one
-            // generic interface may share method names.
-            let block = {
-                let owner_params = std::mem::replace(&mut self.type_params, bindings.iter().copied().collect());
-                let owner_module = std::mem::replace(&mut self.current_module, extension.declaring_module);
-                let block = self.block_interfaces_of(&extension.implements, ty);
-                self.type_params = owner_params;
-                self.current_module = owner_module;
-                block
-            };
+            let interfaces = self.apply_extension_bindings(ty, &extension, &mut bindings);
             let mut declared = Vec::new();
-            for method in &extension.methods {
+            for (method, interface) in extension.methods.iter().zip(interfaces) {
                 if class.is_some()
                     && method.dispatch == ast::Dispatch::Override
                     && !inherited_virtuals.contains_key(&method.name)
@@ -4586,14 +4602,6 @@ impl<'a> Checker<'a> {
                     self.error(codes::E2110, method.span, "override of a method that is not virtual");
                 }
                 let deferred = builtin && extension.interface.is_none();
-                let interface = block
-                    .iter()
-                    .copied()
-                    .find(|interface| {
-                        self.interfaces.get(interface).is_some_and(|def| def.methods.iter().any(|(name, ..)| *name == method.name))
-                    })
-                    .or(block.first().copied())
-                    .or(extension.interface);
                 let Some(def) = self.register_recipe_method(ty, name, method, &bindings, interface, deferred) else {
                     continue;
                 };
@@ -4621,6 +4629,49 @@ impl<'a> Checker<'a> {
                 self.check_implementation(implemented_ty, interface, interface_span);
             }
         }
+    }
+
+    /// D-380, D-400, D-429 — applying `extension` to the instance `ty`:
+    /// each hidden `P.Name` is bound to what the type bound to `P` says, and
+    /// each of its methods gets the interface it belongs to as this instance
+    /// has it (`Conv[Array[T]]` at `Wrap[i64]` is `Conv[Array[i64]]`): the
+    /// block's interface that declares the method, else its first, as a
+    /// concrete block's are (D-313), so two instances of one generic
+    /// interface may share method names. Structs, enums and classes apply
+    /// extensions through this alike.
+    fn apply_extension_bindings(
+        &mut self,
+        ty: Ty,
+        extension: &GenericExtension,
+        bindings: &mut Vec<(Symbol, Ty)>,
+    ) -> Vec<Option<Symbol>> {
+        for param in &extension.params[bindings.len().min(extension.params.len())..] {
+            let Some((base, assoc)) = param.projection else { continue };
+            let arg = bindings.get(base as usize).map(|&(_, arg)| arg);
+            let value = arg.and_then(|arg| self.project(arg, assoc)).unwrap_or(self.common.error);
+            bindings.push((param.name, value));
+        }
+        let owner_params = std::mem::replace(&mut self.type_params, bindings.iter().copied().collect());
+        let owner_module = std::mem::replace(&mut self.current_module, extension.declaring_module);
+        let block = self.block_interfaces_of(&extension.implements, ty);
+        self.type_params = owner_params;
+        self.current_module = owner_module;
+        extension
+            .methods
+            .iter()
+            .map(|method| {
+                block
+                    .iter()
+                    .copied()
+                    .find(|interface| {
+                        self.interfaces
+                            .get(interface)
+                            .is_some_and(|def| def.methods.iter().any(|(name, ..)| *name == method.name))
+                    })
+                    .or(block.first().copied())
+                    .or(extension.interface)
+            })
+            .collect()
     }
 
     /// `[IFC-4]` — a generic extension's `type Name = …` for the instance it
@@ -4780,6 +4831,7 @@ impl<'a> Checker<'a> {
             }
             None => self.register_associated(ty, method.name, signature, interface, method.span),
         }?;
+        self.recipe_method_defs.insert((ty, method.source), def);
         if !method.defaults.is_empty() {
             self.param_defaults.insert(def, (method.source.0, method.defaults.clone()));
         }
@@ -8134,8 +8186,13 @@ impl<'a> Checker<'a> {
                                 .secondary(first, "the first implementation is here"),
                         );
                     }
-                    (true, false) => self.set_aside.push((ty, name, entry.span)),
-                    _ => {}
+                    (true, false) => {
+                        self.set_aside.push((ty, name, entry.span));
+                        self.note_instance_collision(ty, name, first, entry.span);
+                    }
+                    // The same recipe applied again to the instance.
+                    _ if first == entry.span => {}
+                    _ => self.note_instance_collision(ty, name, first, entry.span),
                 }
                 continue;
             }
@@ -8159,6 +8216,42 @@ impl<'a> Checker<'a> {
                 continue;
             }
             self.error(codes::E1010, span, format!("cannot find interface `{written}` in this scope"));
+        }
+    }
+
+    /// D-409 — `ty` met the implementation of `interface` at `second` with
+    /// one already at `first`, and a generic recipe's was one of them. Once
+    /// the overlap pass has run, a pair it did not report is reported here;
+    /// before it, the pass gets the chance first.
+    fn note_instance_collision(&mut self, ty: Ty, interface: Symbol, first: Span, second: Span) {
+        self.instance_collisions.push((ty, interface, first, second));
+        if self.overlaps_checked {
+            self.report_instance_collisions();
+        }
+    }
+
+    /// D-409, `[TYP-19]` — the collisions at instances the overlap pass did
+    /// not report where the two implementations are declared: an
+    /// implementation whose interface the pass could not read must still
+    /// not apply to a type twice.
+    fn report_instance_collisions(&mut self) {
+        for (ty, interface, first, second) in std::mem::take(&mut self.instance_collisions) {
+            if self.overlaps_reported.contains(&(first, second))
+                || self.overlap_reported_at.contains(&second)
+                || self.overlap_reported_at.contains(&first)
+            {
+                continue;
+            }
+            self.overlaps_reported.insert((first, second));
+            self.overlaps_reported.insert((second, first));
+            self.overlap_reported_at.insert(second);
+            let shown = self.types.display(ty);
+            let interface = self.interface_shown(interface);
+            self.sink.emit(
+                Diagnostic::error(codes::E2041, second, format!("`{shown}` gets `{interface}` from two implementations"))
+                    .secondary(first, "the other implementation is here")
+                    .note("two implementations of one interface may not apply to one type [TYP-19]"),
+            );
         }
     }
 
@@ -8210,9 +8303,15 @@ impl<'a> Checker<'a> {
             if implements.is_empty() {
                 continue;
             }
+            // D-409 — a built-in generic's recipe is read against the
+            // instance over its own parameters, so an interface argument
+            // defaulting to `Self` (`interface Combine[R = Self]`) resolves.
             let owner = match BUILTIN_GENERICS.contains(&name.as_str()) {
-                true => None,
-                false => self.named_types.get(&self.generic_instance_name(name, &args)).copied(),
+                true => self.builtin_generic_instance(name, &args),
+                false => {
+                    let instance = self.generic_instance_name(name, &args);
+                    self.named_types.get(&instance).copied()
+                }
             };
             let shown = match owner {
                 Some(owner) => self.types.display(owner),
@@ -8301,6 +8400,9 @@ impl<'a> Checker<'a> {
                     continue;
                 }
                 reported.insert(b.span);
+                self.overlaps_reported.insert((a.span, b.span));
+                self.overlaps_reported.insert((b.span, a.span));
+                self.overlap_reported_at.insert(b.span);
                 let interface = self.interface_shown(b.instance);
                 let message = match a.shown == b.shown {
                     true => format!("`{}` already implements `{interface}`", b.shown),
@@ -8313,6 +8415,21 @@ impl<'a> Checker<'a> {
                 );
             }
         }
+        self.overlaps_checked = true;
+        self.report_instance_collisions();
+    }
+
+    /// The built-in generic type `name` over `args`, as
+    /// `builtin_generic_origin` reads one back.
+    fn builtin_generic_instance(&mut self, name: Symbol, args: &[Ty]) -> Option<Ty> {
+        Some(match (name.as_str(), args) {
+            ("Array", &[elem]) => self.types.intern(TyKind::Vec { elem, text: false }),
+            ("Span", &[elem]) => self.types.intern(TyKind::Span { elem, mutable: false }),
+            ("MutSpan", &[elem]) => self.types.intern(TyKind::Span { elem, mutable: true }),
+            ("Option", &[inner]) => self.option_of(inner),
+            ("Result", &[ok, err]) => self.result_of(ok, err),
+            _ => return None,
+        })
     }
 
     /// The interface instance a generic recipe's `implements` entry names,
@@ -8325,13 +8442,28 @@ impl<'a> Checker<'a> {
             .enumerate()
             .map(|(index, param)| (param.name, self.types.intern(TyKind::Param { index: index as u32, name: param.name })))
             .collect();
+        // D-409 — `implements Conv[I.Item]` names a hidden parameter of the
+        // recipe (D-380), which only the recipe's projections lead to.
+        let projections: HashMap<(Symbol, Symbol), Ty> = params
+            .iter()
+            .enumerate()
+            .filter_map(|(index, param)| {
+                let (base, assoc) = param.projection?;
+                let base = params.get(base as usize)?.name;
+                Some(((base, assoc), self.types.intern(TyKind::Param { index: index as u32, name: param.name })))
+            })
+            .collect();
         let saved_params = std::mem::replace(&mut self.type_params, scope);
+        let saved_projections = std::mem::replace(&mut self.projection_params, projections);
+        let saved_generics = std::mem::replace(&mut self.current_generics, params.to_vec());
         let saved_module = std::mem::replace(&mut self.current_module, module);
         let instance = match owner {
             Some(owner) => self.resolve_interface_use_for(entry, owner),
             None => self.resolve_interface_use(entry),
         };
         self.type_params = saved_params;
+        self.projection_params = saved_projections;
+        self.current_generics = saved_generics;
         self.current_module = saved_module;
         if self.sink.mark() != mark {
             self.sink.rollback(mark);
@@ -10011,12 +10143,12 @@ impl<'a> Checker<'a> {
         if let Some(&instance) = self.open_interfaces.get(&key) {
             return instance;
         }
-        let stem: Vec<String> = args.iter().map(|&ty| type_stem(&self.types.symbol_name(ty))).collect();
         if !args.iter().any(|&ty| self.types.is_generic(ty)) {
-            let instance = Symbol::intern(&format!("{name}_{}", stem.join("_")));
+            let instance = self.unique_instance_name(name.as_str(), args);
             self.open_interface_origin.insert(instance, key);
             return instance;
         }
+        let stem: Vec<String> = args.iter().map(|&ty| self.instance_stem(ty)).collect();
         let instance = Symbol::intern(&format!("{name}_{}_{}", stem.join("_"), self.open_interfaces.len()));
         self.open_interfaces.insert(key.clone(), instance);
         self.open_interface_origin.insert(instance, key);
@@ -10642,9 +10774,89 @@ impl<'a> Checker<'a> {
 
     /// The name of `name`'s instance over `args`: `Pair_i64`, which is also
     /// the instance's C name.
-    fn generic_instance_name(&self, name: Symbol, args: &[Ty]) -> Symbol {
-        let stem: Vec<String> = args.iter().map(|&t| type_stem(&self.types.symbol_name(t))).collect();
-        Symbol::intern(&format!("{name}_{}", stem.join("_")))
+    fn generic_instance_name(&mut self, name: Symbol, args: &[Ty]) -> Symbol {
+        self.unique_instance_name(name.as_str(), args)
+    }
+
+    /// D-412, `[TYP-16]` — the name of the instance `constructor[args]`,
+    /// one per distinct instance. The arguments are spelled as
+    /// `instance_stem` spells them; where a declared name or another
+    /// instance already holds that spelling (a struct named `Wrap_i64`
+    /// beside `Wrap[int]`), a number goes after it. A name is never shared:
+    /// `named_types` is looked up by it.
+    fn unique_instance_name(&mut self, constructor: &str, args: &[Ty]) -> Symbol {
+        let key = (constructor.to_string(), args.to_vec());
+        if let Some(&name) = self.instance_names.get(&key) {
+            return name;
+        }
+        let stem: Vec<String> = args.iter().map(|&arg| self.instance_stem(arg)).collect();
+        let base = format!("{constructor}_{}", stem.join("_"));
+        let mut name = Symbol::intern(&base);
+        let mut number = 2;
+        while self.instance_name_owner.contains_key(&name)
+            || self.named_types.contains_key(&name)
+            || self.interfaces.contains_key(&name)
+        {
+            name = Symbol::intern(&format!("{base}_{number}"));
+            number += 1;
+        }
+        self.instance_names.insert(key.clone(), name);
+        self.instance_name_owner.insert(name, key);
+        name
+    }
+
+    /// D-412 — `ty` as an instance's name spells it: as `type_stem` makes
+    /// its symbol name where that keeps every distinction (a scalar, a
+    /// declared type, another instance, `Array[T]`, `ref T`), and with its
+    /// structure spelled out where `type_stem` drops it: `*i64` was `i64`
+    /// and `(i64, i64)` was `i64_i64`, so `Wrap[*int]` and `Wrap[int]`, or
+    /// `Pair[(int, int), int]` and `Pair[int, (int, int)]`, were one type.
+    fn instance_stem(&self, ty: Ty) -> String {
+        match self.types.kind(ty).clone() {
+            TyKind::Ptr { mutable, inner } => {
+                format!("{}_{}", if mutable { "ptr_mut" } else { "ptr" }, self.instance_stem(inner))
+            }
+            TyKind::Ref { mutable, inner } => {
+                format!("{}_{}", if mutable { "ref_mut" } else { "ref" }, self.instance_stem(inner))
+            }
+            TyKind::Tuple(items) => {
+                let items: Vec<String> = items.iter().map(|&item| self.instance_stem(item)).collect();
+                match items.is_empty() {
+                    true => "tup0".to_string(),
+                    false => format!("tup{}_{}", items.len(), items.join("_")),
+                }
+            }
+            TyKind::Array { elem, len } => format!("arr{len}_{}", self.instance_stem(elem)),
+            TyKind::Vec { elem, text: false } => format!("Array_{}", self.instance_stem(elem)),
+            TyKind::Span { elem, mutable } => {
+                format!("{}_{}", if mutable { "MutSpan" } else { "Span" }, self.instance_stem(elem))
+            }
+            TyKind::Fn { abi, latebound, params, ret } => {
+                let mut out = String::from("fn");
+                if let Some(abi) = abi {
+                    out.push_str("extern");
+                    out.push_str(&type_stem(abi.as_str()));
+                }
+                if latebound {
+                    out.push_str("late");
+                }
+                out.push_str(&params.len().to_string());
+                for param in &params {
+                    out.push('_');
+                    match param.mode {
+                        ember_types::FnParamMode::Borrow => {}
+                        ember_types::FnParamMode::Mut => out.push_str("mut_"),
+                        ember_types::FnParamMode::Owned => out.push_str("owned_"),
+                    }
+                    out.push_str(&self.instance_stem(param.ty));
+                }
+                out.push('_');
+                out.push_str(&self.instance_stem(ret));
+                out
+            }
+            TyKind::Never => "never".to_string(),
+            _ => type_stem(&self.types.symbol_name(ty)),
+        }
     }
 
     fn instantiate_struct(
@@ -11033,12 +11245,19 @@ impl<'a> Checker<'a> {
                 )
             })
             .collect();
-        let matching_extensions = self.matching_generic_extensions(ty, name, args);
-        for (index, extension, bindings) in &matching_extensions {
-            self.applied_extensions.insert((ty, *index));
-            method_recipes.extend(extension.methods.iter().cloned().map(|method| {
-                (method, bindings.clone(), extension.interface)
-            }));
+        // D-429 — a generic class takes its extensions as a struct does
+        // (`apply_extension_bindings`): each method the interface instance
+        // that declares it, and the hidden `P.Name`s bound. Each method had
+        // the block's first interface, so a class with `Conv[Array[T]]` and
+        // `Conv[bool]` had one `conv` twice (`E1030`).
+        let mut matching_extensions = Vec::new();
+        for (index, extension, mut bindings) in self.matching_generic_extensions(ty, name, args) {
+            self.applied_extensions.insert((ty, index));
+            let interfaces = self.apply_extension_bindings(ty, &extension, &mut bindings);
+            method_recipes.extend(
+                extension.methods.iter().cloned().zip(interfaces).map(|(method, interface)| (method, bindings.clone(), interface)),
+            );
+            matching_extensions.push((index, extension, bindings));
         }
         let mut inherited_layouts = HashMap::new();
         let inherited_virtuals = base
@@ -11132,7 +11351,7 @@ impl<'a> Checker<'a> {
 
     /// `Option[T]`, as a two-variant enum built once per `T`.
     fn option_of(&mut self, inner: Ty) -> Ty {
-        let name = Symbol::intern(&format!("Option_{}", type_stem(&self.types.symbol_name(inner))));
+        let name = self.unique_instance_name("Option", &[inner]);
         self.builtin_enum(name, &[(Symbol::intern("None"), Vec::new()), (Symbol::intern("Some"), vec![inner])])
     }
 
@@ -11144,7 +11363,7 @@ impl<'a> Checker<'a> {
     /// from pretending to own an inline `T`. The C backend supplies the real
     /// glue: drop `*value`, then free the allocation.
     fn box_of(&mut self, inner: Ty) -> Ty {
-        let name = Symbol::intern(&format!("Box_{}", type_stem(&self.types.symbol_name(inner))));
+        let name = self.unique_instance_name("Box", &[inner]);
         if let Some(&ty) = self.named_types.get(&name) {
             return ty;
         }
@@ -11218,7 +11437,7 @@ impl<'a> Checker<'a> {
     /// to the runtime object header and materializes that pointer at the
     /// payload offset; no raw field is visible to source programs.
     fn shared_of(&mut self, inner: Ty) -> Ty {
-        let name = Symbol::intern(&format!("Shared_{}", type_stem(&self.types.symbol_name(inner))));
+        let name = self.unique_instance_name("Shared", &[inner]);
         if let Some(&ty) = self.named_types.get(&name) {
             return ty;
         }
@@ -11273,7 +11492,7 @@ impl<'a> Checker<'a> {
             );
             return self.common.error;
         }
-        let name = Symbol::intern(&format!("Weak_{}", type_stem(&self.types.symbol_name(inner))));
+        let name = self.unique_instance_name("Weak", &[inner]);
         if let Some(&ty) = self.named_types.get(&name) {
             return ty;
         }
@@ -11379,7 +11598,7 @@ impl<'a> Checker<'a> {
     /// must "not depend on compiler extensions". It compiled, and only
     /// `-pedantic` said so. Privacy is the mechanism; the name is just a name.
     fn cell_of(&mut self, inner: Ty) -> Ty {
-        let name = Symbol::intern(&format!("Cell_{}", type_stem(&self.types.symbol_name(inner))));
+        let name = self.unique_instance_name("Cell", &[inner]);
         if let Some(&ty) = self.named_types.get(&name) {
             return ty;
         }
@@ -11427,10 +11646,7 @@ impl<'a> Checker<'a> {
     /// structural drop must never visit the payload. This is separate from
     /// both ordinary assignment and `Cell.set`'s replacement order.
     fn maybe_uninit_of(&mut self, inner: Ty) -> Ty {
-        let name = Symbol::intern(&format!(
-            "MaybeUninit_{}",
-            type_stem(&self.types.symbol_name(inner))
-        ));
+        let name = self.unique_instance_name("MaybeUninit", &[inner]);
         if let Some(&ty) = self.named_types.get(&name) {
             return ty;
         }
@@ -11475,10 +11691,7 @@ impl<'a> Checker<'a> {
     /// false even when the payload is Copy. The field is compiler-private;
     /// the only source-level routes are `get` and `into_inner`.
     fn unsafe_cell_of(&mut self, inner: Ty) -> Ty {
-        let name = Symbol::intern(&format!(
-            "UnsafeCell_{}",
-            type_stem(&self.types.symbol_name(inner))
-        ));
+        let name = self.unique_instance_name("UnsafeCell", &[inner]);
         if let Some(&ty) = self.named_types.get(&name) {
             return ty;
         }
@@ -11606,7 +11819,7 @@ impl<'a> Checker<'a> {
     /// ordinary struct move. `needs_drop` stays field-derived (`has_drop`
     /// clear), so a `RefCell` needs drop iff `T` does.
     fn refcell_of(&mut self, inner: Ty) -> Ty {
-        let name = Symbol::intern(&format!("RefCell_{}", type_stem(&self.types.symbol_name(inner))));
+        let name = self.unique_instance_name("RefCell", &[inner]);
         if let Some(&ty) = self.named_types.get(&name) {
             return ty;
         }
@@ -11691,7 +11904,7 @@ impl<'a> Checker<'a> {
     /// update rather than a `drop` method call.
     fn ref_guard_of(&mut self, inner: Ty, mutable: bool) -> Ty {
         let prefix = if mutable { "RefMut" } else { "Ref" };
-        let name = Symbol::intern(&format!("{prefix}_{}", type_stem(&self.types.symbol_name(inner))));
+        let name = self.unique_instance_name(prefix, &[inner]);
         if let Some(&ty) = self.named_types.get(&name) {
             return ty;
         }
@@ -11915,11 +12128,7 @@ impl<'a> Checker<'a> {
 
     /// `Result[T, E]`, likewise.
     fn result_of(&mut self, ok: Ty, err: Ty) -> Ty {
-        let name = Symbol::intern(&format!(
-            "Result_{}_{}",
-            type_stem(&self.types.symbol_name(ok)),
-            type_stem(&self.types.symbol_name(err))
-        ));
+        let name = self.unique_instance_name("Result", &[ok, err]);
         self.builtin_enum(name, &[(Symbol::intern("Ok"), vec![ok]), (Symbol::intern("Err"), vec![err])])
     }
 
@@ -30281,18 +30490,7 @@ impl<'a> Checker<'a> {
     /// reports what is wrong.
     fn choose_instance_method(&mut self, ty: Ty, ident: ast::Ident, entry: MethodEntry, args: &[ast::Arg]) -> MethodEntry {
         let name = ident.name;
-        let Some(interface) = entry.from_interface else { return entry };
-        let Some((origin, _)) = self.open_interface_origin.get(&interface).cloned() else { return entry };
-        let candidates: Vec<MethodEntry> = self
-            .interface_methods
-            .iter()
-            .filter(|((owner, instance, method), _)| {
-                *owner == ty
-                    && *method == name
-                    && self.open_interface_origin.get(instance).is_some_and(|(other, _)| *other == origin)
-            })
-            .map(|(_, candidate)| *candidate)
-            .collect();
+        let candidates = self.instance_candidates(ty, name, entry);
         if candidates.len() < 2 {
             return entry;
         }
@@ -30308,20 +30506,78 @@ impl<'a> Checker<'a> {
             .collect();
         self.sink.rollback(quiet);
         let found: Vec<&Expr> = found.iter().collect();
-        // D-402, `[TYP-24]` — arguments that fit two instances choose
-        // neither: the call names one (`Conv[bool].conv(w)`).
-        let fitting = self.fitting(&candidates, &found);
-        if let [first, second, ..] = fitting.as_slice() {
-            let shown = |this: &Self, entry: &MethodEntry| this.interface_shown(entry.from_interface.expect("an instance's method"));
-            let (a, b) = (shown(self, first), shown(self, second));
-            self.sink.emit(
-                Diagnostic::error(codes::E2070, ident.span, format!("`{name}` is offered by both `{a}` and `{b}`"))
-                    .help(format!("name the one to call: `{b}.{name}(…)` with the receiver first"))
-                    .note("two instances of one interface are told apart by their arguments, and these fit both [TYP-24]"),
-            );
-            return *first;
-        }
-        self.choose_among(candidates, entry, &found)
+        self.choose_instance(name, None, ident.span, &candidates, &found).unwrap_or(entry)
+    }
+
+    /// D-313 — the instances of one generic interface that offer `entry`'s
+    /// method `name` on `ty` (`Mul[Vec4]` and `Mul[Mat4]`); none when
+    /// `entry` is not an instance's.
+    fn instance_candidates(&self, ty: Ty, name: Symbol, entry: MethodEntry) -> Vec<MethodEntry> {
+        let Some(interface) = entry.from_interface else { return Vec::new() };
+        let Some((origin, _)) = self.open_interface_origin.get(&interface) else { return Vec::new() };
+        self.interface_methods
+            .iter()
+            .filter(|((owner, instance, method), _)| {
+                *owner == ty
+                    && *method == name
+                    && self.open_interface_origin.get(instance).is_some_and(|(other, _)| other == origin)
+            })
+            .map(|(_, candidate)| *candidate)
+            .collect()
+    }
+
+    /// D-402, D-428, ODR-096 (`[TYP-24]`, `[RNG-5a2]`) — which of
+    /// `candidates`, the instances of one generic interface offering the
+    /// method `name`, a call's arguments `found` choose. One whose parameters
+    /// the arguments' types match exactly (an untyped literal as its default
+    /// type, `int` or `f64`) goes before any reached through a coercion;
+    /// two equally good choose neither, and are `E2070` at `span`, the first
+    /// returned so the call can still be checked. An operator (`operator`,
+    /// its symbol) chooses as its method does. `None` when none fits, for
+    /// the call to report what is wrong.
+    fn choose_instance(
+        &mut self,
+        name: Symbol,
+        operator: Option<&str>,
+        span: Span,
+        candidates: &[MethodEntry],
+        found: &[&Expr],
+    ) -> Option<MethodEntry> {
+        let fitting = self.fitting(candidates, found);
+        let exact: Vec<MethodEntry> =
+            fitting.iter().copied().filter(|candidate| self.fits_exactly(candidate, found)).collect();
+        let best = if exact.is_empty() { fitting } else { exact };
+        let (first, second) = match best.as_slice() {
+            [] => return None,
+            [only] => return Some(*only),
+            [first, second, ..] => (*first, *second),
+        };
+        let shown = |this: &Self, entry: &MethodEntry| this.interface_shown(entry.from_interface.expect("an instance's method"));
+        let (a, b) = (shown(self, &first), shown(self, &second));
+        let (what, help) = match operator {
+            Some(symbol) => (format!("`{symbol}`"), format!("name the one to call: `{b}.{name}(a, b)`")),
+            None => (format!("`{name}`"), format!("name the one to call: `{b}.{name}(…)` with the receiver first")),
+        };
+        self.sink.emit(
+            Diagnostic::error(codes::E2070, span, format!("{what} is offered by both `{a}` and `{b}`"))
+                .help(help)
+                .note("two instances of one interface are told apart by their arguments, and these fit both equally [TYP-24]"),
+        );
+        Some(first)
+    }
+
+    /// ODR-096 — whether every argument's type is `candidate`'s parameter
+    /// type itself, an untyped literal counting as its default type.
+    fn fits_exactly(&self, candidate: &MethodEntry, found: &[&Expr]) -> bool {
+        let params = &self.signatures[candidate.def.0 as usize].params[1..];
+        params.iter().zip(found).all(|((_, want, _, _), have)| {
+            let have = match self.types.kind(have.ty) {
+                TyKind::IntLit => self.common.i64,
+                TyKind::FloatLit => self.common.f64,
+                _ => have.ty,
+            };
+            have == *want
+        })
     }
 
     /// The candidates whose parameters `found`'s types fit, in declaration
@@ -30342,35 +30598,6 @@ impl<'a> Checker<'a> {
                     })
             })
             .collect()
-    }
-
-    /// D-313 — as `choose_instance_method`, for arguments already checked.
-    fn choose_instance_by_types(&mut self, ty: Ty, name: Symbol, entry: MethodEntry, found: &[&Expr]) -> MethodEntry {
-        let Some(interface) = entry.from_interface else { return entry };
-        let Some((origin, _)) = self.open_interface_origin.get(&interface).cloned() else { return entry };
-        let candidates: Vec<MethodEntry> = self
-            .interface_methods
-            .iter()
-            .filter(|((owner, instance, method), _)| {
-                *owner == ty
-                    && *method == name
-                    && self.open_interface_origin.get(instance).is_some_and(|(other, _)| *other == origin)
-            })
-            .map(|(_, candidate)| *candidate)
-            .collect();
-        if candidates.len() < 2 {
-            return entry;
-        }
-        self.choose_among(candidates, entry, found)
-    }
-
-    /// The one candidate whose parameters `found`'s types fit, else `entry`.
-    fn choose_among(&self, candidates: Vec<MethodEntry>, entry: MethodEntry, found: &[&Expr]) -> MethodEntry {
-        let matching = self.fitting(&candidates, found);
-        match matching.as_slice() {
-            [only] => *only,
-            _ => entry,
-        }
     }
 
     fn synth_registered_method(
@@ -36822,8 +37049,20 @@ impl<'a> Checker<'a> {
     fn call_operator(&mut self, method: &str, lhs: Expr, rhs: Expr, span: Span) -> Expr {
         let name = Symbol::intern(method);
         let entry = self.methods[&(lhs.ty, name)];
-        // D-313 — `m * v` and `m * n` are `Mul[Vec4]` and `Mul[Mat4]`.
-        let entry = self.choose_instance_by_types(lhs.ty, name, entry, &[&rhs]);
+        // D-313 — `m * v` and `m * n` are `Mul[Vec4]` and `Mul[Mat4]`;
+        // D-428 — and an operator two instances fit equally is `E2070`, as
+        // its method's call is, where it took the last registered.
+        let candidates = self.instance_candidates(lhs.ty, name, entry);
+        let entry = match candidates.len() < 2 {
+            true => entry,
+            false => {
+                let symbol = operator_method_named(method).map(|(op, _)| match op {
+                    OperatorMethod::Binary(op) => op.as_str(),
+                    OperatorMethod::Unary(_) => method,
+                });
+                self.choose_instance(name, Some(symbol.unwrap_or(method)), span, &candidates, &[&rhs]).unwrap_or(entry)
+            }
+        };
         let def = entry.def;
         let receiver_mode = entry.receiver;
         // A method a generic extension registered is checked once called.

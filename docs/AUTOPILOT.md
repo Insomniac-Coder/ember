@@ -109,6 +109,12 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   express it, C++ for classes and data-oriented code. Use the same C compiler and optimisation level,
   report the median of several runs with both compilers, and state the comparison plainly. The
   numbers may go in the README.
+- **No README benchmark numbers from a cloud container.** The owner, 2026-10-01: "The benchmarks
+  might vary since this is a cloud container so hold that part off for now", and "you can still use
+  benchmarks to find whether the implementation is optimised or not but you cannot use it for the
+  benchmarks section of readme". In a cloud session, measure against C and C++ as above to find and
+  fix slow code, but never write those numbers into the README's benchmark section; it keeps the
+  numbers measured on the owner's machine until he says otherwise.
 - **Every solution is general, never specific.** The owner, 2026-09-28: "always suggest a general
   and optimised solution, specific solutions are like ticking timebombs just waiting to go off
   because no one is going to write code like 'tests' languages are supposed to be general", and
