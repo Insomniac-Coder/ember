@@ -11104,7 +11104,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h51/` are frozen.
-* **Next numbers:** ODR-098, D-454, ADR-102, ERR-056.
+* **Next numbers:** ODR-098, D-456, ADR-103, ERR-056.
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
@@ -11250,11 +11250,13 @@ first**; the rest of §0.355 is the running narrative behind it.
     begins after the call's own write ends), G5-2 (D-452: a mutable view
     anywhere in an interface call's result is a write) and G5-1 (D-453: the
     runtime's call of `drop` holds the object's write, and the check removal
-    counts it). Left of the nine high: G5-5 (a `RefCell` class field's borrow
-    panics) and G5-4 (a view of a class field made on one path is an ICE).
-  * **Next:** the rest of the second review's findings (G5-5, G5-4, then the
-    medium ones); then the fused `for` over the new adapters and
-    `str.chars()`; then `[CLO-3]` with D-422.
+    counts it). Then G5-5 (D-454: reaching inside a `RefCell` class field is a
+    read of the field) and G5-4 (D-455, ADR-102: an access begun on only some
+    paths keeps a flag its ends test; the MIR verifier follows the flags).
+    Every high finding is fixed.
+  * **Next:** the second review's medium findings (G5-6 to G5-8, G6-2, G7-2,
+    G8-1 to G8-3), then its low ones; then the fused `for` over the new
+    adapters and `str.chars()`; then `[CLO-3]` with D-422.
   * **gcc (the owner's request; ADR-098, D-445, D-446).** Ember built with gcc
     15.2 under WSL (Ubuntu) on this machine; the 39 benchmark programs against
     their C or C++ twin built by the same gcc with the same flags

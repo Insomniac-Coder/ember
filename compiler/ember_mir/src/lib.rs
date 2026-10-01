@@ -40,6 +40,11 @@ pub enum LocalKind {
     Temp,
 }
 
+/// The name of the flag an access begun on only some paths keeps (D-455):
+/// set as the access begins, tested by each of its ends. No Ember
+/// identifier has a `-`, so no user local is named so.
+pub const ACCESS_FLAG_NAME: &str = "access-open";
+
 #[derive(Clone, Debug)]
 pub struct LocalDecl {
     pub ty: Ty,

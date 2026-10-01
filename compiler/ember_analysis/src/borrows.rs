@@ -35,7 +35,7 @@ use std::collections::{HashMap, HashSet};
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_mir::{
     AggregateKind, BasicBlock, BasicBlockId, Body, Builtin, CallableAccessSummary as CallAccessContract,
-    CallableRegionMetadata, FuncRef,
+    CallableRegionMetadata, Const, FuncRef, LocalDecl,
     LocalId, LocalKind, Operand, ParameterFieldAccess, ParameterMode, Place, Projection, RegionAccessKind,
     ResultFieldProvenance, ResultProvenanceSummary, ResultRegionSource, Rvalue, Stmt, StmtKind,
     Terminator,
@@ -689,6 +689,9 @@ enum AccessEvent {
     /// `[EXC-19]` — an access nothing can overlap: its begin and its end back
     /// to back, which the C backend lowers to one check.
     Check { place: Place, mutable: bool, span: Span },
+    /// An access begun on only some paths sets its flag as it begins, and
+    /// clears it as it ends (D-455).
+    Flag { flag: LocalId, value: bool, span: Span },
 }
 
 impl AccessEvent {
@@ -698,6 +701,16 @@ impl AccessEvent {
 
     fn is_check(&self) -> bool {
         matches!(self, Self::Check { .. })
+    }
+
+    fn is_flag(&self) -> bool {
+        matches!(self, Self::Flag { .. })
+    }
+
+    fn span(&self) -> Span {
+        match self {
+            Self::Begin { span, .. } | Self::End { span, .. } | Self::Check { span, .. } | Self::Flag { span, .. } => *span,
+        }
     }
 
     fn check_stmts(&self) -> [Stmt; 2] {
@@ -722,9 +735,33 @@ impl AccessEvent {
             Self::End { place, mutable, transfer: true, span } => {
                 Stmt::new(StmtKind::EndAccessTransfer { place, mutable }, span)
             }
+            Self::Flag { flag, value, span } => Stmt::new(
+                StmtKind::Assign {
+                    place: Place { local: flag, projection: Vec::new() },
+                    rvalue: Rvalue::Use(Operand::Const(Const::Bool(value))),
+                },
+                span,
+            ),
             Self::Check { .. } => unreachable!("a check is two statements"),
         }
     }
+}
+
+/// Where one access begins and ends, before any of it is placed: `begin`
+/// before a statement (or the terminator), `inline_ends` likewise, and
+/// `edge_ends` on an edge out of a block, as (block, successor as its
+/// terminator names it, the original block that successor leads to).
+struct AccessPlan {
+    begin: Option<Point>,
+    inline_ends: Vec<Point>,
+    edge_ends: Vec<(usize, BasicBlockId, BasicBlockId)>,
+}
+
+/// An access with a flag: where it begins, and where it ends if begun.
+struct FlaggedAccess {
+    number: usize,
+    plan: AccessPlan,
+    flag: LocalId,
 }
 
 fn end_event(access: &SharedAccess) -> AccessEvent {
@@ -905,6 +942,7 @@ fn insert_shared_accesses(
         .collect();
     let mut inline: HashMap<(usize, usize), Vec<AccessEvent>> = HashMap::new();
     let mut edge_ends = HashMap::new();
+    let mut flagged: Vec<FlaggedAccess> = Vec::new();
     for (number, access) in accesses.iter().enumerate() {
         if quick[number] {
             inline.entry((access.created_at.block, access.created_at.index)).or_default().push(AccessEvent::Check {
@@ -948,100 +986,304 @@ fn insert_shared_accesses(
         {
             continue;
         }
-        // An end at the same location as a new access has to execute first:
-        // that is the NLL reuse case (`first` dies before `second` starts).
-        if access.start != SharedAccessStart::None {
-            inline
-                .entry((access.created_at.block, access.created_at.index))
-                .or_default()
-                .push(AccessEvent::Begin {
-                    place: access.owner.clone(),
-                    mutable: access.mutable,
-                    transfer: access.start == SharedAccessStart::Transfer,
-                    span: access.span,
-                });
+        let plan = plan_access(body, regions, access, original_blocks);
+        // An access begun on only some of the paths its region covers (a view
+        // made in one branch, kept past the join) cannot be ended the same
+        // way on every path: it gets a flag (D-455).
+        if access.start == SharedAccessStart::Normal
+            && matches!(access.end, SharedAccessEnd::Normal)
+            && !plan_is_exact(body, &plan, original_blocks)
+        {
+            let ty = types.find(&TyKind::Bool).expect("`bool` is interned");
+            let flag = LocalId(body.locals.len() as u32);
+            body.locals.push(LocalDecl {
+                ty,
+                kind: LocalKind::Temp,
+                name: Some(ember_mir::ACCESS_FLAG_NAME.to_string()),
+                span: access.span,
+            });
+            flagged.push(FlaggedAccess { number, plan, flag });
+            continue;
         }
-
-        for block in 0..original_blocks {
-            let statement_count = body.blocks[block].stmts.len();
-            for index in 0..statement_count {
-                let point = Point { block, index };
-                if !access_active(access, regions, point) {
-                    continue;
-                }
-                let following = Point { block, index: index + 1 };
-                if !access_active(access, regions, following) {
-                    inline
-                        .entry((block, index + 1))
-                        .or_default()
-                        .push(end_event(access));
-                }
-            }
-
-            let terminal = Point { block, index: statement_count };
-            if !access_active(access, regions, terminal) {
-                continue;
-            }
-            // A successor may already be a bridge block an earlier access put on
-            // the edge; liveness is the original target's.
-            let successors: Vec<(BasicBlockId, BasicBlockId)> = access_successors(&body.blocks[block].terminator)
-                .into_iter()
-                .map(|successor| (successor, through_bridges(body, successor, original_blocks)))
-                .collect();
-            let live_in = |target: BasicBlockId| access_active(access, regions, Point { block: target.0 as usize, index: 0 });
-            let ends_here = successors.is_empty() || successors.iter().all(|&(_, target)| !live_in(target));
-            // A loan whose last use is a call (a view or `ref mut` passed as
-            // an argument) is live for the whole call: it ends on the way out
-            // of the call, never before it. Otherwise the callee could free
-            // what the loan points into through another handle (F1).
-            if ends_here && matches!(body.blocks[block].terminator, Terminator::Call { .. }) {
-                for (successor, _) in successors {
-                    append_edge_end(body, block, successor, end_event(access), &mut edge_ends);
-                }
-                continue;
-            }
-            if ends_here {
-                if !(matches!(body.blocks[block].terminator, Terminator::Return)
-                    && access.start == SharedAccessStart::Transfer)
-                {
-                    inline
-                        .entry((block, statement_count))
-                        .or_default()
-                        .push(end_event(access));
-                }
-                continue;
-            }
-            for (successor, target) in successors {
-                if live_in(target) {
-                    continue;
-                }
-                append_edge_end(
-                    body,
-                    block,
-                    successor,
-                    end_event(access),
-                    &mut edge_ends,
-                );
-            }
+        if let Some(Point { block, index }) = plan.begin {
+            inline.entry((block, index)).or_default().push(AccessEvent::Begin {
+                place: access.owner.clone(),
+                mutable: access.mutable,
+                transfer: access.start == SharedAccessStart::Transfer,
+                span: access.span,
+            });
+        }
+        for Point { block, index } in plan.inline_ends {
+            inline.entry((block, index)).or_default().push(end_event(access));
+        }
+        for (block, successor, _) in plan.edge_ends {
+            append_edge_end(body, block, successor, end_event(access), &mut edge_ends);
         }
     }
 
-    for (block, basic_block) in body.blocks.iter_mut().take(original_blocks).enumerate() {
-        let original = std::mem::take(&mut basic_block.stmts);
-        let mut rewritten = Vec::with_capacity(original.len() + inline.len());
+    // The flagged accesses: the flag is cleared on entry, set as the access
+    // begins, and each end runs only if it is set (and clears it). An end on
+    // an edge gets blocks of its own, after any other ends on that edge.
+    let mut conditional: HashMap<(usize, usize), Vec<(LocalId, AccessEvent)>> = HashMap::new();
+    let mut edge_heads: HashMap<(usize, BasicBlockId), BasicBlockId> = HashMap::new();
+    for FlaggedAccess { number, plan, flag } in flagged {
+        let access = &accesses[number];
+        inline.entry((0, 0)).or_default().push(AccessEvent::Flag { flag, value: false, span: access.span });
+        if let Some(Point { block, index }) = plan.begin {
+            let events = inline.entry((block, index)).or_default();
+            events.push(AccessEvent::Begin {
+                place: access.owner.clone(),
+                mutable: access.mutable,
+                transfer: false,
+                span: access.span,
+            });
+            events.push(AccessEvent::Flag { flag, value: true, span: access.span });
+        }
+        for Point { block, index } in plan.inline_ends {
+            conditional.entry((block, index)).or_default().push((flag, end_event(access)));
+        }
+        for (block, _, target) in plan.edge_ends {
+            // The edge's first block now: an earlier flagged end's test, or
+            // where the block's terminator leads to the target (through the
+            // bridges other ends put there).
+            let head = edge_heads.get(&(block, target)).copied().unwrap_or_else(|| {
+                access_successors(&body.blocks[block].terminator)
+                    .into_iter()
+                    .find(|&successor| through_bridges(body, successor, original_blocks) == target)
+                    .expect("a planned edge still leaves its block")
+            });
+            let test = append_conditional_end(body, flag, end_event(access), head);
+            redirect(body, block, head, test);
+            edge_heads.insert((block, target), test);
+        }
+    }
+
+    // Each original block gets its statements' events; a conditional end
+    // splits it there: the block tests the flag, a new block ends the access,
+    // and a new block takes the rest.
+    let first_new = body.blocks.len();
+    let mut appended: Vec<BasicBlock> = Vec::new();
+    for block in 0..original_blocks {
+        let original = std::mem::take(&mut body.blocks[block].stmts);
         let original_len = original.len();
-        for (index, stmt) in original.into_iter().enumerate() {
-            if let Some(events) = inline.get(&(block, index)) {
-                push_events(&mut rewritten, events);
+        let terminator = body.blocks[block].terminator.clone();
+        let terminator_span = body.blocks[block].terminator_span;
+        let mut current = block;
+        let mut rewritten = Vec::with_capacity(original.len());
+        let mut slot = |index: usize, rewritten: &mut Vec<Stmt>, current: &mut usize, body: &mut Body| {
+            let events = inline.get(&(block, index));
+            if let Some(events) = events {
+                push_ends(rewritten, events);
             }
+            for (flag, end) in conditional.get(&(block, index)).into_iter().flatten() {
+                let ending = BasicBlockId((first_new + appended.len()) as u32);
+                let rest = BasicBlockId(ending.0 + 1);
+                let test = flag_test(*flag, rest, ending);
+                let span = end.span();
+                let finished = std::mem::take(rewritten);
+                if *current == block {
+                    body.blocks[block].stmts = finished;
+                    body.blocks[block].terminator = test;
+                    body.blocks[block].terminator_span = span;
+                } else {
+                    let open = &mut appended[*current - first_new];
+                    open.stmts = finished;
+                    open.terminator = test;
+                    open.terminator_span = span;
+                }
+                appended.push(BasicBlock {
+                    stmts: vec![end.clone().into_stmt(), AccessEvent::Flag { flag: *flag, value: false, span }.into_stmt()],
+                    terminator: Terminator::Goto(rest),
+                    terminator_span: span,
+                });
+                appended.push(BasicBlock { stmts: Vec::new(), terminator: Terminator::Unreachable, terminator_span: span });
+                *current = rest.0 as usize;
+            }
+            if let Some(events) = events {
+                push_starts(rewritten, events);
+            }
+        };
+        for (index, stmt) in original.into_iter().enumerate() {
+            slot(index, &mut rewritten, &mut current, body);
             rewritten.push(stmt);
         }
-        if let Some(events) = inline.get(&(block, original_len)) {
-            push_events(&mut rewritten, events);
+        slot(original_len, &mut rewritten, &mut current, body);
+        if current == block {
+            body.blocks[block].stmts = rewritten;
+        } else {
+            let last = &mut appended[current - first_new];
+            last.stmts = rewritten;
+            last.terminator = terminator;
+            last.terminator_span = terminator_span;
         }
-        basic_block.stmts = rewritten;
     }
+    body.blocks.extend(appended);
     accesses.len()
+}
+
+/// Where `access` (with regions) begins and ends: begun at its creation,
+/// ended where its regions stop being live, on the edge out of a call that
+/// is its last use.
+fn plan_access(body: &Body, regions: &Regions, access: &SharedAccess, original_blocks: usize) -> AccessPlan {
+    let mut plan = AccessPlan { begin: None, inline_ends: Vec::new(), edge_ends: Vec::new() };
+    // An end at the same location as a new access has to execute first:
+    // that is the NLL reuse case (`first` dies before `second` starts).
+    if access.start != SharedAccessStart::None {
+        plan.begin = Some(access.created_at);
+    }
+
+    for block in 0..original_blocks {
+        let statement_count = body.blocks[block].stmts.len();
+        for index in 0..statement_count {
+            let point = Point { block, index };
+            if !access_active(access, regions, point) {
+                continue;
+            }
+            let following = Point { block, index: index + 1 };
+            if !access_active(access, regions, following) {
+                plan.inline_ends.push(following);
+            }
+        }
+
+        let terminal = Point { block, index: statement_count };
+        if !access_active(access, regions, terminal) {
+            continue;
+        }
+        // A successor may already be a bridge block an earlier access put on
+        // the edge; liveness is the original target's.
+        let successors: Vec<(BasicBlockId, BasicBlockId)> = access_successors(&body.blocks[block].terminator)
+            .into_iter()
+            .map(|successor| (successor, through_bridges(body, successor, original_blocks)))
+            .collect();
+        let live_in = |target: BasicBlockId| access_active(access, regions, Point { block: target.0 as usize, index: 0 });
+        let ends_here = successors.is_empty() || successors.iter().all(|&(_, target)| !live_in(target));
+        // A loan whose last use is a call (a view or `ref mut` passed as
+        // an argument) is live for the whole call: it ends on the way out
+        // of the call, never before it. Otherwise the callee could free
+        // what the loan points into through another handle (F1).
+        if ends_here && matches!(body.blocks[block].terminator, Terminator::Call { .. }) {
+            plan.edge_ends.extend(successors.into_iter().map(|(successor, target)| (block, successor, target)));
+            continue;
+        }
+        if ends_here {
+            if !(matches!(body.blocks[block].terminator, Terminator::Return)
+                && access.start == SharedAccessStart::Transfer)
+            {
+                plan.inline_ends.push(terminal);
+            }
+            continue;
+        }
+        for (successor, target) in successors {
+            if live_in(target) {
+                continue;
+            }
+            plan.edge_ends.push((block, successor, target));
+        }
+    }
+    plan
+}
+
+
+/// Whether `plan` keeps its access balanced on every path of the original
+/// blocks: each end meets it begun, each begin meets it ended, and every
+/// block is entered with it in one state. An access begun on only some paths
+/// fails this (D-455).
+fn plan_is_exact(body: &Body, plan: &AccessPlan, original_blocks: usize) -> bool {
+    let mut entry: Vec<Option<bool>> = vec![None; original_blocks];
+    entry[0] = Some(false);
+    let mut work = vec![0usize];
+    while let Some(block) = work.pop() {
+        let Some(mut open) = entry[block] else { continue };
+        let count = body.blocks[block].stmts.len();
+        for index in 0..=count {
+            let point = Point { block, index };
+            for _ in plan.inline_ends.iter().filter(|&&end| end == point) {
+                if !open {
+                    return false;
+                }
+                open = false;
+            }
+            if plan.begin == Some(point) {
+                if open {
+                    return false;
+                }
+                open = true;
+            }
+        }
+        for successor in access_successors(&body.blocks[block].terminator) {
+            let target = through_bridges(body, successor, original_blocks);
+            let mut state = open;
+            for _ in plan.edge_ends.iter().filter(|&&(source, _, end)| source == block && end == target) {
+                if !state {
+                    return false;
+                }
+                state = false;
+            }
+            let target = target.0 as usize;
+            if target >= original_blocks {
+                continue;
+            }
+            match entry[target] {
+                None => {
+                    entry[target] = Some(state);
+                    work.push(target);
+                }
+                Some(previous) if previous != state => return false,
+                Some(_) => {}
+            }
+        }
+        if open && matches!(body.blocks[block].terminator, Terminator::Return) {
+            return false;
+        }
+    }
+    true
+}
+
+/// `if flag == 0 goto skip else goto ending`, the test before a flagged
+/// access's end.
+fn flag_test(flag: LocalId, skip: BasicBlockId, ending: BasicBlockId) -> Terminator {
+    Terminator::SwitchInt {
+        discr: Operand::Copy(Place { local: flag, projection: Vec::new() }),
+        targets: vec![(0, skip)],
+        otherwise: ending,
+    }
+}
+
+/// Two new blocks that end a flagged access if its flag is set, then go to
+/// `next`; returns the first (the test).
+fn append_conditional_end(body: &mut Body, flag: LocalId, end: AccessEvent, next: BasicBlockId) -> BasicBlockId {
+    let span = end.span();
+    let test = BasicBlockId(body.blocks.len() as u32);
+    let ending = BasicBlockId(test.0 + 1);
+    body.blocks.push(BasicBlock { stmts: Vec::new(), terminator: flag_test(flag, next, ending), terminator_span: span });
+    body.blocks.push(BasicBlock {
+        stmts: vec![end.into_stmt(), AccessEvent::Flag { flag, value: false, span }.into_stmt()],
+        terminator: Terminator::Goto(next),
+        terminator_span: span,
+    });
+    test
+}
+
+/// Points every edge of `source`'s terminator that goes to `from` at `to`.
+fn redirect(body: &mut Body, source: usize, from: BasicBlockId, to: BasicBlockId) {
+    match &mut body.blocks[source].terminator {
+        Terminator::Goto(next) | Terminator::Call { next, .. } | Terminator::Assert { next, .. } => {
+            if *next == from {
+                *next = to;
+            }
+        }
+        Terminator::SwitchInt { targets, otherwise, .. } => {
+            for (_, next) in targets {
+                if *next == from {
+                    *next = to;
+                }
+            }
+            if *otherwise == from {
+                *otherwise = to;
+            }
+        }
+        Terminator::Return | Terminator::Unreachable => {}
+    }
 }
 
 /// Where an access a call's result carries begins: in the call's `next`
@@ -1081,13 +1323,14 @@ fn field_accesses(body: &Body, types: &TypeTable, regions: &Regions) -> Vec<Shar
             let created_at = Point { block, index };
             match &stmt.kind {
                 StmtKind::Assign { place, rvalue: Rvalue::Ref { place: borrowed, mutable } } => {
-                    point_access(&mut accesses, place, true, created_at, stmt.span);
+                    point_access(&mut accesses, place, !inside_a_cell(body, types, place), created_at, stmt.span);
                     let Some(region) = regions.loan_region(created_at) else { continue };
+                    let mutable = *mutable && !inside_a_cell(body, types, borrowed);
                     for owner in field_boundaries(body, types, borrowed, true) {
                         accesses.push(SharedAccess {
                             created_at,
                             owner,
-                            mutable: *mutable,
+                            mutable,
                             regions: vec![region],
                             span: stmt.span,
                             start: SharedAccessStart::Normal,
@@ -1096,7 +1339,7 @@ fn field_accesses(body: &Body, types: &TypeTable, regions: &Regions) -> Vec<Shar
                     }
                 }
                 StmtKind::Assign { place, rvalue } => {
-                    point_access(&mut accesses, place, true, created_at, stmt.span);
+                    point_access(&mut accesses, place, !inside_a_cell(body, types, place), created_at, stmt.span);
                     for read in rvalue_places(rvalue) {
                         point_access(&mut accesses, read, false, created_at, stmt.span);
                     }
@@ -1124,6 +1367,19 @@ fn field_accesses(body: &Body, types: &TypeTable, regions: &Regions) -> Vec<Shar
         }
     }
     accesses
+}
+
+/// `[CELL-5]`, `[CELL-6]` — whether `place` lies inside a `RefCell`: its
+/// value, its borrow counter, or where its last borrow began. The cell's own
+/// counter rules what is borrowed inside it, so reaching in (a guard's loan of
+/// the value, from `borrow` or `borrow_mut`, or the counter's update) reads
+/// the class field that holds the cell and never writes it; replacing the
+/// whole cell is still a write (D-454).
+fn inside_a_cell(body: &Body, types: &TypeTable, place: &Place) -> bool {
+    (0..place.projection.len()).any(|at| {
+        let prefix = Place { local: place.local, projection: place.projection[..at].to_vec() };
+        is_refcell_ty(types, place_ty(body, types, &prefix))
+    })
 }
 
 /// The places an rvalue reads.
@@ -1214,12 +1470,19 @@ fn is_shared_owner(body: &Body, types: &TypeTable, owner: &Place) -> bool {
 }
 
 /// The events at one point, in order: every end (an earlier access ending
-/// where a new one begins), then every begin, then every check.
-fn push_events(rewritten: &mut Vec<Stmt>, events: &[AccessEvent]) {
+/// where a new one begins; a flagged access's ends come next, between these
+/// and the rest), then every begin, every flag, every check.
+fn push_ends(rewritten: &mut Vec<Stmt>, events: &[AccessEvent]) {
     for event in events.iter().filter(|event| event.is_end()) {
         rewritten.push(event.clone().into_stmt());
     }
-    for event in events.iter().filter(|event| !event.is_end() && !event.is_check()) {
+}
+
+fn push_starts(rewritten: &mut Vec<Stmt>, events: &[AccessEvent]) {
+    for event in events.iter().filter(|event| !event.is_end() && !event.is_check() && !event.is_flag()) {
+        rewritten.push(event.clone().into_stmt());
+    }
+    for event in events.iter().filter(|event| event.is_flag()) {
         rewritten.push(event.clone().into_stmt());
     }
     for event in events.iter().filter(|event| event.is_check()) {
@@ -1540,11 +1803,7 @@ fn append_edge_end(
     body.blocks.push(BasicBlock {
         stmts: vec![event.clone().into_stmt()],
         terminator: Terminator::Goto(target),
-        terminator_span: match event {
-            AccessEvent::End { span, .. } => span,
-            AccessEvent::Begin { span, .. } => span,
-            AccessEvent::Check { span, .. } => span,
-        },
+        terminator_span: event.span(),
     });
     let terminator = &mut body.blocks[source].terminator;
     match terminator {

@@ -3557,6 +3557,33 @@ RandomState]` in insertion order; one key, one hash within a run),
 `HASH-2/accept_bytes_differing_in_their_tail_hash_apart` (D-405, both hashers), and
 `random_state_is_keyed_per_process` in `milestones.rs` (one program run twice hashes a key two ways).
 
+## ADR-102 — an access begun on only some paths keeps a flag; the verifier follows it
+
+2026-10-02, with D-455 (the second review's G5-4). `[EXC-18]` holds a class field's access while a
+loan of it lives *on the path taken*. A view made in one branch and used after the join is a loan
+only on that branch, but its region (where the view may still be used) covers the join on both
+paths, so ending the access where the region stops being live ended it on paths that never began it.
+
+**Options priced.** (1) Begin the access on the other paths too, so every path holds it at the
+join: no run-time state, but a write to the field through another handle on a path where the view
+is of something else would panic, so a legal program fails; rejected. (2) Duplicate the code after
+the join for each path until the region ends: exact, but the code grows with every such view;
+rejected. (3) A flag per such access: exact, and the cost is one store at function entry, one as
+the access begins and a test at each end, in functions that make a view on some paths only.
+
+**Built** (`borrows.rs`, `verify.rs`). Each access's placement is planned (`plan_access`) and checked
+by a forward pass over the original blocks (`plan_is_exact`): every end must meet the access begun,
+every begin meet it ended, every block be entered with it in one state. An access that fails keeps
+a `bool` temporary named `access-open` (`ember_mir::ACCESS_FLAG_NAME`, a name no Ember identifier
+can have): cleared on entry, set right after the access begins, and each end becomes a branch on it
+to a block that ends the access and clears it. An end inside a block splits the block there; an end
+on an edge gets its two blocks on that edge. Everything is ordinary MIR, so every later pass
+handles it unchanged. The MIR verifier keeps the states reaching a block apart by the values of
+these flags (at most 256), follows a branch on a known flag one way, and otherwise checks as before:
+an end must meet its access open and a return must meet none open. `try_borrow` of a `RefCell` class
+field, whose guard is made on the success path only, is the commonest case. No benchmark program's C
+changes.
+
 ## ADR-101 — range facts: a moving bound widens to the loop's own constants first; a call that returns one of its arguments keeps their range
 
 2026-10-02, the owner's go ("add this feature and see whether it works if it doesn't use your

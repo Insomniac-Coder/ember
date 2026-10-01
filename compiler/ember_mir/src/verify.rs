@@ -146,23 +146,40 @@ impl Verifier<'_> {
     /// lexical stack would reject valid aliasing code solely because its last
     /// uses are non-LIFO.  Repeated identical brackets are counted so nested
     /// reborrows still need a matching number of ends. The state is propagated
-    /// through the reachable CFG; a join is valid only when every predecessor
-    /// arrives with the same active multiset. This catches both a missing close
-    /// on one branch and an interval that is closed on only some paths before
-    /// a later merge. It intentionally does not decide
-    /// whether an access *may* be elided: that requires `[EXC-3a]`'s safety
-    /// side-table producer and reporting consumer, which are a separate
-    /// implementation boundary.
+    /// through the reachable CFG and must close every access it opens: an end
+    /// meets its access open, a return meets none open.
+    ///
+    /// An access begun on only some paths (a view made in one branch, kept
+    /// past the join; D-455) sets its flag (a temporary named
+    /// `ACCESS_FLAG_NAME`) as it begins and is ended behind a test of it. So a
+    /// state also carries each such flag's value, a branch on a known one
+    /// goes its one way, and a block keeps the states that reach it apart
+    /// unless they are equal. A block reached by more than
+    /// `MAX_ACCESS_STATES` different states fails as unequal states at a
+    /// join did before.
+    /// It intentionally does not decide whether an access *may* be elided:
+    /// that requires `[EXC-3a]`'s safety side-table producer and reporting
+    /// consumer, which are a separate implementation boundary.
     fn access_intervals(&mut self, body: &Body) {
         type Access = (Place, bool);
+        /// `(ordinary, transferred)` per access: a transferred access is
+        /// deliberately left open at this body boundary and will be closed by
+        /// the caller through the returned payload.
+        type Open = BTreeMap<Access, (usize, usize)>;
+        #[derive(Clone, PartialEq, Eq)]
+        struct State {
+            open: Open,
+            flags: BTreeMap<LocalId, bool>,
+        }
+        const MAX_ACCESS_STATES: usize = 256;
+        let flag = |local: LocalId| {
+            body.locals.get(local.0 as usize).is_some_and(|decl| {
+                decl.kind == LocalKind::Temp && decl.name.as_deref() == Some(crate::ACCESS_FLAG_NAME)
+            })
+        };
 
-        // `(ordinary, transferred)`: a transferred access is deliberately
-        // left open at this body boundary and will be closed by the caller
-        // through the returned payload.
-        let mut incoming: Vec<Option<BTreeMap<Access, (usize, usize)>>> =
-            vec![None; body.blocks.len()];
-        let mut work =
-            VecDeque::from([(BasicBlockId(0), BTreeMap::<Access, (usize, usize)>::new())]);
+        let mut seen: Vec<Vec<State>> = vec![Vec::new(); body.blocks.len()];
+        let mut work = VecDeque::from([(BasicBlockId(0), State { open: Open::new(), flags: BTreeMap::new() })]);
 
         while let Some((block_id, mut state)) = work.pop_front() {
             let index = block_id.0 as usize;
@@ -172,25 +189,30 @@ impl Verifier<'_> {
                 continue;
             }
 
-            if let Some(previous) = &incoming[index] {
-                if previous != &state {
-                    self.fail(format!("bb{index} receives incompatible dynamic-access states: previous {previous:?}, incoming {state:?}"));
-                }
+            if seen[index].contains(&state) {
                 continue;
             }
-            incoming[index] = Some(state.clone());
+            if seen[index].len() == MAX_ACCESS_STATES {
+                let previous = &seen[index][0].open;
+                self.fail(format!(
+                    "bb{index} receives incompatible dynamic-access states: previous {previous:?}, incoming {:?}",
+                    state.open
+                ));
+                continue;
+            }
+            seen[index].push(state.clone());
 
             for stmt in &body.blocks[index].stmts {
                 match &stmt.kind {
                     StmtKind::BeginAccess { place, mutable } => {
-                        state.entry((place.clone(), *mutable)).or_default().0 += 1;
+                        state.open.entry((place.clone(), *mutable)).or_default().0 += 1;
                     }
                     StmtKind::BeginAccessTransfer { place, mutable } => {
-                        state.entry((place.clone(), *mutable)).or_default().1 += 1;
+                        state.open.entry((place.clone(), *mutable)).or_default().1 += 1;
                     }
                     StmtKind::EndAccess { place, mutable } => {
                         let expected = (place.clone(), *mutable);
-                        match state.get_mut(&expected) {
+                        match state.open.get_mut(&expected) {
                             Some(counts) if counts.0 != 0 || counts.1 != 0 => {
                                 if counts.0 != 0 {
                                     counts.0 -= 1;
@@ -198,7 +220,7 @@ impl Verifier<'_> {
                                     counts.1 -= 1;
                                 }
                                 if counts.0 == 0 && counts.1 == 0 {
-                                    state.remove(&expected);
+                                    state.open.remove(&expected);
                                 }
                             }
                             None | Some(_) => self.fail(format!(
@@ -207,30 +229,52 @@ impl Verifier<'_> {
                         }
                     }
                     StmtKind::EndAccessTransfer { .. } => {}
+                    StmtKind::Assign { place, rvalue } if flag(place.local) => {
+                        state.flags.remove(&place.local);
+                        if place.projection.is_empty()
+                            && let Rvalue::Use(Operand::Const(Const::Bool(value))) = rvalue
+                        {
+                            state.flags.insert(place.local, *value);
+                        }
+                    }
                     _ => {}
                 }
             }
 
-            let mut enqueue = |target: BasicBlockId| {
+            let mut enqueue = |target: BasicBlockId, state: &State| {
                 if (target.0 as usize) < body.blocks.len() {
                     work.push_back((target, state.clone()));
                 }
             };
             match &body.blocks[index].terminator {
-                Terminator::Goto(target) => enqueue(*target),
-                Terminator::SwitchInt {
-                    targets, otherwise, ..
-                } => {
-                    for (_, target) in targets {
-                        enqueue(*target);
+                Terminator::Goto(target) => enqueue(*target, &state),
+                Terminator::SwitchInt { discr, targets, otherwise } => {
+                    // A branch on a flag this path set goes its one way.
+                    let known = match discr {
+                        Operand::Copy(place) | Operand::Move(place) if place.projection.is_empty() => {
+                            state.flags.get(&place.local).map(|&value| i128::from(value))
+                        }
+                        _ => None,
+                    };
+                    match known {
+                        Some(value) => {
+                            let target = targets.iter().find(|(case, _)| *case == value).map_or(*otherwise, |(_, target)| *target);
+                            enqueue(target, &state);
+                        }
+                        None => {
+                            for (_, target) in targets {
+                                enqueue(*target, &state);
+                            }
+                            enqueue(*otherwise, &state);
+                        }
                     }
-                    enqueue(*otherwise);
                 }
-                Terminator::Call { next, .. } | Terminator::Assert { next, .. } => enqueue(*next),
+                Terminator::Call { next, .. } | Terminator::Assert { next, .. } => enqueue(*next, &state),
                 Terminator::Return => {
-                    if state.values().any(|(ordinary, _)| *ordinary != 0) {
+                    if state.open.values().any(|(ordinary, _)| *ordinary != 0) {
                         self.fail(format!(
-                            "bb{index} terminates with dynamic accesses still open: {state:?}"
+                            "bb{index} terminates with dynamic accesses still open: {:?}",
+                            state.open
                         ));
                     }
                 }
@@ -822,8 +866,11 @@ mod tests {
         );
     }
 
+    /// An access begun on one branch and never ended reaches the return
+    /// open on that path (states may differ at a join since D-455; what
+    /// must hold is that every path closes what it opened).
     #[test]
-    fn dynamic_access_state_must_agree_at_cfg_joins() {
+    fn an_access_open_on_one_path_must_still_close() {
         let span = Span::new(ember_span::FileId(0), 0, 1);
         let (_, common) = TypeTable::new();
         let mut body = body_with(Vec::new(), span);
@@ -869,10 +916,81 @@ mod tests {
         ];
         let violations = verify(&body);
         assert!(
-            violations.iter().any(|violation| violation
-                .message
-                .contains("incompatible dynamic-access states")),
-            "missing CFG-join access violation: {violations:?}"
+            violations.iter().any(|violation| violation.message.contains("still open")),
+            "missing open-access violation: {violations:?}"
+        );
+    }
+
+    /// D-455 — an access begun on one branch sets its flag; past the join,
+    /// its end runs behind a test of the flag. Every path closes what it
+    /// opened, so the body verifies; without the test (an end on every path)
+    /// the path that never began it ends it, which is reported.
+    #[test]
+    fn a_flagged_access_ends_only_where_it_began() {
+        let span = Span::new(ember_span::FileId(0), 0, 1);
+        let (_, common) = TypeTable::new();
+        let build = |tested: bool| {
+            let mut body = body_with(Vec::new(), span);
+            body.arg_count = 1;
+            body.param_modes = vec![ParameterMode::Borrow];
+            body.locals.push(LocalDecl { ty: common.bool_, name: Some("choose".to_string()), kind: LocalKind::Arg, span });
+            body.locals.push(LocalDecl {
+                ty: common.bool_,
+                name: Some(crate::ACCESS_FLAG_NAME.to_string()),
+                kind: LocalKind::Temp,
+                span,
+            });
+            let flag = |value: bool| {
+                Stmt::new(
+                    StmtKind::Assign {
+                        place: Place::local(LocalId(2)),
+                        rvalue: Rvalue::Use(Operand::Const(Const::Bool(value))),
+                    },
+                    span,
+                )
+            };
+            let access = Place::local(LocalId(0));
+            let end = Stmt::new(StmtKind::EndAccess { place: access.clone(), mutable: true }, span);
+            body.blocks = vec![
+                BasicBlock {
+                    stmts: vec![flag(false)],
+                    terminator: Terminator::SwitchInt {
+                        discr: Operand::Copy(Place::local(LocalId(1))),
+                        targets: vec![(1, BasicBlockId(1))],
+                        otherwise: BasicBlockId(2),
+                    },
+                    terminator_span: span,
+                },
+                BasicBlock {
+                    stmts: vec![Stmt::new(StmtKind::BeginAccess { place: access.clone(), mutable: true }, span), flag(true)],
+                    terminator: Terminator::Goto(BasicBlockId(3)),
+                    terminator_span: span,
+                },
+                BasicBlock { stmts: Vec::new(), terminator: Terminator::Goto(BasicBlockId(3)), terminator_span: span },
+                BasicBlock {
+                    stmts: if tested { Vec::new() } else { vec![end.clone()] },
+                    terminator: if tested {
+                        Terminator::SwitchInt {
+                            discr: Operand::Copy(Place::local(LocalId(2))),
+                            targets: vec![(0, BasicBlockId(5))],
+                            otherwise: BasicBlockId(4),
+                        }
+                    } else {
+                        Terminator::Goto(BasicBlockId(5))
+                    },
+                    terminator_span: span,
+                },
+                BasicBlock { stmts: vec![end, flag(false)], terminator: Terminator::Goto(BasicBlockId(5)), terminator_span: span },
+                BasicBlock { stmts: Vec::new(), terminator: Terminator::Return, terminator_span: span },
+            ];
+            body
+        };
+        let violations = verify(&build(true));
+        assert!(violations.is_empty(), "a flagged access must verify: {violations:?}");
+        let violations = verify(&build(false));
+        assert!(
+            violations.iter().any(|violation| violation.message.contains("is not open")),
+            "an end on a path that never began the access must be reported: {violations:?}"
         );
     }
 
