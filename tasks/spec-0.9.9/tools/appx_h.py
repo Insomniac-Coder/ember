@@ -394,6 +394,10 @@ ODRS = [
      '`[RNG-8]`, `[RNG-5a1]`, `[TYP-39]`'),
     ('ODR-096', 'of two instances of one generic interface a call\'s or an operator\'s arguments fit, one whose parameter types are the arguments\' own (an untyped literal as its default type) is chosen before one reached through a coercion, for every type; two that fit equally are `E2070`, and an operator chooses as its method does (Hardened_49)',
      '`[TYP-24]`, `[RNG-5a2]`, `[TYP-21]`'),
+    ('ODR-095', 'a range type has every operator its representation implements over itself, `**` and the bitwise operators included, each generated as `[RNG-5a1]`\'s are with the representation as its `Output` (Hardened_50)',
+     '`[RNG-5]`, `[RNG-5a1]`'),
+    ('ODR-097', 'an implementation may also be written in the package that declares one of its interface\'s arguments, where, reading its type and then those arguments, the first type the package declares comes before any of the implementation\'s type parameters standing alone; anywhere else it is `E2121` (Hardened_50)',
+     '`[TYP-20]`'),
 ]
 
 H5_HEAD = """
@@ -429,7 +433,8 @@ vectorisable form; Hardened_44 adds ODR-089, the iterator adapters' counts and o
 Hardened_45 adds ODR-090, where a float mode holds; Hardened_46 adds ODR-091, which iterators
 run backwards; Hardened_47 adds ODR-092, when two implementations overlap; Hardened_48 adds
 ODR-093, what a range type implements; Hardened_49 adds ODR-096, how a call chooses between two
-instances of one generic interface.
+instances of one generic interface; Hardened_50 adds ODR-095, which operators a range value has,
+and ODR-097, where an implementation may be written.
 
 | ODR | Ruling | Rules |
 |---|---|---|

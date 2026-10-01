@@ -3568,8 +3568,6 @@ carried both. The spec shows the one-file case only.
 **Each file its own group.** The primary's file comes first, under `-->` at the primary's place;
 each other file follows, in the order its first label comes, under `:::` at its first label's
 place (rustc's form), its labels drawn as in the first group. One gutter width serves all groups.
-A collision of a program's implementation with the standard library's puts the primary at the
-program's, std's under its own header: the program's is the one the reader can change.
 
 ## ADR-093 — a callable argument meets a callable bound as a call's arguments meet parameters
 

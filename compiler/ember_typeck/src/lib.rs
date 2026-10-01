@@ -1121,9 +1121,6 @@ struct Checker<'a> {
     /// ambiguous (`E2070`), by span: typed as errors rather than checked
     /// against a candidate the compiler picked.
     ambiguous_calls: HashSet<Span>,
-    /// D-411 — the files of the standard library's modules, as their
-    /// implementations are collected.
-    std_files: HashSet<ember_span::FileId>,
     /// D-418 — a program's implementations on a range type, or naming one,
     /// with the interface as written.
     range_implementations: Vec<(Ty, Symbol, Span, Symbol)>,
@@ -1580,7 +1577,6 @@ impl<'a> Checker<'a> {
             instance_names: HashMap::new(),
             recipe_method_defs: HashMap::new(),
             ambiguous_calls: HashSet::new(),
-            std_files: HashSet::new(),
             range_implementations: Vec::new(),
             extension_method_origin: HashMap::new(),
             instance_name_owner: HashMap::new(),
@@ -3889,9 +3885,12 @@ impl<'a> Checker<'a> {
             if !decl.blanket.is_empty() {
                 // The blanket's parameters follow the extension's, as its
                 // methods declare them.
-                self.record_blanket(decl, params.clone(), item.span);
+                let recorded = self.record_blanket(decl, params.clone(), item.span);
                 self.type_params.clear();
                 self.projection_params.clear();
+                if !recorded {
+                    continue;
+                }
                 self.generic_extensions.entry(name).or_default().push(GenericExtension {
                     params,
                     target_args,
@@ -4151,14 +4150,14 @@ impl<'a> Checker<'a> {
     /// `[TYP-19]` — record a blanket implementation. `params` are the
     /// extension's own, already declared (none for a non-generic target);
     /// the blanket's follow them.
-    fn record_blanket(&mut self, decl: &ast::ExtendDecl, params: Vec<GenericParam>, span: Span) {
+    fn record_blanket(&mut self, decl: &ast::ExtendDecl, params: Vec<GenericParam>, span: Span) -> bool {
         let mut all = params;
         let blanket = self.declare_generics_from(&decl.blanket, all.len());
         let free = blanket.len();
         all.extend(blanket);
         let target = self.resolve_type(&decl.target);
         if target == self.common.error {
-            return;
+            return false;
         }
         let mut interfaces = Vec::new();
         for entry in &decl.implements {
@@ -4169,6 +4168,21 @@ impl<'a> Checker<'a> {
             };
             interfaces.push(found);
         }
+        // ODR-097, `[TYP-20]` — written in a package that may, asked before
+        // its methods are the type's: a blanket's free parameter stands
+        // alone in its interface's arguments (`Mul[T]`).
+        let target_local = match self.types.kind(target) {
+            TyKind::Param { .. } => None,
+            _ => Some(self.type_is_local(target)),
+        };
+        for (origin, args) in &interfaces {
+            if !self.placement_allowed_over(target_local, *origin, args) {
+                let shown = self.types.display(target);
+                let named = self.interface_shown_over(*origin, args);
+                self.report_misplaced_implementation(shown, named, span);
+                return false;
+            }
+        }
         let mut assoc = Vec::new();
         for member in &decl.members {
             if let ast::MemberKind::TypeAlias(alias) = &member.kind
@@ -4178,6 +4192,7 @@ impl<'a> Checker<'a> {
             }
         }
         self.blankets.push(BlanketImpl { params: all, target, interfaces, assoc, free, span });
+        true
     }
 
     /// `[TYP-19]` — whether a blanket implementation gives `ty` the
@@ -6136,9 +6151,11 @@ impl<'a> Checker<'a> {
                     // type's, generic over the blanket's parameters.
                     if !decl.blanket.is_empty() {
                         self.type_params.clear();
-                        self.record_blanket(decl, Vec::new(), item.span);
+                        let recorded = self.record_blanket(decl, Vec::new(), item.span);
                         self.type_params.clear();
-                        self.collect_members(ty, &decl.members, None, true, item.span, item_index);
+                        if recorded {
+                            self.collect_members(ty, &decl.members, None, true, item.span, item_index);
+                        }
                         continue;
                     }
                     let interfaces = self.block_interfaces_of(&decl.implements, ty);
@@ -6469,8 +6486,23 @@ impl<'a> Checker<'a> {
 
     /// `[RNG-5a1]` (N1) — the operators whose implementations the compiler
     /// generates for a range type, by their interfaces' names.
-    const RANGE_OPERATORS: [&'static str; 7] =
-        ["std.core.Add", "std.core.Sub", "std.core.Mul", "std.core.Div", "std.core.FloorDiv", "std.core.Rem", "std.core.Neg"];
+    /// ODR-095 — each one its representation implements over itself.
+    const RANGE_OPERATORS: [&'static str; 14] = [
+        "std.core.Add",
+        "std.core.Sub",
+        "std.core.Mul",
+        "std.core.Div",
+        "std.core.FloorDiv",
+        "std.core.Rem",
+        "std.core.Pow",
+        "std.core.Neg",
+        "std.core.Not",
+        "std.core.BitAnd",
+        "std.core.BitOr",
+        "std.core.BitXor",
+        "std.core.Shl",
+        "std.core.Shr",
+    ];
 
     /// `[RNG-5a1]` (N1) — whether one of a range type's generated operator
     /// implementations is `ty: interface`, `None` when `interface` is not an
@@ -8304,15 +8336,21 @@ impl<'a> Checker<'a> {
         members: &[ast::Member],
         span: Span,
     ) {
-        if self.is_std_module(self.current_module) {
-            self.std_files.insert(span.file);
-        }
         for entry in implements {
             let written = match &entry.kind {
                 ast::TypeKind::Path { segments, .. } if segments.len() == 1 => segments[0].name,
                 _ => Symbol::intern("<invalid interface>"),
             };
             let Some(name) = self.resolve_interface_use_for(entry, ty) else { continue };
+            // ODR-097, `[TYP-20]` — written in a package that may. A generic
+            // recipe's is asked once, where it is declared (the overlap
+            // pass), not at each instance it is applied to.
+            let target_local = self.type_is_local(ty);
+            if !self.from_generic_recipe(entry.span) && !self.placement_allowed(Some(target_local), name) {
+                let (shown, named) = (self.types.display(ty), self.interface_shown(name));
+                self.report_misplaced_implementation(shown, named, entry.span);
+                continue;
+            }
             // `[STD-27]` — `Float` is `f32`'s and `f64`'s only: a literal must
             // be able to become the type, which no other type can promise.
             if name.is("std.math.Float")
@@ -8347,16 +8385,9 @@ impl<'a> Checker<'a> {
                 match (self.from_generic_recipe(first), self.from_generic_recipe(entry.span)) {
                     (false, false) => {
                         let shown = self.types.display(ty);
-                        // D-411 — a program's implementation colliding with
-                        // the standard library's points at the program's;
-                        // std's was met second, its modules collected later.
-                        let (at, other, label) = match self.is_std_module(self.current_module) && !self.std_files.contains(&first.file) {
-                            true => (first, entry.span, "the standard library's implementation is here"),
-                            false => (entry.span, first, "the first implementation is here"),
-                        };
                         self.sink.emit(
-                            Diagnostic::error(codes::E2041, at, format!("`{shown}` already implements `{written}`"))
-                                .secondary(other, label),
+                            Diagnostic::error(codes::E2041, entry.span, format!("`{shown}` already implements `{written}`"))
+                                .secondary(first, "the first implementation is here"),
                         );
                     }
                     (true, false) => {
@@ -8496,6 +8527,18 @@ impl<'a> Checker<'a> {
             };
             for entry in &implements {
                 let Some(instance) = self.recipe_interface(entry, &params, owner, module) else { continue };
+                // ODR-097, `[TYP-20]` — written in a package that may.
+                let saved_module = std::mem::replace(&mut self.current_module, module);
+                let allowed = {
+                    let target_local = self.generic_target_in_this_package(name);
+                    self.placement_allowed(Some(target_local), instance)
+                };
+                self.current_module = saved_module;
+                if !allowed {
+                    let named = self.interface_shown(instance);
+                    self.report_misplaced_implementation(shown.clone(), named, entry.span);
+                    continue;
+                }
                 let (interface, interface_args) =
                     self.open_interface_origin.get(&instance).cloned().unwrap_or((instance, Vec::new()));
                 records.push(ImplRecord {
@@ -9889,7 +9932,7 @@ impl<'a> Checker<'a> {
                             codes::E2040,
                             span,
                             format!(
-                                "`{shown}` does not implement `std.core.Default`, which `T` requires"
+                                "`{shown}` does not implement `Default`, which `T` requires"
                             ),
                         )
                         .help("implement `std.core.Default` or use `mem.replace(place, value)`")
@@ -10471,13 +10514,32 @@ impl<'a> Checker<'a> {
 
     /// An interface as the source writes it: `AsKey[String]`, not the
     /// instance's name.
-    fn interface_shown(&self, interface: Symbol) -> String {
-        match self.open_interface_origin.get(&interface) {
-            Some((name, args)) => {
+    /// `interface_shown` for the interface `origin` over `args`.
+    fn interface_shown_over(&self, origin: Symbol, args: &[Ty]) -> String {
+        let name = self.interface_shown(origin);
+        match args.is_empty() {
+            true => name,
+            false => {
                 let args: Vec<String> = args.iter().map(|&ty| self.types.display(ty)).collect();
                 format!("{name}[{}]", args.join(", "))
             }
-            None => interface.to_string(),
+        }
+    }
+
+    fn interface_shown(&self, interface: Symbol) -> String {
+        // D-415 — as a program writes it, and as a type is shown
+        // (`render_named`): a prelude interface without `std.core.`, a root
+        // module's without `root.`.
+        let source = |name: Symbol| {
+            let name = name.as_str();
+            name.strip_prefix("std.core.").or_else(|| name.strip_prefix("root.")).unwrap_or(name).to_string()
+        };
+        match self.open_interface_origin.get(&interface) {
+            Some((name, args)) => {
+                let args: Vec<String> = args.iter().map(|&ty| self.types.display(ty)).collect();
+                format!("{}[{}]", source(*name), args.join(", "))
+            }
+            None => source(interface),
         }
     }
 
@@ -15446,6 +15508,70 @@ impl<'a> Checker<'a> {
             Some(module) => self.same_package(self.current_module, module),
             None => self.is_std_module(self.current_module),
         }
+    }
+
+    /// ODR-097, `[TYP-20]` — whether the current module's package may write
+    /// an implementation of `interface` whose target is its own or not
+    /// (`Some`), or is a type parameter standing alone (`None`): it declares
+    /// the interface; or, reading the target and then the interface's
+    /// arguments, the first type it declares comes before any type
+    /// parameter standing alone (`extend f32 implements Mul[Vec3]` in
+    /// `Vec3`'s package). Only that package can write the implementation,
+    /// so separate compilation cannot meet two.
+    fn placement_allowed(&self, target: Option<bool>, interface: Symbol) -> bool {
+        let (origin, args) = self.open_interface_origin.get(&interface).cloned().unwrap_or((interface, Vec::new()));
+        self.placement_allowed_over(target, origin, &args)
+    }
+
+    /// `placement_allowed` for the interface `origin` over `args`.
+    fn placement_allowed_over(&self, target: Option<bool>, origin: Symbol, args: &[Ty]) -> bool {
+        let std_name = |name: Symbol| name.as_str() == "std" || name.as_str().starts_with("std.");
+        if std_name(origin) == self.is_std_module(self.current_module) {
+            return true;
+        }
+        match target {
+            Some(true) => return true,
+            None => return false,
+            Some(false) => {}
+        }
+        for &arg in args {
+            if matches!(self.types.kind(arg), TyKind::Param { .. }) {
+                return false;
+            }
+            if self.type_is_local(arg) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// ODR-097 — whether `ty` is a type the current module's package
+    /// declares: one of its nominal types or range types, or an instance of
+    /// one of its generic types. A type parameter is none.
+    fn type_is_local(&self, ty: Ty) -> bool {
+        match *self.types.kind(ty) {
+            TyKind::Param { .. } => false,
+            TyKind::Range(id) => {
+                let name = self.types.range_def(id).name;
+                let std = name.as_str() == "std" || name.as_str().starts_with("std.");
+                std == self.is_std_module(self.current_module)
+            }
+            _ => self.declared_in_this_package(ty),
+        }
+    }
+
+    /// ODR-097, `[TYP-20]` — `E2121`: an implementation outside the
+    /// packages that may write it.
+    fn report_misplaced_implementation(&mut self, shown: String, named: String, span: Span) {
+        self.sink.emit(
+            Diagnostic::error(
+                codes::E2121,
+                span,
+                format!("`{shown}` and `{named}` are both another package's, so this package cannot implement one for the other"),
+            )
+            .help(format!("implement it where `{named}` or `{shown}` is declared, or wrap the value in a type of this package"))
+            .note("an implementation lives with its interface or its type, or with a type of its package among the interface's arguments [TYP-20]"),
+        );
     }
 
     /// `[IFC-2]` — `E2120`: `extend T:` with methods of its own for a type
@@ -29118,6 +29244,7 @@ impl<'a> Checker<'a> {
             });
             let Some((_, def, _, _)) = member else { continue };
             if let Some((_, first)) = found {
+                let (first, bound) = (self.interface_shown(first), self.interface_shown(*bound));
                 self.error(
                     codes::E2070,
                     name.span,
@@ -30387,6 +30514,7 @@ impl<'a> Checker<'a> {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             if let Some(other) = ambiguity {
+                let (interface, other) = (self.interface_shown(interface), self.interface_shown(other));
                 self.error(
                     codes::E2070,
                     name.span,
@@ -31046,9 +31174,17 @@ impl<'a> Checker<'a> {
         self.ambiguous_calls.insert(span);
         let shown = |this: &Self, entry: &MethodEntry| this.interface_shown(entry.from_interface.expect("an instance's method"));
         let (a, b) = (shown(self, &first), shown(self, &second));
+        // D-415 — every instance that fits as well, not only the second.
+        let forms: Vec<String> = best
+            .iter()
+            .map(|entry| match operator {
+                Some(_) => format!("`{}.{name}(a, b)`", shown(self, entry)),
+                None => format!("`{}.{name}(…)`", shown(self, entry)),
+            })
+            .collect();
         let (what, help) = match operator {
-            Some(symbol) => (format!("`{symbol}`"), format!("name the one to call: `{b}.{name}(a, b)`")),
-            None => (format!("`{name}`"), format!("name the one to call: `{b}.{name}(…)` with the receiver first")),
+            Some(symbol) => (format!("`{symbol}`"), format!("name the one to call: {}", forms.join(" or "))),
+            None => (format!("`{name}`"), format!("name the one to call: {}, with the receiver first", forms.join(" or "))),
         };
         self.sink.emit(
             Diagnostic::error(codes::E2070, span, format!("{what} is offered by both `{a}` and `{b}`"))
@@ -31153,9 +31289,32 @@ impl<'a> Checker<'a> {
         self.materialize_deferred_default(receiver.ty, name.name);
         let found = match named {
             Some(interface) => {
-                let found = self.interface_methods.get(&(receiver.ty, interface, name.name)).copied();
+                let mut found = self.interface_methods.get(&(receiver.ty, interface, name.name)).copied();
+                // D-415 — `Conv.conv(w)`, a generic interface without its
+                // arguments: the instance of it the receiver has that offers
+                // the method, chosen by the arguments when several do.
+                let generic = self.interfaces.get(&interface).is_some_and(|def| !def.generic_params.is_empty());
+                if found.is_none() && generic {
+                    let mut instances: Vec<MethodEntry> = self
+                        .interface_methods
+                        .iter()
+                        .filter(|((owner, instance, method), _)| {
+                            *owner == receiver.ty
+                                && *method == name.name
+                                && self.open_interface_origin.get(instance).is_some_and(|(origin, _)| *origin == interface)
+                        })
+                        .map(|(_, entry)| *entry)
+                        .collect();
+                    instances.sort_by_key(|entry| entry.def.0);
+                    found = match instances.as_slice() {
+                        [] => None,
+                        [only] => Some(*only),
+                        [first, ..] => Some(self.choose_instance_method(receiver.ty, name, *first, args)),
+                    };
+                }
                 if found.is_none() {
                     let shown = self.types.display(receiver.ty);
+                    let interface = self.interface_shown(interface);
                     self.error(
                         codes::E2040,
                         name.span,
@@ -31271,7 +31430,8 @@ impl<'a> Checker<'a> {
                 })
                 .map(|(_, i, _)| *i)
                 .collect();
-            if let Some(other) = others.first() {
+            if let Some(&other) = others.first() {
+                let (interface, other) = (self.interface_shown(interface), self.interface_shown(other));
                 self.error(
                     codes::E2070,
                     name.span,
@@ -38101,8 +38261,12 @@ impl<'a> Checker<'a> {
     /// type (`2 ** 0.5`) and is otherwise an `int`.
     fn power(&mut self, base: Expr, exponent: Expr, exponent_ast: &ast::Expr, span: Span) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        // ODR-095, `[RNG-5]` — `**` on a range value is its representation's,
+        // as every operator its representation has is.
         let exponent = self.read_through(exponent);
-        let mut base = self.read_through(base);
+        let exponent = self.range_as_repr(exponent);
+        let base = self.read_through(base);
+        let mut base = self.range_as_repr(base);
         // `[TYP-21]` — `a ** b` on a type that is not a number is its
         // `Pow.pow`; on a type parameter, its bound's.
         let mut exponent = exponent;

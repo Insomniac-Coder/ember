@@ -11088,14 +11088,14 @@ first**; the rest of §0.355 is the running narrative behind it.
     semantic ambiguity and no ODR or new hardening.
 
   The five preceding CI runs, through `f529f8b`, finished green.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_49.md`
-  (ODR-096: how a call chooses between two instances of one generic
-  interface; H48 carried ODR-093, what a range type implements), pinned in
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_50.md`
+  (ODR-095, which operators a range value has, and ODR-097, where an
+  implementation may be written; H49 carried ODR-096, how a call chooses
+  between two instances of one generic interface), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
-  `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h49/` are frozen.
-* **Next numbers:** ODR-097, D-437, ADR-095, ERR-056. ODR-094 is the owner's
-  (ruled, not yet in the spec or built); ODR-095 is reserved for D-420 (what
-  a range value's bitwise operators and `**` do), not yet written.
+  `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h50/` are frozen.
+* **Next numbers:** ODR-098, D-437, ADR-095, ERR-056. ODR-094 is the owner's
+  (ruled, not yet in the spec or built).
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
@@ -11130,13 +11130,18 @@ first**; the rest of §0.355 is the running narrative behind it.
     D-436 (a generic body's error repeated per instance).
   * **Owner, 2026-10-01: no README benchmark numbers from a cloud
     container** (AUTOPILOT §4); benchmarks there only guide optimisation.
-  * **Next:** the review defects still open: D-415 (one way to show an
-    interface in diagnostics, `std.core.` dropped as types drop it; E2070's
-    help listing the fitting instances; `Conv.conv(w)` on a generic
-    interface), D-413 (`[TYP-20]`'s placement rule needs a code: an ODR),
-    D-420 (ODR-095) and D-422 (ODR-097: how the adapters take their
-    callable, see its row); then D-407, ODR-094 and `[CLO-3]` as the owner
-    decided them.
+  * **Third batch, fixed:** D-415 (an interface shown as a program writes
+    it, `std.core.` dropped as types drop it; E2070's help lists every
+    instance that fits; `Conv.conv(w)` on a generic interface), D-420
+    (ODR-095, Hardened_50: a range type has every operator its
+    representation implements over itself, `**` and the bitwise ones
+    included), D-413 (ODR-097, Hardened_50: `[TYP-20]`'s placement rule,
+    Rust's coherence rule, `E2121`; the D-411 swap for std collisions was
+    removed with it, as no program implementation can meet std's now).
+  * **Next:** the review's last open defect, D-422 (how the closure adapters
+    take their callable; a value holding a `ref mut` capture is affine), goes
+    with `[CLO-3]`'s owned callable values; then D-407, ODR-094 and
+    `[CLO-3]` as the owner decided them.
   * **Still to ask the owner:** whether to run the agent inspection of the
     2026-09-26 five defect fixes (D-358, D-355, D-201, D-202, D-218) the
     owner asked about; it was raised again at the start of this session and

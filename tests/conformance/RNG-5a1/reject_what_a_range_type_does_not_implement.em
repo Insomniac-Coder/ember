@@ -22,8 +22,8 @@ fn main():
     u = Unit.clamped(0.5)
     o = Other.clamped(0.5)
     l = Level.clamped(3)
-    z: Unit = zero()                #$ error[E2040]: `Unit` does not implement `std.core.Default`
-    m = mix(u, o)                   #$ error[E2040]: `Unit` does not implement `std.core.Add[Other]`
-    d = divide(l, l)                #$ error[E2040]: `Level` does not implement `std.core.Div[Level]`
+    z: Unit = zero()                #$ error[E2040]: `Unit` does not implement `Default`
+    m = mix(u, o)                   #$ error[E2040]: `Unit` does not implement `Add[Other]`
+    d = divide(l, l)                #$ error[E2040]: `Level` does not implement `Div[Level]`
     keys: Map[Unit, int] = {}       #$ error[E2040]: `Unit` does not implement `std.collections.Hash`
     println(z, m, d, keys)

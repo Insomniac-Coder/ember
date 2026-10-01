@@ -197,6 +197,7 @@ codes! {
     E2110 = (Error, 2110, Types, "[CLS-4]", "override of a method that is not virtual");
     E2111 = (Error, 2111, Types, "[CLS-4]", "a method that replaces an inherited virtual one without `override`");
     E2120 = (Error, 2120, Types, "[IFC-2]", "inherent extension of a type from another package");
+    E2121 = (Error, 2121, Types, "[TYP-20]", "an implementation outside the packages that may write it");
     E2130 = (Error, 2130, Types, "[STA-1]", "static initialiser is not comptime-evaluable");
     E2131 = (Error, 2131, Types, "[IV.3]", "array length must be a constant");
     E2031 = (Error, 2031, Types, "[LT-1a]", "`@borrows` names a parameter the result cannot borrow from");

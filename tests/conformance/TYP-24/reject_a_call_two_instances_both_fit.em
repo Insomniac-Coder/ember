@@ -22,5 +22,5 @@ extend W implements Conv[bool]:
 fn main():
     w = W(x = 5)
     a: Array[int] = w.conv()    #$ error[E2070]: `conv` is offered by both `Conv[Array[i64]]` and `Conv[bool]`
-    #$ help: name the one to call: `Conv[bool].conv(…)` with the receiver first
+    #$ help: name the one to call: `Conv[Array[i64]].conv(…)` or `Conv[bool].conv(…)`, with the receiver first
     println(a.len())

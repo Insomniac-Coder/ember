@@ -63,7 +63,9 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-082 | **CLOSED** — `@ffi(immutable)` on a foreign static asserts a `const` C object and emits a matching declaration | Language / C interop / foreign statics | — | **No** — delegated, 2026-09-27, Hardened_38 |
 | ODR-083 | **CLOSED** — a static free-function export's `creator` thread is anchored to successful module initialization; repeated initialization does not transfer the contract, and reinitialization after shutdown establishes a new creator | Language / C interop / export thread contracts | — | **No** — delegated, 2026-09-27, Hardened_39 |
 | ODR-084 | **CLOSED** — `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts | Language / module attributes / arithmetic | — | **No** — delegated, 2026-09-27, Hardened_40 |
+| ODR-097 | **CLOSED** — an implementation may also be written in the package that declares one of its interface's arguments, where, reading its type and then those arguments, the first type the package declares comes before any of the implementation's type parameters standing alone; anywhere else it is `E2121` | Types / implementations | — | **No** — delegated, 2026-10-01, Hardened_50 |
 | ODR-096 | **CLOSED** — of two instances of one generic interface that a call's or an operator's arguments fit, the one whose parameter types are the arguments' own (an untyped literal as its default type) is chosen before one reached through a coercion, for every type; two that fit equally are `E2070`; an operator chooses as its method does | Types / interface resolution | — | **No** — delegated, 2026-10-01, Hardened_49 |
+| ODR-095 | **CLOSED** — a range type has every operator its representation implements over itself, `**` and the bitwise operators included, generated as `[RNG-5a1]`'s are with the representation as `Output` | Types / range types | — | **No** — delegated, 2026-10-01, Hardened_50 |
 | ODR-094 | **RULED** — `collect[C]()` builds any `C: FromIterator[Item]` (a new library interface), `C` written or taken from the expected type; `peekable` offers `peek`, `peek_mut`, `next_if`, `next_if_eq`; `Box` and `Cell` print as what they hold | Library / iterators / printing | — | **Yes** — the owner, 2026-10-01; not yet in the spec, not built |
 | ODR-093 | **CLOSED** — a range type is `Clone`, `Hash`, `Display` and `Debug` when its representation is, its `Eq` and `Ord` are its representation's, and a range value shows as its representation's value; never `Default` | Types / range types | — | **Yes** — delegated, 2026-10-01, Hardened_48 |
 | ODR-092 | **CLOSED** — two implementations overlap where one type could be both, each one's type parameters standing for any type, found where they are declared; a bound separates two only where the type it bounds is written out in full and does not meet it | Types / implementations | — | **Yes** — delegated, 2026-10-01, Hardened_47 |
@@ -251,6 +253,63 @@ immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
+
+## ODR-097 — where an implementation may be written — **CLOSED**
+
+    ID:        ODR-097
+    Status:    CLOSED — ruled under the owner's delegation, 2026-10-01;
+               incorporated in 0.9.9_Hardened_50
+    Category:  TYPES / IMPLEMENTATIONS
+    Location:  Ember_v0.9.9_Hardened_49.md [TYP-20]
+
+**The question.** `[TYP-20]` lets an implementation of `I` for `T` appear in the package that
+declares `I` or the package that declares `T`, and names no diagnostic for one written elsewhere. It
+does not say which package declares an instance: `Mul[Vec3]`, a standard interface over a
+program's type, or `Array[Vec3]`. The compiler accepted every placement, `extend bool implements
+Add[bool]` in a program included (D-413, found by the 2026-10-01 agent review, G1-6).
+
+**Options.**
+1. The interface's and the type's packages only, their constructors' for an instance. A program
+   cannot write `extend f32 implements Mul[Vec3]`, which `s * v` for a scalar `s` needs.
+2. As 1, and the package that declares one of the interface's arguments, when, reading `T` and then
+   the arguments, the first type the package declares comes before any of the implementation's type
+   parameters standing alone. Only that package can name its type, and the ordering keeps two
+   packages that cannot see each other from both covering one instance (`extend[U] f32 implements
+   Conv2[Vec3, U]` in one, `extend[V] f32 implements Conv2[V, Bar]` in another: the second is refused).
+   An instance's own arguments do not count for `T` (`Array[Vec3]` is the standard library's type).
+3. Any package declaring any type mentioned anywhere in the implementation: two packages could cover
+   one instance, which no single compilation sees.
+
+**Ruling: 2**, with a new code, `E2121`, for an implementation written elsewhere, beside `E2120` for an
+inherent extension of another package's type (`[IFC-2]`). It is the rule Rust's coherence settled on,
+and it keeps every program the corpus has.
+
+## ODR-095 — which operators a range value has — **CLOSED**
+
+    ID:        ODR-095
+    Status:    CLOSED — ruled under the owner's delegation, 2026-10-01;
+               incorporated in 0.9.9_Hardened_50
+    Category:  TYPES / RANGE TYPES
+    Location:  Ember_v0.9.9_Hardened_49.md [RNG-5], [RNG-5a1]
+
+**The question.** `[RNG-5]` says arithmetic on a range value yields its representation, and
+`[RNG-5a1]` lists the operator interfaces the compiler generates for a range type: `Add`, `Sub`,
+`Mul`, `Div`, `FloorDiv`, `Rem`, `Neg`, `Eq` and `Ord`. Neither says whether a range value has `|`,
+`&`, `^`, `<<`, `>>`, `~` or `**`. The compiler gave one the bitwise operators and `~`, answering in
+the representation, but refused the matching bounds (`T: BitOr[T]`, `T: Not`), and refused `**`
+in both forms (D-420, found by the 2026-10-01 agent review, G2-4).
+
+**Options.**
+1. Only `[RNG-5a1]`'s list: `l | 15` is `E2214`, whose help names the erasure. Programs that compile
+   today stop.
+2. Every operator interface the representation implements over itself, generated as `[RNG-5a1]`'s
+   are with the representation as `Output`: `Pow`, `Not`, `BitAnd`, `BitOr`, `BitXor`, `Shl` and
+   `Shr` join the list, and `**` erases as `*` does.
+
+**Ruling: 2.** A range value is a number known to be in a range; every operation on it already yields
+the representation (`[RNG-5]`), and the bound then accepts what the operator form does (ODR-040). A
+range type gets an operator only where its representation has it: an integer range has no `/`, a
+float range no `|`.
 
 ## ODR-096 — how a call chooses between two instances of one interface — **CLOSED**
 

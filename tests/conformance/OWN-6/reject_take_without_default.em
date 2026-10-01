@@ -8,5 +8,5 @@ struct NoDefault:
 
 fn main():
     value = NoDefault(Array[i32]())
-    old = mem.take(value) #$ error[E2040]: `NoDefault` does not implement `std.core.Default`, which `T` requires
+    old = mem.take(value) #$ error[E2040]: `NoDefault` does not implement `Default`, which `T` requires
     println(old.values.len())

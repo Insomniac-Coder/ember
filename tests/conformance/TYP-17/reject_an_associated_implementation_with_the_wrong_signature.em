@@ -10,6 +10,6 @@ extend Pixel implements Default:
     fn default(seed: i32) -> Pixel:
         return Pixel(seed)
 
-#$ error[E2040]: `Pixel.default` does not match the signature required by `std.core.Default`
+#$ error[E2040]: `Pixel.default` does not match the signature required by `Default`
 fn main():
     pass

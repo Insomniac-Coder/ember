@@ -31,4 +31,4 @@ extend R implements Add, Default:
 fn main():
     println(named(1, 2), named(R(x=1), R(x=2)))
     rs: Array[R] = [R(x=1)]
-    println(sum(rs.as_span()))    #$ error[E2040]: `R`'s `Output` for `std.core.Add[R]` is `i64`, but `T`'s bound needs `R`
+    println(sum(rs.as_span()))    #$ error[E2040]: `R`'s `Output` for `Add[R]` is `i64`, but `T`'s bound needs `R`

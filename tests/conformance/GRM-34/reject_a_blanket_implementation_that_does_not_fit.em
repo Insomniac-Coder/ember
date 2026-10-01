@@ -17,7 +17,7 @@ extend[T: Display] Label implements Tag[T]:    #$ error[E2040]: `Label.tag` does
 struct Rows:
     data: Array[int]
 
-extend[I: Copy] Rows implements Index[I]:    #$ error[E2040]: `Rows` implements `std.core.Index[bool]` but does not say what `Output` is
+extend[I: Copy] Rows implements Index[I]:    #$ error[E2040]: `Rows` implements `Index[bool]` but does not say what `Output` is
     fn index(self, i: I) -> ref int:
         return ref self.data[0]
 
@@ -30,4 +30,4 @@ fn row[R: Index[bool, Output = int]](r: R) -> int:
 fn main():
     println(show(Label(name=String.from("n"))))
     r = Rows(data=[1])
-    println(row(r))    #$ error[E2040]: `Rows`'s `Output` for `std.core.Index[bool]` is not stated, but `R`'s bound needs `i64`
+    println(row(r))    #$ error[E2040]: `Rows`'s `Output` for `Index[bool]` is not stated, but `R`'s bound needs `i64`

@@ -11,5 +11,5 @@ fn word[C: Index[str, Output = str]](c: C) -> str:
 
 fn main():
     m: Map[String, int] = {"a": 1}
-    println(get(m))    #$ error[E2040]: `std.collections.Map[String, i64, std.collections.DefaultHasher]` does not implement `std.core.Index[i64]`, which `C` requires
-    println(word(m))    #$ error[E2040]: `std.collections.Map[String, i64, std.collections.DefaultHasher]`'s `Output` for `std.core.Index[str]` is `i64`, but `C`'s bound needs `str`
+    println(get(m))    #$ error[E2040]: `std.collections.Map[String, i64, std.collections.DefaultHasher]` does not implement `Index[i64]`, which `C` requires
+    println(word(m))    #$ error[E2040]: `std.collections.Map[String, i64, std.collections.DefaultHasher]`'s `Output` for `Index[str]` is `i64`, but `C`'s bound needs `str`

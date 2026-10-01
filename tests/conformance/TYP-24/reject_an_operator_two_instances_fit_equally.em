@@ -20,5 +20,5 @@ extend V implements Add[i128]:
 fn main():
     v = V(x = 0)
     s: i32 = 3
-    println(v + s)       #$ error[E2070]: `+` is offered by both `std.core.Add[i64]` and `std.core.Add[i128]`
-    println(v.add(s))    #$ error[E2070]: `add` is offered by both `std.core.Add[i64]` and `std.core.Add[i128]`
+    println(v + s)       #$ error[E2070]: `+` is offered by both `Add[i64]` and `Add[i128]`
+    println(v.add(s))    #$ error[E2070]: `add` is offered by both `Add[i64]` and `Add[i128]`

@@ -6,4 +6,4 @@
 from std.core import NonZero
 
 fn main():
-    _half = NonZero.new(0.5) #$ error[E2040]: `f64` does not implement `std.core.Integer`, which `NonZero`'s `T` requires
+    _half = NonZero.new(0.5) #$ error[E2040]: `f64` does not implement `Integer`, which `NonZero`'s `T` requires
