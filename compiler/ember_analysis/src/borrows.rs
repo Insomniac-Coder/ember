@@ -41,7 +41,7 @@ use ember_mir::{
     Terminator,
 };
 use ember_span::Span;
-use ember_types::{StructId, Ty, TyKind, TypeTable};
+use ember_types::{ClassId, StructId, Ty, TyKind, TypeTable};
 
 use crate::facts::{
     AccessPermission, BorrowCapability, EscapeConstraint, ProvenanceRoot, ReferenceKind, StorageIdentity,
@@ -221,11 +221,19 @@ pub fn insert_shared_accesses_all(bodies: &mut [Body], types: &TypeTable) -> usi
     let summaries = contracts_from_metadata(bodies, &signatures);
     let call_contract = |func: &FuncRef| contract_for(func, &summaries, &signatures);
     let capture_contracts = closure_capture_contracts(bodies, &summaries);
+    // The bodies that implement each virtual slot, by the class declaring them.
+    let mut slots: VirtualSlots = HashMap::new();
+    for body in bodies.iter().filter(|body| !body.is_abstract) {
+        if let (Some(owner), Some(slot)) = (body.class_owner, body.class_virtual_slot) {
+            slots.entry((owner, slot)).or_default().push(body.symbol.clone());
+        }
+    }
     let (returned_accesses, returning_accesses, field_returns) = infer_shared_return_accesses(
         bodies,
         types,
         &call_contract,
         &capture_contracts,
+        &slots,
     );
 
     bodies
@@ -245,10 +253,15 @@ pub fn insert_shared_accesses_all(bodies: &mut [Body], types: &TypeTable) -> usi
                 &returned_accesses,
                 &returning_accesses,
                 &field_returns,
+                &slots,
             )
         })
         .sum()
 }
+
+/// Per (class, virtual slot), the symbols of the bodies that class declares
+/// for the slot.
+type VirtualSlots = HashMap<(ClassId, usize), Vec<String>>;
 
 /// A dynamic `Shared.get()`/`Shared.get_mut()` interval that crosses a direct call. This is
 /// kept separate from callable-region metadata: it affects compiler-internal
@@ -278,6 +291,7 @@ fn infer_shared_return_accesses(
     types: &TypeTable,
     call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
     capture_contracts: &HashMap<StructId, CallAccessContract>,
+    slots: &VirtualSlots,
 ) -> (HashMap<String, SharedReturnAccess>, HashSet<String>, FieldReturns) {
     let mut summaries = HashMap::new();
     let mut returning = HashSet::new();
@@ -294,7 +308,7 @@ fn infer_shared_return_accesses(
                 call_contract,
                 &capture_paths,
             );
-            let fields = field_return_accesses(body, types, &regions, &field_returns);
+            let fields = field_return_accesses(body, types, &regions, &field_returns, slots);
             if !fields.is_empty() {
                 next_fields.insert(body.symbol.clone(), fields);
             }
@@ -342,6 +356,7 @@ fn field_return_accesses(
     types: &TypeTable,
     regions: &Regions,
     summaries: &FieldReturns,
+    slots: &VirtualSlots,
 ) -> Vec<FieldReturnAccess> {
     let mut found: Vec<FieldReturnAccess> = Vec::new();
     let mut add = |place: Place, mutable: bool| {
@@ -370,7 +385,7 @@ fn field_return_accesses(
         if !matches!(basic_block.terminator, Terminator::Call { .. }) {
             continue;
         }
-        for (owner, mutable, argument) in call_result_accesses(body, types, &basic_block.terminator, summaries) {
+        for (owner, mutable, argument) in call_result_accesses(body, types, &basic_block.terminator, summaries, slots) {
             let held = result_access_regions(body, regions, &basic_block.terminator, argument);
             if held.iter().any(|&region| region_reaches_return(body, regions, region)) {
                 add(owner, mutable);
@@ -381,22 +396,22 @@ fn field_return_accesses(
 }
 
 /// The accesses a call's result carries into this body (`[EXC-18]`): a direct
-/// callee's summary mapped onto this call's arguments; for a call this body
-/// cannot see into (virtual, through an interface) whose result is a
-/// reference or view borrowing a class receiver, a read of every field of the
-/// receiver object.
+/// callee's summary mapped onto this call's arguments; for a virtual call, the
+/// union of the summaries of every body the call can reach, when each borrows
+/// only fields the receiver's static class has (D-467); otherwise, and for a
+/// call through an interface, whose result is a reference or view borrowing a
+/// class receiver, a read of every field of the receiver object.
 fn call_result_accesses(
     body: &Body,
     types: &TypeTable,
     terminator: &Terminator,
     summaries: &FieldReturns,
+    slots: &VirtualSlots,
 ) -> Vec<(Place, bool, usize)> {
     let Terminator::Call { func, args, dest, .. } = terminator else { return Vec::new() };
-    match func {
-        FuncRef::Direct { symbol, .. } => summaries
-            .get(symbol.as_str())
+    let mapped = |accesses: Vec<&FieldReturnAccess>| -> Vec<(Place, bool, usize)> {
+        accesses
             .into_iter()
-            .flatten()
             .filter_map(|access| {
                 let (Operand::Copy(argument) | Operand::Move(argument)) = args.get(access.argument)? else {
                     return None;
@@ -405,35 +420,95 @@ fn call_result_accesses(
                 place.projection.extend(access.projection.iter().cloned());
                 Some((resolve_ref_temps(body, place), access.mutable, access.argument))
             })
-            .collect(),
-        FuncRef::Virtual { .. } | FuncRef::Interface { .. } if types.is_view(place_ty(body, types, dest)) => {
-            let Some(Operand::Copy(receiver) | Operand::Move(receiver)) = args.first() else { return Vec::new() };
-            let object = match types.kind(place_ty(body, types, receiver)) {
-                TyKind::Class(_) | TyKind::ClassInterface(_) => resolve_ref_temps(body, receiver.clone()),
-                TyKind::Ref { inner, .. } if matches!(types.kind(*inner), TyKind::Class(_) | TyKind::ClassInterface(_)) => {
-                    let mut object = receiver.clone();
-                    object.projection.push(Projection::Deref);
-                    resolve_ref_temps(body, object)
-                }
-                // A `dyn` receiver: the object behind it, if its concrete is a
-                // class, through its table's `access` entry (F4). The fat
-                // pointer itself names it.
-                TyKind::Dyn { .. } => receiver.clone(),
-                TyKind::Ref { inner, .. } if matches!(types.kind(*inner), TyKind::Dyn { .. }) => receiver.clone(),
-                TyKind::Struct(id)
-                    if types.compiler_box_inner(*id).is_some_and(|inner| matches!(types.kind(inner), TyKind::Dyn { .. })) =>
-                {
-                    receiver.clone()
-                }
-                _ => return Vec::new(),
-            };
-            // A mutable view is a write to what it views, wherever it sits in
-            // the result (`Option[ref mut T]`, a tuple; D-452).
-            let mutable = types.has_mutable_view(place_ty(body, types, dest));
-            vec![(object, mutable, 0)]
+            .collect()
+    };
+    match func {
+        FuncRef::Direct { symbol, .. } => mapped(summaries.get(symbol.as_str()).into_iter().flatten().collect()),
+        FuncRef::Virtual { owner, slot, .. } if types.is_view(place_ty(body, types, dest)) => {
+            match virtual_result_accesses(types, *owner, *slot, summaries, slots) {
+                Some(accesses) => mapped(accesses),
+                None => whole_receiver_access(body, types, args, dest),
+            }
         }
+        FuncRef::Interface { .. } if types.is_view(place_ty(body, types, dest)) => whole_receiver_access(body, types, args, dest),
         _ => Vec::new(),
     }
+}
+
+/// D-467 — what a virtual call's result may borrow of its receiver: the
+/// union of the summaries of every body the call can reach (the slot's in
+/// `owner`, its bases and the classes below it), when each access is a field
+/// of `owner` itself. `None` when one is not (a field only a derived class
+/// has, or a whole object), which the caller cannot name statically.
+fn virtual_result_accesses<'s>(
+    types: &TypeTable,
+    owner: ClassId,
+    slot: usize,
+    summaries: &'s FieldReturns,
+    slots: &VirtualSlots,
+) -> Option<Vec<&'s FieldReturnAccess>> {
+    let within = |class: ClassId, ancestor: ClassId| {
+        let mut current = Some(class);
+        while let Some(id) = current {
+            if id == ancestor {
+                return true;
+            }
+            current = types.class_def(id).base;
+        }
+        false
+    };
+    let fields = types.class_field_count(owner);
+    let mut out: Vec<&FieldReturnAccess> = Vec::new();
+    let mut reached = false;
+    for ((class, at), symbols) in slots {
+        if *at != slot || !(within(owner, *class) || within(*class, owner)) {
+            continue;
+        }
+        for symbol in symbols {
+            reached = true;
+            for access in summaries.get(symbol.as_str()).into_iter().flatten() {
+                let named = access.argument == 0
+                    && matches!(access.projection.as_slice(), [Projection::Deref, Projection::Field(index), ..] if *index < fields);
+                if !named {
+                    return None;
+                }
+                if !out.contains(&access) {
+                    out.push(access);
+                }
+            }
+        }
+    }
+    reached.then_some(out)
+}
+
+/// A call this body cannot see into, whose result borrows a class receiver:
+/// a read (or, for a mutable view anywhere in the result, a write) of every
+/// field of the receiver object.
+fn whole_receiver_access(body: &Body, types: &TypeTable, args: &[Operand], dest: &Place) -> Vec<(Place, bool, usize)> {
+    let Some(Operand::Copy(receiver) | Operand::Move(receiver)) = args.first() else { return Vec::new() };
+    let object = match types.kind(place_ty(body, types, receiver)) {
+        TyKind::Class(_) | TyKind::ClassInterface(_) => resolve_ref_temps(body, receiver.clone()),
+        TyKind::Ref { inner, .. } if matches!(types.kind(*inner), TyKind::Class(_) | TyKind::ClassInterface(_)) => {
+            let mut object = receiver.clone();
+            object.projection.push(Projection::Deref);
+            resolve_ref_temps(body, object)
+        }
+        // A `dyn` receiver: the object behind it, if its concrete is a
+        // class, through its table's `access` entry (F4). The fat
+        // pointer itself names it.
+        TyKind::Dyn { .. } => receiver.clone(),
+        TyKind::Ref { inner, .. } if matches!(types.kind(*inner), TyKind::Dyn { .. }) => receiver.clone(),
+        TyKind::Struct(id)
+            if types.compiler_box_inner(*id).is_some_and(|inner| matches!(types.kind(inner), TyKind::Dyn { .. })) =>
+        {
+            receiver.clone()
+        }
+        _ => return Vec::new(),
+    };
+    // A mutable view is a write to what it views, wherever it sits in
+    // the result (`Option[ref mut T]`, a tuple; D-452).
+    let mutable = types.has_mutable_view(place_ty(body, types, dest));
+    vec![(object, mutable, 0)]
 }
 
 /// The region of the loan an argument was made from, when the argument is a
@@ -785,6 +860,7 @@ fn insert_shared_accesses(
     returned_accesses: &HashMap<String, SharedReturnAccess>,
     returning_accesses: &HashSet<String>,
     field_returns: &FieldReturns,
+    slots: &VirtualSlots,
 ) -> usize {
     let original_blocks = body.blocks.len();
     let mut accesses = Vec::new();
@@ -907,7 +983,7 @@ fn insert_shared_accesses(
     // field's access from the call's return to the result's last use.
     for basic_block in body.blocks.iter().take(original_blocks) {
         let Terminator::Call { next, .. } = &basic_block.terminator else { continue };
-        for (owner, mutable, argument) in call_result_accesses(body, types, &basic_block.terminator, field_returns) {
+        for (owner, mutable, argument) in call_result_accesses(body, types, &basic_block.terminator, field_returns, slots) {
             // Held while the result, or anything it was copied into, is used
             // (F2: a tuple of views, a view copied to another variable).
             let held = result_access_regions(body, regions, &basic_block.terminator, argument);
@@ -4155,6 +4231,10 @@ fn check_point(
                     format!("`{name}` cannot be written while it is borrowed"),
                 ),
             };
+            // `[EXC-3]` — conflicting accesses to a class field through one
+            // local the compiler can see are `E3080` (shape X1), not an
+            // ordinary borrow overlap (D-466).
+            let code = if field_boundaries(body, types, loan_place, false).is_empty() { code } else { codes::E3080 };
 
             // `[DIA-3]` — the borrow site, the conflicting access, and the
             // later use that keeps the borrow alive. The last of those is not
@@ -4607,6 +4687,8 @@ fn field_name(types: &TypeTable, ty: Ty, index: usize) -> Option<String> {
             .fields
             .get(index)
             .map(|f| f.name.to_string()),
+        // `[LT-5]` — a class field by its name, `b.items`, never `b.0` (D-466).
+        TyKind::Class(id) => types.class_field_at(*id, index).map(|f| f.name.to_string()),
         _ => None,
     }
 }
@@ -4614,6 +4696,7 @@ fn field_name(types: &TypeTable, ty: Ty, index: usize) -> Option<String> {
 fn field_ty(types: &TypeTable, ty: Ty, index: usize) -> Option<Ty> {
     match types.kind(ty) {
         TyKind::Struct(id) => types.struct_def(*id).fields.get(index).map(|f| f.ty),
+        TyKind::Class(id) => types.class_field_at(*id, index).map(|f| f.ty),
         TyKind::Tuple(items) => items.get(index).copied(),
         _ => None,
     }

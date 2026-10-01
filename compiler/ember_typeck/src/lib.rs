@@ -27559,6 +27559,20 @@ impl<'a> Checker<'a> {
                     segments[0].span,
                 )
             }
+            // `[GRM-8a]` — a tuple of types (`(int, int)`) and a fixed array
+            // (`[int; 4]`) arrive as expressions too, and are read back the
+            // same way (D-468).
+            ast::ExprKind::Tuple(items) => {
+                let items: Vec<Ty> = items.iter().map(|item| self.type_from_expr(item)).collect();
+                if items.is_empty() { self.common.void } else { self.types.intern(TyKind::Tuple(items)) }
+            }
+            ast::ExprKind::ArrayRepeat { value, count } => {
+                let elem = self.type_from_expr(value);
+                match self.const_len(count) {
+                    Some(len) => self.types.intern(TyKind::Array { elem, len }),
+                    None => self.common.error,
+                }
+            }
             _ => {
                 self.error(codes::E1010, expr.span, "expected a type argument");
                 self.common.error
