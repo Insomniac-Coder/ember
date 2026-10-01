@@ -21,6 +21,15 @@
 //! writing a parameter, and a value that is a constant when the nest starts
 //! written in as that constant (a count or a start the program fixes stays
 //! fixed, which MSVC needs). The caller makes the views and calls it.
+//!
+//! For gcc (ADR-098): gcc vectorises a loop over two lists it cannot prove
+//! apart only with a run-time overlap test, which its `-O2` cost model never
+//! adds, and it takes `restrict` from a function's parameters, not from a
+//! block's pointers read from a list's header (measured: adding one list into
+//! another, 0.071 s against the hand-written C's 0.042 s, and 0.042 s in such
+//! a function). gcc does not turn loops around, so MSVC's conditions on what
+//! a nest reads back do not apply: any outermost counted loop over two lists
+//! or more that writes one moves, nest or not.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -32,9 +41,22 @@ use ember_types::{CommonTypes, Ty, TyKind, TypeTable};
 
 use crate::loop_version::{CountedLoop, counted_loop};
 
+/// The C compiler a loop moves for: each takes `restrict` from a function's
+/// parameters, on its own conditions (module comment).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum KernelTarget {
+    Msvc,
+    Gcc,
+}
+
 /// Moves the qualifying loop nests of every body into bodies of their own,
 /// added to `bodies`. Returns how many moved.
-pub fn outline_list_kernels_all(bodies: &mut Vec<Body>, types: &mut TypeTable, common: &CommonTypes) -> usize {
+pub fn outline_list_kernels_all(
+    bodies: &mut Vec<Body>,
+    types: &mut TypeTable,
+    common: &CommonTypes,
+    target: KernelTarget,
+) -> usize {
     let mut kernels = Vec::new();
     for body in bodies.iter_mut() {
         if body.restrict_views || body.is_abstract || body.is_extern_declaration {
@@ -43,7 +65,7 @@ pub fn outline_list_kernels_all(bodies: &mut Vec<Body>, types: &mut TypeTable, c
         let mut made = 0;
         // One nest at a time: a moved nest's blocks become unreachable, and
         // the counted loops are found again.
-        while let Some(kernel) = outline_one(body, types, common, made) {
+        while let Some(kernel) = outline_one(body, types, common, made, target) {
             kernels.push(kernel);
             made += 1;
         }
@@ -87,12 +109,16 @@ struct Uses {
     other: bool,
 }
 
-fn outline_one(body: &mut Body, types: &mut TypeTable, common: &CommonTypes, made: usize) -> Option<Body> {
+fn outline_one(body: &mut Body, types: &mut TypeTable, common: &CommonTypes, made: usize, target: KernelTarget) -> Option<Body> {
     let loops: Vec<CountedLoop> = (0..body.blocks.len()).filter_map(|header| counted_loop(body, types, header)).collect();
-    // A nest: a counted loop whose turn holds another counted loop's header.
+    // For MSVC a nest: a counted loop whose turn holds another counted
+    // loop's header. For gcc any counted loop.
     let nests: Vec<&CountedLoop> = loops
         .iter()
-        .filter(|shape| loops.iter().any(|inner| inner.header != shape.header && shape.region.contains(&inner.header)))
+        .filter(|shape| {
+            target == KernelTarget::Gcc
+                || loops.iter().any(|inner| inner.header != shape.header && shape.region.contains(&inner.header))
+        })
         .collect();
     let outermost: Vec<&CountedLoop> = nests
         .iter()
@@ -100,7 +126,7 @@ fn outline_one(body: &mut Body, types: &mut TypeTable, common: &CommonTypes, mad
         .filter(|shape| !nests.iter().any(|outer| outer.header != shape.header && outer.region.contains(&shape.header)))
         .collect();
     for shape in outermost {
-        if let Some(kernel) = try_outline(body, types, common, shape, made) {
+        if let Some(kernel) = try_outline(body, types, common, shape, made, target) {
             return Some(kernel);
         }
     }
@@ -113,6 +139,7 @@ fn try_outline(
     common: &CommonTypes,
     shape: &CountedLoop,
     made: usize,
+    target: KernelTarget,
 ) -> Option<Body> {
     let mut inside: BTreeSet<usize> = shape.region.iter().copied().collect();
     inside.insert(shape.header);
@@ -218,9 +245,11 @@ fn try_outline(
     // slower (changing every number using a second list; decimal lists).
     // Except where every round adds the same whole number to each element:
     // then MSVC adds several rounds at once (ADR-080).
-    if written
-        .iter()
-        .any(|&l| uses[&l.0].element_read && !adds_the_same_each_round(body, types, &inside, shape, l, &written))
+    // (For MSVC only: gcc does not turn the loops around, ADR-098.)
+    if target == KernelTarget::Msvc
+        && written
+            .iter()
+            .any(|&l| uses[&l.0].element_read && !adds_the_same_each_round(body, types, &inside, shape, l, &written))
     {
         return None;
     }
@@ -311,6 +340,9 @@ fn try_outline(
         _ => return None,
     };
     match result {
+        // ADR-084's running value is MSVC's (gcc keeps such a loop's total
+        // where it is, and reading needs no `restrict`).
+        Some(_) if target == KernelTarget::Gcc => return None,
         Some(_) => {
             if !written.is_empty() || writes_memory(body, &inside) {
                 return None;

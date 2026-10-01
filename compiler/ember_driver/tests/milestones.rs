@@ -1682,6 +1682,72 @@ fn loop_nests_over_separate_lists_get_restrict_functions_for_msvc() {
 {}", clang.stdout);
 }
 
+/// D-446 — `[CG-C-1]`: a signed `+`, `-` or `*` (negation is `0 - x`) reaching C
+/// unchecked is done in its width's unsigned type, so wrapping is never C's
+/// undefined signed overflow (gcc -O2 miscompiled a wrapping `i * k` in a
+/// loop); MSVC and clang happened to keep it, so the C itself is the test.
+#[test]
+fn wrapping_arithmetic_is_unsigned_in_c() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/TYP-8/accept_wrapping_arithmetic_in_a_loop_is_never_undefined.{SOURCE_EXT}");
+    let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "gcc"], &root);
+    assert_eq!(c.exit, 0, "C failed:
+{}", c.stderr);
+    for wrapped in [
+        "(int64_t)((uint64_t)(_1) * (uint64_t)(6364136223846793005LL))",
+        "(int32_t)((uint32_t)(",
+        "(int16_t)((uint32_t)(",
+        "(int64_t)((uint64_t)(0LL) - (uint64_t)(",
+    ] {
+        assert!(c.stdout.contains(wrapped), "no `{wrapped}`: wrapping arithmetic is signed in C:
+{}", c.stdout);
+    }
+}
+
+/// D-445 — a printing helper takes its value as `T const*`: for a class
+/// handle that is `struct X* const*`, which `&handle` converts to, where
+/// `const struct X**` is an incompatible pointer, an error from gcc 14 on (an
+/// older gcc warns, which no run sees).
+#[test]
+fn printing_a_class_handle_passes_a_pointer_c_accepts() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/TYP-36/accept_a_class_handle_prints_its_class_and_address.{SOURCE_EXT}");
+    let c = ember(&["build", &source, "--emit", "c", "--cc", "gcc"], &root);
+    assert_eq!(c.exit, 0, "C failed:
+{}", c.stderr);
+    assert!(c.stdout.contains("* const* v)"), "the helper does not take `T const*`:
+{}", c.stdout);
+    assert!(!c.stdout.contains("** v)"), "a helper takes `const T**`:
+{}", c.stdout);
+}
+
+/// ADR-098 — for gcc, a loop over two lists or more that writes one runs in a
+/// function of its own whose list parameters are `restrict`, nest or not, and
+/// whether or not it reads back what it writes (gcc does not turn loops
+/// around, so MSVC's conditions on that do not apply): every loop of the
+/// separate-lists program moves, and three of the four nests reading back
+/// their list, all but the one whose addition keeps its overflow check.
+#[test]
+fn loops_over_separate_lists_get_restrict_functions_for_gcc() {
+    let root = workspace_root();
+    let separate = format!("tests/conformance/OPT-2/accept_a_loop_nest_over_separate_lists_keeps_its_results.{SOURCE_EXT}");
+    let gcc = ember(&["build", &separate, "--emit", "c", "--profile", "release", "--cc", "gcc"], &root);
+    assert_eq!(gcc.exit, 0, "gcc C failed:
+{}", gcc.stderr);
+    assert_eq!(gcc.stdout.matches("EMBER_NOINLINE void").count(), 6, "three loops move (prototype and definition each):
+{}", gcc.stdout);
+    assert!(gcc.stdout.contains("* restrict _1_ptr"), "the loop function's lists are not restrict:
+{}", gcc.stdout);
+    let reading_back = format!("tests/conformance/OPT-2/accept_a_loop_nest_adding_the_same_each_round_keeps_its_results.{SOURCE_EXT}");
+    let gcc = ember(&["build", &reading_back, "--emit", "c", "--profile", "release", "--cc", "gcc"], &root);
+    assert_eq!(gcc.exit, 0, "gcc C failed:
+{}", gcc.stderr);
+    assert_eq!(gcc.stdout.matches("EMBER_NOINLINE void").count(), 6, "three nests move for gcc:
+{}", gcc.stdout);
+    let msvc = ember(&["build", &reading_back, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
+    assert_eq!(msvc.stdout.matches("EMBER_NOINLINE void").count(), 2, "one nest moves for MSVC");
+}
+
 /// ADR-080 — a loop nest reading back the list it writes moves for MSVC only
 /// where every round adds the same whole number to each element: of the
 /// four nests, only the one adding `a[i]` each round (the sum kept below

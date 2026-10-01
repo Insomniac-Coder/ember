@@ -1958,6 +1958,20 @@ fn c_for_msvc(options: &Options) -> bool {
     }
 }
 
+/// ADR-098 — whether the C is for gcc: asked for (`--cc gcc` or the
+/// variable), or the compiler found when none is asked for.
+fn c_for_gcc(options: &Options) -> bool {
+    let requested = options
+        .cc
+        .clone()
+        .or_else(|| std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty()));
+    match requested.as_deref() {
+        Some("gcc") => true,
+        Some("msvc" | "clang" | "clang-cl") => false,
+        requested => matches!(ember_build::Toolchain::detect(requested), Ok(ember_build::Toolchain::Gcc(_))),
+    }
+}
+
 /// `[MOD-1]`, `[MOD-3]` — where a module path's file is.
 ///
 /// A path beginning `std` names the standard library package, whose sources
@@ -2255,9 +2269,19 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     ember_analysis::reserve_pushed_lists_all(&mut bodies, &types);
     // For MSVC: a loop nest over separate lists goes into a function of its
     // own whose list parameters are `restrict` (ADR-079); MSVC reorders such
-    // a nest only then. clang and gcc reorder it where it is.
-    if command != "check" && c_for_msvc(&options)
-        && ember_analysis::outline_list_kernels_all(&mut bodies, &mut types, &common) > 0
+    // a nest only then. For gcc: a loop over two lists or more that writes
+    // one, which gcc vectorises only then (ADR-098). clang does both where
+    // the loop is.
+    let kernel_target = if c_for_msvc(&options) {
+        Some(ember_analysis::KernelTarget::Msvc)
+    } else if c_for_gcc(&options) {
+        Some(ember_analysis::KernelTarget::Gcc)
+    } else {
+        None
+    };
+    if command != "check"
+        && let Some(target) = kernel_target
+        && ember_analysis::outline_list_kernels_all(&mut bodies, &mut types, &common, target) > 0
     {
         ember_analysis::install_callable_regions_all(&mut bodies, &types);
     }

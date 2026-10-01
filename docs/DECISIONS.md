@@ -3557,6 +3557,48 @@ RandomState]` in insertion order; one key, one hash within a run),
 `HASH-2/accept_bytes_differing_in_their_tail_hash_apart` (D-405, both hashers), and
 `random_state_is_keyed_per_process` in `milestones.rs` (one program run twice hashes a key two ways).
 
+## ADR-098 — gcc: `restrict` loop functions, and the vectoriser model that takes a tail
+
+2026-10-01, autonomous, the owner's request: "build the gcc version of ember on wsl and test how it
+runs in comparison to gcc C and g++ C code and try to optimise that as well". The 39 benchmark
+programs, built with gcc 15.2 under WSL (Ubuntu) on the owner's machine, each against its C or C++
+twin built by the same gcc with the same optimisation flags (median of 11 interleaved runs). Before:
+the list loops (adding one list into another, changing every number using a second list, the decimal
+lists, adding two lists plus the round) 1.52x to 1.72x the C, `enumerate` and `zip` 1.44x and 1.38x,
+the checked sum 2.52x.
+
+**Two causes, each measured by editing Ember's C by hand first.**
+
+* gcc vectorises a loop over two lists it cannot prove apart only with a run-time overlap test, which
+  its `-O2` cost model never adds; and it takes `restrict` from a function's parameters, not from a
+  block's pointers read from a list's header (adding one list into another: 0.071 s, against the
+  C twin's 0.042 s, whose lists are `restrict` from `malloc`; `restrict` block pointers in Ember's C,
+  0.071 s; the loop in a function with `restrict` list parameters, inlinable or not, 0.042 s).
+* At `-O2` gcc's vectoriser takes only a loop whose vector code leaves no tail, so a loop over a
+  list's elements, its count known only at run time, stays scalar, where the twin's count is a
+  constant (`enumerate`: 1.45x at gcc's default, 0.99x with `-fvect-cost-model=cheap`, both sides
+  built alike). clang's and MSVC's `-O2` vectorise such a loop with a scalar tail.
+
+**Built.** ADR-079's pass (`kernels.rs`) takes a target. For gcc it moves any outermost counted loop
+over two lists or more that writes one into a function of its own whose list parameters are
+`restrict` (`KernelTarget::Gcc`): gcc does not turn loops around, so MSVC's conditions on a nest
+reading back what it writes, and ADR-084's running value, are MSVC's only. Lists are separate by
+the same proof as ADR-079's. The driver asks for it when the C compiler is gcc (`c_for_gcc`, as
+`c_for_msvc`). And gcc's release build adds `-fvect-cost-model=cheap` (`gcc_flags`), which allows the
+tail but no run-time overlap test; `-O3` (the shipping profile) already has a model at least as
+permissive. The benchmark twins are built with the same flag.
+
+**After** (gcc, same flags both sides): the eleven list-loop rows 0.97x to 1.04x, `enumerate`
+0.97x, `zip` 1.00x, the checked sum 1.31x, copying a list one item at a time 1.04x; no row slower.
+What remains is in `docs/HANDOFF.md`: the rows where the overflow check the language requires is the
+whole of the gap (measured with `#! module overflow(wrap)`, which brings each to 0.96x-1.00x), and
+the `Map` row.
+
+**Tests.** `loops_over_separate_lists_get_restrict_functions_for_gcc` (every loop of the
+separate-lists program moves for gcc, three of four nests reading back their list, one for MSVC;
+fails with the gcc target off), `gcc_release_asks_for_the_cheap_vectoriser_model` (`ember_build`).
+The conformance suite passes with gcc 15.2 in WSL.
+
 ## ADR-097 — ODR-094 built: `collect`, `peekable`, `flat_map`, `flatten`, `join`, and printing `Box` and `Cell`
 
 2026-10-01, autonomous: the owner's ruling (ODR-094, Hardened_51), and the rest of `[STD-19]` D-407

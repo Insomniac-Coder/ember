@@ -807,7 +807,7 @@ impl Emitter<'_> {
             for ty in pending {
                 let symbol = ember_branding::mangled(&format!("clone_parts_{emitted}"));
                 let c_ty = self.c_type(ty);
-                let signature = format!("static void {symbol}(const {c_ty}* src, {c_ty}* dst)");
+                let signature = format!("static void {symbol}({c_ty} const* src, {c_ty}* dst)");
                 prototypes.push(format!("{signature};"));
                 self.line(&format!("{signature} {{"));
                 match self.types.kind(ty).clone() {
@@ -1246,6 +1246,20 @@ impl Emitter<'_> {
         }
     }
 
+    /// D-446 — the unsigned C type a signed integer's wrapping arithmetic
+    /// is done in: its width's, or `uint32_t` for the narrow ones (whose
+    /// unsigned forms promote to a signed `int`, which could overflow on
+    /// `*`); `None` for anything else (128-bit integers have their own
+    /// helpers).
+    fn wrapping_unsigned(&self, ty: Ty) -> Option<&'static str> {
+        match self.types.kind(self.through_range(ty)) {
+            TyKind::Int(IntTy::I8 | IntTy::I16 | IntTy::I32) => Some("uint32_t"),
+            TyKind::Int(IntTy::I64) => Some("uint64_t"),
+            TyKind::Int(IntTy::Isize) => Some("size_t"),
+            _ => None,
+        }
+    }
+
     fn debug_stmt(&self, out: &str, v: &str, ty: Ty) -> String {
         if let Some((payload, inner)) = self.printed_payload(v, ty) {
             return self.debug_stmt(out, &payload, inner);
@@ -1336,7 +1350,7 @@ impl Emitter<'_> {
                 let c_ty = self.c_type(ty);
                 let each = |this: &Self, elem: Ty, at: &str| {
                     let elem_c = this.c_type(elem);
-                    let item = this.debug_stmt("out", &format!("((const {elem_c}*){at})[i]"), elem);
+                    let item = this.debug_stmt("out", &format!("(({elem_c} const*){at})[i]"), elem);
                     format!("for (size_t i = 0; i < {{len}}; ++i) {{ if (i) {} {item} }}", text(", "))
                 };
                 let body = match self.types.kind(ty).clone() {
@@ -1428,8 +1442,11 @@ impl Emitter<'_> {
                 };
                 // By pointer: a fixed array can be large, and a copy per
                 // call (and per nesting level) could overflow the stack.
-                prototypes.push(format!("static void {symbol}({RT}vec* out, const {c_ty}* v);"));
-                self.line(&format!("static void {symbol}({RT}vec* out, const {c_ty}* v) {{"));
+                // D-445 — `T const*`, not `const T*`: for a class handle (`struct X*`)
+                // that is `struct X* const*`, which `&handle` converts to; `const
+                // struct X**` it does not (an error from gcc 14 on).
+                prototypes.push(format!("static void {symbol}({RT}vec* out, {c_ty} const* v);"));
+                self.line(&format!("static void {symbol}({RT}vec* out, {c_ty} const* v) {{"));
                 self.line("    (void)v;");
                 self.line(&format!("    {body}"));
                 self.line("}");
@@ -1441,8 +1458,8 @@ impl Emitter<'_> {
         for ty in specs {
             let symbol = self.fmt_fn(ty);
             let c_ty = self.c_type(ty);
-            prototypes.push(format!("static void {symbol}_spec({RT}vec* out, const {c_ty}* v, {RT}fmt_spec spec);"));
-            self.line(&format!("static void {symbol}_spec({RT}vec* out, const {c_ty}* v, {RT}fmt_spec spec) {{"));
+            prototypes.push(format!("static void {symbol}_spec({RT}vec* out, {c_ty} const* v, {RT}fmt_spec spec);"));
+            self.line(&format!("static void {symbol}_spec({RT}vec* out, {c_ty} const* v, {RT}fmt_spec spec) {{"));
             self.line(&format!("    {RT}vec text = {RT}vec_empty();"));
             self.line(&format!("    {symbol}(&text, v);"));
             self.line("    spec.kind = 0;");
@@ -1455,8 +1472,8 @@ impl Emitter<'_> {
         for ty in prints {
             let symbol = self.fmt_fn(ty);
             let c_ty = self.c_type(ty);
-            prototypes.push(format!("static void {symbol}_print(const {c_ty}* v, int to_stderr);"));
-            self.line(&format!("static void {symbol}_print(const {c_ty}* v, int to_stderr) {{"));
+            prototypes.push(format!("static void {symbol}_print({c_ty} const* v, int to_stderr);"));
+            self.line(&format!("static void {symbol}_print({c_ty} const* v, int to_stderr) {{"));
             self.line(&format!("    {RT}vec buffer = {RT}vec_empty();"));
             self.line(&format!("    {symbol}(&buffer, v);"));
             self.line(&format!("    {RT}str text = {RT}vec_as_str(&buffer);"));
@@ -1552,8 +1569,8 @@ impl Emitter<'_> {
                     }
                     _ => unreachable!("D-187 equality functions are requested only for aggregates"),
                 };
-                prototypes.push(format!("static bool {symbol}(const {c_ty}* a, const {c_ty}* b);"));
-                self.line(&format!("static bool {symbol}(const {c_ty}* a, const {c_ty}* b) {{"));
+                prototypes.push(format!("static bool {symbol}({c_ty} const* a, {c_ty} const* b);"));
+                self.line(&format!("static bool {symbol}({c_ty} const* a, {c_ty} const* b) {{"));
                 self.line("    (void)a; (void)b;");
                 self.line(&format!("    {body}"));
                 self.line("}");
@@ -6884,6 +6901,24 @@ impl Emitter<'_> {
                 format!(
                     "{RT}fdiv_{suffix}({}, {})",
                     self.operand(lhs, body),
+                    self.operand(rhs, body)
+                )
+            }
+            // D-446 — a signed `+`, `-` or `*` reaching C unchecked wraps
+            // (`@overflow(wrap)`) or was proved not to overflow; C's signed
+            // overflow is undefined, so it is done in the unsigned type of
+            // its width and converted back, which is two's-complement
+            // wrapping and, where nothing overflows, the same value. (gcc
+            // `-O2` took a wrapping `i * k` in a loop as never overflowing
+            // and computed a different key than the same call elsewhere.)
+            Rvalue::BinaryOp { op: op @ (ember_mir::BinOp::Add | ember_mir::BinOp::Sub | ember_mir::BinOp::Mul), lhs, rhs }
+                if let Some(unsigned) = self.operand_type(lhs, body).and_then(|ty| self.wrapping_unsigned(ty)) =>
+            {
+                let signed = self.c_type(self.operand_type(lhs, body).expect("a typed operand"));
+                format!(
+                    "(({signed})(({unsigned})({}) {} ({unsigned})({})))",
+                    self.operand(lhs, body),
+                    op.c_operator(),
                     self.operand(rhs, body)
                 )
             }

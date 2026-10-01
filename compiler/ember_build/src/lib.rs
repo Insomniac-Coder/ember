@@ -416,7 +416,7 @@ pub fn compile_and_link(toolchain: &Toolchain, request: &LinkRequest) -> Result<
             }
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
-            command.args(gnu_flags(request.profile));
+            command.args(gnu_flags(request.profile)).args(gcc_flags(toolchain, request.profile));
             for dir in request.include_dirs {
                 command.arg("-I").arg(dir);
             }
@@ -459,7 +459,7 @@ pub fn compile_relaxed_object(
             command.arg(source).arg(format!("/Fo{}", output.display()));
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
-            command.args(relaxed_gnu_flags(profile, fast)).arg("-c");
+            command.args(relaxed_gnu_flags(profile, fast)).args(gcc_flags(toolchain, profile)).arg("-c");
             for dir in include_dirs { command.arg("-I").arg(dir); }
             command.arg(source).arg("-o").arg(output);
         }
@@ -554,7 +554,7 @@ pub fn compile_object(
             command.arg(source).arg(format!("/Fo{}", output.display()));
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
-            command.args(gnu_flags(profile)).arg("-c");
+            command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile)).arg("-c");
             for dir in include_dirs { command.arg("-I").arg(dir); }
             command.arg(source).arg("-o").arg(output);
         }
@@ -668,6 +668,20 @@ fn gnu_flags(profile: Profile) -> Vec<&'static str> {
     ["-std=c11", "-Wall", "-Wextra", "-ffp-contract=off", "-fno-fast-math"].iter().chain(optimisation).copied().collect()
 }
 
+/// ADR-098 — gcc's own flags for a profile, after `gnu_flags`. At `-O2` gcc's
+/// vectoriser takes only a loop whose vector code leaves no tail, so a loop
+/// over a list's elements (its count known only at run time) stays scalar,
+/// where clang's and MSVC's `-O2` vectorise it with the tail as a scalar
+/// loop: `-fvect-cost-model=cheap` asks gcc for the same (measured: walking a
+/// list with `enumerate`, 1.45x the hand-written C built with the same flags,
+/// and 0.99x with it). `-O3` already uses a model at least as permissive.
+fn gcc_flags(toolchain: &Toolchain, profile: Profile) -> &'static [&'static str] {
+    match (toolchain, profile) {
+        (Toolchain::Gcc(_), Profile::Release) => &["-fvect-cost-model=cheap"],
+        _ => &[],
+    }
+}
+
 fn run(mut command: Command) -> Result<(), BuildError> {
     let rendered = format!("{command:?}");
     let output = command.output()?;
@@ -736,7 +750,7 @@ pub fn runtime_object(
             "obj"
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
-            command.args(gnu_flags(profile)).arg("-c");
+            command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile)).arg("-c");
             for dir in include_dirs {
                 command.arg("-I").arg(dir);
             }
@@ -840,6 +854,19 @@ fn compiler_file(toolchain: &Toolchain) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ADR-098 — gcc's release build asks for the vectoriser cost model that
+    /// takes a loop with a scalar tail; clang (which does by default), the
+    /// other profiles and MSVC get nothing extra.
+    #[test]
+    fn gcc_release_asks_for_the_cheap_vectoriser_model() {
+        let gcc = Toolchain::Gcc(PathBuf::from("gcc"));
+        let clang = Toolchain::Clang(PathBuf::from("clang"));
+        assert_eq!(gcc_flags(&gcc, Profile::Release), ["-fvect-cost-model=cheap"]);
+        assert!(gcc_flags(&gcc, Profile::Debug).is_empty());
+        assert!(gcc_flags(&gcc, Profile::Shipping).is_empty());
+        assert!(gcc_flags(&clang, Profile::Release).is_empty());
+    }
 
     #[test]
     fn profile_names_round_trip() {

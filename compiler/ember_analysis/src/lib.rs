@@ -38,7 +38,7 @@ pub use loop_access::hoist_loop_accesses_all;
 pub use check_hoisting::hoist_invariant_checks_all;
 pub use copies::propagate_copies_all;
 pub use exit_drops::skip_exit_drops_all;
-pub use kernels::outline_list_kernels_all;
+pub use kernels::{KernelTarget, outline_list_kernels_all};
 pub use reserve_pushes::reserve_pushed_lists_all;
 pub use loop_version::{hoist_invariant_views_all, version_bounds_checked_loops_all};
 pub use strength_reduce::reduce_induction_values_all;

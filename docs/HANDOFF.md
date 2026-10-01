@@ -11101,7 +11101,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h51/` are frozen.
-* **Next numbers:** ODR-098, D-445, ADR-098, ERR-056.
+* **Next numbers:** ODR-098, D-447, ADR-099, ERR-056.
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
@@ -11240,9 +11240,39 @@ first**; the rest of §0.355 is the running narrative behind it.
     deleted: a safety check blocked the long-path removal, so it is left for
     the owner; `git worktree prune` after deleting it.
   * **Next:** the second review's findings, worst first; then the fused `for`
-    over the new adapters and `str.chars()`; then `[CLO-3]` with D-422; and the
-    owner's request to build Ember with gcc on WSL, compare it with gcc's C and
-    g++'s C++, optimise, and add the gcc numbers to the README.
+    over the new adapters and `str.chars()`; then `[CLO-3]` with D-422.
+  * **gcc (the owner's request; ADR-098, D-445, D-446).** Ember built with gcc
+    15.2 under WSL (Ubuntu) on this machine; the 39 benchmark programs against
+    their C or C++ twin built by the same gcc with the same flags
+    (`scratchpad/wsl/bench_gcc.py` in the session's temp folder; Rust 1.98.1
+    from rustup in WSL; the clone is `~/ember`, synced from the Windows tree by
+    `sync_and_check.sh`). The list loops were 1.5x to 1.7x the C: gcc takes
+    `restrict` only from function parameters, and its `-O2` vectoriser refuses
+    a loop that needs a scalar tail. Built: ADR-079's pass moves such loops into
+    `restrict` functions for gcc too (`KernelTarget::Gcc`), and gcc's release
+    build adds `-fvect-cost-model=cheap` (the twins get the same flag). Every
+    list-loop row is now 0.97x to 1.04x. Found and fixed: D-445 (gcc 14+
+    rejected the printing helpers' `const T*` for a class handle) and D-446
+    (wrapping arithmetic was signed in C, undefined on overflow; gcc
+    miscompiled a wrapping hash in a loop). The conformance suite passes with
+    gcc 15.2 in WSL.
+    * **What is left with gcc, each with a named reason:** the rows whose gap
+      is the overflow check the language requires (the checked sum 1.31x, the
+      `mut self` rows 1.9x to 2.3x, generics 1.6x; each 0.96x to 1.00x with
+      `#! module overflow(wrap)`); `Map` (a04, about 2x): libstdc++'s
+      `std::hash<long>` is the identity, so sequential keys land in sequential
+      buckets, which a real hash does not; with scrambled keys Ember takes
+      0.22 s and the C++ 0.28 s (0.79x). An identity hash for integers would be
+      the owner's call (it trades collision resistance for that locality), not
+      taken. And the recursion row, where gcc turns Ember's `fib` into a loop
+      (0.03x, correct output). D-446 costs nothing measured: no row slower with
+      gcc (all 39), MSVC or clang (the wrapping, list and checked-sum rows).
+    * **Not done yet:** the README's gcc columns. The owner's rule is a render
+      first, then the table format changes.
+    * **Trap:** the quick check runs `target/debug/ember.exe` unless `EMBER` is
+      set. A debug build left over from days before fails nearly every test
+      (stack overflow, 1955 failures on 2026-10-01): set
+      `EMBER=target/release/ember.exe` or rebuild the debug compiler.
 * **`[TYP-9]` `@fastmath` and `@fp(contract)` (2026-09-30, ADR-085, ODR-090,
   Hardened_45).** Built for programs: a C unit per float mode, compiled with
   its flags (`[CG-C-11]`); lambdas take their function's mode; a default
