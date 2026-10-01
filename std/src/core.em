@@ -227,6 +227,20 @@ pub interface Iterator:
     fn inspect[F: fn(Item)](owned self, f: F) -> Inspect[Self, F]:
         return Inspect(self, f)
 
+    ## The items of each iterable `f` makes of an item, one after another.
+    fn flat_map[U: IntoIterator, F: fn(Item) -> U](owned self, f: F) -> FlatMap[Self, U, F]:
+        return FlatMap(self, f, None)
+
+    ## The items of each item, one after another, when the items are
+    ## iterable themselves.
+    fn flatten(owned self) -> Flatten[Self, Item] where Item: IntoIterator:
+        return Flatten(self, None)
+
+    ## These items, with `peek` to look at the next one without taking it
+    ## (ODR-094).
+    fn peekable(owned self) -> Peekable[Self]:
+        return Peekable(self, None, false)
+
     ## `[STD-19]` — the consumers. Each takes this iterator and runs it.
 
     ## How many items there are.
@@ -394,6 +408,25 @@ pub interface Iterator:
             out.push(x)
         return out
 
+    ## The items gathered into a collection `C` (ODR-094): any type that can
+    ## be built from them (`FromIterator`), written as `collect[C]()` or taken
+    ## from the type the call is expected to give (`a: Array[int] =
+    ## it.collect()`).
+    fn collect[C: FromIterator[Item]](owned self) -> C:
+        return C.from_iter(self)
+
+    ## The items as text, `sep` between each two (`[1, 2, 3]` with `", "` is
+    ## `"1, 2, 3"`).
+    fn join(owned self, sep: str) -> String where Item: Display:
+        out = String()
+        first = true
+        for x in self:
+            if not first:
+                out += sep
+            out += f"{x}"
+            first = false
+        return out
+
 ## `[CTL-1]` — what `for x in owned e:` consumes: `e.into_iter()` is the
 ## iterator, and the loop takes what its `next` gives, owned.
 ## `[STD-19]` (ODR-091) — an iterator that can run backwards: `next_back`
@@ -419,6 +452,13 @@ pub interface IntoIterator:
     type Item
     type Iter: Iterator[Item = Item]
     fn into_iter(owned self) -> Iter
+
+## `[STD-19]` (ODR-094) — a collection that can be built from values handed
+## to it one at a time, which is what `collect` asks of its target. `Array`,
+## `Set`, `Map` (from key-value pairs) and `String` (from characters or from
+## strings) are; so is any type of a program's that implements it.
+pub interface FromIterator[T]:
+    fn from_iter[I: Iterator[Item = T]](owned it: I) -> Self
 
 ## `[STD-19]` — the adapters `Iterator`'s methods above make. Each holds the
 ## iterator it wraps and gives what `next` says, as that method describes.
@@ -673,6 +713,120 @@ extend[I: Iterator, F: fn(I.Item)] Inspect[I, F] implements Iterator:
             None:
                 return None
 
+## `[STD-19]` — `flat_map(f)`: the items of what `f` makes of each item.
+## `inner` walks the current one; when it runs out, the next item is made into
+## the next one, and when the items run out, so does this.
+pub struct FlatMap[I, U: IntoIterator, F]:
+    outer: I
+    f: F
+    inner: Option[U.Iter]
+
+extend[I: Iterator, U: IntoIterator, F: fn(I.Item) -> U] FlatMap[I, U, F] implements Iterator:
+    type Item = U.Item
+
+    fn next(mut self) -> Option[U.Item]:
+        while true:
+            match self.inner.as_mut():
+                Some(it):
+                    match it.next():
+                        Some(x):
+                            return Some(x)
+                        None:
+                            pass
+                None:
+                    pass
+            match self.outer.next():
+                Some(x):
+                    self.inner = Some((self.f)(x).into_iter())
+                None:
+                    return None
+        return None
+
+## `[STD-19]` — `flatten()`: the items of each item, as `flat_map` gives them
+## with nothing made of the items first. `U` is the items' type, named so its
+## bound can be stated.
+pub struct Flatten[I, U: IntoIterator]:
+    outer: I
+    inner: Option[U.Iter]
+
+extend[U: IntoIterator, I: Iterator[Item = U]] Flatten[I, U] implements Iterator:
+    type Item = U.Item
+
+    fn next(mut self) -> Option[U.Item]:
+        while true:
+            match self.inner.as_mut():
+                Some(it):
+                    match it.next():
+                        Some(x):
+                            return Some(x)
+                        None:
+                            pass
+                None:
+                    pass
+            match self.outer.next():
+                Some(x):
+                    self.inner = Some(x.into_iter())
+                None:
+                    return None
+        return None
+
+## `[STD-19]` (ODR-094) — `peekable()`: the items of the iterator it wraps,
+## with the next one taken early by `peek` and kept (`looked`) until `next`
+## gives it.
+pub struct Peekable[I: Iterator]:
+    inner: I
+    peeked: Option[I.Item]
+    looked: bool
+
+extend[I: Iterator] Peekable[I] implements Iterator:
+    type Item = I.Item
+
+    fn next(mut self) -> Option[I.Item]:
+        if self.looked:
+            self.looked = false
+            return self.peeked.take()
+        return self.inner.next()
+
+extend[I: Iterator] Peekable[I]:
+    ## The next item, left where it is: the following `next` gives it.
+    pub fn peek(mut self) -> Option[ref I.Item]:
+        if not self.looked:
+            self.peeked = self.inner.next()
+            self.looked = true
+        return self.peeked.as_ref()
+
+    ## The next item, left where it is, to change in place.
+    pub fn peek_mut(mut self) -> Option[ref mut I.Item]:
+        if not self.looked:
+            self.peeked = self.inner.next()
+            self.looked = true
+        return self.peeked.as_mut()
+
+    ## The next item when `pred` holds for it; otherwise it stays.
+    pub fn next_if[F: fn(ref I.Item) -> bool](mut self, pred: F) -> Option[I.Item]:
+        take = false
+        match self.peek():
+            Some(x):
+                take = pred(x)
+            None:
+                pass
+        if take:
+            return self.next()
+        return None
+
+extend[T: Eq, I: Iterator[Item = T]] Peekable[I]:
+    ## The next item when it equals `expected`; otherwise it stays.
+    pub fn next_if_eq(mut self, expected: T) -> Option[T]:
+        take = false
+        match self.peek():
+            Some(x):
+                take = x == expected
+            None:
+                pass
+        if take:
+            return self.next()
+        return None
+
 ## `[STD-19]` (ODR-091) — an iterator run backwards: its `next` is the one it
 ## wraps's `next_back`, and the other way round.
 pub struct Rev[I]:
@@ -876,6 +1030,29 @@ extend[T: Integer] RangeInclusive[T]:
 extend[T: Integer] RangeFrom[T]:
     pub fn iter(self) -> RangeFromIter[T]:
         return RangeFromIter(self.start)
+
+## `[CTL-1]` (D-444) — a range is iterable, and consumed as a value its
+## items are its `iter()`'s: `flat_map(fn(x: int) => 0..x)`.
+extend[T: Integer] Range[T] implements IntoIterator:
+    type Item = T
+    type Iter = RangeIter[T]
+
+    fn into_iter(owned self) -> RangeIter[T]:
+        return self.iter()
+
+extend[T: Integer] RangeInclusive[T] implements IntoIterator:
+    type Item = T
+    type Iter = RangeInclusiveIter[T]
+
+    fn into_iter(owned self) -> RangeInclusiveIter[T]:
+        return self.iter()
+
+extend[T: Integer] RangeFrom[T] implements IntoIterator:
+    type Item = T
+    type Iter = RangeFromIter[T]
+
+    fn into_iter(owned self) -> RangeFromIter[T]:
+        return self.iter()
 
 ## The values from `at` up to, not including, `end`.
 pub struct RangeIter[T]:
@@ -1122,6 +1299,22 @@ extend str implements Default:
     fn default() -> str:
         return ""
 
+## The characters, in order (ODR-094).
+extend String implements FromIterator[char]:
+    fn from_iter[I: Iterator[Item = char]](owned it: I) -> String:
+        out = String()
+        for c in it:
+            out.push(c)
+        return out
+
+## The strings, one after another (ODR-094).
+extend String implements FromIterator[String]:
+    fn from_iter[I: Iterator[Item = String]](owned it: I) -> String:
+        out = String()
+        for s in it:
+            out += s
+        return out
+
 extend String implements Default:
     fn default() -> String:
         return String.from("")
@@ -1158,6 +1351,14 @@ pub struct ArrayIntoIter[T]:
 
 extend[T] ArrayIntoIter[T] implements Iterator:
     type Item = T
+
+## The items in order (ODR-094).
+extend[T] Array[T] implements FromIterator[T]:
+    fn from_iter[I: Iterator[Item = T]](owned it: I) -> Array[T]:
+        out: Array[T] = []
+        for x in it:
+            out.push(x)
+        return out
 
 extend[T] Array[T] implements IntoIterator:
     type Item = T

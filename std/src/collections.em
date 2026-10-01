@@ -8,7 +8,7 @@
 ## the Arena or their backing bytes.
 
 import std.mem
-from std.core import DoubleEndedIterator, ExactSizeIterator
+from std.core import DoubleEndedIterator, ExactSizeIterator, FromIterator
 
 ## `[HASH-1]` — the protocol is static at the `Hash.hash` boundary. A concrete
 ## hasher supplies `H`; no bare-interface conversion or mandatory dynamic
@@ -610,6 +610,15 @@ pub struct MapIntoKeys[K, V]:
 extend[K, V] MapIntoKeys[K, V] implements Iterator:
     type Item = K
 
+## The key-value pairs (ODR-094); a later pair's value replaces an earlier
+## one's for the same key, as `insert` does.
+extend[K: Eq + Hash, V, H: Hasher + Default] Map[K, V, H] implements FromIterator[(K, V)]:
+    fn from_iter[I: Iterator[Item = (K, V)]](owned it: I) -> Map[K, V, H]:
+        out = Map[K, V, H]()
+        for (k, v) in it:
+            out.insert(k, v)
+        return out
+
 extend[K: Eq + Hash, V, H: Hasher + Default] Map[K, V, H] implements IntoIterator:
     type Item = K
     type Iter = MapIntoKeys[K, V]
@@ -1016,6 +1025,14 @@ extend[T: Eq + Hash + Ord + Clone, H: Hasher + Default] Set[T, H]:
         return out
 
 ## `for x in owned s:` (`[CTL-1]`): the elements in insertion order, owned.
+## The elements, each once, in the order they first came (ODR-094).
+extend[T: Eq + Hash, H: Hasher + Default] Set[T, H] implements FromIterator[T]:
+    fn from_iter[I: Iterator[Item = T]](owned it: I) -> Set[T, H]:
+        out = Set[T, H]()
+        for x in it:
+            out.add(x)
+        return out
+
 extend[T: Eq + Hash, H: Hasher + Default] Set[T, H] implements IntoIterator:
     type Item = T
     type Iter = MapIntoKeys[T, bool]

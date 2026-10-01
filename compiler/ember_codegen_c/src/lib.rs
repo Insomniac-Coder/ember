@@ -1234,7 +1234,22 @@ impl Emitter<'_> {
     /// `[TYP-39]` — a C statement appending `v`'s `Debug` to the buffer
     /// `out`: text quoted, numbers and `bool` as they display, aggregates
     /// through their function.
+    /// ODR-094 — the payload a compiler-known wrapper prints as, as a C place
+    /// over the value `v`: a `Box[T]` is a pointer to its `T`, a `Cell[T]` a
+    /// struct whose `value` is.
+    fn printed_payload(&self, v: &str, ty: Ty) -> Option<(String, Ty)> {
+        let inner = self.types.printed_as(ty)?;
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
+        match self.types.compiler_box_inner(id) {
+            Some(_) => Some((format!("(*({v}))"), inner)),
+            None => Some((format!("(({v}).value)"), inner)),
+        }
+    }
+
     fn debug_stmt(&self, out: &str, v: &str, ty: Ty) -> String {
+        if let Some((payload, inner)) = self.printed_payload(v, ty) {
+            return self.debug_stmt(out, &payload, inner);
+        }
         // D-227 — a reference inside an aggregate prints what it points to.
         if let TyKind::Ref { inner, .. } = self.types.kind(ty) {
             return self.debug_stmt(out, &format!("(*({v}))"), *inner);
@@ -5535,6 +5550,34 @@ impl Emitter<'_> {
                 format!("({})({})", self.operand(callee, body), rendered.join(", "))
             }
             FuncRef::Builtin { which, arg_ty } => {
+                // ODR-094 — a `Box[T]` or `Cell[T]` printed or formatted is
+                // its payload printed or formatted.
+                let mut rendered = rendered;
+                let mut printed = *arg_ty;
+                let printing = match which {
+                    Builtin::Println | Builtin::Print | Builtin::EPrintln | Builtin::EPrint => Some(0),
+                    Builtin::Format | Builtin::FormatWith(_) => Some(1),
+                    _ => None,
+                };
+                if let Some(at) = printing {
+                    let mut unwrapped = false;
+                    while let Some((payload, inner)) = rendered.get(at).and_then(|v| self.printed_payload(v, printed)) {
+                        rendered[at] = payload;
+                        printed = inner;
+                        unwrapped = true;
+                    }
+                    // A `String` it held prints as its text, as the checker
+                    // makes a `String` argument a `str`.
+                    if unwrapped
+                        && matches!(self.types.kind(printed), TyKind::Vec { text: true, .. })
+                        && let Some(str_ty) = self.types.find(&TyKind::Str)
+                        && let Some((text, _)) = self.text_pair(&rendered[at], &rendered[at], printed)
+                    {
+                        rendered[at] = text;
+                        printed = str_ty;
+                    }
+                }
+                let arg_ty = &printed;
                 // `Array` and `String` share one runtime buffer; the element
                 // size is passed at each call, which is how a single
                 // implementation serves every element type.

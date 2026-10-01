@@ -1454,6 +1454,29 @@ impl TypeTable {
         }
     }
 
+    /// The payload of the compiler-known `Cell[T]` struct `id` (`cell_of`):
+    /// the compiler made it, and it is written `Cell[T]`.
+    pub fn compiler_cell_inner(&self, id: StructId) -> Option<Ty> {
+        let def = self.struct_def(id);
+        match self.written_as.get(&id) {
+            Some((name, args)) if name.is("Cell") && args.len() == 1 && def.declaring_module == COMPILER_MODULE => {
+                Some(args[0])
+            }
+            _ => None,
+        }
+    }
+
+    /// ODR-094 — the type a compiler-known wrapper prints as: `Box[T]` and
+    /// `Cell[T]` print as the `T` they hold (`Box(5)` prints `5`). A boxed
+    /// `dyn` value has no type of its own to print as.
+    pub fn printed_as(&self, ty: Ty) -> Option<Ty> {
+        let TyKind::Struct(id) = *self.kind(ty) else { return None };
+        if let Some(inner) = self.compiler_box_inner(id) {
+            return (!matches!(self.kind(inner), TyKind::Dyn { .. })).then_some(inner);
+        }
+        self.compiler_cell_inner(id)
+    }
+
     /// `[STD-4]` — `std.core.NonZero[T]`, whose one field is never 0: only
     /// `NonZero.new` makes one, after testing.
     pub fn is_nonzero(&self, ty: Ty) -> bool {

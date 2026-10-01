@@ -11094,14 +11094,14 @@ first**; the rest of §0.355 is the running narrative behind it.
     Hardened_50), `4ce5975` (D-407 (2)-(4) and (6), ADR-095) and `8efd1a2`
     (D-407 (5)); then this handoff. CI was green on each through `4ce5975`
     and still running on `8efd1a2` when this was written.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_50.md`
-  (ODR-095, which operators a range value has, and ODR-097, where an
-  implementation may be written; H49 carried ODR-096, how a call chooses
-  between two instances of one generic interface), pinned in
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_51.md`
+  (ODR-094, the owner's: `collect`'s target, `peekable`'s methods, `Option`'s
+  `as_ref`/`as_mut`, and `Box` and `Cell` show as what they hold; H50 carried
+  ODR-095, which operators a range value has, and ODR-097, where an
+  implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
-  `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h50/` are frozen.
-* **Next numbers:** ODR-098, D-439, ADR-097, ERR-056. ODR-094 is the owner's
-  (ruled, not yet in the spec or built).
+  `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h51/` are frozen.
+* **Next numbers:** ODR-098, D-445, ADR-098, ERR-056.
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
@@ -11210,8 +11210,39 @@ first**; the rest of §0.355 is the running narrative behind it.
     parameters numbers its methods' own after them (the prefix rule of D-280);
     a call through a bound reads `Self` as the parameter
     (`bound_call_signature`). MSVC and clang suites pass.
-  * **D-438, found and open:** a parameter fixed only by another's binding
-    (`T` in `I: Iterator[Item = T]`) is not inferred (`[TYP-18]`).
+  * **D-438, found and fixed with ODR-094:** a parameter fixed only by
+    another's binding (`T` in `I: Iterator[Item = T]`) is solved from it, at a
+    call and where an extension is matched (`solve_from_bindings`).
+  * **ODR-094 built (ADR-097, Hardened_51):** `FromIterator` and `collect`
+    (`Array`, `Set`, `Map`, `String` twice, a program's types), `peekable` with
+    `peek`, `peek_mut`, `next_if`, `next_if_eq` over the compiler's
+    `Option.as_ref`/`as_mut`, and `flat_map`, `flatten`, `join`, which D-407
+    had blocked; `Box` and `Cell` print as what they hold (`printed_as`,
+    `printed_payload`). Found and fixed on the way: D-439 (a default's bound
+    over `Item` for a generic instance), D-440 (two instances' associated
+    functions of one name clashed; the instance chooser now takes generic
+    candidates), D-441 (a struct's bounds asked of an unread `Self.Item`),
+    D-442 (a default returning a type over `Self` with a projection), D-443 (a
+    default whose `where` clause a type misses was given to it), D-444 (ranges
+    were not `IntoIterator`). Not built: a fused `for` over `flat_map`,
+    `flatten` or `peekable` (they run through `next`, `[CTL-3]`), and
+    `str.chars()` (`[STD-15]`).
+  * **The second review, done:** the five-fix inspection and ADR-087's
+    `rev` (workflow `wf_e014b9a1-a03`, 8 agents): 26 findings plus 2 the
+    checkers found, all confirmed, recorded in `docs/REVIEW-2026-10-01b.md`,
+    not yet numbered. Nine are high: four use-after-free in class field access
+    (G5-1 `drop`'s missing whole-object write, G5-2 a mutable view in an
+    `Option` through an interface call, G5-3 every `mut self` view getter
+    panics, G5-5 every `RefCell` field borrow panics), a MIR verification ICE
+    for a view on one path (G5-4), `input()`'s unvalidated UTF-8 (G6-1), and
+    invalid C for a borrow of a `void` place (G7-1). The reviewers' worktree
+    folder (`scratchpad/wt-review` in the session's temp folder) could not be
+    deleted: a safety check blocked the long-path removal, so it is left for
+    the owner; `git worktree prune` after deleting it.
+  * **Next:** the second review's findings, worst first; then the fused `for`
+    over the new adapters and `str.chars()`; then `[CLO-3]` with D-422; and the
+    owner's request to build Ember with gcc on WSL, compare it with gcc's C and
+    g++'s C++, optimise, and add the gcc numbers to the README.
 * **`[TYP-9]` `@fastmath` and `@fp(contract)` (2026-09-30, ADR-085, ODR-090,
   Hardened_45).** Built for programs: a C unit per float mode, compiled with
   its flags (`[CG-C-11]`); lambdas take their function's mode; a default

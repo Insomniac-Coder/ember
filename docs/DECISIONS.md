@@ -3557,6 +3557,49 @@ RandomState]` in insertion order; one key, one hash within a run),
 `HASH-2/accept_bytes_differing_in_their_tail_hash_apart` (D-405, both hashers), and
 `random_state_is_keyed_per_process` in `milestones.rs` (one program run twice hashes a key two ways).
 
+## ADR-097 — ODR-094 built: `collect`, `peekable`, `flat_map`, `flatten`, `join`, and printing `Box` and `Cell`
+
+2026-10-01, autonomous: the owner's ruling (ODR-094, Hardened_51), and the rest of `[STD-19]` D-407
+had blocked.
+
+**`collect`.** `std.core.FromIterator[T]` (not a prelude name, as ODR-091's interfaces are not) has
+one function, `from_iter[I: Iterator[Item = T]](owned it: I) -> Self`; `Iterator.collect[C:
+FromIterator[Item]](owned self) -> C` is `C.from_iter(self)`, so every target is written in the
+library, a program's type included (`AUTOPILOT` §4: the meaning lives in the file). `C` comes from
+`[C]` or from the expected type (D-407 (5)'s hint). `Array`, `Set`, `Map` (pairs, `insert`'s
+replacement) and `String` (from `char`s and from `String`s, two instances of one interface, which
+needed D-440) implement it.
+
+**`peekable`.** `struct Peekable[I: Iterator]: inner: I, peeked: Option[I.Item], looked: bool`: one
+`Option`, not `Option[Option[Item]]`, with `looked` saying whether `peeked` holds the next item or
+the end. `peek` and `peek_mut` fill it once and return `peeked.as_ref()`/`as_mut()` (the owner's B2:
+`Option.as_ref`/`as_mut` are the compiler's, `peek` is Ember); `next_if` and `next_if_eq` go through
+`peek`. `next_if_eq` is in a block `extend[T: Eq, I: Iterator[Item = T]] Peekable[I]`, which D-438
+lets apply.
+
+**`flat_map`, `flatten`, `join`.** `FlatMap[I, U: IntoIterator, F]` holds the current inner
+iterator as `Option[U.Iter]` (D-407's hidden parameter) and reaches it through `as_mut`;
+`Flatten[I, U: IntoIterator]` names the item type `U` so its bound can be stated (a struct has no
+`where`), `I: Iterator[Item = U]` in its extension. `join(sep) where Item: Display` formats each
+item (D-407 (5)); a collection's own `join` goes first, even where its bound is missed (the iterator's
+is not tried then: `[STD-19]`).
+
+**Printing `Box` and `Cell`.** `TypeTable::printed_as` gives the type a compiler-known wrapper
+prints as (`Box[T]` but `Box[dyn I]`, `Cell[T]`); the checker's `has_display`, `formattable_in` and
+`fstring_spec` ask it of the payload, and the C backend's `printed_payload` turns the value into its
+payload's place (`*v`, `v.value`) in `debug_stmt` and in the print and format calls, a `String`
+payload as its text.
+
+**Not built here:** a `for` over `flat_map`, `flatten` or `peekable` runs their `next`, not a fused
+counted loop (`[CTL-3]`'s "one loop with no iterator object"); `str.chars()`, which `[STD-15]` lists,
+does not exist yet. Both are on the handoff's list.
+
+**Tests.** `STD-19/accept_collect_builds_any_from_iterator_target`,
+`STD-19/accept_peekable_peeks_and_takes_conditionally`, `STD-19/accept_flat_map_flatten_and_join`,
+`TYP-39/accept_box_and_cell_print_as_what_they_hold`, `ERR-4/accept_as_ref_and_as_mut_reach_the_payload_where_it_is`,
+and the defects' (D-438 to D-444). `STD-9/reject_printing_a_value_with_no_printer` now uses a
+`RefCell`, as a `Cell` prints.
+
 ## ADR-096 — a generic interface method's own parameters never share the caller's slots
 
 2026-10-01, autonomous (D-437). A method's own type parameters were numbered from 0 wherever an

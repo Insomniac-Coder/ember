@@ -66,7 +66,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-097 | **CLOSED** — an implementation may also be written in the package that declares one of its interface's arguments, where, reading its type and then those arguments, the first type the package declares comes before any of the implementation's type parameters standing alone; anywhere else it is `E2121` | Types / implementations | — | **No** — delegated, 2026-10-01, Hardened_50 |
 | ODR-096 | **CLOSED** — of two instances of one generic interface that a call's or an operator's arguments fit, the one whose parameter types are the arguments' own (an untyped literal as its default type) is chosen before one reached through a coercion, for every type; two that fit equally are `E2070`; an operator chooses as its method does | Types / interface resolution | — | **No** — delegated, 2026-10-01, Hardened_49 |
 | ODR-095 | **CLOSED** — a range type has every operator its representation implements over itself, `**` and the bitwise operators included, generated as `[RNG-5a1]`'s are with the representation as `Output` | Types / range types | — | **No** — delegated, 2026-10-01, Hardened_50 |
-| ODR-094 | **RULED** — `collect[C]()` builds any `C: FromIterator[Item]` (a new library interface), `C` written or taken from the expected type; `peekable` offers `peek`, `peek_mut`, `next_if`, `next_if_eq`; `Box` and `Cell` print as what they hold | Library / iterators / printing | — | **Yes** — the owner, 2026-10-01; not yet in the spec, not built |
+| ODR-094 | **CLOSED** — `collect[C]()` builds any `C: FromIterator[Item]` (a new library interface), `C` written or taken from the expected type; `peekable` offers `peek`, `peek_mut`, `next_if`, `next_if_eq`; `Box` and `Cell` print as what they hold | Library / iterators / printing | — | **Yes** — the owner, 2026-10-01; Hardened_51; built (ADR-097) |
 | ODR-093 | **CLOSED** — a range type is `Clone`, `Hash`, `Display` and `Debug` when its representation is, its `Eq` and `Ord` are its representation's, and a range value shows as its representation's value; never `Default` | Types / range types | — | **Yes** — delegated, 2026-10-01, Hardened_48 |
 | ODR-092 | **CLOSED** — two implementations overlap where one type could be both, each one's type parameters standing for any type, found where they are declared; a bound separates two only where the type it bounds is written out in full and does not meet it | Types / implementations | — | **Yes** — delegated, 2026-10-01, Hardened_47 |
 | ODR-091 | **CLOSED** — an iterator runs backwards when it implements `DoubleEndedIterator` (`next_back`), whose method `rev` is; `ExactSizeIterator` gives `len`; ranges with an end, the views' element iterators, and the adapters over them where they can tell their last item | Library / iterators | — | **Yes** — delegated, 2026-10-01, Hardened_46 |
@@ -345,11 +345,11 @@ asking for different types ask for nothing in particular. Ambiguity remains wher
 two coercions (`i32` to `i64` or to `i128`), or no arguments at all (`w.conv()` with `Conv[bool]`
 and `Conv[Array[int]]`, D-402). The compiler's `choose_instance` serves both forms.
 
-## ODR-094 — `collect`, `peekable`, and how `Box` and `Cell` print — **RULED**
+## ODR-094 — `collect`, `peekable`, and how `Box` and `Cell` print — **CLOSED**
 
     ID:        ODR-094
-    Status:    RULED by the owner, 2026-10-01 (the recommended option of each);
-               not yet in the spec; not built
+    Status:    CLOSED — ruled by the owner, 2026-10-01 (the recommended option of
+               each); incorporated in 0.9.9_Hardened_51; built (ADR-097)
     Category:  LIBRARY / ITERATORS / PRINTING
     Location:  Ember_v0.9.9_Hardened_48.md [STD-19]
 

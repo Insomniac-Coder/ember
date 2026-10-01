@@ -398,6 +398,8 @@ ODRS = [
      '`[RNG-5]`, `[RNG-5a1]`'),
     ('ODR-097', 'an implementation may also be written in the package that declares one of its interface\'s arguments, where, reading its type and then those arguments, the first type the package declares comes before any of the implementation\'s type parameters standing alone; anywhere else it is `E2121` (Hardened_50)',
      '`[TYP-20]`'),
+    ('ODR-094', 'the owner\'s: `collect[C]()` builds any `C` implementing `std.core.FromIterator[Item]` (`Array`, `Set`, `Map` from pairs, `String` from `char`s and `String`s, and a program\'s types), `C` written or the type the call is expected to give; `peekable` gives `peek`, `peek_mut`, `next_if` and `next_if_eq`; `Option`\'s `as_ref` and `as_mut` reference the payload where it is; `Box[T]` and `Cell[T]` show as the `T` they hold (Hardened_51)',
+     '`[STD-19]`, `[ERR-4]`, `[TYP-39]`'),
 ]
 
 H5_HEAD = """
@@ -434,7 +436,8 @@ Hardened_45 adds ODR-090, where a float mode holds; Hardened_46 adds ODR-091, wh
 run backwards; Hardened_47 adds ODR-092, when two implementations overlap; Hardened_48 adds
 ODR-093, what a range type implements; Hardened_49 adds ODR-096, how a call chooses between two
 instances of one generic interface; Hardened_50 adds ODR-095, which operators a range value has,
-and ODR-097, where an implementation may be written.
+and ODR-097, where an implementation may be written; Hardened_51 adds ODR-094, the owner's
+ruling on `collect`'s target, `peekable`'s methods, and how `Box` and `Cell` show.
 
 | ODR | Ruling | Rules |
 |---|---|---|

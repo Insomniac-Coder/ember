@@ -871,6 +871,7 @@ struct MethodEntry {
 /// A receiver-less function declared by a type or required by an interface.
 /// Kept separate from `MethodEntry` so value-method lookup can never
 /// accidentally treat a type-level operation as taking `self`.
+#[derive(Clone, Copy)]
 struct AssociatedEntry {
     def: DefId,
     from_interface: Option<Symbol>,
@@ -1143,6 +1144,9 @@ struct Checker<'a> {
     /// `[TYP-24]` — each interface's methods for each type, beside
     /// `methods` (which keeps one per name), for `I.m(recv)`.
     interface_methods: HashMap<(Ty, Symbol, Symbol), MethodEntry>,
+    /// D-440 — an interface instance's associated function on a type, by
+    /// instance: two instances of one generic interface each give `from_iter`.
+    interface_associated: HashMap<(Ty, Symbol, Symbol), AssociatedEntry>,
     /// `[TYP-24]` — the interface an `I.m(recv)` call at this span names.
     named_interface_call: Option<(Symbol, Span)>,
     /// `const` and `static` values, substituted wherever their name is used.
@@ -1488,6 +1492,12 @@ struct Checker<'a> {
     /// slot below that, and this holds what each placeholder stands for: the
     /// caller's parameter, solved before the call is inferred.
     generic_prefix: HashMap<DefId, Vec<Ty>>,
+    /// D-443 — the copies of interface defaults registered on implementing
+    /// types: each is its interface's declaration read for the type.
+    default_copies: HashSet<DefId>,
+    /// D-443 — the defaults a type does not have because it misses their
+    /// `where` clause, so implementing the interface does not ask for them.
+    defaults_not_met: HashSet<(Ty, Symbol)>,
     /// D-437 — `bound_call_signature`'s readings, by method, parameter, bound and caller.
     bound_call_signatures: HashMap<(DefId, Ty, Symbol, Vec<Ty>), DefId>,
     /// `[TYP-17]` — set once every implementation is collected. Before
@@ -1585,6 +1595,7 @@ impl<'a> Checker<'a> {
             class_declared_methods: HashMap::new(),
             class_virtual_slots: HashMap::new(),
             interface_methods: HashMap::new(),
+            interface_associated: HashMap::new(),
             named_interface_call: None,
             associated: HashMap::new(),
             interfaces: HashMap::new(),
@@ -1706,6 +1717,8 @@ impl<'a> Checker<'a> {
             pending_views: Vec::new(),
             picked_ranges: HashMap::new(),
             generic_prefix: HashMap::new(),
+            default_copies: HashSet::new(),
+            defaults_not_met: HashSet::new(),
             bound_call_signatures: HashMap::new(),
             bounds_known: false,
             unresolved_bounds: Vec::new(),
@@ -4702,7 +4715,13 @@ impl<'a> Checker<'a> {
                         self.interface_methods.get(&(owner, interface, method.name)).map(|entry| entry.def)
                     }
                     (Some(_), None) => self.methods.get(&(owner, method.name)).map(|entry| entry.def),
-                    (None, _) => self.associated.get(&(owner, method.name)).map(|entry| entry.def),
+                    // D-440 — and an associated function by its instance.
+                    (None, Some(interface)) => self
+                        .interface_associated
+                        .get(&(owner, interface, method.name))
+                        .or_else(|| self.associated.get(&(owner, method.name)))
+                        .map(|entry| entry.def),
+                    (None, None) => self.associated.get(&(owner, method.name)).map(|entry| entry.def),
                 }
             });
             let Some(def) = def else { continue };
@@ -4797,7 +4816,7 @@ impl<'a> Checker<'a> {
             if self.applied_extensions.contains(&(ty, index)) {
                 continue;
             }
-            let Some(extension_args) = self.generic_extension_bindings(&extension, args) else { continue };
+            let Some(extension_args) = self.generic_extension_bindings_solved(&extension, args) else { continue };
             if !self.generic_extension_bounds_hold(&extension, &extension_args)
                 || !self.extension_bindings_hold(&extension, &extension_args)
             {
@@ -5189,6 +5208,12 @@ impl<'a> Checker<'a> {
         extension: &GenericExtension,
         args: &[Ty],
     ) -> Option<Vec<Ty>> {
+        self.generic_extension_pattern(extension, args)?.into_iter().collect()
+    }
+
+    /// The written parameters `extension`'s target binds at `args`, each
+    /// `None` that the target does not name; `None` when it does not match.
+    fn generic_extension_pattern(&self, extension: &GenericExtension, args: &[Ty]) -> Option<Vec<Option<Ty>>> {
         if extension.target_args.len() != args.len() {
             return None;
         }
@@ -5200,6 +5225,19 @@ impl<'a> Checker<'a> {
             if !self.match_generic_extension_type(pattern, actual, &mut bindings) {
                 return None;
             }
+        }
+        Some(bindings)
+    }
+
+    /// D-438 — as `generic_extension_bindings`, and a parameter the target
+    /// does not name but a bound's binding does (`T` in `extend[T: Eq, I:
+    /// Iterator[Item = T]] Peekable[I]`) is what the type bound to that
+    /// parameter says.
+    fn generic_extension_bindings_solved(&mut self, extension: &GenericExtension, args: &[Ty]) -> Option<Vec<Ty>> {
+        let mut bindings = self.generic_extension_pattern(extension, args)?;
+        if bindings.iter().any(Option::is_none) {
+            let written = bindings.len();
+            self.solve_from_bindings(&extension.params[..written], &mut bindings, 0);
         }
         bindings.into_iter().collect()
     }
@@ -6886,7 +6924,11 @@ impl<'a> Checker<'a> {
                     })
                     .map(|entry| (entry.def, Some(entry.receiver)))
             } else {
-                self.associated.get(&(ty, method)).map(|entry| (entry.def, None))
+                // D-440 — the associated function of this instance.
+                self.interface_associated
+                    .get(&(ty, interface, method))
+                    .or_else(|| self.associated.get(&(ty, method)))
+                    .map(|entry| (entry.def, None))
             };
             let shown = self.types.display(ty);
             // `[STD-20]` — `f32` and `f64` have their float methods built in
@@ -6925,6 +6967,11 @@ impl<'a> Checker<'a> {
             if implementation.is_none() && self.deferred_defaults.contains_key(&(ty, method)) {
                 continue;
             }
+            // D-443 — and one whose `where` clause the type misses is none of
+            // its business.
+            if implementation.is_none() && self.defaults_not_met.contains(&(ty, method)) {
+                continue;
+            }
             let Some((implementation, actual_receiver)) = implementation else {
                 self.error(
                     codes::E2040,
@@ -6933,9 +6980,11 @@ impl<'a> Checker<'a> {
                 );
                 continue;
             };
-            if !assoc_missing && !self.implementation_signature_matches(
-                ty, declaration, receiver, implementation, actual_receiver,
-            ) {
+            // D-443 — a default's copy is the declaration read for this type.
+            if !assoc_missing
+                && !self.default_copies.contains(&implementation)
+                && !self.implementation_signature_matches(ty, declaration, receiver, implementation, actual_receiver)
+            {
                 self.error(
                     codes::E2040,
                     span,
@@ -6959,6 +7008,13 @@ impl<'a> Checker<'a> {
                 );
                 continue;
             };
+            // D-444 — over parameters still open (`Range[T]`'s `Iter` is
+            // `RangeIter[T]`, an `Iterator` by an extension bounded `T:
+            // Integer`), as for every opaque instance (D-250), the bound is
+            // asked of each instance where `T` is known.
+            if self.is_opaque_instance(ty) && self.types.is_generic(value) {
+                continue;
+            }
             for bound in bounds {
                 if !self.implements(value, bound) {
                     let value_shown = self.types.display(value);
@@ -7231,6 +7287,17 @@ impl<'a> Checker<'a> {
                     // copy for each implementing type repeats no lint.
                     let lint = std::mem::replace(&mut self.lint_return_intersection, false);
                     let scope = self.enter_default(interface, *ty);
+                    // D-443 — a default whose `where` clause this type does
+                    // not meet (`flatten`'s `Item: IntoIterator` over numbers)
+                    // is not this type's, as a generic extension whose bound a
+                    // type misses gives it nothing.
+                    if !self.where_clauses_hold(&fn_decl.where_clause, *ty) {
+                        self.defaults_not_met.insert((*ty, fn_decl.name.name));
+                        self.leave_default(scope);
+                        self.lint_return_intersection = lint;
+                        self.self_ty = outer_self;
+                        continue;
+                    }
                     let signature =
                         self.method_signature(fn_decl, Some(*ty), &member.attrs, member.span, 0);
                     self.leave_default(scope);
@@ -7260,6 +7327,7 @@ impl<'a> Checker<'a> {
                     };
                     if let Some(def) = registered {
                         self.record_defaults(def, fn_decl);
+                        self.default_copies.insert(def);
                     }
                     if generic {
                         if let Some(def) = registered {
@@ -7398,6 +7466,11 @@ impl<'a> Checker<'a> {
             {
                 let interface = &interface;
                 let mut signature = self.signatures[default.declaration.0 as usize].clone();
+                // D-442 — the signature's own parameters are in scope while it
+                // is read for this type, so a type over them with a projection
+                // (`FlatMap[Self, U, F]`'s hidden `U.Iter`) names the hidden
+                // parameter the signature declared, as the body's check does.
+                let saved_generics = std::mem::replace(&mut self.current_generics, signature.generics.clone());
                 for (_, param, _, _) in &mut signature.params {
                     let substituted = self.substitute_self(*param, ty);
                     *param = self.resolve_assoc(substituted, ty);
@@ -7425,7 +7498,17 @@ impl<'a> Checker<'a> {
                         let substituted = self.substitute_self(binding.2, ty);
                         binding.2 = self.resolve_assoc(substituted, ty);
                     }
+                    // D-407 (5) — a bound over the interface's associated
+                    // types (`C: FromIterator[Item]`) is read for this
+                    // instance as the signature is, as `resolve_signature_assoc`
+                    // reads it for a concrete type's copy.
+                    let mut bounds = Vec::with_capacity(generic.bounds.len());
+                    for &bound in &generic.bounds {
+                        bounds.push(self.bound_read_for(bound, ty));
+                    }
+                    generic.bounds = bounds;
                 }
+                self.current_generics = saved_generics;
                 if let Some(receiver) = default.receiver {
                     signature.params.insert(0, (Symbol::intern("self"), ty, receiver, Span::DUMMY));
                 }
@@ -7436,6 +7519,7 @@ impl<'a> Checker<'a> {
                     self.register_associated(ty, default.name, signature, Some(*interface), Span::DUMMY)
                 };
                 let Some(def) = registered else { return };
+                self.default_copies.insert(def);
                 // D-437 — the instance's prefix of the caller's parameters
                 // stays ahead of the method's own.
                 if let Some(prefix) = self.generic_prefix.get(&default.declaration).cloned() {
@@ -8542,6 +8626,9 @@ impl<'a> Checker<'a> {
         }
         let def = DefId(self.signatures.len() as u32);
         self.signatures.push(signature);
+        if let Some(interface) = from_interface {
+            self.interface_associated.insert((ty, interface, name), AssociatedEntry { def, from_interface });
+        }
         self.associated.insert((ty, name), AssociatedEntry { def, from_interface });
         Some(def)
     }
@@ -9735,6 +9822,10 @@ impl<'a> Checker<'a> {
     /// `Debug` (`[TYP-39]`). A struct or enum has it only when it says so,
     /// and a class handle never (printing either falls back to `Debug`).
     fn has_display(&self, ty: Ty) -> bool {
+        // ODR-094 — `Box[T]` and `Cell[T]` print as what they hold.
+        if let Some(inner) = self.types.printed_as(ty) {
+            return self.has_display(inner);
+        }
         match self.types.kind(ty) {
             TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Str => true,
             // ODR-093 — a range value shows as its representation's value.
@@ -9753,6 +9844,10 @@ impl<'a> Checker<'a> {
     /// `seen` holds the user types already being examined: a recursive type
     /// (`struct Tree: kids: Array[Tree]`) is formattable if the rest is.
     fn formattable_in(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+        // ODR-094 — `Box[T]` and `Cell[T]` print as what they hold.
+        if let Some(inner) = self.types.printed_as(ty) {
+            return self.formattable_in(inner, seen);
+        }
         match self.types.kind(ty) {
             TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Str => true,
             TyKind::Range(id) => self.formattable_in(self.types.range_def(*id).repr, seen),
@@ -9830,6 +9925,11 @@ impl<'a> Checker<'a> {
         ty: Ty,
         span: Span,
     ) -> Option<hir::FormatSpec> {
+        // ODR-094 — `Box[T]` and `Cell[T]` take the spec their `T` takes.
+        let mut ty = ty;
+        while let Some(inner) = self.types.printed_as(ty) {
+            ty = inner;
+        }
         let mut spec = match text.map(hir::FormatSpec::parse) {
             Some(Ok(spec)) => Some(spec),
             Some(Err(why)) => {
@@ -11581,8 +11681,11 @@ impl<'a> Checker<'a> {
         // `[TYP-17]` — the arguments meet the declaration's bounds, reported
         // where the type is named: `Set[f64]` misses `Hash`. Opaque
         // arguments meet them by the enclosing declaration's own bounds.
+        // D-441 — nor where an argument is an associated type not yet read
+        // (`Flatten[Self, Item]` in a default method's signature): its
+        // bounds are met for each implementing type, when it is read.
         if !decl.generic_params.iter().all(|param| param.bounds.is_empty())
-            && !args.iter().any(|&arg| self.types.is_generic(arg))
+            && !args.iter().any(|&arg| self.types.is_generic(arg) || self.mentions_assoc(arg))
         {
             if !self.bounds_known {
                 self.pending_struct_bounds.push((name, decl.generic_params.clone(), args.to_vec(), span));
@@ -14349,9 +14452,11 @@ impl<'a> Checker<'a> {
                     let Some(entry) = entry else { continue };
                     entry.def
                 } else {
-                    let Some(entry) = self.associated.get(&(owner, decl.name.name)) else {
-                        continue;
-                    };
+                    // D-440 — the block's instance's, not the last one's.
+                    let entry = from_interface
+                        .and_then(|interface| self.interface_associated.get(&(owner, interface, decl.name.name)).copied())
+                        .or_else(|| self.associated.get(&(owner, decl.name.name)).copied());
+                    let Some(entry) = entry else { continue };
                     entry.def
                 };
                 if !self.signatures[def.0 as usize].generics.is_empty() {
@@ -14668,22 +14773,6 @@ impl<'a> Checker<'a> {
             let mut self_param =
                 GenericParam { name: self_name, bounds: vec![bound], callable: None, default: None, projection: None, bindings: Vec::new() };
             self.close_bounds(&mut self_param.bounds, &mut self_param.bindings);
-            // An interface's declaration leaves the receiver out; the body
-            // reads it as `self`.
-            let receiver_param = receiver.and_then(|mode| {
-                fn_decl
-                    .params
-                    .iter()
-                    .find(|param| matches!(param.kind, ast::ParamKind::Receiver { .. }))
-                    .map(|param| (Symbol::intern("self"), opaque_self, mode, param.span))
-            });
-            let params = receiver_param
-                .into_iter()
-                .chain(signature.params.iter().map(|&(name, ty, mode, span)| (name, self.substitute_self(ty, opaque_self), mode, span)))
-                .collect();
-            let ret = self.substitute_self(signature.ret, opaque_self);
-            let opaque = DefId(self.signatures.len() as u32);
-            self.signatures.push(Signature { params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, overflow: signature.overflow, fp: signature.fp, generics: own.clone(), borrows: signature.borrows.clone() });
             let saved_self = self.self_ty.replace(opaque_self);
             let saved_params = std::mem::take(&mut self.type_params);
             let saved_generics = std::mem::take(&mut self.current_generics);
@@ -14699,6 +14788,31 @@ impl<'a> Checker<'a> {
             // D-381 — `Item` here is the opaque `Self`'s, the same type its
             // bound gives `self.next()`.
             let saved_owner = self.assoc_owner.replace(opaque_self);
+            // D-407 (5) — `where Item: Display`: the method's own bounds on
+            // the interface's associated types and on parameters, in scope
+            // while its signature and body are read (`f"{item}"` was `E1010`;
+            // `Flatten[Self, Item]`'s `Item.Iter` needs `Item: IntoIterator`).
+            self.apply_where_bounds(&fn_decl.where_clause, opaque_self);
+            // D-442 — the signature is read once `Self` is a parameter here,
+            // as the body is: a type over `Self` with a projection
+            // (`Peekable[Self]`'s hidden `Self.Item`) is then the same type in
+            // the signature and in the body.
+            // An interface's declaration leaves the receiver out; the body
+            // reads it as `self`.
+            let receiver_param = receiver.and_then(|mode| {
+                fn_decl
+                    .params
+                    .iter()
+                    .find(|param| matches!(param.kind, ast::ParamKind::Receiver { .. }))
+                    .map(|param| (Symbol::intern("self"), opaque_self, mode, param.span))
+            });
+            let params = receiver_param
+                .into_iter()
+                .chain(signature.params.iter().map(|&(name, ty, mode, span)| (name, self.substitute_self(ty, opaque_self), mode, span)))
+                .collect();
+            let ret = self.substitute_self(signature.ret, opaque_self);
+            let opaque = DefId(self.signatures.len() as u32);
+            self.signatures.push(Signature { params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, overflow: signature.overflow, fp: signature.fp, generics: signature.generics.clone(), borrows: signature.borrows.clone() });
             self.resolve_signature_assoc(opaque, opaque_self);
             // The body reads its callable parameters' bounds from here.
             let resolved_own = self.signatures[opaque.0 as usize].generics.clone();
@@ -14707,9 +14821,8 @@ impl<'a> Checker<'a> {
                     *slot = generic;
                 }
             }
-            // D-407 (5) — `where Item: Display`: the method's own bounds on
-            // the interface's associated types and on parameters, in scope
-            // while its body is checked (`f"{item}"` was `E1010`).
+            // The where clause's bounds on the method's own parameters again,
+            // which the resolved signature's replaced.
             self.apply_where_bounds(&fn_decl.where_clause, opaque_self);
             let _ = self.check_one_method(opaque_self, fn_decl, block, opaque, &member.attrs, member.span);
             self.assoc_owner = saved_owner;
@@ -14720,6 +14833,24 @@ impl<'a> Checker<'a> {
             checked.insert(fn_decl.name.name);
         }
         checked
+    }
+
+    /// D-407 (5) — `bound` as `owner`'s copy of a default method reads it:
+    /// `Self` is the owner, and its associated types are the owner's.
+    fn bound_read_for(&mut self, bound: Symbol, owner: Ty) -> Symbol {
+        let Some((origin, args)) = self.open_interface_origin.get(&bound).cloned() else { return bound };
+        let read: Vec<Ty> = args
+            .iter()
+            .map(|&arg| {
+                let arg = self.substitute_self(arg, owner);
+                self.resolve_assoc(arg, owner)
+            })
+            .collect();
+        if read == args {
+            return bound;
+        }
+        let Some(definition) = self.interfaces.get(&origin).cloned() else { return bound };
+        self.instantiate_interface(origin, &definition, &read, Span::DUMMY).unwrap_or(bound)
     }
 
     /// D-407 (5) — `bound` with its arguments' associated types read as
@@ -14754,6 +14885,37 @@ impl<'a> Checker<'a> {
     /// D-407 (5) — a method's `where` clause, for the body checked with its
     /// parameters and `owner`'s associated types opaque: each subject's
     /// parameter takes the interfaces its bounds name.
+    /// D-443 — whether `owner` meets a default method's `where` clauses on
+    /// the interface's associated types (`where Item: Display`); a clause on
+    /// the method's own parameters is met at each call, so it is not asked
+    /// here. Called while the default is entered (`enter_default`).
+    fn where_clauses_hold(&mut self, clauses: &[ast::Bound], owner: Ty) -> bool {
+        for clause in clauses {
+            let ast::TypeKind::Path { segments, args } = &clause.subject.kind else { continue };
+            let [subject] = segments.as_slice() else { continue };
+            if !args.is_empty() || !self.assoc_scope.contains(&subject.name) {
+                continue;
+            }
+            let Some(subject_ty) = self.project(owner, subject.name) else { continue };
+            if self.types.is_generic(subject_ty) {
+                continue;
+            }
+            for bound in &clause.bounds {
+                let resolved = match interface_name(bound) {
+                    Some(name) => self.resolve_name(name),
+                    None => match self.resolve_interface_use(bound) {
+                        Some(instance) => instance,
+                        None => continue,
+                    },
+                };
+                if !self.implements(subject_ty, resolved) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
     fn apply_where_bounds(&mut self, clauses: &[ast::Bound], owner: Ty) {
         for clause in clauses {
             let ast::TypeKind::Path { segments, args } = &clause.subject.kind else { continue };
@@ -14817,7 +14979,12 @@ impl<'a> Checker<'a> {
                         }
                         entry.def
                     } else {
-                        let Some(entry) = self.associated.get(&(*ty, fn_decl.name.name)) else {
+                        // D-440 — by its instance.
+                        let Some(entry) = self
+                            .interface_associated
+                            .get(&(*ty, interface, fn_decl.name.name))
+                            .or_else(|| self.associated.get(&(*ty, fn_decl.name.name)))
+                        else {
                             continue;
                         };
                         if entry.from_interface != Some(interface) {
@@ -15769,19 +15936,27 @@ impl<'a> Checker<'a> {
     /// symbols would collide.
     fn method_symbol_for(&self, owner: Ty, name: Symbol, def: DefId) -> String {
         let owner_name = self.types.symbol_name(owner);
-        let offering: Vec<Symbol> = self
+        // D-440 — an associated function of several instances (`from_iter`
+        // of `FromIterator[char]` and of `FromIterator[String]`) too.
+        let offered: Vec<(Symbol, DefId)> = self
             .interface_methods
             .iter()
             .filter(|((ty, _, method), _)| *ty == owner && *method == name)
-            .map(|((_, interface, _), _)| *interface)
+            .map(|((_, interface, _), entry)| (*interface, entry.def))
+            .chain(
+                self.interface_associated
+                    .iter()
+                    .filter(|((ty, _, function), _)| *ty == owner && *function == name)
+                    .map(|((_, interface, _), entry)| (*interface, entry.def)),
+            )
             .collect();
         let inherent = self
             .methods
             .get(&(owner, name))
-            .is_some_and(|entry| entry.from_interface.is_none() && entry.def != def);
-        if (offering.len() > 1 || inherent)
-            && let Some(((_, interface, _), _)) =
-                self.interface_methods.iter().find(|((ty, _, method), entry)| *ty == owner && *method == name && entry.def == def)
+            .is_some_and(|entry| entry.from_interface.is_none() && entry.def != def)
+            || self.associated.get(&(owner, name)).is_some_and(|entry| entry.from_interface.is_none() && entry.def != def);
+        if (offered.len() > 1 || inherent)
+            && let Some((interface, _)) = offered.iter().find(|(_, offered_def)| *offered_def == def)
         {
             return method_symbol(&owner_name, Symbol::intern(&format!("{}_{name}", type_stem(interface.as_str()))));
         }
@@ -27608,6 +27783,8 @@ impl<'a> Checker<'a> {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
 
+        // D-438 — and a parameter only a solved one's binding names.
+        self.solve_from_bindings(&generics, &mut solved, explicit.len());
         // `[IFC-4]` — `T.Real` is what `T`'s type says its `Real` is.
         for index in 0..generics.len() {
             let Some((base, name)) = generics[index].projection else { continue };
@@ -27939,6 +28116,8 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+        // D-438 — and a parameter only a solved one's binding names.
+        self.solve_from_bindings(&generics, &mut solved, fixed);
         // D-407 — `U.Elem` is what `U`'s type says its `Elem` is, as at a
         // function's call (`[IFC-4]`): a method's own projections.
         for index in 0..generics.len() {
@@ -28206,6 +28385,58 @@ impl<'a> Checker<'a> {
     /// `[FN-6a]` makes the whole mode-bearing `Fn` signature canonical here;
     /// `TypeTable::unify_with_fixed` rejects a mismatched mode vector rather
     /// than treating `mut` or `owned` as annotation that inference may drop.
+    /// D-438, `[TYP-18]` — a parameter no argument names but a solved one's
+    /// bound does (`T` in `I: Iterator[Item = T]`, `I` solved as a range's
+    /// iterator) is what that type says: each binding of a solved
+    /// parameter's bounds unifies the binding's value with the solved type's
+    /// associated type, until nothing more is solved.
+    fn solve_from_bindings(&mut self, generics: &[GenericParam], solved: &mut [Option<Ty>], fixed: usize) {
+        loop {
+            let mut progress = false;
+            for index in 0..generics.len().min(solved.len()) {
+                let Some(arg) = solved[index] else { continue };
+                for &(instance, assoc, value) in &generics[index].bindings {
+                    let mut open = BTreeMap::new();
+                    self.params_in(value, &mut open, &mut HashSet::new());
+                    if open.keys().all(|&slot| solved.get(slot as usize).is_some_and(Option::is_some)) {
+                        continue;
+                    }
+                    let instance = self.bound_instance_as_solved(instance, solved);
+                    let saved = std::mem::replace(&mut self.assoc_instance, instance);
+                    let actual = self.project(arg, assoc);
+                    self.assoc_instance = saved;
+                    let Some(actual) = actual else { continue };
+                    let before = solved.to_vec();
+                    let mut trial = solved.to_vec();
+                    if self.unify_generic_argument(value, actual, generics, &mut trial, fixed) && trial != before {
+                        solved.copy_from_slice(&trial);
+                        progress = true;
+                    }
+                }
+            }
+            if !progress {
+                return;
+            }
+        }
+    }
+
+    /// D-438 — a bound's instance with the parameters solved so far, or none
+    /// while one it names is still open.
+    fn bound_instance_as_solved(&mut self, instance: Symbol, solved: &[Option<Ty>]) -> Option<Symbol> {
+        let Some((origin, args)) = self.open_interface_origin.get(&instance).cloned() else { return Some(instance) };
+        let mut open = BTreeMap::new();
+        for &arg in &args {
+            self.params_in(arg, &mut open, &mut HashSet::new());
+        }
+        if !open.keys().all(|&slot| solved.get(slot as usize).is_some_and(Option::is_some)) {
+            return None;
+        }
+        let known: Vec<Ty> = solved.iter().map(|ty| ty.unwrap_or(self.common.error)).collect();
+        let args: Vec<Ty> = args.iter().map(|&arg| self.substitute_ty(arg, &known)).collect();
+        let definition = self.interfaces.get(&origin).cloned()?;
+        self.instantiate_interface(origin, &definition, &args, Span::DUMMY)
+    }
+
     fn unify_generic_argument(
         &mut self,
         declared: Ty,
@@ -29813,7 +30044,7 @@ impl<'a> Checker<'a> {
         // A built-in generic instance takes its extensions at first use, an
         // associated function's as a method's (`[GRM-34]`).
         self.extend_instance_at_use(owner);
-        let Some(entry) = self.associated.get(&(owner, name.name)) else {
+        let Some(&entry) = self.associated.get(&(owner, name.name)) else {
             let shown = self.types.display(owner);
             self.error(
                 codes::E2020,
@@ -29822,6 +30053,13 @@ impl<'a> Checker<'a> {
             );
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
+        // D-440 — two instances of one generic interface may each give the
+        // function (`String.from_iter` of characters and of strings): the
+        // arguments choose, as for a method (D-313, ODR-096).
+        let entry = self.choose_instance_associated(owner, name, entry, args);
+        if self.ambiguous_calls.contains(&name.span) {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         let def = entry.def;
         self.check_method_visible(def, owner, name);
         let explicit = self.resolve_method_type_args(generic_args);
@@ -30975,6 +31213,12 @@ impl<'a> Checker<'a> {
         if !iterator_has || !iterable || name.name.is("next") {
             return None;
         }
+        // A method of the collection's own of the name takes precedence
+        // (`Array.join`), even where its bound is missed: that is reported
+        // as usual, with the bound, not as the iterator's.
+        if self.unmet_extension_bound(receiver_ty, name.name).is_some() {
+            return None;
+        }
         // D-427 — with the call's written type arguments: `(0..3).map[int](f)`
         // is `(0..3).iter().map[int](f)`, which `E2060`'s help recommends.
         let (recv, generic_args) = self.method_receivers.last()?.clone();
@@ -31921,8 +32165,12 @@ impl<'a> Checker<'a> {
 
     /// ODR-096 — whether every argument's type is `candidate`'s parameter
     /// type itself, an untyped literal counting as its default type.
-    fn fits_exactly(&self, candidate: &MethodEntry, found: &[&Expr]) -> bool {
-        let params = &self.signatures[candidate.def.0 as usize].params[1..];
+    fn fits_exactly(&mut self, candidate: &MethodEntry, found: &[&Expr]) -> bool {
+        if !self.signatures[candidate.def.0 as usize].generics.is_empty() {
+            return self.generic_candidate_fits(candidate.def, found);
+        }
+        let skip = self.receiver_slots(candidate.def);
+        let params = &self.signatures[candidate.def.0 as usize].params[skip..];
         params.iter().zip(found).all(|((_, want, _, _), have)| {
             let have = match self.types.kind(have.ty) {
                 TyKind::IntLit => self.common.i64,
@@ -31933,24 +32181,126 @@ impl<'a> Checker<'a> {
         })
     }
 
+    /// A method's first parameter is its receiver; an associated function
+    /// has none.
+    fn receiver_slots(&self, def: DefId) -> usize {
+        usize::from(self.signatures[def.0 as usize].params.first().is_some_and(|(name, ..)| name.is("self")))
+    }
+
+    /// D-440 — whether a generic candidate takes `found`: its parameters
+    /// solved from the arguments' types, then its bounds and their bindings
+    /// met (`from_iter[I: Iterator[Item = char]]` takes an iterator of
+    /// characters only). Nothing it reports is kept.
+    fn generic_candidate_fits(&mut self, def: DefId, found: &[&Expr]) -> bool {
+        let signature = self.signatures[def.0 as usize].clone();
+        let skip = self.receiver_slots(def);
+        let params = &signature.params[skip..];
+        if params.len() != found.len() {
+            return false;
+        }
+        let prefix = self.generic_prefix.get(&def).cloned().unwrap_or_default();
+        let mut solved: Vec<Option<Ty>> = vec![None; signature.generics.len()];
+        for (slot, &ty) in prefix.iter().enumerate() {
+            solved[slot] = Some(ty);
+        }
+        let quiet = self.sink.mark();
+        let mut fits = true;
+        for ((_, want, _, _), have) in params.iter().zip(found) {
+            let taken = if self.types.is_generic(*want) {
+                self.unify_generic_argument(*want, have.ty, &signature.generics, &mut solved, prefix.len())
+            } else {
+                have.ty == *want
+                    || (self.types.is_untyped_literal(have.ty) && self.literal_fits(have, *want))
+                    || self.types.widens_to(have.ty, *want)
+            };
+            if !taken {
+                fits = false;
+                break;
+            }
+        }
+        if fits {
+            let substitution: Vec<Ty> = solved.iter().map(|ty| ty.unwrap_or(self.common.error)).collect();
+            for (param, &ty) in signature.generics.iter().zip(&substitution) {
+                if ty == self.common.error {
+                    continue;
+                }
+                if !self.missed_bounds(ty, &param.bounds, &substitution).is_empty()
+                    || !self.bindings_met(param, ty, &substitution, Span::DUMMY)
+                {
+                    fits = false;
+                    break;
+                }
+            }
+        }
+        self.sink.rollback(quiet);
+        fits
+    }
+
+    /// D-440 — `owner.name(…)`'s associated function among the instances of
+    /// one generic interface that give it, chosen by the arguments as a
+    /// method is (`choose_instance`); `entry` when only one gives it.
+    fn choose_instance_associated(&mut self, owner: Ty, name: ast::Ident, entry: AssociatedEntry, args: &[ast::Arg]) -> AssociatedEntry {
+        self.ambiguous_calls.remove(&name.span);
+        let Some(interface) = entry.from_interface else { return entry };
+        let Some((origin, _)) = self.open_interface_origin.get(&interface).cloned() else { return entry };
+        let mut candidates: Vec<MethodEntry> = self
+            .interface_associated
+            .iter()
+            .filter(|((ty, instance, function), _)| {
+                *ty == owner
+                    && *function == name.name
+                    && self.open_interface_origin.get(instance).is_some_and(|(other, _)| *other == origin)
+            })
+            .map(|(_, found)| MethodEntry { def: found.def, from_interface: found.from_interface, receiver: Mode::Borrow })
+            .collect();
+        if candidates.len() < 2 {
+            return entry;
+        }
+        candidates.sort_by_key(|candidate| candidate.def.0);
+        let quiet = self.sink.mark();
+        let found: Vec<Expr> = args
+            .iter()
+            .map(|arg| {
+                let value = self.synth(&arg.value);
+                self.read_through(value)
+            })
+            .collect();
+        self.sink.rollback(quiet);
+        let found: Vec<&Expr> = found.iter().collect();
+        match self.choose_instance(name.name, None, name.span, &candidates, &found) {
+            Some(chosen) => AssociatedEntry { def: chosen.def, from_interface: chosen.from_interface },
+            None => entry,
+        }
+    }
+
     /// The candidates whose parameters `found`'s types fit, in declaration
     /// order (the candidates come from a map).
-    fn fitting(&self, candidates: &[MethodEntry], found: &[&Expr]) -> Vec<MethodEntry> {
+    fn fitting(&mut self, candidates: &[MethodEntry], found: &[&Expr]) -> Vec<MethodEntry> {
         let mut candidates = candidates.to_vec();
         candidates.sort_by_key(|candidate| candidate.def.0);
-        candidates
-            .into_iter()
-            .filter(|candidate| {
-                // A method's first parameter is its receiver.
-                let params = &self.signatures[candidate.def.0 as usize].params[1..];
-                params.len() == found.len()
-                    && params.iter().zip(found.iter()).all(|((_, want, _, _), have)| {
-                        have.ty == *want
-                            || (self.types.is_untyped_literal(have.ty) && self.literal_fits(have, *want))
-                            || self.types.widens_to(have.ty, *want)
-                    })
-            })
-            .collect()
+        let mut fitting = Vec::new();
+        for candidate in candidates {
+            // D-440 — a generic candidate fits when the arguments solve it.
+            if !self.signatures[candidate.def.0 as usize].generics.is_empty() {
+                if self.generic_candidate_fits(candidate.def, found) {
+                    fitting.push(candidate);
+                }
+                continue;
+            }
+            // A method's first parameter is its receiver.
+            let skip = self.receiver_slots(candidate.def);
+            let params = &self.signatures[candidate.def.0 as usize].params[skip..];
+            let fits = params.len() == found.len()
+                && params.iter().zip(found.iter()).all(|((_, want, _, _), have)| {
+                    have.ty == *want
+                        || (self.types.is_untyped_literal(have.ty) && self.literal_fits(have, *want))
+                        || self.types.widens_to(have.ty, *want)
+                });
+            if fits {
+                fitting.push(candidate);
+            }
+        }
+        fitting
     }
 
     fn synth_registered_method(
