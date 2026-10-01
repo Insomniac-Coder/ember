@@ -11160,7 +11160,15 @@ first**; the rest of §0.355 is the running narrative behind it.
   `peekable`'s API also need a ruling, ODR-094). `[CLO-3]`'s owned
   callable values: a design waits for the owner's three answers
   (`docs/proposals/CLO-3-owned-callable-values.md`); `[CLO-4]` and
-  `[CLO-6a]` wait on it. **Review wanted (2026-10-01):**
+  `[CLO-6a]` wait on it. **The owner's decisions (2026-10-01), nothing built
+  until the owner says go:** D-407 — build the general fix for (2)-(4);
+  (6) is `Option.as_ref`/`as_mut` compiler-provided with `peek` in Ember.
+  `[CLO-3]` — move-only (`Clone` when the state is), three words inline
+  (32-byte value), one heap allocation beyond that. ODR-094 ruled (the
+  recommended options; `docs/OWNER-QUEUE.md`). The review of ADR-088/089/091
+  and D-398..D-402 by agents ran 2026-10-01: 31 findings plus 6 the checkers
+  found, all confirmed, recorded unfixed in `docs/REVIEW-2026-10-01.md`
+  (defect numbers at triage; development starts when the owner says). **Review wanted (2026-10-01):**
   ADR-088's unification, the D-398..D-402 fixes and ADR-089 were reviewed
   solo.
 * **Goal 2, implementation (2026-09-29, autonomous):** next is `[STD-19]`'s

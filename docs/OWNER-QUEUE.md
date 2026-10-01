@@ -63,6 +63,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-082 | **CLOSED** — `@ffi(immutable)` on a foreign static asserts a `const` C object and emits a matching declaration | Language / C interop / foreign statics | — | **No** — delegated, 2026-09-27, Hardened_38 |
 | ODR-083 | **CLOSED** — a static free-function export's `creator` thread is anchored to successful module initialization; repeated initialization does not transfer the contract, and reinitialization after shutdown establishes a new creator | Language / C interop / export thread contracts | — | **No** — delegated, 2026-09-27, Hardened_39 |
 | ODR-084 | **CLOSED** — `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts | Language / module attributes / arithmetic | — | **No** — delegated, 2026-09-27, Hardened_40 |
+| ODR-094 | **RULED** — `collect[C]()` builds any `C: FromIterator[Item]` (a new library interface), `C` written or taken from the expected type; `peekable` offers `peek`, `peek_mut`, `next_if`, `next_if_eq`; `Box` and `Cell` print as what they hold | Library / iterators / printing | — | **Yes** — the owner, 2026-10-01; not yet in the spec, not built |
 | ODR-093 | **CLOSED** — a range type is `Clone`, `Hash`, `Display` and `Debug` when its representation is, its `Eq` and `Ord` are its representation's, and a range value shows as its representation's value; never `Default` | Types / range types | — | **Yes** — delegated, 2026-10-01, Hardened_48 |
 | ODR-092 | **CLOSED** — two implementations overlap where one type could be both, each one's type parameters standing for any type, found where they are declared; a bound separates two only where the type it bounds is written out in full and does not meet it | Types / implementations | — | **Yes** — delegated, 2026-10-01, Hardened_47 |
 | ODR-091 | **CLOSED** — an iterator runs backwards when it implements `DoubleEndedIterator` (`next_back`), whose method `rev` is; `ExactSizeIterator` gives `len`; ranges with an end, the views' element iterators, and the adapters over them where they can tell their last item | Library / iterators | — | **Yes** — delegated, 2026-10-01, Hardened_46 |
@@ -249,6 +250,30 @@ immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
+
+## ODR-094 — `collect`, `peekable`, and how `Box` and `Cell` print — **RULED**
+
+    ID:        ODR-094
+    Status:    RULED by the owner, 2026-10-01 (the recommended option of each);
+               not yet in the spec; not built
+    Category:  LIBRARY / ITERATORS / PRINTING
+    Location:  Ember_v0.9.9_Hardened_48.md [STD-19]
+
+**The question.** `[STD-19]` names `collect[C]()` and `peekable` and says no more: not which types
+`collect` can build, not whether `C` must be written, not what `peekable` offers (`peek` is not
+mentioned). Nothing says how `Box` and `Cell` print; today `f"{Box(5)}"` and `f"{Cell(5)}"` are
+`E1010` ("cannot be formatted yet; `Display` needs generics").
+
+**Rulings.**
+1. `collect[C]()` builds any `C` that implements a new library interface, `FromIterator[T]`: one
+   function that builds the collection from values handed to it one at a time. `Array`, `Set`, `Map`
+   (from pairs) and `String` implement it, and a program's own types may (Rust's design).
+2. `C` is written (`it.collect[Array[int]]()`) or taken from the type expected where the call
+   stands (`a: Array[int] = it.collect()`).
+3. `peekable` offers Rust's set: `peek`, `peek_mut`, `next_if(pred)` and `next_if_eq(v)`; `peek`
+   and `peek_mut` are written in Ember over the compiler-provided `Option.as_ref`/`as_mut` (D-407).
+4. `Box[T]` and `Cell[T]` print as what they hold: `Box(5)` and `Cell(5)` print `5`. This needs the
+   generic formatting D-407 (5) lacks.
 
 ## ODR-093 — what a range type implements — **CLOSED**
 

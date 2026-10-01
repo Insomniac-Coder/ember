@@ -62,6 +62,16 @@ position pays the indirect call.
    lambda with large captures therefore allocates at the conversion, reported by `ember inspect
    --alloc` once that exists (`[PHIL-2]`, not built). Fine?
 
+## The owner's answers (2026-10-01)
+
+1. **(a):** an owned callable value is move-only, and `Clone` when its state is.
+2. **Three words of inline state**, as `[CLO-10]` says: a value is four words (32 bytes on a 64-bit target).
+   For comparison, C++'s `std::function<long long(long long)>` is 64 bytes here (clang with Microsoft's
+   library, measured 2026-10-01).
+3. **Yes:** state larger than three words goes in one heap allocation owned by the value.
+
+Nothing is built yet: the owner gives the go.
+
 ## Size of the work
 
 Types (the value's layout and `Copy`), MIR (conversion at coercion sites, drop), C codegen (tables
