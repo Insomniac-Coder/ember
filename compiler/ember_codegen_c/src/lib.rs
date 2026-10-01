@@ -890,9 +890,13 @@ impl Emitter<'_> {
             TyKind::Float(FloatTy::F16) => format!("{RT}total_lt_f16(*(const uint16_t*)a, *(const uint16_t*)b)"),
             TyKind::Float(_) => format!("{RT}total_lt_f32(*(const float*)a, *(const float*)b)"),
             TyKind::Str => format!("{RT}str_cmp(*(const {RT}str*)a, *(const {RT}str*)b) < 0"),
-            TyKind::Vec { .. } => format!(
+            // ADR-061 — text is keyed on the flag, never on the element type.
+            TyKind::Vec { text: true, .. } => format!(
                 "{RT}str_cmp({RT}vec_as_str((const {RT}vec*)a), {RT}vec_as_str((const {RT}vec*)b)) < 0"
             ),
+            // An `Array` is not `Ord` (`[TYP-36]`): the checker sorts no list
+            // of them, and its bytes are not text (D-465).
+            TyKind::Vec { text: false, .. } => unreachable!("an `Array` has no order to sort by"),
             _ => {
                 let c = self.c_type(ty);
                 format!("*(const {c}*)a < *(const {c}*)b")
@@ -4550,8 +4554,8 @@ impl Emitter<'_> {
             return format!("{RT}object_{operation}({}, {location})", self.access_object(place, body));
         }
         if let Some((object, field)) = self.class_field_of_place(place, body) {
-            let def = self.types.class_def(object);
-            let what = c_string_literal(&format!("{}.{}", def.name, field));
+            // `[DIA-23]` — the class as the user writes it (D-461).
+            let what = c_string_literal(&format!("{}.{}", self.types.class_display_name(object), field));
             let handle = Place { local: place.local, projection: place.projection[..place.projection.len() - 1].to_vec() };
             return format!(
                 "{RT}field_{operation}(&({})->{}, {what}, {location})",
@@ -4581,8 +4585,7 @@ impl Emitter<'_> {
     /// overlap: that no write (for a read) or no access (for a write) is held.
     fn field_check_call(&self, place: &Place, mutable: bool, span: ember_span::Span, body: &Body) -> Option<String> {
         let (object, field) = self.class_field_of_place(place, body)?;
-        let def = self.types.class_def(object);
-        let what = c_string_literal(&format!("{}.{}", def.name, field));
+        let what = c_string_literal(&format!("{}.{}", self.types.class_display_name(object), field));
         let location = self.location(span);
         let handle = Place { local: place.local, projection: place.projection[..place.projection.len() - 1].to_vec() };
         let operation = if mutable { "check_write" } else { "check_read" };

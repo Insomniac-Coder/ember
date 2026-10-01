@@ -15588,24 +15588,6 @@ impl<'a> Checker<'a> {
         matches!(self.types.kind(base.ty), TyKind::Class(id) if *id == owner).then_some(*index)
     }
 
-    /// Return whether a mutable call argument has a class object whose access
-    /// place the current MIR slice can identify without re-evaluating an
-    /// indexed class handle. Array/collection projections rooted in a class
-    /// field are admitted when MIR can preserve the evaluated place for the
-    /// whole access interval.
-    fn class_mut_argument_supported(&self, expr: &Expr) -> bool {
-        match &expr.kind {
-            ExprKind::Field { base, .. } | ExprKind::Index { base, .. } | ExprKind::Deref(base) => {
-                if matches!(self.types.kind(base.ty), TyKind::Class(_)) {
-                    true
-                } else {
-                    self.class_mut_argument_supported(base)
-                }
-            }
-            _ => false,
-        }
-    }
-
     fn check_class_init_field_read(&mut self, index: usize, span: Span) {
         let Some(state) = self.class_init.as_ref() else { return };
         let base_count = self
@@ -29152,6 +29134,9 @@ impl<'a> Checker<'a> {
             "std.core.Clone" => self.is_cloneable(ty),
             "std.core.Eq" => self.has_implicit_eq(ty),
             "std.collections.Hash" => self.hashes(ty, &mut HashSet::new()),
+            // `[TYP-36]` — `void`'s `Default` is `()`; `void` cannot be
+            // extended, so the compiler answers it (D-463).
+            "std.core.Default" => matches!(self.types.kind(ty), TyKind::Void),
             _ => false,
         };
         if provided {
@@ -30124,6 +30109,10 @@ impl<'a> Checker<'a> {
         args: &[ast::Arg],
         span: Span,
     ) -> Expr {
+        // `[TYP-36]` — `void.default()` is `()` (D-463).
+        if matches!(self.types.kind(owner), TyKind::Void) && name.name.is("default") && args.is_empty() {
+            return self.void_value(span);
+        }
         if let Some(elem) = self.arena_array_element(owner) {
             return self.synth_arena_array_construction(
                 owner,
@@ -30831,32 +30820,25 @@ impl<'a> Checker<'a> {
     }
 
     fn reject_readonly_write(&mut self, place: &Expr, span: Span) {
-        self.reject_readonly_write_inner(place, span, false, false);
+        self.reject_readonly_write_inner(place, span, false);
     }
 
-    /// `[EXC-1]` — a direct write of one scalar/`Copy` field through a class
-    /// handle is instantaneous and needs no runtime access word. This is
-    /// intentionally separate from `ref mut`, a `mut` argument, and a mutating
-    /// method call, all of which are long-term accesses.
+    /// An assignment: also the place `[CLS-9]` restricts, a `let` field
+    /// reassigned outside its `init`. A class field may be written through
+    /// any handle (`[CLS-7]`); the access it takes is checked at run time
+    /// (VIII.3, `[EXC-16]`; D-462).
     fn reject_readonly_write_in_assignment(&mut self, place: &Expr, span: Span) {
-        self.reject_readonly_write_inner(place, span, false, true);
+        self.reject_readonly_write_inner(place, span, true);
     }
 
-    /// `[EXC-1]` — a class field passed to a `mut` parameter is a permitted
-    /// long-term access at the call boundary. It is not an ordinary direct
-    /// assignment, so the caller's MIR lowering will surround the call with
-    /// the runtime access interval.
+    /// `[EXC-1]` — a class field passed to a `mut` parameter is a long-term
+    /// access at the call boundary: the caller's MIR lowering surrounds the
+    /// call with the run-time access interval.
     fn reject_readonly_write_in_mut_argument(&mut self, place: &Expr, span: Span) {
-        self.reject_readonly_write_inner(place, span, true, false);
+        self.reject_readonly_write_inner(place, span, false);
     }
 
-    fn reject_readonly_write_inner(
-        &mut self,
-        place: &Expr,
-        span: Span,
-        allow_class_mut_argument: bool,
-        allow_instantaneous_class_field: bool,
-    ) {
+    fn reject_readonly_write_inner(&mut self, place: &Expr, span: Span, assignment: bool) {
         let mut current = place;
         loop {
             match &current.kind {
@@ -30898,7 +30880,7 @@ impl<'a> Checker<'a> {
                         // restricted. A `ref mut` or a `mut` call through the
                         // field reaches this helper through another entry
                         // point and remains permitted by `[CLS-9a]`.
-                        let reassigns_let_field = allow_instantaneous_class_field
+                        let reassigns_let_field = assignment
                             && std::ptr::eq(current, place)
                             && field.is_some_and(|(_, _, is_let, _)| is_let)
                             && self.class_init_field_index(current).is_none();
@@ -30913,17 +30895,6 @@ impl<'a> Checker<'a> {
                                 format!(
                                     "cannot assign to `let` field `{owner}.{field_name}` outside its `init`"
                                 ),
-                            );
-                        } else if self.class_init_field_index(place).is_none()
-                            && self.class_method_field_index(current).is_none()
-                            && !(allow_class_mut_argument && self.class_mut_argument_supported(place))
-                            && !(allow_instantaneous_class_field
-                                && self.class_instantaneous_field(place))
-                        {
-                            self.error(
-                                codes::E1010,
-                                span,
-                                "mutable class-field access requires a `mut self` class method in this phase",
                             );
                         }
                         if let Some((owner_id, field_name, _, read_only_outside)) = field {
@@ -30982,21 +30953,6 @@ impl<'a> Checker<'a> {
                 ExprKind::Index { base, .. } | ExprKind::Deref(base) => current = base,
                 _ => return,
             }
-        }
-    }
-
-    fn class_instantaneous_field(&self, expr: &Expr) -> bool {
-        let ExprKind::Field { base, .. } = &expr.kind else { return false };
-        if !matches!(self.types.kind(base.ty), TyKind::Class(_)) || !self.types.is_copy(expr.ty) {
-            return false;
-        }
-        match &base.kind {
-            ExprKind::Local(_) => true,
-            ExprKind::Deref(inner) => {
-                matches!(inner.kind, ExprKind::Local(_))
-                    && matches!(self.types.kind(inner.ty), TyKind::Ref { mutable: true, .. })
-            }
-            _ => false,
         }
     }
 

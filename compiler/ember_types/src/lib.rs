@@ -1812,6 +1812,14 @@ impl TypeTable {
         self.render(ty, true)
     }
 
+    /// A class's name as the user writes it: a generic instance is its
+    /// generic's name and arguments (`Bag[int]`), never its instance's
+    /// symbol (`[DIA-23]`).
+    pub fn class_display_name(&self, id: ClassId) -> String {
+        let def = self.class_def(id);
+        self.render_named(def.name, def.origin.as_ref(), true)
+    }
+
     /// The type's compiler identity: a generic instance by its instance
     /// name (`std.core.Range_i64`). Symbols and generated C names are built
     /// from this, so they never move with how a diagnostic spells a type.

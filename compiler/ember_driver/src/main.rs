@@ -2539,10 +2539,13 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         let status = std::process::Command::new(&exe)
             .status()
             .map_err(|e| e.to_string())?;
-        // A panic calls abort(), and Windows reports that as a status well
-        // outside 0..=255 (0xC0000409 arrives as a large negative i32).
-        // Clamping it into a u8 turned a crash into a clean exit, so anything
-        // that is not representable becomes a plain failure.
+        // A status outside 0..=255 (a Windows exception arrives as a large
+        // negative i32) or a Unix signal is a crash: clamping it into a u8
+        // turned one into a clean exit, so it becomes a plain failure, and it
+        // is said what stopped the program (D-464).
+        if let Some(how) = abnormal_end(&status) {
+            eprintln!("error: {how}");
+        }
         return Ok(match status.code() {
             Some(0) => ExitCode::SUCCESS,
             Some(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
@@ -2552,6 +2555,50 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 
     eprintln!("built {}", exe.display());
     Ok(ExitCode::SUCCESS)
+}
+
+/// D-464 — what stopped a program whose status is not an exit code: a Windows
+/// exception or a Unix signal, named. A panic ends through `abort()` (status
+/// 3 on Windows, `SIGABRT` on Unix) after printing its own message, so it
+/// gets none here.
+fn abnormal_end(status: &std::process::ExitStatus) -> Option<String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        let signal = status.signal()?;
+        let what = match signal {
+            6 => return None,
+            11 => "a segmentation fault (a stack overflow, or a bad memory access)",
+            7 => "a bus error",
+            4 => "an illegal instruction",
+            8 => "an arithmetic fault",
+            9 => "a kill",
+            _ => "a signal",
+        };
+        Some(format!("the program was stopped by {what} (signal {signal})"))
+    }
+    #[cfg(windows)]
+    {
+        let code = status.code()?;
+        if (0..=255).contains(&code) {
+            return None;
+        }
+        let code = code as u32;
+        let what = match code {
+            0xC000_00FD => "a stack overflow",
+            0xC000_0005 => "an access violation",
+            0xC000_0409 => "a fast fail",
+            0xC000_001D => "an illegal instruction",
+            0xC000_0094 => "an integer division by zero",
+            _ => "an exception",
+        };
+        Some(format!("the program was stopped by {what} (0x{code:08X})"))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = status;
+        None
+    }
 }
 
 /// `[MAN-3]` — read lint settings from the nearest package and reject every
@@ -2728,5 +2775,33 @@ fn finish(sink: &Sink, map: &SourceMap, options: &Options) -> ExitCode {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::abnormal_end;
+
+    /// D-464 — a crash is named, and a panic's own end (it has printed its
+    /// message) and an ordinary exit code are not.
+    #[test]
+    fn a_crash_is_named_and_a_panic_or_an_exit_is_not() {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::ExitStatusExt;
+            let crash = abnormal_end(&std::process::ExitStatus::from_raw(0xC000_00FD)).expect("a crash is named");
+            assert!(crash.contains("stack overflow") && crash.contains("0xC00000FD"), "{crash}");
+            assert_eq!(abnormal_end(&std::process::ExitStatus::from_raw(3)), None);
+            assert_eq!(abnormal_end(&std::process::ExitStatus::from_raw(0)), None);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            // A raw wait status: the low seven bits are the signal.
+            let crash = abnormal_end(&std::process::ExitStatus::from_raw(11)).expect("a crash is named");
+            assert!(crash.contains("segmentation fault") && crash.contains("signal 11"), "{crash}");
+            assert_eq!(abnormal_end(&std::process::ExitStatus::from_raw(6)), None);
+            assert_eq!(abnormal_end(&std::process::ExitStatus::from_raw(3 << 8)), None);
+        }
     }
 }

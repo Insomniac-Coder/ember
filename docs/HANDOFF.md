@@ -11104,7 +11104,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h51/` are frozen.
-* **Next numbers:** ODR-098, D-461, ADR-103, ERR-056.
+* **Next numbers:** ODR-098, D-466, ADR-103, ERR-056.
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
@@ -11262,10 +11262,19 @@ first**; the rest of §0.355 is the running narrative behind it.
     `d3de175`'s Linux jobs failed: the new `input()` milestone expected exit
     code 3, which a panic gives on Windows; on Linux it is 1. It now expects
     a non-zero code, as the run-fail runner does.
-  * **Next:** the rest of the medium findings (G5-6, a whole-object read for a
-    virtual getter's view; G7-2, a 256-deep literal's stack; D-460), then the
-    low ones; then the fused `for` over the new adapters and `str.chars()`;
-    then `[CLO-3]` with D-422.
+  * Then low ones: G5-10 (D-461: an access panic names a generic class as
+    written), G5-9 with G5-N1 (D-462: a class field is written through any
+    handle, checked at run time; two compile-fail tests that pinned the old
+    refusal became conformance tests), G7-6 (D-463: `void` is `Default`), G7-7
+    (D-464: `ember run` names a crash) and G6-3 (D-465: the sort comparison
+    keys text on its flag); G6-4's stale rows are corrected (and a raw NUL
+    byte in D-405's row, which made tools read `DEFECTS.md` as binary).
+  * **Next:** what is left of the second review: G5-6 (a whole-object read for
+    a virtual getter's view; needs a per-class accessor in the type
+    information), G7-2 (a 256-deep literal's stack), D-460 (G5-7), G5-11
+    (borrow diagnostics name `b.0`; `E3080` unused), G7-3 to G7-5, G7-N1,
+    G8-4; then the fused `for` over the new adapters and `str.chars()`; then
+    `[CLO-3]` with D-422.
   * **gcc (the owner's request; ADR-098, D-445, D-446).** Ember built with gcc
     15.2 under WSL (Ubuntu) on this machine; the 39 benchmark programs against
     their C or C++ twin built by the same gcc with the same flags
