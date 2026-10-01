@@ -11100,7 +11100,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   between two instances of one generic interface), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h50/` are frozen.
-* **Next numbers:** ODR-098, D-438, ADR-096, ERR-056. ODR-094 is the owner's
+* **Next numbers:** ODR-098, D-439, ADR-097, ERR-056. ODR-094 is the owner's
   (ruled, not yet in the spec or built).
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
@@ -11198,6 +11198,20 @@ first**; the rest of §0.355 is the running narrative behind it.
     defect fixes (D-358, D-355, D-201, D-202, D-218). The owner: "I'll run
     that inspection when I'm back on the main system". A cloud session does
     not run it or ask about it again.
+* **Autonomous session on the owner's machine (2026-10-01 afternoon; the
+  owner: "pull the latest commits, figure out the status and resume work").**
+  Workflows only for the items already waiting on one ("for anything new just
+  note things down and ask me"): the five-fix inspection (`c0c7beb`) and
+  ADR-087's `rev`, run as one review in a worktree at `3f38d04` (findings
+  recorded like `docs/REVIEW-2026-10-01.md`). New owner request: build Ember
+  with gcc on WSL, compare with gcc's C and g++'s C++, optimise, and add the gcc
+  numbers to the README (this machine, so the README rule allows it).
+  * **D-437 fixed (ADR-096):** an interface instance over the caller's
+    parameters numbers its methods' own after them (the prefix rule of D-280);
+    a call through a bound reads `Self` as the parameter
+    (`bound_call_signature`). MSVC and clang suites pass.
+  * **D-438, found and open:** a parameter fixed only by another's binding
+    (`T` in `I: Iterator[Item = T]`) is not inferred (`[TYP-18]`).
 * **`[TYP-9]` `@fastmath` and `@fp(contract)` (2026-09-30, ADR-085, ODR-090,
   Hardened_45).** Built for programs: a C unit per float mode, compiled with
   its flags (`[CG-C-11]`); lambdas take their function's mode; a default

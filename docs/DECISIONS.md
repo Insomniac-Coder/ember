@@ -3557,6 +3557,38 @@ RandomState]` in insertion order; one key, one hash within a run),
 `HASH-2/accept_bytes_differing_in_their_tail_hash_apart` (D-405, both hashers), and
 `random_state_is_keyed_per_process` in `milestones.rs` (one program run twice hashes a key two ways).
 
+## ADR-096 — a generic interface method's own parameters never share the caller's slots
+
+2026-10-01, autonomous (D-437). A method's own type parameters were numbered from 0 wherever an
+interface's method was read for a use, the slots the enclosing generic body's own parameters hold.
+Two readings collided: an instance of a generic interface over the caller's parameters
+(`Gather[T]` in `fn build[T, C: Gather[T], I: …]`) gave `gather`'s own `I` the slot of the caller's
+`T`, and a call through a type parameter's bound read the declaration as written, `Self` included.
+
+**The rule, one for every reading: the caller's parameters keep their slots, and a method's own
+come after them.** D-280 already made it for a generic type's methods over an opaque owner
+(`generic_prefix`: the caller's parameters the signature mentions, solved to themselves, then the
+method's own). Now:
+
+* `instantiate_interface` numbers each generic method's own parameters after the highest caller's
+  parameter the instance's arguments mention, and records the mentioned ones as the declaration's
+  prefix. `implementation_signature_matches` and `register_instantiated_default` follow that
+  prefix, so an implementation that names the extension's parameter
+  (`fn fill[I: Iterator[Item = T]](…, extra: T)` in `extend[T: Copy] Array[T] implements Fill[T]`)
+  matches, and a method's own projection (`U.Iter`) moves with its base.
+* A call through a bound is checked against `bound_call_signature`: the declaration with `Self` as
+  the type parameter, its associated types as the parameter's through the bound (D-417), and the
+  method's own parameters after every one of the caller's. `it.zip(other)` is a `Zip[I, J]`,
+  `M.make(3)` an `M`. The reading is a signature of its own, kept per method, parameter, bound and
+  caller; like every call through an opaque bound it is checked and never emitted, as the instance
+  rechecks the body against the implementation.
+
+**Rejected:** substituting `Self` at the call only: the method's own `I` and
+the caller's `T` still shared slot 0, so a bound's binding read one as the other; renaming the
+method's parameters by name: the solver works by slot.
+
+**Tests.** The three `IFC-4` programs D-437 names, each failing without its part.
+
 ## ADR-095 — projections in generic types, interfaces' associated types first
 
 2026-10-01, the owner's design for D-407 (2)-(4) and (6), built autonomously. `[STD-19]`'s

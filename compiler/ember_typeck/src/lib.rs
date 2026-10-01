@@ -1488,6 +1488,8 @@ struct Checker<'a> {
     /// slot below that, and this holds what each placeholder stands for: the
     /// caller's parameter, solved before the call is inferred.
     generic_prefix: HashMap<DefId, Vec<Ty>>,
+    /// D-437 — `bound_call_signature`'s readings, by method, parameter, bound and caller.
+    bound_call_signatures: HashMap<(DefId, Ty, Symbol, Vec<Ty>), DefId>,
     /// `[TYP-17]` — set once every implementation is collected. Before
     /// then a generic struct named with concrete arguments has its bounds
     /// checked later, from `pending_struct_bounds` (D-301).
@@ -1704,6 +1706,7 @@ impl<'a> Checker<'a> {
             pending_views: Vec::new(),
             picked_ranges: HashMap::new(),
             generic_prefix: HashMap::new(),
+            bound_call_signatures: HashMap::new(),
             bounds_known: false,
             unresolved_bounds: Vec::new(),
             reported_unresolved_bounds: HashSet::new(),
@@ -5002,6 +5005,25 @@ impl<'a> Checker<'a> {
     /// Each type parameter a type mentions, by slot: through references,
     /// sequences, tuples, callables and the fields of nominal types (an
     /// opaque instance's arguments live there).
+    /// D-280 — the caller's parameters a method's signature carries ahead of
+    /// its own (`generic_prefix`), each already solved to itself.
+    fn prefix_generics(&self, prefix: &[Ty]) -> Vec<GenericParam> {
+        prefix
+            .iter()
+            .map(|&ty| GenericParam {
+                name: match *self.types.kind(ty) {
+                    TyKind::Param { name, .. } => name,
+                    _ => Symbol::intern("_"),
+                },
+                bounds: Vec::new(),
+                callable: None,
+                default: None,
+                projection: None,
+                bindings: Vec::new(),
+            })
+            .collect()
+    }
+
     fn params_in(&self, ty: Ty, out: &mut BTreeMap<u32, Ty>, seen: &mut HashSet<Ty>) {
         match self.types.kind(ty).clone() {
             TyKind::Param { index, .. } => {
@@ -5071,20 +5093,7 @@ impl<'a> Checker<'a> {
         }
         let ret = self.substitute_ty(method.ret, &combined);
         let prefix: Vec<Ty> = (0..base as u32).map(|slot| mentioned.get(&slot).copied().unwrap_or(self.common.error)).collect();
-        let mut generics: Vec<GenericParam> = prefix
-            .iter()
-            .map(|&ty| GenericParam {
-                name: match *self.types.kind(ty) {
-                    TyKind::Param { name, .. } => name,
-                    _ => Symbol::intern("_"),
-                },
-                bounds: Vec::new(),
-                callable: None,
-                default: None,
-                projection: None,
-                bindings: Vec::new(),
-            })
-            .collect();
+        let mut generics: Vec<GenericParam> = self.prefix_generics(&prefix);
         generics.extend(method.generics.iter().map(|param| self.substitute_generic_param(param, &combined)));
         let signature = Signature {
             params,
@@ -7064,10 +7073,14 @@ impl<'a> Checker<'a> {
             return false;
         }
 
-        let expected_generics = self.signatures[declaration.0 as usize].generics.clone();
         // D-280 — an implementation on an opaque owner numbers its own
         // parameters after the caller's (`generic_prefix`); the interface's
-        // take the same slots, and the caller's stay as they are.
+        // take the same slots, and the caller's stay as they are. D-437 — an
+        // instance of the interface over the caller's parameters carries
+        // them ahead of the method's own in the same way.
+        let expected_prefix = self.generic_prefix.get(&declaration).cloned().unwrap_or_default();
+        let expected_generics =
+            self.signatures[declaration.0 as usize].generics[expected_prefix.len()..].to_vec();
         let prefix = self.generic_prefix.get(&implementation).cloned().unwrap_or_default();
         let base = prefix.len();
         let actual_generics = self.signatures[implementation.0 as usize].generics[base..].to_vec();
@@ -7079,7 +7092,7 @@ impl<'a> Checker<'a> {
         // declared types, so `fn map[T]` and `fn map[U]` are alpha-equivalent.
         // The interface's side is mapped before `Self` becomes the owner, so
         // the owner's own parameters are not renumbered with it.
-        let canonical = expected_generics
+        let own = expected_generics
             .iter()
             .enumerate()
             .map(|(index, param)| {
@@ -7089,7 +7102,8 @@ impl<'a> Checker<'a> {
                 })
             })
             .collect::<Vec<_>>();
-        let actual_canonical: Vec<Ty> = prefix.iter().copied().chain(canonical.iter().copied()).collect();
+        let canonical: Vec<Ty> = expected_prefix.iter().copied().chain(own.iter().copied()).collect();
+        let actual_canonical: Vec<Ty> = prefix.iter().copied().chain(own.iter().copied()).collect();
         for (expected, actual) in expected_generics.iter().zip(&actual_generics) {
             // D-407 (5) — read for this owner, as its parameters are.
             let mut expected_bounds: HashSet<Symbol> = HashSet::new();
@@ -7422,6 +7436,11 @@ impl<'a> Checker<'a> {
                     self.register_associated(ty, default.name, signature, Some(*interface), Span::DUMMY)
                 };
                 let Some(def) = registered else { return };
+                // D-437 — the instance's prefix of the caller's parameters
+                // stays ahead of the method's own.
+                if let Some(prefix) = self.generic_prefix.get(&default.declaration).cloned() {
+                    self.generic_prefix.insert(def, prefix);
+                }
                 if (interface.is("std.core.Iterator")
                     && (matches!(default.name.as_str(), "take" | "skip" | "step_by" | "enumerate" | "zip" | "chain")
                         || FusedStage::named(default.name.as_str()).is_some()))
@@ -7829,21 +7848,30 @@ impl<'a> Checker<'a> {
             },
         );
 
+        // D-437 — over the caller's parameters (`Gather[T]` in a generic
+        // body), a method's own parameters come after those the arguments
+        // mention, as a generic type's methods' do (D-280), so the two never
+        // share a slot: the mentioned ones are the declaration's prefix.
+        let mut mentioned = BTreeMap::new();
+        for &arg in args {
+            self.params_in(arg, &mut mentioned, &mut HashSet::new());
+        }
+        let base = mentioned.keys().next_back().map_or(0, |&last| last as usize + 1);
+        let prefix: Vec<Ty> =
+            (0..base as u32).map(|slot| mentioned.get(&slot).copied().unwrap_or(self.common.error)).collect();
         let mut declarations = HashMap::new();
         let mut methods = Vec::with_capacity(definition.methods.len());
         for (method, declaration, receiver, has_body) in &definition.methods {
             let signature = self.signatures[declaration.0 as usize].clone();
             // D-390 — a method's own parameters follow the interface's in the
             // declaration; the instance has none of its own, so they become
-            // its first, as a generic type's methods' do when it is made.
+            // its first after the prefix, as a generic type's methods' do
+            // when it is made.
+            let own_base = if signature.generics.is_empty() { 0 } else { base };
             let mut combined = args.to_vec();
-            combined.extend(
-                signature
-                    .generics
-                    .iter()
-                    .enumerate()
-                    .map(|(index, param)| self.types.intern(TyKind::Param { index: index as u32, name: param.name })),
-            );
+            combined.extend(signature.generics.iter().enumerate().map(|(index, param)| {
+                self.types.intern(TyKind::Param { index: (own_base + index) as u32, name: param.name })
+            }));
             let params = signature
                 .params
                 .iter()
@@ -7852,13 +7880,30 @@ impl<'a> Checker<'a> {
                 })
                 .collect();
             let ret = self.substitute_ty(signature.ret, &combined);
-            let generics = signature
-                .generics
-                .iter()
-                .map(|param| self.substitute_generic_param(param, &combined))
-                .collect();
+            let mut generics: Vec<GenericParam> = match own_base {
+                0 => Vec::new(),
+                _ => self.prefix_generics(&prefix),
+            };
+            // A method's own projection (`U.Iter`) names its base by the
+            // declaration's slot; the base moves with the method's parameters.
+            let declared_base = definition.generic_params.len();
+            generics.extend(signature.generics.iter().map(|param| {
+                let mut param = self.substitute_generic_param(param, &combined);
+                if let Some((slot, assoc)) = param.projection
+                    && slot as usize >= declared_base
+                {
+                    param.projection = Some(((own_base + slot as usize - declared_base) as u32, assoc));
+                }
+                param
+            }));
             let instance_declaration = DefId(self.signatures.len() as u32);
             self.signatures.push(Signature { params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, overflow: signature.overflow, fp: signature.fp, generics, borrows: signature.borrows });
+            if own_base > 0 {
+                self.generic_prefix.insert(instance_declaration, prefix.clone());
+            }
+            if let Some(defaults) = self.param_defaults.get(declaration).cloned() {
+                self.param_defaults.insert(instance_declaration, defaults);
+            }
             declarations.insert(*declaration, instance_declaration);
             methods.push((*method, instance_declaration, *receiver, *has_body));
         }
@@ -29884,7 +29929,7 @@ impl<'a> Checker<'a> {
             }
             found = Some((*def, *bound));
         }
-        let Some((def, _)) = found else {
+        let Some((def, bound)) = found else {
             let candidate = self.interfaces.iter().find_map(|(interface_name, interface)| {
                 interface
                     .methods
@@ -29911,8 +29956,10 @@ impl<'a> Checker<'a> {
         };
         let explicit = self.resolve_method_type_args(generic_args);
         if !self.signatures[def.0 as usize].generics.is_empty() {
+            // D-437 — `M.make(3)` gives an `M`, not a `Self`.
+            let read = self.bound_call_signature(def, owner, bound);
             return self.synth_generic_method_call(
-                def,
+                read,
                 name.name,
                 None,
                 false,
@@ -32241,8 +32288,12 @@ impl<'a> Checker<'a> {
         self.bound_calls.insert(span, bound);
 
         if !self.signatures[def.0 as usize].generics.is_empty() {
+            // D-437 — `Self` is the parameter, its associated types the
+            // parameter's: `it.zip(other)` is a `Zip[I, J]`.
+            let parameter = self.types.intern(TyKind::Param { index, name: param });
+            let read = self.bound_call_signature(def, parameter, bound);
             return self.synth_generic_method_call(
-                def,
+                read,
                 name.name,
                 Some((receiver, receiver_mode, span)),
                 false,
@@ -32311,6 +32362,83 @@ impl<'a> Checker<'a> {
             },
             span,
         }
+    }
+
+    /// D-437 — an interface's generic method as a call through a type
+    /// parameter's bound reads it: `Self` is the parameter, its associated
+    /// types are the parameter's through `bound`, and the method's own
+    /// parameters come after every one of the caller's, which the call solves
+    /// to themselves (`generic_prefix`), so the two never share a slot. The
+    /// call is checked against this reading and never emitted (an opaque
+    /// body); one reading per method, parameter and caller is kept.
+    fn bound_call_signature(&mut self, def: DefId, parameter: Ty, bound: Symbol) -> DefId {
+        let callers: Vec<Ty> = self
+            .current_generics
+            .iter()
+            .enumerate()
+            .map(|(index, param)| self.types.intern(TyKind::Param { index: index as u32, name: param.name }))
+            .collect();
+        let key = (def, parameter, bound, callers.clone());
+        if let Some(&read) = self.bound_call_signatures.get(&key) {
+            return read;
+        }
+        let signature = self.signatures[def.0 as usize].clone();
+        let declared_prefix = self.generic_prefix.get(&def).cloned().unwrap_or_default();
+        let base = callers.len();
+        let combined: Vec<Ty> = signature
+            .generics
+            .iter()
+            .enumerate()
+            .map(|(slot, param)| match declared_prefix.get(slot) {
+                Some(&caller) => caller,
+                None => self
+                    .types
+                    .intern(TyKind::Param { index: (base + slot - declared_prefix.len()) as u32, name: param.name }),
+            })
+            .collect();
+        let outer_self = self.substituting_self.replace(parameter);
+        let saved_instance = self.assoc_instance.replace(bound);
+        let read = |this: &mut Self, ty: Ty| {
+            let ty = this.substitute_ty(ty, &combined);
+            this.resolve_assoc(ty, parameter)
+        };
+        let params = signature
+            .params
+            .iter()
+            .map(|&(name, ty, mode, param_span)| (name, read(self, ty), mode, param_span))
+            .collect();
+        let ret = read(self, signature.ret);
+        let mut generics = self.prefix_generics(&callers);
+        for param in &signature.generics[declared_prefix.len()..] {
+            let mut param = self.substitute_generic_param(param, &combined);
+            if let Some(callable) = param.callable.as_mut() {
+                for callable_param in &mut callable.params {
+                    callable_param.ty = self.resolve_assoc(callable_param.ty, parameter);
+                }
+                callable.ret = self.resolve_assoc(callable.ret, parameter);
+            }
+            for binding in &mut param.bindings {
+                binding.2 = self.resolve_assoc(binding.2, parameter);
+            }
+            // A method's own projection (`U.Iter`) names its base by slot,
+            // which moved with the method's parameters.
+            if let Some((slot, assoc)) = param.projection
+                && slot as usize >= declared_prefix.len()
+            {
+                param.projection = Some(((base + slot as usize - declared_prefix.len()) as u32, assoc));
+            }
+            generics.push(param);
+        }
+        self.assoc_instance = saved_instance;
+        self.substituting_self = outer_self;
+        let read = DefId(self.signatures.len() as u32);
+        self.signatures.push(Signature { params, ret, generics, ..signature });
+        self.generic_prefix.insert(read, callers);
+        if let Some(defaults) = self.param_defaults.get(&def).cloned() {
+            self.param_defaults.insert(read, defaults);
+        }
+        self.bound_call_signatures.insert(key, read);
+        read
     }
 
     /// The compiler-known methods on `Array[T]` and `String`.
