@@ -190,13 +190,10 @@ pub fn check(
     }
     // Interfaces must be available before ordinary function signatures are
     // resolved: `ref dyn I` names an interface in the signature itself, not
-    // only in a later method/implementation body. Dependencies first, as the
-    // recipes above: a child interface names its parents' associated types
-    // (`[IFC-3]`, D-394), so a parent is collected before it.
-    for (index, loaded) in modules.iter().enumerate().rev() {
-        checker.current_module = index;
-        checker.collect_interfaces(&loaded.module);
-    }
+    // only in a later method/implementation body. A child interface names its
+    // parents' associated types (`[IFC-3]`, D-394), so every parent is
+    // collected before it, in whichever module each is (D-458).
+    checker.collect_interfaces(modules);
     checker.close_recipe_bounds();
     for (index, loaded) in modules.iter().enumerate().rev() {
         checker.current_module = index;
@@ -458,6 +455,16 @@ enum FusedLink {
     Copied,
     /// ODR-091 — the items below, last first.
     Rev,
+}
+
+/// `[CTL-3b]` — the links of a fusable chain by kind only, as
+/// `fused_link_kinds` reads them without taking the chain apart.
+enum FusedLinkKind {
+    Rev,
+    Skip,
+    Enumerate,
+    Zip(Vec<FusedLinkKind>),
+    Other,
 }
 
 /// What a fusable chain gives: a reference into a view, a value, or a pair.
@@ -6206,49 +6213,68 @@ impl<'a> Checker<'a> {
     /// A parent in the same module is collected before its children,
     /// whatever their order in the file (D-394): each round collects the
     /// interfaces whose parents here are all collected.
-    fn collect_interfaces(&mut self, module: &ast::Module) {
-        let here: HashSet<Symbol> = module
-            .items
+    fn collect_interfaces(&mut self, modules: &[LoadedModule]) {
+        // Every interface, as (module, item); a dependency's module first
+        // keeps the order of the modules' own collection.
+        let mut pending: Vec<(usize, usize)> = modules
             .iter()
-            .filter_map(|item| match &item.kind {
-                ast::ItemKind::Interface(decl) => Some(decl.name.name),
-                _ => None,
+            .enumerate()
+            .rev()
+            .flat_map(|(index, loaded)| {
+                loaded.module.items.iter().enumerate().filter_map(move |(item_index, item)| {
+                    matches!(item.kind, ast::ItemKind::Interface(_)).then_some((index, item_index))
+                })
             })
             .collect();
-        let mut done: HashSet<Symbol> = HashSet::new();
+        let declaration = |(module, item): (usize, usize)| {
+            let item = &modules[module].module.items[item];
+            let ast::ItemKind::Interface(decl) = &item.kind else { unreachable!("an interface item") };
+            (item, decl)
+        };
+        // Rounds: each collects the interfaces none of whose parents, named
+        // through the child's own imports, is still waiting.
         loop {
+            let waiting: HashSet<Symbol> = pending
+                .iter()
+                .map(|&(module, item)| {
+                    self.current_module = module;
+                    self.qualified(declaration((module, item)).1.name.name)
+                })
+                .collect();
             let mut progress = false;
-            for (item_index, item) in module.items.iter().enumerate() {
-                let ast::ItemKind::Interface(decl) = &item.kind else { continue };
-                if done.contains(&decl.name.name) {
-                    continue;
-                }
+            let mut left = Vec::new();
+            for (module, index) in pending {
+                self.current_module = module;
+                let (item, decl) = declaration((module, index));
+                let own = self.qualified(decl.name.name);
                 let waits = decl.supertraits.iter().any(|parent| match &parent.kind {
-                    ast::TypeKind::Path { segments, .. } => matches!(segments.as_slice(),
-                        [segment] if segment.name != decl.name.name
-                            && here.contains(&segment.name)
-                            && !done.contains(&segment.name)),
+                    ast::TypeKind::Path { segments, .. } => match segments.as_slice() {
+                        [segment] => {
+                            let parent = self.resolve_name(segment.name);
+                            parent != own && waiting.contains(&parent)
+                        }
+                        _ => false,
+                    },
                     _ => false,
                 });
                 if waits {
+                    left.push((module, index));
                     continue;
                 }
-                self.collect_interface(decl, item.span, item.vis.kind, item_index);
-                done.insert(decl.name.name);
+                self.collect_interface(decl, item.span, item.vis.kind, index);
                 progress = true;
             }
-            if !progress {
+            pending = left;
+            if !progress || pending.is_empty() {
                 break;
             }
         }
         // A cycle of parents: collected as written, where the cycle is
         // reported.
-        for (item_index, item) in module.items.iter().enumerate() {
-            if let ast::ItemKind::Interface(decl) = &item.kind
-                && !done.contains(&decl.name.name)
-            {
-                self.collect_interface(decl, item.span, item.vis.kind, item_index);
-            }
+        for (module, index) in pending {
+            self.current_module = module;
+            let (item, decl) = declaration((module, index));
+            self.collect_interface(decl, item.span, item.vis.kind, index);
         }
     }
 
@@ -17491,10 +17517,10 @@ impl<'a> Checker<'a> {
         };
         let mut scrutinee = self.synth_committed(scrutinee);
         let scrutinee_ty = scrutinee.ty;
-        // D-302 — not through a class handle's field: a reference into it
-        // would need a read access the handle's other aliases respect
-        // (`[EXC-1]`), which is not built (D-202).
-        let by_ref = !consumed && is_place(&scrutinee.kind) && !self.through_class_field(&scrutinee);
+        // Through a class handle's field too: the binding's loan holds the
+        // field's read access, which the handle's other aliases respect
+        // (`[EXC-18]`; D-302's restriction lifted, D-459).
+        let by_ref = !consumed && is_place(&scrutinee.kind);
         let mut written = false;
 
         let mut checked: Vec<hir::MatchArm> = Vec::new();
@@ -20771,6 +20797,81 @@ impl<'a> Checker<'a> {
         narrow.then_some((args[0], inclusive))
     }
 
+    /// `[CTL-3b]` — the links `take_fused_chain` would take from `e`, by kind.
+    fn fused_link_kinds(&self, e: &Expr) -> Vec<FusedLinkKind> {
+        match &e.kind {
+            ExprKind::Call { callee, args, .. } if args.len() == 2 && self.fused_stage(*callee).is_some() => {
+                self.fused_link_kinds(&args[0])
+            }
+            ExprKind::Call { callee, args, .. } if args.len() == 1 && self.adapter_name(*callee).is_some_and(|name| name.is("rev")) => {
+                let mut links = self.fused_link_kinds(&args[0]);
+                links.push(FusedLinkKind::Rev);
+                links
+            }
+            ExprKind::Call { callee, args, .. } if args.len() == 2 && self.adapter_name(*callee).is_some() => {
+                let mut links = self.fused_link_kinds(&args[0]);
+                links.push(match self.adapter_name(*callee).expect("an adapter").as_str() {
+                    "skip" => FusedLinkKind::Skip,
+                    "enumerate" => FusedLinkKind::Enumerate,
+                    "zip" => FusedLinkKind::Zip(self.fused_link_kinds(&args[1])),
+                    _ => FusedLinkKind::Other,
+                });
+                links
+            }
+            ExprKind::StructLit { fields, .. } if fields.len() == 1 && self.struct_origin(e.ty).is_some_and(|o| o.is("std.core.Copied")) => {
+                let mut links = self.fused_link_kinds(&fields[0]);
+                links.push(FusedLinkKind::Other);
+                links
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// `[CTL-3b]`, ODR-091 — whether a fused loop numbers every `enumerate` of
+    /// `links` as std's adapters do (`outer`: the links applied after this
+    /// chain, when it is a `zip`'s argument: that `zip`, then what follows
+    /// it). An `enumerate` under an even number of `rev`s is pulled forwards
+    /// by them, which the loop does not model (D-457). One under an odd
+    /// number is run backwards, and its first pull numbers its greatest item:
+    /// the loop checks that before its first turn, which is exact only when
+    /// the pull happens just when the loop has a turn. A `zip` above it pulls
+    /// it even when the other side is empty, and a `skip` above it pulled
+    /// forwards pulls what it passes over: those chains run through std's
+    /// adapters instead (D-457).
+    fn fused_counters_exact(links: &[FusedLinkKind], outer: &[&FusedLinkKind]) -> bool {
+        let revs = |links: &[&FusedLinkKind]| links.iter().filter(|link| matches!(link, FusedLinkKind::Rev)).count();
+        for (at, link) in links.iter().enumerate() {
+            let above: Vec<&FusedLinkKind> = links[at + 1..].iter().chain(outer.iter().copied()).collect();
+            match link {
+                FusedLinkKind::Enumerate => {
+                    let turned = revs(&above);
+                    if turned % 2 == 0 {
+                        if turned > 0 {
+                            return false;
+                        }
+                        continue;
+                    }
+                    for (index, step) in above.iter().enumerate() {
+                        match step {
+                            FusedLinkKind::Zip(_) => return false,
+                            FusedLinkKind::Skip if revs(&above[index + 1..]) % 2 == 0 => return false,
+                            _ => {}
+                        }
+                    }
+                }
+                FusedLinkKind::Zip(inner) => {
+                    let mut around = vec![link];
+                    around.extend(above.iter().copied());
+                    if !Self::fused_counters_exact(inner, &around) {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        true
+    }
+
     /// `[CTL-3b]` — the chain `fused_shape` accepted, taken apart.
     fn take_fused_chain(&self, e: Expr) -> FusedChain {
         let Expr { ty, kind, span } = e;
@@ -21165,7 +21266,9 @@ impl<'a> Checker<'a> {
                 parts.extend(self.chained_parts(&args[1])?);
                 Some(parts)
             }
-            _ => Some(vec![self.fused_links_shape(e)?]),
+            _ => Some(vec![
+                self.fused_links_shape(e).filter(|_| Self::fused_counters_exact(&self.fused_link_kinds(e), &[]))?,
+            ]),
         }
     }
 
@@ -24062,6 +24165,7 @@ impl<'a> Checker<'a> {
         if let Some(shape) = self.fused_shape(&iterable)
             && self.span_iterator(iterable.ty).is_none()
             && Self::fused_pattern_fits(pattern, &shape)
+            && Self::fused_counters_exact(&self.fused_link_kinds(&iterable), &[])
         {
             let chain = self.take_fused_chain(iterable);
             return self.check_for_fused(label, pattern, chain, body, else_block, span);
@@ -27291,12 +27395,23 @@ impl<'a> Checker<'a> {
         }
 
         // `Array[T]()` and `String()` — the compiler-known constructors.
+        // `[TYP-18]`: written type arguments fix the instantiation, whatever
+        // the context says; the context's type is then checked against it
+        // like any other (D-456).
         if name.is("Array") || name.is("String") {
             if !args.is_empty() {
                 self.error(codes::E2020, span, format!("`{name}()` takes no arguments"));
             }
+            let allowed = usize::from(name.is("Array"));
+            if explicit.len() > allowed {
+                let takes = if allowed == 1 { "one type argument" } else { "no type arguments" };
+                self.error(codes::E2020, span, format!("`{name}` takes {takes}, found {}", explicit.len()));
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             let ty = if name.is("String") {
                 self.common.string
+            } else if let Some(&elem) = explicit.first() {
+                self.types.intern(TyKind::Vec { elem, text: false })
             } else {
                 match expected.filter(|e| matches!(self.types.kind(*e), TyKind::Vec { text: false, .. })) {
                     Some(ty) => ty,
@@ -35486,19 +35601,6 @@ impl<'a> Checker<'a> {
             | TyKind::Span { .. } => false,
             TyKind::Enum(id) => self.types.enum_def(*id).is_unit_only(),
             _ => true,
-        }
-    }
-
-    /// Whether a place is reached through a class handle's field (`h.f`,
-    /// `h.f[i]`).
-    fn through_class_field(&self, place: &Expr) -> bool {
-        match &place.kind {
-            ExprKind::Field { base, .. } => {
-                matches!(self.types.kind(base.ty), TyKind::Class(_)) || self.through_class_field(base)
-            }
-            ExprKind::EnumField { base, .. } | ExprKind::Index { base, .. } => self.through_class_field(base),
-            ExprKind::Deref(inner) => self.through_class_field(inner),
-            _ => false,
         }
     }
 

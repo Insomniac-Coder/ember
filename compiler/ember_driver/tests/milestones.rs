@@ -1725,7 +1725,9 @@ fn input_panics_on_a_line_that_is_not_utf8() {
     let root = workspace_root();
     let source = format!("tests/conformance/STD-10/accept_input_reads_a_line.{SOURCE_EXT}");
     let bad = ember_with_input(&["run", &source], &root, b"\xe2\x82\n42\nend\n");
-    assert_eq!(bad.exit, 3, "no panic:\n{}{}", bad.stdout, bad.stderr);
+    // A panic exits non-zero (3 on Windows, 1 on Linux), as the run-fail
+    // runner checks.
+    assert_ne!(bad.exit, 0, "no panic:\n{}{}", bad.stdout, bad.stderr);
     assert!(bad.stderr.contains("input: the line is not valid UTF-8"), "another panic:\n{}", bad.stderr);
     let good = ember_with_input(&["run", &source], &root, "caf\u{e9}\n42\nend\n".as_bytes());
     assert_eq!(good.exit, 0, "{}", good.stderr);
