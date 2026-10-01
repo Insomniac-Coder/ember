@@ -878,6 +878,7 @@ impl Emitter<'_> {
     /// `a < b` for two elements behind `const void*`, in `Ord`'s order:
     /// totalOrder for floats (`[TYP-37]`), bytes for text.
     fn less_behind_pointers(&self, ty: Ty) -> String {
+        let ty = self.through_range(ty);
         if self.is_void(ty) {
             return "((void)a, (void)b, 0)".to_string();
         }
@@ -3577,6 +3578,21 @@ impl Emitter<'_> {
                 render_float(hi, false)
             );
         }
+        // D-421 — a 128-bit value is the runtime's struct where the C
+        // compiler has no `__int128` (MSVC, `EMBER_SOFT_INT128`): the two
+        // compares are the runtime's, between 128-bit constants.
+        if let Some(suffix) = self.wide_int(def.repr) {
+            let int = |bound: ember_types::Bound| match bound {
+                ember_types::Bound::Int(v) => v,
+                ember_types::Bound::Float(_) => unreachable!("a 128-bit range has integer bounds"),
+            };
+            let lo = self.wide_constant(int(def.lo) as u128, suffix);
+            let hi = int(def.hi) - i128::from(!def.inclusive);
+            let hi = self.wide_constant(hi as u128, suffix);
+            return format!(
+                "({RT}{suffix}_lt(({value}), {lo}) ? {lo} : ({RT}{suffix}_lt({hi}, ({value})) ? {hi} : ({value})))"
+            );
+        }
         let is_float = matches!(self.types.kind(def.repr), TyKind::Float(_));
         let lo = self.bound_literal(def.lo, def.repr);
         let hi = if def.inclusive {
@@ -5109,7 +5125,19 @@ impl Emitter<'_> {
         match self.types.kind(ty) {
             TyKind::Int(IntTy::I128) => Some("i128"),
             TyKind::Uint(UintTy::U128) => Some("u128"),
+            // D-421 — a range type is its representation in C (`[RNG-1]`),
+            // so one over a 128-bit integer is the runtime's struct too.
+            TyKind::Range(id) => self.wide_int(self.types.range_def(*id).repr),
             _ => None,
+        }
+    }
+
+    /// D-421 — the type a value of `ty` is in C: a range type's
+    /// representation (`[RNG-1]`), anything else itself.
+    fn through_range(&self, ty: Ty) -> Ty {
+        match self.types.kind(ty) {
+            TyKind::Range(id) => self.types.range_def(*id).repr,
+            _ => ty,
         }
     }
 
@@ -5225,7 +5253,7 @@ impl Emitter<'_> {
     /// D-316 — whether `ty` is `f16`, which C carries as its bits in a
     /// `uint16_t` and which every operation widens to `double`.
     fn half(&self, ty: Ty) -> bool {
-        matches!(self.types.kind(ty), TyKind::Float(FloatTy::F16))
+        matches!(self.types.kind(self.through_range(ty)), TyKind::Float(FloatTy::F16))
     }
 
     fn half_operands(&self, lhs: &Operand, rhs: &Operand, body: &Body) -> bool {
@@ -5723,7 +5751,7 @@ impl Emitter<'_> {
                         if let Some(suffix) = self.wide_int(*arg_ty) {
                             return format!("{RT}{suffix}_lt({a}, {b})");
                         }
-                        return match self.types.kind(*arg_ty) {
+                        return match self.types.kind(self.through_range(*arg_ty)) {
                             TyKind::Float(FloatTy::F64) => format!("{RT}total_lt_f64({a}, {b})"),
                             TyKind::Float(FloatTy::F16) => format!("{RT}total_lt_f16({a}, {b})"),
                             TyKind::Float(_) => format!("{RT}total_lt_f32({a}, {b})"),
@@ -7064,7 +7092,8 @@ impl Emitter<'_> {
             }
             let bits = self.types.range_unused_integer(id).expect("integer range niche has an unused value");
             let value = self.constant(&Const::Int { value: bits, ty: repr });
-            return format!("({access}) == {value}");
+            // D-421 — through the runtime's helper for a 128-bit one.
+            return self.eq_expr(&format!("({access})"), &value, repr);
         }
         let TyKind::Struct(id) = *self.types.kind(niche.payload) else {
             unreachable!("struct niche payload expected")
@@ -7120,6 +7149,11 @@ impl Emitter<'_> {
             }
             let bits = self.types.range_unused_integer(id).expect("integer range niche has an unused value");
             let value = self.constant(&Const::Int { value: bits, ty: repr });
+            // D-421 — a 128-bit constant is already of the type, and C
+            // casts to no struct.
+            if self.wide_int(repr).is_some() {
+                return value;
+            }
             return format!("(({}){value})", self.c_type(niche.payload));
         }
         let TyKind::Struct(id) = *self.types.kind(niche.payload) else {

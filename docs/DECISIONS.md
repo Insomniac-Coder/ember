@@ -3557,6 +3557,37 @@ RandomState]` in insertion order; one key, one hash within a run),
 `HASH-2/accept_bytes_differing_in_their_tail_hash_apart` (D-405, both hashers), and
 `random_state_is_keyed_per_process` in `milestones.rs` (one program run twice hashes a key two ways).
 
+## ADR-094 — a label in another file is shown under that file's own header
+
+2026-10-01, autonomous; D-411, found by the 2026-10-01 agent review (G1-4, G1-N2). XIX §6's
+human format shows a diagnostic's labels under one `-->` header, for the primary's file, and the
+renderer dropped every label in another file: `E2041` across two modules named one implementation,
+and a program's `extend int implements Default` pointed only into `std/src/core.em`. `--json`
+carried both. The spec shows the one-file case only.
+
+**Each file its own group.** The primary's file comes first, under `-->` at the primary's place;
+each other file follows, in the order its first label comes, under `:::` at its first label's
+place (rustc's form), its labels drawn as in the first group. One gutter width serves all groups.
+A collision of a program's implementation with the standard library's puts the primary at the
+program's, std's under its own header: the program's is the one the reader can change.
+
+## ADR-093 — a callable argument meets a callable bound as a call's arguments meet parameters
+
+2026-10-01, autonomous; D-423, found by the 2026-10-01 agent review (G3-2). `unify_generic_argument`
+solved a callable bound's parameters from the argument's signature and checked nothing else, so
+`apply[F: fn(int) -> int](fn(v: str) => 1, 2)` was reported inside `apply`, where `f(x)` passes an
+`int` to a `str`, and `xs.iter().map(takes_str)` inside `Map.next` in `std/src/core.em`.
+
+**The check.** With what the call has solved put into the bound, each parameter type the callee
+passes must reach the argument's parameter as a call's argument reaches a parameter: the same type,
+a widening, a borrow (`[TYP-5]` rule 7: a lambda written `fn(v: ref int)` for `fn(int)`), or a
+`Copy` value read through a `ref` (a lambda written `fn(v: int)` where the items are `ref int`).
+The argument's result must reach the bound's the same way. Anything still open, or already an
+error, is not compared. A mismatch is `E2020` at the argument, naming both signatures, and the call
+is not instantiated around it. `[FN-6a]`'s exact equality of `fn` types was not taken: programs the
+corpus has always accepted (`CTL-3b`) pass a borrowing lambda for a by-value bound, and the
+instance's body, checked with the real signature, applies exactly those coercions.
+
 ## ADR-092 — an instance is named by its arguments' structure, once
 
 2026-10-01, autonomous; D-412, found by the 2026-10-01 agent review (G1-5). An instance of a generic

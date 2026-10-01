@@ -11,7 +11,7 @@
 
 use std::fmt::Write as _;
 
-use ember_span::{SourceMap, Span};
+use ember_span::{FileId, SourceMap, Span};
 
 pub mod shapes;
 pub mod codes;
@@ -291,14 +291,16 @@ pub fn render(d: &Diagnostic, map: &SourceMap) -> String {
         }
     }
 
-    // Labels that can actually be shown: same file as the primary, resolvable.
+    // Labels that can actually be shown: resolvable. D-411 — a label in
+    // another file than the primary's is shown under that file's own
+    // header; it was dropped, so a collision across modules named one side.
     let primary_file = d.primary.span.file;
     let mut labels: Vec<(&Label, bool)> = Vec::new();
     if !d.primary.span.is_dummy() && map.get(primary_file).is_some() {
         labels.push((&d.primary, true));
     }
     for label in &d.secondary {
-        if label.span.file == primary_file && map.get(label.span.file).is_some() {
+        if !label.span.is_dummy() && map.get(label.span.file).is_some() {
             labels.push((label, false));
         }
     }
@@ -315,50 +317,75 @@ pub fn render(d: &Diagnostic, map: &SourceMap) -> String {
         return out;
     }
 
-    let file = map.file(primary_file);
-    let mut rows: Vec<(u32, &Label, bool)> = labels
+    // One group per file: the first label's (the primary's when it has a
+    // place) first, then the others in the order their labels come.
+    let mut files: Vec<FileId> = Vec::new();
+    for &(label, _) in &labels {
+        if !files.contains(&label.span.file) {
+            files.push(label.span.file);
+        }
+    }
+    let groups: Vec<(FileId, Vec<(u32, &Label, bool)>)> = files
         .iter()
-        .map(|&(label, is_primary)| (file.line_of(label.span.start), label, is_primary))
+        .map(|&id| {
+            let file = map.file(id);
+            let mut rows: Vec<(u32, &Label, bool)> = labels
+                .iter()
+                .filter(|(label, _)| label.span.file == id)
+                .map(|&(label, is_primary)| (file.line_of(label.span.start), label, is_primary))
+                .collect();
+            rows.sort_by_key(|&(line, _, is_primary)| (line, !is_primary));
+            (id, rows)
+        })
         .collect();
-    rows.sort_by_key(|&(line, _, is_primary)| (line, !is_primary));
 
-    let last_line = rows.iter().map(|&(l, _, _)| l).max().unwrap_or(1);
+    let last_line = groups.iter().flat_map(|(_, rows)| rows.iter().map(|&(l, _, _)| l)).max().unwrap_or(1);
     let gutter = last_line.to_string().len();
     let pad = " ".repeat(gutter);
 
-    let _ = writeln!(out, "{pad}--> {}", map.location(d.primary.span));
-    let _ = writeln!(out, "{pad} |");
-
-    let mut previous_line: Option<u32> = None;
-    for &(line, label, is_primary) in &rows {
-        match previous_line {
-            // Bridge a one-line gap with the source; elide anything wider.
-            Some(prev) if line == prev + 2 => {
-                let _ = writeln!(out, "{:>gutter$} | {}", prev + 1, file.line_text(prev + 1));
-            }
-            Some(prev) if line > prev + 2 => {
-                let _ = writeln!(out, "...");
-            }
-            _ => {}
+    for (index, (id, rows)) in groups.iter().enumerate() {
+        let file = map.file(*id);
+        if index == 0 {
+            // At the primary's place when it has one, as before.
+            let at = if !d.primary.span.is_dummy() && *id == primary_file { d.primary.span } else { rows[0].1.span };
+            let _ = writeln!(out, "{pad}--> {}", map.location(at));
+        } else {
+            let _ = writeln!(out, "{pad} |");
+            let _ = writeln!(out, "{pad}::: {}", map.location(rows[0].1.span));
         }
+        let _ = writeln!(out, "{pad} |");
 
-        if previous_line != Some(line) {
-            let _ = writeln!(out, "{line:>gutter$} | {}", file.line_text(line));
-        }
+        let mut previous_line: Option<u32> = None;
+        for &(line, label, is_primary) in rows {
+            match previous_line {
+                // Bridge a one-line gap with the source; elide anything wider.
+                Some(prev) if line == prev + 2 => {
+                    let _ = writeln!(out, "{:>gutter$} | {}", prev + 1, file.line_text(prev + 1));
+                }
+                Some(prev) if line > prev + 2 => {
+                    let _ = writeln!(out, "...");
+                }
+                _ => {}
+            }
 
-        let (caret_col, width) = caret_extent(file, label.span);
-        let marker = if is_primary { '^' } else { '-' };
-        let underline: String = std::iter::repeat_n(marker, width.max(1) as usize).collect();
-        let indent = " ".repeat(caret_col.saturating_sub(1) as usize);
-        match &label.message {
-            Some(text) => {
-                let _ = writeln!(out, "{pad} | {indent}{underline} {text}");
+            if previous_line != Some(line) {
+                let _ = writeln!(out, "{line:>gutter$} | {}", file.line_text(line));
             }
-            None => {
-                let _ = writeln!(out, "{pad} | {indent}{underline}");
+
+            let (caret_col, width) = caret_extent(file, label.span);
+            let marker = if is_primary { '^' } else { '-' };
+            let underline: String = std::iter::repeat_n(marker, width.max(1) as usize).collect();
+            let indent = " ".repeat(caret_col.saturating_sub(1) as usize);
+            match &label.message {
+                Some(text) => {
+                    let _ = writeln!(out, "{pad} | {indent}{underline} {text}");
+                }
+                None => {
+                    let _ = writeln!(out, "{pad} | {indent}{underline}");
+                }
             }
+            previous_line = Some(line);
         }
-        previous_line = Some(line);
     }
 
     let _ = writeln!(out, "{pad} |");
@@ -496,6 +523,25 @@ mod tests {
         let text = render(&elided, &map);
         assert!(text.contains("..."), "{text}");
         assert!(!text.contains("print(n)"), "{text}");
+    }
+
+    /// D-411 — a label in another file is shown under that file's own
+    /// header, not dropped: a collision across modules names both sides.
+    #[test]
+    fn a_label_in_another_file_has_its_own_header() {
+        let (mut map, id) = fixture();
+        let other = map.add("lib/shapes", "struct Wrap:\n    x: int\n\nextend Wrap implements Named:\n");
+        let d = Diagnostic::error(codes::E2041, Span::new(id, 73, 75), "`Wrap` already implements `Named`")
+            .secondary(Span::new(other, 32, 36), "the first implementation is here");
+        let text = render(&d, &map);
+        let primary = format!("--> {}", map.location(Span::new(id, 73, 75)));
+        assert!(text.contains(&primary), "{text}");
+        assert!(text.contains("::: lib/shapes:4:8"), "{text}");
+        assert!(text.contains("extend Wrap implements Named:"), "{text}");
+        assert!(text.contains("---- the first implementation is here"), "{text}");
+        let main_at = text.find(&primary).expect("the primary's header");
+        let other_at = text.find("::: lib/shapes").expect("the other file's header");
+        assert!(main_at < other_at, "{text}");
     }
 
     #[test]

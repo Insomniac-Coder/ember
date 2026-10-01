@@ -11093,7 +11093,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   interface; H48 carried ODR-093, what a range type implements), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h49/` are frozen.
-* **Next numbers:** ODR-097, D-435, ADR-093, ERR-056. ODR-094 is the owner's
+* **Next numbers:** ODR-097, D-437, ADR-095, ERR-056. ODR-094 is the owner's
   (ruled, not yet in the spec or built); ODR-095 is reserved for D-420 (what
   a range value's bitwise operators and `**` do), not yet written.
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
@@ -11116,16 +11116,31 @@ first**; the rest of §0.355 is the running narrative behind it.
     `choose_instance`), D-429 (D-400 for generic classes, and the generic body
     check found methods by name; `apply_extension_bindings`,
     `recipe_method_defs`).
+  * **Second batch, fixed:** D-410 (the overlap pass's bounds: closed
+    through every binding, answered as a call answers them, a blanket
+    included, with nothing recorded), D-411 (other files' labels rendered
+    under `:::`, ADR-094; a collision with std points at the program's),
+    D-414, D-416, D-417 (a projection through the bound's interface), D-418
+    (`E2041` for re-implementing what a range type is given), D-419
+    (`unwrap_or_default` through `Default`), D-421 (the C backend treats a
+    range type as its representation: 128-bit and `f16` ranges), D-423 (a
+    callable argument checked against its bound at the call, ADR-093), D-424,
+    D-425, D-427, D-430, D-431, D-432, D-433, D-434; and two found on the
+    way: D-435 (a negative float constant built no float range value) and
+    D-436 (a generic body's error repeated per instance).
   * **Owner, 2026-10-01: no README benchmark numbers from a cloud
     container** (AUTOPILOT §4); benchmarks there only guide optimisation.
-  * **Next:** the remaining review defects (D-410, D-411, D-413 to D-425,
-    D-427, D-430 to D-434; D-420 needs ODR-095 and D-422 a choice about how
-    adapters take their callable, see its row), then D-407, ODR-094 and
-    `[CLO-3]` as the owner decided them.
-  * **Still to ask the owner when he is back:** whether to run the agent
-    inspection of the 2026-09-26 five defect fixes (D-358, D-355, D-201,
-    D-202, D-218) he asked about; it was raised again at the start of this
-    session and not answered.
+  * **Next:** the review defects still open: D-415 (one way to show an
+    interface in diagnostics, `std.core.` dropped as types drop it; E2070's
+    help listing the fitting instances; `Conv.conv(w)` on a generic
+    interface), D-413 (`[TYP-20]`'s placement rule needs a code: an ODR),
+    D-420 (ODR-095) and D-422 (ODR-097: how the adapters take their
+    callable, see its row); then D-407, ODR-094 and `[CLO-3]` as the owner
+    decided them.
+  * **Still to ask the owner:** whether to run the agent inspection of the
+    2026-09-26 five defect fixes (D-358, D-355, D-201, D-202, D-218) the
+    owner asked about; it was raised again at the start of this session and
+    not answered.
 * **`[TYP-9]` `@fastmath` and `@fp(contract)` (2026-09-30, ADR-085, ODR-090,
   Hardened_45).** Built for programs: a C unit per float mode, compiled with
   its flags (`[CG-C-11]`); lambdas take their function's mode; a default
