@@ -11194,10 +11194,10 @@ first**; the rest of §0.355 is the running narrative behind it.
     worth doing with it: the checker carries a method call's expected type
     twice (the old one-step `method_expectation` and D-407 (5)'s scoped
     `method_call_expected`); one field, scoped, can serve both.
-  * **Still to ask the owner:** whether to run the agent inspection of the
-    2026-09-26 five defect fixes (D-358, D-355, D-201, D-202, D-218) the
-    owner asked about; it was raised again at the start of this session and
-    not answered.
+  * **Answered, 2026-10-01:** the agent inspection of the 2026-09-26 five
+    defect fixes (D-358, D-355, D-201, D-202, D-218). The owner: "I'll run
+    that inspection when I'm back on the main system". A cloud session does
+    not run it or ask about it again.
 * **`[TYP-9]` `@fastmath` and `@fp(contract)` (2026-09-30, ADR-085, ODR-090,
   Hardened_45).** Built for programs: a C unit per float mode, compiled with
   its flags (`[CG-C-11]`); lambdas take their function's mode; a default
