@@ -6499,6 +6499,17 @@ impl<'a> Checker<'a> {
             kind: ast::ExprKind::Path { segments: vec![ast::Ident { name, span }] },
             span,
         };
+        // `sum_f64` totals `f32`s in an `f64`: each item is converted first.
+        let item = if self.iterator_number(receiver_ty) == Some(number) {
+            path(item_name)
+        } else {
+            let to = ast::TypeExpr {
+                id: ast::NodeId::DUMMY,
+                kind: ast::TypeKind::Path { segments: vec![ast::Ident { name: Symbol::intern("f64"), span }], args: Vec::new() },
+                span,
+            };
+            ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Cast { expr: Box::new(path(item_name)), ty: to }, span }
+        };
         let body = ast::Block {
             id: ast::NodeId::DUMMY,
             stmts: vec![ast::Stmt {
@@ -6507,7 +6518,7 @@ impl<'a> Checker<'a> {
                 kind: ast::StmtKind::Assign {
                     targets: vec![path(total_name)],
                     op: Some(if summing { ast::BinOp::Add } else { ast::BinOp::Mul }),
-                    value: path(item_name),
+                    value: item,
                 },
                 span,
             }],
@@ -17742,6 +17753,52 @@ impl<'a> Checker<'a> {
                     stmts: vec![Stmt::Let { local: a, init: Some(receiver) }, Stmt::Let { local: b, init: Some(other) }],
                     span,
                 },
+                value: Box::new(chosen),
+            },
+            span,
+        }
+    }
+
+    /// `[TYP-6]` — `char.from_u32(x) -> Option[char]`: the character whose
+    /// scalar value is `x`, or `None` when `x` is not one (past `0x10FFFF`, or
+    /// a surrogate, `0xD800` to `0xDFFF`). The one way an integer other than a
+    /// `u8` becomes a `char` (D-469).
+    fn synth_char_from_u32(&mut self, args: &[ast::Arg], span: Span) -> Expr {
+        if args.len() != 1 || args[0].name.is_some() {
+            self.error(codes::E2020, span, format!("`char.from_u32` takes 1 argument, found {}", args.len()));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let (u32_ty, char_ty, bool_ty) = (self.common.u32, self.common.char_, self.common.bool_);
+        let value = self.check_expr(&args[0].value, u32_ty);
+        let code = self.declare(None, u32_ty, span);
+        let local = || Expr { ty: u32_ty, kind: ExprKind::Local(code), span };
+        let int = |value: u128| Expr { ty: u32_ty, kind: ExprKind::Int(value), span };
+        let compare = |op, lhs: Expr, rhs: Expr| Expr { ty: bool_ty, kind: ExprKind::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) }, span };
+        let scalar = compare(BinOp::Le, local(), int(0x10FFFF));
+        let outside = compare(BinOp::Or, compare(BinOp::Lt, local(), int(0xD800)), compare(BinOp::Gt, local(), int(0xDFFF)));
+        let valid = compare(BinOp::And, scalar, outside);
+        let option_ty = self.option_of(char_ty);
+        let TyKind::Enum(option_id) = *self.types.kind(option_ty) else {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        let character = Expr { ty: char_ty, kind: ExprKind::Cast { expr: Box::new(local()), to: char_ty }, span };
+        let some = Expr { ty: option_ty, kind: ExprKind::EnumLit { enum_id: option_id, variant: 1, fields: vec![character] }, span };
+        let none = Expr { ty: option_ty, kind: ExprKind::EnumLit { enum_id: option_id, variant: 0, fields: vec![] }, span };
+        let arm = |kind, body: Expr| hir::MatchArm {
+            pattern: hir::Pattern { ty: bool_ty, kind, span },
+            guard: None,
+            body: hir::MatchArmBody::Expr(body),
+            span,
+        };
+        let chosen = Expr {
+            ty: option_ty,
+            kind: ExprKind::Match { scrutinee: Box::new(valid), arms: vec![arm(hir::PatternKind::Int(1), some), arm(hir::PatternKind::Wild, none)] },
+            span,
+        };
+        Expr {
+            ty: option_ty,
+            kind: ExprKind::Block {
+                block: Block { stmts: vec![Stmt::Let { local: code, init: Some(value) }], span },
                 value: Box::new(chosen),
             },
             span,
@@ -30123,6 +30180,9 @@ impl<'a> Checker<'a> {
         args: &[ast::Arg],
         span: Span,
     ) -> Expr {
+        if matches!(self.types.kind(owner), TyKind::Char) && name.name.is("from_u32") && generic_args.is_empty() {
+            return self.synth_char_from_u32(args, span);
+        }
         // `[TYP-36]` — `void.default()` is `()` (D-463).
         if matches!(self.types.kind(owner), TyKind::Void) && name.name.is("default") && args.is_empty() {
             return self.void_value(span);
@@ -31398,6 +31458,17 @@ impl<'a> Checker<'a> {
             && let Some(number) = self.iterator_number(receiver.ty)
         {
             return self.synth_iterator_total(receiver, number, name.name.is("sum"), span);
+        }
+        // `[STD-5]` — `sum_f64()` adds an iterator's `f32`s in an `f64` (D-471).
+        if name.name.is("sum_f64")
+            && args.is_empty()
+            && generic_args.is_empty()
+            && self.lookup_method(receiver.ty, name.name).is_none()
+            && let Some(number) = self.iterator_number(receiver.ty)
+            && number == self.common.f32
+        {
+            let f64_ty = self.common.f64;
+            return self.synth_iterator_total(receiver, f64_ty, true, span);
         }
         // `[STD-19]` — `copied()` / `cloned()` over an iterator of references.
         if matches!(name.name.as_str(), "copied" | "cloned")

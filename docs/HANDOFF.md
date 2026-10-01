@@ -11104,7 +11104,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h51/` are frozen.
-* **Next numbers:** ODR-098, D-469, ADR-103, ERR-056.
+* **Next numbers:** ODR-098, D-472, ADR-103, ERR-056.
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
@@ -11275,11 +11275,19 @@ first**; the rest of §0.355 is the running narrative behind it.
     fields its reachable overrides borrow; an interface call still holds the
     whole object) and G7-N1 (D-468: tuple and fixed-array type arguments in
     expression position).
-  * **Next:** what is left of the second review: the interface half of D-467
-    (a per-class accessor in the type information), G7-2 (a 256-deep
-    literal's stack), D-460 (G5-7), D-466's temporaries, G7-3 to G7-5, G8-4;
-    then the fused `for` over the new adapters and `str.chars()`; then
-    `[CLO-3]` with D-422.
+  * Then two functions the spec names that did not exist: `char.from_u32`
+    (D-469, `[TYP-6]`) and `sum_f64()` on an iterator of `f32`s (D-471,
+    `[STD-5]`, which `KahanSum` already completed). `[TXT-10]`'s iterators
+    (`chars`, `split`, `lines`, ...) were written and taken out again: an
+    iterator whose items are views of the text it holds fails inside std's
+    `Iterator` defaults, because a reference to a struct with view fields has
+    no region slot of its own (D-470, open; the cause and the fix's shape are
+    in its row).
+  * **Next:** D-470, then `[TXT-10]`'s iterators on top of it; what is left of
+    the second review: the interface half of D-467 (a per-class accessor in
+    the type information), G7-2 (a 256-deep literal's stack), D-460 (G5-7),
+    D-466's temporaries, G7-3 to G7-5, G8-4; then the fused `for` over the new
+    adapters; then `[CLO-3]` with D-422.
   * **gcc (the owner's request; ADR-098, D-445, D-446).** Ember built with gcc
     15.2 under WSL (Ubuntu) on this machine; the 39 benchmark programs against
     their C or C++ twin built by the same gcc with the same flags
