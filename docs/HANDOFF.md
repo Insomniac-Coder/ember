@@ -11143,12 +11143,16 @@ first**; the rest of §0.355 is the running narrative behind it.
     generic types, a method's own projections, chains, an associated type's
     bound with a binding kept (`IntoIterator.Iter`), and the compiler's
     `Option.as_ref`/`as_mut`.
-  * **Next:** D-407 (5) (a default method formatting a `Self.Item` under
-    `where Item: Display`; a default method bounded `C: Build[Item]`), then
-    ODR-094 (`FromIterator`/`collect`, `peekable` over `as_ref`, `Box` and
-    `Cell` printing; spec text in the next hardening, with `as_ref`/`as_mut`),
-    then `[CLO-3]` with D-422 (how the closure adapters take their
-    callable).
+  * **D-407 (5), fixed; D-407 closed:** a default method's `where` clause
+    bounds the interface's associated types in its body; a bound over them
+    (`C: Build[Item]`) is read for each implementing type, at its calls and
+    where an implementation is compared with the interface; and the type
+    expected of a method call is a hint for a generic parameter only its
+    result names (`b: Bag = s.gather()`), as at a function's call.
+  * **Next:** ODR-094 (`FromIterator`/`collect`, `peekable` over `as_ref`,
+    `Box` and `Cell` printing; spec text in the next hardening, with
+    `as_ref`/`as_mut`), then `[CLO-3]` with D-422 (how the closure adapters
+    take their callable).
   * **Still to ask the owner:** whether to run the agent inspection of the
     2026-09-26 five defect fixes (D-358, D-355, D-201, D-202, D-218) the
     owner asked about; it was raised again at the start of this session and
