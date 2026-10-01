@@ -11101,7 +11101,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h51/` are frozen.
-* **Next numbers:** ODR-098, D-448, ADR-100, ERR-056.
+* **Next numbers:** ODR-098, D-449, ADR-101, ERR-056.
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
@@ -11272,6 +11272,18 @@ first**; the rest of §0.355 is the running narrative behind it.
       innermost loop only pushes onto is kept in a local (`list_locals.rs`,
       with the push's growth by value; not for MSVC, 8 times slower there); an
       interface call's fallback search is out of line and cold.
+    * **ADR-100 (the owner's go, after a long explanation):** `Map` places a
+      number key at its own remainder by a prime table length, switches a map
+      to the multiply only when storing walks past more than 100 used places,
+      and keeps 4-byte entry numbers below 2^31 places (8-byte above). The
+      `Map` benchmark with gcc: 2.02x → 0.67x; four new map rows (`a13`-`a16`)
+      in the README. Open from it: text keys are 1.56x-1.71x the C++ with MSVC
+      and clang (not the placement, not looked into), and D-448 (a test copy of
+      std made a printing test generate invalid C).
+    * **Waiting for the owner's go:** the generic `larger` with gcc (1.75x): the
+      overflow check on `total` is the whole cost, and the range analysis could
+      prove it away if a value a loop only raises were bounded by the limits in
+      the loop (widening to thresholds; `best` never passes 100,002).
     * **D-447 (open):** with MSVC, the three `mut self` programs are 1.20x to
       1.30x the C++ (21 runs, twice), against 1.10x to 1.17x in the README's
       2026-09-30 run. Not today's work: with D-446 switched off they are slower

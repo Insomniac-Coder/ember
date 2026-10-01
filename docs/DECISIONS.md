@@ -3557,6 +3557,58 @@ RandomState]` in insertion order; one key, one hash within a run),
 `HASH-2/accept_bytes_differing_in_their_tail_hash_apart` (D-405, both hashers), and
 `random_state_is_keyed_per_process` in `milestones.rs` (one program run twice hashes a key two ways).
 
+## ADR-100 — `Map`: a number key at its own remainder, a prime-length table, the multiply only when keys pile up; 4-byte entry numbers
+
+2026-10-01/02, the owner's go. With gcc the `Map` benchmark (a million keys `i * 7`, then five
+million lookups in the same order) ran 2.02x its C++ twin. `DefaultHasher` multiplied every key by
+FxHash's constant and the table took a key's place from the product's high bits (ADR-047), so keys
+next to each other landed about 3.8 MB apart and every lookup waited on memory; libstdc++'s
+`unordered_map` uses an integer as its own hash and a prime number of buckets, so the same keys sit
+in neighbouring buckets and are read in order.
+
+**Built** (`std/src/collections.em`):
+* `DefaultHasher.mix` spreads the state by the multiply before each word is xored in: a one-word key
+  (any integer) hashes to itself, a key of several words still mixes them all. Still one multiply,
+  one rotate and one xor per word (`[HASH-2]`); its values change, which `[HASH-2]` allows between
+  versions.
+* The table is a prime number of places long (`prime_at_most`, the largest prime at most the power
+  of two the map would have used, so the seven-eighths rule and the growth are unchanged), and a
+  key's home is its hash's remainder by that length: keys close together get neighbouring places,
+  and keys a power of two apart do not share one.
+* The one pattern that piles up under a remainder is keys a multiple of the table's length apart.
+  When storing an entry, in `push_new` or in `rebuild` (a table can reach that length inside a
+  rebuild), walks past more than 100 used places, the map switches for good (`use_multiply`) to
+  ADR-047's placement, the hash times FxHash's constant and its high bits, in a table a power of two
+  long, and rebuilds. 20,000 keys `i * 32749` (the length of their table): 0.75 s before the switch
+  existed, 0.0015 s with it (ADR-047's map 0.0013 s).
+* A place holds a 4-byte entry number (`slots: Array[i32]`) while the table is at most 2^31 − 1
+  long; a rebuild to a longer table uses 8-byte ones (`wide_slots`, `wide`). `find` and `place`
+  choose the list once and walk it, and the table's length is read once per operation, so the
+  choice costs 0% to 4% against a 4-byte-only table.
+
+**Measured** (median of 11; Ember's time over the C++ twin's, each built by the same compiler):
+
+| Program | gcc before → after | MSVC after | clang after |
+|---|---|---|---|
+| keys `i * 7` in order (the benchmark) | 2.02x → 0.67x | 0.33x | 0.20x |
+| scrambled keys | 0.77x → 0.94x | 0.58x | 0.50x |
+| keys 1,024 apart | 1.34x → 0.76x | 0.40x | 0.34x |
+| keys 1,048,576 apart | 1.09x → 0.60x | 0.40x | 0.28x |
+| text keys | 0.67x → 0.80x | 1.71x | 1.56x |
+
+The remainder is a division where the multiply and shift were not, so scrambled keys (no
+neighbours to gain from) are about 10% slower with gcc than before; MSVC and clang measured them
+even. Text keys with MSVC and clang were as slow before; that gap is not the placement and is not
+looked into yet. The four new rows are README benchmarks (`a13` to `a16`).
+
+**Tests.** `STD-11/accept_a_map_whose_keys_share_a_place_switches_its_placement` (a map of keys
+`i * 7` keeps a prime table, capacity 28,655; one of keys `i * 32749` switches to a power-of-two
+table, capacity 28,672; every key found; fails with the switch disabled). The 8-byte path cannot be
+reached on this machine (a table past 2^31 places): the whole conformance, run-pass and std suites
+pass with gcc against a std whose switch to 8-byte numbers happens at 64 places, so every larger map
+in them ran on the 8-byte list. The quick check, the full suite with MSVC and with clang, and the
+conformance suite with gcc pass.
+
 ## ADR-099 — gcc unrolls loops; a list a loop only pushes onto lives in a local; an interface call's fallback search is out of line
 
 2026-10-01, the owner's choice ("turn it on, option A"), after the gcc comparison of ADR-098. The

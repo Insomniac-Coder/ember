@@ -160,10 +160,14 @@ extend str implements AsKey[String], ToKey[String]:
     fn to_key(self) -> String:
         return String.from(self)
 
-## `[HASH-2]` — fixed-seed and FxHash's class: one rotate, one xor and one
-## multiply per word. The exact mixer is replaceable and therefore is not part
-## of Ember's source compatibility contract. Bytes go in eight to a word. No
-## `Copy` derive is present: this state is moved.
+## `[HASH-2]` — fixed-seed and FxHash's class: one multiply, one rotate and
+## one xor per word. The state is spread by the multiply before each word is
+## xored in, so a key of one word (any integer) hashes to itself, as C++'s
+## `std::hash` does, and a `Map` keeps keys that are close together in
+## neighbouring places (ADR-100); a key of several words still mixes them all.
+## The exact mixer is replaceable and therefore is not part of Ember's source
+## compatibility contract. Bytes go in eight to a word. No `Copy` derive is
+## present: this state is moved.
 pub struct DefaultHasher implements Hasher:
     state: u64
 
@@ -172,7 +176,8 @@ pub struct DefaultHasher implements Hasher:
 
     @overflow(wrap)
     fn mix(mut self, word: u64):
-        self.state = (((self.state << 5) | (self.state >> 59)) ^ word) * 0x517cc1b727220a95
+        spread = self.state * 0x517cc1b727220a95
+        self.state = ((spread << 5) | (spread >> 59)) ^ word
 
     fn write_bytes(mut self, bytes: Span[u8]):
         index = 0
@@ -342,6 +347,23 @@ extend RandomState implements Default:
 fn process_key(which: int) -> u64:
     return 0
 
+## The largest prime at most `size`, the length of a `Map`'s table before it
+## switches (ADR-100): keys whose gap is a power of two do not share places.
+fn prime_at_most(size: int) -> int:
+    n = size
+    while n > 3:
+        prime = true
+        d = 2
+        while d * d <= n:
+            if n % d == 0:
+                prime = false
+                break
+            d += 1
+        if prime:
+            return n
+        n -= 1
+    return n
+
 ## One entry: its hash, kept so growing never hashes again, its key and its
 ## value.
 struct MapSlot[K, V]:
@@ -353,15 +375,26 @@ struct MapSlot[K, V]:
 ## order. `entries` holds the entries in that order; a removed one is `None`
 ## until the map closes the gaps up. `slots` is an open-addressed table of
 ## positions into `entries`: -1 is empty and -2 a removed entry's old place.
-## It is a power of two long, probed linearly from the hash's high bits, and
-## at most seven eighths used, so a probe always meets an empty place and
-## ends (`[HASH-3]`).
+## It is at most seven eighths used, so a probe always meets an empty place
+## and ends (`[HASH-3]`), and it is probed linearly from a key's home (ADR-100):
+## * the hash's remainder by the table's length, a prime: keys close together
+##   get neighbouring places, so a run of them is read in order, and keys a
+##   power of two apart do not share one;
+## * once storing an entry has walked past more than 100 used places (keys a
+##   multiple of the length apart all share one home), the map switches for
+##   good to the hash times FxHash's constant, its high bits, in a table a
+##   power of two long (`use_multiply`), which spreads any such run.
+## A place holds a 4-byte entry number while the table is at most 2^31 − 1
+## long, an 8-byte one in a longer table (`wide`).
 pub struct Map[K: Eq + Hash, V, H: Hasher + Default = DefaultHasher]:
     entries: Array[Option[MapSlot[K, V]]] = []
-    slots: Array[int] = []
+    slots: Array[i32] = []
+    wide_slots: Array[int] = []
+    wide: bool = false
     live: int = 0
     used: int = 0
     shift: u64 = 64
+    use_multiply: bool = false
 
     ## `Map[K, V]()` is an empty map (`[STR-6]`: every field has a default).
     pub fn init(self):
@@ -380,21 +413,24 @@ pub struct Map[K: Eq + Hash, V, H: Hasher + Default = DefaultHasher]:
 
     ## How many entries fit before the table grows.
     pub fn capacity(self) -> int:
-        return self.slots.len() * 7 // 8
+        return self.slot_count() * 7 // 8
 
     pub fn clear(mut self):
         self.entries.clear()
         self.slots.clear()
+        self.wide_slots.clear()
+        self.wide = false
         self.live = 0
         self.used = 0
         self.shift = 64
+        self.use_multiply = false
 
     ## Room for `n` more entries. A rebuild leaves at least half the usable
     ## room free, so at a steady load near the limit removed places are
     ## dropped only after as many operations again: insertion stays expected
     ## constant time, amortised (`[STD-11]`, ODR-033).
     pub fn reserve(mut self, n: int):
-        if (self.used + n) * 8 <= self.slots.len() * 7:
+        if (self.used + n) * 8 <= self.slot_count() * 7:
             return
         size = 8
         while size * 7 < (self.live + n) * 16:
@@ -406,46 +442,111 @@ pub struct Map[K: Eq + Hash, V, H: Hasher + Default = DefaultHasher]:
         q.hash(h)
         return h.finish()
 
+    ## The entry number at position `at`, from whichever list the table is in.
+    fn slot_at(self, at: int) -> int:
+        if self.wide:
+            return self.wide_slots[at]
+        return self.slots[at] as int
+
+    fn set_slot(mut self, at: int, value: int):
+        if self.wide:
+            self.wide_slots[at] = value
+        else:
+            self.slots[at] = value as i32
+
+    ## The table's length.
+    fn slot_count(self) -> int:
+        if self.wide:
+            return self.wide_slots.len()
+        return self.slots.len()
+
+    ## Which position in `slots` a key starts at.
+    @overflow(wrap)
+    fn home(self, hash: u64, places: int) -> int:
+        if self.use_multiply:
+            return ((hash * 0x517cc1b727220a95) >> self.shift) as int
+        return (hash % (places as u64)) as int
+
     ## Where in `slots` the entry keyed `q` is listed.
     fn find[Q: AsKey[K] + Hash](self, q: Q, hash: u64) -> Option[int]:
-        if self.slots.len() == 0:
+        places = self.slot_count()
+        if places == 0:
             return None
-        mask = self.slots.len() - 1
-        at = (hash >> self.shift) as int
-        while true:
-            slot = self.slots[at]
-            if slot == -1:
-                return None
-            if slot >= 0:
-                match self.entries[slot]:
-                    Some(e):
-                        if e.hash == hash and q.is_key(e.key):
-                            return Some(at)
-                    None:
-                        pass
-            at = (at + 1) & mask
+        at = self.home(hash, places)
+        if self.wide:
+            while true:
+                slot = self.wide_slots[at]
+                if slot == -1:
+                    return None
+                if slot >= 0:
+                    match self.entries[slot]:
+                        Some(e):
+                            if e.hash == hash and q.is_key(e.key):
+                                return Some(at)
+                        None:
+                            pass
+                at += 1
+                if at == places:
+                    at = 0
+        else:
+            while true:
+                slot = (self.slots[at] as int)
+                if slot == -1:
+                    return None
+                if slot >= 0:
+                    match self.entries[slot]:
+                        Some(e):
+                            if e.hash == hash and q.is_key(e.key):
+                                return Some(at)
+                        None:
+                            pass
+                at += 1
+                if at == places:
+                    at = 0
         return None
 
-    ## Lists entry `i` in `slots`, in the first free place from its home.
-    fn place(mut self, hash: u64, i: int):
-        mask = self.slots.len() - 1
-        at = (hash >> self.shift) as int
-        while self.slots[at] >= 0:
-            at = (at + 1) & mask
-        if self.slots[at] == -1:
+    ## Lists entry `i` in `slots`, in the first free place from its home, and
+    ## says how many used places it walked past.
+    fn place(mut self, hash: u64, i: int) -> int:
+        places = self.slot_count()
+        at = self.home(hash, places)
+        passed = 0
+        if self.wide:
+            while self.wide_slots[at] >= 0:
+                at += 1
+                if at == places:
+                    at = 0
+                passed += 1
+        else:
+            while (self.slots[at] as int) >= 0:
+                at += 1
+                if at == places:
+                    at = 0
+                passed += 1
+        if self.slot_at(at) == -1:
             self.used += 1
-        self.slots[at] = i
+        self.set_slot(at, i)
+        return passed
 
     ## Closes up removed entries, then lists every entry in a table of `size`.
     fn rebuild(mut self, size: int):
         if self.entries.len() != self.live:
             self.entries.retain(fn(e) => e.is_some())
         self.slots.clear()
-        for _ in range(size):
-            self.slots.push(-1)
         bits = 0
         while (1 << bits) < size:
             bits += 1
+        length = prime_at_most(size)
+        if self.use_multiply:
+            length = 1 << bits
+        self.wide_slots.clear()
+        self.wide = length > 2147483647
+        if self.wide:
+            for _ in range(length):
+                self.wide_slots.push(-1)
+        else:
+            for _ in range(length):
+                self.slots.push(-1)
         self.shift = (64 - bits) as u64
         self.used = 0
         for i in range(self.entries.len()):
@@ -455,20 +556,26 @@ pub struct Map[K: Eq + Hash, V, H: Hasher + Default = DefaultHasher]:
                     hash = e.hash
                 None:
                     pass
-            self.place(hash, i)
+            if self.place(hash, i) > 100 and not self.use_multiply:
+                self.use_multiply = true
+                self.rebuild(size)
+                return
 
     fn push_new(mut self, hash: u64, owned k: K, owned v: V):
         self.reserve(1)
         at = self.entries.len()
         self.entries.push(Some(MapSlot(hash, k, v)))
-        self.place(hash, at)
+        passed = self.place(hash, at)
         self.live += 1
+        if passed > 100 and not self.use_multiply:
+            self.use_multiply = true
+            self.rebuild(self.slot_count())
 
     pub fn insert(mut self, owned k: K, owned v: V) -> Option[V]:
         hash = self.hash_of(k)
         match self.find(k, hash):
             Some(at):
-                match self.entries[self.slots[at]]:
+                match self.entries[self.slot_at(at)]:
                     Some(ref mut e):
                         return Some(mem.replace(e.value, v))
                     None:
@@ -481,7 +588,7 @@ pub struct Map[K: Eq + Hash, V, H: Hasher + Default = DefaultHasher]:
     pub fn get[Q: AsKey[K] + Hash](self, q: Q) -> Option[ref V]:
         match self.find(q, self.hash_of(q)):
             Some(at):
-                match self.entries[self.slots[at]]:
+                match self.entries[self.slot_at(at)]:
                     Some(e):
                         return Some(ref e.value)
                     None:
@@ -492,7 +599,7 @@ pub struct Map[K: Eq + Hash, V, H: Hasher + Default = DefaultHasher]:
     pub fn get_mut[Q: AsKey[K] + Hash](mut self, q: Q) -> Option[ref mut V]:
         match self.find(q, self.hash_of(q)):
             Some(at):
-                match self.entries[self.slots[at]]:
+                match self.entries[self.slot_at(at)]:
                     Some(ref mut e):
                         return Some(ref mut e.value)
                     None:
@@ -510,12 +617,12 @@ pub struct Map[K: Eq + Hash, V, H: Hasher + Default = DefaultHasher]:
     pub fn remove[Q: AsKey[K] + Hash](mut self, q: Q) -> Option[V]:
         match self.find(q, self.hash_of(q)):
             Some(at):
-                i = self.slots[at]
-                self.slots[at] = -2
+                i = self.slot_at(at)
+                self.set_slot(at, -2)
                 old = mem.replace(self.entries[i], None)
                 self.live -= 1
                 if self.entries.len() > 16 and self.live * 2 < self.entries.len():
-                    self.rebuild(self.slots.len())
+                    self.rebuild(self.slot_count())
                 match owned old:
                     Some(e):
                         return Some(e.value)
@@ -536,7 +643,7 @@ pub struct Map[K: Eq + Hash, V, H: Hasher + Default = DefaultHasher]:
             if gone:
                 self.entries[i] = None
                 self.live -= 1
-        self.rebuild(self.slots.len())
+        self.rebuild(self.slot_count())
 
     ## Removes and returns the newest entry, as Python's `dict.popitem` does.
     pub fn pop_item(mut self) -> Option[(K, V)]:
@@ -560,11 +667,13 @@ pub struct Map[K: Eq + Hash, V, H: Hasher + Default = DefaultHasher]:
 
     ## Marks the place listing entry `i` as removed.
     fn forget(mut self, hash: u64, i: int):
-        mask = self.slots.len() - 1
-        at = (hash >> self.shift) as int
-        while self.slots[at] != i:
-            at = (at + 1) & mask
-        self.slots[at] = -2
+        places = self.slot_count()
+        at = self.home(hash, places)
+        while self.slot_at(at) != i:
+            at += 1
+            if at == places:
+                at = 0
+        self.set_slot(at, -2)
 
     ## Inserts `other`'s entries in its order.
     pub fn update(mut self, owned other: Map[K, V, H]):
@@ -636,7 +745,7 @@ extend[K: Eq + Hash, V, H: Hasher + Default, Q: AsKey[K] + Hash + Debug] Map[K, 
     fn index(self, q: Q) -> ref V:
         match self.find(q, self.hash_of(q)):
             Some(at):
-                match self.entries[self.slots[at]]:
+                match self.entries[self.slot_at(at)]:
                     Some(e):
                         return ref e.value
                     None:
@@ -648,7 +757,7 @@ extend[K: Eq + Hash, V, H: Hasher + Default, Q: AsKey[K] + Hash + Debug] Map[K, 
     fn index_mut(mut self, q: Q) -> ref mut V:
         match self.find(q, self.hash_of(q)):
             Some(at):
-                match self.entries[self.slots[at]]:
+                match self.entries[self.slot_at(at)]:
                     Some(ref mut e):
                         return ref mut e.value
                     None:
@@ -662,7 +771,7 @@ extend[K: Eq + Hash, V, H: Hasher + Default, Q: ToKey[K] + Hash] Map[K, V, H] im
         hash = self.hash_of(q)
         match self.find(q, hash):
             Some(at):
-                match self.entries[self.slots[at]]:
+                match self.entries[self.slot_at(at)]:
                     Some(ref mut e):
                         e.value = v
                         return
@@ -728,7 +837,7 @@ pub struct MapEntry[K: Eq + Hash, V, H: Hasher + Default]:
         i = 0
         match self.map.find(self.key, self.hash):
             Some(at):
-                i = self.map.slots[at]
+                i = self.map.slot_at(at)
             None:
                 # `push_new` may close up removed entries first, so the new
                 # entry's place is read after it.
@@ -743,7 +852,7 @@ pub struct MapEntry[K: Eq + Hash, V, H: Hasher + Default]:
     pub fn or_insert_with(owned self, make: fn() -> V) -> ref mut V:
         match self.map.find(self.key, self.hash):
             Some(at):
-                i = self.map.slots[at]
+                i = self.map.slot_at(at)
                 match self.map.entries[i]:
                     Some(ref mut e):
                         return ref mut e.value
@@ -757,7 +866,7 @@ extend[K: Eq + Hash, V: Default, H: Hasher + Default] MapEntry[K, V, H]:
         i = 0
         match self.map.find(self.key, self.hash):
             Some(at):
-                i = self.map.slots[at]
+                i = self.map.slot_at(at)
             None:
                 self.map.push_new(self.hash, self.key, V.default())
                 i = self.map.entries.len() - 1
@@ -918,7 +1027,7 @@ pub struct Set[T: Eq + Hash, H: Hasher + Default = DefaultHasher]:
             if gone:
                 self.map.entries[i] = None
                 self.map.live -= 1
-        self.map.rebuild(self.map.slots.len())
+        self.map.rebuild(self.map.slot_count())
 
     ## Removes and returns the newest element.
     pub fn pop(mut self) -> Option[T]:
