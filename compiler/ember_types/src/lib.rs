@@ -1711,6 +1711,23 @@ impl TypeTable {
         }
     }
 
+    /// Whether a view reachable in `ty`, as [`TypeTable::is_view`] walks it,
+    /// lends mutably: a `ref mut` or a `MutSpan`, or one inside a tuple, a
+    /// fixed array, a struct or an enum's payload. A shared `ref` lends
+    /// nothing mutably, whatever it points at.
+    pub fn has_mutable_view(&self, ty: Ty) -> bool {
+        match self.kind(ty) {
+            TyKind::Ref { mutable, .. } | TyKind::Span { mutable, .. } => *mutable,
+            TyKind::Tuple(items) => items.iter().any(|&t| self.has_mutable_view(t)),
+            TyKind::Array { elem, .. } => self.has_mutable_view(*elem),
+            TyKind::Struct(id) => self.struct_def(*id).fields.iter().any(|f| self.has_mutable_view(f.ty)),
+            TyKind::Enum(id) => {
+                self.enum_def(*id).variants.iter().any(|v| v.fields.iter().any(|f| self.has_mutable_view(f.ty)))
+            }
+            _ => false,
+        }
+    }
+
     /// Whether a type may cross a C boundary unchanged (`[FFI-5]`). Every
     /// scalar and every `@layout(c)` struct of FFI-safe fields qualifies.
     pub fn is_ffi_safe(&self, ty: Ty) -> bool {

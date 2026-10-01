@@ -688,7 +688,7 @@ impl Emitter<'_> {
         // Class tables first: an interface adapter can call through one (D-375).
         self.emit_virtual_tables();
         self.emit_interface_adapters();
-        self.emit_class_drop_adapters();
+        self.emit_class_drop_adapters(bodies);
         self.emit_class_field_drop_glue();
         // `[WK-8]` is an opt-in diagnostic mode.  Do not grow ordinary
         // generated programs with unused debug callbacks or registrations.
@@ -1785,7 +1785,7 @@ impl Emitter<'_> {
     /// `void(*)(void*)` metadata slot. The ordinary function prototype is
     /// emitted first, so this wrapper remains valid C11 without relying on an
     /// implicit declaration or an incompatible function-pointer conversion.
-    fn emit_class_drop_adapters(&mut self) {
+    fn emit_class_drop_adapters(&mut self, bodies: &[Body]) {
         let classes: Vec<ClassId> = self.types.runtime_classes().map(|(id, _)| id).collect();
         for id in classes {
             let def = self.types.class_def(id);
@@ -1799,6 +1799,30 @@ impl Emitter<'_> {
             self.line(&format!(
                 "    {object}* handle = ({object}*)raw;",
             ));
+            // `[EXC-15]` — `drop(mut self)` holds a write access to every
+            // field from entry to return, as a `mut self` call holds it from
+            // its caller; the runtime is the caller here (D-453). Its
+            // location is the first `drop` in the chain. A `@sync` object
+            // has no plain access words.
+            let object_write = !def.is_sync;
+            let header = format!("(({RT}obj_header*)handle)");
+            let location = {
+                let mut chain = Some(id);
+                let mut found = None;
+                while let Some(class) = chain {
+                    let class_def = self.types.class_def(class);
+                    if class_def.has_drop {
+                        let symbol = drop_symbol(&class_def.name.to_string());
+                        found = bodies.iter().find(|body| body.symbol == symbol).map(|body| self.location(body.span));
+                        break;
+                    }
+                    chain = class_def.base;
+                }
+                found.unwrap_or_else(|| format!("{RT}loc_unknown()"))
+            };
+            if object_write {
+                self.line(&format!("    {RT}object_begin_write({header}, {location});"));
+            }
             if def.has_drop {
                 self.line(&format!("    {}(&handle);", drop_symbol(&owner)));
             }
@@ -1823,6 +1847,9 @@ impl Emitter<'_> {
                 }
                 base = base_def.base;
                 depth += 1;
+            }
+            if object_write {
+                self.line(&format!("    {RT}object_end_write({header}, {location});"));
             }
             self.line("}");
             self.line("");
@@ -7058,6 +7085,10 @@ impl Emitter<'_> {
                     _ => read,
                 }
             }
+            // A `void` place has no C object (a `void` local is never
+            // declared, and `*p` of a `void*` is not C): its borrow takes
+            // the runtime's one byte for them (ADR-062, D-449).
+            Rvalue::Ref { place, .. } if self.is_void(self.place_ty(place, body)) => format!("{RT}void_place()"),
             Rvalue::Ref { place, .. } => {
                 let address = format!("&{}", self.place_in(place, body));
                 // A shared Ember borrow of a class handle is a read-only

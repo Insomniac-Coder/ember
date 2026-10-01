@@ -312,14 +312,20 @@ fn terminator_uses_root(
 /// derived from it, and a family shares the root of its base chain. A read
 /// check needs no held write that could cover it; a write check, no held
 /// access. A `dyn` or interface anywhere in the program turns the pass off:
-/// those reach accesses taken on concrete classes the pass cannot see.
+/// those reach accesses taken on concrete classes the pass cannot see. A
+/// class with a `drop` holds a write of its whole object while it runs (the
+/// runtime begins it, D-453), so its family counts as holding one.
 pub fn remove_never_firing_checks_all(bodies: &mut [Body], types: &TypeTable) -> usize {
     let mut held_write: HashSet<(ClassId, String)> = HashSet::new();
     let mut held_any: HashSet<(ClassId, String)> = HashSet::new();
     let mut held_write_family: HashSet<ClassId> = HashSet::new();
     let mut held_any_family: HashSet<ClassId> = HashSet::new();
-    let mut object_write_family: HashSet<ClassId> = HashSet::new();
-    let mut object_any_family: HashSet<ClassId> = HashSet::new();
+    let mut object_write_family: HashSet<ClassId> = types
+        .classes()
+        .filter(|(_, def)| def.has_drop && !def.is_sync)
+        .map(|(id, _)| class_family(types, id))
+        .collect();
+    let mut object_any_family: HashSet<ClassId> = object_write_family.clone();
     for body in bodies.iter() {
         for basic_block in &body.blocks {
             if let Terminator::Call { func: FuncRef::Interface { .. } | FuncRef::DynBoxNew { .. }, .. } = basic_block.terminator {

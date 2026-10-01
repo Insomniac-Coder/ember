@@ -381,7 +381,7 @@ fn assert_exact_diagnostics(
 }
 
 /// `ember` with `input` piped to its standard input (`#$ stdin:`).
-fn ember_with_input(args: &[&str], root: &Path, input: &str) -> Run {
+fn ember_with_input(args: &[&str], root: &Path, input: &[u8]) -> Run {
     use std::io::Write;
     let mut child = Command::new(EMBER)
         .args(args)
@@ -391,7 +391,7 @@ fn ember_with_input(args: &[&str], root: &Path, input: &str) -> Run {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .expect("the ember binary runs");
-    child.stdin.take().expect("piped stdin").write_all(input.as_bytes()).expect("stdin is written");
+    child.stdin.take().expect("piped stdin").write_all(input).expect("stdin is written");
     let output = child.wait_with_output().expect("the ember binary finishes");
     Run {
         stdout: String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
@@ -1715,6 +1715,23 @@ fn a_devirtualised_interface_call_searches_out_of_line() {
     assert!(!c.stdout.contains(&inline), "an inline table search remains:\n{}", c.stdout);
 }
 
+/// D-450 — `[STD-10]`, `[TXT-1]`, `[TXT-2]`: `input()` returns a `String`,
+/// which is valid UTF-8, and only a `_lossy` form may substitute U+FFFD, so a
+/// line that is not UTF-8 is a console failure and panics; a valid line with
+/// characters of several bytes reads whole. A conformance file cannot hold
+/// bytes that are not UTF-8, so they are piped in here.
+#[test]
+fn input_panics_on_a_line_that_is_not_utf8() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/STD-10/accept_input_reads_a_line.{SOURCE_EXT}");
+    let bad = ember_with_input(&["run", &source], &root, b"\xe2\x82\n42\nend\n");
+    assert_eq!(bad.exit, 3, "no panic:\n{}{}", bad.stdout, bad.stderr);
+    assert!(bad.stderr.contains("input: the line is not valid UTF-8"), "another panic:\n{}", bad.stderr);
+    let good = ember_with_input(&["run", &source], &root, "caf\u{e9}\n42\nend\n".as_bytes());
+    assert_eq!(good.exit, 0, "{}", good.stderr);
+    assert_eq!(good.stdout, "name? hi caf\u{e9}\nage? 2\nend\n");
+}
+
 /// D-446 — `[CG-C-1]`: a signed `+`, `-` or `*` (negation is `0 - x`) reaching C
 /// unchecked is done in its width's unsigned type, so wrapping is never C's
 /// undefined signed overflow (gcc -O2 miscompiled a wrapping `i * k` in a
@@ -1724,16 +1741,14 @@ fn wrapping_arithmetic_is_unsigned_in_c() {
     let root = workspace_root();
     let source = format!("tests/conformance/TYP-8/accept_wrapping_arithmetic_in_a_loop_is_never_undefined.{SOURCE_EXT}");
     let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "gcc"], &root);
-    assert_eq!(c.exit, 0, "C failed:
-{}", c.stderr);
+    assert_eq!(c.exit, 0, "C failed:\n{}", c.stderr);
     for wrapped in [
         "(int64_t)((uint64_t)(_1) * (uint64_t)(6364136223846793005LL))",
         "(int32_t)((uint32_t)(",
         "(int16_t)((uint32_t)(",
         "(int64_t)((uint64_t)(0LL) - (uint64_t)(",
     ] {
-        assert!(c.stdout.contains(wrapped), "no `{wrapped}`: wrapping arithmetic is signed in C:
-{}", c.stdout);
+        assert!(c.stdout.contains(wrapped), "no `{wrapped}`: wrapping arithmetic is signed in C:\n{}", c.stdout);
     }
 }
 
@@ -2848,7 +2863,7 @@ fn check_file(path: &Path, root: &Path) {
         let out_dir_arg = out_dir.to_string_lossy().into_owned();
         let arguments = ["run", relative.as_str(), "--out-dir", &out_dir_arg, "--profile", profile];
         let run = match &expectations.stdin {
-            Some(input) => ember_with_input(&arguments, root, input),
+            Some(input) => ember_with_input(&arguments, root, input.as_bytes()),
             None => ember(&arguments, root),
         };
 

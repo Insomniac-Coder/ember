@@ -427,11 +427,9 @@ fn call_result_accesses(
                 }
                 _ => return Vec::new(),
             };
-            // A mutable view is a write to what it views.
-            let mutable = matches!(
-                types.kind(place_ty(body, types, dest)),
-                TyKind::Span { mutable: true, .. } | TyKind::Ref { mutable: true, .. }
-            );
+            // A mutable view is a write to what it views, wherever it sits in
+            // the result (`Option[ref mut T]`, a tuple; D-452).
+            let mutable = types.has_mutable_view(place_ty(body, types, dest));
             vec![(object, mutable, 0)]
         }
         _ => Vec::new(),
@@ -822,7 +820,7 @@ fn insert_shared_accesses(
             continue;
         }
         accesses.push(SharedAccess {
-            created_at: Point { block: next.0 as usize, index: 0 },
+            created_at: after_call_ends(body, *next),
             owner,
             mutable: summary.mutable,
             regions: vec![region],
@@ -858,7 +856,7 @@ fn insert_shared_accesses(
         let mut payload = dest.clone();
         payload.projection.push(Projection::Deref);
         accesses.push(SharedAccess {
-            created_at: Point { block: next.0 as usize, index: 0 },
+            created_at: after_call_ends(body, *next),
             owner: payload,
             mutable,
             regions: vec![region],
@@ -880,7 +878,7 @@ fn insert_shared_accesses(
                 continue;
             }
             accesses.push(SharedAccess {
-                created_at: Point { block: next.0 as usize, index: 0 },
+                created_at: after_call_ends(body, *next),
                 owner,
                 mutable,
                 regions: held,
@@ -1044,6 +1042,16 @@ fn insert_shared_accesses(
         basic_block.stmts = rewritten;
     }
     accesses.len()
+}
+
+/// Where an access a call's result carries begins: in the call's `next`
+/// block, after the accesses the call itself held end (the `EndAccess` run
+/// lowering puts first there: a `mut self` call's whole-object write). Begun
+/// before them, a view a `mut self` method returns met that write (D-451).
+fn after_call_ends(body: &Body, next: BasicBlockId) -> Point {
+    let block = next.0 as usize;
+    let index = body.blocks[block].stmts.iter().take_while(|stmt| matches!(stmt.kind, StmtKind::EndAccess { .. })).count();
+    Point { block, index }
 }
 
 /// `[EXC-1]`, `[EXC-2]`, `[EXC-16]`, `[EXC-18]`, `[EXC-19]` — the accesses to

@@ -77,6 +77,15 @@ extern "C" {
 #define EMBER_OVERFLOW_SHIFT 63
 #endif
 
+/* ADR-062, D-449 — the address a borrow of a `void` place takes. `void`
+ * has no bytes, so nothing is ever read through it; one byte that lives as
+ * long as the program serves every such borrow (ODR-068: zero-sized values
+ * need not have distinct addresses). */
+static inline void* ember_void_place(void) {
+    static uint8_t place;
+    return &place;
+}
+
 /* Infinity and NaN in the emitted C, built from their IEEE bits: MSVC
  * refuses a constant division by zero (C2124), and its `NAN` sets the sign
  * bit, so the bits are what make every compiler agree. The NaN is the quiet

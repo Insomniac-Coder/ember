@@ -6031,7 +6031,9 @@ EMBER_PRINTERS(char, uint32_t)
 /* `[STD-10]` — `input(prompt)`: the prompt, flushed, then one line of
  * standard input without its `\n` (or `\r\n`). The prelude's console
  * functions treat a console failure as fatal: end of input panics, and the
- * message names the `Result` form in `std.io`. */
+ * message names the `Result` form in `std.io`. So does a line that is not
+ * UTF-8 (D-450): a `String` is valid UTF-8 (`[TXT-1]`), and only a `_lossy`
+ * form may substitute U+FFFD (`[TXT-2]`). */
 ember_vec ember_input(ember_str prompt, ember_loc loc) {
     print_str_to(stdout, prompt);
     fflush(stdout);
@@ -6054,6 +6056,12 @@ ember_vec ember_input(ember_str prompt, ember_loc loc) {
     }
     if (line.len > 0 && ((uint8_t*)line.ptr)[line.len - 1] == '\r') {
         line.len -= 1;
+    }
+    if (!ember_utf8_valid((ember_span){ line.ptr, line.len })) {
+        static const char message[] =
+            "input: the line is not valid UTF-8; `std.io.stdin().read_line()` returns it as a `Result` instead";
+        ember_vec_free(&line, 1);
+        ember_panic(message, sizeof message - 1, loc);
     }
     return line;
 }

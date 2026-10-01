@@ -11104,7 +11104,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h51/` are frozen.
-* **Next numbers:** ODR-098, D-449, ADR-102, ERR-056.
+* **Next numbers:** ODR-098, D-454, ADR-102, ERR-056.
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
@@ -11242,8 +11242,19 @@ first**; the rest of §0.355 is the running narrative behind it.
     folder (`scratchpad/wt-review` in the session's temp folder) could not be
     deleted: a safety check blocked the long-path removal, so it is left for
     the owner; `git worktree prune` after deleting it.
-  * **Next:** the second review's findings, worst first; then the fused `for`
-    over the new adapters and `str.chars()`; then `[CLO-3]` with D-422.
+  * **The second review's findings, being fixed worst first (2026-10-02,
+    autonomous, after ADR-101):** G7-1 (D-449: a borrow of a `void` place gave
+    C that does not compile), G6-1 (D-450: `input()` validates its line; a line
+    that is not UTF-8 panics, as end of input does, by `[TXT-2]` and
+    `[STD-10]`, no ODR), G5-3 (D-451: a `mut self` getter's carried access
+    begins after the call's own write ends), G5-2 (D-452: a mutable view
+    anywhere in an interface call's result is a write) and G5-1 (D-453: the
+    runtime's call of `drop` holds the object's write, and the check removal
+    counts it). Left of the nine high: G5-5 (a `RefCell` class field's borrow
+    panics) and G5-4 (a view of a class field made on one path is an ICE).
+  * **Next:** the rest of the second review's findings (G5-5, G5-4, then the
+    medium ones); then the fused `for` over the new adapters and
+    `str.chars()`; then `[CLO-3]` with D-422.
   * **gcc (the owner's request; ADR-098, D-445, D-446).** Ember built with gcc
     15.2 under WSL (Ubuntu) on this machine; the 39 benchmark programs against
     their C or C++ twin built by the same gcc with the same flags
