@@ -17,14 +17,14 @@
 <text x="1066" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember</text>
 <text x="1140" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember ÷ C</text>
 <line x1="0" y1="57" x2="1164" y2="57" stroke="#30363d"/>
-<text x="16" y="83" fill="#e6edf3" xml:space="preserve">Calls through an interface: area of 1 million shapes, 20 times</text>
-<text x="500" y="83.0" fill="#9198a1" text-anchor="end">103 ms</text>
-<text x="574" y="83.0" fill="#e6edf3" text-anchor="end">101 ms</text>
-<text x="648" y="83.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.98</text>
-<text x="746" y="83.0" fill="#9198a1" text-anchor="end">98 ms</text>
-<text x="820" y="83.0" fill="#e6edf3" text-anchor="end">97 ms</text>
-<text x="894" y="83.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<text x="992" y="83.0" fill="#9198a1" text-anchor="end">64 ms</text>
-<text x="1066" y="83.0" fill="#e6edf3" text-anchor="end">70 ms</text>
-<text x="1140" y="83.0" fill="#d29922" text-anchor="end" font-weight="600">×1.10</text>
+<text x="16" y="83" fill="#e6edf3" xml:space="preserve">Add two lists plus the round number into a third, overflow checks off</text>
+<text x="500" y="83.0" fill="#9198a1" text-anchor="end">15 ms</text>
+<text x="574" y="83.0" fill="#e6edf3" text-anchor="end">15 ms</text>
+<text x="648" y="83.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
+<text x="746" y="83.0" fill="#9198a1" text-anchor="end">67 ms</text>
+<text x="820" y="83.0" fill="#e6edf3" text-anchor="end">71 ms</text>
+<text x="894" y="83.0" fill="#d29922" text-anchor="end" font-weight="600">×1.05</text>
+<text x="992" y="83.0" fill="#9198a1" text-anchor="end">41 ms</text>
+<text x="1066" y="83.0" fill="#e6edf3" text-anchor="end">41 ms</text>
+<text x="1140" y="83.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
 </svg>
