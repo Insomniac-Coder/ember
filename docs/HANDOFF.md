@@ -11104,7 +11104,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h51/` are frozen.
-* **Next numbers:** ODR-098, D-472, ADR-105, ERR-056.
+* **Next numbers:** ODR-098, D-472, ADR-106, ERR-056.
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
@@ -11283,7 +11283,13 @@ first**; the rest of §0.355 is the running narrative behind it.
     `Iterator` defaults, because a reference to a struct with view fields has
     no region slot of its own (D-470, open; the cause and the fix's shape are
     in its row).
-  * **Next:** D-470, then `[TXT-10]`'s iterators on top of it; what is left of
+  * **D-470 fixed (ADR-105):** a reference has a region slot of its own; a
+    result tied to a `mut` parameter of a `Copy` view type borrows what the
+    view borrows; an iterator that is a `Copy` view gives items that outlive
+    the next call. A non-`Copy` view iterator still lends (`[LT-1]`'s second
+    kind): std's `[TXT-10]` iterators must be `Copy` views.
+  * **Next:** `[TXT-10]`'s iterators (as `Copy` views, compared with C and made
+    as fast as it can, AUTOPILOT's protocol); what is left of
     the second review: the interface half of D-467 (a per-class accessor in
     the type information), G7-2 (a 256-deep literal's stack), D-460 (G5-7),
     D-466's temporaries, G7-3 to G7-5, G8-4; then the fused `for` over the new

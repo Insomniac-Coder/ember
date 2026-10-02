@@ -90,6 +90,9 @@ pub enum Origin {
 pub struct ViewRegionSlot {
     pub projection: Vec<Projection>,
     pub region: RegionVid,
+    /// The slot holds a mutable reference or a mutable span: what is reached
+    /// through it stays reachable only through the places holding it.
+    pub unique: bool,
 }
 
 const ALL_REGION_ACCESSES: &[RegionAccessKind] = &[
@@ -309,7 +312,11 @@ impl Regions {
         for decl in &body.locals {
             let mut slots = Vec::new();
             for projection in view_region_paths(types, decl.ty) {
-                slots.push(ViewRegionSlot { projection, region: next });
+                let unique = matches!(
+                    types.kind(projected_type(types, decl.ty, &projection)),
+                    TyKind::Ref { mutable: true, .. } | TyKind::Span { mutable: true, .. }
+                );
+                slots.push(ViewRegionSlot { projection, region: next, unique });
                 next += 1;
             }
             local_regions.push(slots);
@@ -443,7 +450,7 @@ impl Regions {
     /// point was never reached or the operand carries no region.
     pub fn operand_origins_at(&self, operand: &Operand, point: Point) -> Option<HashSet<Origin>> {
         let (Operand::Copy(place) | Operand::Move(place)) = operand else { return None };
-        let regions = self.place_regions(place);
+        let regions = self.value_regions(place);
         let state = self.values_at.get(&point)?;
         if regions.is_empty() {
             return None;
@@ -461,7 +468,7 @@ impl Regions {
             Operand::Const(_) => true,
             Operand::Copy(place) | Operand::Move(place) if self.heap_reads.contains(place) => true,
             Operand::Copy(place) | Operand::Move(place) => {
-                let regions = self.place_regions(place);
+                let regions = self.value_regions(place);
                 let Some(state) = self.values_at.get(&point) else { return false };
                 !regions.is_empty()
                     && regions
@@ -540,10 +547,10 @@ impl Regions {
                 dest,
                 call_contract,
             );
+            let named: Vec<Vec<Projection>> =
+                summary.fields.iter().map(|field| field.result_projection.clone()).collect();
             for field in &summary.fields {
-                let mut result = dest.clone();
-                result.projection.extend(field.result_projection.clone());
-                let destinations = self.assigned_place_regions(&result);
+                let destinations = self.field_destinations(dest, &field.result_projection, &named);
                 if destinations.is_empty() {
                     violations.push(format!(
                         "bb{block_index}: result field {:?} names no destination region slot",
@@ -893,6 +900,7 @@ impl Regions {
         match rvalue {
             Rvalue::Ref { place, .. } => {
                 let mut fact = self.fact_for_place(state, place);
+                fact.merge(&self.through_facts(state, place));
                 if let Some(loan) = self.loan_region.get(&point) {
                     fact.roots.insert(*loan);
                 }
@@ -945,7 +953,7 @@ impl Regions {
             CallResultContract::Legacy(tied) => {
                 for (index, argument) in args.iter().enumerate() {
                     if tied.ties(index) {
-                        fact.merge(&self.fact_for_operand(state, argument));
+                        fact.merge(&self.tied_fact(body, types, state, argument, tied.through(index)));
                         arena(&mut fact, argument);
                     }
                 }
@@ -1241,6 +1249,7 @@ impl Regions {
                     for path in paths {
                         let source = project_place(place, path);
                         let mut fact = self.fact_for_place(state, &source);
+                        fact.merge(&self.through_facts(state, &source));
                         fact.roots.insert(loan);
                         if self.borrows_own_storage(&source) {
                             fact.origins.insert(match body.local(source.local).kind {
@@ -1260,23 +1269,34 @@ impl Regions {
                     }
                     return result;
                 }
-                let mut fact = self.fact_for_place(state, place);
                 let Some(loan) = self.loan_region.get(&point).copied() else { return result };
-                fact.roots.insert(loan);
+                // The reference's own slot: this loan, and what holds the
+                // place (`holding_facts`).
+                let mut own = self.holding_facts(state, place);
+                own.roots.insert(loan);
                 if self.borrows_own_storage(place) {
-                    fact.origins.insert(match body.local(place.local).kind {
+                    own.origins.insert(match body.local(place.local).kind {
                         LocalKind::Arg => Origin::Param(place.local),
                         _ => Origin::Local(place.local),
                     });
                 }
-                for destination in destinations {
-                    result.insert(destination, fact.clone());
+                // D-470 — each slot behind it: what the place's view there
+                // borrows (`[LT-20]`).
+                for slot in &self.local_regions[destination.local.0 as usize] {
+                    if !path_is_prefix(&destination.projection, &slot.projection) {
+                        continue;
+                    }
+                    let fact = match slot.projection[destination.projection.len()..].split_first() {
+                        Some((Projection::Deref, below)) => self.fact_for_place(state, &project_place(place, below)),
+                        _ => own.clone(),
+                    };
+                    result.insert(slot.region, fact);
                 }
             }
             Rvalue::Use(operand) | Rvalue::Cast { operand, .. } => {
                 self.map_facts(
                     state,
-                    &self.operand_regions(operand),
+                    &self.operand_value_regions(operand),
                     &destinations,
                     &mut result,
                 );
@@ -1297,7 +1317,7 @@ impl Regions {
                     let field_place = Place { local: destination.local, projection };
                     self.map_facts(
                         state,
-                        &self.operand_regions(operand),
+                        &self.operand_value_regions(operand),
                         &self.assigned_place_regions(&field_place),
                         &mut result,
                     );
@@ -1357,9 +1377,10 @@ impl Regions {
         };
         match contract.result {
             CallResultContract::Fields(summary) => {
+                let named: Vec<Vec<Projection>> =
+                    summary.fields.iter().map(|field| field.result_projection.clone()).collect();
                 for field in summary.fields {
-                    let mut result_place = destination.clone();
-                    result_place.projection.extend(field.result_projection);
+                    let destinations = self.field_destinations(destination, &field.result_projection, &named);
                     let mut fact = ValueFact::default();
                     for source in field.sources {
                         match source {
@@ -1385,7 +1406,7 @@ impl Regions {
                             }
                         }
                     }
-                    for destination in self.assigned_place_regions(&result_place) {
+                    for destination in destinations {
                         result.insert(destination, fact.clone());
                     }
                 }
@@ -1396,7 +1417,7 @@ impl Regions {
                     if !tied.ties(index) {
                         continue;
                     }
-                    let source = self.fact_for_operand(state, argument);
+                    let source = self.tied_fact(body, types, state, argument, tied.through(index));
                     if source.roots.is_empty()
                         && source.origins.is_empty()
                         && let Operand::Copy(place) | Operand::Move(place) = argument
@@ -1436,6 +1457,30 @@ impl Regions {
             }
         }
         result
+    }
+
+    /// The slots of `destination` a result summary field covers: those at or
+    /// below its projection, but not those below a deeper field the summary
+    /// names too (D-470: a returned reference's own slot is one field and the
+    /// view behind it another).
+    fn field_destinations(&self, destination: &Place, field: &[Projection], named: &[Vec<Projection>]) -> Vec<RegionVid> {
+        let at = |projection: &[Projection]| {
+            let mut path = destination.projection.clone();
+            path.extend(projection.iter().cloned());
+            path
+        };
+        let own = at(field);
+        let deeper: Vec<Vec<Projection>> = named
+            .iter()
+            .filter(|other| other.len() > field.len() && path_is_prefix(field, other))
+            .map(|other| at(other))
+            .collect();
+        self.local_regions[destination.local.0 as usize]
+            .iter()
+            .filter(|slot| path_is_prefix(&own, &slot.projection))
+            .filter(|slot| !deeper.iter().any(|path| path_is_prefix(path, &slot.projection)))
+            .map(|slot| slot.region)
+            .collect()
     }
 
     fn install_facts(
@@ -1485,10 +1530,23 @@ impl Regions {
             return ValueFact::default();
         }
         let mut fact = ValueFact::default();
-        for region in self.place_regions(place) {
+        for region in self.value_regions(place) {
             fact.merge(&state[region]);
         }
         fact
+    }
+
+    /// What a result tied to `operand` carries: the operand's fact, or, when
+    /// tied through a reference (`Elision::through`), the fact of the view it
+    /// refers to (D-470). An operand that is not a reference keeps its own.
+    fn tied_fact(&self, body: &Body, types: &TypeTable, state: &[ValueFact], operand: &Operand, through: bool) -> ValueFact {
+        if through
+            && let Operand::Copy(place) | Operand::Move(place) = operand
+            && matches!(types.kind(place_type(body, types, place)), TyKind::Ref { .. })
+        {
+            return self.fact_for_operand_at(state, operand, &[Projection::Deref]);
+        }
+        self.fact_for_operand(state, operand)
     }
 
     fn fact_for_operand(&self, state: &[ValueFact], operand: &Operand) -> ValueFact {
@@ -1547,7 +1605,9 @@ impl Regions {
         self.accesses.iter_mut().for_each(HashSet::clear);
         for (point, place, operation) in self.access_events(body, call_contract) {
             let Some(state) = self.values_at.get(&point) else { continue };
-            for root in self.fact_for_place(state, &place).roots {
+            let mut reached = self.fact_for_place(state, &place);
+            reached.merge(&self.through_facts(state, &place));
+            for root in reached.roots {
                 self.accesses[root].insert(operation);
             }
         }
@@ -1743,6 +1803,8 @@ impl Regions {
     /// Region slots selected by a place. A whole-value place selects every
     /// slot; a field projection selects only slots at or below that field; a
     /// dereference/index past a view leaf still uses that leaf's slot.
+    /// The slots a read of `place` needs live: those overlapping it,
+    /// including the slot of each reference it reads through.
     pub fn place_regions(&self, place: &Place) -> Vec<RegionVid> {
         let slots = &self.local_regions[place.local.0 as usize];
         // `[LT-34]` — a legacy one-region view keeps its old validity
@@ -1760,6 +1822,79 @@ impl Regions {
             .collect()
     }
 
+    /// `[LT-20]` — the slots whose values a read of `place` yields: those
+    /// overlapping it, but not the slot of a reference it reads through (what
+    /// is read through a reference is what that refers to). Liveness keeps
+    /// the reference's slot (`place_regions`).
+    pub fn value_regions(&self, place: &Place) -> Vec<RegionVid> {
+        let slots = &self.local_regions[place.local.0 as usize];
+        if slots.len() == 1 {
+            return vec![slots[0].region];
+        }
+        slots
+            .iter()
+            .filter(|slot| {
+                paths_overlap(&slot.projection, &place.projection) && !reads_through(&slot.projection, &place.projection)
+            })
+            .map(|slot| slot.region)
+            .collect()
+    }
+
+    /// What a borrow of `place` needs to stay valid besides its own loan: the
+    /// innermost reference or view `place` lies in, and each one outside it
+    /// while the one inside is mutable. A shared reference held in another
+    /// place can be copied out of it, so what it reaches does not depend on
+    /// the outer place (`MapKeys.next`'s `ref e.key` borrows the map, not the
+    /// iterator); a mutable one cannot, and the outer borrow stays (D-470).
+    fn holding_facts(&self, state: &[ValueFact], place: &Place) -> ValueFact {
+        let mut enclosing: Vec<&ViewRegionSlot> = self.local_regions[place.local.0 as usize]
+            .iter()
+            .filter(|slot| slot.projection.len() < place.projection.len() && path_is_prefix(&slot.projection, &place.projection))
+            .collect();
+        enclosing.sort_by_key(|slot| std::cmp::Reverse(slot.projection.len()));
+        let mut fact = ValueFact::default();
+        for slot in enclosing {
+            fact.merge(&state[slot.region]);
+            if !slot.unique {
+                break;
+            }
+        }
+        fact
+    }
+
+    /// `[LT-22]` — how many independent regions a value at `place` holds:
+    /// its value slots, a reference's own slot and the slots of the view
+    /// behind it counting once (D-470 keeps them apart, but one borrow makes
+    /// both, so a result holding them is still a one-region view).
+    pub fn independent_regions(&self, place: &Place) -> usize {
+        let slots: Vec<&ViewRegionSlot> = self.local_regions[place.local.0 as usize]
+            .iter()
+            .filter(|slot| {
+                paths_overlap(&slot.projection, &place.projection) && !reads_through(&slot.projection, &place.projection)
+            })
+            .collect();
+        if slots.len() <= 1 {
+            return slots.len();
+        }
+        slots
+            .iter()
+            .filter(|slot| !slots.iter().any(|outer| reads_through(&outer.projection, &slot.projection)))
+            .count()
+    }
+
+    /// The facts of every slot `place` lies strictly inside: a reference it
+    /// is reached through, or a view whose storage holds it (`s[i]` of a
+    /// span). A borrow of `place` holds only while each of those does.
+    fn through_facts(&self, state: &[ValueFact], place: &Place) -> ValueFact {
+        let mut fact = ValueFact::default();
+        for slot in &self.local_regions[place.local.0 as usize] {
+            if slot.projection.len() < place.projection.len() && path_is_prefix(&slot.projection, &place.projection) {
+                fact.merge(&state[slot.region]);
+            }
+        }
+        fact
+    }
+
     /// Region slots whose *view values* are replaced by assignment to this
     /// place. A dereference or index beyond a view leaf writes the referent,
     /// not the reference/span value, and therefore is not a provenance flow.
@@ -1769,6 +1904,15 @@ impl Regions {
             .filter(|slot| path_is_prefix(&place.projection, &slot.projection))
             .map(|slot| slot.region)
             .collect()
+    }
+
+    /// The slots an operand's value comes from (`value_regions`).
+    fn operand_value_regions(&self, operand: &Operand) -> Vec<RegionVid> {
+        match operand {
+            Operand::Copy(place) | Operand::Move(place) if self.heap_reads.contains(place) => Vec::new(),
+            Operand::Copy(place) | Operand::Move(place) => self.value_regions(place),
+            Operand::Const(_) => Vec::new(),
+        }
     }
 
     fn operand_regions(&self, operand: &Operand) -> Vec<RegionVid> {
@@ -2247,19 +2391,18 @@ fn view_region_paths(types: &TypeTable, ty: Ty) -> Vec<Vec<Projection>> {
         // and a closure body that projects `pair.left` must retain only that
         // source field, not every field of `Pair`. An ordinary `ref T` still
         // has one slot when `T` contains no view fields.
+        // D-470 — the reference has a slot of its own besides them: the
+        // borrow of the place it refers to. A view read out through it
+        // carries its field's region, not the reference's (`[LT-20]`), so a
+        // call whose result is made of those views (`next(mut self) ->
+        // Option[str]`) does not keep the place borrowed.
         TyKind::Ref { inner, .. } => {
-            let paths = view_region_paths(types, *inner);
-            if paths.is_empty() {
-                vec![Vec::new()]
-            } else {
-                paths
-                    .into_iter()
-                    .map(|mut path| {
-                        path.insert(0, Projection::Deref);
-                        path
-                    })
-                    .collect()
-            }
+            let mut paths = vec![Vec::new()];
+            paths.extend(view_region_paths(types, *inner).into_iter().map(|mut path| {
+                path.insert(0, Projection::Deref);
+                path
+            }));
+            paths
         }
         TyKind::Str | TyKind::CStr | TyKind::Span { .. } => vec![Vec::new()],
         TyKind::Struct(id) => types
@@ -2314,6 +2457,12 @@ fn project_place(place: &Place, path: &[Projection]) -> Place {
     projected
 }
 
+/// Whether a slot at `slot` holds a reference that a place at `place`
+/// reads through: `place` continues past it with a dereference.
+fn reads_through(slot: &[Projection], place: &[Projection]) -> bool {
+    place.len() > slot.len() && path_is_prefix(slot, place) && matches!(place[slot.len()], Projection::Deref)
+}
+
 fn path_is_prefix(prefix: &[Projection], path: &[Projection]) -> bool {
     prefix.len() <= path.len() && prefix.iter().zip(path).all(|(left, right)| left == right)
 }
@@ -2362,16 +2511,30 @@ pub enum Elision {
     /// chose over Rust's elision failure.
     Everything,
     /// `[LT-1a]` — `@borrows` named these parameter positions, and the caller
-    /// may keep using the rest.
-    Named(Vec<usize>),
+    /// may keep using the rest. Those in `through` are reached through a
+    /// reference to a view (a `mut` parameter of a `Copy` view type, passed by
+    /// reference for its mode only): a source of the first kind, so the result
+    /// borrows what that view borrows, not the place (D-470).
+    Named { arguments: Vec<usize>, through: Vec<usize> },
 }
 
 impl Elision {
+    /// These positions, none of them reached through a reference.
+    pub(crate) fn named(arguments: Vec<usize>) -> Elision {
+        Elision::Named { arguments, through: Vec::new() }
+    }
+
     pub(crate) fn ties(&self, argument: usize) -> bool {
         match self {
             Elision::Nothing => false,
             Elision::Everything => true,
-            Elision::Named(indices) => indices.contains(&argument),
+            Elision::Named { arguments, .. } => arguments.contains(&argument),
         }
+    }
+
+    /// Whether a result tied to `argument` borrows what the view behind it
+    /// borrows rather than the place it refers to.
+    pub(crate) fn through(&self, argument: usize) -> bool {
+        matches!(self, Elision::Named { through, .. } if through.contains(&argument))
     }
 }

@@ -3557,6 +3557,46 @@ RandomState]` in insertion order; one key, one hash within a run),
 `HASH-2/accept_bytes_differing_in_their_tail_hash_apart` (D-405, both hashers), and
 `random_state_is_keyed_per_process` in `milestones.rs` (one program run twice hashes a key two ways).
 
+## ADR-105 — a reference has a region slot of its own; a `Copy` view's `mut self` is a first-kind source
+
+2026-10-02, D-470, after the owner's "start working on the language again". `[TXT-10]`'s iterators
+(`chars`, `split`, `lines`) were written and taken out again: an iterator holding a `str` and giving
+parts of it failed inside std's `Iterator` defaults, and keeping two of its items was `E3025`. The
+region model gave a reference to a value with view fields no slot of its own: a borrow `&mut w` put
+its loan, and what `w`'s fields borrow, into the same slots, so a view copied out through the
+reference carried the loan of `w`, and so did every item `next` returned.
+
+**Options priced.** (1) Treat what `Iterator.next` returns as never borrowing the iterator: shaped
+to one interface and wrong for a lending iterator; rejected (general solutions only). (2) Give each
+reference a slot of its own, the borrow of the place it refers to, beside the slots of the views
+behind it, and route every fact by slot. General: it also covers `ref mut str` parameters and any
+struct of views. Built.
+
+**Built** (`regions.rs`, `borrows.rs`).
+* `view_region_paths`: a reference's own slot first, then the slots of the views behind it
+  (`Deref` paths); each slot knows whether it holds a mutable reference or span (`unique`).
+* A borrow puts its loan, and what holds the borrowed place, in the reference's own slot
+  (`holding_facts`: the innermost reference or view the place lies in, and each one outside it
+  while the inner one is mutable, since a shared reference can be copied out of its holder and a
+  mutable one cannot); each slot behind it gets what that view of the place borrows.
+* A value read through a reference carries the facts of the views it reads (`value_regions`);
+  liveness still keeps the reference (`place_regions`); an access is attributed to everything the
+  place is reached through.
+* `[LT-1]`: a result tied to a `mut` parameter of a `Copy` view type, which is passed by reference
+  for its mode only (a source of the first kind), borrows what the view behind the reference
+  borrows (`Elision::Named { through }`), as does a span iterator's next element. A non-`Copy` `mut`
+  receiver is the caller's place (the second kind) and keeps the loan, so keeping two items of such
+  an iterator stays `E3025`.
+* A result summary field covers its own slots only (`field_destinations`); `[LT-22]`'s
+  multi-region check counts a reference and the view behind it once (`independent_regions`).
+
+**Result.** An iterator that is a `Copy` view gives items that outlive the next call; std's
+defaults keep them. What must still fail fails: growing a list while a pair of references into it
+lives (`BRW-5`), and a second reference through a held mutable reference
+(`LT-20/reject_a_reference_through_a_held_mutable_reference_keeps_its_holder_borrowed`). Every
+test passes; no benchmark program's C changes. `[TXT-10]`'s iterators can now be written as
+`Copy` views.
+
 ## ADR-104 — an f-string reserves its room; integers format without `printf`
 
 2026-10-02, the owner: "target all of them" (the programs more than 10% slower than the C). The

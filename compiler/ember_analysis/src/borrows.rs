@@ -2306,12 +2306,15 @@ fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elis
                 | Builtin::SpanReborrow
                 | Builtin::SpanSharedReborrow
                 | Builtin::SpanChunksNew { .. }
-                | Builtin::SpanIterNext { .. }
-                | Builtin::SpanChunksNext { .. }
-                | Builtin::SpanWindowsNew { .. }
-                | Builtin::SpanWindowsNext { .. },
+                | Builtin::SpanWindowsNew { .. },
             ..
-        } => Elision::Named(vec![0]),
+        } => Elision::named(vec![0]),
+        // A span iterator's next element points into the span it views, not
+        // into the iterator its `&mut` receiver refers to (D-470).
+        FuncRef::Builtin {
+            which: Builtin::SpanIterNext { .. } | Builtin::SpanChunksNext { .. } | Builtin::SpanWindowsNext { .. },
+            ..
+        } => Elision::Named { arguments: vec![0], through: vec![0] },
         // `[SPN-2]` — `get` and `get_unchecked` return a reference into the
         // view, so the view stays borrowed too.
         // A `str` built by `as_str()` points into its `String` the same way
@@ -2321,7 +2324,7 @@ fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elis
             which: Builtin::SpanGet | Builtin::SpanGetUnchecked | Builtin::StringAsStr
                 | Builtin::CStringAsCStr,
             ..
-        } => Elision::Named(vec![0]),
+        } => Elision::named(vec![0]),
         FuncRef::Builtin { .. } => Elision::Nothing,
         FuncRef::DynBoxNew { .. } => Elision::Nothing,
         // A virtual method has no direct symbol at this stage. Preserve the
@@ -2336,7 +2339,7 @@ fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elis
         // its source parameters (rule 3; a callable type has no receiver and
         // no `@borrows`, and a function reaching further is not such a
         // value). A callee of no `fn` type is still opaque.
-        FuncRef::Indirect { sources: Some(sources), .. } => Elision::Named(sources.clone()),
+        FuncRef::Indirect { sources: Some(sources), .. } => Elision::named(sources.clone()),
         FuncRef::Indirect { sources: None, .. } => Elision::Everything,
     }
 }
@@ -2598,7 +2601,7 @@ fn unresolved_multi_result_calls<'a>(
         let Terminator::Call { func, dest, .. } = &block.terminator else {
             return None;
         };
-        (regions.place_regions(dest).len() >= 2
+        (regions.independent_regions(dest) >= 2
             && matches!(call_contract(func).result, CallResultContract::Legacy(_)))
         .then_some(func)
     })
@@ -2620,13 +2623,25 @@ fn elision_of(body: &Body, types: &TypeTable) -> Elision {
     if !types.is_view(body.return_ty()) {
         return Elision::Nothing;
     }
-    if let Some(named) = &body.borrows {
-        return Elision::Named(named.clone());
-    }
-    if receiver_is_a_view(body, types) {
-        return Elision::Named(vec![0]);
-    }
-    Elision::Named(source_parameters(body, types))
+    let arguments = if let Some(named) = &body.borrows {
+        named.clone()
+    } else if receiver_is_a_view(body, types) {
+        vec![0]
+    } else {
+        source_parameters(body, types)
+    };
+    let through = arguments.iter().copied().filter(|&index| tied_through(body, types, index)).collect();
+    Elision::Named { arguments, through }
+}
+
+/// `[LT-1]` — a `mut` parameter of a `Copy` view type is passed by reference
+/// for its mode only: a source of the first kind, not the caller's place, so a
+/// result tied to it borrows what the view borrows, not the place it refers
+/// to (D-470). A non-`Copy` one is the caller's place (the second kind).
+fn tied_through(body: &Body, types: &TypeTable, index: usize) -> bool {
+    body.param_modes.get(index) == Some(&ParameterMode::Mut)
+        && matches!(types.kind(body.local(LocalId(index as u32 + 1)).ty), TyKind::Ref { inner, .. }
+            if types.is_view(*inner) && types.is_copy_for_elision(*inner))
 }
 
 /// `[LT-1]` (ODR-024) — the parameters a returned view may borrow without
@@ -2847,7 +2862,7 @@ fn check_multi_result_summary(
         let Terminator::Call { func, dest, .. } = &block.terminator else {
             continue;
         };
-        if regions.place_regions(dest).len() < 2
+        if regions.independent_regions(dest) < 2
             || matches!(call_contract(func).result, CallResultContract::Fields(_))
             || matches!(
                 func,
