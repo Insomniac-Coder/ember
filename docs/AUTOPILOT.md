@@ -115,6 +115,12 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   benchmarks section of readme". In a cloud session, measure against C and C++ as above to find and
   fix slow code, but never write those numbers into the README's benchmark section; it keeps the
   numbers measured on the owner's machine until he says otherwise.
+- **Benchmarks run on the performance cores.** The owner, 2026-10-02: "run all compiler benchmarks
+  on the faster cores". The owner's machine has 8 performance cores (logical processors 0, 1, 10 to
+  13, 22 and 23) and 16 slower efficiency cores; one program took 31 ms on a performance core and
+  36 ms on an efficiency core, so unpinned ratios moved between runs. Every timed run on Windows sets
+  its process's affinity to the performance cores (mask `0xC03C03`; the programs it starts inherit
+  it). WSL cannot be held there without administrator rights; say so wherever its numbers appear.
 - **Every solution is general, never specific.** The owner, 2026-09-28: "always suggest a general
   and optimised solution, specific solutions are like ticking timebombs just waiting to go off
   because no one is going to write code like 'tests' languages are supposed to be general", and

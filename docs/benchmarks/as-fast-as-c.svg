@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1164" height="1706" viewBox="0 0 1164 1706" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14">
-<rect width="1164" height="1706" fill="#0d1117" rx="6"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1164" height="1746" viewBox="0 0 1164 1746" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14">
+<rect width="1164" height="1746" fill="#0d1117" rx="6"/>
 <text x="16" y="46" fill="#9198a1" font-size="12">What the program does</text>
 <text x="545.0" y="22" fill="#e6edf3" font-weight="600" text-anchor="middle">MSVC</text>
 <line x1="440" y1="30" x2="650" y2="30" stroke="#30363d"/>
@@ -18,365 +18,376 @@
 <text x="1140" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember ÷ C</text>
 <line x1="0" y1="57" x2="1164" y2="57" stroke="#30363d"/>
 <text x="16" y="83" fill="#e6edf3" xml:space="preserve">Change every number twice, writing to a separate list, overflow</text>
-<text x="16" y="103" fill="#e6edf3" xml:space="preserve">checks off ²</text>
-<text x="500" y="93.0" fill="#9198a1" text-anchor="end">6677 ms</text>
-<text x="574" y="93.0" fill="#e6edf3" text-anchor="end">92 ms</text>
+<text x="16" y="103" fill="#e6edf3" xml:space="preserve">checks on ²</text>
+<text x="500" y="93.0" fill="#9198a1" text-anchor="end">6848 ms</text>
+<text x="574" y="93.0" fill="#e6edf3" text-anchor="end">87 ms</text>
 <text x="648" y="93.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.01</text>
-<text x="746" y="93.0" fill="#9198a1" text-anchor="end">414 ms</text>
-<text x="820" y="93.0" fill="#e6edf3" text-anchor="end">414 ms</text>
+<text x="746" y="93.0" fill="#9198a1" text-anchor="end">406 ms</text>
+<text x="820" y="93.0" fill="#e6edf3" text-anchor="end">407 ms</text>
 <text x="894" y="93.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<text x="992" y="93.0" fill="#9198a1" text-anchor="end">395 ms</text>
+<text x="992" y="93.0" fill="#9198a1" text-anchor="end">407 ms</text>
 <text x="1066" y="93.0" fill="#e6edf3" text-anchor="end">390 ms</text>
-<text x="1140" y="93.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
+<text x="1140" y="93.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.96</text>
 <rect x="0" y="118" width="1164" height="60" fill="#151b23"/>
 <text x="16" y="143" fill="#e6edf3" xml:space="preserve">Change every number twice, writing to a separate list, overflow</text>
-<text x="16" y="163" fill="#e6edf3" xml:space="preserve">checks on ²</text>
-<text x="500" y="153.0" fill="#9198a1" text-anchor="end">5921 ms</text>
-<text x="574" y="153.0" fill="#e6edf3" text-anchor="end">93 ms</text>
+<text x="16" y="163" fill="#e6edf3" xml:space="preserve">checks off ²</text>
+<text x="500" y="153.0" fill="#9198a1" text-anchor="end">5601 ms</text>
+<text x="574" y="153.0" fill="#e6edf3" text-anchor="end">87 ms</text>
 <text x="648" y="153.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.02</text>
-<text x="746" y="153.0" fill="#9198a1" text-anchor="end">413 ms</text>
-<text x="820" y="153.0" fill="#e6edf3" text-anchor="end">419 ms</text>
-<text x="894" y="153.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.02</text>
-<text x="992" y="153.0" fill="#9198a1" text-anchor="end">391 ms</text>
-<text x="1066" y="153.0" fill="#e6edf3" text-anchor="end">403 ms</text>
-<text x="1140" y="153.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.03</text>
+<text x="746" y="153.0" fill="#9198a1" text-anchor="end">404 ms</text>
+<text x="820" y="153.0" fill="#e6edf3" text-anchor="end">407 ms</text>
+<text x="894" y="153.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
+<text x="992" y="153.0" fill="#9198a1" text-anchor="end">394 ms</text>
+<text x="1066" y="153.0" fill="#e6edf3" text-anchor="end">402 ms</text>
+<text x="1140" y="153.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.02</text>
 <text x="16" y="203" fill="#e6edf3" xml:space="preserve">Map of numbers: 1 million inserts, then 5 million lookups</text>
-<text x="500" y="203.0" fill="#9198a1" text-anchor="end">316 ms</text>
-<text x="574" y="203.0" fill="#e6edf3" text-anchor="end">103 ms</text>
-<text x="648" y="203.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.33</text>
-<text x="746" y="203.0" fill="#9198a1" text-anchor="end">344 ms</text>
-<text x="820" y="203.0" fill="#e6edf3" text-anchor="end">68 ms</text>
+<text x="500" y="203.0" fill="#9198a1" text-anchor="end">325 ms</text>
+<text x="574" y="203.0" fill="#e6edf3" text-anchor="end">96 ms</text>
+<text x="648" y="203.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.30</text>
+<text x="746" y="203.0" fill="#9198a1" text-anchor="end">293 ms</text>
+<text x="820" y="203.0" fill="#e6edf3" text-anchor="end">59 ms</text>
 <text x="894" y="203.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.20</text>
-<text x="992" y="203.0" fill="#9198a1" text-anchor="end">65 ms</text>
+<text x="992" y="203.0" fill="#9198a1" text-anchor="end">61 ms</text>
 <text x="1066" y="203.0" fill="#e6edf3" text-anchor="end">43 ms</text>
-<text x="1140" y="203.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.67</text>
-<rect x="0" y="218" width="1164" height="60" fill="#151b23"/>
-<text x="16" y="243" fill="#e6edf3" xml:space="preserve">Map of numbers 1,048,576 apart: 1 million inserts, then 5 million</text>
-<text x="16" y="263" fill="#e6edf3" xml:space="preserve">lookups</text>
-<text x="500" y="253.0" fill="#9198a1" text-anchor="end">279 ms</text>
-<text x="574" y="253.0" fill="#e6edf3" text-anchor="end">110 ms</text>
-<text x="648" y="253.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.40</text>
-<text x="746" y="253.0" fill="#9198a1" text-anchor="end">272 ms</text>
-<text x="820" y="253.0" fill="#e6edf3" text-anchor="end">76 ms</text>
-<text x="894" y="253.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.28</text>
-<text x="992" y="253.0" fill="#9198a1" text-anchor="end">72 ms</text>
-<text x="1066" y="253.0" fill="#e6edf3" text-anchor="end">44 ms</text>
-<text x="1140" y="253.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.60</text>
-<text x="16" y="303" fill="#e6edf3" xml:space="preserve">Change every number using a second list, 20,000 rounds, overflow</text>
-<text x="16" y="323" fill="#e6edf3" xml:space="preserve">checks on ²</text>
-<text x="500" y="313.0" fill="#9198a1" text-anchor="end">1193 ms</text>
-<text x="574" y="313.0" fill="#e6edf3" text-anchor="end">396 ms</text>
-<text x="648" y="313.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.33</text>
-<text x="746" y="313.0" fill="#9198a1" text-anchor="end">423 ms</text>
-<text x="820" y="313.0" fill="#e6edf3" text-anchor="end">412 ms</text>
-<text x="894" y="313.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.97</text>
-<text x="992" y="313.0" fill="#9198a1" text-anchor="end">363 ms</text>
-<text x="1066" y="313.0" fill="#e6edf3" text-anchor="end">361 ms</text>
-<text x="1140" y="313.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
-<rect x="0" y="338" width="1164" height="60" fill="#151b23"/>
-<text x="16" y="363" fill="#e6edf3" xml:space="preserve">Change every number twice, reading back what it wrote, overflow</text>
-<text x="16" y="383" fill="#e6edf3" xml:space="preserve">checks off ²</text>
-<text x="500" y="373.0" fill="#9198a1" text-anchor="end">1211 ms</text>
-<text x="574" y="373.0" fill="#e6edf3" text-anchor="end">403 ms</text>
-<text x="648" y="373.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.33</text>
-<text x="746" y="373.0" fill="#9198a1" text-anchor="end">407 ms</text>
-<text x="820" y="373.0" fill="#e6edf3" text-anchor="end">411 ms</text>
-<text x="894" y="373.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
-<text x="992" y="373.0" fill="#9198a1" text-anchor="end">351 ms</text>
-<text x="1066" y="373.0" fill="#e6edf3" text-anchor="end">357 ms</text>
-<text x="1140" y="373.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.02</text>
-<text x="16" y="423" fill="#e6edf3" xml:space="preserve">Change every number using a second list, 20,000 rounds, overflow</text>
-<text x="16" y="443" fill="#e6edf3" xml:space="preserve">checks off ²</text>
-<text x="500" y="433.0" fill="#9198a1" text-anchor="end">1199 ms</text>
-<text x="574" y="433.0" fill="#e6edf3" text-anchor="end">402 ms</text>
-<text x="648" y="433.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.34</text>
-<text x="746" y="433.0" fill="#9198a1" text-anchor="end">411 ms</text>
-<text x="820" y="433.0" fill="#e6edf3" text-anchor="end">418 ms</text>
-<text x="894" y="433.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.02</text>
-<text x="992" y="433.0" fill="#9198a1" text-anchor="end">353 ms</text>
-<text x="1066" y="433.0" fill="#e6edf3" text-anchor="end">354 ms</text>
-<text x="1140" y="433.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<rect x="0" y="458" width="1164" height="60" fill="#151b23"/>
-<text x="16" y="483" fill="#e6edf3" xml:space="preserve">Change every number twice, reading back what it wrote, overflow</text>
-<text x="16" y="503" fill="#e6edf3" xml:space="preserve">checks on ²</text>
-<text x="500" y="493.0" fill="#9198a1" text-anchor="end">1204 ms</text>
-<text x="574" y="493.0" fill="#e6edf3" text-anchor="end">406 ms</text>
-<text x="648" y="493.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.34</text>
-<text x="746" y="493.0" fill="#9198a1" text-anchor="end">416 ms</text>
-<text x="820" y="493.0" fill="#e6edf3" text-anchor="end">416 ms</text>
-<text x="894" y="493.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<text x="992" y="493.0" fill="#9198a1" text-anchor="end">354 ms</text>
-<text x="1066" y="493.0" fill="#e6edf3" text-anchor="end">356 ms</text>
-<text x="1140" y="493.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<text x="16" y="543" fill="#e6edf3" xml:space="preserve">Map of numbers 1,024 apart: 1 million inserts, then 5 million lookups</text>
-<text x="500" y="543.0" fill="#9198a1" text-anchor="end">282 ms</text>
-<text x="574" y="543.0" fill="#e6edf3" text-anchor="end">114 ms</text>
-<text x="648" y="543.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.40</text>
-<text x="746" y="543.0" fill="#9198a1" text-anchor="end">274 ms</text>
-<text x="820" y="543.0" fill="#e6edf3" text-anchor="end">94 ms</text>
-<text x="894" y="543.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.34</text>
-<text x="992" y="543.0" fill="#9198a1" text-anchor="end">78 ms</text>
-<text x="1066" y="543.0" fill="#e6edf3" text-anchor="end">59 ms</text>
-<text x="1140" y="543.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.76</text>
+<text x="1140" y="203.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.70</text>
+<rect x="0" y="218" width="1164" height="40" fill="#151b23"/>
+<text x="16" y="243" fill="#e6edf3" xml:space="preserve">Map of numbers 1,024 apart: 1 million inserts, then 5 million lookups</text>
+<text x="500" y="243.0" fill="#9198a1" text-anchor="end">346 ms</text>
+<text x="574" y="243.0" fill="#e6edf3" text-anchor="end">108 ms</text>
+<text x="648" y="243.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.31</text>
+<text x="746" y="243.0" fill="#9198a1" text-anchor="end">313 ms</text>
+<text x="820" y="243.0" fill="#e6edf3" text-anchor="end">86 ms</text>
+<text x="894" y="243.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.27</text>
+<text x="992" y="243.0" fill="#9198a1" text-anchor="end">83 ms</text>
+<text x="1066" y="243.0" fill="#e6edf3" text-anchor="end">60 ms</text>
+<text x="1140" y="243.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.72</text>
+<text x="16" y="283" fill="#e6edf3" xml:space="preserve">Map of numbers 1,048,576 apart: 1 million inserts, then 5 million</text>
+<text x="16" y="303" fill="#e6edf3" xml:space="preserve">lookups</text>
+<text x="500" y="293.0" fill="#9198a1" text-anchor="end">249 ms</text>
+<text x="574" y="293.0" fill="#e6edf3" text-anchor="end">97 ms</text>
+<text x="648" y="293.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.39</text>
+<text x="746" y="293.0" fill="#9198a1" text-anchor="end">228 ms</text>
+<text x="820" y="293.0" fill="#e6edf3" text-anchor="end">63 ms</text>
+<text x="894" y="293.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.27</text>
+<text x="992" y="293.0" fill="#9198a1" text-anchor="end">79 ms</text>
+<text x="1066" y="293.0" fill="#e6edf3" text-anchor="end">45 ms</text>
+<text x="1140" y="293.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.57</text>
+<rect x="0" y="318" width="1164" height="60" fill="#151b23"/>
+<text x="16" y="343" fill="#e6edf3" xml:space="preserve">Change every number using a second list, 20,000 rounds, overflow</text>
+<text x="16" y="363" fill="#e6edf3" xml:space="preserve">checks off ²</text>
+<text x="500" y="353.0" fill="#9198a1" text-anchor="end">1170 ms</text>
+<text x="574" y="353.0" fill="#e6edf3" text-anchor="end">379 ms</text>
+<text x="648" y="353.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.32</text>
+<text x="746" y="353.0" fill="#9198a1" text-anchor="end">404 ms</text>
+<text x="820" y="353.0" fill="#e6edf3" text-anchor="end">404 ms</text>
+<text x="894" y="353.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="992" y="353.0" fill="#9198a1" text-anchor="end">347 ms</text>
+<text x="1066" y="353.0" fill="#e6edf3" text-anchor="end">347 ms</text>
+<text x="1140" y="353.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="16" y="403" fill="#e6edf3" xml:space="preserve">Change every number twice, reading back what it wrote, overflow</text>
+<text x="16" y="423" fill="#e6edf3" xml:space="preserve">checks on ²</text>
+<text x="500" y="413.0" fill="#9198a1" text-anchor="end">1195 ms</text>
+<text x="574" y="413.0" fill="#e6edf3" text-anchor="end">385 ms</text>
+<text x="648" y="413.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.32</text>
+<text x="746" y="413.0" fill="#9198a1" text-anchor="end">413 ms</text>
+<text x="820" y="413.0" fill="#e6edf3" text-anchor="end">416 ms</text>
+<text x="894" y="413.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
+<text x="992" y="413.0" fill="#9198a1" text-anchor="end">349 ms</text>
+<text x="1066" y="413.0" fill="#e6edf3" text-anchor="end">355 ms</text>
+<text x="1140" y="413.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.02</text>
+<rect x="0" y="438" width="1164" height="60" fill="#151b23"/>
+<text x="16" y="463" fill="#e6edf3" xml:space="preserve">Change every number twice, reading back what it wrote, overflow</text>
+<text x="16" y="483" fill="#e6edf3" xml:space="preserve">checks off ²</text>
+<text x="500" y="473.0" fill="#9198a1" text-anchor="end">1190 ms</text>
+<text x="574" y="473.0" fill="#e6edf3" text-anchor="end">386 ms</text>
+<text x="648" y="473.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.32</text>
+<text x="746" y="473.0" fill="#9198a1" text-anchor="end">409 ms</text>
+<text x="820" y="473.0" fill="#e6edf3" text-anchor="end">410 ms</text>
+<text x="894" y="473.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="992" y="473.0" fill="#9198a1" text-anchor="end">355 ms</text>
+<text x="1066" y="473.0" fill="#e6edf3" text-anchor="end">362 ms</text>
+<text x="1140" y="473.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.02</text>
+<text x="16" y="523" fill="#e6edf3" xml:space="preserve">Change every number using a second list, 20,000 rounds, overflow</text>
+<text x="16" y="543" fill="#e6edf3" xml:space="preserve">checks on ²</text>
+<text x="500" y="533.0" fill="#9198a1" text-anchor="end">1181 ms</text>
+<text x="574" y="533.0" fill="#e6edf3" text-anchor="end">384 ms</text>
+<text x="648" y="533.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.33</text>
+<text x="746" y="533.0" fill="#9198a1" text-anchor="end">406 ms</text>
+<text x="820" y="533.0" fill="#e6edf3" text-anchor="end">404 ms</text>
+<text x="894" y="533.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
+<text x="992" y="533.0" fill="#9198a1" text-anchor="end">350 ms</text>
+<text x="1066" y="533.0" fill="#e6edf3" text-anchor="end">351 ms</text>
+<text x="1140" y="533.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
 <rect x="0" y="558" width="1164" height="40" fill="#151b23"/>
 <text x="16" y="583" fill="#e6edf3" xml:space="preserve">Clear and refill a list while 1 other list is being viewed</text>
-<text x="500" y="583.0" fill="#9198a1" text-anchor="end">49 ms</text>
-<text x="574" y="583.0" fill="#e6edf3" text-anchor="end">50 ms</text>
+<text x="500" y="583.0" fill="#9198a1" text-anchor="end">45 ms</text>
+<text x="574" y="583.0" fill="#e6edf3" text-anchor="end">45 ms</text>
 <text x="648" y="583.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<text x="746" y="583.0" fill="#9198a1" text-anchor="end">53 ms</text>
-<text x="820" y="583.0" fill="#e6edf3" text-anchor="end">23 ms</text>
-<text x="894" y="583.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.44</text>
+<text x="746" y="583.0" fill="#9198a1" text-anchor="end">48 ms</text>
+<text x="820" y="583.0" fill="#e6edf3" text-anchor="end">19 ms</text>
+<text x="894" y="583.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.41</text>
 <text x="992" y="583.0" fill="#9198a1" text-anchor="end">40 ms</text>
 <text x="1066" y="583.0" fill="#e6edf3" text-anchor="end">15 ms</text>
-<text x="1140" y="583.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.38</text>
+<text x="1140" y="583.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.37</text>
 <text x="16" y="623" fill="#e6edf3" xml:space="preserve">Clear and refill a list while 4 other lists are being viewed</text>
-<text x="500" y="623.0" fill="#9198a1" text-anchor="end">52 ms</text>
-<text x="574" y="623.0" fill="#e6edf3" text-anchor="end">49 ms</text>
-<text x="648" y="623.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.96</text>
-<text x="746" y="623.0" fill="#9198a1" text-anchor="end">51 ms</text>
-<text x="820" y="623.0" fill="#e6edf3" text-anchor="end">23 ms</text>
-<text x="894" y="623.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.46</text>
+<text x="500" y="623.0" fill="#9198a1" text-anchor="end">48 ms</text>
+<text x="574" y="623.0" fill="#e6edf3" text-anchor="end">45 ms</text>
+<text x="648" y="623.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.94</text>
+<text x="746" y="623.0" fill="#9198a1" text-anchor="end">47 ms</text>
+<text x="820" y="623.0" fill="#e6edf3" text-anchor="end">19 ms</text>
+<text x="894" y="623.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.41</text>
 <text x="992" y="623.0" fill="#9198a1" text-anchor="end">40 ms</text>
 <text x="1066" y="623.0" fill="#e6edf3" text-anchor="end">15 ms</text>
-<text x="1140" y="623.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.38</text>
-<rect x="0" y="638" width="1164" height="40" fill="#151b23"/>
-<text x="16" y="663" fill="#e6edf3" xml:space="preserve">Clear and refill a list while 16 other lists are being viewed</text>
-<text x="500" y="663.0" fill="#9198a1" text-anchor="end">50 ms</text>
-<text x="574" y="663.0" fill="#e6edf3" text-anchor="end">50 ms</text>
-<text x="648" y="663.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
-<text x="746" y="663.0" fill="#9198a1" text-anchor="end">52 ms</text>
-<text x="820" y="663.0" fill="#e6edf3" text-anchor="end">23 ms</text>
-<text x="894" y="663.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.44</text>
-<text x="992" y="663.0" fill="#9198a1" text-anchor="end">40 ms</text>
-<text x="1066" y="663.0" fill="#e6edf3" text-anchor="end">15 ms</text>
-<text x="1140" y="663.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.38</text>
-<text x="16" y="703" fill="#e6edf3" xml:space="preserve">Copy a 1,000-number list into another, one item at a time, 100,000</text>
-<text x="16" y="723" fill="#e6edf3" xml:space="preserve">times</text>
-<text x="500" y="713.0" fill="#9198a1" text-anchor="end">70 ms</text>
-<text x="574" y="713.0" fill="#e6edf3" text-anchor="end">51 ms</text>
-<text x="648" y="713.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.73</text>
-<text x="746" y="713.0" fill="#9198a1" text-anchor="end">50 ms</text>
-<text x="820" y="713.0" fill="#e6edf3" text-anchor="end">25 ms</text>
-<text x="894" y="713.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.50</text>
-<text x="992" y="713.0" fill="#9198a1" text-anchor="end">36 ms</text>
-<text x="1066" y="713.0" fill="#e6edf3" text-anchor="end">15 ms</text>
-<text x="1140" y="713.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.41</text>
+<text x="1140" y="623.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.37</text>
+<rect x="0" y="638" width="1164" height="60" fill="#151b23"/>
+<text x="16" y="663" fill="#e6edf3" xml:space="preserve">Copy a 1,000-number list into another, one item at a time, 100,000</text>
+<text x="16" y="683" fill="#e6edf3" xml:space="preserve">times</text>
+<text x="500" y="673.0" fill="#9198a1" text-anchor="end">65 ms</text>
+<text x="574" y="673.0" fill="#e6edf3" text-anchor="end">46 ms</text>
+<text x="648" y="673.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.71</text>
+<text x="746" y="673.0" fill="#9198a1" text-anchor="end">45 ms</text>
+<text x="820" y="673.0" fill="#e6edf3" text-anchor="end">21 ms</text>
+<text x="894" y="673.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.46</text>
+<text x="992" y="673.0" fill="#9198a1" text-anchor="end">36 ms</text>
+<text x="1066" y="673.0" fill="#e6edf3" text-anchor="end">14 ms</text>
+<text x="1140" y="673.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.38</text>
+<text x="16" y="723" fill="#e6edf3" xml:space="preserve">Clear and refill a list while 16 other lists are being viewed</text>
+<text x="500" y="723.0" fill="#9198a1" text-anchor="end">45 ms</text>
+<text x="574" y="723.0" fill="#e6edf3" text-anchor="end">45 ms</text>
+<text x="648" y="723.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="746" y="723.0" fill="#9198a1" text-anchor="end">48 ms</text>
+<text x="820" y="723.0" fill="#e6edf3" text-anchor="end">19 ms</text>
+<text x="894" y="723.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.40</text>
+<text x="992" y="723.0" fill="#9198a1" text-anchor="end">40 ms</text>
+<text x="1066" y="723.0" fill="#e6edf3" text-anchor="end">15 ms</text>
+<text x="1140" y="723.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.38</text>
 <rect x="0" y="738" width="1164" height="60" fill="#151b23"/>
 <text x="16" y="763" fill="#e6edf3" xml:space="preserve">Two lists of 100,000 decimal numbers, add one into the other 5,000</text>
 <text x="16" y="783" fill="#e6edf3" xml:space="preserve">times ²</text>
-<text x="500" y="773.0" fill="#9198a1" text-anchor="end">202 ms</text>
-<text x="574" y="773.0" fill="#e6edf3" text-anchor="end">100 ms</text>
+<text x="500" y="773.0" fill="#9198a1" text-anchor="end">198 ms</text>
+<text x="574" y="773.0" fill="#e6edf3" text-anchor="end">98 ms</text>
 <text x="648" y="773.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.50</text>
-<text x="746" y="773.0" fill="#9198a1" text-anchor="end">104 ms</text>
-<text x="820" y="773.0" fill="#e6edf3" text-anchor="end">107 ms</text>
-<text x="894" y="773.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.02</text>
-<text x="992" y="773.0" fill="#9198a1" text-anchor="end">84 ms</text>
-<text x="1066" y="773.0" fill="#e6edf3" text-anchor="end">83 ms</text>
+<text x="746" y="773.0" fill="#9198a1" text-anchor="end">98 ms</text>
+<text x="820" y="773.0" fill="#e6edf3" text-anchor="end">99 ms</text>
+<text x="894" y="773.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
+<text x="992" y="773.0" fill="#9198a1" text-anchor="end">85 ms</text>
+<text x="1066" y="773.0" fill="#e6edf3" text-anchor="end">86 ms</text>
 <text x="1140" y="773.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
 <text x="16" y="823" fill="#e6edf3" xml:space="preserve">Map of numbers in no order (scrambled keys): 1 million inserts, then</text>
 <text x="16" y="843" fill="#e6edf3" xml:space="preserve">5 million lookups</text>
-<text x="500" y="833.0" fill="#9198a1" text-anchor="end">411 ms</text>
-<text x="574" y="833.0" fill="#e6edf3" text-anchor="end">240 ms</text>
-<text x="648" y="833.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.58</text>
-<text x="746" y="833.0" fill="#9198a1" text-anchor="end">479 ms</text>
-<text x="820" y="833.0" fill="#e6edf3" text-anchor="end">239 ms</text>
-<text x="894" y="833.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.50</text>
-<text x="992" y="833.0" fill="#9198a1" text-anchor="end">215 ms</text>
-<text x="1066" y="833.0" fill="#e6edf3" text-anchor="end">201 ms</text>
-<text x="1140" y="833.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.94</text>
+<text x="500" y="833.0" fill="#9198a1" text-anchor="end">337 ms</text>
+<text x="574" y="833.0" fill="#e6edf3" text-anchor="end">215 ms</text>
+<text x="648" y="833.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.64</text>
+<text x="746" y="833.0" fill="#9198a1" text-anchor="end">472 ms</text>
+<text x="820" y="833.0" fill="#e6edf3" text-anchor="end">245 ms</text>
+<text x="894" y="833.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.52</text>
+<text x="992" y="833.0" fill="#9198a1" text-anchor="end">243 ms</text>
+<text x="1066" y="833.0" fill="#e6edf3" text-anchor="end">222 ms</text>
+<text x="1140" y="833.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.92</text>
 <rect x="0" y="858" width="1164" height="40" fill="#151b23"/>
 <text x="16" y="883" fill="#e6edf3" xml:space="preserve">Build a long string (16 million appends), then count one letter in it</text>
-<text x="500" y="883.0" fill="#9198a1" text-anchor="end">150 ms</text>
-<text x="574" y="883.0" fill="#e6edf3" text-anchor="end">104 ms</text>
-<text x="648" y="883.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.69</text>
-<text x="746" y="883.0" fill="#9198a1" text-anchor="end">132 ms</text>
-<text x="820" y="883.0" fill="#e6edf3" text-anchor="end">109 ms</text>
-<text x="894" y="883.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.83</text>
-<text x="992" y="883.0" fill="#9198a1" text-anchor="end">130 ms</text>
-<text x="1066" y="883.0" fill="#e6edf3" text-anchor="end">96 ms</text>
-<text x="1140" y="883.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.74</text>
+<text x="500" y="883.0" fill="#9198a1" text-anchor="end">148 ms</text>
+<text x="574" y="883.0" fill="#e6edf3" text-anchor="end">100 ms</text>
+<text x="648" y="883.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.68</text>
+<text x="746" y="883.0" fill="#9198a1" text-anchor="end">127 ms</text>
+<text x="820" y="883.0" fill="#e6edf3" text-anchor="end">102 ms</text>
+<text x="894" y="883.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.80</text>
+<text x="992" y="883.0" fill="#9198a1" text-anchor="end">129 ms</text>
+<text x="1066" y="883.0" fill="#e6edf3" text-anchor="end">95 ms</text>
+<text x="1140" y="883.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.73</text>
 <text x="16" y="923" fill="#e6edf3" xml:space="preserve">Sort 5 million numbers</text>
-<text x="500" y="923.0" fill="#9198a1" text-anchor="end">310 ms</text>
-<text x="574" y="923.0" fill="#e6edf3" text-anchor="end">235 ms</text>
-<text x="648" y="923.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.76</text>
-<text x="746" y="923.0" fill="#9198a1" text-anchor="end">298 ms</text>
-<text x="820" y="923.0" fill="#e6edf3" text-anchor="end">238 ms</text>
+<text x="500" y="923.0" fill="#9198a1" text-anchor="end">305 ms</text>
+<text x="574" y="923.0" fill="#e6edf3" text-anchor="end">229 ms</text>
+<text x="648" y="923.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.75</text>
+<text x="746" y="923.0" fill="#9198a1" text-anchor="end">294 ms</text>
+<text x="820" y="923.0" fill="#e6edf3" text-anchor="end">235 ms</text>
 <text x="894" y="923.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.80</text>
-<text x="992" y="923.0" fill="#9198a1" text-anchor="end">271 ms</text>
-<text x="1066" y="923.0" fill="#e6edf3" text-anchor="end">239 ms</text>
-<text x="1140" y="923.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.88</text>
-<rect x="0" y="938" width="1164" height="60" fill="#151b23"/>
-<text x="16" y="963" fill="#e6edf3" xml:space="preserve">Integer arithmetic: 50 million rounds of multiply, divide and</text>
-<text x="16" y="983" fill="#e6edf3" xml:space="preserve">remainder</text>
-<text x="500" y="973.0" fill="#9198a1" text-anchor="end">73 ms</text>
-<text x="574" y="973.0" fill="#e6edf3" text-anchor="end">59 ms</text>
-<text x="648" y="973.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.82</text>
-<text x="746" y="973.0" fill="#9198a1" text-anchor="end">51 ms</text>
-<text x="820" y="973.0" fill="#e6edf3" text-anchor="end">51 ms</text>
-<text x="894" y="973.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
-<text x="992" y="973.0" fill="#9198a1" text-anchor="end">54 ms</text>
-<text x="1066" y="973.0" fill="#e6edf3" text-anchor="end">54 ms</text>
-<text x="1140" y="973.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
-<text x="16" y="1023" fill="#e6edf3" xml:space="preserve">Enum with <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">match</tspan>: area of 1 million shapes, 100 times</text>
-<text x="500" y="1023.0" fill="#9198a1" text-anchor="end">109 ms</text>
-<text x="574" y="1023.0" fill="#e6edf3" text-anchor="end">95 ms</text>
-<text x="648" y="1023.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.86</text>
-<text x="746" y="1023.0" fill="#9198a1" text-anchor="end">108 ms</text>
-<text x="820" y="1023.0" fill="#e6edf3" text-anchor="end">108 ms</text>
-<text x="894" y="1023.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<text x="992" y="1023.0" fill="#9198a1" text-anchor="end">77 ms</text>
-<text x="1066" y="1023.0" fill="#e6edf3" text-anchor="end">69 ms</text>
-<text x="1140" y="1023.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.89</text>
+<text x="992" y="923.0" fill="#9198a1" text-anchor="end">282 ms</text>
+<text x="1066" y="923.0" fill="#e6edf3" text-anchor="end">243 ms</text>
+<text x="1140" y="923.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.86</text>
+<rect x="0" y="938" width="1164" height="40" fill="#151b23"/>
+<text x="16" y="963" fill="#e6edf3" xml:space="preserve">Enum with <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">match</tspan>: area of 1 million shapes, 100 times</text>
+<text x="500" y="963.0" fill="#9198a1" text-anchor="end">107 ms</text>
+<text x="574" y="963.0" fill="#e6edf3" text-anchor="end">90 ms</text>
+<text x="648" y="963.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.84</text>
+<text x="746" y="963.0" fill="#9198a1" text-anchor="end">121 ms</text>
+<text x="820" y="963.0" fill="#e6edf3" text-anchor="end">125 ms</text>
+<text x="894" y="963.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.03</text>
+<text x="992" y="963.0" fill="#9198a1" text-anchor="end">98 ms</text>
+<text x="1066" y="963.0" fill="#e6edf3" text-anchor="end">76 ms</text>
+<text x="1140" y="963.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.78</text>
+<text x="16" y="1003" fill="#e6edf3" xml:space="preserve">Integer arithmetic: 50 million rounds of multiply, divide and</text>
+<text x="16" y="1023" fill="#e6edf3" xml:space="preserve">remainder</text>
+<text x="500" y="1013.0" fill="#9198a1" text-anchor="end">68 ms</text>
+<text x="574" y="1013.0" fill="#e6edf3" text-anchor="end">54 ms</text>
+<text x="648" y="1013.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.80</text>
+<text x="746" y="1013.0" fill="#9198a1" text-anchor="end">46 ms</text>
+<text x="820" y="1013.0" fill="#e6edf3" text-anchor="end">47 ms</text>
+<text x="894" y="1013.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.02</text>
+<text x="992" y="1013.0" fill="#9198a1" text-anchor="end">54 ms</text>
+<text x="1066" y="1013.0" fill="#e6edf3" text-anchor="end">54 ms</text>
+<text x="1140" y="1013.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
 <rect x="0" y="1038" width="1164" height="40" fill="#151b23"/>
-<text x="16" y="1063" fill="#e6edf3" xml:space="preserve">Move 100,000 particles 2,000 times, changing each in place</text>
-<text x="500" y="1063.0" fill="#9198a1" text-anchor="end">90 ms</text>
-<text x="574" y="1063.0" fill="#e6edf3" text-anchor="end">90 ms</text>
-<text x="648" y="1063.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<text x="746" y="1063.0" fill="#9198a1" text-anchor="end">96 ms</text>
-<text x="820" y="1063.0" fill="#e6edf3" text-anchor="end">97 ms</text>
-<text x="894" y="1063.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
-<text x="992" y="1063.0" fill="#9198a1" text-anchor="end">112 ms</text>
-<text x="1066" y="1063.0" fill="#e6edf3" text-anchor="end">97 ms</text>
-<text x="1140" y="1063.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.87</text>
-<text x="16" y="1103" fill="#e6edf3" xml:space="preserve">1 million objects holding 6 lists, each read 40 times</text>
-<text x="500" y="1103.0" fill="#9198a1" text-anchor="end">333 ms</text>
-<text x="574" y="1103.0" fill="#e6edf3" text-anchor="end">305 ms</text>
-<text x="648" y="1103.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.92</text>
-<text x="746" y="1103.0" fill="#9198a1" text-anchor="end">318 ms</text>
-<text x="820" y="1103.0" fill="#e6edf3" text-anchor="end">285 ms</text>
-<text x="894" y="1103.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.90</text>
-<text x="992" y="1103.0" fill="#9198a1" text-anchor="end">263 ms</text>
-<text x="1066" y="1103.0" fill="#e6edf3" text-anchor="end">261 ms</text>
+<text x="16" y="1063" fill="#e6edf3" xml:space="preserve">1 million objects holding 6 lists, each read 40 times</text>
+<text x="500" y="1063.0" fill="#9198a1" text-anchor="end">307 ms</text>
+<text x="574" y="1063.0" fill="#e6edf3" text-anchor="end">284 ms</text>
+<text x="648" y="1063.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.92</text>
+<text x="746" y="1063.0" fill="#9198a1" text-anchor="end">310 ms</text>
+<text x="820" y="1063.0" fill="#e6edf3" text-anchor="end">277 ms</text>
+<text x="894" y="1063.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.89</text>
+<text x="992" y="1063.0" fill="#9198a1" text-anchor="end">247 ms</text>
+<text x="1066" y="1063.0" fill="#e6edf3" text-anchor="end">243 ms</text>
+<text x="1140" y="1063.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.98</text>
+<text x="16" y="1103" fill="#e6edf3" xml:space="preserve">A generic function (&quot;larger of two&quot;), 200 million times</text>
+<text x="500" y="1103.0" fill="#9198a1" text-anchor="end">122 ms</text>
+<text x="574" y="1103.0" fill="#e6edf3" text-anchor="end">115 ms</text>
+<text x="648" y="1103.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.94</text>
+<text x="746" y="1103.0" fill="#9198a1" text-anchor="end">103 ms</text>
+<text x="820" y="1103.0" fill="#e6edf3" text-anchor="end">104 ms</text>
+<text x="894" y="1103.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
+<text x="992" y="1103.0" fill="#9198a1" text-anchor="end">101 ms</text>
+<text x="1066" y="1103.0" fill="#e6edf3" text-anchor="end">100 ms</text>
 <text x="1140" y="1103.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
-<rect x="0" y="1118" width="1164" height="40" fill="#151b23"/>
-<text x="16" y="1143" fill="#e6edf3" xml:space="preserve">A generic function (&quot;larger of two&quot;), 200 million times</text>
-<text x="500" y="1143.0" fill="#9198a1" text-anchor="end">125 ms</text>
-<text x="574" y="1143.0" fill="#e6edf3" text-anchor="end">117 ms</text>
-<text x="648" y="1143.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.93</text>
-<text x="746" y="1143.0" fill="#9198a1" text-anchor="end">108 ms</text>
-<text x="820" y="1143.0" fill="#e6edf3" text-anchor="end">108 ms</text>
-<text x="894" y="1143.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<text x="992" y="1143.0" fill="#9198a1" text-anchor="end">101 ms</text>
-<text x="1066" y="1143.0" fill="#e6edf3" text-anchor="end">99 ms</text>
-<text x="1140" y="1143.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.98</text>
-<text x="16" y="1183" fill="#e6edf3" xml:space="preserve">Walk two 1-million-number lists side by side, changing one (<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">zip</tspan>),</text>
-<text x="16" y="1203" fill="#e6edf3" xml:space="preserve">300 times</text>
-<text x="500" y="1193.0" fill="#9198a1" text-anchor="end">127 ms</text>
-<text x="574" y="1193.0" fill="#e6edf3" text-anchor="end">118 ms</text>
-<text x="648" y="1193.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.93</text>
-<text x="746" y="1193.0" fill="#9198a1" text-anchor="end">117 ms</text>
-<text x="820" y="1193.0" fill="#e6edf3" text-anchor="end">117 ms</text>
-<text x="894" y="1193.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<text x="992" y="1193.0" fill="#9198a1" text-anchor="end">114 ms</text>
-<text x="1066" y="1193.0" fill="#e6edf3" text-anchor="end">114 ms</text>
-<text x="1140" y="1193.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<rect x="0" y="1218" width="1164" height="60" fill="#151b23"/>
-<text x="16" y="1243" fill="#e6edf3" xml:space="preserve">Every third number of a list, after skipping some, at most 300,000 of</text>
-<text x="16" y="1263" fill="#e6edf3" xml:space="preserve">them (<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">skip</tspan>, <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">step_by</tspan>, <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">take</tspan>), 300 times</text>
-<text x="500" y="1253.0" fill="#9198a1" text-anchor="end">61 ms</text>
-<text x="574" y="1253.0" fill="#e6edf3" text-anchor="end">60 ms</text>
-<text x="648" y="1253.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
-<text x="746" y="1253.0" fill="#9198a1" text-anchor="end">55 ms</text>
-<text x="820" y="1253.0" fill="#e6edf3" text-anchor="end">54 ms</text>
-<text x="894" y="1253.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
-<text x="992" y="1253.0" fill="#9198a1" text-anchor="end">48 ms</text>
-<text x="1066" y="1253.0" fill="#e6edf3" text-anchor="end">46 ms</text>
-<text x="1140" y="1253.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.96</text>
-<text x="16" y="1303" fill="#e6edf3" xml:space="preserve">Add one list into another, 2,000 rounds, overflow checks on ¹</text>
-<text x="500" y="1303.0" fill="#9198a1" text-anchor="end">40 ms</text>
-<text x="574" y="1303.0" fill="#e6edf3" text-anchor="end">40 ms</text>
-<text x="648" y="1303.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
-<text x="746" y="1303.0" fill="#9198a1" text-anchor="end">48 ms</text>
-<text x="820" y="1303.0" fill="#e6edf3" text-anchor="end">47 ms</text>
-<text x="894" y="1303.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.98</text>
-<text x="992" y="1303.0" fill="#9198a1" text-anchor="end">37 ms</text>
-<text x="1066" y="1303.0" fill="#e6edf3" text-anchor="end">36 ms</text>
-<text x="1140" y="1303.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.97</text>
-<rect x="0" y="1318" width="1164" height="40" fill="#151b23"/>
-<text x="16" y="1343" fill="#e6edf3" xml:space="preserve">Call a function passed as a value, 200 million times</text>
-<text x="500" y="1343.0" fill="#9198a1" text-anchor="end">103 ms</text>
-<text x="574" y="1343.0" fill="#e6edf3" text-anchor="end">105 ms</text>
-<text x="648" y="1343.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.02</text>
-<text x="746" y="1343.0" fill="#9198a1" text-anchor="end">125 ms</text>
-<text x="820" y="1343.0" fill="#e6edf3" text-anchor="end">125 ms</text>
-<text x="894" y="1343.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<text x="992" y="1343.0" fill="#9198a1" text-anchor="end">91 ms</text>
-<text x="1066" y="1343.0" fill="#e6edf3" text-anchor="end">88 ms</text>
-<text x="1140" y="1343.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.97</text>
-<text x="16" y="1383" fill="#e6edf3" xml:space="preserve">Number the items of a list past a starting point, as copies (<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">copied</tspan>,</text>
-<text x="16" y="1403" fill="#e6edf3" xml:space="preserve"><tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">enumerate</tspan>, <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">skip</tspan>), 300 times</text>
-<text x="500" y="1393.0" fill="#9198a1" text-anchor="end">71 ms</text>
-<text x="574" y="1393.0" fill="#e6edf3" text-anchor="end">73 ms</text>
-<text x="648" y="1393.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.03</text>
-<text x="746" y="1393.0" fill="#9198a1" text-anchor="end">63 ms</text>
-<text x="820" y="1393.0" fill="#e6edf3" text-anchor="end">63 ms</text>
-<text x="894" y="1393.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
-<text x="992" y="1393.0" fill="#9198a1" text-anchor="end">54 ms</text>
-<text x="1066" y="1393.0" fill="#e6edf3" text-anchor="end">52 ms</text>
-<text x="1140" y="1393.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.97</text>
-<rect x="0" y="1418" width="1164" height="40" fill="#151b23"/>
-<text x="16" y="1443" fill="#e6edf3" xml:space="preserve">Add up a list of 1,000 numbers, 300,000 times, overflow checks off</text>
-<text x="500" y="1443.0" fill="#9198a1" text-anchor="end">30 ms</text>
-<text x="574" y="1443.0" fill="#e6edf3" text-anchor="end">29 ms</text>
-<text x="648" y="1443.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.98</text>
-<text x="746" y="1443.0" fill="#9198a1" text-anchor="end">20 ms</text>
-<text x="820" y="1443.0" fill="#e6edf3" text-anchor="end">20 ms</text>
-<text x="894" y="1443.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
-<text x="992" y="1443.0" fill="#9198a1" text-anchor="end">26 ms</text>
-<text x="1066" y="1443.0" fill="#e6edf3" text-anchor="end">26 ms</text>
-<text x="1140" y="1443.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<text x="16" y="1483" fill="#e6edf3" xml:space="preserve">Add two lists plus the round number into a third, overflow checks on</text>
-<text x="500" y="1483.0" fill="#9198a1" text-anchor="end">19 ms</text>
-<text x="574" y="1483.0" fill="#e6edf3" text-anchor="end">19 ms</text>
-<text x="648" y="1483.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
-<text x="746" y="1483.0" fill="#9198a1" text-anchor="end">49 ms</text>
-<text x="820" y="1483.0" fill="#e6edf3" text-anchor="end">50 ms</text>
-<text x="894" y="1483.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.02</text>
-<text x="992" y="1483.0" fill="#9198a1" text-anchor="end">40 ms</text>
-<text x="1066" y="1483.0" fill="#e6edf3" text-anchor="end">39 ms</text>
-<text x="1140" y="1483.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.98</text>
-<rect x="0" y="1498" width="1164" height="40" fill="#151b23"/>
-<text x="16" y="1523" fill="#e6edf3" xml:space="preserve">Decimal arithmetic: the Mandelbrot set, 1,000 × 1,000 points</text>
-<text x="500" y="1523.0" fill="#9198a1" text-anchor="end">101 ms</text>
-<text x="574" y="1523.0" fill="#e6edf3" text-anchor="end">102 ms</text>
-<text x="648" y="1523.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
-<text x="746" y="1523.0" fill="#9198a1" text-anchor="end">99 ms</text>
-<text x="820" y="1523.0" fill="#e6edf3" text-anchor="end">101 ms</text>
-<text x="894" y="1523.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.02</text>
-<text x="992" y="1523.0" fill="#9198a1" text-anchor="end">91 ms</text>
-<text x="1066" y="1523.0" fill="#e6edf3" text-anchor="end">92 ms</text>
-<text x="1140" y="1523.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<text x="16" y="1563" fill="#e6edf3" xml:space="preserve">Add two lists plus the round number into a third, overflow checks off</text>
-<text x="500" y="1563.0" fill="#9198a1" text-anchor="end">19 ms</text>
-<text x="574" y="1563.0" fill="#e6edf3" text-anchor="end">20 ms</text>
-<text x="648" y="1563.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
-<text x="746" y="1563.0" fill="#9198a1" text-anchor="end">49 ms</text>
-<text x="820" y="1563.0" fill="#e6edf3" text-anchor="end">49 ms</text>
-<text x="894" y="1563.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
-<text x="992" y="1563.0" fill="#9198a1" text-anchor="end">40 ms</text>
-<text x="1066" y="1563.0" fill="#e6edf3" text-anchor="end">40 ms</text>
-<text x="1140" y="1563.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<rect x="0" y="1578" width="1164" height="60" fill="#151b23"/>
-<text x="16" y="1603" fill="#e6edf3" xml:space="preserve">Number each item of a 1-million-number list while changing it</text>
-<text x="16" y="1623" fill="#e6edf3" xml:space="preserve">(<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">enumerate</tspan>), 300 times</text>
-<text x="500" y="1613.0" fill="#9198a1" text-anchor="end">49 ms</text>
-<text x="574" y="1613.0" fill="#e6edf3" text-anchor="end">49 ms</text>
-<text x="648" y="1613.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
-<text x="746" y="1613.0" fill="#9198a1" text-anchor="end">62 ms</text>
-<text x="820" y="1613.0" fill="#e6edf3" text-anchor="end">64 ms</text>
-<text x="894" y="1613.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.03</text>
-<text x="992" y="1613.0" fill="#9198a1" text-anchor="end">58 ms</text>
-<text x="1066" y="1613.0" fill="#e6edf3" text-anchor="end">58 ms</text>
-<text x="1140" y="1613.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<text x="16" y="1663" fill="#e6edf3" xml:space="preserve">Number every second value of a range of 2 million (<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">step_by</tspan>,</text>
-<text x="16" y="1683" fill="#e6edf3" xml:space="preserve"><tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">enumerate</tspan>), 300 times</text>
-<text x="500" y="1673.0" fill="#9198a1" text-anchor="end">70 ms</text>
-<text x="574" y="1673.0" fill="#e6edf3" text-anchor="end">70 ms</text>
-<text x="648" y="1673.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<text x="746" y="1673.0" fill="#9198a1" text-anchor="end">47 ms</text>
-<text x="820" y="1673.0" fill="#e6edf3" text-anchor="end">47 ms</text>
-<text x="894" y="1673.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
-<text x="992" y="1673.0" fill="#9198a1" text-anchor="end">60 ms</text>
-<text x="1066" y="1673.0" fill="#e6edf3" text-anchor="end">60 ms</text>
-<text x="1140" y="1673.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<rect x="0" y="1118" width="1164" height="60" fill="#151b23"/>
+<text x="16" y="1143" fill="#e6edf3" xml:space="preserve">Walk two 1-million-number lists side by side, changing one (<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">zip</tspan>),</text>
+<text x="16" y="1163" fill="#e6edf3" xml:space="preserve">300 times</text>
+<text x="500" y="1153.0" fill="#9198a1" text-anchor="end">119 ms</text>
+<text x="574" y="1153.0" fill="#e6edf3" text-anchor="end">112 ms</text>
+<text x="648" y="1153.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.94</text>
+<text x="746" y="1153.0" fill="#9198a1" text-anchor="end">111 ms</text>
+<text x="820" y="1153.0" fill="#e6edf3" text-anchor="end">112 ms</text>
+<text x="894" y="1153.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
+<text x="992" y="1153.0" fill="#9198a1" text-anchor="end">108 ms</text>
+<text x="1066" y="1153.0" fill="#e6edf3" text-anchor="end">111 ms</text>
+<text x="1140" y="1153.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.03</text>
+<text x="16" y="1203" fill="#e6edf3" xml:space="preserve">Add up a list of 1,000 numbers, 300,000 times, overflow checks off</text>
+<text x="500" y="1203.0" fill="#9198a1" text-anchor="end">23 ms</text>
+<text x="574" y="1203.0" fill="#e6edf3" text-anchor="end">22 ms</text>
+<text x="648" y="1203.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.97</text>
+<text x="746" y="1203.0" fill="#9198a1" text-anchor="end">16 ms</text>
+<text x="820" y="1203.0" fill="#e6edf3" text-anchor="end">16 ms</text>
+<text x="894" y="1203.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="992" y="1203.0" fill="#9198a1" text-anchor="end">25 ms</text>
+<text x="1066" y="1203.0" fill="#e6edf3" text-anchor="end">25 ms</text>
+<text x="1140" y="1203.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<rect x="0" y="1218" width="1164" height="40" fill="#151b23"/>
+<text x="16" y="1243" fill="#e6edf3" xml:space="preserve">Call a function passed as a value, 200 million times</text>
+<text x="500" y="1243.0" fill="#9198a1" text-anchor="end">98 ms</text>
+<text x="574" y="1243.0" fill="#e6edf3" text-anchor="end">100 ms</text>
+<text x="648" y="1243.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.02</text>
+<text x="746" y="1243.0" fill="#9198a1" text-anchor="end">124 ms</text>
+<text x="820" y="1243.0" fill="#e6edf3" text-anchor="end">124 ms</text>
+<text x="894" y="1243.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="992" y="1243.0" fill="#9198a1" text-anchor="end">91 ms</text>
+<text x="1066" y="1243.0" fill="#e6edf3" text-anchor="end">89 ms</text>
+<text x="1140" y="1243.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.97</text>
+<text x="16" y="1283" fill="#e6edf3" xml:space="preserve">Add one list into another, 2,000 rounds, overflow checks off ¹</text>
+<text x="500" y="1283.0" fill="#9198a1" text-anchor="end">36 ms</text>
+<text x="574" y="1283.0" fill="#e6edf3" text-anchor="end">36 ms</text>
+<text x="648" y="1283.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
+<text x="746" y="1283.0" fill="#9198a1" text-anchor="end">43 ms</text>
+<text x="820" y="1283.0" fill="#e6edf3" text-anchor="end">43 ms</text>
+<text x="894" y="1283.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
+<text x="992" y="1283.0" fill="#9198a1" text-anchor="end">36 ms</text>
+<text x="1066" y="1283.0" fill="#e6edf3" text-anchor="end">35 ms</text>
+<text x="1140" y="1283.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.98</text>
+<rect x="0" y="1298" width="1164" height="40" fill="#151b23"/>
+<text x="16" y="1323" fill="#e6edf3" xml:space="preserve">Add two lists plus the round number into a third, overflow checks on</text>
+<text x="500" y="1323.0" fill="#9198a1" text-anchor="end">14 ms</text>
+<text x="574" y="1323.0" fill="#e6edf3" text-anchor="end">14 ms</text>
+<text x="648" y="1323.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
+<text x="746" y="1323.0" fill="#9198a1" text-anchor="end">46 ms</text>
+<text x="820" y="1323.0" fill="#e6edf3" text-anchor="end">48 ms</text>
+<text x="894" y="1323.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.03</text>
+<text x="992" y="1323.0" fill="#9198a1" text-anchor="end">38 ms</text>
+<text x="1066" y="1323.0" fill="#e6edf3" text-anchor="end">38 ms</text>
+<text x="1140" y="1323.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.98</text>
+<text x="16" y="1363" fill="#e6edf3" xml:space="preserve">Every third number of a list, after skipping some, at most 300,000 of</text>
+<text x="16" y="1383" fill="#e6edf3" xml:space="preserve">them (<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">skip</tspan>, <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">step_by</tspan>, <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">take</tspan>), 300 times</text>
+<text x="500" y="1373.0" fill="#9198a1" text-anchor="end">53 ms</text>
+<text x="574" y="1373.0" fill="#e6edf3" text-anchor="end">53 ms</text>
+<text x="648" y="1373.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
+<text x="746" y="1373.0" fill="#9198a1" text-anchor="end">51 ms</text>
+<text x="820" y="1373.0" fill="#e6edf3" text-anchor="end">51 ms</text>
+<text x="894" y="1373.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="992" y="1373.0" fill="#9198a1" text-anchor="end">47 ms</text>
+<text x="1066" y="1373.0" fill="#e6edf3" text-anchor="end">46 ms</text>
+<text x="1140" y="1373.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.98</text>
+<rect x="0" y="1398" width="1164" height="40" fill="#151b23"/>
+<text x="16" y="1423" fill="#e6edf3" xml:space="preserve">Add one list into another, 2,000 rounds, overflow checks on ¹</text>
+<text x="500" y="1423.0" fill="#9198a1" text-anchor="end">36 ms</text>
+<text x="574" y="1423.0" fill="#e6edf3" text-anchor="end">36 ms</text>
+<text x="648" y="1423.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
+<text x="746" y="1423.0" fill="#9198a1" text-anchor="end">44 ms</text>
+<text x="820" y="1423.0" fill="#e6edf3" text-anchor="end">44 ms</text>
+<text x="894" y="1423.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
+<text x="992" y="1423.0" fill="#9198a1" text-anchor="end">35 ms</text>
+<text x="1066" y="1423.0" fill="#e6edf3" text-anchor="end">35 ms</text>
+<text x="1140" y="1423.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
+<text x="16" y="1463" fill="#e6edf3" xml:space="preserve">Add two lists plus the round number into a third, overflow checks off</text>
+<text x="500" y="1463.0" fill="#9198a1" text-anchor="end">14 ms</text>
+<text x="574" y="1463.0" fill="#e6edf3" text-anchor="end">15 ms</text>
+<text x="648" y="1463.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.02</text>
+<text x="746" y="1463.0" fill="#9198a1" text-anchor="end">44 ms</text>
+<text x="820" y="1463.0" fill="#e6edf3" text-anchor="end">44 ms</text>
+<text x="894" y="1463.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
+<text x="992" y="1463.0" fill="#9198a1" text-anchor="end">40 ms</text>
+<text x="1066" y="1463.0" fill="#e6edf3" text-anchor="end">40 ms</text>
+<text x="1140" y="1463.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
+<rect x="0" y="1478" width="1164" height="40" fill="#151b23"/>
+<text x="16" y="1503" fill="#e6edf3" xml:space="preserve">Move 100,000 particles 2,000 times, changing each in place</text>
+<text x="500" y="1503.0" fill="#9198a1" text-anchor="end">84 ms</text>
+<text x="574" y="1503.0" fill="#e6edf3" text-anchor="end">84 ms</text>
+<text x="648" y="1503.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="746" y="1503.0" fill="#9198a1" text-anchor="end">87 ms</text>
+<text x="820" y="1503.0" fill="#e6edf3" text-anchor="end">88 ms</text>
+<text x="894" y="1503.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
+<text x="992" y="1503.0" fill="#9198a1" text-anchor="end">87 ms</text>
+<text x="1066" y="1503.0" fill="#e6edf3" text-anchor="end">86 ms</text>
+<text x="1140" y="1503.0" fill="#3fb950" text-anchor="end" font-weight="600">×0.99</text>
+<text x="16" y="1543" fill="#e6edf3" xml:space="preserve">Decimal arithmetic: the Mandelbrot set, 1,000 × 1,000 points</text>
+<text x="500" y="1543.0" fill="#9198a1" text-anchor="end">95 ms</text>
+<text x="574" y="1543.0" fill="#e6edf3" text-anchor="end">95 ms</text>
+<text x="648" y="1543.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="746" y="1543.0" fill="#9198a1" text-anchor="end">93 ms</text>
+<text x="820" y="1543.0" fill="#e6edf3" text-anchor="end">93 ms</text>
+<text x="894" y="1543.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="992" y="1543.0" fill="#9198a1" text-anchor="end">91 ms</text>
+<text x="1066" y="1543.0" fill="#e6edf3" text-anchor="end">92 ms</text>
+<text x="1140" y="1543.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
+<rect x="0" y="1558" width="1164" height="60" fill="#151b23"/>
+<text x="16" y="1583" fill="#e6edf3" xml:space="preserve">Number each item of a 1-million-number list while changing it</text>
+<text x="16" y="1603" fill="#e6edf3" xml:space="preserve">(<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">enumerate</tspan>), 300 times</text>
+<text x="500" y="1593.0" fill="#9198a1" text-anchor="end">44 ms</text>
+<text x="574" y="1593.0" fill="#e6edf3" text-anchor="end">45 ms</text>
+<text x="648" y="1593.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="746" y="1593.0" fill="#9198a1" text-anchor="end">59 ms</text>
+<text x="820" y="1593.0" fill="#e6edf3" text-anchor="end">60 ms</text>
+<text x="894" y="1593.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="992" y="1593.0" fill="#9198a1" text-anchor="end">57 ms</text>
+<text x="1066" y="1593.0" fill="#e6edf3" text-anchor="end">57 ms</text>
+<text x="1140" y="1593.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="16" y="1643" fill="#e6edf3" xml:space="preserve">Number every second value of a range of 2 million (<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">step_by</tspan>,</text>
+<text x="16" y="1663" fill="#e6edf3" xml:space="preserve"><tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">enumerate</tspan>), 300 times</text>
+<text x="500" y="1653.0" fill="#9198a1" text-anchor="end">64 ms</text>
+<text x="574" y="1653.0" fill="#e6edf3" text-anchor="end">64 ms</text>
+<text x="648" y="1653.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="746" y="1653.0" fill="#9198a1" text-anchor="end">42 ms</text>
+<text x="820" y="1653.0" fill="#e6edf3" text-anchor="end">42 ms</text>
+<text x="894" y="1653.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<text x="992" y="1653.0" fill="#9198a1" text-anchor="end">59 ms</text>
+<text x="1066" y="1653.0" fill="#e6edf3" text-anchor="end">59 ms</text>
+<text x="1140" y="1653.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.00</text>
+<rect x="0" y="1678" width="1164" height="60" fill="#151b23"/>
+<text x="16" y="1703" fill="#e6edf3" xml:space="preserve">Number the items of a list past a starting point, as copies (<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">copied</tspan>,</text>
+<text x="16" y="1723" fill="#e6edf3" xml:space="preserve"><tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">enumerate</tspan>, <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">skip</tspan>), 300 times</text>
+<text x="500" y="1713.0" fill="#9198a1" text-anchor="end">64 ms</text>
+<text x="574" y="1713.0" fill="#e6edf3" text-anchor="end">66 ms</text>
+<text x="648" y="1713.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.03</text>
+<text x="746" y="1713.0" fill="#9198a1" text-anchor="end">58 ms</text>
+<text x="820" y="1713.0" fill="#e6edf3" text-anchor="end">59 ms</text>
+<text x="894" y="1713.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.01</text>
+<text x="992" y="1713.0" fill="#9198a1" text-anchor="end">51 ms</text>
+<text x="1066" y="1713.0" fill="#e6edf3" text-anchor="end">53 ms</text>
+<text x="1140" y="1713.0" fill="#3fb950" text-anchor="end" font-weight="600">×1.04</text>
 </svg>

@@ -11336,6 +11336,32 @@ first**; the rest of §0.355 is the running narrative behind it.
       benchmark programs only its C changed. With gcc, 2 of the 43 programs are
       now more than 10% slower than the C: the empty program (1.14x) and the
       million objects (1.14x).
+    * **2026-10-02, why MSVC has more slow rows, and the fast cores (the owner's
+      choice).** The extra MSVC rows are the three `mut self` programs. Pinned to
+      one performance core (31 runs): the one-field program is 1.17x as
+      generated and 0.97x with the check on `count += 1` taken out by hand, so
+      that check, which the language requires, is its whole gap: MSVC keeps
+      Ember's loop at one turn per pass (8 instructions and the check's jump),
+      where clang unrolls it by 2 and MSVC unrolls the check-free C++ twin by 5.
+      The six-field program is about 1.15x with the check and without it; not
+      the field's place (moved first: 1.12x), not the object's size (the twin
+      padded to Ember's 200 bytes: 1.00x), not start-up (4.9 ms against 4.8
+      ms), not where the objects land (10,208 bytes apart in every run). On one
+      core, Ember's MSVC loop takes 28 to 44 ms from run to run where the twin
+      holds 30 to 31 ms: **not yet explained**, so D-447's "regression" may be
+      partly this. The laptop has 8 performance cores (logical processors 0, 1,
+      10-13, 22, 23) and 16 efficiency cores, so the README runs are now held
+      to the performance cores (`docs/AUTOPILOT.md`; scripts `pin_bench.py`,
+      `pin_rerun.py`, `pcores.py`, `pcore_compare.py` and `readme_pcores.py` in
+      the session scratchpad). On them the counts are unchanged (MSVC 5, clang
+      3, gcc 2, the same programs). The text-key map rose to 2.09x and 1.77x:
+      its C++ twin gains more on the fast cores (MSVC 112 to 83 ms) than Ember
+      does (191 to 174 ms). Several rows still move 10-20% between runs; one
+      fixed core is the next thing to try. WSL cannot be held without
+      administrator rights: during an 11-run gcc pass, 75% of the machine's
+      busy time was on the performance cores. Not built: checking the overflow
+      once per group of turns (`[SIMD-7]`'s MAY), the owner's option A, not
+      chosen.
     * **D-447 (open):** with MSVC, the three `mut self` programs are 1.20x to
       1.30x the C++ (21 runs, twice), against 1.10x to 1.17x in the README's
       2026-09-30 run. Not today's work: with D-446 switched off they are slower
