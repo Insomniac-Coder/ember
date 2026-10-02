@@ -99,6 +99,9 @@ pub struct CallableDeclarationCallableBound {
 pub struct CheckOutput {
     pub program: Program,
     pub callable_declarations: Vec<CallableDeclaration>,
+    /// `[COST-1]` — the bodies instantiated from a declaration in `std`, kept
+    /// only if something reaches them (`ember_mir::prune_unused_implicit`).
+    pub std_instances: HashSet<String>,
 }
 
 pub fn check(
@@ -296,6 +299,7 @@ pub fn check(
     CheckOutput {
         program: Program { functions, main },
         callable_declarations,
+        std_instances: std::mem::take(&mut checker.std_instances),
     }
 }
 
@@ -1308,6 +1312,8 @@ struct Checker<'a> {
     /// instance takes every matching extension at its first method call, and
     /// a body need not hold for an instance that never calls it.
     deferred_methods: HashMap<DefId, PendingMethod>,
+    /// `[COST-1]` — see `CheckOutput::std_instances` and `note_std_instance`.
+    std_instances: HashSet<String>,
     /// A generic class/extension declaration can materialize more than once,
     /// but an invalid `override` is one source error, not one per concrete
     /// type argument list.
@@ -1670,6 +1676,7 @@ impl<'a> Checker<'a> {
             applied_extensions: HashSet::new(),
             emit_if_used_methods: HashSet::new(),
             deferred_methods: HashMap::new(),
+            std_instances: HashSet::new(),
             bound_calls: HashMap::new(),
             generically_checked: HashSet::new(),
             reported_generic_override_errors: HashSet::new(),
@@ -13408,6 +13415,7 @@ impl<'a> Checker<'a> {
                 self.emit_concrete_instantiation_diagnostics(concrete);
                 self.type_params.clear();
                 self.callable_value_params.clear();
+                self.note_std_instance(module_index, &function);
                 out.push(function);
             }
 
@@ -13475,6 +13483,7 @@ impl<'a> Checker<'a> {
                 self.type_params.clear();
                 if let Some(mut function) = function {
                     function.emit_if_used |= self.emit_if_used_methods.contains(&job.def);
+                    self.note_std_instance(module_index, &function);
                     out.push(function);
                 }
             }
@@ -13558,6 +13567,7 @@ impl<'a> Checker<'a> {
                     self.leave_default(saved);
                 }
                 if let Some(function) = function {
+                    self.note_std_instance(module_index, &function);
                     out.push(function);
                 }
             }
@@ -15074,7 +15084,10 @@ impl<'a> Checker<'a> {
                             .collect();
                         self.emit_concrete_instantiation_diagnostics(concrete);
                     }
-                    out.extend(function);
+                    if let Some(function) = function {
+                        self.note_std_instance(self.current_module, &function);
+                        out.push(function);
+                    }
                 }
             }
         }
@@ -16173,6 +16186,19 @@ impl<'a> Checker<'a> {
     fn is_std_module(&self, module: usize) -> bool {
         let path = self.prefixes[module].as_str();
         path == "std" || path.starts_with("std.")
+    }
+
+    /// `[COST-1]` — a body instantiated from `std` (a generic function's
+    /// instance, a generic type's method, an interface's provided method) is
+    /// kept only if something reaches it: every iterator in `std` would
+    /// otherwise give every program a copy of each of `Iterator`'s provided
+    /// methods, and all the adapters those name, to check (D-474). Not a
+    /// class's method (its vtable names it) nor a `drop` (drop glue names it
+    /// by its type).
+    fn note_std_instance(&mut self, module: usize, function: &Function) {
+        if self.is_std_module(module) && function.class_owner.is_none() && !function.name.is("drop") {
+            self.std_instances.insert(function.symbol.clone());
+        }
     }
 
     /// `[IFC-2]` — whether `ty` belongs to the package of the module being

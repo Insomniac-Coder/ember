@@ -125,11 +125,13 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   is invalid". The runners check before each group of programs and stop on battery
   (`GetSystemPowerStatus`); Windows logs each switch (Kernel-Power event 105). The README names the
   laptop and the compiler versions the numbers come from.
-- **Where Ember is faster, the README says so in bold green.** The owner, 2026-10-02: "for the
-  benchmark values where ember is just better can you make sure that the value is in bold ... bold
-  along with the green colour, make this part of the readme update process". In the README's
-  benchmark tables a ratio below ×1.00 as printed is bold and green; every other ratio keeps its
-  colour (green under ×1.05, amber to ×1.10, red above) in the regular weight.
+- **Where Ember is clearly faster, the README says so in bold green.** The owner, 2026-10-02: "for
+  the benchmark values where ember is just better can you make sure that the value is in bold ...
+  bold along with the green colour, make this part of the readme update process", then "any value
+  less than 0.95 needs to be be shown as bold and green instead of just green ... that will be the
+  readme protocol from now on". In the README's benchmark tables a ratio below ×0.95 as printed is
+  bold and green; every other ratio keeps its colour (green under ×1.05, amber to ×1.10, red above)
+  in the regular weight.
 - **Every solution is general, never specific.** The owner, 2026-09-28: "always suggest a general
   and optimised solution, specific solutions are like ticking timebombs just waiting to go off
   because no one is going to write code like 'tests' languages are supposed to be general", and

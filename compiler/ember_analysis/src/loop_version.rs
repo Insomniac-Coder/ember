@@ -1248,7 +1248,7 @@ fn entry_tests(
 }
 
 /// Apply `f` to every place a block names.
-fn rewrite_places(block: &mut BasicBlock, f: &impl Fn(&mut Place)) {
+pub(crate) fn rewrite_places(block: &mut BasicBlock, f: &impl Fn(&mut Place)) {
     let operand = |operand: &mut Operand| {
         if let Operand::Copy(place) | Operand::Move(place) = operand {
             f(place);
@@ -1773,7 +1773,7 @@ fn reach_order(body: &Body, start: usize, stop: usize) -> Vec<usize> {
 
 /// Visit every place a block names: `(place, written, part of an access
 /// check)`.
-fn visit_places(block: &BasicBlock, f: &mut dyn FnMut(&Place, bool, bool)) {
+pub(crate) fn visit_places(block: &BasicBlock, f: &mut dyn FnMut(&Place, bool, bool)) {
     for stmt in &block.stmts {
         visit_stmt(stmt, f);
     }

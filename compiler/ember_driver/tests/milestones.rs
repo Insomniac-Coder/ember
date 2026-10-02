@@ -3974,8 +3974,8 @@ fn c_definition<'a>(c: &'a str, name: &str) -> &'a str {
 
 /// ADR-106 — `s.chars()`, `s.char_indices()` and `s.bytes()` in a `for`
 /// header are counted loops with no iterator: `main` decodes with the text
-/// loop's step and calls neither `next`. An iterator in a variable or an
-/// adapter's still calls `next`.
+/// loop's step and calls neither `next`. An iterator in a variable still
+/// calls `next` with clang (with MSVC its step is copied in, ADR-107).
 #[test]
 fn text_iterator_loops_are_counted_loops_without_the_iterator() {
     let root = workspace_root();
@@ -3986,29 +3986,41 @@ fn text_iterator_loops_are_counted_loops_without_the_iterator() {
         let main = c_definition(&c.stdout, &ember_branding::mangled("main"));
         assert!(main.contains("str_char_next("), "{cc}: no text loop in main:\n{main}");
         assert!(!main.contains("CharIndices_next(") && !main.contains("Bytes_next("), "{cc}: a loop calls `next`:\n{main}");
-        assert!(main.contains("Chars_next("), "{cc}: the iterator held in a variable lost its `next`:\n{main}");
+        if cc == "clang" {
+            assert!(main.contains("Chars_next("), "clang: the iterator held in a variable lost its `next`:\n{main}");
+        }
     }
 }
 
 /// ADR-106 — a struct, tuple or payload variant assigned to a local is
 /// written field by field, the tag first, and a unit variant writes only its
-/// tag; a view a built-in makes, a view copied whole and an `Option` of a
-/// view's `None` take their two fields one at a time. As compound literals
-/// MSVC built them in memory and read them back wider than they were
-/// written (`char_indices()` 15x the C loop).
+/// tag; a view a built-in makes and an `Option` of a view's `None` take
+/// their two fields one at a time. As compound literals MSVC built them in
+/// memory and read them back wider than they were written (`char_indices()`
+/// 15x the C loop). D-475 — a view copied whole from a place its function
+/// writes by fields is copied by its fields too (`lines()` 1.98x the C with
+/// MSVC copied whole), and from a place written whole it stays one
+/// assignment (by its fields, MSVC no longer interchanged `a05_structs`'s
+/// loop nest: 1.47x).
 #[test]
 fn aggregates_and_views_are_written_field_by_field() {
     let root = workspace_root();
     let source = format!("tests/conformance/TXT-10/accept_text_iterators_in_loops_and_through_next.{SOURCE_EXT}");
-    let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
-    assert_eq!(c.exit, 0, "msvc C failed:\n{}", c.stderr);
+    // clang's C: with MSVC these steps are copied into their loops (ADR-107);
+    // the writes by fields are every compiler's.
+    let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
     let next = c_definition(&c.stdout, &format!("{}_CharIndices_next", ember_branding::mangled("std_string")));
     assert!(next.contains("(_0).tag = 1;") && next.contains("_0.payload.Some._0 = "), "the item is not written by fields:\n{next}");
     assert!(next.contains("(_0).tag = 0;") && !next.contains("memset(") && !next.contains(".tag = 1, .payload"), "`None` or `Some` is a literal:\n{next}");
     let lines = c_definition(&c.stdout, &format!("{}_Lines_next", ember_branding::mangled("std_string")));
     assert!(lines.contains("((*_1).rest).ptr = ") && lines.contains("((*_1).rest).len = "), "the slice is a literal:\n{lines}");
     assert!(lines.contains("(_0).ptr = NULL;") && !lines.contains("{ .ptr = NULL"), "`None` of a view is a literal:\n{lines}");
-    assert!(lines.contains("(_2).ptr = ((*_1).rest).ptr;"), "the view is copied whole:\n{lines}");
+    assert!(lines.contains("(_2).ptr = ((*_1).rest).ptr;"), "the rest, written by fields, is copied whole:\n{lines}");
+    let counted = format!("tests/conformance/CTL-1/accept_a_view_iterator_loop_is_counted.{SOURCE_EXT}");
+    let c = ember(&["build", &counted, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
+    assert!(c.stdout.contains(".source;") && !c.stdout.contains(".source).ptr;"), "an iterator's view, written whole, is copied by its fields:\n{}", c.stdout);
 }
 
 /// `[CG-C-3]` — a standard view's or container's `next` is forced inline,
@@ -4020,8 +4032,10 @@ fn aggregates_and_views_are_written_field_by_field() {
 fn inline_header_functions_and_inline_attributes_reach_the_c() {
     let root = workspace_root();
     let iterators = format!("tests/conformance/TXT-10/accept_text_iterators_in_loops_and_through_next.{SOURCE_EXT}");
-    let c = ember(&["build", &iterators, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
-    assert_eq!(c.exit, 0, "msvc C failed:\n{}", c.stderr);
+    // clang's C keeps `Chars.next` a function (with MSVC it is copied into
+    // its loops, ADR-107); how it is marked is every compiler's.
+    let c = ember(&["build", &iterators, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
     let std_string = ember_branding::mangled("std_string");
     assert!(c.stdout.contains(&format!("EMBER_INLINED {} {std_string}_Chars_next(", ember_branding::mangled("Option_char"))), "`Chars.next` is not forced inline:\n{}", c.stdout);
     assert!(c.stdout.contains(&format!("static inline {std_string}_Chars {}(", ember_branding::mangled("str_chars"))), "`str.chars` is not static inline:\n{}", c.stdout);
@@ -4064,4 +4078,56 @@ fn an_iterator_loop_without_else_has_no_flag() {
     assert_eq!(c.exit, 0, "msvc C failed:\n{}", c.stderr);
     let main = c_definition(&c.stdout, &ember_branding::mangled("main"));
     assert!(main.contains("Countdown_next(") && !main.contains("__done"), "the loop keeps a flag:\n{main}");
+}
+
+/// ADR-107 — for MSVC, a `for` loop's step through a standard iterator is
+/// copied into the loop, and the variant it builds goes straight to its
+/// branch: the loop calls no `next`, and no test of what came back is ever
+/// entered (its block keeps no label). clang's C keeps the call.
+#[test]
+fn msvc_loops_copy_a_standard_step_and_skip_its_answer() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/TXT-10/accept_text_iterators_in_loops_and_through_next.{SOURCE_EXT}");
+    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
+    assert_eq!(msvc.exit, 0, "msvc C failed:\n{}", msvc.stderr);
+    let main = c_definition(&msvc.stdout, &ember_branding::mangled("main"));
+    for step in ["Lines_next(", "Split_next(", "SplitWhitespace_next("] {
+        assert!(!main.contains(step), "the loop still calls {step}:\n{main}");
+    }
+    // `#line` markers sit between a label and its first statement.
+    let lines: Vec<&str> = main.lines().filter(|line| !line.starts_with("#line")).collect();
+    let entered_test = lines.windows(2).any(|pair| {
+        pair[0].starts_with("bb") && pair[0].ends_with(": ;") && pair[1].contains(".ptr == NULL && (") && pair[1].contains(".len == SIZE_MAX ? 0 : 1);")
+    });
+    assert!(!entered_test, "a loop still tests what its step gave back:\n{main}");
+    let clang = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    assert_eq!(clang.exit, 0, "clang C failed:\n{}", clang.stderr);
+    assert!(c_definition(&clang.stdout, &ember_branding::mangled("main")).contains("Split_next("), "clang's loop lost its call");
+}
+
+/// D-474 — a body instantiated from `std` (a generic function's instance, a
+/// generic type's method, an interface's provided method) is kept only if
+/// something reaches it: a program that names no text iterator checks none
+/// of `Iterator`'s provided methods for std's six, nor the adapters those
+/// name (every program checked about 150 of them, 4x the time), and one that
+/// calls `count` keeps that one.
+#[test]
+fn std_instances_nothing_reaches_are_not_kept() {
+    let root = workspace_root();
+    let std_string = ember_branding::mangled("std_string");
+    let unused = [
+        format!("fn {std_string}_Chars_count:"),
+        format!("fn {std_string}_Split_step_by:"),
+        format!("fn {}_Enumerate_std_string_Lines_next:", ember_branding::mangled("std_core")),
+    ];
+    let plain = format!("tests/milestones/m1_value_code_has_no_runtime_cost.{SOURCE_EXT}");
+    let mir = ember(&["build", &plain, "--emit", "mir", "--profile", "release"], &root);
+    assert_eq!(mir.exit, 0, "MIR failed:\n{}", mir.stderr);
+    for body in &unused {
+        assert!(!mir.stdout.contains(body.as_str()), "`{body}` is kept though nothing reaches it");
+    }
+    let iterators = format!("tests/conformance/TXT-10/accept_text_iterators_in_loops_and_through_next.{SOURCE_EXT}");
+    let mir = ember(&["build", &iterators, "--emit", "mir", "--profile", "release"], &root);
+    assert_eq!(mir.exit, 0, "MIR failed:\n{}", mir.stderr);
+    assert!(mir.stdout.contains(unused[0].as_str()), "`count`, which the program calls, was dropped");
 }

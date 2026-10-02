@@ -11104,7 +11104,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h51/` are frozen.
-* **Next numbers:** ODR-098, D-474, ADR-107, ERR-056.
+* **Next numbers:** ODR-098, D-477, ADR-109, ERR-056.
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
@@ -11303,23 +11303,51 @@ first**; the rest of §0.355 is the running narrative behind it.
     searches; no `__done` flag without an `else`; `push_str` of a literal
     reserves its room in a counted loop. D-473: an inherent `next` broke every
     adapter in the program (std's `lines` and `split` were written that way).
-  * **What is left of ADR-106, and why.** `lines()`: its slices' bounds and
-    character-boundary checks (1.04x and 0.99x with them deleted by hand),
-    safety checks. `split()` with MSVC: MSVC keeps the iterator in memory, so
-    the separator is not folded and three values spill around each `memchr`
-    (clang runs the same C at 0.95x). That cost can be removed, so by
-    AUTOPILOT §4 the investigation is not finished: it needs a MIR pass that
-    inlines a standard iterator's `next` into its `for` loop and holds the
-    iterator's fields in locals. The owner, 2026-10-02: "yes check split
-    after".
-  * **Next:** (1) that MIR pass (for MSVC: the loop's iterator a local whose
-    address is never taken), measured; then the full README benchmark run
-    on mains power with the seven text programs and the bold-green rule
-    (scratchpad `text/`, `readme_adr106.py`); (2) `for x in span` and
+  * **What is left of ADR-106, and the owner's Option A (ADR-107).**
+    `lines()`: its slices' bounds and character-boundary checks (1.04x and
+    0.99x with them deleted by hand), safety checks. `split()` with MSVC: the
+    owner chose "option A" for the test of what `next` gives back, which
+    clang removes and MSVC keeps: for MSVC a `for` loop's step through a
+    standard iterator is copied into the loop and the variant it builds goes
+    straight to its branch. MSVC: `split_whitespace()` 0.93x to 0.87x,
+    `lines()` 1.11x to 1.09x, `split()` 1.13x to 1.12x. What is left of
+    `split()` was taken apart by hand (ADR-107's last section): the
+    separator as a constant, the iterator in registers, the checks deleted
+    and `find`'s `-1` tested differently each change nothing; a hand-written
+    loop of Ember's shape is 1.05x to 1.07x the C. It is the per-part cost
+    of that shape with MSVC, with no single removable cause found.
+  * **What the README run and CI found (ADR-108).** D-474: ADR-106's six
+    text iterators gave every program about 150 provided-method copies to
+    borrow-check (4x the compile time; the CI run of `5a5a678` took over 2
+    hours). A body instantiated from std is now kept only if something
+    reaches it. D-475: copying every whole view by its fields cost
+    `a05_structs` 1.47x with MSVC, and copying none cost `lines()` 1.98x; a
+    view is copied by fields only from a place its function writes by
+    fields. gcc's `-finline-functions-called-once` with
+    `[CG-C-3]`'s `static inline` costs `a04_map_int` 8% and
+    `a14_map_gap_1024` 4% against the compiler before ADR-106; both ways out
+    measured neutral over all programs (ADR-108), so it stays; one more way,
+    not yet measured: for gcc, `static inline` only on the functions small
+    with their callees counted (`inline_sizes`), which `Map.index` (it calls
+    `find`) is not. Every other row that looked slower in that run measured
+    the same as before ADR-106, built by both and timed interleaved. D-476:
+    the summary fixpoint inferred every body in every round (a 57-line
+    program of adapter chains took 2.56 s to compile); a body whose callees
+    did not change keeps its summary (1.94 s).
+  * **The README run on the final compiler** (2026-10-02, 18:27 to 18:42,
+    on mains; scratchpad `readme_final2_win.log`, `wsl/readme_final2_gcc.log`):
+    41 of the 50 programs as fast as C or faster, 4 close, 5 more than 10%
+    slower with one compiler: MSVC `a16_map_text` 1.15x (the owner's
+    text-map decision), `p1_read_loop` 1.48x and `t3_lines` 1.13x (their
+    checks); clang `a10_recursion` 1.74x and `p1_read_loop` 1.73x (the
+    check); gcc `p5_million_objects` 1.12x. 57 values under x0.95 (bold).
+  * **Paused** by the owner after this commit ("update the handoff and pause
+    all the work"): resume only when the owner says so.
+  * **Next:** (1) `for x in span` and
     `for x in xs` over an `Array` bind each element by reference, and
     `[SIMD-5]`'s vectorisable form refuses a reference, so those loops never
     group their overflow checks (`for b in text.as_bytes()` 1.5x C): admit a
-    read-only element reference; (3) `[TXT-11]`'s seven missing `String`
+    read-only element reference; (2) `[TXT-11]`'s seven missing `String`
     methods (`with_capacity`, `reserve`, `insert`, `remove`, `truncate`,
     `clear`, `capacity`); then what is left of the second review: the
     interface half of D-467 (a per-class accessor in the type information),

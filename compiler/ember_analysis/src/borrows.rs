@@ -2414,21 +2414,56 @@ fn builtin_contract(func: &FuncRef) -> Option<CallRegionContract> {
     })
 }
 
+#[cfg(test)]
+thread_local! {
+    /// The bodies `infer_callable_summaries` inferred, in order (D-476's test).
+    static INFERRED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Infer exact direct-function result provenance to a fixpoint. A wrapper may
 /// depend on a callee declared later, so one source-order pass is insufficient.
 /// Unknown and recursive relations remain absent and are conservatively
 /// checked (and, when returned, diagnosed as B14) rather than guessed.
+///
+/// A body's inference reads its direct callees' summaries (`contract_for`)
+/// and every closure body's (`closure_capture_contracts`), so a body none of
+/// whose callees changed in the last round would give the summary it has
+/// again and keeps it: the same rounds and the same fixpoint, without
+/// inferring a large `main` once per round (D-476).
 fn infer_callable_summaries(
     bodies: &[Body],
     types: &TypeTable,
     signatures: &HashMap<String, Elision>,
 ) -> HashMap<String, CallRegionContract> {
+    let callees: Vec<HashSet<&str>> = bodies
+        .iter()
+        .map(|body| {
+            body.blocks
+                .iter()
+                .filter_map(|block| match &block.terminator {
+                    Terminator::Call { func: FuncRef::Direct { symbol, .. }, .. } => Some(symbol.as_str()),
+                    _ => None,
+                })
+                .collect()
+        })
+        .collect();
     let mut summaries: HashMap<String, CallRegionContract> = HashMap::new();
+    // The symbols whose summary the last round changed; `None` for every body.
+    let mut changed: Option<HashSet<String>> = None;
     for _ in 0..=bodies.len() {
         let contract = |func: &FuncRef| contract_for(func, &summaries, signatures);
         let capture_contracts = closure_capture_contracts(bodies, &summaries);
         let mut next = HashMap::new();
-        for body in bodies {
+        for (index, body) in bodies.iter().enumerate() {
+            let unchanged = changed
+                .as_ref()
+                .is_some_and(|changed| !callees[index].iter().any(|callee| changed.contains(*callee)));
+            if unchanged && let Some(summary) = summaries.get(&body.symbol) {
+                next.insert(body.symbol.clone(), summary.clone());
+                continue;
+            }
+            #[cfg(test)]
+            INFERRED.with(|inferred| inferred.borrow_mut().push(body.symbol.clone()));
             let capture_paths = capture_borrow_paths(body, &capture_contracts);
             let regions = Regions::infer_with_capture_borrow_paths(
                 body,
@@ -2444,6 +2479,15 @@ fn infer_callable_summaries(
         if next == summaries {
             return summaries;
         }
+        let now: HashSet<String> = next
+            .iter()
+            .filter(|(symbol, summary)| summaries.get(symbol.as_str()) != Some(*summary))
+            .map(|(symbol, _)| symbol.clone())
+            .collect();
+        // A closure body's summary reaches each closure's creator through its
+        // capture contract, not a call: every body is inferred again.
+        changed = (!bodies.iter().any(|body| body.closure_environment.is_some() && now.contains(&body.symbol)))
+            .then_some(now);
         summaries = next;
     }
     summaries
@@ -4896,6 +4940,37 @@ mod callable_region_metadata_tests {
             removed_checks: Vec::new(),
             restrict_views: false,
         }
+    }
+
+    /// D-476 — a body none of whose callees changed in a round is not
+    /// inferred again: `leaf` calls nothing and keeps its first summary, and
+    /// `caller`, whose callee's summary has just appeared, is inferred again.
+    #[test]
+    fn a_body_whose_callees_did_not_change_is_not_inferred_again() {
+        let (types, _) = TypeTable::new();
+        let mut leaf = empty_body();
+        leaf.symbol = "leaf".to_string();
+        let mut caller = empty_body();
+        caller.symbol = "caller".to_string();
+        let span = caller.span;
+        caller.blocks.insert(0, BasicBlock {
+            stmts: Vec::new(),
+            terminator: Terminator::Call {
+                func: FuncRef::Direct { symbol: "leaf".to_string(), latebound: false },
+                args: Vec::new(),
+                dest: Place::local(LocalId(0)),
+                next: BasicBlockId(1),
+            },
+            terminator_span: span,
+        });
+        let bodies = vec![caller, leaf];
+        let signatures: HashMap<String, Elision> =
+            bodies.iter().map(|body| (body.symbol.clone(), elision_of(body, &types))).collect();
+        INFERRED.with(|inferred| inferred.borrow_mut().clear());
+        let _ = infer_callable_summaries(&bodies, &types, &signatures);
+        let inferred = INFERRED.with(|inferred| inferred.borrow().clone());
+        let count = |symbol: &str| inferred.iter().filter(|each| *each == symbol).count();
+        assert_eq!((count("leaf"), count("caller")), (1, 2), "inferred: {inferred:?}");
     }
 
     #[test]

@@ -178,6 +178,7 @@ pub fn emit(
         inline_sizes: inline_sizes(bodies),
         inline_bodies: if split { BTreeMap::new() } else { inline_bodies(bodies, types) },
         view_pointers: BTreeMap::new(),
+        parted_views: Vec::new(),
         direct_param_modes: bodies
             .iter()
             .map(|body| (body.symbol.clone(), body.param_modes.clone()))
@@ -422,6 +423,9 @@ struct Emitter<'a> {
     /// its own (`_N_ptr`), set wherever the view is, which MSVC keeps in a
     /// register where it re-reads a struct field.
     view_pointers: BTreeMap<usize, String>,
+    /// The places this body writes a view to by its two fields (`view_parts`,
+    /// an `Option` of a view's `None`): a whole copy of one reads them back.
+    parted_views: Vec<Place>,
     /// Direct-call ownership modes. A `Copy` operand passed to an `owned`
     /// parameter creates another class-handle owner, so its retain must be
     /// emitted before the call transfers that new owner to the callee.
@@ -4166,6 +4170,7 @@ impl Emitter<'_> {
             .map(|(local, elem)| (local, self.c_type(elem)))
             .filter(|(_, c)| c != "void")
             .collect();
+        self.parted_views = self.parted_views(body);
         // ADR-079: a view parameter of such a body *is* its pointer, and
         // every element access goes through it.
         let mut restrict_params: BTreeSet<usize> = BTreeSet::new();
@@ -4572,10 +4577,13 @@ impl Emitter<'_> {
                     self.set_view_pointer(place);
                     return;
                 }
-                // A view copied whole: its two fields, for the reason
-                // `view_parts` gives (a view written by fields, then read back
-                // whole, waits for both stores).
+                // A view copied whole from a place this body writes by its
+                // fields: its two fields, for the reason `view_parts` gives
+                // (`lines()` with MSVC, 1.98x the C copied whole). From a place
+                // written whole it stays one assignment: by its fields, MSVC
+                // no longer interchanged `a05_structs`'s loop nest (D-475).
                 if let Rvalue::Use(Operand::Copy(source) | Operand::Move(source)) = rvalue
+                    && self.parted_views.contains(source)
                     && self.view_shaped(ty)
                     && self.place_ty(source, body) == ty
                 {
@@ -5300,6 +5308,31 @@ impl Emitter<'_> {
                 .is_some_and(|niche| matches!(self.types.kind(niche.payload), TyKind::Str | TyKind::Span { .. })),
             _ => false,
         }
+    }
+
+    /// The places `body` writes a view to by its two fields: a built-in's
+    /// view (`view_parts`) and an `Option` of a view's `None`.
+    fn parted_views(&self, body: &Body) -> Vec<Place> {
+        let mut parted = Vec::new();
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                if let StmtKind::Assign { place, rvalue: Rvalue::Aggregate { kind: AggregateKind::Enum(id, variant), operands } } =
+                    &stmt.kind
+                    && operands.is_empty()
+                    && let Some(niche) = self.types.option_niche(*id)
+                    && *variant != niche.some
+                    && matches!(self.types.kind(niche.payload), TyKind::Span { .. } | TyKind::Str)
+                {
+                    parted.push(place.clone());
+                }
+            }
+            if let Terminator::Call { func, args, dest, .. } = &block.terminator
+                && self.view_parts(func, args, self.place_ty(dest, body), body).is_some()
+            {
+                parted.push(dest.clone());
+            }
+        }
+        parted
     }
 
     /// The pointer and the length of a shared view a built-in makes (a

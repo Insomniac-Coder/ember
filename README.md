@@ -96,7 +96,8 @@ cannot be held there without administrator rights, so the gcc runs ran where Win
 Overflow checks are on unless a row says they are off (`@overflow(wrap)`). Each table shows, for
 each compiler, the hand-written C's time, Ember's time (each the middle of 11 or more runs), and
 Ember's time divided by the C's: ×1.00 is the same speed, above 1 is slower, below 1 is faster.
-Green is under ×1.05 (less than 5% slower than C, or faster), amber ×1.05 to ×1.10, red over ×1.10.
+Green is under ×1.05 (less than 5% slower than C, or faster), amber ×1.05 to ×1.10, red over ×1.10;
+a value under ×0.95, in bold green, is a program Ember runs at least 5% faster than C.
 A program goes in the table of its slowest compiler.
 
 Each compiler's columns compare Ember with the hand-written C built by that compiler. On the rows
@@ -117,7 +118,7 @@ notes under the tables say how. With gcc, both programs are built with
 
 > Development is in progress, and attempts will be made to speed the language up in these areas.
 
-More than 10% slower than C: 2 of the 43 programs with MSVC, 3 with clang, 3 with gcc; none with all
+More than 10% slower than C: 3 of the 50 programs with MSVC, 2 with clang, 1 with gcc; none with all
 three.
 
 ![Programs more than 10% slower than C with one compiler: C time, Ember time, Ember divided by C](docs/benchmarks/slower-than-c.svg)

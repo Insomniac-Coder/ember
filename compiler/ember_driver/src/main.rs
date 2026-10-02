@@ -2134,7 +2134,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // as "type-check + borrow-check without codegen", so it cannot stop here.
     let mut bodies = ember_mir::lower(program, &types, &common, &map);
     // `[COST-1]` — an implicit `clone` nothing calls is not emitted.
-    ember_mir::prune_unused_implicit(&mut bodies, &types);
+    ember_mir::prune_unused_implicit(&mut bodies, &types, &checked.std_instances);
     if cfg!(debug_assertions) {
         ember_mir::verify::verify_all(&bodies);
     }
@@ -2233,6 +2233,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // the slower unsigned `max` (`cmovbe`) for values it proves non-negative
     // (ADR-081). MSVC's inliner is weaker, so for it every such function.
     ember_analysis::inline_single_calls_all(&mut bodies, &types, !c_for_msvc(&options));
+    // ADR-107 — MSVC keeps a struct whose address goes to a function in
+    // memory, inlined or not: a `for` loop's step through a standard
+    // iterator is inlined and the iterator becomes a plain local.
+    if c_for_msvc(&options) {
+        ember_analysis::inline_loop_steps_all(&mut bodies, &types);
+    }
     // Both passes above change bodies after `[MIR-REG-1]`'s summaries were
     // made (a call through a parameter became a direct call; a call became
     // its callee's body): make them again from the MIR as it now is.

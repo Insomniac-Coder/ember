@@ -1342,10 +1342,16 @@ pub enum FuncRef {
 }
 
 /// `--emit=mir`: a stable textual form, for snapshot tests.
-/// `[COST-1]` — drop the implicit derives (`emit_if_used`) nothing kept
-/// reaches: a direct call, or a structural clone whose field eventually
-/// reaches the derive's type through a backend helper.
-pub fn prune_unused_implicit(bodies: &mut Vec<Body>, types: &ember_types::TypeTable) {
+/// `[COST-1]` — drop the implicit derives (`emit_if_used`) and the bodies
+/// instantiated from `std` (`std_instances`) nothing kept reaches: a direct
+/// call, a function value, an interface table's implementation, or a
+/// structural clone whose field eventually reaches the derive's type through
+/// a backend helper.
+pub fn prune_unused_implicit(
+    bodies: &mut Vec<Body>,
+    types: &ember_types::TypeTable,
+    std_instances: &std::collections::HashSet<String>,
+) {
     use std::collections::HashMap;
     fn clone_dependencies(
         ty: Ty,
@@ -1384,14 +1390,51 @@ pub fn prune_unused_implicit(bodies: &mut Vec<Body>, types: &ember_types::TypeTa
         .filter(|(_, body)| body.emit_if_used)
         .map(|(i, body)| (body.return_ty(), i))
         .collect();
-    let mut live: Vec<bool> = bodies.iter().map(|body| !body.emit_if_used).collect();
+    let mut live: Vec<bool> =
+        bodies.iter().map(|body| !body.emit_if_used && !std_instances.contains(&body.symbol)).collect();
     let mut work: Vec<usize> = (0..bodies.len()).filter(|&i| live[i]).collect();
+    let function_value = |operand: &Operand| match operand {
+        Operand::Const(Const::Fn(symbol)) => by_symbol.get(symbol.as_str()).copied(),
+        _ => None,
+    };
+    let table = |implementations: &[Option<InterfaceAdapterMethod>]| {
+        implementations
+            .iter()
+            .flatten()
+            .filter_map(|method| by_symbol.get(method.symbol.as_str()).copied())
+            .collect::<Vec<_>>()
+    };
     while let Some(i) = work.pop() {
         let mut reached = Vec::new();
         for block in &bodies[i].blocks {
-            let Terminator::Call { func, .. } = &block.terminator else { continue };
+            for stmt in &block.stmts {
+                let StmtKind::Assign { rvalue, .. } = &stmt.kind else { continue };
+                match rvalue {
+                    Rvalue::Use(operand)
+                    | Rvalue::UnaryOp { operand, .. }
+                    | Rvalue::Repeat { value: operand, .. } => reached.extend(function_value(operand)),
+                    Rvalue::BinaryOp { lhs, rhs, .. } => {
+                        reached.extend(function_value(lhs));
+                        reached.extend(function_value(rhs));
+                    }
+                    Rvalue::Aggregate { operands, .. } => reached.extend(operands.iter().filter_map(function_value)),
+                    Rvalue::Cast { kind, operand, .. } => {
+                        reached.extend(function_value(operand));
+                        if let CastKind::InterfaceUpcast { implementations, .. }
+                        | CastKind::ClassInterfaceUpcast { implementations, .. } = kind
+                        {
+                            reached.extend(table(implementations));
+                        }
+                    }
+                    Rvalue::Discriminant(_) | Rvalue::Ref { .. } => {}
+                }
+            }
+            let Terminator::Call { func, args, .. } = &block.terminator else { continue };
+            reached.extend(args.iter().filter_map(function_value));
             match func {
                 FuncRef::Direct { symbol, .. } => reached.extend(by_symbol.get(symbol.as_str()).copied()),
+                FuncRef::DynBoxNew { implementations, .. } => reached.extend(table(implementations)),
+                FuncRef::Indirect { operand, .. } => reached.extend(function_value(operand)),
                 FuncRef::Builtin { which: Builtin::ArrayClone { elem }, .. } => {
                     clone_dependencies(*elem, types, &clone_of, &mut reached, &mut Default::default());
                 }

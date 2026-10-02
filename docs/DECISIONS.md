@@ -3557,6 +3557,89 @@ RandomState]` in insertion order; one key, one hash within a run),
 `HASH-2/accept_bytes_differing_in_their_tail_hash_apart` (D-405, both hashers), and
 `random_state_is_keyed_per_process` in `milestones.rs` (one program run twice hashes a key two ways).
 
+## ADR-108 — what the README run and CI found in ADR-106: unused std instances, a view's copy, gcc
+
+2026-10-02, while finishing ADR-106 and ADR-107 for the README run.
+
+**Unused std instances are not kept (D-474).** Every implementing type gets a copy of each of an
+interface's provided methods, and every generic type's instance its methods; ADR-106's six text
+iterators therefore gave every program about 150 bodies to borrow-check, 4x the compile time. Such
+a body, when its declaration is std's, is now kept only if a call, a function value or an
+interface table's implementation reaches it (`[COST-1]`'s rule for implicit derives, which
+`prune_unused_implicit` already applied). A class's method and a `drop` stay, since a vtable and
+drop glue name them without a call. The MIR inliner still treats these bodies as before (they are
+not `emit_if_used`). 10-line program: 0.38 s → 0.11 s (release), 2.5 s → 0.47 s (debug). A copy of
+a user interface's provided method is checked as before, used or not.
+
+**A body whose callees did not change is not inferred again (D-476).** The fixpoint of callable
+summaries inferred every body in every round, five fixpoints a compilation; a body whose direct
+callees' summaries all stayed the same in the last round now keeps its summary (a closure body's
+change still infers every body, since capture contracts reach their creators without a call). Same
+rounds, same fixpoint, the same C for every benchmark program; a 57-line program of seven adapter
+chains 2.56 s → 1.94 s.
+
+**A view is copied by its fields only from a place written by fields (D-475).** ADR-106 copied
+every view assigned whole by its two fields; that made MSVC stop interchanging `a05_structs`'s loop
+nest (1.00x → 1.47x the C; clang 1.15x, gcc 1.28x), where the source is an iterator's view written
+whole. Copied whole everywhere, `lines()` ran 1.98x the C with MSVC: its iterator's rest is written
+by a slice field by field and read back for each item, and a whole read waits for both stores. So a
+copy is by fields exactly when its function writes the source by fields (`parted_views`).
+
+**`[CG-C-3]`'s `static inline` with gcc, measured.** With gcc, `a04_map_int` and
+`a14_map_gap_1024` are 8% and 4% slower than before ADR-106 (still 0.78x and 0.75x the C at the
+last run). The cause: ADR-106 made every function of at most 40 statements `static inline`
+(`[CG-C-3]` (d)); gcc inlines a `static` function called once whatever its size
+(`-finline-functions-called-once`), so `Map.index` moves into `main`'s lookup loop, which
+`-funroll-loops` then unrolls 2 turns deep instead of 8 (the same C with that one option off:
+40 ms against 47 ms; a branch hint on the slot width changes nothing). Two ways out were measured
+on all 48 timed programs, each on the same emitted C: `-fno-inline-functions-called-once`
+(geometric mean 0.995; the maps 0.87–0.92, but `a05_structs` 1.05, `s3_skip_step_take` 1.06,
+`s4_copied_enumerate_skip` 1.05) and no `static inline` for gcc (0.994; the maps 0.93–0.96,
+`a05_structs` 1.09, `a13_map_scrambled` 1.06). Neither gains overall; each moves time from some
+programs to others, so `[CG-C-3]` stays as the specification writes it. clang and MSVC run these
+programs as fast as before ADR-106 or faster (new/old 0.96–1.01).
+
+**Measured against the compiler before ADR-106** (`f02ee12`, each program built by both and timed
+interleaved): clang, `a16_map_text`, `w13_int_lanes`, `b15_checked`, `b16_checked`,
+`s3_skip_step_take`, `a04_map_int`, `a14_map_gap_1024`: 0.97–1.01; MSVC, the same with
+`a05_structs`: 0.96–1.00. The clang rows that looked slower in the previous README run (`a16`
+0.91x → 1.06x the C, `w13_int_lanes` 0.89x → 1.03x, `b15`/`b16` 0.91–0.94x → 0.99x) were that
+run's C references running slower (`a16`'s C++ 0.117 s then, 0.095 s now), not Ember.
+
+## ADR-107 — for MSVC, a `for` loop's step through a standard iterator is copied into the loop
+
+2026-10-02, the owner's pick ("option A") after ADR-106 left `split()` 1.13x the C with MSVC
+(clang 0.94x on the same C). Every `for` over a standard iterator calls its `next`, which hands
+back an `Option`; the loop then tests which variant came back. clang, once it inlines `next`,
+sends each `return None` straight out of the loop and each `return Some(x)` straight into the
+body, and drops the test. MSVC keeps building the `Option` and testing it, every item.
+
+**Built** (MSVC only, after the MIR inliner: `inline_loop_steps_all` in `inline.rs`).
+1. A `for` loop's call of `next` on a type of std's (`next(&mut it)`, `it` the loop's iterator)
+   is replaced by a copy of `next`'s body; `next` itself stays (interface tables, other callers).
+   The copy's reference to the iterator is forwarded to the iterator itself when it is used for
+   nothing but reaching its fields, so the C never takes the iterator's address.
+2. `thread_known_variants`: a block that only asks which variant a local holds
+   (`d = discriminant(x)` and a switch on `d`), entered from a block that has just given `x` a
+   variant (`x = Some(...)`, `x = None`, or a whole copy of a local just given one), is jumped
+   over: the entering block goes to that variant's branch. With part 1, the loop no longer tests
+   what the step gave back; inside the step, `find`'s result is no longer tested either. Not for a
+   local whose address is taken, nor a `d` read anywhere but its switch.
+
+**Result** (MSVC; Ember's time ÷ the C's): `split_whitespace()` 0.93x → 0.87x, `lines()` 1.11x →
+1.09x, `split()` 1.13x → 1.12x. The milestone `msvc_loops_copy_a_standard_step_and_skip_its_answer`
+fails with either part undone.
+
+**What is left in `split()` with MSVC, measured, each by hand on the generated C.** The iterator's
+fields as separate variables with the separator a constant: MSVC then keeps everything in registers
+and searches for `','` directly, and the time does not change. The slices' checks deleted: no
+change. `find`'s none tested as `== -1` instead of `< 0`: no change. A loop written by hand in
+Ember's shape (a view of the rest moved past each part, `find`'s position with `-1` for none, a
+finished flag) is 1.05x to 1.07x the C, whose loop takes the pointer `memchr` returns as it is; C's
+own loop moves less than 1% with its code laid out differently, so the gap is not layout. So what
+is left is the per-part cost of that shape with MSVC (clang runs the same C at 0.94x); no single
+change measured here removes it.
+
 ## ADR-106 — text iteration at C speed
 
 2026-10-02, after the owner's rule that every feature is made as fast as it can be, attended or
@@ -3592,8 +3675,9 @@ it lives: the compiler, the runtime or std.
   an inlined `next` cost `char_indices()` 15x the C. A struct, tuple or payload variant assigned to
   a local is now written field by field, the tag first; a unit variant writes its tag only (D-360's
   zeroing took the value's address, which kept it in memory: `bytes()` 19x); a view a built-in makes
-  (a slice, `as_bytes`), a view copied whole and an `Option` of a view's `None` take their pointer
-  and length one at a time.
+  (a slice, `as_bytes`) and an `Option` of a view's `None` take their pointer and length one at a
+  time, and so is a view copied whole from such a place (every whole copy so cost `a05_structs`
+  1.47x: D-475, ADR-108).
 * **Searches.** `find`, `contains`, `count` and `replace` compared with `memcmp` at every byte;
   they now find the needle's first byte with `memchr` and compare the rest, and `find`,
   `contains`, `starts_with`, `ends_with` and the character-boundary test are inline (MSVC passes a
@@ -3614,12 +3698,11 @@ README's tables get the seven programs with the next full benchmark run.
 * `lines()`: its slices' bounds and character-boundary checks. With them deleted by hand it is
   1.04x (MSVC) and 0.99x (clang): safety checks the compiler cannot prove (a line ends where `find`
   found a `\n`).
-* `split()` with MSVC (clang runs the same C at 0.94x): MSVC keeps the five-word iterator in memory,
-  since it never splits a struct whose address goes to `next` into registers, even inlined, so the
-  separator's length and byte are not folded and three loop values are spilled around each `memchr`
-  call. The checks cost nothing here. Removable by a MIR pass that inlines a standard iterator's
-  `next` into its `for` loop and holds the iterator's fields in locals; the owner, 2026-10-02: "yes
-  check split after" — the next piece of work.
+* `split()` with MSVC, 1.13x (clang runs the same C at 0.94x). The cause first named here (the
+  iterator kept in memory) was measured after this commit and is not it: with the iterator in
+  registers nothing changes. About 6% was the loop testing what `next` gave back, which clang
+  removes and MSVC does not; the owner chose to remove it for every loop over a standard iterator
+  (ADR-107), which also measures what is left.
 * Found on the way: `for x in span` binds each element by reference, and `[SIMD-5]`'s vectorisable
   form refuses a reference, so such a loop never groups its overflow checks (`for b in
   text.as_bytes()` 1.5x the C); `bytes()` is now a counted loop by value and is not affected.
