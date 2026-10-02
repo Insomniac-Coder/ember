@@ -3957,3 +3957,111 @@ fn the_conformance_suite_runs() {
     }
     report_failures("tests/conformance", &run_cases(&cases, |path| check_file(path, &root)));
 }
+
+/// The definition of the generated C function `name` (from its header line
+/// to its closing brace), for a test reading what one function became.
+fn c_definition<'a>(c: &'a str, name: &str) -> &'a str {
+    let call = format!("{name}(");
+    let start = c
+        .match_indices(&call)
+        .map(|(at, _)| at)
+        .find(|&at| c[at..].split('\n').next().is_some_and(|line| line.ends_with('{')))
+        .unwrap_or_else(|| panic!("{name} is defined:\n{c}"));
+    let start = c[..start].rfind('\n').map_or(0, |at| at + 1);
+    let end = start + c[start..].find("\n}\n").expect("the function ends");
+    &c[start..end]
+}
+
+/// ADR-106 — `s.chars()`, `s.char_indices()` and `s.bytes()` in a `for`
+/// header are counted loops with no iterator: `main` decodes with the text
+/// loop's step and calls neither `next`. An iterator in a variable or an
+/// adapter's still calls `next`.
+#[test]
+fn text_iterator_loops_are_counted_loops_without_the_iterator() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/TXT-10/accept_text_iterators_in_loops_and_through_next.{SOURCE_EXT}");
+    for cc in ["msvc", "clang"] {
+        let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", cc], &root);
+        assert_eq!(c.exit, 0, "{cc} C failed:\n{}", c.stderr);
+        let main = c_definition(&c.stdout, &ember_branding::mangled("main"));
+        assert!(main.contains("str_char_next("), "{cc}: no text loop in main:\n{main}");
+        assert!(!main.contains("CharIndices_next(") && !main.contains("Bytes_next("), "{cc}: a loop calls `next`:\n{main}");
+        assert!(main.contains("Chars_next("), "{cc}: the iterator held in a variable lost its `next`:\n{main}");
+    }
+}
+
+/// ADR-106 — a struct, tuple or payload variant assigned to a local is
+/// written field by field, the tag first, and a unit variant writes only its
+/// tag; a view a built-in makes, a view copied whole and an `Option` of a
+/// view's `None` take their two fields one at a time. As compound literals
+/// MSVC built them in memory and read them back wider than they were
+/// written (`char_indices()` 15x the C loop).
+#[test]
+fn aggregates_and_views_are_written_field_by_field() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/TXT-10/accept_text_iterators_in_loops_and_through_next.{SOURCE_EXT}");
+    let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
+    assert_eq!(c.exit, 0, "msvc C failed:\n{}", c.stderr);
+    let next = c_definition(&c.stdout, &format!("{}_CharIndices_next", ember_branding::mangled("std_string")));
+    assert!(next.contains("(_0).tag = 1;") && next.contains("_0.payload.Some._0 = "), "the item is not written by fields:\n{next}");
+    assert!(next.contains("(_0).tag = 0;") && !next.contains("memset(") && !next.contains(".tag = 1, .payload"), "`None` or `Some` is a literal:\n{next}");
+    let lines = c_definition(&c.stdout, &format!("{}_Lines_next", ember_branding::mangled("std_string")));
+    assert!(lines.contains("((*_1).rest).ptr = ") && lines.contains("((*_1).rest).len = "), "the slice is a literal:\n{lines}");
+    assert!(lines.contains("(_0).ptr = NULL;") && !lines.contains("{ .ptr = NULL"), "`None` of a view is a literal:\n{lines}");
+    assert!(lines.contains("(_2).ptr = ((*_1).rest).ptr;"), "the view is copied whole:\n{lines}");
+}
+
+/// `[CG-C-3]` — a standard view's or container's `next` is forced inline,
+/// and a function of at most 40 statements is `static inline`; `[CG-C-3a]`
+/// — `@inline` is forced, `@noinline`, `@cold` and `@hot` reach the C
+/// compiler, and a `@noinline` function called once stays a call even for
+/// MSVC, where the MIR inliner takes every other such function.
+#[test]
+fn inline_header_functions_and_inline_attributes_reach_the_c() {
+    let root = workspace_root();
+    let iterators = format!("tests/conformance/TXT-10/accept_text_iterators_in_loops_and_through_next.{SOURCE_EXT}");
+    let c = ember(&["build", &iterators, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
+    assert_eq!(c.exit, 0, "msvc C failed:\n{}", c.stderr);
+    let std_string = ember_branding::mangled("std_string");
+    assert!(c.stdout.contains(&format!("EMBER_INLINED {} {std_string}_Chars_next(", ember_branding::mangled("Option_char"))), "`Chars.next` is not forced inline:\n{}", c.stdout);
+    assert!(c.stdout.contains(&format!("static inline {std_string}_Chars {}(", ember_branding::mangled("str_chars"))), "`str.chars` is not static inline:\n{}", c.stdout);
+    let attributes = format!("tests/conformance/CG-C-3a/accept_inline_noinline_cold_and_hot.{SOURCE_EXT}");
+    for cc in ["msvc", "clang"] {
+        let c = ember(&["build", &attributes, "--emit", "c", "--profile", "release", "--cc", cc], &root);
+        assert_eq!(c.exit, 0, "{cc} C failed:\n{}", c.stderr);
+        let header = |name: &str| {
+            let call = format!("{}(", ember_branding::mangled(name));
+            c.stdout.lines().find(|line| line.contains(&call) && line.ends_with('{')).map(str::to_string).unwrap_or_default()
+        };
+        assert!(header("twice").starts_with("EMBER_INLINED "), "{cc}: `@inline` is not forced: {}", header("twice"));
+        assert!(header("thrice").starts_with("EMBER_NOINLINE "), "{cc}: `@noinline` is lost: {}", header("thrice"));
+        assert!(header("failed").starts_with("EMBER_COLD "), "{cc}: `@cold` is lost: {}", header("failed"));
+        assert!(header("step").starts_with("EMBER_HOT "), "{cc}: `@hot` is lost: {}", header("step"));
+        let main = c_definition(&c.stdout, &ember_branding::mangled("main"));
+        assert!(main.contains(&format!("{}(", ember_branding::mangled("thrice"))), "{cc}: the `@noinline` call was inlined:\n{main}");
+    }
+}
+
+/// ADR-106 — a counted loop pushing a literal onto a `String` on every turn
+/// has room for all its bytes asked for before it, as for `Array.push`.
+#[test]
+fn a_loop_pushing_a_literal_reserves_its_text() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/TXT-11/accept_a_string_has_every_str_method.{SOURCE_EXT}");
+    let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
+    let main = c_definition(&c.stdout, &ember_branding::mangled("main"));
+    assert!(main.contains("vec_reserve_hint(") && main.contains(", 2u)"), "no room is reserved for the pushes:\n{main}");
+}
+
+/// ADR-106 — a `for` over an iterator without an `else` leaves by `break`
+/// when `next` gives `None`: no `__done` flag tested on every turn.
+#[test]
+fn an_iterator_loop_without_else_has_no_flag() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/TYP-17/accept_an_inherent_next_is_the_iterators_for_a_bound_call.{SOURCE_EXT}");
+    let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
+    assert_eq!(c.exit, 0, "msvc C failed:\n{}", c.stderr);
+    let main = c_definition(&c.stdout, &ember_branding::mangled("main"));
+    assert!(main.contains("Countdown_next(") && !main.contains("__done"), "the loop keeps a flag:\n{main}");
+}

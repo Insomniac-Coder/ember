@@ -17,6 +17,7 @@ pub use lower::lower;
 /// HIR solely to construct or inspect a MIR body.
 pub use ember_hir::Mode as ParameterMode;
 pub use ember_hir::FfiAbiParam;
+pub use ember_hir::InlineHint;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct BasicBlockId(pub u32);
@@ -81,6 +82,8 @@ pub struct Body {
     /// `[TYP-9]` — its floating point's relaxation; `[CG-C-11]` emits a
     /// relaxed body in a translation unit of its own.
     pub fp: ember_types::FpMode,
+    /// `[CG-C-3a]` — `@inline` (always inlined), `@noinline`, `@cold`, `@hot`.
+    pub inline: InlineHint,
     /// `[FFI-33]` — resolved calling-thread contract of a C export.
     pub export_thread_policy: ExportThreadPolicy,
     pub locals: Vec<LocalDecl>,

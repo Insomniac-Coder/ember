@@ -1,7 +1,7 @@
 #$ test: run-pass
 #$ rules: CTL-1, CTL-3, CTL-4, SPN-5
 #$ profiles: debug, release, shipping
-#$ assert-c-count: contains(".index = ") == 1
+#$ assert-c-count: contains(".index = _") == 1
 #$ stdout:
 #$ 510
 #$ [6, 7, 8]
@@ -14,7 +14,8 @@
 # `next` would, and the loop is a counted one with no `Option` in it
 # (`[CTL-3]`'s spirit). `iter_mut` items change the list in place; an
 # iterator already moved on starts where it stands (its one `next` is the
-# only write of a cursor in the C); `break` skips the `else` (`[CTL-4]`);
+# only write of a cursor in the C past each iterator's start, which is
+# written by its fields, ADR-106); `break` skips the `else` (`[CTL-4]`);
 # a tuple pattern binds through the borrowed item.
 
 struct P:

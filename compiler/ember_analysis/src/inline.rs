@@ -170,7 +170,11 @@ fn named_symbols(bodies: &[Body]) -> HashSet<String> {
 
 /// Whether a function's call boundary carries nothing but the call.
 fn inlinable(body: &Body, types: &TypeTable) -> bool {
-    body.abi.is_none()
+    // `[CG-C-3a]` — `@noinline` asks for a call, and `@cold` code is kept
+    // out of the paths that call it.
+    !body.inline.never
+        && !body.inline.cold
+        && body.abi.is_none()
         && !body.is_extern_declaration
         && !body.is_abstract
         && body.class_owner.is_none()

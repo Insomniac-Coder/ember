@@ -7017,6 +7017,23 @@ impl<'a> Checker<'a> {
                 );
                 continue;
             };
+            // D-473 — an inherent method that is the implementation is the
+            // interface's method too, so a call through a bound (`[TYP-17]`,
+            // D-245), `I.m(x)` and a `dyn I` reach it as this check does.
+            let key = (ty, interface, method);
+            if receiver.is_some() {
+                if let Some(entry) = self.methods.get(&(ty, method)).copied()
+                    && entry.from_interface.is_none()
+                    && entry.def == implementation
+                {
+                    self.interface_methods.entry(key).or_insert(entry);
+                }
+            } else if let Some(entry) = self.associated.get(&(ty, method)).copied()
+                && entry.from_interface.is_none()
+                && entry.def == implementation
+            {
+                self.interface_associated.entry(key).or_insert(entry);
+            }
             // D-443 — a default's copy is the declaration read for this type.
             if !assoc_missing
                 && !self.default_copies.contains(&implementation)
@@ -13297,6 +13314,7 @@ impl<'a> Checker<'a> {
                 span: item.span,
                 overflow,
                 fp,
+                inline: inline_hint(&item.attrs),
                 borrows: self.declared_borrows(def),
                 sources: self.declared_sources(def),
                 is_lambda: false,
@@ -13501,6 +13519,7 @@ impl<'a> Checker<'a> {
                     span: job.span,
                     overflow: signature.overflow,
                     fp: signature.fp,
+                    inline: hir::InlineHint::default(),
                     borrows: signature.borrows.clone().or_else(|| self.declared_borrows(job.def)),
                     sources: self.declared_sources(job.def),
                     is_lambda: false,
@@ -14422,6 +14441,7 @@ impl<'a> Checker<'a> {
             span,
             overflow,
             fp,
+            inline: inline_hint(attrs),
             borrows: self.declared_borrows(def),
             sources: self.declared_sources(def),
             is_lambda: false,
@@ -14761,6 +14781,7 @@ impl<'a> Checker<'a> {
                     span,
                     overflow: OverflowPolicy::default(),
                     fp: FpMode::Strict,
+                    inline: hir::InlineHint::default(),
                     borrows: None,
                     sources: self.sources_of(&[(Symbol::intern("self"), ty, Mode::Borrow, span)]),
                     is_lambda: false,
@@ -15294,6 +15315,7 @@ impl<'a> Checker<'a> {
             span,
             overflow,
             fp,
+            inline: inline_hint(attrs),
             borrows: self.declared_borrows(def),
             sources: self.declared_sources(def),
             is_lambda: false,
@@ -19525,25 +19547,28 @@ impl<'a> Checker<'a> {
         label: Option<ast::Ident>,
         pattern: &ast::Pattern,
         text: Expr,
+        offset: Option<&ast::Pattern>,
         body: &ast::Block,
         else_block: &Option<ast::Block>,
         span: Span,
     ) -> Option<Stmt> {
         let incoming_class_init = self.class_init.clone();
-        let (str_ty, usize_ty, char_ty, bool_ty) =
-            (self.common.str_, self.common.usize, self.common.char_, self.common.bool_);
+        let (str_ty, usize_ty, int_ty, char_ty, bool_ty) =
+            (self.common.str_, self.common.usize, self.common.i64, self.common.char_, self.common.bool_);
         let mut stmts = Vec::new();
         let text = self.keep_alive(text, &mut stmts);
         let view = self.coerce(text, str_ty);
         self.scopes.push(HashMap::new());
         let view_local = self.declare(None, str_ty, span);
         self.locals[view_local.0 as usize].for_iterator = true;
-        let index = self.declare(None, usize_ty, span);
+        let index = self.declare(None, int_ty, span);
         let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
         stmts.push(Stmt::Let { local: view_local, init: Some(view) });
-        stmts.push(Stmt::Let { local: index, init: Some(Expr { ty: usize_ty, kind: ExprKind::Int(0), span }) });
+        stmts.push(Stmt::Let { local: index, init: Some(Expr { ty: int_ty, kind: ExprKind::Int(0), span }) });
 
         self.scopes.push(HashMap::new());
+        // `s.char_indices()`: the offset the character starts at.
+        let position = offset.map(|offset| self.declare(binding_name(offset), int_ty, offset.span));
         let character = self.declare(binding_name(pattern), char_ty, pattern.span);
         if !matches!(pattern.kind, ast::PatternKind::Bind { .. } | ast::PatternKind::Wild) {
             self.error(codes::E2020, pattern.span, "a `char` binds to one name");
@@ -19552,35 +19577,20 @@ impl<'a> Checker<'a> {
         let checked = self.check_block(body);
         self.loop_labels.pop();
         self.scopes.pop();
-        let mut inner = vec![
-            Stmt::Let {
-                local: character,
-                init: Some(Expr {
-                    ty: char_ty,
-                    kind: ExprKind::Builtin {
-                        which: Builtin::StrCharAt,
-                        args: vec![local(view_local, str_ty), local(index, usize_ty)],
-                    },
-                    span,
-                }),
-            },
-            Stmt::Assign {
-                place: local(index, usize_ty),
-                value: Expr {
-                    ty: usize_ty,
-                    kind: ExprKind::Binary {
-                        op: BinOp::Add,
-                        lhs: Box::new(local(index, usize_ty)),
-                        rhs: Box::new(Expr {
-                            ty: usize_ty,
-                            kind: ExprKind::Builtin { which: Builtin::CharUtf8Len, args: vec![local(character, char_ty)] },
-                            span,
-                        }),
-                    },
-                    span,
-                },
-            },
-        ];
+        // One step decodes the character and moves past it, as a C loop
+        // does: a width found again from the character costs a second chain
+        // of compares (MSVC: 1.3x the C loop).
+        let step = self.pass_receiver(local(index, int_ty), Mode::Mut, span);
+        let mut inner: Vec<Stmt> =
+            position.map(|position| Stmt::Let { local: position, init: Some(local(index, int_ty)) }).into_iter().collect();
+        inner.push(Stmt::Let {
+            local: character,
+            init: Some(Expr {
+                ty: char_ty,
+                kind: ExprKind::Builtin { which: Builtin::StrCharNext, args: vec![local(view_local, str_ty), step] },
+                span,
+            }),
+        });
         inner.extend(checked.stmts);
 
         let body_class_init = self.class_init.clone();
@@ -19589,16 +19599,17 @@ impl<'a> Checker<'a> {
         }
         let else_block = else_block.as_ref().map(|b| self.check_block(b));
         self.scopes.pop();
+        let len = Expr {
+            ty: usize_ty,
+            kind: ExprKind::Builtin { which: Builtin::SpanLen, args: vec![local(view_local, str_ty)] },
+            span,
+        };
         let more = Expr {
             ty: bool_ty,
             kind: ExprKind::Binary {
                 op: BinOp::Lt,
-                lhs: Box::new(local(index, usize_ty)),
-                rhs: Box::new(Expr {
-                    ty: usize_ty,
-                    kind: ExprKind::Builtin { which: Builtin::SpanLen, args: vec![local(view_local, str_ty)] },
-                    span,
-                }),
+                lhs: Box::new(local(index, int_ty)),
+                rhs: Box::new(Expr { ty: int_ty, kind: ExprKind::Cast { expr: Box::new(len), to: int_ty }, span }),
             },
             span,
         };
@@ -20036,6 +20047,90 @@ impl<'a> Checker<'a> {
             else_block,
         });
         Some(Stmt::Block(Block { stmts: kept, span }))
+    }
+
+    /// `s.bytes()` in a `for` header: a counted loop over the bytes of a view
+    /// of the text, each byte read by value, as an index loop is (ADR-106).
+    fn check_for_bytes(
+        &mut self,
+        label: Option<ast::Ident>,
+        pattern: &ast::Pattern,
+        text: Expr,
+        body: &ast::Block,
+        else_block: &Option<ast::Block>,
+        span: Span,
+    ) -> Option<Stmt> {
+        let incoming_class_init = self.class_init.clone();
+        let mut kept = Vec::new();
+        let text = self.keep_alive(text, &mut kept);
+        let (usize_ty, u8_ty) = (self.common.usize, self.common.u8);
+        let bytes_ty = self.types.intern(TyKind::Span { elem: u8_ty, mutable: false });
+        let bytes = Expr { ty: bytes_ty, kind: ExprKind::Builtin { which: Builtin::StrAsBytes, args: vec![text] }, span };
+        self.scopes.push(HashMap::new());
+        let bytes_local = self.declare(Some(Symbol::intern("__bytes")), bytes_ty, span);
+        self.locals[bytes_local.0 as usize].for_iterator = true;
+        let index_local = self.declare(Some(Symbol::intern("__i")), usize_ty, span);
+        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+
+        self.scopes.push(HashMap::new());
+        let byte = self.declare(binding_name(pattern), u8_ty, pattern.span);
+        self.loop_labels.push(label.map(|l| l.name));
+        let mut inner = vec![Stmt::Let {
+            local: byte,
+            init: Some(Expr {
+                ty: u8_ty,
+                kind: ExprKind::Index {
+                    base: Box::new(local(bytes_local, bytes_ty)),
+                    index: Box::new(local(index_local, usize_ty)),
+                },
+                span,
+            }),
+        }];
+        let checked = self.check_block(body);
+        self.loop_labels.pop();
+        self.scopes.pop();
+        inner.extend(checked.stmts);
+
+        let body_class_init = self.class_init.clone();
+        if else_block.is_some() && incoming_class_init.is_some() {
+            self.class_init = Self::merge_class_init_paths(incoming_class_init, body_class_init);
+        }
+        let else_block = else_block.as_ref().map(|b| self.check_block(b));
+        self.scopes.pop();
+
+        let length = Expr {
+            ty: usize_ty,
+            kind: ExprKind::Builtin { which: Builtin::SpanLen, args: vec![local(bytes_local, bytes_ty)] },
+            span,
+        };
+        kept.push(Stmt::Let { local: bytes_local, init: Some(bytes) });
+        kept.push(Stmt::ForRange {
+            local: index_local,
+            start: Expr { ty: usize_ty, kind: ExprKind::Int(0), span },
+            end: length,
+            inclusive: false,
+            body: Block { stmts: inner, span },
+            else_block,
+        });
+        Some(Stmt::Block(Block { stmts: kept, span }))
+    }
+
+    /// A checked call of std's `str.chars()`, `str.char_indices()` or
+    /// `str.bytes()` (`[TXT-10]`): the iterator's name and the text. Only
+    /// std's own functions make those iterators from a `str` alone.
+    fn text_iterator_call(&self, iterable: &Expr) -> Option<(&'static str, Expr)> {
+        let TyKind::Struct(id) = *self.types.kind(iterable.ty) else { return None };
+        let iterator = match self.types.struct_def(id).name.as_str() {
+            "std.string.Chars" => "Chars",
+            "std.string.CharIndices" => "CharIndices",
+            "std.string.Bytes" => "Bytes",
+            _ => return None,
+        };
+        let ExprKind::Call { args, arg_eval_order: None, default_arg_locals: None, .. } = &iterable.kind else { return None };
+        match args.as_slice() {
+            [text] if text.ty == self.common.str_ => Some((iterator, text.clone())),
+            _ => None,
+        }
     }
 
     /// `[TYP-23]` — check a function body. A local declared from `None` or
@@ -24112,7 +24207,9 @@ impl<'a> Checker<'a> {
     /// ```
     ///
     /// Exhaustion ends the loop through the condition rather than through a
-    /// `break`, so `[CTL-4]`'s `else` still tells the two apart.
+    /// `break`, so `[CTL-4]`'s `else` still tells the two apart. Without an
+    /// `else` it is `while true` and `None: break`: no flag tested each turn
+    /// (MSVC kept it, a test and a branch an item).
     fn check_for_iterator(
         &mut self,
         label: Option<ast::Ident>,
@@ -24158,7 +24255,30 @@ impl<'a> Checker<'a> {
         };
         if self.is_text(referent) {
             let iterable = self.read_through(iterable);
-            return self.check_for_text(label, pattern, iterable, body, else_block, span);
+            return self.check_for_text(label, pattern, iterable, None, body, else_block, span);
+        }
+        // `[CTL-3]`'s spirit for text (ADR-106): `s.chars()` in a `for` header
+        // is the text loop, `s.char_indices()` the text loop with each
+        // character's offset, and `s.bytes()` a counted loop over the bytes,
+        // with no iterator object. Through `next` MSVC kept a test of each
+        // item's `Option`, and a byte loop could not group its checks
+        // (`[SIMD-7]`). Any other header keeps the iterator.
+        if let Some((iterator, text)) = self.text_iterator_call(&iterable) {
+            let simple = |pattern: &ast::Pattern| {
+                matches!(pattern.kind, ast::PatternKind::Wild | ast::PatternKind::Bind { by_ref: false, sub: None, .. })
+            };
+            match (iterator, &pattern.kind) {
+                ("Chars", _) if simple(pattern) => {
+                    return self.check_for_text(label, pattern, text, None, body, else_block, span);
+                }
+                ("CharIndices", ast::PatternKind::Tuple(items)) if items.len() == 2 && items.iter().all(simple) => {
+                    return self.check_for_text(label, &items[1], text, Some(&items[0]), body, else_block, span);
+                }
+                ("Bytes", _) if simple(pattern) => {
+                    return self.check_for_bytes(label, pattern, text, body, else_block, span);
+                }
+                _ => {}
+            }
         }
         // `[CTL-1]`, `[CTL-3b]` — a mutable view is iterated as
         // `view.iter_mut()`: its elements, mutably, the view reborrowed for
@@ -24271,7 +24391,7 @@ impl<'a> Checker<'a> {
         let it_local = self.declare(Some(Symbol::intern("__it")), iterable.ty, iter.span);
         self.locals[it_local.0 as usize].for_iterator = true;
         let bool_ty = self.common.bool_;
-        let done_local = self.declare(Some(Symbol::intern("__done")), bool_ty, iter.span);
+        let done_local = else_block.is_some().then(|| self.declare(Some(Symbol::intern("__done")), bool_ty, iter.span));
 
         // `__it.next()`, checked through ordinary method resolution so that a
         // type without one is reported the same way any missing method is.
@@ -24463,9 +24583,12 @@ impl<'a> Checker<'a> {
             },
             guard: None,
             body: hir::MatchArmBody::Block(Block {
-                stmts: vec![Stmt::Assign {
-                    place: Expr { ty: bool_ty, kind: ExprKind::Local(done_local), span },
-                    value: Expr { ty: bool_ty, kind: ExprKind::Bool(true), span },
+                stmts: vec![match done_local {
+                    Some(done) => Stmt::Assign {
+                        place: Expr { ty: bool_ty, kind: ExprKind::Local(done), span },
+                        value: Expr { ty: bool_ty, kind: ExprKind::Bool(true), span },
+                    },
+                    None => Stmt::Break { depth: 0 },
                 }],
                 span,
             }),
@@ -24493,30 +24616,23 @@ impl<'a> Checker<'a> {
             })],
             span,
         };
-        let condition = Expr {
-            ty: bool_ty,
-            kind: ExprKind::Unary {
-                op: UnOp::Not,
-                operand: Box::new(Expr {
+        let mut stmts = vec![Stmt::Let { local: it_local, init: Some(iterable) }];
+        let condition = match done_local {
+            Some(done) => {
+                stmts.push(Stmt::Let { local: done, init: Some(Expr { ty: bool_ty, kind: ExprKind::Bool(false), span }) });
+                Expr {
                     ty: bool_ty,
-                    kind: ExprKind::Local(done_local),
+                    kind: ExprKind::Unary {
+                        op: UnOp::Not,
+                        operand: Box::new(Expr { ty: bool_ty, kind: ExprKind::Local(done), span }),
+                    },
                     span,
-                }),
-            },
-            span,
+                }
+            }
+            None => Expr { ty: bool_ty, kind: ExprKind::Bool(true), span },
         };
-
-        Some(Stmt::Block(Block {
-            stmts: vec![
-                Stmt::Let { local: it_local, init: Some(iterable) },
-                Stmt::Let {
-                    local: done_local,
-                    init: Some(Expr { ty: bool_ty, kind: ExprKind::Bool(false), span }),
-                },
-                Stmt::While { cond: condition, body: loop_body, else_block },
-            ],
-            span,
-        }))
+        stmts.push(Stmt::While { cond: condition, body: loop_body, else_block });
+        Some(Stmt::Block(Block { stmts, span }))
     }
 
     fn check_if(&mut self, if_stmt: &ast::IfStmt, out: &mut Vec<Stmt>) {
@@ -31702,6 +31818,23 @@ impl<'a> Checker<'a> {
         {
             return self.synth_text_method(receiver, name, args, span);
         }
+        // `[TXT-10]` — std's iterators decode as the text loop does:
+        // `text.next_char(at)` is the character at byte `at`, moving `at` past
+        // it. Only std can call it; its iterators keep `at` on a boundary.
+        if self.is_text(receiver.ty)
+            && name.name.is("next_char")
+            && explicit.is_empty()
+            && self.is_std_module(self.current_module)
+            && args.len() == 1
+            && args[0].name.is_none()
+        {
+            let (str_ty, int_ty, char_ty) = (self.common.str_, self.common.i64, self.common.char_);
+            let receiver = self.read_through(receiver);
+            let text = if receiver.ty == str_ty { receiver } else { self.coerce(receiver, str_ty) };
+            let at = self.check_expr(&args[0].value, int_ty);
+            let at = self.pass_receiver(at, Mode::Mut, span);
+            return Expr { ty: char_ty, kind: ExprKind::Builtin { which: Builtin::StrCharNext, args: vec![text, at] }, span };
+        }
         // `[TXT-10]` (ODR-029) — `s.parse[T]()`.
         if self.is_text(receiver.ty) && name.name.is("parse") && !self.methods.contains_key(&(receiver.ty, name.name)) {
             return self.synth_text_parse(receiver, explicit, args, span);
@@ -33670,6 +33803,7 @@ impl<'a> Checker<'a> {
             span,
             overflow: self.active_overflow,
             fp: self.active_fp,
+            inline: hir::InlineHint::default(),
             borrows: None,
             sources,
             is_lambda: true,
@@ -37691,6 +37825,12 @@ impl<'a> Checker<'a> {
             if self.lookup_method(receiver.ty, name.name).is_some() {
                 return self.synth_registered_method(receiver, recv_span, name, args, Vec::new(), span);
             }
+            // `[TXT-11]` — a `String` has every method a `str` has, std's
+            // (`chars`, `split`, ...) through a view of its text (D-472).
+            if is_string && self.lookup_method(str_ty, name.name).is_some() {
+                let text = self.view_of(receiver, str_ty, false, Builtin::StringAsStr);
+                return self.synth_registered_method(text, recv_span, name, args, Vec::new(), span);
+            }
             if let Some(call) = self.iterable_form(receiver.ty, name, args, span) {
                 return call;
             }
@@ -40851,6 +40991,16 @@ fn binding_name(pattern: &ast::Pattern) -> Option<Symbol> {
     }
 }
 
+/// `[CG-C-3a]` — `@inline`, `@noinline`, `@cold` and `@hot` on a function.
+fn inline_hint(attrs: &[ast::Attribute]) -> hir::InlineHint {
+    hir::InlineHint {
+        always: has_attribute(attrs, "inline"),
+        never: has_attribute(attrs, "noinline"),
+        cold: has_attribute(attrs, "cold"),
+        hot: has_attribute(attrs, "hot"),
+    }
+}
+
 /// `@view`, `@packed` and the rest: an attribute by bare name.
 fn has_attribute(attrs: &[ast::Attribute], name: &str) -> bool {
     attrs.iter().any(|attr| attr.path.len() == 1 && attr.path[0].name.is(name))
@@ -40888,7 +41038,9 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     // `[TYP-9]`, `[CG-C-11]` — a relaxed function has a translation unit of
     // its own.
     (&["fastmath", "fp"], &["fn"], true),
-    (&["inline", "noinline", "cold", "hot"], &["fn"], false),
+    // `[CG-C-3a]` — `@inline` forces inlining; the others are hints the C
+    // compiler takes (ADR-106).
+    (&["inline", "noinline", "cold", "hot"], &["fn"], true),
     (&["must_use"], &["fn", "struct", "enum", "class", "type"], false),
     (&["deprecated", "allow"], &["item"], false),
     (&["export"], &["fn", "static"], false),

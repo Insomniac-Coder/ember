@@ -125,6 +125,11 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   is invalid". The runners check before each group of programs and stop on battery
   (`GetSystemPowerStatus`); Windows logs each switch (Kernel-Power event 105). The README names the
   laptop and the compiler versions the numbers come from.
+- **Where Ember is faster, the README says so in bold green.** The owner, 2026-10-02: "for the
+  benchmark values where ember is just better can you make sure that the value is in bold ... bold
+  along with the green colour, make this part of the readme update process". In the README's
+  benchmark tables a ratio below ×1.00 as printed is bold and green; every other ratio keeps its
+  colour (green under ×1.05, amber to ×1.10, red above) in the regular weight.
 - **Every solution is general, never specific.** The owner, 2026-09-28: "always suggest a general
   and optimised solution, specific solutions are like ticking timebombs just waiting to go off
   because no one is going to write code like 'tests' languages are supposed to be general", and
@@ -161,7 +166,10 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   in an attended session or on autopilot, until its C or C++ twin has been written and timed (on
   the performance cores, on mains power) and every gap has been chased to one of two ends: as fast
   as the twin or faster, or slower by an overhead or a safety check the language requires, priced
-  as the whole of the gap. Any other answer means the investigation goes on.
+  as the whole of the gap. Any other answer means the investigation goes on. The owner again,
+  2026-10-02: "you don't stop investigating until you find a valid cause for it and the only valid
+  causes I am aware of are overhead that cannot be removed or safety checks". An overhead a compiler
+  change could remove is not an end: build the change, or raise it with the owner.
 - **Research online when stuck.** The owner, 2026-09-28: "you are allowed to do online research to
   find solutions to problems that you get stuck on". Before giving up on a problem (a slowdown with
   no known cause, a C compiler's behaviour, a design with no clear answer), search how other

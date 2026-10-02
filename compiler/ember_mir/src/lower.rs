@@ -371,6 +371,7 @@ impl<'a> Builder<'a> {
             abi: self.function.abi.clone(),
             overflow: self.function.overflow,
             fp: self.function.fp,
+            inline: self.function.inline,
             export_thread_policy: self.function.export_thread_policy,
             locals: self.locals,
             blocks: self.blocks,

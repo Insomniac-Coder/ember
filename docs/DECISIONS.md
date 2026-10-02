@@ -3557,6 +3557,73 @@ RandomState]` in insertion order; one key, one hash within a run),
 `HASH-2/accept_bytes_differing_in_their_tail_hash_apart` (D-405, both hashers), and
 `random_state_is_keyed_per_process` in `milestones.rs` (one program run twice hashes a key two ways).
 
+## ADR-106 — text iteration at C speed
+
+2026-10-02, after the owner's rule that every feature is made as fast as it can be, attended or
+not (AUTOPILOT §4), and "you only stop investigating if the answer to the slowdown is overhead or a
+safety check". `[TXT-10]`'s iterators were written in std as `Copy` views (ADR-105) and timed
+against the loop a C programmer writes over a 3 MB text (`for c in text`, `chars`, `bytes`,
+`char_indices`, `lines`, `split(",")`, `split_whitespace`), on the performance cores: 1.8x to 21.8x
+the C. Each cause was found in the generated C and the compilers' machine code, and removed where
+it lives: the compiler, the runtime or std.
+
+**Causes and changes.**
+* **Decoding.** The text loop called two runtime functions per character (decode, then the width
+  again from the character), and MSVC compares the width out of the character a second time. One
+  built-in now decodes and steps (`StrCharNext`, the runtime's inline `ember_str_char_next`), as
+  C's loop does; std's iterators reach it as `text.next_char(at)`, a method only std can call.
+* **`for` over the text iterators.** `for c in s.chars()` is the text loop, `for (i, c) in
+  s.char_indices()` the text loop with each character's offset, and `for b in s.bytes()` a counted
+  loop over the bytes, with no iterator object (`[CTL-3]`'s spirit, as for `range`, `enumerate` and
+  an `Array`). Through `next`, MSVC kept a test of each item's `Option` (1.16x), and a byte loop
+  could not group its overflow checks (`[SIMD-7]`). An iterator held in a variable, or an
+  adapter's, still calls `next`.
+* **`[CG-C-3]` in one translation unit.** The program is one C unit, so the functions the inline
+  header would hold are its `static inline` functions: any of at most 40 statements with no
+  foreign call, and every standard view's or container's `len`, `is_empty`, `as_span`, `iter` and
+  `next`, which are forced inline (`EMBER_INLINED`), since a `for` loop calls `next` for every item
+  and MSVC left `chars()`'s a call (1.4x). **`[CG-C-3a]` is built:** `@inline` forces inlining,
+  `@noinline`, `@cold` and `@hot` reach the C compiler (they were `E0900`); the MIR inliner keeps a
+  `@noinline` or `@cold` function a call. std's `is_split_space` is `@inline` (MSVC kept it a call:
+  `split_whitespace` 1.5x), with the ASCII spaces as bits of one word and the rest a function of
+  their own.
+* **Values written by their fields.** MSVC builds a compound literal in memory with narrow stores
+  and reads it back with one wider load, which waits for them: an `Option[(int, char)]` returned by
+  an inlined `next` cost `char_indices()` 15x the C. A struct, tuple or payload variant assigned to
+  a local is now written field by field, the tag first; a unit variant writes its tag only (D-360's
+  zeroing took the value's address, which kept it in memory: `bytes()` 19x); a view a built-in makes
+  (a slice, `as_bytes`), a view copied whole and an `Option` of a view's `None` take their pointer
+  and length one at a time.
+* **Searches.** `find`, `contains`, `count` and `replace` compared with `memcmp` at every byte;
+  they now find the needle's first byte with `memchr` and compare the rest, and `find`,
+  `contains`, `starts_with`, `ends_with` and the character-boundary test are inline (MSVC passes a
+  view to a call through a copy it reads whole). `lines()` went from 7x to 1.1x the C.
+* **Loops.** A `for` over an iterator with no `else` is `while true` with `None: break`: no flag
+  tested each turn (`[CTL-4]`'s `else` keeps it). A counted loop pushing a literal onto a `String`
+  on every turn has its room reserved first, as ADR-099 does for `Array.push`.
+* **std.** `lines`, `split` and `split_whitespace` define `next` in their `implements Iterator`
+  blocks (an inherent one broke the program's adapters: D-473).
+
+**Result** (Ember's time ÷ the C's; MSVC, clang): `for c in s` 1.84x, 1.85x → 0.98x, 0.82x;
+`chars()` 5.16x, 4.83x → 0.98x, 0.83x; `char_indices()` 21.8x, 5.37x → 1.00x, 0.93x; `bytes()` 3.40x, 2.66x → 1.00x, 0.97x;
+`lines()` 7.54x, 4.75x → 1.12x, 1.05x; `split()` 6.54x, 4.54x → 1.12x, 0.95x; `split_whitespace()` 3.78x, 2.43x → 0.93x, 0.65x.
+Measured on the performance cores, on mains power (`scratchpad/txtbench`, 11 runs, the median); the
+README's tables get the seven programs with the next full benchmark run.
+
+**What is left, and why.**
+* `lines()`: its slices' bounds and character-boundary checks. With them deleted by hand it is
+  1.04x (MSVC) and 0.99x (clang): safety checks the compiler cannot prove (a line ends where `find`
+  found a `\n`).
+* `split()` with MSVC (clang runs the same C at 0.94x): MSVC keeps the five-word iterator in memory,
+  since it never splits a struct whose address goes to `next` into registers, even inlined, so the
+  separator's length and byte are not folded and three loop values are spilled around each `memchr`
+  call. The checks cost nothing here. Removable by a MIR pass that inlines a standard iterator's
+  `next` into its `for` loop and holds the iterator's fields in locals; the owner, 2026-10-02: "yes
+  check split after" — the next piece of work.
+* Found on the way: `for x in span` binds each element by reference, and `[SIMD-5]`'s vectorisable
+  form refuses a reference, so such a loop never groups its overflow checks (`for b in
+  text.as_bytes()` 1.5x the C); `bytes()` is now a counted loop by value and is not affected.
+
 ## ADR-105 — a reference has a region slot of its own; a `Copy` view's `mut self` is a first-kind source
 
 2026-10-02, D-470, after the owner's "start working on the language again". `[TXT-10]`'s iterators

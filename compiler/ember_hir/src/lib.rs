@@ -138,6 +138,16 @@ impl ExportThreadPolicy {
     }
 }
 
+/// `[CG-C-3a]` — `@inline` is binding: the function is always inlined.
+/// `@noinline`, `@cold` and `@hot` are hints passed to the C compiler.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InlineHint {
+    pub always: bool,
+    pub never: bool,
+    pub cold: bool,
+    pub hot: bool,
+}
+
 #[derive(Debug)]
 pub struct Function {
     pub def: DefId,
@@ -173,6 +183,8 @@ pub struct Function {
     /// `[TYP-9]` — from `@fastmath` or `@fp(contract)`; a lambda's is its
     /// enclosing function's.
     pub fp: FpMode,
+    /// `[CG-C-3a]` — from `@inline`, `@noinline`, `@cold` and `@hot`.
+    pub inline: InlineHint,
     /// `[LT-1a]` — the parameter *positions* `@borrows(…)` names, when the
     /// attribute is written. `None` means elision decides (`[LT-1]`).
     ///
@@ -879,10 +891,10 @@ pub enum Builtin {
     ParseStatus { kind: ParseKind },
     ParseValue { kind: ParseKind },
     StrToLower,
-    /// `[CTL-1]` — the `char` that starts at a byte index of a `str`.
-    StrCharAt,
-    /// How many bytes UTF-8 gives a `char`.
-    CharUtf8Len,
+    /// `[CTL-1]` — the `char` that starts at byte `at` of a `str`, moving
+    /// `at` (an `int`, passed by reference) past it. `at` is on a character
+    /// boundary before the end: the text loop and std's iterators keep it so.
+    StrCharNext,
     /// `[LEX-19]` — append a value to an f-string's buffer as its spec says.
     FormatWith(FormatSpec),
     /// `[STD-8b]` — `needle in text`, for a `str` needle and a `char` one.
@@ -1295,8 +1307,7 @@ impl Builtin {
             Builtin::CStringAsCStr => "as_cstr",
             Builtin::ParseStatus { .. } | Builtin::ParseValue { .. } => "parse",
             Builtin::StrToLower => "to_lower",
-            Builtin::StrCharAt => "char_at",
-            Builtin::CharUtf8Len => "len_utf8",
+            Builtin::StrCharNext => "next_char",
             Builtin::FormatWith(_) => "format",
             Builtin::StrContains | Builtin::StrContainsChar => "contains",
             Builtin::ProcessKey => "process_key",

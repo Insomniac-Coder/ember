@@ -65,6 +65,14 @@ extern "C" {
 #define EMBER_COLD
 #endif
 
+/* `[CG-C-3a]` — `@hot`: a function gcc and clang optimise harder. MSVC has
+ * no such hint. */
+#if defined(__GNUC__) || defined(__clang__)
+#define EMBER_HOT __attribute__((hot))
+#else
+#define EMBER_HOT
+#endif
+
 /* [SIMD-7] A group of iterations with several overflow checks ORs each
  * check's overflow word (its top bit set on overflow), shifted down by
  * EMBER_OVERFLOW_SHIFT, into the group's flag, and tests the flag shifted
@@ -1464,6 +1472,31 @@ size_t ember_str_char_count(ember_str s);
  * number of bytes UTF-8 gives a character. */
 uint32_t ember_str_char_at(ember_str s, size_t i);
 size_t ember_char_utf8_len(uint32_t c);
+
+/* `[CTL-1]`, `[TXT-10]` — the character that starts at byte `*at` of valid
+ * UTF-8 (a boundary before the end), moving `*at` past it: the text loop's
+ * and std's iterators' step. Inline, and one function, as a C programmer's
+ * loop decodes: a call into the runtime's unit cannot be inlined, and a
+ * width found again from the character costs MSVC a second chain of
+ * compares. */
+static inline uint32_t ember_str_char_next(ember_str s, int64_t* at) {
+    const unsigned char* p = s.ptr + *at;
+    if (p[0] < 0x80) {
+        *at += 1;
+        return p[0];
+    }
+    if (p[0] < 0xE0) {
+        *at += 2;
+        return ((uint32_t)(p[0] & 0x1F) << 6) | (uint32_t)(p[1] & 0x3F);
+    }
+    if (p[0] < 0xF0) {
+        *at += 3;
+        return ((uint32_t)(p[0] & 0x0F) << 12) | ((uint32_t)(p[1] & 0x3F) << 6) | (uint32_t)(p[2] & 0x3F);
+    }
+    *at += 4;
+    return ((uint32_t)(p[0] & 0x07) << 18) | ((uint32_t)(p[1] & 0x3F) << 12)
+         | ((uint32_t)(p[2] & 0x3F) << 6) | (uint32_t)(p[3] & 0x3F);
+}
 /* `[TXT-2]`: reject malformed, overlong, surrogate and out-of-range UTF-8. */
 bool ember_utf8_valid(ember_span bytes);
 /* Append one valid Unicode scalar to a UTF-8 String. */
@@ -1472,7 +1505,6 @@ void ember_vec_push_char(ember_vec* out, uint32_t c);
 /* `[STD-8b]`: whether `needle` occurs in `text`. UTF-8 matches only at
  * character boundaries, so a character never matches inside another's
  * encoding. */
-bool ember_str_contains(ember_str text, ember_str needle);
 bool ember_str_contains_char(ember_str text, uint32_t needle);
 /* [HASH-2] Word `which` (0 or 1) of the process's 128-bit hash key, drawn
  * from the operating system at the first call and the same for the rest of
@@ -1484,9 +1516,48 @@ uint64_t ember_process_key(int64_t which);
  * Python's does); `replace` replaces every match; `repeat` of a count below
  * one is empty; `trim_start`/`trim_end` give the offsets that drop Unicode
  * white space from each end. */
-bool ember_str_starts_with(ember_str s, ember_str prefix);
-bool ember_str_ends_with(ember_str s, ember_str suffix);
-int64_t ember_str_find(ember_str s, ember_str needle);
+/* Inline: a literal's length is then known, and a one-byte suffix one
+ * compare. */
+EMBER_INLINED bool ember_str_starts_with(ember_str s, ember_str prefix) {
+    return prefix.len <= s.len && memcmp(s.ptr, prefix.ptr, prefix.len) == 0;
+}
+
+EMBER_INLINED bool ember_str_ends_with(ember_str s, ember_str suffix) {
+    return suffix.len <= s.len && memcmp(s.ptr + (s.len - suffix.len), suffix.ptr, suffix.len) == 0;
+}
+/* `[TXT-10]` — where the first `needle` in `s` at or after byte `from`
+ * starts, or `SIZE_MAX`: `memchr` finds each place the needle's first byte
+ * is and `memcmp` checks the rest, as a C programmer searches (a `memcmp` at
+ * every byte made `lines()` 7x the C loop). Inline, with `find` and
+ * `contains`: MSVC passes a view to a call through a copy it reads whole,
+ * which waits for the two stores that just wrote it. */
+EMBER_INLINED size_t ember_str_search(ember_str s, ember_str needle, size_t from) {
+    if (needle.len == 0) {
+        return from <= s.len ? from : SIZE_MAX;
+    }
+    while (from + needle.len <= s.len) {
+        const unsigned char* hit =
+            (const unsigned char*)memchr(s.ptr + from, needle.ptr[0], s.len - needle.len + 1 - from);
+        if (hit == NULL) {
+            return SIZE_MAX;
+        }
+        /* A one-byte needle is found: no call to compare nothing. */
+        if (needle.len == 1 || memcmp(hit + 1, needle.ptr + 1, needle.len - 1) == 0) {
+            return (size_t)(hit - s.ptr);
+        }
+        from = (size_t)(hit - s.ptr) + 1;
+    }
+    return SIZE_MAX;
+}
+
+EMBER_INLINED int64_t ember_str_find(ember_str s, ember_str needle) {
+    size_t at = ember_str_search(s, needle, 0);
+    return at == SIZE_MAX ? -1 : (int64_t)at;
+}
+
+EMBER_INLINED bool ember_str_contains(ember_str text, ember_str needle) {
+    return ember_str_search(text, needle, 0) != SIZE_MAX;
+}
 int64_t ember_str_rfind(ember_str s, ember_str needle);
 int64_t ember_str_count(ember_str s, ember_str needle);
 ember_vec ember_str_replace(ember_str s, ember_str from, ember_str to);
@@ -1571,7 +1642,11 @@ void ember_fmt_bool(ember_vec* out, bool value);
 void ember_fmt_char(ember_vec* out, uint32_t value);
 void ember_fmt_str(ember_vec* out, ember_str value);
 void ember_fmt_repr_str(ember_vec* out, ember_str value);
-bool ember_str_is_char_boundary(ember_str s, size_t i);
+/* `[TXT-4]` — a byte offset that starts a character, or is the end. Inline:
+ * slicing text takes it for both ends. */
+EMBER_INLINED bool ember_str_is_char_boundary(ember_str s, size_t i) {
+    return i == 0 || i == s.len || (i < s.len && (s.ptr[i] & 0xC0) != 0x80);
+}
 void ember_fmt_handle(ember_vec* out, const void* object);
 void ember_fmt_repr_char(ember_vec* out, uint32_t value);
 

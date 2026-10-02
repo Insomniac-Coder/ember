@@ -11,10 +11,14 @@
 //! would have) and changes nothing but the capacity. So it is done only in a
 //! program that never asks a list for its `capacity()`; the memory it takes
 //! is no more than doubling would have reached (`[PHIL-5]`, `[PHIL-11]`).
+//! A `String`'s `push_str` of a literal adds the literal's bytes (ADR-106: a
+//! text built by such a loop grew by doubling where C's is allocated once).
 
 use std::collections::{BTreeMap, HashSet};
 
-use ember_mir::{BasicBlock, BasicBlockId, Body, Builtin, FuncRef, LocalId, Operand, Place, Rvalue, StmtKind, Terminator};
+use ember_mir::{
+    BasicBlock, BasicBlockId, Body, Builtin, Const, FuncRef, LocalId, Operand, Place, Rvalue, StmtKind, Terminator,
+};
 use ember_types::TypeTable;
 
 use crate::loop_version::{CountedLoop, counted_loop, retarget};
@@ -24,6 +28,23 @@ pub fn reserve_pushed_lists_all(bodies: &mut [Body], types: &TypeTable) -> usize
         return 0;
     }
     bodies.iter_mut().map(|body| reserve_pushed_lists(body, types)).sum()
+}
+
+/// A push a hint can count: the reference to the list it pushes onto, and
+/// how many elements it adds (an `Array`'s `push`, one; a `String`'s
+/// `push_str` of a literal, the literal's bytes).
+fn pushed(terminator: &Terminator) -> Option<(LocalId, u32)> {
+    let Terminator::Call { func: FuncRef::Builtin { which, .. }, args, .. } = terminator else { return None };
+    let Some(Operand::Copy(reference) | Operand::Move(reference)) = args.first() else { return None };
+    if !reference.projection.is_empty() {
+        return None;
+    }
+    let added = match (which, args.get(1)) {
+        (Builtin::ArrayPush, _) => 1,
+        (Builtin::StringPush, Some(Operand::Const(Const::Str(text)))) if !text.is_empty() => u32::try_from(text.len()).ok()?,
+        _ => return None,
+    };
+    Some((reference.local, added))
 }
 
 fn reads_capacity(body: &Body) -> bool {
@@ -196,17 +217,18 @@ fn reserve_before(body: &mut Body, types: &TypeTable, shape: &CountedLoop) -> us
         }
         list
     };
-    // block -> (reference, list); list -> (the push's `arg_ty`, the reference's type)
-    let mut pushes: BTreeMap<usize, (LocalId, LocalId)> = BTreeMap::new();
+    // block -> (reference, list, elements added); list -> (the push's
+    // `arg_ty`, the reference's type)
+    let mut pushes: BTreeMap<usize, (LocalId, LocalId, u32)> = BTreeMap::new();
     let mut lists: BTreeMap<u32, (ember_types::Ty, ember_types::Ty)> = BTreeMap::new();
     for &block in &region {
-        if let Terminator::Call { func: FuncRef::Builtin { which: Builtin::ArrayPush, arg_ty }, args, .. } = &body.blocks[block].terminator
-            && let Some(Operand::Copy(place) | Operand::Move(place)) = args.first()
-            && place.projection.is_empty()
-            && let Some(list) = list_of(place.local)
+        let terminator = &body.blocks[block].terminator;
+        if let Some((reference, added)) = pushed(terminator)
+            && let Terminator::Call { func: FuncRef::Builtin { arg_ty, .. }, .. } = terminator
+            && let Some(list) = list_of(reference)
         {
-            pushes.insert(block, (place.local, list));
-            lists.entry(list.0).or_insert((*arg_ty, body.local(place.local).ty));
+            pushes.insert(block, (reference, list, added));
+            lists.entry(list.0).or_insert((*arg_ty, body.local(reference).ty));
         }
     }
     let order = forward_order(body, shape);
@@ -215,7 +237,7 @@ fn reserve_before(body: &mut Body, types: &TypeTable, shape: &CountedLoop) -> us
     for (list, (arg_ty, reference_ty)) in lists {
         let list = LocalId(list);
         let references: HashSet<LocalId> =
-            pushes.values().filter(|(_, onto)| *onto == list).map(|(reference, _)| *reference).collect();
+            pushes.values().filter(|(_, onto, _)| *onto == list).map(|(reference, _, _)| *reference).collect();
         if !only_pushes(body, &inside, list, &references) {
             continue;
         }
@@ -237,7 +259,7 @@ fn reserve_before(body: &mut Body, types: &TypeTable, shape: &CountedLoop) -> us
     // the list, the last going to the header.
     let span = body.blocks[shape.header].terminator_span;
     let void = body.blocks.iter().find_map(|data| match &data.terminator {
-        Terminator::Call { func: FuncRef::Builtin { which: Builtin::ArrayPush, .. }, dest, .. } => Some(body.local(dest.local).ty),
+        terminator @ Terminator::Call { dest, .. } if pushed(terminator).is_some() => Some(body.local(dest.local).ty),
         _ => None,
     });
     let Some(void) = void else { return 0 };
@@ -320,8 +342,8 @@ fn only_pushes(body: &Body, inside: &HashSet<usize>, list: LocalId, references: 
         }
         let mut read = vec![false; body.locals.len()];
         match &data.terminator {
-            Terminator::Call { func: FuncRef::Builtin { which: Builtin::ArrayPush, .. }, args, dest, .. }
-                if matches!(args.first(), Some(Operand::Copy(place) | Operand::Move(place)) if references.contains(&place.local)) =>
+            terminator @ Terminator::Call { args, dest, .. }
+                if pushed(terminator).is_some_and(|(reference, _)| references.contains(&reference)) =>
             {
                 args[1..].iter().for_each(|arg| crate::strength_reduce::operand_reads(arg, &mut read));
                 if dest.local == list {
@@ -380,17 +402,17 @@ fn forward_order(body: &Body, shape: &CountedLoop) -> Vec<(usize, Vec<usize>)> {
     post
 }
 
-/// The fewest pushes onto `list` on any path from the loop's entry to its
-/// step (zero when a path has none).
+/// The fewest elements pushed onto `list` on any path from the loop's entry
+/// to its step (zero when a path has none).
 fn fewest_pushes(
     shape: &CountedLoop,
     order: &[(usize, Vec<usize>)],
-    pushes: &BTreeMap<usize, (LocalId, LocalId)>,
+    pushes: &BTreeMap<usize, (LocalId, LocalId, u32)>,
     list: LocalId,
 ) -> u32 {
     let mut fewest: BTreeMap<usize, u32> = BTreeMap::new();
     for (block, nexts) in order {
-        let own = u32::from(pushes.get(block).is_some_and(|(_, onto)| *onto == list));
+        let own = pushes.get(block).filter(|(_, onto, _)| *onto == list).map_or(0, |(_, _, added)| *added);
         let after = if *block == shape.step {
             Some(0)
         } else {

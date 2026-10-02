@@ -1784,34 +1784,7 @@ bool ember_utf8_valid(ember_span bytes) {
     return true;
 }
 
-bool ember_str_contains(ember_str text, ember_str needle) {
-    if (needle.len == 0) {
-        return true;
-    }
-    for (size_t at = 0; at + needle.len <= text.len; ++at) {
-        if (memcmp(text.ptr + at, needle.ptr, needle.len) == 0) {
-            return true;
-        }
-    }
-    return false;
-}
 
-bool ember_str_starts_with(ember_str s, ember_str prefix) {
-    return prefix.len <= s.len && memcmp(s.ptr, prefix.ptr, prefix.len) == 0;
-}
-
-bool ember_str_ends_with(ember_str s, ember_str suffix) {
-    return suffix.len <= s.len && memcmp(s.ptr + (s.len - suffix.len), suffix.ptr, suffix.len) == 0;
-}
-
-int64_t ember_str_find(ember_str s, ember_str needle) {
-    for (size_t at = 0; at + needle.len <= s.len; ++at) {
-        if (memcmp(s.ptr + at, needle.ptr, needle.len) == 0) {
-            return (int64_t)at;
-        }
-    }
-    return -1;
-}
 
 int64_t ember_str_rfind(ember_str s, ember_str needle) {
     if (needle.len > s.len) {
@@ -1830,13 +1803,8 @@ int64_t ember_str_count(ember_str s, ember_str needle) {
         return (int64_t)ember_str_char_count(s) + 1;
     }
     int64_t count = 0;
-    for (size_t at = 0; at + needle.len <= s.len;) {
-        if (memcmp(s.ptr + at, needle.ptr, needle.len) == 0) {
-            count += 1;
-            at += needle.len;
-        } else {
-            at += 1;
-        }
+    for (size_t at = ember_str_search(s, needle, 0); at != SIZE_MAX; at = ember_str_search(s, needle, at + needle.len)) {
+        count += 1;
     }
     return count;
 }
@@ -1856,15 +1824,12 @@ ember_vec ember_str_replace(ember_str s, ember_str from, ember_str to) {
         return out;
     }
     size_t at = 0;
-    while (at < s.len) {
-        if (at + from.len <= s.len && memcmp(s.ptr + at, from.ptr, from.len) == 0) {
-            ember_vec_extend(&out, to.ptr, to.len);
-            at += from.len;
-        } else {
-            ember_vec_extend(&out, s.ptr + at, 1);
-            at += 1;
-        }
+    for (size_t hit = ember_str_search(s, from, 0); hit != SIZE_MAX; hit = ember_str_search(s, from, at)) {
+        ember_vec_extend(&out, s.ptr + at, hit - at);
+        ember_vec_extend(&out, to.ptr, to.len);
+        at = hit + from.len;
     }
+    ember_vec_extend(&out, s.ptr + at, s.len - at);
     return out;
 }
 
@@ -6449,11 +6414,6 @@ void ember_fmt_handle(ember_vec* out, const void* object) {
     ember_vec_extend(out, "<", 1);
     ember_vec_extend(out, header->ti->name, strlen(header->ti->name));
     ember_vec_extend(out, address, n > 0 ? (size_t)n : 0);
-}
-
-/* `[TXT-4]` — a byte offset that starts a character, or is the end. */
-bool ember_str_is_char_boundary(ember_str s, size_t i) {
-    return i == 0 || i == s.len || (i < s.len && (s.ptr[i] & 0xC0) != 0x80);
 }
 
 /* `[TYP-39]` — inside a collection, text shows as its `Debug`: quoted as

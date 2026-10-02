@@ -446,6 +446,7 @@ mod tests {
             abi: None,
             overflow: ember_types::OverflowPolicy::Panic,
             fp: ember_types::FpMode::Strict,
+            inline: ember_mir::InlineHint::default(),
             export_thread_policy: ember_mir::ExportThreadPolicy::Any,
             locals: vec![
                 LocalDecl {

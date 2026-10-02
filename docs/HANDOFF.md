@@ -10703,7 +10703,7 @@ formal 1/9 count or Phase 2's estimate.
 
 ### 0.355 0.9.9 implementation, on `main` — 2026-09-23
 
-#### Start here after a context reset — state at 2026-10-01
+#### Start here after a context reset — state at 2026-10-02
 
 The previous batches are committed and pushed on `main`; the newest batch is
 described below and committed with this checkpoint. **Read this subsection
@@ -11104,7 +11104,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h51/` are frozen.
-* **Next numbers:** ODR-098, D-472, ADR-106, ERR-056.
+* **Next numbers:** ODR-098, D-474, ADR-107, ERR-056.
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
@@ -11288,12 +11288,44 @@ first**; the rest of §0.355 is the running narrative behind it.
     view borrows; an iterator that is a `Copy` view gives items that outlive
     the next call. A non-`Copy` view iterator still lends (`[LT-1]`'s second
     kind): std's `[TXT-10]` iterators must be `Copy` views.
-  * **Next:** `[TXT-10]`'s iterators (as `Copy` views, compared with C and made
-    as fast as it can, AUTOPILOT's protocol); what is left of
-    the second review: the interface half of D-467 (a per-class accessor in
-    the type information), G7-2 (a 256-deep literal's stack), D-460 (G5-7),
-    D-466's temporaries, G7-3 to G7-5, G8-4; then the fused `for` over the new
-    adapters; then `[CLO-3]` with D-422.
+  * **`[TXT-10]`'s iterators, as fast as C (ADR-106, D-472, D-473).** `chars`,
+    `char_indices`, `bytes`, `lines`, `split`, `split_whitespace` in std, and a
+    `String` has every `str` method (D-472). Timed against C's loops on the
+    performance cores; Ember ÷ C, MSVC and clang: `for c in s` 0.98x, 0.82x,
+    `chars()` 0.98x, 0.83x, `char_indices()` 1.00x, 0.93x, `bytes()` 1.00x,
+    0.97x, `lines()` 1.12x, 1.05x, `split()` 1.12x, 0.95x, `split_whitespace()`
+    0.93x, 0.65x (the README's tables get them with the next full run). Built
+    on the way: one decoding step (`StrCharNext`); a `for` over `chars`,
+    `char_indices`, `bytes` as counted loops; `[CG-C-3]`'s `static inline`
+    functions in the one C unit and `[CG-C-3a]` (`@inline` forced; `@noinline`,
+    `@cold`, `@hot` hints; they were `E0900`); values written by their fields
+    (MSVC read compound literals back wider than it wrote them); `memchr`
+    searches; no `__done` flag without an `else`; `push_str` of a literal
+    reserves its room in a counted loop. D-473: an inherent `next` broke every
+    adapter in the program (std's `lines` and `split` were written that way).
+  * **What is left of ADR-106, and why.** `lines()`: its slices' bounds and
+    character-boundary checks (1.04x and 0.99x with them deleted by hand),
+    safety checks. `split()` with MSVC: MSVC keeps the iterator in memory, so
+    the separator is not folded and three values spill around each `memchr`
+    (clang runs the same C at 0.95x). That cost can be removed, so by
+    AUTOPILOT §4 the investigation is not finished: it needs a MIR pass that
+    inlines a standard iterator's `next` into its `for` loop and holds the
+    iterator's fields in locals. The owner, 2026-10-02: "yes check split
+    after".
+  * **Next:** (1) that MIR pass (for MSVC: the loop's iterator a local whose
+    address is never taken), measured; then the full README benchmark run
+    on mains power with the seven text programs and the bold-green rule
+    (scratchpad `text/`, `readme_adr106.py`); (2) `for x in span` and
+    `for x in xs` over an `Array` bind each element by reference, and
+    `[SIMD-5]`'s vectorisable form refuses a reference, so those loops never
+    group their overflow checks (`for b in text.as_bytes()` 1.5x C): admit a
+    read-only element reference; (3) `[TXT-11]`'s seven missing `String`
+    methods (`with_capacity`, `reserve`, `insert`, `remove`, `truncate`,
+    `clear`, `capacity`); then what is left of the second review: the
+    interface half of D-467 (a per-class accessor in the type information),
+    G7-2 (a 256-deep literal's stack), D-460 (G5-7), D-466's temporaries, G7-3
+    to G7-5, G8-4; then the fused `for` over the other adapters; then
+    `[CLO-3]` with D-422.
   * **gcc (the owner's request; ADR-098, D-445, D-446).** Ember built with gcc
     15.2 under WSL (Ubuntu) on this machine; the 39 benchmark programs against
     their C or C++ twin built by the same gcc with the same flags
@@ -12168,7 +12200,13 @@ first**; the rest of §0.355 is the running narrative behind it.
   | P7 | 0 |
   | 7a | 6 |
   | P8 | 17 |
-  | Overall | 59 |
+  | Overall | 60 |
+
+  2026-10-02, after ADR-106: the same phases; `python tasks/impl-0.9.9/
+  rule_sizes.py 99 89 60 13 14 4 6` now gives 59.6% (the spec's rules have
+  changed length since the 59.1% of 2026-10-01), 60% rounded, in the README.
+  `[TXT-*]` and `[CG-C-*]` are in no phase's families; D-473's rules are
+  Phase 1's, already counted.
 
   2026-10-02, before ADR-101's commit: the same table (59%). The range facts
   are `[RNG-4]`, already counted in P1; ADR-098 to ADR-101 are speed work

@@ -1662,7 +1662,7 @@ pub(crate) fn quiet_builtin(types: &TypeTable, which: &Builtin, arg_ty: Ty) -> b
         | Builtin::StrCount
         | Builtin::StrContains
         | Builtin::StrContainsChar
-        | Builtin::StrCharAt
+        | Builtin::StrCharNext
         | Builtin::StrIsCharBoundary
         | Builtin::StrAsBytes
         | Builtin::StrSliceOk
@@ -3531,8 +3531,7 @@ fn builtin_cannot_reach_a_cell(func: &FuncRef) -> bool {
             | Builtin::ParseStatus { .. }
             | Builtin::ParseValue { .. }
             | Builtin::StrToLower
-            | Builtin::StrCharAt
-            | Builtin::CharUtf8Len
+            | Builtin::StrCharNext
             | Builtin::StrContains
             | Builtin::StrContainsChar
             | Builtin::StrIsCharBoundary
@@ -4859,6 +4858,7 @@ mod callable_region_metadata_tests {
             abi: None,
             overflow: ember_types::OverflowPolicy::Panic,
             fp: ember_types::FpMode::Strict,
+            inline: ember_mir::InlineHint::default(),
             export_thread_policy: ember_mir::ExportThreadPolicy::Any,
             locals: vec![LocalDecl {
                 ty: common.void,

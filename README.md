@@ -45,7 +45,7 @@ method in [`docs/HANDOFF.md`](docs/HANDOFF.md)):
 | 7 | C++ interoperability and the interpreter | 0% |
 | 7a | Iteration, determinism, cost control | 6% |
 | 8 | Hardening and 1.0 | 17% |
-| | Overall | 59% |
+| | Overall | 60% |
 
 The latest language work includes the owner's simplification pass
 ([`docs/proposals/Ember_Simplification_Pass_Revised.md`](docs/proposals/Ember_Simplification_Pass_Revised.md));
@@ -73,6 +73,7 @@ container (a `Map[str, int]` of string literals), checked at every store.
 - The standard library in Ember: `Array`, `String`, `Map` and `Set` (insertion-ordered),
   `Option`/`Result`, `Cell`/`RefCell`, `Box`, arenas (`alloc_array`, `alloc_zeroed`,
   `alloc_uninit`, fixed-capacity collections), `NonZero[T]`, iterators and `for x in owned e`,
+  text iterators (`chars`, `char_indices`, `bytes`, `lines`, `split`, `split_whitespace`),
   `std.math` (vectors, matrices, `KahanSum`, `Float` and `Number` generics) and `std.math.det`
   (bit-identical transcendental functions on every target).
 - Diagnostics with stable codes, help and notes; `ember explain CODE` and error pages in

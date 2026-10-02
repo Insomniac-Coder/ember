@@ -176,6 +176,7 @@ pub fn emit(
         fall_into: None,
         folded_refs: BTreeMap::new(),
         inline_sizes: inline_sizes(bodies),
+        inline_bodies: if split { BTreeMap::new() } else { inline_bodies(bodies, types) },
         view_pointers: BTreeMap::new(),
         direct_param_modes: bodies
             .iter()
@@ -408,6 +409,11 @@ struct Emitter<'a> {
     /// statement that sets it, by local, with the reference and its type:
     /// written into the call itself (`folded_refs`).
     folded_refs: BTreeMap<usize, (Rvalue, Ty)>,
+    /// `[CG-C-3]` — the bodies the one translation unit gives internal
+    /// linkage and `inline` (`inline_bodies`), `true` for those forced
+    /// inline; none when relaxed units share the program's bodies
+    /// (`[CG-C-11]`).
+    inline_bodies: BTreeMap<String, bool>,
     /// The functions the C compiler inlines (`inline_sizes`), by symbol,
     /// with their statements and those of the functions they call.
     inline_sizes: BTreeMap<String, usize>,
@@ -3827,7 +3833,10 @@ impl Emitter<'_> {
                 continue;
             }
             let signature = self.signature(body);
-            if self.library_mode && body.abi.as_deref() != Some("C") {
+            if self.inline_bodies.contains_key(&body.symbol) || body.inline != ember_mir::InlineHint::default() {
+                let linkage = self.linkage(body);
+                self.line(&format!("{linkage}{signature};"));
+            } else if self.library_mode && body.abi.as_deref() != Some("C") {
                 self.emit_internal_prototype(&signature);
             } else {
                 self.line(&format!("{signature};"));
@@ -4090,9 +4099,32 @@ impl Emitter<'_> {
         self.line("");
     }
 
+    /// A body's linkage: `[CG-C-3]`'s inline ones (`inline_bodies`), or
+    /// internal in a library, where a host may link two Ember archives;
+    /// after `[CG-C-3a]`'s hints.
+    fn linkage(&self, body: &Body) -> String {
+        let mut out = String::new();
+        if body.inline.never {
+            out.push_str("EMBER_NOINLINE ");
+        }
+        if body.inline.cold {
+            out.push_str("EMBER_COLD ");
+        }
+        if body.inline.hot {
+            out.push_str("EMBER_HOT ");
+        }
+        out.push_str(match self.inline_bodies.get(&body.symbol) {
+            Some(true) => "EMBER_INLINED ",
+            Some(false) => "static inline ",
+            None if self.library_mode && body.abi.as_deref() != Some("C") => "static ",
+            None => "",
+        });
+        out
+    }
+
     fn emit_body(&mut self, body: &Body) {
         let signature = self.signature(body);
-        let linkage = if self.library_mode && body.abi.as_deref() != Some("C") { "static " } else { "" };
+        let linkage = self.linkage(body);
         self.line(&format!("{linkage}{signature} {{"));
         if body.abi.as_deref() == Some("C") {
             // `[FFI-22]` — the host may call this export on a thread that has
@@ -4520,19 +4552,50 @@ impl Emitter<'_> {
                     ));
                     return;
                 }
-                // MSVC expands the omitted payload of a unit variant's
-                // compound initializer recursively. With a deeply nested
-                // Option this exceeds its initializer-depth limit, even
-                // though only the tag is live (D-360). Zero the storage at
-                // this MIR assignment boundary, then set the discriminant.
+                // A unit variant of a payload enum sets the tag only, the
+                // payload being dead. A compound initializer omitting the
+                // payload made MSVC expand it recursively, past its depth
+                // limit for a deeply nested `Option` (D-360); zeroing the
+                // value first takes its address, which keeps it in memory,
+                // where MSVC reads the tag and a payload with one load wider
+                // than their stores (ADR-106: `bytes()` 19x the C loop).
                 if let Rvalue::Aggregate { kind: AggregateKind::Enum(id, variant), operands } = rvalue
                     && operands.is_empty()
                     && !self.types.enum_def(*id).is_unit_only()
                     && self.types.option_niche(*id).is_none()
                 {
                     let tag = self.types.enum_def(*id).variants[*variant].discriminant;
-                    self.line(&format!("    memset(&({lhs}), 0, sizeof({lhs}));"));
                     self.line(&format!("    ({lhs}).tag = {tag};"));
+                    return;
+                }
+                if self.emit_fields(place, rvalue, body) {
+                    self.set_view_pointer(place);
+                    return;
+                }
+                // A view copied whole: its two fields, for the reason
+                // `view_parts` gives (a view written by fields, then read back
+                // whole, waits for both stores).
+                if let Rvalue::Use(Operand::Copy(source) | Operand::Move(source)) = rvalue
+                    && self.view_shaped(ty)
+                    && self.place_ty(source, body) == ty
+                {
+                    let from = self.place_in(source, body);
+                    self.line(&format!("    ({lhs}).ptr = ({from}).ptr;"));
+                    self.line(&format!("    ({lhs}).len = ({from}).len;"));
+                    self.set_view_pointer(place);
+                    return;
+                }
+                // `None` of an `Option` of a view: its two fields, for the
+                // reason `view_parts` gives.
+                if let Rvalue::Aggregate { kind: AggregateKind::Enum(id, variant), operands } = rvalue
+                    && operands.is_empty()
+                    && let Some(niche) = self.types.option_niche(*id)
+                    && *variant != niche.some
+                    && matches!(self.types.kind(niche.payload), TyKind::Span { .. } | TyKind::Str)
+                {
+                    self.line(&format!("    ({lhs}).ptr = NULL;"));
+                    self.line(&format!("    ({lhs}).len = SIZE_MAX;"));
+                    self.set_view_pointer(place);
                     return;
                 }
                 let rhs = self.rvalue(rvalue, body, ty);
@@ -5209,7 +5272,12 @@ impl Emitter<'_> {
                     self.call_expression(func, args, body)
                 };
                 let dest_ty = self.place_ty(dest, body);
-                if self.is_void(dest_ty) {
+                if let Some((ptr, len)) = self.view_parts(func, args, dest_ty, body) {
+                    let dest_text = self.place_in(dest, body);
+                    self.line(&format!("    ({dest_text}).ptr = {ptr};"));
+                    self.line(&format!("    ({dest_text}).len = {len};"));
+                    self.set_view_pointer(dest);
+                } else if self.is_void(dest_ty) {
                     self.line(&format!("    {call};"));
                 } else {
                     let dest_text = self.place_in(dest, body);
@@ -5218,6 +5286,50 @@ impl Emitter<'_> {
                 }
                 self.emit_next(next.0 as usize, index);
             }
+        }
+    }
+
+    /// A `str`, a `Span` or a `MutSpan`, or an `Option` of one (`[TYP-13]`:
+    /// the view itself, `None` a null pointer): a C struct of `ptr` and `len`.
+    fn view_shaped(&self, ty: Ty) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Str | TyKind::Span { .. } => true,
+            TyKind::Enum(id) => self
+                .types
+                .option_niche(*id)
+                .is_some_and(|niche| matches!(self.types.kind(niche.payload), TyKind::Str | TyKind::Span { .. })),
+            _ => false,
+        }
+    }
+
+    /// The pointer and the length of a shared view a built-in makes (a
+    /// slice, `as_bytes`), which its destination takes one at a time: as a
+    /// compound literal MSVC builds the view in memory with two stores and
+    /// reads it back with one load wider than both, which waits for them
+    /// (ADR-106: `lines()` 3x the C loop). The length reads no pointer, so
+    /// writing the pointer first is safe when the view is its own source.
+    fn view_parts(&self, func: &FuncRef, args: &[Operand], dest_ty: Ty, body: &Body) -> Option<(String, String)> {
+        let FuncRef::Builtin { which, arg_ty } = func else { return None };
+        if !matches!(self.types.kind(dest_ty), TyKind::Str | TyKind::Span { mutable: false, .. }) {
+            return None;
+        }
+        match which {
+            Builtin::Slice { text } => {
+                let (view, lo, hi) = (self.operand(&args[0], body), self.operand(&args[1], body), self.operand(&args[2], body));
+                let ptr = if *text {
+                    format!("({lo} == 0 ? ({view}).ptr : ({view}).ptr + {lo})")
+                } else {
+                    let elem = self.c_type(self.span_element(*arg_ty));
+                    let tail = element_pointer(&format!("({view}).ptr"), &elem, &lo, false);
+                    format!("({lo} == 0 ? ({view}).ptr : (const void*){tail})")
+                };
+                Some((ptr, format!("{hi} - {lo}")))
+            }
+            Builtin::StrAsBytes => {
+                let text = self.operand(&args[0], body);
+                Some((format!("({text}).ptr"), format!("({text}).len")))
+            }
+            _ => None,
         }
     }
 
@@ -6051,11 +6163,8 @@ impl Emitter<'_> {
                     Builtin::StrTrimEnd => {
                         return format!("{RT}str_trim_end({})", rendered[0]);
                     }
-                    Builtin::StrCharAt => {
-                        return format!("{RT}str_char_at({}, {})", rendered[0], rendered[1]);
-                    }
-                    Builtin::CharUtf8Len => {
-                        return format!("{RT}char_utf8_len({})", rendered[0]);
+                    Builtin::StrCharNext => {
+                        return format!("{RT}str_char_next({}, {})", rendered[0], rendered[1]);
                     }
                     Builtin::StrCharCount => {
                         return format!("{RT}str_char_count({})", rendered[0]);
@@ -7212,6 +7321,50 @@ impl Emitter<'_> {
         }
     }
 
+    /// A struct, tuple or payload variant assigned to a local, written one
+    /// field at a time (the tag first). As a compound literal MSVC builds the
+    /// value in memory with narrow stores and copies it with wide loads, which
+    /// wait for the stores: an `Option[(int, char)]` returned by an inlined
+    /// `next` cost 15x the C loop (ADR-106). Not when an operand reads the
+    /// local, which the first field written would change.
+    fn emit_fields(&mut self, place: &Place, rvalue: &Rvalue, body: &Body) -> bool {
+        let Rvalue::Aggregate { kind, operands } = rvalue else { return false };
+        if !place.projection.is_empty()
+            || operands.is_empty()
+            || operands
+                .iter()
+                .any(|operand| matches!(operand, Operand::Copy(read) | Operand::Move(read) if read.local == place.local))
+        {
+            return false;
+        }
+        let mut prefix = Vec::new();
+        match (kind, self.types.kind(body.local(place.local).ty)) {
+            // A `Box` or `Shared` is a pointer in C, not its fields.
+            (AggregateKind::Struct(id), TyKind::Struct(local))
+                if id == local && self.box_inner_id(*id).is_none() && self.shared_inner_id(*id).is_none() => {}
+            (AggregateKind::Tuple, TyKind::Tuple(_)) => {}
+            (AggregateKind::Enum(id, variant), TyKind::Enum(local)) if id == local => {
+                let def = self.types.enum_def(*id);
+                if def.is_unit_only() || self.types.option_niche(*id).is_some() {
+                    return false;
+                }
+                let tag = def.variants[*variant].discriminant;
+                let lhs = self.place_in(place, body);
+                self.line(&format!("    ({lhs}).tag = {tag};"));
+                prefix.push(Projection::Downcast(*variant));
+            }
+            _ => return false,
+        }
+        for (index, operand) in operands.iter().enumerate() {
+            let mut projection = prefix.clone();
+            projection.push(Projection::Field(index));
+            let field = self.place_in(&Place { local: place.local, projection }, body);
+            let value = self.operand(operand, body);
+            self.line(&format!("    {field} = {value};"));
+        }
+        true
+    }
+
     /// One enum value. A unit-only enum is just its discriminant; a payload
     /// enum sets the tag and the one union member that variant uses.
     /// Designated initialisers name both, so nothing is left uninitialised
@@ -8198,6 +8351,65 @@ fn blocks_in_cycles(body: &Body) -> Vec<bool> {
 /// The statements that become C, without storage markers.
 fn statement_count(stmts: &[Stmt]) -> usize {
     stmts.iter().filter(|stmt| !matches!(stmt.kind, StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop)).count()
+}
+
+/// `[CG-C-3]` — the functions the inline header holds: every `@inline` one
+/// (forced, `[CG-C-3a]`), `len`, `is_empty`, `as_span`, `iter` and `next`
+/// of a standard view or container, and any other function of at most
+/// `INLINE_STATEMENTS` statements that makes no foreign call. The program is one translation unit, so they are its
+/// `static inline` functions; an export keeps its external linkage, and a
+/// loop moved out for MSVC (`kernels.rs`) stays a call. The standard ones are
+/// `true`, forced inline as the runtime's fast paths are: a `for` loop calls
+/// `next` for every item, and MSVC left `chars()`'s a call (1.4x the C loop).
+fn inline_bodies(bodies: &[Body], types: &TypeTable) -> BTreeMap<String, bool> {
+    let foreign: BTreeSet<&str> =
+        bodies.iter().filter(|body| body.is_extern_declaration).map(|body| body.symbol.as_str()).collect();
+    bodies
+        .iter()
+        .filter(|body| {
+            if body.is_abstract
+                || body.is_extern_declaration
+                || body.abi.is_some()
+                || body.ffi_counted.is_some()
+                || body.restrict_views
+                || body.inline.never
+            {
+                return false;
+            }
+            if body.inline.always {
+                return true;
+            }
+            let mut statements = 0;
+            let mut foreign_call = false;
+            for block in &body.blocks {
+                statements += statement_count(&block.stmts) + 1;
+                if let Terminator::Call { func: FuncRef::Direct { symbol, .. }, .. } = &block.terminator {
+                    foreign_call |= foreign.contains(symbol.as_str());
+                }
+            }
+            standard_accessor(body, types) || (statements <= INLINE_STATEMENTS && !foreign_call)
+        })
+        .map(|body| (body.symbol.clone(), body.inline.always || standard_accessor(body, types)))
+        .collect()
+}
+
+/// `len`, `is_empty`, `as_span`, `iter` or `next` of a standard view or
+/// container (`[CG-C-3]`): a method of that name whose receiver is a type of
+/// std's.
+fn standard_accessor(body: &Body, types: &TypeTable) -> bool {
+    if body.arg_count == 0 || !matches!(body.name.as_str(), "len" | "is_empty" | "as_span" | "iter" | "next") {
+        return false;
+    }
+    let mut receiver = body.locals[1].ty;
+    if let TyKind::Ref { inner, .. } = types.kind(receiver) {
+        receiver = *inner;
+    }
+    let name = match types.kind(receiver) {
+        TyKind::Struct(id) => types.struct_def(*id).name,
+        TyKind::Enum(id) => types.enum_def(*id).name,
+        _ => return false,
+    };
+    name.as_str().starts_with("std.")
 }
 
 /// `[CG-C-3]` — the functions the C compiler inlines, by symbol: each of at
