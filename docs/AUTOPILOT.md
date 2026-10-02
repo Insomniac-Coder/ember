@@ -154,6 +154,14 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   the whole of the gap (for example: the overflow check the language requires on `count += 1`,
   priced by timing the program without it). "Still slower, cause unknown" is not an answer; it
   means the investigation is not finished.
+- **Every feature, as fast as it can be: protocol, attended or not.** The owner, 2026-10-02:
+  "remember any few feature you add you have to make sure that it gets as fast as it can, that is
+  the part of the protocol now no matter whether its autopilot or not", and "you only stop
+  investigating if the answer to the slow down is overhead/ safety check". So no feature is done,
+  in an attended session or on autopilot, until its C or C++ twin has been written and timed (on
+  the performance cores, on mains power) and every gap has been chased to one of two ends: as fast
+  as the twin or faster, or slower by an overhead or a safety check the language requires, priced
+  as the whole of the gap. Any other answer means the investigation goes on.
 - **Research online when stuck.** The owner, 2026-09-28: "you are allowed to do online research to
   find solutions to problems that you get stuck on". Before giving up on a problem (a slowdown with
   no known cause, a C compiler's behaviour, a design with no clear answer), search how other
