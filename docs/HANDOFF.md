@@ -11341,8 +11341,50 @@ first**; the rest of §0.355 is the running narrative behind it.
     text-map decision), `p1_read_loop` 1.48x and `t3_lines` 1.13x (their
     checks); clang `a10_recursion` 1.74x and `p1_read_loop` 1.73x (the
     check); gcc `p5_million_objects` 1.12x. 57 values under x0.95 (bold).
-  * **Paused** by the owner after this commit ("update the handoff and pause
-    all the work"): resume only when the owner says so.
+  * **Paused by the owner after `e2cbba3`** ("update the handoff and pause
+    all the work"): resume only when the owner says so. `5a5a678` (ADR-106)
+    and `e2cbba3` (ADR-107, D-474 to D-476, ADR-108, the README) are pushed
+    and CI is green on both; `5a5a678`'s run took 3 hours (D-474),
+    `e2cbba3`'s 48 minutes.
+  * **Where the benchmark tools are.** Not in the repository: in the
+    session scratchpad
+    `C:\Users\ism19\AppData\Local\Temp\claude\C--Users-ism19-Code\ae3a2898-3f0f-4361-99e2-9bbbb0976123\scratchpad`
+    (a new session gets a new scratchpad; copy these from the old one).
+    * Windows, MSVC then clang, held to the performance cores, refused on
+      battery: `python pin_bench.py <log> 11 bench/compare_c.py
+      audit/compare.py a13v3/compare.py wrap/compare.py chain/compare.py
+      text/compare.py`; one program: `python pin_one.py <harness> <cc> <runs>
+      <name part>`.
+    * gcc under WSL: `wsl/sync_and_check.sh` copies the Windows tree's
+      changed files into `~/ember`, builds and runs the conformance suite
+      with gcc; `wsl/stage.sh 11` runs the 50 programs (`wsl/bench/`).
+    * The README: `python readme_adr103.py <gcc log> <windows log>` writes the
+      three charts (`readme_svg_gcc.py`: bold under x0.95) and the counts
+      sentence; the legend already has the bold-green line.
+    * Checks: `gates.sh` (every repository gate); `emit_all.sh <dir>` writes
+      every benchmark program's C for the three compilers, to show a change
+      leaves them byte for byte the same; `ab_old_new.py <cc> <runs>
+      <programs>` times an old compiler's build against the current one's,
+      interleaved. `power_guard.py` must be on `PYTHONPATH` when a script runs
+      from the repository folder.
+  * **The owner's rules from 2026-10-02 (also in AUTOPILOT §4 and memory).**
+    Benchmarks run once, after every change is in; a run that finds a defect
+    means a new run after its fix. No timing of any kind on battery, compile
+    speed included. The runners check the power only between harnesses, so
+    each run's window is checked against the System log's Kernel-Power event
+    105 (power source change). A README value under x0.95 is bold green.
+  * **The WSL clone** `~/ember` sits at `f02ee12` with every later file copied
+    over by `sync_and_check.sh`: before the next sync, stash its leftovers
+    and fast-forward it to `origin/main`.
+  * **Open threads, none started:** for gcc, `static inline` only on the
+    functions small with their callees counted (ADR-108; would recover
+    `a04_map_int` and `a14_map_gap_1024` if `a05_structs` keeps its gain);
+    one region inference of a large body is slow, since each point keeps
+    every region's state (D-476's row); std's provided-method copies are still
+    type-checked in every program, about 7 ms (D-474's row); the owner's
+    pending decisions: `a16_map_text`'s text map (key on the stack, a
+    small-block allocator, or short text inside `String`) and bigger
+    `[SIMD-7]` blocks for `p1_read_loop` (a spec change).
   * **Next:** (1) `for x in span` and
     `for x in xs` over an `Array` bind each element by reference, and
     `[SIMD-5]`'s vectorisable form refuses a reference, so those loops never

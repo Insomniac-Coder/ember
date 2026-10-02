@@ -123,8 +123,13 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   it). WSL cannot be held there without administrator rights; say so wherever its numbers appear.
   Only on mains power: the owner, 2026-10-02, "laptop is on battery power ... this benchmark result
   is invalid". The runners check before each group of programs and stop on battery
-  (`GetSystemPowerStatus`); Windows logs each switch (Kernel-Power event 105). The README names the
-  laptop and the compiler versions the numbers come from.
+  (`GetSystemPowerStatus`); Windows logs each switch (Kernel-Power event 105), and each run's window
+  is checked against those events. No timing of any kind on battery, compile speed included ("you
+  cannot test the slow compilation speed right now because the computer is on battery mode"). The
+  README names the laptop and the compiler versions the numbers come from.
+- **Benchmarks run once, after every change is in.** The owner, 2026-10-02: "only run the
+  benchmarks after all changes have been done please". A run that finds a defect means a new run
+  after its fix, since the README's numbers are the final code's.
 - **Where Ember is clearly faster, the README says so in bold green.** The owner, 2026-10-02: "for
   the benchmark values where ember is just better can you make sure that the value is in bold ...
   bold along with the green colour, make this part of the readme update process", then "any value
