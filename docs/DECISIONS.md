@@ -3557,6 +3557,95 @@ RandomState]` in insertion order; one key, one hash within a run),
 `HASH-2/accept_bytes_differing_in_their_tail_hash_apart` (D-405, both hashers), and
 `random_state_is_keyed_per_process` in `milestones.rs` (one program run twice hashes a key two ways).
 
+## ADR-104 — an f-string reserves its room; integers format without `printf`
+
+2026-10-02, the owner: "target all of them" (the programs more than 10% slower than the C). The
+text-key map (`m[f"key{i}"]`: 200,000 keys, then a million lookups) ran 2.07x the C++ with MSVC
+and 1.56x to 1.77x with clang (0.71x with gcc on Linux, whose `malloc` is quicker). Each lookup
+formatted `i` with `snprintf`, allocated four bytes for `"key"`, reallocated when the digits did
+not fit (`[HEAP-2]`: growth from four elements), and freed the text after the lookup; the C++ twin's
+`std::to_string` uses a digit loop and keeps text this short inside the string. Priced by variants
+of the generated C (one performance core, 15 runs):
+
+| Variant | Time | vs C++ |
+|---|---:|---:|
+| As emitted | 178 ms | 2.07x |
+| Integers formatted by a digit loop, not `snprintf` | 155 ms | 1.79x |
+| and the key's text allocated once | 128 ms | 1.49x |
+| and the lookup key built on the stack (no allocation) | 107 ms | 1.24x |
+| The C++ twin | 86 ms | 1.00x |
+
+**Built.**
+* The runtime formats an `i64` or `u64`, printed or put in text, with its own digit loop
+  (`decimal_u64`, `decimal_i64`): MSVC's `snprintf` parses its format and consults the locale on
+  every call.
+* `[LEX-19]` — an f-string all of whose pieces have a longest text (literal text; an integer, its
+  digits and sign; a `bool`; a `char`, four bytes of UTF-8) reserves that room before it appends
+  them (`fstring_room` in `lower.rs`, through the existing `ArrayReserve`): one allocation, where
+  growing from four bytes took two. Any other piece, or a format spec, leaves it as it was.
+
+**Result** (the README's run, on the performance cores): with MSVC 2.09x → 1.51x, with clang
+1.77x → 1.14x, with gcc 0.71x → 0.43x. Its times move from batch to batch (the C++ twin took 111 to
+116 ms in the 11-run pass and 81 ms in the 21-run re-run, where Ember with clang was 0.91x and
+1.14x). `STD-20/accept_every_integer_prints_its_digits` and
+`LEX-19/accept_an_fstring_of_bounded_pieces_reserves_its_room` (its `assert-c` fails without the
+reservation; the first fails with the digit loop broken). **Not built, each the owner's call:** the
+lookup key built on the stack (it never leaves the call it is lent to, but a `String` whose buffer is
+on the stack must never be freed or grown, which the compiler would have to prove); a small-block
+allocator in front of `malloc` (every small allocation gains; a change to how memory is allocated);
+short text kept inside the `String` (C++'s short-string optimisation; a representation change).
+What is left with all three is the map's layout: the key's text is one memory access further away
+than in the C++ twin's node.
+
+## ADR-103 — MSVC: a small checked loop several turns to a pass; a call takes an address directly
+
+2026-10-02, the same request. The three `mut self` benchmarks (`t = things[i % 2]; t.bump()`, a
+hundred million times) ran 1.30x, 1.35x and 1.31x the C++ with MSVC, 1.00x with clang and gcc.
+
+**Measured** (pinned to one performance core, 21 to 31 runs; `scratchpad/msvc_slow`, `unroll`).
+* MSVC unrolls no loop that can leave other than by its test, and the overflow check on
+  `count += 1` (inlined from `bump`) is such an exit, so Ember's loop ran one turn per pass. MSVC
+  unrolls the check-free C++ twin five times: a divisor of its constant count (with a count of
+  100,000,001, or one known only at run time, it does not unroll the twin at all).
+* Run to run, Ember's loop took 35 to 65 ms where the twin held 31 ms: one add instruction updated
+  the two objects in turn, and the processor mispredicted which earlier store each load read.
+  When a pass has at least as many turns as there are objects in the rotation, each instruction
+  keeps to one object's chain: 0.81x, steady. With 2, 3, 4, 5 and 7 objects in rotation, eight
+  turns to a pass were at or under the C++ every time; four turns were not at five (1.14x).
+* Grouping the checks (`[SIMD-7]`'s MAY) instead: 2.5x. MSVC chains the flag through every turn and
+  still does not unroll. Rejected.
+
+**Built** (`ember_codegen_c`, for MSVC only; clang's and gcc's C are unchanged on all 45 benchmark
+programs).
+* `for_loops(body, inlined)`: a block of a counted loop's body may end in a call MSVC inlines (to a
+  function of the program within `[CG-C-3]`'s 40 statements counting what it calls,
+  `inline_sizes`), so such a loop is a C `for` loop too (`emit_for_body`, `fall_into`); a call into
+  the runtime, through a table or a value, or to a larger function costs more than the loop, and
+  such a loop stays as blocks. For a loop over 1,000 objects in turn, 2.16x → 1.44x the C++.
+* `unrolled_turns`: a body with a check or such a call is written in passes of the most turns, a
+  power of two up to 8, whose statements, the inlined callees' counted, stay within 200 (gcc's
+  `-funroll-loops` limits, `max-unroll-times` and `max-unrolled-insns`, which Ember's gcc build
+  already asks for, ADR-099), then the turns left one at a time; each turn keeps its own checks, in
+  order, so nothing a program can see changes. Not for a loop carrying a scalar from turn to turn (a
+  running total), where each turn waits for the one before.
+* `folded_refs`: a reference temporary set by the statement before a call, and read by that call
+  only, is written into the call (`bump(&_4)`). Unrolled, MSVC stopped inlining `bump` while it was
+  called through the temporary (2.5x the C++); with the address written in, 0.82x.
+
+**Result**, MSVC, the README's programs (one performance core): the three `mut self` programs
+0.82x each; programs more than 10% slower than the C, 5 → 2. Of the two, the list sum (`p1`) is the
+overflow check on its running total, measured: with `@overflow(wrap)` the same program is 0.97x the
+C. It first went 1.47x → 1.66x when its leftover running-total loop was unrolled, an effect of where
+its hot loop landed (removing cold code moved it between 32 and 40 ms); running totals are left
+alone and it is back to 1.47x. Blocks of up to 1,024 additions with each value under 2^51 (the same
+proof as `[SIMD-7]`'s 64 under 2^55) would make it 1.30x; that changes the spec's numbers, so it is
+the owner's call. `msvc_writes_small_checked_loops_several_turns_a_pass` (milestones) and
+`CTL-3/accept_a_counted_loop_runs_every_turn_in_any_pass`: the first fails with any of the four
+parts undone (the passes, the addresses, running totals left alone, MSVC only). Six conformance
+tests counted emitted text an unrolled loop repeats (`for (;`, a view pointer's reads, a reference
+temporary's assignment); each now counts what is the same for every compiler (a loop's one-turn
+header `; ++_`, where each view pointer is set, the address itself).
+
 ## ADR-102 — an access begun on only some paths keeps a flag; the verifier follows it
 
 2026-10-02, with D-455 (the second review's G5-4). `[EXC-18]` holds a class field's access while a

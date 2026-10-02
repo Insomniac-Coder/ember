@@ -4,7 +4,7 @@
 #$ stdout: 42
 #$ stdout: 42
 #$ assert-c: contains(em_Leaf_clone)
-#$ assert-c: contains(= &(*_1).payload.Value._0;)
+#$ assert-c: contains(&(*_1).payload.Value._0)
 #$ assert-c: contains(em_Entry_clone)
 
 struct Leaf:

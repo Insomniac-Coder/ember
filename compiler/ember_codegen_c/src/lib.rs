@@ -110,6 +110,17 @@ fn interface_id_symbol(interface: &str) -> String {
 /// before an interface call searches the table.
 const MAX_DEVIRTUALISED: usize = 4;
 
+/// For MSVC, a small checked loop is written several turns per pass, with
+/// gcc's `-funroll-loops` limits, which Ember's gcc build already asks for
+/// (ADR-099): at most this many turns (gcc's `max-unroll-times`)...
+const MSVC_MAX_TURNS: usize = 8;
+/// ...and at most this many statements in all the turns of a pass (gcc's
+/// `max-unrolled-insns`, counted in MIR statements).
+const MSVC_MAX_UNROLLED_STATEMENTS: usize = 200;
+/// `[CG-C-3]` — a function of at most this many statements is small enough
+/// for the C compiler to inline.
+const INLINE_STATEMENTS: usize = 40;
+
 fn class_itable_symbol(class: &str) -> String {
     ember_branding::mangled(&format!("itables_{class}"))
 }
@@ -162,6 +173,9 @@ pub fn emit(
         class_interface_call_interfaces: BTreeSet::new(),
         interface_caches: BTreeMap::new(),
         folded_tests: BTreeMap::new(),
+        fall_into: None,
+        folded_refs: BTreeMap::new(),
+        inline_sizes: inline_sizes(bodies),
         view_pointers: BTreeMap::new(),
         direct_param_modes: bodies
             .iter()
@@ -387,6 +401,16 @@ struct Emitter<'a> {
     /// into the `if` itself rather than into a function-wide `bool`, which
     /// keeps MSVC from taking the loop it tests for a canonical one.
     folded_tests: BTreeMap<usize, (Rvalue, Ty)>,
+    /// The block a call written inside a `for` loop's body goes on to: the
+    /// body's next block, which follows in the C with no label.
+    fall_into: Option<usize>,
+    /// For MSVC, a reference temporary read only by the call after the
+    /// statement that sets it, by local, with the reference and its type:
+    /// written into the call itself (`folded_refs`).
+    folded_refs: BTreeMap<usize, (Rvalue, Ty)>,
+    /// The functions the C compiler inlines (`inline_sizes`), by symbol,
+    /// with their statements and those of the functions they call.
+    inline_sizes: BTreeMap<String, usize>,
     /// A view never set inside a loop nor borrowed, by local, with its
     /// element's C type: its elements are reached through a typed pointer of
     /// its own (`_N_ptr`), set wherever the view is, which MSVC keeps in a
@@ -4091,7 +4115,11 @@ impl Emitter<'_> {
         self.interface_caches = interface_cache_plan(body);
         // A 128-bit counter is a runtime struct on MSVC: C's `<` and `++`
         // are for plain integers only.
-        let mut for_loops = for_loops(body);
+        let inline_sizes = &self.inline_sizes;
+        let inlined = |func: &FuncRef| {
+            self.for_msvc && matches!(func, FuncRef::Direct { symbol, .. } if inline_sizes.contains_key(symbol))
+        };
+        let mut for_loops = for_loops(body, &inlined);
         for_loops.retain(|_, counted| {
             let ty = body.locals[counted.counter.0 as usize].ty;
             self.types.is_integral(ty) && self.wide_int(ty).is_none()
@@ -4099,6 +4127,8 @@ impl Emitter<'_> {
         let mut hidden_tests: BTreeSet<usize> = for_loops.values().map(|l| l.test.0 as usize).collect();
         self.folded_tests = folded_tests(body, &for_loops, self.types);
         hidden_tests.extend(self.folded_tests.keys().copied());
+        self.folded_refs = if self.for_msvc { folded_refs(body, self.types) } else { BTreeMap::new() };
+        hidden_tests.extend(self.folded_refs.keys().copied());
         self.view_pointers = view_pointers(body, self.types)
             .into_iter()
             .map(|(local, elem)| (local, self.c_type(elem)))
@@ -4254,7 +4284,8 @@ impl Emitter<'_> {
 
     /// A counted loop as a C `for` loop: MSVC vectorises only a `for` loop
     /// whose counter steps by one in its header; clang takes any loop. The
-    /// body's blocks follow one another with no jump, their checks inline.
+    /// body's blocks follow one another with no jump, their checks and calls
+    /// inline.
     fn emit_for_loop(&mut self, counted: &ForLoop, body: &Body, locals: &[usize]) {
         // A function-wide scalar the loop sets (a running total) is copied
         // into a block-local of the same name for the loop and back after
@@ -4272,36 +4303,28 @@ impl Emitter<'_> {
                 self.line(&format!("    {} _{local} = _{local}_in;", self.c_type(body.locals[local].ty)));
             }
         }
+        let (counter, limit) = (counted.counter.0, counted.limit.0);
         let test = if counted.inclusive { "<=" } else { "<" };
-        self.line(&format!(
-            "    for (; _{counter} {test} _{limit}; ++_{counter}) {{",
-            counter = counted.counter.0,
-            limit = counted.limit.0,
-        ));
-        for &local in locals {
-            self.line(&self.local_declaration(local, &body.locals[local]));
-        }
-        for (position, &block) in counted.chain.iter().enumerate() {
-            let data = &body.blocks[block];
-            if position + 1 == counted.chain.len() {
-                // The step: every statement but the counter's increment,
-                // which the loop header performs.
-                let stmts: Vec<Stmt> = data
-                    .stmts
-                    .iter()
-                    .enumerate()
-                    .filter(|(index, _)| *index != counted.increment)
-                    .map(|(_, stmt)| stmt.clone())
-                    .collect();
-                self.emit_block_stmts(&stmts, body);
-                continue;
+        if let Some(turns) = self.unrolled_turns(counted, body, locals) {
+            // A whole pass is left while the limit is at least `turns - 1`
+            // past the counter (more than that, for an exclusive limit). Once
+            // the counter has not passed the limit, their difference as
+            // `uint64_t` is exact for every integer type the header takes.
+            let more = if counted.inclusive { ">=" } else { ">" };
+            self.line(&format!(
+                "    for (; _{counter} {test} _{limit} && (uint64_t)_{limit} - (uint64_t)_{counter} {more} {}u; ) {{",
+                turns - 1
+            ));
+            for _ in 0..turns {
+                self.line("    {");
+                self.emit_for_body(counted, body, locals);
+                self.line("    }");
+                self.line(&format!("    ++_{counter};"));
             }
-            self.emit_block_stmts(&data.stmts, body);
-            if let Terminator::Assert { next, .. } = &data.terminator {
-                // The check itself, falling through to the next block.
-                self.emit_terminator(&data.terminator, body, (next.0 as usize).wrapping_sub(1));
-            }
+            self.line("    }");
         }
+        self.line(&format!("    for (; _{counter} {test} _{limit}; ++_{counter}) {{"));
+        self.emit_for_body(counted, body, locals);
         self.line("    }");
         if !carried.is_empty() {
             for &local in &carried {
@@ -4314,6 +4337,85 @@ impl Emitter<'_> {
             self.line("    }");
         }
         self.line(&format!("    goto bb{};", counted.exit));
+    }
+
+    /// One turn of a counted loop: the locals it declares, then its blocks in
+    /// order without the step's increment (the loop performs it), each check
+    /// and each call going on to the next block.
+    fn emit_for_body(&mut self, counted: &ForLoop, body: &Body, locals: &[usize]) {
+        for &local in locals {
+            self.line(&self.local_declaration(local, &body.locals[local]));
+        }
+        for (position, &block) in counted.chain.iter().enumerate() {
+            let data = &body.blocks[block];
+            if position + 1 == counted.chain.len() {
+                let stmts: Vec<Stmt> = data
+                    .stmts
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| *index != counted.increment)
+                    .map(|(_, stmt)| stmt.clone())
+                    .collect();
+                self.emit_block_stmts(&stmts, body);
+                continue;
+            }
+            self.emit_block_stmts(&data.stmts, body);
+            match &data.terminator {
+                // The check itself, falling through to the next block.
+                Terminator::Assert { next, .. } => {
+                    self.emit_terminator(&data.terminator, body, (next.0 as usize).wrapping_sub(1));
+                }
+                Terminator::Call { next, .. } => {
+                    let outer = self.fall_into.replace(next.0 as usize);
+                    self.emit_terminator(&data.terminator, body, block);
+                    self.fall_into = outer;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// For MSVC, how many turns of `counted` to write per pass, if more than
+    /// one. MSVC unrolls no loop that can leave other than by its test, and
+    /// every check is such an exit, in the body or in a function it inlines
+    /// there, where clang unrolls such a loop and gcc does under the
+    /// `-funroll-loops` Ember gives it. A body with a check or a call gets
+    /// gcc's unrolling: the most turns, a power of two up to
+    /// `MSVC_MAX_TURNS`, whose statements together stay within
+    /// `MSVC_MAX_UNROLLED_STATEMENTS`. Each turn keeps its own checks, in
+    /// order. A body with neither is left to MSVC, which unrolls or
+    /// vectorises a `for` loop itself.
+    fn unrolled_turns(&self, counted: &ForLoop, body: &Body, locals: &[usize]) -> Option<usize> {
+        if !self.for_msvc {
+            return None;
+        }
+        let blocks = || counted.chain.iter().map(|&block| &body.blocks[block]);
+        if !blocks().any(|data| matches!(data.terminator, Terminator::Assert { .. } | Terminator::Call { .. })) {
+            return None;
+        }
+        // A loop that carries a scalar from turn to turn (a running total:
+        // each turn waits for the one before, `[SIMD-7]`) gains nothing from
+        // more turns per pass.
+        if !self.carried_scalars(counted, body, locals).is_empty() {
+            return None;
+        }
+        // A call counts with the statements MSVC inlines in its place; a call
+        // it cannot inline (into the runtime, through a table or a value, or
+        // to a large function) costs more than the loop's own work, so such
+        // a loop is left as it is.
+        let mut statements = 0;
+        for data in blocks() {
+            statements += statement_count(&data.stmts) + 1;
+            if let Terminator::Call { func, .. } = &data.terminator {
+                let FuncRef::Direct { symbol, .. } = func else { return None };
+                statements += *self.inline_sizes.get(symbol)?;
+            }
+        }
+        let mut turns = 1;
+        while turns * 2 <= MSVC_MAX_TURNS && turns * 2 * statements <= MSVC_MAX_UNROLLED_STATEMENTS {
+            turns *= 2;
+        }
+        (turns > 1).then_some(turns)
     }
 
     /// The function-wide scalars `counted` sets, whose address the function
@@ -4384,7 +4486,9 @@ impl Emitter<'_> {
     fn emit_stmt(&mut self, stmt: &Stmt, body: &Body) {
         match &stmt.kind {
             StmtKind::Assign { place, .. }
-                if place.projection.is_empty() && self.folded_tests.contains_key(&(place.local.0 as usize)) => {}
+                if place.projection.is_empty()
+                    && (self.folded_tests.contains_key(&(place.local.0 as usize))
+                        || self.folded_refs.contains_key(&(place.local.0 as usize))) => {}
             StmtKind::Assign { place, rvalue } => {
                 let ty = self.place_ty(place, body);
                 if self.is_void(ty) {
@@ -4875,6 +4979,17 @@ impl Emitter<'_> {
         let _ = writeln!(self.out, "#line {line} \"{path}\"");
     }
 
+    /// The jump to `next` at the end of block `index`: none when `next`
+    /// follows in the C, as the next block in order or as the next block of
+    /// a `for` loop's body (`fall_into`).
+    fn emit_next(&mut self, next: usize, index: usize) {
+        if next == index + 1 || self.fall_into == Some(next) {
+            self.line("    /* fallthrough */");
+        } else {
+            self.line(&format!("    goto bb{next};"));
+        }
+    }
+
     fn emit_terminator(&mut self, terminator: &Terminator, body: &Body, index: usize) {
         match terminator {
             Terminator::Goto(target) => {
@@ -4967,11 +5082,7 @@ impl Emitter<'_> {
                     ),
                 };
                 self.line(&format!("    if ({negate}{cond}) {{ {call}; }}"));
-                if next.0 as usize == index + 1 {
-                    self.line("    /* fallthrough */");
-                } else {
-                    self.line(&format!("    goto bb{};", next.0));
-                }
+                self.emit_next(next.0 as usize, index);
             }
             Terminator::Return => {
                 if self.is_void(body.return_ty()) {
@@ -4998,11 +5109,7 @@ impl Emitter<'_> {
                 let elem = self.c_type(*elem);
                 self.line(&format!("    {dest} = *(({elem}*)({target}));"));
                 self.line(&format!("    *(({elem}*)({target})) = {value};"));
-                if next.0 as usize == index + 1 {
-                    self.line("    /* fallthrough */");
-                } else {
-                    self.line(&format!("    goto bb{};", next.0));
-                }
+                self.emit_next(next.0 as usize, index);
             }
             Terminator::Call {
                 func: FuncRef::Builtin {
@@ -5022,11 +5129,7 @@ impl Emitter<'_> {
                      *(({elem}*)({left})) = *(({elem}*)({right})); \
                      *(({elem}*)({right})) = {temp}; }}"
                 ));
-                if next.0 as usize == index + 1 {
-                    self.line("    /* fallthrough */");
-                } else {
-                    self.line(&format!("    goto bb{};", next.0));
-                }
+                self.emit_next(next.0 as usize, index);
             }
             Terminator::Call {
                 func: FuncRef::Builtin {
@@ -5039,11 +5142,7 @@ impl Emitter<'_> {
             } => {
                 let value = self.operand(&args[0], body);
                 self.line(&format!("    (void)({value}); /* mem.forget */"));
-                if next.0 as usize == index + 1 {
-                    self.line("    /* fallthrough */");
-                } else {
-                    self.line(&format!("    goto bb{};", next.0));
-                }
+                self.emit_next(next.0 as usize, index);
             }
             Terminator::Call {
                 func: func @ FuncRef::Builtin {
@@ -5071,11 +5170,7 @@ impl Emitter<'_> {
                 }
                 let call = self.call_expression(func, args, body);
                 self.line(&format!("    {call};"));
-                if next.0 as usize == index + 1 {
-                    self.line("    /* fallthrough */");
-                } else {
-                    self.line(&format!("    goto bb{};", next.0));
-                }
+                self.emit_next(next.0 as usize, index);
             }
             Terminator::Call { func, args, dest, next } => {
                 if let FuncRef::Builtin { which: Builtin::CloneParts { ty }, .. } = func {
@@ -5083,11 +5178,7 @@ impl Emitter<'_> {
                     let target = self.place_in(dest, body);
                     let helper = self.clone_parts_helper(*ty);
                     self.line(&format!("    {helper}({source}, &({target}));"));
-                    if next.0 as usize == index + 1 {
-                        self.line("    /* fallthrough */");
-                    } else {
-                        self.line(&format!("    goto bb{};", next.0));
-                    }
+                    self.emit_next(next.0 as usize, index);
                     return;
                 }
                 // `[RC-1]`/`[FN-1]` — a class handle is `Copy`, but its C
@@ -5125,11 +5216,7 @@ impl Emitter<'_> {
                     self.line(&format!("    {dest_text} = {call};"));
                     self.set_view_pointer(dest);
                 }
-                if next.0 as usize == index + 1 {
-                    self.line("    /* fallthrough */");
-                } else {
-                    self.line(&format!("    goto bb{};", next.0));
-                }
+                self.emit_next(next.0 as usize, index);
             }
         }
     }
@@ -6789,6 +6876,12 @@ impl Emitter<'_> {
     }
 
     fn operand(&self, operand: &Operand, body: &Body) -> String {
+        if let Operand::Copy(place) | Operand::Move(place) = operand
+            && place.projection.is_empty()
+            && let Some((rvalue, ty)) = self.folded_refs.get(&(place.local.0 as usize))
+        {
+            return self.rvalue(rvalue, body, *ty);
+        }
         match operand {
             // A move and a copy generate the same C; the difference is a fact
             // the borrow checker uses, not a code shape.
@@ -7932,6 +8025,55 @@ fn folded_tests(body: &Body, for_loops: &BTreeMap<usize, ForLoop>, types: &TypeT
     found
 }
 
+/// A reference temporary that a block's last statement sets (`_t = &x`) and
+/// that only that block's call reads, as one argument: the call is written
+/// `f(&x)`. MSVC inlines a small function called so in an unrolled loop,
+/// where it does not inline one called with a pointer variable set to `&x`
+/// (the `mut self` benchmarks: 2.5x the C++ with the variable, 0.8x
+/// without). Keyed by the temporary, with the reference and its type.
+fn folded_refs(body: &Body, types: &TypeTable) -> BTreeMap<usize, (Rvalue, Ty)> {
+    let quiet = |stmt: &Stmt| matches!(stmt.kind, StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop);
+    let mut mentions: BTreeMap<LocalId, usize> = BTreeMap::new();
+    for block in &body.blocks {
+        let mut named = Vec::new();
+        for stmt in block.stmts.iter().filter(|stmt| !quiet(stmt)) {
+            stmt_locals(stmt, &mut named);
+        }
+        terminator_locals(&block.terminator, &mut named);
+        for local in named {
+            *mentions.entry(local).or_default() += 1;
+        }
+    }
+    // Each such statement and call, by temporary: a loop's copies (`[OPT-2]`
+    // versioning) set the same temporary to the same reference each.
+    let mut pairs: BTreeMap<LocalId, (Rvalue, usize, bool)> = BTreeMap::new();
+    for block in &body.blocks {
+        let Terminator::Call { args, .. } = &block.terminator else { continue };
+        let Some(stmt) = block.stmts.iter().rev().find(|stmt| !quiet(stmt)) else { continue };
+        let StmtKind::Assign { place, rvalue: rvalue @ Rvalue::Ref { place: target, .. } } = &stmt.kind else { continue };
+        let decl = body.local(place.local);
+        if !place.projection.is_empty()
+            || decl.kind != LocalKind::Temp
+            || !matches!(types.kind(decl.ty), TyKind::Ref { .. })
+        {
+            continue;
+        }
+        let read_by_call = args
+            .iter()
+            .filter(|arg| matches!(arg, Operand::Copy(read) | Operand::Move(read) if *read == Place::local(place.local)))
+            .count();
+        let entry = pairs.entry(place.local).or_insert_with(|| (rvalue.clone(), 0, true));
+        entry.1 += 1;
+        entry.2 &= read_by_call == 1 && matches!(&entry.0, Rvalue::Ref { place: first, .. } if first == target);
+    }
+    // Named by those statements and their calls' one argument each only.
+    pairs
+        .into_iter()
+        .filter(|(local, (_, count, alike))| *alike && mentions.get(local) == Some(&(2 * count)))
+        .map(|(local, (rvalue, _, _))| (local.0 as usize, (rvalue, body.local(local).ty)))
+        .collect()
+}
+
 /// The views that get a typed pointer of their own: a view local set only
 /// whole, never inside a loop, and never borrowed. Keyed by the local, with
 /// its element type.
@@ -8053,6 +8195,58 @@ fn blocks_in_cycles(body: &Body) -> Vec<bool> {
     result
 }
 
+/// The statements that become C, without storage markers.
+fn statement_count(stmts: &[Stmt]) -> usize {
+    stmts.iter().filter(|stmt| !matches!(stmt.kind, StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop)).count()
+}
+
+/// `[CG-C-3]` — the functions the C compiler inlines, by symbol: each of at
+/// most `INLINE_STATEMENTS` statements counting those of the functions it
+/// calls, every one of them a body of this program reached directly (no call
+/// into the runtime, through a table or a value, and no recursion).
+fn inline_sizes(bodies: &[Body]) -> BTreeMap<String, usize> {
+    fn size(
+        symbol: &str,
+        by_symbol: &BTreeMap<&str, &Body>,
+        known: &mut BTreeMap<String, Option<usize>>,
+        visiting: &mut BTreeSet<String>,
+    ) -> Option<usize> {
+        if let Some(found) = known.get(symbol) {
+            return *found;
+        }
+        if !visiting.insert(symbol.to_string()) {
+            return None;
+        }
+        let found = (|| {
+            let body = by_symbol.get(symbol)?;
+            if body.is_abstract || body.is_extern_declaration {
+                return None;
+            }
+            let mut total = 0;
+            for block in &body.blocks {
+                total += statement_count(&block.stmts) + 1;
+                if let Terminator::Call { func, .. } = &block.terminator {
+                    let FuncRef::Direct { symbol: callee, .. } = func else { return None };
+                    total += size(callee, by_symbol, known, visiting)?;
+                }
+                if total > INLINE_STATEMENTS {
+                    return None;
+                }
+            }
+            Some(total)
+        })();
+        visiting.remove(symbol);
+        known.insert(symbol.to_string(), found);
+        found
+    }
+    let by_symbol: BTreeMap<&str, &Body> = bodies.iter().map(|body| (body.symbol.as_str(), body)).collect();
+    let mut known = BTreeMap::new();
+    for body in bodies {
+        size(&body.symbol, &by_symbol, &mut known, &mut BTreeSet::new());
+    }
+    known.into_iter().filter_map(|(symbol, found)| found.map(|n| (symbol, n))).collect()
+}
+
 /// A counted loop the C backend writes as a `for` loop.
 struct ForLoop {
     /// The body's blocks in order, the step last.
@@ -8070,7 +8264,10 @@ struct ForLoop {
 /// Every counted loop of the shape `lower_for_range` emits whose body is one
 /// chain of blocks, each reached only from the one before, ending in the step
 /// `counter = counter + 1` and its jump back to the header. Keyed by header.
-fn for_loops(body: &Body) -> BTreeMap<usize, ForLoop> {
+/// A block of the chain may also end in a call returning to the next when
+/// `inlined` accepts it: for MSVC, which optimises only a `for` loop, a call
+/// it inlines (`inline_sizes`); clang and gcc keep such a loop as blocks.
+fn for_loops(body: &Body, inlined: &dyn Fn(&FuncRef) -> bool) -> BTreeMap<usize, ForLoop> {
     let mut predecessors = vec![0usize; body.blocks.len()];
     for block in &body.blocks {
         let targets: Vec<usize> = match &block.terminator {
@@ -8127,6 +8324,7 @@ fn for_loops(body: &Body) -> BTreeMap<usize, ForLoop> {
             match &body.blocks[current].terminator {
                 Terminator::Goto(target) if target.0 as usize == header => break Some(current),
                 Terminator::Goto(target) | Terminator::Assert { next: target, .. } => current = target.0 as usize,
+                Terminator::Call { func, next: target, .. } if inlined(func) => current = target.0 as usize,
                 _ => break None,
             }
         };
@@ -8153,9 +8351,21 @@ fn for_loops(body: &Body) -> BTreeMap<usize, ForLoop> {
         let writes_counter_or_limit = chain.iter().any(|&block| {
             body.blocks[block].stmts.iter().enumerate().any(|(index, stmt)| {
                 (block != step || index != increment) && (stmt_writes(stmt, counter) || stmt_writes(stmt, limit))
-            })
+            }) || matches!(&body.blocks[block].terminator,
+                Terminator::Call { dest, .. } if dest.local == counter || dest.local == limit)
         });
         if writes_counter_or_limit {
+            continue;
+        }
+        // A call could write the counter or the limit through a reference
+        // taken anywhere in the function.
+        let borrowed = |local: LocalId| {
+            body.blocks.iter().flat_map(|block| &block.stmts).any(|stmt| {
+                matches!(&stmt.kind, StmtKind::Assign { rvalue: Rvalue::Ref { place, .. }, .. } if place.local == local)
+            })
+        };
+        let has_call = chain.iter().any(|&block| matches!(body.blocks[block].terminator, Terminator::Call { .. }));
+        if has_call && (borrowed(counter) || borrowed(limit)) {
             continue;
         }
         found.insert(header, ForLoop { chain, counter, limit, inclusive, test: discr.local, increment, exit: exit.0 as usize });

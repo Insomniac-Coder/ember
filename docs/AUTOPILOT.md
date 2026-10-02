@@ -121,6 +121,10 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   36 ms on an efficiency core, so unpinned ratios moved between runs. Every timed run on Windows sets
   its process's affinity to the performance cores (mask `0xC03C03`; the programs it starts inherit
   it). WSL cannot be held there without administrator rights; say so wherever its numbers appear.
+  Only on mains power: the owner, 2026-10-02, "laptop is on battery power ... this benchmark result
+  is invalid". The runners check before each group of programs and stop on battery
+  (`GetSystemPowerStatus`); Windows logs each switch (Kernel-Power event 105). The README names the
+  laptop and the compiler versions the numbers come from.
 - **Every solution is general, never specific.** The owner, 2026-09-28: "always suggest a general
   and optimised solution, specific solutions are like ticking timebombs just waiting to go off
   because no one is going to write code like 'tests' languages are supposed to be general", and

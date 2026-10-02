@@ -1,7 +1,7 @@
 #$ test: run-pass
 #$ rules: OPT-2, CTL-3b
 #$ profiles: debug, release, shipping
-#$ assert-c-count: contains("_ptr[") == 3
+#$ assert-c-count: contains("_ptr = (") == 7
 #$ stdout:
 #$ 3 7 11 15 19
 #$ 60 [6, 4, 4, 4, 4, 4]
@@ -10,7 +10,9 @@
 # The view an inner loop iterates is made once, before an outer loop that
 # cannot change the list it views (its length and buffer), and read through a
 # pointer of its own; an outer loop that pushes to the list, or rebinds it,
-# makes the view again each turn and sees what changed.
+# makes the view again each turn and sees what changed. Counted where each
+# such pointer is set (seven views get one): a loop MSVC runs several turns to
+# a pass reads it in each turn (ADR-103).
 
 struct P:
     x: int

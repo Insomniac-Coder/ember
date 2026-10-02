@@ -11,7 +11,7 @@
 use ember_hir as hir;
 use ember_span::SourceMap;
 use ember_types::{
-    CommonTypes, EnumId, OverflowPolicy, Ty, TyKind, TypeTable, bit_width, int_max, is_signed,
+    CommonTypes, EnumId, IntTy, OverflowPolicy, Ty, TyKind, TypeTable, UintTy, bit_width, int_max, is_signed,
     signed_min_magnitude,
 };
 
@@ -2749,6 +2749,31 @@ impl<'a> Builder<'a> {
                 self.current = next;
 
                 let void = self.void_ty;
+                // When every piece has a longest text, room for all of them is
+                // reserved first: one allocation, where appending the pieces
+                // grows the text from four bytes and copies it as it doubles.
+                if let Some(room) = self.fstring_room(parts)
+                    && room > 0
+                {
+                    let buffer = self.temp(*buffer_ref, expr.span);
+                    self.push(StmtKind::StorageLive(buffer));
+                    self.push(StmtKind::Assign {
+                        place: Place::local(buffer),
+                        rvalue: Rvalue::Ref { place: place.clone(), mutable: true },
+                    });
+                    let next = self.new_block();
+                    let sink = self.temp(void, expr.span);
+                    self.terminate(Terminator::Call {
+                        func: FuncRef::Builtin { which: hir::Builtin::ArrayReserve, arg_ty: expr.ty },
+                        args: vec![
+                            Operand::Copy(Place::local(buffer)),
+                            Operand::Const(Const::Int { value: room as u128, ty: self.usize_ty }),
+                        ],
+                        dest: Place::local(sink),
+                        next,
+                    });
+                    self.current = next;
+                }
                 for part in parts {
                     // The appenders write through the buffer, so they take its
                     // address — the same shape `s.push_str(...)` produces.
@@ -2794,6 +2819,37 @@ impl<'a> Builder<'a> {
                 self.push(StmtKind::Assign { place, rvalue });
             }
         }
+    }
+
+    /// `[LEX-19]` — the longest text an f-string can make, when every piece
+    /// has one: its literal text, and a value of a type whose plain format
+    /// has a longest form (an integer's digits and sign, `false`, a
+    /// character's four bytes of UTF-8). `None` for a format spec or any
+    /// other type.
+    fn fstring_room(&self, parts: &[hir::FStringPart]) -> Option<usize> {
+        let mut room = 0usize;
+        for part in parts {
+            room += match part {
+                hir::FStringPart::Text(text) => text.len(),
+                hir::FStringPart::Value(value, None) => match self.types.kind(value.ty) {
+                    TyKind::Int(IntTy::I8) => 4,
+                    TyKind::Int(IntTy::I16) => 6,
+                    TyKind::Int(IntTy::I32) => 11,
+                    TyKind::Int(IntTy::I64 | IntTy::Isize) => 20,
+                    TyKind::Int(IntTy::I128) => 40,
+                    TyKind::Uint(UintTy::U8) => 3,
+                    TyKind::Uint(UintTy::U16) => 5,
+                    TyKind::Uint(UintTy::U32) => 10,
+                    TyKind::Uint(UintTy::U64 | UintTy::Usize) => 20,
+                    TyKind::Uint(UintTy::U128) => 39,
+                    TyKind::Bool => 5,
+                    TyKind::Char => 4,
+                    _ => return None,
+                },
+                hir::FStringPart::Value(_, Some(_)) => return None,
+            };
+        }
+        Some(room)
     }
 
     /// `[ARN-3]`, `[ARN-10]` — the non-zeroable `alloc_array` path is an

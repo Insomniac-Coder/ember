@@ -3,7 +3,7 @@
 #$ profiles: debug, release, shipping
 #$ panics: integer overflow in `-`
 #$ assert-c: !contains(" << ")
-#$ assert-c-count: contains("for (;") == 3
+#$ assert-c-count: contains("; ++_") == 3
 # Two checks on a view read and written: the `-` (second in the body)
 # overflows at iteration 5, the `+` (first in the body) at iteration 9, in the
 # same group. The group has already changed `xs` when it finds the overflow,

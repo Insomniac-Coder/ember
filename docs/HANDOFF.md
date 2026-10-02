@@ -11104,7 +11104,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h51/` are frozen.
-* **Next numbers:** ODR-098, D-472, ADR-103, ERR-056.
+* **Next numbers:** ODR-098, D-472, ADR-105, ERR-056.
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
@@ -11362,6 +11362,22 @@ first**; the rest of §0.355 is the running narrative behind it.
       busy time was on the performance cores. Not built: checking the overflow
       once per group of turns (`[SIMD-7]`'s MAY), the owner's option A, not
       chosen.
+    * **Then the owner: "target all of them" (the five MSVC rows).** ADR-103:
+      for MSVC, a small loop with a check or a call is a C `for` loop written
+      up to eight turns to a pass (gcc's `-funroll-loops` limits), not for
+      running totals, and a call takes an address directly; the three `mut
+      self` rows 1.30x-1.35x → 0.82x, and D-447 closed (it was the swing, not
+      a commit). ADR-104: integers format without `snprintf`, an f-string of
+      bounded pieces reserves its room; the text-key map 2.09x → 1.51x with
+      MSVC (1.77x → 1.14x with clang, 0.71x → 0.43x with gcc). The
+      list sum stays 1.47x: its overflow check on the running total, measured
+      (0.97x with `@overflow(wrap)`). **For the owner (not built):** bigger
+      `[SIMD-7]` blocks (up to 1,024 with values under 2^51: p1 1.30x, a spec
+      change); the text map's lookup key on the stack, a small-block
+      allocator, or short text inside `String` (each about 1.45x → 1.24x or
+      better). A loop over 1,000 objects in turn stays 1.44x with MSVC: not
+      the check (the same without it), not looked into further (not a README
+      program; Ember's object is larger than the twin's, the first suspect).
     * **D-447 (open):** with MSVC, the three `mut self` programs are 1.20x to
       1.30x the C++ (21 runs, twice), against 1.10x to 1.17x in the README's
       2026-09-30 run. Not today's work: with D-446 switched off they are slower

@@ -3,7 +3,7 @@
 #$ profiles: debug, release, shipping
 #$ panics: integer overflow in `+`
 #$ assert-c: !contains(" << ")
-#$ assert-c-count: contains("for (;") == 3
+#$ assert-c-count: contains("; ++_") == 3
 # `xs[i]` is read and then written, and the loop has one check. Each group
 # runs once in wrapping arithmetic, storing as it goes, and a set overflow flag
 # panics at the group's end with that check's location: the first overflow's,

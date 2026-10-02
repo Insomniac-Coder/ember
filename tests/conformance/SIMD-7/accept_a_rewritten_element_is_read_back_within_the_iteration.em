@@ -3,11 +3,13 @@
 #$ profiles: debug, release, shipping
 #$ stdout: -1 67 155
 #$ assert-c: !contains(" << ")
-#$ assert-c-count: contains("for (;") == 3
+#$ assert-c-count: contains("; ++_") == 3
 # `xs[i]` is written and then read again in the same iteration, with two
 # checks. Each group runs once, for real, its elements of `xs` saved at its
 # start; the second statement reads the first one's result. Three C `for`
-# loops: the checked copy, the unchecked copy and the group.
+# loops: the checked copy, the unchecked copy and the group (counted by the
+# header each has once, `; ++_`: for MSVC a copy may also run several turns
+# to a pass first, ADR-103).
 
 fn main():
     xs: Array[int] = []

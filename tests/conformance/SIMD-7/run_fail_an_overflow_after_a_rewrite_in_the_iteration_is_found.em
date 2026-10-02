@@ -2,7 +2,7 @@
 #$ rules: SIMD-7
 #$ profiles: debug, release, shipping
 #$ panics: integer overflow in `-`
-#$ assert-c-count: contains("for (;") == 3
+#$ assert-c-count: contains("; ++_") == 3
 # At iteration 20 the `+` makes `xs[i]` the least `int`, and the `-` that reads
 # it back overflows: the group runs once for real, so the `-` reads the `+`'s
 # result, not the older value (from which it would not overflow).

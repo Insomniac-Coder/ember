@@ -5965,8 +5965,41 @@ static void print_str_to(FILE* out, ember_str s) {
     }
 }
 
-static void print_i64_to(FILE* out, int64_t v) { fprintf(out, "%" PRId64, v); }
-static void print_u64_to(FILE* out, uint64_t v) { fprintf(out, "%" PRIu64, v); }
+/* `v`'s decimal digits, as `%llu` writes them, into `text` (20 bytes);
+ * returns their count. The C library's formatting parses a format string and
+ * consults the locale on every call: with MSVC that costs about as much as a
+ * small map lookup (the text-key map benchmark, 155 ms against 178). */
+static size_t decimal_u64(char* text, uint64_t v) {
+    char reversed[20];
+    size_t n = 0;
+    do {
+        reversed[n++] = (char)('0' + v % 10);
+        v /= 10;
+    } while (v != 0);
+    for (size_t at = 0; at < n; ++at) {
+        text[at] = reversed[n - 1 - at];
+    }
+    return n;
+}
+
+/* `v` as `%lld` writes it, into `text` (21 bytes). */
+static size_t decimal_i64(char* text, int64_t v) {
+    if (v < 0) {
+        text[0] = '-';
+        return 1 + decimal_u64(text + 1, 0 - (uint64_t)v);
+    }
+    return decimal_u64(text, (uint64_t)v);
+}
+
+static void print_i64_to(FILE* out, int64_t v) {
+    char text[21];
+    fwrite(text, 1, decimal_i64(text, v), out);
+}
+
+static void print_u64_to(FILE* out, uint64_t v) {
+    char text[20];
+    fwrite(text, 1, decimal_u64(text, v), out);
+}
 
 static void print_i128_to(FILE* out, ember_i128 v) {
     char text[41];
@@ -6069,19 +6102,13 @@ ember_vec ember_input(ember_str prompt, ember_loc loc) {
 /* -- formatting -------------------------------------------------------------- */
 
 void ember_fmt_i64(ember_vec* out, int64_t value) {
-    char buffer[32];
-    int n = snprintf(buffer, sizeof buffer, "%lld", (long long)value);
-    if (n > 0) {
-        ember_vec_extend(out, buffer, (size_t)n);
-    }
+    char text[21];
+    ember_vec_extend(out, text, decimal_i64(text, value));
 }
 
 void ember_fmt_u64(ember_vec* out, uint64_t value) {
-    char buffer[32];
-    int n = snprintf(buffer, sizeof buffer, "%llu", (unsigned long long)value);
-    if (n > 0) {
-        ember_vec_extend(out, buffer, (size_t)n);
-    }
+    char text[20];
+    ember_vec_extend(out, text, decimal_u64(text, value));
 }
 
 void ember_fmt_f64(ember_vec* out, double value) {

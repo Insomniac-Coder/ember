@@ -1798,6 +1798,34 @@ fn loops_over_separate_lists_get_restrict_functions_for_gcc() {
     assert_eq!(msvc.stdout.matches("EMBER_NOINLINE void").count(), 2, "one nest moves for MSVC");
 }
 
+/// ADR-103 — for MSVC, a small counted loop with a check or a call is written
+/// eight turns to a pass (gcc's `-funroll-loops` limits), with each call that
+/// takes an object's address taking it directly (`bump(&t)`: MSVC does not
+/// inline a call through a pointer variable set just before it, in such a
+/// loop); a loop carrying a running total keeps one turn to a pass, and
+/// clang's C keeps the loops as they were.
+#[test]
+fn msvc_writes_small_checked_loops_several_turns_a_pass() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/CTL-3/accept_a_counted_loop_runs_every_turn_in_any_pass.{SOURCE_EXT}");
+    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
+    assert_eq!(msvc.exit, 0, "msvc C failed:\n{}", msvc.stderr);
+    assert!(msvc.stdout.contains(" > 7u; ) {"), "no loop runs eight turns to a pass:\n{}", msvc.stdout);
+    assert!(msvc.stdout.contains("_bump(&_"), "the call does not take the object's address directly:\n{}", msvc.stdout);
+    let total_of = format!("{}(", ember_branding::mangled("total_of"));
+    let start = msvc
+        .stdout
+        .match_indices(&total_of)
+        .map(|(at, _)| at)
+        .find(|&at| msvc.stdout[at..].split('\n').next().is_some_and(|line| line.ends_with('{')))
+        .expect("total_of is defined");
+    let end = start + msvc.stdout[start..].find("\n}\n").expect("total_of ends");
+    assert!(!msvc.stdout[start..end].contains("u; ) {"), "the running total's loop was unrolled:\n{}", &msvc.stdout[start..end]);
+    let clang = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    assert_eq!(clang.exit, 0, "clang C failed:\n{}", clang.stderr);
+    assert!(!clang.stdout.contains("u; ) {"), "clang's C was unrolled:\n{}", clang.stdout);
+}
+
 /// ADR-080 — a loop nest reading back the list it writes moves for MSVC only
 /// where every round adds the same whole number to each element: of the
 /// four nests, only the one adding `a[i]` each round (the sum kept below
