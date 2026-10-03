@@ -144,10 +144,10 @@ extend Split implements Iterator:
         if self.done:
             return None
         rest = self.rest
-        match rest.find(self.sep):
-            Some(at):
-                self.rest = rest[at + self.sep.len()..]
-                return Some(rest[..at])
+        match rest.split_once(self.sep):
+            Some((part, remaining)):
+                self.rest = remaining
+                return Some(part)
             None:
                 self.done = true
                 return Some(rest)

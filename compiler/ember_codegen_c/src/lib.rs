@@ -27,6 +27,7 @@ use ember_types::{ClassId, EnumId, FloatTy, FnParam, FnParamMode, FpMode, IntTy,
 use std::collections::{BTreeMap, BTreeSet};
 
 mod header;
+mod integer_reduction;
 
 pub struct Output {
     /// The single translation unit for this module.
@@ -178,7 +179,7 @@ pub fn emit(
         inline_sizes: inline_sizes(bodies),
         inline_bodies: if split { BTreeMap::new() } else { inline_bodies(bodies, types) },
         view_pointers: BTreeMap::new(),
-        parted_views: Vec::new(),
+        parted_views: BTreeSet::new(),
         direct_param_modes: bodies
             .iter()
             .map(|body| (body.symbol.clone(), body.param_modes.clone()))
@@ -423,9 +424,9 @@ struct Emitter<'a> {
     /// its own (`_N_ptr`), set wherever the view is, which MSVC keeps in a
     /// register where it re-reads a struct field.
     view_pointers: BTreeMap<usize, String>,
-    /// The places this body writes a view to by its two fields (`view_parts`,
-    /// an `Option` of a view's `None`): a whole copy of one reads them back.
-    parted_views: Vec<Place>,
+    /// View descriptor storage written by fields, including copies from such
+    /// storage. A niche Option's Some payload names the same C descriptor.
+    parted_views: BTreeSet<Place>,
     /// Direct-call ownership modes. A `Copy` operand passed to an `owned`
     /// parameter creates another class-handle owner, so its retain must be
     /// emitted before the call transfers that new owner to the callee.
@@ -1068,14 +1069,14 @@ impl Emitter<'_> {
                         format!("static void {symbol}({RT}vec* v, const void* elems, size_t count)"),
                         vec![
                             "(void)elems;".to_string(),
-                            format!("{RT}vec_reserve_more(v, 0, count);"),
+                            format!("{RT}vec_reserve_more_inline(v, 0, count);"),
                             "v->len += count;".to_string(),
                         ],
                     ),
                     ArrayHelper::Extend => {
                         let c = self.c_type(ty);
                         let mut body = vec![
-                            format!("{RT}vec_reserve_more(v, {c_size}, count);", c_size = c_size(&c)),
+                            format!("{RT}vec_reserve_more_inline(v, {c_size}, count);", c_size = c_size(&c)),
                             format!("{c}* to = ({c}*)v->ptr + v->len;"),
                             format!("memcpy(to, elems, count * {c_size});", c_size = c_size(&c)),
                         ];
@@ -4188,6 +4189,14 @@ impl Emitter<'_> {
             }
         }
         let unread_all = unread_locals(body);
+        // Byte reductions require a total and counter that no pointer can
+        // observe through their addresses. Cache the conservative roots once
+        // for the body, rather than scanning the whole CFG for every loop.
+        let address_taken: BTreeSet<LocalId> = body.blocks.iter().flat_map(|block| &block.stmts)
+            .filter_map(|stmt| match &stmt.kind {
+                StmtKind::Assign { rvalue: Rvalue::Ref { place, .. }, .. } => Some(place.local),
+                _ => None,
+            }).collect();
         // A local that every `for` loop naming it sets before reading, and
         // nothing else names, is declared inside each of those loops: MSVC
         // vectorises no loop that sets a function-wide scalar, which it
@@ -4285,7 +4294,7 @@ impl Emitter<'_> {
                 self.line(&format!("bb{index}: ;"));
             }
             if let Some(counted) = for_loops.get(&index) {
-                self.emit_for_loop(counted, body, scoped.get(&index).map_or(&[], Vec::as_slice));
+                self.emit_for_loop(counted, body, scoped.get(&index).map_or(&[], Vec::as_slice), &address_taken);
                 continue;
             }
             self.emit_block_stmts(&block.stmts, body);
@@ -4323,7 +4332,7 @@ impl Emitter<'_> {
     /// whose counter steps by one in its header; clang takes any loop. The
     /// body's blocks follow one another with no jump, their checks and calls
     /// inline.
-    fn emit_for_loop(&mut self, counted: &ForLoop, body: &Body, locals: &[usize]) {
+    fn emit_for_loop(&mut self, counted: &ForLoop, body: &Body, locals: &[usize], address_taken: &BTreeSet<LocalId>) {
         // A function-wide scalar the loop sets (a running total) is copied
         // into a block-local of the same name for the loop and back after
         // it: MSVC does not unroll a loop setting a function-wide variable.
@@ -4342,27 +4351,45 @@ impl Emitter<'_> {
         }
         let (counter, limit) = (counted.counter.0, counted.limit.0);
         let test = if counted.inclusive { "<=" } else { "<" };
-        if let Some(turns) = self.unrolled_turns(counted, body, locals) {
-            // A whole pass is left while the limit is at least `turns - 1`
-            // past the counter (more than that, for an exclusive limit). Once
-            // the counter has not passed the limit, their difference as
-            // `uint64_t` is exact for every integer type the header takes.
-            let more = if counted.inclusive { ">=" } else { ">" };
+        if let Some(sum) = integer_reduction::byte_sum(counted, body, self.types, locals, address_taken, |place| self.place_ty(place, body)) {
+            // The original unchecked loop is a read-only byte reduction:
+            // the same modular integer sum, with full in-bounds vector loads
+            // and a scalar tail. Its checked copy and entry proof remain.
+            let total = sum.total.0;
+            let element = self.place_in(&sum.element, body);
+            let op = if sum.subtract { "-" } else { "+" };
+            let signed = if sum.signed { "true" } else { "false" };
+            self.emit_line_directive(sum.span);
+            self.line(&format!("    if (_{counter} < _{limit}) {{"));
             self.line(&format!(
-                "    for (; _{counter} {test} _{limit} && (uint64_t)_{limit} - (uint64_t)_{counter} {more} {}u; ) {{",
-                turns - 1
+                "    _{total} = ({})((uint64_t)_{total} {op} {RT}sum_bytes(&{element}, _{limit} - _{counter}, {signed}));",
+                self.c_type(body.local(sum.total).ty)
             ));
-            for _ in 0..turns {
-                self.line("    {");
-                self.emit_for_body(counted, body, locals);
+            self.line(&format!("    _{counter} = _{limit};"));
+            self.line("    }");
+        } else {
+            if let Some(turns) = self.unrolled_turns(counted, body, locals) {
+                // A whole pass is left while the limit is at least `turns - 1`
+                // past the counter (more than that, for an exclusive limit). Once
+                // the counter has not passed the limit, their difference as
+                // `uint64_t` is exact for every integer type the header takes.
+                let more = if counted.inclusive { ">=" } else { ">" };
+                self.line(&format!(
+                    "    for (; _{counter} {test} _{limit} && (uint64_t)_{limit} - (uint64_t)_{counter} {more} {}u; ) {{",
+                    turns - 1
+                ));
+                for _ in 0..turns {
+                    self.line("    {");
+                    self.emit_for_body(counted, body, locals);
+                    self.line("    }");
+                    self.line(&format!("    ++_{counter};"));
+                }
                 self.line("    }");
-                self.line(&format!("    ++_{counter};"));
             }
+            self.line(&format!("    for (; _{counter} {test} _{limit}; ++_{counter}) {{"));
+            self.emit_for_body(counted, body, locals);
             self.line("    }");
         }
-        self.line(&format!("    for (; _{counter} {test} _{limit}; ++_{counter}) {{"));
-        self.emit_for_body(counted, body, locals);
-        self.line("    }");
         if !carried.is_empty() {
             for &local in &carried {
                 self.line(&format!("    _{local}_in = _{local};"));
@@ -4582,10 +4609,8 @@ impl Emitter<'_> {
                 // (`lines()` with MSVC, 1.98x the C copied whole). From a place
                 // written whole it stays one assignment: by its fields, MSVC
                 // no longer interchanged `a05_structs`'s loop nest (D-475).
-                if let Rvalue::Use(Operand::Copy(source) | Operand::Move(source)) = rvalue
-                    && self.parted_views.contains(source)
-                    && self.view_shaped(ty)
-                    && self.place_ty(source, body) == ty
+                if let Some(source) = self.view_copy_source(place, rvalue, body)
+                    && self.parted_views.contains(&self.view_storage_place(source, body))
                 {
                     let from = self.place_in(source, body);
                     self.line(&format!("    ({lhs}).ptr = ({from}).ptr;"));
@@ -5176,10 +5201,11 @@ impl Emitter<'_> {
             } => {
                 let target = self.operand(&args[0], body);
                 let value = self.operand(&args[1], body);
-                let dest = self.place_in(dest, body);
+                let dest_text = self.place_in(dest, body);
                 let elem = self.c_type(*elem);
-                self.line(&format!("    {dest} = *(({elem}*)({target}));"));
+                self.line(&format!("    {dest_text} = *(({elem}*)({target}));"));
                 self.line(&format!("    *(({elem}*)({target})) = {value};"));
+                self.set_view_pointer(dest);
                 self.emit_next(next.0 as usize, index);
             }
             Terminator::Call {
@@ -5239,11 +5265,16 @@ impl Emitter<'_> {
                         self.line(&format!("    {line}"));
                     }
                 }
-                let call = self.call_expression(func, args, body);
+                let call = self.call_expression(func, args, body, body.blocks[index].terminator_span);
                 self.line(&format!("    {call};"));
                 self.emit_next(next.0 as usize, index);
             }
             Terminator::Call { func, args, dest, next } => {
+                if let FuncRef::Builtin { which: Builtin::StrSplitOnce { none, some }, .. } = func {
+                    self.emit_str_split_once(dest, args, *none, *some, body, index);
+                    self.emit_next(next.0 as usize, index);
+                    return;
+                }
                 if let FuncRef::Builtin { which: Builtin::CloneParts { ty }, .. } = func {
                     let source = self.operand(&args[0], body);
                     let target = self.place_in(dest, body);
@@ -5277,7 +5308,7 @@ impl Emitter<'_> {
                     let location = self.location(body.blocks[index].terminator_span);
                     format!("{RT}input({}, {location})", self.operand(&args[0], body))
                 } else {
-                    self.call_expression(func, args, body)
+                    self.call_expression(func, args, body, body.blocks[index].terminator_span)
                 };
                 let dest_ty = self.place_ty(dest, body);
                 if let Some((ptr, len)) = self.view_parts(func, args, dest_ty, body) {
@@ -5297,6 +5328,51 @@ impl Emitter<'_> {
         }
     }
 
+    /// `[TXT-10]` — one search and its two valid borrowed sides. Neither a
+    /// signed endpoint addition nor another boundary scan is needed: a
+    /// successful search proves `at <= text.len` and
+    /// `separator.len <= text.len - at`, and a complete valid UTF-8 needle
+    /// starts and ends on scalar boundaries in valid UTF-8 text.
+    fn emit_str_split_once(&mut self, dest: &Place, args: &[Operand], none: usize, some: usize, body: &Body, index: usize) {
+        let TyKind::Enum(option) = *self.types.kind(self.place_ty(dest, body)) else {
+            unreachable!("split_once returns Option[(str, str)]")
+        };
+        assert!(self.types.option_niche(option).is_none(), "a text-pair Option has a tag");
+        let some_tag = self.types.enum_def(option).variants[some].discriminant;
+        let output = self.place_in(dest, body);
+        let none_tag = self.types.enum_def(option).variants[none].discriminant;
+        let before = self.place_in(&dest.clone().downcast(some).field(0).field(0), body);
+        let after = self.place_in(&dest.clone().downcast(some).field(0).field(1), body);
+        let text = self.operand(&args[0], body);
+        let separator = self.operand(&args[1], body);
+        let view = format!("_ember_split_text_{index}");
+        let needle = format!("_ember_split_needle_{index}");
+        let at = format!("_ember_split_at_{index}");
+        let tail = format!("_ember_split_tail_{index}");
+        let consumed = format!("_ember_split_consumed_{index}");
+        self.line("    {");
+        // Snapshot both inputs before any output field is written: the
+        // destination may hold one of the source descriptors.
+        self.line(&format!("        {RT}str {view} = {text};"));
+        self.line(&format!("        {RT}str {needle} = {separator};"));
+        self.line(&format!("        size_t {at} = {RT}str_search({view}, {needle}, 0);"));
+        self.line(&format!("        if ({at} == SIZE_MAX) {{"));
+        // As for a unit variant in emit_stmt, only the live tag is written.
+        self.line(&format!("            ({output}).tag = {none_tag};"));
+        self.line("        } else {");
+        self.line(&format!("            size_t {tail} = ({view}.len - {at}) - {needle}.len;"));
+        self.line(&format!("            size_t {consumed} = {view}.len - {tail};"));
+        self.line(&format!("            ({output}).tag = {some_tag};"));
+        self.line(&format!("            ({before}).ptr = {view}.ptr;"));
+        self.line(&format!("            ({before}).len = {at};"));
+        // An empty String may have no buffer. Its empty-needle match must
+        // keep that null pointer without forming even `NULL + 0`.
+        self.line(&format!("            ({after}).ptr = ({consumed} == 0 ? {view}.ptr : {view}.ptr + {consumed});"));
+        self.line(&format!("            ({after}).len = {tail};"));
+        self.line("        }");
+        self.line("    }");
+    }
+
     /// A `str`, a `Span` or a `MutSpan`, or an `Option` of one (`[TYP-13]`:
     /// the view itself, `None` a null pointer): a C struct of `ptr` and `len`.
     fn view_shaped(&self, ty: Ty) -> bool {
@@ -5310,10 +5386,74 @@ impl Emitter<'_> {
         }
     }
 
-    /// The places `body` writes a view to by its two fields: a built-in's
-    /// view (`view_parts`) and an `Option` of a view's `None`.
-    fn parted_views(&self, body: &Body) -> Vec<Place> {
-        let mut parted = Vec::new();
+    /// The underlying view type, with a niche Option's representation erased.
+    /// Equal payload types keep str/span and shared/mutable spans distinct.
+    fn view_payload_ty(&self, ty: Ty) -> Option<Ty> {
+        match self.types.kind(ty) {
+            TyKind::Str | TyKind::Span { .. } => Some(ty),
+            TyKind::Enum(id) => self.types.option_niche(*id).and_then(|niche| {
+                matches!(self.types.kind(niche.payload), TyKind::Str | TyKind::Span { .. }).then_some(niche.payload)
+            }),
+            _ => None,
+        }
+    }
+
+    /// A copy of a descriptor, including a niche Some wrapper. No tuple,
+    /// struct or tagged enum is itself a view copy.
+    fn view_copy_source<'a>(&self, place: &Place, rvalue: &'a Rvalue, body: &Body) -> Option<&'a Place> {
+        let ty = self.place_ty(place, body);
+        if !self.view_shaped(ty) {
+            return None;
+        }
+        let source = match rvalue {
+            Rvalue::Use(Operand::Copy(source) | Operand::Move(source)) if self.place_ty(source, body) == ty => source,
+            Rvalue::Aggregate { kind: AggregateKind::Enum(id, variant), operands }
+                if matches!(self.types.kind(ty), TyKind::Enum(destination) if destination == id)
+                    && self.types.option_niche(*id).is_some_and(|niche| *variant == niche.some) =>
+            {
+                let [Operand::Copy(source) | Operand::Move(source)] = operands.as_slice() else { return None };
+                if self.place_ty(source, body) != self.types.option_niche(*id)?.payload {
+                    return None;
+                }
+                source
+            }
+            _ => return None,
+        };
+        let payload = self.view_payload_ty(ty)?;
+        (self.view_payload_ty(self.place_ty(source, body)) == Some(payload)).then_some(source)
+    }
+
+    /// Niche Option[view].Some.0 occupies the Option's descriptor itself.
+    /// Preserve every real field, dereference and index: no reference alias
+    /// or aggregate-layout equivalence is inferred here.
+    fn view_storage_place(&self, place: &Place, body: &Body) -> Place {
+        let mut storage = Place::local(place.local);
+        let mut at = Cursor { ty: body.local(place.local).ty, variant: None };
+        for projection in &place.projection {
+            let erased = match (projection, self.types.kind(at.ty)) {
+                (Projection::Downcast(variant), TyKind::Enum(id)) => self.types.option_niche(*id).is_some_and(|niche| {
+                    *variant == niche.some && self.view_payload_ty(niche.payload).is_some()
+                }),
+                (Projection::Field(0), TyKind::Enum(id)) => self.types.option_niche(*id).is_some_and(|niche| {
+                    at.variant == Some(niche.some) && self.view_payload_ty(niche.payload).is_some()
+                }),
+                _ => false,
+            };
+            if !erased {
+                storage.projection.push(projection.clone());
+            }
+            at = self.project(at, projection);
+        }
+        storage
+    }
+
+    /// Field-writing producers, followed by descriptor-copy edges. This is
+    /// the existing body-wide may-write policy, independent of CFG joins.
+    /// Only seed-reachable views change; wholly written aggregates retain
+    /// their copies (D-475). Each edge is visited once by the worklist.
+    fn parted_views(&self, body: &Body) -> BTreeSet<Place> {
+        let mut parted = BTreeSet::new();
+        let mut copies: BTreeMap<Place, Vec<Place>> = BTreeMap::new();
         for block in &body.blocks {
             for stmt in &block.stmts {
                 if let StmtKind::Assign { place, rvalue: Rvalue::Aggregate { kind: AggregateKind::Enum(id, variant), operands } } =
@@ -5323,13 +5463,33 @@ impl Emitter<'_> {
                     && *variant != niche.some
                     && matches!(self.types.kind(niche.payload), TyKind::Span { .. } | TyKind::Str)
                 {
-                    parted.push(place.clone());
+                    parted.insert(self.view_storage_place(place, body));
+                }
+                if let StmtKind::Assign { place, rvalue } = &stmt.kind
+                    && let Some(source) = self.view_copy_source(place, rvalue, body)
+                {
+                    copies.entry(self.view_storage_place(source, body)).or_default().push(self.view_storage_place(place, body));
                 }
             }
-            if let Terminator::Call { func, args, dest, .. } = &block.terminator
-                && self.view_parts(func, args, self.place_ty(dest, body), body).is_some()
-            {
-                parted.push(dest.clone());
+            if let Terminator::Call { func, args, dest, .. } = &block.terminator {
+                if self.view_parts(func, args, self.place_ty(dest, body), body).is_some() {
+                    parted.insert(self.view_storage_place(dest, body));
+                }
+                if let FuncRef::Builtin { which: Builtin::StrSplitOnce { some, .. }, .. } = func {
+                    for field in [0, 1] {
+                        parted.insert(self.view_storage_place(&dest.clone().downcast(*some).field(0).field(field), body));
+                    }
+                }
+            }
+        }
+        let mut pending: Vec<_> = parted.iter().cloned().collect();
+        while let Some(source) = pending.pop() {
+            if let Some(destinations) = copies.get(&source) {
+                for destination in destinations {
+                    if parted.insert(destination.clone()) {
+                        pending.push(destination.clone());
+                    }
+                }
             }
         }
         parted
@@ -5682,7 +5842,7 @@ impl Emitter<'_> {
         }
     }
 
-    fn call_expression(&self, func: &FuncRef, args: &[Operand], body: &Body) -> String {
+    fn call_expression(&self, func: &FuncRef, args: &[Operand], body: &Body, span: ember_span::Span) -> String {
         let rendered: Vec<String> = args.iter().map(|a| self.operand(a, body)).collect();
         match func {
             FuncRef::Direct { symbol, .. } => {
@@ -6126,6 +6286,9 @@ impl Emitter<'_> {
                         let function = if *reverse { "rfind" } else { "find" };
                         return format!("{RT}str_{function}({}, {})", rendered[0], rendered[1]);
                     }
+                    Builtin::StrSplitOnce { .. } => {
+                        unreachable!("split_once constructs its Option result at the call terminator")
+                    }
                     Builtin::StrCount => {
                         return format!("{RT}str_count({}, {})", rendered[0], rendered[1]);
                     }
@@ -6197,7 +6360,19 @@ impl Emitter<'_> {
                         return format!("{RT}str_trim_end({})", rendered[0]);
                     }
                     Builtin::StrCharNext => {
-                        return format!("{RT}str_char_next({}, {})", rendered[0], rendered[1]);
+                        // The cursor pointer keeps its actual pointee type:
+                        // native text loops use `usize`, std iterators `int`.
+                        // Equal widths do not make their pointer types aliases.
+                        let cursor = self.operand_type(&args[1], body).expect("a typed text cursor");
+                        let TyKind::Ref { mutable: true, inner } = *self.types.kind(cursor) else {
+                            unreachable!("a text step receives a mutable cursor reference")
+                        };
+                        let helper = match self.types.kind(inner) {
+                            TyKind::Uint(UintTy::Usize) => "str_char_next_usize",
+                            TyKind::Int(IntTy::I64) => "str_char_next",
+                            _ => unreachable!("a text cursor is usize or int"),
+                        };
+                        return format!("{RT}{helper}({}, {})", rendered[0], rendered[1]);
                     }
                     Builtin::StrCharCount => {
                         return format!("{RT}str_char_count({})", rendered[0]);
@@ -6257,7 +6432,7 @@ impl Emitter<'_> {
                         let elem = self.element_of(*arg_ty);
                         // `[HEAP-8]` — `len + n` is checked, never formed to wrap.
                         return format!(
-                            "{RT}vec_reserve_more({}, {}, {})",
+                            "{RT}vec_reserve_more_inline({}, {}, {})",
                             rendered[0],
                             c_size(&self.c_type(elem)),
                             rendered[1]
@@ -6489,6 +6664,13 @@ impl Emitter<'_> {
                             "{RT}vec_extend({}, {}.ptr, {}.len)",
                             rendered[0], rendered[1], rendered[1]
                         );
+                    }
+                    Builtin::StringInsert => {
+                        return format!("{RT}string_insert({}, {}, {}, {})", rendered[0], rendered[1], rendered[2], self.location(span));
+                    }
+                    Builtin::StringRemove | Builtin::StringTruncate => {
+                        let function = if matches!(which, Builtin::StringRemove) { "string_remove" } else { "string_truncate" };
+                        return format!("{RT}{function}({}, {}, {})", rendered[0], rendered[1], self.location(span));
                     }
                     Builtin::StringPushChar => {
                         return format!("{RT}vec_push_char({}, {})", rendered[0], rendered[1]);

@@ -27,6 +27,7 @@ pub mod regions;
 pub mod stores;
 pub mod strength_reduce;
 pub mod uncounted_handles;
+pub mod temporary_owners;
 pub mod unused;
 
 pub use borrows::{
@@ -45,6 +46,7 @@ pub use reserve_pushes::reserve_pushed_lists_all;
 pub use loop_version::{hoist_invariant_views_all, version_bounds_checked_loops_all};
 pub use strength_reduce::reduce_induction_values_all;
 pub use uncounted_handles::mark_uncounted_handles_all;
+pub use temporary_owners::transfer_temporary_owners_all;
 pub use range_facts::remove_proven_checks_all;
 pub use callable_arguments::specialize_callable_arguments_all;
 pub use inline::{inline_loop_steps_all, inline_single_calls_all};

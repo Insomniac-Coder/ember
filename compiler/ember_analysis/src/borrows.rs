@@ -1653,12 +1653,16 @@ pub(crate) fn quiet_builtin(types: &TypeTable, which: &Builtin, arg_ty: Ty) -> b
         | Builtin::StringLen
         | Builtin::StringPush
         | Builtin::StringPushChar
+        | Builtin::StringInsert
+        | Builtin::StringRemove
+        | Builtin::StringTruncate
         | Builtin::StringAsStr
         | Builtin::Slice { .. }
         | Builtin::StrCharCount
         | Builtin::StrStartsWith
         | Builtin::StrEndsWith
         | Builtin::StrFind { .. }
+        | Builtin::StrSplitOnce { .. }
         | Builtin::StrCount
         | Builtin::StrContains
         | Builtin::StrContainsChar
@@ -2300,6 +2304,7 @@ fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elis
                 | Builtin::ArenaScope { .. }
                 | Builtin::SpanSplitAt { .. }
                 | Builtin::Slice { .. }
+                | Builtin::StrSplitOnce { .. }
                 | Builtin::StrAsBytes
                 | Builtin::SpanToStr
                 | Builtin::CStrToSpan
@@ -2390,15 +2395,18 @@ fn contract_for(
 /// existing semantic contract. Both halves of a split borrow the same source
 /// view even though `[BRW-5]` gives them disjoint storage identities.
 fn builtin_contract(func: &FuncRef) -> Option<CallRegionContract> {
-    let FuncRef::Builtin {
-        which: Builtin::SpanSplitAt { .. },
-        ..
-    } = func
-    else {
+    let FuncRef::Builtin { which, .. } = func else {
         return None;
     };
-    let field = |index| ResultFieldProvenance {
-        result_projection: vec![Projection::Field(index)],
+    let paths = match which {
+        Builtin::SpanSplitAt { .. } => vec![vec![Projection::Field(0)], vec![Projection::Field(1)]],
+        Builtin::StrSplitOnce { some, .. } => (0..2)
+            .map(|index| vec![Projection::Downcast(*some), Projection::Field(0), Projection::Field(index)])
+            .collect(),
+        _ => return None,
+    };
+    let field = |result_projection| ResultFieldProvenance {
+        result_projection,
         sources: vec![ResultRegionSource::View {
             argument: 0,
             projection: Vec::new(),
@@ -2407,7 +2415,7 @@ fn builtin_contract(func: &FuncRef) -> Option<CallRegionContract> {
     Some(CallRegionContract {
         access: CallAccessContract::All,
         result: CallResultContract::Fields(ResultProvenanceSummary {
-            fields: vec![field(0), field(1)],
+            fields: paths.into_iter().map(field).collect(),
         }),
         latebound: false,
         stores: Default::default(),
@@ -3558,6 +3566,9 @@ fn builtin_cannot_reach_a_cell(func: &FuncRef) -> bool {
             | Builtin::StringNew
             | Builtin::StringPush
             | Builtin::StringPushChar
+            | Builtin::StringInsert
+            | Builtin::StringRemove
+            | Builtin::StringTruncate
             | Builtin::StringLen
             | Builtin::StringAsStr
             | Builtin::CStringAsCStr
@@ -3565,6 +3576,7 @@ fn builtin_cannot_reach_a_cell(func: &FuncRef) -> bool {
             | Builtin::StrStartsWith
             | Builtin::StrEndsWith
             | Builtin::StrFind { .. }
+            | Builtin::StrSplitOnce { .. }
             | Builtin::StrCount
             | Builtin::StrReplace
             | Builtin::StrRepeat
@@ -3849,10 +3861,10 @@ fn borrower_feeds_arena_scope(body: &Body, borrower: LocalId) -> bool {
 ///
 /// A borrow taken for a call is reserved from its creation until the call
 /// consumes it, and behaves as shared throughout. The window is found by
-/// walking forward along the single-successor chain that argument evaluation
-/// produces, stopping at the first use of the borrower. If that use is a call
-/// argument, everything before it is the window; if it is anything else, the
-/// borrow was never two-phase and the window is empty.
+/// following argument evaluation to the first use of the borrower. Conditional
+/// arguments may branch, but every returning path must reach the same consuming
+/// call without another use or reassignment. A cycle, escaping path or earlier
+/// use means the borrow was never two-phase and the window is empty.
 fn reservation_window(body: &Body, borrower: LocalId, created_at: Point) -> HashSet<Point> {
     // `[BRW-3]` — a reservation is a borrow taken *for* a call's receiver or
     // a `mut` argument: its borrower is always a temporary the lowering
@@ -3892,75 +3904,102 @@ fn reservation_window(body: &Body, borrower: LocalId, created_at: Point) -> Hash
         }
         return window;
     }
+    call_reservation(body, borrower, created_at)
+        .map(|(window, _)| window)
+        .unwrap_or_default()
+}
+
+/// Find a temporary's single consuming call across conditional arguments.
+/// The explicit DFS rejects cycles without recursion; completed blocks can be
+/// shared by several branches. Panic paths may terminate without activation.
+fn call_reservation(
+    body: &Body,
+    borrower: LocalId,
+    created_at: Point,
+) -> Option<(HashSet<Point>, usize)> {
     let mut window = HashSet::new();
-    let mut block_index = created_at.block;
-    let mut start = created_at.index + 1;
-
-    // Bounded by the block count: argument evaluation is a chain, and a loop
-    // back into it would mean the borrow is used more than once anyway.
-    for _ in 0..body.blocks.len() {
-        let Some(block) = body.blocks.get(block_index) else {
-            return HashSet::new();
-        };
-
+    let mut pending = vec![(created_at.block, created_at.index + 1, false)];
+    let mut active = HashSet::new();
+    let mut complete = HashSet::new();
+    let mut activation = None;
+    let uses = |operand: &Operand| {
+        matches!(operand, Operand::Copy(p) | Operand::Move(p) if p.local == borrower)
+    };
+    while let Some((block_index, start, leaving)) = pending.pop() {
+        if leaving {
+            active.remove(&block_index);
+            complete.insert(block_index);
+            continue;
+        }
+        if complete.contains(&block_index) { continue; }
+        if !active.insert(block_index) { return None; }
+        let block = body.blocks.get(block_index)?;
         for (index, stmt) in block.stmts.iter().enumerate().skip(start) {
             let mut reads = Vec::new();
             match &stmt.kind {
                 StmtKind::Assign { place, rvalue } => {
+                    if place.local == borrower { return None; }
                     rvalue_reads(rvalue, &mut reads);
-                    if place.local == borrower {
-                        return HashSet::new();
-                    }
                 }
-                StmtKind::CheckedBinaryOp { lhs, rhs, .. } => {
+                StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
+                    if dest.local == borrower || overflow.local == borrower { return None; }
                     operand_read(lhs, &mut reads);
                     operand_read(rhs, &mut reads);
                 }
-                StmtKind::Drop { place, .. } => reads.push((place.clone(), Access::Read)),
+                StmtKind::Drop { place, .. }
+                | StmtKind::BeginAccess { place, .. }
+                | StmtKind::BeginAccessTransfer { place, .. }
+                | StmtKind::EndAccess { place, .. }
+                | StmtKind::EndAccessTransfer { place, .. } => {
+                    if place.local == borrower { return None; }
+                }
+                StmtKind::StorageLive(local) | StmtKind::StorageDead(local)
+                    if *local == borrower => return None,
                 _ => {}
             }
-            if reads.iter().any(|(p, _)| p.local == borrower) {
-                return HashSet::new();
-            }
-            window.insert(Point {
-                block: block_index,
-                index,
-            });
+            if reads.iter().any(|(p, _)| p.local == borrower) { return None; }
+            window.insert(Point { block: block_index, index });
         }
-
-        let terminator_point = Point {
-            block: block_index,
-            index: block.stmts.len(),
-        };
+        let mut successors = Vec::new();
         match &block.terminator {
-            Terminator::Call { args, next, .. } => {
-                let used = args.iter().any(|a| match a {
-                    Operand::Copy(p) | Operand::Move(p) => p.local == borrower,
-                    Operand::Const(_) => false,
-                });
-                if used {
-                    // This is the activation. The window is everything before.
-                    return window;
+            Terminator::Call { func, args, dest, next } => {
+                if dest.local == borrower { return None; }
+                if matches!(func, FuncRef::Indirect { operand, .. } if uses(operand)) {
+                    return None;
                 }
-                window.insert(terminator_point);
-                block_index = next.0 as usize;
-                start = 0;
+                if args.iter().any(uses) {
+                    if activation.is_some_and(|previous| previous != block_index) { return None; }
+                    activation = Some(block_index);
+                    active.remove(&block_index);
+                    complete.insert(block_index);
+                    continue;
+                }
+                successors.push(next.0 as usize);
             }
-            Terminator::Assert { next, .. } => {
-                window.insert(terminator_point);
-                block_index = next.0 as usize;
-                start = 0;
+            Terminator::SwitchInt { discr, targets, otherwise } => {
+                if uses(discr) { return None; }
+                successors.push(otherwise.0 as usize);
+                successors.extend(targets.iter().map(|(_, next)| next.0 as usize));
             }
-            Terminator::Goto(next) => {
-                window.insert(terminator_point);
-                block_index = next.0 as usize;
-                start = 0;
+            Terminator::Assert { cond, msg, next, .. } => {
+                if uses(cond) { return None; }
+                match msg {
+                    ember_mir::AssertKind::Bounds { len, index } if uses(len) || uses(index) => return None,
+                    ember_mir::AssertKind::RefCellBorrow { file, line } if uses(file) || uses(line) => return None,
+                    ember_mir::AssertKind::Panic { message } if uses(message) => return None,
+                    _ => {}
+                }
+                successors.push(next.0 as usize);
             }
-            // A branch means the borrow outlives argument evaluation.
-            _ => return HashSet::new(),
+            Terminator::Goto(next) => successors.push(next.0 as usize),
+            Terminator::Unreachable => {}
+            Terminator::Return => return None,
         }
+        window.insert(Point { block: block_index, index: block.stmts.len() });
+        pending.push((block_index, start, true));
+        pending.extend(successors.into_iter().map(|next| (next, 0, false)));
     }
-    HashSet::new()
+    Some((window, activation?))
 }
 
 /// `[BRW-4]`, shape B8 — the place a method call takes, when the conflict at
@@ -3994,84 +4033,15 @@ fn method_autoref_target(
     }
     let borrower = borrower.local;
     let borrowed = borrowed.clone();
-    let mut block_index = point.block;
-    let mut start = point.index + 1;
-
-    // Bounded like `reservation_window`: argument evaluation is a chain, and
-    // a loop back would mean the temporary is used more than once anyway.
-    for _ in 0..body.blocks.len() {
-        let block = body.blocks.get(block_index)?;
-
-        for stmt in block.stmts.iter().skip(start) {
-            match &stmt.kind {
-                StmtKind::Assign { place, rvalue } => {
-                    if place.local == borrower {
-                        return None;
-                    }
-                    let mut reads = Vec::new();
-                    rvalue_reads(rvalue, &mut reads);
-                    if reads.iter().any(|(p, _)| p.local == borrower) {
-                        return None;
-                    }
-                }
-                StmtKind::CheckedBinaryOp { lhs, rhs, .. } => {
-                    let mut reads = Vec::new();
-                    operand_read(lhs, &mut reads);
-                    operand_read(rhs, &mut reads);
-                    if reads.iter().any(|(p, _)| p.local == borrower) {
-                        return None;
-                    }
-                }
-                StmtKind::Drop { place, .. } => {
-                    if place.local == borrower {
-                        return None;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        match &block.terminator {
-            Terminator::Call {
-                func, args, next, ..
-            } => {
-                let receiver = args.first().and_then(|arg| match arg {
-                    Operand::Copy(p) | Operand::Move(p) => Some(p.local),
-                    Operand::Const(_) => None,
-                });
-                if receiver == Some(borrower) {
-                    // The temporary is this call's receiver: B8 exactly when
-                    // the callee is a method.
-                    return if is_method(func) {
-                        Some(borrowed)
-                    } else {
-                        None
-                    };
-                }
-                if args.iter().any(|arg| match arg {
-                    Operand::Copy(p) | Operand::Move(p) => p.local == borrower,
-                    Operand::Const(_) => false,
-                }) {
-                    // Consumed somewhere other than the receiver: not B8.
-                    return None;
-                }
-                block_index = next.0 as usize;
-                start = 0;
-            }
-            Terminator::Assert { next, .. } => {
-                block_index = next.0 as usize;
-                start = 0;
-            }
-            Terminator::Goto(next) => {
-                block_index = next.0 as usize;
-                start = 0;
-            }
-            // A branch (or return) means the temporary outlives argument
-            // evaluation: not the autoref shape, so keep the ordinary code.
-            _ => return None,
-        }
-    }
-    None
+    let (_, activation) = call_reservation(body, borrower, point)?;
+    let Terminator::Call { func, args, .. } = &body.blocks[activation].terminator else {
+        return None;
+    };
+    let receiver = args.first().and_then(|arg| match arg {
+        Operand::Copy(p) | Operand::Move(p) => Some(p.local),
+        Operand::Const(_) => None,
+    });
+    (receiver == Some(borrower) && is_method(func)).then_some(borrowed)
 }
 
 /// `[BRW-2]` — the loans in scope at a point: created before it, and with the

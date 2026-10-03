@@ -219,6 +219,9 @@ fn runs_no_ember_code(body: &Body, types: &TypeTable, which: &Builtin, args: &[O
         | Builtin::StringLen
         | Builtin::StringPush
         | Builtin::StringPushChar
+        | Builtin::StringInsert
+        | Builtin::StringRemove
+        | Builtin::StringTruncate
         | Builtin::Print
         | Builtin::Println => true,
         Builtin::ArrayClear | Builtin::ArrayTruncate => args.first().is_some_and(|list| {

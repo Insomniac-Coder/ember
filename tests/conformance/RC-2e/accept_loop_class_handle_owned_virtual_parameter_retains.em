@@ -1,13 +1,14 @@
 #$ test: run-pass
 #$ rules: RC-1, RC-2e, CTL-1, CTL-2, FN-1, TYP-14, DSP-2, RNG-4
 #$ profiles: debug, release, shipping
-#$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 3
+#$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 2
 #$ assert-c-count: contains("ember_retain((ember_obj_header*)") == 0
 #$ stdout: 7
 
 # Virtual dispatch preserves an `owned` parameter mode, so a loop-yielded
-# class handle retains at the virtual call boundary. The third retain is the
-# independent Worker-to-Consumer class upcast used to select that dispatch.
+# class handle retains at the virtual call boundary. The other retain is the
+# independent Worker-to-Consumer class upcast used to select that dispatch;
+# the fresh Token constructor temporary transfers directly into its Array.
 # Range facts prove the loop's index in bounds (`[RNG-4]`), so the loop is
 # not versioned: its body, and the retains in it, appear once.
 class Token:

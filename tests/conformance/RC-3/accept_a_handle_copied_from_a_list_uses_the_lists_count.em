@@ -1,7 +1,7 @@
 #$ test: run-pass
 #$ rules: RC-3, RC-1, RC-2a, EXC-15
 #$ profiles: debug, release, shipping
-#$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 2
+#$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 0
 #$ stdout: 45
 #$ end
 #$ drop 6
@@ -9,8 +9,8 @@
 # `[RC-3]` — `t` is a copy of an element of `nodes`, which nothing changes
 # while `t` lives, so the list's own count keeps the object alive: the copy
 # is not retained and `t`'s end releases nothing. Lending `t` to a `mut self`
-# method or a borrowed parameter cannot re-point it. The two retains left are
-# the two `push` calls'.
+# method or a borrowed parameter cannot re-point it. Fresh constructor
+# temporaries transfer into the list, so insertion also needs no retain.
 
 class Node:
     v: int

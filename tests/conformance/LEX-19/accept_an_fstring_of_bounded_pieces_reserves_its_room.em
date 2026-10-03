@@ -1,7 +1,7 @@
 #$ test: run-pass
 #$ rules: LEX-19
 #$ profiles: debug, release
-#$ assert-c: contains("vec_reserve_more(")
+#$ assert-c: contains("vec_reserve_more_inline(")
 #$ stdout: key-9223372036854775808|18446744073709551615|false|é|-128|65535
 #$ stdout: key7 key123456
 # `[LEX-19]` — an f-string whose pieces all have a longest text (literal

@@ -966,6 +966,72 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Byte reductions must widen signed values correctly and never read
+    /// beyond a short or unaligned view, even beside an inaccessible page.
+    #[test]
+    fn byte_sums_agree_with_a_scalar_oracle_at_guard_pages() {
+        let requested = std::env::var(ember_branding::cc_var()).ok();
+        let toolchain = Toolchain::detect(requested.as_deref()).expect("a C toolchain");
+        let runtime = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+        let dir = std::env::temp_dir().join(format!("byte-sums-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("obj")).expect("the test directory is creatable");
+        let program = dir.join(if cfg!(windows) { "byte_sums.exe" } else { "byte_sums" });
+        compile_and_link(&toolchain, &LinkRequest {
+            sources: &[runtime.join("tests/byte_sums.c")],
+            include_dirs: &[runtime.join("include")], output: program.clone(),
+            profile: Profile::Release, obj_dir: dir.join("obj"),
+        }).expect("the guarded byte-sum oracle compiles");
+        let output = Command::new(program).output().expect("the guarded oracle runs");
+        assert!(output.status.success(), "guarded oracle failed: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `[TXT-2, TXT-10]` — both cursor types decode every Unicode scalar,
+    /// advance exactly once, and stop reading at the end of a guarded view.
+    #[test]
+    fn text_char_steps_agree_with_a_scalar_oracle_at_guard_pages() {
+        let requested = std::env::var(ember_branding::cc_var()).ok();
+        let toolchain = Toolchain::detect(requested.as_deref()).expect("a C toolchain");
+        let runtime = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+        let dir = std::env::temp_dir().join(format!("text-char-steps-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("obj")).expect("the test directory is creatable");
+        let program = dir.join(if cfg!(windows) { "text_char_steps.exe" } else { "text_char_steps" });
+        compile_and_link(&toolchain, &LinkRequest {
+            sources: &[runtime.join("tests/text_char_steps.c")],
+            include_dirs: &[runtime.join("include")], output: program.clone(),
+            profile: Profile::Release, obj_dir: dir.join("obj"),
+        }).expect("the guarded scalar-decoder oracle compiles");
+        let output = Command::new(program).output().expect("the guarded oracle runs");
+        assert!(output.status.success(), "guarded decoder oracle failed: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `[RT-11]` — even sequential host-thread operations must not share
+    /// allocation counters. Cross-thread frees belong to the freeing thread.
+    #[test]
+    fn allocation_statistics_are_independent_per_thread() {
+        let requested = std::env::var(ember_branding::cc_var()).ok();
+        let toolchain = Toolchain::detect(requested.as_deref()).expect("a C toolchain");
+        let runtime = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+        let dir = std::env::temp_dir().join(format!("thread-alloc-stats-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("obj")).expect("the test directory is creatable");
+        let program = dir.join(if cfg!(windows) { "thread_alloc_stats.exe" } else { "thread_alloc_stats" });
+        compile_and_link(&toolchain, &LinkRequest {
+            sources: &[runtime.join("tests/thread_alloc_stats.c"), runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX))],
+            include_dirs: &[runtime.join("include")], output: program.clone(),
+            profile: Profile::Release, obj_dir: dir.join("obj"),
+        }).expect("the allocation-statistics oracle compiles");
+        let output = Command::new(program).output().expect("the allocation-statistics oracle runs");
+        assert!(output.status.success(), "thread-local statistics failed: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// D-272 — the runtime's 128-bit integers as two 64-bit halves (MSVC's
     /// form) agree bit for bit with the C compiler's `__int128`: the test
     /// program, rendered from `templates/tests/int128_halves.c.in`, compares

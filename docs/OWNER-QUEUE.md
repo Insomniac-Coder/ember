@@ -63,6 +63,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-082 | **CLOSED** — `@ffi(immutable)` on a foreign static asserts a `const` C object and emits a matching declaration | Language / C interop / foreign statics | — | **No** — delegated, 2026-09-27, Hardened_38 |
 | ODR-083 | **CLOSED** — a static free-function export's `creator` thread is anchored to successful module initialization; repeated initialization does not transfer the contract, and reinitialization after shutdown establishes a new creator | Language / C interop / export thread contracts | — | **No** — delegated, 2026-09-27, Hardened_39 |
 | ODR-084 | **CLOSED** — `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts | Language / module attributes / arithmetic | — | **No** — delegated, 2026-09-27, Hardened_40 |
+| ODR-098 | **CLOSED** — String capacity and offsets count bytes; reserve asks for additional bytes, insert takes a char and remove returns one; truncate and clear retain capacity; invalid sizes and UTF-8 boundaries panic in every profile | Library / text | — | **No** — delegated, 2026-10-03, Hardened_52 |
 | ODR-097 | **CLOSED** — an implementation may also be written in the package that declares one of its interface's arguments, where, reading its type and then those arguments, the first type the package declares comes before any of the implementation's type parameters standing alone; anywhere else it is `E2121` | Types / implementations | — | **No** — delegated, 2026-10-01, Hardened_50 |
 | ODR-096 | **CLOSED** — of two instances of one generic interface that a call's or an operator's arguments fit, the one whose parameter types are the arguments' own (an untyped literal as its default type) is chosen before one reached through a coercion, for every type; two that fit equally are `E2070`; an operator chooses as its method does | Types / interface resolution | — | **No** — delegated, 2026-10-01, Hardened_49 |
 | ODR-095 | **CLOSED** — a range type has every operator its representation implements over itself, `**` and the bitwise operators included, generated as `[RNG-5a1]`'s are with the representation as `Output` | Types / range types | — | **No** — delegated, 2026-10-01, Hardened_50 |
@@ -253,6 +254,42 @@ immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
+
+## ODR-098 — String mutation and capacity contracts — **CLOSED**
+
+    ID:        ODR-098
+    Status:    CLOSED — ruled under the owner's delegation, 2026-10-03;
+               incorporated in 0.9.9_Hardened_52
+    Category:  LIBRARY / TEXT
+    Location:  Ember_v0.9.9_Hardened_51.md [TXT-11], [TXT-4], [TYP-31]
+
+**The question.** `[TXT-11]` lists `with_capacity`, `reserve`, `insert`, `remove`,
+`truncate`, `clear` and `capacity`, without complete signatures, offset rules,
+or a contract for preserving capacity. `[TXT-4]` already chooses byte offsets
+and character-boundary checks for slicing; character-position indexing is
+forbidden because it scans the prefix. These seven methods are not implemented.
+
+**Options.**
+1. Character positions for mutation. This scans the prefix and makes an offset
+   mean something different from the same offset in a string slice.
+2. Byte offsets with character-boundary checks, additional-byte reservation,
+   and capacity retained when shrinking. Insertion and removal move only the
+   suffix; truncation and clearing require no allocation or scan.
+3. Raw-byte mutation. A program could break safe text's UTF-8 invariant.
+
+**Ruling: 2.** `insert(i, c: char)` inserts one character; `remove(i) -> char`
+returns the removed character. `truncate(n)` keeps a prefix, or does nothing
+when `n >= len()`. `with_capacity(n)` creates empty text; `reserve(n)` ensures
+room for `len() + n` bytes. Both can overallocate; zero initial capacity does
+not allocate. `capacity() -> int` reads the byte capacity. Shrinking preserves
+it. Mutations borrow `mut self`; their arguments are evaluated first, as for
+Array. All accept integer counts/offsets without lossy conversion: a negative
+literal is `E2011`; invalid run-time sizes and UTF-8 boundaries panic in all
+profiles. Checked growth obeys `[HEAP-8]`. No additional method is added.
+
+The byte-offset, capacity and prefix contracts follow the established design
+documented by [Rust String](https://doc.rust-lang.org/std/string/struct.String.html).
+Ember's integer inputs and borrow/evaluation rules follow its own language.
 
 ## ODR-097 — where an implementation may be written — **CLOSED**
 

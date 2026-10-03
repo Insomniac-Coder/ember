@@ -90,9 +90,9 @@ impl Interval {
     }
 }
 
-/// The values a type holds: an integer's whole range, or a range type's
-/// declared one (`[RNG-9]`). `None` for anything else, and for `u128`, whose
-/// top half no `i128` holds.
+/// The values a type holds: an integer's whole range, a `char`'s scalar
+/// interval (`[TYP-3]`), or a range type's declared one (`[RNG-9]`). `None`
+/// for anything else, and for `u128`, whose top half no `i128` holds.
 pub(crate) fn type_range(types: &TypeTable, ty: Ty) -> Option<Interval> {
     match types.kind(ty) {
         TyKind::Int(_) | TyKind::Uint(_) => {
@@ -100,6 +100,12 @@ pub(crate) fn type_range(types: &TypeTable, ty: Ty) -> Option<Interval> {
             let lo = if ember_types::is_signed(types, ty) == Some(true) { -max - 1 } else { 0 };
             Some(Interval { lo, hi: max })
         }
+        // `[TYP-3]` requires every `char` to remain a Unicode scalar through
+        // unsafe and foreign boundaries. `[FFI-8]` maps `char32_t` to `u32`,
+        // whose full integer range stays above. The interval deliberately
+        // includes the surrogate gap: it is a conservative bound, not a
+        // scalar-validity check.
+        TyKind::Char => Some(Interval { lo: 0, hi: 0x10FFFF }),
         TyKind::Range(id) => {
             let def = types.range_def(*id);
             let repr = type_range(types, def.repr)?;
@@ -2110,6 +2116,8 @@ fn reorders_or_removes(which: &Builtin) -> bool {
             | Builtin::ArrayDrain
             | Builtin::ArrayReserve
             | Builtin::ArrayTruncate
+            | Builtin::StringRemove
+            | Builtin::StringTruncate
             | Builtin::ArraySwapRemove
             | Builtin::ArraySwap
             | Builtin::ArrayLen

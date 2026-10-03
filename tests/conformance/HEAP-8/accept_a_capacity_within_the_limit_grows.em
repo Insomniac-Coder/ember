@@ -1,4 +1,5 @@
 #$ test: run-pass
+#$ assert-c: contains("vec_reserve_more_inline(")
 #$ rules: HEAP-8, HEAP-2
 #$ profiles: debug, release, shipping
 #$ stdout: true

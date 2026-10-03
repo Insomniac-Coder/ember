@@ -1,0 +1,118 @@
+/* [TXT-2, TXT-10] Independent scalar codec oracle at an inaccessible page. */
+#define _GNU_SOURCE
+#include "ember_rt.h"
+#include <stdlib.h>
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
+/* Base-64 digits, rather than the runtime decoder's masks and shifts. */
+static size_t encode_scalar(uint32_t scalar, unsigned char bytes[4]) {
+    size_t width = scalar < 128 ? 1 : scalar < 2048 ? 2 : scalar < 65536 ? 3 : 4;
+    if (width == 1) {
+        bytes[0] = (unsigned char)scalar;
+        return width;
+    }
+    uint32_t remaining = scalar;
+    for (size_t i = width - 1; i > 0; --i) {
+        bytes[i] = (unsigned char)(128 + remaining % 64);
+        remaining /= 64;
+    }
+    bytes[0] = (unsigned char)((width == 2 ? 192 : width == 3 ? 224 : 240) + remaining);
+    return width;
+}
+
+static int decode_reference(const unsigned char bytes[4], uint32_t* decoded, size_t* decoded_width) {
+    size_t width;
+    uint32_t scalar;
+    if (bytes[0] < 128) { width = 1; scalar = bytes[0]; }
+    else if (bytes[0] >= 194 && bytes[0] <= 223) { width = 2; scalar = bytes[0] - 192; }
+    else if (bytes[0] >= 224 && bytes[0] <= 239) { width = 3; scalar = bytes[0] - 224; }
+    else if (bytes[0] >= 240 && bytes[0] <= 244) { width = 4; scalar = bytes[0] - 240; }
+    else return 0;
+    for (size_t i = 1; i < width; ++i) {
+        if (bytes[i] < 128 || bytes[i] > 191) return 0;
+        scalar = scalar * 64 + bytes[i] - 128;
+    }
+    if ((width == 2 && scalar < 128) || (width == 3 && scalar < 2048)
+        || (width == 4 && scalar < 65536) || scalar > 0x10FFFF
+        || (scalar >= 0xD800 && scalar <= 0xDFFF)) return 0;
+    *decoded = scalar;
+    *decoded_width = width;
+    return 1;
+}
+
+static int check_step(ember_str text, size_t start, uint32_t scalar, size_t width) {
+    int64_t signed_at = (int64_t)start;
+    size_t unsigned_at = start;
+    uint32_t signed_scalar = ember_str_char_next(text, &signed_at);
+    uint32_t unsigned_scalar = ember_str_char_next_usize(text, &unsigned_at);
+    if (signed_scalar != scalar || unsigned_scalar != scalar
+        || signed_at != (int64_t)(start + width) || unsigned_at != start + width) {
+        fprintf(stderr, "scalar %lu at %zu: decoded %lu/%lu, advanced %lld/%zu, expected width %zu\n",
+            (unsigned long)scalar, start, (unsigned long)signed_scalar,
+            (unsigned long)unsigned_scalar, (long long)signed_at, unsigned_at, width);
+        return 0;
+    }
+    return 1;
+}
+
+int main(void) {
+    size_t page;
+    unsigned char* allocation;
+#if defined(_WIN32)
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    page = info.dwPageSize;
+#else
+    long reported_page = sysconf(_SC_PAGESIZE);
+    if (reported_page <= 0) return 2;
+    page = (size_t)reported_page;
+#endif
+    if (page < 4 || page > SIZE_MAX / 3 || page > INT64_MAX) return 2;
+#if defined(_WIN32)
+    allocation = (unsigned char*)VirtualAlloc(NULL, page * 3, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS);
+    if (!allocation) return 2;
+    DWORD old;
+    if (!VirtualProtect(allocation + page, page, PAGE_READWRITE, &old)) return 2;
+#else
+    allocation = (unsigned char*)mmap(NULL, page * 3, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (allocation == MAP_FAILED) return 2;
+    if (mprotect(allocation + page, page, PROT_READ | PROT_WRITE)) return 2;
+#endif
+    unsigned char* data = allocation + page;
+    for (size_t i = 0; i < page; ++i) data[i] = 'x';
+    size_t widths[5] = {0};
+    for (uint32_t scalar = 0; scalar <= 0x10FFFF; ++scalar) {
+        if (scalar >= 0xD800 && scalar <= 0xDFFF) continue;
+        unsigned char bytes[4];
+        size_t width = encode_scalar(scalar, bytes);
+        uint32_t reference_scalar;
+        size_t reference_width;
+        if (!decode_reference(bytes, &reference_scalar, &reference_width)
+            || reference_scalar != scalar || reference_width != width) return 1;
+        ++widths[width];
+        /* Clear the previous scalar's prefix so full_view is valid UTF-8 too. */
+        for (size_t i = 0; i < 4; ++i) data[page - 4 + i] = 'x';
+        unsigned char* tail = data + page - width;
+        for (size_t i = 0; i < width; ++i) tail[i] = bytes[i];
+        /* Each scalar, including NUL and every width transition, ends just
+         * before the protected page. Test zero and nonzero typed cursors. */
+        ember_str short_view = {tail, width};
+        ember_str full_view = {data, page};
+        if (!check_step(short_view, 0, scalar, width)
+            || !check_step(full_view, page - width, scalar, width)) return 1;
+    }
+    if (widths[1] != 128 || widths[2] != 1920 || widths[3] != 61440 || widths[4] != 1048576) return 1;
+#if defined(_WIN32)
+    if (!VirtualFree(allocation, 0, MEM_RELEASE)) return 2;
+#else
+    if (munmap(allocation, page * 3)) return 2;
+#endif
+    puts("ok");
+    return 0;
+}

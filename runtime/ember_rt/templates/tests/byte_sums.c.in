@@ -1,0 +1,58 @@
+/* Independent byte-sum oracle, with inaccessible pages on both sides. */
+#define _GNU_SOURCE
+#include "ember_rt.h"
+#include <stdlib.h>
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
+static int check(const uint8_t* p, size_t len) {
+    uint64_t u = 0, s = 0;
+    for (size_t i = 0; i < len; ++i) {
+        u += p[i];
+        s += p[i] < 128 ? (uint64_t)p[i] : (uint64_t)p[i] - 256;
+    }
+    return ember_sum_bytes(p, len, false) == u
+        && ember_sum_bytes(p, len, true) == s;
+}
+
+int main(void) {
+    size_t page;
+    uint8_t* allocation;
+#if defined(_WIN32)
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    page = info.dwPageSize;
+    allocation = (uint8_t*)VirtualAlloc(NULL, page * 3, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS);
+    if (!allocation) return 2;
+    DWORD old;
+    if (!VirtualProtect(allocation + page, page, PAGE_READWRITE, &old)) return 2;
+#else
+    page = (size_t)sysconf(_SC_PAGESIZE);
+    allocation = (uint8_t*)mmap(NULL, page * 3, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (allocation == MAP_FAILED) return 2;
+    if (mprotect(allocation + page, page, PROT_READ | PROT_WRITE)) return 2;
+#endif
+    uint8_t* data = allocation + page;
+    for (size_t i = 0; i < page; ++i) data[i] = (uint8_t)(i * 73 + 19);
+    if (!check(NULL, 0)) return 1;
+    for (size_t len = 0; len <= page; ++len) {
+        if (!check(data + page - len, len)) return 1;
+    }
+    for (size_t offset = 0; offset < 64; ++offset) {
+        for (size_t len = 0; len < 256; ++len) {
+            if (!check(data + offset, len)) return 1;
+        }
+    }
+#if defined(_WIN32)
+    if (!VirtualFree(allocation, 0, MEM_RELEASE)) return 2;
+#else
+    if (munmap(allocation, page * 3)) return 2;
+#endif
+    puts("ok");
+    return 0;
+}

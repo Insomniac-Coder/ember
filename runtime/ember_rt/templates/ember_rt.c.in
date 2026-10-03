@@ -28,7 +28,6 @@
 
 static ember_rt_config g_config;
 static bool g_initialised = false;
-static ember_alloc_stats g_stats = { 0, 0, 0 };
 
 /* `[FFI-22]`/`[FFI-31a]` — an exported body calls attach on every entry.
  * The fast path compares one thread-local epoch with the module's current
@@ -42,6 +41,10 @@ static uint32_t g_thread_generation = 1;
 #else
 #define EMBER_RT_THREAD_LOCAL _Thread_local
 #endif
+/* `[RT-11]`: allocation statistics never write a shared non-atomic counter.
+ * They count this thread's operations, including a free of another thread's
+ * block; live_bytes is the local allocation/free balance, saturated at zero. */
+static EMBER_RT_THREAD_LOCAL ember_alloc_stats g_stats = { 0, 0, 0 };
 static EMBER_RT_THREAD_LOCAL uint32_t g_attached_generation;
 /* Identity is a TLS epoch, not an OS thread id that can be reused. It is
  * independent of attachment: detach/attach cannot transfer main authority.
@@ -600,9 +603,8 @@ void ember_free(void* p, size_t size, size_t align) {
     } else {
         raw_free(p, align);
     }
-    if (g_stats.live_bytes >= (uint64_t)size) {
-        g_stats.live_bytes -= (uint64_t)size;
-    }
+    g_stats.live_bytes = g_stats.live_bytes >= (uint64_t)size
+        ? g_stats.live_bytes - (uint64_t)size : 0;
     g_stats.total_frees += 1;
 }
 
@@ -1518,11 +1520,7 @@ void ember_vec_reserve_hint(ember_vec* v, size_t elem_size, uint64_t turns, size
 }
 
 void ember_vec_reserve_more(ember_vec* v, size_t elem_size, size_t additional) {
-    size_t limit = vec_max_elems(elem_size);
-    if (v->len > limit || additional > limit - v->len) {
-        vec_capacity_overflow();
-    }
-    ember_vec_reserve(v, elem_size, v->len + additional);
+    ember_vec_reserve_more_inline(v, elem_size, additional);
 }
 
 void ember_vec_reverse(ember_vec* v, size_t elem_size) {
@@ -1727,18 +1725,7 @@ size_t ember_str_char_count(ember_str s) {
 }
 
 uint32_t ember_str_char_at(ember_str s, size_t i) {
-    const unsigned char* p = s.ptr + i;
-    if (p[0] < 0x80) {
-        return p[0];
-    }
-    if (p[0] < 0xE0) {
-        return ((uint32_t)(p[0] & 0x1F) << 6) | (uint32_t)(p[1] & 0x3F);
-    }
-    if (p[0] < 0xF0) {
-        return ((uint32_t)(p[0] & 0x0F) << 12) | ((uint32_t)(p[1] & 0x3F) << 6) | (uint32_t)(p[2] & 0x3F);
-    }
-    return ((uint32_t)(p[0] & 0x07) << 18) | ((uint32_t)(p[1] & 0x3F) << 12)
-         | ((uint32_t)(p[2] & 0x3F) << 6) | (uint32_t)(p[3] & 0x3F);
+    return ember_char_decode_utf8(s, i);
 }
 
 size_t ember_char_utf8_len(uint32_t c) {
@@ -1887,7 +1874,7 @@ bool ember_str_slice_ok(ember_str s, int64_t start, int64_t end, bool inclusive)
     return ember_str_is_char_boundary(s, (size_t)start) && ember_str_is_char_boundary(s, (size_t)end);
 }
 
-static size_t encode_utf8(uint32_t c, unsigned char* out);
+
 
 /* BEGIN GENERATED: tools/unicode_case.py */
 /* Unicode 16.0.0: full case mappings, as Python 3.14.2 gives them. */
@@ -4936,7 +4923,7 @@ static bool is_cased(uint32_t c) {
 
 void ember_vec_push_char(ember_vec* out, uint32_t c) {
     unsigned char bytes[4];
-    ember_vec_extend(out, bytes, encode_utf8(c, bytes));
+    ember_vec_extend(out, bytes, ember_char_encode_utf8(c, bytes));
 }
 
 static ember_vec case_map(ember_str s, const ember_case_entry* table, size_t len, bool lower) {
@@ -5263,7 +5250,7 @@ bool ember_str_contains_char(ember_str text, uint32_t needle) {
     unsigned char encoded[4];
     ember_str piece;
     piece.ptr = encoded;
-    piece.len = encode_utf8(needle, encoded);
+    piece.len = ember_char_encode_utf8(needle, encoded);
     return ember_str_contains(text, piece);
 }
 
@@ -5575,30 +5562,6 @@ static void write_shortest_f32(float v, char* buffer, size_t cap) {
 
 static void write_shortest_f16(uint16_t v, char* buffer, size_t cap) {
     write_repr(ember_f16_to_f64(v), 16, buffer, cap);
-}
-
-/* Encode one Unicode scalar value as UTF-8. Returns the byte count. */
-static size_t encode_utf8(uint32_t c, unsigned char* out) {
-    if (c < 0x80) {
-        out[0] = (unsigned char)c;
-        return 1;
-    }
-    if (c < 0x800) {
-        out[0] = (unsigned char)(0xC0 | (c >> 6));
-        out[1] = (unsigned char)(0x80 | (c & 0x3F));
-        return 2;
-    }
-    if (c < 0x10000) {
-        out[0] = (unsigned char)(0xE0 | (c >> 12));
-        out[1] = (unsigned char)(0x80 | ((c >> 6) & 0x3F));
-        out[2] = (unsigned char)(0x80 | (c & 0x3F));
-        return 3;
-    }
-    out[0] = (unsigned char)(0xF0 | (c >> 18));
-    out[1] = (unsigned char)(0x80 | ((c >> 12) & 0x3F));
-    out[2] = (unsigned char)(0x80 | ((c >> 6) & 0x3F));
-    out[3] = (unsigned char)(0x80 | (c & 0x3F));
-    return 4;
 }
 
 /* -- 128-bit integers (D-272) ------------------------------------------------
@@ -5999,7 +5962,7 @@ static void print_bool_to(FILE* out, bool v) { fputs(v ? "true" : "false", out);
 
 static void print_char_to(FILE* out, uint32_t v) {
     unsigned char buffer[4];
-    size_t n = encode_utf8(v, buffer);
+    size_t n = ember_char_encode_utf8(v, buffer);
     fwrite(buffer, 1, n, out);
 }
 
@@ -6101,7 +6064,7 @@ void ember_fmt_bool(ember_vec* out, bool value) {
 
 void ember_fmt_char(ember_vec* out, uint32_t value) {
     unsigned char buffer[4];
-    size_t n = encode_utf8(value, buffer);
+    size_t n = ember_char_encode_utf8(value, buffer);
     ember_vec_extend(out, buffer, n);
 }
 
@@ -6121,7 +6084,7 @@ static size_t utf8_count(const unsigned char* s, size_t n) {
 
 static void push_fill(ember_vec* out, uint32_t fill, size_t count) {
     unsigned char buffer[4];
-    size_t n = encode_utf8(fill, buffer);
+    size_t n = ember_char_encode_utf8(fill, buffer);
     for (size_t i = 0; i < count; ++i) {
         ember_vec_extend(out, buffer, n);
     }
@@ -6423,7 +6386,7 @@ void ember_fmt_repr_str(ember_vec* out, ember_str value) {
 
 void ember_fmt_repr_char(ember_vec* out, uint32_t value) {
     unsigned char buffer[4];
-    size_t n = encode_utf8(value, buffer);
+    size_t n = ember_char_encode_utf8(value, buffer);
     repr_text(out, buffer, n);
 }
 
@@ -6434,6 +6397,6 @@ void ember_fmt_spec_bool(ember_vec* out, bool value, ember_fmt_spec spec) {
 
 void ember_fmt_spec_char(ember_vec* out, uint32_t value, ember_fmt_spec spec) {
     unsigned char buffer[4];
-    size_t n = encode_utf8(value, buffer);
+    size_t n = ember_char_encode_utf8(value, buffer);
     fmt_spec_text(out, buffer, n, spec.kind == '?', spec);
 }

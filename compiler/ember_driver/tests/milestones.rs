@@ -3984,7 +3984,7 @@ fn text_iterator_loops_are_counted_loops_without_the_iterator() {
         let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc} C failed:\n{}", c.stderr);
         let main = c_definition(&c.stdout, &ember_branding::mangled("main"));
-        assert!(main.contains("str_char_next("), "{cc}: no text loop in main:\n{main}");
+        assert!(main.contains("str_char_next_usize("), "{cc}: no native text loop in main:\n{main}");
         assert!(!main.contains("CharIndices_next(") && !main.contains("Bytes_next("), "{cc}: a loop calls `next`:\n{main}");
         if cc == "clang" {
             assert!(main.contains("Chars_next("), "clang: the iterator held in a variable lost its `next`:\n{main}");
@@ -4021,6 +4021,51 @@ fn aggregates_and_views_are_written_field_by_field() {
     let c = ember(&["build", &counted, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
     assert!(c.stdout.contains(".source;") && !c.stdout.contains(".source).ptr;"), "an iterator's view, written whole, is copied by its fields:\n{}", c.stdout);
+}
+
+/// A nested field producer obeys D-475 through copied locals and niche
+/// Option wrapping/extraction. The existing aggregate test above retains
+/// the inverse proof: a wholly written iterator view stays copied whole.
+#[test]
+fn split_once_view_fields_stay_field_copies_through_niche_options() {
+    fn field_copy_targets(c: &str, source_suffix: &str) -> Vec<String> {
+        let mut targets = Vec::new();
+        for line in c.lines().map(str::trim) {
+            let Some((to, from)) = line.split_once(".ptr = ") else { continue };
+            if !from.ends_with(source_suffix) {
+                continue;
+            }
+            let from = from.strip_suffix(".ptr;").expect("a pointer field copy");
+            let length = format!("{to}.len = {from}.len;");
+            assert!(c.lines().any(|line| line.trim() == length), "the descriptor's length is not copied with its pointer:\n{c}");
+            let source = from.strip_prefix('(').and_then(|from| from.strip_suffix(')')).expect("a parenthesized descriptor source");
+            assert!(!c.lines().any(|line| line.trim().ends_with(&format!("= {source};"))), "a field-written descriptor is also read whole:\n{c}");
+            let target = to.strip_prefix('(').and_then(|to| to.strip_suffix(')')).expect("a parenthesized descriptor destination");
+            targets.push(target.to_string());
+        }
+        targets
+    }
+    fn reaches_return(c: &str, source_suffix: &str) {
+        let mut pending = field_copy_targets(c, source_suffix);
+        assert!(!pending.is_empty(), "the split payload is read whole:\n{c}");
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some(source) = pending.pop() {
+            if seen.insert(source.clone()) {
+                pending.extend(field_copy_targets(c, &format!("({source}).ptr;")));
+            }
+        }
+        assert!(seen.contains("_0"), "the split payload's copies do not reach the return by fields:\n{c}");
+    }
+    let root = workspace_root();
+    let source = format!("tests/conformance/TXT-10/accept_split_once_view_copy_chains.{SOURCE_EXT}");
+    for cc in ["msvc", "clang"] {
+        let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", cc], &root);
+        assert_eq!(c.exit, 0, "{cc} C failed:\n{}", c.stderr);
+        let first = c_definition(&c.stdout, &ember_branding::mangled("first_view"));
+        assert!(first.contains(").tag = 0;") && !first.contains("{ .tag = 0 }"), "split None is not tag-only:\n{first}");
+        reaches_return(first, ".payload.Some._0._0).ptr;");
+        reaches_return(first, ".payload.Some._0._1).ptr;");
+    }
 }
 
 /// `[CG-C-3]` — a standard view's or container's `next` is forced inline,
@@ -4130,4 +4175,53 @@ fn std_instances_nothing_reaches_are_not_kept() {
     let mir = ember(&["build", &iterators, "--emit", "mir", "--profile", "release"], &root);
     assert_eq!(mir.exit, 0, "MIR failed:\n{}", mir.stderr);
     assert!(mir.stdout.contains(unused[0].as_str()), "`count`, which the program calls, was dropped");
+}
+
+// D-491: verify the cache before indexing without executing broken C.
+fn assert_memreplace_span_result_pointer_is_refreshed(c: &str) {
+    let span = ember_branding::runtime("span");
+    let load_marker = format!(" = *(({span}*)(");
+    let lines: Vec<_> = c.lines().map(str::trim).collect();
+    let (load_at, destination, target) = lines.iter().enumerate().find_map(|(index, line)| {
+        let (destination, target) = line.split_once(&load_marker)?;
+        let target = target.strip_suffix("));")?;
+        Some((index, destination.to_string(), target.to_string()))
+    }).unwrap_or_else(|| panic!("no direct Span MemReplace result load:\n{c}"));
+    let replacement_prefix = format!("*(({span}*)({target})) = ");
+    let replacement_at = lines.iter().enumerate().skip(load_at + 1)
+        .find_map(|(index, line)| line.starts_with(&replacement_prefix).then_some(index))
+        .unwrap_or_else(|| panic!("MemReplace does not store its replacement:\n{c}"));
+    let pointer = format!("{destination}_ptr");
+    let index_marker = format!("{pointer}[");
+    let first_index_at = lines.iter().position(|line| line.contains(&index_marker))
+        .unwrap_or_else(|| panic!("the result has no dynamic cached-pointer index:\n{c}"));
+    let refresh_prefix = format!("{pointer} = ");
+    let refresh_suffix = format!("{destination}.ptr;");
+    let refresh_at = lines.iter().position(|line|
+        line.starts_with(&refresh_prefix) && line.ends_with(&refresh_suffix))
+        .unwrap_or_else(|| panic!("MemReplace leaves its result pointer cache uninitialized:\n{c}"));
+    assert!(load_at < replacement_at && replacement_at < refresh_at && refresh_at < first_index_at,
+        "the result pointer cache is not refreshed after the exchange and before indexing:\n{c}");
+    // The addressed target cannot retain a duplicate pointer that the exchange
+    // silently invalidates. If it renders as a direct local address, pin that
+    // inverse policy without depending on MIR local numbers.
+    if let Some(addressed) = target.strip_prefix('&') {
+        let addressed = addressed.trim_matches(|ch| ch == '(' || ch == ')');
+        assert!(!c.contains(&format!("{addressed}_ptr")),
+            "the addressed replacement target retained a pointer cache:\n{c}");
+    }
+}
+
+#[test]
+fn memreplace_span_results_refresh_their_index_pointer() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/OWN-6/accept_span_replace_result_refreshes_index_pointer.{SOURCE_EXT}");
+    for profile in ["debug", "release", "shipping"] {
+        for cc in ["msvc", "clang"] {
+            let c = ember(&["build", &source, "--emit", "c", "--profile", profile, "--cc", cc], &root);
+            assert_eq!(c.exit, 0, "{cc}/{profile} C generation failed:\n{}", c.stderr);
+            let replaced = c_definition(&c.stdout, &ember_branding::mangled("replace_shared_view"));
+            assert_memreplace_span_result_pointer_is_refreshed(replaced);
+        }
+    }
 }

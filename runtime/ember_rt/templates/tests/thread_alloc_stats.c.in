@@ -1,0 +1,63 @@
+/* [RT-11]: independent counters, including frees on a different thread. */
+#include "ember_rt.h"
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <pthread.h>
+#endif
+
+typedef struct worker_data {
+    void* parent_allocation;
+    bool ok;
+} worker_data;
+
+#if defined(_WIN32)
+static DWORD WINAPI worker(void* raw) {
+#else
+static void* worker(void* raw) {
+#endif
+    worker_data* data = (worker_data*)raw;
+    ember_rt_thread_attach();
+    ember_alloc_stats stats;
+    ember_debug_alloc_stats(&stats);
+    data->ok = stats.live_bytes == 0 && stats.total_allocations == 0 && stats.total_frees == 0;
+    void* local = ember_alloc(7, 1);
+    ember_free(local, 7, 1);
+    void* smaller = ember_alloc(5, 1);
+    ember_free(data->parent_allocation, 16, 1);
+    ember_debug_alloc_stats(&stats);
+    data->ok = data->ok && stats.live_bytes == 0 && stats.total_allocations == 2 && stats.total_frees == 2;
+    ember_free(smaller, 5, 1);
+    ember_debug_alloc_stats(&stats);
+    data->ok = data->ok && stats.live_bytes == 0 && stats.total_allocations == 2 && stats.total_frees == 3;
+    ember_rt_thread_detach();
+#if defined(_WIN32)
+    return 0;
+#else
+    return NULL;
+#endif
+}
+
+int main(void) {
+    ember_rt_init(NULL);
+    worker_data data = { ember_alloc(16, 1), false };
+#if defined(_WIN32)
+    HANDLE thread = CreateThread(NULL, 0, worker, &data, 0, NULL);
+    if (!thread) return 2;
+    if (WaitForSingleObject(thread, INFINITE) != WAIT_OBJECT_0) return 2;
+    if (!CloseHandle(thread)) return 2;
+#else
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, worker, &data)) return 2;
+    if (pthread_join(thread, NULL)) return 2;
+#endif
+    ember_alloc_stats stats;
+    ember_debug_alloc_stats(&stats);
+    if (!data.ok || stats.live_bytes != 16 || stats.total_allocations != 1 || stats.total_frees != 0) return 1;
+    /* live_bytes is an allocation/free balance on this thread, not a
+     * process-wide leak total: the worker already freed those 16 bytes. */
+    ember_rt_shutdown();
+    puts("ok");
+    return 0;
+}

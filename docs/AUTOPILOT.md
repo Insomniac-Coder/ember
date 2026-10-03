@@ -89,7 +89,8 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   looks wrong, write a new ODR marked OPEN with the question, and move on to other work.
 - **When something truly needs the owner** (reversing his ruling, anything outside 0.9.9,
   anything touching RageV), do not block: record it as an OPEN ODR and continue with the next task.
-- **No subagents or workflows while unattended.** The owner's words: "no workflows, you go solo".
+- **Current-task delegation exception (owner, 2026-10-03):** "you can use parallel agents wherever necessary to speed up the work if you need that". This authorizes scoped parallel agents for this resumed task. Keep shared edits coordinated and serialize compiler suites and timing.
+- **Historical unattended default: no subagents or workflows.** The owner's words: "no workflows, you go solo".
   `docs/AGENT-WORKFLOW.md` holds his rules for multi-agent work, which apply only when he is
   present and has approved the plan.
 
@@ -137,6 +138,18 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   readme protocol from now on". In the README's benchmark tables a ratio below ×0.95 as printed is
   bold and green; every other ratio keeps its colour (green under ×1.05, amber to ×1.10, red above)
   in the regular weight.
+- **Investigate every new slowdown, including the close-to-C table.**
+  The owner's clarified rule, 2026-10-03: only the five already-investigated
+  slow programs (`a10_recursion`, `p1_read_loop`, `a16_map_text`, `t3_lines`,
+  `p5_million_objects`) get a pass. Anything else slower than its C/C++ twin
+  requires investigation; being below 10% is not an exemption. Every new
+  close-to-C or over-10% entry needs optimization wherever possible. Pricing
+  one check or a larger header is evidence, not permission to stop: exhaust
+  safe general alternatives before calling the remaining overhead reasonable.
+  The owner requires that there be no way to make it faster without losing
+  memory safety or safety checks. Do not accept a C compiler's code-generation
+  choice as inevitable before trying general compiler or runtime changes.
+  Reinvestigation of the five accepted entries remains welcome.
 - **Every solution is general, never specific.** The owner, 2026-09-28: "always suggest a general
   and optimised solution, specific solutions are like ticking timebombs just waiting to go off
   because no one is going to write code like 'tests' languages are supposed to be general", and
@@ -206,6 +219,20 @@ The handoff's start-here subsection keeps this list current: tick items off ther
 - **Never touch RageV** (`Code/RageV`), even where the spec describes plans for it.
 
 ## 5. Build, test, commit, push
+
+- **GCC build, test and performance checks are mandatory for every batch.**
+  The owner, 2026-10-03: "good gcc checks are also a must", then "gcc
+  benchmarks are also needed, it's performance also has to be compared".
+  Validate with `EMBER_CC=gcc` as well as MSVC and clang, and compare the
+  feature's C/C++ twin under GCC too, with the same optimization flags and
+  the same gap investigation as above. On this Windows machine GCC is in
+  WSL; use a fresh source snapshot when its existing checkout has uncommitted
+  work, and preserve that work. Keep WSL sources under the home directory:
+  its `/tmp` is tmpfs and disappears when WSL idles out. Correctness builds
+  and tests may run on battery; timing follows the mains and affinity rules
+  above. Pin both WSL programs to the same guest CPU and explicitly report
+  that host performance-core affinity is unverified; those GCC ratios are
+  within WSL, never directly comparable to Windows absolute times.
 
 - **Quick check** (about 30 s): the `annotations.py` command in the handoff's recipes.
   **Full suite:** `cargo test --workspace --no-fail-fast`. **Gates:** the nine commands in the

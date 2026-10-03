@@ -1,12 +1,12 @@
 #$ test: run-pass
 #$ rules: RC-1, RC-2e, CTL-1, CTL-2, RNG-4
 #$ profiles: debug, release, shipping
-#$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 2
+#$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 1
 #$ assert-c-count: contains("ember_retain((ember_obj_header*)") == 0
 #$ stdout: 7
 
 # A yielded handle is borrowed only until an operation gives it a new owner.
-# The second retain belongs to `copies.push(token)`, not to loop iteration.
+# The remaining retain belongs to `copies.push(token)`, not to loop iteration.
 # Range facts prove the loop's index in bounds (`[RNG-4]`), so the loop is
 # not versioned: its body, and the push's retain, appear once.
 class Token:

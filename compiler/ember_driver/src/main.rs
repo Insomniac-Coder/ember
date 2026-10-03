@@ -2263,6 +2263,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[RC-3]` — on the final MIR: a handle copied from a list element that
     // the list keeps alive for the handle's whole life is not counted.
     ember_analysis::mark_uncounted_handles_all(&mut bodies, &types);
+    // `[RC-3]`: a hidden owner transfers only to an owner that survives its
+    // original drop. An owned callee is not such a survival guarantee.
+    ember_analysis::transfer_temporary_owners_all(&mut bodies, &types);
     // A hidden local that only copies another is read from that one, so no
     // copy stands between the loops of a nest; then the pure work a loop's
     // turn begins with whose inputs the loop cannot change (the view an

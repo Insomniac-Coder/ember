@@ -4339,3 +4339,400 @@ exact collection lengths from construction into loop specialization is a
 possible general future optimization, outside this reference-access change.
 Raw samples, C, assembly and the diagnostic scripts are in the session folder
 named in the handoff. No benchmark numbers were written to the README.
+
+## ADR-110 — String mutation over the shared byte buffer
+
+2026-10-03. D-478 and D-479; delegated ODR-098, Hardened_52.
+
+**Context.** `[TXT-11]` promised seven methods with no implementation and
+incomplete signatures. ODR-098 chooses byte offsets, character-boundary
+checks, additional-byte reservation, capacity retained when shrinking and
+integer inputs checked before conversion. No character-position scan or raw
+mutable bytes are exposed to safe code.
+
+**Decision.** Reuse the existing buffer for all seven methods. Construction
+starts an empty String and reserves bytes; capacity, reserve and clear share
+Array's proven paths over u8. Insert, remove and truncate use inline UTF-8
+helpers, moving only the suffix, and passing the original call's source
+location to any boundary or bounds panic. The existing exported decoder is
+retained as a wrapper around the shared inline codec. Existing UTF-8 encoding
+callers use the same inline encoder, with no duplicate algorithm.
+
+Check a size's original integer before handing a native length to the
+runtime: bind it once, cast, check a round trip and (for signed integers)
+nonnegativity. Range values erase to their representation first. This uses
+the existing HIR comparisons and assertions and is valid on any pointer
+width; it needs no new numeric operation or run-time conversion function.
+The C compiler removes redundant round-trip comparisons for native-width
+values. A cast alone lets wide offsets wrap into a valid index and negative
+truncation become an unintended no-op.
+
+Evaluate and reserve the receiver before its arguments, preserving `[EXP-1]`
+left-to-right effects; activate its mutable borrow only at the call, as
+`[BRW-3]`/`[BCK-5]` require. Binding arguments in an outer block reverses
+receiver-index effects and permits writes before the receiver reservation.
+The original reservation analysis followed only a single-successor chain,
+so conditional arguments (including exact-size checks) incorrectly activated
+early. Its general control-flow search now requires every returning path to
+reach one consuming call with no earlier borrower use or reassignment. Panic
+paths may terminate; cycles or escaping paths remain conservative. Method
+autoref diagnostics reuse that provenance search. Genuine user-bound mutable
+references remain active from creation (D-039), and writes during reservation
+or shared borrows live at activation still fail.
+
+Implementing another String allocator or a raw-byte mutation API was rejected:
+the current checked buffer already supplies growth, allocation accounting and
+freeing, and UTF-8 is a safe-code invariant. A character-position interface
+would scan the prefix and disagree with text slicing; ODR-098 rejects it.
+
+**Evidence.** The pre-fix combined method probe fails at
+`String.with_capacity`; afterwards it inserts/removes a Unicode character and
+reads the requested capacity. Twenty-one new TXT-11 cases test all seven
+methods, ASCII and multi-byte Unicode, NUL, empty text, preserved capacity,
+argument reads before mutation, invalid bounds and boundaries, wide/negative
+sizes, and rejection while a text view is live. The first standalone UTF-8
+panic prints its call's location without a dialog. Two BRW-3 cases cover
+conditional argument reads and both branches' borrows live at activation.
+The receiver-order probe printed offset/character/receiver before the fix;
+it now prints receiver/offset/character. Break-testing outer argument bindings
+accepts a mutation during reservation, and refusing reservation branches
+rejects valid conditional reads. Both fixes restore the correct result.
+Focused annotations and final MSVC/clang/GCC workspace correctness suites pass
+after these review fixes. The complete final-code matrix and wider performance
+audit remain open.
+
+**Performance.** No timings ran during the owner's battery-power interval.
+After mains was restored, 40 million Unicode edit turns with all seven methods
+were compared to hand-written C, with identical output. Median of 11
+interleaved runs on the performance cores: msvc: Ember 0.4477 s, C 0.4703 s (0.95x); clang: Ember 0.4551 s, C 0.4579 s (0.99x).
+
+The original clang assembly called `ember_vec_reserve_more` twice on each
+turn, even with adequate capacity. A hand-edited checked inline fast path
+takes 0.4506 s against the original 0.4625 s and C's 0.4537 s, removing the
+whole gap. Build that general fast path: it checks the original length and
+addition, then calls the existing growth function only when capacity is
+insufficient. Array reserve/extend and String use it; the exported reserve-more
+function delegates to the same helper, preserving its ABI. Bounds, UTF-8 and
+size checks remain. Array and String C assertions fail when the compiler's
+inline-reserve calls are removed.
+
+The owner explicitly required GCC performance comparisons too (2026-10-03).
+Under GCC 15.2 with the same release flags (`-O2`, cheap vectorizer and loop
+unrolling), matching output and 11 interleaved runs: GCC: Ember 0.4166 s, C 0.4390 s (0.95x).
+Both programs run on mains pinned to WSL guest CPU 0; host performance-core
+affinity is unverified. This is a within-WSL comparison, not an absolute-time
+comparison against Windows. The handoff records raw-sample paths and power
+checks; these focused numbers do not regenerate README charts.
+
+## ADR-111 — single-byte string searches use one guarded `memchr`
+
+2026-10-03, while regenerating the full benchmark matrix. The owner clarified
+that the five existing over-10% programs have accepted memory-safety overhead
+explanations; every newly added entry needs investigation. MSVC's `split` moved
+around the threshold (1.09x–1.13x C), so it was investigated before publication.
+
+The generated C's generic string search carried the separator length and
+multi-byte retry loop even for a one-byte separator. Initial removal of the
+overflow and slice checks did not remove the gap. Forcing the constructor to
+inline, replacing the preallocated text fill with `memcpy`, and spelling the
+iterator's separator as a literal did not remove the whole gap either. A hand
+written rest-view loop was faster than the reference, so an iterator-shape
+explanation alone was insufficient.
+
+**Built:** `ember_str_search` handles every one-byte needle with one `memchr`
+over the remaining view. It checks `from < s.len` before adding to the pointer
+or reading the needle, including an empty String's null backing pointer. Empty
+needles still match through the view's end; multi-byte needles retain their
+candidate search and comparison loop. This benefits `find`, `contains`,
+`count`, `replace` and all callers, with no special case for the benchmark or
+comma. No overflow, slice or UTF-8 safety check is removed.
+
+**Priced**, median of 51 interleaved runs on mains and Windows performance
+cores, identical output `10000200 590000000`: original Ember 0.0670024 s,
+hand-written C 0.0608453 s (1.1012x); checked single-byte path 0.0644052 s
+(1.0585x). Removing overflow and slice checks only from the diagnostic with
+that path gives 0.0604966 s (0.9943x), accounting for the remaining gap.
+The old generic path alone kept it even with checks removed; this is why the
+initial no-checks result was not accepted as an explanation.
+
+The new TXT-10 case covers empty backing buffers, first/last-byte matches,
+UTF-8 byte offsets, NUL, repeated matches, replacement and empty split parts.
+The standalone MSVC debug panic still exits 3 without a window. Full MSVC,
+clang and GCC correctness validation now passes after the final code changes.
+The final 52-program measurements and wider slowdown audit remain open. Diagnostic C, assembly and all raw
+samples are preserved beside `price-split-search.py` in
+`C:\Users\ism19\AppData\Local\Temp\ember-codex-autopilot-20261003`.
+
+## ADR-112 — byte reductions widen with SAD after the existing proof
+
+2026-10-03, the owner's stricter slowdown audit. A runtime collection length
+and a C compiler's choice of partial sums are not reasons to stop: an available
+safe implementation must be tried. Only the five previously investigated
+over-10% programs are exempt; new close-to-C entries also require investigation.
+
+**Measured before implementation**, 11 interleaved runs on mains and Windows
+performance cores, matching output `499992480000`: original Ember 0.41185 s,
+C 0.39456 s; two/four scalar partial sums 0.39022/0.39068 s (0.989x/0.990x C).
+Eight/sixteen are much worse (10.510/10.535 s) and discarded. A second paired
+experiment prices SSE2, with the original entry proof, checked copy and outer
+total's overflow check: one/two/four vector accumulators 0.08578/0.06805/0.05755 s
+against original Ember 0.41168 s and C 0.39459 s. Four sums are 0.146x C.
+These are diagnostic variants; final production timings follow validation.
+
+**Built:** the C backend follows the complete data flow of an integer byte
+reduction, including copies of the induction variable, immutable element
+references and widening casts. Only a straight, read-only unit-stride stream
+with one 64-bit total and dead loop intermediates qualifies. Integer add and
+subtract, signed and unsigned byte values, and arbitrary Array/Span views use
+the same selection. Any remaining check, call, mutation, live intermediate,
+prefix-result store or unsupported expression keeps the original loop. Native
+size counters and exclusive bounds are required in this first implementation.
+No source name, benchmark size or literal byte value is recognized.
+
+`ember_sum_bytes` returns the sum modulo 2^64. On SSE2 targets four independent
+accumulators use SAD to widen each group of eight unsigned bytes. Signed bytes
+are biased by 128 and unbiased modulo 2^64; scalar tails sign-extend correctly.
+The loop loads a full 64-byte group only if that many bytes remain. Other
+targets use a scalar loop. The helper is used only on the existing unchecked
+path: its arithmetic and bounds proof and original checked fallback remain.
+An empty loop never forms an address from its empty/null backing pointer.
+The low vector lane is copied with C `memcpy`, avoiding a register-extraction
+intrinsic absent on 32-bit SSE2 targets. No object ABI or spec change.
+
+Instruction choice was informed by [Microsoft's intrinsic list](https://learn.microsoft.com/en-us/cpp/intrinsics/x64-amd64-intrinsics-list)
+and [Intel's instruction reference](https://cdrdv2-public.intel.com/789581/325383-sdm-vol-2abcd.pdf),
+then priced in our actual generated C; documentation alone was not evidence
+of a speedup. Raw samples and assembly are beside `price-byte-partials.py`
+and `price-byte-sse.py` in
+`C:\Users\ism19\AppData\Local\Temp\ember-codex-autopilot-20261003`.
+
+**Verification:** all byte values, signed subtraction, nonzero starting
+totals, unaligned slices and every short tail agree with an independent
+closed-form answer under MSVC, clang and GCC in debug/release/shipping. Prefix
+outputs retain the original loop, and a near-limit starting sum still panics
+on its first overflowing add. A separate scalar C oracle checks views beside
+inaccessible pages, every length through a page and unaligned offsets; all
+three compilers pass, and GCC passes the portable scalar fallback too. Removing
+the backend selection fails the conformance C assertion. An external header
+control that drops the vector length guard faults at the guard page. Final
+MSVC/clang/GCC workspace correctness validation passes; final production timing
+and the wider performance audit remain open.
+
+The virtual-call and text-iterator gaps remain open investigations. A safe
+allocation prototype beat the old incomplete C++ twin while retaining the full
+object header, and moving temporary owners also helped. That twin omitted
+object deletion while Ember destroys its owners; those historical ratios do
+not settle the gap. The corrected external raw-pointer twin adds delete after
+printf and is ready, unexecuted, for new pricing. Neither header size nor one no-checks
+control proves that the remaining overhead cannot be optimized safely.
+
+## ADR-113 — allocation statistics describe the calling thread
+
+2026-10-03, found during the strict virtual-call allocation audit. `[RT-11]`
+explicitly requires per-thread statistics or debug-only counters, and forbids
+shared non-atomic writes on allocation. The runtime used one plain global
+`g_stats` in every profile. No design or spec change is needed to fix it.
+
+**Built:** keep the existing allocator and statistics ABI and place the three
+counters in runtime TLS. Allocation and free totals describe operations on
+the calling thread. A free of another thread's block is charged to the freeing
+thread; live bytes are that thread's balance, saturated at zero. They cannot
+be read as a global leak total, and the public header now states this. This
+avoids adding global atomics or an allocation-owner prefix to every block.
+The zero clamp also makes free agree with the existing realloc accounting.
+
+**Verification:** a C oracle uses a real OS worker thread, checks an initially
+empty worker view, allocates/frees locally, frees the parent's block, joins,
+and checks the parent's independent totals. It fails deterministically with
+the old shared counter without requiring concurrent accesses to provoke UB.
+The assertion for a cross-thread free larger than a positive local balance
+also fails before the clamp. The final probe passes with MSVC, clang and GCC.
+The mandatory standalone Windows panic prints and exits without a window;
+final three-compiler batch correctness validation passes. The wider allocation
+performance investigation remains open.
+
+## ADR-114 — transfer fresh temporary owners only when destruction cannot advance
+
+2026-10-03, D-483, found while investigating GCC's virtual-call comparison.
+Fresh ClassNew values passed through class/interface temporaries and Array
+push paid count pairs despite a replacement owner living until the old drop.
+The optimization is in general MIR ownership analysis, not a benchmark shape.
+
+Transfer only a counted Temp with one whole definition, one whole Copy use
+and one unconditional whole Drop, whose cached origin is a known fresh
+non-Sync class allocation through temporary copies/upcasts. The replacement
+class/interface temporary must itself be a counted owner. Array push must
+be followed by a quiet all-path interval to the original drop: intervening
+calls, drops or mutations that could clear/repoint the array are excluded.
+Dominance, storage lifetime, references, moves, conditional/projected drops,
+cycles and unknown origins are checked conservatively. Change Copy to Move
+and erase only the old owner's now-redundant drop.
+
+Do not transfer the caller's last fresh owner into an owned function argument.
+The callee can explicitly drop its owner before returning, and advancing the
+object's observable deinit would change semantics. Named owners and Sync
+allocations remain counted; this does not alter the safety or counting model.
+
+Build one block-dominator tree and interval index per body, then query statement
+order and block dominance in constant time. Cache iterative origin-chain proofs
+across both transfer stages; avoid an entry-graph traversal per candidate or a
+quadratic dominator matrix. Fifteen units compare CFG answers to an independent
+path-removal oracle, cover irreducible edges and verify operation counts on
+16,384-node graphs/chains. Six new conformance cases cover interface/base
+sinks, named/Weak lifetime, explicit callee drop, and retained Sync counts.
+A later review found overlapping intervals could revisit the same statements
+quadratically even though dominance and origin lookup were cached. Uncounted
+membership is now a bitmap and drop-point membership a hash set. One shared
+interval budget charges traversal starts, pops and edges across both stages;
+its limit is 32 times statements + blocks + edges. On exhaustion, leave all
+unproved ownership operations intact. This bounds interval traversal without
+claiming a linear worst case for dominance construction. Units cover 1,024
+overlapping lifetimes, declined-transfer preservation and 1,024 cheap transfers.
+Array intervals also reject Assert because configured panic hooks run before
+abort and may observe owners; no callback non-observation assumption remains.
+Removing the transfer pass makes the positive C assertion fail. Three-compiler
+profiles and final workspace correctness suites pass. Corrected C++ lifetime-
+parity comparison and the wider performance investigation remain open.
+
+## ADR-115 — a char contributes its scalar upper bound to integer range facts
+
+2026-10-03, D-484. A valid char is in 0..=0x10FFFF ([TYP-3]); use that interval
+in the existing type-range machinery. It conservatively includes the invalid
+surrogate gap, which cannot create a false proof. Invalid chars are possible
+only through unsafe behavior already ruled UB. FFI char32_t is mapped to u32,
+whose arbitrary bits are not restricted by this fact ([FFI-8]).
+
+A noinline fixture checks widening char to u32 and adding one, including NUL,
+ASCII and the maximum scalar, while preserving overflow checks for a larger
+addition and an unrestricted u32 parameter. This does not prove text-loop
+accumulations safe; that separate investigation remains open. Disabling only
+the Char fact makes the noinline C assertion RED (three checked additions
+instead of two); restored code retains the two required checks. Final batch
+full correctness validation passes; dynamic text-reduction proof work remains open.
+
+## ADR-116 — native text cursors keep their actual unsigned pointer type
+
+2026-10-03, D-485. Diagnostic 31-run alternatives preserved all checks.
+Unsigned internal state improved GCC; common advance improved MSVC, while
+clang favored the stock branch-local updates. These results identify safe
+alternatives and do not make GCC's remaining gap reasonable or unavoidable.
+
+Native text-loop lowering now uses hidden usize state, compares it directly
+with the evaluated valid view's byte length, and copies char_indices offsets
+as int. Every pre-step cursor is below len. A valid UTF-8 scalar advances by
+1..4 to at most len, so usize cursor arithmetic is representable. All 32-bit
+native offsets fit int; managed 64-bit buffers cap bytes at PTRDIFF_MAX.
+Foreign views do not universally enforce that cap: a hypothetical allocation-
+backed 64-bit view beyond INT64_MAX exposes the existing public signed-length
+contract gap (D-487), also present in .len() and stored iterators. Invalid
+allocation extents are unsafe UB; oversize alone is not expressly ruled UB.
+No realizable supported-target reproducer was found. Empty text never decodes.
+The saved view, keep-alive/borrowing, step-before-body and loop control remain.
+
+StrCharNext codegen inspects its actual mutable-reference pointee and dispatches
+to distinct size_t* and int64_t* helpers. Std Chars/CharIndices keep their int
+state and old signed helper. Equal widths do not permit pointer punning. One
+private header macro defines both codecs, then is undefined. Genuine MSVC
+uses cached lead byte/common advance; clang/GCC retain the measured stock
+shape. No public API change or new unsafe primitive is exposed.
+
+Two run-pass fixtures cover UTF-8 widths, NUL, maximum scalar, signed public
+offsets, native/stored iterators, null-backed empty String and validated empty
+byte views, exhaustion and continue/break/else. Two privacy negatives keep the
+unchecked helper and iterator cursor mutation inaccessible to users. An
+independent encode/decode oracle covers all 1,112,064 valid scalars, both
+typed helpers and zero/nonzero starting cursors, with each scalar ending at a
+protected page. It passes prior compiler validation and actual 32-bit MSVC. An
+external deliberate overread faults at the protected page (0xC0000005); the
+canonical header remains unchanged. Restoring signed native lowering makes the
+unsigned-helper C assertion RED. Production pricing is diagnostic; GCC
+reductions still need safe general alternatives investigated. Final full
+correctness suites after the latest codegen and capability correction pass.
+
+## ADR-117 — split_once produces the two sides of one proven text match
+
+2026-10-03, D-486. General range analysis would need projected conditional
+Option facts, value identity and three-term relations to recover every search
+postcondition after lowering. The existing public split_once already names
+this exact semantic operation. Implement it directly, then use it in every
+std Split.next. This improves all users/separators without recognizing a
+benchmark, expression spelling or panic message, and requires no new API.
+
+Snapshot receiver then separator in the existing HIR Let wrapper; a separator
+expression may repoint the original receiver descriptor. C emission snapshots
+both evaluated descriptors before writing any output field, so output/source
+overlap is safe. One str_search gives SIZE_MAX or a match. Success proves
+at <= text.len and separator.len <= text.len-at; compute tail=(len-at)-sep.len
+and consumed=len-tail, avoiding a checked signed endpoint addition. A complete
+valid UTF-8 needle starts and ends at scalar boundaries of valid UTF-8 text.
+Construct the ordinary tagged Option[(str,str)] directly using existing enum
+layout helpers, without another slice validation, pointer punning or runtime
+result ABI. The suffix uses consumed==0 ? ptr : ptr+consumed, including a
+null-backed empty String and empty needle. Never form NULL+0.
+
+Both Some tuple views have exact nested result-field provenance from argument
+zero only. A temporary separator may die while the views live; the source may
+not. Split still borrows/stores its separator for later iteration. Public
+split_once with empty separator remains Some(("",text)); Split's constructor
+still rejects empty separators, returns trailing empty fields and stays done.
+Partition's distinct empty-separator panic remains unchanged. This does not
+whitelist/elide any general MIR Assert.
+
+Nine TXT-10 fixtures cover Unicode/NUL/no match/empty/trailing fields, both
+retained accumulator checks, receiver evaluation before a mutating separator,
+source-only borrowing, wrapper return/tag access, stored iterator exhaustion,
+copy chains and each result field's source-mutation rejection. One TYP-13 case
+covers shared-Span niche copy chains through reference/index storage, empty
+Some and joined None, with a wholly written element preserved.
+
+Fresh MSVC production initially regressed because nested descriptors were
+written by fields then read whole, and copied destinations lost that producer
+classification. A 31-round rotated/reversed diagnostic isolates the cause:
+baseline 1.728664x C, tag-only None 1.721775x, first payload reads by fields
+1.723587x, propagated descriptor copies 1.040194x, and combined 1.025482x. The
+general correction seeds both nested descriptors and follows exact-type
+Copy/Move chains and exact-payload niche Some wrapping/extraction. Niche
+Some.0 is canonicalized to its physical descriptor; all real
+dereferences/indices and str/span, shared/mutable and element-type
+distinctions remain. No arbitrary alias merging, tuple/struct recursive
+scalarization or source-body recognition is introduced. Wholly written
+unrelated view sources remain whole (D-475). None writes only its live tag; no
+inactive None payload is read or scalarized. This does not remove object
+allocation zeroing.
+
+The copy-chain C milestone is RED before adoption. Removing propagation or
+niche storage canonicalization independently is RED; the inverse
+whole-copy/Lines milestone remains GREEN. Independent before/after provenance
+breaks lose exactly the corresponding text-mutation rejection; receiver-order,
+old split-check and separator-provenance breaks are also RED. A completely
+absent result contract is still rejected by the general validator (E3065), so
+that control is not misreported as broken-code acceptance. The
+temporary-source guard remains E3060.
+
+Post-fix 11-run production diagnostic Ember/C ratios are MSVC 1.038572x, clang
+0.949404x and GCC 0.941660x. The complete normalized MSVC C equals the
+combined prototype, with eight whole-copy replacements; clang differs only by
+its seven descriptor replacements and tag-only None. Both input snapshots and
+both accumulator checks remain. Windows a05_structs remains
+1.003614x/1.002660x. GCC full optimized binaries for all seven paired programs
+(both Ember and C) are byte-identical before/after fields, including split
+despite its C changing: timing movement under GCC does not establish a
+machine-code speedup from this correction. These are diagnostic evidence, not
+README updates or a reasonable/unavoidable-overhead claim. Final full correctness
+suites pass; the wider slowdown audit remains OPEN.
+
+Final correctness evidence for ADR-110 through ADR-117 and D-489/D-491:
+final-fields-workspace-{msvc,clang}.log, final-fields-gcc-{build,workspace,annotations}.log,
+final-fields-msvc-annotations.log and final-fields-validation.json in the same
+external directory. The MSVC/GCC annotation sweeps report failing 0; all eleven
+gates pass, and Appendix A is byte-identical. This validation does not close the
+performance investigation or adopt the external startup/allocation prototypes.
+The first MSVC suite log is preserved separately: unexpected shared-Span
+alias/wrapped L1001 warnings were fixed by deliberate unused-name prefixes,
+then the complete rerun passed; the focused runner now checks unexpected
+diagnostics. D-490 remains OPEN.
+
+Evidence: msvc-current-split-aggregate.json, split-copy-break-results.json,
+split-each-field-break.json, text-break-summary.json,
+current-feature-after-fields-{windows,gcc}.json and
+post-fields-binary-identity.json in the external session directory.

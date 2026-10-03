@@ -17709,6 +17709,56 @@ impl<'a> Checker<'a> {
         Expr { ty: usize_ty, kind: ExprKind::Cast { expr: Box::new(found), to: usize_ty }, span }
     }
 
+    /// `[TXT-11]` (ODR-098) — keep the original integer until its conversion
+    /// is proved exact. A negative value must not become a large no-op
+    /// truncate, nor may a wide integer wrap to a valid byte offset.
+    fn checked_string_size(&mut self, index: &ast::Expr, span: Span) -> Option<Expr> {
+        if matches!(&index.kind, ast::ExprKind::Unary { op: ast::UnOp::Neg, operand }
+            if matches!(&operand.kind, ast::ExprKind::Lit(ast::Literal::Int { value, .. }) if *value > 0))
+        {
+            // Keep the existing negative-literal diagnostic and help.
+            return self.check_index(index, None, span);
+        }
+        let original = self.synth(index);
+        let mut original = self.read_through(original);
+        if let TyKind::Range(id) = *self.types.kind(original.ty) {
+            let repr = self.types.range_def(id).repr;
+            original = Expr { ty: repr, kind: ExprKind::EraseRange(Box::new(original)), span };
+        }
+        let size = self.common.usize;
+        if self.types.is_untyped_literal(original.ty) || original.ty == self.common.error {
+            return Some(self.coerce(original, size));
+        }
+        if !self.types.is_integral(original.ty) {
+            let shown = self.types.display(original.ty);
+            self.error(codes::E2020, index.span, format!("expected an integer, found `{shown}`"));
+            return None;
+        }
+        if original.ty == size { return Some(original) }
+        let ty = original.ty;
+        let bool_ty = self.common.bool_;
+        let (source, result) = (self.declare(None, ty, span), self.declare(None, size, span));
+        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        let cast = |value, to| Expr { ty: to, kind: ExprKind::Cast { expr: Box::new(value), to }, span };
+        let binary = |op, lhs, rhs| Expr { ty: bool_ty, kind: ExprKind::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) }, span };
+        let exact = binary(BinOp::Eq, local(source, ty), cast(local(result, size), ty));
+        let valid = if matches!(self.types.kind(ty), TyKind::Int(_)) {
+            binary(BinOp::And, binary(BinOp::Ge, local(source, ty), Expr { ty, kind: ExprKind::Int(0), span }), exact)
+        } else { exact };
+        Some(Expr {
+            ty: size,
+            kind: ExprKind::Block {
+                block: Block { stmts: vec![
+                    Stmt::Let { local: source, init: Some(original) },
+                    Stmt::Let { local: result, init: Some(cast(local(source, ty), size)) },
+                    Stmt::Expr(Expr { ty: self.common.void, kind: ExprKind::Builtin { which: Builtin::Assert, args: vec![valid, Expr { ty: self.common.str_, kind: ExprKind::Str("String size or byte offset is negative or too large".to_string()), span }] }, span }),
+                ], span },
+                value: Box::new(local(result, size)),
+            },
+            span,
+        })
+    }
+
     /// `[TYP-31]` (0.9.9) — a container's size, read as the `usize` the
     /// runtime keeps, is an `int` to the program.
     fn size_as_int(&self, size: Expr) -> Expr {
@@ -17862,8 +17912,33 @@ impl<'a> Checker<'a> {
         let (str_ty, int_ty, usize_ty, bool_ty) = (self.common.str_, self.common.i64, self.common.usize, self.common.bool_);
         let view = self.declare(None, str_ty, span);
         let sep = self.declare(None, str_ty, span);
-        let at = self.declare(None, int_ty, span);
         let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        // `[EXP-1]` — save the receiver before evaluating the separator,
+        // which may repoint the receiver's original descriptor.
+        let mut stmts = vec![
+            Stmt::Let { local: view, init: Some(text) },
+            Stmt::Let { local: sep, init: Some(separator) },
+        ];
+        if !partition {
+            let pair = self.types.intern(TyKind::Tuple(vec![str_ty, str_ty]));
+            let option_ty = self.option_of(pair);
+            let TyKind::Enum(option) = *self.types.kind(option_ty) else {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            };
+            let variants = &self.types.enum_def(option).variants;
+            let none = variants.iter().position(|variant| variant.fields.is_empty()).expect("Option has None");
+            let some = variants.iter().position(|variant| variant.fields.len() == 1).expect("Option has Some");
+            let value = Expr {
+                ty: option_ty,
+                kind: ExprKind::Builtin {
+                    which: Builtin::StrSplitOnce { none, some },
+                    args: vec![local(view, str_ty), local(sep, str_ty)],
+                },
+                span,
+            };
+            return Expr { ty: option_ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(value) }, span };
+        }
+        let at = self.declare(None, int_ty, span);
         let len_of = |id| Expr { ty: usize_ty, kind: ExprKind::Builtin { which: Builtin::SpanLen, args: vec![local(id, str_ty)] }, span };
         let at_usize = || Expr { ty: usize_ty, kind: ExprKind::Cast { expr: Box::new(local(at, int_ty)), to: usize_ty }, span };
         let slice = |lo: Expr, hi: Expr| Expr {
@@ -17878,29 +17953,23 @@ impl<'a> Checker<'a> {
         };
         let before = slice(Expr { ty: usize_ty, kind: ExprKind::Int(0), span }, at_usize());
         let rest = slice(after_sep(), len_of(view));
-        let mut stmts = vec![
-            Stmt::Let { local: view, init: Some(text) },
-            Stmt::Let { local: sep, init: Some(separator) },
-        ];
-        if partition {
-            let nonempty = Expr {
-                ty: bool_ty,
-                kind: ExprKind::Binary {
-                    op: BinOp::Ne,
-                    lhs: Box::new(len_of(sep)),
-                    rhs: Box::new(Expr { ty: usize_ty, kind: ExprKind::Int(0), span }),
-                },
-                span,
-            };
-            stmts.push(Stmt::Expr(Expr {
-                ty: self.common.void,
-                kind: ExprKind::Builtin {
-                    which: Builtin::Assert,
-                    args: vec![nonempty, Expr { ty: str_ty, kind: ExprKind::Str("partition: empty separator".to_string()), span }],
-                },
-                span,
-            }));
-        }
+        let nonempty = Expr {
+            ty: bool_ty,
+            kind: ExprKind::Binary {
+                op: BinOp::Ne,
+                lhs: Box::new(len_of(sep)),
+                rhs: Box::new(Expr { ty: usize_ty, kind: ExprKind::Int(0), span }),
+            },
+            span,
+        };
+        stmts.push(Stmt::Expr(Expr {
+            ty: self.common.void,
+            kind: ExprKind::Builtin {
+                which: Builtin::Assert,
+                args: vec![nonempty, Expr { ty: str_ty, kind: ExprKind::Str("partition: empty separator".to_string()), span }],
+            },
+            span,
+        }));
         stmts.push(Stmt::Let {
             local: at,
             init: Some(Expr {
@@ -17918,28 +17987,11 @@ impl<'a> Checker<'a> {
             },
             span,
         };
-        let (ty, found, absent) = if partition {
-            let triple = self.types.intern(TyKind::Tuple(vec![str_ty, str_ty, str_ty]));
-            let middle = slice(at_usize(), after_sep());
-            let empty = || Expr { ty: str_ty, kind: ExprKind::Str(String::new()), span };
-            (
-                triple,
-                Expr { ty: triple, kind: ExprKind::TupleLit(vec![before, middle, rest]), span },
-                Expr { ty: triple, kind: ExprKind::TupleLit(vec![local(view, str_ty), empty(), empty()]), span },
-            )
-        } else {
-            let pair = self.types.intern(TyKind::Tuple(vec![str_ty, str_ty]));
-            let option_ty = self.option_of(pair);
-            let TyKind::Enum(option_id) = *self.types.kind(option_ty) else {
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            };
-            let both = Expr { ty: pair, kind: ExprKind::TupleLit(vec![before, rest]), span };
-            (
-                option_ty,
-                Expr { ty: option_ty, kind: ExprKind::EnumLit { enum_id: option_id, variant: 1, fields: vec![both] }, span },
-                Expr { ty: option_ty, kind: ExprKind::EnumLit { enum_id: option_id, variant: 0, fields: vec![] }, span },
-            )
-        };
+        let ty = self.types.intern(TyKind::Tuple(vec![str_ty, str_ty, str_ty]));
+        let middle = slice(at_usize(), after_sep());
+        let empty = || Expr { ty: str_ty, kind: ExprKind::Str(String::new()), span };
+        let found = Expr { ty, kind: ExprKind::TupleLit(vec![before, middle, rest]), span };
+        let absent = Expr { ty, kind: ExprKind::TupleLit(vec![local(view, str_ty), empty(), empty()]), span };
         let arm = |kind, body: Expr| hir::MatchArm {
             pattern: hir::Pattern { ty: bool_ty, kind, span },
             guard: None,
@@ -19587,10 +19639,13 @@ impl<'a> Checker<'a> {
         self.scopes.push(HashMap::new());
         let view_local = self.declare(None, str_ty, span);
         self.locals[view_local.0 as usize].for_iterator = true;
-        let index = self.declare(None, int_ty, span);
+        // The hidden byte cursor is bounded by this valid UTF-8 view's length.
+        // Public offsets remain `int` (`[TYP-31]`); its native representation
+        // avoids signed cursor arithmetic without changing the iterator item.
+        let index = self.declare(None, usize_ty, span);
         let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
         stmts.push(Stmt::Let { local: view_local, init: Some(view) });
-        stmts.push(Stmt::Let { local: index, init: Some(Expr { ty: int_ty, kind: ExprKind::Int(0), span }) });
+        stmts.push(Stmt::Let { local: index, init: Some(Expr { ty: usize_ty, kind: ExprKind::Int(0), span }) });
 
         self.scopes.push(HashMap::new());
         // `s.char_indices()`: the offset the character starts at.
@@ -19606,9 +19661,21 @@ impl<'a> Checker<'a> {
         // One step decodes the character and moves past it, as a C loop
         // does: a width found again from the character costs a second chain
         // of compares (MSVC: 1.3x the C loop).
-        let step = self.pass_receiver(local(index, int_ty), Mode::Mut, span);
-        let mut inner: Vec<Stmt> =
-            position.map(|position| Stmt::Let { local: position, init: Some(local(index, int_ty)) }).into_iter().collect();
+        let step = self.pass_receiver(local(index, usize_ty), Mode::Mut, span);
+        let mut inner: Vec<Stmt> = position
+            .map(|position| Stmt::Let {
+                local: position,
+                // Every 32-bit offset fits int; managed 64-bit views cap
+                // bytes at PTRDIFF_MAX. Public offsets keep the existing
+                // int representation, including foreign-view conversions.
+                init: Some(Expr {
+                    ty: int_ty,
+                    kind: ExprKind::Cast { expr: Box::new(local(index, usize_ty)), to: int_ty },
+                    span,
+                }),
+            })
+            .into_iter()
+            .collect();
         inner.push(Stmt::Let {
             local: character,
             init: Some(Expr {
@@ -19634,8 +19701,8 @@ impl<'a> Checker<'a> {
             ty: bool_ty,
             kind: ExprKind::Binary {
                 op: BinOp::Lt,
-                lhs: Box::new(local(index, int_ty)),
-                rhs: Box::new(Expr { ty: int_ty, kind: ExprKind::Cast { expr: Box::new(len), to: int_ty }, span }),
+                lhs: Box::new(local(index, usize_ty)),
+                rhs: Box::new(len),
             },
             span,
         };
@@ -26490,6 +26557,40 @@ impl<'a> Checker<'a> {
                 let call = self.synth_method_call(&args[0].value, *name, generic_args, &args[1..], span);
                 self.named_interface_call = outer;
                 call
+            }
+
+            // `[TXT-11]` (ODR-098) — a new empty buffer with byte capacity.
+            ast::ExprKind::MethodCall { recv, name, generic_args, args }
+                if is_single_path(recv, "String")
+                    && name.name.is("with_capacity")
+                    && self.lookup(Symbol::intern("String")).is_none()
+                    && !self.names_program_type("String") =>
+            {
+                self.reject_method_type_args(name.name, generic_args, span);
+                if args.len() != 1 || args[0].name.is_some() {
+                    self.error(codes::E2020, span, format!("`String.with_capacity` takes 1 argument, found {}", args.len()));
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+                let Some(count) = self.checked_string_size(&args[0].value, span) else {
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                };
+                let string = self.common.string;
+                let size = self.common.usize;
+                let (kept, buffer) = (self.declare(None, size, span), self.declare(None, string, span));
+                let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+                let receiver = self.pass_receiver(local(buffer, string), Mode::Mut, span);
+                Expr {
+                    ty: string,
+                    kind: ExprKind::Block {
+                        block: Block { stmts: vec![
+                            Stmt::Let { local: kept, init: Some(count) },
+                            Stmt::Let { local: buffer, init: Some(Expr { ty: string, kind: ExprKind::Builtin { which: Builtin::StringNew, args: Vec::new() }, span }) },
+                            Stmt::Expr(Expr { ty: self.common.void, kind: ExprKind::Builtin { which: Builtin::ArrayReserve, args: vec![receiver, local(kept, size)] }, span }),
+                        ], span },
+                        value: Box::new(local(buffer, string)),
+                    },
+                    span,
+                }
             }
 
             // `[TXT-9]` — `String.from(s)` copies a `str` into a new `String`.
@@ -35394,7 +35495,9 @@ impl<'a> Checker<'a> {
             // D-318 — as its representation: not a float range.
             TyKind::Range(id) => self.hashes(self.types.range_def(*id).repr, seen),
             TyKind::Tuple(items) => items.clone().iter().all(|&item| self.hashes(item, seen)),
-            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => {
+            // D-489 — std's structural Hash is for shared Span only. MutSpan
+            // reaches the explicit-implementation fallback below.
+            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, mutable: false } => {
                 self.hashes(*elem, seen)
             }
             TyKind::Enum(id) if self.types.enum_def(*id).is_unit_only() => true,
@@ -37717,6 +37820,10 @@ impl<'a> Checker<'a> {
         let usize_ty = self.common.usize;
         let str_ty = self.common.str_;
 
+        if is_string && matches!(name.name.as_str(), "capacity" | "reserve" | "insert" | "remove" | "truncate" | "clear") {
+            return self.synth_string_mutation(receiver, name, args, span);
+        }
+
         // `[OWN-8]` — `xs.clone()`: a new buffer holding a clone of each
         // element; a `String` copies its bytes.
         if name.name.is("clone") {
@@ -37896,6 +38003,48 @@ impl<'a> Checker<'a> {
         }
         let call = Expr { ty: ret, kind: ExprKind::Builtin { which, args: call_args }, span };
         if matches!(which, Builtin::ArrayLen | Builtin::StringLen) { self.size_as_int(call) } else { call }
+    }
+
+    /// `[TXT-11]` (ODR-098) — the byte-buffer operations share Array growth
+    /// and clear paths; UTF-8 mutation has its own boundary-preserving calls.
+    fn synth_string_mutation(&mut self, receiver: Expr, name: ast::Ident, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let method = name.name.as_str();
+        let expected = match method { "capacity" | "clear" => 0, "insert" => 2, _ => 1 };
+        if args.len() != expected || args.iter().any(|arg| arg.name.is_some()) {
+            self.error(codes::E2020, span, format!("`{method}` takes {expected} positional arguments, found {}", args.len()));
+            return error;
+        }
+        if method == "capacity" {
+            return self.size_as_int(Expr { ty: self.common.usize, kind: ExprKind::Builtin { which: Builtin::ArrayCapacity, args: vec![receiver] }, span });
+        }
+        if !is_place(&receiver.kind) {
+            self.error(codes::E2140, span, format!("`{method}` changes the string, so it needs a String variable"));
+            return error;
+        }
+        // `[EXP-1]`, `[BCK-5]`: evaluate and reserve the receiver first.
+        // Builtin lowering evaluates its arguments in order and activates
+        // the compiler-created mutable reference only at the final call.
+        // Binding the other values in an outer block reverses the receiver's
+        // index/field effects and allows writes before its reservation.
+        let receiver = self.pass_receiver(receiver, Mode::Mut, span);
+        let mut values = vec![receiver];
+        if expected > 0 {
+            let Some(count) = self.checked_string_size(&args[0].value, span) else { return error };
+            values.push(count);
+        }
+        if method == "insert" {
+            values.push(self.check_expr(&args[1].value, self.common.char_));
+        }
+        let (which, ty) = match method {
+            "reserve" => (Builtin::ArrayReserve, self.common.void),
+            "clear" => (Builtin::ArrayClear, self.common.void),
+            "insert" => (Builtin::StringInsert, self.common.void),
+            "remove" => (Builtin::StringRemove, self.common.char_),
+            "truncate" => (Builtin::StringTruncate, self.common.void),
+            _ => unreachable!("String mutation table"),
+        };
+        Expr { ty, kind: ExprKind::Builtin { which, args: values }, span }
     }
 
     /// Part IV.11 step 3 — adjust the receiver to the method's declared mode.

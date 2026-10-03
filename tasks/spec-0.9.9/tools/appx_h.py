@@ -400,6 +400,8 @@ ODRS = [
      '`[TYP-20]`'),
     ('ODR-094', 'the owner\'s: `collect[C]()` builds any `C` implementing `std.core.FromIterator[Item]` (`Array`, `Set`, `Map` from pairs, `String` from `char`s and `String`s, and a program\'s types), `C` written or the type the call is expected to give; `peekable` gives `peek`, `peek_mut`, `next_if` and `next_if_eq`; `Option`\'s `as_ref` and `as_mut` reference the payload where it is; `Box[T]` and `Cell[T]` show as the `T` they hold (Hardened_51)',
      '`[STD-19]`, `[ERR-4]`, `[TYP-39]`'),
+    ('ODR-098', 'String capacity is measured in bytes; reserve asks for additional bytes; insert takes a byte offset and a char, remove returns that char, truncate keeps a byte prefix, and shrinking retains capacity, with UTF-8 boundary and integer-size checks in every profile (Hardened_52)',
+     '`[TXT-11]`, `[TXT-4]`, `[TYP-31]`, `[HEAP-8]`'),
 ]
 
 H5_HEAD = """
@@ -437,7 +439,8 @@ run backwards; Hardened_47 adds ODR-092, when two implementations overlap; Harde
 ODR-093, what a range type implements; Hardened_49 adds ODR-096, how a call chooses between two
 instances of one generic interface; Hardened_50 adds ODR-095, which operators a range value has,
 and ODR-097, where an implementation may be written; Hardened_51 adds ODR-094, the owner's
-ruling on `collect`'s target, `peekable`'s methods, and how `Box` and `Cell` show.
+ruling on `collect`'s target, `peekable`'s methods, and how `Box` and `Cell` show; Hardened_52 adds
+ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutation methods.
 
 | ODR | Ruling | Rules |
 |---|---|---|

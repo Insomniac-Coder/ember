@@ -10705,11 +10705,341 @@ formal 1/9 count or Phase 2's estimate.
 
 #### Start here after a context reset — state at 2026-10-03
 
-The previous batches are committed and pushed on `main`; the newest batch is
-described below and committed with this checkpoint. **Read this subsection
-first**; the rest of §0.355 is the running narrative behind it.
+The previous batches are committed and pushed on `main`; the newest batch below
+is locally validated and prepared for its implementation commit. The wider
+performance audit remains OPEN; post-push CI is pending, with no new commit SHA
+claimed here. **Read this subsection first**; the rest of §0.355 is the running
+narrative behind it.
 
 **Where things stand**
+
+* **String batch: D-478/D-479/D-480 implemented, correctness validated, performance audit OPEN, 2026-10-03 (ADR-110/111).**
+  * ODR-098 is ruled under delegation and pinned as Hardened_52: byte-offset
+    insertion/removal, UTF-8 boundary checks, retained shrinking capacity,
+    additional-byte reservation and exact integer-size conversion.
+  * All seven missing methods are implemented: `with_capacity`, `capacity`,
+    `reserve`, `insert`, `remove`, `truncate`, `clear`. The three UTF-8
+    operations have inline helpers; capacity, reserve and clear share Array's
+    byte-buffer paths. The receiver evaluates and is reserved before arguments;
+    the call activates the mutable borrow after their evaluation. Negative/wide
+    integers are checked before a lossy conversion, and integer ranges and
+    references are read through correctly. D-479's general reservation analysis
+    follows conditional arguments to one consuming call; writes and borrows
+    live at activation still fail. Both mechanisms have been break-tested.
+  * Twenty-one new TXT-11 and two BRW-3 cases pass, covering Unicode/NUL, capacity, boundaries,
+    wide/negative sizes, argument evaluation and live-view borrow rejection.
+    The range case fails when range erasure is removed. Removing the compiler's
+    inline-reserve calls makes the Array and String C assertions fail. The
+    standalone UTF-8 and capacity-overflow panics print without windows.
+  * **Pre-review measurements, to be repeated after the order fix:** 40 million Unicode edit turns, all seven methods exercised,
+    identical output to the hand-written C, median of 11 interleaved runs on
+    mains and performance cores. msvc: Ember 0.4477 s, C 0.4703 s (0.95x); clang: Ember 0.4551 s, C 0.4579 s (0.99x).
+    Clang's original gap was two out-of-line reservations per turn. A checked
+    inline fast path prices the whole gap (Ember 0.4625 s, C 0.4537 s,
+    variant 0.4506 s); it is now shared by Array reserve/extend and String.
+    All original length/addition overflow checks remain; only growth calls
+    the runtime, whose existing exported reserve-more ABI is preserved.
+    The owner also required GCC performance comparisons before this batch
+    was committed. GCC 15.2, same release flags including the cheap vectorizer
+    and loop unrolling, median of 11 interleaved runs: GCC: Ember 0.4166 s, C 0.4390 s (0.95x).
+    The C output matches. Both programs are pinned to WSL guest CPU 0;
+    host performance-core affinity is unverified, so compare this ratio
+    within WSL rather than its absolute times to Windows.
+    Raw samples, C twins, assembly and diagnostic variants are in
+    `C:\Users\ism19\AppData\Local\Temp\ember-codex-autopilot-20261003`.
+    No power-source change occurred during these windows. README charts
+    have not been regenerated for this focused comparison.
+  * **Validation before the final review fix:** full MSVC, clang and GCC workspace
+    suites passed, as did the full MSVC/GCC annotation sweeps, all eleven
+    repository gates and unchanged
+    Appendix A generation. GCC 15.2 (Rust 1.98.1) runs in a fresh WSL snapshot;
+    the previous `~/ember` checkout and its uncommitted work are preserved.
+    H52 has 933 unique rules, no undefined citations, and 42/46 syntax
+    examples compile (the same four unbuilt examples, zero errors).
+  * **Test-run recovery:** concurrent MSVC/clang suites collided in shared
+    temporary output paths. Those earlier suites ran sequentially with distinct
+    TEMP/TMP directories and passed; they do not validate the latest codegen.
+    Never run them together on this checkout.
+    Automatic approval review rejected the command to remove the stale PDB
+    `C:\Users\ism19\AppData\Local\Temp\ember-tests\e67dc816badc9280\debug\bin\accept_only_construction_allocates_backing_storage.pdb`
+    and rerun that conformance target, with the reason "blocked by policy".
+    No cleanup was performed or retried; that artifact is preserved. Fresh
+    output directories validated the code without needing that blocked action.
+  * **Owner's current power and compiler rules:** no benchmarks ran during the
+    battery interval. After he said "connected to main again", the authorized
+    `power-watch.py` poller checks every two minutes (PID 22476); each timed
+    program still checks power immediately before and after. Stop timing on
+    battery. He also said "good gcc checks are also a must": every subsequent
+    batch must pass GCC build/tests alongside MSVC and clang. His following
+    "gcc benchmarks are also needed, it's performance also has to be compared"
+    makes the C/C++ performance comparison mandatory under GCC as well;
+    all three obligations are recorded in `docs/AUTOPILOT.md`. The persistent
+    GCC snapshot is `/home/ism19/ember-gcc-20261003.mH3qar`. Earlier correctness
+    checks passed in a `/tmp` snapshot of the same archive, which WSL removed
+    when it idled out; `/tmp` here is tmpfs, so do not keep working sources there.
+  * D-477 is pushed as `c04ecf5dc6f113c9ca7f35741a626e8c504f64b1`; all five
+    CI jobs passed (run 37102121471). This newest implementation checkpoint is
+    locally correctness-validated; repeat the docs-only gates before its commit,
+    then watch that exact commit in CI. Current feature comparisons and the
+    wider performance audit remain open. README regeneration requires a current final
+    matrix after the stricter slowdown audit, which remains open.
+  * **New slow-table candidate investigated (D-480):** MSVC `split` measured
+    1.1012x C. A general one-byte string-search path reduces it to 1.0585x;
+    removing checks only from that diagnostic gives 0.9943x, pricing the
+    remaining gap as checks. Earlier no-checks, forced-inlining, literal
+    separator and preallocated-fill variants did not explain the whole gap.
+    Final correctness validation now passes; the complete final-code matrix
+    and exhaustive slowdown investigation remain pending.
+    The owner's subsequent clarification exempts only the previous five slow
+    programs; every other slowdown, including a new close-to-C entry, needs
+    investigation and all safe general optimization options exhausted. One
+    diagnostic that prices a check or header does not establish that no safe
+    speedup remains. Keep the performance investigation open until those
+    alternatives are exhausted. Verified implementation checkpoints may be
+    committed under the standing five-feature cadence, with unresolved audit
+    work recorded explicitly; do not publish stale benchmark tables or call
+    remaining overhead reasonable. Fresh pre-D-481 Windows/GCC 52-program samples
+    are preserved in `readme-final-{windows,gcc}.json` and `.log`; they are not
+    published. GCC virtual calls are a new candidate (initial 1.1443x C++,
+    31-run repeat 1.0883x; a C++ control with matching 32-byte objects 1.1271x).
+    Its hot loop already has direct guarded calls and no per-item safety
+    checks; investigate safe allocation/layout improvements before calling
+    the header cost unavoidable. MSVC byte sums also need safe alternatives
+    to its two-versus-four partial-sum choice explored. GCC split's 31-run
+    diagnostic is 1.0722x C, 0.9738x with checks removed only in the variant;
+    investigate whether those checks can be proved or hoisted safely too.
+  * **D-481 implemented (ADR-112), correctness validated, performance audit OPEN:** the stricter
+    audit found a safe byte-sum optimization. Runtime-count MSVC is not an
+    unavoidable explanation: two/four partial sums measured 0.989x/0.990x C;
+    eight/sixteen became 26.6x/26.7x and were discarded. Four SSE2 sums measured
+    0.05755 s against original Ember 0.41168 s and C 0.39459 s (0.146x C),
+    with the original guard and checked fallback still in place. Production
+    now selects complete, pure byte-reduction data flow for signed/unsigned
+    bytes added/subtracted into 64-bit totals, follows copies/references and
+    widens with SAD. It has a portable scalar fallback and never reads past
+    a short or unaligned view. Three conformance cases and a guard-page C
+    oracle pass on MSVC/clang/GCC; GCC's scalar fallback also passes. The
+    selection and load-length guard are break-tested. A later conservative
+    hardening rejects address-taken totals and counters; each guard has its
+    own red generated-C assertion when removed. Six additional cases cover
+    modular u64/signed casts, copied indices/references, narrowing, mutation,
+    live intermediates and escaped addresses. Final full correctness suites
+    pass; final feature timing and the wider audit remain open. All 52-program samples preceding this fix are
+    diagnostic history and cannot be published as current README numbers.
+  * **D-482 implemented (ADR-113), correctness validated, performance audit OPEN:** allocation
+    statistics were shared non-atomic counters even in release/shipping,
+    contrary to `[RT-11]`. They are now thread-local with the same public
+    structure and allocator hooks. Totals describe this thread's operations;
+    cross-thread frees count on the freeing thread and live bytes are a local
+    balance saturated at zero, not a process-wide leak total. The native
+    thread oracle fails with the shared counter and passes under MSVC, clang
+    and GCC. A larger cross-thread free exposed the original balance's lack
+    of saturation; that additional assertion was red before the correction.
+    A single MSVC UTF-8 panic exits normally without opening a window before
+    the focused checks. Final three-compiler batch correctness validation passes.
+  * **D-483 implemented (ADR-114), correctness validated, performance audit OPEN:** transfer a
+    fresh non-Sync class temporary through owning class/interface temporary
+    sinks, or into an Array push, only when all paths preserve its owner until
+    the original unconditional drop. Named owners, references, unknown/cyclic
+    origins, Shared/Sync objects, conditional drops and owned function calls
+    remain counted. In particular a callee may explicitly drop its argument:
+    transferring the caller's only owner would advance observable destruction.
+    Fifteen unit tests cover CFG dominance against a path-removal oracle,
+    actual Return/drop/cycle/uncounted/Assert rejections, cheap transfers and
+    overlapping lifetimes. Uncounted membership and drop points are cached.
+    A shared interval-work budget of 32 times body statements/blocks/edges
+    preserves all unproved Copy/Drop operations on exhaustion; this bounds
+    repeated interval traversal, not the dominator algorithm's worst case.
+    Array proof rejects Assert as well as calls: panic hooks can observe owners
+    before abort. Six conformance cases cover fresh/interface/base owners,
+    named/Weak lifetime, owned calls and Sync counts. Removing the transfer
+    pass makes the positive retain assertion red; the char fact and each byte
+    address guard also have independent red break-tests. Final correctness
+    suites pass. New C++ lifetime-parity pricing is still required before any
+    final speed or overhead conclusion.
+  * **D-484 implemented (ADR-115), correctness validated, performance audit OPEN:** range analysis
+    now knows a valid char lies in 0..=0x10FFFF. This safe overapproximation
+    includes the surrogate gap. Widening a char to u32 and adding one is proven
+    safe; potentially overflowing additions and unrestricted foreign u32
+    values keep checks. A noinline regression distinguishes all three.
+    The disabled-Char-fact assertion is RED (three checks instead of two);
+    restored code retains the required two. Final full correctness validation passes.
+  * **D-485 implemented (ADR-116), correctness validated, performance audit OPEN:** decoder
+    alternatives retain all checks. Diagnostic 31-run comparisons found
+    GCC's unsigned cursor 1.0284x C versus 1.0683x baseline; MSVC common
+    advance 0.9772x versus 1.0080x, while clang favors the original shape
+    (0.9339x versus 0.9960x). Production native text loops now use a hidden
+    usize byte cursor and copy public offsets as int, with actual typed
+    int64_t*/size_t* helpers; std iterator state remains int. Genuine MSVC
+    uses common advance; clang/GCC keep branch-local advance. No pointer
+    punning or safety relaxation. Two fixtures cover Unicode widths, NUL,
+    maximum scalar, native/stored iterators and continue/break/else. The
+    combined production shapes have current diagnostic comparisons; GCC text
+    reductions remain open; final correctness validation passes. Kernel-Power 105 review covers
+    07:02:49 through 14:03:48 UTC with zero events (all-bench-power-check.json).
+    Repeat the query for later runs.
+  * **D-486 implemented (ADR-117), correctness validated, performance audit OPEN:** the existing
+    public split_once is one semantic text primitive, used by every std Split
+    step. Search success proves both lengths by subtraction and both UTF-8
+    endpoints, so no endpoint overflow or boundary revalidation is needed.
+    Backend snapshots both inputs before writing its ordinary Option tuple;
+    the HIR wrapper separately preserves receiver-before-separator evaluation.
+    Both views borrow only the text, with exact nested Some result provenance.
+    Public empty separator stays Some(("", text)); Split retains its empty-sep
+    constructor panic, terminal state and trailing empty part. Empty null-backed
+    text never forms NULL+0.
+    Nine TXT-10 cases cover behavior, checks, order, borrowing, both sides and
+    copy chains; one shared-Span TYP-13 case covers projected/niche storage.
+    Fresh MSVC production regressed because field-written descriptors and their
+    copied destinations were read whole. The 31-round baseline/tag-only/
+    first-reads/propagation/combined ratios are 1.728664/1.721775/1.723587/
+    1.040194/1.025482x C. General field-producer classification now follows
+    exact-type copies and exact niche Some wrapping/extraction, erasing only
+    physical Some.0 projections. Real projections and wholly written unrelated
+    sources remain. None writes only its live tag; no inactive payload is read
+    or object allocation zeroing removed. The new milestone is RED before
+    adoption; disabled propagation/canonicalization controls are separately RED.
+    The inverse whole-copy/Lines proof stays GREEN. Each side's provenance,
+    receiver order, old checks and separator provenance also have RED controls;
+    missing contracts still fail E3065 and temporary escape still fails E3060.
+    Current 11-run diagnostic ratios are MSVC 1.038572x, clang 0.949404x and
+    GCC 0.941660x C. The full MSVC C matches the priced eight-copy closure;
+    clang has exactly seven replacements. Both snapshots and checks remain.
+    Windows a05_structs is 1.003614x/1.002660x. This establishes no reasonable/
+    unavoidable-overhead conclusion. Final correctness suites pass; slowdown
+    work remains OPEN.
+    Old split-fact pricing stays historical, not publication. Evidence:
+    msvc-current-split-aggregate.json, split-copy-break-results.json,
+    split-each-field-break.json, text-break-summary.json and
+    current-feature-after-fields-{windows,gcc}.json in the external directory.
+  * **Actual 32-bit byte-sum check:** MSVC x86 /arch:SSE2 executes the full
+    protected-page oracle successfully. A standalone x86 CRT abort finishes
+    under CREATE_NO_WINDOW/SetErrorMode before the oracle (expected CRT
+    fail-fast status 0xC0000409). Typed decoder page-end coverage also passes
+    actual 32-bit MSVC (/arch:SSE2); see x86-native-results.json.
+  * **Decoder review follow-up:** a native C guard-page oracle now covers
+    all 1,112,064 valid scalars, both typed helpers and zero/nonzero cursors;
+    prior native validation passed. A deliberate overread is RED (0xC0000005),
+    with the canonical header unchanged. New cases include empty String/view and
+    private cursor/next_char rejection. A review corrected an overbroad
+    PTRDIFF_MAX comment: it is a managed-buffer bound, not universally enforced
+    for foreign views. Native usize decoding cannot overflow because the full
+    scalar fits the remaining bytes; all 32-bit offsets fit public int.
+    D-487 records the pre-existing hypothetical 64-bit foreign-view signed
+    length gap, with no realizable supported-target reproduction; no fabricated
+    invalid allocation was used as a proof or reason to weaken checks.
+  * **Final correctness validation COMPLETE, 2026-10-03:** sequential MSVC
+    and clang workspace suites pass in final-fields-workspace-{msvc,clang}.log.
+    The persistent WSL snapshot's fresh GCC build and complete workspace suite
+    pass in final-fields-gcc-{build,workspace}.log. Full annotation sweeps report
+    failing 0 in final-fields-msvc-annotations.log and
+    final-fields-gcc-annotations.log. All eleven repository gates, including
+    runtime generation/consistency, pass; Appendix A regeneration is byte-identical
+    with SHA256 f8ec2010eadc6f7393e81c67c77dcb8268b8604578f419bc03eedad422dcc4af.
+    final-fields-validation.json records all three workspace statuses, the
+    successful final-suite marker, source ID and each log's path/SHA256.
+    The 4,260-file validated input manifest, captured before this documentation
+    update, has ID cb1384dfce06e4767177edef7dac5b36406a45cd0119c01af13f56e07930fd7e
+    (final-fields-source-manifest.json and final-fields-source-id.txt). Root
+    verified compiler/runtime/std/test inputs unchanged after all three
+    suites; only DEFECTS, DECISIONS and this handoff changed afterward. The
+    docs-only gate rerun precedes commit. Post-push CI remains pending. Earlier
+    current-batch-validation.json remains pre-aggregate/Hash/cache history.
+  * **Final-suite first failure preserved:** the first MSVC run failed only
+    because the shared-Span fixture's hoisted alias/wrapped bindings emitted
+    unexpected L1001 warnings. It is retained as
+    final-fields-first-msvc-unexpected-lints.log. Root renamed the deliberately
+    unused fixture bindings _alias/_wrapped, without a branch-hoisting fix.
+    The focused runner now checks unexpected diagnostics; the complete MSVC
+    rerun passes. This fixture adjustment does not close D-490.
+  * **Timing variability:** among seven GCC paired programs only split C
+    changes; all seven full optimized Ember/C pairs are byte-identical before/
+    after fields, split included. a05_structs is outside this identity record.
+    Windows non-split C is identical. Clang String C and all eight PE sections
+    are identical despite its separate 11-run ratio moving 0.998587x to
+    1.054748x. A rotated/reversed 31-round repeat gives 0.950624x earlier and
+    0.963872x current, with matching stdout. Whole PE hashes differ. Evidence:
+    post-fields-binary-identity.json and equivalent-program-repeat-clang-string.json.
+    README values are unchanged; code identity does not waive the wider audit.
+  * **D-488 OPEN:** compiler-synthesized evaluation bindings end owned producer
+    temporaries at hidden statement boundaries instead of the source evaluation
+    endpoint. The general design and unvalidated candidates are external under
+    d488-evaluation-lifetimes. HEAD source has the same issue; this is not
+    D-466's remaining diagnostic-name problem. No fix is claimed.
+  * **D-489 FIXED, correctness validated:** structural Hash
+    admitted mutable Span despite std's shared-only implementation, so unused
+    Option[MutSpan[int]].hash failed E2020 during take() lookup. The shared-only
+    predicate preserves explicit implementations. Shared actual-method/generic
+    and two adapted mutable positives pass all MSVC/clang profiles; the generic
+    negative passes with sole E2040 in all Windows profiles. Disabling only the
+    guard restores take's E2020 and incorrectly accepts the negative. Full
+    source is restored/rebuilt. The original larger case now reaches D-490,
+    not GREEN. Final GCC and three-compiler full correctness suites pass. Evidence:
+    hash-fixed-negative-results.json and hash-cache-break-results.json.
+    The Hash mismatch is present at HEAD; D-318 is the earlier analogue.
+  * **D-490 OPEN:** hoist_branch_names appends reads of consumed
+    moved/wrapped/forwarded at the end of a completing owned Some arm; None
+    panics, so Some alone qualifies. Extra reads cause E3040 at the initial
+    declarations and unused outer bindings cause L1001. Root reproduced the
+    larger case after the Hash fix. The same HEAD assignments were inspected,
+    not executed as a baseline reproduction. Evidence:
+    hash-mut-span/MOVE-HOIST.md. This is separate from D-489 and fixed D-260.
+  * **D-491 FIXED, correctness validated:** MemReplace returned
+    a direct Span without refreshing its duplicate indexing pointer. Confirmed
+    pre-fix C assigns _5 then indexes uninitialized _5_ptr; see
+    view-copy-review/memreplace-before-fix.c. HEAD omits the setter by source
+    inspection. The existing setter now refreshes the result before continuing.
+    The dynamic-index runtime fixture and cache milestone pass all Windows
+    profiles. Disabling only the setter makes the C milestone RED; the broken
+    executable was never run. Full source is restored/rebuilt. Final GCC and
+    three-compiler full correctness suites pass (hash-cache-break-results.json
+    and final-fields logs). Hash consistency and cache
+    maintenance need no new ADR.
+  * **Delegation authorized, 2026-10-03:** the owner explicitly permits
+    parallel agents wherever necessary. Ownership proof review and text proof/
+    decoder work are delegated with separate scopes; root serializes builds,
+    runtime execution and benchmarks. This supersedes the resumed solo rule
+    for this task. The current goal continues; no phase estimate was changed.
+  * **Virtual-call audit remains open:** 31 interleaved GCC runs price the
+    temporary count pairs: original 1.0712x C++, moved-temporary diagnostic
+    1.0295x. Direct first-itable dispatch is worse (1.2556x; with moves 1.2334x),
+    so keep guarded devirtualization. A full-header slab diagnostic is 0.7936x
+    C++; omitting dropless-field zeroing alone is 1.0568x and does not help.
+    The slab is not production-ready (reclamation, cross-thread frees, stats,
+    custom hooks), and H52 `[RT-1]` requires system malloc/realloc/free. Do not
+    change that contract silently or call the header overhead unavoidable.
+    General safe temporary ownership transfer is implemented in D-483.
+    Continue allocation/dispatch alternatives before any overhead conclusion,
+    and decide whether an ODR is necessary.
+    Raw samples: `byte-partial-pricing.json`, `byte-sse-pricing.json`,
+    `gcc-object-allocation-pricing.json`, `gcc-virtual-dispatch-pricing.json`
+    under the same external evidence directory. Check their windows against
+    Kernel-Power 105 before recording final timing claims.
+  * **C++ twin lifetime parity and publication boundary:** the old a07 C++ twin
+    allocated one million Circle/Square objects in vector<Shape*> and never
+    deleted them; Ember's owning Array destroys them. All old virtual ratios
+    are incomplete-baseline history, unable to settle required overhead.
+    twin-parity/a07_virtual_calls.cpp preserves the raw-pointer layout/work
+    and adds explicit delete after printf; it is ready but unexecuted.
+    twin-parity/a05_structs.cpp is the required DOD C++ twin: an empty
+    vector<Particle>, matching pushes/fields/mutation/reduction, then cleanup.
+    It too is unexecuted; its vendor-dependent growth is disclosed. Old
+    references/results and README are untouched. Future comparisons must
+    explicitly select these fresh twins and recompile them under the same
+    compiler/release flags. The prepared publication pipeline passed syntax
+    checks, but actual/synthetic smoke validation is pending. No final matrix
+    has been regenerated or published.
+  * **Prepared alternatives are not production:** gcc-startup-investigation
+    contains the future startup plan, init-NULL and section-GC candidates.
+    They have not been adopted. The external allocation prototype's C++
+    alignment issue was corrected only outside the repository; no production
+    allocator/alignment change or speed conclusion follows.
+  * **Next:** commit/push the locally validated checkpoint after the source and
+    docs-gate checks, watch post-push CI, and continue the stricter slowdown
+    audit above; then the interface
+    half of D-467 (per-class result access), G7-2's
+    256-deep literals, D-460 and D-466's temporaries, then the review backlog
+    below. Core phase estimates remain unchanged; this is no new phase audit.
 
 * **Autopilot resumed, 2026-10-03.** The owner: "use autopilot mode and start
   working on the language development". This resumes the 2026-10-02 pause;
@@ -10737,20 +11067,26 @@ first**; the rest of §0.355 is the running narrative behind it.
     generated C that fixed count takes 0.3999 s; changing only its unsigned
     arithmetic to signed does not help (0.4282 s). The fixed-count gap is
     MSVC's treatment of a runtime collection length, priced as the whole
-    gap, with no per-element check left. The benchmark and diagnostic
+    gap, with no per-element check left. **This initial conclusion is
+    superseded by D-481 above: a safe general byte reduction is much faster.**
+    The benchmark and diagnostic
     scripts, assembly and raw samples are in
     `C:\Users\ism19\AppData\Local\Temp\ember-codex-autopilot-20261003`.
     No power-source change event occurred during these runs. README
     benchmark charts have not been regenerated for this focused check.
+    GCC performance was also checked on 2026-10-03 at the owner's explicit
+    request: GCC: Ember 0.3492 s, C 0.4668 s (0.75x), same output `499992480000`, same GCC release flags,
+    median of 11 interleaved runs. Both programs are pinned to WSL guest
+    CPU 0; host performance-core affinity is unverified. Raw samples are in
+    `gcc-current-bench-results.json`; generated C and assembly are under the
+    persistent GCC snapshot's `gcc-comparison/` directory.
   * All eleven repository gates and the full annotation sweep pass.
     `spec_check --emit-appendix` leaves the adopted specification unchanged
-    byte for byte. This checkpoint is ready to commit and push; watch its
-    exact-head CI before continuing the next batch.
-  * **Next:** `[TXT-11]`'s seven missing String methods, then the remaining
-    review findings below. Its `insert`/`remove`/`truncate` names have no
-    complete signatures in H51; settle those through delegated ODR-098
-    before implementing them. The existing phase estimates stay unchanged:
-    this batch implements an optimization of already-counted rules.
+    byte for byte. This checkpoint was pushed as `c04ecf5d`; all five CI
+    jobs passed in run 37102121471.
+  * The following String batch (D-478, above) supplies the seven methods and
+    their missing H51 signatures through delegated ODR-098. The existing
+    phase estimates stay unchanged: D-477 optimizes already-counted rules.
 
 * **Last commits, oldest first:**
   * `f3a8d6c` (D-248/D-250) and the handoff `770780b`.
@@ -11138,14 +11474,15 @@ first**; the rest of §0.355 is the running narrative behind it.
   * The gcc and speed work of 2026-10-01/02 (below): `fa40f25` (ADR-098,
     D-445, D-446), `723800f` (ADR-099, the README's gcc columns), `065fd5b`
     (ADR-100, the `Map`; CI green on each), then ADR-101's commit.
-* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_51.md`
-  (ODR-094, the owner's: `collect`'s target, `peekable`'s methods, `Option`'s
+* **Development target:** `docs/spec-source/Ember_v0.9.9_Hardened_52.md`
+  (ODR-098, String mutation and capacity contracts; H51 carried
+  ODR-094, the owner's: `collect`'s target, `peekable`'s methods, `Option`'s
   `as_ref`/`as_mut`, and `Box` and `Cell` show as what they hold; H50 carried
   ODR-095, which operators a range value has, and ODR-097, where an
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
-  `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h51/` are frozen.
-* **Next numbers:** ODR-098, D-478, ADR-110, ERR-056.
+  `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h52/` are frozen.
+* **Next numbers:** ODR-099, D-492, ADR-118, ERR-056 (D-488/D-490 OPEN; D-489/D-491 FIXED and correctness-validated; wider performance audit OPEN).
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
@@ -11426,10 +11763,9 @@ first**; the rest of §0.355 is the running narrative behind it.
     pending decisions: `a16_map_text`'s text map (key on the stack, a
     small-block allocator, or short text inside `String`) and bigger
     `[SIMD-7]` blocks for `p1_read_loop` (a spec change).
-  * **Next:** D-477 closes the read-only element-reference gap in
-    `[SIMD-5]` (2026-10-03, above). Build `[TXT-11]`'s seven missing `String`
-    methods (`with_capacity`, `reserve`, `insert`, `remove`, `truncate`,
-    `clear`, `capacity`); then what is left of the second review: the
+  * **Next:** D-477 closes read-only element references in `[SIMD-5]` and
+    D-478 completes `[TXT-11]`'s seven String methods (2026-10-03, above).
+    Continue what is left of the second review: the
     interface half of D-467 (a per-class accessor in the type information),
     G7-2 (a 256-deep literal's stack), D-460 (G5-7), D-466's temporaries, G7-3
     to G7-5, G8-4; then the fused `for` over the other adapters; then

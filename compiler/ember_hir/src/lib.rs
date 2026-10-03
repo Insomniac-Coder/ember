@@ -871,6 +871,10 @@ pub enum Builtin {
     StrStartsWith,
     StrEndsWith,
     StrFind { reverse: bool },
+    /// `[TXT-10]` — find the first separator and return its two borrowed
+    /// sides, or `None`. Successful search already proves their bounds and
+    /// UTF-8 boundaries. The result borrows only the searched text.
+    StrSplitOnce { none: usize, some: usize },
     StrCount,
     StrReplace,
     StrRepeat,
@@ -892,8 +896,10 @@ pub enum Builtin {
     ParseValue { kind: ParseKind },
     StrToLower,
     /// `[CTL-1]` — the `char` that starts at byte `at` of a `str`, moving
-    /// `at` (an `int`, passed by reference) past it. `at` is on a character
-    /// boundary before the end: the text loop and std's iterators keep it so.
+    /// `at` past it through a mutable reference. Std's iterator state is
+    /// `int`; a native text loop's hidden cursor is `usize`, with its public
+    /// byte offset copied as `int`. Both keep `at` on a character boundary
+    /// before the end and dispatch to a helper with the same pointer type.
     StrCharNext,
     /// `[LEX-19]` — append a value to an f-string's buffer as its spec says.
     FormatWith(FormatSpec),
@@ -1017,6 +1023,11 @@ pub enum Builtin {
     StringPush,
     /// `s.push(c)`, appending one Unicode scalar encoded as UTF-8.
     StringPushChar,
+    /// `[TXT-11]` (ODR-098) — UTF-8 mutation by byte offset, preserving
+    /// character boundaries and the owned buffer's capacity when shrinking.
+    StringInsert,
+    StringRemove,
+    StringTruncate,
     /// `s.len()` in bytes.
     StringLen,
     /// A `String` borrowed as a `str`, which is what `println` takes.
@@ -1296,6 +1307,7 @@ impl Builtin {
             Builtin::StrStartsWith => "starts_with",
             Builtin::StrEndsWith => "ends_with",
             Builtin::StrFind { reverse } => if reverse { "rfind" } else { "find" },
+            Builtin::StrSplitOnce { .. } => "split_once",
             Builtin::StrCount => "count",
             Builtin::StrReplace => "replace",
             Builtin::StrRepeat => "repeat",
@@ -1346,6 +1358,9 @@ impl Builtin {
             Builtin::StringNew => "String",
             Builtin::StringPush => "push_str",
             Builtin::StringPushChar => "push",
+            Builtin::StringInsert => "insert",
+            Builtin::StringRemove => "remove",
+            Builtin::StringTruncate => "truncate",
             Builtin::StringLen => "len",
             Builtin::StringAsStr => "as_str",
             Builtin::Format => "format",

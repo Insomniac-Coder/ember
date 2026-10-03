@@ -19,6 +19,10 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>  /* [STD-15]: the generated Array helpers move bytes */
+#if defined(__SSE2__) || defined(_M_X64)
+#include <emmintrin.h> /* integer byte reductions; portable scalar fallback below */
+#define EMBER_SSE2_BYTE_SUM 1
+#endif
 #if defined(_MSC_VER) && !defined(__clang__) && (defined(_M_X64) || defined(_M_ARM64))
 #include <intrin.h>  /* __mulh, __umulh: a 64-bit product's high half */
 #define EMBER_MSVC_MULH 1
@@ -57,6 +61,43 @@ extern "C" {
 #define EMBER_NORETURN __attribute__((noreturn))
 #define EMBER_INLINE __attribute__((always_inline)) inline
 #endif
+
+/* `[SIMD-7]` — a read-only byte sum after its arithmetic/bounds proof, or
+ * with wrapping arithmetic. Return the sum modulo 2^64. The compiler keeps
+ * the original checked path where its proof fails. Four independent sums
+ * hide the add latency; unsigned SAD widens each group of eight bytes before
+ * adding it. Signed bytes are biased by 128, then unbiased modulo 2^64.
+ * No vector load reaches outside `len`, including an unaligned short tail;
+ * a null pointer is valid only for `len == 0`, when nothing is read. */
+static EMBER_INLINE uint64_t ember_sum_bytes(const void* raw, size_t len, bool signed_bytes) {
+    const uint8_t* bytes = (const uint8_t*)raw;
+    uint64_t sum = 0;
+    size_t i = 0;
+#if defined(EMBER_SSE2_BYTE_SUM)
+    __m128i zero = _mm_setzero_si128();
+    __m128i bias = signed_bytes ? _mm_set1_epi8((char)-128) : zero;
+    __m128i p0 = zero, p1 = zero, p2 = zero, p3 = zero;
+    for (; len - i >= 64; i += 64) {
+        p0 = _mm_add_epi64(p0, _mm_sad_epu8(_mm_xor_si128(_mm_loadu_si128((const __m128i*)(bytes + i)), bias), zero));
+        p1 = _mm_add_epi64(p1, _mm_sad_epu8(_mm_xor_si128(_mm_loadu_si128((const __m128i*)(bytes + i + 16)), bias), zero));
+        p2 = _mm_add_epi64(p2, _mm_sad_epu8(_mm_xor_si128(_mm_loadu_si128((const __m128i*)(bytes + i + 32)), bias), zero));
+        p3 = _mm_add_epi64(p3, _mm_sad_epu8(_mm_xor_si128(_mm_loadu_si128((const __m128i*)(bytes + i + 48)), bias), zero));
+    }
+    p0 = _mm_add_epi64(_mm_add_epi64(p0, p1), _mm_add_epi64(p2, p3));
+    p0 = _mm_add_epi64(p0, _mm_srli_si128(p0, 8));
+    /* A C copy of the low lane also works on 32-bit SSE2 targets, whose
+     * intrinsic headers do not provide the 64-bit register extraction. */
+    memcpy(&sum, &p0, sizeof sum);
+    if (signed_bytes) sum -= (uint64_t)i * UINT64_C(128);
+#endif
+    if (signed_bytes) {
+        const int8_t* signed_data = (const int8_t*)raw;
+        for (; i < len; ++i) sum += (uint64_t)(int64_t)signed_data[i];
+    } else {
+        for (; i < len; ++i) sum += bytes[i];
+    }
+    return sum;
+}
 
 /* A function only a rare path calls: gcc and clang lay the paths that
  * reach it out of line, so the common path falls through. */
@@ -1474,30 +1515,67 @@ size_t ember_str_char_count(ember_str s);
 uint32_t ember_str_char_at(ember_str s, size_t i);
 size_t ember_char_utf8_len(uint32_t c);
 
-/* `[CTL-1]`, `[TXT-10]` — the character that starts at byte `*at` of valid
- * UTF-8 (a boundary before the end), moving `*at` past it: the text loop's
- * and std's iterators' step. Inline, and one function, as a C programmer's
- * loop decodes: a call into the runtime's unit cannot be inlined, and a
- * width found again from the character costs MSVC a second chain of
- * compares. */
-static inline uint32_t ember_str_char_next(ember_str s, int64_t* at) {
-    const unsigned char* p = s.ptr + *at;
-    if (p[0] < 0x80) {
-        *at += 1;
-        return p[0];
-    }
-    if (p[0] < 0xE0) {
-        *at += 2;
-        return ((uint32_t)(p[0] & 0x1F) << 6) | (uint32_t)(p[1] & 0x3F);
-    }
-    if (p[0] < 0xF0) {
-        *at += 3;
-        return ((uint32_t)(p[0] & 0x0F) << 12) | ((uint32_t)(p[1] & 0x3F) << 6) | (uint32_t)(p[2] & 0x3F);
-    }
-    *at += 4;
-    return ((uint32_t)(p[0] & 0x07) << 18) | ((uint32_t)(p[1] & 0x3F) << 12)
-         | ((uint32_t)(p[2] & 0x3F) << 6) | (uint32_t)(p[3] & 0x3F);
+/* `[CTL-1]`, `[TXT-10]` — decode at a boundary before the end of valid
+ * UTF-8 and move the cursor past that scalar. The advance is at most the
+ * remaining bytes, so a usize cursor cannot overflow. An int cursor also
+ * needs representable signed offsets; managed buffers cap bytes at PTRDIFF_MAX.
+ * Std keeps an int cursor; native text loops use usize and copy public
+ * offsets as int (`[TYP-31]`). Each helper takes its actual pointer type.
+ * One private definition keeps both codecs identical. MSVC's measured
+ * faster shape advances once after decoding; clang and GCC keep the
+ * branch-local advances. Finding the width again from the decoded scalar
+ * would cost a second chain of comparisons. */
+#if defined(_MSC_VER) && !defined(__clang__)
+#define EMBER_TEXT_CHAR_NEXT(NAME, INDEX_TYPE)                              \
+static inline uint32_t NAME(ember_str s, INDEX_TYPE* at) {                  \
+    const unsigned char* p = s.ptr + *at;                                 \
+    unsigned char b = p[0];                                               \
+    uint32_t c;                                                          \
+    int64_t width;                                                       \
+    if (b < 0x80) {                                                      \
+        width = 1; c = b;                                                \
+    } else if (b < 0xE0) {                                               \
+        width = 2;                                                       \
+        c = ((uint32_t)(b & 0x1F) << 6) | (uint32_t)(p[1] & 0x3F);        \
+    } else if (b < 0xF0) {                                               \
+        width = 3;                                                       \
+        c = ((uint32_t)(b & 0x0F) << 12)                                 \
+          | ((uint32_t)(p[1] & 0x3F) << 6) | (uint32_t)(p[2] & 0x3F);     \
+    } else {                                                             \
+        width = 4;                                                       \
+        c = ((uint32_t)(b & 0x07) << 18)                                 \
+          | ((uint32_t)(p[1] & 0x3F) << 12)                              \
+          | ((uint32_t)(p[2] & 0x3F) << 6) | (uint32_t)(p[3] & 0x3F);     \
+    }                                                                    \
+    *at += width;                                                        \
+    return c;                                                            \
 }
+#else
+#define EMBER_TEXT_CHAR_NEXT(NAME, INDEX_TYPE)                              \
+static inline uint32_t NAME(ember_str s, INDEX_TYPE* at) {                  \
+    const unsigned char* p = s.ptr + *at;                                 \
+    if (p[0] < 0x80) {                                                    \
+        *at += 1;                                                        \
+        return p[0];                                                     \
+    }                                                                    \
+    if (p[0] < 0xE0) {                                                    \
+        *at += 2;                                                        \
+        return ((uint32_t)(p[0] & 0x1F) << 6) | (uint32_t)(p[1] & 0x3F);   \
+    }                                                                    \
+    if (p[0] < 0xF0) {                                                    \
+        *at += 3;                                                        \
+        return ((uint32_t)(p[0] & 0x0F) << 12)                            \
+             | ((uint32_t)(p[1] & 0x3F) << 6) | (uint32_t)(p[2] & 0x3F);  \
+    }                                                                    \
+    *at += 4;                                                            \
+    return ((uint32_t)(p[0] & 0x07) << 18)                                \
+         | ((uint32_t)(p[1] & 0x3F) << 12)                               \
+         | ((uint32_t)(p[2] & 0x3F) << 6) | (uint32_t)(p[3] & 0x3F);       \
+}
+#endif
+EMBER_TEXT_CHAR_NEXT(ember_str_char_next, int64_t)
+EMBER_TEXT_CHAR_NEXT(ember_str_char_next_usize, size_t)
+#undef EMBER_TEXT_CHAR_NEXT
 /* `[TXT-2]`: reject malformed, overlong, surrogate and out-of-range UTF-8. */
 bool ember_utf8_valid(ember_span bytes);
 /* Append one valid Unicode scalar to a UTF-8 String. */
@@ -1536,14 +1614,18 @@ EMBER_INLINED size_t ember_str_search(ember_str s, ember_str needle, size_t from
     if (needle.len == 0) {
         return from <= s.len ? from : SIZE_MAX;
     }
+    if (needle.len == 1) {
+        if (from >= s.len) return SIZE_MAX;
+        const uint8_t* hit = (const uint8_t*)memchr(s.ptr + from, needle.ptr[0], s.len - from);
+        return hit ? (size_t)(hit - s.ptr) : SIZE_MAX;
+    }
     while (from + needle.len <= s.len) {
         const unsigned char* hit =
             (const unsigned char*)memchr(s.ptr + from, needle.ptr[0], s.len - needle.len + 1 - from);
         if (hit == NULL) {
             return SIZE_MAX;
         }
-        /* A one-byte needle is found: no call to compare nothing. */
-        if (needle.len == 1 || memcmp(hit + 1, needle.ptr + 1, needle.len - 1) == 0) {
+        if (memcmp(hit + 1, needle.ptr + 1, needle.len - 1) == 0) {
             return (size_t)(hit - s.ptr);
         }
         from = (size_t)(hit - s.ptr) + 1;
@@ -1864,7 +1946,102 @@ typedef struct ember_alloc_stats {
     uint64_t total_frees;
 } ember_alloc_stats;
 
+/* `[RT-11]`: this thread's allocation/free totals. live_bytes is its byte
+ * balance, saturated at zero, rather than a process-wide leak count; a free
+ * on another thread is charged to that thread. No shared counter is written. */
 void ember_debug_alloc_stats(ember_alloc_stats* out);
+
+/* `[HEAP-8]`: a reservation that already fits stays in the caller.
+ * Check the original length and addition even on that fast path; the
+ * exported function delegates here too, preserving its ABI and checks. */
+EMBER_INLINED void ember_vec_reserve_more_inline(ember_vec* v, size_t elem_size, size_t additional) {
+    size_t limit = elem_size == 0 ? (size_t)PTRDIFF_MAX : (size_t)PTRDIFF_MAX / elem_size;
+    if (v->len > limit || additional > limit - v->len) {
+        ember_panic("capacity overflow", 17, ember_loc_at("<array>", 0, 0));
+    }
+    size_t want = v->len + additional;
+    if (want > v->cap) ember_vec_reserve(v, elem_size, want);
+}
+
+/* `[TXT-11]` (ODR-098): byte-offset mutations preserve valid UTF-8.
+ * The small checks and character codec are inline; only growth and the
+ * suffix move need library calls. The caller checks the integer conversion. */
+EMBER_INLINED uint32_t ember_char_decode_utf8(ember_str s, size_t i) {
+    const unsigned char* p = s.ptr + i;
+    if (p[0] < 0x80) {
+        return p[0];
+    }
+    if (p[0] < 0xE0) {
+        return ((uint32_t)(p[0] & 0x1F) << 6) | (uint32_t)(p[1] & 0x3F);
+    }
+    if (p[0] < 0xF0) {
+        return ((uint32_t)(p[0] & 0x0F) << 12) | ((uint32_t)(p[1] & 0x3F) << 6) | (uint32_t)(p[2] & 0x3F);
+    }
+    return ((uint32_t)(p[0] & 0x07) << 18) | ((uint32_t)(p[1] & 0x3F) << 12)
+         | ((uint32_t)(p[2] & 0x3F) << 6) | (uint32_t)(p[3] & 0x3F);
+}
+
+EMBER_INLINED size_t ember_char_encode_utf8(uint32_t c, unsigned char* out) {
+    if (c < 0x80) {
+        out[0] = (unsigned char)c;
+        return 1;
+    }
+    if (c < 0x800) {
+        out[0] = (unsigned char)(0xC0 | (c >> 6));
+        out[1] = (unsigned char)(0x80 | (c & 0x3F));
+        return 2;
+    }
+    if (c < 0x10000) {
+        out[0] = (unsigned char)(0xE0 | (c >> 12));
+        out[1] = (unsigned char)(0x80 | ((c >> 6) & 0x3F));
+        out[2] = (unsigned char)(0x80 | (c & 0x3F));
+        return 3;
+    }
+    out[0] = (unsigned char)(0xF0 | (c >> 18));
+    out[1] = (unsigned char)(0x80 | ((c >> 12) & 0x3F));
+    out[2] = (unsigned char)(0x80 | ((c >> 6) & 0x3F));
+    out[3] = (unsigned char)(0x80 | (c & 0x3F));
+    return 4;
+}
+
+EMBER_INLINED void ember_string_boundary(ember_vec* text, size_t at, ember_loc loc) {
+    ember_str view = { (const uint8_t*)text->ptr, text->len };
+    if (!ember_str_is_char_boundary(view, at)) {
+        const char msg[] = "String byte offset is not on a character boundary";
+        ember_panic(msg, sizeof(msg) - 1, loc);
+    }
+}
+
+EMBER_INLINED void ember_string_insert(ember_vec* text, size_t at, uint32_t c, ember_loc loc) {
+    if (at > text->len) ember_panic_bounds(at, text->len, loc);
+    ember_string_boundary(text, at, loc);
+    unsigned char bytes[4];
+    size_t width = ember_char_encode_utf8(c, bytes);
+    ember_vec_reserve_more_inline(text, 1, width);
+    unsigned char* data = (unsigned char*)text->ptr;
+    memmove(data + at + width, data + at, text->len - at);
+    memcpy(data + at, bytes, width);
+    text->len += width;
+}
+
+EMBER_INLINED uint32_t ember_string_remove(ember_vec* text, size_t at, ember_loc loc) {
+    if (at >= text->len) ember_panic_bounds(at, text->len, loc);
+    ember_string_boundary(text, at, loc);
+    ember_str view = { (const uint8_t*)text->ptr, text->len };
+    uint32_t c = ember_char_decode_utf8(view, at);
+    size_t width = c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
+    unsigned char* data = (unsigned char*)text->ptr;
+    memmove(data + at, data + at + width, text->len - at - width);
+    text->len -= width;
+    return c;
+}
+
+EMBER_INLINED void ember_string_truncate(ember_vec* text, size_t len, ember_loc loc) {
+    if (len >= text->len) return;
+    ember_string_boundary(text, len, loc);
+    text->len = len;
+}
+
 
 #ifdef __cplusplus
 }
