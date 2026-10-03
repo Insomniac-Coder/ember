@@ -488,6 +488,75 @@ fn temporary_directory(label: &str) -> PathBuf {
     path
 }
 
+/// A managed executable may discard unreachable implementation code, but a
+/// defined C entry point remains callable even without an Ember caller. Its
+/// selected symbol, including imported and relaxed-FP definitions, is a root;
+/// an unused foreign declaration is not a definition the linker must find.
+#[cfg(target_os = "linux")]
+#[test]
+fn gcc_executables_keep_c_exports_and_discard_unreachable_native_bodies() {
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
+    let Toolchain::Gcc(compiler) = &toolchain else { return; };
+    let root = workspace_root();
+    let directory = temporary_directory("executable-roots");
+    // Check actual linker acceptance independently of the production detector.
+    // An always-false detector must not silently skip all removal assertions.
+    let probe = directory.join("probe.c");
+    std::fs::write(&probe,
+        "int probe_c_root(void) { return 42; }\nint main(void) { return 0; }\n").unwrap();
+    let probe_output = Command::new(compiler)
+        .args(["-ffunction-sections", "-fdata-sections", "-Xlinker", "--gc-sections",
+            "-Xlinker", "--require-defined=probe_c_root"])
+        .arg(&probe).arg("-o").arg(directory.join("probe"))
+        .output().expect("linker capability probe runs");
+    let gc_available = probe_output.status.success();
+    assert_eq!(ember_build::executable_section_gc_supported(&toolchain), gc_available,
+        "linker capability detection disagrees with an actual link");
+    let imported = directory.join(ember_branding::source_file("exports"));
+    std::fs::write(&imported,
+        "@export(\"imported_root\", threads=any)\npub fn imported_value() -> i32:\n    return 42\n")
+        .expect("imported exports are writable");
+    let entry = directory.join(ember_branding::source_file("entry"));
+    std::fs::write(&entry,
+        "import exports\n@export(\"selected_root\", threads=any)\npub fn local_value() -> i32:\n    return 43\npub extern \"C\" fn plain_root() -> i32:\n    return 44\n@export(\"relaxed_root\", threads=any)\n@fp(contract)\npub fn relaxed_value(x: f64) -> f64:\n    return x * x + 1.0\nunsafe extern \"C\":\n    fn absent_foreign() -> i32\n@noinline\npub fn unused_native() -> i32:\n    return 99\nfn main():\n    println(7)\n")
+        .expect("executable fixture is writable");
+    let entry_arg = entry.to_string_lossy().into_owned();
+    // A file cannot contain cache/runtime: this exercises the uncached runtime
+    // source fallback without depending on filesystem permissions or root uid.
+    let unavailable_cache = directory.join("unavailable-cache");
+    std::fs::write(&unavailable_cache, "not a directory").unwrap();
+    let cache_var = ember_branding::cache_dir_var();
+    for profile in [Profile::Debug, Profile::Release, Profile::Shipping] {
+        for cached in [true, false] {
+            let output_dir = directory.join(format!("{}-{cached}", profile.name()));
+            let output_arg = output_dir.to_string_lossy().into_owned();
+            let cache = if cached { directory.join("cache") } else { unavailable_cache.clone() };
+            let built = ember_with_env(
+                &["build", &entry_arg, "--profile", profile.name(), "--out-dir", &output_arg],
+                &root, &cache_var, &cache.to_string_lossy(),
+            );
+            assert_eq!(built.exit, 0, "{} cached={cached}: {}", profile.name(), built.stderr);
+            let executable = output_dir.join(profile.name()).join("bin/entry");
+            let run = Command::new(&executable).output().expect("managed executable runs");
+            assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+            assert_eq!(run.stdout, b"7\n");
+            assert!(run.stderr.is_empty());
+            let listed = Command::new("nm").arg("--defined-only").arg(&executable)
+                .output().expect("ELF symbol reader runs");
+            assert!(listed.status.success());
+            let listing = String::from_utf8_lossy(&listed.stdout);
+            let symbols: Vec<_> = listing.lines().filter_map(|line| line.split_whitespace().last()).collect();
+            for symbol in ["imported_root", "selected_root", "plain_root", "relaxed_root"] {
+                assert!(symbols.contains(&symbol), "{} cached={cached}: missing C definition {symbol}", profile.name());
+            }
+            assert_eq!(symbols.contains(&ember_branding::mangled("unused_native").as_str()), !gc_available,
+                "{} cached={cached}: unreachable native body survived or fallback lost it", profile.name());
+            assert!(!symbols.contains(&"absent_foreign"));
+        }
+    }
+}
+
 /// `[FFI-10]` — a hand-declared static names linker storage rather than an
 /// inlined Ember constant. A separate C translation unit proves the actual
 /// symbol binding, including `link_name` and `@ffi(immutable)`.

@@ -554,6 +554,9 @@ static void* raw_alloc(size_t size, size_t align) {
     return _aligned_malloc(size, align);
 #else
     /* C11 aligned_alloc requires a size that is a multiple of the alignment. */
+    if (size > SIZE_MAX - (align - 1)) {
+        return NULL;
+    }
     size_t rounded = (size + align - 1) & ~(align - 1);
     return aligned_alloc(align, rounded);
 #endif

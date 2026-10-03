@@ -4736,3 +4736,126 @@ Evidence: msvc-current-split-aggregate.json, split-copy-break-results.json,
 split-each-field-break.json, text-break-summary.json,
 current-feature-after-fields-{windows,gcc}.json and
 post-fields-binary-identity.json in the external session directory.
+
+
+## ADR-118 — discard unreachable managed GCC executable sections
+
+2026-10-04, D-492. Implemented and correctness validated; production
+performance confirmation and the wider audit remain OPEN. No semantic or ABI
+amendment is required.
+
+The empty GCC program's runtime object carries unused functions, constant
+strings and TLS. A controlled outside-repository comparison, three balanced
+windows and 378 retained samples per label, reduces .text from 69,195 to 9,608
+bytes, .rodata from 50,400 to 335 and TLS from 40 to 8 with function/data
+sections and linker removal. PIE, RELRO, BIND_NOW, non-executable stack and CRT
+initialization/finalization remain. Its ratio to C is 1.038796 versus the
+baseline's 1.053066; the sectioned no-GC control is 1.051706. The isolated
+GC/sectioned ratio is 0.987725 (cycle bootstrap 95% interval 0.9791–0.998935).
+The identical-binary control is 0.994749 of baseline: these small process
+measurements require caution. This is whole-process launch/loader/I/O work,
+not a claim that the residual cost is intrinsic. The retained libm dependency
+and other safe startup alternatives remain OPEN. No README values are updated.
+Host mains checks passed and the exact UTC window has zero Kernel-Power 105
+source transitions; WSL guest CPU0 is pinned, host performance-core affinity
+is unverified. Evidence: external gcc-startup-investigation/completed-first.
+
+Use explicit additive build APIs for driver-owned executables. On Linux GCC,
+compile their generated C, cached runtime and relaxed-FP objects into individual
+function/data sections. The changed command participates in the runtime cache
+hash; source fallback receives the same policy. Generic compile_and_link,
+runtime_object, compile_relaxed_object, compile_object and static archives
+keep their original policy. FP/profile/protection defaults and RT-1's raw
+allocator remain unchanged. Separate sections can increase build cost or alter
+layout; final production comparisons are required before claiming a gain.
+[GCC documents the section flags](https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html).
+
+Link removal must retain the public C definitions even without an Ember call.
+Collect the same definition predicate as the generated header: ABI C, neither
+extern declaration nor abstract. Sort/deduplicate actual Body.symbol values,
+including selected @export names, written extern-C names, imported definitions
+and relaxed-FP units. Use --gc-sections and --require-defined for these roots:
+missing definitions fail, and relocations keep their dependencies. Do not root
+unused foreign declarations, all native global symbols, or export everything
+dynamically. Retention does not promise dynamic symbol discovery; export
+tables remain outside the implemented language surface.
+[GNU ld defines the root and relocation behavior](https://sourceware.org/binutils/docs/ld/Options.html).
+
+GCC does not guarantee GNU ld. Ask GCC for its selected linker, and require
+both documented options in that linker's successful help output. Failed or
+unsupported capability discovery uses ordinary linking, which keeps the
+complete image. The integration test independently attempts an actual link,
+so an always-false detector cannot silently skip the optimization assertions.
+A simulated linker lacking required-root support verifies the complete fallback.
+
+The rt_init(NULL) entry experiment has been reverted. Paired native GCC
+whole-process sampling gives NG_lm/G_lm 1.002681 (cycle bootstrap 95% interval
+0.995958–1.012479) and NG_nolm/G_nolm 1.000870 (0.993833–1.007373), both neutral.
+Ordinary main therefore retains its original default-config construction.
+Initialization/main/shutdown, leak-check flags and ownership-edge registration
+remain. Allocation counters remain cumulative across reinitialization.
+
+Focused regression covers three profiles, cached/source-fallback runtime,
+unused native removal and all supported C root kinds. A real native fixture
+checks CRT constructors/finalizers, indirect callbacks, custom alloc/free/panic
+hooks, TLS accounting, default and configured init/reinit, exact panic abort,
+non-executable stack, RELRO and missing-root errors. Removing C roots and
+section removal separately is RED; exact candidate restoration is GREEN.
+Standalone production NULL-metadata panics passed window-free under MSVC and
+clang before batch checks. Full MSVC, clang and GCC workspace suites pass;
+MSVC/GCC annotations report failing 0, all eleven gates pass, and Appendix A
+regeneration is byte-identical (SHA256 f8ec2010eadc6f7393e81c67c77dcb8268b8604578f419bc03eedad422dcc4af).
+The 4,260-file frozen input manifest has source ID
+d4f301cabcdc6a859c8008426770726a77d4b98e15e13b1b8ff2385bf54ce3dc.
+Evidence is under external d492-validation/full-short-1791054923844312300
+and continued-1791056120781943700. The first deeply nested MSVC temporary root
+exceeded MAX_PATH; the same unchanged milestone is RED there and GREEN with a
+short temporary root, followed by complete workspace reruns. The first GCC
+annotation invocation omitted its documented EMBER=target/debug/ember setting;
+its launch failure is preserved, and the corrected remaining checks pass without
+source edits. These harness failures do not establish a production regression.
+That earlier frozen-source validation predates the neutral entry-experiment
+reversion and D-493 regression/guard. Fresh validation now passes on the complete
+4,262-file source ID
+c936abc3b1eaec9d0d2263dcb2ec6cc87efefc2a54e1ff34e2739242481da18c:
+all three full workspaces, MSVC/GCC annotations (failing 0), all eleven gates,
+and byte-identical Appendix A. The first launcher completed the Windows suites
+then failed before GCC testing because its nested shell expanded the saved exit
+status. The corrected literal-file --exec continuation verified the original
+source, tools, record chain and every log before reusing only those two completed
+Windows suites; it then executed all remaining groups. Both results remain
+preserved. Evidence: external d493-validation/run-20261004-continuation-03/
+combined-validation.json, SHA256
+6b92f222c821e43efcd9d8617be5f5281a548b19d2fbbb5d6bf9073d97ad8810.
+No final README matrix or reasonable-overhead conclusion follows from this
+correctness record.
+
+## ADR-119 — reject unrepresentable aligned-allocation round-up
+
+2026-10-04, D-493. Fixed and production correctness validated.
+
+The non-MSVC default allocator rounds a size to a multiple of its power-of-two
+alignment. Near SIZE_MAX its addition can wrap to zero, violating the requested
+allocation size. Reject size > SIZE_MAX - (align - 1) before that addition, only
+in this C11 over-aligned branch. Return NULL through the existing allocation
+failure path, with unchanged counters. No new PTRDIFF_MAX ceiling is imposed
+on the raw allocation API; ordinary malloc and configured hooks still receive
+the original request. MSVC forwards directly to _aligned_malloc and has no
+round-up addition. Zero-size default normalization remains one byte.
+
+The public try_alloc regression includes the actual generated runtime after
+NULL-only allocator interception. It checks ordinary and aligned warmups before
+boundary requests, small/exact/largest representable multiples, overflow rejection,
+custom-hook forwarding and unchanged statistics. Every intercepted allocator
+returns NULL; no huge real allocation, dereference or free occurs. The permanent
+GCC test fails on the original runtime with requested_or_rounded=0, aligned=1.
+External guarded/inverse/restored variants pass their independent assertion
+oracles, and MSVC/LLVM confirm their unchanged forwarding branch. The permanent
+regression is GREEN in full MSVC, explicit LLVM clang and GCC production
+workspace suites on source c936abc3. MSVC/GCC annotations report failing 0,
+all eleven gates pass, and outside-repository Appendix A regeneration is
+byte-identical. Standalone production NULL-metadata panics pass on Windows
+before batch tests; the window watchdog remains clear. The frozen manifest
+contains both new regression files and the template/generated-runtime guard.
+The original GCC launcher failure and the verified continuation described in
+ADR-118 remain intact; no source was edited during these suites.

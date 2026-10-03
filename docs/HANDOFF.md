@@ -10703,13 +10703,139 @@ formal 1/9 count or Phase 2's estimate.
 
 ### 0.355 0.9.9 implementation, on `main` — 2026-09-23
 
-#### Start here after a context reset — state at 2026-10-03
+#### Start here after a context reset — state at 2026-10-04
 
-The previous batches are committed and pushed on `main`; the newest batch below
-is locally validated and prepared for its implementation commit. The wider
-performance audit remains OPEN; post-push CI is pending, with no new commit SHA
-claimed here. **Read this subsection first**; the rest of §0.355 is the running
+The prior implementation checkpoint is committed and pushed on `main` as
+`8e588ef2a0f78615b79fe45208f216078a1eda77`. Its local MSVC, clang and GCC
+workspace suites, MSVC/GCC annotations and all eleven gates passed. Exact-SHA
+CI run [37134225136](https://github.com/Insomniac-Coder/ember/actions/runs/37134225136)
+now has all five jobs green, including GCC. The owner resumed work on
+2026-10-04 after the explicit pause. The wider performance audit remains OPEN.
+The authorized two-minute power poller was restarted (PID 62748); mains was
+verified. **Read this subsection first**; the rest of §0.355 is the running
 narrative behind it.
+
+**Current batch:** D-492 managed Linux GCC executable section
+removal with canonical defined C roots and an unsupported-linker fallback.
+The neutral rt_init(NULL) experiment has been reverted; ordinary main again
+constructs the default configuration. D-493 adds a narrow C11 aligned-size
+round-up overflow guard and a permanent NULL-only allocator regression.
+The permanent GCC test is RED on the original runtime; the production guard
+is now present and the permanent test passes all three full workspace suites.
+D-493 is FIXED; the wider D-492 performance audit remains OPEN. Standalone
+production NULL-metadata panics after this change pass MSVC and LLVM clang
+without windows, under the watchdog. No production allocator-inline or
+math-archive policy has been adopted. Existing untracked build/ artifacts remain.
+
+Fresh complete MSVC/clang/GCC workspaces, MSVC/GCC annotations (failing 0),
+eleven gates and byte-identical Appendix validate the 4,262-file source ID
+c936abc3b1eaec9d0d2263dcb2ec6cc87efefc2a54e1ff34e2739242481da18c,
+including the NULL-experiment reversion and both new allocation regression
+files. The first controller completed MSVC/LLVM workspaces but failed before GCC
+testing when its nested shell expanded the saved exit status. The corrected
+literal LF script/WSL --exec continuation verified the exact source, tool hashes,
+record chain and every saved log before reusing only those completed Windows
+suites. It then ran GCC workspace, both annotation sweeps, all eleven gates and
+the Appendix byte check. No repository input changed during the queue.
+The combined record is d493-validation/run-20261004-continuation-03/
+combined-validation.json (SHA256
+6b92f222c821e43efcd9d8617be5f5281a548b19d2fbbb5d6bf9073d97ad8810).
+Evidence remains under
+C:\Users\ism19\AppData\Local\Temp\ember-codex-autopilot-20261003.
+Preserve the long-TEMP MSVC MAX_PATH failure and original GCC annotation
+launch failure; corrected checks passed on that earlier source. Never edit
+repository inputs during a full suite.
+
+Allocator validation passes all profiles: 72 MSVC, 72 LLVM clang and 78 GCC
+native cases, plus nine GCC assertion-based inverse controls. Actual terminal
+and worker program/runtime assembly is reviewed for all three compilers.
+All six complete allocator pairs show no reliable inline-candidate gain:
+candidate/baseline terminal MSVC 0.999496, clang 1.001840; worker MSVC
+0.993882, clang 1.003954; GCC terminal 1.008294 and worker 0.989904.
+All cycle-bootstrap intervals cross one, so this candidate form is rejected.
+The wider
+virtual-call gap remains OPEN. Terminal Ember elides object/vector cleanup,
+whereas terminal C++ omits object deletes but frees its pointer vector; worker
+contexts perform object and vector destruction before return. Keep these
+lifetime contexts separate; old unmatched full-delete terminal samples prove
+neither gain nor reasonable overhead. Internal public allocator-symbol
+interception changes remain an explicit candidate limitation.
+
+GCC pair v1 failed in warmup because copied controls lost execute permission;
+that run collected no retained samples. Frozen v2 uses copy2 and checks actual HOME
+execute permissions; the inert ext4 test passes and rebuilt assembly matches.
+Separate WSL build/sample launches then failed the full-environment identity
+gate before workload execution. The fresh persistent coordinator passed with
+one exact child environment for both builds and both complete pairs: 176
+executions per context, including 144 retained samples, exact stdout and
+matching full environment hashes. Both UTC windows have zero Kernel-Power105
+events. GCC baseline/reserved-C++ ratios remain 1.089274 terminal and 1.213572
+worker; neither is an acceptable-overhead verdict. Evidence is recorded in
+allocator-pair-pricing/root-six-pair-summary.json and
+allocator-pair-pricing/root-gcc-v2-stable-power-audit.json. Preserve every
+failed run and every old runtime snapshot; archive pricing still binds those
+old bytes. Fresh correctness suites use a separate new WSL snapshot.
+Root serializes every compiler/native/
+timing queue; agents perform scoped source preparation and review.
+
+The completed GCC libm startup sample has 378 retained samples per label:
+G_nolm/G_lm 0.9675902 (cycle bootstrap 95% 0.9633905–0.9735370).
+The balanced link-only diagnostic has 96 samples per label: empty no-libm/
+libm 0.9767577, while independent math-fail-plus-math-link cost is about
+1.99064 of its direct successful link; this is not an actual sequential retry.
+WSL guest CPU0 is pinned; host performance-core affinity remains unverified.
+The on-demand strict-clamp archive prototype is built and actually ELF-reviewed:
+empty omits libm, live/direct/rooted math retains it, and all sixteen native
+exact-output/lifecycle checks pass. Dead unrooted wrappers disappear after GC
+but pre-GC archive extraction can still retain libm. All compared code/rodata/
+CRT/unwind/property sections are byte-identical except one lifecycle RIP-relative
+hook-constant address adjustment, reviewed in the actual disassembly. Startup
+and cold/warm build-cost pricing are still pending; no production policy follows.
+
+Power audit correction: ConvertFrom-Json automatically typed ISO date strings;
+a later culture-dependent Parse(object) misread October 3 as April 9 and lost
+fractions. Invalid records are preserved. New scripts use DateKind String and
+invariant parsing; all ten corrected complete windows have zero Kernel-Power105
+events, independently checked against all twenty raw UTC boundaries. The older
+29-window numeric audit rounded both endpoints inward by submilliseconds;
+the containing floor/ceiling audit also passes with zero events. Evidence:
+power-audit-verification/REPORT.md, power-audit-v2-preparation.json,
+allocator-pair-pricing/root-windows-power-audit.json and
+all-bench-power-check-v2.json. The two new GCC allocator windows also pass their
+separate exact-boundary audit. Do not cite the preserved invalid audits.
+
+Safe alternatives remain open: the source-reviewed general guarded header
+constructor has fresh original/worker capsules and fixtures against the guarded
+D-493 runtime f0df57a9. Root source checks and exact panic-oracle controls pass;
+native validation and context pricing remain pending. V1's preparer syntax error
+is retained; prepare-v2.py fixes only that character. run-validation-v2.py
+requires all-profile NULL/C++ boundaries before 72 native semantic cases and
+nine bounded inverse controls per compiler/context. Outputs must be fresh and
+short enough for Windows paths. Pricing v1's ordinary GCC flags and missing
+Windows clang compiler-rt were rejected before execution; v2 restores current
+managed policy and fresh C++ builds, but its typed Body inventory is unavailable
+from --emit mir. MIR omits ABI/declaration/abstract fields and precedes final
+body pruning. A separate v3 source-only correction uses the actual canonical
+package header from the same --emit c --emit-header invocation; never invent
+those Body fields or infer ABI C from em_main's external C linkage. Root must
+emit current C/header after the correctness queue and compare full C bytes to
+the frozen capsules before native pricing. These diagnostic tools remain outside
+the repository under guarded-header-constructor-{diagnostic,validation,pricing}.
+
+A fresh math-archive-d493-diagnostic source pack is Root-read and AST-checked;
+its six matching profile/int128-mode builds, actual ELF review and native sets
+are still pending. The old archive and pricing packs bind RT8b and stay intact
+indefinitely. Current empty C must be freshly emitted and checked against the
+frozen cfg-local program before current-production pricing. No old runtime
+object, lifecycle attestation or performance ratio transfers to the new pack.
+
+The general
+capacity-proved push loops need a maximum weighted CFG bound, native-width
+nonpanicking preflight and private descriptor/shadow escape proof. Plans are
+outside the repo under virtual-constructor-validation/header-constructor-plan.md
+and array-capacity-feasibility/compiler-plan.md. Neither is implemented or priced.
+Continue the speed audit before new core features; final README matrix remains
+pending after all changes and every new slowdown investigation.
 
 **Where things stand**
 
@@ -10767,8 +10893,9 @@ narrative behind it.
     output directories validated the code without needing that blocked action.
   * **Owner's current power and compiler rules:** no benchmarks ran during the
     battery interval. After he said "connected to main again", the authorized
-    `power-watch.py` poller checks every two minutes (PID 22476); each timed
-    program still checks power immediately before and after. Stop timing on
+    `power-watch.py` poller checked every two minutes (PID 22476, stopped at
+    the owner's new pause); restart it on resume. Each timed program still
+    checks power immediately before and after. Stop timing on
     battery. He also said "good gcc checks are also a must": every subsequent
     batch must pass GCC build/tests alongside MSVC and clang. His following
     "gcc benchmarks are also needed, it's performance also has to be compared"
@@ -11015,28 +11142,57 @@ narrative behind it.
     `gcc-object-allocation-pricing.json`, `gcc-virtual-dispatch-pricing.json`
     under the same external evidence directory. Check their windows against
     Kernel-Power 105 before recording final timing claims.
-  * **C++ twin lifetime parity and publication boundary:** the old a07 C++ twin
-    allocated one million Circle/Square objects in vector<Shape*> and never
-    deleted them; Ember's owning Array destroys them. All old virtual ratios
-    are incomplete-baseline history, unable to settle required overhead.
-    twin-parity/a07_virtual_calls.cpp preserves the raw-pointer layout/work
-    and adds explicit delete after printf; it is ready but unexecuted.
-    twin-parity/a05_structs.cpp is the required DOD C++ twin: an empty
-    vector<Particle>, matching pushes/fields/mutation/reduction, then cleanup.
-    It too is unexecuted; its vendor-dependent growth is disclosed. Old
-    references/results and README are untouched. Future comparisons must
-    explicitly select these fresh twins and recompile them under the same
-    compiler/release flags. The prepared publication pipeline passed syntax
-    checks, but actual/synthetic smoke validation is pending. No final matrix
-    has been regenerated or published.
-  * **Prepared alternatives are not production:** gcc-startup-investigation
-    contains the future startup plan, init-NULL and section-GC candidates.
-    They have not been adopted. The external allocation prototype's C++
-    alignment issue was corrected only outside the repository; no production
-    allocator/alignment change or speed conclusion follows.
-  * **Next:** commit/push the locally validated checkpoint after the source and
-    docs-gate checks, watch post-push CI, and continue the stricter slowdown
-    audit above; then the interface
+  * **Corrected cleanup inference and publication boundary:** source ownership
+    did not imply executed terminal destruction. ADR-076 intentionally elides
+    memory-only drops at the end of release/shipping main; actual a07 assembly
+    returns after printing. The explicit-delete C++ clones therefore do more
+    work than that production main. Their three-compiler 36-round samples are
+    preserved as unmatched-cleanup diagnostics in virtual-gap-pricing; ratios
+    cannot settle equivalent-work speed or overhead. GCC baseline/typed-push
+    binaries are byte-identical, so their timing difference is not a code gain.
+    No constructor/typed-push candidate was adopted. The three timing windows
+    had no Kernel-Power 105 event; WSL host core affinity remains unverified.
+    twin-parity/audit-52-cleanup-correction.{md,json} supersedes the earlier
+    mandatory-cleanup claim: all 104 available MSVC/clang generated main tails
+    omit terminal owner cleanup (44 rows per compiler use historical snapshots).
+    The 36 cleanup clones are hypothetical full-lifecycle controls, not repaired
+    equivalents. Eight required C++ comparator conversions remain pending.
+    Ordinary noinline workers in twin-parity/worker keep cleanup outside that
+    optimization. Root emitted all three fresh worker C inputs and verified
+    object releases and buffer free after printing. At this earlier checkpoint,
+    worker timing and C++ assembly review had not run; both later completed for
+    all three compilers, as recorded in the current start-here subsection. Terminal
+    original/no-delete and reserved comparisons remain a separate context.
+    The prepared README pipeline passed 38 synthetic checks; its external
+    clang/GCC C++ `-std=c++17` typo was fixed with RED/GREEN evidence.
+    Native compiler/hardware publication validation and the final matrix remain
+    pending. Old input sources/results and repository README are untouched.
+  * **Earlier GCC startup diagnostic, before D-492 adoption:**
+    /home/ism19/ember-gcc-startup-20261003T160524Z-1747089e has 378 retained
+    samples per label across three balanced windows. P/C = 1.053066,
+    section-GC G/C = 1.038796, default-NULL N/C = 1.045424, combined
+    NG/C = 1.043401. G reuses S's exact sectioned objects; P_copy is
+    byte-identical to P. GC reduced .text from 69,195 to 9,608 bytes and
+    .rodata from 50,400 to 335; PIE, BIND_NOW, RELRO, stack permissions and
+    CRT init/fini were retained. Raw windows, guards and conditional uncertainty
+    are copied to gcc-startup-investigation/completed-first. Whole-process
+    timing still includes loader/spawn/I/O/scheduling, and the identical-copy
+    control varies too; no irreducible-overhead conclusion follows. Fresh
+    before/after mains guards passed; the separate Kernel-Power 105 audit for
+    this startup run now records a successful exact-window query with zero
+    events in power-event-audit-verified-query.json. That earlier diagnostic
+    preceded the current D-492 candidate; it is not final production pricing.
+  * **Earlier prepared alternatives checkpoint:** gcc-startup-investigation
+    contained the startup plan, init-NULL and section-GC prototypes. At this
+    checkpoint none had been adopted. Later D-492 implements managed section
+    removal; the neutral init-NULL experiment was reverted. The external
+    allocation prototype's C++ alignment correction still does not transfer
+    to production. The separate D-493 C11 round-up guard is now FIXED and fully
+    correctness-validated; see the current start-here subsection. No speed
+    or reasonable-overhead conclusion follows from these historical controls.
+  * **Earlier resume plan, superseded by the current start-here:** verify checkpoint 8e588ef's exact CI,
+    review interrupted external scripts and the cleanup correction, and continue
+    the stricter slowdown audit above; then the interface
     half of D-467 (per-class result access), G7-2's
     256-deep literals, D-460 and D-466's temporaries, then the review backlog
     below. Core phase estimates remain unchanged; this is no new phase audit.
@@ -11482,7 +11638,7 @@ narrative behind it.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h52/` are frozen.
-* **Next numbers:** ODR-099, D-492, ADR-118, ERR-056 (D-488/D-490 OPEN; D-489/D-491 FIXED and correctness-validated; wider performance audit OPEN).
+* **Next numbers:** ODR-099, D-494, ADR-120, ERR-056 (D-488/D-490 OPEN; D-489/D-491/D-493 FIXED and correctness-validated; wider performance audit OPEN).
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's

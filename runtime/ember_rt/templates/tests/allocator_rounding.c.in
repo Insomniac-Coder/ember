@@ -1,0 +1,153 @@
+/* Public try_alloc oracle. Every intercepted allocator and hook returns NULL.
+ * No allocation result is dereferenced or freed; no huge real request is made.
+ * [RT-11] NULL failures preserve all allocation counters.
+ * Warmup proves both default routes are intercepted before boundary requests. */
+/* Parse CRT declarations before installing allocator interception. */
+#include <stddef.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#if defined(_WIN32)
+#include <malloc.h>
+#endif
+#include "ember_rt.h"
+
+void* diagnostic_malloc(size_t size);
+void* diagnostic_aligned_alloc(size_t alignment, size_t size);
+void* diagnostic_aligned_malloc(size_t size, size_t alignment);
+#define malloc diagnostic_malloc
+#if defined(_MSC_VER)
+#define _aligned_malloc diagnostic_aligned_malloc
+#else
+#define aligned_alloc diagnostic_aligned_alloc
+#endif
+/* Include the actual generated runtime after the macros; no cached object. */
+#include "../src/ember_rt.c"
+#undef malloc
+#if defined(_MSC_VER)
+#undef _aligned_malloc
+#else
+#undef aligned_alloc
+#endif
+
+static size_t malloc_calls, aligned_calls, hook_calls, last_size, last_align;
+static const char* current_case = "startup";
+static ember_alloc_stats before_call;
+#define CHECK(condition) do { if (!(condition)) { \
+    fprintf(stderr, "FAIL %s: %s requested_or_rounded=%zu align=%zu malloc=%zu aligned=%zu hook=%zu\n", \
+        current_case, #condition, last_size, last_align, malloc_calls, aligned_calls, hook_calls); \
+    exit(1); \
+} } while (0)
+
+static void unchanged_stats(void) {
+    ember_alloc_stats observed;
+    ember_debug_alloc_stats(&observed);
+    CHECK(observed.live_bytes == before_call.live_bytes);
+    CHECK(observed.total_allocations == before_call.total_allocations);
+    CHECK(observed.total_frees == before_call.total_frees);
+}
+void* diagnostic_malloc(size_t size) {
+    unchanged_stats();
+    ++malloc_calls; last_size = size; last_align = 0;
+    return NULL;
+}
+void* diagnostic_aligned_alloc(size_t alignment, size_t size) {
+    unchanged_stats();
+    ++aligned_calls; last_size = size; last_align = alignment;
+    return NULL;
+}
+void* diagnostic_aligned_malloc(size_t size, size_t alignment) {
+    unchanged_stats();
+    ++aligned_calls; last_size = size; last_align = alignment;
+    return NULL;
+}
+static void* custom_null(size_t size, size_t alignment) {
+    unchanged_stats();
+    ++hook_calls; last_size = size; last_align = alignment;
+    return NULL;
+}
+static void no_free(void* p, size_t size, size_t align) {
+    (void)p; (void)size; (void)align;
+    current_case = "unexpected-free"; CHECK(false);
+}
+static void begin_case(const char* name) {
+    current_case = name;
+    malloc_calls = aligned_calls = hook_calls = last_size = last_align = 0;
+    ember_debug_alloc_stats(&before_call);
+}
+static void default_case(const char* name, size_t size, size_t align,
+                         size_t want_malloc, size_t want_aligned, size_t want_size) {
+    begin_case(name);
+    CHECK(ember_try_alloc(size, align) == NULL);
+    unchanged_stats();
+    CHECK(hook_calls == 0);
+    CHECK(malloc_calls == want_malloc);
+    CHECK(aligned_calls == want_aligned);
+    if (want_malloc || want_aligned) {
+        CHECK(last_size == want_size);
+        CHECK(last_align == (want_aligned ? align : 0));
+    }
+}
+static void custom_case(const char* name, size_t size, size_t align) {
+    begin_case(name);
+    CHECK(ember_try_alloc(size, align) == NULL);
+    unchanged_stats();
+    CHECK(hook_calls == 1 && malloc_calls == 0 && aligned_calls == 0);
+    CHECK(last_size == size && last_align == align);
+}
+static size_t aligned_expected(size_t size) {
+#if defined(_MSC_VER)
+    return size == 0 ? 1 : size;
+#else
+    /* Independent known test values; callers pass only small or exact multiples. */
+    return size == 0 || size <= 64 ? 64 : size == 65 ? 128 : size == 129 ? 192 : size;
+#endif
+}
+static void warmup(void) {
+    default_case("interception-ordinary", 17, 1, 1, 0, 17);
+    default_case("interception-overaligned", 65, 64, 0, 1, aligned_expected(65));
+}
+int main(int argc, char** argv) {
+    CHECK(argc == 2);
+    CHECK(sizeof(void*) == 4 || sizeof(void*) == 8);
+    CHECK(64 > 2 * sizeof(void*));
+    const char* mode = argv[1];
+    const size_t maximum_multiple = SIZE_MAX - 63;
+    ember_rt_config cfg = ember_rt_config_default();
+    if (strcmp(mode, "custom") == 0) { cfg.alloc = custom_null; cfg.free = no_free; }
+    CHECK(ember_rt_init(&cfg) == 0);
+    if (strcmp(mode, "custom") == 0) {
+        custom_case("custom-ordinary", 17, 1);
+        custom_case("custom-zero", 0, 64);
+        custom_case("custom-overaligned", 65, 64);
+        custom_case("custom-max-overaligned", SIZE_MAX, 64);
+        custom_case("custom-max-ordinary", SIZE_MAX, _Alignof(void*));
+    } else {
+        warmup(); /* Fail here before any large request if interception is absent. */
+        if (strcmp(mode, "default-controls") == 0) {
+            default_case("ordinary-zero", 0, 1, 1, 0, 1);
+            default_case("overaligned-zero", 0, 64, 0, 1, aligned_expected(0));
+            default_case("overaligned-one", 1, 64, 0, 1, aligned_expected(1));
+            default_case("overaligned-63", 63, 64, 0, 1, aligned_expected(63));
+            default_case("overaligned-64", 64, 64, 0, 1, aligned_expected(64));
+            default_case("overaligned-129", 129, 64, 0, 1, aligned_expected(129));
+            default_case("largest-representable-rounded-size", maximum_multiple, 64, 0, 1, maximum_multiple);
+            default_case("ordinary-max-unrounded", SIZE_MAX, _Alignof(void*), 1, 0, SIZE_MAX);
+        } else {
+            CHECK(strcmp(mode, "overflow-default") == 0);
+#if defined(_MSC_VER)
+            /* This branch forwards the original size; it has no rounding add. */
+            default_case("msvc-max-forwarded", SIZE_MAX, 64, 0, 1, SIZE_MAX);
+            default_case("msvc-near-max-forwarded", maximum_multiple + 1, 64, 0, 1, maximum_multiple + 1);
+#else
+            default_case("overflowing-round-up", SIZE_MAX, 64, 0, 0, 0);
+            default_case("overflowing-round-up-minus-one", SIZE_MAX - 1, 64, 0, 0, 0);
+            default_case("first-overflowing-round-up", maximum_multiple + 1, 64, 0, 0, 0);
+#endif
+        }
+    }
+    ember_rt_shutdown();
+    puts("ok");
+    return 0;
+}

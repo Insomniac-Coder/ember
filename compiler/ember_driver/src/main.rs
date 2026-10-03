@@ -2503,7 +2503,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     }
     // The runtime is compiled once per toolchain and profile, then linked as
     // an object; without one (MSVC), it is compiled with the program.
-    let runtime_input = ember_build::runtime_object(
+    let runtime_input = ember_build::runtime_object_for_executable(
         &toolchain,
         &runtime_source,
         &includes,
@@ -2519,7 +2519,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         let unit = layout.c.join(format!("{module_name}.{}.c", mode.name()));
         std::fs::write(&unit, source).map_err(|e| e.to_string())?;
         let object = layout.obj.join(format!("{module_name}.{}.{object_ext}", mode.name()));
-        ember_build::compile_relaxed_object(
+        ember_build::compile_relaxed_object_for_executable(
             &toolchain,
             &unit,
             &includes,
@@ -2530,7 +2530,16 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         .map_err(|e| e.to_string())?;
         sources.push(object);
     }
-    ember_build::compile_and_link(
+    // The C header and executable expose the same definitions. Root selected
+    // ABI symbols, including renamed/imported exports, never declarations.
+    let mut retained_symbols: Vec<String> = bodies.iter()
+        .filter(|body| body.abi.as_deref() == Some("C")
+            && !body.is_extern_declaration && !body.is_abstract)
+        .map(|body| body.symbol.clone())
+        .collect();
+    retained_symbols.sort();
+    retained_symbols.dedup();
+    ember_build::compile_and_link_executable_with_roots(
         &toolchain,
         &LinkRequest {
             sources: &sources,
@@ -2539,6 +2548,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             profile: options.profile,
             obj_dir: layout.obj.clone(),
         },
+        &retained_symbols,
     )
     .map_err(|e| e.to_string())?;
 
