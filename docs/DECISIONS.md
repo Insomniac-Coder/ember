@@ -4285,3 +4285,57 @@ form), `CTL-3b/accept_closure_adapters_are_stages_of_a_counted_loop` (each stage
 `enumerate` pair through a `filter`, a `take_while` `else`, a `break` past a mapped `rev().skip()`;
 no `next` in the C), `CLO-14/accept_an_explicit_callable_bound_is_called_like_a_function` and
 `CLO-14/reject_a_bound_that_is_no_interface_or_callable` (D-406).
+
+
+## ADR-109 — read-only element references in vectorisable loops
+
+2026-10-03, autopilot resumed by the owner. D-477; `[SIMD-5]`, `[SIMD-7]`.
+
+**Context.** Array and Span iteration binds an element by reference, but the
+vectorisable-form analysis refused all reference creation and dereferences.
+It therefore missed the existing running-total width and block proofs for
+ordinary iteration, including `for b in text.as_bytes()`.
+
+**Decision.** Preserve the reference in MIR and C. Trace a read-only local's
+dominating, single definition to its indexed source in `vf_place`, following
+copies too, with the same bounded walk used by the affine-index proof. Admit
+only references to the indexed accesses that analysis already accepts. A
+reference carried from the previous iteration remains excluded, since a
+block dominance test alone does not prove the current iteration defined it
+before a use in that same block. Reuse every existing alias, written-offset,
+overflow and bounds condition. This is an analysis change, with no additional
+run-time operation and no language or specification change.
+
+Changing iteration to bind values was rejected: it changes the language's
+reference semantics and is not general for non-Copy elements. Rewriting
+reference places in another MIR pass would duplicate the existing definitions
+and affine-access model, and add transformations the optimization does not
+need. Following the existing model costs at most 16 reference steps per access;
+the C compiler can already eliminate these local pointers.
+
+**Evidence.** Six new conformance cases exercise an Array total, a Span total
+through a copied reference, the width proof for i32 and UTF-8 bytes, checked
+overflow, rejection of unknown and strided references, and reading through a
+reference before rewriting a view (including first-overflow order). The
+first case's C had zero block proofs before the fix and has two afterwards.
+Every case's C assertions pass for MSVC and clang in debug, release and
+shipping. A chain of two element iterators retains two logical loops, with a
+guarded unchecked copy of each; its fixture now expects four generated loops.
+The full MSVC run passes every other target, and its complete conformance
+target passes after that fixture correction. The full clang workspace suite,
+the annotation sweep and all eleven gates pass. Appendix A leaves the
+adopted specification unchanged byte for byte.
+
+**Speed.** One million bytes summed 4,000 times, outputs identical, on the
+owner's laptop on mains power and its performance cores, median of 11
+interleaved runs: MSVC Ember 0.4246 s, fixed-count C 0.4040 s, runtime-length
+C 0.4277 s; clang Ember 0.4032 s and C 0.4032 s. The MSVC assembly has two
+independent totals for the runtime-count loop and four for the fixed-count
+loop. Giving the generated C a fixed count takes 0.3999 s, recovering the
+whole gap; changing only its unsigned addition to signed takes 0.4282 s.
+Ember matches the C with the same runtime length. This is the host compiler's
+runtime-trip-count cost, not a remaining per-element safety check. Tracking
+exact collection lengths from construction into loop specialization is a
+possible general future optimization, outside this reference-access change.
+Raw samples, C, assembly and the diagnostic scripts are in the session folder
+named in the handoff. No benchmark numbers were written to the README.

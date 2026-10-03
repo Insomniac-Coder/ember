@@ -10703,13 +10703,54 @@ formal 1/9 count or Phase 2's estimate.
 
 ### 0.355 0.9.9 implementation, on `main` — 2026-09-23
 
-#### Start here after a context reset — state at 2026-10-02
+#### Start here after a context reset — state at 2026-10-03
 
 The previous batches are committed and pushed on `main`; the newest batch is
 described below and committed with this checkpoint. **Read this subsection
 first**; the rest of §0.355 is the running narrative behind it.
 
 **Where things stand**
+
+* **Autopilot resumed, 2026-10-03.** The owner: "use autopilot mode and start
+  working on the language development". This resumes the 2026-10-02 pause;
+  solo, no agents, under `docs/AUTOPILOT.md`, on `main`.
+  * **D-477 fixed (ADR-109):** ordinary Array and Span iteration's read-only
+    element references now count as their unit-stride indexed reads for
+    `[SIMD-5]`. `[SIMD-7]` can use its existing width proof or block proof;
+    arbitrary references, mutable references and strided accesses stay out.
+    Copies of an element reference are followed too; a reference carried
+    from the previous turn is excluded. No spec change or ODR.
+  * Six new conformance cases cover Array/Span totals, a copied reference,
+    narrow elements and `String.as_bytes()` (UTF-8), overflow, unknown and
+    strided references, and read-then-rewrite ordering and first overflow.
+    Their C assertions pass with MSVC and clang in all three profiles. The
+    chain-loop fixture now expects four C loops: two logical parts, each
+    with a guarded unchecked copy. Its old two-loop count was the only
+    failure in the first full MSVC run; its complete conformance target
+    passes after the fixture correction. Every other MSVC workspace target
+    passed. The full clang workspace suite passes too.
+  * **Speed, on mains and the performance cores, median of 11 interleaved
+    runs:** summing one million bytes 4,000 times, MSVC Ember 0.4246 s,
+    fixed-count C 0.4040 s, runtime-length C 0.4277 s (Ember/C 0.99x);
+    clang Ember 0.4032 s, C 0.4032 s (1.00x). MSVC uses two independent
+    sums for a runtime count and four for a compile-time count. Giving the
+    generated C that fixed count takes 0.3999 s; changing only its unsigned
+    arithmetic to signed does not help (0.4282 s). The fixed-count gap is
+    MSVC's treatment of a runtime collection length, priced as the whole
+    gap, with no per-element check left. The benchmark and diagnostic
+    scripts, assembly and raw samples are in
+    `C:\Users\ism19\AppData\Local\Temp\ember-codex-autopilot-20261003`.
+    No power-source change event occurred during these runs. README
+    benchmark charts have not been regenerated for this focused check.
+  * All eleven repository gates and the full annotation sweep pass.
+    `spec_check --emit-appendix` leaves the adopted specification unchanged
+    byte for byte. This checkpoint is ready to commit and push; watch its
+    exact-head CI before continuing the next batch.
+  * **Next:** `[TXT-11]`'s seven missing String methods, then the remaining
+    review findings below. Its `insert`/`remove`/`truncate` names have no
+    complete signatures in H51; settle those through delegated ODR-098
+    before implementing them. The existing phase estimates stay unchanged:
+    this batch implements an optimization of already-counted rules.
 
 * **Last commits, oldest first:**
   * `f3a8d6c` (D-248/D-250) and the handoff `770780b`.
@@ -11104,7 +11145,7 @@ first**; the rest of §0.355 is the running narrative behind it.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h51/` are frozen.
-* **Next numbers:** ODR-098, D-477, ADR-109, ERR-056.
+* **Next numbers:** ODR-098, D-478, ADR-110, ERR-056.
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
@@ -11341,8 +11382,8 @@ first**; the rest of §0.355 is the running narrative behind it.
     text-map decision), `p1_read_loop` 1.48x and `t3_lines` 1.13x (their
     checks); clang `a10_recursion` 1.74x and `p1_read_loop` 1.73x (the
     check); gcc `p5_million_objects` 1.12x. 57 values under x0.95 (bold).
-  * **Paused by the owner after `e2cbba3`** ("update the handoff and pause
-    all the work"): resume only when the owner says so. `5a5a678` (ADR-106)
+  * **Historical pause after `e2cbba3`** ("update the handoff and pause
+    all the work"): resumed by the owner on 2026-10-03, recorded above. `5a5a678` (ADR-106)
     and `e2cbba3` (ADR-107, D-474 to D-476, ADR-108, the README) are pushed
     and CI is green on both; `5a5a678`'s run took 3 hours (D-474),
     `e2cbba3`'s 48 minutes.
@@ -11385,11 +11426,8 @@ first**; the rest of §0.355 is the running narrative behind it.
     pending decisions: `a16_map_text`'s text map (key on the stack, a
     small-block allocator, or short text inside `String`) and bigger
     `[SIMD-7]` blocks for `p1_read_loop` (a spec change).
-  * **Next:** (1) `for x in span` and
-    `for x in xs` over an `Array` bind each element by reference, and
-    `[SIMD-5]`'s vectorisable form refuses a reference, so those loops never
-    group their overflow checks (`for b in text.as_bytes()` 1.5x C): admit a
-    read-only element reference; (2) `[TXT-11]`'s seven missing `String`
+  * **Next:** D-477 closes the read-only element-reference gap in
+    `[SIMD-5]` (2026-10-03, above). Build `[TXT-11]`'s seven missing `String`
     methods (`with_capacity`, `reserve`, `insert`, `remove`, `truncate`,
     `clear`, `capacity`); then what is left of the second review: the
     interface half of D-467 (a per-class accessor in the type information),

@@ -1534,6 +1534,7 @@ fn vectorisable(
     let inside: HashSet<usize> = all.iter().copied().collect();
     let definitions = definitions(body, &all);
     let dominators = dominators(body, shape.header, &all);
+    let carried = carried_locals(body, shape);
     let mut checks = Vec::new();
     // Views accessed: the place each came from, its offsets, whether written,
     // whether read.
@@ -1560,8 +1561,26 @@ fn vectorisable(
         for (index, stmt) in data.stmts.iter().enumerate() {
             match &stmt.kind {
                 StmtKind::Assign { place, rvalue } => {
-                    if matches!(rvalue, Rvalue::Ref { .. }) {
+                    if place.projection.is_empty()
+                        && matches!(types.kind(body.local(place.local).ty), TyKind::Ref { .. })
+                        && carried.contains(&place.local)
+                    {
                         return None;
+                    }
+                    if let Rvalue::Ref { place: source, mutable } = rvalue {
+                        // Ordinary Array/Span iteration lends a read-only
+                        // element. Its dereference is the indexed access it
+                        // came from, provided it is defined anew each turn.
+                        if *mutable
+                            || !place.projection.is_empty()
+                            || !definitions.contains_key(&place.local)
+                            || !matches!(
+                                vf_place(body, types, &definitions, &dominators, shape.counter, block, source),
+                                Ok(Some(_))
+                            )
+                        {
+                            return None;
+                        }
                     }
                     // A floating-point running total needs `@fastmath` or
                     // `@parallel(reduce=…)` to be reordered.
@@ -1700,6 +1719,29 @@ fn vf_place(
     block: usize,
     place: &Place,
 ) -> Result<Option<(Place, i128)>, ()> {
+    let mut resolved = place.clone();
+    for _ in 0..16 {
+        if resolved.projection.first() != Some(&Projection::Deref) {
+            break;
+        }
+        if !matches!(types.kind(body.local(resolved.local).ty), TyKind::Ref { mutable: false, .. }) {
+            return Err(());
+        }
+        let (defined_at, definition) = definitions.get(&resolved.local).ok_or(())?;
+        if !dominators.get(&block).is_some_and(|seen| seen.contains(defined_at)) {
+            return Err(());
+        }
+        let (source, skip) = match definition {
+            Definition::Value(Rvalue::Ref { place: source, mutable: false }) => (source, 1),
+            Definition::Value(Rvalue::Use(Operand::Copy(source) | Operand::Move(source)))
+                if source.projection.is_empty() => (source, 0),
+            _ => return Err(()),
+        };
+        let mut projection = source.projection.clone();
+        projection.extend_from_slice(&resolved.projection[skip..]);
+        resolved = Place { local: source.local, projection };
+    }
+    let place = &resolved;
     let mut index_at = None;
     for (position, projection) in place.projection.iter().enumerate() {
         let prefix = Place { local: place.local, projection: place.projection[..position].to_vec() };
