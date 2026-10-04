@@ -5085,6 +5085,13 @@ setup loop, not the measured one, its C is the same before and after, and the pu
 is 19 ms, so the difference is most likely where the measured loop was placed, not this change;
 recorded as a lead.
 
+The clang gap to `shared_ptr` was the comparison's (measured 2026-10-05, 04:24, the same way):
+the C++ twin's `Holder` is a stack struct, which clang keeps in a register, while the Ember
+program's is a class, whose field is stored to memory before each locked instruction. Both loops
+make the same two atomic operations a store (`lock xadd` in Ember, `lock inc`/`lock dec` in the
+C++). With `Holder` a struct in Ember as well, like with like: MSVC 0.399 s, the C++ 0.525 s
+(×0.760; before this change ×1.997); clang 0.398 s, the C++ 0.416 s (×0.955; before ×1.329).
+
 ## ADR-132 — a virtual call one body answers is a direct call (`[DSP-1]`, `[DSP-5]`)
 
 2026-10-04, autopilot. `[DSP-1]` makes a call on a final class's handle a static call; `[DSP-5]`

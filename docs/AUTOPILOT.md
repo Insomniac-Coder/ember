@@ -39,7 +39,7 @@ The static-library batch is verified; use the current rule-and-evidence checklis
 for those three phases and close its remaining gaps. Other phases are eligible only where
 they supply a concrete dependency of this work. Defer further FFI expansion, including
 export tables, until this priority is fulfilled. Keep delegating by complexity and commit
-about every five features. Progress estimates must follow verified obligations, not stale
+about every ten tasks (section 4). Progress estimates must follow verified obligations, not stale
 audit rows. This supersedes the older lowest-completion-first ordering below.
 
 Historical order (2026-09-25):
@@ -138,9 +138,10 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   are getting way to close to TjMAX and staying that hot for extended durations is not
   recommended". Revised the same day: "I am oaky with you using all cores for validation and
   conformance tests and the 8 performance cores for benchmarks but I need you to give a good 10-15
-  minutes gap between tests so that the laptop has enough time to cooldown". Validation runs (the
-  quick check, each workspace suite, the gates, the WSL suite) may use every core, one at a time,
-  with 10 to 15 minutes between one run and the next; benchmarks stay on the performance cores.
+  minutes gap between tests so that the laptop has enough time to cooldown", and on 2026-10-05:
+  "reduce the cooldown time to 10 minutes". Validation runs (the quick check, each workspace
+  suite, the gates, the WSL suite) may use every core, one at a time, with 10 minutes between one
+  run and the next; benchmarks stay on the performance cores.
   The quick check honours `RUST_TEST_THREADS` when a run must be narrower. Windows power settings
   (the maximum processor state) are the owner's to change, not an agent's.
 - **Benchmarks run once, after every change is in.** The owner, 2026-10-02: "only run the
@@ -271,8 +272,12 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   clang-cl. Use `python3` if `python` is missing.
 - **Never edit repository files while the full suite runs**: it reads the runtime's C and the
   test directories during the run.
-- **Commit and push to `main` about every five features**, and always before stopping, only after
-  the quick check, the full suite and every gate pass. End each commit message with
+- **Commit and push to `main` about every ten tasks**, and always before stopping, only after
+  the quick check, the full suite and every gate pass. The owner, 2026-10-05: "since we are taking
+  longer breaks between each runs we can increase the number of tasks we do in one commit go up
+  from 5 to 10" (it was about every five features): each task still gets its own focused checks
+  and break tests; the full validation (both Windows suites, the gates, the WSL suite) runs once
+  for the batch. End each commit message with
   `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - **Every commit carries both identities** (the owner, 2026-09-26: "I actually want both
   identities to be carried from here after"): the owner as author and Claude as committer,

@@ -10784,16 +10784,24 @@ anything needs a review just note it down and ask me about a workflow later".
   inline atomic add. Both counts are inline now; measured in ADR-133.
 * **Then D-510** (ADR-118 amended): the linker probe tries a program that did not start again and
   keeps no answer it could not finish (its test had failed once in WSL: "text file busy").
-* **Speed lead (not built):** `p5_million_objects` retains each new object for `push` and releases
-  the temporary at once (`ember_retain_plain` and `ember_release_plain` around
-  `ember_vec_push_ptr`); `[RC-3]` allows moving a temporary into an `owned` parameter, which
-  would drop both. `[RC-2d]` guarantees that move only into a field.
-* **Leads from ADR-133's measurement (not investigated yet):** clang's `p4_views_alive_01`
-  took 33.2 ms with the old runtime header and 19.4 ms with the new one, though its C is the
-  same and its retain is outside the measured loop (published: 19 ms): the measured loop's
-  placement swings it, as D-498's loop swings with MSVC; a general fix (loop alignment) is the
-  thing to try. And the Sync-handle program with clang is 1.26x its `shared_ptr` twin (MSVC
-  1.00x): find what the rest is before it joins the README's set.
+* **Tried and not adopted (2026-10-05):** `p5_million_objects` retains each new object for
+  `push` and releases the temporary at once. Moving a fresh value into `push` (`[RC-3]` allows
+  it: nothing runs in between) removed the pair from six benchmark programs and measured nothing
+  (all within 1.3%, `p5` and `p6` again with 21 runs: allocation dominates). It also crossed
+  ADR-114's temporary-owner transfer, which already moves some fresh temporaries into lists: a
+  push through an interface upcast got a retain back, and a Sync temporary ADR-114 keeps counted
+  on purpose lost its retain. Moving an `owned` call argument the same way is wrong: the callee
+  may drop it before the statement ends (`RC-3/accept_owned_calls_preserve_the_callers_temporary_drop`).
+  If the pair ever matters, ADR-114's pass is the place to extend (a constructor with `init`).
+* **Leads from ADR-133's measurement:** clang's `p4_views_alive_01` took 33.2 ms with the old
+  runtime header and 19.4 ms with the new one, though its C is the same and its retain is outside
+  the measured loop (published: 19 ms): the measured loop's placement swings it, as D-498's loop
+  swings with MSVC; a general fix (loop alignment) is the thing to try. Not investigated yet.
+  The Sync-handle program's 1.26x with clang was its twin: the C++ `Holder` is a stack struct
+  clang keeps in a register, the Ember one a class whose field is stored before every locked
+  instruction. With `Holder` a struct in Ember too (`scratchpad/rc4bench/s2_...`), Ember is
+  0.76x the `shared_ptr` time with MSVC and 0.955x with clang (ADR-133's note); that program,
+  not the first, is the one for the README's set.
 * **Then D-460** (ADR-134): a base class's view getter called on a derived local borrows the
   local (it was `E3060`); every borrowed class upcast is a base-typed copy in C, so inherited
   `mut self` calls no longer reinterpret a `Derived**` as a `Base**`.
