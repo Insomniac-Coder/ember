@@ -10733,9 +10733,8 @@ anything needs a review just note it down and ask me about a workflow later".
   temporary ends: a mistake there skips or doubles a destructor).
 * **To ask the owner:** D-498 (above): the multiply guard now and the placement accepted, or the
   character loop's layout first.
-* **Open:** D-498, D-487; ADR-118's
-  linker probe starts two processes on every gcc build, uncached; `lines()` with MSVC about 4%
-  slower than the published compiler from its loop's placement (ADR-125).
+* **Open:** D-498, D-487; `lines()` with MSVC about 4% slower than the published compiler from
+  its loop's placement (ADR-125).
 * **Committed `50c8389`:** D-502 (ADR-126): the runtime no longer makes every Linux program load
   libm; gcc's `a00_empty` 1.12x → 0.989x the C.
 * **After `50c8389`:** D-488, D-503 and D-504 (ADR-127): temporaries end where `[EXP-4]` and
@@ -10757,8 +10756,10 @@ anything needs a review just note it down and ask me about a workflow later".
   `progress_reduction_emits_...` asserts one `ck_mul_u64(` and no ` / ` per guarded function.
 * **Then D-490** (ADR-128): a name hoisted out of a branch (`[CTL-10]`) is one variable with
   each arm's declaration of it; an arm that moved it no longer gets `E3040` and `L1001`.
-* **Next:** the linker probe (ADR-118, uncached on every gcc build); then the phases
-  (AUTOPILOT §2).
+* **Then the linker probe** (ADR-118 amended): its answer is cached by the compiler and linker
+  files; a gcc build 2.2 ms (1.7%) faster.
+* **Next:** the phases (AUTOPILOT §2): `docs/PHASE-1-3-CLOSURE.md`; its CTL-3b row is stale
+  (`step_by` and counted-loop fusion exist, with tests); Phase 3's OBJ/RC/EXC/DSP/WK audit.
 * **Tools for this work** (session scratchpad, see the 2026-10-02 bullet below for the rest):
   `ab_variants.py <experiment> <cc> <runs> <log> <programs>` builds every program with several
   compiler trees and times them interleaved; `wsl/ab_gcc.py` does it for gcc in WSL (`~/ab-old`,

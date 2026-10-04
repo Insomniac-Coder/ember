@@ -4833,6 +4833,15 @@ combined-validation.json, SHA256
 No final README matrix or reasonable-overhead conclusion follows from this
 correctness record.
 
+**The probe's answer is cached** (2026-10-04, autopilot). Asking GCC for its linker and the
+linker for its options took two processes on every gcc build. The answer is kept in the global
+build cache (`linker/`), keyed by the compiler file (path, size, modification time) and
+`COMPILER_PATH`/`GCC_EXEC_PREFIX`, and it holds while the linker GCC named is found at the same
+file, unchanged (a bare name is looked up on `PATH` again); otherwise it is asked again. Measured
+in WSL on mains, a small program's gcc build 124.7 → 122.6 ms (31 interleaved runs, guest CPU 0),
+the two processes alone 1.3 ms. `the_linker_probe_is_cached_until_the_linker_changes` counts the
+processes a fake GCC is asked for.
+
 ## ADR-119 — reject unrepresentable aligned-allocation round-up
 
 2026-10-04, D-493. Fixed and production correctness validated.

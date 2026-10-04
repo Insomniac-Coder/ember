@@ -210,13 +210,7 @@ fn cached_msvc_environment(vcvars: &Path) -> Option<BTreeMap<String, String>> {
     }
     let env = capture_environment(vcvars)?;
     let text: String = env.iter().map(|(name, value)| format!("{name}={value}\n")).collect();
-    if let Some(dir) = file.parent() {
-        let _ = std::fs::create_dir_all(dir);
-        let temp = file.with_extension(format!("tmp{}", std::process::id()));
-        if std::fs::write(&temp, text).is_ok() && std::fs::rename(&temp, &file).is_err() {
-            let _ = std::fs::remove_file(&temp);
-        }
-    }
+    write_atomically(&file, &text);
     Some(env)
 }
 
@@ -425,17 +419,92 @@ fn executable_section_flags(toolchain: &Toolchain, managed_executable: bool) -> 
 /// Whether GCC's selected Linux linker supports both section removal and
 /// required definition roots. GCC may use a linker other than GNU ld; an
 /// unavailable or unrecognized capability preserves ordinary linking.
+///
+/// Asking takes two processes (GCC names its linker, the linker lists its
+/// options), on every build: the answer is kept in the global cache, keyed by
+/// the compiler file and what steers GCC's choice of linker, and it holds
+/// while the linker GCC named is still the same file at the same place.
 pub fn executable_section_gc_supported(toolchain: &Toolchain) -> bool {
     if executable_section_flags(toolchain, true).is_empty() { return false; }
-    let Ok(selected) = compiler_command(toolchain).arg("-print-prog-name=ld").output() else { return false; };
-    if !selected.status.success() { return false; }
-    let Ok(selected) = std::str::from_utf8(&selected.stdout) else { return false; };
+    let cache = linker_probe_file(toolchain);
+    if let Some(answer) = cache.as_deref().and_then(read_linker_probe) {
+        return answer;
+    }
+    let (named, answer) = probe_linker(toolchain);
+    if let (Some(file), Some(named)) = (cache, named)
+        && let Some(found) = program_file(Path::new(&named), std::env::var_os("PATH"))
+        && let Some(stamp) = file_stamp(&found)
+    {
+        let text = format!("{}\n{named}\n{}\n{stamp}\n", if answer { "yes" } else { "no" }, found.display());
+        write_atomically(&file, &text);
+    }
+    answer
+}
+
+/// GCC's linker, as GCC names it, and whether it has both options.
+fn probe_linker(toolchain: &Toolchain) -> (Option<String>, bool) {
+    let Ok(selected) = compiler_command(toolchain).arg("-print-prog-name=ld").output() else { return (None, false) };
+    if !selected.status.success() { return (None, false); }
+    let Ok(selected) = std::str::from_utf8(&selected.stdout) else { return (None, false) };
     let selected = selected.trim();
-    if selected.is_empty() || selected.contains('\n') { return false; }
-    let Ok(help) = Command::new(selected).arg("--help").output() else { return false; };
-    if !help.status.success() { return false; }
+    if selected.is_empty() || selected.contains('\n') { return (None, false); }
+    let named = Some(selected.to_string());
+    let Ok(help) = Command::new(selected).arg("--help").output() else { return (named, false) };
+    if !help.status.success() { return (named, false); }
     let help = String::from_utf8_lossy(&help.stdout);
-    help.contains("--gc-sections") && help.contains("--require-defined")
+    (named, help.contains("--gc-sections") && help.contains("--require-defined"))
+}
+
+/// Where the probe's answer for this compiler is kept: keyed by the compiler
+/// file (path, size, modification time) and the variables GCC searches for
+/// its linker by. `None` when the compiler file cannot be found.
+fn linker_probe_file(toolchain: &Toolchain) -> Option<PathBuf> {
+    let compiler = compiler_file(toolchain)?;
+    let mut key = blake3::Hasher::new();
+    key.update(b"linker-gc v1\0");
+    key.update(compiler.to_string_lossy().as_bytes());
+    key.update(file_stamp(&compiler)?.as_bytes());
+    for name in ["COMPILER_PATH", "GCC_EXEC_PREFIX"] {
+        key.update(b"\0");
+        key.update(name.as_bytes());
+        key.update(b"=");
+        if let Some(value) = std::env::var_os(name) {
+            key.update(value.to_string_lossy().as_bytes());
+        }
+    }
+    Some(cache_root().join("linker").join(format!("{}.txt", key.finalize().to_hex())))
+}
+
+/// A cached answer, if the linker GCC named is still found at the same file,
+/// unchanged: a bare name is looked up on this process's `PATH` again.
+fn read_linker_probe(file: &Path) -> Option<bool> {
+    let text = std::fs::read_to_string(file).ok()?;
+    let mut lines = text.lines();
+    let answer = match lines.next()? {
+        "yes" => true,
+        "no" => false,
+        _ => return None,
+    };
+    let (named, found, stamp) = (lines.next()?, lines.next()?, lines.next()?);
+    let now = program_file(Path::new(named), std::env::var_os("PATH"))?;
+    (now == Path::new(found) && file_stamp(&now)? == stamp).then_some(answer)
+}
+
+/// A file's size and modification time, as text.
+fn file_stamp(file: &Path) -> Option<String> {
+    let meta = file.metadata().ok()?;
+    Some(format!("{} {}", meta.len(), modified_nanos(&meta)))
+}
+
+/// Write a cache file whole or not at all: another build may be reading it.
+fn write_atomically(file: &Path, text: &str) {
+    if let Some(dir) = file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+        let temp = file.with_extension(format!("tmp{}", std::process::id()));
+        if std::fs::write(&temp, text).is_ok() && std::fs::rename(&temp, file).is_err() {
+            let _ = std::fs::remove_file(&temp);
+        }
+    }
 }
 
 fn compile_and_link_impl(
@@ -950,10 +1019,15 @@ fn compiler_file(toolchain: &Toolchain) -> Option<PathBuf> {
         ),
         Toolchain::Clang(path) | Toolchain::Gcc(path) => (path, None),
     };
+    program_file(program, search.or_else(|| std::env::var_os("PATH")))
+}
+
+/// The file a program name runs: a path as it is, a bare name found on `search`.
+fn program_file(program: &Path, search: Option<std::ffi::OsString>) -> Option<PathBuf> {
     if program.components().count() > 1 {
-        return Some(program.clone());
+        return Some(program.to_path_buf());
     }
-    std::env::split_paths(&search.or_else(|| std::env::var_os("PATH"))?)
+    std::env::split_paths(&search?)
         .map(|dir| dir.join(program))
         .find(|candidate| candidate.is_file())
 }
@@ -1148,6 +1222,40 @@ int main(int argc, char** argv) {
         let listing = String::from_utf8_lossy(&listed.stdout);
         let names: Vec<_> = listing.lines().filter_map(|line| line.split_whitespace().last()).collect();
         assert!(names.contains(&"retained_c_root") && names.contains(&"dead_helper"));
+    }
+
+    /// ADR-118's probe runs GCC and its linker once; the answer is reused
+    /// until the linker GCC names is a different file.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_linker_probe_is_cached_until_the_linker_changes() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("linker-probe-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let linker = dir.join("linker");
+        let log = dir.join("calls");
+        let shell_quote = |path: &Path| format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"));
+        let wrapper = dir.join("gcc-wrapper");
+        std::fs::write(&wrapper, format!(
+            "#!/bin/sh\necho \"$1\" >> {}\nif [ \"$1\" = '-print-prog-name=ld' ]; then printf '%s\\n' {}; exit 0; fi\nexit 1\n",
+            shell_quote(&log), shell_quote(&linker))).unwrap();
+        let both = "#!/bin/sh\nprintf '%s\\n' '--gc-sections' '--require-defined=SYMBOL'\n";
+        std::fs::write(&linker, both).unwrap();
+        for script in [&linker, &wrapper] {
+            std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let simulated = Toolchain::Gcc(wrapper);
+        let calls = || std::fs::read_to_string(&log).unwrap_or_default().lines().count();
+        assert!(executable_section_gc_supported(&simulated));
+        assert_eq!(calls(), 1);
+        assert!(executable_section_gc_supported(&simulated), "the cached answer");
+        assert_eq!(calls(), 1, "a cached answer runs nothing");
+        // A different linker at the same path: asked again.
+        std::fs::write(&linker, "#!/bin/sh\nprintf '%s\\n' '--gc-sections'\n").unwrap();
+        assert!(!executable_section_gc_supported(&simulated));
+        assert_eq!(calls(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Compiled once, reused while nothing changes, and rebuilt when a header
