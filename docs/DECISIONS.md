@@ -5008,6 +5008,33 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-130 — the debug leak report is on by default, scales, and names each object's cycle
+
+2026-10-04, D-507, autopilot. `[WK-15]` has `ember run` (and `ember test`, not built yet) in the
+debug profile report leaked objects and their cycles at exit by default, `--no-leak-check`
+turning it off; `[WK-4]` has the report name, for each leaked object on a cycle, the shortest
+strong cycle through it as `Type.field` edges and the edge to weaken (`L3017`). The report
+existed behind `--leak-check` (`[WK-8]`), on a registry that could not be on by default: a list
+every release searched, and a component search that rescanned all edges from every node.
+
+* The live set is open addressing keyed by the header's address, at most half full counting
+  removed slots: track and untrack are O(1). A spin lock on the runtime's own atomics guards it,
+  since an attached host thread can make and release objects.
+* The report maps objects to indices through a second such table, groups edges by owner, and
+  finds the strongly connected components of the strong edges with an iterative Tarjan: linear
+  in objects and edges, with no recursion a long chain of owners could overflow.
+* Each component prints as before (objects, strong edges, static prediction, the suggested weak
+  edge, the edges), under `warning[L3017]: reference cycle detected`, then `shortest cycles:`:
+  for each object, a breadth-first search inside the component from it meets an edge back to it
+  first on its shortest cycle; equal shapes are printed once with the objects that share them.
+  At most 64 objects and edges of a component are listed and traced (a leaked million-node list
+  is one component), and one search stops after 65,536 objects.
+* `ember run` in the debug profile sets `--leak-check` unless `--no-leak-check`; the other
+  profiles report only when asked. The error-page gate runs a runtime code's examples instead of
+  checking them, and the test harness gains `#$ stderr:`.
+
+No spec change.
+
 ## ADR-129 — the guaranteed count elisions `[RC-2c]` and `[RC-2d]`
 
 2026-10-04, D-505, D-506, autopilot. `[RC-2]` guarantees no retain or release in five cases and

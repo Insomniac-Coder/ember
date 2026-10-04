@@ -149,6 +149,8 @@ def check(path):
         stdout = expected_stdout(text)
         if stdout is not None and out.rstrip('\n').split('\n') != stdout:
             problems.append(f'stdout {out.rstrip()!r} is not {stdout!r}')
+        problems += [f'stderr lacks {needle.strip()!r}: {err.strip()[:200]!r}'
+                     for needle in re.findall(r'^\s*#\$ stderr:(.*)$', text, re.M) if needle.strip() not in err]
         panics = re.search(r'^#\$ panics:\s*(.*)$', text, re.M)
         if kind == 'run-fail' and (code == 0 or (panics and panics[1].strip() not in err)):
             problems.append(f'expected a panic {panics[1].strip() if panics else ""!r}, got exit {code}: {err.strip()[:160]!r}')

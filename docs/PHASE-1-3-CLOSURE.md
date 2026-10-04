@@ -62,20 +62,21 @@ complete. Ten rules had none; RC-2b, RC-2c and RC-2d now do (two were defects: D
 | OBJ-1 | 4 | RC-2e | 24 | EXC-3 | 5 | DSP-1 | 29 |
 | OBJ-2 | 25 | RC-3 | 13 | EXC-3a | 2 | DSP-2 | 14 |
 | OBJ-3 | 44 | RC-4 | 2 | EXC-4 | 1 | DSP-3 | 17 |
-| OBJ-4 | **0** | RC-5 | 13 | EXC-5 | 3 | DSP-4 | 4 |
+| OBJ-4 | 1 (new) | RC-5 | 13 | EXC-5 | 3 | DSP-4 | 4 |
 | OBJ-5 | 3 | RC-6 | **0** | EXC-6 | 4 | DSP-5 | **0** |
 | RC-1 | 38 | EXC-1 | 96 | EXC-7 | 3 | WK-1..3 | 2-3 |
-| RC-2 | 1 | EXC-2 | 11 | EXC-8 | 7 | WK-4 | **0** |
+| RC-2 | 1 | EXC-2 | 11 | EXC-8 | 7 | WK-4 | 1 (new) |
 | RC-2a | 2 | EXC-14 | 5 | EXC-9 | 5 | WK-5..9 | 1-12 |
 | RC-2b | 1 (new) | EXC-15 | 27 | EXC-10 | **0** | WK-11..14 | 45-125 |
-| RC-2c | 1 (new) | EXC-16..19 | 2-29 | EXC-11 | 1 | WK-15 | **0** |
+| RC-2c | 1 (new) | EXC-16..19 | 2-29 | EXC-11 | 1 | WK-15 | 1 (new) |
 | RC-2d | 1 (new) | | | EXC-12 | 5 | OPT-1 | **0** |
 
-Still without a case: OBJ-4 (objects through the runtime allocator), RC-6 (`ember inspect`
+Still without a case: RC-6 (`ember inspect`
 lists surviving count operations in loops), EXC-10 (an inner loop reuses an outer loop's
 hoisted access; a known gap, below), DSP-5 (devirtualising a call with one reachable
-implementation), WK-4 and WK-15 (the debug leak report and its shortest cycle), OPT-1 (stack
-promotion by escape analysis).
+implementation), OPT-1 (stack promotion by escape analysis, a MAY). WK-4 and WK-15 have cases
+since D-507 (the debug leak report, on by default, naming each object's shortest cycle), and
+OBJ-4 a case checking that a class object is made by the runtime's `ember_obj_new`.
 
 ## Phase 3 — lead audit pending
 

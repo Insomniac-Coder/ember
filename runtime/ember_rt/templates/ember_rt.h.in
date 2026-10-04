@@ -1916,9 +1916,10 @@ void ember_rt_check_main_thread(void);
 
 /* -- debug facilities ------------------------------------------------------- */
 
-/* `[WK-8]` runtime cycle inspection is opt-in. The generated entry point
- * enables it for `ember run --leak-check`; embedding hosts can register their
- * own generated enumerators before requesting a report. */
+/* `[WK-8]` runtime cycle inspection. The generated entry point enables it for
+ * `ember run` in the debug profile (`[WK-15]`, unless `--no-leak-check`) and
+ * for `ember run --leak-check`; embedding hosts can register their own
+ * generated enumerators before requesting a report. */
 #define EMBER_RT_DEBUG_OBJECTS UINT32_C(1)
 
 /* A generated enumerator describes the ownership references held by one live

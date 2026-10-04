@@ -109,7 +109,12 @@ def ember() -> Path:
     return max(built, key=lambda exe: exe.stat().st_mtime)
 
 
-def run(source: str, work: Path, manifest: str | None = None) -> tuple[int, str]:
+# A code the debug runtime reports rather than the compiler (`[WK-15]`): its
+# page's programs are run, and the fixed one must run without reporting it.
+RUNTIME_CODES = {"L3017"}
+
+
+def run(source: str, work: Path, manifest: str | None = None, command: str = "check") -> tuple[int, str]:
     path = work / "page.em"
     manifest_path = work / "ember.toml"
     if manifest is None:
@@ -117,8 +122,11 @@ def run(source: str, work: Path, manifest: str | None = None) -> tuple[int, str]
     else:
         manifest_path.write_text(manifest, encoding="utf-8", newline="\n")
     path.write_text(source, encoding="utf-8", newline="\n")
+    arguments = [str(ember()), command, str(path)]
+    if command == "run":
+        arguments += ["--out-dir", str(work / "out")]
     result = subprocess.run(
-        [str(ember()), "check", str(path)],
+        arguments,
         capture_output=True,
         text=True,
         cwd=ROOT,
@@ -140,11 +148,12 @@ def check_page(path: Path, work: Path) -> list[str]:
     # guard held across a call) was the first lint page; `W2111` is the first
     # compiler warning page.
     is_non_error = code.startswith(("L", "W"))
+    command = "run" if code in RUNTIME_CODES else "check"
 
     if "fails" not in blocks:
         problems.append(f"{code}: no ```ember,fails block — [DOC-1] wants the program that triggers it")
     else:
-        status, output = run(blocks["fails"], work, manifests.get("fails"))
+        status, output = run(blocks["fails"], work, manifests.get("fails"), command)
         if is_non_error:
             # It must compile — a lint does not reject — and it must actually
             # emit the lint. The second half is the one that matters: without
@@ -169,12 +178,14 @@ def check_page(path: Path, work: Path) -> list[str]:
     if "fixed" not in blocks:
         problems.append(f"{code}: no ```ember,fixed block — [DOC-1] wants the fix as compilable code")
     else:
-        status, output = run(blocks["fixed"], work, manifests.get("fixed"))
+        status, output = run(blocks["fixed"], work, manifests.get("fixed"), command)
         if status != 0:
             problems.append(
                 f"{code}: the ```ember,fixed program does not compile — [PHIL-8a]:\n"
                 + "\n".join("      " + line for line in output.splitlines()[:8])
             )
+        elif code in RUNTIME_CODES and code in output:
+            problems.append(f"{code}: the ```ember,fixed program still reports {code} when it runs")
 
     # `[DOC-1]` — "one paragraph on **why the rule exists** (not a restatement
     # of the rule)". A heading is the cheapest thing that can be checked; the

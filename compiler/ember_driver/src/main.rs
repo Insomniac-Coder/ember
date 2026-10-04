@@ -43,7 +43,9 @@ options:
     --backend c                        the only backend in v1
     --cc msvc|clang|gcc                override C compiler detection
     --out-dir <dir>                    default: target/; staticlib archives and headers in <profile>/lib/
-    --leak-check                       `run` only: report live ownership SCCs
+    --leak-check                       `run` only: report leaked ownership cycles at exit
+                                       (the default for `run` in the debug profile)
+    --no-leak-check                    `run` only: no leak report in the debug profile
     --json                             machine-readable diagnostics
     -D warnings                        treat warnings as errors
 
@@ -279,9 +281,12 @@ struct Options {
     out_dir: Option<PathBuf>,
     json: bool,
     deny_warnings: bool,
-    /// `[WK-8]` — emit the opt-in runtime cycle inspector into the generated
-    /// entry point without changing the Ember program's command-line arguments.
+    /// `[WK-8]` — emit the runtime cycle inspector into the generated entry
+    /// point without changing the Ember program's command-line arguments.
+    /// `[WK-15]`: on for `ember run` in the debug profile unless
+    /// `--no-leak-check`.
     leak_check: bool,
+    no_leak_check: bool,
     /// `[CLI-9]` — lex and parse only, reporting `E00xx` and `E01xx`. Names
     /// are not resolved, so an example naming undeclared types still passes.
     /// This is what `[TST-7]`'s gate over the specification's own code blocks
@@ -370,6 +375,18 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             let options = parse_options(&rest)?;
             if options.leak_check && command != "run" {
                 return Err("`--leak-check` is only valid with `ember run`".to_string());
+            }
+            if options.no_leak_check && command != "run" {
+                return Err("`--no-leak-check` is only valid with `ember run`".to_string());
+            }
+            if options.leak_check && options.no_leak_check {
+                return Err("`--leak-check` and `--no-leak-check` contradict each other".to_string());
+            }
+            // `[WK-15]` — `ember run` in the debug profile reports leaked
+            // objects and their cycles at exit unless told not to.
+            let mut options = options;
+            if command == "run" && options.profile == Profile::Debug && !options.no_leak_check {
+                options.leak_check = true;
             }
             if options.emit_header && command != "build" {
                 return Err("`--emit-header` is only valid with `ember build`".to_string());
@@ -1169,6 +1186,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--syntax-only" => options.syntax_only = true,
             "--json" => options.json = true,
             "--leak-check" => options.leak_check = true,
+            "--no-leak-check" => options.no_leak_check = true,
             "-Dwarnings" | "-D" => {
                 if arg == "-D" {
                     let what = value(&mut index, arg)?;

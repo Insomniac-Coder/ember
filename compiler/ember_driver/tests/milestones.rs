@@ -49,6 +49,9 @@ struct Expectations {
     stdout: Option<String>,
     /// `#$ stdin:` — one line of standard input per annotation.
     stdin: Option<String>,
+    /// `#$ stderr:` — text the run's standard error must contain, one needle
+    /// per annotation: the debug leak report (`[WK-15]`) goes there.
+    stderr: Vec<String>,
     exit: Option<i32>,
     /// Profiles in which this program must have the same specified result.
     /// Empty means the ordinary `debug` run. A rule with an explicit
@@ -223,6 +226,9 @@ fn parse_expectations(source: &str) -> Expectations {
         } else if let Some(value) = rest.strip_prefix("stdin:") {
             stdin_lines.push(value.trim().to_string());
             collecting_stdout = false;
+        } else if let Some(value) = rest.strip_prefix("stderr:") {
+            expectations.stderr.push(value.trim().to_string());
+            collecting_stdout = false;
         } else if let Some(value) = rest.strip_prefix("stdout:") {
             collecting_stdout = true;
             let value = value.trim();
@@ -237,7 +243,7 @@ fn parse_expectations(source: &str) -> Expectations {
             // passed. Every annotation is now either understood or refused.
             panic!(
                 "unrecognised `#$` annotation: {rest:?}
-  known keys:                  test, profiles, exit, assert-c, error[…], warning[…], help, not-help, panics, stdout, stdin, rules, note"
+  known keys:                  test, profiles, exit, assert-c, error[…], warning[…], help, not-help, panics, stdout, stderr, stdin, rules, note"
             );
         }
     }
@@ -2653,6 +2659,35 @@ fn leak_check_reports_a_live_strong_object_cycle() {
     );
 }
 
+/// `[WK-15]` — the debug leak report is on for `ember run` by default; the
+/// flag turns it off, and the other profiles have it only when asked.
+#[test]
+fn debug_runs_report_leaks_unless_turned_off() {
+    let root = workspace_root();
+    let out_dir = std::env::temp_dir().join(format!("ember-leak-default-{}", std::process::id()));
+    let out_dir = out_dir.to_string_lossy().into_owned();
+    let program = format!("tests/conformance/WK-15/accept_a_debug_run_reports_a_leaked_cycle_by_default.{SOURCE_EXT}");
+    let run = |extra: &[&str]| {
+        let mut arguments = vec!["run", program.as_str(), "--out-dir", out_dir.as_str()];
+        arguments.extend_from_slice(extra);
+        ember(&arguments, &root)
+    };
+    let default = run(&[]);
+    assert!(default.exit == 0 && default.stderr.contains("warning[L3017]"), "no default report:\n{}", default.stderr);
+    let off = run(&["--no-leak-check"]);
+    assert!(off.exit == 0 && !off.stderr.contains("runtime ownership cycle"), "--no-leak-check reported:\n{}", off.stderr);
+    for profile in ["release", "shipping"] {
+        let quiet = run(&["--profile", profile]);
+        assert!(quiet.exit == 0 && !quiet.stderr.contains("runtime ownership cycle"), "{profile} reported unasked:\n{}", quiet.stderr);
+        let asked = run(&["--profile", profile, "--leak-check"]);
+        assert!(asked.exit == 0 && asked.stderr.contains("runtime ownership cycle"), "{profile} --leak-check silent:\n{}", asked.stderr);
+    }
+    let both = run(&["--leak-check", "--no-leak-check"]);
+    assert!(both.exit != 0 && both.stderr.contains("contradict"), "both flags accepted:\n{}", both.stderr);
+    let build = ember(&["build", program.as_str(), "--no-leak-check", "--out-dir", out_dir.as_str()], &root);
+    assert!(build.exit != 0 && build.stderr.contains("only valid with `ember run`"), "build took --no-leak-check:\n{}", build.stderr);
+}
+
 fn assert_reported_node_components(report: &str, expected_count: usize) {
     let components = report.split("runtime ownership cycle:\n").skip(1).collect::<Vec<_>>();
     assert_eq!(
@@ -2965,6 +3000,13 @@ fn check_file(path: &Path, root: &Path) {
             Some(input) => ember_with_input(&arguments, root, input.as_bytes()),
             None => ember(&arguments, root),
         };
+        for needle in &expectations.stderr {
+            assert!(
+                run.stderr.contains(needle.as_str()),
+                "{relative} [{profile}]: expected standard error to contain {needle:?}\nstderr:\n{}",
+                run.stderr
+            );
+        }
 
         // A `run-fail` test compiles and runs, then panics with a given message.
         if let Some(message) = &expectations.panics {
