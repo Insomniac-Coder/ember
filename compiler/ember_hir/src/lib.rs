@@ -68,6 +68,10 @@ pub struct LocalDecl {
     /// `for` loop. An `owned fn` capture must copy the handle into its
     /// environment instead of preserving the compiler-internal reference.
     pub loop_borrowed_handle: bool,
+    /// `[CTL-10]` — this arm's declaration is of a name hoisted beside the
+    /// branch, to the local given: the two are one variable, set in the arm
+    /// and read after the branch (D-490).
+    pub hoisted_into: Option<LocalId>,
 }
 
 #[derive(Debug)]

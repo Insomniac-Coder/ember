@@ -13500,6 +13500,7 @@ impl<'a> Checker<'a> {
                         span: *span,
                         for_iterator: false,
                         loop_borrowed_handle: false,
+                        hoisted_into: None,
                     })
                     .collect();
                 let params = signature
@@ -14676,6 +14677,7 @@ impl<'a> Checker<'a> {
                         span,
                         for_iterator: false,
                         loop_borrowed_handle: false,
+                        hoisted_into: None,
                     },
                     LocalDecl {
                         name: Some(Symbol::intern("self")),
@@ -14683,6 +14685,7 @@ impl<'a> Checker<'a> {
                         span,
                         for_iterator: false,
                         loop_borrowed_handle: false,
+                        hoisted_into: None,
                     },
                 ];
                 let (value, class_owner) = match self.types.kind(ty).clone() {
@@ -15826,6 +15829,7 @@ impl<'a> Checker<'a> {
             span,
             for_iterator: false,
             loop_borrowed_handle: false,
+            hoisted_into: None,
         });
         if let Some(name) = name {
             self.scopes.last_mut().expect("a scope is open").insert(name, id);
@@ -16503,8 +16507,11 @@ impl<'a> Checker<'a> {
 
     /// `[CTL-10]` — a name that is not in scope before a branching statement
     /// and is declared by `x = e` in every arm that completes normally, at one
-    /// type, is declared beside the statement (`out`) and set at the end of
-    /// each such arm. Different types are `E2230`, naming each arm's.
+    /// type, is declared beside the statement (`out`), and each such arm's
+    /// declaration of it is that variable (`hoisted_into`). A copy into it at
+    /// the arm's end read the arm's local again after the arm had moved it
+    /// (D-490: `E3040`, and `L1001` on names the arm read). Different types
+    /// are `E2230`, naming each arm's.
     fn hoist_branch_names(&mut self, arms: Vec<(&mut Block, HashMap<Symbol, LocalId>)>, out: &mut Vec<Stmt>) {
         let never = self.common.never;
         let completing: Vec<usize> =
@@ -16517,7 +16524,6 @@ impl<'a> Checker<'a> {
             .map(|(name, _)| *name)
             .collect();
         names.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-        let mut arms = arms;
         for name in names {
             if self.lookup(name).is_some() {
                 continue;
@@ -16564,12 +16570,8 @@ impl<'a> Checker<'a> {
             // An enclosing branch may hoist it again.
             self.plain_declared.insert(hoisted);
             out.push(Stmt::Let { local: hoisted, init: None });
-            for (index, local) in found {
-                let ty = tys[0];
-                arms[index].0.stmts.push(Stmt::Assign {
-                    place: Expr { ty, kind: ExprKind::Local(hoisted), span },
-                    value: Expr { ty, kind: ExprKind::Local(local), span },
-                });
+            for (_, local) in found {
+                self.locals[local.0 as usize].hoisted_into = Some(hoisted);
             }
         }
     }

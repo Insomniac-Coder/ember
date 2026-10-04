@@ -295,7 +295,7 @@ impl<'a> Builder<'a> {
             .map(|(index, _)| LocalId((index + 1) as u32))
             .collect();
         for (index, decl) in function.locals.iter().enumerate() {
-            if function.params.iter().any(|p| p.local.0 as usize == index) {
+            if function.params.iter().any(|p| p.local.0 as usize == index) || decl.hoisted_into.is_some() {
                 continue;
             }
             let id = LocalId(locals.len() as u32);
@@ -306,6 +306,17 @@ impl<'a> Builder<'a> {
                 span: decl.span,
             });
             local_map[index] = id;
+        }
+        // `[CTL-10]` (D-490) — an arm's declaration of a hoisted name is the
+        // hoisted variable, through any enclosing branch that hoists it again.
+        for index in 0..function.locals.len() {
+            let mut target = index;
+            while let Some(next) = function.locals[target].hoisted_into {
+                target = next.0 as usize;
+            }
+            if target != index {
+                local_map[index] = local_map[target];
+            }
         }
 
         let blocks = vec![BasicBlock {
@@ -775,6 +786,16 @@ impl<'a> Builder<'a> {
         match stmt {
             hir::Stmt::Let { local, init } => {
                 let mir_local = self.local_map[local.0 as usize];
+                // `[CTL-10]` (D-490) — a hoisted name's storage and scope are
+                // the enclosing block's, declared before the branch; the arm
+                // only sets it.
+                if self.function.local(*local).hoisted_into.is_some() {
+                    self.at(self.function.local(*local).span);
+                    if let Some(init) = init {
+                        self.lower_into(Place::local(mir_local), init);
+                    }
+                    return;
+                }
                 let decl_span = self.locals[mir_local.0 as usize].span;
                 self.at(decl_span);
                 self.push(StmtKind::StorageLive(mir_local));

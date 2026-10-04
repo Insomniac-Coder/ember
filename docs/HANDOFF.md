@@ -10733,7 +10733,7 @@ anything needs a review just note it down and ask me about a workflow later".
   temporary ends: a mistake there skips or doubles a destructor).
 * **To ask the owner:** D-498 (above): the multiply guard now and the placement accepted, or the
   character loop's layout first.
-* **Open:** D-498, D-490 (a false E3040), D-487; ADR-118's
+* **Open:** D-498, D-487; ADR-118's
   linker probe starts two processes on every gcc build, uncached; `lines()` with MSVC about 4%
   slower than the published compiler from its loop's placement (ADR-125).
 * **Committed `50c8389`:** D-502 (ADR-126): the runtime no longer makes every Linux program load
@@ -10755,7 +10755,10 @@ anything needs a review just note it down and ask me about a workflow later".
   u64/bool temporaries); phase 3 loses `Ne`, phase 4 `Div`. The unit tests' interpreter models the
   multiply with u128 and its zero-bound cases now read the total; `milestones.rs`
   `progress_reduction_emits_...` asserts one `ck_mul_u64(` and no ` / ` per guarded function.
-* **Next:** D-490, the linker probe; then the phases (AUTOPILOT §2).
+* **Then D-490** (ADR-128): a name hoisted out of a branch (`[CTL-10]`) is one variable with
+  each arm's declaration of it; an arm that moved it no longer gets `E3040` and `L1001`.
+* **Next:** the linker probe (ADR-118, uncached on every gcc build); then the phases
+  (AUTOPILOT §2).
 * **Tools for this work** (session scratchpad, see the 2026-10-02 bullet below for the rest):
   `ab_variants.py <experiment> <cc> <runs> <log> <programs>` builds every program with several
   compiler trees and times them interleaved; `wsl/ab_gcc.py` does it for gcc in WSL (`~/ab-old`,
@@ -12055,7 +12058,7 @@ README timing values and benchmark assets are unchanged.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h52/` are frozen.
-* **Next numbers:** ODR-099, D-505, ADR-128, ERR-056 (D-490/D-498 OPEN).
+* **Next numbers:** ODR-099, D-505, ADR-129, ERR-056 (D-498 OPEN).
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's

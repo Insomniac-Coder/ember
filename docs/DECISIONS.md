@@ -4999,6 +4999,19 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-128 — a name hoisted out of a branch is one variable with each arm's declaration of it
+
+2026-10-04, D-490, autopilot. `[CTL-10]` declares a name set in every completing arm in the
+enclosing block. The compiler kept each arm's local and copied it into the hoisted one at the
+arm's end; when the arm had moved the value (into a constructor, an owned `match`), that copy read
+it again: `E3040` on a valid program, at the declaration, and `L1001` on names the arm did read.
+Each completing arm's local now records the hoisted local it declares (`hoisted_into`), through
+any enclosing branch that hoists it again, and MIR lowering gives them one MIR local: the hoisted
+name is declared (storage, scope) before the branch, and the arm's declaration only sets it. A
+name an arm moved is moved after the branch on that path, so reading it there is `E3040` at the
+read, as for any variable. No copy remains, so nothing changes for values that are not moved.
+No spec change.
+
 ## ADR-127 — temporaries end where the source says: conditions, early exits, written-out evaluations
 
 2026-10-04, D-488, D-503, D-504, autopilot. `[EXP-4]` ends a statement's temporaries at its end, a
