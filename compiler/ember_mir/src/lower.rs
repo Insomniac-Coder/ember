@@ -1097,8 +1097,10 @@ impl<'a> Builder<'a> {
         self.lower_into(Place::local(temp), expr);
         self.at(expr.span);
         self.push(StmtKind::Drop { place: place.clone(), flag: None, scope_end: false });
-        let value = self.read(Place::local(temp), expr.ty);
-        self.push(StmtKind::Assign { place, rvalue: Rvalue::Use(value) });
+        // `[RC-2d]` (D-505) — the temporary is this store's own, so it moves
+        // into the place. A copy retained a class handle (a `Copy` type with
+        // a count) and the temporary's end released it again.
+        self.push(StmtKind::Assign { place, rvalue: Rvalue::Use(Operand::Move(Place::local(temp))) });
     }
 
     /// A local that no scope and no statement will drop.
@@ -5748,15 +5750,15 @@ impl<'a> Builder<'a> {
             // convert.
             hir::ExprKind::EraseRange(inner) => Rvalue::Use(self.lower_operand(inner)),
             hir::ExprKind::StructLit { struct_id, fields } => {
-                let operands = fields.iter().map(|f| self.lower_operand(f)).collect();
+                let operands = fields.iter().map(|f| self.lower_operand_kept(f)).collect();
                 Rvalue::Aggregate { kind: AggregateKind::Struct(*struct_id), operands }
             }
             hir::ExprKind::TupleLit(items) => {
-                let operands = items.iter().map(|e| self.lower_operand(e)).collect();
+                let operands = items.iter().map(|e| self.lower_operand_kept(e)).collect();
                 Rvalue::Aggregate { kind: AggregateKind::Tuple, operands }
             }
             hir::ExprKind::ArrayLit(items) => {
-                let operands = items.iter().map(|e| self.lower_operand(e)).collect();
+                let operands = items.iter().map(|e| self.lower_operand_kept(e)).collect();
                 Rvalue::Aggregate { kind: AggregateKind::Array, operands }
             }
             hir::ExprKind::ArrayRepeat { value, count } => {
@@ -5764,7 +5766,7 @@ impl<'a> Builder<'a> {
                 Rvalue::Repeat { value, count: *count }
             }
             hir::ExprKind::EnumLit { enum_id, variant, fields } => {
-                let operands = fields.iter().map(|f| self.lower_operand(f)).collect();
+                let operands = fields.iter().map(|f| self.lower_operand_kept(f)).collect();
                 Rvalue::Aggregate { kind: AggregateKind::Enum(*enum_id, *variant), operands }
             }
             hir::ExprKind::Ref { place, mutable } => {
@@ -5808,6 +5810,26 @@ impl<'a> Builder<'a> {
                 self.lower_into(Place::local(temp), expr);
                 self.read(Place::local(temp), expr.ty)
             }
+        }
+    }
+
+    /// `[RC-2d]` (D-505) — an operand the consumer keeps: a field or element
+    /// of a literal. A place is read as usual (a class handle copied, so
+    /// retained: its owner keeps its own count); anything else is made in a
+    /// temporary of its own, which moves in. A copy retained a fresh handle
+    /// and the temporary's end released it again.
+    fn lower_operand_kept(&mut self, expr: &'a hir::Expr) -> Operand {
+        let place = matches!(
+            expr.kind,
+            hir::ExprKind::Local(_)
+                | hir::ExprKind::Field { .. }
+                | hir::ExprKind::EnumField { .. }
+                | hir::ExprKind::Index { .. }
+                | hir::ExprKind::Deref(_)
+        );
+        match self.lower_operand(expr) {
+            Operand::Copy(temp) if !place && self.types.needs_drop(expr.ty) => Operand::Move(temp),
+            other => other,
         }
     }
 

@@ -17,6 +17,13 @@
 //! assigned anything but such a copy, and lent mutably only where the callee
 //! cannot re-point it — a `mut self` receiver (`E2103`) or a parameter that is
 //! not `mut`. Copies of `t` count themselves as usual.
+//!
+//! `[RC-2c]` (D-506) — the same holds for `t = h` copied from a local `h` that
+//! keeps its own count (a user-written local or `owned` parameter never
+//! assigned a copy), when no path from the copy to `t`'s drop re-points,
+//! moves, drops or mutably lends `h` itself: `h`'s count keeps the object, so
+//! a retain and a release with nothing between them that could end it cancel.
+//! Writing a field of the object through `h` changes no count.
 
 use std::collections::{HashMap, HashSet};
 
@@ -75,7 +82,9 @@ fn uncounted(body: &Body, types: &TypeTable, callees: &HashMap<String, Callee>, 
     for (b, block) in body.blocks.iter().enumerate() {
         for (s, stmt) in block.stmts.iter().enumerate() {
             match &stmt.kind {
-                StmtKind::Assign { place, rvalue } if whole(place, t) => match element_of_owned_list(body, types, rvalue) {
+                StmtKind::Assign { place, rvalue } if whole(place, t) => match element_of_owned_list(body, types, rvalue)
+                    .or_else(|| owning_handle_source(body, types, rvalue, t))
+                {
                     Some(list) => copies.push((b, s, list)),
                     None => return false,
                 },
@@ -102,7 +111,7 @@ fn uncounted(body: &Body, types: &TypeTable, callees: &HashMap<String, Callee>, 
     // of `t` ends one of these copies.
     let mut reached = HashSet::new();
     for (b, s, lists) in &copies {
-        if !list_kept(body, (*b, *s + 1), t, lists, &mut reached) {
+        if !list_kept(body, types, (*b, *s + 1), t, lists, &mut reached) {
             return false;
         }
     }
@@ -159,6 +168,26 @@ fn element_of_owned_list(body: &Body, types: &TypeTable, rvalue: &Rvalue) -> Opt
     });
     (body.local(list).kind == LocalKind::Temp && one_origin && !set_otherwise && owned(origin) && !origin_copied)
         .then(|| vec![list, origin])
+}
+
+/// `[RC-2c]` — `copy h` from a local holding a class handle with a count of its
+/// own: a user-written local or `owned` parameter that is never assigned a
+/// copy of another place, so no elision has taken its count away.
+fn owning_handle_source(body: &Body, types: &TypeTable, rvalue: &Rvalue, t: LocalId) -> Option<Vec<LocalId>> {
+    let Rvalue::Use(Operand::Copy(place)) = rvalue else { return None };
+    let source = place.local;
+    if !place.projection.is_empty() || source == t || !matches!(types.kind(body.local(source).ty), TyKind::Class(_)) {
+        return None;
+    }
+    let owned = match body.local(source).kind {
+        LocalKind::User => true,
+        LocalKind::Arg => body.param_modes.get(source.0 as usize - 1) == Some(&ParameterMode::Owned),
+        LocalKind::Return | LocalKind::Temp => false,
+    };
+    let copied = body.blocks.iter().flat_map(|block| &block.stmts).any(|stmt| {
+        matches!(&stmt.kind, StmtKind::Assign { place, rvalue: Rvalue::Use(Operand::Copy(_)) } if whole(place, source))
+    });
+    (owned && !copied).then(|| vec![source])
 }
 
 /// Whether every use of `t` leaves it holding the same object: no move of it,
@@ -275,15 +304,22 @@ fn copies_ref(operand: &Operand, refs: &HashMap<LocalId, bool>) -> bool {
 /// assigns `t` again, or returns first.
 fn list_kept(
     body: &Body,
+    types: &TypeTable,
     start: (usize, usize),
     t: LocalId,
     lists: &[LocalId],
     reached: &mut HashSet<(usize, usize)>,
 ) -> bool {
     // A place of a list itself; a place inside an element's object is not.
+    // For a handle kept by a local (`[RC-2c]`), only the handle itself: a
+    // field of its object may be written.
     let of_list = |place: &Place| {
         lists.contains(&place.local)
-            && !(place.projection.len() >= 2 && matches!(place.projection[0], Projection::Index(_) | Projection::ConstIndex(_)))
+            && if matches!(types.kind(body.local(place.local).ty), TyKind::Class(_)) {
+                place.projection.is_empty()
+            } else {
+                !(place.projection.len() >= 2 && matches!(place.projection[0], Projection::Index(_) | Projection::ConstIndex(_)))
+            }
     };
     let moves = |operand: &Operand| matches!(operand, Operand::Move(place) if lists.contains(&place.local));
     let mut stack = vec![start];

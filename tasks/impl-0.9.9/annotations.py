@@ -159,7 +159,10 @@ def check(path):
 
 directories = [(d, sorted(glob.glob(os.path.join(d, '*.em')))) for d in sys.argv[1:]]
 everything = sorted({path for _, paths in directories for path in paths})
-with ThreadPoolExecutor(max_workers=os.cpu_count()) as pool:
+# RUST_TEST_THREADS caps the workers, as it does the cargo suite's case sweep:
+# every core at once keeps a laptop's CPU near its thermal limit.
+workers = int(os.environ.get('RUST_TEST_THREADS') or 0) or os.cpu_count()
+with ThreadPoolExecutor(max_workers=workers) as pool:
     found = dict(zip(everything, pool.map(check, everything)))
 
 failures = 0

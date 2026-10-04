@@ -5008,6 +5008,31 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-129 — the guaranteed count elisions `[RC-2c]` and `[RC-2d]`
+
+2026-10-04, D-505, D-506, autopilot. `[RC-2]` guarantees no retain or release in five cases and
+says each is tested by counting retains in the emitted C. Auditing Part VIII found RC-2b, RC-2c
+and RC-2d without a test, and two of them not met:
+
+* `[RC-2d]` (D-505): a handle stored into a field from a temporary is a move. The assignment
+  (`[OWN-5]`: evaluate, drop the old value, store) read its own temporary as a copy, which
+  retains a counted `Copy` type, and the temporary's end released it; it now moves the temporary
+  in. A struct, tuple, array or enum literal does the same for a field or element made in a
+  temporary (`lower_operand_kept`); a place is still copied and retained, since its owner keeps
+  its own count. An ordinary operand stays a copy: a comparison or call that only reads a moved
+  handle would leak its reference.
+* `[RC-2c]` (D-506): a retain followed by a release of the same handle, with nothing between that
+  could end the object, cancels. The `[RC-3]` uncounted-handle analysis already proved this for a
+  copy out of a list the function owns; it now takes a local as the source too, when that local
+  keeps a count of its own (a user-written local or `owned` parameter never assigned a copy, so
+  no elision took its count away) and no path from the copy to the copy's end re-points, moves,
+  drops or mutably lends it. A field written through it changes no count. Removing the pair
+  moves no `drop` and no `Weak.upgrade` outcome (`[RC-3]`): the source's count stays above zero
+  for the copy's whole life.
+
+Each case has a test asserting the count in the C (`RC-2b/`, `RC-2c/`, `RC-2d/`). No benchmark
+program's C changes. No spec change.
+
 ## ADR-128 — a name hoisted out of a branch is one variable with each arm's declaration of it
 
 2026-10-04, D-490, autopilot. `[CTL-10]` declares a name set in every completing arm in the

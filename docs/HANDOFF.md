@@ -10758,8 +10758,14 @@ anything needs a review just note it down and ask me about a workflow later".
   each arm's declaration of it; an arm that moved it no longer gets `E3040` and `L1001`.
 * **Then the linker probe** (ADR-118 amended): its answer is cached by the compiler and linker
   files; a gcc build 2.2 ms (1.7%) faster.
-* **Next:** the phases (AUTOPILOT §2): `docs/PHASE-1-3-CLOSURE.md`; its CTL-3b row is stale
-  (`step_by` and counted-loop fusion exist, with tests); Phase 3's OBJ/RC/EXC/DSP/WK audit.
+* **Then Part VIII audited** (`docs/PHASE-1-3-CLOSURE.md`, the rule-by-case table): RC-2b,
+  RC-2c and RC-2d had no test, and two were not met: D-505 (a handle stored from a temporary was
+  retained and released) and D-506 (a copy ending while its local source held the object was
+  counted), ADR-129.
+* **Next:** the Part VIII rules still without a case: RC-6 (`ember inspect` lists surviving
+  counts in loops), EXC-10 (an inner loop reuses an outer loop's hoisted access), DSP-5
+  (devirtualising a call with one reachable implementation), WK-4 and WK-15 (the debug leak
+  report), OBJ-4, OPT-1 (stack promotion).
 * **Tools for this work** (session scratchpad, see the 2026-10-02 bullet below for the rest):
   `ab_variants.py <experiment> <cc> <runs> <log> <programs>` builds every program with several
   compiler trees and times them interleaved; `wsl/ab_gcc.py` does it for gcc in WSL (`~/ab-old`,
@@ -12059,7 +12065,7 @@ README timing values and benchmark assets are unchanged.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h52/` are frozen.
-* **Next numbers:** ODR-099, D-505, ADR-129, ERR-056 (D-498 OPEN).
+* **Next numbers:** ODR-099, D-507, ADR-130, ERR-056 (D-498 OPEN).
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
@@ -13214,7 +13220,7 @@ README timing values and benchmark assets are unchanged.
   |---|---:|
   | P1 | 99 |
   | P2 | 89 |
-  | P3 | 60 |
+  | P3 | 61 |
   | P4 | 13 |
   | P5 | 14 |
   | P6 | 4 |
@@ -13222,6 +13228,10 @@ README timing values and benchmark assets are unchanged.
   | 7a | 6 |
   | P8 | 17 |
   | Overall | 60 |
+
+  2026-10-04, after ADR-129: P3 61 (RC-2b and RC-2c, new in 0.9.9, met and tested: 41 of
+  Phase 3's 2,968 words); `rule_sizes.py 99 89 61 13 14 4 6` gives 59.7%, 60% rounded. D-488,
+  D-490, D-503 and D-504 repaired rules already counted in P1; RC-2d was counted already.
 
   2026-10-02, after ADR-106: the same phases; `python tasks/impl-0.9.9/
   rule_sizes.py 99 89 60 13 14 4 6` now gives 59.6% (the spec's rules have
@@ -14016,8 +14026,10 @@ unless named otherwise):
 
 **Recipes**
 
-* **Full suite:** `cargo test --workspace --no-fail-fast`, about 1 minute.
-* **Fast check** (directories only; about 30 seconds):
+* **Full suite:** `CARGO_BUILD_JOBS=6 RUST_TEST_THREADS=6 cargo test --workspace --no-fail-fast`
+  (the owner's thread cap, AUTOPILOT §4; `EMBER_CC=clang` for the clang suite). Never at the same
+  time as the WSL suite.
+* **Fast check** (directories only; about 30 seconds at full width; set `RUST_TEST_THREADS=6`):
 
   ```
   python tasks/impl-0.9.9/annotations.py tests/conformance/*/ tests/compile-fail tests/compile-pass tests/run-pass tests/run-fail tests/milestones tests/std tests/ffi

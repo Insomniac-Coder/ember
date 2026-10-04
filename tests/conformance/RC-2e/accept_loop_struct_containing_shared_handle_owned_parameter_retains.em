@@ -2,7 +2,7 @@
 #$ rules: OWN-7, HEAP-3, HEAP-4, HEAP-6, RC-1, RC-2e, CTL-1, CTL-2, TYP-14, RNG-4
 #$ profiles: debug, release, shipping
 #$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 0
-#$ assert-c-count: contains("ember_retain((ember_obj_header*)") == 3
+#$ assert-c-count: contains("ember_retain((ember_obj_header*)") == 2
 #$ stdout: 7
 
 # `[RC-2e]` also covers a borrowed value-type loop element with a Shared field.

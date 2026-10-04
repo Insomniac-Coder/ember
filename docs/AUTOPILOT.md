@@ -133,6 +133,13 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   is checked against those events. No timing of any kind on battery, compile speed included ("you
   cannot test the slow compilation speed right now because the computer is on battery mode"). The
   README names the laptop and the compiler versions the numbers come from.
+- **Keep the CPU away from its thermal limit.** The owner, 2026-10-04: "can you do something to
+  make sure that the CPU of this system is not pushed to it's absolute limit because a few cores
+  are getting way to close to TjMAX and staying that hot for extended durations is not
+  recommended". Builds and suites run with `CARGO_BUILD_JOBS=6 RUST_TEST_THREADS=6` (6 of the 24
+  hardware threads; the quick check honours `RUST_TEST_THREADS` too), and the Windows suites and
+  the WSL suite run one after the other, never at the same time. Windows power settings (the
+  maximum processor state) are the owner's to change, not an agent's.
 - **Benchmarks run once, after every change is in.** The owner, 2026-10-02: "only run the
   benchmarks after all changes have been done please". A run that finds a defect means a new run
   after its fix, since the README's numbers are the final code's.
