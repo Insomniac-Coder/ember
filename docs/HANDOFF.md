@@ -10765,10 +10765,11 @@ anything needs a review just note it down and ask me about a workflow later".
 * **Then D-507** (ADR-130): the debug leak report is on for `ember run` in the debug profile
   (`--no-leak-check` turns it off), runs in linear time on an O(1) registry, and names each
   leaked object's shortest cycle under `L3017`.
-* **Next:** the Part VIII rules still without a case: RC-6 (`ember inspect` lists surviving
-  counts in loops), EXC-10 (an inner loop reuses an outer loop's hoisted access), DSP-5
-  (devirtualising a call with one reachable implementation, a MAY with a report), OPT-1 (stack
-  promotion, a MAY). OBJ-4 has a case now.
+* **Then RC-6** (ADR-131): `ember inspect --counts` lists the retains and releases left inside
+  loops, each with its reason (it had not been built). OBJ-4 has a case too.
+* **Next:** EXC-10 (an inner loop reuses an outer loop's hoisted access; `[EXC-8]`'s hoisting
+  covers single loops), then the rest of Phase 3's matrix. DSP-5 (devirtualising, with
+  `--emit-optimization-report`) and OPT-1 (stack promotion) are MAYs.
 * **Tools for this work** (session scratchpad, see the 2026-10-02 bullet below for the rest):
   `ab_variants.py <experiment> <cc> <runs> <log> <programs>` builds every program with several
   compiler trees and times them interleaved; `wsl/ab_gcc.py` does it for gcc in WSL (`~/ab-old`,
@@ -12068,7 +12069,7 @@ README timing values and benchmark assets are unchanged.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h52/` are frozen.
-* **Next numbers:** ODR-099, D-508, ADR-131, ERR-056 (D-498 OPEN).
+* **Next numbers:** ODR-099, D-508, ADR-132, ERR-056 (D-498 OPEN).
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
@@ -13223,7 +13224,7 @@ README timing values and benchmark assets are unchanged.
   |---|---:|
   | P1 | 99 |
   | P2 | 89 |
-  | P3 | 62 |
+  | P3 | 63 |
   | P4 | 13 |
   | P5 | 14 |
   | P6 | 4 |
@@ -13231,6 +13232,9 @@ README timing values and benchmark assets are unchanged.
   | 7a | 6 |
   | P8 | 17 |
   | Overall | 60 |
+
+  2026-10-04, after ADR-131: P3 63 (RC-6 met and tested: 27 words); `rule_sizes.py 99 89 63 13
+  14 4 6` gives 59.9%, 60% rounded.
 
   2026-10-04, after ADR-130: P3 62 (WK-15, new in 0.9.9, met and tested: 29 words; WK-4 was
   counted already); `rule_sizes.py 99 89 62 13 14 4 6` gives 59.8%, 60% rounded.

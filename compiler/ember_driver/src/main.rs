@@ -34,6 +34,8 @@ usage:
                                       report emitted/elided safety checks
     ember inspect --cycle [--json] <path>
                                       report the static ownership graph for a package or source root
+    ember inspect --counts [--json] [--function <name>] <path>
+                                      report the retains and releases left inside loops
 
 options:
     --profile debug|release|shipping   default: debug
@@ -422,8 +424,26 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
     }
 }
 
+/// `[RC-6]` — the side table `ember inspect --counts` reads.
+fn counts_json(bodies: &[ember_mir::Body], types: &TypeTable, map: &SourceMap) -> String {
+    let operations: Vec<serde_json::Value> = ember_analysis::count_report::surviving_count_operations(bodies, types)
+        .into_iter()
+        .map(|operation| {
+            serde_json::json!({
+                "kind": if operation.retain { "retain" } else { "release" },
+                "source": map.location(operation.span),
+                "function": operation.function,
+                "loop": map.location(operation.loop_span),
+                "reason": operation.reason,
+            })
+        })
+        .collect();
+    format!("{}\n", serde_json::json!({ "schema": 1, "operations": operations }))
+}
+
 fn inspect(args: &[String]) -> Result<ExitCode, String> {
     let mut safety = false;
+    let mut counts = false;
     let mut cycle = false;
     let mut elided_only = false;
     let mut json = false;
@@ -434,6 +454,7 @@ fn inspect(args: &[String]) -> Result<ExitCode, String> {
     while index < args.len() {
         match args[index].as_str() {
             "--safety" => safety = true,
+            "--counts" => counts = true,
             "--cycle" => cycle = true,
             "--elided-only" => elided_only = true,
             "--json" => json = true,
@@ -458,11 +479,18 @@ fn inspect(args: &[String]) -> Result<ExitCode, String> {
         index += 1;
     }
 
-    if safety && cycle {
+    if [safety, counts, cycle].iter().filter(|&&kind| kind).count() > 1 {
         return Err("`ember inspect` accepts only one report kind at a time".to_string());
     }
-    if !safety && !cycle {
-        return Err("`ember inspect` requires `--safety` or `--cycle`".to_string());
+    if !safety && !counts && !cycle {
+        return Err("`ember inspect` requires `--safety`, `--counts` or `--cycle`".to_string());
+    }
+    if counts {
+        if elided_only {
+            return Err("`--elided-only` applies only to `--safety`".to_string());
+        }
+        let path = path.ok_or("`ember inspect --counts` needs a side-table path")?;
+        return inspect_counts(&path, function.as_deref(), json);
     }
     if cycle {
         if elided_only || function.is_some() {
@@ -967,6 +995,67 @@ fn inspect_safety(
         print_safety_report(&resolved, &selected, elided_only, function);
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// `[RC-6]` — print the count operations a build left inside loops.
+fn inspect_counts(path: &Path, function: Option<&str>, json: bool) -> Result<ExitCode, String> {
+    let resolved = resolve_side_table(path, "counts");
+    let text = std::fs::read_to_string(&resolved)
+        .map_err(|error| format!("could not read count side table `{}`: {error}", resolved.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|error| format!("invalid count side table `{}`: {error}", resolved.display()))?;
+    if value.get("schema").and_then(serde_json::Value::as_u64) != Some(1) {
+        return Err("unsupported or missing count side-table schema".to_string());
+    }
+    let operations: Vec<&serde_json::Value> = value
+        .get("operations")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("count side table is missing its operations array")?
+        .iter()
+        .filter(|operation| function.is_none_or(|name| operation.get("function").and_then(serde_json::Value::as_str) == Some(name)))
+        .collect();
+    if json {
+        println!("{}", serde_json::json!({ "schema": 1, "operations": operations }));
+        return Ok(ExitCode::SUCCESS);
+    }
+    let field = |operation: &serde_json::Value, name: &str| {
+        operation.get(name).and_then(serde_json::Value::as_str).unwrap_or("<unknown>").to_string()
+    };
+    println!("Count operations inside loops: {}", resolved.display());
+    if let Some(function) = function {
+        println!("Function: {function}");
+    }
+    if operations.is_empty() {
+        println!("  none");
+        return Ok(ExitCode::SUCCESS);
+    }
+    let retains = operations.iter().filter(|operation| field(operation, "kind") == "retain").count();
+    println!("  retain {retains}");
+    println!("  release {}", operations.len() - retains);
+    for operation in operations {
+        println!(
+            "  {} {}: {} in the loop at {}: {}",
+            field(operation, "function"),
+            field(operation, "source"),
+            field(operation, "kind"),
+            field(operation, "loop"),
+            field(operation, "reason"),
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn resolve_side_table(path: &Path, kind: &str) -> PathBuf {
+    if path.is_file() {
+        return path.to_path_buf();
+    }
+    for directory in ["target/debug/inspect", "target/release/inspect", "target/shipping/inspect"] {
+        let candidate = PathBuf::from(directory).join(format!("{}.{kind}.json", path.display()));
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    path.to_path_buf()
 }
 
 fn resolve_safety_path(path: &Path) -> PathBuf {
@@ -2483,6 +2572,10 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     std::fs::write(&c_path, &emitted.c_source).map_err(|e| e.to_string())?;
     let safety_path = layout.inspect.join(format!("{module_name}.safety.json"));
     std::fs::write(&safety_path, &emitted.safety_json).map_err(|e| e.to_string())?;
+    // `[RC-6]` — the count operations left inside loops, read from the same
+    // final MIR the backend was given.
+    let counts_path = layout.inspect.join(format!("{module_name}.counts.json"));
+    std::fs::write(&counts_path, counts_json(&bodies, &types, &map)).map_err(|e| e.to_string())?;
 
     let runtime = runtime_dir()?;
     let exe_name = if cfg!(windows) {

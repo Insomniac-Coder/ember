@@ -5008,6 +5008,24 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-131 — `ember inspect --counts`: the count operations left inside loops
+
+2026-10-04, autopilot. `[RC-6]` has `ember inspect` list every retain and release that survives
+inside a loop, with the reason it could not be removed: a surviving count operation blocks
+vectorisation. It had not been built. A build now writes `<module>.counts.json` beside the safety
+side table, and `ember inspect --counts <path>` prints it (`--json`, `--function <name>`).
+
+The analysis (`count_report`) reads the final MIR the backend is given and mirrors what the
+backend emits. A counted value is one that is `Copy` and still needs a drop: a class or interface
+handle, a `Shared` or `Weak`, or a value holding one. Copying one retains (an assignment's copy,
+unless it lands in an uncounted handle, `[RC-3]`; a literal's copied field or element; an
+upcast's copy; a copy pushed into a list; a copy passed to an `owned` parameter), and dropping one
+releases. Loops are the CFG's natural loops, and each operation names its innermost loop. A
+reason says what keeps the count: a store into a field or element (the store's own temporary is
+followed to where it moves), a list, an `owned` parameter, a copy into a local whose source is
+not shown to hold the object, a value's end, or the old value a store replaces (`[OWN-5]`). The
+loops of a list's drop glue are not the program's and are not listed.
+
 ## ADR-130 — the debug leak report is on by default, scales, and names each object's cycle
 
 2026-10-04, D-507, autopilot. `[WK-15]` has `ember run` (and `ember test`, not built yet) in the

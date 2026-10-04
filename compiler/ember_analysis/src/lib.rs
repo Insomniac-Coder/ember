@@ -9,6 +9,7 @@ pub mod borrows;
 pub mod callable_arguments;
 pub mod check_hoisting;
 pub mod copies;
+pub mod count_report;
 pub mod exit_drops;
 pub mod kernels;
 pub mod list_locals;

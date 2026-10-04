@@ -2659,6 +2659,49 @@ fn leak_check_reports_a_live_strong_object_cycle() {
     );
 }
 
+/// `[RC-6]` — `ember inspect --counts` lists the retains and releases a build
+/// left inside loops, each with its reason; a loop that reads borrowed
+/// handles has none.
+#[test]
+fn inspect_counts_lists_count_operations_left_in_loops() {
+    let root = workspace_root();
+    let out_dir = std::env::temp_dir().join(format!("ember-inspect-counts-{}", std::process::id()));
+    let out = out_dir.to_string_lossy().into_owned();
+    let stem = "accept_count_operations_left_in_loops_are_listed";
+    let program = format!("tests/conformance/RC-6/{stem}.{SOURCE_EXT}");
+    let built = ember(&["build", &program, "--out-dir", &out], &root);
+    assert_eq!(built.exit, 0, "build failed:\n{}", built.stderr);
+    let table = out_dir.join("debug").join("inspect").join(format!("{stem}.counts.json"));
+    let table = table.to_string_lossy().into_owned();
+    let report = ember(&["inspect", "--counts", &table], &root);
+    assert_eq!(report.exit, 0, "inspect failed:\n{}", report.stderr);
+    for needle in [
+        "retain 2",
+        "release 1",
+        "`node` is pushed into a list, which keeps a count of its own",
+        "`other` is stored into a field or element of `holder`, which keeps a count of its own",
+        "the value in a field or element of `holder` is released as a store replaces it ([OWN-5])",
+        "in the loop at",
+    ] {
+        assert!(report.stdout.contains(needle), "missing {needle:?}:\n{}", report.stdout);
+    }
+    let json = ember(&["inspect", "--counts", "--json", &table], &root);
+    let value: serde_json::Value = serde_json::from_str(json.stdout.trim()).expect("--json prints JSON");
+    assert_eq!(value["operations"].as_array().map(Vec::len), Some(3), "{}", json.stdout);
+    let other = ember(&["inspect", "--counts", "--function", "nothing_here", &table], &root);
+    assert!(other.stdout.contains("none"), "a function filter kept another's operations:\n{}", other.stdout);
+    // A loop reading through borrowed handles makes no count operation.
+    let quiet = format!("tests/conformance/RC-2b/accept_a_handle_read_within_one_expression_is_not_retained.{SOURCE_EXT}");
+    assert_eq!(ember(&["build", &quiet, "--out-dir", &out], &root).exit, 0);
+    let quiet_table = out_dir.join("debug").join("inspect").join("accept_a_handle_read_within_one_expression_is_not_retained.counts.json");
+    let quiet = ember(&["inspect", "--counts", &quiet_table.to_string_lossy()], &root);
+    assert!(quiet.stdout.contains("none"), "a borrowed loop reported counts:\n{}", quiet.stdout);
+    let both = ember(&["inspect", "--counts", "--cycle", &table], &root);
+    assert!(both.exit != 0 && both.stderr.contains("only one report kind"), "{}", both.stderr);
+    let elided = ember(&["inspect", "--counts", "--elided-only", &table], &root);
+    assert!(elided.exit != 0 && elided.stderr.contains("applies only to `--safety`"), "{}", elided.stderr);
+}
+
 /// `[WK-15]` — the debug leak report is on for `ember run` by default; the
 /// flag turns it off, and the other profiles have it only when asked.
 #[test]
