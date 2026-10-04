@@ -2354,7 +2354,27 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if program.main.is_some() && !staticlib && options.profile != Profile::Debug && !options.leak_check {
         ember_analysis::skip_exit_drops_all(&mut bodies, &types, &ember_branding::mangled("main"));
     }
+    // Run after all body pruning and mutation. Retain the complete immutable
+    // proof batch until the unconditional final verification below.
+    let progress_certificates =
+        ember_analysis::version_progress_reductions_all(&mut bodies, &types, &common);
+    if !progress_certificates.is_empty() {
+        ember_analysis::install_callable_regions_all(&mut bodies, &types);
+    }
     verify_callable_regions_or_panic(&bodies, &types);
+    let progress_violations = ember_analysis::verify_progress_reductions_all(
+        &bodies, &types, &common, &progress_certificates,
+    );
+    if !progress_violations.is_empty() {
+        panic!(
+            "progress-reduction verification failed:\n{}",
+            progress_violations
+                .iter()
+                .map(|v| format!("  {}: {}", v.body, v.message))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
     // `[IMP-7]` / `[VERIFY-3]` — verified MIR is a type-enforced backend
     // boundary. This check is unconditional and follows the final body-pruning
     // transformation, so release builds cannot emit stale or malformed MIR.

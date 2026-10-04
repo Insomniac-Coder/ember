@@ -1471,7 +1471,20 @@ fn group_overflow_checks(body: &mut Body, types: &TypeTable, common: &CommonType
             }
             // Otherwise the totals are proved safe block by block at run time
             // (ODR-086), the other checks grouped beside them; a total that
-            // cannot be keeps a check on every operation.
+            // cannot be keeps a check on every operation. So does a total
+            // updated on only some turns (`if b == x: n += 1`): its loop has
+            // a branch, so the C compiler does not vectorise the blocks, which
+            // then only add their tests (D-499: `a03_strings` 1.27x with MSVC,
+            // 1.02x with clang).
+            let mut all = shape.region.clone();
+            all.push(shape.header);
+            let dominators = dominators(body, shape.header, &all);
+            if checks.iter().any(|check| {
+                running_total(&body.blocks[check.block].stmts[check.stmt])
+                    && !dominators.get(&shape.step).is_some_and(|seen| seen.contains(&check.block))
+            }) {
+                continue;
+            }
             let (Some(totals), Some(saves)) =
                 (block_totals(body, types, &shape, &checks), undo_saves(body, types, &shape, &written))
             else {

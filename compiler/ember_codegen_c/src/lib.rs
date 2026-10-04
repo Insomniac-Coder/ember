@@ -180,6 +180,7 @@ pub fn emit(
         inline_bodies: if split { BTreeMap::new() } else { inline_bodies(bodies, types) },
         view_pointers: BTreeMap::new(),
         parted_views: BTreeSet::new(),
+        addressed_locals: BTreeSet::new(),
         direct_param_modes: bodies
             .iter()
             .map(|body| (body.symbol.clone(), body.param_modes.clone()))
@@ -427,6 +428,8 @@ struct Emitter<'a> {
     /// View descriptor storage written by fields, including copies from such
     /// storage. A niche Option's Some payload names the same C descriptor.
     parted_views: BTreeSet<Place>,
+    /// Locals whose address the body takes: their views live in memory.
+    addressed_locals: BTreeSet<LocalId>,
     /// Direct-call ownership modes. A `Copy` operand passed to an `owned`
     /// parameter creates another class-handle owner, so its retain must be
     /// emitted before the call transfers that new owner to the callee.
@@ -4172,6 +4175,15 @@ impl Emitter<'_> {
             .filter(|(_, c)| c != "void")
             .collect();
         self.parted_views = self.parted_views(body);
+        self.addressed_locals = body
+            .blocks
+            .iter()
+            .flat_map(|block| &block.stmts)
+            .filter_map(|stmt| match &stmt.kind {
+                StmtKind::Assign { rvalue: Rvalue::Ref { place, .. }, .. } => Some(place.local),
+                _ => None,
+            })
+            .collect();
         // ADR-079: a view parameter of such a body *is* its pointer, and
         // every element access goes through it.
         let mut restrict_params: BTreeSet<usize> = BTreeSet::new();
@@ -4609,8 +4621,15 @@ impl Emitter<'_> {
                 // (`lines()` with MSVC, 1.98x the C copied whole). From a place
                 // written whole it stays one assignment: by its fields, MSVC
                 // no longer interchanged `a05_structs`'s loop nest (D-475).
+                // Only a source read from memory waits for those stores: a
+                // local whose address is never taken lives in registers, and
+                // copying it by fields cost `split_whitespace` 1.04x (D-501).
+                // A projection counts as memory, a niche `Option`'s payload
+                // included: MSVC keeps such an `Option`, tested by its fields,
+                // in memory (copied whole, `split()` ran 1.23x).
                 if let Some(source) = self.view_copy_source(place, rvalue, body)
                     && self.parted_views.contains(&self.view_storage_place(source, body))
+                    && (!source.projection.is_empty() || self.addressed_locals.contains(&source.local))
                 {
                     let from = self.place_in(source, body);
                     self.line(&format!("    ({lhs}).ptr = ({from}).ptr;"));
@@ -5521,6 +5540,20 @@ impl Emitter<'_> {
             Builtin::StrAsBytes => {
                 let text = self.operand(&args[0], body);
                 Some((format!("({text}).ptr"), format!("({text}).len")))
+            }
+            Builtin::StringAsStr => {
+                // This intrinsic constructs a descriptor from the shared
+                // String loan. Its runtime helper only copies these fields.
+                let [source] = args else { return None };
+                let source_ty = self.operand_type(source, body)?;
+                let TyKind::Ref { mutable: false, inner } = self.types.kind(source_ty) else { return None };
+                if !matches!(self.types.kind(dest_ty), TyKind::Str)
+                    || !matches!(self.types.kind(*inner), TyKind::Vec { text: true, .. })
+                {
+                    return None;
+                }
+                let source = self.operand(source, body);
+                Some((format!("(const unsigned char*)({source})->ptr"), format!("({source})->len")))
             }
             _ => None,
         }
@@ -6661,7 +6694,7 @@ impl Emitter<'_> {
                     }
                     Builtin::StringPush => {
                         return format!(
-                            "{RT}vec_extend({}, {}.ptr, {}.len)",
+                            "{RT}vec_extend_inline({}, {}.ptr, {}.len)",
                             rendered[0], rendered[1], rendered[1]
                         );
                     }
@@ -7078,6 +7111,9 @@ impl Emitter<'_> {
                     // An `Array[T]` is the runtime's buffer: pointer, length,
                     // capacity, in that order. A view is the same shape with
                     // no capacity (Part VII §7).
+                    (_, TyKind::Str) if *index <= 1 => {
+                        out.push_str(if *index == 0 { ".ptr" } else { ".len" });
+                    }
                     (_, TyKind::Vec { .. } | TyKind::Span { .. }) => {
                         out.push_str(match index {
                             0 => ".ptr",
@@ -7189,6 +7225,7 @@ impl Emitter<'_> {
             // `.len` and `.cap` on the runtime buffer are `usize`; `.ptr` is
             // never projected through, so it keeps the buffer's own type. A
             // view is the same shape with no `.cap`.
+            (Projection::Field(1), TyKind::Str) => plain(self.usize_ty),
             (Projection::Field(index), TyKind::Vec { .. } | TyKind::Span { .. }) => {
                 if *index == 0 { at } else { plain(self.usize_ty) }
             }
@@ -9228,5 +9265,260 @@ mod tests {
         let text = c_string_literal("éa");
         assert!(text.contains("\\xc3\" \""), "{text}");
         assert!(text.ends_with("a\""), "{text}");
+    }
+}
+
+#[cfg(test)]
+mod string_descriptor_view_parts_tests {
+    use super::*;
+    use ember_mir::{BasicBlock, LocalDecl};
+
+    // Only the private dispatch helper is called. Do not turn rejected shapes
+    // into VerifiedMir or pass this type-only carrier to production emit().
+    fn body_for_view_parts(source_ty: Ty, dest_ty: Ty) -> Body {
+        let span = ember_span::Span::DUMMY;
+        Body {
+            name: "view_parts_test".into(),
+            symbol: ember_branding::mangled("view_parts_test"),
+            is_unsafe: false,
+            abi: None,
+            overflow: ember_types::OverflowPolicy::Panic,
+            fp: FpMode::Strict,
+            inline: ember_mir::InlineHint::default(),
+            export_thread_policy: ember_mir::ExportThreadPolicy::Any,
+            locals: vec![
+                LocalDecl {
+                    ty: dest_ty,
+                    name: None,
+                    kind: LocalKind::Return,
+                    span,
+                },
+                LocalDecl {
+                    ty: source_ty,
+                    name: None,
+                    kind: LocalKind::Arg,
+                    span,
+                },
+            ],
+            blocks: vec![BasicBlock {
+                stmts: Vec::new(),
+                terminator: Terminator::Return,
+                terminator_span: span,
+            }],
+            arg_count: 1,
+            param_modes: vec![ParameterMode::Borrow],
+            span,
+            borrows: None,
+            sources: Vec::new(),
+            is_lambda: false,
+            emit_if_used: false,
+            borrowed_params: vec![LocalId(1)],
+            call_argument_bindings: Vec::new(),
+            for_iterators: Vec::new(),
+            callable_regions: None,
+            closure_environment: None,
+            closure_captures_by_move: false,
+            class_owner: None,
+            class_virtual_slot: None,
+            is_abstract: false,
+            is_extern_declaration: false,
+            ffi_counted: None,
+            mut_self: false,
+            elided_accesses: Vec::new(),
+            hoisted_accesses: Vec::new(),
+            uncounted_handles: Vec::new(),
+            removed_checks: Vec::new(),
+            restrict_views: false,
+        }
+    }
+
+    fn emitter_for_view_parts<'a>(
+        types: &'a TypeTable,
+        map: &'a SourceMap,
+        usize_ty: Ty,
+    ) -> Emitter<'a> {
+        Emitter {
+            types,
+            map,
+            usize_ty,
+            out: String::new(),
+            unit: None,
+            split: false,
+            for_msvc: false,
+            library_mode: false,
+            type_namespace: String::new(),
+            line_directives: false,
+            order: Vec::new(),
+            structural: BTreeMap::new(),
+            virtual_tables: BTreeMap::new(),
+            virtual_signatures: BTreeMap::new(),
+            interface_layouts: BTreeMap::new(),
+            interface_adapters: BTreeMap::new(),
+            class_interface_tables: BTreeMap::new(),
+            class_interface_call_interfaces: BTreeSet::new(),
+            interface_caches: BTreeMap::new(),
+            folded_tests: BTreeMap::new(),
+            fall_into: None,
+            folded_refs: BTreeMap::new(),
+            inline_bodies: BTreeMap::new(),
+            inline_sizes: BTreeMap::new(),
+            view_pointers: BTreeMap::new(),
+            parted_views: BTreeSet::new(),
+            addressed_locals: BTreeSet::new(),
+            direct_param_modes: BTreeMap::new(),
+            restrict_kernels: BTreeMap::new(),
+            ffi_export_value_params: BTreeMap::new(),
+            native_fn_values: BTreeMap::new(),
+            foreign_statics: Default::default(),
+            drop_glue: Default::default(),
+            eq_fns: Default::default(),
+            clone_parts_fns: Default::default(),
+            array_helpers: Default::default(),
+            clone_fns: BTreeMap::new(),
+            fmt_fns: Default::default(),
+            fmt_prints: Default::default(),
+            fmt_specs: Default::default(),
+        }
+    }
+
+    #[test]
+    fn string_view_parts_accept_a_shared_text_reference_and_pair_its_fields() {
+        let (mut types, common) = TypeTable::new();
+        let shared = types.intern(TyKind::Ref {
+            mutable: false,
+            inner: common.string,
+        });
+        let body = body_for_view_parts(shared, common.str_);
+        let map = SourceMap::new();
+        let emitter = emitter_for_view_parts(&types, &map, common.usize);
+        let func = FuncRef::Builtin {
+            which: Builtin::StringAsStr,
+            arg_ty: shared,
+        };
+        for source in [
+            Operand::Copy(Place::local(LocalId(1))),
+            Operand::Move(Place::local(LocalId(1))),
+        ] {
+            assert_eq!(
+                emitter.view_parts(&func, &[source], common.str_, &body),
+                Some(("(const unsigned char*)(_1)->ptr".into(), "(_1)->len".into()))
+            );
+        }
+    }
+
+    #[test]
+    fn string_view_parts_refuse_owned_raw_mutable_and_nontext_sources() {
+        let (mut types, common) = TypeTable::new();
+        let raw = types.intern(TyKind::Ptr {
+            mutable: false,
+            inner: common.string,
+        });
+        let mutable = types.intern(TyKind::Ref {
+            mutable: true,
+            inner: common.string,
+        });
+        let bytes = types.intern(TyKind::Vec {
+            elem: common.u8,
+            text: false,
+        });
+        let nontext = types.intern(TyKind::Ref {
+            mutable: false,
+            inner: bytes,
+        });
+        let map = SourceMap::new();
+        let emitter = emitter_for_view_parts(&types, &map, common.usize);
+        let args = [Operand::Copy(Place::local(LocalId(1)))];
+        for (name, source_ty) in [
+            ("owned", common.string),
+            ("raw", raw),
+            ("mutable", mutable),
+            ("nontext", nontext),
+        ] {
+            let body = body_for_view_parts(source_ty, common.str_);
+            let func = FuncRef::Builtin {
+                which: Builtin::StringAsStr,
+                arg_ty: source_ty,
+            };
+            assert_eq!(
+                emitter.view_parts(&func, &args, common.str_, &body),
+                None,
+                "accepted {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn string_view_parts_refuse_span_destinations_and_wrong_arity() {
+        let (mut types, common) = TypeTable::new();
+        let shared = types.intern(TyKind::Ref {
+            mutable: false,
+            inner: common.string,
+        });
+        let span = types.intern(TyKind::Span {
+            elem: common.u8,
+            mutable: false,
+        });
+        let mutspan = types.intern(TyKind::Span {
+            elem: common.u8,
+            mutable: true,
+        });
+        let map = SourceMap::new();
+        let emitter = emitter_for_view_parts(&types, &map, common.usize);
+        let func = FuncRef::Builtin {
+            which: Builtin::StringAsStr,
+            arg_ty: shared,
+        };
+        let source = Operand::Copy(Place::local(LocalId(1)));
+        for dest_ty in [span, mutspan] {
+            let body = body_for_view_parts(shared, dest_ty);
+            assert_eq!(
+                emitter.view_parts(&func, &[source.clone()], dest_ty, &body),
+                None
+            );
+        }
+        let body = body_for_view_parts(shared, common.str_);
+        assert_eq!(emitter.view_parts(&func, &[], common.str_, &body), None);
+        assert_eq!(
+            emitter.view_parts(&func, &[source.clone(), source], common.str_, &body),
+            None
+        );
+    }
+
+    #[test]
+    fn text_descriptor_length_fields_have_native_type_and_c_names() {
+        let (mut types, common) = TypeTable::new();
+        let reference = types.intern(TyKind::Ref {
+            mutable: false,
+            inner: common.str_,
+        });
+        let nested = types.intern(TyKind::Tuple(vec![common.str_, common.usize]));
+        let map = SourceMap::new();
+        let emitter = emitter_for_view_parts(&types, &map, common.usize);
+        for (source_ty, prefix, expected) in [
+            (common.str_, Place::local(LocalId(1)), "_1.len"),
+            (
+                reference,
+                Place {
+                    local: LocalId(1),
+                    projection: vec![Projection::Deref],
+                },
+                "(*_1).len",
+            ),
+            (nested, Place::local(LocalId(1)).field(0), "_1._0.len"),
+        ] {
+            let body = body_for_view_parts(source_ty, common.str_);
+            let length = prefix.field(1);
+            assert_eq!(emitter.place_ty(&length, &body), common.usize);
+            assert_eq!(emitter.place_in(&length, &body), expected);
+        }
+        let body = body_for_view_parts(common.str_, common.str_);
+        assert_eq!(
+            emitter.place_in(&Place::local(LocalId(1)).field(0), &body),
+            "_1.ptr"
+        );
+        assert_eq!(
+            emitter.place_in(&Place::local(LocalId(1)).field(2), &body),
+            "_1._2"
+        );
     }
 }

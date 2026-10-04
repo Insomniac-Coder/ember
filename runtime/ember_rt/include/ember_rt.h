@@ -1521,13 +1521,17 @@ size_t ember_char_utf8_len(uint32_t c);
  * needs representable signed offsets; managed buffers cap bytes at PTRDIFF_MAX.
  * Std keeps an int cursor; native text loops use usize and copy public
  * offsets as int (`[TYP-31]`). Each helper takes its actual pointer type.
- * One private definition keeps both codecs identical. MSVC's measured
+ * One private definition keeps both codecs identical. MSVC's is forced
+ * inline: loop versioning, or a step copied into its loop, can otherwise make
+ * MSVC turn the decoder into a call on every character (`split_whitespace`
+ * 1.84x). gcc and clang inline it themselves, and forcing it costs gcc's
+ * `split_whitespace` 10% (D-496). MSVC's measured
  * faster shape advances once after decoding; clang and GCC keep the
  * branch-local advances. Finding the width again from the decoded scalar
  * would cost a second chain of comparisons. */
 #if defined(_MSC_VER) && !defined(__clang__)
 #define EMBER_TEXT_CHAR_NEXT(NAME, INDEX_TYPE)                              \
-static inline uint32_t NAME(ember_str s, INDEX_TYPE* at) {                  \
+EMBER_INLINED uint32_t NAME(ember_str s, INDEX_TYPE* at) {                  \
     const unsigned char* p = s.ptr + *at;                                 \
     unsigned char b = p[0];                                               \
     uint32_t c;                                                          \
@@ -1614,10 +1618,17 @@ EMBER_INLINED size_t ember_str_search(ember_str s, ember_str needle, size_t from
     if (needle.len == 0) {
         return from <= s.len ? from : SIZE_MAX;
     }
+    /* The found case falls through: written as `hit ? ... : SIZE_MAX` or
+     * with an early return, MSVC turned it into a `cmov` after `memchr` and
+     * a taken jump on every call (`lines()` 1.05x, D-500). */
     if (needle.len == 1) {
-        if (from >= s.len) return SIZE_MAX;
-        const uint8_t* hit = (const uint8_t*)memchr(s.ptr + from, needle.ptr[0], s.len - from);
-        return hit ? (size_t)(hit - s.ptr) : SIZE_MAX;
+        if (from < s.len) {
+            const uint8_t* hit = (const uint8_t*)memchr(s.ptr + from, needle.ptr[0], s.len - from);
+            if (hit != NULL) {
+                return (size_t)(hit - s.ptr);
+            }
+        }
+        return SIZE_MAX;
     }
     while (from + needle.len <= s.len) {
         const unsigned char* hit =
@@ -1962,6 +1973,22 @@ EMBER_INLINED void ember_vec_reserve_more_inline(ember_vec* v, size_t elem_size,
     size_t want = v->len + additional;
     if (want > v->cap) ember_vec_reserve(v, elem_size, want);
 }
+
+/* `[TXT-11]`, `[HEAP-8]`: MSVC benefits from seeing a small append's copy
+ * and checked reservation together. Preserve the zero-count no-op and every
+ * length/capacity check from the exported byte append. Clang and GCC keep
+ * that existing call: forcing its body inline regressed GCC in measured text
+ * loops. The exported ember_vec_extend ABI and implementation are unchanged. */
+#if defined(_MSC_VER) && !defined(__clang__)
+EMBER_INLINED void ember_vec_extend_inline(ember_vec* v, const void* bytes, size_t count) {
+    if (count == 0) return;
+    ember_vec_reserve_more_inline(v, 1, count);
+    memcpy((unsigned char*)v->ptr + v->len, bytes, count);
+    v->len += count;
+}
+#else
+#define ember_vec_extend_inline ember_vec_extend
+#endif
 
 /* `[TXT-11]` (ODR-098): byte-offset mutations preserve valid UTF-8.
  * The small checks and character codec are inline; only growth and the

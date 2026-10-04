@@ -4340,6 +4340,9 @@ possible general future optimization, outside this reference-access change.
 Raw samples, C, assembly and the diagnostic scripts are in the session folder
 named in the handoff. No benchmark numbers were written to the README.
 
+**Amended by ADR-124 (D-499):** a total updated on only some turns no longer takes the block form
+this change made reachable for byte iteration.
+
 ## ADR-110 — String mutation over the shared byte buffer
 
 2026-10-03. D-478 and D-479; delegated ODR-098, Hardened_52.
@@ -4859,3 +4862,204 @@ before batch tests; the window watchdog remains clear. The frozen manifest
 contains both new regression files and the template/generated-runtime guard.
 The original GCC launcher failure and the verified continuation described in
 ADR-118 remain intact; no source was edited during these suites.
+
+## ADR-120 — bound a pure text reduction by semantic decoder progress
+
+2026-10-04, D-494. Implemented; focused, native and workspace correctness
+validated. The completed pre-pause suites/annotations/gates are historical;
+current focused evidence and remaining performance work are recorded below.
+
+A UTF-8 decoder advances its private native-width byte cursor by at least one
+byte per iteration. A loop can therefore bound its remaining additions without
+a benchmark-specific pattern or a new counting builtin. Apply this fact to one
+signed-i64 addition of a proven nonnegative term; keep the original checked
+loop whenever the proof is unavailable or the runtime guard fails. This is
+independent of the existing CountedLoop proof and does not relax that contract.
+
+The initial slice accepts a single-entry natural loop of at most 128 blocks,
+one typed StrCharNext step, one signed-i64 CheckedBinaryOp Add and its overflow
+Assert, with only the normal header-false exit. Cutting the header backedges
+must leave a pure DAG: branches may skip the addition, but hidden cycles,
+extra entries/exits, calls or observable effects decline. The cursor must reach
+zero through every incoming path, and its sole mutable reference is private to
+the decoder. Dominance, definite initialization, exact operand types and
+whole-body alias/flag-use inventories are checked. Copied accumulator carries,
+unsupported casts/signs, callable argument-binding or hoisted-access metadata
+also decline. Term bounds support constants, scalar/range limits, byte offsets
+at their original statement point, copies, safe numeric casts and supported
+bitwise expressions; decoder chars are bounded by 0x10FFFF. This uses existing
+valid-UTF-8 and decoder-boundary invariants, not new runtime validation.
+
+The guard first proves length <= INT64_MAX and cursor <= native length.
+Remaining bytes give an upper bound on updates. A zero remaining count falls
+back before the guard reads the accumulator; a zero term bound needs no
+division. Otherwise reinterpret the initial total as u64, compute unsigned
+INT64_MAX - total_bits, and require remaining <= room / term_upper. This equals
+the mathematical available room even for INT64_MIN. No product or signed
+INT64_MAX-total calculation is emitted. Only the certified Add and its overflow
+Assert change in the clone. The checked fallback retains its operands, spans,
+first-overflow panic and effect order. The safety side table records the removed
+overflow check with LoopEntryTest evidence.
+
+Proof work is deliberately bounded, not advertised as globally linear. The
+whole-body initialization lattice is capped at 262,144 block/local cells;
+bodies, statements/edges, candidate headers, recursive term depth/work and
+entry-zero walks have explicit limits. At most one loop is committed per body;
+the enlarged candidate is budget-checked before a fresh initialization lattice.
+Over-budget or unsupported candidates preserve their checks.
+
+Run the pass after final pruning and exit-drop removal. Retain its opaque
+complete certificate batch, including immutable whole original bodies and
+original body indices. Refresh callable-region summaries when MIR changes.
+Immediately before the unconditional ordinary for_codegen gate, verify the
+complete progress batch in every profile. Verification re-extracts the proof
+from originals, compares unchanged original/fallback material, independently
+checks the actual typed guard and cloned loop, and also replays the construction.
+Missing bodies/certificates, duplicate entries, changed spans/operands/proof-relevant metadata
+or malformed guards fail compilation. No mutating pass follows that verification.
+
+The first actual native compile exposed a prerequisite backend bug: a str
+descriptor's length was emitted as tuple field ._1. Render str fields 0/1 as
+.ptr/.len and type field 1 as internal usize, through direct, dereferenced and
+nested projections. Do not inherit Vec's .cap fallback. Public len/index
+semantics remain unchanged. Preserve the failed compilation and its focused
+RED-to-GREEN correction separately from the optimization evidence.
+
+Verification: all 18 actual-MIR proof/mutation/initialization/budget tests
+and the driver regression passed before pause, with meaningful RED controls.
+The pause checkpoint records 45 native cases, complete MSVC/clang/GCC workspaces,
+completed annotation sweeps and eleven gates after the test-only branding fix.
+Those full passes precede the later decoder/append production changes and are
+not new full-suite evidence. The resumed current-source slice builds on Windows
+and Linux and passes nine backend tests, 54 native cases across all profiles and
+compiler families, and all three exhaustive Unicode guard-page oracles. The
+large t6 pair is now faster than C on all three compilers after ADR-122/123;
+the actual short-input guard still adds avoidable setup costs (D-498). Its
+performance audit is OPEN. No native32 or final README matrix claim is made.
+Evidence and failed harness controls: TEXT-PERFORMANCE-2026-10-04.md.
+
+## ADR-121 — construct a borrowed String descriptor through the view-field path
+
+2026-10-04, D-495. Implemented; focused, native and workspace correctness
+validated. The completed pre-pause suites/annotations/gates are historical;
+current focused evidence and remaining performance work are recorded below.
+
+The StringAsStr runtime helper copies two fields from a borrowed String; it
+does not inspect bytes or perform a safety check. Express that same operation
+through the backend's existing view_parts path so generated C receives paired
+pointer/byte-length assignments and the existing descriptor-copy classification
+can follow their consumers. This is a general producer classification, not a
+benchmark recognizer or a blanket aggregate-scalarization policy.
+
+Eligibility comes from the actual operand reference type: exactly one argument,
+an immutable Ref to Vec with text=true, and a str destination. Copy or Move of
+that shared reference is eligible; neither transfers the String owner. Owned
+String values, raw pointers, mutable references, nontext Arrays, Span/MutSpan
+destinations and incorrect arity decline this producer path. The ordinary
+helper emission remains the fallback for valid calls outside its eligibility. Do not infer eligibility merely from builtin arg_ty.
+
+Read both fields from the same already-lowered shared receiver. Emit the
+const-byte pointer and native byte length, then refresh the existing indexing
+pointer cache. Seed the existing parted-view copy graph so projected/niche
+copies retain the paired-field route. The change leaves receiver evaluation,
+borrow/result provenance, class access scopes, retains and public helper ABI
+intact. The ordinary ember_vec_as_str declaration and definition remain
+available to native callers and unsupported emission forms. Empty/reserved
+String views and Some(empty) preserve their descriptors and tags; no pointer
+arithmetic or byte load is added.
+
+Verification: four backend tests cover eligibility, rejected forms,
+destination/arity and str projections. The driver checks adjacent paired fields
+and their projected Option route under all nine selectors; its meaningful RED
+without the producer arm is preserved. The historical pre-pause complete
+validation is recorded in the pause checkpoint. Current focused evidence is
+54 native cases across all profiles/compilers, including named-field exclusivity,
+views, Unicode/NUL/empty descriptors and the new append case. Nine backend tests
+pass after integration. Do not attribute the combined whole-program t6 gain
+to this producer alone or describe the old complete suites as fresh. The wider
+audit and README matrix remain pending. See TEXT-PERFORMANCE-2026-10-04.md.
+
+## ADR-122 — keep typed UTF-8 steps inside versioned text loops
+
+2026-10-04, D-496. Implemented and focused correctness/performance validated.
+
+The MSVC cursor codec bodies now use EMBER_INLINED (amended 2026-10-04: gcc and clang keep
+`static inline`; forcing gcc's costs `split_whitespace` 10%, D-496). This is the existing
+policy for small per-operation fast paths; no decoder masks, cursor type, width,
+pointer access or valid-UTF-8 precondition changes. Versioning enlarged t6's
+caller enough that MSVC emitted a decoder call for every character. Actual
+assembly, before and after this annotation, establishes removal of those calls.
+The original checked fallback still emits overflow/panic behavior. The isolated
+MSVC Ember/C ratio moves from 1.186 to 1.006; clang and GCC remain faster than C.
+The exhaustive guard-page oracle and all focused native cases pass on all three.
+
+[Microsoft documents that ordinary inline expansion is discretionary and even
+forceinline is not an absolute guarantee](https://learn.microsoft.com/en-us/cpp/cpp/inline-functions-cpp?view=msvc-170).
+Therefore actual assembly and measurements, not the keyword alone, are the
+evidence. Complete current validation remains required before push. The short
+guard setup cost is separate and remains OPEN under D-498.
+
+## ADR-125 — the one-byte search falls through; only a view read from memory is copied by fields
+
+2026-10-04, D-500 and D-501, autopilot. Every benchmark was built by the published compiler
+(`e2cbba3`) and by this batch and timed interleaved (21 runs, performance cores, mains; gcc in WSL
+on guest CPU 0). With MSVC two programs were slower than before the other agent's work.
+
+**`lines()` (D-500).** ADR-111's one-byte search returned `hit ? hit - s.ptr : SIZE_MAX`; MSVC
+made that a `cmov` after `memchr` and laid the non-empty case out as a taken jump, every line. The
+same function with the found case falling through (`if (from < len) { ...; if (hit != NULL) return
+...; } return SIZE_MAX;`) gives MSVC the previous loop, apart from one equivalent compare one byte
+shorter. Measured on the same C: 69.7 → 65.1 ms (`split()` keeps 58.8 ms against 62.7 with the old
+generic search). The early return alone still produced the `cmov`.
+
+**`split_whitespace()` (D-501).** ADR-117 extended D-475's rule (a view copied from a place written
+by fields is copied by fields) along every copy. Four of those copies in `split_whitespace`'s loop
+read a plain local MSVC keeps in registers; made whole by hand they recover the previous 61.3 ms
+(63.5 → 61.5). Built rule: copy by fields only when the source is read from memory, a projection or
+a local whose address the body takes. A niche `Option`'s payload counts as a projection: MSVC keeps
+an `Option` it tests by its fields in memory, and treating it as a register made `split()` 1.23x.
+
+**Measured after both, against `e2cbba3`** (MSVC / clang): `split_whitespace` 0.998 / 0.997,
+`split()` 0.927 / 0.98, `char_indices()` 0.93 / 0.94, `chars()` 0.96 / 0.93, `a05_structs` 1.00 /
+1.00. `lines()` with MSVC is 1.045: the loop above is the previous one instruction for instruction
+except that compare, and the previous compiler's own C on the new runtime moves by the same amount,
+so the rest is the loop's placement in memory, not work.
+
+## ADR-124 — a running total updated on only some turns keeps its check
+
+2026-10-04, D-499, autopilot (the owner: "fix and improve issues with other agent's implementation").
+`[SIMD-7]`'s block proof (ODR-086) runs a loop in blocks of 64 turns: an entry test, every value
+added tested small enough, the block's total checked at its end, the block run again checked if a
+test fails. That pays when the C compiler vectorises the block. A total updated only on some turns
+(`if b == 111: count += 1`) puts a branch in the loop, which neither MSVC nor clang vectorises here,
+so the blocks only add their tests: `a03_strings` 1.27x the previous compiler with MSVC, 1.02x with
+clang, once ADR-109 let byte iteration reach the proof.
+
+**Built:** in `group_overflow_checks`, after the unchecked copy (`unchecked_totals`: one entry
+test, no per-block work) is tried and refused, a running total whose checked operation does not
+dominate the loop's step keeps its check on each operation. An unconditional total keeps its
+blocks. No benchmark shape is recognised: the rule reads the loop's control flow.
+
+**Measured** (MSVC and clang, 21 interleaved runs on the performance cores, on mains): MSVC 86.5 →
+57.0 ms (68.5 ms with ADR-109 reverted alone; ADR-123's append gives the rest), clang 68.7 → 67.5 ms.
+
+## ADR-123 — expose checked String appends where the measured compiler benefits
+
+2026-10-04, D-497. Implemented; focused native and whole-program validation pass.
+
+StringPush emits a private header route. Under MSVC it exposes the existing
+zero-count no-op, checked additional-byte reservation, memcpy and length update.
+Under clang/GCC the name aliases the original exported ember_vec_extend call.
+The public declaration, ABI and implementation remain unchanged. Arguments and
+receiver still come from the same lowered temporaries; pointer/length reads add
+no evaluation, borrow scope or ownership operation. No capacity check is removed.
+
+Forcing that append body inline on every compiler is rejected: GCC t6 moves from
+0.985 to 1.021 of C. The selected general compiler policy gives MSVC/clang/GCC
+0.958/0.906/0.985, in six eleven-pair cycles with power/affinity evidence. The new
+append regression is RED without the emitter redirect and passes every profile
+on each compiler. It checks receiver/argument order, retained reserved capacity,
+growth, empty append and Unicode/NUL bytes. Full current suites, normal-return
+cleanup diagnostics and the wider speed audit remain outstanding; no README
+number or acceptable-overhead conclusion follows. Raw receipts and uncertainty
+are in TEXT-PERFORMANCE-2026-10-04.md.

@@ -3040,7 +3040,14 @@ static RUNNING: Mutex<usize> = Mutex::new(0);
 static FINISHED: Condvar = Condvar::new();
 
 fn cores() -> usize {
-    std::thread::available_parallelism().map_or(4, |n| n.get())
+    let available = std::thread::available_parallelism().map_or(4, |n| n.get());
+    // Honour the standard test runner's explicit worker limit inside a case
+    // sweep too; --test-threads alone only serializes the outer test functions.
+    std::env::var("RUST_TEST_THREADS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&limit| limit > 0)
+        .map_or(available, |limit| limit.min(available))
 }
 
 /// A place among the `cores()` cases that may run at once, held until drop.
@@ -4090,40 +4097,44 @@ fn aggregates_and_views_are_written_field_by_field() {
     let c = ember(&["build", &counted, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
     assert!(c.stdout.contains(".source;") && !c.stdout.contains(".source).ptr;"), "an iterator's view, written whole, is copied by its fields:\n{}", c.stdout);
+    // D-501 — only a source read from memory is copied by its fields: a local
+    // whose address is never taken lives in registers and is copied whole.
+    let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
+    let words = c_definition(&c.stdout, &format!("{}_SplitWhitespace_next", ember_branding::mangled("std_string")));
+    assert!(words.contains("(_2).ptr = ((*_1).rest).ptr;"), "the rest, read from memory, is copied whole:\n{words}");
+    assert_eq!(register_field_copies(words), 0, "a register local is copied by its fields:\n{words}");
 }
 
-/// A nested field producer obeys D-475 through copied locals and niche
-/// Option wrapping/extraction. The existing aggregate test above retains
-/// the inverse proof: a wholly written iterator view stays copied whole.
+/// The view copies `(_a).ptr = (_b).ptr;` whose source is a plain local.
+fn register_field_copies(c: &str) -> usize {
+    c.lines()
+        .map(str::trim)
+        .filter(|line| {
+            line.strip_prefix("(_").and_then(|rest| rest.split_once(").ptr = (_")).is_some_and(|(_, source)| {
+                source.strip_suffix(").ptr;").is_some_and(|local| !local.is_empty() && local.chars().all(|c| c.is_ascii_digit()))
+            })
+        })
+        .count()
+}
+
+/// A nested field producer obeys D-475 through niche Option wrapping and
+/// extraction: the split payload, read from memory, is copied by its fields,
+/// pointer and length together (a register local's copies are whole, D-501,
+/// tested on `split_whitespace` above). The existing aggregate test above
+/// retains the inverse proof: a wholly written iterator view stays copied
+/// whole.
 #[test]
 fn split_once_view_fields_stay_field_copies_through_niche_options() {
-    fn field_copy_targets(c: &str, source_suffix: &str) -> Vec<String> {
-        let mut targets = Vec::new();
-        for line in c.lines().map(str::trim) {
-            let Some((to, from)) = line.split_once(".ptr = ") else { continue };
-            if !from.ends_with(source_suffix) {
-                continue;
-            }
+    fn payload_copied_by_fields(c: &str, source_suffix: &str) {
+        let copies: Vec<&str> = c.lines().map(str::trim).filter(|line| line.contains(".ptr = ") && line.ends_with(source_suffix)).collect();
+        assert!(!copies.is_empty(), "the split payload is read whole:\n{c}");
+        for copy in copies {
+            let (to, from) = copy.split_once(".ptr = ").expect("a pointer field copy");
             let from = from.strip_suffix(".ptr;").expect("a pointer field copy");
             let length = format!("{to}.len = {from}.len;");
             assert!(c.lines().any(|line| line.trim() == length), "the descriptor's length is not copied with its pointer:\n{c}");
-            let source = from.strip_prefix('(').and_then(|from| from.strip_suffix(')')).expect("a parenthesized descriptor source");
-            assert!(!c.lines().any(|line| line.trim().ends_with(&format!("= {source};"))), "a field-written descriptor is also read whole:\n{c}");
-            let target = to.strip_prefix('(').and_then(|to| to.strip_suffix(')')).expect("a parenthesized descriptor destination");
-            targets.push(target.to_string());
         }
-        targets
-    }
-    fn reaches_return(c: &str, source_suffix: &str) {
-        let mut pending = field_copy_targets(c, source_suffix);
-        assert!(!pending.is_empty(), "the split payload is read whole:\n{c}");
-        let mut seen = std::collections::BTreeSet::new();
-        while let Some(source) = pending.pop() {
-            if seen.insert(source.clone()) {
-                pending.extend(field_copy_targets(c, &format!("({source}).ptr;")));
-            }
-        }
-        assert!(seen.contains("_0"), "the split payload's copies do not reach the return by fields:\n{c}");
     }
     let root = workspace_root();
     let source = format!("tests/conformance/TXT-10/accept_split_once_view_copy_chains.{SOURCE_EXT}");
@@ -4132,8 +4143,8 @@ fn split_once_view_fields_stay_field_copies_through_niche_options() {
         assert_eq!(c.exit, 0, "{cc} C failed:\n{}", c.stderr);
         let first = c_definition(&c.stdout, &ember_branding::mangled("first_view"));
         assert!(first.contains(").tag = 0;") && !first.contains("{ .tag = 0 }"), "split None is not tag-only:\n{first}");
-        reaches_return(first, ".payload.Some._0._0).ptr;");
-        reaches_return(first, ".payload.Some._0._1).ptr;");
+        payload_copied_by_fields(first, ".payload.Some._0._0).ptr;");
+        payload_copied_by_fields(first, ".payload.Some._0._1).ptr;");
     }
 }
 
@@ -4293,4 +4304,201 @@ fn memreplace_span_results_refresh_their_index_pointer() {
             assert_memreplace_span_result_pointer_is_refreshed(replaced);
         }
     }
+}
+
+/// Semantic progress can remove a per-character add check only behind a
+/// verified entry guard. Both the optimized path and checked fallback reach C;
+/// an effectful loop remains checked. The native annotations independently
+/// check Unicode/NUL offsets, negative starts, empty input and original panic.
+#[test]
+fn progress_reduction_emits_a_fast_loop_and_preserves_checked_fallback() {
+    let root = workspace_root();
+    let safe = format!(
+        "tests/conformance/RNG-4/accept_progress_reductions_keep_unicode_and_signed_start.{SOURCE_EXT}"
+    );
+    let effectful = format!(
+        "tests/conformance/RNG-4/run_fail_progress_reduction_keeps_effects_before_overflow.{SOURCE_EXT}"
+    );
+    for cc in ["msvc", "clang", "gcc"] {
+        let c = ember(
+            &[
+                "build",
+                &safe,
+                "--emit",
+                "c",
+                "--profile",
+                "release",
+                "--cc",
+                cc,
+            ],
+            &root,
+        );
+        assert_eq!(
+            c.exit, 0,
+            "{cc}: progress loop failed to emit:\n{}",
+            c.stderr
+        );
+        for name in ["reduce", "reduce_skipping_nul"] {
+            let body = c_definition(&c.stdout, &ember_branding::mangled(name));
+            assert!(
+                !body.contains("._1"),
+                "{cc}: a text descriptor length was emitted as a tuple field:\n{body}"
+            );
+            assert_eq!(
+                body.matches("str_char_next_usize(").count(),
+                2,
+                "{cc}: guarded loop and checked fallback missing from {name}:\n{body}"
+            );
+            assert_eq!(
+                body.matches("ck_add_i64(").count(),
+                1,
+                "{cc}: the fallback's original accumulation check changed:\n{body}"
+            );
+            assert_eq!(
+                body.matches("panic_overflow(").count(),
+                1,
+                "{cc}: the fallback's original panic changed:\n{body}"
+            );
+        }
+        let c = ember(
+            &[
+                "build",
+                &effectful,
+                "--emit",
+                "c",
+                "--profile",
+                "release",
+                "--cc",
+                cc,
+            ],
+            &root,
+        );
+        assert_eq!(
+            c.exit, 0,
+            "{cc}: effectful loop failed to emit:\n{}",
+            c.stderr
+        );
+        let body = c_definition(&c.stdout, &ember_branding::mangled("effectful"));
+        assert_eq!(
+            body.matches("str_char_next_usize(").count(),
+            1,
+            "{cc}: unsupported effects were included in a fast loop:\n{body}"
+        );
+        assert_eq!(
+            body.matches("ck_add_i64(").count(),
+            1,
+            "{cc}: unsupported effectful accumulation lost its check:\n{body}"
+        );
+    }
+}
+
+#[test]
+fn string_descriptor_fields_keep_their_source_and_projected_copy_route() {
+    // Test-side C shape inspection only. Match both adjacent writes, including
+    // identical destination AND source; unrelated field strings cannot pass.
+    fn borrowed_pairs(c: &str) -> Vec<(String, String)> {
+        let lines: Vec<_> = c.lines().map(str::trim).collect();
+        let mut pairs = Vec::new();
+        for pair in lines.windows(2) {
+            let Some((dest, pointer)) = pair[0].split_once(".ptr = (const unsigned char*)") else {
+                continue;
+            };
+            let Some(source) = pointer.strip_suffix("->ptr;") else {
+                continue;
+            };
+            assert_eq!(
+                pair[1],
+                format!("{dest}.len = {source}->len;"),
+                "unpaired borrowed descriptor:\n{c}"
+            );
+            pairs.push((dest.to_string(), source.to_string()));
+        }
+        assert!(
+            !pairs.is_empty(),
+            "no String descriptor field producer:\n{c}"
+        );
+        pairs
+    }
+    fn copy_edges(c: &str) -> Vec<(String, String)> {
+        let lines: Vec<_> = c.lines().map(str::trim).collect();
+        let mut edges = Vec::new();
+        for pair in lines.windows(2) {
+            let Some((dest, pointer)) = pair[0].split_once(".ptr = ") else {
+                continue;
+            };
+            let Some(source) = pointer.strip_suffix(".ptr;") else {
+                continue;
+            };
+            assert_eq!(
+                pair[1],
+                format!("{dest}.len = {source}.len;"),
+                "unpaired descriptor copy:\n{c}"
+            );
+            edges.push((source.to_string(), dest.to_string()));
+        }
+        edges
+    }
+    let root = workspace_root();
+    let source = format!("tests/conformance/SPN-1/accept_string_descriptor_fields.{SOURCE_EXT}");
+    for profile in ["debug", "release", "shipping"] {
+        for cc in ["msvc", "clang", "gcc"] {
+            let c = ember(
+                &[
+                    "build",
+                    &source,
+                    "--emit",
+                    "c",
+                    "--profile",
+                    profile,
+                    "--cc",
+                    cc,
+                ],
+                &root,
+            );
+            assert_eq!(
+                c.exit, 0,
+                "{cc}/{profile}: String descriptor emission failed:\n{}",
+                c.stderr
+            );
+            for name in ["borrow_explicit", "borrow_implicit", "descriptor_chain"] {
+                let function = c_definition(&c.stdout, &ember_branding::mangled(name));
+                assert!(
+                    !function.contains("vec_as_str("),
+                    "{cc}/{profile}: {name} retains the helper:\n{function}"
+                );
+                let producers = borrowed_pairs(function);
+                assert_eq!(
+                    producers.len(),
+                    1,
+                    "{cc}/{profile}: {name} did not keep its one source conversion:\n{function}"
+                );
+                let edges = copy_edges(function);
+                // D-501: a copy read from memory (a projection) is by fields;
+                // a copy of a register local is whole, so the chain to the
+                // return need not be fields all the way.
+                if name == "descriptor_chain" {
+                    assert!(
+                        edges.iter().any(|(from, _)| from.contains("._0[")),
+                        "{cc}/{profile}: the Option copy read from the array is not by fields:\n{function}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// D-500 — the one-byte search lets its found case fall through: written as
+/// `hit ? ... : SIZE_MAX`, MSVC turned it into a `cmov` after `memchr` and a
+/// taken jump on every call, and `lines()` ran 1.05x.
+#[test]
+fn one_byte_search_falls_through_when_found() {
+    let runtime = workspace_root().join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+    let header = std::fs::read_to_string(runtime.join("include").join(ember_branding::runtime_header())).expect("the runtime header");
+    let text = ember_branding::runtime("str");
+    let signature = format!("size_t {}({text} s, {text} needle, size_t from) {{", ember_branding::runtime("str_search"));
+    let start = header.find(&signature).expect("the search");
+    let search = &header[start..start + header[start..].find("\n}\n").expect("its end")];
+    let one_byte = &search[search.find("if (needle.len == 1) {").expect("the one-byte path")..];
+    assert!(one_byte.contains("if (from < s.len) {") && one_byte.contains("if (hit != NULL) {"), "the found case does not fall through:\n{search}");
+    assert!(!search.contains("return hit ?"), "the answer is a conditional expression:\n{search}");
 }

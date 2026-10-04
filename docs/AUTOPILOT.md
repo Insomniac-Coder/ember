@@ -7,6 +7,11 @@ extended 2026-09-28.
 
 ## 1. Start here
 
+**Current status (owner, 2026-10-04): autopilot.** "Activate autopilot mode, your goal will be
+to fix and improve issues with other agent's implementation and then continue developing the
+language, be mindful of power supply and measure and benchmark everything"; solo: "if anything
+needs a review just note it down and ask me about a workflow later".
+
 1. Read this file.
 2. Read `docs/HANDOFF.md` §0.355, the subsection "Start here after a context reset": the state,
    the next task, the backlog, and the recipes (build, test, gates, CI, cutting a hardening).
@@ -149,6 +154,19 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   The owner requires that there be no way to make it faster without losing
   memory safety or safety checks. Do not accept a C compiler's code-generation
   choice as inevitable before trying general compiler or runtime changes.
+- **Current publication authorization (owner, 2026-10-04):** "continue with work,
+  update the benchmarks and push them these values seem fine to me, just make
+  sure that the existing benchmarks aren't seeing a slow down". Publish this
+  accepted text-optimization batch after a current full matrix with a matched
+  previous/current regression check. The owner's subsequent instruction,
+  "yeah you are just stuck start again and consider what I said yourr conformance
+  tests took way too long", changes the order: preserve completed focused checks
+  and gates, record the timed-out local full suite as incomplete, prioritize
+  benchmarks, and observe full-suite CI on the exact pushed commit. Keep D-498 and
+  the wider optimization backlog OPEN; they do not delay this authorized batch.
+  Do not fabricate exhausted-investigation evidence. Investigate any new
+  regression in existing benchmarks before publishing, and retain power,
+  affinity, twin-work and output checks.
   Reinvestigation of the five accepted entries remains welcome.
 - **Every solution is general, never specific.** The owner, 2026-09-28: "always suggest a general
   and optimised solution, specific solutions are like ticking timebombs just waiting to go off

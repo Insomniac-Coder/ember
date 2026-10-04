@@ -21,6 +21,7 @@ pub mod facts;
 pub mod inline;
 pub mod loop_access;
 pub mod loop_version;
+pub mod progress_reduction;
 pub mod long_access_lint;
 pub mod range_facts;
 pub mod regions;
@@ -44,6 +45,10 @@ pub use kernels::{KernelTarget, outline_list_kernels_all};
 pub use list_locals::keep_pushed_lists_in_locals_all;
 pub use reserve_pushes::reserve_pushed_lists_all;
 pub use loop_version::{hoist_invariant_views_all, version_bounds_checked_loops_all};
+pub use progress_reduction::{
+    ProgressReductionCertificates, verify_progress_reductions_all,
+    version_progress_reductions_all,
+};
 pub use strength_reduce::reduce_induction_values_all;
 pub use uncounted_handles::mark_uncounted_handles_all;
 pub use temporary_owners::transfer_temporary_owners_all;

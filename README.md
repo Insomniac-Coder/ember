@@ -22,8 +22,8 @@ pages, and the records that keep them consistent.
 
 | | |
 |---|---|
-| Language version being implemented | **0.9.9**, specification `Ember_v0.9.9_Hardened_51` |
-| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.9_Hardened_51.md`](docs/spec-source/Ember_v0.9.9_Hardened_51.md) |
+| Language version being implemented | **0.9.9**, specification `Ember_v0.9.9_Hardened_52` |
+| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.9_Hardened_52.md`](docs/spec-source/Ember_v0.9.9_Hardened_52.md) |
 | Specification sources | [`tasks/spec-0.9.9/parts/`](tasks/spec-0.9.9/parts/), one file per Part; each `Hardened_N` is their concatenation and is never edited afterwards |
 | Last adopted normative specification | [`docs/spec-source/ember-spec.md`](docs/spec-source/ember-spec.md), 0.8.5_Hardened_1 (0.9.9 is adopted when its gates pass and the owner installs it) |
 | Tests | Rust unit and integration suites; Ember run and conformance suites in [`tests/`](tests/) |
@@ -31,7 +31,7 @@ pages, and the records that keep them consistent.
 | Language decisions | Current owner decisions (ODRs) in [`docs/OWNER-QUEUE.md`](docs/OWNER-QUEUE.md) |
 | CI | Linux (Clang, GCC) and Windows (MSVC, clang-cl); every push to `main` |
 
-Phase estimates against 0.9.9 (2026-10-02; weighted by the size of each phase's rules;
+Phase estimates against 0.9.9 (2026-10-04, unchanged; weighted by the size of each phase's rules;
 method in [`docs/HANDOFF.md`](docs/HANDOFF.md)):
 
 | Phase | Scope | Done |
@@ -88,7 +88,7 @@ ECS facilities, C++ interop, the interpreter, and hot reload. The open defects a
 
 Each program below was written twice, in Ember and by hand in C (C++ for the programs that use
 objects, strings, maps or sorting), built by the same C compiler with the same optimisation flags,
-and timed on 2026-10-02 on one laptop, plugged in: an ASUS ROG Strix G16 (G615LR) with an Intel Core
+and timed on 2026-10-04 on one laptop, plugged in: an ASUS ROG Strix G16 (G615LR) with an Intel Core
 Ultra 9 275HX (8 performance cores and 16 slower efficiency cores), 64 GB of DDR5-5600 memory and
 Windows 11 Home (build 26200). The compilers are MSVC 19.44 and clang 22.1 on Windows, and gcc 15.2
 under WSL (Ubuntu 26.04) on the same laptop. The Windows runs are held to the performance cores; WSL
@@ -118,7 +118,7 @@ notes under the tables say how. With gcc, both programs are built with
 
 > Development is in progress, and attempts will be made to speed the language up in these areas.
 
-More than 10% slower than C: 3 of the 50 programs with MSVC, 2 with clang, 1 with gcc; none with all
+More than 10% slower than C: 3 of the 50 programs with MSVC, 3 with clang, 2 with gcc; none with all
 three.
 
 ![Programs more than 10% slower than C with one compiler: C time, Ember time, Ember divided by C](docs/benchmarks/slower-than-c.svg)

@@ -10703,14 +10703,103 @@ formal 1/9 count or Phase 2's estimate.
 
 ### 0.355 0.9.9 implementation, on `main` — 2026-09-23
 
-#### Start here after a context reset — state at 2026-10-04
+#### Start here after a context reset — state at 2026-10-04 (autopilot)
 
-The prior implementation checkpoint is committed and pushed on `main` as
-`8e588ef2a0f78615b79fe45208f216078a1eda77`. Its local MSVC, clang and GCC
+**Autopilot, 2026-10-04.** The owner: "Activate autopilot mode, your goal will be to fix and
+improve issues with other agent's implementation and then continue developing the language, be
+mindful of power supply and measure and benchmark everything", and "you go solo for now, if
+anything needs a review just note it down and ask me about a workflow later".
+
+* **The other agent's work, analysed** (commits `c04ecf5`, `8e588ef`, `37f4420` and its
+  uncommitted batch, ADR-120 to ADR-123). Its decisions hold up: ODR-098 was ruled under the
+  standing delegation, and ADR-109 to ADR-119 were read and checked (the reference-based sum proof,
+  the conditional reservation, the SIMD byte sum, the temporary-owner transfer, the linker sections
+  and the aligned-allocation guard). Its process priced each change alone and never compared the
+  whole benchmark set against the published compiler, so regressions went in unseen: `a03_strings`
+  MSVC 1.25x (ADR-109: D-499), `split_whitespace` MSVC 1.84x (ADR-116's decoder no longer inlined
+  inside the step ADR-107 copies into the loop; ADR-122's forced inline fixes it, and that forcing
+  cost gcc 1.07x, so it is MSVC only), `lines()` MSVC 1.06x (ADR-111's search shape: D-500) and its
+  copy chains (`split_whitespace` again: D-501).
+* **Its uncommitted batch is adopted**, each part measured: the progress reduction (ADR-120)
+  pays (clang `chars()` 0.93, `char_indices()` 0.95; MSVC `char_indices()` 0.96) at about 1% on
+  MSVC `chars()` and twice the time on very short text (D-498, OPEN; the owner: it does not block
+  this batch); ADR-122 fixes `split_whitespace`; ADR-121 and ADR-123 help `char_indices()`.
+* **Fixed in this session:** D-499 (ADR-124), D-500 and D-501 (ADR-125); ADR-122's forced inline
+  on MSVC only (D-496 amended). Each has a test that fails without it.
+* **Against the published compiler (`e2cbba3`):** every program built by both and timed interleaved, 21 runs (Windows on the performance cores, gcc in WSL on guest CPU 0; all on mains, 15:08 to 15:33, no Kernel-Power 105 event). MSVC: slower only `t3_lines` 1.04 (ADR-125: placement); faster `t2_bytes` 0.59, `a03_strings` 0.83, `s5_range_step_enumerate` 0.87, `t4_split` 0.93, `a14_map_gap_1024` 0.93, `t6_char_indices` 0.93. clang: none slower; faster `t2_bytes` 0.58, `b16_checked` 0.72, `w13_int_lanes` 0.83, `s1_enumerate_xor` 0.87, `a10_recursion` 0.93, `t1_chars` and `t1b_str_loop` 0.93, `t6_char_indices` 0.95. gcc: none slower; faster `t2_bytes` 0.29, `t1_chars` and `t1b_str_loop` 0.84, `t4_split` 0.87, `a03_strings` 0.90, `t6_char_indices` 0.92. The README against C: 42 of the 50 as fast as C or faster, 2 close, 6 more than 10% slower with one compiler, all on the owner's exempt list except gcc's `a00_empty` (1.12x, the process start, the other agent's D-492 work; next). Its clang rows of `a01_int_math`, `a05_structs` and `a16_map_text` were run again with 21 runs (1.26x and 1.36x were a disturbance in the full run: 1.02x and 1.01x).
+* **For a review workflow later** (the owner asked to be asked): ADR-114's temporary-owner
+  transfer (851 lines on reference counts, where an error frees an object early) and ADR-120's
+  progress reduction (3,100 lines with its verifier).
+* **Open:** D-498, D-488 (valid programs refused, E3060), D-490 (a false E3040), D-487; ADR-118's
+  linker probe starts two processes on every gcc build, uncached; `lines()` with MSVC about 4%
+  slower than the published compiler from its loop's placement (ADR-125).
+* **Next:** gcc's `a00_empty` start-up (D-492's follow-up), D-498 (replace the guard's division
+  with a checked multiply, verifier included), D-488, D-490, the linker probe; then the phases
+  (AUTOPILOT §2).
+* **Tools for this work** (session scratchpad, see the 2026-10-02 bullet below for the rest):
+  `ab_variants.py <experiment> <cc> <runs> <log> <programs>` builds every program with several
+  compiler trees and times them interleaved; `wsl/ab_gcc.py` does it for gcc in WSL (`~/ab-old`,
+  `~/ab-final`).
+
+The following describes the earlier resumed investigation. The historical
+[pause checkpoint](AUTOPILOT-PAUSE-2026-10-04.md) remains preserved. Read the new
+[text performance continuation](TEXT-PERFORMANCE-2026-10-04.md) for current
+measurements, evidence, source changes and the next focused task.
+
+The missing GCC objects and the production default links completed. The
+pre-pause Windows object/assembly commands were authenticated and reused.
+`t6_char_indices` exposed MSVC per-character decoder calls: its Ember/C ratio
+was 1.186. General decoder inlining reduces it to 1.006; the measured MSVC
+checked append fast path brings the selected policy to 0.958, versus clang
+0.906 and GCC 0.985. Forcing append inline on GCC regressed to 1.021 and was
+rejected. The selected general policy keeps GNU append calls and every original
+capacity check. All complete timing windows passed mains/event checks; Windows
+uses P-core mask 0xC03C03, GCC guest CPU0 with host P-core affinity unverified.
+
+**Current requested batch (owner, 2026-10-04):** update the full benchmark matrix
+and push the accepted implementation after verifying no existing-benchmark
+regression. Measure previous/current versions with the same inputs and compilers,
+publish truthful current results, then commit and push to main and observe CI.
+The owner subsequently requested a restart because conformance took too long.
+The serialized MSVC full suite timed out after 90 minutes without a reported
+assertion failure; it is incomplete, not a passing suite. Retain the completed
+focused checks and gates, prioritize the benchmark comparison, and use exact-head
+CI for the remaining full-suite coverage. The owner's acceptance defers the following
+profitability investigation; its open status is preserved.
+
+**Deferred next task: D-498, OPEN — reduction guard profitability on short inputs.**
+One-byte dynamic reductions cost about 2.1–2.2 ns with the guard versus
+0.8–1.2 ns for the original checked loop. Price a general small-input fallback
+before division, and validate any adopted condition in the independent guard
+verifier. Keep empty/negative-start/first-overflow/effect-order guarantees. The
+60-byte MSVC/GCC comparison and a matched normal-return cleanup worker remain
+open. The large-input win does not close this audit or the wider slowdown list.
+
+The decoder header/template and StringPush emission are now changed in the
+working tree, with one new append regression. Current Windows/Linux builds,
+nine backend tests, 54 focused native cases across all profiles/compilers, and
+all three exhaustive Unicode guard-page oracles pass. A UTF-8 test-copy error
+was repaired explicitly, with failed evidence preserved and completed MSVC
+cases reused. Fresh emitted C matches the measured policy after one helper
+redirect and an explicit GCC diagnostic-source-path relocation. Historical full
+workspace/annotation passes remain historical. Current eleven gates and the
+byte-equal Appendix pass on a frozen copy; seven completed gates were retained
+when the remaining native gate needed a fresh owned cache. No new full workspace
+claim, commit or push is made. All native Jobs/guest groups are drained. Existing
+`build/`, evidence directories, README timings and benchmark assets remain.
+
+The following narrative describes earlier checkpoints and investigations;
+the continuation above and its linked evidence govern current status.
+
+The current implementation checkpoint is committed and pushed on `main` as
+`37f4420742bf252d8bda8a584e2b88ce1417b2b4` (D-492/D-493). Its local MSVC, clang and GCC
 workspace suites, MSVC/GCC annotations and all eleven gates passed. Exact-SHA
-CI run [37134225136](https://github.com/Insomniac-Coder/ember/actions/runs/37134225136)
+CI run [37154421064](https://github.com/Insomniac-Coder/ember/actions/runs/37154421064)
 now has all five jobs green, including GCC. The owner resumed work on
 2026-10-04 after the explicit pause. The wider performance audit remains OPEN.
+The owner reiterated that every new slowdown, including every close-to-C row,
+must be optimized wherever safety permits. Existing implementation work is not
+full performance clearance; use the explicit OPEN checklist below.
 The authorized two-minute power poller was restarted (PID 62748); mains was
 verified. **Read this subsection first**; the rest of §0.355 is the running
 narrative behind it.
@@ -10807,7 +10896,14 @@ separate exact-boundary audit. Do not cite the preserved invalid audits.
 Safe alternatives remain open: the source-reviewed general guarded header
 constructor has fresh original/worker capsules and fixtures against the guarded
 D-493 runtime f0df57a9. Root source checks and exact panic-oracle controls pass;
-native validation and context pricing remain pending. V1's preparer syntax error
+the complete serial-v4 native queue now passes all 558 checks: both lifetimes
+with MSVC, explicit LLVM clang and GCC, all-profile NULL/C++ boundaries,
+72 semantic cases and nine bounded inverse controls per compiler/context.
+Root independently checked every report, command, object/binary/output hash,
+coverage and owned host Job/guest-group cleanup. The fresh constructor v6
+comparisons now complete all six compiler/lifetime contexts, with actual Root
+machine-code/PE/ELF review, complete power audits and separate cycle analysis.
+V1's preparer syntax error
 is retained; prepare-v2.py fixes only that character. run-validation-v2.py
 requires all-profile NULL/C++ boundaries before 72 native semantic cases and
 nine bounded inverse controls per compiler/context. Outputs must be fresh and
@@ -10819,23 +10915,324 @@ body pruning. A separate v3 source-only correction uses the actual canonical
 package header from the same --emit c --emit-header invocation; never invent
 those Body fields or infer ABI C from em_main's external C linkage. Root must
 emit current C/header after the correctness queue and compare full C bytes to
-the frozen capsules before native pricing. These diagnostic tools remain outside
+the frozen capsules before native pricing. Those six current emissions now
+match the complete frozen C bytes. All six complete generated headers have
+empty defined C export sets; ordinary em_main linkage is not an ABI C root.
+The source-reviewed canonical-evidence-generation-v3 pack passed 43 pure
+controls and produced actual Root-reviewed source/build bindings for all six
+contexts. Each uses its main plus four automatic std modules, ten whole-byte
+pinned EMIF artifacts, all 107 compiler/std/runtime/Cargo inputs, and the
+preserved completed-suite log chain. Physical std selection and absence of an
+intervening driver replacement are explicit Root sequence attestations;
+GCC's first exact driver hash was recorded after its suite, and no Cargo
+artifact metadata or contemporaneous suite binary hash is invented.
+
+Pricing v6 with unchanged canonical v3 and the v5 archival binder is now
+source/AST-reviewed. Its pure controls pass on every actual context (23 on each
+Windows case, 22 on each GCC case). It preserves the raw original contexts.
+Only the four Windows live-runtime pins advanced from RT8b to f0; their exact
+original-manifest-pinned baseline archives provide historical verification,
+with the current f0 observation separately pinned. GCC needs no rebinding.
+The first v4 pure check caught MSVC's HostX64/Hostx64 spelling difference.
+V5/v6 compare actual-host resolved paths and verify compiler bytes; all old
+files/failures remain. All three priced binaries must be freshly rebuilt with
+current D493 and current managed/strict-FP flags. The complete Windows pricing
+prerequisite gate passes; its first wrong fixture-directory invocation failed
+before compilation and is preserved. GCC's complete prerequisite gate also
+passes both lifetimes. Pricing still requires actual new machine-code/PE/ELF review before
+sampling, a separately reviewed v6 cycle analyzer, and exact whole-window
+Kernel-Power105 audits; all six current contexts have now passed these gates.
+Public successful obj_new interception/stack-frame
+differences remain explicit; no production adoption or reasonable-overhead
+verdict follows. These diagnostic tools remain outside
 the repository under guarded-header-constructor-{diagnostic,validation,pricing}.
 
+Fresh constructor v6 has 126 executions, 252 before/after mains guards and
+36 retained observations per label in each context, with no retries or drops.
+All six exact full warmup-inclusive windows have zero Kernel-Power105 events;
+owned Windows Jobs and GCC guest groups drained. Candidate/baseline medians:
+terminal MSVC 1.004312, clang 0.998875, GCC 0.997370; worker MSVC 0.990172,
+clang 0.996098, GCC 0.968382. The four Windows and GCC terminal ratio-of-medians
+95% complete-cycle intervals cross one. GCC worker's conditional interval is
+0.942913–0.998616, while its paired same-round ratio interval 0.950003–1.004383
+crosses one: limited context-specific evidence, not a stable general gain or
+an equivalence/noise waiver. Fresh matched worker baseline/C++ medians remain
+1.064289 MSVC, 1.110527 clang and 1.201306 GCC, all OPEN. Actual constructor
+inlining also changes surrounding register allocation/layout; terminal cleanup
+is not fully matched. GCC guest CPU0 is pinned, host performance-core placement
+unverified. No production adoption, README values, safe-alternative exhaustion
+or reasonable-overhead verdict follows. Root summary is
+root-six-guarded-constructor-pricing-v6-first.json, SHA256
+aaa85efffb339f3a54b7b94410a6d5a5bca291780455083ec3a93085681308af.
+
 A fresh math-archive-d493-diagnostic source pack is Root-read and AST-checked;
-its six matching profile/int128-mode builds, actual ELF review and native sets
-are still pending. The old archive and pricing packs bind RT8b and stay intact
+its six matching Debug/Release/Shipping native/soft-int128 builds are complete.
+Root reviewed the actual paired ELF sections, complete instruction differences,
+named GOT/PLT bindings, decoded unwind rules, extraction maps and lifecycle/
+object-safety code. Relocation targets preserve operations; the lifecycle hook
+constant is byte-identical at a shifted RELRO location. Extra four-byte FDE
+record padding changes offsets without changing CFA/register recovery rules.
+All 108 exact-output native cases passed, with 216 before/after mains guards
+and owned host/guest cleanup. Root independently verified every native result,
+binary, expected output and immutable artifact. Acceptance is
+/home/ism19/ember-math-archive-d493-native-01/root-native-acceptance.json,
+SHA256 19971be3dedc1b1c10cc37d255a62895868dc4f2a88279b7a13eac2b2fa4693a.
+Release/Shipping native empty/lifecycle/object/int128-only outputs omit libm;
+Debug/soft-int128 core dependencies retain it. Live/direct/rooted math retains
+libm, and dead wrappers can still extract it before GC. Ordinary/full-runtime
+embedding contracts and PIE/RELRO/BIND_NOW/RW-stack protections remain.
+These are x86-64 GCC correctness diagnostics, not startup/build-cost timings.
+The old archive and pricing packs bind RT8b and stay intact
 indefinitely. Current empty C must be freshly emitted and checked against the
-frozen cfg-local program before current-production pricing. No old runtime
+frozen cfg-local program before current-production pricing; that new emission
+now matches its complete frozen C bytes. New math-archive-d493-pricing-v2
+is source/AST-reviewed and binds all six current reviewed capsules and 108
+native checks; its pure evidence gate verifies 6,260 files, including under
+Python -O. The first new preflight stopped before retained timing because it
+guessed a dead-wrapper object filename. The fresh v2 maps that context to the
+actual exports.o with roots omitted, preserving the failed pack/records. V2
+passes all 18 exact positive ELF links, eight required negative links and four
+fresh runtime-object/archive/ELF reproductions: 47 commands and 94 mains guards,
+with both owned groups drained. Current v2 startup pricing and Root analysis
+are now complete: three full warmup-inclusive windows, 48 retained balanced
+eight-round cycles, 384 retained samples per label, all 1,632 raw trials,
+1,641 commands and 3,282 before/after mains guards. There are no dropped samples
+or retries. Actual exact-boundary Kernel-Power105 queries find zero transitions
+in all three windows, and both owned process groups are drained. Empty archive/
+monolithic median ratio is 0.968332 (whole-cycle conditional 95% interval
+0.962844–0.976711); live ratio is 0.993113 (0.987620–1.000038). Paired within-round
+median deltas are -59,722 ns empty and -12,496 ns live. The live ratio interval
+crosses one; its paired delta interval is -27,240 to -349.5 ns. Keep these
+different estimands explicit. Startup analysis is
+/home/ism19/ember-math-archive-d493-startup-analysis-first/analysis.json, SHA256
+15536ecfa3948c5829df3c6de891d71507aad948d429e03f30c81d0a6008c9f7.
+Startup, runtime-compilation-cache-miss and cached-link pricing use separate
+fresh price-02 HOME outputs under the reviewed v2 carrier/Job/guest supervisor;
+the new current-evidence cycle analyzer is Root source/AST-reviewed, with all
+48 pure positive/rejection controls passing both normally and under Python -O.
+The startup analyzer verifies every recorded trial/command/guard, all exact
+current evidence and actual owned receipts, with NEW Root coordinator/power
+associations binding all thirteen original Linux timing files. These compare
+two Ember link policies, not Ember against C. Startup's C comparison, all
+remaining safe alternatives remain OPEN. Build/cache-miss and warm-link pricing
+are also now complete and strictly Root-analyzed. Each mode has three complete
+power-audited windows, six retained balanced cycles and 48 samples per label,
+with all 288 raw trials retained and no retries/drops. Runtime-cache-miss archive/
+monolithic medians are 1.011859 empty (conditional 95% interval
+1.009615–1.014255) and 1.026067 live (1.021174–1.030591); paired deltas are
++13,673,823.5 ns and +22,293,608 ns. This is warm OS/tool pages and component
+subprocess sums, not end-to-end uncached build latency. Cached-link medians are
+0.982913 empty (0.955067–0.989735) and 1.031893 live (0.981361–1.044293);
+paired deltas are -2,569,216 ns and -684,604.5 ns. Live's median-ratio and paired
+delta estimates differ; both live intervals cross their null, so do not label
+it a win/equivalent/unavoidable cost. All 899 cache-miss commands/1,798 power
+guards and 323 cached-link commands/646 guards verify; both owned groups drain
+for each mode. Analyses are original HOME
+ember-math-archive-d493-cold-build-analysis-first/analysis.json (SHA256
+a424927bcdddc0257013efac2429d6718cfcaa110a69125a49544ed381b9742a)
+and ember-math-archive-d493-warm-link-analysis-first/analysis.json (SHA256
+ecf14da8fa77d6335621f42b85e77b357bc210620515d1456e519f2b073799ab).
+Together these provide nine actual zero-transition full windows. No archive
+policy, README values or reasonable-overhead verdict follows. A new source-only
+integration plan is math-archive-d493-integration-source-first; production
+generator/cache/link order, capability/mode/embedding tests and current C
+comparisons are still required, not established by the diagnostic.
+Full current pricing
+environment is frozen; old native receipts recorded only the compiler-variable
+subset, so no unrecorded historical ambient values are invented. No old runtime
 object, lifecycle attestation or performance ratio transfers to the new pack.
 
 The general
 capacity-proved push loops need a maximum weighted CFG bound, native-width
 nonpanicking preflight and private descriptor/shadow escape proof. Plans are
 outside the repo under virtual-constructor-validation/header-constructor-plan.md
-and array-capacity-feasibility/compiler-plan.md. Neither is implemented or priced.
+and array-capacity-feasibility/compiler-plan.md. The pure borrowed complete-CFG
+maximum-path helper is prepared outside the repository in
+capacity-bound-source-second, independently source-reviewed and actually
+compiled/tested under the owned Windows Job. All 28 handwritten graph/budget
+tests pass; a disposable max-to-min mutant makes the diamond/reconvergence
+oracles RED (18 pass, ten fail); exact restored bytes pass all 28 again.
+Evidence is capacity-bound-root-check-second-first/results.json. The helper
+rejects residual cycles, omitted-member push/break tails, second entries,
+overflow and exhausted shared budgets; it establishes a bound only for the
+complete supplied graph. Actual MIR extraction/weight fidelity, whole-body
+dominance/progress/private-owner/shadow proofs, native-width preflight, FN-5
+clone provenance, unconditional final verification and backend coverage remain
+OPEN. This is untimed x86-64 standalone Rust evidence, not a production pass,
+native32/zero-size store proof or speed claim. Neither optimization is adopted.
 Continue the speed audit before new core features; final README matrix remains
 pending after all changes and every new slowdown investigation.
+
+**Close-to-C audit checklist (all OPEN; owner reiterated 2026-10-04):**
+
+| Published benchmark | Landed general work | Remaining work before clearance |
+|---|---|---|
+| `t4_split` — text splitting | D-480 shared checked reserve fast paths; D-486 `split_once`, proven text endpoints and exact aggregate-field facts | Inspect remaining MSVC gap and safe general check/dataflow alternatives; compare final current code against the matched C twin with MSVC, clang and GCC. |
+| `t6_char_indices` — characters with byte offsets | D-484 character range facts; D-485 typed native `usize` iterator cursors and compiler-specific common advance choices | Investigate remaining decoder/accumulator and cursor checks, preserving foreign-view/bounds/overflow semantics; verify final current all-three-compiler comparisons. |
+| `a00_empty` — startup/shutdown | D-492 managed GCC section removal; ordinary configuration restored after the neutral NULL experiment | Current archive startup/build/link pricing is complete; production generator/cache/link-order, safety/embedding/fallback proofs and matched C comparisons remain before adoption/clearance. |
+| `a07_virtual_calls` — interface dispatch | D-482 TLS allocator statistics; D-483 proven fresh temporary ownership transfers | General constructor, allocation/layout, descriptor/capacity and ownership alternatives remain; matched worker comparisons still show gaps. Check actual final dispatch and lifetime parity with C++ on every compiler. |
+
+The published 2026-10-02 ratios are historical. D-481 through D-486 diagnostics
+show implemented improvements but do not replace a final current-source matrix.
+Small slowdowns in the as-fast table also require investigation; the historical
+52-program pre-D481 files are inventory input, never current clearance or README
+publication input. Only `a10_recursion`, `p1_read_loop`, `a16_map_text`, `t3_lines`
+and `p5_million_objects` have the owner's existing exemption. No new benchmark
+has been excused as required overhead, and no safe-alternative exhaustion is
+claimed. Record concrete causes, alternatives and full-gap pricing for each
+new slower compiler/program pair before closing it.
+
+Root has independently recomputed the complete historical pre-D481 inventory:
+all 52 programs, each compiler's median of eleven raw samples and exact ratio.
+It has 39 programs with any ratio above one; excluding precisely the five
+existing exemptions leaves 34 names and 50 compiler/program pairs to reconcile
+against the eventual current matrix. This is a historical inventory, not a
+claim 34 programs remain slow now. Root report is
+root-historical-slowdown-inventory-first.json (SHA256
+8547628917c7f6c4308b3afe529e47867db85e3eb8c3cbc2a88456c61a04a435).
+The source-reviewed close-to-c-status-source-first pack transcribes those
+triggers and maps general alternatives; current reference language/lifetime,
+actual compiler/link flags and every new raw slowdown remain obligations.
+
+Next text candidate: a general bounded-progress reduction proof with original
+checked fallback. Valid UTF-8 yields advance at least one byte within the same
+unchanged view, so remaining byte length bounds successful additions. The
+actual cursor/view/call/alias/CFG/clone and final-verifier proofs are required;
+existing exact-plus-one counted-loop analysis cannot supply them. Historical
+t6 C still has one checked accumulation per scalar. Proposed quotient entry
+guard proves every nonnegative-add prefix without eager multiplication or
+signed subtraction, including a negative initial total. New pure C11 arithmetic
+source/tests are text-reduction-guard-source-first; Root has read the guard,
+independent two-limb product/signed-sum oracle and complete fixed/grid tests.
+Actual current native64 MSVC, LLVM clang and GCC arithmetic checks now pass;
+native32 execution, MIR integration, machine-code review and whole-workload C
+comparisons remain pending. Numeric helper success will not authorize unchecked
+emission. Source-only alternatives are in
+char-indices-general-options-source-first/options.md; pointer traversal,
+bounded ASCII runs and stored-iterator optimization also remain to investigate.
+
+
+Root independently verified the complete untimed numeric-guard-validation-source-second
+queue: 51 commands, 24 fresh compile/link commands and 24 native runs. Both
+capacity and text guards pass original and restored GREEN on MSVC, LLVM clang
+and GCC, with 144,880 and 66,652 checks per native64 run respectively. Twelve
+safe integer-only product/inclusive-MAX/negative-slack mutants are RED against
+the unchanged literal expectations and independent wide oracles. All 550 sealed
+files, actual command/binary/stream hashes and compiler/environment identities
+verify; 51 host Jobs and 17 GCC guest groups drain, and all 102 fresh before/after
+mains guards pass. Aggregate SHA256 is
+a50605bd540fd9d65560361a491ba79afcc59c6c566938aa690b4d577486ab98;
+Root acceptance is numeric-guard-validation-source-second/run-first/
+root-acceptance-first.json. This is one C11 O2 helper configuration, not managed
+runtime, Debug/Shipping, decoder, allocation/backing-store or native32 evidence.
+The original first queue stopped before native execution because MSVC's C
+headers lack max_align_t. Its failed compile and drained Jobs stay preserved;
+the new capacity fixture changes only _Alignas(max_align_t) to _Alignas(uint64_t),
+with guard/oracle/expectations/counts unchanged. Nothing is adopted or timed.
+
+The source-reviewed char-progress-mir-design-source-first plan requires a
+complete pure single-entry iteration DAG, semantic progress in the same immutable
+view, a private zero-initialized usize cursor and compositional typed nonnegative
+term bounds. It proposes a late guarded clone after all existing transformations,
+with exact checked fallback, refreshed callable regions and unconditional final
+certificate rederivation before for_codegen. RemovedCheck/LoopEntryTest is
+inspection metadata, not an arithmetic proof checker. Unsupported aliases,
+callbacks, second entries, residual cycles, exit tails and FN5/block metadata
+remain checked. Implementation and final-source evidence are still pending.
+
+Fresh current `t6_char_indices` emissions are now independently verified for
+MSVC, LLVM clang and GCC in `ci-current-01`: six emitter commands exit zero with
+empty stderr, all three host Jobs and the GCC private guest group drain, and
+319 source/tool/evidence files are rehashed. Each C file and canonical header
+comes from the same invocation. All three complete headers have no defined C
+exports; ordinary `em_main` is not an exported ABI-C root. All three actual C
+hot loops still contain `ember_ck_add_i64` and the original overflow panic per
+character. The separate diagnostic MIR confirms the old-offset snapshot,
+typed private `usize` cursor reference, same-view semantic decoder, casts and
+checked accumulation, but is emitted before final pruning and verification.
+Aggregate SHA256 is
+bc87a13743b593b2ca849b7bd7903cd7a66ac0990b5e04b9eb54e1cfb0520714;
+Root acceptance `ci-current-01/root-acceptance-first.json` SHA256 is
+d6d4f2dc81c104afb5cce4bcd107164c8637e88dfe39bdc5f5c03a6265ccf875.
+No native C compilation, timing, README publication or overhead clearance is
+claimed. The independent source-only proof review additionally requires an
+immutable pre-transform fallback anchor, current accumulator operands and
+statement-point cursor/snapshot versions; copied accumulator carries are
+conservatively outside the first implementation scope.
+
+The current baseline object/assembly queue also passes on all three compilers:
+14 serialized commands, 369 independently rehashed input/tool/evidence files,
+three drained host Jobs and one drained GCC guest group. `co-current-01`
+contains both exact current generated TUs and the unchanged C twin compiled
+with current strict Release flags. Only the expected clang compile-only
+compiler-rt-option and reference unused-is_space warnings occur. Root acceptance
+SHA256 is 82ad4ea77304e0e798d99ee0cde1869b4e25cc89fea2acb17f23c4e1a6d3c97c.
+Root read the actual decoder/add/backedge/panic assembly: MSVC and clang have
+an add followed by `jo`; GCC has overflow-conditioned paths for ASCII and
+multibyte decoding. The reference has no overflow branch. Every Ember outer
+round also calls `ember_vec_as_str`; the C twin retains its known pointer/length,
+and MSVC unrolls five outer rounds in the reference. General direct/inline view
+construction is therefore another candidate to investigate. These are baseline
+assembly observations, not linked-image proof, causal pricing, a whole-gap
+explanation or clearance. No native workload or timing ran in this queue.
+
+**Text-loop integration, 2026-10-04 (current work; audit OPEN):**
+
+The late semantic-progress reduction pass is now integrated in
+`compiler/ember_analysis/src/progress_reduction.rs`, after final pruning and
+exit-drop removal. It retains an opaque complete batch of immutable original
+bodies, refreshes callable-region summaries after changes, independently checks
+the actual guard and cloned loop, and verifies the batch unconditionally before
+`for_codegen`. At most one pure loop per body qualifies. Unsupported effects,
+aliases, copied accumulator carries, extra entries/exits, multiple steps/checks,
+cycles, metadata or resource limits retain their checked operations. The guard
+uses unsigned remaining-byte/term bounds and division, including negative initial
+totals; it never multiplies or computes signed INTMAX-total. Valid UTF-8 and
+in-range cursor boundaries are existing language invariants, not validations
+performed by the runtime decoder.
+
+All 18 actual-MIR proof/mutation/budget/initialization tests pass. The driver
+regression was RED before integration (one decoder instead of fast plus fallback)
+and is GREEN for MSVC, clang and GCC selectors. Native Unicode/NUL/empty-text,
+INTMIN/INTMAX, first-overflow and effect-before-overflow cases pass all three
+profiles on actual MSVC, LLVM clang and GCC: 27 cases. Evidence is
+`progress-integration-02`, `progress-regression-red-01`, `progress-native-04`
+and `progress-gcc-01` under the session temporary root. GCC uses a fresh
+4,267-file source snapshot at
+`/home/ism19/ember-progress-validation-20261004-first`; source bytes remain
+unchanged and its private guest group drains. All host Jobs drain without
+timeouts. No native32 execution or measured performance is claimed.
+
+The first native MSVC compile found the new guard's text length emitted as the
+tuple member `._1`. The backend now renders str descriptor fields 0/1 as
+`.ptr`/`.len` and gives field 1 native `usize` type; str never acquires Vec's
+`.cap` fallback. Direct, borrowed and nested length projections have a unit
+regression. The generated-C regression is RED before this correction and GREEN
+after it. Preserve the original failed native compile in `progress-native-02`.
+`progress-native-03` instead encountered a harness expectation error: the valid
+Windows panic exits 3 (documented abort), not 1. The new worker corrects only
+that expectation; its original output and failed harness receipt remain intact.
+Earlier preflight failures started no compiler/native work.
+
+The general StringAsStr intrinsic now writes its borrowed source's pointer and
+byte length through the existing descriptor-field/copy path. The ordinary public
+`ember_vec_as_str` declaration, definition and ABI are unchanged; that helper
+contains no checks or byte access. Its dispatch unit test and driver regression
+are RED without the new arm and GREEN with it. The driver checks paired same-
+source fields through projected/niche copies for all nine compiler/profile
+selectors. Four backend unit tests pass. Original source-only test constructors
+needed MIR reexports rather than a new crate dependency; these compile failures
+remain recorded and are not counted as meaningful RED controls.
+
+Both changes together pass 30 actual MSVC/clang native cases across all profiles,
+including a single evaluated indexed receiver, explicit/implicit String views,
+reserved empty views, Some(empty), projected Option copies, Array[u8] spans and
+the original named class-field exclusivity panic (`text-native-01`). Native GCC
+checks of this second slice, full current workspace/annotation/gate suites,
+current benchmark C/header/assembly, independent inverse controls and matched
+performance measurements remain pending. These results close no benchmark gap;
+all four close-to-C rows and the full slowdown audit remain OPEN. Published
+README timing values and benchmark assets are unchanged.
 
 **Where things stand**
 
@@ -11638,7 +12035,7 @@ pending after all changes and every new slowdown investigation.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h52/` are frozen.
-* **Next numbers:** ODR-099, D-494, ADR-120, ERR-056 (D-488/D-490 OPEN; D-489/D-491/D-493 FIXED and correctness-validated; wider performance audit OPEN).
+* **Next numbers:** ODR-099, D-502, ADR-126, ERR-056 (D-488/D-490/D-498 OPEN).
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
