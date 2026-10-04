@@ -4999,6 +4999,15 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-126 — the runtime calls nothing in libm
+
+2026-10-04, D-502, autopilot. glibc keeps `fmin`, `fmax` and `copysign` in libm, and GNU ld
+decides `--as-needed` before `--gc-sections` removes the functions that call them, so one use in
+the runtime made every Linux program load libm (about 25 µs at start-up, the whole of the empty
+program's gap to C). The runtime's two uses are written with comparisons and `signbit`, exact for
+every input they get; a program whose own C does maths links libm as before. MSVC and clang on
+Windows are unaffected (the C runtime holds these functions).
+
 ## ADR-125 — the one-byte search falls through; only a view read from memory is copied by fields
 
 2026-10-04, D-500 and D-501, autopilot. Every benchmark was built by the published compiler

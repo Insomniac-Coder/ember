@@ -1639,8 +1639,18 @@ bool ember_range_contains_f32(float v, float lo, float hi, bool inclusive) {
     return v >= lo && (inclusive ? v <= hi : v < hi);
 }
 
-double ember_range_clamp_f64(double v, double lo, double hi) { return fmin(fmax(v, lo), hi); }
-float ember_range_clamp_f32(float v, float lo, float hi) { return fminf(fmaxf(v, lo), hi); }
+/* `fmin(fmax(v, lo), hi)` for finite endpoints, written with comparisons:
+ * glibc keeps `fmin`/`fmax` in libm, and that one reference made every
+ * Linux program load libm at start-up (`a00_empty` 1.08x the C, D-502).
+ * A NaN fails `>=` and becomes `lo`; equal values keep `v`, as glibc's do. */
+double ember_range_clamp_f64(double v, double lo, double hi) {
+    double above = v >= lo ? v : lo;
+    return above <= hi ? above : hi;
+}
+float ember_range_clamp_f32(float v, float lo, float hi) {
+    float above = v >= lo ? v : lo;
+    return above <= hi ? above : hi;
+}
 
 /* D-316: rounding a `double` to the nearest `f16`, ties to even, from its
  * bits. The value is `significand * 2^(e - 52)`; the `f16` quantum is
@@ -5196,7 +5206,8 @@ static int compare_decimal_magnitude(ember_str s, double x) {
 /* An `f16`'s value as a rounding step: the infinity stands one step past the
  * largest finite `f16`, at 2^16. */
 static double f16_step_value(uint16_t h, double sign) {
-    return (h & 0x7FFFu) == 0x7C00u ? copysign(65536.0, sign) : ember_f16_to_f64(h);
+    /* `copysign(65536.0, sign)`: an unoptimised build calls libm's (D-502). */
+    return (h & 0x7FFFu) == 0x7C00u ? (signbit(sign) ? -65536.0 : 65536.0) : ember_f16_to_f64(h);
 }
 
 uint16_t ember_parse_f16_value(ember_str s) {

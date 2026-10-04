@@ -1096,6 +1096,12 @@ int main(int argc, char** argv) {
                 assert!(headers.contains("GNU_RELRO"));
                 let stack = headers.lines().find(|line| line.contains("GNU_STACK")).expect("stack permissions");
                 assert!(stack.contains("RW ") && !stack.contains("RWE"), "{stack}");
+                // D-502: the runtime calls nothing in libm, so a program that
+                // does not either never loads it.
+                let dynamic = Command::new("readelf").args(["-dW"]).arg(&executable).output().unwrap();
+                let dynamic = String::from_utf8_lossy(&dynamic.stdout);
+                assert!(!dynamic.contains("libm.so"), "the runtime made libm needed (section removal {uses_gc}):
+{dynamic}");
                 if uses_gc {
                     assert!(compile_and_link_executable_with_roots(&toolchain, &request,
                         &["missing_definition".to_string()]).is_err(), "missing C root silently linked");

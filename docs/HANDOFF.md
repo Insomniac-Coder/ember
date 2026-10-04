@@ -10730,12 +10730,26 @@ anything needs a review just note it down and ask me about a workflow later".
 * **For a review workflow later** (the owner asked to be asked): ADR-114's temporary-owner
   transfer (851 lines on reference counts, where an error frees an object early) and ADR-120's
   progress reduction (3,100 lines with its verifier).
+* **To ask the owner:** D-498 (above): the multiply guard now and the placement accepted, or the
+  character loop's layout first.
 * **Open:** D-498, D-488 (valid programs refused, E3060), D-490 (a false E3040), D-487; ADR-118's
   linker probe starts two processes on every gcc build, uncached; `lines()` with MSVC about 4%
   slower than the published compiler from its loop's placement (ADR-125).
-* **Next:** gcc's `a00_empty` start-up (D-492's follow-up), D-498 (replace the guard's division
-  with a checked multiply, verifier included), D-488, D-490, the linker probe; then the phases
-  (AUTOPILOT §2).
+* **After `1ff1c8c`:** D-502 (ADR-126): the runtime no longer makes every Linux program load
+  libm; gcc's `a00_empty` 1.12x → 0.989x the C.
+* **D-498 priced, needs the owner** (row in DEFECTS): the checked multiply makes a one-byte call
+  about 40% faster on every compiler, but it moves the long text loops' code on this laptop
+  (`t6_char_indices` MSVC 1.07-1.08x, `t1_chars` MSVC 1.05x; same instructions, the ASCII path
+  crossing a 64-byte boundary), so the published division guard stays. The change, to re-apply:
+  in `apply` (`progress_reduction.rs`) the fourth guard block ends in
+  `CheckedBinaryOp { dest: product, overflow: wraps, op: Mul, lhs: remaining, rhs: upper }` and
+  branches on `wraps` (0 to the fifth block, else the checked loop); the fifth computes `room` and
+  tests `product <= room`; the `upper != 0` test goes. `guard_semantics` gets a
+  `GuardNode::Wraps(remaining, upper)` node and accepts that one statement in phase 3 only (fresh
+  u64/bool temporaries); phase 3 loses `Ne`, phase 4 `Div`. The unit tests' interpreter models the
+  multiply with u128 and its zero-bound cases now read the total; `milestones.rs`
+  `progress_reduction_emits_...` asserts one `ck_mul_u64(` and no ` / ` per guarded function.
+* **Next:** D-488, D-490, the linker probe; then the phases (AUTOPILOT §2).
 * **Tools for this work** (session scratchpad, see the 2026-10-02 bullet below for the rest):
   `ab_variants.py <experiment> <cc> <runs> <log> <programs>` builds every program with several
   compiler trees and times them interleaved; `wsl/ab_gcc.py` does it for gcc in WSL (`~/ab-old`,
@@ -12035,7 +12049,7 @@ README timing values and benchmark assets are unchanged.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h52/` are frozen.
-* **Next numbers:** ODR-099, D-502, ADR-126, ERR-056 (D-488/D-490/D-498 OPEN).
+* **Next numbers:** ODR-099, D-503, ADR-127, ERR-056 (D-488/D-490/D-498 OPEN).
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
