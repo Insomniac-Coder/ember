@@ -32825,12 +32825,33 @@ impl<'a> Checker<'a> {
         }
 
         let inherited = !self.methods.contains_key(&(receiver.ty, name.name));
+        // D-460 — an inherited method that takes its receiver by address,
+        // called on a local handle of a derived class, borrows that local and
+        // upcasts the borrow, as an inherited `mut self` method does: what it
+        // returns then borrows the local, not a copy of the handle that the
+        // statement's end releases ([LT-1], [RC-5]).
+        let mut upcast_borrow = None;
         if receiver_mode != Mode::Mut {
             if let Some((_, receiver_ty, _, _)) = self.signatures[def.0 as usize].params.first() {
-                // The base receiver is the first parameter of the inherited
-                // method. `coerce` inserts the nominal class upcast only when
-                // the two class identities differ.
-                receiver = self.coerce(receiver, *receiver_ty);
+                let receiver_ty = *receiver_ty;
+                let derived = matches!(
+                    (self.types.kind(receiver.ty), self.types.kind(receiver_ty)),
+                    (TyKind::Class(derived), TyKind::Class(base))
+                        if derived != base && self.types.class_is_subclass_of(*derived, *base)
+                );
+                if inherited
+                    && receiver_mode == Mode::Borrow
+                    && derived
+                    && matches!(receiver.kind, ExprKind::Local(_))
+                    && self.receiver_by_address(receiver_ty, def)
+                {
+                    upcast_borrow = Some(receiver_ty);
+                } else {
+                    // The base receiver is the first parameter of the inherited
+                    // method. `coerce` inserts the nominal class upcast only when
+                    // the two class identities differ.
+                    receiver = self.coerce(receiver, receiver_ty);
+                }
             }
         }
 
@@ -32931,6 +32952,15 @@ impl<'a> Checker<'a> {
                 }
             } else {
                 checked_receiver
+            }
+        } else if let Some(base) = upcast_borrow {
+            // D-460 — the borrow of the derived local, upcast.
+            match self.types.kind(checked_receiver.ty) {
+                TyKind::Ref { .. } => {
+                    let expected = self.types.intern(TyKind::Ref { mutable: false, inner: base });
+                    Expr { ty: expected, kind: ExprKind::Cast { expr: Box::new(checked_receiver), to: expected }, span: recv_span }
+                }
+                _ => self.coerce(checked_receiver, base),
             }
         } else {
             checked_receiver

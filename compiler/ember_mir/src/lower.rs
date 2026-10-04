@@ -5673,7 +5673,9 @@ impl<'a> Builder<'a> {
                     {
                         CastKind::ClassUpcast
                     }
-                    (TyKind::Ref { mutable: true, inner: derived }, TyKind::Ref { mutable: true, inner: base }) => {
+                    (TyKind::Ref { mutable: from, inner: derived }, TyKind::Ref { mutable: to_mut, inner: base })
+                        if from == to_mut =>
+                    {
                         if let (TyKind::Class(derived), TyKind::Class(base)) =
                             (self.types.kind(*derived), self.types.kind(*base))
                             && self.types.class_is_subclass_of(*derived, *base)

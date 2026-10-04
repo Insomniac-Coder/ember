@@ -186,6 +186,7 @@ pub fn emit(
         view_pointers: BTreeMap::new(),
         parted_views: BTreeSet::new(),
         addressed_locals: BTreeSet::new(),
+        upcast_copies: BTreeSet::new(),
         direct_param_modes: bodies
             .iter()
             .map(|body| (body.symbol.clone(), body.param_modes.clone()))
@@ -439,6 +440,9 @@ struct Emitter<'a> {
     parted_views: BTreeSet<Place>,
     /// Locals whose address the body takes: their views live in memory.
     addressed_locals: BTreeSet<LocalId>,
+    /// D-460 — the locals a borrowed class upcast sets: each has a C
+    /// variable of the base class's handle type beside it (`_N_up`).
+    upcast_copies: BTreeSet<usize>,
     /// Direct-call ownership modes. A `Copy` operand passed to an `owned`
     /// parameter creates another class-handle owner, so its retain must be
     /// emitted before the call transfers that new owner to the callee.
@@ -4223,6 +4227,19 @@ impl Emitter<'_> {
                 _ => None,
             })
             .collect();
+        self.upcast_copies = body
+            .blocks
+            .iter()
+            .flat_map(|block| &block.stmts)
+            .filter_map(|stmt| match &stmt.kind {
+                StmtKind::Assign { place, rvalue: Rvalue::Cast { kind: CastKind::ClassUpcastBorrowed, .. } }
+                    if place.projection.is_empty() =>
+                {
+                    Some(place.local.0 as usize)
+                }
+                _ => None,
+            })
+            .collect();
         // ADR-079: a view parameter of such a body *is* its pointer, and
         // every element access goes through it.
         let mut restrict_params: BTreeSet<usize> = BTreeSet::new();
@@ -4595,7 +4612,13 @@ impl Emitter<'_> {
             Some(name) => format!("  /* {name} */"),
             None => String::new(),
         };
-        format!("    {} _{index};{comment}", self.c_type(decl.ty))
+        let declaration = format!("    {} _{index};{comment}", self.c_type(decl.ty));
+        match self.types.kind(decl.ty) {
+            TyKind::Ref { inner, .. } if self.upcast_copies.contains(&index) => {
+                format!("{declaration}\n    {} _{index}_up;", self.c_type(*inner))
+            }
+            _ => declaration,
+        }
     }
 
     fn emit_stmt(&mut self, stmt: &Stmt, body: &Body) {
@@ -4611,6 +4634,21 @@ impl Emitter<'_> {
                 }
                 self.emit_line_directive(stmt.span);
                 let lhs = self.place_in(place, body);
+                // D-460 — a borrowed class upcast points at a base-typed copy
+                // of the handle, never at the derived handle itself: a callee
+                // reading a `struct Derived*` through a `struct Base*` lvalue
+                // is undefined in C. A receiver is never assigned through
+                // (`E2103`), so the copy stays the handle's value.
+                if let Rvalue::Cast { kind: CastKind::ClassUpcastBorrowed, operand, to } = rvalue
+                    && place.projection.is_empty()
+                    && let TyKind::Ref { inner, .. } = self.types.kind(*to)
+                {
+                    let value = self.operand(operand, body);
+                    let copy = format!("_{}_up", place.local.0);
+                    self.line(&format!("    {copy} = ({})(*({value}));", self.c_type(*inner)));
+                    self.line(&format!("    {lhs} = &{copy};"));
+                    return;
+                }
                 // `[OWN-7]` — a class-handle copy retains before the new
                 // pointer becomes visible in its destination.  This is kept
                 // in the backend's explicit ownership boundary rather than
@@ -9442,6 +9480,7 @@ mod string_descriptor_view_parts_tests {
             view_pointers: BTreeMap::new(),
             parted_views: BTreeSet::new(),
             addressed_locals: BTreeSet::new(),
+            upcast_copies: BTreeSet::new(),
             direct_param_modes: BTreeMap::new(),
             restrict_kernels: BTreeMap::new(),
             ffi_export_value_params: BTreeMap::new(),

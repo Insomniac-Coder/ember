@@ -10735,6 +10735,8 @@ anything needs a review just note it down and ask me about a workflow later".
   counted loop whose turn makes one direct call, so EXC-10 first needs `[EXC-8]` widened to loops
   that hold other loops, under every condition of `[EXC-9]`; holding an access longer can turn a
   program that runs into one that panics, so it is soundness work to design with a review.
+  And ADR-134 (D-460): a receiver's borrow changed from a temporary copy to the local itself,
+  which decides what a view keeps alive.
 * **To ask the owner:** D-498 (above): the multiply guard now and the placement accepted, or the
   character loop's layout first.
 * **Open:** D-498, D-487; `lines()` with MSVC about 4% slower than the published compiler from
@@ -10792,10 +10794,11 @@ anything needs a review just note it down and ask me about a workflow later".
   placement swings it, as D-498's loop swings with MSVC; a general fix (loop alignment) is the
   thing to try. And the Sync-handle program with clang is 1.26x its `shared_ptr` twin (MSVC
   1.00x): find what the rest is before it joins the README's set.
-* **Next:** D-460 (a borrowed upcast of a local receiver
-  as a reference to that local, emitted through a base-typed copy, which also removes the
-  `Base**` type pun inherited `mut self` calls make), then OPT-1 (stack promotion, a MAY).
-  EXC-10 waits for the review workflow (above).
+* **Then D-460** (ADR-134): a base class's view getter called on a derived local borrows the
+  local (it was `E3060`); every borrowed class upcast is a base-typed copy in C, so inherited
+  `mut self` calls no longer reinterpret a `Derived**` as a `Base**`.
+* **Next:** the speed leads above (the `push` temporary, clang's `p4` placement, the Sync stores
+  with clang), then OPT-1 (stack promotion, a MAY). EXC-10 waits for the review workflow (above).
 * **Tools for this work** (session scratchpad, see the 2026-10-02 bullet below for the rest):
   `ab_variants.py <experiment> <cc> <runs> <log> <programs>` builds every program with several
   compiler trees and times them interleaved; `wsl/ab_gcc.py` does it for gcc in WSL (`~/ab-old`,
@@ -12095,7 +12098,7 @@ README timing values and benchmark assets are unchanged.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h52/` are frozen.
-* **Next numbers:** ODR-099, D-511, ADR-134, ERR-056 (D-498 OPEN).
+* **Next numbers:** ODR-099, D-511, ADR-135, ERR-056 (D-498 OPEN).
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's

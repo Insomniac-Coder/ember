@@ -5016,6 +5016,34 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-134 — an inherited method borrows a derived local through an upcast borrow, in C through a base-typed copy (D-460)
+
+2026-10-05, autopilot. A method declared on a base class that takes its receiver by address (one
+returning a view of it, `[LT-1]`) and is called on a local handle of a derived class upcast the
+handle into a temporary, retained, and borrowed that: the statement's end released the temporary,
+so keeping the view was `E3060`, whose help described a handle stored in an object, which this
+is not (D-460, the second review's G5-7). The fix the defect named: the borrow is a loan of the
+local itself.
+
+The type checker now borrows the derived local and upcasts the borrow, as it already did for an
+inherited `mut self` method (`ref Derived` to `ref Base`), when the receiver is a local of a class
+below the method's own and the method takes it by address; any other receiver (a field, an
+element) is upcast as before, so `[RC-5]`'s retained copy for a handle stored in an object
+stands. Lowering makes either borrow's cast a `ClassUpcastBorrowed` (it took only `ref mut`). So
+the view borrows `d`: it may outlive the statement, and `d` cannot be written while it lives
+(`E3021`). The retain and release of the temporary are gone too.
+
+In C, the borrowed upcast no longer reinterprets the address of the derived handle
+(`(struct em_obj_Base**)&d`): a callee reading a `struct Derived*` through a `struct Base*`
+lvalue is undefined, and clang 20 and later tell pointer types apart for aliasing. Each local a
+borrowed upcast sets has a C variable of the base handle's type beside it (`_N_up`): the cast
+copies the handle into it and points at the copy. A method never assigns its receiver (`E2103`),
+and the borrow keeps the local from changing while it lives, so the copy is always the handle's
+value. This applies to inherited `mut self` calls too, which had the same reinterpretation.
+
+No benchmark program calls an inherited method, so their C is byte for byte the same (all 52, for
+MSVC, clang and gcc).
+
 ## ADR-133 — a Sync object's counts are inline atomic operations (`[RT-10]`, D-509); its counts tested under threads (`[RC-4]`, `[WK-12]`)
 
 2026-10-04, autopilot. `[RT-10]`: "Counting is inline. The fast path of retain (one increment and
