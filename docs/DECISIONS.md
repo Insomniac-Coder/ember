@@ -4842,6 +4842,14 @@ in WSL on mains, a small program's gcc build 124.7 → 122.6 ms (31 interleaved 
 the two processes alone 1.3 ms. `the_linker_probe_is_cached_until_the_linker_changes` counts the
 processes a fake GCC is asked for.
 
+**An answer the probe could not finish is not kept** (D-510, 2026-10-05). A program the probe
+could not start was cached as "no" (gc-sections off) until the compiler file changed, and the test
+above failed once in WSL: it runs its scripts just after writing them, and on Linux a file just
+written is "text file busy" to `exec` while another thread's new child still holds it open, for a
+moment. The probe now tries a program that did not start again (four times, 10 to 80 ms apart),
+and keeps only an answer it finished; the test checks that a linker that cannot be started leaves
+no answer behind.
+
 ## ADR-119 — reject unrepresentable aligned-allocation round-up
 
 2026-10-04, D-493. Fixed and production correctness validated.
@@ -5007,6 +5015,47 @@ forceinline is not an absolute guarantee](https://learn.microsoft.com/en-us/cpp/
 Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
+
+## ADR-133 — a Sync object's counts are inline atomic operations (`[RT-10]`, D-509); its counts tested under threads (`[RC-4]`, `[WK-12]`)
+
+2026-10-04, autopilot. `[RT-10]`: "Counting is inline. The fast path of retain (one increment and
+an overflow test) and release (one decrement and a test for zero) is defined in `ember_rt.h` and
+inlined into the caller; only deinitialisation is out of line. Copying an existing strong handle of
+a `@sync` object is one atomic `fetch_add`, never a compare-exchange loop ... The deinitialising and
+resurrection checks of `[OBJ-5]` run on the release-to-zero path only." A Sync object's retain was
+the out-of-line compare-exchange loop `Weak.upgrade` uses (on MSVC its loads were locked
+instructions too: three per retain), its release out of line, and the plain retain's fast path also
+tested the deinitialising flag (D-509).
+
+`ember_rt.h` now has `ember_retain_sync` (one atomic add, relaxed) and `ember_release_sync` (one
+atomic subtract, acquire-release, `[RT-8]`), on gcc and clang's `__atomic` builtins, MSVC's
+`_InterlockedExchangeAdd`, or C11 atomics. Only a count at its end leaves them: a retain that found
+zero or the maximum panics (`ember_obj_retain_failed`), and a release that found one deinitialises
+(`ember_obj_release_ended`, which panics at zero). The C backend calls them for a Sync class; a
+handle whose class is not known statically (a `Shared`, an interface's) keeps `ember_retain`, which
+now picks between the two inline forms by the type information. The plain retain no longer tests
+the deinitialising flag: a deinitialising object's count is zero, which already leaves the fast
+path, so the test bought nothing. `Weak.upgrade` stays the one compare-exchange (`[WK-12]`).
+
+Ember has no threads of its own yet (Phase 6), so the counts were never run concurrently. The
+runtime test `sync_counts` (`templates/tests/sync_counts.c.in`, run by
+`ember_build`'s `sync_counts_hold_under_threads`) drives them from C: four threads retain and
+release one Sync object 200,000 times each, some nested, and the count must come back exactly; then
+300 rounds where four threads upgrade a weak handle while the last strong one is released, an
+upgrade never holding a deinitialised object and each object deinitialised once. With the atomic
+add made a plain increment it fails with both MSVC and clang (lost updates end the object early).
+
+Measured 2026-10-05, 00:06 to 00:08, on mains and the performance cores, 11 interleaved runs,
+medians, each program built by the compiler and runtime before and after
+(`scratchpad/rc4bench`). A Sync object's handle stored into a field fifty million times, two
+handles taking turns, against the same work with `std::shared_ptr`: MSVC 1.045 s before, 0.524 s
+after (×0.501), the C++ 0.524 s (after ×1.000 of it, before ×1.995); clang 0.554 s, 0.525 s
+(×0.947), the C++ 0.417 s (after ×1.258, before ×1.328; the rest not investigated yet). The
+11 benchmark programs whose C retains a handle are unchanged with both compilers (×0.977 to
+×1.006), except clang's `p4_views_alive_01`: 33.2 ms before, 19.4 ms after. Its retain is in the
+setup loop, not the measured one, its C is the same before and after, and the published number
+is 19 ms, so the difference is most likely where the measured loop was placed, not this change;
+recorded as a lead.
 
 ## ADR-132 — a virtual call one body answers is a direct call (`[DSP-1]`, `[DSP-5]`)
 

@@ -95,8 +95,10 @@ Current bounded evidence:
   was needed for these coverage gaps; the final MSVC/clang-cl workspace suites
   and all gates pass.
 * `RC-3`: raw-pointer and other liveness-boundary probes remain open.
-* `RC-4`: atomic selection alone does not prove concurrent retain/release or
-  weak-upgrade CAS behavior; these runtime probes remain open.
+* `RC-4`: probed under threads since ADR-133: the runtime test `sync_counts` (four threads
+  retaining and releasing one Sync object, and weak upgrades racing the last release) passes with
+  MSVC, clang and gcc and fails with the atomic add made plain. Writing it found D-509 (a Sync
+  retain was a compare-exchange loop, not `[RT-10]`'s one inline atomic add), fixed there.
 * `EXC-10`: current loop hoisting covers canonical single loops; nested-loop
   access reuse remains an implementation gap. A check (an access begun and
   ended at once) is now hoisted out of any loop, nested or not, that changes

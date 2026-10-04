@@ -1,0 +1,177 @@
+/* [RC-4], [WK-12]: a Sync object's counts under several threads at once. Retains and releases
+ * made from every thread balance exactly, and a weak handle upgraded while the last strong handle
+ * is released never brings the object back: an upgrade either holds the object alive or finds it
+ * gone, and the object is deinitialised exactly once. */
+#include "ember_rt.h"
+#include <stdio.h>
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <intrin.h>
+typedef HANDLE worker_thread;
+#define WORKER_RESULT DWORD WINAPI
+typedef DWORD (WINAPI *worker_body)(void*);
+#define WORKER_DONE 0
+static long counter_add(volatile long* value) { return _InterlockedIncrement(value); }
+static long counter_read(volatile long* value) { return _InterlockedCompareExchange(value, 0, 0); }
+#else
+#include <pthread.h>
+typedef pthread_t worker_thread;
+#define WORKER_RESULT void*
+typedef void* (*worker_body)(void*);
+#define WORKER_DONE NULL
+static long counter_add(volatile long* value) { return __atomic_add_fetch(value, 1, __ATOMIC_SEQ_CST); }
+static long counter_read(volatile long* value) { return __atomic_load_n(value, __ATOMIC_SEQ_CST); }
+#endif
+
+#define THREADS 4
+#define ROUNDS 200000
+#define UPGRADE_ROUNDS 300
+
+typedef struct counted {
+    ember_obj_header header;
+    volatile long dead;
+} counted;
+
+static volatile long deinits;
+
+static void drop_counted(void* object) {
+    counter_add(&((counted*)object)->dead);
+    counter_add(&deinits);
+}
+
+static const ember_type_info counted_ti = {
+    sizeof(counted), _Alignof(counted), EMBER_TI_SYNC, "Counted", NULL, drop_counted, NULL, NULL, NULL, 0, NULL, 0,
+};
+
+typedef struct job {
+    counted* object;
+    volatile long* go;
+    volatile long failures;
+    long upgrades;
+} job;
+
+static bool start(worker_thread* thread, worker_body body, job* work) {
+#if defined(_WIN32)
+    *thread = CreateThread(NULL, 0, body, work, 0, NULL);
+    return *thread != NULL;
+#else
+    return pthread_create(thread, NULL, body, work) == 0;
+#endif
+}
+
+static bool finish(worker_thread thread) {
+#if defined(_WIN32)
+    return WaitForSingleObject(thread, INFINITE) == WAIT_OBJECT_0 && CloseHandle(thread);
+#else
+    return pthread_join(thread, NULL) == 0;
+#endif
+}
+
+/* Retains and releases, some nested, all of one object shared by every thread. */
+static WORKER_RESULT churn(void* raw) {
+    job* work = (job*)raw;
+    ember_rt_thread_attach();
+    ember_obj_header* object = &work->object->header;
+    while (counter_read(work->go) == 0) {
+    }
+    for (int round = 0; round < ROUNDS; ++round) {
+        ember_retain(object);
+        if (round % 3 == 0) {
+            ember_retain(object);
+            ember_release(object);
+        }
+        ember_release(object);
+    }
+    ember_rt_thread_detach();
+    return WORKER_DONE;
+}
+
+/* Upgrades until the object is gone; one held must never be deinitialised. */
+static WORKER_RESULT upgrade(void* raw) {
+    job* work = (job*)raw;
+    ember_rt_thread_attach();
+    ember_obj_header* object = &work->object->header;
+    while (counter_read(work->go) == 0) {
+    }
+    for (;;) {
+        ember_obj_header* held = ember_weak_upgrade(object);
+        if (held == NULL) {
+            break;
+        }
+        work->upgrades += 1;
+        if (counter_read(&work->object->dead) != 0) {
+            counter_add(&work->failures);
+        }
+        ember_release(held);
+    }
+    ember_rt_thread_detach();
+    return WORKER_DONE;
+}
+
+int main(void) {
+    ember_rt_init(NULL);
+    worker_thread threads[THREADS];
+    job jobs[THREADS];
+
+    /* Balance: every retain and release from four threads at once. */
+    volatile long go = 0;
+    counted* shared = (counted*)ember_obj_new(&counted_ti);
+    for (int t = 0; t < THREADS; ++t) {
+        jobs[t] = (job){ shared, &go, 0, 0 };
+        if (!start(&threads[t], churn, &jobs[t])) return 2;
+    }
+    counter_add(&go);
+    for (int t = 0; t < THREADS; ++t) {
+        if (!finish(threads[t])) return 2;
+    }
+    if (shared->header.strong != 1 || counter_read(&deinits) != 0) {
+        printf("unbalanced: strong %u, deinits %ld\n", (unsigned)shared->header.strong, counter_read(&deinits));
+        return 1;
+    }
+    ember_release(&shared->header);
+    if (counter_read(&deinits) != 1) {
+        printf("the last release did not deinitialise\n");
+        return 1;
+    }
+
+    /* Upgrades racing the last release: never a resurrection, one deinit each. */
+    long upgrades = 0;
+    for (int round = 0; round < UPGRADE_ROUNDS; ++round) {
+        volatile long started = 0;
+        counted* object = (counted*)ember_obj_new(&counted_ti);
+        ember_weak_retain(&object->header);
+        for (int t = 0; t < THREADS; ++t) {
+            jobs[t] = (job){ object, &started, 0, 0 };
+            if (!start(&threads[t], upgrade, &jobs[t])) return 2;
+        }
+        counter_add(&started);
+        for (volatile int spin = 0; spin < (round % 7) * 200; ++spin) {
+        }
+        ember_release(&object->header);
+        for (int t = 0; t < THREADS; ++t) {
+            if (!finish(threads[t])) return 2;
+            if (jobs[t].failures != 0) {
+                printf("round %d: an upgrade held a deinitialised object\n", round);
+                return 1;
+            }
+            upgrades += jobs[t].upgrades;
+        }
+        if (object->dead != 1 || counter_read(&deinits) != round + 2) {
+            printf("round %d: deinitialised %ld times\n", round, object->dead);
+            return 1;
+        }
+        if (ember_weak_upgrade(&object->header) != NULL) {
+            printf("round %d: upgraded after the end\n", round);
+            return 1;
+        }
+        ember_weak_release(&object->header);
+    }
+    if (upgrades == 0) {
+        printf("no upgrade ever raced the release\n");
+        return 1;
+    }
+    ember_rt_shutdown();
+    puts("ok");
+    return 0;
+}

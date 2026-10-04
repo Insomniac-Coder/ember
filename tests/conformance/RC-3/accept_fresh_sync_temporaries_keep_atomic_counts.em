@@ -2,7 +2,8 @@
 #$ rules: RC-3, RC-4, RT-8, THR-1
 #$ profiles: debug, release, shipping
 #$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 0
-#$ assert-c-count: contains("ember_retain((ember_obj_header*)") == 1
+#$ assert-c-count: contains("ember_retain((ember_obj_header*)") == 0
+#$ assert-c-count: contains("ember_retain_sync((ember_obj_header*)") == 1
 #$ stdout: 42
 #$ stdout: cleared
 

@@ -4830,11 +4830,15 @@ impl Emitter<'_> {
     /// so has every class of its family (`[THR-1]`), so its handle takes the
     /// `_plain` pair, whose common case is inline arithmetic; any other handle
     /// takes the pair that reads the type information first.
+    /// `[RC-4]`, `[RT-10]` — a class's counts are plain or atomic by its
+    /// declaration, so its retain and release are the inline form for it;
+    /// any other handle's are chosen by its type information.
     fn count_function(&self, operation: &str, ty: Ty) -> String {
         match self.types.kind(ty) {
-            TyKind::Class(id) if !self.types.class_def(*id).is_sync => {
-                ember_branding::runtime(&format!("{operation}_plain"))
+            TyKind::Class(id) if self.types.class_def(*id).is_sync => {
+                ember_branding::runtime(&format!("{operation}_sync"))
             }
+            TyKind::Class(_) => ember_branding::runtime(&format!("{operation}_plain")),
             _ => ember_branding::runtime(operation),
         }
     }

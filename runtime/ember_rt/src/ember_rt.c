@@ -1296,6 +1296,19 @@ void ember_obj_release(ember_obj_header* object) {
     }
 }
 
+/* `[RT-10]` — the out-of-line ends of the inline Sync counts. */
+void ember_obj_retain_failed(ember_obj_header* object) {
+    (void)object;
+    object_panic_text("retain of deinitialising or invalid object");
+}
+
+void ember_obj_release_ended(ember_obj_header* object, uint32_t previous) {
+    if (previous == 0) {
+        object_panic_text("release of object with no strong references");
+    }
+    ember_rt_deinit(object);
+}
+
 void ember_weak_retain(ember_obj_header* object) {
     if (object == NULL) {
         return;

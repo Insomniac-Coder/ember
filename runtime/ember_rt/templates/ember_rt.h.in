@@ -1167,15 +1167,17 @@ static inline const void* ember_itable_lookup(const ember_type_info* type, const
     return ember_itable_lookup_slow(type->base, interface_id);
 }
 
-/* `[RC-4]` — the counts of an object that is not Sync are plain integers,
- * so the common case is done here, without a call: a retain of a live object
- * whose count can grow, a release that is not the last. Everything else (an
- * empty handle, a panic, the last release, which deinitialises, and a Sync
- * object's atomic count) goes through the out-of-line functions above,
- * unchanged. */
+/* `[RC-4]`, `[RT-10]` — counting is inline. The counts of an object that is
+ * not Sync are plain integers: a retain of a live object whose count can grow
+ * and a release that is not the last are done here, without a call. A Sync
+ * object's are one atomic add, relaxed, and one atomic subtract,
+ * acquire-release (`[RT-8]`), never a compare-exchange loop. Only a count at
+ * its end goes out of line: an empty handle, a count at zero or at its
+ * maximum (a panic), and the release to zero, which deinitialises and runs
+ * `[OBJ-5]`'s checks. A deinitialising object's count is zero, so its retain
+ * leaves the fast path without a test of its own. */
 EMBER_INLINED void ember_retain_plain(ember_obj_header* object) {
-    if (object != NULL && (object->flags & EMBER_OBJ_DEINITIALISING) == 0
-        && object->strong - 1u < UINT32_MAX - 1u) {
+    if (object != NULL && object->strong - 1u < UINT32_MAX - 1u) {
         object->strong += 1;
         return;
     }
@@ -1190,21 +1192,57 @@ EMBER_INLINED void ember_release_plain(ember_obj_header* object) {
     ember_obj_release(object);
 }
 
+#if defined(__GNUC__) || defined(__clang__)
+#define EMBER_COUNT_UP(word) __atomic_fetch_add((word), 1u, __ATOMIC_RELAXED)
+#define EMBER_COUNT_DOWN(word) __atomic_fetch_sub((word), 1u, __ATOMIC_ACQ_REL)
+#elif defined(_MSC_VER)
+#include <intrin.h>
+#define EMBER_COUNT_UP(word) ((uint32_t)_InterlockedExchangeAdd((volatile long*)(word), 1))
+#define EMBER_COUNT_DOWN(word) ((uint32_t)_InterlockedExchangeAdd((volatile long*)(word), -1))
+#else
+#include <stdatomic.h>
+#define EMBER_COUNT_UP(word) \
+    atomic_fetch_add_explicit((volatile _Atomic(uint32_t)*)(word), 1u, memory_order_relaxed)
+#define EMBER_COUNT_DOWN(word) \
+    atomic_fetch_sub_explicit((volatile _Atomic(uint32_t)*)(word), 1u, memory_order_acq_rel)
+#endif
+
+/* A Sync retain that found the count at zero or at its maximum: a panic. */
+EMBER_NORETURN void ember_obj_retain_failed(ember_obj_header* object);
+/* A Sync release that found the count at one (the object deinitialises) or
+ * at zero (a panic). */
+void ember_obj_release_ended(ember_obj_header* object, uint32_t previous);
+
+EMBER_INLINED void ember_retain_sync(ember_obj_header* object) {
+    if (object != NULL && EMBER_COUNT_UP(&object->strong) - 1u >= UINT32_MAX - 1u) {
+        ember_obj_retain_failed(object);
+    }
+}
+
+EMBER_INLINED void ember_release_sync(ember_obj_header* object) {
+    if (object != NULL) {
+        uint32_t previous = EMBER_COUNT_DOWN(&object->strong);
+        if (previous <= 1) {
+            ember_obj_release_ended(object, previous);
+        }
+    }
+}
+
 /* Any handle: the type information says whether the counts are atomic. */
 EMBER_INLINED void ember_retain(ember_obj_header* object) {
-    if (object != NULL && object->ti != NULL && (object->ti->flags & EMBER_TI_SYNC) == 0) {
-        ember_retain_plain(object);
+    if (object != NULL && object->ti != NULL && (object->ti->flags & EMBER_TI_SYNC) != 0) {
+        ember_retain_sync(object);
         return;
     }
-    ember_obj_retain(object);
+    ember_retain_plain(object);
 }
 
 EMBER_INLINED void ember_release(ember_obj_header* object) {
-    if (object != NULL && object->ti != NULL && (object->ti->flags & EMBER_TI_SYNC) == 0) {
-        ember_release_plain(object);
+    if (object != NULL && object->ti != NULL && (object->ti->flags & EMBER_TI_SYNC) != 0) {
+        ember_release_sync(object);
         return;
     }
-    ember_obj_release(object);
+    ember_release_plain(object);
 }
 
 /* Access-state helpers implement the !Sync class exclusivity word. A Sync

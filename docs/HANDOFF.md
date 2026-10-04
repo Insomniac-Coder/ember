@@ -10776,8 +10776,23 @@ anything needs a review just note it down and ask me about a workflow later".
   body), and `--emit-optimization-report` lists the second kind. Measured in ADR-132: with clang
   the virtual-call program went from 1.12x its C++ twin to 0.56x. That program and its twin
   (`scratchpad/dsp5bench`) join the README's set at the next full benchmark run.
-* **Next:** RC-4 and WK-12 under threads (a runtime test: a Sync object's counts from several
-  threads, upgrades racing the last release), then D-460 (a borrowed upcast of a local receiver
+* **Then RC-4 and WK-12 under threads, and D-509** (ADR-133): a C runtime test drives a Sync
+  object's counts from four threads and races weak upgrades against the last release; writing it
+  found that a Sync retain was an out-of-line compare-exchange loop where `[RT-10]` asks for one
+  inline atomic add. Both counts are inline now; measured in ADR-133.
+* **Then D-510** (ADR-118 amended): the linker probe tries a program that did not start again and
+  keeps no answer it could not finish (its test had failed once in WSL: "text file busy").
+* **Speed lead (not built):** `p5_million_objects` retains each new object for `push` and releases
+  the temporary at once (`ember_retain_plain` and `ember_release_plain` around
+  `ember_vec_push_ptr`); `[RC-3]` allows moving a temporary into an `owned` parameter, which
+  would drop both. `[RC-2d]` guarantees that move only into a field.
+* **Leads from ADR-133's measurement (not investigated yet):** clang's `p4_views_alive_01`
+  took 33.2 ms with the old runtime header and 19.4 ms with the new one, though its C is the
+  same and its retain is outside the measured loop (published: 19 ms): the measured loop's
+  placement swings it, as D-498's loop swings with MSVC; a general fix (loop alignment) is the
+  thing to try. And the Sync-handle program with clang is 1.26x its `shared_ptr` twin (MSVC
+  1.00x): find what the rest is before it joins the README's set.
+* **Next:** D-460 (a borrowed upcast of a local receiver
   as a reference to that local, emitted through a base-typed copy, which also removes the
   `Base**` type pun inherited `mut self` calls make), then OPT-1 (stack promotion, a MAY).
   EXC-10 waits for the review workflow (above).
@@ -12080,7 +12095,7 @@ README timing values and benchmark assets are unchanged.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h52/` are frozen.
-* **Next numbers:** ODR-099, D-509, ADR-133, ERR-056 (D-498 OPEN).
+* **Next numbers:** ODR-099, D-511, ADR-134, ERR-056 (D-498 OPEN).
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's

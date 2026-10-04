@@ -431,28 +431,47 @@ pub fn executable_section_gc_supported(toolchain: &Toolchain) -> bool {
         return answer;
     }
     let (named, answer) = probe_linker(toolchain);
-    if let (Some(file), Some(named)) = (cache, named)
+    // D-510 — only an answer the probe finished is kept: one whose program
+    // could not be started says nothing about the linker.
+    if let (Some(file), Some(named), Some(answer)) = (cache, named, answer)
         && let Some(found) = program_file(Path::new(&named), std::env::var_os("PATH"))
         && let Some(stamp) = file_stamp(&found)
     {
         let text = format!("{}\n{named}\n{}\n{stamp}\n", if answer { "yes" } else { "no" }, found.display());
         write_atomically(&file, &text);
     }
-    answer
+    answer.unwrap_or(false)
 }
 
-/// GCC's linker, as GCC names it, and whether it has both options.
-fn probe_linker(toolchain: &Toolchain) -> (Option<String>, bool) {
-    let Ok(selected) = compiler_command(toolchain).arg("-print-prog-name=ld").output() else { return (None, false) };
-    if !selected.status.success() { return (None, false); }
-    let Ok(selected) = std::str::from_utf8(&selected.stdout) else { return (None, false) };
+/// GCC's linker, as GCC names it, and whether it has both options; `None`
+/// for the answer when a program could not be started.
+fn probe_linker(toolchain: &Toolchain) -> (Option<String>, Option<bool>) {
+    let Ok(selected) = output_started(compiler_command(toolchain).arg("-print-prog-name=ld")) else { return (None, None) };
+    if !selected.status.success() { return (None, Some(false)); }
+    let Ok(selected) = std::str::from_utf8(&selected.stdout) else { return (None, Some(false)) };
     let selected = selected.trim();
-    if selected.is_empty() || selected.contains('\n') { return (None, false); }
+    if selected.is_empty() || selected.contains('\n') { return (None, Some(false)); }
     let named = Some(selected.to_string());
-    let Ok(help) = Command::new(selected).arg("--help").output() else { return (named, false) };
-    if !help.status.success() { return (named, false); }
+    let Ok(help) = output_started(Command::new(selected).arg("--help")) else { return (named, None) };
+    if !help.status.success() { return (named, Some(false)); }
     let help = String::from_utf8_lossy(&help.stdout);
-    (named, help.contains("--gc-sections") && help.contains("--require-defined"))
+    (named, Some(help.contains("--gc-sections") && help.contains("--require-defined")))
+}
+
+/// D-510 — a command's output, tried again when it could not be started at
+/// all: on Linux a file just written cannot be executed ("text file busy")
+/// while another thread's new child still holds it open, for a moment.
+fn output_started(command: &mut Command) -> std::io::Result<std::process::Output> {
+    let mut tries = 0;
+    loop {
+        match command.output() {
+            Err(_) if tries < 4 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(5 << tries));
+            }
+            result => return result,
+        }
+    }
 }
 
 /// Where the probe's answer for this compiler is kept: keyed by the compiler
@@ -1225,7 +1244,10 @@ int main(int argc, char** argv) {
     }
 
     /// ADR-118's probe runs GCC and its linker once; the answer is reused
-    /// until the linker GCC names is a different file.
+    /// until the linker GCC names is a different file. D-510: the scripts are
+    /// run just after they are written, which another test's new child can
+    /// make "text file busy" for a moment; the probe tries again, and keeps
+    /// no answer it could not finish.
     #[cfg(target_os = "linux")]
     #[test]
     fn the_linker_probe_is_cached_until_the_linker_changes() {
@@ -1255,6 +1277,15 @@ int main(int argc, char** argv) {
         std::fs::write(&linker, "#!/bin/sh\nprintf '%s\\n' '--gc-sections'\n").unwrap();
         assert!(!executable_section_gc_supported(&simulated));
         assert_eq!(calls(), 2);
+        // D-510 — a linker that cannot be started gives no answer to keep:
+        // once it can be, it is asked.
+        std::fs::write(&linker, both).unwrap();
+        std::fs::set_permissions(&linker, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(!executable_section_gc_supported(&simulated));
+        assert_eq!(calls(), 3);
+        std::fs::set_permissions(&linker, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(executable_section_gc_supported(&simulated), "the failed start was not kept");
+        assert_eq!(calls(), 4);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1430,6 +1461,32 @@ int main(int argc, char** argv) {
             assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
             assert!(output.stderr.is_empty(), "{mode}: {}", String::from_utf8_lossy(&output.stderr));
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `[RC-4]`, `[WK-12]` — a Sync object's counts under four threads at
+    /// once: their retains and releases balance exactly, and weak handles
+    /// upgraded while the last strong one is released never bring the object
+    /// back (an upgrade holds it alive or finds it gone), each object
+    /// deinitialised once. Ember has no threads of its own yet (Phase 6), so
+    /// the runtime is driven from C (`templates/tests/sync_counts.c.in`).
+    #[test]
+    fn sync_counts_hold_under_threads() {
+        let requested = std::env::var(ember_branding::cc_var()).ok();
+        let toolchain = Toolchain::detect(requested.as_deref()).expect("a C toolchain");
+        let runtime = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+        let dir = std::env::temp_dir().join(format!("sync-counts-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("obj")).expect("the test directory is creatable");
+        let program = dir.join(if cfg!(windows) { "sync_counts.exe" } else { "sync_counts" });
+        compile_and_link(&toolchain, &LinkRequest {
+            sources: &[runtime.join("tests/sync_counts.c"), runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX))],
+            include_dirs: &[runtime.join("include")], output: program.clone(),
+            profile: Profile::Release, obj_dir: dir.join("obj"),
+        }).expect("the Sync-count oracle compiles");
+        let output = Command::new(program).output().expect("the Sync-count oracle runs");
+        assert!(output.status.success(), "Sync counts failed: {}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
