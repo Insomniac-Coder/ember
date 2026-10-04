@@ -10729,14 +10729,20 @@ anything needs a review just note it down and ask me about a workflow later".
 * **Against the published compiler (`e2cbba3`):** every program built by both and timed interleaved, 21 runs (Windows on the performance cores, gcc in WSL on guest CPU 0; all on mains, 15:08 to 15:33, no Kernel-Power 105 event). MSVC: slower only `t3_lines` 1.04 (ADR-125: placement); faster `t2_bytes` 0.59, `a03_strings` 0.83, `s5_range_step_enumerate` 0.87, `t4_split` 0.93, `a14_map_gap_1024` 0.93, `t6_char_indices` 0.93. clang: none slower; faster `t2_bytes` 0.58, `b16_checked` 0.72, `w13_int_lanes` 0.83, `s1_enumerate_xor` 0.87, `a10_recursion` 0.93, `t1_chars` and `t1b_str_loop` 0.93, `t6_char_indices` 0.95. gcc: none slower; faster `t2_bytes` 0.29, `t1_chars` and `t1b_str_loop` 0.84, `t4_split` 0.87, `a03_strings` 0.90, `t6_char_indices` 0.92. The README against C: 42 of the 50 as fast as C or faster, 2 close, 6 more than 10% slower with one compiler, all on the owner's exempt list except gcc's `a00_empty` (1.12x, the process start, the other agent's D-492 work; next). Its clang rows of `a01_int_math`, `a05_structs` and `a16_map_text` were run again with 21 runs (1.26x and 1.36x were a disturbance in the full run: 1.02x and 1.01x).
 * **For a review workflow later** (the owner asked to be asked): ADR-114's temporary-owner
   transfer (851 lines on reference counts, where an error frees an object early) and ADR-120's
-  progress reduction (3,100 lines with its verifier).
+  progress reduction (3,100 lines with its verifier); and this session's ADR-127 (where every
+  temporary ends: a mistake there skips or doubles a destructor).
 * **To ask the owner:** D-498 (above): the multiply guard now and the placement accepted, or the
   character loop's layout first.
-* **Open:** D-498, D-488 (valid programs refused, E3060), D-490 (a false E3040), D-487; ADR-118's
+* **Open:** D-498, D-490 (a false E3040), D-487; ADR-118's
   linker probe starts two processes on every gcc build, uncached; `lines()` with MSVC about 4%
   slower than the published compiler from its loop's placement (ADR-125).
-* **After `1ff1c8c`:** D-502 (ADR-126): the runtime no longer makes every Linux program load
+* **Committed `50c8389`:** D-502 (ADR-126): the runtime no longer makes every Linux program load
   libm; gcc's `a00_empty` 1.12x → 0.989x the C.
+* **After `50c8389`:** D-488, D-503 and D-504 (ADR-127): temporaries end where `[EXP-4]` and
+  `[CTL-8]` say. A condition's before the block it chooses (a `while` leaked all but its last); on
+  a `return`, `break` or `continue`, every temporary of the statements it leaves (none were
+  dropped); a written-out evaluation's (`split_once`, tuple `==`) with the source statement, which
+  also ends `E3060` on valid programs. Benchmark C unchanged.
 * **D-498 priced, needs the owner** (row in DEFECTS): the checked multiply makes a one-byte call
   about 40% faster on every compiler, but it moves the long text loops' code on this laptop
   (`t6_char_indices` MSVC 1.07-1.08x, `t1_chars` MSVC 1.05x; same instructions, the ASCII path
@@ -10749,7 +10755,7 @@ anything needs a review just note it down and ask me about a workflow later".
   u64/bool temporaries); phase 3 loses `Ne`, phase 4 `Div`. The unit tests' interpreter models the
   multiply with u128 and its zero-bound cases now read the total; `milestones.rs`
   `progress_reduction_emits_...` asserts one `ck_mul_u64(` and no ` / ` per guarded function.
-* **Next:** D-488, D-490, the linker probe; then the phases (AUTOPILOT §2).
+* **Next:** D-490, the linker probe; then the phases (AUTOPILOT §2).
 * **Tools for this work** (session scratchpad, see the 2026-10-02 bullet below for the rest):
   `ab_variants.py <experiment> <cc> <runs> <log> <programs>` builds every program with several
   compiler trees and times them interleaved; `wsl/ab_gcc.py` does it for gcc in WSL (`~/ab-old`,
@@ -12049,7 +12055,7 @@ README timing values and benchmark assets are unchanged.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h52/` are frozen.
-* **Next numbers:** ODR-099, D-503, ADR-127, ERR-056 (D-488/D-490/D-498 OPEN).
+* **Next numbers:** ODR-099, D-505, ADR-128, ERR-056 (D-490/D-498 OPEN).
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's

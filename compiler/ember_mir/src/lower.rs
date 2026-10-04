@@ -147,6 +147,9 @@ struct Loop {
     break_bb: BasicBlockId,
     defer_mark: usize,
     owned_mark: usize,
+    /// The statement temporaries pending when the body starts: a `break` or
+    /// `continue` ends those made after it (D-504).
+    temps_mark: usize,
 }
 
 struct Builder<'a> {
@@ -178,6 +181,11 @@ struct Builder<'a> {
     /// hold nothing that points elsewhere: their storage ends with the
     /// statement too, which a borrow of one must not outlive.
     plain_temps: Vec<LocalId>,
+    /// `[EXP-4]`, `[CTL-8]` (D-504) — when each local in `owned` or
+    /// `statement_temps` was registered, by MIR local: an early exit ends
+    /// both kinds in one order, the last registered first.
+    cleanup_order: Vec<u32>,
+    cleanup_count: u32,
     /// ODR-065 — a handle expression lowered as a retained temporary while a
     /// borrow through it is lowered (`lower_borrowed_place`).
     place_overrides: Vec<(*const hir::Expr, Place)>,
@@ -319,6 +327,8 @@ impl<'a> Builder<'a> {
             owned,
             statement_temps: Vec::new(),
             plain_temps: Vec::new(),
+            cleanup_order: Vec::new(),
+            cleanup_count: 0,
             place_overrides: Vec::new(),
             write_backs: Vec::new(),
             call_argument_bindings: Vec::new(),
@@ -444,11 +454,57 @@ impl<'a> Builder<'a> {
         // because every temporary comes through this one function and a site
         // that forgot would be invisible.
         if self.types.needs_drop(ty) {
-            self.statement_temps.push(id);
+            self.statement_temp(id);
         } else if is_plain_data(self.types, ty) {
             self.plain_temps.push(id);
         }
         id
+    }
+
+    /// `[DRP-3]` — `local` is a temporary of the statement being lowered.
+    fn statement_temp(&mut self, local: LocalId) {
+        self.statement_temps.push(local);
+        self.order(local);
+    }
+
+    /// Note when `local` was registered to be ended (`cleanup_order`). A
+    /// local registered again takes the later place, as the later entry of
+    /// the list is the one that ends it first.
+    fn order(&mut self, local: LocalId) {
+        let index = local.0 as usize;
+        if self.cleanup_order.len() <= index {
+            self.cleanup_order.resize(index + 1, 0);
+        }
+        self.cleanup_count += 1;
+        self.cleanup_order[index] = self.cleanup_count;
+    }
+
+    /// `[CTL-8]`, `[EXP-4]` (D-504) — what a `return`, `break` or `continue`
+    /// leaves: the locals of every scope it leaves and the temporaries of
+    /// every statement it leaves, the last made first. A statement's
+    /// temporaries are made after the locals of the scopes around it and
+    /// before those of the blocks inside it, so one order serves both. Only
+    /// the locals were ended before: a `for` bound's, a `match` scrutinee's
+    /// or a condition's temporary was never dropped on these paths. The lists
+    /// are not shortened: the paths that stay still end them.
+    fn emit_exit_drops(&mut self, owned_mark: usize, temps_mark: usize) {
+        // Each list last first, then a stable merge: the owned parameters,
+        // registered before any of this, share order 0 and keep that order.
+        let order = |local: &LocalId| self.cleanup_order.get(local.0 as usize).copied().unwrap_or(0);
+        let mut pending: Vec<(u32, LocalId, bool)> = self.owned[owned_mark..]
+            .iter()
+            .rev()
+            .map(|local| (order(local), *local, false))
+            .chain(self.statement_temps[temps_mark..].iter().rev().map(|local| (order(local), *local, true)))
+            .collect();
+        pending.sort_by_key(|&(order, _, _)| std::cmp::Reverse(order));
+        for (_, local, temporary) in pending {
+            if temporary || self.types.needs_drop(self.locals[local.0 as usize].ty) {
+                self.push(StmtKind::Drop { place: Place::local(local), flag: None, scope_end: true });
+            } else {
+                self.push(StmtKind::StorageDead(local));
+            }
+        }
     }
 
     /// `[DRP-3]` — drop the temporaries this statement made, last first.
@@ -613,6 +669,7 @@ impl<'a> Builder<'a> {
     /// Record every local's scope end, including storage with no drop glue.
     fn owns(&mut self, local: LocalId) {
         self.owned.push(local);
+        self.order(local);
     }
 
     /// Lower every `defer` block registered at or after `mark`, in reverse.
@@ -650,6 +707,54 @@ impl<'a> Builder<'a> {
         // `[EXP-4]`, `[DRP-3]` — the statement is over, so its temporaries are.
         self.emit_statement_temps(temps);
         self.end_plain_temps(plain);
+    }
+
+    /// `[EXP-4]` (D-503) — a condition's temporaries end before the chosen
+    /// block runs, on every evaluation: a `while` made one each turn and
+    /// dropped only the last, after the loop, and an `if` dropped its after
+    /// the block. The value is copied out first: a destructor may change
+    /// what it was read from. Storage-only temporaries keep their statement's
+    /// end, which no source can tell apart, and leave a loop header that
+    /// makes none exactly as it was.
+    fn lower_condition(&mut self, cond: &'a hir::Expr) -> Operand {
+        let temps = self.statement_temps.len();
+        let discr = self.lower_operand(cond);
+        if self.statement_temps.len() == temps {
+            return discr;
+        }
+        let value = self.temp_unowned(self.bool_ty, cond.span);
+        self.push(StmtKind::Assign { place: Place::local(value), rvalue: Rvalue::Use(discr) });
+        self.emit_statement_temps(temps);
+        Operand::Copy(Place::local(value))
+    }
+
+    /// `[EXP-4]` (D-488) — one step of an evaluation the compiler wrote out
+    /// as statements (`ExprKind::Block`). Its temporaries are the source
+    /// statement's, so they are not ended here, and a hidden binding is one
+    /// of them too: it ends with that statement, in reverse order of
+    /// creation, rather than with the hidden block. A value it held (a tuple
+    /// compared field by field, an argument kept for a later one) dropped
+    /// before the source statement was over, and a view of a temporary it
+    /// was made from was refused (`E3060`). A step's own blocks (a loop's
+    /// body) keep their statements' ends.
+    fn lower_evaluation_step(&mut self, stmt: &'a hir::Stmt) {
+        let hir::Stmt::Let { local, init } = stmt else {
+            self.lower_stmt_inner(stmt);
+            return;
+        };
+        let mir_local = self.local_map[local.0 as usize];
+        let decl_span = self.locals[mir_local.0 as usize].span;
+        self.at(decl_span);
+        self.push(StmtKind::StorageLive(mir_local));
+        if let Some(init) = init {
+            self.lower_into(Place::local(mir_local), init);
+        }
+        let ty = self.locals[mir_local.0 as usize].ty;
+        if self.types.needs_drop(ty) {
+            self.statement_temp(mir_local);
+        } else if is_plain_data(self.types, ty) {
+            self.plain_temps.push(mir_local);
+        }
     }
 
     /// `[EXP-4]` (D-342) — end the storage of this statement's plain
@@ -696,7 +801,7 @@ impl<'a> Builder<'a> {
                 self.push(StmtKind::StorageLive(temp));
                 self.lower_into(Place::local(temp), value);
                 if self.types.needs_drop(value.ty) {
-                    self.statement_temps.push(temp);
+                    self.statement_temp(temp);
                 }
                 for binding in bindings {
                     match binding {
@@ -721,21 +826,25 @@ impl<'a> Builder<'a> {
                 self.lower_into(Place::local(temp), expr);
             }
             hir::Stmt::Return(value) => {
+                let own = self.statement_temps.len();
                 if let Some(value) = value {
                     self.lower_into(Place::local(RETURN_LOCAL), value);
                 }
-                // `[CTL-8]` — a `return` runs every `defer` still pending, in
-                // every scope it is leaving, and then drops what those scopes
-                // own, before it goes.
+                // `[EXP-4]` — the statement's own temporaries end with it,
+                // before the scopes it leaves (D-504: they were never
+                // dropped). `[CTL-8]` — then every `defer` still pending, in
+                // every scope it is leaving, and then what those scopes own,
+                // with the temporaries of the statements it is inside.
+                self.emit_statement_temps(own);
                 self.emit_defers_from(0);
-                self.emit_drops_from(0);
+                self.emit_exit_drops(0, 0);
                 self.terminate(Terminator::Return);
                 // Anything after a `return` in the same block is unreachable;
                 // start a fresh block so later statements still lower cleanly.
                 self.current = self.new_block();
             }
             hir::Stmt::If { cond, then_block, else_block } => {
-                let discr = self.lower_operand(cond);
+                let discr = self.lower_condition(cond);
                 let then_bb = self.new_block();
                 let else_bb = self.new_block();
                 let join_bb = self.new_block();
@@ -768,14 +877,20 @@ impl<'a> Builder<'a> {
                 self.terminate(Terminator::Goto(head_bb));
 
                 self.current = head_bb;
-                let discr = self.lower_operand(cond);
+                let discr = self.lower_condition(cond);
                 self.terminate(Terminator::SwitchInt {
                     discr,
                     targets: vec![(0, else_bb)],
                     otherwise: body_bb,
                 });
 
-                self.loops.push(Loop { continue_bb: head_bb, break_bb: exit_bb, defer_mark: self.defers.len(), owned_mark: self.owned.len() });
+                self.loops.push(Loop {
+                    continue_bb: head_bb,
+                    break_bb: exit_bb,
+                    defer_mark: self.defers.len(),
+                    owned_mark: self.owned.len(),
+                    temps_mark: self.statement_temps.len(),
+                });
                 self.current = body_bb;
                 self.lower_block(body);
                 self.goto_if_open(head_bb);
@@ -800,7 +915,7 @@ impl<'a> Builder<'a> {
             hir::Stmt::Break { depth } => {
                 if let Some(target) = self.loop_at(*depth).copied() {
                     self.emit_defers_from(target.defer_mark);
-                    self.emit_drops_from(target.owned_mark);
+                    self.emit_exit_drops(target.owned_mark, target.temps_mark);
                     self.terminate(Terminator::Goto(target.break_bb));
                     self.current = self.new_block();
                 }
@@ -811,7 +926,7 @@ impl<'a> Builder<'a> {
                 // spin forever.
                 if let Some(target) = self.loop_at(*depth).copied() {
                     self.emit_defers_from(target.defer_mark);
-                    self.emit_drops_from(target.owned_mark);
+                    self.emit_exit_drops(target.owned_mark, target.temps_mark);
                     self.terminate(Terminator::Goto(target.continue_bb));
                     self.current = self.new_block();
                 }
@@ -874,7 +989,13 @@ impl<'a> Builder<'a> {
             otherwise: body_bb,
         });
 
-        self.loops.push(Loop { continue_bb: step_bb, break_bb: exit_bb, defer_mark: self.defers.len(), owned_mark: self.owned.len() });
+        self.loops.push(Loop {
+            continue_bb: step_bb,
+            break_bb: exit_bb,
+            defer_mark: self.defers.len(),
+            owned_mark: self.owned.len(),
+            temps_mark: self.statement_temps.len(),
+        });
         self.current = body_bb;
         self.lower_block(body);
         self.goto_if_open(step_bb);
@@ -1875,7 +1996,7 @@ impl<'a> Builder<'a> {
                         // read it and through the call, then ends with this
                         // expression's statement as an ordinary temporary.
                         if self.types.needs_drop(ty) {
-                            self.statement_temps.push(local);
+                            self.statement_temp(local);
                         } else if is_plain_data(self.types, ty) {
                             self.plain_temps.push(local);
                         }
@@ -2721,12 +2842,13 @@ impl<'a> Builder<'a> {
             }
             // The block's statements, then its value into `place`, and only
             // then the block's defers and drops: the value may read a local
-            // the block declared.
+            // the block declared. Each statement is a step of the source
+            // statement being evaluated (`lower_evaluation_step`, D-488).
             hir::ExprKind::Block { block, value } => {
                 let mark = self.defers.len();
                 let owned_mark = self.owned.len();
                 for stmt in &block.stmts {
-                    self.lower_stmt(stmt);
+                    self.lower_evaluation_step(stmt);
                 }
                 self.lower_into(place, value);
                 self.emit_defers_from(mark);
@@ -6400,7 +6522,7 @@ impl<'a> Builder<'a> {
                 self.push(StmtKind::StorageLive(temp));
                 self.lower_into(Place::local(temp), expr);
                 if self.types.needs_drop(expr.ty) {
-                    self.statement_temps.push(temp);
+                    self.statement_temp(temp);
                 }
                 Place::local(temp)
             }

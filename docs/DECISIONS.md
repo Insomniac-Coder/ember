@@ -4999,6 +4999,37 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-127 — temporaries end where the source says: conditions, early exits, written-out evaluations
+
+2026-10-04, D-488, D-503, D-504, autopilot. `[EXP-4]` ends a statement's temporaries at its end, a
+condition's before the block it chooses and an iterable's with its loop; `[CTL-8]` has an early
+exit run the pending `defer`s and then drop what the scopes it leaves own. MIR lowering kept one
+list of the statement's temporaries and ended it only at the statement's normal end:
+
+* A condition's temporaries were dropped after the chosen block, and a `while` reused its
+  condition's temporary each turn and dropped only the last (D-503). The condition's value is now
+  copied to a slot, its temporaries dropped, then the branch. A condition that makes no temporary
+  with a destructor keeps its shape: storage-only temporaries cannot be told apart in the source,
+  and the loop headers the analyses read stay as they were.
+* A `return`, `break` or `continue` ended the locals of the scopes it left and none of the
+  temporaries of the statements it left (D-504). Locals and temporaries are now numbered as they
+  are registered, and an early exit drops both lists in one order, the last first: a statement's
+  temporaries are registered after the locals around it and before those of its inner blocks, so
+  the order nests. A `return`'s own temporaries end first, then the `defer`s, then the rest; a
+  loop records the temporaries pending when its body starts, so a `break` or `continue` ends only
+  those made inside it. As for locals, the lists are not shortened.
+* A written-out evaluation (`ExprKind::Block`: `split_once`'s receiver and separator, a tuple
+  compared field by field) was lowered statement by statement, so each hidden step ended its
+  temporaries, and its bindings dropped with the hidden block. A separator's `String` died before
+  the call that used its view (`E3060` on a valid program), and destructors ran before the source
+  statement was over (D-488). Each of its statements is now a step of the source statement: its
+  temporaries stay pending, and a hidden binding is registered as one of them. The other agent
+  proposed a HIR marker per synthesized statement; it is not needed, because every
+  `ExprKind::Block` is compiler-written (the AST has none) and the user's statements appear only
+  inside its statements' own blocks (a loop body), which keep their statement ends.
+
+The benchmark programs' C is byte-identical. No spec change: the spec already says this.
+
 ## ADR-126 — the runtime calls nothing in libm
 
 2026-10-04, D-502, autopilot. glibc keeps `fmin`, `fmax` and `copysign` in libm, and GNU ld
