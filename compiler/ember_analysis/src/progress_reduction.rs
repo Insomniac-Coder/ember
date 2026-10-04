@@ -1489,14 +1489,16 @@ fn same_func(a: &FuncRef, b: &FuncRef) -> bool {
             FuncRef::Virtual {
                 owner: a,
                 slot: as_,
+                receiver: ar,
                 param_modes: am,
             },
             FuncRef::Virtual {
                 owner: b,
                 slot: bs,
+                receiver: br,
                 param_modes: bm,
             },
-        ) => a == b && as_ == bs && am == bm,
+        ) => a == b && as_ == bs && ar == br && am == bm,
         (
             FuncRef::Indirect {
                 operand: a,

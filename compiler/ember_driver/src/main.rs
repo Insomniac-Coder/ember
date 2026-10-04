@@ -41,6 +41,7 @@ options:
     --profile debug|release|shipping   default: debug
     --emit tokens|ast|hir|mir|c|header emit a stage and stop; header writes a file
     --emit-header                     write <package>.h alongside a build or C emit
+    --emit-optimization-report        list the calls made direct on the whole program's word
     --syntax-only                      lex and parse only; report E00xx/E01xx
     --backend c                        the only backend in v1
     --cc msvc|clang|gcc                override C compiler detection
@@ -289,6 +290,9 @@ struct Options {
     /// `--no-leak-check`.
     leak_check: bool,
     no_leak_check: bool,
+    /// `[DSP-5]` — `--emit-optimization-report`: print the optimisations the
+    /// whole program allowed, each at its source location.
+    optimization_report: bool,
     /// `[CLI-9]` — lex and parse only, reporting `E00xx` and `E01xx`. Names
     /// are not resolved, so an example naming undeclared types still passes.
     /// This is what `[TST-7]`'s gate over the specification's own code blocks
@@ -1264,6 +1268,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             }
             "--emit" => options.emit = Some(value(&mut index, arg)?),
             "--emit-header" => options.emit_header = true,
+            "--emit-optimization-report" => options.optimization_report = true,
             "--cc" => options.cc = Some(value(&mut index, arg)?),
             "--out-dir" => options.out_dir = Some(PathBuf::from(value(&mut index, arg)?)),
             "--backend" => {
@@ -2523,6 +2528,16 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         staticlib,
         c_for_msvc(&options),
     );
+    // `[DSP-5]` — on standard error, so it never mixes with `--emit c`.
+    if options.optimization_report {
+        eprintln!("optimization report:");
+        if emitted.optimization_report.is_empty() {
+            eprintln!("  none");
+        }
+        for line in &emitted.optimization_report {
+            eprintln!("  {line}");
+        }
+    }
     if header_requested && !(staticlib && options.emit.is_none()) {
         let target_dir = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target"));
         let layout = Layout::new(&target_dir, options.profile).map_err(|e| e.to_string())?;

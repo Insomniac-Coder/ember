@@ -10730,7 +10730,11 @@ anything needs a review just note it down and ask me about a workflow later".
 * **For a review workflow later** (the owner asked to be asked): ADR-114's temporary-owner
   transfer (851 lines on reference counts, where an error frees an object early) and ADR-120's
   progress reduction (3,100 lines with its verifier); and this session's ADR-127 (where every
-  temporary ends: a mistake there skips or doubles a destructor).
+  temporary ends: a mistake there skips or doubles a destructor). Also EXC-10's design (an inner
+  loop reusing an outer loop's hoisted access): `[EXC-8]`'s hoisting (`loop_access.rs`) takes one
+  counted loop whose turn makes one direct call, so EXC-10 first needs `[EXC-8]` widened to loops
+  that hold other loops, under every condition of `[EXC-9]`; holding an access longer can turn a
+  program that runs into one that panics, so it is soundness work to design with a review.
 * **To ask the owner:** D-498 (above): the multiply guard now and the placement accepted, or the
   character loop's layout first.
 * **Open:** D-498, D-487; `lines()` with MSVC about 4% slower than the published compiler from
@@ -10767,9 +10771,16 @@ anything needs a review just note it down and ask me about a workflow later".
   leaked object's shortest cycle under `L3017`.
 * **Then RC-6** (ADR-131): `ember inspect --counts` lists the retains and releases left inside
   loops, each with its reason (it had not been built). OBJ-4 has a case too.
-* **Next:** EXC-10 (an inner loop reuses an outer loop's hoisted access; `[EXC-8]`'s hoisting
-  covers single loops), then the rest of Phase 3's matrix. DSP-5 (devirtualising, with
-  `--emit-optimization-report`) and OPT-1 (stack promotion) are MAYs.
+* **Then DSP-1 and DSP-5** (ADR-132, D-508): a virtual call that one body answers is a direct
+  call (a final class's always; an open or abstract class's when the whole program shows one
+  body), and `--emit-optimization-report` lists the second kind. Measured in ADR-132: with clang
+  the virtual-call program went from 1.12x its C++ twin to 0.56x. That program and its twin
+  (`scratchpad/dsp5bench`) join the README's set at the next full benchmark run.
+* **Next:** RC-4 and WK-12 under threads (a runtime test: a Sync object's counts from several
+  threads, upgrades racing the last release), then D-460 (a borrowed upcast of a local receiver
+  as a reference to that local, emitted through a base-typed copy, which also removes the
+  `Base**` type pun inherited `mut self` calls make), then OPT-1 (stack promotion, a MAY).
+  EXC-10 waits for the review workflow (above).
 * **Tools for this work** (session scratchpad, see the 2026-10-02 bullet below for the rest):
   `ab_variants.py <experiment> <cc> <runs> <log> <programs>` builds every program with several
   compiler trees and times them interleaved; `wsl/ab_gcc.py` does it for gcc in WSL (`~/ab-old`,
@@ -12069,7 +12080,7 @@ README timing values and benchmark assets are unchanged.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h52/` are frozen.
-* **Next numbers:** ODR-099, D-508, ADR-132, ERR-056 (D-498 OPEN).
+* **Next numbers:** ODR-099, D-509, ADR-133, ERR-056 (D-498 OPEN).
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
@@ -13224,7 +13235,7 @@ README timing values and benchmark assets are unchanged.
   |---|---:|
   | P1 | 99 |
   | P2 | 89 |
-  | P3 | 63 |
+  | P3 | 64 |
   | P4 | 13 |
   | P5 | 14 |
   | P6 | 4 |
@@ -13232,6 +13243,9 @@ README timing values and benchmark assets are unchanged.
   | 7a | 6 |
   | P8 | 17 |
   | Overall | 60 |
+
+  2026-10-04, after ADR-132: P3 64 (DSP-5 met and tested: 21 words; D-508 repaired DSP-1, which
+  was counted); `rule_sizes.py 99 89 64 13 14 4 6` gives 60.0%, 60% rounded.
 
   2026-10-04, after ADR-131: P3 63 (RC-6 met and tested: 27 words); `rule_sizes.py 99 89 63 13
   14 4 6` gives 59.9%, 60% rounded.

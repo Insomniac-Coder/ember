@@ -1290,6 +1290,11 @@ pub enum FuncRef {
     Virtual {
         owner: ember_types::ClassId,
         slot: usize,
+        /// `[DSP-1]`, `[DSP-5]` — the receiver's class as the program wrote
+        /// it, under the upcast to `owner`: the object is of this class or of
+        /// one below it, so when they all hold one body in the slot the
+        /// backend calls it directly.
+        receiver: ember_types::ClassId,
         /// The complete method parameter-mode vector, including the receiver.
         /// It keeps ownership transfers visible to the C backend at a vtable
         /// boundary without making parameter modes part of the C table ABI.

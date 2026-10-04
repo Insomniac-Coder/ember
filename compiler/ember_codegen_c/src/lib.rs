@@ -37,6 +37,10 @@ pub struct Output {
     /// functions, which the build compiles with that mode's flags. The main
     /// unit declares them and does not define them.
     pub relaxed_units: Vec<(FpMode, String)>,
+    /// `[DSP-5]` — each call made direct because the whole program showed
+    /// one body for it, as `--emit-optimization-report` prints it (location
+    /// first), in source order.
+    pub optimization_report: Vec<String>,
     /// The standalone C/C++ declaration surface for defined C exports.
     pub header_source: Result<HeaderOutput, String>,
     /// `[EFF-10]` — per-site safety metadata for the checks this translation
@@ -168,6 +172,7 @@ pub fn emit(
         usize_ty,
         virtual_tables: BTreeMap::new(),
         virtual_signatures: BTreeMap::new(),
+        direct_calls: Default::default(),
         interface_layouts: BTreeMap::new(),
         interface_adapters: BTreeMap::new(),
         class_interface_tables: BTreeMap::new(),
@@ -250,17 +255,18 @@ pub fn emit(
     let mut emitter = make(None);
     write(&mut emitter);
     let header_source = header::render(&emitter, bodies, package_name);
-    let relaxed_units = modes
-        .into_iter()
-        .map(|mode| {
-            let mut unit = make(Some(mode));
-            write(&mut unit);
-            (mode, unit.out)
-        })
-        .collect();
+    let mut direct_calls = emitter.direct_calls.take();
+    let mut relaxed_units = Vec::new();
+    for mode in modes {
+        let mut unit = make(Some(mode));
+        write(&mut unit);
+        direct_calls.append(&mut unit.direct_calls.take());
+        relaxed_units.push((mode, unit.out));
+    }
     Output {
         c_source: emitter.out,
         relaxed_units,
+        optimization_report: direct_calls.into_iter().map(|(_, _, line)| line).collect(),
         header_source,
         safety_json: safety_json(bodies, map),
     }
@@ -384,6 +390,9 @@ struct Emitter<'a> {
     virtual_tables: BTreeMap<ClassId, Vec<Option<VirtualMethod>>>,
     /// The signature established by the first declaration in each hierarchy.
     virtual_signatures: BTreeMap<(ClassId, usize), VirtualMethod>,
+    /// `[DSP-5]` — the calls made direct on the whole program's word, by
+    /// position: the report's lines.
+    direct_calls: std::cell::RefCell<BTreeSet<(ember_span::FileId, u32, String)>>,
     /// `[TYP-22]` — full declaration-order layouts observed at dynamic
     /// interface call sites. Interface declarations are type-checker data,
     /// so MIR carries this exact erased ABI fact across the backend boundary.
@@ -522,6 +531,8 @@ enum ArrayHelper {
 struct VirtualMethod {
     owner: ClassId,
     symbol: String,
+    /// The method's name (`sides`), for the report.
+    name: String,
     params: Vec<Ty>,
     ret: Ty,
     is_abstract: bool,
@@ -1980,6 +1991,7 @@ impl Emitter<'_> {
                     VirtualMethod {
                         owner: body.class_owner?,
                         symbol: body.symbol.clone(),
+                        name: body.name.clone(),
                         params: body.args().map(|(_, decl)| decl.ty).collect(),
                         ret: body.return_ty(),
                         is_abstract: body.is_abstract,
@@ -2580,6 +2592,33 @@ impl Emitter<'_> {
             return Some(signature);
         }
         declared.get(&(id, slot)).cloned()
+    }
+
+    /// `[DSP-1]`, `[DSP-5]` — the one body a virtual call on a `receiver`
+    /// can run. The whole program is in this build, so the receiver's class
+    /// and the classes below it are every class its object can be; `None`
+    /// when two of them hold different bodies in the slot, or one is not
+    /// known. An abstract slot is passed over only in an abstract class, of
+    /// which no object exists.
+    fn only_implementation(&self, receiver: ClassId, slot: usize) -> Option<&VirtualMethod> {
+        let mut only: Option<&VirtualMethod> = None;
+        for (class, slots) in &self.virtual_tables {
+            if !self.types.class_is_subclass_of(*class, receiver) {
+                continue;
+            }
+            let method = slots.get(slot)?.as_ref()?;
+            if method.is_abstract {
+                if self.types.class_def(*class).openness == ember_types::ClassOpenness::Abstract {
+                    continue;
+                }
+                return None;
+            }
+            if only.is_some_and(|seen| seen.symbol != method.symbol) {
+                return None;
+            }
+            only = Some(method);
+        }
+        only
     }
 
     fn virtual_field_signature(&self, method: &VirtualMethod, field: &str) -> String {
@@ -5897,11 +5936,44 @@ impl Emitter<'_> {
                 }
                 format!("{symbol}({})", rendered.join(", "))
             }
-            FuncRef::Virtual { owner, slot, .. } => {
+            FuncRef::Virtual { owner, slot, receiver, .. } => {
                 let signature = self
                     .virtual_signatures
                     .get(&(*owner, *slot))
                     .expect("virtual call has a collected vtable signature");
+                // `[DSP-1]`, `[DSP-5]` — one body for every class the object
+                // can be: called directly, an argument cast where the body's
+                // C type differs from the slot's (the receiver's class), as
+                // the override adapters do.
+                if let Some(method) = self.only_implementation(*receiver, *slot) {
+                    let class = self.types.class_def(*receiver);
+                    if class.openness != ember_types::ClassOpenness::Final {
+                        self.direct_calls.borrow_mut().insert((
+                            span.file,
+                            span.start,
+                            format!(
+                                "{}: calls `{}.{}` directly, the only implementation for class `{}` ([DSP-5])",
+                                self.map.location(span),
+                                self.types.class_def(method.owner).name,
+                                method.name,
+                                class.name
+                            ),
+                        ));
+                    }
+                    let args = rendered
+                        .iter()
+                        .enumerate()
+                        .map(|(index, argument)| {
+                            let c_type = method.params.get(index).map(|ty| self.c_type(*ty));
+                            let declared = signature.params.get(index).map(|ty| self.c_type(*ty));
+                            match c_type {
+                                Some(c_type) if declared.as_ref() != Some(&c_type) => format!("({c_type})({argument})"),
+                                _ => argument.clone(),
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    return format!("{}({})", method.symbol, args.join(", "));
+                }
                 let receiver = rendered.first().expect("virtual call has a receiver");
                 let receiver_ty = signature.params.first().copied();
                 let object = match receiver_ty.map(|ty| self.types.kind(ty)) {
@@ -9352,6 +9424,7 @@ mod string_descriptor_view_parts_tests {
             structural: BTreeMap::new(),
             virtual_tables: BTreeMap::new(),
             virtual_signatures: BTreeMap::new(),
+            direct_calls: Default::default(),
             interface_layouts: BTreeMap::new(),
             interface_adapters: BTreeMap::new(),
             class_interface_tables: BTreeMap::new(),

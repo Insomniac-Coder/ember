@@ -1972,6 +1972,8 @@ impl<'a> Builder<'a> {
                     .params
                     .first()
                     .is_some_and(|param| function.local(param.local).name.is_some_and(|name| name.as_str() == "self"));
+                // `[DSP-1]`, `[DSP-5]` — read before the arguments are lowered.
+                let receiver_class = args.first().filter(|_| takes_self).and_then(|receiver| self.receiver_class(receiver));
                 let mut class_accesses = Vec::new();
                 let eval_order = arg_eval_order
                     .clone()
@@ -2048,6 +2050,9 @@ impl<'a> Builder<'a> {
                     (Some(owner), Some(slot)) => FuncRef::Virtual {
                         owner,
                         slot,
+                        receiver: receiver_class
+                            .filter(|class| self.types.class_is_subclass_of(*class, owner))
+                            .unwrap_or(owner),
                         param_modes: modes.clone(),
                     },
                     _ => FuncRef::Direct { symbol, latebound: *latebound },
@@ -6430,6 +6435,28 @@ impl<'a> Builder<'a> {
             other => other,
         };
         (operand, arg.ty, arg.span)
+    }
+
+    /// `[DSP-1]`, `[DSP-5]` — the class of a method call's receiver as the
+    /// program wrote it, under the upcast to the method's own class and the
+    /// borrow of a `mut self` receiver: the object is of this class or of
+    /// one below it.
+    fn receiver_class(&self, mut expr: &hir::Expr) -> Option<ember_types::ClassId> {
+        let class_of = |ty: Ty| match self.types.kind(ty) {
+            TyKind::Class(id) => Some(*id),
+            TyKind::Ref { inner, .. } => match self.types.kind(*inner) {
+                TyKind::Class(id) => Some(*id),
+                _ => None,
+            },
+            _ => None,
+        };
+        loop {
+            match &expr.kind {
+                hir::ExprKind::OverflowScope { expr: inner, .. } => expr = inner,
+                hir::ExprKind::Cast { expr: inner, .. } if class_of(inner.ty).is_some() => expr = inner,
+                _ => return class_of(expr.ty),
+            }
+        }
     }
 
     fn lower_operand_borrowed(&mut self, expr: &'a hir::Expr) -> Operand {

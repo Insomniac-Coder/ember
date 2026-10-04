@@ -5008,6 +5008,40 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-132 — a virtual call one body answers is a direct call (`[DSP-1]`, `[DSP-5]`)
+
+2026-10-04, autopilot. `[DSP-1]` makes a call on a final class's handle a static call; `[DSP-5]`
+lets a virtual call with exactly one reachable implementation become a direct call when the whole
+program is visible, and has `--emit-optimization-report` list each. Neither was built: every call
+to a virtual method read the object's table (D-508 for `[DSP-1]`), and the flag did not exist.
+
+`FuncRef::Virtual` carries the receiver's class as the program wrote it, under the upcast to the
+method's own class (and the borrow of a `mut self` receiver). The object is of that class or of
+one below it, and a build holds every class of the program (a library's too: a C host cannot
+derive from an Ember class, and `extern class`, N2, is not built), so the C backend looks at the
+slot in that class and in every class below it. When they all hold one body, the call is made to
+it directly, an argument cast where the body's C type differs from the slot's, as the override
+adapters do. An abstract slot is passed over only in an abstract class, of which no object exists,
+so an abstract class with one concrete class below it calls that class's body. A final class has
+only itself: that is `[DSP-1]`. For an open or abstract class the answer took the whole program,
+and `ember build --emit-optimization-report` (or `ember run`) lists the call on standard error, so
+it never mixes with `--emit c`: `<file>:<line>:<col>: calls `Shape.sides` directly, the only
+implementation for class `Shape` ([DSP-5])`, or `none`.
+
+The analyses still treat these calls as virtual (they take every body the call could reach), which
+stays sound. When hot reload (`--reload`) is built, a reloadable class can gain a subclass, so
+`[DSP-5]` must then be off for it; `[DSP-1]` stays. An interface table's adapter for an open class
+still calls through the object's table (D-375); the same test applies there and is left for later.
+
+Measured 2026-10-04, 22:04, on mains (no Kernel-Power 105 event) and the performance cores, 11
+interleaved runs, medians: a thousand objects of an open class nothing derives from, each asked a
+virtual question in every one of 100,000 passes, against the same work in C++ (an open class with
+one implementation, called through the base pointer; `scratchpad/dsp5bench`). MSVC: 73.9 ms
+before, 48.5 ms after, C++ 66.5 ms (after ×0.657 of before, ×0.730 of the C++). clang: 72.5 ms,
+36.3 ms, 64.9 ms (×0.501, ×0.560). Before, Ember took 1.11x the C++ time with both compilers.
+The C of all 52 benchmark programs for MSVC, clang and gcc is byte for byte the same before and
+after (none makes a virtual call), so no published number moves.
+
 ## ADR-131 — `ember inspect --counts`: the count operations left inside loops
 
 2026-10-04, autopilot. `[RC-6]` has `ember inspect` list every retain and release that survives

@@ -2659,6 +2659,38 @@ fn leak_check_reports_a_live_strong_object_cycle() {
     );
 }
 
+/// `[DSP-5]` — `ember build --emit-optimization-report` lists, on standard
+/// error, each virtual call the whole program made direct, at its location; a
+/// call on a final class (`[DSP-1]`) and one two bodies answer are not listed,
+/// and a program with none says so.
+#[test]
+fn the_optimization_report_lists_each_direct_call() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/DSP-5/accept_a_call_with_one_implementation_is_direct.{SOURCE_EXT}");
+    let built = ember(&["build", &source, "--emit", "c", "--emit-optimization-report"], &root);
+    assert_eq!(built.exit, 0, "build failed:\n{}", built.stderr);
+    let listed: Vec<&str> = built.stderr.lines().filter(|line| line.contains("([DSP-5])")).collect();
+    assert_eq!(listed.len(), 2, "{}", built.stderr);
+    let text = std::fs::read_to_string(root.join(&source)).expect("the program reads");
+    let at = |needle: &str| text.lines().position(|line| line.contains(needle)).expect("the call is in the program") + 1;
+    for (call, says) in [
+        ("s.sides()", "calls `Shape.sides` directly, the only implementation for class `Shape`"),
+        ("a.legs()", "calls `Dog.legs` directly, the only implementation for class `Animal`"),
+    ] {
+        let line = format!(".{SOURCE_EXT}:{}:", at(call));
+        assert!(
+            listed.iter().any(|listed| listed.contains(&line) && listed.contains(says)),
+            "missing {says:?} at {line}:\n{}",
+            built.stderr
+        );
+    }
+    assert!(!built.stdout.contains("optimization report"), "the report went into the C:\n{}", built.stdout);
+    let final_only = format!("tests/conformance/DSP-1/accept_a_call_on_a_final_class_is_direct.{SOURCE_EXT}");
+    let none = ember(&["build", &final_only, "--emit", "c", "--emit-optimization-report"], &root);
+    assert_eq!(none.exit, 0, "{}", none.stderr);
+    assert!(none.stderr.contains("optimization report:\n  none"), "{}", none.stderr);
+}
+
 /// `[RC-6]` — `ember inspect --counts` lists the retains and releases a build
 /// left inside loops, each with its reason; a loop that reads borrowed
 /// handles has none.
