@@ -10821,7 +10821,15 @@ anything needs a review just note it down and ask me about a workflow later".
   is a byte, against `[TYP-1]`/`[TYP-11]`) is for the owner (below); D-466's rest (a temporary
   named `_3`) needs the source map in the borrow checker or a field on 54 local constructions, so
   it waits.
-* **Next, the owner's priority (2026-10-05): a compile cache for built programs**, so the suites
+* **Built: the compile cache (ADR-136),** the owner's priority below; how it works and what it
+  measured are in the ADR. **On the local branch `compile-cache`, not on `main`** (2026-10-05
+  08:55, the owner away at work): the MSVC suite passed twice with it (empty cache, full cache).
+  Still to run, each after the cooldown: the clang suite, the gates, the WSL gcc suite
+  (`refresh_delta.sh` against `d78f996`); then fast-forward `main`, README date, push, CI. For the
+  owner (the ADR's last paragraph): the suite's time is mostly the unoptimised compiler, so
+  optimising the compiler the tests build, and naming the milestone tests' folders by test. `EMBER_NO_COMPILE_CACHE=1` turns it off (to time the C compiler); the
+  cache lives in `%LOCALAPPDATA%\ember\cache\programs` (2 GiB at most).
+* **The design as first written (2026-10-05): a compile cache for built programs**, so the suites
   (local and CI) stop recompiling test programs whose C did not change; it also cuts the heat that
   forced the cooldowns. Design: in `ember_build`'s `compile_and_link` (so `ember build` and `run`
   gain too), key each output by a hash of every input: the C sources' bytes, the runtime header
@@ -12154,7 +12162,7 @@ README timing values and benchmark assets are unchanged.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h52/` are frozen.
-* **Next numbers:** ODR-099, D-515, ADR-136, ERR-056 (D-498, D-514 OPEN).
+* **Next numbers:** ODR-099, D-515, ADR-137, ERR-056 (D-498, D-514 OPEN).
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's

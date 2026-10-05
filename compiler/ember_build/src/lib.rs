@@ -390,9 +390,11 @@ pub struct LinkRequest<'a> {
 
 /// Compile and link in one invocation. Phase 0 has one translation unit plus
 /// the runtime, so separate compilation buys nothing yet; `[BLD-4]`'s
-/// Ninja-driven incremental build arrives with the module system.
+/// Ninja-driven incremental build arrives with the module system. A program
+/// linked before from the same inputs is copied from the global cache instead
+/// (ADR-136, [`CachedProgram`]).
 pub fn compile_and_link(toolchain: &Toolchain, request: &LinkRequest) -> Result<(), BuildError> {
-    compile_and_link_impl(toolchain, request, None)
+    compile_and_link_impl(toolchain, request, None, program_cache().as_deref())
 }
 
 /// Link a driver-owned executable whose externally callable C definitions are
@@ -405,7 +407,7 @@ pub fn compile_and_link_executable_with_roots(
     request: &LinkRequest,
     retained_symbols: &[String],
 ) -> Result<(), BuildError> {
-    compile_and_link_impl(toolchain, request, Some(retained_symbols))
+    compile_and_link_impl(toolchain, request, Some(retained_symbols), program_cache().as_deref())
 }
 
 fn executable_section_flags(toolchain: &Toolchain, managed_executable: bool) -> &'static [&'static str] {
@@ -530,6 +532,7 @@ fn compile_and_link_impl(
     toolchain: &Toolchain,
     request: &LinkRequest,
     retained_symbols: Option<&[String]>,
+    cache: Option<&Path>,
 ) -> Result<(), BuildError> {
     let mut command = compiler_command(toolchain);
     match toolchain {
@@ -540,12 +543,6 @@ fn compile_and_link_impl(
             }
             for source in request.sources {
                 command.arg(source);
-            }
-            // Object files land in obj/, keeping the C directory readable.
-            command.arg(format!("/Fo{}\\", request.obj_dir.display()));
-            command.arg(format!("/Fe{}", request.output.display()));
-            if request.profile == Profile::Debug {
-                command.arg(format!("/Fd{}\\", request.obj_dir.display()));
             }
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
@@ -558,7 +555,6 @@ fn compile_and_link_impl(
             for source in request.sources {
                 command.arg(source);
             }
-            command.arg("-o").arg(&request.output);
             if !cfg!(windows) {
                 command.arg("-lm");
             }
@@ -570,7 +566,277 @@ fn compile_and_link_impl(
             }
         }
     }
-    run(command)
+    // Everything but where the outputs go: the cache's key.
+    let cached = cache.and_then(|dir| CachedProgram::find(dir, toolchain, &command, request));
+    if let Some(cached) = &cached {
+        if cached.serve(&request.output) {
+            return Ok(());
+        }
+        // The files the sources include, wherever they are found.
+        command.arg(if matches!(toolchain, Toolchain::Msvc { .. }) { "/showIncludes" } else { "-H" });
+    }
+    match toolchain {
+        Toolchain::Msvc { .. } => {
+            // Object files land in obj/, keeping the C directory readable.
+            command.arg(format!("/Fo{}\\", request.obj_dir.display()));
+            command.arg(format!("/Fe{}", request.output.display()));
+            if request.profile == Profile::Debug {
+                command.arg(format!("/Fd{}\\", request.obj_dir.display()));
+            }
+        }
+        Toolchain::Clang(_) | Toolchain::Gcc(_) => {
+            command.arg("-o").arg(&request.output);
+        }
+    }
+    let started = std::time::SystemTime::now();
+    let compiled = run_output(command)?;
+    if let Some(cached) = cached {
+        cached.store(request, &compiled, started);
+    }
+    Ok(())
+}
+
+/// The global cache's linked programs, unless the variable
+/// `no_compile_cache_var()` names is set.
+fn program_cache() -> Option<PathBuf> {
+    let off = std::env::var_os(ember_branding::no_compile_cache_var()).is_some_and(|value| !value.is_empty());
+    (!off).then(|| cache_root().join("programs"))
+}
+
+/// What the C compilers and linkers read from the environment besides their
+/// arguments: MSVC's search paths and extra options, then GCC's and clang's.
+const PROGRAM_VARIABLES: [&str; 12] = [
+    "INCLUDE", "LIB", "LIBPATH", "CL", "_CL_", "LINK", "_LINK_",
+    "CPATH", "C_INCLUDE_PATH", "LIBRARY_PATH", "COMPILER_PATH", "GCC_EXEC_PREFIX",
+];
+
+/// ADR-136 — a program linked before from the same inputs, kept in the global
+/// cache to be copied instead of built again.
+///
+/// Its key is the compile command without its outputs, each source in it by
+/// what it holds (the same program built in another folder is the same
+/// executable), the variables the compiler and linker read, what each include
+/// directory lists, and the compiler's file. The files the sources include,
+/// found wherever the compiler finds them (beside the including file, in an
+/// include directory or in the system's), only the compile can name
+/// (`/showIncludes`, `-H`): the manifest `<key>.txt` names the program those
+/// files built and lists each file with its hash, and a build is served only
+/// while every one of them still has it. The ceiling: the system's libraries
+/// are known by the compiler's file and `LIB` alone, and a header newly put
+/// ahead of an included one, beside the including file, is not seen.
+struct CachedProgram {
+    dir: PathBuf,
+    key: String,
+}
+
+impl CachedProgram {
+    /// `None` when a source cannot be read: the compiler reports it.
+    fn find(dir: &Path, toolchain: &Toolchain, command: &Command, request: &LinkRequest) -> Option<CachedProgram> {
+        let mut key = Key::new();
+        key.part(b"program v1");
+        key.part(command.get_program().as_encoded_bytes());
+        for arg in command.get_args() {
+            match request.sources.iter().find(|source| source.as_os_str() == arg) {
+                Some(source) => {
+                    key.part(source.extension().unwrap_or_default().as_encoded_bytes());
+                    key.part(&std::fs::read(source).ok()?);
+                }
+                None => key.part(arg.as_encoded_bytes()),
+            }
+        }
+        for name in PROGRAM_VARIABLES {
+            key.part(variable(command, name).unwrap_or_default().as_encoded_bytes());
+        }
+        for include in request.include_dirs {
+            let mut names: Vec<_> = std::fs::read_dir(include).ok()?
+                .filter_map(|entry| entry.ok().map(|entry| entry.file_name()))
+                .collect();
+            names.sort();
+            for name in names {
+                key.part(name.as_encoded_bytes());
+            }
+        }
+        key.compiler_file(toolchain);
+        Some(CachedProgram { dir: dir.to_path_buf(), key: key.finish() })
+    }
+
+    fn manifest(&self) -> PathBuf {
+        self.dir.join(format!("{}.txt", self.key))
+    }
+
+    /// Copy the kept program to `output`, if every file it was built from
+    /// still holds what it held.
+    fn serve(&self, output: &Path) -> bool {
+        let Ok(text) = std::fs::read_to_string(self.manifest()) else { return false };
+        let mut lines = text.lines();
+        let Some(program) = lines.next().map(|name| self.dir.join(name)) else { return false };
+        for line in lines {
+            let Some((hash, file)) = line.split_once(' ') else { return false };
+            if !std::fs::read(file).is_ok_and(|bytes| blake3::hash(&bytes).to_hex().as_str() == hash) {
+                return false;
+            }
+        }
+        if std::fs::copy(&program, output).is_err() {
+            return false;
+        }
+        // Used now: the trim removes the least recently used first.
+        for file in [program, self.manifest()] {
+            if let Ok(open) = std::fs::File::options().write(true).open(file) {
+                let _ = open.set_modified(std::time::SystemTime::now());
+            }
+        }
+        true
+    }
+
+    /// Keep the program just built, with the files its compile named; not when
+    /// it named none (notes this does not read), or when one of them changed
+    /// since `started`, or just before it (a file's time can be coarse): what
+    /// would be kept might not be what was built.
+    fn store(&self, request: &LinkRequest, compiled: &std::process::Output, started: std::time::SystemTime) {
+        let mut files = Vec::new();
+        for stream in [&compiled.stdout, &compiled.stderr] {
+            for line in String::from_utf8_lossy(stream).lines() {
+                if let Some(file) = included_file(line) && let Ok(file) = std::path::absolute(file) {
+                    files.push(file);
+                }
+            }
+        }
+        files.sort();
+        files.dedup();
+        let compiles_c = request.sources.iter().any(|source| source.extension().is_some_and(|ext| ext == "c"));
+        if files.is_empty() && compiles_c {
+            return;
+        }
+        let settled = started.checked_sub(std::time::Duration::from_secs(2)).unwrap_or(started);
+        let mut manifest = String::new();
+        let mut built = Key::new();
+        built.part(self.key.as_bytes());
+        for file in &files {
+            let Ok(meta) = file.metadata() else { return };
+            if meta.modified().map_or(true, |time| time > settled) {
+                return;
+            }
+            let Ok(bytes) = std::fs::read(file) else { return };
+            let hash = blake3::hash(&bytes).to_hex();
+            built.part(hash.as_bytes());
+            manifest.push_str(&format!("{hash} {}\n", file.display()));
+        }
+        let extension = if cfg!(windows) { "exe" } else { "bin" };
+        let name = format!("{}-{}.{extension}", self.key, &built.finish()[..16]);
+        let program = self.dir.join(&name);
+        if std::fs::create_dir_all(&self.dir).is_err() {
+            return;
+        }
+        if !program.is_file() {
+            // Copied in under a temporary name: another build sees the whole
+            // program or none.
+            let temp = self.dir.join(format!("{name}.tmp{}", std::process::id()));
+            if std::fs::copy(&request.output, &temp).is_err() || std::fs::rename(&temp, &program).is_err() {
+                let _ = std::fs::remove_file(&temp);
+                if !program.is_file() {
+                    return;
+                }
+            }
+        }
+        write_atomically(&self.manifest(), &format!("{name}\n{manifest}"));
+        trim_programs(&self.dir, PROGRAM_CACHE_BYTES);
+    }
+}
+
+/// A variable as `command` will see it: set on it, else inherited.
+fn variable(command: &Command, name: &str) -> Option<std::ffi::OsString> {
+    match command.get_envs().find(|(set, _)| set.eq_ignore_ascii_case(name)) {
+        Some((_, value)) => value.map(std::ffi::OsStr::to_os_string),
+        None => std::env::var_os(name),
+    }
+}
+
+/// The file an include note names: `-H`'s dots, a space and the path; or the
+/// note `/showIncludes` writes in the compiler's own language ("Note:
+/// including file:" in English), whose path is absolute and follows a colon.
+/// `None` for the compiler's other output: a diagnostic starts with its file.
+fn included_file(line: &str) -> Option<&str> {
+    let undotted = line.trim_start_matches('.');
+    if undotted.len() < line.len() {
+        return undotted.strip_prefix(' ').filter(|path| !path.is_empty());
+    }
+    let mut at = 0;
+    while let Some(found) = line[at..].find(": ") {
+        let rest = line[at + found + 1..].trim_start_matches(' ').trim_end();
+        let bytes = rest.as_bytes();
+        let drive = bytes.len() > 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'\\';
+        if drive || rest.starts_with("\\\\") {
+            return Some(rest);
+        }
+        at += found + 2;
+    }
+    None
+}
+
+/// The program cache's size, kept by `trim_programs`. ponytail: fixed; a
+/// setting when a machine needs another.
+const PROGRAM_CACHE_BYTES: u64 = 2 << 30;
+
+/// Keep the program cache under `limit` bytes (trimmed to three quarters of
+/// it), the least recently used first; at most once an hour, as listing the
+/// folder on every build would cost more than the cache saves.
+fn trim_programs(dir: &Path, limit: u64) {
+    let stamp = dir.join("trimmed");
+    let recent = stamp.metadata().and_then(|meta| meta.modified())
+        .is_ok_and(|time| time.elapsed().is_ok_and(|age| age.as_secs() < 3600));
+    if recent || std::fs::write(&stamp, b"").is_err() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let mut files = Vec::new();
+    for entry in entries.flatten() {
+        if let Ok(meta) = entry.metadata() && meta.is_file() && let Ok(time) = meta.modified() {
+            files.push((time, meta.len(), entry.path()));
+        }
+    }
+    let mut total: u64 = files.iter().map(|(_, len, _)| len).sum();
+    if total <= limit {
+        return;
+    }
+    files.sort();
+    for (_, len, file) in files {
+        if total <= limit / 4 * 3 {
+            break;
+        }
+        if file != stamp && std::fs::remove_file(&file).is_ok() {
+            total -= len;
+        }
+    }
+}
+
+/// A cache key: each part hashed with its length, so no two lists of parts
+/// hash the same bytes.
+struct Key(blake3::Hasher);
+
+impl Key {
+    fn new() -> Key {
+        Key(blake3::Hasher::new())
+    }
+
+    fn part(&mut self, bytes: &[u8]) {
+        self.0.update(&(bytes.len() as u64).to_le_bytes());
+        self.0.update(bytes);
+    }
+
+    /// An upgraded compiler, or another one first on PATH, is a new key.
+    fn compiler_file(&mut self, toolchain: &Toolchain) {
+        if let Some(file) = compiler_file(toolchain) {
+            self.part(file.to_string_lossy().as_bytes());
+            if let Ok(meta) = file.metadata() {
+                self.part(&meta.len().to_le_bytes());
+                self.part(&modified_nanos(&meta).to_le_bytes());
+            }
+        }
+    }
+
+    fn finish(&self) -> String {
+        self.0.finalize().to_hex().to_string()
+    }
 }
 
 /// `[CG-C-11]` — compile a relaxed floating-point unit: the profile's flags
@@ -853,18 +1119,29 @@ fn gcc_flags(toolchain: &Toolchain, profile: Profile) -> &'static [&'static str]
     }
 }
 
-fn run(mut command: Command) -> Result<(), BuildError> {
+fn run(command: Command) -> Result<(), BuildError> {
+    run_output(command).map(drop)
+}
+
+/// `run`, keeping what the compiler wrote.
+fn run_output(mut command: Command) -> Result<std::process::Output, BuildError> {
     let rendered = format!("{command:?}");
     let output = command.output()?;
     if !output.status.success() {
-        let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
-        text.push_str(&String::from_utf8_lossy(&output.stderr));
+        let mut text = String::new();
+        for stream in [&output.stdout, &output.stderr] {
+            // The include notes the program cache asks for are not the failure.
+            for line in String::from_utf8_lossy(stream).lines().filter(|line| included_file(line).is_none()) {
+                text.push_str(line);
+                text.push('\n');
+            }
+        }
         return Err(BuildError::CompilerFailed {
             command: rendered,
             output: text,
         });
     }
-    Ok(())
+    Ok(output)
 }
 
 /// The global build cache, shared by every build on the machine: the variable
@@ -954,12 +1231,8 @@ fn runtime_object_impl(
     };
     command.arg(source);
 
-    let mut key = blake3::Hasher::new();
-    let mut part = |bytes: &[u8]| {
-        key.update(&(bytes.len() as u64).to_le_bytes());
-        key.update(bytes);
-    };
-    part(format!("{command:?}").as_bytes());
+    let mut key = Key::new();
+    key.part(format!("{command:?}").as_bytes());
     // MSVC reads its headers and libraries from these: another Windows SDK is
     // another object. From the toolchain's variables, else this process's
     // (a developer environment used as it is).
@@ -971,10 +1244,10 @@ fn runtime_object_impl(
                 .map(|(_, value)| value.clone())
                 .or_else(|| std::env::var(name).ok())
                 .unwrap_or_default();
-            part(value.as_bytes());
+            key.part(value.as_bytes());
         }
     }
-    part(&std::fs::read(source)?);
+    key.part(&std::fs::read(source)?);
     // ponytail: the include directories' own files, not their subdirectories
     // (the runtime's headers are flat); walk deeper if that changes.
     for dir in include_dirs {
@@ -984,24 +1257,17 @@ fn runtime_object_impl(
             .collect();
         headers.sort();
         for header in headers {
-            part(header.to_string_lossy().as_bytes());
-            part(&std::fs::read(&header)?);
+            key.part(header.to_string_lossy().as_bytes());
+            key.part(&std::fs::read(&header)?);
         }
     }
-    // An upgraded compiler, or another one first on PATH, is a new key.
-    if let Some(file) = compiler_file(toolchain) {
-        part(file.to_string_lossy().as_bytes());
-        if let Ok(meta) = file.metadata() {
-            part(&meta.len().to_le_bytes());
-            part(&modified_nanos(&meta).to_le_bytes());
-        }
-    }
+    key.compiler_file(toolchain);
 
     let dir = cache.join("runtime");
     if std::fs::create_dir_all(&dir).is_err() {
         return Ok(None);
     }
-    let name = key.finalize().to_hex();
+    let name = key.finish();
     let object = dir.join(format!("{name}.{extension}"));
     if object.is_file() {
         return Ok(Some(object));
@@ -1066,6 +1332,109 @@ mod tests {
         assert!(gcc_flags(&gcc, Profile::Debug).is_empty());
         assert!(gcc_flags(&gcc, Profile::Shipping).is_empty());
         assert!(gcc_flags(&clang, Profile::Release).is_empty());
+    }
+
+    /// ADR-136 — a second identical build is the kept program, copied; a
+    /// changed source builds again, and so does a changed file it includes from
+    /// beside itself, which no include directory names.
+    #[test]
+    fn program_cache_serves_identical_builds_and_sees_every_included_file() {
+        let requested = std::env::var(ember_branding::cc_var()).ok();
+        let toolchain = Toolchain::detect(requested.as_deref()).expect("a C toolchain");
+        let dir = std::env::temp_dir().join(format!("program-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("obj")).expect("the test directory is creatable");
+        let cache = dir.join("cache");
+        let (source, header) = (dir.join("main.c"), dir.join("value.h"));
+        let write_header = |value: u32| {
+            std::fs::write(&header, format!("#define VALUE {value}\n")).expect("the header is writable");
+            // A file written just before its build is not kept with it.
+            let past = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+            std::fs::File::options().write(true).open(&header).and_then(|file| file.set_modified(past))
+                .expect("the header's time is settable");
+        };
+        let write_source = |extra: u32| {
+            let text = format!("#include <stdio.h>\n#include \"value.h\"\nint main(void) {{ printf(\"%d\\n\", VALUE + {extra}); return 0; }}\n");
+            std::fs::write(&source, text).expect("the source is writable");
+        };
+        let program = |name: &str| dir.join(if cfg!(windows) { format!("{name}.exe") } else { name.to_string() });
+        let build = |name: &str| {
+            compile_and_link_impl(&toolchain, &LinkRequest {
+                sources: &[source.clone()], include_dirs: &[], output: program(name),
+                profile: Profile::Debug, obj_dir: dir.join("obj"),
+            }, None, Some(&cache)).expect("the program builds");
+            let output = Command::new(program(name)).output().expect("the program runs");
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        };
+        let kept = || {
+            let mut found: Vec<PathBuf> = std::fs::read_dir(&cache).expect("the cache exists").flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == if cfg!(windows) { "exe" } else { "bin" }))
+                .collect();
+            found.sort();
+            found
+        };
+        write_header(1);
+        write_source(0);
+        assert_eq!(build("first"), "1");
+        let first = kept();
+        assert_eq!(first.len(), 1, "one program kept");
+        // Marked, to tell the kept program from one built again.
+        let mut marked = std::fs::read(&first[0]).expect("the kept program reads");
+        marked.extend_from_slice(b"kept");
+        std::fs::write(&first[0], &marked).expect("the kept program is writable");
+        assert_eq!(build("second"), "1");
+        assert_eq!(std::fs::read(program("second")).expect("the second program reads"), marked,
+            "the second build is the kept program");
+        write_header(2);
+        assert_eq!(build("third"), "2", "a changed include builds again");
+        write_source(5);
+        assert_eq!(build("fourth"), "7", "a changed source builds again");
+        assert_eq!(kept().len(), 3);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The trim removes the least recently used programs first, down to three
+    /// quarters of the limit, and keeps its own stamp.
+    #[test]
+    fn program_cache_trims_the_least_recently_used() {
+        let dir = std::env::temp_dir().join(format!("program-trim-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("the test directory is creatable");
+        let now = std::time::SystemTime::now();
+        for age in 1..=4u64 {
+            let file = dir.join(format!("{age}.exe"));
+            std::fs::write(&file, [0u8; 100]).expect("a program is writable");
+            std::fs::File::options().write(true).open(&file)
+                .and_then(|open| open.set_modified(now - std::time::Duration::from_secs(age * 3600)))
+                .expect("a program's time is settable");
+        }
+        trim_programs(&dir, 250);
+        let mut left: Vec<String> = std::fs::read_dir(&dir).expect("the folder lists").flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["1.exe", "trimmed"]);
+        // Within the hour, no second trim.
+        std::fs::write(dir.join("5.exe"), [0u8; 300]).expect("a program is writable");
+        trim_programs(&dir, 250);
+        assert!(dir.join("5.exe").is_file());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Include notes from `-H` and from `/showIncludes` in two languages; a
+    /// diagnostic, which starts with its file, is none.
+    #[test]
+    fn include_notes_name_their_files() {
+        assert_eq!(included_file(". /usr/include/stdio.h"), Some("/usr/include/stdio.h"));
+        assert_eq!(included_file(".. C:\\llvm\\stdint.h"), Some("C:\\llvm\\stdint.h"));
+        assert_eq!(included_file("Note: including file:  C:\\VC\\include\\stdio.h"), Some("C:\\VC\\include\\stdio.h"));
+        assert_eq!(included_file("Remarque : inclusion du fichier :   C:\\a b\\x.h"), Some("C:\\a b\\x.h"));
+        assert_eq!(included_file("Note: including file: \\\\server\\share\\x.h"), Some("\\\\server\\share\\x.h"));
+        assert_eq!(included_file("C:\\x\\main.c(3): error C2143: syntax error: missing ';'"), None);
+        assert_eq!(included_file("C:\\x\\main.c(1): fatal error C1083: Cannot open include file: 'C:\\y.h': No such file"), None);
+        assert_eq!(included_file("main.c"), None);
+        assert_eq!(included_file("main.c:3:5: error: expected ';'"), None);
     }
 
     #[test]

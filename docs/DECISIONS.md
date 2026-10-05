@@ -5016,6 +5016,64 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-136 — a cache of linked programs
+
+2026-10-05, autopilot: the owner's priority after the heat brainstorm (the 10-minute cooldowns
+took about 70% of a batch's validation time, and a suite's heat is mostly the C compiler).
+
+**What.** `compile_and_link` (every `ember build` and `run`, and the tests that link C programs
+directly) keeps each program it links in the global build cache (`programs/` under the cache
+root, which `EMBER_CACHE` moves) and copies it instead of compiling again when nothing it was
+built from has changed. `EMBER_NO_COMPILE_CACHE=1` turns it off, to time the C compiler itself.
+This is not `[BLD-4]` (one C unit per module through Ninja, still not built): it sits in front of
+whatever compiles, and with one unit per module it would serve each unchanged module's object the
+same way, as it would an LLVM back end's.
+
+**The key** is the compile command without its outputs, each source in it by its bytes (the same
+program built in another folder is the same executable), the variables the C compilers and
+linkers read (`INCLUDE`, `LIB`, `LIBPATH`, `CL`, `_CL_`, `LINK`, `_LINK_`, `CPATH`,
+`C_INCLUDE_PATH`, `LIBRARY_PATH`, `COMPILER_PATH`, `GCC_EXEC_PREFIX`), each include directory's
+listing, and the compiler's file (its path, size and time, as the runtime object's key has it).
+
+**The included files only the compile can name.** C files include others beside themselves or by
+relative path (`runtime/ember_rt/tests/allocator_rounding.c` includes `../src/ember_rt.c`; a
+driver fixture includes `program.c`), so a key over the include directories alone would serve a
+stale program. A compile the cache may keep asks the compiler (`/showIncludes` for MSVC and
+clang-cl, `-H` for clang and gcc); the manifest `<key>.txt` names the program those files built
+and lists each with its BLAKE3 hash, and a build is served only while every one still has it
+(ccache's "direct mode"). Nothing is kept from a failed compile; from one that compiles C and
+whose notes name no file (notes in a form this does not read); or when an included file changed
+during the compile or in the two seconds before it (a file's time can be coarse), since what
+would be kept might not be what was built. A failed compile's message leaves the notes out.
+
+**Keeping it.** A program is copied in under a temporary name and renamed, so a build running
+alongside sees the whole program or none. A hit marks the program and its manifest used. At most
+once an hour, a build that keeps a program trims the folder, when it is past 2 GiB, to 1.5 GiB,
+least recently used first.
+
+**The ceiling** (`CachedProgram`'s comment): the system's libraries are known only by the
+compiler's file and `LIB`; a header newly put beside an including file, ahead of one an include
+directory gives, is not seen (a new one in an include directory is).
+
+Tests (`ember_build`): `program_cache_serves_identical_builds_and_sees_every_included_file` (the
+second build is the kept program byte for byte; a changed header beside the source, which no
+include directory names, and a changed source build again),
+`program_cache_trims_the_least_recently_used`, `include_notes_name_their_files`.
+
+**Measured** (2026-10-05, MSVC, the whole suite on all cores, the same tree twice, 10 minutes
+apart): with an empty cache 291 s, every test passing; with the cache that run filled, 258 s
+(x0.89), every test passing. The first run kept 1,727 programs (138 MB, about 80 KB each); the
+second served about 1,700 of its builds and compiled about 1,520 again, correctly: the milestone
+tests write their programs into folders named by process and time (`temporary_directory`), so
+each run's C names other source paths (`#line`, panic locations), another program. For one
+conformance case the C step goes from 128 ms to 11 ms (debug and release alike), but the work
+before it is 360 ms in the debug-built compiler the suite runs (100 ms in a release build): most
+of the suite's time is the Ember compiler built without optimisation, which this cache cannot
+touch. The temperatures did not move: the CPU package at 97 C on average in both runs, 100-102 C
+at the peak, about three minutes of each run at or above 95 C. Two levers for the owner: build the
+compiler the tests run with optimisation (a 3.6x faster front end on that case; slower rebuilds
+of the compiler), and folders named by test instead of by run for the milestone programs.
+
 ## ADR-135 — `--timings`; the second review's deep-nesting findings (G7-2, G7-3, G7-4, G8-4)
 
 2026-10-05, autopilot, the first batch under the owner's ten-task cadence.
