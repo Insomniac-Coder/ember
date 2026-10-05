@@ -10740,14 +10740,69 @@ anything needs a review just note it down and ask me about a workflow later".
   result still holds the whole object; the fix (a per-class accessor in each interface table that
   begins exactly what that class's implementation borrows) decides what exclusivity checks, so a
   mistake lets a write free what a view points into.
-* **To ask the owner:** D-498 (above): the multiply guard now and the placement accepted, or the
-  character loop's layout first. G7-5 (the second review): a `void` struct member is a byte in C
-  (ADR-062), so `struct {u: void, n: int}` is 16 bytes where `[TYP-1]`/`[TYP-11]` give 8: make
-  `void` members zero-sized (every struct, tuple and payload field walk in the C backend skips
-  them; a struct of only `void` fields keeps C's one byte), or rule in the spec that a `void`
-  member takes a byte. And G8-4's rest: a range longer than `int.MAX` has no `len`, so its
-  adapters panic where the fused `for` runs: rule that such ranges are not `ExactSizeIterator`, or
-  that the fused loop checks the same way.
+* **ALL EIGHT DECISIONS UNDONE by the owner (2026-10-05, about 09:45):** "undo all the 8 decisions
+  because of how horrible things were and EXPLAIN me EVERYTHING one by one and ask me questions".
+  The answers below are void and kept only as history; each item is open until it is explained
+  again, one at a time, and answered. Until then the old rules hold: 10 minutes between runs, all
+  four checks locally (MSVC, clang, gates, WSL gcc), no `phase-*` flow. **Re-decided so far:**
+  (1) the optimised compiler for the tests: **measure later** (rebuild time after a typical edit,
+  and the suite's time), then show the owner; (2) the milestone tests' temporary folders: **yes**,
+  one fixed folder per test (`temporary_directory` without the process number and time), emptied
+  when the test starts; (3) pacing by temperature: **yes**, a run starts once the CPU package is at
+  or under 60 °C (30 s), and stays at or under 95 °C (measure the thread count; stop a run above
+  95 °C for about 15 s); this replaces the 10 minutes; (4) the `phase-*` flow: **yes**, each batch
+  is committed to `phase-next` and pushed, CI runs clang and gcc (Linux) and MSVC and clang-cl
+  (Windows), locally only the MSVC suite and the gates; when CI is green, `main` is moved to that
+  commit and pushed; (5) the cores: **suites on the 16 efficiency cores only** (affinity `0x3FC3FC`,
+  16 threads), and the start rule held a little longer: at or under 60 °C for 45 s; (6) D-498:
+  **B**, design the loop layout so the checked-multiply guard does not move the long-text loop, then
+  adopt the multiply; measure each compiler, and bring B's before/after code and numbers back;
+  (7) G7-5: **test both**, build `void` members as zero-sized (A) and measure sizes and speed against
+  today's byte (B) on programs with `void` fields, then the owner rules; (8) G8-4, giant ranges:
+  **do both**. Part 1, build: the counts Ember uses only internally (`take`, `skip`, `step_by`,
+  `zip` walking backwards, and the compiler's missing fused `zip` loop that ADR-087 promises) are
+  chosen while the program runs: the fast `int` path when the length fits, wider arithmetic only
+  for a giant range, so crashes 1, 2, 3 and 5 go. Part 2, design only, back to the owner before
+  any code: the size of the numbers handed to the program (`len()`'s answer, `enumerate`'s
+  positions). The owner's requirements: positions and counts handle any number, negative starts
+  kept (`enumerate(xs, -3)`), up to the largest value the thing looped over needs, chosen
+  situationally ("why use a hammer for a thing which can be fixed with a screwdriver"), never
+  128-bit everywhere. The owner also held that ODR-089's "counts are `int`s" (mine, under
+  delegation) created this failure point.
+* **Next task after G8-4 (the owner, 2026-10-05):** go through the 52 rulings made under the
+  owner's delegation (ODR-021..048, 065, 070..084, 089..093, 095..098) for failure points like
+  G8-4's: cases each ruling did not consider. Plan it first (agents need the owner's go).
+* *(void)* The owner's answers (2026-10-05, about 09:05) to the eight-point list of that morning:
+  * D-498: **B**, lay the character loop out first (the ASCII path straight into the loop's tail,
+    so neither guard shape moves it), then adopt the checked multiply (the change is described
+    below).
+  * G7-5: **test both**, inclined to A: prototype `void` members as zero-sized (every struct, tuple
+    and payload field walk in the C backend skips them; a struct of only `void` fields keeps C's
+    one byte) and measure it against today's byte (ADR-062) before the owner rules.
+  * The milestone tests' temporary folders named by test, not by process and time (so their
+    programs hit the compile cache): **yes**.
+  * Pacing by temperature: **yes**, start a run once the CPU package is at or under 60 °C, and keep
+    a run at or under 95 °C (full suites at all 24 threads averaged 97 °C: measure fewer threads,
+    and the 16 efficiency cores alone, which the owner also approved measuring). This replaces the
+    fixed 10 minutes.
+  * Validation on a `phase-*` branch: **yes**. Push each batch to `phase-next`; CI runs Linux clang
+    and gcc and Windows MSVC and clang-cl on it; locally only the MSVC suite and the gates; when CI
+    is green, fast-forward `main` to it and push.
+  * Building the compiler the tests run with optimisation: **measure first** (its rebuild time
+    after a typical edit, and the suite's time), then show the owner before switching.
+  * G8-4's rest: **open again.** The owner chose A, then withdrew it the same morning: "I do not
+    like the idea of len and enumerate crashing ... I take what I said about the range, this is a
+    huge mess". The owner's requirement: `len` and `enumerate` must not crash on such ranges either.
+    Nothing is built until the owner has understood the problem and the options and says which. Measured 2026-10-05 on
+    `0 as u64 .. u64.MAX`, each case as a `for` loop and step by step with `.next()`: `take(3).rev()`,
+    `skip(5).rev()`, `step_by(2).rev()` print in the `for` loop and panic step by step ("has no
+    length"); `enumerate().rev()` panics both ways (`for`: "integer overflow in `+`"); `zip(…).rev()`
+    panics both ways (its `for` runs the library code); `.len()` panics. The cause: the `for` loop
+    counts the range in a `size_t` (`ember_range_count_u64`), which holds the count; the library
+    counts it in an `int` (`distance_to`), which does not. A: `take`, `skip`, `step_by` and `zip`
+    count in the range's own unsigned width instead of asking `len()`, so step by step matches the
+    `for` loop in every case; `len()` and `enumerate` backwards still panic both ways (their answer
+    is an `int`), with one message.
 * **Open:** D-498, D-487; `lines()` with MSVC about 4% slower than the published compiler from
   its loop's placement (ADR-125).
 * **Committed `50c8389`:** D-502 (ADR-126): the runtime no longer makes every Linux program load
@@ -10824,8 +10879,8 @@ anything needs a review just note it down and ask me about a workflow later".
 * **Built: the compile cache (ADR-136),** the owner's priority below; how it works and what it
   measured are in the ADR. **On the local branch `compile-cache`, not on `main`** (2026-10-05
   08:55, the owner away at work): the MSVC suite passed twice with it (empty cache, full cache).
-  Still to run, each after the cooldown: the clang suite, the gates, the WSL gcc suite
-  (`refresh_delta.sh` against `d78f996`); then fast-forward `main`, README date, push, CI. For the
+  Under the owner's new flow (below): the gates, then the branch pushed as `phase-next` for CI's
+  clang and gcc; `main` fast-forwarded when CI is green. For the
   owner (the ADR's last paragraph): the suite's time is mostly the unoptimised compiler, so
   optimising the compiler the tests build, and naming the milestone tests' folders by test. `EMBER_NO_COMPILE_CACHE=1` turns it off (to time the C compiler); the
   cache lives in `%LOCALAPPDATA%\ember\cache\programs` (2 GiB at most).
