@@ -10769,6 +10769,21 @@ anything needs a review just note it down and ask me about a workflow later".
   situationally ("why use a hammer for a thing which can be fixed with a screwdriver"), never
   128-bit everywhere. The owner also held that ODR-089's "counts are `int`s" (mine, under
   delegation) created this failure point.
+* **G8-4 part 1, built (uncommitted at writing):** D-515 / ADR-137, the fused `zip` with a
+  temporary range; crash 5 in a `for` loop is gone. The library half (step by step) needs a new
+  `ExactSizeIterator` method, a `[STD-19]` change, so it is folded into part 2's design for the
+  owner. **The owner (2026-10-05): part 2 is a huge change to the language, so if it succeeds the
+  spec's version becomes `0.9.10_Hardened_1`** (not Hardened_53 of 0.9.9); it then needs its own
+  migration notes, as the `MIGRATION-0.9.x` files are, and the spec tools checked for the name.
+* **G8-4 part 2, decided by the owner (2026-10-05 evening; table in
+  `docs/proposals/G8-4-counts-and-positions.md`, "Decided so far"):** `len()` unsigned and sized to
+  what is looped over (`int` for containers and ranges of up to 32 bits, `u64`/`u128` for `..`/`..=`
+  ranges of 64-bit numbers, `u128`/256-bit for 128-bit ones); `enumerate`'s numbers signed (`i128`
+  for ranges of 64-bit numbers, the 256-bit count for 128-bit ones); the 256-bit count exposed but
+  count-only; a gigantic range numbered from a negative start must work; the visible-numbers rule
+  (the smallest type the visible numbers allow, so `0 .. n` with `n: int` is `int`) and loop
+  versioning for the wide types (the owner's idea). **The whole design is decided** ("design it
+  that way"); nothing built yet; the spec becomes `0.9.10_Hardened_1` when it is.
 * **Next task after G8-4 (the owner, 2026-10-05):** go through the 52 rulings made under the
   owner's delegation (ODR-021..048, 065, 070..084, 089..093, 095..098) for failure points like
   G8-4's: cases each ruling did not consider. Plan it first (agents need the owner's go).
@@ -12217,7 +12232,7 @@ README timing values and benchmark assets are unchanged.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h52/` are frozen.
-* **Next numbers:** ODR-099, D-515, ADR-137, ERR-056 (D-498, D-514 OPEN).
+* **Next numbers:** ODR-099, D-516, ADR-138, ERR-056 (D-498, D-514 OPEN).
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's

@@ -5016,6 +5016,31 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-137 — `zip` with a temporary iterator is one counted loop (D-515)
+
+2026-10-05, part 1 of the owner's decision on G8-4 (the giant ranges).
+
+`zip` takes its argument borrowed (`[FN-2]`: an omitted mode is borrowed), and std's `Zip` copies
+it. So in `xs.iter().zip((0..n).iter())`, the argument reaches the checker as a borrow of the
+temporary `(0..n).iter()`, and the fused-loop builder, which recognised a range's or a view's
+iterator only as a value, gave up: every `zip` with a range's iterator ran std's `Zip`, which
+ADR-087 says is one counted loop. Backwards over a range too long for an `int` to count, `Zip`'s
+`next_back` asks both sides for their `len` and panicked, where the counted loop counts in
+`size_t` and runs.
+
+The builder now looks through a borrow of a temporary (`zip_argument`, `take_zip_argument`):
+nothing else can reach a temporary, so the loop taking it is what `Zip`'s copy was. A borrow of a
+**place** (a named iterator) is kept and that chain still runs std's `Zip`: the first version of
+this fix looked through it too and moved the caller's iterator, which made `E3050` reject a
+program that uses it after the loop (caught before commit; the test keeps it).
+
+Part 2 of the owner's decision (the size of `len()`'s answer and of `enumerate`'s positions, and
+whether every iterator that knows its length gets a "keep your first `n` items" method, which
+`[STD-19]` would have to name) is a design for the owner, not built.
+
+Test: `CTL-3b/accept_zip_with_a_temporary_range_is_one_counted_loop` (forwards, backwards, a view
+with a range, the giant range backwards, and the named iterator).
+
 ## ADR-136 — a cache of linked programs
 
 2026-10-05, autopilot: the owner's priority after the heat brainstorm (the 10-minute cooldowns

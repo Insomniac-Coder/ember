@@ -20934,6 +20934,27 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `zip`'s argument as the fused loop reads it. `zip` takes it borrowed
+    /// (`[FN-2]`), so a temporary iterator (`(0..n).iter()`) arrives as a
+    /// borrow of a value nothing else can reach, which `Zip` copies: the loop
+    /// takes the temporary itself. A borrow of a place (a named iterator) is
+    /// kept, and that chain runs through std's `Zip`, as the place must stay
+    /// the caller's to use after the loop.
+    fn zip_argument(e: &Expr) -> &Expr {
+        match &e.kind {
+            ExprKind::Ref { place, mutable: false } if !is_place(&place.kind) => place,
+            _ => e,
+        }
+    }
+
+    /// `zip_argument`, taking the expression apart.
+    fn take_zip_argument(e: Expr) -> Expr {
+        match e.kind {
+            ExprKind::Ref { place, mutable: false } if !is_place(&place.kind) => *place,
+            kind => Expr { kind, ..e },
+        }
+    }
+
     /// Which closure adapter `callee` is, if any.
     fn fused_stage(&self, callee: DefId) -> Option<FusedStage> {
         self.adapter_name(callee).and_then(|name| FusedStage::named(name.as_str()))
@@ -20960,7 +20981,7 @@ impl<'a> Checker<'a> {
                     // Two loops, one after the other (`check_for_chained`):
                     // under another adapter it is not one loop.
                     "chain" => return None,
-                    "zip" => FusedShape::Pair(Box::new(inner), Box::new(self.fused_links_shape(&args[1])?)),
+                    "zip" => FusedShape::Pair(Box::new(inner), Box::new(self.fused_links_shape(Self::zip_argument(&args[1]))?)),
                     "enumerate" => FusedShape::Pair(Box::new(FusedShape::Value), Box::new(inner)),
                     _ => inner,
                 })
@@ -21042,7 +21063,7 @@ impl<'a> Checker<'a> {
                 links.push(match self.adapter_name(*callee).expect("an adapter").as_str() {
                     "skip" => FusedLinkKind::Skip,
                     "enumerate" => FusedLinkKind::Enumerate,
-                    "zip" => FusedLinkKind::Zip(self.fused_link_kinds(&args[1])),
+                    "zip" => FusedLinkKind::Zip(self.fused_link_kinds(Self::zip_argument(&args[1]))),
                     _ => FusedLinkKind::Other,
                 });
                 links
@@ -21128,7 +21149,7 @@ impl<'a> Checker<'a> {
                     "skip" => FusedLink::Skip(arg),
                     "step_by" => FusedLink::StepBy(arg),
                     "enumerate" => FusedLink::Enumerate(arg),
-                    _ => FusedLink::Zip(self.take_fused_chain(arg)),
+                    _ => FusedLink::Zip(self.take_fused_chain(Self::take_zip_argument(arg))),
                 });
                 chain
             }
