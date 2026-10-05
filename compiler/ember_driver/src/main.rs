@@ -42,6 +42,7 @@ options:
     --emit tokens|ast|hir|mir|c|header emit a stage and stop; header writes a file
     --emit-header                     write <package>.h alongside a build or C emit
     --emit-optimization-report        list the calls made direct on the whole program's word
+    --timings[=json]                   each stage's time, module by module where it runs so
     --syntax-only                      lex and parse only; report E00xx/E01xx
     --backend c                        the only backend in v1
     --cc msvc|clang|gcc                override C compiler detection
@@ -293,6 +294,8 @@ struct Options {
     /// `[DSP-5]` — `--emit-optimization-report`: print the optimisations the
     /// whole program allowed, each at its source location.
     optimization_report: bool,
+    /// `[BLD-9]` — `--timings` (`Some(false)`) or `--timings=json` (`Some(true)`).
+    timings: Option<bool>,
     /// `[CLI-9]` — lex and parse only, reporting `E00xx` and `E01xx`. Names
     /// are not resolved, so an example naming undeclared types still passes.
     /// This is what `[TST-7]`'s gate over the specification's own code blocks
@@ -1269,6 +1272,8 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--emit" => options.emit = Some(value(&mut index, arg)?),
             "--emit-header" => options.emit_header = true,
             "--emit-optimization-report" => options.optimization_report = true,
+            "--timings" => options.timings = Some(false),
+            "--timings=json" => options.timings = Some(true),
             "--cc" => options.cc = Some(value(&mut index, arg)?),
             "--out-dir" => options.out_dir = Some(PathBuf::from(value(&mut index, arg)?)),
             "--backend" => {
@@ -1390,6 +1395,7 @@ fn load_modules(
         let text = map.file(file).text.clone();
         let lexed = ember_lexer::lex(file, &text, sink);
         let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
+        mark("read and parse", &key);
         seen.insert(key);
         queue.push((names, parsed));
     }
@@ -1483,6 +1489,7 @@ fn load_modules(
             let text = map.file(file).text.clone();
             let lexed = ember_lexer::lex(file, &text, sink);
             let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
+            mark("read and parse", &names.join("."));
             queue.push((names, parsed));
         }
     }
@@ -2174,6 +2181,9 @@ fn package_source_root(input: &Path) -> PathBuf {
 }
 
 fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, String> {
+    if options.timings.is_some() {
+        start_timings();
+    }
     let mut map = SourceMap::new();
     let file = map.load(input).map_err(|e| e.to_string())?;
     let source = map.file(file).text.clone();
@@ -2183,6 +2193,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 
     // Lex.
     let lexed = ember_lexer::lex(file, &source, &mut sink);
+    mark("lex", "main");
     if options.emit.as_deref() == Some("tokens") {
         for token in &lexed.tokens {
             println!("{:?} {:?}", token.kind, token.span);
@@ -2192,6 +2203,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 
     // Parse.
     let module = ember_parser::parse(file, &source, lexed.tokens, &mut sink);
+    mark("parse", "main");
     if options.emit.as_deref() == Some("ast") {
         print!("{}", ember_ast::dump(&module));
         return Ok(finish(&sink, &map, options));
@@ -2228,6 +2240,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         options.profile == Profile::Debug,
     );
     let program = &checked.program;
+    mark("check", "all modules");
     // `[WK-5]`–`[WK-7]` — class-field ownership cycles are a package-visible
     // lint over resolved types. It is diagnostic-only and therefore runs
     // before any MIR transformation can obscure the declared strong edges.
@@ -2247,6 +2260,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let mut bodies = ember_mir::lower(program, &types, &common, &map);
     // `[COST-1]` — an implicit `clone` nothing calls is not emitted.
     ember_mir::prune_unused_implicit(&mut bodies, &types, &checked.std_instances);
+    mark("lower", "all modules");
     if cfg!(debug_assertions) {
         ember_mir::verify::verify_all(&bodies);
     }
@@ -2313,6 +2327,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         ember_mir::verify::verify_views_all(&bodies, &types);
         ember_mir::verify::verify_interface_upcasts_all(&bodies, &types);
     }
+    mark("move, drop, borrow checks", "all modules");
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
     }
@@ -2518,6 +2533,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let header_requested = options.emit_header || options.emit.as_deref() == Some("header") ||
         (staticlib && options.emit.is_none());
     let package_name = if header_requested || staticlib { export_package_name(input)? } else { module_name.clone() };
+    mark("analyses and passes", "all modules");
     let emitted = ember_codegen_c::emit(
         verified_mir,
         &map,
@@ -2528,6 +2544,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         staticlib,
         c_for_msvc(&options),
     );
+    mark("C generation", "all modules");
     // `[DSP-5]` — on standard error, so it never mixes with `--emit c`.
     if options.optimization_report {
         eprintln!("optimization report:");
@@ -2697,6 +2714,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         &retained_symbols,
     )
     .map_err(|e| e.to_string())?;
+    mark("C compile and link", "all modules");
 
     report(&sink, &map, options);
 
@@ -2920,6 +2938,7 @@ fn overflow_policy(profile: Profile) -> ember_types::OverflowPolicy {
 }
 
 fn report(sink: &Sink, map: &SourceMap, options: &Options) {
+    report_timings(options);
     if sink.diagnostics().is_empty() {
         return;
     }
@@ -2928,6 +2947,46 @@ fn report(sink: &Sink, map: &SourceMap, options: &Options) {
     } else {
         eprint!("{}", sink.render(map));
     }
+}
+
+/// `[BLD-9]` — each stage's time since the one before, with the module it
+/// ran on (`all modules` for a stage that runs over the program at once),
+/// in the order they ran. Off (`None`) unless `--timings` started it.
+type Timings = Option<(std::time::Instant, std::time::Instant, Vec<(String, String, std::time::Duration)>)>;
+static TIMINGS: std::sync::Mutex<Timings> = std::sync::Mutex::new(None);
+
+fn start_timings() {
+    let now = std::time::Instant::now();
+    *TIMINGS.lock().unwrap_or_else(|e| e.into_inner()) = Some((now, now, Vec::new()));
+}
+
+fn mark(stage: &str, module: &str) {
+    if let Some((_, last, stages)) = TIMINGS.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        let now = std::time::Instant::now();
+        stages.push((stage.to_string(), module.to_string(), now - *last));
+        *last = now;
+    }
+}
+
+/// Prints the timings once, on standard error (as one JSON line with
+/// `--timings=json`), so they never mix with `--emit c` on standard output.
+fn report_timings(options: &Options) {
+    let Some(json) = options.timings else { return };
+    let Some((start, last, stages)) = TIMINGS.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
+    let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+    if json {
+        let stages: Vec<serde_json::Value> = stages
+            .iter()
+            .map(|(stage, module, took)| serde_json::json!({ "stage": stage, "module": module, "ms": ms(*took) }))
+            .collect();
+        eprintln!("{}", serde_json::json!({ "timings": stages, "total_ms": ms(last - start) }));
+        return;
+    }
+    eprintln!("timings (ms):");
+    for (stage, module, took) in &stages {
+        eprintln!("  {stage:<22}{:>10.2}  {module}", ms(*took));
+    }
+    eprintln!("  {:<22}{:>10.2}", "total", ms(last - start));
 }
 
 fn finish(sink: &Sink, map: &SourceMap, options: &Options) -> ExitCode {

@@ -2659,6 +2659,48 @@ fn leak_check_reports_a_live_strong_object_cycle() {
     );
 }
 
+/// `[BLD-9]` — `--timings` reports each stage's time on standard error,
+/// module by module where a stage runs so (reading and parsing each module),
+/// and `--timings=json` the same as one JSON line; without the flag nothing.
+#[test]
+fn timings_report_each_stage_and_module() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/RC-6/accept_count_operations_left_in_loops_are_listed.{SOURCE_EXT}");
+    let out_dir = std::env::temp_dir().join(format!("ember-timings-{}", std::process::id()));
+    let out = out_dir.to_string_lossy().into_owned();
+    let built = ember(&["build", &source, "--out-dir", &out, "--timings=json"], &root);
+    assert_eq!(built.exit, 0, "build failed:\n{}", built.stderr);
+    let line = built.stderr.lines().find(|line| line.starts_with("{\"timings\"")).expect("a JSON timings line");
+    let value: serde_json::Value = serde_json::from_str(line).expect("the timings are JSON");
+    let stages: Vec<(String, String)> = value["timings"]
+        .as_array()
+        .expect("a list of stages")
+        .iter()
+        .map(|entry| (entry["stage"].as_str().unwrap().to_string(), entry["module"].as_str().unwrap().to_string()))
+        .collect();
+    for (stage, module) in [
+        ("parse", "main"),
+        ("read and parse", "std.core"),
+        ("check", "all modules"),
+        ("lower", "all modules"),
+        ("C generation", "all modules"),
+        ("C compile and link", "all modules"),
+    ] {
+        assert!(
+            stages.iter().any(|(s, m)| s == stage && m == module),
+            "no {stage} of {module}: {stages:?}"
+        );
+    }
+    assert!(value["total_ms"].as_f64().is_some_and(|ms| ms > 0.0), "{line}");
+    let checked = ember(&["check", &source, "--timings"], &root);
+    assert_eq!(checked.exit, 0, "{}", checked.stderr);
+    assert!(checked.stderr.contains("timings (ms):") && checked.stderr.contains("  total"), "{}", checked.stderr);
+    assert!(!checked.stderr.contains("C compile and link"), "check compiled C:\n{}", checked.stderr);
+    let quiet = ember(&["check", &source], &root);
+    assert!(!quiet.stderr.contains("timings"), "{}", quiet.stderr);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
 /// `[DSP-5]` — `ember build --emit-optimization-report` lists, on standard
 /// error, each virtual call the whole program made direct, at its location; a
 /// call on a final class (`[DSP-1]`) and one two bodies answer are not listed,
@@ -4204,7 +4246,12 @@ fn aggregates_and_views_are_written_field_by_field() {
     let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
     let next = c_definition(&c.stdout, &format!("{}_CharIndices_next", ember_branding::mangled("std_string")));
-    assert!(next.contains("(_0).tag = 1;") && next.contains("_0.payload.Some._0 = "), "the item is not written by fields:\n{next}");
+    // ADR-135 (G7-2): the item's tuple is a literal written in place, its own
+    // fields under the payload's.
+    assert!(
+        next.contains("(_0).tag = 1;") && next.contains("_0.payload.Some._0._0 = ") && next.contains("_0.payload.Some._0._1 = "),
+        "the item is not written by fields:\n{next}"
+    );
     assert!(next.contains("(_0).tag = 0;") && !next.contains("memset(") && !next.contains(".tag = 1, .payload"), "`None` or `Some` is a literal:\n{next}");
     let lines = c_definition(&c.stdout, &format!("{}_Lines_next", ember_branding::mangled("std_string")));
     assert!(lines.contains("((*_1).rest).ptr = ") && lines.contains("((*_1).rest).len = "), "the slice is a literal:\n{lines}");

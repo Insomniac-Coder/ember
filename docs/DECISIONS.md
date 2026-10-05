@@ -5016,6 +5016,51 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-135 — `--timings`; the second review's deep-nesting findings (G7-2, G7-3, G7-4, G8-4)
+
+2026-10-05, autopilot, the first batch under the owner's ten-task cadence.
+
+**`--timings` (`[BLD-9]`).** "`--timings` writes a per-stage, per-module timing report
+(`--timings=json` for tools)" was not built. `ember build`, `run` and `check` take `--timings`
+(a table) or `--timings=json` (one line), on standard error after the diagnostics, so it never
+mixes with `--emit c`. Each stage's time is from the end of the one before: lexing and parsing the
+file named, reading and parsing each module it imports (by module), checking, lowering, the move,
+drop and borrow checks, the analyses and passes, C generation, and the C compiler and linker; the
+stages that run over the whole program say `all modules`. The milestone
+`timings_report_each_stage_and_module` reads the JSON.
+
+**Deep dereferences (G7-3, D-511).** A value read through 256 boxes was one C expression nesting
+`(*` 256 times, past clang's default bracket limit of 256 (D-358's concern). Past sixteen
+dereferences in one place the C writes `p[0]`, the same object, with no nesting:
+`GRM-39/accept_a_value_boxed_256_deep_reads_without_deep_brackets` (261 brackets before, 21
+after; `clang -fbracket-depth=256` accepts it). The test runs in the debug profile only: MSVC's
+`/O2` does not finish compiling a value 256 boxes deep, before this batch as after (D-514, open).
+
+**Deep literals (G7-2, D-513).** Each level of a nested literal was a temporary of its own, each
+larger than the one inside it, all in one frame: four 256-deep `Option[String]` literals in one
+function overflowed the 1 MB stack in the debug profile. A literal's temporary that the next
+literal reads once (moved, or copied with nothing to count) is now written straight into that
+literal's field, and never declared: only the literals just before, the reading literal's other
+such operands between, both written one field at a time, and never where the folded parts read
+the place the outermost literal writes. The folded literal's own retains are made where it is
+written (`TYP-36/accept_a_class_handle_hashes_by_identity` caught their loss). Eight such literals
+now run: 40 temporaries, 2,080 before (`GRM-39/accept_eight_values_nested_256_deep_in_one_function`;
+`GRM-39/accept_nested_literals_are_written_in_place` covers the shapes). Measured 2026-10-05, 05:58, on mains and the performance cores, 11 interleaved runs: the five
+`Map` programs whose C changed (their entries are nested literals), before and after: MSVC
+×0.981 to ×1.013, clang ×0.977 to ×1.007; no benchmark program's C changed otherwise.
+
+**Hashing deep keys (G7-4): resolved before this batch.** Checking a `Set` of 256-deep arrays took
+33 s and a `Map` keyed by 256-deep options 20 s when the review measured them (2026-10-01); D-474
+and D-476 (2026-10-02) cut what is instantiated and re-summarised. Measured 2026-10-05 with
+`--timings`: 1.06 s and 0.61 s, near linear in the depth (0.20 s at 64, 0.41 s at 128).
+
+**Wide signed ranges (G8-4, D-512).** A signed 64-bit range longer than `int.MAX` panicked with
+`integer overflow in -` from its length, where the unsigned widths say `a range of more than
+int.MAX values has no length`; the gap is now counted in `i128`, and an inclusive range exactly
+`int.MAX` long says the same instead of overflowing its `+ 1`
+(`STD-19/run_fail_a_wide_signed_range_has_no_length`). The rest of G8-4 (the fused loop over
+such a range runs where the adapters panic) is a rule for the owner: `len` returns `int`.
+
 ## ADR-134 — an inherited method borrows a derived local through an upcast borrow, in C through a base-typed copy (D-460)
 
 2026-10-05, autopilot. A method declared on a base class that takes its receiver by address (one

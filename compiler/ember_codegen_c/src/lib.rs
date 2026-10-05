@@ -125,6 +125,11 @@ const MSVC_MAX_UNROLLED_STATEMENTS: usize = 200;
 /// `[CG-C-3]` — a function of at most this many statements is small enough
 /// for the C compiler to inline.
 const INLINE_STATEMENTS: usize = 40;
+/// `[GRM-39]` (G7-3) — past this many dereferences in one place, each further
+/// one is written `p[0]`, the same object as `(*p)` with no bracket nesting:
+/// a value read through 256 boxes is otherwise 256 nested brackets, past
+/// clang's default limit of 256 (D-358).
+const DEREF_NESTING: usize = 16;
 
 fn class_itable_symbol(class: &str) -> String {
     ember_branding::mangled(&format!("itables_{class}"))
@@ -181,6 +186,7 @@ pub fn emit(
         folded_tests: BTreeMap::new(),
         fall_into: None,
         folded_refs: BTreeMap::new(),
+        folded_aggregates: BTreeMap::new(),
         inline_sizes: inline_sizes(bodies),
         inline_bodies: if split { BTreeMap::new() } else { inline_bodies(bodies, types) },
         view_pointers: BTreeMap::new(),
@@ -422,6 +428,10 @@ struct Emitter<'a> {
     /// statement that sets it, by local, with the reference and its type:
     /// written into the call itself (`folded_refs`).
     folded_refs: BTreeMap<usize, (Rvalue, Ty)>,
+    /// `[GRM-39]` (G7-2) — a literal's temporary that the next literal reads
+    /// once, by its literal: written into that literal's field, never
+    /// declared (`foldable_aggregates`).
+    folded_aggregates: BTreeMap<usize, Rvalue>,
     /// `[CG-C-3]` — the bodies the one translation unit gives internal
     /// linkage and `inline` (`inline_bodies`), `true` for those forced
     /// inline; none when relaxed units share the program's bodies
@@ -4212,6 +4222,8 @@ impl Emitter<'_> {
         hidden_tests.extend(self.folded_tests.keys().copied());
         self.folded_refs = if self.for_msvc { folded_refs(body, self.types) } else { BTreeMap::new() };
         hidden_tests.extend(self.folded_refs.keys().copied());
+        self.folded_aggregates = self.foldable_aggregates(body);
+        hidden_tests.extend(self.folded_aggregates.keys().copied());
         self.view_pointers = view_pointers(body, self.types)
             .into_iter()
             .map(|(local, elem)| (local, self.c_type(elem)))
@@ -4626,7 +4638,8 @@ impl Emitter<'_> {
             StmtKind::Assign { place, .. }
                 if place.projection.is_empty()
                     && (self.folded_tests.contains_key(&(place.local.0 as usize))
-                        || self.folded_refs.contains_key(&(place.local.0 as usize))) => {}
+                        || self.folded_refs.contains_key(&(place.local.0 as usize))
+                        || self.folded_aggregates.contains_key(&(place.local.0 as usize))) => {}
             StmtKind::Assign { place, rvalue } => {
                 let ty = self.place_ty(place, body);
                 if self.is_void(ty) {
@@ -7178,6 +7191,7 @@ impl Emitter<'_> {
     fn place_in(&self, place: &Place, body: &Body) -> String {
         let mut out = format!("_{}", place.local.0);
         let mut at = Cursor { ty: body.local(place.local).ty, variant: None };
+        let mut derefs = 0;
         for (position, projection) in place.projection.iter().enumerate() {
             match projection {
                 // A view with a pointer of its own indexes through it.
@@ -7279,9 +7293,12 @@ impl Emitter<'_> {
                             unreachable!("matched a reference above")
                         };
                         out = format!("(*(({}*){out}))", self.c_type(*inner));
+                    } else if derefs >= DEREF_NESTING {
+                        out.push_str("[0]");
                     } else {
                         out = format!("(*{out})");
                     }
+                    derefs += 1;
                 }
                 // A downcast writes nothing on its own; the `Field` after it
                 // names the variant and the member together.
@@ -7694,41 +7711,142 @@ impl Emitter<'_> {
     /// `next` cost 15x the C loop (ADR-106). Not when an operand reads the
     /// local, which the first field written would change.
     fn emit_fields(&mut self, place: &Place, rvalue: &Rvalue, body: &Body) -> bool {
-        let Rvalue::Aggregate { kind, operands } = rvalue else { return false };
         if !place.projection.is_empty()
-            || operands.is_empty()
-            || operands
-                .iter()
-                .any(|operand| matches!(operand, Operand::Copy(read) | Operand::Move(read) if read.local == place.local))
+            || !self.fields_writable(body.local(place.local).ty, rvalue)
+            || reads_local(&self.folded_aggregates, rvalue, place.local)
         {
             return false;
         }
-        let mut prefix = Vec::new();
-        match (kind, self.types.kind(body.local(place.local).ty)) {
-            // A `Box` or `Shared` is a pointer in C, not its fields.
-            (AggregateKind::Struct(id), TyKind::Struct(local))
-                if id == local && self.box_inner_id(*id).is_none() && self.shared_inner_id(*id).is_none() => {}
-            (AggregateKind::Tuple, TyKind::Tuple(_)) => {}
-            (AggregateKind::Enum(id, variant), TyKind::Enum(local)) if id == local => {
-                let def = self.types.enum_def(*id);
-                if def.is_unit_only() || self.types.option_niche(*id).is_some() {
-                    return false;
-                }
-                let tag = def.variants[*variant].discriminant;
-                let lhs = self.place_in(place, body);
-                self.line(&format!("    ({lhs}).tag = {tag};"));
-                prefix.push(Projection::Downcast(*variant));
+        self.write_fields(place, rvalue, body);
+        true
+    }
+
+    /// Whether a literal of `ty` can be written one field at a time: a
+    /// struct (not a `Box` or `Shared`, pointers in C), a tuple, or a payload
+    /// enum without a niche.
+    fn fields_writable(&self, ty: Ty, rvalue: &Rvalue) -> bool {
+        let Rvalue::Aggregate { kind, operands } = rvalue else { return false };
+        if operands.is_empty() {
+            return false;
+        }
+        match (kind, self.types.kind(ty)) {
+            (AggregateKind::Struct(id), TyKind::Struct(local)) => {
+                id == local && self.box_inner_id(*id).is_none() && self.shared_inner_id(*id).is_none()
             }
-            _ => return false,
+            (AggregateKind::Tuple, TyKind::Tuple(_)) => true,
+            (AggregateKind::Enum(id, _), TyKind::Enum(local)) => {
+                id == local && !self.types.enum_def(*id).is_unit_only() && self.types.option_niche(*id).is_none()
+            }
+            _ => false,
+        }
+    }
+
+    /// A literal's fields written into `place` one at a time, the tag first.
+    /// A field whose operand is a folded literal's temporary (G7-2) gets that
+    /// literal's fields, under this one, in its place.
+    fn write_fields(&mut self, place: &Place, rvalue: &Rvalue, body: &Body) {
+        let Rvalue::Aggregate { kind, operands } = rvalue else { return };
+        let mut prefix = place.projection.clone();
+        if let AggregateKind::Enum(id, variant) = kind {
+            let tag = self.types.enum_def(*id).variants[*variant].discriminant;
+            let lhs = self.place_in(place, body);
+            self.line(&format!("    ({lhs}).tag = {tag};"));
+            prefix.push(Projection::Downcast(*variant));
         }
         for (index, operand) in operands.iter().enumerate() {
             let mut projection = prefix.clone();
             projection.push(Projection::Field(index));
-            let field = self.place_in(&Place { local: place.local, projection }, body);
+            let field_place = Place { local: place.local, projection };
+            if let Operand::Copy(read) | Operand::Move(read) = operand
+                && read.projection.is_empty()
+                && let Some(inner) = self.folded_aggregates.get(&(read.local.0 as usize)).cloned()
+            {
+                // The retains its own statement made: a handle it copies.
+                if !body.uncounted_handles.contains(&read.local) {
+                    let mut retains = Vec::new();
+                    self.retain_lines_for_rvalue(&inner, body.local(read.local).ty, body, &mut retains);
+                    for line in retains {
+                        self.line(&format!("    {line}"));
+                    }
+                }
+                self.write_fields(&field_place, &inner, body);
+                continue;
+            }
+            let field = self.place_in(&field_place, body);
             let value = self.operand(operand, body);
             self.line(&format!("    {field} = {value};"));
         }
-        true
+    }
+
+    /// `[GRM-39]` (G7-2) — the literals written straight into the next
+    /// literal's field: a temporary set once, by a literal, in the statement
+    /// just before one that reads it once, by its own literal, both written
+    /// one field at a time (nothing between but the reading literal's other
+    /// such operands). A value nested 256 deep was 256 temporaries of growing
+    /// size in one frame; four of them overflowed a 1 MB stack. A literal
+    /// whose folded operands read the place it writes keeps them.
+    fn foldable_aggregates(&self, body: &Body) -> BTreeMap<usize, Rvalue> {
+        let quiet = |stmt: &Stmt| matches!(stmt.kind, StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop);
+        let mut mentions: BTreeMap<LocalId, usize> = BTreeMap::new();
+        for block in &body.blocks {
+            let mut named = Vec::new();
+            for stmt in block.stmts.iter().filter(|stmt| !quiet(stmt)) {
+                stmt_locals(stmt, &mut named);
+            }
+            terminator_locals(&block.terminator, &mut named);
+            for local in named {
+                *mentions.entry(local).or_default() += 1;
+            }
+        }
+        let mut folded: BTreeMap<usize, Rvalue> = BTreeMap::new();
+        let mut parents: Vec<(LocalId, Rvalue, Vec<usize>)> = Vec::new();
+        for block in &body.blocks {
+            let stmts: Vec<&Stmt> = block.stmts.iter().filter(|stmt| !quiet(stmt)).collect();
+            for (at, stmt) in stmts.iter().enumerate() {
+                let StmtKind::Assign { place, rvalue: rvalue @ Rvalue::Aggregate { operands, .. } } = &stmt.kind else {
+                    continue;
+                };
+                if !place.projection.is_empty() || !self.fields_writable(body.local(place.local).ty, rvalue) {
+                    continue;
+                }
+                let mut children = Vec::new();
+                let mut before = at;
+                while before > 0 {
+                    let StmtKind::Assign { place: built, rvalue: inner @ Rvalue::Aggregate { .. } } = &stmts[before - 1].kind
+                    else {
+                        break;
+                    };
+                    let read_here = operands.iter().any(|operand| {
+                        matches!(operand, Operand::Copy(read) | Operand::Move(read)
+                            if read.local == built.local && read.projection.is_empty())
+                    });
+                    if !built.projection.is_empty()
+                        || !read_here
+                        || body.local(built.local).kind != LocalKind::Temp
+                        || mentions.get(&built.local) != Some(&2)
+                        || !self.fields_writable(body.local(built.local).ty, inner)
+                    {
+                        break;
+                    }
+                    folded.insert(built.local.0 as usize, inner.clone());
+                    children.push(built.local.0 as usize);
+                    before -= 1;
+                }
+                if !children.is_empty() {
+                    parents.push((place.local, rvalue.clone(), children));
+                }
+            }
+        }
+        // A literal that is not itself folded writes its place: its folded
+        // operands may not read that place, or they stay temporaries.
+        for (local, rvalue, children) in parents {
+            if !folded.contains_key(&(local.0 as usize)) && reads_local(&folded, &rvalue, local) {
+                for child in children {
+                    folded.remove(&child);
+                }
+            }
+        }
+        folded
     }
 
     /// One enum value. A unit-only enum is just its discriminant; a payload
@@ -8542,6 +8660,21 @@ fn folded_tests(body: &Body, for_loops: &BTreeMap<usize, ForLoop>, types: &TypeT
         }
     }
     found
+}
+
+/// Whether a literal's operands, or those of a literal folded into it
+/// (`folded`, G7-2), read `local`: the first field written would change what a
+/// later one reads.
+fn reads_local(folded: &BTreeMap<usize, Rvalue>, rvalue: &Rvalue, local: LocalId) -> bool {
+    let Rvalue::Aggregate { operands, .. } = rvalue else { return false };
+    operands.iter().any(|operand| match operand {
+        Operand::Copy(read) | Operand::Move(read) => {
+            read.local == local
+                || (read.projection.is_empty()
+                    && folded.get(&(read.local.0 as usize)).is_some_and(|inner| reads_local(folded, inner, local)))
+        }
+        _ => false,
+    })
 }
 
 /// A reference temporary that a block's last statement sets (`_t = &x`) and
@@ -9475,6 +9608,7 @@ mod string_descriptor_view_parts_tests {
             folded_tests: BTreeMap::new(),
             fall_into: None,
             folded_refs: BTreeMap::new(),
+            folded_aggregates: BTreeMap::new(),
             inline_bodies: BTreeMap::new(),
             inline_sizes: BTreeMap::new(),
             view_pointers: BTreeMap::new(),

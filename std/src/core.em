@@ -1120,7 +1120,10 @@ extend[T: Integer] RangeInclusiveIter[T] implements ExactSizeIterator:
     fn len(self) -> int:
         if self.done:
             return 0
-        return self.at.distance_to(self.end) + 1
+        gap = self.at.distance_to(self.end)
+        if gap == 9223372036854775807:
+            panic("a range of more than int.MAX values has no length")
+        return gap + 1
 
 ## The values from `at` on; stepping past the type's top panics, as a `for`
 ## over `a..` does (`[CTL-3]`).
@@ -1665,7 +1668,12 @@ extend i64 implements Integer:
         return self - 1
 
     fn distance_to(self, end: i64) -> int:
-        return (end - self) as int
+        # G8-4 — counted in i128, so a gap past int.MAX is this panic, not an
+        # overflow of the subtraction.
+        gap = (end as i128) - (self as i128)
+        if gap > 9223372036854775807:
+            panic("a range of more than int.MAX values has no length")
+        return gap as int
 
 extend i128 implements Integer:
     fn successor(self) -> i128:
@@ -1688,7 +1696,10 @@ extend isize implements Integer:
         return self - 1
 
     fn distance_to(self, end: isize) -> int:
-        return (end - self) as int
+        gap = (end as i128) - (self as i128)
+        if gap > 9223372036854775807:
+            panic("a range of more than int.MAX values has no length")
+        return gap as int
 
 extend u8 implements Integer:
     fn successor(self) -> u8:

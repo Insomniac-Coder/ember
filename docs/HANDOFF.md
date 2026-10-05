@@ -10736,9 +10736,18 @@ anything needs a review just note it down and ask me about a workflow later".
   that hold other loops, under every condition of `[EXC-9]`; holding an access longer can turn a
   program that runs into one that panics, so it is soundness work to design with a review.
   And ADR-134 (D-460): a receiver's borrow changed from a temporary copy to the local itself,
-  which decides what a view keeps alive.
+  which decides what a view keeps alive. And D-467's interface half: an interface call's view
+  result still holds the whole object; the fix (a per-class accessor in each interface table that
+  begins exactly what that class's implementation borrows) decides what exclusivity checks, so a
+  mistake lets a write free what a view points into.
 * **To ask the owner:** D-498 (above): the multiply guard now and the placement accepted, or the
-  character loop's layout first.
+  character loop's layout first. G7-5 (the second review): a `void` struct member is a byte in C
+  (ADR-062), so `struct {u: void, n: int}` is 16 bytes where `[TYP-1]`/`[TYP-11]` give 8: make
+  `void` members zero-sized (every struct, tuple and payload field walk in the C backend skips
+  them; a struct of only `void` fields keeps C's one byte), or rule in the spec that a `void`
+  member takes a byte. And G8-4's rest: a range longer than `int.MAX` has no `len`, so its
+  adapters panic where the fused `for` runs: rule that such ranges are not `ExactSizeIterator`, or
+  that the fused loop checks the same way.
 * **Open:** D-498, D-487; `lines()` with MSVC about 4% slower than the published compiler from
   its loop's placement (ADR-125).
 * **Committed `50c8389`:** D-502 (ADR-126): the runtime no longer makes every Linux program load
@@ -10805,8 +10814,47 @@ anything needs a review just note it down and ask me about a workflow later".
 * **Then D-460** (ADR-134): a base class's view getter called on a derived local borrows the
   local (it was `E3060`); every borrowed class upcast is a base-typed copy in C, so inherited
   `mut self` calls no longer reinterpret a `Derived**` as a `Base**`.
-* **Next:** the speed leads above (the `push` temporary, clang's `p4` placement, the Sync stores
-  with clang), then OPT-1 (stack promotion, a MAY). EXC-10 waits for the review workflow (above).
+* **Batch 1 under the ten-task cadence** (ADR-135): `--timings` (`[BLD-9]`, which had not been
+  built); D-511 (G7-3, 256 dereferences as `p[0]`), D-512 (G8-4's message), D-513 (G7-2, nested
+  literals written in place: eight 256-deep literals run in debug); G7-4 resolved earlier (D-474,
+  D-476: 1.06 s and 0.61 s now); D-448 closed (no longer reproduces). G7-5 (a `void` struct member
+  is a byte, against `[TYP-1]`/`[TYP-11]`) is for the owner (below); D-466's rest (a temporary
+  named `_3`) needs the source map in the borrow checker or a field on 54 local constructions, so
+  it waits.
+* **Next, the owner's priority (2026-10-05): a compile cache for built programs**, so the suites
+  (local and CI) stop recompiling test programs whose C did not change; it also cuts the heat that
+  forced the cooldowns. Design: in `ember_build`'s `compile_and_link` (so `ember build` and `run`
+  gain too), key each output by a hash of every input: the C sources' bytes, the runtime header
+  and runtime object (or its existing cache key), the compiler file (path, size, modification
+  time, as the linker probe's cache does), every flag, the output kind, and the variables the C
+  compilers read (`INCLUDE`, `LIB`, `LIBPATH`; `CPATH`, `LIBRARY_PATH`, `COMPILER_PATH`); store the
+  linked output under the build cache root (`programs/<key>/`), written whole or not at all
+  (`write_atomically`); on a hit copy it to the requested path and run no compiler; cap the
+  directory's size, oldest out first; `EMBER_NO_COMPILE_CACHE=1` turns it off; nothing is kept
+  from a failed compile. Tests with a logging fake compiler (as
+  `the_linker_probe_is_cached_until_the_linker_changes`): one compile, then none for the same
+  inputs, and a compile again when the C, a flag, the runtime header or the compiler file changes;
+  the cached output byte for byte the fresh one. Then measure the MSVC suite before and after.
+  **Corrected the same morning:** hashing the include directories is not enough. C files include
+  others by relative path (`runtime/ember_rt/tests/allocator_rounding.c` includes
+  `../src/ember_rt.c`; the driver's fixtures include `program.c` and the runtime source), so such a
+  key could serve a stale program. So: the key covers the command (without its outputs), the
+  sources by content, the variables and the include directories' listings; the files a compile
+  actually read come from the compiler itself (`/showIncludes`, `-H`) into a manifest, checked by
+  hash on every lookup (ccache's direct mode); nothing is kept if one changed during the compile.
+  This is ADR-136, in progress.
+* **Then:** D-514 (MSVC's `/O2` does not finish a value 256 boxes deep; older than this batch),
+  then clang's `p4` placement (above), then OPT-1 (stack promotion, a MAY). EXC-10 and D-467's
+  interface half wait for the review workflow (above).
+* **Heat strategy (owner, 2026-10-05, brainstorm):** the 10-minute cooldowns take about 70% of a
+  batch's validation time. Agreed: the compile cache first (above). The owner enabled HWiNFO64's
+  gadget reporting (CPU Package, Core Max): live temperatures in `HKCU\Software\HWiNFO64\VSB`
+  (`ValueRaw0`, `ValueRaw1`), read 79 °C during the gates run. Proposed, waiting for the owner:
+  start a run once the package is at or under 60 °C for 30 s (3 to 10 minutes after the last),
+  log each run's peak and its seconds above 95 °C, fewer threads after a minute above. Offered, waiting for the owner's go: validate on a `phase-*`
+  branch, which CI already runs (free: the repository is public), and fast-forward `main` when
+  green, so the local clang and WSL suites can go; and pinning test runs to the 16 efficiency
+  cores (benchmarks keep the performance cores).
 * **Tools for this work** (session scratchpad, see the 2026-10-02 bullet below for the rest):
   `ab_variants.py <experiment> <cc> <runs> <log> <programs>` builds every program with several
   compiler trees and times them interleaved; `wsl/ab_gcc.py` does it for gcc in WSL (`~/ab-old`,
@@ -12106,7 +12154,7 @@ README timing values and benchmark assets are unchanged.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h52/` are frozen.
-* **Next numbers:** ODR-099, D-511, ADR-135, ERR-056 (D-498 OPEN).
+* **Next numbers:** ODR-099, D-515, ADR-136, ERR-056 (D-498, D-514 OPEN).
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's
