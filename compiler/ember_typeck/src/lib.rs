@@ -339,6 +339,28 @@ fn root_qualified(name: Symbol) -> Symbol {
     if COMPILER_KNOWN_TYPES.contains(&name.as_str()) { Symbol::intern(&format!("root.{name}")) } else { name }
 }
 
+/// G8-4, `[STD-19]` — how a hidden count type is made from two others: a
+/// `chain`'s count steps up a level from its sides', `flatten`'s holds their
+/// product, and the numbers of either hold the items they number. Written in
+/// std as `CountSum[A, B]`, `CountProduct[A, B]`, `PositionJoin[A, B]` and
+/// `PositionOf[A]`; where `A` and `B` are known it is a type at once, and
+/// where they are a generic body's it is a hidden parameter the uses fill in.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum CountOp {
+    /// `int` and `int` stay `int` (stored items and small ranges cannot come
+    /// near its top); otherwise one level above the wider side's, `u64` ->
+    /// `u128` -> `u256`, the limit.
+    Sum,
+    /// `int` and `int` stay `int`; otherwise the level that holds every
+    /// product of the two (`u64` by `u64` is a `u128`), `u256` the limit.
+    Product,
+    /// The signed type holding both sides' numbers: `int`, `i128`, `i256`.
+    Join,
+    /// The signed type numbering a count of `A`'s type: `int` for `int`,
+    /// `i128` for `u64`, `i256` above.
+    PositionOf,
+}
+
 /// One declared type parameter and what it is allowed to do.
 #[derive(Clone)]
 struct GenericParam {
@@ -362,6 +384,10 @@ struct GenericParam {
     /// type `Name` of the parameter at this index. Each call fills it in from
     /// what the argument's type says `Name` is (`type Real = f64`).
     projection: Option<(u32, Symbol)>,
+    /// G8-4 — a hidden parameter standing for a count recipe over two other
+    /// types of the same list (`CountSum[I.Count, J.Count]`), which each use
+    /// fills in from what those two are.
+    count_op: Option<(CountOp, Ty, Ty)>,
     /// `[TYP-17]` — a bound's associated-type binding, `T: Add[Output = T]`:
     /// the bound's interface instance, the associated type's name, and the
     /// type the bound says it is. Inside the body `a + b` is then a `T`.
@@ -454,7 +480,8 @@ enum FusedLink {
     Take(Expr),
     Skip(Expr),
     StepBy(Expr),
-    Enumerate(Expr),
+    /// The start, and the position type the numbers are in (G8-4).
+    Enumerate(Expr, Ty),
     Zip(FusedChain),
     Copied,
     /// ODR-091 — the items below, last first.
@@ -491,8 +518,10 @@ enum FusedNodeKind {
     View { xs: LocalId, span_ty: Ty, elem: Ty, mutable: bool, cursor: Option<LocalId> },
     /// The `index`th value from `at`.
     Range { at: LocalId, bound: Ty },
-    /// `enumerate`'s number, `start + index`.
-    Counter { start: LocalId },
+    /// `enumerate`'s number, `start + index`, in the iterator's position
+    /// type `pos` (G8-4): an `int`, or an `i128` for a range of 64-bit
+    /// numbers, which every such number fits.
+    Counter { start: LocalId, pos: Ty },
 }
 
 #[derive(Clone, Copy)]
@@ -1257,6 +1286,11 @@ struct Checker<'a> {
     /// `[IFC-4]` — while a signature is read, the hidden parameter each
     /// `T.Name` it mentions stands for.
     projection_params: HashMap<(Symbol, Symbol), Ty>,
+    /// G8-4 — the count recipes of the generic block being collected, each
+    /// its hidden parameter there (`count_op_type`).
+    count_op_params: HashMap<(CountOp, Ty, Ty), Ty>,
+    /// G8-4 — while a block's recipes are declared: they are recorded.
+    declaring_count_ops: bool,
     /// D-345 — whether `project` may make a hidden parameter for a `T.Name`
     /// a body reaches through a bound. An operator's result does not take
     /// one: `[IFC-4]` makes an unsaid `Output` `E2040` at the operator.
@@ -1659,6 +1693,8 @@ impl<'a> Checker<'a> {
             block_interfaces: Vec::new(),
             accept_bindings: false,
             projection_params: HashMap::new(),
+            count_op_params: HashMap::new(),
+            declaring_count_ops: false,
             no_lazy_projection: false,
             instances: HashMap::new(),
             generic_of: HashMap::new(),
@@ -2471,7 +2507,7 @@ impl<'a> Checker<'a> {
                 }
             }
             let default = param.default.as_ref().map(|default| self.resolve_type(default));
-            declared.push(GenericParam { name: param.name.name, bounds, callable: None, default, projection: None, bindings });
+            declared.push(GenericParam { name: param.name.name, bounds, callable: None, default, projection: None, count_op: None, bindings });
         }
         // `[GRM-8c]` — a binding may name another parameter's associated
         // type (`J: Iterator[Item = I.Item]`, `[STD-19]`'s `chain`): each
@@ -2624,6 +2660,7 @@ impl<'a> Checker<'a> {
             callable: Some(bound),
             default: None,
             projection: None,
+            count_op: None,
             bindings: Vec::new(),
         });
         param_ty
@@ -3596,6 +3633,36 @@ impl<'a> Checker<'a> {
         None
     }
 
+    /// G8-4 — the bounds of the type parameter `name` at `index` in this
+    /// body. A hidden one (`I.Count`) made while another list of parameters
+    /// was current (an instance's, applied in a call) is not at `index`
+    /// here: its bounds are what its base's bounds declare of the
+    /// associated type (`Iterator`'s `Count: ItemCount`).
+    fn generic_bounds(&self, index: u32, name: Symbol) -> Vec<Symbol> {
+        match self.current_generics.get(index as usize) {
+            Some(param) if param.name == name => return param.bounds.clone(),
+            None if !name.as_str().contains('.') => return Vec::new(),
+            _ => {}
+        }
+        if let Some(param) = self.current_generics.iter().find(|param| param.name == name) {
+            return param.bounds.clone();
+        }
+        // G8-4 — a count recipe (`(I.Count + J.Count)`) is an `ItemCount`.
+        if name.as_str().starts_with('(') {
+            return self.count_bounds();
+        }
+        let Some((base, assoc)) = name.as_str().rsplit_once('.') else {
+            return self.current_generics.get(index as usize).map(|param| param.bounds.clone()).unwrap_or_default();
+        };
+        let base = Symbol::intern(base);
+        let base_bounds = match self.current_generics.iter().position(|param| param.name == base) {
+            Some(at) => self.generic_bounds(at as u32, base),
+            None => self.generic_bounds(u32::MAX, base),
+        };
+        let assoc = Symbol::intern(assoc);
+        base_bounds.iter().find_map(|&bound| self.assoc_bounds_of(bound, assoc)).unwrap_or_default()
+    }
+
     /// D-407 — a hidden parameter's bounds, where its interface was not yet
     /// collected when it was declared: as the base's bound declares the
     /// associated type. In order, so a chain's base is closed first.
@@ -3998,6 +4065,7 @@ impl<'a> Checker<'a> {
             // read the field as its own `U.Iter`, bounded as declared.
             if decl.blanket.is_empty() {
                 self.declare_target_projections(name, &target_args, &mut params, decl.target.span);
+                self.declare_count_ops(decl, &mut params);
             }
             let mut methods = Vec::new();
             for (member_index, member) in decl.members.iter().enumerate() {
@@ -4059,6 +4127,7 @@ impl<'a> Checker<'a> {
             }
             self.type_params.clear();
             self.projection_params.clear();
+            self.count_op_params.clear();
             let interfaces: Vec<Symbol> =
                 decl.implements.iter().filter_map(interface_name).map(|name| self.resolve_name(name)).collect();
             let interface = interfaces.first().copied();
@@ -4925,7 +4994,7 @@ impl<'a> Checker<'a> {
             }
             let owner_params =
                 std::mem::replace(&mut self.type_params, bindings.iter().copied().collect());
-            let implementations = self.register_instantiated_implements(
+            let implementations = self.collect_instantiated_implements(
                 ty,
                 &extension.implements,
                 extension.span,
@@ -4933,6 +5002,17 @@ impl<'a> Checker<'a> {
             );
             self.type_params = owner_params;
             self.record_extension_assoc(ty, &extension, &bindings, &implementations);
+            // ODR-049, G8-4 — the defaults are copied once this instance's
+            // associated types are known, the ones it leaves to the
+            // interface's default filled first: a copy made before kept
+            // `n: Count` as `Self.Count` where its body's `Count.of(0)` was
+            // the default (`ArrayIntoIter[T]`'s `skip_front`).
+            for &(implemented, interface, _) in &implementations {
+                let saved_instance = self.assoc_instance.replace(interface);
+                self.fill_assoc_defaults(implemented, interface);
+                self.assoc_instance = saved_instance;
+            }
+            self.register_instantiated_defaults(ty, &implementations);
             for (implemented_ty, interface, interface_span) in implementations {
                 self.check_implementation(implemented_ty, interface, interface_span);
             }
@@ -4954,6 +5034,13 @@ impl<'a> Checker<'a> {
         bindings: &mut Vec<(Symbol, Ty)>,
     ) -> Vec<Option<Symbol>> {
         for param in &extension.params[bindings.len().min(extension.params.len())..] {
+            if let Some((op, a, b)) = param.count_op {
+                let args: Vec<Ty> = bindings.iter().map(|&(_, arg)| arg).collect();
+                let (a, b) = (self.substitute_ty(a, &args), self.substitute_ty(b, &args));
+                let value = self.count_op_type(op, a, b);
+                bindings.push((param.name, value));
+                continue;
+            }
             let Some((base, assoc)) = param.projection else { continue };
             let arg = bindings.get(base as usize).map(|&(_, arg)| arg);
             let value = arg.and_then(|arg| self.project(arg, assoc)).unwrap_or(self.common.error);
@@ -5052,6 +5139,7 @@ impl<'a> Checker<'a> {
                 callable: None,
                 default: None,
                 projection: None,
+                count_op: None,
                 bindings: Vec::new(),
             })
             .collect()
@@ -5233,7 +5321,7 @@ impl<'a> Checker<'a> {
         }
         // The written parameters; the hidden ones for `P.Name` follow them
         // and are bound when the extension is applied (D-380).
-        let written = extension.params.iter().take_while(|param| param.projection.is_none()).count();
+        let written = extension.params.iter().take_while(|param| param.projection.is_none() && param.count_op.is_none()).count();
         let mut bindings = vec![None; written];
         for (&pattern, &actual) in extension.target_args.iter().zip(args) {
             if !self.match_generic_extension_type(pattern, actual, &mut bindings) {
@@ -5263,10 +5351,16 @@ impl<'a> Checker<'a> {
         extension: &GenericExtension,
         args: &[Ty],
     ) -> bool {
+        // G8-4 — a hidden parameter's bounds (`I.Count: ItemCount`) are what
+        // the interface declares of the associated type, met by every type
+        // its base's bound admits: asked of an opaque `I.Count` made in
+        // another generic body, they would be read against that body's
+        // parameters.
         extension
             .params
             .iter()
             .zip(args)
+            .filter(|(param, _)| param.projection.is_none() && param.count_op.is_none())
             .all(|(param, &arg)| param.bounds.iter().all(|&bound| self.implements(arg, bound)))
     }
 
@@ -7076,6 +7170,14 @@ impl<'a> Checker<'a> {
             if self.is_opaque_instance(ty) && self.types.is_generic(value) {
                 continue;
             }
+            // G8-4 — an instance made while the declarations are still read
+            // (a generic extension's signature names `ArrayIntoIter[T]`) is
+            // checked again by `check_implementations` once every
+            // implementation is known; asked now, `i64: ItemCount`, written
+            // in an `extend` not read yet, would be missing.
+            if !self.bounds_known {
+                continue;
+            }
             for bound in bounds {
                 if !self.implements(value, bound) {
                     let value_shown = self.types.display(value);
@@ -7092,7 +7194,7 @@ impl<'a> Checker<'a> {
         // `implements`, or by what the compiler provides (a struct's implicit
         // `Eq`, `[STR-5]`).
         for parent in supertraits {
-            if self.implements(ty, parent) {
+            if !self.bounds_known || self.implements(ty, parent) {
                 continue;
             }
             let shown = self.types.display(ty);
@@ -7245,7 +7347,7 @@ impl<'a> Checker<'a> {
                     let expected = self.substitute_self(expected, owner);
                     let expected = self.resolve_assoc(expected, owner);
                     let actual = self.substitute_ty(actual.ty, &actual_canonical);
-                    if expected != actual {
+                    if !self.same_across_blocks(owner, expected, actual) {
                         return false;
                     }
                 }
@@ -7253,7 +7355,7 @@ impl<'a> Checker<'a> {
                 let expected_ret = self.substitute_self(expected_ret, owner);
                 let expected_ret = self.resolve_assoc(expected_ret, owner);
                 let actual_ret = self.substitute_ty(actual.ret, &actual_canonical);
-                if expected_ret != actual_ret {
+                if !self.same_across_blocks(owner, expected_ret, actual_ret) {
                     return false;
                 }
             }
@@ -7292,7 +7394,7 @@ impl<'a> Checker<'a> {
             let expected = self.substitute_self(expected, owner);
             let expected = self.resolve_assoc(expected, owner);
             let actual = self.substitute_ty(actual, &actual_canonical);
-            if expected != actual || expected_mode != actual_mode {
+            if !self.same_across_blocks(owner, expected, actual) || expected_mode != actual_mode {
                 return false;
             }
         }
@@ -7300,7 +7402,32 @@ impl<'a> Checker<'a> {
         let expected_ret = self.substitute_self(expected_ret, owner);
         let expected_ret = self.resolve_assoc(expected_ret, owner);
         let actual_ret = self.substitute_ty(actual_ret, &actual_canonical);
-        expected_ret == actual_ret
+        self.same_across_blocks(owner, expected_ret, actual_ret)
+    }
+
+    /// `[IFC-4]` — `a` and `b` are one type for `owner`'s implementation,
+    /// where a hidden parameter one of its generic blocks made (`I.Count`) is
+    /// the one of the same name another made: each block numbers its own, so
+    /// `Take[I]`'s `Count`, read from its `Iterator` block, is that block's
+    /// `I.Count`, and its `ExactSizeIterator` block's `len` gives its own.
+    /// Only a projection of one of `owner`'s parameters is matched by name.
+    fn same_across_blocks(&self, owner: Ty, a: Ty, b: Ty) -> bool {
+        if a == b {
+            return true;
+        }
+        if let (&TyKind::Param { name: x, .. }, &TyKind::Param { name: y, .. }) = (self.types.kind(a), self.types.kind(b)) {
+            let owners = self.ty_shape(owner).1;
+            return x == y
+                && (x.as_str().starts_with('(') || x.as_str().split_once('.').is_some_and(|(base, _)| {
+                    owners.iter().any(|&arg| matches!(*self.types.kind(arg), TyKind::Param { name, .. } if name.as_str() == base))
+                }));
+        }
+        let (shape_a, args_a) = self.ty_shape(a);
+        let (shape_b, args_b) = self.ty_shape(b);
+        !matches!(shape_a, TyShape::Leaf(_))
+            && shape_a == shape_b
+            && args_a.len() == args_b.len()
+            && args_a.iter().zip(&args_b).all(|(&x, &y)| self.same_across_blocks(owner, x, y))
     }
 
     /// Register one method per (implementing type, defaulted interface method)
@@ -7311,6 +7438,14 @@ impl<'a> Checker<'a> {
             let ast::ItemKind::Interface(decl) = &item.kind else { continue };
             let interface = self.qualified(decl.name.name);
             for (ty, _, _) in implementations.iter().filter(|(_, i, _)| *i == interface) {
+                // ODR-049 — an associated type this implementation leaves to
+                // the interface's default is that default in its copies'
+                // signatures too: filled now, before they are made, not when
+                // the implementation is checked, after (a copy's `-> Count`
+                // stayed `Self.Count` where its body's calls were the default).
+                let saved_instance = self.assoc_instance.replace(interface);
+                self.fill_assoc_defaults(*ty, interface);
+                self.assoc_instance = saved_instance;
                 for (member_index, member) in decl.members.iter().enumerate() {
                     let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
                     if fn_decl.body.is_none() {
@@ -7642,13 +7777,25 @@ impl<'a> Checker<'a> {
         span: Span,
         module: usize,
     ) -> Vec<(Ty, Symbol, Span)> {
+        let implementations = self.collect_instantiated_implements(ty, implements, span, module);
+        self.register_instantiated_defaults(ty, &implementations);
+        implementations
+    }
+
+    /// The implementations an instance's `implements` list names, recorded,
+    /// without their defaults' copies.
+    fn collect_instantiated_implements(
+        &mut self,
+        ty: Ty,
+        implements: &[ast::TypeExpr],
+        span: Span,
+        module: usize,
+    ) -> Vec<(Ty, Symbol, Span)> {
         let previous_module = std::mem::replace(&mut self.current_module, module);
         let implemented_at = self.implemented.len();
         self.collect_implements(ty, implements, &[], span);
         self.current_module = previous_module;
-        let implementations = self.implemented[implemented_at..].to_vec();
-        self.register_instantiated_defaults(ty, &implementations);
-        implementations
+        self.implemented[implemented_at..].to_vec()
     }
 
     fn collect_interface(
@@ -9693,6 +9840,16 @@ impl<'a> Checker<'a> {
                 return self.instantiate_class(resolved_name, &decl, &resolved, span);
             }
         }
+        // G8-4 — std's count recipes.
+        if let Some(op) = self.count_op_named(name) {
+            let arity = if op == CountOp::PositionOf { 1 } else { 2 };
+            if !require(self, arity) {
+                return self.common.error;
+            }
+            let a = args[0].0;
+            let b = args.get(1).map_or(a, |&(ty, _)| ty);
+            return self.count_op_type(op, a, b);
+        }
         // Compiler-known generic types share ordinary type-application
         // semantics; only their representation and invariants are special.
         if name.is("Span") || name.is("MutSpan") {
@@ -10904,7 +11061,8 @@ impl<'a> Checker<'a> {
             .iter()
             .map(|&(instance, name, value)| (self.substitute_bound(instance, args), name, self.substitute_ty(value, args)))
             .collect();
-        GenericParam { name: param.name, bounds, callable, default, projection: param.projection, bindings }
+        let count_op = param.count_op.map(|(op, a, b)| (op, self.substitute_ty(a, args), self.substitute_ty(b, args)));
+        GenericParam { name: param.name, bounds, callable, default, projection: param.projection, count_op, bindings }
     }
 
     /// A parameter that neither an explicit argument nor inference fixed takes
@@ -13105,6 +13263,9 @@ impl<'a> Checker<'a> {
             // the default integer and the size and index type.
             "int" => c.i64,
             "i128" => c.i128,
+            // G8-4 — the 256-bit count (`[STD-19]`).
+            "i256" => c.i256,
+            "u256" => c.u256,
             "isize" => c.isize,
             "u8" => c.u8,
             "u16" => c.u16,
@@ -14842,7 +15003,7 @@ impl<'a> Checker<'a> {
             let self_name = Symbol::intern("Self");
             let opaque_self = self.types.intern(TyKind::Param { index: self_index as u32, name: self_name });
             let mut self_param =
-                GenericParam { name: self_name, bounds: vec![bound], callable: None, default: None, projection: None, bindings: Vec::new() };
+                GenericParam { name: self_name, bounds: vec![bound], callable: None, default: None, projection: None, count_op: None, bindings: Vec::new() };
             self.close_bounds(&mut self_param.bounds, &mut self_param.bindings);
             let saved_self = self.self_ty.replace(opaque_self);
             let saved_params = std::mem::take(&mut self.type_params);
@@ -17687,13 +17848,19 @@ impl<'a> Checker<'a> {
             self.sink.emit(diagnostic);
             return None;
         }
-        Some(self.integer_as_usize(index))
+        Some(self.integer_as_usize_for(index, true))
     }
 
     /// `[TYP-31]` (0.9.9) — an index or a size of any integer type, as the
     /// `usize` the runtime keeps. A signed value is converted with `as`'s
     /// wrap, so a negative one is past every length.
     fn integer_as_usize(&mut self, index: &ast::Expr) -> Expr {
+        self.integer_as_usize_for(index, false)
+    }
+
+    /// `integer_as_usize`, saying whether the value is an index, for the
+    /// panic of one wider than `usize` that it does not hold.
+    fn integer_as_usize_for(&mut self, index: &ast::Expr, is_index: bool) -> Expr {
         let usize_ty = self.common.usize;
         let found = self.synth(index);
         if self.types.is_untyped_literal(found.ty) || found.ty == self.common.error {
@@ -17708,7 +17875,58 @@ impl<'a> Checker<'a> {
             return found;
         }
         let span = found.span;
-        Expr { ty: usize_ty, kind: ExprKind::Cast { expr: Box::new(found), to: usize_ty }, span }
+        let ty = found.ty;
+        let wider = ember_types::bit_width(&self.types, ty).zip(ember_types::bit_width(&self.types, usize_ty));
+        if !wider.is_some_and(|(bits, size)| bits > size) {
+            return Expr { ty: usize_ty, kind: ExprKind::Cast { expr: Box::new(found), to: usize_ty }, span };
+        }
+        // `[TYP-31]` (D-527) — a value wider than `usize` (`i128`, `u128`, the
+        // 256-bit counts) is converted only once `usize` holds it (or, below
+        // zero, `isize`, so a negative index still wraps past every length and
+        // is printed back with the length): `as` kept its low bits, so
+        // `xs[2^64 + 1]` read `xs[1]`. One that does not fit is past every
+        // length, so as an index it is out of bounds.
+        let bool_ty = self.common.bool_;
+        let source = self.declare(None, ty, span);
+        let local = || Expr { ty, kind: ExprKind::Local(source), span };
+        let binary = |op, lhs, rhs| Expr { ty: bool_ty, kind: ExprKind::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) }, span };
+        let top = ember_types::int_max(&self.types, usize_ty).unwrap_or(u64::MAX as u128);
+        let mut outside = binary(BinOp::Gt, local(), Expr { ty, kind: ExprKind::Int(top), span });
+        if matches!(self.types.kind(ty), TyKind::Int(_)) {
+            let least = top / 2 + 1;
+            let least = Expr {
+                ty,
+                kind: ExprKind::Unary { op: UnOp::Neg, operand: Box::new(Expr { ty, kind: ExprKind::Int(least), span }) },
+                span,
+            };
+            outside = binary(BinOp::Or, binary(BinOp::Lt, local(), least), outside);
+        }
+        let (before, after) = if is_index { ("index ", " is out of bounds") } else { ("size ", " is negative or too large") };
+        let parts = vec![
+            hir::FStringPart::Text(before.to_string()),
+            hir::FStringPart::Value(local(), None),
+            hir::FStringPart::Text(after.to_string()),
+        ];
+        let string_ty = self.common.string;
+        let buffer_ref = self.types.intern(TyKind::Ref { mutable: true, inner: string_ty });
+        let text = Expr { ty: string_ty, kind: ExprKind::FString { parts, buffer_ref }, span };
+        let str_ty = self.common.str_;
+        let text = self.coerce(text, str_ty);
+        let panic = Expr { ty: self.common.never, kind: ExprKind::Builtin { which: Builtin::Panic, args: vec![text] }, span };
+        Expr {
+            ty: usize_ty,
+            kind: ExprKind::Block {
+                block: Block {
+                    stmts: vec![
+                        Stmt::Let { local: source, init: Some(found) },
+                        Stmt::If { cond: outside, then_block: Block { stmts: vec![Stmt::Expr(panic)], span }, else_block: None },
+                    ],
+                    span,
+                },
+                value: Box::new(Expr { ty: usize_ty, kind: ExprKind::Cast { expr: Box::new(local()), to: usize_ty }, span }),
+            },
+            span,
+        }
     }
 
     /// `[TXT-11]` (ODR-098) — keep the original integer until its conversion
@@ -18038,6 +18256,18 @@ impl<'a> Checker<'a> {
         let (kind, bounds): (hir::ParseKind, Vec<Expr>) = match *self.types.kind(target) {
             TyKind::Int(ember_types::IntTy::I128) => (hir::ParseKind::I128, Vec::new()),
             TyKind::Uint(UintTy::U128) => (hir::ParseKind::U128, Vec::new()),
+            // G8-4 — the 256-bit counts only count (`[TYP-42]`); a `u256`
+            // read as a `u64` stopped at `u64.MAX`, and an `i256` stopped the
+            // compiler (its least value shifted out of 128 bits).
+            TyKind::Int(ember_types::IntTy::I256) | TyKind::Uint(UintTy::U256) => {
+                let shown = self.types.display(target);
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`parse` does not read `{shown}`: the 256-bit counts only count; read an `i128` or a `u128` and convert it with `as`"),
+                );
+                return error;
+            }
             TyKind::Int(_) => {
                 let bits = ember_types::bit_width(&self.types, target).unwrap_or(64);
                 let max = (1u128 << (bits - 1)) - 1;
@@ -19563,6 +19793,9 @@ impl<'a> Checker<'a> {
             self.error(codes::E2020, span, format!("cannot count over `{shown}`"));
             return None;
         }
+        if self.refuse_range_of_count(start.ty, span) {
+            return None;
+        }
         let incoming_class_init = self.class_init.clone();
 
         // The loop variable is the counter, so it is in scope for the body
@@ -19583,29 +19816,62 @@ impl<'a> Checker<'a> {
         }
         let else_block = else_block.as_ref().map(|b| self.check_block(b));
         let Some(end) = end else {
+            // `[CTL-3]`, ODR-027 (D-526) — `a..` gives its type's top too, and
+            // only the value after it is the overflow (`[TYP-8]`), as producing
+            // it would be: the counter steps when it is read unless it is the
+            // top, and the step past the top is made, and panics, when another
+            // value is asked for. Stepping before the body panicked as the top
+            // itself was given, so `for i in 250 as u8 ..` never reached 255.
             let ty = start.ty;
-            let next = self.declare(None, ty, span);
-            let read = |ty| Expr { ty, kind: ExprKind::Local(next), span };
-            let mut stmts = vec![
-                Stmt::Let { local, init: Some(read(ty)) },
-                Stmt::Assign {
-                    place: read(ty),
-                    value: Expr {
-                        ty,
-                        kind: ExprKind::Binary {
-                            op: BinOp::Add,
-                            lhs: Box::new(read(ty)),
-                            rhs: Box::new(Expr { ty, kind: ExprKind::Int(1), span }),
-                        },
-                        span,
-                    },
-                },
-            ];
-            stmts.extend(body.stmts);
             let bool_ty = self.common.bool_;
+            let next = self.declare(None, ty, span);
+            let last = self.declare(None, bool_ty, span);
+            let read = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+            let step = || Stmt::Assign {
+                place: read(next, ty),
+                value: Expr {
+                    ty,
+                    kind: ExprKind::Binary {
+                        op: BinOp::Add,
+                        lhs: Box::new(read(next, ty)),
+                        rhs: Box::new(Expr { ty, kind: ExprKind::Int(1), span }),
+                    },
+                    span,
+                },
+            };
+            let mut stmts = match int_max(self.types, ty) {
+                Some(top) => vec![
+                    Stmt::If {
+                        cond: read(last, bool_ty),
+                        then_block: Block { stmts: vec![step()], span },
+                        else_block: None,
+                    },
+                    Stmt::Let { local, init: Some(read(next, ty)) },
+                    Stmt::Assign {
+                        place: read(last, bool_ty),
+                        value: Expr {
+                            ty: bool_ty,
+                            kind: ExprKind::Binary {
+                                op: BinOp::Eq,
+                                lhs: Box::new(read(next, ty)),
+                                rhs: Box::new(Expr { ty, kind: ExprKind::Int(top), span }),
+                            },
+                            span,
+                        },
+                    },
+                    Stmt::If {
+                        cond: Expr { ty: bool_ty, kind: ExprKind::Unary { op: UnOp::Not, operand: Box::new(read(last, bool_ty)) }, span },
+                        then_block: Block { stmts: vec![step()], span },
+                        else_block: None,
+                    },
+                ],
+                None => vec![Stmt::Let { local, init: Some(read(next, ty)) }, step()],
+            };
+            stmts.extend(body.stmts);
             return Some(Stmt::Block(Block {
                 stmts: vec![
                     Stmt::Let { local: next, init: Some(start) },
+                    Stmt::Let { local: last, init: Some(Expr { ty: bool_ty, kind: ExprKind::Bool(false), span }) },
                     Stmt::While {
                         cond: Expr { ty: bool_ty, kind: ExprKind::Bool(true), span },
                         body: Block { stmts, span: body.span },
@@ -19795,101 +20061,12 @@ impl<'a> Checker<'a> {
             }
             return error;
         }
-        let (usize_ty, int_ty, bool_ty) = (self.common.usize, self.common.i64, self.common.bool_);
-        let (range_ty, range_span) = (range.ty, range.span);
-        let r = self.declare(None, range_ty, range_span);
-        let n = self.declare(None, usize_ty, span);
-        let field = |index| Expr {
-            ty: bound,
-            kind: ExprKind::Field {
-                base: Box::new(Expr { ty: range_ty, kind: ExprKind::Local(r), span: range_span }),
-                index,
-            },
-            span,
-        };
-        let count = || Expr { ty: usize_ty, kind: ExprKind::Local(n), span };
-        let mut stmts = vec![
-            Stmt::Let { local: r, init: Some(range) },
-            Stmt::Let {
-                local: n,
-                init: Some(Expr {
-                    ty: usize_ty,
-                    kind: ExprKind::Builtin {
-                        which: Builtin::RangeCount,
-                        args: vec![field(0), field(1), Expr { ty: bound, kind: ExprKind::Int(1), span }],
-                    },
-                    span,
-                }),
-            },
-        ];
-        let message = || Expr {
-            ty: self.common.str_,
-            kind: ExprKind::Str("len: the range has more values than an `int` can hold".to_string()),
-            span,
-        };
-        // `a..=b` has `b` too, when it is not empty. The count is checked
-        // before the `+ 1`, which could otherwise overflow (a 128-bit range's
-        // count stops at `usize`'s maximum).
-        if shape == "std.core.RangeInclusive" {
-            let below = Expr {
-                ty: bool_ty,
-                kind: ExprKind::Binary {
-                    op: BinOp::Lt,
-                    lhs: Box::new(count()),
-                    rhs: Box::new(Expr { ty: usize_ty, kind: ExprKind::Int(i64::MAX as u128), span }),
-                },
-                span,
-            };
-            stmts.push(Stmt::If {
-                cond: Expr {
-                    ty: bool_ty,
-                    kind: ExprKind::Binary { op: BinOp::Le, lhs: Box::new(field(0)), rhs: Box::new(field(1)) },
-                    span,
-                },
-                then_block: Block {
-                    stmts: vec![Stmt::Expr(Expr {
-                        ty: self.common.void,
-                        kind: ExprKind::Builtin { which: Builtin::Assert, args: vec![below, message()] },
-                        span,
-                    }), Stmt::Assign {
-                        place: count(),
-                        value: Expr {
-                            ty: usize_ty,
-                            kind: ExprKind::Binary {
-                                op: BinOp::Add,
-                                lhs: Box::new(count()),
-                                rhs: Box::new(Expr { ty: usize_ty, kind: ExprKind::Int(1), span }),
-                            },
-                            span,
-                        },
-                    }],
-                    span,
-                },
-                else_block: None,
-            });
-        }
-        let fits = Expr {
-            ty: bool_ty,
-            kind: ExprKind::Binary {
-                op: BinOp::Le,
-                lhs: Box::new(count()),
-                rhs: Box::new(Expr { ty: usize_ty, kind: ExprKind::Int(i64::MAX as u128), span }),
-            },
-            span,
-        };
-        stmts.push(Stmt::Expr(Expr {
-            ty: self.common.void,
-            kind: ExprKind::Builtin { which: Builtin::Assert, args: vec![fits, message()] },
-            span,
-        }));
-        Expr {
-            ty: int_ty,
-            kind: ExprKind::Block {
-                block: Block { stmts, span },
-                value: Box::new(Expr { ty: int_ty, kind: ExprKind::Cast { expr: Box::new(count()), to: int_ty }, span }),
-            },
-            span,
-        }
+        // G8-4 — a range's length is its iterator's (`[STD-19]`): a `u64` for a
+        // `..` range of 64-bit numbers, and so on, in the smallest type that
+        // holds it where the numbers are written in place (`len(0..10)`).
+        let iter = self.synth_registered_method(range, span, ast::Ident { name: Symbol::intern("iter"), span }, &[], Vec::new(), span);
+        let len = self.synth_registered_method(iter, span, ast::Ident { name: Symbol::intern("len"), span }, &[], Vec::new(), span);
+        self.visible_numbers(len, Symbol::intern("len"))
     }
 
     /// `[CTL-3]` (ODR-027) — a range written as a value is one of the
@@ -19932,6 +20109,9 @@ impl<'a> Checker<'a> {
     fn range_struct(&mut self, path: &str, fields: Vec<Expr>, span: Span) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         if fields.iter().any(|field| field.ty == self.common.error) {
+            return error;
+        }
+        if self.refuse_range_of_count(fields[0].ty, span) {
             return error;
         }
         let ty = self.instantiate_named_generic(path, &[fields[0].ty], span);
@@ -20618,7 +20798,7 @@ impl<'a> Checker<'a> {
                             Some(start) => self.check_expr(start, int_ty),
                             None => Expr { ty: int_ty, kind: ExprKind::Int(0), span: iter.span },
                         };
-                        chain.links.push(FusedLink::Enumerate(start));
+                        chain.links.push(FusedLink::Enumerate(start, int_ty));
                     } else {
                         chain.links.push(FusedLink::Zip(chains.remove(0)));
                     }
@@ -20991,6 +21171,11 @@ impl<'a> Checker<'a> {
             {
                 (self.fused_links_shape(&fields[0])? == FusedShape::Ref).then_some(FusedShape::Value)
             }
+            // G8-4 — an `enumerate` numbered by the visible-numbers rule.
+            ExprKind::StructLit { .. } if self.enumerate_literal(e).is_some() => {
+                let (inner, _, _) = self.enumerate_literal(e).expect("just checked");
+                Some(FusedShape::Pair(Box::new(FusedShape::Value), Box::new(self.fused_links_shape(inner)?)))
+            }
             // ODR-091 — `rev` gives what it runs backwards over.
             ExprKind::Call { callee, args, latebound: false, .. }
                 if args.len() == 1 && self.adapter_name(*callee).is_some_and(|name| name.is("rev")) =>
@@ -21073,6 +21258,12 @@ impl<'a> Checker<'a> {
                 links.push(FusedLinkKind::Other);
                 links
             }
+            ExprKind::StructLit { .. } if self.enumerate_literal(e).is_some() => {
+                let (inner, _, _) = self.enumerate_literal(e).expect("just checked");
+                let mut links = self.fused_link_kinds(inner);
+                links.push(FusedLinkKind::Enumerate);
+                links
+            }
             _ => Vec::new(),
         }
     }
@@ -21122,6 +21313,18 @@ impl<'a> Checker<'a> {
         true
     }
 
+    /// G8-4 — the position type an `Enumerate` instance numbers in: its
+    /// `number` field's.
+    fn enumerate_position(&self, ty: Ty) -> Ty {
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return self.common.i64 };
+        self.types
+            .struct_def(id)
+            .fields
+            .iter()
+            .find(|field| field.name.is("number"))
+            .map_or(self.common.i64, |field| field.ty)
+    }
+
     /// `[CTL-3b]` — the chain `fused_shape` accepted, taken apart.
     fn take_fused_chain(&self, e: Expr) -> FusedChain {
         let Expr { ty, kind, span } = e;
@@ -21148,7 +21351,7 @@ impl<'a> Checker<'a> {
                     "take" => FusedLink::Take(arg),
                     "skip" => FusedLink::Skip(arg),
                     "step_by" => FusedLink::StepBy(arg),
-                    "enumerate" => FusedLink::Enumerate(arg),
+                    "enumerate" => FusedLink::Enumerate(arg, self.enumerate_position(ty)),
                     _ => FusedLink::Zip(self.take_fused_chain(Self::take_zip_argument(arg))),
                 });
                 chain
@@ -21156,6 +21359,21 @@ impl<'a> Checker<'a> {
             ExprKind::StructLit { mut fields, .. } if self.struct_origin(ty).is_some_and(|o| o.is("std.core.Copied")) => {
                 let mut chain = self.take_fused_chain(fields.pop().expect("the adapted iterator"));
                 chain.links.push(FusedLink::Copied);
+                chain
+            }
+            ExprKind::StructLit { struct_id, fields }
+                if self.enumerate_literal(&Expr { ty, kind: ExprKind::StructLit { struct_id, fields: fields.clone() }, span }).is_some() =>
+            {
+                let mut fields = fields.into_iter();
+                let inner = fields.next().expect("what it numbers");
+                let number = fields.next().expect("its first number");
+                let pos = number.ty;
+                let start = match number.kind {
+                    ExprKind::Cast { expr, .. } => *expr,
+                    kind => Expr { kind, ..number },
+                };
+                let mut chain = self.take_fused_chain(inner);
+                chain.links.push(FusedLink::Enumerate(start, pos));
                 chain
             }
             kind => FusedChain { source: Expr { ty, kind, span }, links: Vec::new(), stages: Vec::new() },
@@ -21279,11 +21497,17 @@ impl<'a> Checker<'a> {
         let (count, end_check) = self.fused_numbers(count, &levels, &nodes, &mut outer, span);
         let (start, end, inclusive) = self.fused_bounds(count, &mut outer, span);
         let index_local = self.declare(None, usize_ty, span);
+        // G8-4 decision C — an `enumerate` numbering in a type wider than 64
+        // bits (its numbers not visible) gets a copy of the loop that computes
+        // its numbers as `int`s, taken after one test when every number fits
+        // one; the loop computing them in their own type runs otherwise. The
+        // numbers are the same either way: only the arithmetic is narrower.
+        let wide = self.wide_counters(&nodes);
+        let narrow = if wide.is_empty() { None } else { self.wide_numbers_fit(&wide, &levels, &nodes, &mut outer, span) };
 
         self.scopes.push(HashMap::new());
         let mut inner = Vec::new();
-        let values: Vec<Expr> =
-            nodes.iter().map(|node| self.fused_node_value(node, index_local, span)).collect();
+        let (values, prefix_wide, prefix_narrow) = self.fused_values(&nodes, &wide, narrow.is_some(), index_local, span);
         let mut values: Vec<Option<Expr>> = values.into_iter().map(Some).collect();
         if staged.is_empty() {
             self.bind_fused_item(pattern, item, &mut values, &mut inner, span);
@@ -21322,9 +21546,127 @@ impl<'a> Checker<'a> {
             (false, Some(block)) => Some(Block { stmts: end_check.into_iter().chain(block.stmts).collect(), span: block.span }),
         };
         self.scopes.pop();
-        outer.push(Stmt::ForRange { local: index_local, start, end, inclusive, body: Block { stmts: inner, span }, else_block });
+        match narrow {
+            None => {
+                outer.push(Stmt::ForRange { local: index_local, start, end, inclusive, body: Block { stmts: inner, span }, else_block })
+            }
+            Some(fits) => {
+                let narrow_turn: Vec<Stmt> = prefix_narrow.into_iter().chain(inner.iter().cloned()).collect();
+                let wide_turn: Vec<Stmt> = prefix_wide.into_iter().chain(inner).collect();
+                let narrow_loop = Stmt::ForRange {
+                    local: index_local,
+                    start: start.clone(),
+                    end: end.clone(),
+                    inclusive,
+                    body: Block { stmts: narrow_turn, span },
+                    else_block: else_block.clone(),
+                };
+                let wide_loop =
+                    Stmt::ForRange { local: index_local, start, end, inclusive, body: Block { stmts: wide_turn, span }, else_block };
+                outer.push(Stmt::If {
+                    cond: Expr { ty: bool_ty, kind: ExprKind::Local(fits), span },
+                    then_block: Block { stmts: vec![narrow_loop], span },
+                    else_block: Some(Block { stmts: vec![wide_loop], span }),
+                });
+            }
+        }
         outer.extend(after);
         Some(Stmt::Block(Block { stmts: outer, span }))
+    }
+
+    /// G8-4 decision C — the `enumerate`s of a fused loop that number in a
+    /// type wider than 64 bits (their numbers not visible).
+    fn wide_counters(&self, nodes: &[FusedNode]) -> Vec<usize> {
+        nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| {
+                matches!(node.kind, FusedNodeKind::Counter { pos, .. }
+                    if ember_types::bit_width(&self.types, pos).is_some_and(|bits| bits > 64))
+            })
+            .map(|(at, _)| at)
+            .collect()
+    }
+
+    /// `[CTL-3b]` — what each node gives on the turn `index`; with
+    /// `versioned`, each wide `enumerate`'s number (`wide`) is held, set by
+    /// the first statements of the loop computing it in its own type and of
+    /// its copy computing it as an `int` (G8-4 decision C). The `int` is held
+    /// for the whole turn, so a read of the number as an `int` reads it
+    /// (`narrow_widened_reads_all`).
+    fn fused_values(
+        &mut self,
+        nodes: &[FusedNode],
+        wide: &[usize],
+        versioned: bool,
+        index: LocalId,
+        span: Span,
+    ) -> (Vec<Expr>, Vec<Stmt>, Vec<Stmt>) {
+        let (mut values, mut in_wide, mut in_narrow) = (Vec::new(), Vec::new(), Vec::new());
+        for (at, node) in nodes.iter().enumerate() {
+            let value = self.fused_node_value(node, index, span);
+            if !versioned || !wide.contains(&at) {
+                values.push(value);
+                continue;
+            }
+            let narrowed = self.fused_counter_narrow(node, index, span);
+            let number = self.declare(None, narrowed.ty, span);
+            let ty = value.ty;
+            let held = self.declare(None, ty, span);
+            in_wide.push(Stmt::Let { local: held, init: Some(value) });
+            let read = Expr { ty: narrowed.ty, kind: ExprKind::Local(number), span };
+            in_narrow.push(Stmt::Let { local: number, init: Some(narrowed) });
+            in_narrow.push(Stmt::Let { local: held, init: Some(Expr { ty, kind: ExprKind::Cast { expr: Box::new(read), to: ty }, span }) });
+            values.push(Expr { ty, kind: ExprKind::Local(held), span });
+        }
+        (values, in_wide, in_narrow)
+    }
+
+    /// G8-4 decision C — whether every number the wide `enumerate`s at `wide`
+    /// give fits an `int`: each has no more items below it than its room
+    /// (`counter_room`). `None` when one's count is not known here.
+    fn wide_numbers_fit(
+        &mut self,
+        wide: &[usize],
+        levels: &[FusedLevel],
+        nodes: &[FusedNode],
+        outer: &mut Vec<Stmt>,
+        span: Span,
+    ) -> Option<LocalId> {
+        let (usize_ty, bool_ty) = (self.common.usize, self.common.bool_);
+        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        let binary = |op, lhs: Expr, rhs: Expr| Expr { ty: bool_ty, kind: ExprKind::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) }, span };
+        let mut below = HashMap::new();
+        Self::enumerate_counts(levels, &mut below);
+        let mut fits: Option<Expr> = None;
+        for &at in wide {
+            let FusedNodeKind::Counter { start, .. } = nodes[at].kind else { return None };
+            let count = *below.get(&at)?;
+            let room = local(self.counter_room(start, outer, span), usize_ty);
+            let this = match count {
+                FusedCount::Exact(n) => binary(BinOp::Le, local(n, usize_ty), room),
+                FusedCount::Last { nonempty, last, .. } => {
+                    let none = Expr { ty: bool_ty, kind: ExprKind::Unary { op: UnOp::Not, operand: Box::new(local(nonempty, bool_ty)) }, span };
+                    binary(BinOp::Or, none, binary(BinOp::Le, local(last, usize_ty), room))
+                }
+            };
+            fits = Some(match fits {
+                None => this,
+                Some(before) => binary(BinOp::And, before, this),
+            });
+        }
+        Some(self.hold_local(fits?, outer))
+    }
+
+    /// G8-4 decision C — a wide `enumerate`'s number computed as an `int`, as
+    /// `fused_node_value` computes an `int` one: exact in the loop's copy that
+    /// every number fits (`wide_numbers_fit`).
+    fn fused_counter_narrow(&mut self, node: &FusedNode, index: LocalId, span: Span) -> Expr {
+        let FusedNodeKind::Counter { start, .. } = node.kind else {
+            return self.fused_node_value(node, index, span);
+        };
+        let narrow = FusedNode { kind: FusedNodeKind::Counter { start, pos: self.common.i64 }, steps: node.steps.clone() };
+        self.fused_node_value(&narrow, index, span)
     }
 
     /// `[CTL-3b]` (ADR-091) — one turn of a fused loop from stage `at` on,
@@ -21564,16 +21906,19 @@ impl<'a> Checker<'a> {
             let (count, end_check) = self.fused_numbers(count, &levels, &nodes, &mut outer, span);
             let bounds = self.fused_bounds(count, &mut outer, span);
             let index = self.declare(None, usize_ty, span);
-            segments.push((nodes, item, end_check, bounds, index));
+            // G8-4 decision C, part by part (`check_for_fused`).
+            let wide = self.wide_counters(&nodes);
+            let narrow = if wide.is_empty() { None } else { self.wide_numbers_fit(&wide, &levels, &nodes, &mut outer, span) };
+            segments.push((nodes, item, end_check, bounds, index, wide, narrow));
         }
 
         self.scopes.push(HashMap::new());
         let mut held: Vec<(LocalId, Ty)> = Vec::new();
         let mut shared_item = None;
         let mut loops = Vec::new();
-        for (nodes, item, end_check, bounds, index) in segments {
-            let mut values: Vec<Option<Expr>> =
-                nodes.iter().map(|node| Some(self.fused_node_value(node, index, span))).collect();
+        for (nodes, item, end_check, bounds, index, wide, narrow) in segments {
+            let (values, in_wide, in_narrow) = self.fused_values(&nodes, &wide, narrow.is_some(), index, span);
+            let mut values: Vec<Option<Expr>> = values.into_iter().map(Some).collect();
             if shared_item.is_none() {
                 shared_item = Some(Self::fused_leaves_renumbered(&item, &mut 0));
             }
@@ -21585,7 +21930,7 @@ impl<'a> Checker<'a> {
             debug_assert!(leaves.len() == held.len() && leaves.iter().zip(&held).all(|(leaf, &(_, ty))| leaf.ty == ty));
             let prefix: Vec<Stmt> =
                 held.iter().zip(leaves).map(|(&(local, _), leaf)| Stmt::Let { local, init: Some(leaf) }).collect();
-            loops.push((index, bounds, prefix, end_check));
+            loops.push((index, bounds, prefix, end_check, in_wide, in_narrow, narrow));
         }
         let mut body_stmts = Vec::new();
         let mut values: Vec<Option<Expr>> =
@@ -21603,12 +21948,31 @@ impl<'a> Checker<'a> {
         }
         let mut tail: Vec<Stmt> = else_block.as_ref().map(|b| self.check_block(b).stmts).unwrap_or_default();
         self.scopes.pop();
-        for (index, (start, end, inclusive), prefix, end_check) in loops.into_iter().rev() {
+        for (index, (start, end, inclusive), prefix, end_check, in_wide, in_narrow, narrow) in loops.into_iter().rev() {
             let otherwise: Vec<Stmt> = end_check.into_iter().chain(tail).collect();
             let else_block = (!otherwise.is_empty()).then(|| Block { stmts: otherwise, span });
-            let mut stmts = prefix;
-            stmts.extend(body_stmts.iter().cloned());
-            tail = vec![Stmt::ForRange { local: index, start, end, inclusive, body: Block { stmts, span }, else_block }];
+            let turn = |first: Vec<Stmt>| -> Vec<Stmt> {
+                first.into_iter().chain(prefix.iter().cloned()).chain(body_stmts.iter().cloned()).collect()
+            };
+            let wide_loop = Stmt::ForRange {
+                local: index,
+                start: start.clone(),
+                end: end.clone(),
+                inclusive,
+                body: Block { stmts: turn(in_wide), span },
+                else_block: else_block.clone(),
+            };
+            tail = match narrow {
+                None => vec![wide_loop],
+                Some(fits) => {
+                    let narrow_loop = Stmt::ForRange { local: index, start, end, inclusive, body: Block { stmts: turn(in_narrow), span }, else_block };
+                    vec![Stmt::If {
+                        cond: Expr { ty: self.common.bool_, kind: ExprKind::Local(fits), span },
+                        then_block: Block { stmts: vec![narrow_loop], span },
+                        else_block: Some(Block { stmts: vec![wide_loop], span }),
+                    }]
+                }
+            };
         }
         outer.extend(tail);
         Some(Stmt::Block(Block { stmts: outer, span }))
@@ -21737,9 +22101,9 @@ impl<'a> Checker<'a> {
                         }
                     };
                 }
-                FusedLink::Enumerate(start) => {
+                FusedLink::Enumerate(start, pos) => {
                     let start = self.hold_local(start, outer);
-                    nodes.push(FusedNode { kind: FusedNodeKind::Counter { start }, steps: Vec::new() });
+                    nodes.push(FusedNode { kind: FusedNodeKind::Counter { start, pos }, steps: Vec::new() });
                     levels.push(FusedLevel::Enumerate { node: nodes.len() - 1, below: count });
                     item = FusedItem::Pair(Box::new(FusedItem::Node { node: nodes.len() - 1, copied: false }), Box::new(item));
                 }
@@ -21839,7 +22203,7 @@ impl<'a> Checker<'a> {
             .iter()
             .enumerate()
             .filter_map(|(at, node)| match node.kind {
-                FusedNodeKind::Counter { start } if node.steps.iter().any(|step| matches!(step, FusedStep::Rev(_))) => Some((at, start)),
+                FusedNodeKind::Counter { start, pos } if pos == self.common.i64 && node.steps.iter().any(|step| matches!(step, FusedStep::Rev(_))) => Some((at, start)),
                 _ => None,
             })
             .collect();
@@ -21871,7 +22235,7 @@ impl<'a> Checker<'a> {
             .iter()
             .enumerate()
             .filter_map(|(at, node)| match node.kind {
-                FusedNodeKind::Counter { start } if !node.steps.iter().any(|step| matches!(step, FusedStep::Rev(_))) => Some((at, start)),
+                FusedNodeKind::Counter { start, pos } if pos == self.common.i64 && !node.steps.iter().any(|step| matches!(step, FusedStep::Rev(_))) => Some((at, start)),
                 _ => None,
             })
             .collect();
@@ -22211,7 +22575,14 @@ impl<'a> Checker<'a> {
             // numbers do (`fused_numbers`).
             // Added as `usize`s, whose wrapping C defines, and read back as an
             // `int`: exact, since the number fits.
-            FusedNodeKind::Counter { start } => {
+            // G8-4 — in a wider position type (`i128`) every number fits, and
+            // is computed there.
+            FusedNodeKind::Counter { start, pos } if pos != int_ty => {
+                let start = Expr { ty: pos, kind: ExprKind::Cast { expr: Box::new(local(start, int_ty)), to: pos }, span };
+                let at = Expr { ty: pos, kind: ExprKind::Cast { expr: Box::new(at), to: pos }, span };
+                Expr { ty: pos, kind: ExprKind::Binary { op: BinOp::Add, lhs: Box::new(start), rhs: Box::new(at) }, span }
+            }
+            FusedNodeKind::Counter { start, .. } => {
                 let start = Expr { ty: usize_ty, kind: ExprKind::Cast { expr: Box::new(local(start, int_ty)), to: usize_ty }, span };
                 let number = self.wrapping(BinOp::Add, start, at, span);
                 Expr { ty: int_ty, kind: ExprKind::Cast { expr: Box::new(number), to: int_ty }, span }
@@ -23496,6 +23867,9 @@ impl<'a> Checker<'a> {
         let ty = receiver.ty;
         let method = name.name.as_str();
         let Some(kind) = IntMethod::named(method) else { unreachable!("the caller checked the name") };
+        if self.refuse_for_count(ty, &format!("`{method}`"), span) {
+            return error;
+        }
         let arity = kind.arity();
         if args.len() != arity || args.iter().any(|arg| arg.name.is_some()) {
             self.error(codes::E2020, span, format!("`{method}` takes {arity} argument(s), found {}", args.len()));
@@ -23768,6 +24142,42 @@ impl<'a> Checker<'a> {
         Expr { ty: pair, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(value) }, span }
     }
 
+    /// G8-4 — the 256-bit counts, `u256` and `i256`.
+    fn is_count_type(&self, ty: Ty) -> bool {
+        ty == self.common.i256 || ty == self.common.u256
+    }
+
+    /// G8-4 — `u256` and `i256` are counts (`[STD-19]`): they add, subtract,
+    /// compare, print and convert with `as`. Anything else on one (`what`)
+    /// is `E2020`; true when it was refused.
+    fn refuse_for_count(&mut self, ty: Ty, what: &str, span: Span) -> bool {
+        if !self.is_count_type(ty) {
+            return false;
+        }
+        let shown = self.types.display(ty);
+        self.sink.emit(
+            Diagnostic::error(codes::E2020, span, format!("{what} cannot be applied to `{shown}`")).note(format!(
+                "`{shown}` is a count: it adds, subtracts, compares, prints and converts with `as` [STD-19]"
+            )),
+        );
+        true
+    }
+
+    /// G8-4 — there are no ranges of `u256` or `i256`: a range of one would
+    /// need a 512-bit count (`[STD-19]`).
+    fn refuse_range_of_count(&mut self, ty: Ty, span: Span) -> bool {
+        if !self.is_count_type(ty) {
+            return false;
+        }
+        let shown = self.types.display(ty);
+        self.sink.emit(
+            Diagnostic::error(codes::E2020, span, format!("there are no ranges of `{shown}`")).note(format!(
+                "`{shown}` is a count: it adds, subtracts, compares, prints and converts with `as` [STD-19]"
+            )),
+        );
+        true
+    }
+
     /// `[STD-20]` (ODR-039) — `i64.MAX`, `u8.MIN`, `int.MAX`, `f64.INF`,
     /// `f32.EPSILON`: a constant of a scalar type, named through the type.
     /// `None` when the type has no constant of that name.
@@ -23776,6 +24186,8 @@ impl<'a> Checker<'a> {
         let float = |value: f64| Expr { ty, kind: ExprKind::Float(value), span };
         let single = matches!(self.types.kind(ty), TyKind::Float(ember_types::FloatTy::F32));
         match (self.types.kind(ty), name.as_str()) {
+            // G8-4 — the 256-bit counts have no `MIN` or `MAX` (`[STD-19]`).
+            (TyKind::Int(ember_types::IntTy::I256) | TyKind::Uint(UintTy::U256), _) => None,
             // D-316 — `f16`'s: EPSILON is 2^-10, MAX 65504.
             (TyKind::Float(ember_types::FloatTy::F16), constant) => Some(float(match constant {
                 "INF" => f64::INFINITY,
@@ -25161,6 +25573,14 @@ impl<'a> Checker<'a> {
     /// integer operands are `E2240`, whose fix-its are floor division and a
     /// conversion to `float`. Returns whether it reported.
     fn reject_integer_true_division(&mut self, op: BinOp, operand: Ty, span: Span) -> bool {
+        // G8-4 — and, on an `i256`, anything but `+`, `-` and comparing,
+        // in an expression or an assignment (`c *= 2`).
+        if !op.is_comparison()
+            && !matches!(op, BinOp::Add | BinOp::Sub)
+            && self.refuse_for_count(operand, &format!("`{}`", op.spelling()), span)
+        {
+            return true;
+        }
         if op != BinOp::Div || !self.types.is_integral(operand) {
             return false;
         }
@@ -26801,6 +27221,9 @@ impl<'a> Checker<'a> {
                 // reference.
                 if *op != ast::UnOp::Not {
                     operand = self.read_through(operand);
+                    if *op == ast::UnOp::BitNot && self.refuse_for_count(operand.ty, "`~`", span) {
+                        return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                    }
                     let method = if *op == ast::UnOp::Neg { "neg" } else { "not" };
                     if !self.types.is_numeric(operand.ty) && self.operator_implemented(operand.ty, method) {
                         return self.call_unary_operator(method, operand, span);
@@ -26880,6 +27303,20 @@ impl<'a> Checker<'a> {
                     (self.types.kind(inner.ty), self.types.kind(to)),
                     (TyKind::Ptr { .. }, TyKind::Ptr { .. })
                 );
+                // G8-4 — a 256-bit count converts to and from the other integers.
+                let count_cast = self.is_count_type(inner.ty) || self.is_count_type(to);
+                if count_cast
+                    && !(self.types.is_integral(inner.ty) && self.types.is_integral(to))
+                    && inner.ty != self.common.error
+                    && to != self.common.error
+                {
+                    let (from, shown) = (self.types.display(inner.ty), self.types.display(to));
+                    self.sink.emit(
+                        Diagnostic::error(codes::E2020, span, format!("`{from}` cannot be cast to `{shown}` with `as`"))
+                            .note("a 256-bit count converts with `as` to and from the other integers only [STD-19]"),
+                    );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
                 let reference_pointer_cast = matches!(
                     (self.types.kind(inner.ty), self.types.kind(to)),
                     (TyKind::Ref { mutable: source_mutable, inner: source },
@@ -27895,6 +28332,35 @@ impl<'a> Checker<'a> {
                     Some(len) => self.types.intern(TyKind::Array { elem, len }),
                     None => self.common.error,
                 }
+            }
+            // G8-4 — a dotted path (`I.Count`, `mod.Type`) is the type it names,
+            // as written in a type position: `as_count[CountSum[I.Count, J.Count]]()`.
+            ast::ExprKind::Field { .. } => {
+                fn dotted(expr: &ast::Expr, out: &mut Vec<ast::Ident>) -> bool {
+                    match &expr.kind {
+                        ast::ExprKind::Path { segments } => {
+                            out.extend(segments.iter().copied());
+                            true
+                        }
+                        ast::ExprKind::Field { base, name } => {
+                            let read = dotted(base, out);
+                            out.push(*name);
+                            read
+                        }
+                        _ => false,
+                    }
+                }
+                let mut segments = Vec::new();
+                if !dotted(expr, &mut segments) {
+                    self.error(codes::E1010, expr.span, "expected a type argument");
+                    return self.common.error;
+                }
+                let ty = ast::TypeExpr {
+                    id: ast::NodeId(0),
+                    kind: ast::TypeKind::Path { segments, args: Vec::new() },
+                    span: expr.span,
+                };
+                self.resolve_type(&ty)
             }
             _ => {
                 self.error(codes::E1010, expr.span, "expected a type argument");
@@ -29195,6 +29661,7 @@ impl<'a> Checker<'a> {
                 callable: None,
                 default: None,
                 projection: Some(((index_base + base_index) as u32, assoc.name)),
+                count_op: None,
                 bindings: Vec::new(),
             });
             self.projection_params.insert((base, assoc.name), ty);
@@ -29234,6 +29701,176 @@ impl<'a> Checker<'a> {
             return None;
         }
         Some(self.interface_instance_name(origin, &args))
+    }
+
+    /// G8-4 — a count recipe's bounds: `ItemCount` and its parents
+    /// (`[IFC-3]`).
+    fn count_bounds(&self) -> Vec<Symbol> {
+        let mut bounds = vec![Symbol::intern("std.core.ItemCount")];
+        self.close_bounds(&mut bounds, &mut Vec::new());
+        bounds
+    }
+
+    /// G8-4 — the count recipe a type name in std names, if it is one.
+    fn count_op_named(&self, name: Symbol) -> Option<CountOp> {
+        if !self.prefixes.get(self.current_module).is_some_and(|prefix| prefix.starts_with("std")) {
+            return None;
+        }
+        Some(match name.as_str() {
+            "CountSum" => CountOp::Sum,
+            "CountProduct" => CountOp::Product,
+            "PositionJoin" => CountOp::Join,
+            "PositionOf" => CountOp::PositionOf,
+            _ => return None,
+        })
+    }
+
+    /// G8-4 — a block's count recipes, each a hidden parameter after its
+    /// others: they are made from the block's projections, so they come
+    /// after them, and before its signatures read them.
+    fn declare_count_ops(&mut self, decl: &ast::ExtendDecl, params: &mut Vec<GenericParam>) {
+        fn uses(ty: &ast::TypeExpr, out: &mut Vec<ast::TypeExpr>) {
+            match &ty.kind {
+                ast::TypeKind::Path { segments, args } => {
+                    for arg in args {
+                        if let ast::GenericArg::Type(inner) | ast::GenericArg::Assoc { ty: inner, .. } = arg {
+                            uses(inner, out);
+                        }
+                    }
+                    if let [segment] = segments.as_slice()
+                        && matches!(segment.name.as_str(), "CountSum" | "CountProduct" | "PositionJoin" | "PositionOf")
+                    {
+                        out.push(ty.clone());
+                    }
+                }
+                ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } => uses(inner, out),
+                ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => items.iter().for_each(|item| uses(item, out)),
+                ast::TypeKind::Array { elem, .. } => uses(elem, out),
+                ast::TypeKind::Fn { params, ret, .. } => {
+                    params.iter().for_each(|param| uses(&param.ty, out));
+                    if let Some(ret) = ret {
+                        uses(ret, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut found = Vec::new();
+        for member in &decl.members {
+            match &member.kind {
+                ast::MemberKind::Fn(fn_decl) => {
+                    for param in &fn_decl.params {
+                        if let ast::ParamKind::Named { ty, .. } | ast::ParamKind::Receiver { ty: Some(ty) } = &param.kind {
+                            uses(ty, &mut found);
+                        }
+                    }
+                    if let Some(ret) = &fn_decl.ret {
+                        uses(ret, &mut found);
+                    }
+                }
+                ast::MemberKind::TypeAlias(alias) => {
+                    if let Some(value) = &alias.value {
+                        uses(value, &mut found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if found.is_empty() {
+            return;
+        }
+        std::mem::swap(&mut self.current_generics, params);
+        self.declaring_count_ops = true;
+        for ty in &found {
+            self.resolve_type(ty);
+        }
+        self.declaring_count_ops = false;
+        std::mem::swap(&mut self.current_generics, params);
+    }
+
+    /// G8-4 — the count recipe `op` over `a` and `b`: the type when both are
+    /// known; otherwise the hidden parameter standing for it, the block's or
+    /// the generic body's own (made on first use, bounded by `ItemCount`).
+    fn count_op_type(&mut self, op: CountOp, a: Ty, b: Ty) -> Ty {
+        if !self.types.is_generic(a) && !self.types.is_generic(b) {
+            return self.count_op_concrete(op, a, b);
+        }
+        if let Some(&found) = self.count_op_params.get(&(op, a, b)) {
+            return found;
+        }
+        if let Some(index) = self.current_generics.iter().position(|param| param.count_op == Some((op, a, b))) {
+            let name = self.current_generics[index].name;
+            return self.types.intern(TyKind::Param { index: index as u32, name });
+        }
+        if self.no_lazy_projection && !self.declaring_count_ops {
+            return match op {
+                CountOp::Sum | CountOp::Product => self.common.u256,
+                CountOp::Join | CountOp::PositionOf => self.common.i256,
+            };
+        }
+        let (shown_a, shown_b) = (self.types.display(a), self.types.display(b));
+        let name = Symbol::intern(&match op {
+            CountOp::Sum => format!("({shown_a} + {shown_b})"),
+            CountOp::Product => format!("({shown_a} * {shown_b})"),
+            CountOp::Join => format!("({shown_a} | {shown_b})"),
+            CountOp::PositionOf => format!("(numbers of {shown_a})"),
+        });
+        let index = self.current_generics.len();
+        let bounds = self.count_bounds();
+        self.current_generics.push(GenericParam {
+            name,
+            bounds,
+            callable: None,
+            default: None,
+            projection: None,
+            count_op: Some((op, a, b)),
+            bindings: Vec::new(),
+        });
+        let ty = self.types.intern(TyKind::Param { index: index as u32, name });
+        if self.declaring_count_ops {
+            self.count_op_params.insert((op, a, b), ty);
+        }
+        ty
+    }
+
+    /// G8-4 — `count_op_type` for two known types, by levels: a count is
+    /// `int` (0), `u64` (1), `u128` (2) or `u256` (3); a number `int`,
+    /// `i128` or `i256`.
+    fn count_op_concrete(&self, op: CountOp, a: Ty, b: Ty) -> Ty {
+        use ember_types::IntTy;
+        let c = self.common;
+        let level = |ty: Ty| -> usize {
+            match self.types.kind(ty) {
+                TyKind::Uint(UintTy::U64 | UintTy::Usize) => 1,
+                TyKind::Int(IntTy::I128) | TyKind::Uint(UintTy::U128) => 2,
+                TyKind::Int(IntTy::I256) | TyKind::Uint(UintTy::U256) => 3,
+                _ => 0,
+            }
+        };
+        let counts = [c.i64, c.u64, c.u128, c.u256];
+        let numbers = [c.i64, c.i128, c.i256];
+        let (x, y) = (level(a), level(b));
+        match op {
+            CountOp::Sum if x == 0 && y == 0 => c.i64,
+            CountOp::Sum => counts[(x.max(y) + 1).min(3)],
+            CountOp::Product if x == 0 && y == 0 => c.i64,
+            CountOp::Product => {
+                let bits = |level: usize| [63u32, 64, 128, 256][level];
+                let total = bits(x) + bits(y);
+                counts[if total <= 64 { 1 } else if total <= 128 { 2 } else { 3 }]
+            }
+            CountOp::Join => {
+                let signed = |ty: Ty| -> usize {
+                    match self.types.kind(ty) {
+                        TyKind::Uint(UintTy::U64 | UintTy::Usize) | TyKind::Int(IntTy::I128) => 1,
+                        TyKind::Uint(UintTy::U128 | UintTy::U256) | TyKind::Int(IntTy::I256) => 2,
+                        _ => 0,
+                    }
+                };
+                numbers[signed(a).max(signed(b))]
+            }
+            CountOp::PositionOf => numbers[x.min(2)],
+        }
     }
 
     /// `[IFC-4]` — `T.Name` where `T` is a type parameter: the hidden
@@ -29340,6 +29977,7 @@ impl<'a> Checker<'a> {
             callable: None,
             default: None,
             projection: Some((index, name)),
+            count_op: None,
             bindings: Vec::new(),
         });
         // D-407 — and the bindings its bounds write: `U.Iter`'s `Item` is
@@ -29438,7 +30076,7 @@ impl<'a> Checker<'a> {
         {
             return true;
         }
-        if let TyKind::Param { index, .. } = *self.types.kind(ty) {
+        if let TyKind::Param { index, name } = *self.types.kind(ty) {
             // `[STD-27]` — `T: Float` provides `Copy`, `Clone`, `Eq`, `Ord`,
             // `Default`, `Display` and `Debug` as the floats do.
             let implied = self.float_param(ty)
@@ -29446,11 +30084,7 @@ impl<'a> Checker<'a> {
                     interface.as_str().rsplit('.').next().unwrap_or_default(),
                     "Copy" | "Clone" | "Eq" | "Ord" | "Default" | "Display" | "Debug"
                 );
-            return implied
-                || self
-                    .current_generics
-                    .get(index as usize)
-                    .is_some_and(|param| param.bounds.contains(&interface));
+            return implied || self.generic_bounds(index, name).contains(&interface);
         }
         // `[ENM-3]`, `[HASH-4]` — scalar/range/unit-enum equality and
         // hashing are compiler-known standard capabilities. They must satisfy
@@ -30419,7 +31053,16 @@ impl<'a> Checker<'a> {
                     .or_else(|| self.scalar_named(name.as_str()))
                     .or_else(|| self.named_types.get(&self.resolve_name(name)).copied())
             }
-            ast::ExprKind::Field { .. } => {
+            // G8-4 — `I.Count.of(n)`: a type parameter's associated type, as
+            // in a type position (`[IFC-4]`).
+            ast::ExprKind::Field { base, name } => {
+                if let ast::ExprKind::Path { segments } = &base.kind
+                    && let [segment] = segments.as_slice()
+                    && self.lookup(segment.name).is_none()
+                    && self.type_params.contains_key(&segment.name)
+                {
+                    return Some(self.resolve_projection(*segment, *name));
+                }
                 let qualified = self.item_through_module(expr)?;
                 self.named_types.get(&qualified).copied()
             }
@@ -30588,11 +31231,7 @@ impl<'a> Checker<'a> {
         args: &[ast::Arg],
         span: Span,
     ) -> Expr {
-        let bounds = self
-            .current_generics
-            .get(index as usize)
-            .map(|generic| generic.bounds.clone())
-            .unwrap_or_default();
+        let bounds = self.generic_bounds(index, param);
         let mut found: Option<(DefId, Symbol)> = None;
         for bound in &bounds {
             let Some(interface) = self.interfaces.get(bound) else { continue };
@@ -30663,7 +31302,12 @@ impl<'a> Checker<'a> {
             self.signatures[def.0 as usize].params.iter().map(|(_, ty, mode, _)| (*ty, *mode)).collect();
         let signature =
             declared.into_iter().map(|(ty, mode)| (self.substitute_self(ty, owner), mode)).collect::<Vec<_>>();
+        // G8-4 — `Self.Name` in the signature is the parameter's hidden
+        // `T.Name`, as for a method called through a bound: `T.widen_count(n)`
+        // takes a `T.SpanCount` and gives a `T.FullCount`.
+        let saved_instance = self.assoc_instance.replace(bound);
         let ret = self.substitute_self(self.signatures[def.0 as usize].ret, owner);
+        let ret = self.resolve_assoc(ret, owner);
         if !self.arity_fits(def, args.len(), signature.len()) {
             self.error(
                 codes::E2020,
@@ -30675,9 +31319,11 @@ impl<'a> Checker<'a> {
         let params = params
             .into_iter()
             .map(|(param, ty, mode, param_span)| {
-                (param, self.substitute_self(ty, owner), mode, param_span)
+                let ty = self.substitute_self(ty, owner);
+                (param, self.resolve_assoc(ty, owner), mode, param_span)
             })
             .collect::<Vec<_>>();
+        self.assoc_instance = saved_instance;
         let slots = self.call_argument_slots(name.name, args, &params);
         let (checked, slots, default_arg_locals) = self.check_call_with_defaults(
             def, name.name, args, &params, &slots, span, None, Some(owner));
@@ -31605,7 +32251,212 @@ impl<'a> Checker<'a> {
         self.method_receivers.push((recv.clone(), generic_args.to_vec()));
         let call = self.synth_method_call_on(recv, name, generic_args, args, span);
         self.method_receivers.pop();
-        call
+        self.visible_numbers(call, name.name)
+    }
+
+    /// G8-4, `[STD-19]` — the visible-numbers rule (the owner's B): where a
+    /// range's numbers are written at the place it is numbered or measured
+    /// (`(0..n).iter().enumerate()`, `(0..10).iter().len()`), `enumerate`
+    /// numbers, and `len` and `count` measure, in the smallest type that
+    /// holds every value the loop can give, never a wider one than the
+    /// iterator's own. An iterator kept in a variable shows no numbers.
+    fn visible_numbers(&mut self, call: Expr, name: Symbol) -> Expr {
+        let ExprKind::Call { callee, args, .. } = &call.kind else { return call };
+        let callee = *callee;
+        if self.adapter_name(callee).is_some_and(|adapter| adapter.is("enumerate")) && args.len() == 2 {
+            let Some(count) = self.visible_item_count(&args[0]) else { return call };
+            let Some((low, high)) = self.visible_bounds(&args[1]) else { return call };
+            let last = if count == 0 { Some(high) } else { i128::try_from(count - 1).ok().and_then(|more| high.checked_add(more)) };
+            let pos = self.position_type_for(low, last, count, high);
+            let table = self.enumerate_position(call.ty);
+            if self.number_rank(pos) >= self.number_rank(table) {
+                return call;
+            }
+            let span = call.span;
+            let ExprKind::Call { mut args, .. } = call.kind else { unreachable!("matched above") };
+            let start = args.pop().expect("the start");
+            let receiver = args.pop().expect("the receiver");
+            let ty = self.instantiate_named_generic("std.core.Enumerate", &[receiver.ty, pos], span);
+            let TyKind::Struct(struct_id) = *self.types.kind(ty) else {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            };
+            let start = if start.ty == pos { start } else { Expr { ty: pos, kind: ExprKind::Cast { expr: Box::new(start), to: pos }, span } };
+            let past = Expr { ty: self.common.bool_, kind: ExprKind::Bool(false), span };
+            return Expr { ty, kind: ExprKind::StructLit { struct_id, fields: vec![receiver, start, past] }, span };
+        }
+        let iterator = Symbol::intern("std.core.Iterator");
+        if !matches!(name.as_str(), "len" | "count") || args.len() != 1 || !self.types.is_integral(call.ty) {
+            return call;
+        }
+        let receiver = Self::zip_argument(&args[0]);
+        if !self.implements(receiver.ty, iterator) {
+            return call;
+        }
+        let Some(count) = self.visible_item_count(receiver) else { return call };
+        let narrow = if count <= i64::MAX as u128 {
+            self.common.i64
+        } else if count <= u64::MAX as u128 {
+            self.common.u64
+        } else {
+            return call;
+        };
+        if self.number_rank(narrow) >= self.number_rank(call.ty) {
+            return call;
+        }
+        let span = call.span;
+        Expr { ty: narrow, kind: ExprKind::Cast { expr: Box::new(call), to: narrow }, span }
+    }
+
+    /// G8-4 — how wide a count or position type is, narrowest first: `int`,
+    /// then `u64` (as wide, and chosen only when `int` does not hold the
+    /// numbers), `i128`, `u128`, `i256`.
+    fn number_rank(&self, ty: Ty) -> u8 {
+        match self.types.kind(ty) {
+            TyKind::Int(ember_types::IntTy::I64) => 1,
+            TyKind::Uint(UintTy::U64) => 2,
+            TyKind::Int(ember_types::IntTy::I128) => 3,
+            TyKind::Uint(UintTy::U128) => 4,
+            TyKind::Int(ember_types::IntTy::I256) => 5,
+            _ => 0,
+        }
+    }
+
+    /// G8-4 — the smallest position type holding `low` to `last` (`None`
+    /// past `i128`: `count` items numbered from at most `high`).
+    fn position_type_for(&self, low: i128, last: Option<i128>, count: u128, high: i128) -> Ty {
+        let c = self.common;
+        match last {
+            Some(last) if low >= i128::from(i64::MIN) && last <= i128::from(i64::MAX) => c.i64,
+            Some(last) if low >= 0 && last <= i128::from(u64::MAX) => c.u64,
+            Some(_) => c.i128,
+            None if low >= 0 && u128::try_from(high).ok().and_then(|high| high.checked_add(count - 1)).is_some() => c.u128,
+            None => c.i256,
+        }
+    }
+
+    /// G8-4 — the values an integer `e` can have, as the visible-numbers
+    /// rule reads them: a number written as one (`10`, `-3`, `0 as u64`) is
+    /// itself, and anything else may be any value of its type. `None` for a
+    /// type whose values no `i128` holds (`u128`, `i256`).
+    fn visible_bounds(&self, e: &Expr) -> Option<(i128, i128)> {
+        // A filled-in default keeps its declaration's overflow rule around it.
+        if let ExprKind::OverflowScope { expr, .. } = &e.kind {
+            return self.visible_bounds(expr);
+        }
+        let whole = |this: &Self, ty: Ty| -> Option<(i128, i128)> {
+            let high = i128::try_from(int_max(this.types, ty)?).ok()?;
+            let low = match ember_types::signed_min_magnitude(this.types, ty) {
+                Some(magnitude) => 0i128.checked_sub_unsigned(magnitude)?,
+                None => 0,
+            };
+            (!matches!(this.types.kind(ty), TyKind::Int(ember_types::IntTy::I256))).then_some((low, high))
+        };
+        let (type_low, type_high) = whole(self, e.ty)?;
+        let within = |value: i128| (type_low..=type_high).contains(&value).then_some((value, value));
+        match &e.kind {
+            ExprKind::Int(value) => i128::try_from(*value).ok().and_then(within).or(Some((type_low, type_high))),
+            ExprKind::Unary { op: UnOp::Neg, operand } if matches!(operand.kind, ExprKind::Int(_)) => {
+                let ExprKind::Int(value) = operand.kind else { unreachable!("matched above") };
+                i128::try_from(value).ok().and_then(i128::checked_neg).and_then(within).or(Some((type_low, type_high)))
+            }
+            ExprKind::Cast { expr, .. } if self.types.is_integral(expr.ty) => match self.visible_bounds(expr) {
+                Some((low, high)) if low == high => within(low).or(Some((type_low, type_high))),
+                _ => Some((type_low, type_high)),
+            },
+            _ => Some((type_low, type_high)),
+        }
+    }
+
+    /// G8-4 — the most items `e` can give where the range it runs over is
+    /// written in it (`(a..b).iter()`, `(a..=b).iter()`), through the
+    /// adapters that never give more than they take; `None` for any other
+    /// source (an iterator in a variable, a container, a `chain`).
+    fn visible_item_count(&self, e: &Expr) -> Option<u128> {
+        let origin = |this: &Self, ty: Ty| this.struct_origin(ty);
+        match &e.kind {
+            ExprKind::Call { args, .. }
+                if args.len() == 1
+                    && origin(self, e.ty).is_some_and(|o| o.is("std.core.RangeIter") || o.is("std.core.RangeInclusiveIter"))
+                    && origin(self, Self::zip_argument(&args[0]).ty).is_some_and(|o| o.is("std.core.Range") || o.is("std.core.RangeInclusive")) =>
+            {
+                // `iter` borrows the range: a literal arrives as a borrow of a temporary.
+                let range = Self::zip_argument(&args[0]);
+                let ExprKind::StructLit { fields, .. } = &range.kind else { return None };
+                let [start, end] = fields.as_slice() else { return None };
+                let (low, _) = self.visible_bounds(start)?;
+                let (_, high) = self.visible_bounds(end)?;
+                let gap = high.checked_sub(low)?;
+                let inclusive = origin(self, range.ty).is_some_and(|o| o.is("std.core.RangeInclusive"));
+                Some(match (gap < 0, inclusive) {
+                    (true, false) => 0,
+                    (true, true) => u128::from(gap == -1),
+                    (false, false) => gap as u128,
+                    (false, true) => gap as u128 + 1,
+                })
+            }
+            ExprKind::Call { callee, args, .. } if !args.is_empty() => {
+                let adapter = self.adapter_name(*callee)?;
+                let below = self.visible_item_count(&args[0]);
+                match adapter.as_str() {
+                    "take" => {
+                        let (_, most) = self.visible_bounds(args.get(1)?)?;
+                        Some(below?.min(u128::try_from(most.max(0)).ok()?))
+                    }
+                    // `skip(s)` leaves out the first `s`, `step_by(k)` gives the
+                    // first item and every `k`-th after it: a written `s` or `k`
+                    // (or its type's least value) lowers the count, so
+                    // `(m..n).step_by(2).enumerate()` with `m, n: int` numbers in
+                    // `int`, as it did before G8-4.
+                    "skip" => {
+                        let (least, _) = self.visible_bounds(args.get(1)?)?;
+                        Some(below?.saturating_sub(u128::try_from(least.max(0)).ok()?))
+                    }
+                    "step_by" => {
+                        let (least, _) = self.visible_bounds(args.get(1)?)?;
+                        let below = below?;
+                        Some(if least < 1 { below } else { below.div_ceil(u128::try_from(least).ok()?) })
+                    }
+                    "zip" => {
+                        let theirs = self.visible_item_count(Self::zip_argument(args.get(1)?));
+                        match (below, theirs) {
+                            (Some(mine), Some(theirs)) => Some(mine.min(theirs)),
+                            (Some(only), None) | (None, Some(only)) => Some(only),
+                            (None, None) => None,
+                        }
+                    }
+                    "chain" => {
+                        let theirs = self.visible_item_count(Self::zip_argument(args.get(1)?))?;
+                        below?.checked_add(theirs)
+                    }
+                    _ => below,
+                }
+            }
+            ExprKind::StructLit { fields, .. }
+                if origin(self, e.ty).is_some_and(|o| o.is("std.core.Copied") || o.is("std.core.Cloned") || o.is("std.core.Enumerate")) =>
+            {
+                self.visible_item_count(fields.first()?)
+            }
+            ExprKind::Ref { place, mutable: false } => self.visible_item_count(place),
+            ExprKind::OverflowScope { expr, .. } => self.visible_item_count(expr),
+            _ => None,
+        }
+    }
+
+    /// G8-4 — an `enumerate` the visible-numbers rule built
+    /// (`visible_numbers`): what it numbers, its start as an `int`, and the
+    /// position type.
+    fn enumerate_literal<'e>(&self, e: &'e Expr) -> Option<(&'e Expr, &'e Expr, Ty)> {
+        let ExprKind::StructLit { fields, .. } = &e.kind else { return None };
+        if !self.struct_origin(e.ty).is_some_and(|o| o.is("std.core.Enumerate")) {
+            return None;
+        }
+        let [inner, number, _] = fields.as_slice() else { return None };
+        let start = match &number.kind {
+            ExprKind::Cast { expr, .. } if expr.ty == self.common.i64 => &**expr,
+            _ if number.ty == self.common.i64 => number,
+            _ => return None,
+        };
+        Some((inner, start, number.ty))
     }
 
     /// `[STD-19]` — `xs.enumerate()` is `xs.iter().enumerate()`: a name no
@@ -33019,11 +33870,7 @@ impl<'a> Checker<'a> {
         explicit: Vec<Ty>,
         span: Span,
     ) -> Expr {
-        let mut bounds = self
-            .current_generics
-            .get(index as usize)
-            .map(|p| p.bounds.clone())
-            .unwrap_or_default();
+        let mut bounds = self.generic_bounds(index, param);
         // D-431, `[TYP-24]` — `I.m(recv)` and `I[A].m(recv)` name the bound
         // to call through, as they name the implementation on a concrete
         // receiver.
@@ -33161,12 +34008,17 @@ impl<'a> Checker<'a> {
         }
         let mut checked = vec![self.pass_receiver_to(receiver, receiver_mode, def, span)];
         let params = self.signatures[def.0 as usize].params.clone();
+        // G8-4 — and a parameter's as the result's: `nth_back(n: Count)` on
+        // an `I` takes an `I.Count`.
+        let saved_instance = self.assoc_instance.replace(bound);
         let params = params
             .into_iter()
             .map(|(param, ty, mode, param_span)| {
-                (param, self.substitute_self(ty, concrete), mode, param_span)
+                let ty = self.substitute_self(ty, concrete);
+                (param, self.resolve_assoc(ty, concrete), mode, param_span)
             })
             .collect::<Vec<_>>();
+        self.assoc_instance = saved_instance;
         let slots = self.call_argument_slots(name.name, args, &params);
         self.check_direct_call_safety(def, span);
         checked.extend(self.check_bound_call_arguments(args, &params, &slots, Some(def)));

@@ -9,8 +9,8 @@
 //! nest (`enumerate(start=round)`: 1.5x C, and C's speed without the copy).
 //! Locals the programmer named keep their reads, for the debugger.
 
-use ember_mir::{Body, LocalId, LocalKind, Operand, Place, Rvalue, StmtKind, Terminator};
-use ember_types::{TyKind, TypeTable};
+use ember_mir::{Body, CastKind, LocalId, LocalKind, Operand, Place, Rvalue, StmtKind, Terminator};
+use ember_types::{Ty, TyKind, TypeTable};
 
 pub fn propagate_copies_all(bodies: &mut [Body], types: &TypeTable) -> usize {
     bodies.iter_mut().map(|body| propagate_copies(body, types)).sum()
@@ -229,6 +229,156 @@ fn propagate(body: &mut Body, copy: LocalId, defs: &[(usize, usize)]) -> usize {
         }
     }
     if replaced > 0 && !read_anywhere(body, copy) {
+        for &(block, index) in defs {
+            body.blocks[block].stmts[index].kind = StmtKind::Nop;
+        }
+    }
+    replaced
+}
+
+/// G8-4 decision C — an integer widened and read back no wider than it was:
+/// `wide = a as T`, `T` wider than `a`'s type `S`, then `c = wide as U` with
+/// `U` no wider than `S`, reads `a` (`c = a as U`, or `c = a` when `U` is
+/// `S`) wherever `wide` still holds that widening of `a`: the low bits are
+/// `a`'s either way. The copy of a loop that computes `enumerate`'s wide
+/// numbers as `int`s widens each one, and a program reading it back as an
+/// `int` then reads the `int`: MSVC kept the 128-bit halves in memory on every
+/// turn (1.47x the loop with `int` numbers, and its speed without them).
+/// Returns how many reads changed.
+pub fn narrow_widened_reads_all(bodies: &mut [Body], types: &TypeTable) -> usize {
+    bodies.iter_mut().map(|body| narrow_widened_reads(body, types)).sum()
+}
+
+fn integer_width(types: &TypeTable, ty: Ty) -> Option<u64> {
+    matches!(types.kind(ty), TyKind::Int(_) | TyKind::Uint(_)).then(|| ember_types::bit_width(types, ty)).flatten()
+}
+
+fn narrow_widened_reads(body: &mut Body, types: &TypeTable) -> usize {
+    // Each (wide, a) pair with the statements that widen `a` into `wide`.
+    let mut taken = vec![false; body.locals.len()];
+    let mut widenings: Vec<((LocalId, LocalId), Vec<(usize, usize)>)> = Vec::new();
+    for (block, data) in body.blocks.iter().enumerate() {
+        for (index, stmt) in data.stmts.iter().enumerate() {
+            let StmtKind::Assign { place, rvalue } = &stmt.kind else { continue };
+            if let Rvalue::Ref { place, .. } | Rvalue::Discriminant(place) = rvalue {
+                taken[place.local.0 as usize] = true;
+            }
+            let Rvalue::Cast { kind: CastKind::Numeric, operand: Operand::Copy(source), to } = rvalue else { continue };
+            if !place.projection.is_empty() || !source.projection.is_empty() || place.local == source.local {
+                continue;
+            }
+            let (Some(from), Some(wide)) = (integer_width(types, body.local(source.local).ty), integer_width(types, *to)) else {
+                continue;
+            };
+            if wide <= from || body.local(place.local).ty != *to {
+                continue;
+            }
+            let key = (place.local, source.local);
+            match widenings.iter_mut().find(|(seen, _)| *seen == key) {
+                Some((_, defs)) => defs.push((block, index)),
+                None => widenings.push((key, vec![(block, index)])),
+            }
+        }
+    }
+    let mut total = 0;
+    for ((wide, source), defs) in widenings {
+        if taken[wide.0 as usize] || taken[source.0 as usize] {
+            continue;
+        }
+        total += narrow_reads_of(body, types, wide, source, &defs);
+    }
+    total
+}
+
+/// `narrow_widened_reads` for one `wide = source as T`, set by `defs`.
+fn narrow_reads_of(body: &mut Body, types: &TypeTable, wide: LocalId, source: LocalId, defs: &[(usize, usize)]) -> usize {
+    let source_ty = body.local(source).ty;
+    let Some(width) = integer_width(types, source_ty) else { return 0 };
+    let is_def = |block: usize, index: usize| defs.contains(&(block, index));
+    // Where `wide == source as T` holds: after a widening, until either is
+    // written or its storage begins or ends. A must-analysis: every path in.
+    let n = body.blocks.len();
+    let mut predecessors = vec![Vec::new(); n];
+    for (block, data) in body.blocks.iter().enumerate() {
+        for next in successors(&data.terminator) {
+            predecessors[next].push(block);
+        }
+    }
+    let touches = |local: LocalId| local == wide || local == source;
+    let kills = |kind: &StmtKind| match kind {
+        StmtKind::Assign { place, .. } => touches(place.local),
+        StmtKind::CheckedBinaryOp { dest, overflow, .. } => touches(dest.local) || touches(overflow.local),
+        StmtKind::Drop { place, .. } => touches(place.local),
+        StmtKind::StorageLive(local) | StmtKind::StorageDead(local) => touches(*local),
+        _ => false,
+    };
+    let out_of = |block: usize, mut holds: bool| {
+        for (index, stmt) in body.blocks[block].stmts.iter().enumerate() {
+            if is_def(block, index) {
+                holds = true;
+            } else if kills(&stmt.kind) {
+                holds = false;
+            }
+        }
+        if let Terminator::Call { dest, .. } = &body.blocks[block].terminator
+            && touches(dest.local)
+        {
+            holds = false;
+        }
+        holds
+    };
+    let mut holds_in = vec![true; n];
+    holds_in[0] = false;
+    for (block, from) in predecessors.iter().enumerate() {
+        if from.is_empty() {
+            holds_in[block] = false;
+        }
+    }
+    let mut holds_out: Vec<bool> = (0..n).map(|block| out_of(block, holds_in[block])).collect();
+    loop {
+        let mut changed = false;
+        for block in 1..n {
+            let holds = !predecessors[block].is_empty() && predecessors[block].iter().all(|&from| holds_out[from]);
+            if holds != holds_in[block] {
+                holds_in[block] = holds;
+                holds_out[block] = out_of(block, holds);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let mut replaced = 0;
+    for (block, holds_at_entry) in holds_in.iter().enumerate() {
+        let mut holds = *holds_at_entry;
+        for index in 0..body.blocks[block].stmts.len() {
+            if holds
+                && let StmtKind::Assign { rvalue, .. } = &mut body.blocks[block].stmts[index].kind
+                && let Rvalue::Cast { kind: CastKind::Numeric, operand: Operand::Copy(read), to } = rvalue
+                && *read == Place::local(wide)
+                && integer_width(types, *to).is_some_and(|narrow| narrow <= width)
+            {
+                *rvalue = if *to == source_ty {
+                    Rvalue::Use(Operand::Copy(Place::local(source)))
+                } else {
+                    Rvalue::Cast { kind: CastKind::Numeric, operand: Operand::Copy(Place::local(source)), to: *to }
+                };
+                replaced += 1;
+            }
+            let kind = &body.blocks[block].stmts[index].kind;
+            if is_def(block, index) {
+                holds = true;
+            } else if kills(kind) {
+                holds = false;
+            }
+        }
+    }
+    // A local the programmer named keeps its value, for the debugger.
+    let decl = body.local(wide);
+    let hidden = matches!(decl.kind, LocalKind::Temp)
+        || (matches!(decl.kind, LocalKind::User) && decl.name.as_deref().is_none_or(str::is_empty));
+    if replaced > 0 && hidden && !read_anywhere(body, wide) {
         for &(block, index) in defs {
             body.blocks[block].stmts[index].kind = StmtKind::Nop;
         }

@@ -115,7 +115,7 @@ impl<'a, 'b> Reachable<'a, 'b> {
     fn visit(&mut self, ty: Ty) -> Result<(), String> {
         if !self.seen.insert(ty) { return Ok(()); }
         match self.emitter.types.kind(ty).clone() {
-            TyKind::Int(IntTy::I128) | TyKind::Uint(UintTy::U128) => {
+            TyKind::Int(IntTy::I128 | IntTy::I256) | TyKind::Uint(UintTy::U128 | UintTy::U256) => {
                 self.runtime_integer_carrier = true;
             }
             TyKind::Struct(id) => {

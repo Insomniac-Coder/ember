@@ -48,8 +48,10 @@ fn main():
     line.clear()
     total = 0
     for round in 0..4:
+        # G8-4 — a range from a variable numbers in `i128` (the visible-numbers rule sees `round`'s
+        # type, not its values), so the number is converted where it is added to an `int`.
         for (i, v) in (round..30).step_by(round + 1).enumerate(start=round):
-            total += i * 100 + v
+            total += (i as int) * 100 + v
     println(total)
     for (a, (b, c)) in xs.iter().skip(1).zip(xs.iter().step_by(3).enumerate()):
         line.push(f"{a},{b},{c}")

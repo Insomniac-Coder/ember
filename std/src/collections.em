@@ -94,6 +94,32 @@ extend u128 implements Hash:
         h.write_u64(self as u64)
         h.write_u64((self >> 64) as u64)
 
+## G8-4 — its low 128 bits, then whether it is past a `u128` (a `u256` has no shifts to reach its
+## high bits with).
+extend u256 implements Hash:
+    fn hash[H: Hasher](self, mut h: H):
+        low = self as u128
+        h.write_u64(low as u64)
+        h.write_u64((low >> 64) as u64)
+        if self > (u128.MAX as u256):
+            h.write_u8(2)
+        else:
+            h.write_u8(0)
+
+## G8-4 — its low 128 bits, then where it lies against them: below zero, within a `u128`, or
+## above one (an `i256` has no shifts to reach its high bits with).
+extend i256 implements Hash:
+    fn hash[H: Hasher](self, mut h: H):
+        low = self as u128
+        h.write_u64(low as u64)
+        h.write_u64((low >> 64) as u64)
+        if self < 0:
+            h.write_u8(1)
+        elif self > (u128.MAX as i256):
+            h.write_u8(2)
+        else:
+            h.write_u8(0)
+
 ## `[TYP-36]`, `[STD-12]` — text hashes its bytes, then a byte no UTF-8 text
 ## contains, so `("ab", "c")` and `("a", "bc")` feed different streams. A
 ## `String` hashes exactly as the `str` it holds.

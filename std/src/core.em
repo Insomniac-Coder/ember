@@ -159,12 +159,317 @@ extend[T] Span[T] implements Index[int]:
 extend[T] MutSpan[T] implements Index[int], IndexMut[int]:
     type Output = T
 
+## `[STD-19]` (G8-4) — a count of items: what `len`, `count` and `position` give, in an
+## iterator's `Count`, and `enumerate`'s numbers, in its `Position`. An iterator over stored items counts in `int`, which no array, view, string
+## or collection outgrows; a range of wide numbers counts in a type that holds every count it can
+## have (the owner's design, `docs/proposals/G8-4-counts-and-positions.md`). These are the
+## operations the adapters count with.
+pub interface ItemCount: Ord + Copy:
+    ## The count of `n` items, which is not negative.
+    fn of(n: int) -> Self
+    ## The count `n`, which fits: how counts of different types meet.
+    fn of_wide(n: u256) -> Self
+    ## This count as a `u256`, which holds every count; a negative number has none.
+    fn to_wide(self) -> u256
+
+    ## The count `n`, or this type's largest where `n` is past it.
+    fn at_most(n: u256) -> Self
+
+    ## This count in the count type `C`, which holds it.
+    fn as_count[C: ItemCount](self) -> C:
+        return C.of_wide(self.to_wide())
+    ## Whether this is the type's largest value, which has no next one.
+    fn at_top(self) -> bool
+    ## This count and `other`'s items together.
+    fn plus(self, other: Self) -> Self
+    ## This count less `other`, which is not more than it.
+    fn less(self, other: Self) -> Self
+    ## Whether this count is more than `n` items.
+    fn exceeds(self, n: int) -> bool
+    ## This count divided by `k`, which is positive, rounded down.
+    fn div_by(self, k: int) -> Self
+    ## What is left of this count after dividing it by `k`, which is positive.
+    fn rem_by(self, k: int) -> int
+    ## This count as an `int`; one past `int.MAX` panics.
+    fn to_int(self) -> int
+
+extend i64 implements ItemCount:
+    fn of(n: int) -> i64:
+        return n
+
+    fn at_most(n: u256) -> i64:
+        if n > (int.MAX as u256):
+            return int.MAX
+        return n as i64
+
+    fn of_wide(n: u256) -> i64:
+        if n > (int.MAX as u256):
+            panic(f"{n} does not fit an int")
+        return n as i64
+
+    fn to_wide(self) -> u256:
+        if self < 0:
+            panic(f"{self} is not a count")
+        return self as u256
+
+    fn at_top(self) -> bool:
+        return self == 9223372036854775807
+
+    fn plus(self, other: i64) -> i64:
+        return self + other
+
+    fn less(self, other: i64) -> i64:
+        return self - other
+
+    fn exceeds(self, n: int) -> bool:
+        return self > n
+
+    fn div_by(self, k: int) -> i64:
+        return self // k
+
+    fn rem_by(self, k: int) -> int:
+        return self % k
+
+    fn to_int(self) -> int:
+        return self
+
+## G8-4 — what a `..` range of 64-bit numbers counts in.
+extend u64 implements ItemCount:
+    fn of(n: int) -> u64:
+        if n < 0:
+            panic(f"a count cannot be negative: {n}")
+        return n as u64
+
+    fn at_most(n: u256) -> u64:
+        if n > (u64.MAX as u256):
+            return u64.MAX
+        return n as u64
+
+    fn of_wide(n: u256) -> u64:
+        if n > (u64.MAX as u256):
+            panic(f"{n} does not fit a u64")
+        return n as u64
+
+    fn to_wide(self) -> u256:
+        return self
+
+    fn at_top(self) -> bool:
+        return self == 18446744073709551615
+
+    fn plus(self, other: u64) -> u64:
+        return self + other
+
+    fn less(self, other: u64) -> u64:
+        return self - other
+
+    fn exceeds(self, n: int) -> bool:
+        return n < 0 or self > (n as u64)
+
+    fn div_by(self, k: int) -> u64:
+        return self // (k as u64)
+
+    fn rem_by(self, k: int) -> int:
+        return (self % (k as u64)) as int
+
+    fn to_int(self) -> int:
+        if self > 9223372036854775807:
+            panic(f"a count of {self} does not fit an int")
+        return self as int
+
+## G8-4 — what a `..` range of 128-bit numbers counts in, and a `..=` one of 64-bit numbers.
+extend u128 implements ItemCount:
+    fn of(n: int) -> u128:
+        if n < 0:
+            panic(f"a count cannot be negative: {n}")
+        return n as u128
+
+    fn at_most(n: u256) -> u128:
+        if n > (u128.MAX as u256):
+            return u128.MAX
+        return n as u128
+
+    fn of_wide(n: u256) -> u128:
+        if n > (u128.MAX as u256):
+            panic(f"{n} does not fit a u128")
+        return n as u128
+
+    fn to_wide(self) -> u256:
+        return self
+
+    fn at_top(self) -> bool:
+        return self == u128.MAX
+
+    fn plus(self, other: u128) -> u128:
+        return self + other
+
+    fn less(self, other: u128) -> u128:
+        return self - other
+
+    fn exceeds(self, n: int) -> bool:
+        return n < 0 or self > (n as u128)
+
+    fn div_by(self, k: int) -> u128:
+        return self // (k as u128)
+
+    fn rem_by(self, k: int) -> int:
+        return (self % (k as u128)) as int
+
+    fn to_int(self) -> int:
+        if self > 9223372036854775807:
+            panic(f"a count of {self} does not fit an int")
+        return self as int
+
+## G8-4 — what `enumerate` numbers a range of 64-bit numbers with.
+extend i128 implements ItemCount:
+    fn of(n: int) -> i128:
+        return n
+
+    fn at_most(n: u256) -> i128:
+        if n > (i128.MAX as u256):
+            return i128.MAX
+        return n as i128
+
+    fn of_wide(n: u256) -> i128:
+        if n > (i128.MAX as u256):
+            panic(f"{n} does not fit an i128")
+        return n as i128
+
+    fn to_wide(self) -> u256:
+        if self < 0:
+            panic(f"{self} is not a count")
+        return self as u256
+
+    fn at_top(self) -> bool:
+        return self == i128.MAX
+
+    fn plus(self, other: i128) -> i128:
+        return self + other
+
+    fn less(self, other: i128) -> i128:
+        return self - other
+
+    fn exceeds(self, n: int) -> bool:
+        return self > (n as i128)
+
+    fn div_by(self, k: int) -> i128:
+        return self // (k as i128)
+
+    fn rem_by(self, k: int) -> int:
+        return (self % (k as i128)) as int
+
+    fn to_int(self) -> int:
+        if self > (int.MAX as i128) or self < (int.MIN as i128):
+            panic(f"a number of {self} does not fit an int")
+        return self as int
+
+## G8-4 — what `enumerate` numbers a range of 128-bit numbers with (`i256`, the signed 256-bit
+## count: a start may be negative).
+extend i256 implements ItemCount:
+    fn of(n: int) -> i256:
+        return n
+
+    ## A count past the largest `i256` has no number: it panics.
+    fn at_most(n: u256) -> i256:
+        return i256.of_wide(n)
+
+    fn of_wide(n: u256) -> i256:
+        number = n as i256
+        if number < 0:
+            panic(f"{n} does not fit an i256")
+        return number
+
+    fn to_wide(self) -> u256:
+        if self < 0:
+            panic(f"{self} is not a count")
+        return self as u256
+
+    ## Never: no number comes near its top.
+    fn at_top(self) -> bool:
+        return false
+
+    fn plus(self, other: i256) -> i256:
+        return self + other
+
+    fn less(self, other: i256) -> i256:
+        return self - other
+
+    fn exceeds(self, n: int) -> bool:
+        return self > (n as i256)
+
+    fn div_by(self, k: int) -> i256:
+        return count_divmod(self.to_wide(), k as u256).0 as i256
+
+    fn rem_by(self, k: int) -> int:
+        return count_divmod(self.to_wide(), k as u256).1 as int
+
+    fn to_int(self) -> int:
+        if self > (int.MAX as i256) or self < (int.MIN as i256):
+            panic(f"a number of {self} does not fit an int")
+        return self as int
+
+## G8-4 — what a `..=` range of 128-bit numbers counts in (`u256`, the 256-bit count). It adds,
+## subtracts and compares, so it divides by doubling.
+extend u256 implements ItemCount:
+    fn of(n: int) -> u256:
+        if n < 0:
+            panic(f"a count cannot be negative: {n}")
+        return n as u256
+
+    fn at_most(n: u256) -> u256:
+        return n
+
+    fn of_wide(n: u256) -> u256:
+        return n
+
+    fn to_wide(self) -> u256:
+        return self
+
+    ## Never: no count comes near its top.
+    fn at_top(self) -> bool:
+        return false
+
+    fn plus(self, other: u256) -> u256:
+        return self + other
+
+    fn less(self, other: u256) -> u256:
+        return self - other
+
+    fn exceeds(self, n: int) -> bool:
+        return n < 0 or self > (n as u256)
+
+    fn div_by(self, k: int) -> u256:
+        return count_divmod(self, k as u256).0
+
+    fn rem_by(self, k: int) -> int:
+        return count_divmod(self, k as u256).1 as int
+
+    fn to_int(self) -> int:
+        if self > (int.MAX as u256):
+            panic(f"a count of {self} does not fit an int")
+        return self as int
+
+## `n` divided by `d`, which is positive, and what is left: the quotient by `2d` (`d + d` is not
+## past `n`), doubled, and one more `d` when it is left.
+fn count_divmod(n: u256, d: u256) -> (u256, u256):
+    if n < d:
+        return (0, n)
+    if n - d < d:
+        return (1, n - d)
+    half = count_divmod(n, d + d)
+    if half.1 < d:
+        return (half.0 + half.0, half.1)
+    return (half.0 + half.0 + 1, half.1 - d)
+
 ## Part IV §8's canonical associated-type iterator contract. Named standard
 ## iterators, including the Arena-backed collection and Span iterators,
 ## implement this interface rather than introducing a second iterator
 ## abstraction.
 pub interface Iterator:
     type Item
+    ## `[STD-19]` (G8-4) — what this iterator counts its items in: `int` unless it says otherwise.
+    type Count: ItemCount = int
+    ## And what `enumerate` numbers its items with.
+    type Position: ItemCount = int
     fn next(mut self) -> Option[Item]
 
     ## `[STD-19]` (ODR-089) — the adapters. Each takes this iterator and
@@ -190,8 +495,8 @@ pub interface Iterator:
         return StepBy(self, k - 1, false)
 
     ## Each item with its number, counting from `start` (`[STD-26]`).
-    fn enumerate(owned self, start: int = 0) -> Enumerate[Self]:
-        return Enumerate(self, start, false)
+    fn enumerate(owned self, start: int = 0) -> Enumerate[Self, Position]:
+        return Enumerate(self, Position.of(start), false)
 
     ## Pairs of an item of each, until either runs out.
     fn zip[J: Iterator](owned self, other: J) -> Zip[Self, J]:
@@ -244,10 +549,11 @@ pub interface Iterator:
     ## `[STD-19]` — the consumers. Each takes this iterator and runs it.
 
     ## How many items there are.
-    fn count(owned self) -> int:
-        n = 0
+    fn count(owned self) -> Count:
+        n = Count.of(0)
+        one = Count.of(1)
         for _ in self:
-            n += 1
+            n = n.plus(one)
         return n
 
     ## The last item, if any.
@@ -261,12 +567,23 @@ pub interface Iterator:
     fn nth(owned self, n: int) -> Option[Item]:
         if n < 0:
             panic(f"nth({n}): an index cannot be negative")
-        at = 0
-        for x in self:
-            if at == n:
-                return Some(x)
-            at += 1
-        return None
+        rest = self
+        if rest.skip_front(Count.of(n)) > Count.of(0):
+            return None
+        return rest.next()
+
+    ## `[STD-19]` (G8-4) — leaves out up to `n` items from the front, and gives how many of the `n`
+    ## it could not (none when all went). A range does it at once, and the adapters that never
+    ## change their items pass it down, so no gigantic run is passed one item at a time.
+    fn skip_front(mut self, n: Count) -> Count:
+        left = n
+        zero = Count.of(0)
+        one = Count.of(1)
+        while left > zero:
+            if self.next().is_none():
+                return left
+            left = left.less(one)
+        return left
 
     ## `f(... f(f(init, a), b) ..., z)` over the items `a` to `z`.
     fn fold[B](owned self, init: B, f: fn(B, Item) -> B) -> B:
@@ -297,12 +614,13 @@ pub interface Iterator:
         return None
 
     ## The index of the first item `pred` holds for.
-    fn position(owned self, pred: fn(Item) -> bool) -> Option[int]:
-        at = 0
+    fn position(owned self, pred: fn(Item) -> bool) -> Option[Count]:
+        at = Count.of(0)
+        one = Count.of(1)
         for x in self:
             if pred(x):
                 return Some(at)
-            at += 1
+            at = at.plus(one)
         return None
 
     ## `f` on each item, in order.
@@ -438,6 +756,25 @@ pub interface Iterator:
 pub interface DoubleEndedIterator: Iterator:
     fn next_back(mut self) -> Option[Item]
 
+    ## `[STD-19]` (G8-4) — leaves out up to `n` items from the back, and gives how many of the `n`
+    ## it could not (none when all went). A range does it at once, and the adapters pass it down.
+    fn skip_back(mut self, n: Count) -> Count:
+        left = n
+        zero = Count.of(0)
+        one = Count.of(1)
+        while left > zero:
+            if self.next_back().is_none():
+                return left
+            left = left.less(one)
+        return left
+
+    ## `[STD-19]` (G8-4) — leaves out `n` items from the back and gives the one before them:
+    ## `nth_back(Count.of(0))` is `next_back()`.
+    fn nth_back(mut self, n: Count) -> Option[Item]:
+        if self.skip_back(n) > Count.of(0):
+            return None
+        return self.next_back()
+
     ## The items, last first.
     fn rev(owned self) -> Rev[Self]:
         return Rev(self)
@@ -446,7 +783,7 @@ pub interface DoubleEndedIterator: Iterator:
 ## left (`len`), without giving them: the ranges of integers, the views'
 ## iterators, and the adapters over ones.
 pub interface ExactSizeIterator: Iterator:
-    fn len(self) -> int
+    fn len(self) -> Count
 
 pub interface IntoIterator:
     type Item
@@ -468,6 +805,8 @@ pub struct Take[I]:
 
 extend[I: Iterator] Take[I] implements Iterator:
     type Item = I.Item
+    type Count = I.Count
+    type Position = I.Position
 
     fn next(mut self) -> Option[I.Item]:
         if self.left <= 0:
@@ -475,19 +814,39 @@ extend[I: Iterator] Take[I] implements Iterator:
         self.left -= 1
         return self.inner.next()
 
+    fn skip_front(mut self, n: I.Count) -> I.Count:
+        wanted = n
+        if n.exceeds(self.left):
+            wanted = I.Count.of(max(self.left, 0))
+        missed = self.inner.skip_front(wanted)
+        gone = wanted.less(missed)
+        self.left -= gone.to_int()
+        return n.less(gone)
+
 pub struct Skip[I]:
     inner: I
     left: int
 
 extend[I: Iterator] Skip[I] implements Iterator:
     type Item = I.Item
+    type Count = I.Count
+    type Position = I.Position
 
     fn next(mut self) -> Option[I.Item]:
-        while self.left > 0:
-            self.left -= 1
-            if self.inner.next().is_none():
+        if self.left > 0:
+            first = I.Count.of(self.left)
+            self.left = 0
+            if self.inner.skip_front(first) > I.Count.of(0):
                 return None
         return self.inner.next()
+
+    fn skip_front(mut self, n: I.Count) -> I.Count:
+        if self.left > 0:
+            first = I.Count.of(self.left)
+            self.left = 0
+            if self.inner.skip_front(first) > I.Count.of(0):
+                return n
+        return self.inner.skip_front(n)
 
 pub struct StepBy[I]:
     inner: I
@@ -497,6 +856,8 @@ pub struct StepBy[I]:
 
 extend[I: Iterator] StepBy[I] implements Iterator:
     type Item = I.Item
+    type Count = I.Count
+    type Position = I.Position
 
     fn next(mut self) -> Option[I.Item]:
         if self.started:
@@ -511,24 +872,29 @@ extend[I: Iterator] StepBy[I] implements Iterator:
 ## Item `k` is numbered `start + k`, so a number past `int`'s top panics, and
 ## only then; a `for` over it counts the same way (`[CTL-3b]`). `number` is the
 ## next item's, and `past` says the last one given was numbered `int.MAX`.
-pub struct Enumerate[I]:
+## G8-4 — the numbers are `P`s: the iterator's `Position`, `int` for stored items and wider for
+## a range of 64- or 128-bit numbers, so every item has its number; or, where the range's numbers
+## are written in place, the smallest type that holds them (the visible-numbers rule).
+pub struct Enumerate[I, P]:
     inner: I
-    number: int
+    number: P
     past: bool
 
-extend[I: Iterator] Enumerate[I] implements Iterator:
-    type Item = (int, I.Item)
+extend[I: Iterator, P: ItemCount] Enumerate[I, P] implements Iterator:
+    type Item = (P, I.Item)
+    type Count = I.Count
+    type Position = P
 
-    fn next(mut self) -> Option[(int, I.Item)]:
+    fn next(mut self) -> Option[(P, I.Item)]:
         match self.inner.next():
             Some(x):
                 at = self.number
                 if self.past:
-                    at += 1
-                elif at < int.MAX:
-                    self.number = at + 1
-                else:
+                    at = at.plus(P.of(1))
+                elif at.at_top():
                     self.past = true
+                else:
+                    self.number = at.plus(P.of(1))
                 return Some((at, x))
             None:
                 return None
@@ -539,6 +905,8 @@ pub struct Zip[I, J]:
 
 extend[I: Iterator, J: Iterator] Zip[I, J] implements Iterator:
     type Item = (I.Item, J.Item)
+    type Count = I.Count
+    type Position = I.Position
 
     fn next(mut self) -> Option[(I.Item, J.Item)]:
         match self.a.next():
@@ -551,6 +919,15 @@ extend[I: Iterator, J: Iterator] Zip[I, J] implements Iterator:
             None:
                 return None
 
+    fn skip_front(mut self, n: I.Count) -> I.Count:
+        mine = self.a.skip_front(n).to_wide()
+        wide = n.to_wide()
+        theirs = J.Count.at_most(wide)
+        missed = self.b.skip_front(theirs).to_wide() + (wide - theirs.to_wide())
+        if missed > mine:
+            return I.Count.of_wide(missed)
+        return I.Count.of_wide(mine)
+
 ## `other` runs only once the first has run out (`done`), and the first is
 ## not asked again after it said `None`.
 pub struct Chain[I, J]:
@@ -560,6 +937,12 @@ pub struct Chain[I, J]:
 
 extend[I: Iterator, J: Iterator[Item = I.Item]] Chain[I, J] implements Iterator:
     type Item = I.Item
+    ## G8-4 — the two sides' items together, stepping up by need: `int` and `int` stay `int`
+    ## (stored items and small ranges cannot come near its top); otherwise one level above the
+    ## wider side's count, `u64` -> `u128` -> `u256`, so every count of the two has its type.
+    type Count = CountSum[I.Count, J.Count]
+    ## And the numbers `enumerate` gives it, which hold both sides'.
+    type Position = PositionJoin[I.Position, J.Position]
 
     fn next(mut self) -> Option[I.Item]:
         if not self.done:
@@ -569,6 +952,19 @@ extend[I: Iterator, J: Iterator[Item = I.Item]] Chain[I, J] implements Iterator:
                 None:
                     self.done = true
         return self.other.next()
+
+    fn skip_front(mut self, n: CountSum[I.Count, J.Count]) -> CountSum[I.Count, J.Count]:
+        left = n.to_wide()
+        if not self.done:
+            mine = I.Count.at_most(left)
+            missed = self.first.skip_front(mine).to_wide()
+            left = missed + (left - mine.to_wide())
+            if left == 0:
+                return n.less(n)
+            self.done = true
+        theirs = J.Count.at_most(left)
+        left = self.other.skip_front(theirs).to_wide() + (left - theirs.to_wide())
+        return left.as_count[CountSum[I.Count, J.Count]]()
 
 ## `[STD-19]` — `it.copied()` and `it.cloned()` over an iterator of
 ## references `ref T`: the values they reach, copied or cloned, so the items
@@ -580,6 +976,8 @@ pub struct Copied[I, T]:
 
 extend[T: Copy, I: Iterator[Item = ref T]] Copied[I, T] implements Iterator:
     type Item = T
+    type Count = I.Count
+    type Position = I.Position
 
     fn next(mut self) -> Option[T]:
         match self.inner.next():
@@ -588,11 +986,16 @@ extend[T: Copy, I: Iterator[Item = ref T]] Copied[I, T] implements Iterator:
             None:
                 return None
 
+    fn skip_front(mut self, n: I.Count) -> I.Count:
+        return self.inner.skip_front(n)
+
 pub struct Cloned[I, T]:
     inner: I
 
 extend[T: Clone, I: Iterator[Item = ref T]] Cloned[I, T] implements Iterator:
     type Item = T
+    type Count = I.Count
+    type Position = I.Position
 
     fn next(mut self) -> Option[T]:
         match self.inner.next():
@@ -612,6 +1015,8 @@ pub struct Map[I, R, F]:
 
 extend[I: Iterator, R, F: fn(I.Item) -> R] Map[I, R, F] implements Iterator:
     type Item = R
+    type Count = I.Count
+    type Position = I.Position
 
     fn next(mut self) -> Option[R]:
         match self.inner.next():
@@ -626,6 +1031,8 @@ pub struct Filter[I, F]:
 
 extend[I: Iterator, F: fn(I.Item) -> bool] Filter[I, F] implements Iterator:
     type Item = I.Item
+    type Count = I.Count
+    type Position = I.Position
 
     fn next(mut self) -> Option[I.Item]:
         while true:
@@ -643,6 +1050,8 @@ pub struct FilterMap[I, R, F]:
 
 extend[I: Iterator, R, F: fn(I.Item) -> Option[R]] FilterMap[I, R, F] implements Iterator:
     type Item = R
+    type Count = I.Count
+    type Position = I.Position
 
     fn next(mut self) -> Option[R]:
         while true:
@@ -664,6 +1073,8 @@ pub struct TakeWhile[I, F]:
 
 extend[I: Iterator, F: fn(I.Item) -> bool] TakeWhile[I, F] implements Iterator:
     type Item = I.Item
+    type Count = I.Count
+    type Position = I.Position
 
     fn next(mut self) -> Option[I.Item]:
         if self.done:
@@ -684,6 +1095,8 @@ pub struct SkipWhile[I, F]:
 
 extend[I: Iterator, F: fn(I.Item) -> bool] SkipWhile[I, F] implements Iterator:
     type Item = I.Item
+    type Count = I.Count
+    type Position = I.Position
 
     fn next(mut self) -> Option[I.Item]:
         if self.started:
@@ -704,6 +1117,8 @@ pub struct Inspect[I, F]:
 
 extend[I: Iterator, F: fn(I.Item)] Inspect[I, F] implements Iterator:
     type Item = I.Item
+    type Count = I.Count
+    type Position = I.Position
 
     fn next(mut self) -> Option[I.Item]:
         match self.inner.next():
@@ -723,6 +1138,11 @@ pub struct FlatMap[I, U: IntoIterator, F]:
 
 extend[I: Iterator, U: IntoIterator, F: fn(I.Item) -> U] FlatMap[I, U, F] implements Iterator:
     type Item = U.Item
+    ## G8-4 — every inner iterator's items together, stepping up by need: the level that holds the
+    ## outer count times the inner one (an `int` by an `int` stays an `int`; `u256` the limit).
+    type Count = CountProduct[I.Count, U.Iter.Count]
+    ## And the numbers `enumerate` gives them.
+    type Position = PositionOf[CountProduct[I.Count, U.Iter.Count]]
 
     fn next(mut self) -> Option[U.Item]:
         while true:
@@ -751,6 +1171,11 @@ pub struct Flatten[I, U: IntoIterator]:
 
 extend[U: IntoIterator, I: Iterator[Item = U]] Flatten[I, U] implements Iterator:
     type Item = U.Item
+    ## G8-4 — every inner iterator's items together, stepping up by need: the level that holds the
+    ## outer count times the inner one (an `int` by an `int` stays an `int`; `u256` the limit).
+    type Count = CountProduct[I.Count, U.Iter.Count]
+    ## And the numbers `enumerate` gives them.
+    type Position = PositionOf[CountProduct[I.Count, U.Iter.Count]]
 
     fn next(mut self) -> Option[U.Item]:
         while true:
@@ -780,6 +1205,8 @@ pub struct Peekable[I: Iterator]:
 
 extend[I: Iterator] Peekable[I] implements Iterator:
     type Item = I.Item
+    type Count = I.Count
+    type Position = I.Position
 
     fn next(mut self) -> Option[I.Item]:
         if self.looked:
@@ -834,16 +1261,24 @@ pub struct Rev[I]:
 
 extend[I: DoubleEndedIterator] Rev[I] implements Iterator:
     type Item = I.Item
+    type Count = I.Count
+    type Position = I.Position
 
     fn next(mut self) -> Option[I.Item]:
         return self.inner.next_back()
+
+    fn skip_front(mut self, n: I.Count) -> I.Count:
+        return self.inner.skip_back(n)
 
 extend[I: DoubleEndedIterator] Rev[I] implements DoubleEndedIterator:
     fn next_back(mut self) -> Option[I.Item]:
         return self.inner.next()
 
+    fn skip_back(mut self, n: I.Count) -> I.Count:
+        return self.inner.skip_front(n)
+
 extend[I: DoubleEndedIterator + ExactSizeIterator] Rev[I] implements ExactSizeIterator:
-    fn len(self) -> int:
+    fn len(self) -> I.Count:
         return self.inner.len()
 
 ## ODR-091 — which adapters run backwards, and know their length. One whose
@@ -851,95 +1286,144 @@ extend[I: DoubleEndedIterator + ExactSizeIterator] Rev[I] implements ExactSizeIt
 ## `enumerate`, `zip`) runs backwards when the iterator below it knows its
 ## length; `copied`, `cloned` and `chain` run backwards when theirs do.
 extend[I: ExactSizeIterator] Take[I] implements ExactSizeIterator:
-    fn len(self) -> int:
+    fn len(self) -> I.Count:
         left = self.inner.len()
-        return left if left < self.left else max(self.left, 0)
+        if left.exceeds(self.left):
+            return I.Count.of(max(self.left, 0))
+        return left
 
+## G8-4 — the items after the first `left` are left out from the back at once (`nth_back`), so a
+## range too long for an `int` to count gives its first items backwards too.
 extend[I: DoubleEndedIterator + ExactSizeIterator] Take[I] implements DoubleEndedIterator:
     fn next_back(mut self) -> Option[I.Item]:
         if self.left <= 0:
             return None
-        extra = self.inner.len() - self.left
-        while extra > 0:
-            extra -= 1
-            if self.inner.next_back().is_none():
-                return None
+        left = self.inner.len()
+        keep = self.left
         self.left -= 1
+        if left.exceeds(keep):
+            return self.inner.nth_back(left.less(I.Count.of(keep)))
         return self.inner.next_back()
 
+    fn skip_back(mut self, n: I.Count) -> I.Count:
+        if self.left <= 0:
+            return n
+        wanted = n
+        if n.exceeds(self.left):
+            wanted = I.Count.of(self.left)
+        held = self.inner.len()
+        if held.exceeds(self.left):
+            self.inner.skip_back(held.less(I.Count.of(self.left)))
+        missed = self.inner.skip_back(wanted)
+        gone = wanted.less(missed)
+        self.left -= gone.to_int()
+        return n.less(gone)
+
 extend[I: ExactSizeIterator] Skip[I] implements ExactSizeIterator:
-    fn len(self) -> int:
-        return max(self.inner.len() - self.left, 0)
+    fn len(self) -> I.Count:
+        left = self.inner.len()
+        if left.exceeds(self.left):
+            return left.less(I.Count.of(self.left))
+        return I.Count.of(0)
 
 extend[I: DoubleEndedIterator + ExactSizeIterator] Skip[I] implements DoubleEndedIterator:
     fn next_back(mut self) -> Option[I.Item]:
-        if self.inner.len() - self.left <= 0:
+        if not self.inner.len().exceeds(self.left):
             return None
         return self.inner.next_back()
+
+    fn skip_back(mut self, n: I.Count) -> I.Count:
+        held = self.inner.len()
+        if not held.exceeds(self.left):
+            return n
+        room = held.less(I.Count.of(self.left))
+        wanted = n
+        if n > room:
+            wanted = room
+        missed = self.inner.skip_back(wanted)
+        return n.less(wanted.less(missed))
 
 ## The items a `step_by(k)` gives are at `0, k, 2k, …` of those left before
 ## the first, then at `k - 1, 2k - 1, …` after it (`gap` is `k - 1`).
 extend[I: ExactSizeIterator] StepBy[I] implements ExactSizeIterator:
-    fn len(self) -> int:
+    fn len(self) -> I.Count:
         left = self.inner.len()
         step = self.gap + 1
         if self.started:
-            return left // step
-        if left == 0:
-            return 0
-        return 1 + (left - 1) // step
+            return left.div_by(step)
+        if not left.exceeds(0):
+            return I.Count.of(0)
+        one = I.Count.of(1)
+        return one.plus(left.less(one).div_by(step))
 
 extend[I: DoubleEndedIterator + ExactSizeIterator] StepBy[I] implements DoubleEndedIterator:
     fn next_back(mut self) -> Option[I.Item]:
         left = self.inner.len()
         step = self.gap + 1
+        extra = 0
         if self.started:
-            if left < step:
+            if not left.exceeds(step - 1):
                 return None
-            extra = left % step
+            extra = left.rem_by(step)
         else:
-            if left == 0:
+            if not left.exceeds(0):
                 return None
-            extra = (left - 1) % step
-        while extra > 0:
-            extra -= 1
-            self.inner.next_back()
+            extra = left.less(I.Count.of(1)).rem_by(step)
+        if extra > 0:
+            return self.inner.nth_back(I.Count.of(extra))
         return self.inner.next_back()
 
-extend[I: ExactSizeIterator] Enumerate[I] implements ExactSizeIterator:
-    fn len(self) -> int:
+extend[I: ExactSizeIterator, P: ItemCount] Enumerate[I, P] implements ExactSizeIterator:
+    fn len(self) -> I.Count:
         return self.inner.len()
 
 ## The last item left is numbered the next one's number plus the items
-## between: a number past `int`'s top panics here too.
-extend[I: DoubleEndedIterator + ExactSizeIterator] Enumerate[I] implements DoubleEndedIterator:
-    fn next_back(mut self) -> Option[(int, I.Item)]:
+## between.
+extend[I: DoubleEndedIterator + ExactSizeIterator, P: ItemCount] Enumerate[I, P] implements DoubleEndedIterator:
+    fn next_back(mut self) -> Option[(P, I.Item)]:
         left = self.inner.len()
         match self.inner.next_back():
             Some(x):
-                at = self.number + (left - 1)
+                at = self.number.plus(P.of_wide(left.to_wide() - 1))
                 if self.past:
-                    at += 1
+                    at = at.plus(P.of(1))
                 return Some((at, x))
             None:
                 return None
 
+    ## The items left out are numbered as `next_back` numbers them, the greatest first, so a
+    ## number past the type's top panics as it would item by item (`[CTL-3b]`, D-457).
+    fn skip_back(mut self, n: I.Count) -> I.Count:
+        left = self.inner.len()
+        if n.exceeds(0) and left.exceeds(0):
+            at = self.number.plus(P.of_wide(left.to_wide() - 1))
+            if self.past:
+                at.plus(P.of(1))
+        return self.inner.skip_back(n)
+
 extend[I: ExactSizeIterator, J: ExactSizeIterator] Zip[I, J] implements ExactSizeIterator:
-    fn len(self) -> int:
-        return min(self.a.len(), self.b.len())
+    fn len(self) -> I.Count:
+        mine = self.a.len()
+        theirs = self.b.len().to_wide()
+        if theirs < mine.to_wide():
+            return I.Count.of_wide(theirs)
+        return mine
+
+## G8-4 — the longer side's extra items left out at once, so both have as many left.
+extend[I: DoubleEndedIterator + ExactSizeIterator, J: DoubleEndedIterator + ExactSizeIterator] Zip[I, J]:
+    fn even_up(mut self):
+        mine = self.a.len().to_wide()
+        theirs = self.b.len().to_wide()
+        if mine > theirs:
+            self.a.skip_back(I.Count.of_wide(mine - theirs))
+        if theirs > mine:
+            self.b.skip_back(J.Count.of_wide(theirs - mine))
 
 ## The longer is cut to the shorter's length from the back first, so the
 ## pairs are the ones `next` would make.
 extend[I: DoubleEndedIterator + ExactSizeIterator, J: DoubleEndedIterator + ExactSizeIterator] Zip[I, J] implements DoubleEndedIterator:
     fn next_back(mut self) -> Option[(I.Item, J.Item)]:
-        mine = self.a.len()
-        theirs = self.b.len()
-        while mine > theirs:
-            mine -= 1
-            self.a.next_back()
-        while theirs > mine:
-            theirs -= 1
-            self.b.next_back()
+        self.even_up()
         match self.a.next_back():
             Some(x):
                 match self.b.next_back():
@@ -950,11 +1434,18 @@ extend[I: DoubleEndedIterator + ExactSizeIterator, J: DoubleEndedIterator + Exac
             None:
                 return None
 
+    fn skip_back(mut self, n: I.Count) -> I.Count:
+        self.even_up()
+        missed = self.a.skip_back(n)
+        self.b.skip_back(J.Count.at_most(n.to_wide()))
+        return missed
+
 extend[I: ExactSizeIterator, J: ExactSizeIterator[Item = I.Item]] Chain[I, J] implements ExactSizeIterator:
-    fn len(self) -> int:
+    fn len(self) -> CountSum[I.Count, J.Count]:
+        rest = self.other.len().as_count[CountSum[I.Count, J.Count]]()
         if self.done:
-            return self.other.len()
-        return self.first.len() + self.other.len()
+            return rest
+        return self.first.len().as_count[CountSum[I.Count, J.Count]]().plus(rest)
 
 ## Backwards the second runs first; the first is not asked once it said
 ## `None` from the front.
@@ -968,8 +1459,17 @@ extend[I: DoubleEndedIterator, J: DoubleEndedIterator[Item = I.Item]] Chain[I, J
                     return None
                 return self.first.next_back()
 
+    fn skip_back(mut self, n: CountSum[I.Count, J.Count]) -> CountSum[I.Count, J.Count]:
+        left = n.to_wide()
+        theirs = J.Count.at_most(left)
+        left = self.other.skip_back(theirs).to_wide() + (left - theirs.to_wide())
+        if left > 0 and not self.done:
+            mine = I.Count.at_most(left)
+            left = self.first.skip_back(mine).to_wide() + (left - mine.to_wide())
+        return left.as_count[CountSum[I.Count, J.Count]]()
+
 extend[T: Copy, I: ExactSizeIterator[Item = ref T]] Copied[I, T] implements ExactSizeIterator:
-    fn len(self) -> int:
+    fn len(self) -> I.Count:
         return self.inner.len()
 
 extend[T: Copy, I: DoubleEndedIterator[Item = ref T]] Copied[I, T] implements DoubleEndedIterator:
@@ -980,8 +1480,11 @@ extend[T: Copy, I: DoubleEndedIterator[Item = ref T]] Copied[I, T] implements Do
             None:
                 return None
 
+    fn skip_back(mut self, n: I.Count) -> I.Count:
+        return self.inner.skip_back(n)
+
 extend[T: Clone, I: ExactSizeIterator[Item = ref T]] Cloned[I, T] implements ExactSizeIterator:
-    fn len(self) -> int:
+    fn len(self) -> I.Count:
         return self.inner.len()
 
 extend[T: Clone, I: DoubleEndedIterator[Item = ref T]] Cloned[I, T] implements DoubleEndedIterator:
@@ -1029,7 +1532,7 @@ extend[T: Integer] RangeInclusive[T]:
 
 extend[T: Integer] RangeFrom[T]:
     pub fn iter(self) -> RangeFromIter[T]:
-        return RangeFromIter(self.start)
+        return RangeFromIter(self.start, false)
 
 ## `[CTL-1]` (D-444) — a range is iterable, and consumed as a value its
 ## items are its `iter()`'s: `flat_map(fn(x: int) => 0..x)`.
@@ -1061,6 +1564,8 @@ pub struct RangeIter[T]:
 
 extend[T: Integer] RangeIter[T] implements Iterator:
     type Item = T
+    type Count = T.SpanCount
+    type Position = T.Position
 
     fn next(mut self) -> Option[T]:
         if self.at < self.end:
@@ -1069,7 +1574,18 @@ extend[T: Integer] RangeIter[T] implements Iterator:
             return Some(here)
         return None
 
-## ODR-091 — backwards from `end`, which moves down to meet `at`.
+    fn skip_front(mut self, n: T.SpanCount) -> T.SpanCount:
+        if self.at < self.end:
+            gap = self.at.distance_to(self.end)
+            if gap > n:
+                self.at = self.at.forward_by(n)
+                return T.SpanCount.of(0)
+            self.at = self.end
+            return n.less(gap)
+        return n
+
+## ODR-091 — backwards from `end`, which moves down to meet `at`; G8-4 — `nth_back` moves it
+## past `n` values at once.
 extend[T: Integer] RangeIter[T] implements DoubleEndedIterator:
     fn next_back(mut self) -> Option[T]:
         if self.at < self.end:
@@ -1077,11 +1593,21 @@ extend[T: Integer] RangeIter[T] implements DoubleEndedIterator:
             return Some(self.end)
         return None
 
+    fn skip_back(mut self, n: T.SpanCount) -> T.SpanCount:
+        if self.at < self.end:
+            gap = self.at.distance_to(self.end)
+            if gap > n:
+                self.end = self.end.back_by(n)
+                return T.SpanCount.of(0)
+            self.end = self.at
+            return n.less(gap)
+        return n
+
 extend[T: Integer] RangeIter[T] implements ExactSizeIterator:
-    fn len(self) -> int:
+    fn len(self) -> T.SpanCount:
         if self.at < self.end:
             return self.at.distance_to(self.end)
-        return 0
+        return T.SpanCount.of(0)
 
 ## The values from `at` up to and including `end`; `done` once `end` is
 ## given, so a range ending at the type's top never steps past it.
@@ -1092,6 +1618,8 @@ pub struct RangeInclusiveIter[T]:
 
 extend[T: Integer] RangeInclusiveIter[T] implements Iterator:
     type Item = T
+    type Count = T.FullCount
+    type Position = T.Position
 
     fn next(mut self) -> Option[T]:
         if self.done:
@@ -1102,6 +1630,16 @@ extend[T: Integer] RangeInclusiveIter[T] implements Iterator:
         else:
             self.done = true
         return Some(here)
+
+    fn skip_front(mut self, n: T.FullCount) -> T.FullCount:
+        if self.done:
+            return n
+        count = T.widen_count(self.at.distance_to(self.end)).plus(T.FullCount.of(1))
+        if count > n:
+            self.at = self.at.forward_by(T.narrow_count(n))
+            return T.FullCount.of(0)
+        self.done = true
+        return n.less(count)
 
 ## ODR-091 — backwards from `end`; `done` once the two meet, so a range
 ## starting at the type's bottom never steps below it.
@@ -1116,27 +1654,56 @@ extend[T: Integer] RangeInclusiveIter[T] implements DoubleEndedIterator:
             self.done = true
         return Some(here)
 
-extend[T: Integer] RangeInclusiveIter[T] implements ExactSizeIterator:
-    fn len(self) -> int:
+    ## G8-4 — `end` moved past `n` values at once; an `n` below the count leaves `at` at least.
+    fn skip_back(mut self, n: T.FullCount) -> T.FullCount:
         if self.done:
-            return 0
-        gap = self.at.distance_to(self.end)
-        if gap == 9223372036854775807:
-            panic("a range of more than int.MAX values has no length")
-        return gap + 1
+            return n
+        count = T.widen_count(self.at.distance_to(self.end)).plus(T.FullCount.of(1))
+        if count > n:
+            self.end = self.end.back_by(T.narrow_count(n))
+            return T.FullCount.of(0)
+        self.done = true
+        return n.less(count)
 
-## The values from `at` on; stepping past the type's top panics, as a `for`
-## over `a..` does (`[CTL-3]`).
+extend[T: Integer] RangeInclusiveIter[T] implements ExactSizeIterator:
+    fn len(self) -> T.FullCount:
+        if self.done:
+            return T.FullCount.of(0)
+        return T.widen_count(self.at.distance_to(self.end)).plus(T.FullCount.of(1))
+
+## The values from `at` on, the type's top included; the value after the top is an overflow
+## (`[TYP-8]`), which panics when it is asked for, as in a `for` over `a..` (`[CTL-3]`, D-526).
+## `given` says `at` has been given.
 pub struct RangeFromIter[T]:
     at: T
+    given: bool
 
 extend[T: Integer] RangeFromIter[T] implements Iterator:
     type Item = T
+    ## G8-4 — it gives the values up to the type's top at most.
+    type Count = T.FullCount
+    type Position = T.Position
 
     fn next(mut self) -> Option[T]:
-        here = self.at
-        self.at = here.successor()
-        return Some(here)
+        if self.given:
+            self.at = self.at.successor()
+        self.given = true
+        return Some(self.at)
+
+    ## G8-4 — the values left out at once; leaving out the value after the top panics, as asking
+    ## for it would.
+    fn skip_front(mut self, n: T.FullCount) -> T.FullCount:
+        if not n.exceeds(0):
+            return n
+        if self.given:
+            self.at = self.at.successor()
+        self.given = true
+        left = self.at.count_to_top()
+        if n > left:
+            self.at = self.at.forward_by(T.narrow_count(left.less(T.FullCount.of(1))))
+            self.at = self.at.successor()
+        self.at = self.at.forward_by(T.narrow_count(n.less(T.FullCount.of(1))))
+        return T.FullCount.of(0)
 
 ## Part IV §8 also declares `Hash`, `Display`, `Debug`, and the operator
 ## interfaces; they remain staged with their dependent surface.
@@ -1602,6 +2169,13 @@ extend usize implements Add, Sub, Mul, FloorDiv, Rem, Pow, Neg, Not, BitAnd, Bit
         BitXorAssign, ShlAssign, ShrAssign:
     type Output = usize
 
+## G8-4 — the 256-bit counts have the operators a count has (`[TYP-42]`).
+extend i256 implements Add, Sub, Neg, AddAssign, SubAssign:
+    type Output = i256
+
+extend u256 implements Add, Sub, Neg, AddAssign, SubAssign:
+    type Output = u256
+
 extend f16 implements Add, Sub, Mul, Div, FloorDiv, Rem, Pow, Neg, \
         AddAssign, SubAssign, MulAssign, DivAssign, FloorDivAssign, RemAssign, PowAssign:
     type Output = f16
@@ -1620,6 +2194,16 @@ extend f64 implements Add, Sub, Mul, Div, FloorDiv, Rem, Pow, Neg, \
 ## interface is private, so no other type can join them, and its method is
 ## std's own.
 interface Integer: Hash + Default + Ord + Copy:
+    ## `[STD-19]` (G8-4) — what a `..` range of these numbers counts its values in, the
+    ## smallest type that holds every count it can have: `int` for numbers of 8, 16 or 32
+    ## bits, `u64` for 64 bits, `u128` for 128 bits.
+    type SpanCount: ItemCount
+    ## And a `..=` range, which can hold one value more: `int`, `u128`, `u256`.
+    type FullCount: ItemCount
+    ## What `enumerate` numbers such a range with, from a start that may be negative: `int`,
+    ## `i128`, `i256`.
+    type Position: ItemCount
+
     ## The next integer; past the type's top it panics, as `+ 1` does.
     fn successor(self) -> Self
 
@@ -1627,10 +2211,36 @@ interface Integer: Hash + Default + Ord + Copy:
     fn predecessor(self) -> Self
 
     ## How many integers from this one up to, not including, `end`, which is
-    ## not below it: a range's length. One of more than `int.MAX` panics.
-    fn distance_to(self, end: Self) -> int
+    ## not below it: a `..` range's length.
+    fn distance_to(self, end: Self) -> SpanCount
+
+    ## The integer `n` before this one, which the type holds.
+    fn back_by(self, n: SpanCount) -> Self
+
+    ## The integer `n` after this one, which the type holds.
+    fn forward_by(self, n: SpanCount) -> Self
+
+    ## How many integers from this one up to the type's top, both included: what `self..` holds
+    ## (D-526).
+    fn count_to_top(self) -> FullCount
+
+    ## A `..` range's count as a `..=` range's.
+    fn widen_count(n: SpanCount) -> FullCount
+
+    ## A `..=` range's count as a `..` range's, which holds it.
+    fn narrow_count(n: FullCount) -> SpanCount
 
 extend i8 implements Integer:
+    type SpanCount = int
+    type FullCount = int
+    type Position = int
+
+    fn widen_count(n: int) -> int:
+        return n
+
+    fn narrow_count(n: int) -> int:
+        return n
+
     fn successor(self) -> i8:
         return self + 1
 
@@ -1640,7 +2250,26 @@ extend i8 implements Integer:
     fn distance_to(self, end: i8) -> int:
         return (end as int) - (self as int)
 
+    fn back_by(self, n: int) -> i8:
+        return ((self as int) - n) as i8
+
+    fn forward_by(self, n: int) -> i8:
+        return ((self as int) + n) as i8
+
+    fn count_to_top(self) -> int:
+        return self.distance_to(i8.MAX) + 1
+
 extend i16 implements Integer:
+    type SpanCount = int
+    type FullCount = int
+    type Position = int
+
+    fn widen_count(n: int) -> int:
+        return n
+
+    fn narrow_count(n: int) -> int:
+        return n
+
     fn successor(self) -> i16:
         return self + 1
 
@@ -1650,7 +2279,26 @@ extend i16 implements Integer:
     fn distance_to(self, end: i16) -> int:
         return (end as int) - (self as int)
 
+    fn back_by(self, n: int) -> i16:
+        return ((self as int) - n) as i16
+
+    fn forward_by(self, n: int) -> i16:
+        return ((self as int) + n) as i16
+
+    fn count_to_top(self) -> int:
+        return self.distance_to(i16.MAX) + 1
+
 extend i32 implements Integer:
+    type SpanCount = int
+    type FullCount = int
+    type Position = int
+
+    fn widen_count(n: int) -> int:
+        return n
+
+    fn narrow_count(n: int) -> int:
+        return n
+
     fn successor(self) -> i32:
         return self + 1
 
@@ -1660,48 +2308,127 @@ extend i32 implements Integer:
     fn distance_to(self, end: i32) -> int:
         return (end as int) - (self as int)
 
+    fn back_by(self, n: int) -> i32:
+        return ((self as int) - n) as i32
+
+    fn forward_by(self, n: int) -> i32:
+        return ((self as int) + n) as i32
+
+    fn count_to_top(self) -> int:
+        return self.distance_to(i32.MAX) + 1
+
 extend i64 implements Integer:
+    type SpanCount = u64
+    type FullCount = u128
+    type Position = i128
+
+    fn widen_count(n: u64) -> u128:
+        return n
+
+    fn narrow_count(n: u128) -> u64:
+        return n as u64
+
     fn successor(self) -> i64:
         return self + 1
 
     fn predecessor(self) -> i64:
         return self - 1
 
-    fn distance_to(self, end: i64) -> int:
-        # G8-4 — counted in i128, so a gap past int.MAX is this panic, not an
-        # overflow of the subtraction.
-        gap = (end as i128) - (self as i128)
-        if gap > 9223372036854775807:
-            panic("a range of more than int.MAX values has no length")
-        return gap as int
+    ## G8-4 — `end - self` in 64 unsigned bits wraps to the gap exactly, which is at most
+    ## `u64.MAX`.
+    @overflow(wrap)
+    fn distance_to(self, end: i64) -> u64:
+        return (end as u64) - (self as u64)
+
+    @overflow(wrap)
+    fn back_by(self, n: u64) -> i64:
+        return ((self as u64) - n) as i64
+
+    @overflow(wrap)
+    fn forward_by(self, n: u64) -> i64:
+        return ((self as u64) + n) as i64
+
+    fn count_to_top(self) -> u128:
+        return (self.distance_to(i64.MAX) as u128) + 1
 
 extend i128 implements Integer:
+    type SpanCount = u128
+    type FullCount = u256
+    type Position = i256
+
+    fn widen_count(n: u128) -> u256:
+        return n
+
+    fn narrow_count(n: u256) -> u128:
+        return n as u128
+
     fn successor(self) -> i128:
         return self + 1
 
     fn predecessor(self) -> i128:
         return self - 1
 
-    fn distance_to(self, end: i128) -> int:
-        gap = end - self
-        if gap > 9223372036854775807:
-            panic("a range of more than int.MAX values has no length")
-        return gap as int
+    ## G8-4 — `end - self` in 128 unsigned bits wraps to the gap exactly.
+    @overflow(wrap)
+    fn distance_to(self, end: i128) -> u128:
+        return (end as u128) - (self as u128)
+
+    @overflow(wrap)
+    fn back_by(self, n: u128) -> i128:
+        return ((self as u128) - n) as i128
+
+    @overflow(wrap)
+    fn forward_by(self, n: u128) -> i128:
+        return ((self as u128) + n) as i128
+
+    fn count_to_top(self) -> u256:
+        return (self.distance_to(i128.MAX) as u256) + 1
 
 extend isize implements Integer:
+    type SpanCount = u64
+    type FullCount = u128
+    type Position = i128
+
+    fn widen_count(n: u64) -> u128:
+        return n
+
+    fn narrow_count(n: u128) -> u64:
+        return n as u64
+
     fn successor(self) -> isize:
         return self + 1
 
     fn predecessor(self) -> isize:
         return self - 1
 
-    fn distance_to(self, end: isize) -> int:
-        gap = (end as i128) - (self as i128)
-        if gap > 9223372036854775807:
-            panic("a range of more than int.MAX values has no length")
-        return gap as int
+    ## G8-4 — `end - self` in 64 unsigned bits wraps to the gap exactly, which is at most
+    ## `u64.MAX`.
+    @overflow(wrap)
+    fn distance_to(self, end: isize) -> u64:
+        return (end as u64) - (self as u64)
+
+    @overflow(wrap)
+    fn back_by(self, n: u64) -> isize:
+        return ((self as u64) - n) as isize
+
+    @overflow(wrap)
+    fn forward_by(self, n: u64) -> isize:
+        return ((self as u64) + n) as isize
+
+    fn count_to_top(self) -> u128:
+        return (self.distance_to(isize.MAX) as u128) + 1
 
 extend u8 implements Integer:
+    type SpanCount = int
+    type FullCount = int
+    type Position = int
+
+    fn widen_count(n: int) -> int:
+        return n
+
+    fn narrow_count(n: int) -> int:
+        return n
+
     fn successor(self) -> u8:
         return self + 1
 
@@ -1711,7 +2438,26 @@ extend u8 implements Integer:
     fn distance_to(self, end: u8) -> int:
         return (end as int) - (self as int)
 
+    fn back_by(self, n: int) -> u8:
+        return ((self as int) - n) as u8
+
+    fn forward_by(self, n: int) -> u8:
+        return ((self as int) + n) as u8
+
+    fn count_to_top(self) -> int:
+        return self.distance_to(u8.MAX) + 1
+
 extend u16 implements Integer:
+    type SpanCount = int
+    type FullCount = int
+    type Position = int
+
+    fn widen_count(n: int) -> int:
+        return n
+
+    fn narrow_count(n: int) -> int:
+        return n
+
     fn successor(self) -> u16:
         return self + 1
 
@@ -1721,7 +2467,26 @@ extend u16 implements Integer:
     fn distance_to(self, end: u16) -> int:
         return (end as int) - (self as int)
 
+    fn back_by(self, n: int) -> u16:
+        return ((self as int) - n) as u16
+
+    fn forward_by(self, n: int) -> u16:
+        return ((self as int) + n) as u16
+
+    fn count_to_top(self) -> int:
+        return self.distance_to(u16.MAX) + 1
+
 extend u32 implements Integer:
+    type SpanCount = int
+    type FullCount = int
+    type Position = int
+
+    fn widen_count(n: int) -> int:
+        return n
+
+    fn narrow_count(n: int) -> int:
+        return n
+
     fn successor(self) -> u32:
         return self + 1
 
@@ -1731,44 +2496,101 @@ extend u32 implements Integer:
     fn distance_to(self, end: u32) -> int:
         return (end as int) - (self as int)
 
+    fn back_by(self, n: int) -> u32:
+        return ((self as int) - n) as u32
+
+    fn forward_by(self, n: int) -> u32:
+        return ((self as int) + n) as u32
+
+    fn count_to_top(self) -> int:
+        return self.distance_to(u32.MAX) + 1
+
 extend u64 implements Integer:
+    type SpanCount = u64
+    type FullCount = u128
+    type Position = i128
+
+    fn widen_count(n: u64) -> u128:
+        return n
+
+    fn narrow_count(n: u128) -> u64:
+        return n as u64
+
     fn successor(self) -> u64:
         return self + 1
 
     fn predecessor(self) -> u64:
         return self - 1
 
-    fn distance_to(self, end: u64) -> int:
-        gap = end - self
-        if gap > 9223372036854775807:
-            panic("a range of more than int.MAX values has no length")
-        return gap as int
+    fn distance_to(self, end: u64) -> u64:
+        return (end - self)
+
+    fn back_by(self, n: u64) -> u64:
+        return self - n
+
+    fn forward_by(self, n: u64) -> u64:
+        return self + n
+
+    fn count_to_top(self) -> u128:
+        return (self.distance_to(u64.MAX) as u128) + 1
 
 extend u128 implements Integer:
+    type SpanCount = u128
+    type FullCount = u256
+    type Position = i256
+
+    fn widen_count(n: u128) -> u256:
+        return n
+
+    fn narrow_count(n: u256) -> u128:
+        return n as u128
+
     fn successor(self) -> u128:
         return self + 1
 
     fn predecessor(self) -> u128:
         return self - 1
 
-    fn distance_to(self, end: u128) -> int:
-        gap = end - self
-        if gap > 9223372036854775807:
-            panic("a range of more than int.MAX values has no length")
-        return gap as int
+    fn distance_to(self, end: u128) -> u128:
+        return (end - self)
+
+    fn back_by(self, n: u128) -> u128:
+        return self - n
+
+    fn forward_by(self, n: u128) -> u128:
+        return self + n
+
+    fn count_to_top(self) -> u256:
+        return (self.distance_to(u128.MAX) as u256) + 1
 
 extend usize implements Integer:
+    type SpanCount = u64
+    type FullCount = u128
+    type Position = i128
+
+    fn widen_count(n: u64) -> u128:
+        return n
+
+    fn narrow_count(n: u128) -> u64:
+        return n as u64
+
     fn successor(self) -> usize:
         return self + 1
 
     fn predecessor(self) -> usize:
         return self - 1
 
-    fn distance_to(self, end: usize) -> int:
-        gap = end - self
-        if gap > 9223372036854775807:
-            panic("a range of more than int.MAX values has no length")
-        return gap as int
+    fn distance_to(self, end: usize) -> u64:
+        return (end - self) as u64
+
+    fn back_by(self, n: u64) -> usize:
+        return self - (n as usize)
+
+    fn forward_by(self, n: u64) -> usize:
+        return self + (n as usize)
+
+    fn count_to_top(self) -> u128:
+        return (self.distance_to(usize.MAX) as u128) + 1
 
 ## `[STD-4]` — an integer that is not zero, made by `NonZero.new`. Since no
 ## `NonZero` holds 0, `Option[NonZero[T]]` stores `None` as 0 and is the size

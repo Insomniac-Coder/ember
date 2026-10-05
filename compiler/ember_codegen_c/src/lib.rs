@@ -5683,6 +5683,7 @@ impl Emitter<'_> {
                 IntTy::I32 => "i32",
                 IntTy::I64 => "i64",
                 IntTy::I128 => "i128",
+                IntTy::I256 => "i256",
                 IntTy::Isize => "isize",
             },
             TyKind::Uint(u) => match u {
@@ -5691,6 +5692,7 @@ impl Emitter<'_> {
                 UintTy::U32 => "u32",
                 UintTy::U64 => "u64",
                 UintTy::U128 => "u128",
+                UintTy::U256 => "u256",
                 UintTy::Usize => "usize",
             },
             _ => "i64",
@@ -5705,6 +5707,8 @@ impl Emitter<'_> {
     fn wide_int(&self, ty: Ty) -> Option<&'static str> {
         match self.types.kind(ty) {
             TyKind::Int(IntTy::I128) => Some("i128"),
+            TyKind::Int(IntTy::I256) => Some("i256"),
+            TyKind::Uint(UintTy::U256) => Some("u256"),
             TyKind::Uint(UintTy::U128) => Some("u128"),
             // D-421 — a range type is its representation in C (`[RNG-1]`),
             // so one over a 128-bit integer is the runtime's struct too.
@@ -8067,6 +8071,8 @@ impl Emitter<'_> {
                 // `[CG-C-*]` — MSVC has no `__int128`, so the runtime carries
                 // a struct with helper ops under its own prefix.
                 IntTy::I128 => format!("{RT}i128"),
+                // G8-4 — four 64-bit words on every compiler.
+                IntTy::I256 => format!("{RT}i256"),
                 IntTy::Isize => "ptrdiff_t".to_string(),
             },
             TyKind::Uint(u) => match u {
@@ -8075,6 +8081,7 @@ impl Emitter<'_> {
                 UintTy::U32 => "uint32_t".to_string(),
                 UintTy::U64 => "uint64_t".to_string(),
                 UintTy::U128 => format!("{RT}u128"),
+                UintTy::U256 => format!("{RT}u256"),
                 UintTy::Usize => "size_t".to_string(),
             },
             TyKind::Float(f) => match f {

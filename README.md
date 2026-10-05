@@ -22,16 +22,16 @@ pages, and the records that keep them consistent.
 
 | | |
 |---|---|
-| Language version being implemented | **0.9.9**, specification `Ember_v0.9.9_Hardened_52` |
-| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.9_Hardened_52.md`](docs/spec-source/Ember_v0.9.9_Hardened_52.md) |
+| Language version being implemented | **0.9.10**, specification `Ember_v0.9.10_Hardened_1` ([what changed from 0.9.9](docs/MIGRATION-0.9.10.md)) |
+| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.10_Hardened_1.md`](docs/spec-source/Ember_v0.9.10_Hardened_1.md) |
 | Specification sources | [`tasks/spec-0.9.9/parts/`](tasks/spec-0.9.9/parts/), one file per Part; each `Hardened_N` is their concatenation and is never edited afterwards |
-| Last adopted normative specification | [`docs/spec-source/ember-spec.md`](docs/spec-source/ember-spec.md), 0.8.5_Hardened_1 (0.9.9 is adopted when its gates pass and the owner installs it) |
+| Last adopted normative specification | [`docs/spec-source/ember-spec.md`](docs/spec-source/ember-spec.md), 0.8.5_Hardened_1 (0.9.10 is adopted when its gates pass and the owner installs it) |
 | Tests | Rust unit and integration suites; Ember run and conformance suites in [`tests/`](tests/) |
 | Defects | Current fixed and open findings in [`docs/DEFECTS.md`](docs/DEFECTS.md) |
 | Language decisions | Current owner decisions (ODRs) in [`docs/OWNER-QUEUE.md`](docs/OWNER-QUEUE.md) |
 | CI | Linux (Clang, GCC) and Windows (MSVC, clang-cl); every push to `main` |
 
-Phase estimates against 0.9.9 (2026-10-05; weighted by the size of each phase's rules;
+Phase estimates against 0.9.10 (2026-10-06; weighted by the size of each phase's rules;
 method in [`docs/HANDOFF.md`](docs/HANDOFF.md)):
 
 | Phase | Scope | Done |
@@ -47,7 +47,12 @@ method in [`docs/HANDOFF.md`](docs/HANDOFF.md)):
 | 8 | Hardening and 1.0 | 17% |
 | | Overall | 60% |
 
-The latest language work includes the owner's simplification pass
+The latest language work is the owner's design G8-4, which made the language 0.9.10
+([`docs/MIGRATION-0.9.10.md`](docs/MIGRATION-0.9.10.md)): every iterator counts and numbers its items
+in a type that holds every count and number it can have (`u64`, `u128` and the 256-bit counts for
+ranges too long for an `int`, stepping up only as far as the values need), and ranges, `rev`,
+`take`, `skip`, `zip` and `chain` leave out a gigantic run of items at once. Before it, the owner's
+simplification pass
 ([`docs/proposals/Ember_Simplification_Pass_Revised.md`](docs/proposals/Ember_Simplification_Pass_Revised.md));
 its rulings and current status are tracked in [`docs/OWNER-QUEUE.md`](docs/OWNER-QUEUE.md). It
 covers associated-type defaults, `alloc_array` by `Default` and a separate `alloc_zeroed`, float
@@ -88,7 +93,7 @@ ECS facilities, C++ interop, the interpreter, and hot reload. The open defects a
 
 Each program below was written twice, in Ember and by hand in C (C++ for the programs that use
 objects, strings, maps or sorting), built by the same C compiler with the same optimisation flags,
-and timed on 2026-10-04 on one laptop, plugged in: an ASUS ROG Strix G16 (G615LR) with an Intel Core
+and timed on 2026-10-06 on one laptop, plugged in: an ASUS ROG Strix G16 (G615LR) with an Intel Core
 Ultra 9 275HX (8 performance cores and 16 slower efficiency cores), 64 GB of DDR5-5600 memory and
 Windows 11 Home (build 26200). The compilers are MSVC 19.44 and clang 22.1 on Windows, and gcc 15.2
 under WSL (Ubuntu 26.04) on the same laptop. The Windows runs are held to the performance cores; WSL
@@ -118,7 +123,7 @@ notes under the tables say how. With gcc, both programs are built with
 
 > Development is in progress, and attempts will be made to speed the language up in these areas.
 
-More than 10% slower than C: 3 of the 50 programs with MSVC, 3 with clang, 2 with gcc; none with all
+More than 10% slower than C: 3 of the 50 programs with MSVC, 2 with clang, 2 with gcc; none with all
 three.
 
 ![Programs more than 10% slower than C with one compiler: C time, Ember time, Ember divided by C](docs/benchmarks/slower-than-c.svg)

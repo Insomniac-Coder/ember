@@ -219,7 +219,8 @@ ODRS = [
                 '`clone` gives it one (Hardened_7)', '`[STR-5]`'),
     ('ODR-027', "a range is a value: the prelude's range types are structs with public bounds, `Copy` "
                 'when the bound is, and a `for` over one counts over a copy of its bounds, leaving it '
-                "unchanged; `a..` overflows at its type's maximum (Hardened_8)",
+                "unchanged; `a..` overflows past its type's maximum (Hardened_8; since 0.9.10 it gives the "
+                'maximum first, D-526)',
      '`[CTL-3]`, `[STD-8]`, `[STD-26]`'),
     ('ODR-028', 'a method named like an inherited one replaces it: without `override` over a virtual method it '
                 'is `E2111`, over a non-virtual one `E2110`; an `override` is itself virtual (Hardened_9)',
@@ -449,9 +450,56 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 
 def h2_to_now():
     head = H5_HEAD + '\n'.join(f'| {o} | {r} | {rules} |' for o, r, rules in ODRS)
-    diff = rule_diff(H2_PARTS, os.path.join(HERE, '..', 'parts'))
-    return head + '\n\nGenerated: every rule whose text differs from Hardened_2.\n\n' \
-        + '| Rule | H2 → now |\n|---|---|\n' + diff
+    diff = rule_diff(H2_PARTS, H52_PARTS)
+    return head + '\n\nGenerated: every rule whose text differs from Hardened_2 in Hardened_52, the last\n' \
+        + '0.9.9.\n\n| Rule | H2 → Hardened_52 |\n|---|---|\n' + diff
+
+
+# 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52.
+CURRENT = ('0.9.10', 1)
+H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
+
+H6_HEAD = """
+## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
+
+**0.9.10_Hardened_1** is the owner's design G8-4 (`docs/proposals/G8-4-counts-and-positions.md`,
+decided 2026-10-05, built with `docs/MIGRATION-0.9.10.md`). It changes what programs are accepted,
+so it is a new language version (`[VER-9]`):
+
+* Every iterator counts and numbers its items in a type that holds every count and number it can
+  have: `Iterator.Count` and `Iterator.Position`, `int` unless the iterator says otherwise; ranges
+  of 64-bit numbers count in `u64` (`..`) and `u128` (`..=`) and number in `i128`; ranges of
+  128-bit numbers count in `u128` (`..`) and `u256` (`..=`) and number in `i256` (`[STD-19]`).
+  This replaces ODR-089's "counts are `int`s" for what Ember hands back (what a caller passes stays
+  an `int`) and ODR-091's backwards-`enumerate` panic.
+* `chain`, `flatten` and `flat_map` step up only as far as their counts need (`u256` the limit).
+* The visible-numbers rule: where a range's numbers are written in place, `enumerate`, `len` and
+  `count` give the smallest type that holds the values (`[STD-19]`, `[STD-26]`).
+* `skip_front`, `skip_back` and `nth_back` leave out items at once through the adapters, so none
+  passes a gigantic run of items one at a time (`[STD-19]`).
+* `u256` and `i256`, the 256-bit counts (`[TYP-42]`).
+* `a..` gives its type's maximum and panics only when the value after it is asked for, in a `for`
+  and through its iterator, which leaves values out at once (`[CTL-3]`, D-526; ODR-027 said the
+  loop overflowed on reaching the maximum).
+* `for i in a..=T.MAX` ends after `T.MAX`, as `[CTL-3]` said (D-525: it ran forever).
+* An index or a size wider than `usize` that `usize` does not hold is out of bounds (`[TYP-31]`,
+  D-527: its low bits were used).
+* `i256` and `u256` implement `Add`, `Sub`, `Neg`, `AddAssign` and `SubAssign` (ODR-040); `parse`
+  does not read them (`[TYP-42]`).
+* A loop numbering in a type wider than 64 bits has a copy computing the numbers as `int`s, taken
+  when every number fits one (`[CTL-3b]`, the owner's decision C).
+* A program that put such a count or number into an `int` converts it (`as int`, or `to_int()` in
+  generic code); `docs/MIGRATION-0.9.10.md` lists the cases.
+
+Generated: every rule whose text differs from Hardened_52.
+
+| Rule | Hardened_52 → 0.9.10_Hardened_1 |
+|---|---|
+"""
+
+
+def h52_to_now():
+    return H6_HEAD + rule_diff(H52_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -474,9 +522,11 @@ def rule_diff(old_folder, new_folder):
 
 
 def header_lines(n):
-    """The front matter's Version and Supersedes lines for 0.9.9_Hardened_<n>."""
-    earlier = ', '.join(f'0.9.9_Hardened_{k}' for k in range(n - 1, 0, -1))
-    return (f'**Version:** 0.9.9_Hardened_{n}',
+    """The front matter's Version and Supersedes lines: 0.9.10_Hardened_1 supersedes every 0.9.9
+    hardening, the last of them `n`."""
+    earlier = ', '.join(f'0.9.9_Hardened_{k}' for k in range(n, 0, -1))
+    version, hardening = CURRENT
+    return (f'**Version:** {version}_Hardened_{hardening}',
             f'**Supersedes:** {earlier}, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 '
             '(adopted). This document is')
 
@@ -517,10 +567,10 @@ def main():
         rows.append(f'| {f} | {ids} | {REASON.get(f, "TODO")} |')
     h4 = h1_to_h2()
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
-        HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n')
+        HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
-          'H1->H2 rows', h4.count('\n') + 1, 'header Hardened_%d' % latest)
+          'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))
     return gone
 
 if __name__ == '__main__':

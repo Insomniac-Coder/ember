@@ -2398,6 +2398,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // turn begins with whose inputs the loop cannot change (the view an
     // inner loop iterates) runs once, before the loop.
     ember_analysis::propagate_copies_all(&mut bodies, &types);
+    ember_analysis::narrow_widened_reads_all(&mut bodies, &types);
     ember_analysis::hoist_invariant_views_all(&mut bodies, &types);
     // A counted loop that pushes onto a list on every turn asks for the room
     // before it, as a hint that changes nothing but the capacity (never done

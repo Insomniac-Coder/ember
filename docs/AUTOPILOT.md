@@ -107,6 +107,39 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   possible to C speeds wherever possible". Price every check or piece of machinery the compiler or
   runtime adds against the same program with it removed. Keep the safety at the lowest run-time
   cost, and measure before claiming a speed.
+- **A panic has to make sense.** The owner, 2026-10-05: "it made no sense for loops to panic for
+  types that language support, you have to make sure that a panic situation actually makes sense".
+  Every value a type the language supports can hold works in every construct that accepts the type:
+  a `for` loop, every adapter, `len()`, `enumerate`, over the whole of the type. A panic is right for
+  the caller's bug (a negative count, a step of zero, an index past the end, the program's own
+  arithmetic overflowing), never for a limit of the implementation, such as a count kept in a type
+  too small for what it counts. The example that set this: ranges longer than `int.MAX` crashed in
+  `len()` and the backwards adapters because an agent's delegated ruling (ODR-089) made every count
+  an `int` (G8-4; the owner's design is `docs/proposals/G8-4-counts-and-positions.md`).
+- **Correct and fast, not one at the cost of the other.** The owner, 2026-10-05: "you gave an idea of
+  using i128 for (m..n) while that works but it slows things down so run time variant picking was
+  the optimal solution here". When the representation that is always correct is slower than the
+  common case needs, find the mechanism that gives both: decide from what the compiler can see (the
+  smallest type that holds every value the code can produce), and where it cannot see, build the
+  variants and pick one at run time with a single test before the loop (loop versioning, as
+  `[OPT-2]`/`[OPT-3]` do for bounds checks), so only the rare case pays for the wide one.
+- **The smallest type that holds the values.** The owner: "why use a hammer for a thing which can be
+  fixed with a screwdriver", and "DID YOU FORGET THAT UINT EXISTS". Before reaching for a wider type,
+  check the narrower and the unsigned ones: a count is never negative, so a `u64` holds every count
+  of a `..` range of 64-bit numbers.
+- **Step up by need; the biggest tool only when the values need it.** The owner, 2026-10-05, after
+  I said a `chain`'s count in generic code "would have to use `u256`" and the owner proposed stepping
+  up one level at a time (`int` → `u64` → `u128` → `u256`) from what the two sides' counts are:
+  "Sure u256 helps us store unimaginably big numbers but we don't need that capability all the
+  time, only slowly upgrade to it if there is a need and having u256 all the time will slow down
+  things in general so always try to preserve speed and only use the big tool when necessary".
+  Before proposing a fallback that is always correct but always costs more (the widest type, a slow
+  path, a check everywhere), look for the graduated version and present it first:
+  - decide from what the compiler can see;
+  - step up one level at a time;
+  - or build the variants and pick one at run time.
+
+  Say what the big tool would cost if it were kept.
 - **Speed is verified against real C and C++.** The owner, 2026-09-27: "as the part of development
   process I would like you to actually verify things by comparing the speed to a similar C code if
   possible, compare things that are possible in C with ember and for the oops and DOD stuff compare
@@ -142,6 +175,14 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   "reduce the cooldown time to 10 minutes". Validation runs (the quick check, each workspace
   suite, the gates, the WSL suite) may use every core, one at a time, with 10 minutes between one
   run and the next; benchmarks stay on the performance cores.
+  **Revised 2026-10-05 (the owner, one decision at a time, then "new temperature range for now 65 to
+  100"):** a run starts once the CPU package (HWiNFO64's gadget export, `HKCU\Software\HWiNFO64\VSB`,
+  `ValueRaw0`; the hottest core is `ValueRaw1`) has read 65 °C or less for 45 s, which replaces the
+  10 minutes, and a run is stopped if it stays above 100 °C; "for now", so ask before assuming it
+  holds in a later session. Test suites run on the 16 efficiency cores only (mask `0x3FC3FC`,
+  `RUST_TEST_THREADS=16`, set on the launching process so its children inherit it); benchmarks stay
+  on the performance cores. Measured that day: a full MSVC suite on the efficiency cores averaged
+  95 °C (peak 102 °C on the hottest core), against 97 °C on every core.
   The quick check honours `RUST_TEST_THREADS` when a run must be narrower. Windows power settings
   (the maximum processor state) are the owner's to change, not an agent's.
 - **Benchmarks run once, after every change is in.** The owner, 2026-10-02: "only run the
@@ -272,6 +313,11 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   clang-cl. Use `python3` if `python` is missing.
 - **Never edit repository files while the full suite runs**: it reads the runtime's C and the
   test directories during the run.
+- **Batches go through `phase-next` first** (the owner, 2026-10-05: "Okay cool lets do that").
+  Locally run the MSVC suite and the gates; commit, and push the branch as `phase-next`, which CI
+  runs (Linux clang and gcc, Windows MSVC and clang-cl; free, the repository is public). When CI is
+  green, fast-forward `main` to that commit and push it. This replaces the local clang and WSL gcc
+  suites for correctness; gcc *timing* still runs in WSL when benchmarking.
 - **Commit and push to `main` about every ten tasks**, and always before stopping, only after
   the quick check, the full suite and every gate pass. The owner, 2026-10-05: "since we are taking
   longer breaks between each runs we can increase the number of tasks we do in one commit go up

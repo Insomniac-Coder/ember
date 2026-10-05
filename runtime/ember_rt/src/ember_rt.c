@@ -6186,6 +6186,87 @@ void ember_fmt_i128(ember_vec* out, ember_i128 value) {
     ember_vec_extend(out, text, integer_text(text, ember_i128_is_negative(value), ember_u128_hi(m), ember_u128_lo(m)));
 }
 
+/* G8-4 — an `i256`'s magnitude, least significant word first: the least
+ * value's is 2^255, which its negation leaves as it is. */
+static void i256_magnitude(ember_i256 v, uint64_t m[4]) {
+    if (ember_i256_is_negative(v)) {
+        v = ember_i256_neg(v);
+    }
+    for (int i = 0; i < 4; ++i) {
+        m[i] = v.w[i];
+    }
+}
+
+/* The digits of a 256-bit magnitude in `base` (2 to 16), least significant
+ * first, into `reversed`; returns how many. Divided in 32-bit pieces, as
+ * `digits_reversed` divides 128 bits. */
+static size_t digits_reversed256(const uint64_t m[4], unsigned base, const char* numerals, char* reversed) {
+    uint64_t limbs[8];
+    for (int i = 0; i < 4; ++i) {
+        limbs[7 - 2 * i] = m[i] & 0xFFFFFFFFu;
+        limbs[6 - 2 * i] = m[i] >> 32;
+    }
+    int top = 0;
+    while (top < 8 && limbs[top] == 0) {
+        ++top;
+    }
+    size_t n = 0;
+    if (top == 8) {
+        reversed[n++] = numerals[0];
+        return n;
+    }
+    while (top < 8) {
+        uint64_t rest = 0;
+        for (int i = top; i < 8; ++i) {
+            uint64_t current = (rest << 32) | limbs[i];
+            limbs[i] = current / base;
+            rest = current % base;
+        }
+        reversed[n++] = numerals[rest];
+        while (top < 8 && limbs[top] == 0) {
+            ++top;
+        }
+    }
+    return n;
+}
+
+/* An `i256`'s `Display` into `text`, which holds 80 bytes (78 at most). */
+static size_t i256_text(char* text, ember_i256 v) {
+    uint64_t m[4];
+    i256_magnitude(v, m);
+    char reversed[80];
+    size_t n = digits_reversed256(m, 10, "0123456789", reversed);
+    size_t at = 0;
+    if (ember_i256_is_negative(v)) {
+        text[at++] = '-';
+    }
+    while (n > 0) {
+        text[at++] = reversed[--n];
+    }
+    return at;
+}
+
+void ember_fmt_i256(ember_vec* out, ember_i256 value) {
+    char text[80];
+    ember_vec_extend(out, text, i256_text(text, value));
+}
+
+/* A `u256`'s `Display` into `text`, which holds 80 bytes (78 at most). */
+static size_t u256_text(char* text, ember_u256 v) {
+    char reversed[80];
+    size_t n = digits_reversed256(v.w, 10, "0123456789", reversed);
+    size_t at = 0;
+    while (n > 0) {
+        text[at++] = reversed[--n];
+    }
+    return at;
+}
+
+void ember_fmt_u256(ember_vec* out, ember_u256 value) {
+    char text[80];
+    ember_vec_extend(out, text, u256_text(text, value));
+}
+
 void ember_fmt_u128(ember_vec* out, ember_u128 value) {
     char text[41];
     ember_vec_extend(out, text, integer_text(text, false, ember_u128_hi(value), ember_u128_lo(value)));
@@ -6345,6 +6426,16 @@ static void print_i128_to(FILE* out, ember_i128 v) {
     fwrite(text, 1, integer_text(text, ember_i128_is_negative(v), ember_u128_hi(m), ember_u128_lo(m)), out);
 }
 
+static void print_i256_to(FILE* out, ember_i256 v) {
+    char text[80];
+    fwrite(text, 1, i256_text(text, v), out);
+}
+
+static void print_u256_to(FILE* out, ember_u256 v) {
+    char text[80];
+    fwrite(text, 1, u256_text(text, v), out);
+}
+
 static void print_u128_to(FILE* out, ember_u128 v) {
     char text[41];
     fwrite(text, 1, integer_text(text, false, ember_u128_hi(v), ember_u128_lo(v)), out);
@@ -6392,6 +6483,8 @@ EMBER_PRINTERS(str, ember_str)
 EMBER_PRINTERS(i64, int64_t)
 EMBER_PRINTERS(u64, uint64_t)
 EMBER_PRINTERS(i128, ember_i128)
+EMBER_PRINTERS(i256, ember_i256)
+EMBER_PRINTERS(u256, ember_u256)
 EMBER_PRINTERS(u128, ember_u128)
 EMBER_PRINTERS(f16, uint16_t)
 EMBER_PRINTERS(f32, float)
@@ -6612,6 +6705,45 @@ void ember_fmt_spec_u64(ember_vec* out, uint64_t value, ember_fmt_spec spec) {
 void ember_fmt_spec_i128(ember_vec* out, ember_i128 value, ember_fmt_spec spec) {
     ember_u128 m = ember_i128_magnitude(value);
     fmt_spec_integer(out, ember_i128_is_negative(value), ember_u128_hi(m), ember_u128_lo(m), spec);
+}
+
+/* G8-4 — as `fmt_spec_integer`, over 256 bits: a magnitude and its sign. */
+static void fmt_spec_wide256(ember_vec* out, const uint64_t m[4], bool negative, ember_fmt_spec spec);
+
+void ember_fmt_spec_i256(ember_vec* out, ember_i256 value, ember_fmt_spec spec) {
+    uint64_t m[4];
+    i256_magnitude(value, m);
+    fmt_spec_wide256(out, m, ember_i256_is_negative(value), spec);
+}
+
+void ember_fmt_spec_u256(ember_vec* out, ember_u256 value, ember_fmt_spec spec) {
+    fmt_spec_wide256(out, value.w, false, spec);
+}
+
+static void fmt_spec_wide256(ember_vec* out, const uint64_t m[4], bool negative, ember_fmt_spec spec) {
+    char kind = spec.kind == 0 || spec.kind == '?' ? 'd' : spec.kind;
+    if (strchr("eEfFgG%", kind)) {
+        double magnitude = ldexp((double)m[3], 192) + ldexp((double)m[2], 128) + ldexp((double)m[1], 64) + (double)m[0];
+        fmt_spec_float(out, negative ? -magnitude : magnitude, 64, spec);
+        return;
+    }
+    unsigned base = kind == 'x' || kind == 'X' ? 16 : kind == 'b' ? 2 : kind == 'o' ? 8 : 10;
+    const char* numerals = kind == 'X' ? "0123456789ABCDEF" : "0123456789abcdef";
+    char reversed[264];
+    size_t n = digits_reversed256(m, base, numerals, reversed);
+    char digits[264];
+    for (size_t i = 0; i < n; ++i) {
+        digits[i] = reversed[n - 1 - i];
+    }
+    char prefix[8];
+    sign_prefix(prefix, negative, &spec);
+    if (spec.alternate && base != 10) {
+        size_t at = strlen(prefix);
+        prefix[at++] = '0';
+        prefix[at++] = kind;
+        prefix[at] = '\0';
+    }
+    emit_number(out, prefix, digits, n, "", &spec, base == 10 ? 3 : 4);
 }
 
 void ember_fmt_spec_u128(ember_vec* out, ember_u128 value, ember_fmt_spec spec) {

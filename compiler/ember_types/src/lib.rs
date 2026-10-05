@@ -72,6 +72,11 @@ pub enum IntTy {
     I32,
     I64,
     I128,
+    /// G8-4 — the 256-bit count (`[STD-19]`): what `len()` gives for a
+    /// `..=` range of 128-bit numbers and `enumerate` numbers a 128-bit
+    /// range with. Only a count: it adds, subtracts, compares, prints and
+    /// converts with `as`; no ranges of it.
+    I256,
     Isize,
 }
 
@@ -82,6 +87,9 @@ pub enum UintTy {
     U32,
     U64,
     U128,
+    /// G8-4 — the unsigned 256-bit count (`[STD-19]`): what `len()` gives
+    /// for a `..=` range of 128-bit numbers. Only a count, as `i256` is.
+    U256,
     Usize,
 }
 
@@ -471,6 +479,8 @@ pub struct CommonTypes {
     pub i32: Ty,
     pub i64: Ty,
     pub i128: Ty,
+    pub i256: Ty,
+    pub u256: Ty,
     pub isize: Ty,
     pub u8: Ty,
     pub u16: Ty,
@@ -540,6 +550,8 @@ impl TypeTable {
             i32: table.intern(TyKind::Int(IntTy::I32)),
             i64: table.intern(TyKind::Int(IntTy::I64)),
             i128: table.intern(TyKind::Int(IntTy::I128)),
+            i256: table.intern(TyKind::Int(IntTy::I256)),
+            u256: table.intern(TyKind::Uint(UintTy::U256)),
             isize: table.intern(TyKind::Int(IntTy::Isize)),
             u8: u8_ty,
             u16: table.intern(TyKind::Uint(UintTy::U16)),
@@ -1126,20 +1138,25 @@ impl TypeTable {
         match self.kind(ty) {
             TyKind::Bool => Layout::scalar(1),
             TyKind::Char => Layout::scalar(4),
+            // G8-4 — four 64-bit words, aligned as an `i128` is.
+            TyKind::Int(IntTy::I256) => Layout { size: 32, align: 16, field_offsets: Vec::new() },
             TyKind::Int(int) => Layout::scalar(match int {
                 IntTy::I8 => 1,
                 IntTy::I16 => 2,
                 IntTy::I32 => 4,
                 IntTy::I64 => 8,
                 IntTy::I128 => 16,
+                IntTy::I256 => 32,
                 IntTy::Isize => self.pointer_size,
             }),
+            TyKind::Uint(UintTy::U256) => Layout { size: 32, align: 16, field_offsets: Vec::new() },
             TyKind::Uint(uint) => Layout::scalar(match uint {
                 UintTy::U8 => 1,
                 UintTy::U16 => 2,
                 UintTy::U32 => 4,
                 UintTy::U64 => 8,
                 UintTy::U128 => 16,
+                UintTy::U256 => 32,
                 UintTy::Usize => self.pointer_size,
             }),
             TyKind::Float(float) => Layout::scalar(match float {
@@ -1859,6 +1876,7 @@ impl TypeTable {
                 IntTy::I32 => "i32",
                 IntTy::I64 => "i64",
                 IntTy::I128 => "i128",
+                IntTy::I256 => "i256",
                 IntTy::Isize => "isize",
             }
             .into(),
@@ -1868,6 +1886,7 @@ impl TypeTable {
                 UintTy::U32 => "u32",
                 UintTy::U64 => "u64",
                 UintTy::U128 => "u128",
+                UintTy::U256 => "u256",
                 UintTy::Usize => "usize",
             }
             .into(),
@@ -1994,6 +2013,7 @@ impl TypeTable {
                 IntTy::I32 => "i32",
                 IntTy::I64 => "i64",
                 IntTy::I128 => "i128",
+                IntTy::I256 => "i256",
                 IntTy::Isize => "isize",
             }
             .into(),
@@ -2003,6 +2023,7 @@ impl TypeTable {
                 UintTy::U32 => "u32",
                 UintTy::U64 => "u64",
                 UintTy::U128 => "u128",
+                UintTy::U256 => "u256",
                 UintTy::Usize => "usize",
             }
             .into(),
@@ -2110,6 +2131,7 @@ fn int_bits(ty: IntTy, pointer_size: u64) -> u64 {
         IntTy::I32 => 32,
         IntTy::I64 => 64,
         IntTy::I128 => 128,
+        IntTy::I256 => 256,
         IntTy::Isize => pointer_size * 8,
     }
 }
@@ -2121,6 +2143,7 @@ fn uint_bits(ty: UintTy, pointer_size: u64) -> u64 {
         UintTy::U32 => 32,
         UintTy::U64 => 64,
         UintTy::U128 => 128,
+        UintTy::U256 => 256,
         UintTy::Usize => pointer_size * 8,
     }
 }
@@ -2215,6 +2238,9 @@ pub fn bit_width(table: &TypeTable, ty: Ty) -> Option<u64> {
 /// because the true result is not representable.
 pub fn signed_min_magnitude(table: &TypeTable, ty: Ty) -> Option<u128> {
     match table.kind(ty) {
+        // G8-4 — an `i256` constant is a sign-extended 128-bit one, so the
+        // least a literal or constant of it can be is `i128`'s.
+        TyKind::Int(IntTy::I256) => Some(1u128 << 127),
         TyKind::Int(i) => Some(1u128 << (int_bits(*i, table.pointer_size()) - 1)),
         _ => None,
     }
@@ -2223,13 +2249,17 @@ pub fn signed_min_magnitude(table: &TypeTable, ty: Ty) -> Option<u128> {
 /// The largest value an integer type can hold, for `[LEX-16]`'s range check.
 pub fn int_max(table: &TypeTable, ty: Ty) -> Option<u128> {
     match table.kind(ty) {
+        // G8-4 — the most a literal or constant of an `i256` can be: one
+        // is a sign-extended 128-bit constant.
+        TyKind::Int(IntTy::I256) => Some(i128::MAX as u128),
         TyKind::Int(i) => {
             let bits = int_bits(*i, table.pointer_size());
             Some((1u128 << (bits - 1)) - 1)
         }
         TyKind::Uint(u) => {
+            // G8-4 — a `u256` constant is a zero-extended 128-bit one.
             let bits = uint_bits(*u, table.pointer_size());
-            Some(if bits == 128 { u128::MAX } else { (1u128 << bits) - 1 })
+            Some(if bits >= 128 { u128::MAX } else { (1u128 << bits) - 1 })
         }
         _ => None,
     }

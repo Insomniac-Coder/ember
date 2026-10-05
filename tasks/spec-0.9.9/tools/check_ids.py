@@ -1,7 +1,7 @@
 """End check 0/1: rule-id hygiene against 0.9.8_Hardened_3.
 
 - every id defined in the parts is defined once;
-- an id not present in 0.9.8 must be marked *(new in 0.9.9)*;
+- an id not present in 0.9.8 must be marked *(new in 0.9.9)* (or *(new in 0.9.10)*);
 - an id marked *(new in 0.9.9)* must not be present in 0.9.8.
 """
 import re, glob, os, sys, collections
@@ -9,7 +9,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OLD = os.path.join(HERE, '..', '..', '..', 'docs', 'spec-source', 'Ember_v0.9.8_Hardened_3.md')
 old = open(OLD, encoding='utf-8').read()
 oldids = set(re.findall(r'\[([A-Z][A-Z0-9]*(?:-[A-Z]+)?-[0-9]+[a-z0-9]*)\]', old))
-DEF = re.compile(r'^\* `\[([A-Z][A-Z0-9-]*-[0-9]+[a-z0-9]*)\]`( \*\(new in 0\.9\.9\)\*)?', re.M)
+DEF = re.compile(r'^\* `\[([A-Z][A-Z0-9-]*-[0-9]+[a-z0-9]*)\]`( \*\(new in 0\.9\.(?:9|10)\)\*)?', re.M)
 seen = collections.defaultdict(list)
 bad = 0
 for p in sorted(glob.glob(os.path.join(HERE, '..', 'parts', 'p*.md'))):

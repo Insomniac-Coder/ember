@@ -472,7 +472,10 @@ implementations are all in view (a private interface, `Float`) separate two boun
 
     ID:        ODR-091
     Status:    CLOSED — ruled under the owner's delegation, 2026-10-01;
-               incorporated in 0.9.9_Hardened_46
+               incorporated in 0.9.9_Hardened_46. PARTLY REPLACED by the owner's
+               design G8-4 (0.9.10_Hardened_1): `len` is the iterator's `Count`,
+               and a backwards `enumerate` numbers in its `Position` instead of
+               panicking past `int`'s top (`[STD-19]`).
     Category:  LIBRARY / ITERATORS
     Location:  Ember_v0.9.9_Hardened_45.md [STD-19], [CTL-3b], [MOD-5]
 
@@ -558,7 +561,11 @@ work that its mode's closure cannot hold (a `mut` parameter's place) is `E0900` 
 
     ID:        ODR-089
     Status:    CLOSED — ruled under the owner's delegation, 2026-09-29;
-               incorporated in 0.9.9_Hardened_44
+               incorporated in 0.9.9_Hardened_44. PARTLY REPLACED by the owner's
+               design G8-4 (0.9.10_Hardened_1): what a caller passes stays an
+               `int`, but what Ember hands back (`len`, `count`, `position`,
+               `enumerate`'s numbers) is in the iterator's `Count`/`Position`
+               (`[STD-19]`).
     Category:  LIBRARY / ITERATORS
     Location:  Ember_v0.9.9_Hardened_43.md [STD-19]
 
@@ -2471,6 +2478,12 @@ has the flag alone. `[CG-C-11]` says so.
 - With a bound that leaves `Output` unsaid (`T: Add`), `a + b` is a
   `T.Output`: the signature names it (`-> T.Output`) or the use is `E2040`.
 
+**Applied 2026-10-06 (the audit of the delegated rulings, ADR-139).** The
+256-bit counts of 0.9.10 (`[TYP-42]`) add, subtract and negate, so by this
+ruling `i256` and `u256` implement `Add`, `Sub`, `Neg`, `AddAssign` and
+`SubAssign`; G8-4 had left them out, and generic code bounded by `Add` refused a
+count.
+
 ---
 
 ## ODR-039 — what exactly are `[STD-20]`'s integer methods and constants? — **CLOSED**
@@ -3081,6 +3094,13 @@ its bounds and leaves the range as it was. `a..` has no end: counting up to its
 type's maximum is an overflow (`[TYP-8]`), as producing the next value would be.
 `..=b` and `..` name no prelude type, so as values they are `E1010`. Printing a
 range uses the implicit `Debug` of `[STR-5]` (`Range(start=0, end=4)`).
+
+**Amended 2026-10-06 (the audit of the delegated rulings, D-526, ADR-139).** Read
+as "reaching the maximum is the overflow", this ruling made `for i in 250u8..`
+panic giving `255`: a value of the type the loop could not give, G8-4's question.
+`a..` gives its type's maximum, and only the value after it is the overflow, found
+when it is asked for, in a `for` and through `RangeFromIter` (`[CTL-3]`'s words
+changed in 0.9.10).
 
 **Implementation (2026-09-24).** `std/src/core.em` declares the four structs
 with `@derive(Copy)` and the prelude exports them. The checker builds `a..b`,

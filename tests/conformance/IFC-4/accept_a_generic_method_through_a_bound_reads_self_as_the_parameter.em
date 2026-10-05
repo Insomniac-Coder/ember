@@ -8,7 +8,8 @@
 # `M` (was E2020, "expected `M`, found `Self`").
 
 fn pairs[I: Iterator, J: Iterator](owned it: I, owned other: J) -> int:
-    return it.zip(other).count()
+    # G8-4 — `count()` gives the iterator's count type, `I.Count` here.
+    return it.zip(other).count().to_int()
 
 interface Make:
     fn make[T: Copy](x: T) -> Self

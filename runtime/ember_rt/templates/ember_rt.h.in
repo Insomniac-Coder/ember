@@ -966,6 +966,168 @@ EMBER_INLINED bool ember_ck_floorrem_i128(ember_i128 a, ember_i128 b, ember_i128
     return false;
 }
 
+/* -- the 256-bit count ---------------------------------------------------------
+ *
+ * G8-4, [STD-19]: `i256`, what `len()` gives for a `..=` range of 128-bit
+ * numbers and what `enumerate` numbers a 128-bit range with. Four 64-bit words,
+ * least significant first, two's complement, on every compiler. Only what a
+ * count does: add and subtract (wrapping, and checked as the narrower ones
+ * are), compare, convert and print. A constant of it is a sign-extended
+ * 128-bit one (`ember_i256_make`). */
+
+#if defined(_MSC_VER)
+typedef struct __declspec(align(16)) ember_i256 { uint64_t w[4]; } ember_i256;
+#else
+typedef struct ember_i256 { _Alignas(16) uint64_t w[4]; } ember_i256;
+#endif
+
+static inline ember_i256 ember_i256_words(uint64_t w3, uint64_t w2, uint64_t w1, uint64_t w0) {
+    ember_i256 r;
+    r.w[0] = w0;
+    r.w[1] = w1;
+    r.w[2] = w2;
+    r.w[3] = w3;
+    return r;
+}
+static inline ember_i256 ember_i256_make(uint64_t hi, uint64_t lo) {
+    uint64_t sign = (hi >> 63) ? UINT64_MAX : 0;
+    return ember_i256_words(sign, sign, hi, lo);
+}
+static inline ember_i256 ember_i256_from_i64(int64_t v) {
+    uint64_t sign = v < 0 ? UINT64_MAX : 0;
+    return ember_i256_words(sign, sign, sign, (uint64_t)v);
+}
+static inline ember_i256 ember_i256_from_u64(uint64_t v) { return ember_i256_words(0, 0, 0, v); }
+static inline ember_i256 ember_i128_to_i256(ember_i128 v) {
+    ember_u128 bits = ember_i128_to_u128(v);
+    return ember_i256_make(ember_u128_hi(bits), ember_u128_lo(bits));
+}
+static inline ember_i256 ember_u128_to_i256(ember_u128 v) {
+    return ember_i256_words(0, 0, ember_u128_hi(v), ember_u128_lo(v));
+}
+/* The low bits, as every narrowing integer cast takes ([TYP-6]). */
+static inline ember_i128 ember_i256_to_i128(ember_i256 v) { return ember_i128_make(v.w[1], v.w[0]); }
+static inline ember_u128 ember_i256_to_u128(ember_i256 v) { return ember_u128_make(v.w[1], v.w[0]); }
+static inline uint64_t ember_i256_to_u64(ember_i256 v) { return v.w[0]; }
+static inline bool ember_i256_is_negative(ember_i256 v) { return (v.w[3] >> 63) != 0; }
+
+static inline bool ember_i256_eq(ember_i256 a, ember_i256 b) {
+    return a.w[0] == b.w[0] && a.w[1] == b.w[1] && a.w[2] == b.w[2] && a.w[3] == b.w[3];
+}
+static inline bool ember_i256_lt(ember_i256 a, ember_i256 b) {
+    if (a.w[3] != b.w[3]) { return (int64_t)a.w[3] < (int64_t)b.w[3]; }
+    if (a.w[2] != b.w[2]) { return a.w[2] < b.w[2]; }
+    if (a.w[1] != b.w[1]) { return a.w[1] < b.w[1]; }
+    return a.w[0] < b.w[0];
+}
+static inline bool ember_i256_ne(ember_i256 a, ember_i256 b) { return !ember_i256_eq(a, b); }
+static inline bool ember_i256_le(ember_i256 a, ember_i256 b) { return !ember_i256_lt(b, a); }
+static inline bool ember_i256_gt(ember_i256 a, ember_i256 b) { return ember_i256_lt(b, a); }
+static inline bool ember_i256_ge(ember_i256 a, ember_i256 b) { return !ember_i256_lt(a, b); }
+
+static inline ember_i256 ember_i256_add(ember_i256 a, ember_i256 b) {
+    ember_i256 r;
+    uint64_t carry = 0;
+    for (int i = 0; i < 4; ++i) {
+        uint64_t sum = a.w[i] + carry;
+        uint64_t first = sum < carry;
+        r.w[i] = sum + b.w[i];
+        carry = first | (r.w[i] < sum);
+    }
+    return r;
+}
+static inline ember_i256 ember_i256_sub(ember_i256 a, ember_i256 b) {
+    ember_i256 r;
+    uint64_t borrow = 0;
+    for (int i = 0; i < 4; ++i) {
+        uint64_t less = a.w[i] - borrow;
+        uint64_t first = a.w[i] < borrow;
+        r.w[i] = less - b.w[i];
+        borrow = first | (less < b.w[i]);
+    }
+    return r;
+}
+static inline ember_i256 ember_i256_neg(ember_i256 a) { return ember_i256_sub(ember_i256_words(0, 0, 0, 0), a); }
+EMBER_INLINED bool ember_ck_add_i256(ember_i256 a, ember_i256 b, ember_i256* out) {
+    *out = ember_i256_add(a, b);
+    return ember_i256_is_negative(a) == ember_i256_is_negative(b)
+        && ember_i256_is_negative(*out) != ember_i256_is_negative(a);
+}
+EMBER_INLINED bool ember_ck_sub_i256(ember_i256 a, ember_i256 b, ember_i256* out) {
+    *out = ember_i256_sub(a, b);
+    return ember_i256_is_negative(a) != ember_i256_is_negative(b)
+        && ember_i256_is_negative(*out) != ember_i256_is_negative(a);
+}
+
+/* `u256`, the unsigned 256-bit count: the same four words, compared and
+ * checked as unsigned. A constant of it is a zero-extended 128-bit one
+ * (`ember_u256_make`). Between the two 256-bit types the bits are kept, as
+ * every same-width integer cast keeps them. */
+
+#if defined(_MSC_VER)
+typedef struct __declspec(align(16)) ember_u256 { uint64_t w[4]; } ember_u256;
+#else
+typedef struct ember_u256 { _Alignas(16) uint64_t w[4]; } ember_u256;
+#endif
+
+static inline ember_u256 ember_u256_words(uint64_t w3, uint64_t w2, uint64_t w1, uint64_t w0) {
+    ember_u256 r;
+    r.w[0] = w0;
+    r.w[1] = w1;
+    r.w[2] = w2;
+    r.w[3] = w3;
+    return r;
+}
+static inline ember_u256 ember_u256_make(uint64_t hi, uint64_t lo) { return ember_u256_words(0, 0, hi, lo); }
+static inline ember_u256 ember_u256_from_i64(int64_t v) {
+    uint64_t sign = v < 0 ? UINT64_MAX : 0;
+    return ember_u256_words(sign, sign, sign, (uint64_t)v);
+}
+static inline ember_u256 ember_u256_from_u64(uint64_t v) { return ember_u256_words(0, 0, 0, v); }
+static inline ember_u256 ember_i128_to_u256(ember_i128 v) {
+    ember_u128 bits = ember_i128_to_u128(v);
+    uint64_t sign = (ember_u128_hi(bits) >> 63) ? UINT64_MAX : 0;
+    return ember_u256_words(sign, sign, ember_u128_hi(bits), ember_u128_lo(bits));
+}
+static inline ember_u256 ember_u128_to_u256(ember_u128 v) {
+    return ember_u256_words(0, 0, ember_u128_hi(v), ember_u128_lo(v));
+}
+static inline ember_i128 ember_u256_to_i128(ember_u256 v) { return ember_i128_make(v.w[1], v.w[0]); }
+static inline ember_u128 ember_u256_to_u128(ember_u256 v) { return ember_u128_make(v.w[1], v.w[0]); }
+static inline uint64_t ember_u256_to_u64(ember_u256 v) { return v.w[0]; }
+static inline ember_u256 ember_i256_to_u256(ember_i256 v) { return ember_u256_words(v.w[3], v.w[2], v.w[1], v.w[0]); }
+static inline ember_i256 ember_u256_to_i256(ember_u256 v) { return ember_i256_words(v.w[3], v.w[2], v.w[1], v.w[0]); }
+
+static inline bool ember_u256_eq(ember_u256 a, ember_u256 b) {
+    return a.w[0] == b.w[0] && a.w[1] == b.w[1] && a.w[2] == b.w[2] && a.w[3] == b.w[3];
+}
+static inline bool ember_u256_lt(ember_u256 a, ember_u256 b) {
+    if (a.w[3] != b.w[3]) { return a.w[3] < b.w[3]; }
+    if (a.w[2] != b.w[2]) { return a.w[2] < b.w[2]; }
+    if (a.w[1] != b.w[1]) { return a.w[1] < b.w[1]; }
+    return a.w[0] < b.w[0];
+}
+static inline bool ember_u256_ne(ember_u256 a, ember_u256 b) { return !ember_u256_eq(a, b); }
+static inline bool ember_u256_le(ember_u256 a, ember_u256 b) { return !ember_u256_lt(b, a); }
+static inline bool ember_u256_gt(ember_u256 a, ember_u256 b) { return ember_u256_lt(b, a); }
+static inline bool ember_u256_ge(ember_u256 a, ember_u256 b) { return !ember_u256_lt(a, b); }
+
+static inline ember_u256 ember_u256_add(ember_u256 a, ember_u256 b) {
+    return ember_i256_to_u256(ember_i256_add(ember_u256_to_i256(a), ember_u256_to_i256(b)));
+}
+static inline ember_u256 ember_u256_sub(ember_u256 a, ember_u256 b) {
+    return ember_i256_to_u256(ember_i256_sub(ember_u256_to_i256(a), ember_u256_to_i256(b)));
+}
+static inline ember_u256 ember_u256_neg(ember_u256 a) { return ember_u256_sub(ember_u256_words(0, 0, 0, 0), a); }
+EMBER_INLINED bool ember_ck_add_u256(ember_u256 a, ember_u256 b, ember_u256* out) {
+    *out = ember_u256_add(a, b);
+    return ember_u256_lt(*out, a);
+}
+EMBER_INLINED bool ember_ck_sub_u256(ember_u256 a, ember_u256 b, ember_u256* out) {
+    *out = ember_u256_sub(a, b);
+    return ember_u256_lt(a, b);
+}
+
 /* -- bit counts ---------------------------------------------------------------
  *
  * [STD-20]: `count_ones`, `leading_zeros` and `trailing_zeros`, as an `int`.
@@ -1535,6 +1697,8 @@ typedef struct ember_fmt_spec {
 void ember_fmt_spec_i64(ember_vec* out, int64_t value, ember_fmt_spec spec);
 void ember_fmt_spec_u64(ember_vec* out, uint64_t value, ember_fmt_spec spec);
 void ember_fmt_spec_i128(ember_vec* out, ember_i128 value, ember_fmt_spec spec);
+void ember_fmt_spec_i256(ember_vec* out, ember_i256 value, ember_fmt_spec spec);
+void ember_fmt_spec_u256(ember_vec* out, ember_u256 value, ember_fmt_spec spec);
 void ember_fmt_spec_u128(ember_vec* out, ember_u128 value, ember_fmt_spec spec);
 void ember_fmt_spec_f64(ember_vec* out, double value, ember_fmt_spec spec);
 void ember_fmt_spec_f32(ember_vec* out, float value, ember_fmt_spec spec);
@@ -1764,6 +1928,8 @@ ember_u128 ember_range_nth_u128(ember_u128 start, ember_u128 step, size_t k);
 void ember_fmt_i64(ember_vec* out, int64_t value);
 void ember_fmt_u64(ember_vec* out, uint64_t value);
 void ember_fmt_i128(ember_vec* out, ember_i128 value);
+void ember_fmt_i256(ember_vec* out, ember_i256 value);
+void ember_fmt_u256(ember_vec* out, ember_u256 value);
 void ember_fmt_u128(ember_vec* out, ember_u128 value);
 void ember_fmt_f64(ember_vec* out, double value);
 void ember_fmt_f32(ember_vec* out, float value);
@@ -1895,6 +2061,10 @@ void ember_print_u64(uint64_t v);
 void ember_println_u64(uint64_t v);
 void ember_print_i128(ember_i128 v);
 void ember_println_i128(ember_i128 v);
+void ember_print_i256(ember_i256 v);
+void ember_println_i256(ember_i256 v);
+void ember_print_u256(ember_u256 v);
+void ember_println_u256(ember_u256 v);
 void ember_print_u128(ember_u128 v);
 void ember_println_u128(ember_u128 v);
 void ember_print_f16(uint16_t v);
@@ -1916,6 +2086,10 @@ void ember_eprint_u64(uint64_t v);
 void ember_eprintln_u64(uint64_t v);
 void ember_eprint_i128(ember_i128 v);
 void ember_eprintln_i128(ember_i128 v);
+void ember_eprint_i256(ember_i256 v);
+void ember_eprintln_i256(ember_i256 v);
+void ember_eprint_u256(ember_u256 v);
+void ember_eprintln_u256(ember_u256 v);
 void ember_eprint_u128(ember_u128 v);
 void ember_eprintln_u128(ember_u128 v);
 void ember_eprint_f16(uint16_t v);

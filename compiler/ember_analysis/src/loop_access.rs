@@ -61,6 +61,9 @@ struct Candidate {
     body: usize,
     end: usize,
     step: usize,
+    /// D-525 — an inclusive loop's test for its last turn, before the step:
+    /// it leaves the loop too, so through the postheader.
+    last: Option<usize>,
     exit: BasicBlockId,
     begin_index: usize,
     place: Place,
@@ -99,7 +102,18 @@ fn candidate(
     let Terminator::Goto(step_block) = end_block.terminator else {
         return None;
     };
-    let step = step_block.0 as usize;
+    let mut step = step_block.0 as usize;
+    // D-525 — an inclusive loop tests for its last turn before it steps; the
+    // test leaves where the header's does.
+    let mut last = None;
+    if let Terminator::SwitchInt { targets, otherwise, .. } = &body.blocks.get(step)?.terminator
+        && targets.len() == 1
+        && targets[0].0 == 0
+        && *otherwise == exit
+    {
+        last = Some(step);
+        step = targets[0].1.0 as usize;
+    }
     if step >= body.blocks.len()
         || !matches!(body.blocks.get(step)?.terminator, Terminator::Goto(target) if target.0 as usize == header)
     {
@@ -113,6 +127,7 @@ fn candidate(
     if predecessors.get(header)?.len() != 2
         || predecessors.get(body_index)?.as_slice() != [header]
         || predecessors.get(end)?.as_slice() != [body_index]
+        || last.is_some_and(|test| predecessors.get(step).is_none_or(|from| from.as_slice() != [test]))
     {
         return None;
     }
@@ -181,6 +196,7 @@ fn candidate(
     // `[EXC-9](a)` and `(c)`.
     if block_mentions_local(body.blocks.get(header)?, place.local)
         || block_mentions_local(body.blocks.get(step)?, place.local)
+        || last.is_some_and(|test| body.blocks.get(test).is_none_or(|test| block_mentions_local(test, place.local)))
     {
         return None;
     }
@@ -190,6 +206,7 @@ fn candidate(
         body: body_index,
         end,
         step,
+        last,
         exit,
         begin_index,
         place,
@@ -512,6 +529,12 @@ fn apply(body: &mut Body, candidate: Candidate) {
     // The access ends at the loop's exit now; the copies' releases stay.
     body.blocks[candidate.end].stmts.remove(0);
     body.blocks[candidate.step].terminator = Terminator::Goto(steady_header);
+    // D-525 — the last turn's test leaves through the access's end too.
+    if let Some(test) = candidate.last
+        && let Terminator::SwitchInt { otherwise, .. } = &mut body.blocks[test].terminator
+    {
+        *otherwise = postheader;
+    }
 
     body.blocks.push(BasicBlock {
         stmts: vec![begin],

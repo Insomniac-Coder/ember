@@ -95,6 +95,8 @@ impl Interval {
 /// for anything else, and for `u128`, whose top half no `i128` holds.
 pub(crate) fn type_range(types: &TypeTable, ty: Ty) -> Option<Interval> {
     match types.kind(ty) {
+        // G8-4 — nor for `i256`, whose values no `i128` holds.
+        TyKind::Int(ember_types::IntTy::I256) | TyKind::Uint(ember_types::UintTy::U256) => None,
         TyKind::Int(_) | TyKind::Uint(_) => {
             let max = i128::try_from(ember_types::int_max(types, ty)?).ok()?;
             let lo = if ember_types::is_signed(types, ty) == Some(true) { -max - 1 } else { 0 };
@@ -147,7 +149,8 @@ pub(crate) fn constant(types: &TypeTable, value: u128, ty: Ty) -> Option<i128> {
     let ty = representation(types, ty);
     let width = ember_types::bit_width(types, ty)?;
     let signed = ember_types::is_signed(types, ty)?;
-    if width == 128 {
+    // G8-4 — an `i256` constant is a sign-extended 128-bit one.
+    if width >= 128 {
         return if signed { Some(value as i128) } else { i128::try_from(value).ok() };
     }
     let low = value & ((1u128 << width) - 1);

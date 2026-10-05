@@ -40,7 +40,7 @@ pub use borrows::{
 pub use access::{elide_static_accesses_all, remove_never_firing_checks_all};
 pub use loop_access::hoist_loop_accesses_all;
 pub use check_hoisting::hoist_invariant_checks_all;
-pub use copies::propagate_copies_all;
+pub use copies::{narrow_widened_reads_all, propagate_copies_all};
 pub use exit_drops::skip_exit_drops_all;
 pub use kernels::{KernelTarget, outline_list_kernels_all};
 pub use list_locals::keep_pushed_lists_in_locals_all;

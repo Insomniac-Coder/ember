@@ -1022,11 +1022,34 @@ impl<'a> Builder<'a> {
         self.goto_if_open(step_bb);
         self.loops.pop();
 
-        // The counter is stepped with a plain add. `a..=T.MAX` would wrap
-        // here; `[CTL-3]` does not say what should happen, and the checked
-        // form would cost a branch in every counted loop, so the honest note
-        // is that the inclusive form stops short of the type's maximum.
+        // `[CTL-3]` (D-525) — an inclusive loop leaves when its counter is the
+        // end, before stepping, so `a..=T.MAX` ends at the type's top. With
+        // the end tested only at the head, the step wrapped the counter to the
+        // type's bottom and the loop ran forever, and the range facts, which
+        // read the loop as ending, removed the body's own exits. The step
+        // below cannot overflow: the counter is short of the end. An end
+        // written as a number below the top needs no test; the loop passes
+        // drop the test where the range facts prove the end below the top,
+        // and run a copy without it where they cannot (`loop_version`).
         self.current = step_bb;
+        if inclusive && !below_top(self.types, end, ty) {
+            let last = self.temp(self.bool_ty, end.span);
+            self.push(StmtKind::Assign {
+                place: Place::local(last),
+                rvalue: Rvalue::BinaryOp {
+                    op: BinOp::Eq,
+                    lhs: Operand::Copy(Place::local(counter)),
+                    rhs: Operand::Copy(Place::local(limit)),
+                },
+            });
+            let advance_bb = self.new_block();
+            self.terminate(Terminator::SwitchInt {
+                discr: Operand::Copy(Place::local(last)),
+                targets: vec![(0, advance_bb)],
+                otherwise: else_bb,
+            });
+            self.current = advance_bb;
+        }
         self.push(StmtKind::Assign {
             place: Place::local(counter),
             rvalue: Rvalue::BinaryOp {
@@ -6599,6 +6622,17 @@ impl<'a> Builder<'a> {
                 Place::local(temp)
             }
         }
+    }
+}
+
+/// `[CTL-3]` (D-525) — an inclusive loop's end written as a number below its
+/// type's top: the loop ends at the head's test before its counter could
+/// step past the top.
+fn below_top(types: &ember_types::TypeTable, end: &hir::Expr, ty: Ty) -> bool {
+    match &end.kind {
+        hir::ExprKind::OverflowScope { expr, .. } => below_top(types, expr, ty),
+        hir::ExprKind::Int(value) => ember_types::int_max(types, ty).is_some_and(|top| *value < top),
+        _ => false,
     }
 }
 

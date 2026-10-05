@@ -2,8 +2,10 @@
 #$ rules: CTL-3, TYP-8
 #$ panics: integer overflow
 #$ stdout: 254
-# `[CTL-3]` — `a..` has no end: counting past the type's maximum is an
-# overflow (`[TYP-8]`), found as the counter moves past `255`.
+#$ stdout: 255
+# `[CTL-3]` — `a..` has no end: it gives its type's maximum, and the value
+# after it is an overflow (`[TYP-8]`), found when the loop asks for it. Until
+# D-526 the loop stepped before its turn, so `255` was never given.
 
 for i in 254u8..:
     println(i)

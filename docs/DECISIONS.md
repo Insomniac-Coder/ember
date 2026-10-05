@@ -5016,6 +5016,108 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-139 — the audit of the delegated rulings: values a loop or an index could not reach
+
+2026-10-06, the owner's order after 0.9.10_Hardened_1: audit the 52 rulings delegated to the agent
+(ODR-021 to ODR-037, ODR-039 to ODR-048, ODR-065, ODR-070 to ODR-084, ODR-089 to ODR-093 and
+ODR-095 to ODR-098) for
+problems like G8-4's (an implementation limit that makes a value or type the language supports fail
+in a loop or an adapter), and fix them, solo.
+
+**Found and fixed.**
+* D-525: `for i in a..=T.MAX` ran forever. An inclusive loop now tests for its last turn before
+  stepping (`lower_for_range`), unless its end is written as a number below the top. Every loop pass
+  matched the counted loop's one exit at its head, and the test is a second: `settle_inclusive_loops`
+  (first in `version_bounds_checked_loops_all`) drops it where the range facts prove the end below
+  the top, and otherwise makes a copy of the loop without it, entered after `limit < T.MAX`, the
+  original running only when the end is the top; `[OPT-2]`'s `plan` leaves a loop that still tests
+  alone, and `[EXC-8]`'s hoisting reads the test as part of the step. The other passes see the loop
+  they always saw. An unproven `1..=n` with a running total keeps its grouped overflow checks
+  (`[SIMD-7]`) in the copy.
+* D-526 (ODR-027): `a..` stopped before its type's maximum, in the `for` and in `RangeFromIter`.
+  Both now step when the next value is asked for; `RangeFromIter.skip_front` leaves values out at
+  once with the new `Integer.count_to_top`. `[CTL-3]`'s words changed: it gives the maximum, and the
+  value after it is the overflow.
+* D-527: an index or size wider than `usize` was cut to its low bits (`xs[2^64 + 1]` read `xs[1]`).
+  `integer_as_usize` converts such a value only when `usize` holds it (`isize` below zero), and
+  otherwise panics with the whole value.
+* D-528: `parse[i256]` stopped the compiler and `parse[u256]` stopped at `u64.MAX`; the 256-bit
+  counts are not parsed (`E2020`, `[TYP-42]`).
+* ODR-040: `i256` and `u256` implement the operator interfaces of what they do (`Add`, `Sub`,
+  `Neg`, `AddAssign`, `SubAssign`), so generic code bounded by them takes a count.
+* G8-4's own `Enumerate.skip_back` (found by the suite): leaving items out from the back at once did
+  not number them, so a backwards `enumerate` started near `int`'s top no longer panicked as it
+  does item by item (`CTL-3b/run_fail_a_backwards_enumerate_a_skip_passes_over_still_numbers`); it
+  now numbers the greatest item it leaves out, as `next_back` would first.
+* The visible-numbers rule read `take`, `zip` and `chain` but not `skip` or `step_by`, so
+  `(round..n).step_by(2).enumerate()` with `round, n: int` numbered in `u64` though at most 2^63
+  items come: the stepped-range benchmark (`total ^= i ^ v`) stopped compiling, found by the
+  benchmark run. `visible_item_count` reads both (`STD-19/accept_visible_numbers_pick_the_smallest_type`),
+  and `[STD-19]` lists them.
+
+**Looked at and left** (none makes a supported value fail; for the owner, `docs/HANDOFF.md`): a range
+type is not an index (`[TYP-5]` lists no coercion there, though text offsets erase it); `flatten`'s
+`int` × `int` count could pass `int.MAX` only over 32-bit ranges counted item by item, which takes
+centuries; `range(a, b, step)` over 128-bit numbers with more than 2^64 steps saturates its count,
+unobservably; a fused `enumerate` over a range runs at 1.75x a hand-kept counter with clang, as it
+did before G8-4.
+
+## ADR-138 — counts and numbers for every iterator (G8-4 part 2, 0.9.10)
+
+2026-10-05/06, the owner's design (`docs/proposals/G8-4-counts-and-positions.md`, decisions A to G),
+built under the owner's "yes, start building it"; the language version is now 0.9.10
+(`docs/spec-source/Ember_v0.9.10_Hardened_1.md`, `docs/MIGRATION-0.9.10.md`).
+
+**What Ember hands back is in the smallest type that holds it.** `Iterator` has two associated types,
+`Count` (`len`, `count`, `position`) and `Position` (`enumerate`'s numbers), defaulted to `int`, each
+bounded by the new `std.core.ItemCount` (`int`, `u64`, `u128`, `u256`, `i128`, `i256`). The private
+`Integer` gives each number type `SpanCount`/`FullCount`/`Position` (`u64`/`u128`/`i128` for 64-bit
+numbers, `u128`/`u256`/`i256` for 128-bit ones, `int` below), `distance_to`, `back_by`,
+`forward_by`, `widen_count` and `narrow_count`, so the range iterators count exactly with plain
+arithmetic (`end - self` wrapping in 64 or 128 unsigned bits). Adapters keep their source's types;
+`Enumerate[I, P]` takes its number type as a parameter.
+
+**Stepping up by need** (the owner's rule, `docs/AUTOPILOT.md` §4). `chain`'s count is one level above
+its wider side's (`int` and `int` stay `int`), `flatten`'s the level that holds outer × inner, with
+`u256` the limit. These are compiler-known *count recipes* (`CountSum`, `CountProduct`,
+`PositionJoin`, `PositionOf`, std-only names): a type at once when both sides are known, otherwise a
+hidden parameter of the block or generic body (`GenericParam.count_op`) that each use fills in
+(`count_op_type`, `apply_extension_bindings`), so generic code steps up too, with no `u256` unless
+the values need it.
+
+**The visible-numbers rule** (`visible_numbers`): at a method call, `enumerate` over a chain whose
+range is written in place numbers in the smallest of `int`, `u64`, `i128`, `u128`, `i256` that holds
+every value (from the bounds' literals and types, what `take`, `skip`, `step_by`, `zip` and `chain`
+allow, and the start; the
+compiler builds the `Enumerate` with that `P`), and `len`/`count` are narrowed by a cast that cannot
+lose a value. A fused `for` numbers in the position type (`FusedNodeKind::Counter { pos }`).
+
+**The 256-bit counts.** `u256` and `i256` are built-in integer kinds: four 64-bit words in the runtime
+(`ember_u256`/`ember_i256`, add/sub wrapping and checked, comparisons, conversions with every other
+integer, decimal and formatted printing), count-only in the checker (`refuse_for_count`,
+`refuse_range_of_count`, casts with integers only, no `MIN`/`MAX`), never modelled by the range facts.
+std gives them `ItemCount` (division by doubling, `count_divmod`) and `Hash`.
+
+**Leaving items out at once.** `Iterator.skip_front` and `DoubleEndedIterator.skip_back` (`nth`,
+`nth_back`, `skip` and `take` are built on them) are instant on ranges and passed down by `rev`,
+`copied`, `take`, `skip`, `zip`, `chain` and backwards `enumerate`, so decision E's "none skips a
+gigantic tail one item at a time" holds through compositions (`big.enumerate().take(3).rev()`).
+
+**Defects found and fixed on the way** (D-516 to D-524): defaults' copies made before an
+implementation's associated types were known (two paths), associated-type bounds checked before
+every implementation was known, two blocks' hidden parameters compared by number, `T.Name` in an
+expression, bound calls' parameter types, a hidden parameter's bounds read from another body, and a
+dotted path as an expression's type argument.
+
+**Design C** (loop versioning, built 2026-10-06 after measuring it): a fused `for` whose
+`enumerate` numbers in a type wider than 64 bits has a copy computing the numbers as `int`s, taken
+after one test before the loop when every number fits (`wide_counters`, `wide_numbers_fit`,
+`fused_values`, in `check_for_fused` and per part in `check_for_chained`); the `int` is held for the
+whole turn, and `narrow_widened_reads_all` turns a read of the widened number as an `int` back into
+a read of the `int`, which MSVC needed (it kept the 128-bit halves in memory each turn). Measured on
+2,000,000,000 turns of `enumerate(start=s)` over `m..n` against the same loop before G8-4 (`int`
+numbers): 1.14x with clang and 1.47x with MSVC without the copy, 1.00x with both with it.
+
 ## ADR-137 — `zip` with a temporary iterator is one counted loop (D-515)
 
 2026-10-05, part 1 of the owner's decision on G8-4 (the giant ranges).

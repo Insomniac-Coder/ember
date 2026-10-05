@@ -10705,6 +10705,33 @@ formal 1/9 count or Phase 2's estimate.
 
 #### Start here after a context reset — state at 2026-10-04 (autopilot)
 
+**2026-10-06, autopilot: G8-4 part 2 is built and the language is 0.9.10** (the owner's design,
+`docs/proposals/G8-4-counts-and-positions.md`; spec `docs/spec-source/Ember_v0.9.10_Hardened_1.md`;
+`docs/MIGRATION-0.9.10.md`; ADR-138; defects D-516 to D-524). The owner's order for the rest
+(2026-10-06): **0.9.10 H1 → test → audit the 52 delegated ODRs for G8-4-like problems and fix them
+(solo; note anything that really needs the owner) → one benchmark run and the README → commit and
+push** (phase-next, CI, then main). New rule in `docs/AUTOPILOT.md` §4: step up by need, the
+biggest tool only when the values need it. HWiNFO's gadget export was off from about 22:30 on
+2026-10-05 (the process ran, no `VSB` key): test runs were kept light (`RUST_TEST_THREADS` 1-3 on
+the efficiency cores) until it returns. Design C (loop versioning for a counter wider than 64
+bits) was measured (1.14x clang, 1.47x MSVC without it) and built (ADR-138). **The audit of the 52
+delegated rulings** (ADR-139): fixed D-525 (`a..=T.MAX` ran forever; inclusive loops now test their
+last turn, and `settle_inclusive_loops` drops or versions the test so the loop passes see the
+canonical loop), D-526 (`a..` gives its maximum; ODR-027 amended, `[CTL-3]` changed), D-527 (an
+index wider than `usize` was cut to its low bits), D-528 (`parse` of the 256-bit counts), ODR-040's
+operator interfaces for `i256`/`u256`, and G8-4's own backwards-`enumerate` skip. For the owner (none
+blocks): a range type is not an index while text offsets erase it; a fused `enumerate` over a range
+runs at 1.75x a hand-kept counter with clang (as before G8-4); `flatten`'s `int` × `int` count and
+`range(a, b, step)`'s 128-bit count saturate only past what a loop can reach. The benchmark run
+found one more (ADR-139): the visible-numbers rule ignored `skip`/`step_by`, so
+`s5_range_step_enumerate` stopped compiling; fixed, then the whole set ran again (2026-10-06
+03:19-03:38, mains, no Kernel-Power 105; logs `readme_g8_win2.log`, `wsl/readme_g8_gcc.log` in the
+scratchpad; two disturbed MSVC cells timed again alone and used: `a09_generics` 0.140 → 0.114 s,
+`t6_char_indices` 0.061 → 0.032 s). Against 2026-10-04 no Ember time moved beyond the machine's
+noise; README: 43 as fast as C, 1 close, 6 slower (MSVC `p1_read_loop` 1.44, `a16_map_text` 1.35,
+`t3_lines`; clang `a10_recursion` 1.72, `p1_read_loop` 1.76; gcc `a00_empty`, `p5_million_objects`).
+Next numbers: ODR-099, D-529, ADR-140, ERR-056.
+
 **Autopilot, 2026-10-04.** The owner: "Activate autopilot mode, your goal will be to fix and
 improve issues with other agent's implementation and then continue developing the language, be
 mindful of power supply and measure and benchmark everything", and "you go solo for now, if
@@ -12232,7 +12259,7 @@ README timing values and benchmark assets are unchanged.
   implementation may be written), pinned in
   `docs/spec-source/development-target.json`. The spec's working sources are
   `tasks/spec-0.9.9/parts/`; `parts-h30/` through `parts-h52/` are frozen.
-* **Next numbers:** ODR-099, D-516, ADR-138, ERR-056 (D-498, D-514 OPEN).
+* **Next numbers:** ODR-099, D-529, ADR-140, ERR-056 (D-498, D-514 OPEN).
 * **Autonomous session of 2026-10-01 (the owner: "Pull the latest stuff,
   understand the status and activate autonomous development mode"; solo, no
   agents).** Taken as the go for everything waiting on it: the review's

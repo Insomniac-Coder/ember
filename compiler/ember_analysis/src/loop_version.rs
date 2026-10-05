@@ -59,6 +59,7 @@ pub fn version_bounds_checked_loops_all(bodies: &mut [Body], types: &TypeTable, 
     let mut versioned = 0;
     let mut grouped = 0;
     for body in bodies.iter_mut() {
+        settle_inclusive_loops(body, types, common, &returns);
         versioned += version_loops(body, types, common, &summaries, &returns);
         grouped += group_overflow_checks(body, types, common);
     }
@@ -205,6 +206,11 @@ fn plan(
                 if *place == Place::local(counter) && *lhs == Place::local(counter))
     });
     if increments != 1 || !is_increment || !matches!(step_block.terminator, Terminator::Goto(target) if target.0 as usize == header) {
+        return None;
+    }
+    // D-525 — a loop that still tests for its last turn runs only when its
+    // end is its type's top (`settle_inclusive_loops`): left as it is.
+    if last_test(body, &predecessors, header, *step, counter, limit).is_some() {
         return None;
     }
 
@@ -1385,6 +1391,9 @@ pub(crate) struct CountedLoop {
     pub(crate) counter: LocalId,
     pub(crate) limit: LocalId,
     pub(crate) inclusive: bool,
+    /// D-525 — the block that leaves an inclusive loop on its last turn
+    /// (`last_test`), while the loop has one.
+    pub(crate) last: Option<usize>,
 }
 
 pub(crate) fn counted_loop(body: &Body, types: &TypeTable, header: usize) -> Option<CountedLoop> {
@@ -1442,9 +1451,124 @@ pub(crate) fn counted_loop(body: &Body, types: &TypeTable, header: usize) -> Opt
     if increments != 1 || !is_increment || !matches!(step_block.terminator, Terminator::Goto(target) if target.0 as usize == header) {
         return None;
     }
+    let last = last_test(body, &predecessors, header, *step, counter, limit);
     let mut region: Vec<usize> = region.into_iter().collect();
     region.sort_unstable();
-    Some(CountedLoop { header, entry, step: *step, region, counter, limit, inclusive: op == BinOp::Le })
+    Some(CountedLoop { header, entry, step: *step, region, counter, limit, inclusive: op == BinOp::Le, last })
+}
+
+/// `[CTL-3]` (D-525) — the block `lower_for_range` puts before an inclusive
+/// loop's step: `t = counter == limit`, then a switch on `t` that steps on
+/// `0` and otherwise leaves where the header's test does, so `a..=T.MAX`
+/// ends instead of stepping past its type's top. `step` is the loop's one
+/// back-edge block.
+pub(crate) fn last_test(
+    body: &Body,
+    predecessors: &[Vec<usize>],
+    header: usize,
+    step: usize,
+    counter: LocalId,
+    limit: LocalId,
+) -> Option<usize> {
+    let Terminator::SwitchInt { targets: head, .. } = &body.blocks[header].terminator else { return None };
+    let exit = head.first()?.1;
+    let [test] = predecessors[step].as_slice() else { return None };
+    let block = &body.blocks[*test];
+    let Terminator::SwitchInt { discr: Operand::Copy(discr), targets, otherwise } = &block.terminator else {
+        return None;
+    };
+    if !discr.projection.is_empty()
+        || targets.len() != 1
+        || targets[0].0 != 0
+        || targets[0].1.0 as usize != step
+        || *otherwise != exit
+    {
+        return None;
+    }
+    let compares = block.stmts.iter().rev().find_map(|stmt| match &stmt.kind {
+        StmtKind::Assign { place, rvalue } if *place == Place::local(discr.local) => Some(matches!(rvalue,
+            Rvalue::BinaryOp { op: BinOp::Eq, lhs: Operand::Copy(lhs), rhs: Operand::Copy(rhs) }
+                if *lhs == Place::local(counter) && *rhs == Place::local(limit))),
+        _ => None,
+    })?;
+    compares.then_some(*test)
+}
+
+/// D-525 — the test for the last turn dropped: the block steps. Only where
+/// the end is below its type's top, so the header's test ends the loop at the
+/// same turn.
+fn drop_last_test(block: &mut BasicBlock, step: usize) {
+    if let Terminator::SwitchInt { discr: Operand::Copy(discr), .. } = &block.terminator {
+        let discr = discr.clone();
+        if let Some(stmt) =
+            block.stmts.iter_mut().rev().find(|stmt| matches!(&stmt.kind, StmtKind::Assign { place, .. } if *place == discr))
+        {
+            stmt.kind = StmtKind::Nop;
+        }
+    }
+    block.terminator = Terminator::Goto(BasicBlockId(step as u32));
+}
+
+/// `[CTL-3]` (D-525) — an inclusive loop's test for its last turn
+/// (`last_test`) is needed only when the loop's end is its type's top. Where
+/// the range facts prove the end below the top, the test goes. Where they
+/// cannot, the loop gets a copy without it, entered when the end is below the
+/// top, and runs as it is only when the end is the top. Every loop pass after
+/// this then sees the counted loop it always saw, and a loop it does not
+/// recognise (`plan`, `vectorisable`, `kernels`, `reserve_pushes`) only on
+/// that path. Outer loops first: the loops inside a copy are settled in turn;
+/// those inside the loop that runs to the top are left as they are.
+fn settle_inclusive_loops(body: &mut Body, types: &TypeTable, common: &CommonTypes, returns: &HashMap<String, Vec<usize>>) -> usize {
+    let mut settled: HashSet<usize> = HashSet::new();
+    let mut count = 0;
+    loop {
+        let Some(shape) = (0..body.blocks.len())
+            .filter(|header| !settled.contains(header))
+            .filter_map(|header| counted_loop(body, types, header))
+            .filter(|shape| shape.last.is_some())
+            .max_by_key(|shape| shape.region.len())
+        else {
+            break;
+        };
+        let test = shape.last.expect("a loop with a last-turn test");
+        settled.insert(shape.header);
+        count += 1;
+        let ty = body.local(shape.limit).ty;
+        let Some(top) = ember_types::int_max(types, ty).and_then(|top| i128::try_from(top).ok()) else { continue };
+        let below = Analysis::run(body, types, common, returns)
+            .and_then(|ranges| ranges.upper_bounds(shape.header, &copy(shape.limit)))
+            .is_some_and(|(hi, _)| hi < top);
+        if below {
+            drop_last_test(&mut body.blocks[test], shape.step);
+            continue;
+        }
+        let build = Build { span: body.blocks[shape.header].terminator_span };
+        let mut copied: Vec<usize> = shape.region.clone();
+        copied.push(shape.header);
+        let base = body.blocks.len();
+        let map: HashMap<usize, usize> = copied.iter().enumerate().map(|(i, &b)| (b, base + i)).collect();
+        let remap = |target: BasicBlockId| map.get(&(target.0 as usize)).map_or(target, |&n| BasicBlockId(n as u32));
+        for &block in &copied {
+            let mut clone: BasicBlock = body.blocks[block].clone();
+            retarget(&mut clone.terminator, remap);
+            body.blocks.push(clone);
+        }
+        drop_last_test(&mut body.blocks[map[&test]], map[&shape.step]);
+        let original = BasicBlockId(shape.header as u32);
+        let below = build.temp(body, common.bool_);
+        let entry = build.branch(
+            body,
+            vec![build.set(below, binary(BinOp::Lt, copy(shape.limit), int(top, ty)))],
+            below,
+            original,
+            BasicBlockId(map[&shape.header] as u32),
+        );
+        for block in (0..base).filter(|block| *block != shape.header && !shape.region.contains(block)) {
+            retarget(&mut body.blocks[block].terminator, |target| if target == original { entry } else { target });
+        }
+        settled.extend(shape.region.iter().copied());
+    }
+    count
 }
 
 /// Group the overflow checks of every loop of `body` in vectorisable form.
