@@ -10731,7 +10731,10 @@ loop so it ran once (now a loan of a local's own storage keeps its value in the 
 what a list or view points to does not, so the particles benchmark keeps its seven views). Four
 OPT-2/SIMD-7 tests whose lists the facts now know lend them to a function so they still test what
 they were written for; their original shapes are now RNG-4 accept tests with no `ember_ck_` left.
-**D-532 (open, next):** a generic function cannot iterate `it.enumerate(start=s)`. Spec unchanged
+**D-532 (fixed the same session, the owner: "Please fix that bug in this session"; ADR-143):** a
+generic function could not iterate `it.enumerate(start=s)`, because an associated type's bound
+(`I.Position: ItemCount`) did not bring its parents (`Ord`, `Copy`), as a parameter's does; the
+same refused `h.get().area()` through `type Thing: Named` with `interface Named: Shape`. Spec unchanged
 (`[RNG-4]` already allows what is proved; D-529/D-530 were implementation defects); README phase
 percentages unchanged (no rule newly met). Checked: quick check 0 failing, MSVC suite 390 passed,
 gates 0 failed; the new tests on MSVC, clang and (frame buffers, D-529) gcc in WSL, where the
@@ -10743,8 +10746,13 @@ and timed again alone with 21 runs: 0.171 s and 0.237 s, as before); faster: `p1
 0.65x, clang 0.55x of the old time, `a16_map_text` MSVC 0.78x, clang 0.73x. README: 43 as fast as
 C, 2 close, 5 slower (MSVC `a16_map_text` 1.14x, `t3_lines`; clang `a10_recursion`; gcc
 `p5_million_objects` 1.11x and `a00_empty`, the process start at 0 ms, 1.08x to 1.18x from run to
-run). **Next:** D-532; what remains of MSVC's `a16_map_text` gap (1.14x) is not yet measured; the
-thermal rules are back in force.
+run). **Next:** what remains of MSVC's `a16_map_text` gap (1.14x) is not yet measured; the thermal
+rules are back in force. **For the owner, to ask (the owner: "if you still think there's a need for
+workflow evaluation note it down and ask me later"):** a small review workflow (2-3 read-only
+agents) that sweeps the type checker for other places that treat a type parameter `T` and its
+associated type `T.Name` differently (D-532 was one: `implements`, `float_param`, `zeroable`,
+`default_initialisation` and the operator checks all start from `TyKind::Param`), each finding
+checked by a probe program before any fix.
 
 **2026-10-06 (later), 0.9.10_Hardened_2: the owner's rulings on three of the audit's decisions**
 (ADR-140; spec `docs/spec-source/Ember_v0.9.10_Hardened_2.md`, Appendix H §H.7;

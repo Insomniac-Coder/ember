@@ -5016,6 +5016,23 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-143 — an associated type's bound brings its parents (D-532)
+
+2026-10-06. The owner: "Please fix that bug in this session" (D-532, recorded open in 2caffd7). A
+generic function could not iterate `it.enumerate(start=s)`: `Enumerate[I, P]`'s `next` is in
+`extend[I: Iterator, P: ItemCount]`, `ItemCount` is `Ord + Copy`, and `I.Position` (declared
+`type Position: ItemCount` in `Iterator`) met `ItemCount` but not `Ord`. A type parameter's own
+bounds are closed with their parents when it is declared (`close_bounds`, `[IFC-3]`); the bounds of
+an associated type of one were taken as declared, by four routes (the bounds of a name
+`I.Position`, the hidden parameter a signature declares for it, the one a body reaches, and their
+closing once the interfaces are collected). All four now go through `assoc_bounds_of`, which
+closes what it finds with the parents, and where a hidden parameter is made its bindings are
+closed with the bounds, so a binding its bound writes names the parent's associated type as a
+parameter's does. The rule is general, not `enumerate`'s: `type Thing: Named` with
+`interface Named: Shape` gives `h.get().area()` in a body bounded only by `H: Holder`, and gives
+nothing `Named` does not bring (`IFC-3/reject_an_associated_types_bound_brings_only_its_parents`).
+The specification is unchanged: `[IFC-3]` and `[IFC-4]` already say this.
+
 ## ADR-142 — a list in a field holds what the program stores in it; a running total counts every inner turn (D-530)
 
 2026-10-06. The owner asked to look into the benchmarks more than 10% slower than C, and on the

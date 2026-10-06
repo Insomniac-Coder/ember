@@ -3640,14 +3640,22 @@ impl<'a> Checker<'a> {
     /// D-407 — the bounds of the associated type `assoc` that `interface`
     /// (or a parent) declares: from the interface once it is collected,
     /// none yet from what was noted before (`close_projection_bounds` fills
-    /// them in). `None` when it declares no `assoc`.
+    /// them in). `None` when it declares no `assoc`. D-532 — with their
+    /// parents (`[IFC-3]`), as a parameter's bounds have them: `Iterator`'s
+    /// `Position: ItemCount` is `Ord` and `Copy` too.
     fn assoc_bounds_of(&self, interface: Symbol, assoc: Symbol) -> Option<Vec<Symbol>> {
+        let declared = |interface: Symbol| {
+            self.interface_assoc(interface).into_iter().find(|(name, _)| *name == assoc).map(|(_, mut bounds)| {
+                self.close_bounds(&mut bounds, &mut Vec::new());
+                bounds
+            })
+        };
         if self.interfaces.contains_key(&interface) {
-            return self.interface_assoc(interface).into_iter().find(|(name, _)| *name == assoc).map(|(_, bounds)| bounds);
+            return declared(interface);
         }
         let origin = self.open_interface_origin.get(&interface).map_or(interface, |(origin, _)| *origin);
         if self.interfaces.contains_key(&origin) {
-            return self.interface_assoc(origin).into_iter().find(|(name, _)| *name == assoc).map(|(_, bounds)| bounds);
+            return declared(origin);
         }
         let mut pending = vec![origin];
         let mut seen = HashSet::new();
@@ -29513,7 +29521,10 @@ impl<'a> Checker<'a> {
             // = Item]`: `U.Iter`'s `Item` is `U.Item`).
             let base_bounds = generics[base_index].bounds.clone();
             let slot = index as usize - index_base;
-            let bindings = self.projection_bindings(&base_bounds, base, assoc.name, generics, index_base, assoc.span);
+            let mut bindings = self.projection_bindings(&base_bounds, base, assoc.name, generics, index_base, assoc.span);
+            let mut bounds = std::mem::take(&mut generics[slot].bounds);
+            self.close_bounds(&mut bounds, &mut bindings);
+            generics[slot].bounds = bounds;
             generics[slot].bindings = bindings;
         }
     }
@@ -29810,9 +29821,7 @@ impl<'a> Checker<'a> {
             return None;
         }
         let base_bounds = base.bounds.clone();
-        let bounds = base_bounds.clone().into_iter().find_map(|bound| {
-            self.interface_assoc(bound).into_iter().find(|(assoc, _)| *assoc == name).map(|(_, bounds)| bounds)
-        })?;
+        let bounds = base_bounds.iter().find_map(|&bound| self.assoc_bounds_of(bound, name))?;
         let slot = self.current_generics.len();
         let param_name = Symbol::intern(&format!("{base_name}.{name}"));
         self.current_generics.push(GenericParam {
@@ -29839,6 +29848,9 @@ impl<'a> Checker<'a> {
                 }
                 bindings.push((instance, assoc, self.replace_assoc(value, &map)));
             }
+            let mut bounds = std::mem::take(&mut self.current_generics[slot].bounds);
+            self.close_bounds(&mut bounds, &mut bindings);
+            self.current_generics[slot].bounds = bounds;
             self.current_generics[slot].bindings = bindings;
         }
         Some(self.types.intern(TyKind::Param { index: slot as u32, name: param_name }))
