@@ -6329,6 +6329,106 @@ ember_u128 ember_parse_u128_value(ember_str s) {
     return digits_value128(s, s.ptr[0] == '+' ? 1 : 0);
 }
 
+/* G8-4 — `parse` for the 256-bit counts, with the statuses the narrower
+ * forms give. The digits gather in eight 32-bit pieces, least significant
+ * first, so each step is plain 64-bit arithmetic on every compiler. `top` is
+ * the largest magnitude the text may have; a value past it, or past 256
+ * bits, is `Overflow`, found at the digit that passes it. */
+static bool above256(const uint32_t value[8], const uint32_t top[8]) {
+    for (int i = 7; i >= 0; --i) {
+        if (value[i] != top[i]) {
+            return value[i] > top[i];
+        }
+    }
+    return false;
+}
+
+static uint8_t parse_digits256(ember_str s, size_t at, const uint32_t top[8], uint32_t value[8]) {
+    for (int i = 0; i < 8; ++i) {
+        value[i] = 0;
+    }
+    if (at >= s.len) {
+        return 2;
+    }
+    for (; at < s.len; ++at) {
+        unsigned char c = s.ptr[at];
+        if (c < '0' || c > '9') {
+            return 2;
+        }
+        uint64_t carry = (uint64_t)(c - '0');
+        for (int i = 0; i < 8; ++i) {
+            uint64_t next = (uint64_t)value[i] * 10 + carry;
+            value[i] = (uint32_t)next;
+            carry = next >> 32;
+        }
+        if (carry != 0 || above256(value, top)) {
+            return 3;
+        }
+    }
+    return 0;
+}
+
+static ember_u256 pieces256(const uint32_t value[8]) {
+    ember_u256 r;
+    for (int i = 0; i < 4; ++i) {
+        r.w[i] = (uint64_t)value[2 * i] | ((uint64_t)value[2 * i + 1] << 32);
+    }
+    return r;
+}
+
+/* The largest magnitude of an `i256`: 2^255 below zero, 2^255 - 1 above. */
+static void i256_top(bool negative, uint32_t top[8]) {
+    for (int i = 0; i < 7; ++i) {
+        top[i] = negative ? 0 : UINT32_MAX;
+    }
+    top[7] = negative ? 0x80000000u : 0x7FFFFFFFu;
+}
+
+uint8_t ember_parse_i256_status(ember_str s) {
+    if (s.len == 0) {
+        return 1;
+    }
+    bool negative = s.ptr[0] == '-';
+    size_t at = (s.ptr[0] == '-' || s.ptr[0] == '+') ? 1 : 0;
+    uint32_t top[8];
+    uint32_t value[8];
+    i256_top(negative, top);
+    return parse_digits256(s, at, top, value);
+}
+
+ember_i256 ember_parse_i256_value(ember_str s) {
+    bool negative = s.ptr[0] == '-';
+    size_t at = (s.ptr[0] == '-' || s.ptr[0] == '+') ? 1 : 0;
+    uint32_t top[8];
+    uint32_t value[8];
+    i256_top(negative, top);
+    (void)parse_digits256(s, at, top, value);
+    ember_i256 magnitude = ember_u256_to_i256(pieces256(value));
+    return negative ? ember_i256_neg(magnitude) : magnitude;
+}
+
+uint8_t ember_parse_u256_status(ember_str s) {
+    if (s.len == 0) {
+        return 1;
+    }
+    uint32_t top[8];
+    uint32_t value[8];
+    for (int i = 0; i < 8; ++i) {
+        top[i] = UINT32_MAX;
+    }
+    return parse_digits256(s, s.ptr[0] == '+' ? 1 : 0, top, value);
+}
+
+ember_u256 ember_parse_u256_value(ember_str s) {
+    uint32_t top[8];
+    uint32_t value[8];
+    for (int i = 0; i < 8; ++i) {
+        top[i] = UINT32_MAX;
+    }
+    (void)parse_digits256(s, s.ptr[0] == '+' ? 1 : 0, top, value);
+    return pieces256(value);
+}
+
 /* `[STD-26]` over 128-bit integers, as over 64-bit ones. A count past
  * `SIZE_MAX` is `SIZE_MAX`: no loop runs that long. */
 static size_t saturated_count(ember_u128 distance, ember_u128 step) {
@@ -6722,7 +6822,10 @@ void ember_fmt_spec_u256(ember_vec* out, ember_u256 value, ember_fmt_spec spec) 
 static void fmt_spec_wide256(ember_vec* out, const uint64_t m[4], bool negative, ember_fmt_spec spec) {
     char kind = spec.kind == 0 || spec.kind == '?' ? 'd' : spec.kind;
     if (strchr("eEfFgG%", kind)) {
-        double magnitude = ldexp((double)m[3], 192) + ldexp((double)m[2], 128) + ldexp((double)m[1], 64) + (double)m[0];
+        /* Each word scaled by 2^64 exactly, as `ldexp` would; `ldexp` is
+         * libm's, and one reference made a Linux program load libm (D-502). */
+        const double word = 18446744073709551616.0;
+        double magnitude = (((double)m[3] * word + (double)m[2]) * word + (double)m[1]) * word + (double)m[0];
         fmt_spec_float(out, negative ? -magnitude : magnitude, 64, spec);
         return;
     }

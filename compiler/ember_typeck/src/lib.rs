@@ -480,8 +480,9 @@ enum FusedLink {
     Take(Expr),
     Skip(Expr),
     StepBy(Expr),
-    /// The start, and the position type the numbers are in (G8-4).
-    Enumerate(Expr, Ty),
+    /// The start, the position type the numbers are in (G8-4), and what the
+    /// known-numbers rule knows of the numbers (`[STD-19]`).
+    Enumerate(Expr, Ty, Option<(i128, i128)>),
     Zip(FusedChain),
     Copied,
     /// ODR-091 — the items below, last first.
@@ -516,12 +517,13 @@ struct FusedNode {
 enum FusedNodeKind {
     /// `xs[cursor + index]`, borrowed.
     View { xs: LocalId, span_ty: Ty, elem: Ty, mutable: bool, cursor: Option<LocalId> },
-    /// The `index`th value from `at`.
-    Range { at: LocalId, bound: Ty },
+    /// The `index`th value from `at`; what the known-numbers rule knows of
+    /// the range's values (`[STD-19]`).
+    Range { at: LocalId, bound: Ty, values: Option<(i128, i128)> },
     /// `enumerate`'s number, `start + index`, in the iterator's position
     /// type `pos` (G8-4): an `int`, or an `i128` for a range of 64-bit
-    /// numbers, which every such number fits.
-    Counter { start: LocalId, pos: Ty },
+    /// numbers, which every such number fits; and the numbers it can give.
+    Counter { start: LocalId, pos: Ty, values: Option<(i128, i128)> },
 }
 
 #[derive(Clone, Copy)]
@@ -540,24 +542,11 @@ enum FusedItem {
     Pair(Box<FusedItem>, Box<FusedItem>),
 }
 
-/// `[CTL-3b]` — one adapter of a fused chain, as far as what it pulls from
-/// the iterator below it goes: which items an `enumerate` below it numbers.
+/// `[CTL-3b]` — an `enumerate` of a fused chain, with the count of what it
+/// numbers, or a `zip`'s other chain, with its own.
 enum FusedLevel {
-    Take { by: LocalId },
-    Skip { by: LocalId, below: FusedCount },
-    StepBy { by: LocalId, below: FusedCount },
     Enumerate { node: usize, below: FusedCount },
-    Zip { mine: FusedCount, theirs: Vec<FusedLevel> },
-}
-
-/// What a chain's loop has pulled from one level when it has run to its end:
-/// whether any items, the last one's index, and whether a last call found
-/// the level exhausted.
-#[derive(Clone, Copy)]
-struct FusedPulls {
-    any: LocalId,
-    last: LocalId,
-    probed: LocalId,
+    Zip { theirs: Vec<FusedLevel> },
 }
 
 /// How many turns a fused loop takes: `n`, or, when a range may hold 2^64
@@ -1057,6 +1046,37 @@ struct OpenState {
     allowed: bool,
     locals: HashMap<LocalId, OpenLocal>,
     resolved: HashMap<Span, Ty>,
+    /// `[STD-19]` (the owner's rulings of 2026-10-06) — the known-numbers
+    /// rule: in a function's body (`check_body`), what each name set once and
+    /// never changed holds (`known`), and which of them a count or a number
+    /// read (`relied`). A pass assumes every name it learns is never changed;
+    /// one it relied on that the body changes (an assignment, `+=`, a
+    /// mutable borrow: a `mut` argument or a `mut self` call) is `changed`,
+    /// and the body is checked again knowing nothing of it.
+    knowing: bool,
+    known: HashMap<LocalId, Known>,
+    relied: HashSet<LocalId>,
+    changed: HashSet<(Span, Option<Symbol>)>,
+    /// The names what each name holds was worked out from: relied on when
+    /// it is (`rely`). While a name is learned, the names read (`recording`).
+    deps: HashMap<LocalId, Vec<LocalId>>,
+    recording: Option<Vec<LocalId>>,
+    /// In a generic function's own check, the names whose type each use
+    /// decides (`in_generic_template`): `enumerate`'s numbers over a list
+    /// of `T`, and the names set from them.
+    per_use: HashSet<LocalId>,
+}
+
+/// `[STD-19]` — what the known-numbers rule knows a local holds.
+#[derive(Clone, Copy)]
+enum Known {
+    /// An integer from the first to the second, both included.
+    Int(i128, i128),
+    /// A range of integers: where it starts and ends, each from the first
+    /// to the second; `..=` when `inclusive`.
+    Range { start: (i128, i128), end: (i128, i128), inclusive: bool },
+    /// An `Array` of exactly this many items.
+    Items(u128),
 }
 
 /// What a body check changes, so that a pass can be undone.
@@ -1242,6 +1262,10 @@ struct Checker<'a> {
     /// hop and taken there before anything else is synthesised, so a nested
     /// call never sees it.
     method_expectation: Option<Ty>,
+    /// `[STD-19]` — per closure body (by its span), the names an earlier
+    /// check of it found it changes: a closure is checked more than once
+    /// (`synth_lambda`), and each check after the first knows nothing of them.
+    lambda_changed: HashMap<Span, HashSet<(Span, Option<Symbol>)>>,
     /// `[ERR-4]` — the `Option`/`Result` method whose `std.core` helper is
     /// being called, so a diagnostic names the method, not the helper.
     routed_method: Option<Symbol>,
@@ -1598,6 +1622,11 @@ struct Checker<'a> {
     /// `[UNS-10b]` — `UnsafeCell` delegates an invariant to unsafe code and
     /// therefore cannot occur in a function that promises `@static_safe`.
     in_static_safe: bool,
+    /// `[STD-19]`, `[TYP-17]` — a generic function's body is being checked
+    /// with its parameters opaque. What depends on the item type there (an
+    /// `enumerate` over a list of `T`) is decided by each use's check, so a
+    /// line it decides is not refused here (`defers_to_uses`).
+    in_generic_template: bool,
     /// Keep one precise E3105 per function even when the forbidden type occurs
     /// in both its signature and body.
     static_safe_unsafe_cell_reported: bool,
@@ -1671,6 +1700,7 @@ impl<'a> Checker<'a> {
             local_ranges: HashMap::new(),
             literal_locals: HashMap::new(),
             method_expectation: None,
+            lambda_changed: HashMap::new(),
             routed_method: None,
             closure_calls: HashMap::new(),
             lambdas: Vec::new(),
@@ -1787,6 +1817,7 @@ impl<'a> Checker<'a> {
             in_defer: false,
             in_unsafe: false,
             in_static_safe: false,
+            in_generic_template: false,
             static_safe_unsafe_cell_reported: false,
             ret_ty,
             default_overflow: OverflowPolicy::default(),
@@ -13371,7 +13402,9 @@ impl<'a> Checker<'a> {
                     }
                     self.check_declared_defaults(def, decl, &signature_params);
                     let outer_unsafe = std::mem::replace(&mut self.in_unsafe, decl.is_unsafe);
+                    self.in_generic_template = true;
                     self.check_body(block);
+                    self.in_generic_template = false;
                     self.in_unsafe = outer_unsafe;
                 }
                 self.in_static_safe = outer_static_safe;
@@ -13572,7 +13605,19 @@ impl<'a> Checker<'a> {
                 let function = self.check_one_function(decl, block, instance, &item.attrs,
                     &modules[module_index].module.directives, item.span);
                 quiet = std::mem::replace(self.sink, saved);
-                let concrete = quiet.diagnostics()[quiet_before..].to_vec();
+                // `[STD-19]` — an instance can refuse a line its generic check left
+                // to the uses: say which use.
+                let used_with = generics
+                    .iter()
+                    .zip(key.args.iter())
+                    .map(|(param, &ty)| format!("`{}` = `{}`", param.name, self.types.display(ty)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let concrete = quiet.diagnostics()[quiet_before..]
+                    .iter()
+                    .cloned()
+                    .map(|diagnostic| diagnostic.note(format!("in `{}` used with {used_with}", decl.name.name)))
+                    .collect();
                 self.emit_concrete_instantiation_diagnostics(concrete);
                 self.type_params.clear();
                 self.callable_value_params.clear();
@@ -16797,6 +16842,9 @@ impl<'a> Checker<'a> {
                 if let Some(range) = init.as_ref().and_then(|e| self.range_of(e)) {
                     self.local_ranges.insert(local, range);
                 }
+                if let Some(init) = &init {
+                    self.learn(local, init);
+                }
                 out.push(Stmt::Let { local, init });
             }
             ast::StmtKind::Assign { targets, op, value } => {
@@ -17038,6 +17086,7 @@ impl<'a> Checker<'a> {
                         if let Some(range) = self.range_of(&init) {
                             self.local_ranges.insert(local, range);
                         }
+                        self.learn(local, &init);
                         out.push(Stmt::Let { local, init: Some(init) });
                         return;
                     }
@@ -18256,18 +18305,11 @@ impl<'a> Checker<'a> {
         let (kind, bounds): (hir::ParseKind, Vec<Expr>) = match *self.types.kind(target) {
             TyKind::Int(ember_types::IntTy::I128) => (hir::ParseKind::I128, Vec::new()),
             TyKind::Uint(UintTy::U128) => (hir::ParseKind::U128, Vec::new()),
-            // G8-4 — the 256-bit counts only count (`[TYP-42]`); a `u256`
-            // read as a `u64` stopped at `u64.MAX`, and an `i256` stopped the
-            // compiler (its least value shifted out of 128 bits).
-            TyKind::Int(ember_types::IntTy::I256) | TyKind::Uint(UintTy::U256) => {
-                let shown = self.types.display(target);
-                self.error(
-                    codes::E2020,
-                    span,
-                    format!("`parse` does not read `{shown}`: the 256-bit counts only count; read an `i128` or a `u128` and convert it with `as`"),
-                );
-                return error;
-            }
+            // G8-4 (D-528) — the 256-bit counts read over their whole range: a
+            // `u256` read as a `u64` stopped at `u64.MAX`, and an `i256`
+            // stopped the compiler (its least value shifted out of 128 bits).
+            TyKind::Int(ember_types::IntTy::I256) => (hir::ParseKind::I256, Vec::new()),
+            TyKind::Uint(UintTy::U256) => (hir::ParseKind::U256, Vec::new()),
             TyKind::Int(_) => {
                 let bits = ember_types::bit_width(&self.types, target).unwrap_or(64);
                 let max = (1u128 << (bits - 1)) - 1;
@@ -19802,6 +19844,14 @@ impl<'a> Checker<'a> {
         // and nowhere else.
         self.scopes.push(HashMap::new());
         let local = self.declare(binding_name(pattern), start.ty, pattern.span);
+        // `[STD-19]` — the counter holds its range's numbers.
+        self.learn_counter(local, |this| {
+            let last = match &end {
+                Some(end) => this.known_bounds(end).map(|(_, high)| if inclusive { high } else { high.saturating_sub(1) }),
+                None => this.whole_bounds(start.ty).map(|(_, high)| high),
+            };
+            Some((this.known_bounds(&start)?.0, last?))
+        });
         self.loop_labels.push(label.map(|l| l.name));
         let body = self.check_block(body);
         self.loop_labels.pop();
@@ -19817,61 +19867,43 @@ impl<'a> Checker<'a> {
         let else_block = else_block.as_ref().map(|b| self.check_block(b));
         let Some(end) = end else {
             // `[CTL-3]`, ODR-027 (D-526) — `a..` gives its type's top too, and
-            // only the value after it is the overflow (`[TYP-8]`), as producing
-            // it would be: the counter steps when it is read unless it is the
-            // top, and the step past the top is made, and panics, when another
-            // value is asked for. Stepping before the body panicked as the top
-            // itself was given, so `for i in 250 as u8 ..` never reached 255.
+            // only the value after it is the overflow (`[TYP-8]`), found when
+            // the loop asks for it: the loop is `a..=T.MAX`, a counted loop
+            // that ends after the top (D-525), and running to its end is asking
+            // for the value after the top, which panics as `+ 1` does. The
+            // loop's own `else` never runs: it ends only by `break`. Stepping
+            // before the body panicked as the top itself was given, so
+            // `for i in 250u8..` never reached 255; and a flag tested every
+            // turn cost clang 1.5x on a plain counting loop.
             let ty = start.ty;
+            if let Some(top) = int_max(self.types, ty).filter(|_| self.types.is_integral(ty)) {
+                let end = Expr { ty, kind: ExprKind::Int(top), span };
+                let past = self.number_overflow(span);
+                let else_block = Some(Block { stmts: vec![past], span });
+                return Some(Stmt::ForRange { local, start, end, inclusive: true, body, else_block });
+            }
             let bool_ty = self.common.bool_;
             let next = self.declare(None, ty, span);
-            let last = self.declare(None, bool_ty, span);
-            let read = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
-            let step = || Stmt::Assign {
-                place: read(next, ty),
-                value: Expr {
-                    ty,
-                    kind: ExprKind::Binary {
-                        op: BinOp::Add,
-                        lhs: Box::new(read(next, ty)),
-                        rhs: Box::new(Expr { ty, kind: ExprKind::Int(1), span }),
-                    },
-                    span,
-                },
-            };
-            let mut stmts = match int_max(self.types, ty) {
-                Some(top) => vec![
-                    Stmt::If {
-                        cond: read(last, bool_ty),
-                        then_block: Block { stmts: vec![step()], span },
-                        else_block: None,
-                    },
-                    Stmt::Let { local, init: Some(read(next, ty)) },
-                    Stmt::Assign {
-                        place: read(last, bool_ty),
-                        value: Expr {
-                            ty: bool_ty,
-                            kind: ExprKind::Binary {
-                                op: BinOp::Eq,
-                                lhs: Box::new(read(next, ty)),
-                                rhs: Box::new(Expr { ty, kind: ExprKind::Int(top), span }),
-                            },
-                            span,
+            let read = |ty| Expr { ty, kind: ExprKind::Local(next), span };
+            let mut stmts = vec![
+                Stmt::Let { local, init: Some(read(ty)) },
+                Stmt::Assign {
+                    place: read(ty),
+                    value: Expr {
+                        ty,
+                        kind: ExprKind::Binary {
+                            op: BinOp::Add,
+                            lhs: Box::new(read(ty)),
+                            rhs: Box::new(Expr { ty, kind: ExprKind::Int(1), span }),
                         },
+                        span,
                     },
-                    Stmt::If {
-                        cond: Expr { ty: bool_ty, kind: ExprKind::Unary { op: UnOp::Not, operand: Box::new(read(last, bool_ty)) }, span },
-                        then_block: Block { stmts: vec![step()], span },
-                        else_block: None,
-                    },
-                ],
-                None => vec![Stmt::Let { local, init: Some(read(next, ty)) }, step()],
-            };
+                },
+            ];
             stmts.extend(body.stmts);
             return Some(Stmt::Block(Block {
                 stmts: vec![
                     Stmt::Let { local: next, init: Some(start) },
-                    Stmt::Let { local: last, init: Some(Expr { ty: bool_ty, kind: ExprKind::Bool(false), span }) },
                     Stmt::While {
                         cond: Expr { ty: bool_ty, kind: ExprKind::Bool(true), span },
                         body: Block { stmts, span: body.span },
@@ -20414,7 +20446,7 @@ impl<'a> Checker<'a> {
     /// pass's diagnostics are dropped. Passes repeat while they fix another
     /// local; one still open at the end is `E2060` at its first use.
     fn check_body(&mut self, block: &ast::Block) -> Block {
-        let outer = std::mem::replace(&mut self.open, OpenState { allowed: true, ..OpenState::default() });
+        let outer = std::mem::replace(&mut self.open, OpenState { allowed: true, knowing: true, ..OpenState::default() });
         let mark = self.sink.mark();
         let snapshot = BodySnapshot {
             locals: self.locals.len(),
@@ -20432,8 +20464,14 @@ impl<'a> Checker<'a> {
             reported_defaults: self.reported_defaults.clone(),
         };
         let body = loop {
+            self.open.known.clear();
+            self.open.relied.clear();
+            self.open.deps.clear();
+            self.open.per_use.clear();
             let body = self.check_block(block);
-            let mut fixed_one = false;
+            // A name a count or a number relied on, that the body changes,
+            // is known no more: another pass (`[STD-19]`).
+            let mut fixed_one = self.forget_changed(&body);
             let mut still_open: Vec<OpenLocal> = Vec::new();
             for (_, open) in std::mem::take(&mut self.open.locals) {
                 match open.fixed {
@@ -20778,6 +20816,7 @@ impl<'a> Checker<'a> {
                     }
                     let mut stmts = Vec::new();
                     let mut chains = Vec::new();
+                    let first_source = sources[0].0.clone();
                     for (value, elem) in sources {
                         let span_ty = self.types.intern(TyKind::Span { elem, mutable: false });
                         let view = if matches!(self.types.kind(value.ty), TyKind::Vec { .. }) {
@@ -20798,7 +20837,13 @@ impl<'a> Checker<'a> {
                             Some(start) => self.check_expr(start, int_ty),
                             None => Expr { ty: int_ty, kind: ExprKind::Int(0), span: iter.span },
                         };
-                        chain.links.push(FusedLink::Enumerate(start, int_ty));
+                        // `[STD-19]` — numbered in the type that holds every number.
+                        let (_, most) = self.list_items(&first_source);
+                        let pos = self.known_position(&start, Some(most));
+                        let values = self.known_bounds(&start).and_then(|(low, high)| {
+                            Some((low, high.checked_add(i128::try_from(most.saturating_sub(1)).ok()?)?))
+                        });
+                        chain.links.push(FusedLink::Enumerate(start, pos, values));
                     } else {
                         chain.links.push(FusedLink::Zip(chains.remove(0)));
                     }
@@ -20860,6 +20905,11 @@ impl<'a> Checker<'a> {
         };
         self.scopes.push(HashMap::new());
         let value_local = self.declare(binding_name(pattern), ty, pattern.span);
+        // `[STD-19]` — each value is between the start and the stop.
+        self.learn_counter(value_local, |this| {
+            let (from, to) = (this.known_bounds(&start)?, this.known_bounds(&stop)?);
+            Some((from.0.min(to.0), from.1.max(to.1)))
+        });
         self.loop_labels.push(label.map(|l| l.name));
         let checked = self.check_block(body);
         self.loop_labels.pop();
@@ -21326,7 +21376,7 @@ impl<'a> Checker<'a> {
     }
 
     /// `[CTL-3b]` — the chain `fused_shape` accepted, taken apart.
-    fn take_fused_chain(&self, e: Expr) -> FusedChain {
+    fn take_fused_chain(&mut self, e: Expr) -> FusedChain {
         let Expr { ty, kind, span } = e;
         match kind {
             ExprKind::Call { callee, mut args, .. } if args.len() == 2 && self.fused_stage(callee).is_some() => {
@@ -21346,14 +21396,17 @@ impl<'a> Checker<'a> {
             ExprKind::Call { callee, mut args, .. } if self.adapter_name(callee).is_some() => {
                 let arg = args.pop().expect("an adapter's argument");
                 let receiver = args.pop().expect("an adapter's receiver");
+                let adapter = self.adapter_name(callee).expect("an adapter");
+                let values = if adapter.is("enumerate") { self.numbering_values(&receiver, &arg) } else { None };
                 let mut chain = self.take_fused_chain(receiver);
-                chain.links.push(match self.adapter_name(callee).expect("an adapter").as_str() {
+                let link = match adapter.as_str() {
                     "take" => FusedLink::Take(arg),
                     "skip" => FusedLink::Skip(arg),
                     "step_by" => FusedLink::StepBy(arg),
-                    "enumerate" => FusedLink::Enumerate(arg, self.enumerate_position(ty)),
+                    "enumerate" => FusedLink::Enumerate(arg, self.enumerate_position(ty), values),
                     _ => FusedLink::Zip(self.take_fused_chain(Self::take_zip_argument(arg))),
-                });
+                };
+                chain.links.push(link);
                 chain
             }
             ExprKind::StructLit { mut fields, .. } if self.struct_origin(ty).is_some_and(|o| o.is("std.core.Copied")) => {
@@ -21372,8 +21425,9 @@ impl<'a> Checker<'a> {
                     ExprKind::Cast { expr, .. } => *expr,
                     kind => Expr { kind, ..number },
                 };
+                let values = self.numbering_values(&inner, &start);
                 let mut chain = self.take_fused_chain(inner);
-                chain.links.push(FusedLink::Enumerate(start, pos));
+                chain.links.push(FusedLink::Enumerate(start, pos, values));
                 chain
             }
             kind => FusedChain { source: Expr { ty, kind, span }, links: Vec::new(), stages: Vec::new() },
@@ -21463,6 +21517,8 @@ impl<'a> Checker<'a> {
         let mut nodes = Vec::new();
         let mut chain = chain;
         let stages = std::mem::take(&mut chain.stages);
+        // `[STD-19]` — over a list of `T`, `enumerate`'s numbers are decided by each use.
+        let per_use = self.in_generic_template && self.types.is_generic(chain.source.ty);
         let (count, item, levels) = self.fuse_chain(chain, &mut nodes, &mut outer, span);
         // ADR-091 — each stage's callable is evaluated once, after the links'
         // iterators and counts and in the order the calls make them, and is
@@ -21494,7 +21550,6 @@ impl<'a> Checker<'a> {
             outer.push(Stmt::Let { local: ended, init: Some(Expr { ty: bool_ty, kind: ExprKind::Bool(false), span }) });
             ended
         });
-        let (count, end_check) = self.fused_numbers(count, &levels, &nodes, &mut outer, span);
         let (start, end, inclusive) = self.fused_bounds(count, &mut outer, span);
         let index_local = self.declare(None, usize_ty, span);
         // G8-4 decision C — an `enumerate` numbering in a type wider than 64
@@ -21510,7 +21565,15 @@ impl<'a> Checker<'a> {
         let (values, prefix_wide, prefix_narrow) = self.fused_values(&nodes, &wide, narrow.is_some(), index_local, span);
         let mut values: Vec<Option<Expr>> = values.into_iter().map(Some).collect();
         if staged.is_empty() {
-            self.bind_fused_item(pattern, item, &mut values, &mut inner, span);
+            let known: Vec<(Option<(i128, i128)>, bool)> = nodes
+                .iter()
+                .map(|node| match node.kind {
+                    FusedNodeKind::Range { values, .. } => (values, false),
+                    FusedNodeKind::Counter { values, .. } => (values, per_use),
+                    FusedNodeKind::View { .. } => (None, false),
+                })
+                .collect();
+            self.bind_fused_item(pattern, item, &mut values, &mut inner, &known, span);
             self.loop_labels.push(label.map(|l| l.name));
             let checked = self.check_block(body);
             self.loop_labels.pop();
@@ -21539,11 +21602,6 @@ impl<'a> Checker<'a> {
                 else_block: None,
             }),
             _ => None,
-        };
-        let else_block = match (end_check.is_empty(), else_block) {
-            (true, else_block) => else_block,
-            (false, None) => Some(Block { stmts: end_check, span }),
-            (false, Some(block)) => Some(Block { stmts: end_check.into_iter().chain(block.stmts).collect(), span: block.span }),
         };
         self.scopes.pop();
         match narrow {
@@ -21665,7 +21723,7 @@ impl<'a> Checker<'a> {
         let FusedNodeKind::Counter { start, .. } = node.kind else {
             return self.fused_node_value(node, index, span);
         };
-        let narrow = FusedNode { kind: FusedNodeKind::Counter { start, pos: self.common.i64 }, steps: node.steps.clone() };
+        let narrow = FusedNode { kind: FusedNodeKind::Counter { start, pos: self.common.i64, values: None }, steps: node.steps.clone() };
         self.fused_node_value(&narrow, index, span)
     }
 
@@ -21865,7 +21923,7 @@ impl<'a> Checker<'a> {
     }
 
     /// `[CTL-3b]` — the chains `chained_parts` accepted, taken apart.
-    fn take_chained_parts(&self, e: Expr, parts: &mut Vec<FusedChain>) {
+    fn take_chained_parts(&mut self, e: Expr, parts: &mut Vec<FusedChain>) {
         let Expr { ty, kind, span } = e;
         match kind {
             ExprKind::Call { callee, mut args, .. } if self.adapter_name(callee).is_some_and(|name| name.is("chain")) => {
@@ -21903,20 +21961,19 @@ impl<'a> Checker<'a> {
         for chain in parts {
             let mut nodes = Vec::new();
             let (count, item, levels) = self.fuse_chain(chain, &mut nodes, &mut outer, span);
-            let (count, end_check) = self.fused_numbers(count, &levels, &nodes, &mut outer, span);
             let bounds = self.fused_bounds(count, &mut outer, span);
             let index = self.declare(None, usize_ty, span);
             // G8-4 decision C, part by part (`check_for_fused`).
             let wide = self.wide_counters(&nodes);
             let narrow = if wide.is_empty() { None } else { self.wide_numbers_fit(&wide, &levels, &nodes, &mut outer, span) };
-            segments.push((nodes, item, end_check, bounds, index, wide, narrow));
+            segments.push((nodes, item, bounds, index, wide, narrow));
         }
 
         self.scopes.push(HashMap::new());
         let mut held: Vec<(LocalId, Ty)> = Vec::new();
         let mut shared_item = None;
         let mut loops = Vec::new();
-        for (nodes, item, end_check, bounds, index, wide, narrow) in segments {
+        for (nodes, item, bounds, index, wide, narrow) in segments {
             let (values, in_wide, in_narrow) = self.fused_values(&nodes, &wide, narrow.is_some(), index, span);
             let mut values: Vec<Option<Expr>> = values.into_iter().map(Some).collect();
             if shared_item.is_none() {
@@ -21930,12 +21987,12 @@ impl<'a> Checker<'a> {
             debug_assert!(leaves.len() == held.len() && leaves.iter().zip(&held).all(|(leaf, &(_, ty))| leaf.ty == ty));
             let prefix: Vec<Stmt> =
                 held.iter().zip(leaves).map(|(&(local, _), leaf)| Stmt::Let { local, init: Some(leaf) }).collect();
-            loops.push((index, bounds, prefix, end_check, in_wide, in_narrow, narrow));
+            loops.push((index, bounds, prefix, in_wide, in_narrow, narrow));
         }
         let mut body_stmts = Vec::new();
         let mut values: Vec<Option<Expr>> =
             held.iter().map(|&(local, ty)| Some(Expr { ty, kind: ExprKind::Local(local), span })).collect();
-        self.bind_fused_item(pattern, shared_item.expect("a chain has parts"), &mut values, &mut body_stmts, span);
+        self.bind_fused_item(pattern, shared_item.expect("a chain has parts"), &mut values, &mut body_stmts, &[], span);
         self.loop_labels.push(label.map(|l| l.name));
         let checked = self.check_block(body);
         self.loop_labels.pop();
@@ -21948,9 +22005,8 @@ impl<'a> Checker<'a> {
         }
         let mut tail: Vec<Stmt> = else_block.as_ref().map(|b| self.check_block(b).stmts).unwrap_or_default();
         self.scopes.pop();
-        for (index, (start, end, inclusive), prefix, end_check, in_wide, in_narrow, narrow) in loops.into_iter().rev() {
-            let otherwise: Vec<Stmt> = end_check.into_iter().chain(tail).collect();
-            let else_block = (!otherwise.is_empty()).then(|| Block { stmts: otherwise, span });
+        for (index, (start, end, inclusive), prefix, in_wide, in_narrow, narrow) in loops.into_iter().rev() {
+            let else_block = (!tail.is_empty()).then(|| Block { stmts: tail, span });
             let turn = |first: Vec<Stmt>| -> Vec<Stmt> {
                 first.into_iter().chain(prefix.iter().cloned()).chain(body_stmts.iter().cloned()).collect()
             };
@@ -22050,11 +22106,6 @@ impl<'a> Checker<'a> {
                     outer.push(guard);
                     let by = Expr { ty: usize_ty, kind: ExprKind::Cast { expr: Box::new(local(n, int_ty)), to: usize_ty }, span };
                     let by = self.hold_local(by, outer);
-                    levels.push(match adapter {
-                        "take" => FusedLevel::Take { by },
-                        "skip" => FusedLevel::Skip { by, below: count },
-                        _ => FusedLevel::StepBy { by, below: count },
-                    });
                     count = match (adapter, count) {
                         ("take", FusedCount::Exact(turns)) => {
                             let fewer = self.pick_less(local(turns, usize_ty), local(by, usize_ty), span);
@@ -22101,15 +22152,15 @@ impl<'a> Checker<'a> {
                         }
                     };
                 }
-                FusedLink::Enumerate(start, pos) => {
+                FusedLink::Enumerate(start, pos, values) => {
                     let start = self.hold_local(start, outer);
-                    nodes.push(FusedNode { kind: FusedNodeKind::Counter { start, pos }, steps: Vec::new() });
+                    nodes.push(FusedNode { kind: FusedNodeKind::Counter { start, pos, values }, steps: Vec::new() });
                     levels.push(FusedLevel::Enumerate { node: nodes.len() - 1, below: count });
                     item = FusedItem::Pair(Box::new(FusedItem::Node { node: nodes.len() - 1, copied: false }), Box::new(item));
                 }
                 FusedLink::Zip(other) => {
                     let (theirs, their_item, their_levels) = self.fuse_chain(other, nodes, outer, span);
-                    levels.push(FusedLevel::Zip { mine: count, theirs: their_levels });
+                    levels.push(FusedLevel::Zip { theirs: their_levels });
                     count = match (count, theirs) {
                         (FusedCount::Exact(a), FusedCount::Exact(b)) => {
                             let fewer = self.pick_less(local(a, usize_ty), local(b, usize_ty), span);
@@ -22177,168 +22228,6 @@ impl<'a> Checker<'a> {
         Stmt::Expr(self.synth(&panic))
     }
 
-    /// `[CTL-3b]` — the numbers of a fused loop's `enumerate`s without a
-    /// check on each: the loop takes only the turns whose numbers fit, and,
-    /// if it runs to its end, panics there when std's adapters would have
-    /// numbered an item past `int`'s top by then. They number every item
-    /// they pull: those `skip` and `step_by` pass over, and, on the call that
-    /// finds the chain exhausted, the rest of `step_by`'s gap and one item
-    /// past a `zip`'s shorter side. Returns the loop's count and the check
-    /// for its end.
-    fn fused_numbers(
-        &mut self,
-        count: FusedCount,
-        levels: &[FusedLevel],
-        nodes: &[FusedNode],
-        outer: &mut Vec<Stmt>,
-        span: Span,
-    ) -> (FusedCount, Vec<Stmt>) {
-        let (usize_ty, bool_ty) = (self.common.usize, self.common.bool_);
-        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
-        // ODR-091 — an `enumerate` run backwards gives its greatest number
-        // first, as `Enumerate.next_back` does (`number + len - 1`): when
-        // that is past `int`'s top the first item panics, before the body,
-        // so the check is before the loop, and the count stays.
-        let reversed: Vec<(usize, LocalId)> = nodes
-            .iter()
-            .enumerate()
-            .filter_map(|(at, node)| match node.kind {
-                FusedNodeKind::Counter { start, pos } if pos == self.common.i64 && node.steps.iter().any(|step| matches!(step, FusedStep::Rev(_))) => Some((at, start)),
-                _ => None,
-            })
-            .collect();
-        if !reversed.is_empty() {
-            let mut below = HashMap::new();
-            Self::enumerate_counts(levels, &mut below);
-            let (turns, _, _) = self.fused_last(count, outer, span);
-            for &(at, start) in &reversed {
-                let room = self.counter_room(start, outer, span);
-                // The greatest number is `start + (n - 1)`; the loop runs a turn
-                // only when there is an item below (`turns`).
-                let past = match below[&at] {
-                    FusedCount::Exact(n) => {
-                        let one = Expr { ty: usize_ty, kind: ExprKind::Int(1), span };
-                        let last = self.wrapping(BinOp::Sub, local(n, usize_ty), one, span);
-                        Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::Gt, lhs: Box::new(last), rhs: Box::new(local(room, usize_ty)) }, span }
-                    }
-                    FusedCount::Last { nonempty, last, .. } => {
-                        let within = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::Gt, lhs: Box::new(local(last, usize_ty)), rhs: Box::new(local(room, usize_ty)) }, span };
-                        Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(local(nonempty, bool_ty)), rhs: Box::new(within) }, span }
-                    }
-                };
-                let both = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(local(turns, bool_ty)), rhs: Box::new(past) }, span };
-                let panic = self.number_overflow(span);
-                outer.push(Stmt::If { cond: both, then_block: Block { stmts: vec![panic], span }, else_block: None });
-            }
-        }
-        let counters: Vec<(usize, LocalId)> = nodes
-            .iter()
-            .enumerate()
-            .filter_map(|(at, node)| match node.kind {
-                FusedNodeKind::Counter { start, pos } if pos == self.common.i64 && !node.steps.iter().any(|step| matches!(step, FusedStep::Rev(_))) => Some((at, start)),
-                _ => None,
-            })
-            .collect();
-        if counters.is_empty() {
-            return (count, Vec::new());
-        }
-        let rooms: HashMap<usize, LocalId> =
-            counters.iter().map(|&(at, start)| (at, self.counter_room(start, outer, span))).collect();
-        // No number can pass the top when every `enumerate` has no more items
-        // below it than its room: the loop then keeps its count and needs no
-        // check at its end. One test, which the range facts decide when they
-        // know the start (a round's counter) and the length.
-        let mut below = HashMap::new();
-        Self::enumerate_counts(levels, &mut below);
-        let mut safe: Option<Expr> = None;
-        for &(at, _) in &counters {
-            let room = local(rooms[&at], usize_ty);
-            let this = match below[&at] {
-                FusedCount::Exact(n) => {
-                    Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::Le, lhs: Box::new(local(n, usize_ty)), rhs: Box::new(room) }, span }
-                }
-                FusedCount::Last { nonempty, last, .. } => {
-                    let none = Expr { ty: bool_ty, kind: ExprKind::Unary { op: UnOp::Not, operand: Box::new(local(nonempty, bool_ty)) }, span };
-                    let within = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::Le, lhs: Box::new(local(last, usize_ty)), rhs: Box::new(room) }, span };
-                    Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::Or, lhs: Box::new(none), rhs: Box::new(within) }, span }
-                }
-            };
-            safe = Some(match safe {
-                None => this,
-                Some(before) => Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(before), rhs: Box::new(this) }, span },
-            });
-        }
-        let safe = self.hold_local(safe.expect("at least one enumerate"), outer);
-        let uncut = count;
-        // What each `enumerate` has numbered when the loop has run to its end.
-        let (any, last, _) = self.fused_last(count, outer, span);
-        let probed = self.hold_local(Expr { ty: bool_ty, kind: ExprKind::Bool(true), span }, outer);
-        let mut pulled = Vec::new();
-        self.fused_pulls(levels, FusedPulls { any, last, probed }, &mut pulled, outer, span);
-        let mut end_check = Vec::new();
-        for &(at, _) in &counters {
-            let (any, last) = pulled.iter().find(|(node, ..)| *node == at).map(|&(_, any, last)| (any, last)).expect("each enumerate is pulled");
-            let past = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::Gt, lhs: Box::new(local(last, usize_ty)), rhs: Box::new(local(rooms[&at], usize_ty)) }, span };
-            let both = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(local(any, bool_ty)), rhs: Box::new(past) }, span };
-            let panic = self.number_overflow(span);
-            end_check.push(Stmt::If { cond: both, then_block: Block { stmts: vec![panic], span }, else_block: None });
-        }
-        // The turns whose numbers all fit: for each `enumerate`, the turns
-        // whose index into its items is at most its room.
-        let mut count = count;
-        for &(at, _) in &counters {
-            let mut bound = rooms[&at];
-            let mut fits = self.hold_local(Expr { ty: bool_ty, kind: ExprKind::Bool(true), span }, outer);
-            for step in &nodes[at].steps {
-                match *step {
-                    FusedStep::Skip(by) => {
-                        let enough = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::Ge, lhs: Box::new(local(bound, usize_ty)), rhs: Box::new(local(by, usize_ty)) }, span };
-                        let both = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(local(fits, bool_ty)), rhs: Box::new(enough) }, span };
-                        fits = self.hold_local(both, outer);
-                        let less = self.wrapping(BinOp::Sub, local(bound, usize_ty), local(by, usize_ty), span);
-                        bound = self.hold_local(less, outer);
-                    }
-                    FusedStep::StepBy(by) => {
-                        let fewer = self.wrapping(BinOp::Div, local(bound, usize_ty), local(by, usize_ty), span);
-                        bound = self.hold_local(fewer, outer);
-                    }
-                    FusedStep::Rev(_) => unreachable!("a reversed enumerate is checked before the loop"),
-                }
-            }
-            count = match count {
-                FusedCount::Exact(turns) => {
-                    let int = |value| Expr { ty: usize_ty, kind: ExprKind::Int(value), span };
-                    let all = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::Ge, lhs: Box::new(local(bound, usize_ty)), rhs: Box::new(local(turns, usize_ty)) }, span };
-                    let some = self.wrapping(BinOp::Add, local(bound, usize_ty), int(1), span);
-                    let ok = self.if_value(all, local(turns, usize_ty), some, usize_ty, span);
-                    let ok = self.if_value(local(fits, bool_ty), ok, int(0), usize_ty, span);
-                    FusedCount::Exact(self.hold_local(ok, outer))
-                }
-                FusedCount::Last { nonempty, last, wide } => {
-                    let both = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(local(nonempty, bool_ty)), rhs: Box::new(local(fits, bool_ty)) }, span };
-                    let fewer = self.pick_less(local(last, usize_ty), local(bound, usize_ty), span);
-                    FusedCount::Last { nonempty: self.hold_local(both, outer), last: self.hold_local(fewer, outer), wide }
-                }
-            };
-        }
-        // When no number can pass the top, the count as it was.
-        let count = match (uncut, count) {
-            (FusedCount::Exact(whole), FusedCount::Exact(cut)) => {
-                let turns = self.if_value(local(safe, bool_ty), local(whole, usize_ty), local(cut, usize_ty), usize_ty, span);
-                FusedCount::Exact(self.hold_local(turns, outer))
-            }
-            (FusedCount::Last { nonempty: a_any, last: a_last, wide }, FusedCount::Last { nonempty: b_any, last: b_last, .. }) => {
-                let any = self.if_value(local(safe, bool_ty), local(a_any, bool_ty), local(b_any, bool_ty), bool_ty, span);
-                let last = self.if_value(local(safe, bool_ty), local(a_last, usize_ty), local(b_last, usize_ty), usize_ty, span);
-                FusedCount::Last { nonempty: self.hold_local(any, outer), last: self.hold_local(last, outer), wide }
-            }
-            _ => unreachable!("cutting a count keeps its form"),
-        };
-        let unsafe_ = Expr { ty: bool_ty, kind: ExprKind::Unary { op: UnOp::Not, operand: Box::new(local(safe, bool_ty)) }, span };
-        let end_check = vec![Stmt::If { cond: unsafe_, then_block: Block { stmts: end_check, span }, else_block: None }];
-        (count, end_check)
-    }
-
     /// The count below each `enumerate` of a chain, by its node.
     fn enumerate_counts(levels: &[FusedLevel], out: &mut HashMap<usize, FusedCount>) {
         for level in levels {
@@ -22346,97 +22235,10 @@ impl<'a> Checker<'a> {
                 FusedLevel::Enumerate { node, below } => {
                     out.insert(*node, *below);
                 }
-                FusedLevel::Zip { theirs, .. } => Self::enumerate_counts(theirs, out),
-                _ => {}
+                FusedLevel::Zip { theirs } => Self::enumerate_counts(theirs, out),
             }
         }
     }
-
-    /// `[CTL-3b]` — follow what the loop pulls down a chain's levels,
-    /// outermost first, noting for each `enumerate` what it has numbered.
-    fn fused_pulls(
-        &mut self,
-        levels: &[FusedLevel],
-        mut state: FusedPulls,
-        pulled: &mut Vec<(usize, LocalId, LocalId)>,
-        outer: &mut Vec<Stmt>,
-        span: Span,
-    ) {
-        let (usize_ty, bool_ty) = (self.common.usize, self.common.bool_);
-        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
-        let int = |value| Expr { ty: usize_ty, kind: ExprKind::Int(value), span };
-        let binary = |op, lhs: Expr, rhs: Expr| Expr { ty: bool_ty, kind: ExprKind::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs) }, span };
-        for level in levels.iter().rev() {
-            match level {
-                // A last call reaches below only while fewer than `n` were given.
-                FusedLevel::Take { by } => {
-                    let one_more = self.wrapping(BinOp::Add, local(state.last, usize_ty), int(1), span);
-                    let given_all = self.if_value(
-                        local(state.any, bool_ty),
-                        binary(BinOp::Eq, one_more, local(*by, usize_ty)),
-                        binary(BinOp::Eq, local(*by, usize_ty), int(0)),
-                        bool_ty,
-                        span,
-                    );
-                    let probed = binary(BinOp::And, local(state.probed, bool_ty), Expr {
-                        ty: bool_ty,
-                        kind: ExprKind::Unary { op: UnOp::Not, operand: Box::new(given_all) },
-                        span,
-                    });
-                    state.probed = self.hold_local(probed, outer);
-                }
-                // The `n` passed over, then those given; with none given, a
-                // last call passed over as many as there were, up to `n`.
-                FusedLevel::Skip { by, below } => {
-                    let (below_any, below_last, _) = self.fused_last(*below, outer, span);
-                    let some_below = binary(BinOp::And, binary(BinOp::Gt, local(*by, usize_ty), int(0)), local(below_any, bool_ty));
-                    let tried = binary(BinOp::And, local(state.probed, bool_ty), some_below);
-                    let any = binary(BinOp::Or, local(state.any, bool_ty), tried);
-                    let through = self.wrapping(BinOp::Add, local(*by, usize_ty), local(state.last, usize_ty), span);
-                    let before = self.wrapping(BinOp::Sub, local(*by, usize_ty), int(1), span);
-                    let passed = self.pick_less(local(below_last, usize_ty), before, span);
-                    let last = self.if_value(local(state.any, bool_ty), through, passed, usize_ty, span);
-                    state.any = self.hold_local(any, outer);
-                    state.last = self.hold_local(last, outer);
-                }
-                // A last call passes over the rest; before it, the last item
-                // given is the last pulled.
-                FusedLevel::StepBy { by, below } => {
-                    let (below_any, below_last, _) = self.fused_last(*below, outer, span);
-                    let any = self.if_value(local(state.probed, bool_ty), local(below_any, bool_ty), local(state.any, bool_ty), bool_ty, span);
-                    let given = self.wrapping(BinOp::Mul, local(state.last, usize_ty), local(*by, usize_ty), span);
-                    let last = self.if_value(local(state.probed, bool_ty), local(below_last, usize_ty), given, usize_ty, span);
-                    state.any = self.hold_local(any, outer);
-                    state.last = self.hold_local(last, outer);
-                }
-                FusedLevel::Enumerate { node, .. } => pulled.push((*node, state.any, state.last)),
-                // A last call asks this side first: if it is not exhausted,
-                // one more item is pulled from it and the other side is asked.
-                FusedLevel::Zip { mine, theirs } => {
-                    let not = |operand: Expr| Expr { ty: bool_ty, kind: ExprKind::Unary { op: UnOp::Not, operand: Box::new(operand) }, span };
-                    let (mine_any, mine_last, _) = self.fused_last(*mine, outer, span);
-                    let same_any = binary(BinOp::Eq, local(mine_any, bool_ty), local(state.any, bool_ty));
-                    let same_last = binary(BinOp::Eq, local(mine_last, usize_ty), local(state.last, usize_ty));
-                    let exhausted = binary(BinOp::And, same_any, binary(BinOp::Or, not(local(state.any, bool_ty)), same_last));
-                    let exhausted = self.hold_local(exhausted, outer);
-                    let extra = binary(BinOp::And, local(state.probed, bool_ty), not(local(exhausted, bool_ty)));
-                    let extra = self.hold_local(extra, outer);
-                    self.fused_pulls(theirs, FusedPulls { any: state.any, last: state.last, probed: extra }, pulled, outer, span);
-                    let any = binary(BinOp::Or, local(state.any, bool_ty), local(extra, bool_ty));
-                    let one_more = self.wrapping(BinOp::Add, local(state.last, usize_ty), int(1), span);
-                    let next = self.if_value(local(state.any, bool_ty), one_more, int(0), usize_ty, span);
-                    let last = self.if_value(local(extra, bool_ty), next, local(state.last, usize_ty), usize_ty, span);
-                    let probed = binary(BinOp::And, local(state.probed, bool_ty), local(exhausted, bool_ty));
-                    state = FusedPulls {
-                        any: self.hold_local(any, outer),
-                        last: self.hold_local(last, outer),
-                        probed: self.hold_local(probed, outer),
-                    };
-                }
-            }
-        }
-    }
-
 
     /// A count as whether there are any turns and the last index.
     fn fused_last(&mut self, count: FusedCount, outer: &mut Vec<Stmt>, span: Span) -> (LocalId, LocalId, bool) {
@@ -22509,6 +22311,12 @@ impl<'a> Checker<'a> {
             return (FusedCount::Exact(turns), FusedItem::Node { node: nodes.len() - 1, copied: false });
         }
         let (bound, inclusive) = self.range_iterator(source_ty).expect("`fused_shape` accepted the source");
+        let values = match &source.kind {
+            ExprKind::Call { args, .. } if args.len() == 1 => self
+                .known_range(Self::zip_argument(&args[0]))
+                .map(|(start, end, inclusive)| (start.0, if inclusive { end.1 } else { end.1.saturating_sub(1) })),
+            _ => None,
+        };
         let it = self.hold_local(source, outer);
         self.locals[it.0 as usize].for_iterator = true;
         let project = |this: &Self, name: &str| {
@@ -22527,7 +22335,7 @@ impl<'a> Checker<'a> {
             span,
         };
         let distance = self.hold_local(distance, outer);
-        nodes.push(FusedNode { kind: FusedNodeKind::Range { at, bound }, steps: Vec::new() });
+        nodes.push(FusedNode { kind: FusedNodeKind::Range { at, bound, values }, steps: Vec::new() });
         let item = FusedItem::Node { node: nodes.len() - 1, copied: false };
         if !inclusive {
             return (FusedCount::Exact(distance), item);
@@ -22567,7 +22375,7 @@ impl<'a> Checker<'a> {
                 let ty = self.types.intern(TyKind::Ref { mutable, inner: elem });
                 Expr { ty, kind: ExprKind::Builtin { which: Builtin::SpanGetUnchecked, args: vec![local(xs, span_ty), at] }, span }
             }
-            FusedNodeKind::Range { at: from, bound } => {
+            FusedNodeKind::Range { at: from, bound, .. } => {
                 let one = Expr { ty: bound, kind: ExprKind::Int(1), span };
                 Expr { ty: bound, kind: ExprKind::Builtin { which: Builtin::RangeNth, args: vec![local(from, bound), one, at] }, span }
             }
@@ -22577,10 +22385,12 @@ impl<'a> Checker<'a> {
             // `int`: exact, since the number fits.
             // G8-4 — in a wider position type (`i128`) every number fits, and
             // is computed there.
-            FusedNodeKind::Counter { start, pos } if pos != int_ty => {
+            // `[STD-19]` — the position type holds every number, so the sum
+            // needs no check.
+            FusedNodeKind::Counter { start, pos, .. } if pos != int_ty => {
                 let start = Expr { ty: pos, kind: ExprKind::Cast { expr: Box::new(local(start, int_ty)), to: pos }, span };
                 let at = Expr { ty: pos, kind: ExprKind::Cast { expr: Box::new(at), to: pos }, span };
-                Expr { ty: pos, kind: ExprKind::Binary { op: BinOp::Add, lhs: Box::new(start), rhs: Box::new(at) }, span }
+                self.wrapping(BinOp::Add, start, at, span)
             }
             FusedNodeKind::Counter { start, .. } => {
                 let start = Expr { ty: usize_ty, kind: ExprKind::Cast { expr: Box::new(local(start, int_ty)), to: usize_ty }, span };
@@ -22593,11 +22403,19 @@ impl<'a> Checker<'a> {
     /// `[CTL-3b]` — bind `pattern` to what the item gives: a pair through a
     /// tuple pattern part by part, a name to the whole (a pair as a tuple),
     /// and any other pattern through a borrowed element.
-    fn bind_fused_item(&mut self, pattern: &ast::Pattern, item: FusedItem, values: &mut [Option<Expr>], inner: &mut Vec<Stmt>, span: Span) {
+    fn bind_fused_item(
+        &mut self,
+        pattern: &ast::Pattern,
+        item: FusedItem,
+        values: &mut [Option<Expr>],
+        inner: &mut Vec<Stmt>,
+        known: &[(Option<(i128, i128)>, bool)],
+        span: Span,
+    ) {
         match (&pattern.kind, item) {
             (ast::PatternKind::Tuple(items), FusedItem::Pair(a, b)) if items.len() == 2 => {
-                self.bind_fused_item(&items[0], *a, values, inner, span);
-                self.bind_fused_item(&items[1], *b, values, inner, span);
+                self.bind_fused_item(&items[0], *a, values, inner, known, span);
+                self.bind_fused_item(&items[1], *b, values, inner, known, span);
             }
             // A `_` still reads its element into a hidden local, so a view the
             // loop holds stays in use (and its list borrowed) for every turn,
@@ -22608,10 +22426,23 @@ impl<'a> Checker<'a> {
                 inner.push(Stmt::Let { local: held, init: Some(value) });
             }
             (kind, item) => {
+                let node = match item {
+                    FusedItem::Node { node, .. } => Some(node),
+                    FusedItem::Pair(..) => None,
+                };
                 let value = self.fused_item_value(item, values, span);
                 let simple = matches!(kind, ast::PatternKind::Bind { .. });
                 let ty = value.ty;
                 let bound = self.declare(simple.then(|| binding_name(pattern)).flatten(), ty, pattern.span);
+                // `[STD-19]` — a range's value is one of the range's numbers; an
+                // `enumerate`'s number over a list of `T` has the type each use gives it.
+                let (values, per_use) = node.and_then(|node| known.get(node).copied()).unwrap_or((None, false));
+                if simple && let Some(values) = values {
+                    self.learn_counter(bound, |_| Some(values));
+                }
+                if per_use {
+                    self.open.per_use.insert(bound);
+                }
                 self.locals[bound.0 as usize].loop_borrowed_handle = simple
                     && matches!(*self.types.kind(ty), TyKind::Ref { inner, .. } if self.is_counted_owner_handle(inner));
                 inner.push(Stmt::Let { local: bound, init: Some(value) });
@@ -25867,6 +25698,15 @@ impl<'a> Checker<'a> {
                 span,
             };
         }
+        // `[TYP-5]` rule 12 (the owner's ruling of 2026-10-06) — a whole number
+        // goes into another whole-number type where the compiler knows every
+        // value it can have fits (`[STD-19]`'s known numbers): converted as
+        // `as` converts it, which then loses nothing. In a generic function's
+        // own check, a value whose type each use decides waits for the uses.
+        if self.fits_by_value(&expr, expected) || (self.whole(expr.ty) && self.whole(expected) && self.defers_to_uses(&expr)) {
+            let span = expr.span;
+            return Expr { ty: expected, kind: ExprKind::Cast { expr: Box::new(expr), to: expected }, span };
+        }
         // `[TYP-5]` rule 11 — a `T` becomes `Option[T]` as `Some(value)`,
         // after rules 1–4 and one level only: an `Option` is never wrapped.
         if self.is_option(expected)
@@ -25899,7 +25739,11 @@ impl<'a> Checker<'a> {
                 .primary_label(format!("this is `{found}`"));
         // `[TYP-4]` — the note is for two numbers, and only for two numbers.
         let numeric = |ty| self.types.is_numeric(ty) || self.types.is_untyped_literal(ty);
-        if numeric(expr.ty) && numeric(expected) {
+        if self.whole(expr.ty) && self.whole(expected) {
+            diagnostic = diagnostic.note(
+                "Ember converts a whole number to another whole-number type by itself only where it knows the value fits [TYP-5]",
+            );
+        } else if numeric(expr.ty) && numeric(expected) {
             diagnostic = diagnostic.note("Ember does not convert between numeric types implicitly [TYP-4]");
         }
         // `[TYP-5]` rule 7 borrows a place, and only a shared `ref`.
@@ -32254,22 +32098,23 @@ impl<'a> Checker<'a> {
         self.visible_numbers(call, name.name)
     }
 
-    /// G8-4, `[STD-19]` — the visible-numbers rule (the owner's B): where a
-    /// range's numbers are written at the place it is numbered or measured
-    /// (`(0..n).iter().enumerate()`, `(0..10).iter().len()`), `enumerate`
-    /// numbers, and `len` and `count` measure, in the smallest type that
-    /// holds every value the loop can give, never a wider one than the
-    /// iterator's own. An iterator kept in a variable shows no numbers.
+    /// G8-4, `[STD-19]` — the known-numbers rule (the owner's B, widened by
+    /// the owner's rulings of 2026-10-06): `enumerate` numbers, and `len` and
+    /// `count` measure, in the smallest type that holds every value they can
+    /// give, read from the numbers the compiler knows (`known_bounds`,
+    /// `most_items`). `enumerate` steps up past its iterator's own type where
+    /// its numbers could pass that type's top, so no number overflows.
     fn visible_numbers(&mut self, call: Expr, name: Symbol) -> Expr {
         let ExprKind::Call { callee, args, .. } = &call.kind else { return call };
         let callee = *callee;
         if self.adapter_name(callee).is_some_and(|adapter| adapter.is("enumerate")) && args.len() == 2 {
-            let Some(count) = self.visible_item_count(&args[0]) else { return call };
-            let Some((low, high)) = self.visible_bounds(&args[1]) else { return call };
-            let last = if count == 0 { Some(high) } else { i128::try_from(count - 1).ok().and_then(|more| high.checked_add(more)) };
-            let pos = self.position_type_for(low, last, count, high);
-            let table = self.enumerate_position(call.ty);
-            if self.number_rank(pos) >= self.number_rank(table) {
+            // Generic code numbers in its iterator's `Position`, filled in for each use.
+            if self.types.is_generic(args[0].ty) {
+                return call;
+            }
+            let most = self.most_items(&args[0]);
+            let pos = self.known_position(&args[1], most);
+            if pos == self.enumerate_position(call.ty) {
                 return call;
             }
             let span = call.span;
@@ -32289,10 +32134,10 @@ impl<'a> Checker<'a> {
             return call;
         }
         let receiver = Self::zip_argument(&args[0]);
-        if !self.implements(receiver.ty, iterator) {
+        if !self.implements(receiver.ty, iterator) || self.types.is_generic(receiver.ty) {
             return call;
         }
-        let Some(count) = self.visible_item_count(receiver) else { return call };
+        let Some(count) = self.most_items(receiver) else { return call };
         let narrow = if count <= i64::MAX as u128 {
             self.common.i64
         } else if count <= u64::MAX as u128 {
@@ -32321,125 +32166,425 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// G8-4 — the smallest position type holding `low` to `last` (`None`
-    /// past `i128`: `count` items numbered from at most `high`).
-    fn position_type_for(&self, low: i128, last: Option<i128>, count: u128, high: i128) -> Ty {
+    /// `[STD-19]` — the type `enumerate` numbers in, counting from `start`
+    /// over at most `most` items (`None`: more than a `u128` holds): the
+    /// smallest of `int`, `u64`, `i128`, `u128` and `i256` that holds every
+    /// number, `start` to `start + most - 1`.
+    fn known_position(&mut self, start: &Expr, most: Option<u128>) -> Ty {
         let c = self.common;
+        let (low, high) = self.known_bounds(start).unwrap_or((i128::from(i64::MIN), i128::from(i64::MAX)));
+        let last = match most {
+            Some(0) => Some(high),
+            Some(n) => i128::try_from(n - 1).ok().and_then(|more| high.checked_add(more)),
+            None => None,
+        };
         match last {
             Some(last) if low >= i128::from(i64::MIN) && last <= i128::from(i64::MAX) => c.i64,
             Some(last) if low >= 0 && last <= i128::from(u64::MAX) => c.u64,
             Some(_) => c.i128,
-            None if low >= 0 && u128::try_from(high).ok().and_then(|high| high.checked_add(count - 1)).is_some() => c.u128,
+            None if low >= 0 && most.is_some_and(|n| u128::try_from(high).ok().and_then(|high| high.checked_add(n - 1)).is_some()) => c.u128,
             None => c.i256,
         }
     }
 
-    /// G8-4 — the values an integer `e` can have, as the visible-numbers
-    /// rule reads them: a number written as one (`10`, `-3`, `0 as u64`) is
-    /// itself, and anything else may be any value of its type. `None` for a
-    /// type whose values no `i128` holds (`u128`, `i256`).
-    fn visible_bounds(&self, e: &Expr) -> Option<(i128, i128)> {
-        // A filled-in default keeps its declaration's overflow rule around it.
-        if let ExprKind::OverflowScope { expr, .. } = &e.kind {
-            return self.visible_bounds(expr);
+    /// The values of an integer type, as `i128`s; `None` for a type whose
+    /// values no `i128` holds (`u128`, `u256`, `i256`).
+    fn whole_bounds(&self, ty: Ty) -> Option<(i128, i128)> {
+        if matches!(self.types.kind(ty), TyKind::Int(ember_types::IntTy::I256)) {
+            return None;
         }
-        let whole = |this: &Self, ty: Ty| -> Option<(i128, i128)> {
-            let high = i128::try_from(int_max(this.types, ty)?).ok()?;
-            let low = match ember_types::signed_min_magnitude(this.types, ty) {
-                Some(magnitude) => 0i128.checked_sub_unsigned(magnitude)?,
-                None => 0,
-            };
-            (!matches!(this.types.kind(ty), TyKind::Int(ember_types::IntTy::I256))).then_some((low, high))
+        let high = i128::try_from(int_max(self.types, ty)?).ok()?;
+        let low = match ember_types::signed_min_magnitude(self.types, ty) {
+            Some(magnitude) => 0i128.checked_sub_unsigned(magnitude)?,
+            None => 0,
         };
-        let (type_low, type_high) = whole(self, e.ty)?;
-        let within = |value: i128| (type_low..=type_high).contains(&value).then_some((value, value));
-        match &e.kind {
-            ExprKind::Int(value) => i128::try_from(*value).ok().and_then(within).or(Some((type_low, type_high))),
-            ExprKind::Unary { op: UnOp::Neg, operand } if matches!(operand.kind, ExprKind::Int(_)) => {
-                let ExprKind::Int(value) = operand.kind else { unreachable!("matched above") };
-                i128::try_from(value).ok().and_then(i128::checked_neg).and_then(within).or(Some((type_low, type_high)))
-            }
-            ExprKind::Cast { expr, .. } if self.types.is_integral(expr.ty) => match self.visible_bounds(expr) {
-                Some((low, high)) if low == high => within(low).or(Some((type_low, type_high))),
-                _ => Some((type_low, type_high)),
+        Some((low, high))
+    }
+
+    /// `[STD-19]` — the values an integer `e` can have, as the known-numbers
+    /// rule reads them: a number written as one is itself; a name set once
+    /// and never changed holds what its value held, and a loop's counter its
+    /// range's numbers (`Known`); `+`, `-`, `*`, `//` and `%` give what their
+    /// operands allow; a length is what `list_items` says; anything else may
+    /// be any value of its type, as may an answer its type does not hold.
+    /// `None` for a type whose values no `i128` holds.
+    fn known_bounds(&mut self, e: &Expr) -> Option<(i128, i128)> {
+        let whole = self.whole_bounds(e.ty);
+        if whole.is_none() && !self.whole(e.ty) {
+            return None;
+        }
+        let found = match &e.kind {
+            ExprKind::Int(value) => i128::try_from(*value).ok().map(|value| (value, value)),
+            ExprKind::Local(local) => match self.known_of(*local) {
+                Some(Known::Int(low, high)) => Some((low, high)),
+                _ => None,
             },
-            _ => Some((type_low, type_high)),
+            // A filled-in default keeps its declaration's overflow rule around it.
+            ExprKind::OverflowScope { expr, .. } => self.known_bounds(expr),
+            ExprKind::Cast { expr, .. } | ExprKind::Widen { expr, .. } if self.types.is_integral(expr.ty) => self.known_bounds(expr),
+            ExprKind::Unary { op: UnOp::Neg, operand } => {
+                self.known_bounds(operand).and_then(|(low, high)| high.checked_neg().zip(low.checked_neg()))
+            }
+            ExprKind::Binary { op, lhs, rhs } if self.types.is_integral(lhs.ty) && self.types.is_integral(rhs.ty) => {
+                match (self.known_bounds(lhs), self.known_bounds(rhs)) {
+                    (Some(a), Some(b)) => Self::interval(*op, a, b),
+                    _ => None,
+                }
+            }
+            ExprKind::Builtin { which: Builtin::ArrayLen | Builtin::SpanLen | Builtin::StringLen, args } if args.len() == 1 => {
+                let (least, most) = self.list_items(&args[0]);
+                i128::try_from(least).ok().zip(i128::try_from(most).ok())
+            }
+            _ => None,
+        };
+        match found {
+            Some(values) if self.type_holds(e.ty, values) => Some(values),
+            _ => whole,
         }
     }
 
-    /// G8-4 — the most items `e` can give where the range it runs over is
-    /// written in it (`(a..b).iter()`, `(a..=b).iter()`), through the
-    /// adapters that never give more than they take; `None` for any other
-    /// source (an iterator in a variable, a container, a `chain`).
-    fn visible_item_count(&self, e: &Expr) -> Option<u128> {
+    /// `[STD-19]` — what `a op b` can be, for operands from `a` and from `b`;
+    /// `None` where it is not worked out.
+    fn interval(op: BinOp, (a_low, a_high): (i128, i128), (b_low, b_high): (i128, i128)) -> Option<(i128, i128)> {
+        match op {
+            BinOp::Add => Some((a_low.checked_add(b_low)?, a_high.checked_add(b_high)?)),
+            BinOp::Sub => Some((a_low.checked_sub(b_high)?, a_high.checked_sub(b_low)?)),
+            BinOp::Mul => {
+                let corners = [a_low.checked_mul(b_low)?, a_low.checked_mul(b_high)?, a_high.checked_mul(b_low)?, a_high.checked_mul(b_high)?];
+                Some((*corners.iter().min()?, *corners.iter().max()?))
+            }
+            // By a divisor known to be positive: floor division grows with
+            // what is divided, and for a part below zero with the divisor.
+            BinOp::FloorDiv if b_low > 0 => {
+                let low = if a_low >= 0 { a_low.div_euclid(b_high) } else { a_low.div_euclid(b_low) };
+                let high = if a_high >= 0 { a_high.div_euclid(b_low) } else { a_high.div_euclid(b_high) };
+                Some((low, high))
+            }
+            BinOp::Div if a_low >= 0 && b_low > 0 => Some((a_low / b_high, a_high / b_low)),
+            // Floor modulo takes the divisor's sign.
+            BinOp::FloorRem if b_low > 0 => Some((0, if a_low >= 0 { a_high.min(b_high - 1) } else { b_high - 1 })),
+            BinOp::Rem if a_low >= 0 && b_low > 0 => Some((0, a_high.min(b_high - 1))),
+            // Of numbers not below zero: `&` keeps no bit either lacks, and
+            // `|` and `^` set none above the higher's highest.
+            BinOp::BitAnd if a_low >= 0 && b_low >= 0 => Some((0, a_high.min(b_high))),
+            BinOp::BitOr | BinOp::BitXor if a_low >= 0 && b_low >= 0 => {
+                let bits = 128 - (a_high.max(b_high) as u128).leading_zeros();
+                (bits < 127).then(|| (0, (1i128 << bits) - 1))
+            }
+            _ => None,
+        }
+    }
+
+    /// `[HEAP-8]` — the most items a list of `elem`s (or a view of one, or
+    /// text, of bytes) can hold: their bytes are at most `PTRDIFF_MAX`, and
+    /// an item of no size counts as one byte, as the runtime counts it.
+    fn list_most(&self, elem: Ty) -> u128 {
+        let top = (1u128 << (self.types.pointer_size() * 8 - 1)) - 1;
+        top / u128::from(self.types.layout(elem).size.max(1))
+    }
+
+    /// `[STD-19]` — how many items a list, a view or text `e` holds, the
+    /// least and the most: an `Array` set once from a literal and never
+    /// changed has its literal's; a fixed array its length; any other at most
+    /// what `list_most` allows.
+    fn list_items(&mut self, e: &Expr) -> (u128, u128) {
+        // A view of a whole list (`xs.iter()`'s) has the list's items.
+        if let ExprKind::Builtin { which: Builtin::SpanFrom { .. }, args } = &e.kind
+            && let [list] = args.as_slice()
+        {
+            return self.list_items(list);
+        }
+        let e = match &e.kind {
+            ExprKind::Ref { place, .. } => &**place,
+            _ => e,
+        };
+        if let ExprKind::Local(local) = e.kind
+            && let Some(Known::Items(n)) = self.known_of(local)
+        {
+            return (n, n);
+        }
+        let ty = match *self.types.kind(e.ty) {
+            TyKind::Ref { inner, .. } => inner,
+            _ => e.ty,
+        };
+        match *self.types.kind(ty) {
+            TyKind::Array { len, .. } => (u128::from(len), u128::from(len)),
+            TyKind::Vec { elem, text: false } | TyKind::Span { elem, .. } => (0, self.list_most(elem)),
+            _ => (0, self.list_most(self.common.u8)),
+        }
+    }
+
+    /// `[STD-19]` — the numbers an `enumerate` of `receiver` from `start` can
+    /// give: `start` to `start + n - 1` over at most `n` items.
+    fn numbering_values(&mut self, receiver: &Expr, start: &Expr) -> Option<(i128, i128)> {
+        let (low, high) = self.known_bounds(start)?;
+        match self.most_items(receiver)? {
+            0 => Some((low, high)),
+            n => Some((low, high.checked_add(i128::try_from(n - 1).ok()?)?)),
+        }
+    }
+
+    /// `[STD-19]` — the most items an iterator `e` can give, from the
+    /// numbers the compiler knows: a range's from its bounds; a list's or a
+    /// view's from `list_items`; through the adapters that never give more
+    /// than they take, as each allows; any other iterator's what its `Count`
+    /// holds. `None` for more than a `u128` holds.
+    fn most_items(&mut self, e: &Expr) -> Option<u128> {
         let origin = |this: &Self, ty: Ty| this.struct_origin(ty);
         match &e.kind {
             ExprKind::Call { args, .. }
                 if args.len() == 1
-                    && origin(self, e.ty).is_some_and(|o| o.is("std.core.RangeIter") || o.is("std.core.RangeInclusiveIter"))
-                    && origin(self, Self::zip_argument(&args[0]).ty).is_some_and(|o| o.is("std.core.Range") || o.is("std.core.RangeInclusive")) =>
+                    && origin(self, e.ty).is_some_and(|o| o.is("std.core.RangeIter") || o.is("std.core.RangeInclusiveIter")) =>
             {
                 // `iter` borrows the range: a literal arrives as a borrow of a temporary.
-                let range = Self::zip_argument(&args[0]);
-                let ExprKind::StructLit { fields, .. } = &range.kind else { return None };
-                let [start, end] = fields.as_slice() else { return None };
-                let (low, _) = self.visible_bounds(start)?;
-                let (_, high) = self.visible_bounds(end)?;
-                let gap = high.checked_sub(low)?;
-                let inclusive = origin(self, range.ty).is_some_and(|o| o.is("std.core.RangeInclusive"));
-                Some(match (gap < 0, inclusive) {
-                    (true, false) => 0,
-                    (true, true) => u128::from(gap == -1),
-                    (false, false) => gap as u128,
-                    (false, true) => gap as u128 + 1,
-                })
+                if let Some((start, end, inclusive)) = self.known_range(Self::zip_argument(&args[0]))
+                    && let Some(gap) = end.1.checked_sub(start.0)
+                {
+                    return Some(match (gap < 0, inclusive) {
+                        (true, false) => 0,
+                        (true, true) => u128::from(gap == -1),
+                        (false, false) => gap as u128,
+                        (false, true) => gap as u128 + 1,
+                    });
+                }
             }
-            ExprKind::Call { callee, args, .. } if !args.is_empty() => {
-                let adapter = self.adapter_name(*callee)?;
-                let below = self.visible_item_count(&args[0]);
-                match adapter.as_str() {
+            ExprKind::Call { callee, args, .. } if !args.is_empty() && self.adapter_name(*callee).is_some() => {
+                let adapter = self.adapter_name(*callee).expect("just checked");
+                let below = self.most_items(&args[0]);
+                let at_least = |this: &mut Self, arg: Option<&Expr>| {
+                    arg.and_then(|arg| this.known_bounds(arg)).map_or(0, |(least, _)| u128::try_from(least.max(0)).unwrap_or(0))
+                };
+                return match adapter.as_str() {
                     "take" => {
-                        let (_, most) = self.visible_bounds(args.get(1)?)?;
-                        Some(below?.min(u128::try_from(most.max(0)).ok()?))
+                        let most = args.get(1).and_then(|n| self.known_bounds(n)).map(|(_, most)| u128::try_from(most.max(0)).unwrap_or(0));
+                        match (below, most) {
+                            (Some(below), Some(most)) => Some(below.min(most)),
+                            (one, None) | (None, one) => one,
+                        }
                     }
-                    // `skip(s)` leaves out the first `s`, `step_by(k)` gives the
-                    // first item and every `k`-th after it: a written `s` or `k`
-                    // (or its type's least value) lowers the count, so
-                    // `(m..n).step_by(2).enumerate()` with `m, n: int` numbers in
-                    // `int`, as it did before G8-4.
+                    // `skip(s)` leaves out the first `s`, and `step_by(k)` gives the
+                    // first item and every `k`-th after it.
                     "skip" => {
-                        let (least, _) = self.visible_bounds(args.get(1)?)?;
-                        Some(below?.saturating_sub(u128::try_from(least.max(0)).ok()?))
+                        let least = at_least(self, args.get(1));
+                        below.map(|below| below.saturating_sub(least))
                     }
                     "step_by" => {
-                        let (least, _) = self.visible_bounds(args.get(1)?)?;
-                        let below = below?;
-                        Some(if least < 1 { below } else { below.div_ceil(u128::try_from(least).ok()?) })
+                        let least = at_least(self, args.get(1)).max(1);
+                        below.map(|below| below.div_ceil(least))
                     }
                     "zip" => {
-                        let theirs = self.visible_item_count(Self::zip_argument(args.get(1)?));
+                        let theirs = match args.get(1) {
+                            Some(other) => self.most_items(Self::zip_argument(other)),
+                            None => None,
+                        };
                         match (below, theirs) {
                             (Some(mine), Some(theirs)) => Some(mine.min(theirs)),
-                            (Some(only), None) | (None, Some(only)) => Some(only),
+                            (Some(one), None) | (None, Some(one)) => Some(one),
                             (None, None) => None,
                         }
                     }
                     "chain" => {
-                        let theirs = self.visible_item_count(Self::zip_argument(args.get(1)?))?;
-                        below?.checked_add(theirs)
+                        let theirs = match args.get(1) {
+                            Some(other) => self.most_items(Self::zip_argument(other)),
+                            None => None,
+                        };
+                        below.zip(theirs).and_then(|(mine, theirs)| mine.checked_add(theirs))
                     }
                     _ => below,
-                }
+                };
             }
             ExprKind::StructLit { fields, .. }
                 if origin(self, e.ty).is_some_and(|o| o.is("std.core.Copied") || o.is("std.core.Cloned") || o.is("std.core.Enumerate")) =>
             {
-                self.visible_item_count(fields.first()?)
+                if let Some(inner) = fields.first() {
+                    return self.most_items(inner);
+                }
             }
-            ExprKind::Ref { place, mutable: false } => self.visible_item_count(place),
-            ExprKind::OverflowScope { expr, .. } => self.visible_item_count(expr),
+            // A list's or a view's items (`xs.iter()`): at most all of them.
+            ExprKind::StructLit { fields, .. }
+                if fields.len() == 2 && matches!(self.span_iterator(e.ty), Some((_, SpanIteratorKind::Elements { .. }))) =>
+            {
+                return Some(self.list_items(&fields[0]).1);
+            }
+            ExprKind::Ref { place, mutable: false } => return self.most_items(place),
+            ExprKind::OverflowScope { expr, .. } => return self.most_items(expr),
+            _ => {}
+        }
+        self.count_limit(e.ty)
+    }
+
+    /// `[STD-19]` — a range's start and end as the known-numbers rule reads
+    /// them: written in place, or a name set once to one and never changed.
+    fn known_range(&mut self, e: &Expr) -> Option<((i128, i128), (i128, i128), bool)> {
+        if let ExprKind::Ref { place, .. } = &e.kind {
+            return self.known_range(place);
+        }
+        let origin = self.struct_origin(e.ty)?;
+        let inclusive = origin.is("std.core.RangeInclusive");
+        if !inclusive && !origin.is("std.core.Range") {
+            return None;
+        }
+        match &e.kind {
+            ExprKind::StructLit { fields, .. } => {
+                let [start, end] = fields.as_slice() else { return None };
+                Some((self.known_bounds(start)?, self.known_bounds(end)?, inclusive))
+            }
+            ExprKind::Local(local) => match self.known_of(*local)? {
+                Known::Range { start, end, inclusive } => Some((start, end, inclusive)),
+                _ => None,
+            },
+            ExprKind::OverflowScope { expr, .. } => self.known_range(expr),
             _ => None,
         }
+    }
+
+    /// `[STD-19]` — the most items an iterator of type `ty` gives: what its
+    /// `Count` holds (`None` past a `u128`).
+    fn count_limit(&self, ty: Ty) -> Option<u128> {
+        let count = self
+            .implementation_assoc(ty, Symbol::intern("std.core.Iterator"), Symbol::intern("Count"))
+            .unwrap_or(self.common.i64);
+        match self.types.kind(count) {
+            TyKind::Uint(UintTy::U256) => None,
+            _ => int_max(self.types, count),
+        }
+    }
+
+    /// `[STD-19]` — what is known of `local`: noted as relied on, or, while
+    /// a name is learned, as read.
+    fn known_of(&mut self, local: LocalId) -> Option<Known> {
+        let known = *self.open.known.get(&local)?;
+        match &mut self.open.recording {
+            Some(read) => read.push(local),
+            None => self.rely(local),
+        }
+        Some(known)
+    }
+
+    /// `[STD-19]` — a count or a number read what `local` holds, and so
+    /// what it was worked out from.
+    fn rely(&mut self, local: LocalId) {
+        if self.open.relied.insert(local) {
+            for dep in self.open.deps.get(&local).cloned().unwrap_or_default() {
+                self.rely(dep);
+            }
+        }
+    }
+
+    /// `[STD-19]` — `learn`'s reading: what `work` finds, with the names it read.
+    fn reading<T>(&mut self, work: impl FnOnce(&mut Self) -> Option<T>) -> (Option<T>, Vec<LocalId>) {
+        let outer = self.open.recording.replace(Vec::new());
+        let found = work(self);
+        let read = std::mem::replace(&mut self.open.recording, outer).unwrap_or_default();
+        (found, read)
+    }
+
+    /// `[STD-19]` — keep what `local` holds, worked out from `read`.
+    fn keep_known(&mut self, local: LocalId, known: Known, read: Vec<LocalId>) {
+        self.open.known.insert(local, known);
+        if !read.is_empty() {
+            self.open.deps.insert(local, read);
+        }
+    }
+
+    /// A whole-number type: one of the signed and unsigned integers.
+    fn whole(&self, ty: Ty) -> bool {
+        matches!(self.types.kind(ty), TyKind::Int(_) | TyKind::Uint(_))
+    }
+
+    /// Whether `ty` holds every value from `low` to `high`.
+    fn type_holds(&self, ty: Ty, (low, high): (i128, i128)) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Int(ember_types::IntTy::I128 | ember_types::IntTy::I256) => true,
+            TyKind::Uint(UintTy::U128 | UintTy::U256) => low >= 0,
+            _ => self.whole_bounds(ty).is_some_and(|(top_low, top_high)| low >= top_low && high <= top_high),
+        }
+    }
+
+    /// `[TYP-5]` rule 12 — whether `expr`, a whole number of another type,
+    /// goes into `target`: every value the known numbers give it fits.
+    fn fits_by_value(&mut self, expr: &Expr, target: Ty) -> bool {
+        if expr.ty == target || !self.whole(expr.ty) || !self.whole(target) {
+            return false;
+        }
+        self.known_bounds(expr).is_some_and(|values| self.type_holds(target, values))
+    }
+
+    /// `[STD-19]` — in a generic function's own check, whether `e` reads a
+    /// name whose type each use decides.
+    fn defers_to_uses(&self, e: &Expr) -> bool {
+        self.in_generic_template && !self.open.per_use.is_empty() && reads_any(e, &self.open.per_use)
+    }
+
+    /// `[STD-19]` — a local as passes over one body name it: its declaration.
+    fn known_key(&self, local: LocalId) -> (Span, Option<Symbol>) {
+        let decl = &self.locals[local.0 as usize];
+        (decl.span, decl.name)
+    }
+
+    /// `[STD-19]` — what `local`, just declared from `init`, holds: an
+    /// integer's values, a range's bounds, or an `Array` literal's length.
+    /// Every name is learned as if never changed; `forget_changed` finds the
+    /// ones that are.
+    fn learn(&mut self, local: LocalId, init: &Expr) {
+        if self.defers_to_uses(init) {
+            self.open.per_use.insert(local);
+        }
+        if !self.open.knowing || self.open.changed.contains(&self.known_key(local)) {
+            return;
+        }
+        let whole = self.whole_bounds(init.ty);
+        let (known, read) = self.reading(|this| {
+            if let Some(values) = this.known_bounds(init) {
+                return (Some(values) != whole).then_some(Known::Int(values.0, values.1));
+            }
+            if let Some((start, end, inclusive)) = this.known_range(init) {
+                return Some(Known::Range { start, end, inclusive });
+            }
+            match &init.kind {
+                ExprKind::Builtin { which: Builtin::ArrayFromLiteral, args } => match args.as_slice() {
+                    [literal] => match *this.types.kind(literal.ty) {
+                        TyKind::Array { len, .. } => Some(Known::Items(u128::from(len))),
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => None,
+            }
+        });
+        if let Some(known) = known {
+            self.keep_known(local, known, read);
+        }
+    }
+
+    /// `[STD-19]` — a loop's counter holds what `values` finds, unless the
+    /// body changes it.
+    fn learn_counter(&mut self, local: LocalId, values: impl FnOnce(&mut Self) -> Option<(i128, i128)>) {
+        if !self.open.knowing || self.open.changed.contains(&self.known_key(local)) {
+            return;
+        }
+        let (found, read) = self.reading(values);
+        if let Some((low, high)) = found {
+            self.keep_known(local, Known::Int(low, high.max(low)), read);
+        }
+    }
+
+    /// `[STD-19]` — the names this pass relied on that `body` changes, which
+    /// are known no more; whether there was one (another pass is needed).
+    fn forget_changed(&mut self, body: &Block) -> bool {
+        if self.open.relied.is_empty() {
+            return false;
+        }
+        let mut written = HashSet::new();
+        written_in_block(body, &mut written);
+        let mut relied: Vec<LocalId> = written.intersection(&self.open.relied).copied().collect();
+        relied.sort_by_key(|local| local.0);
+        let mut forgot = false;
+        for local in relied {
+            let key = self.known_key(local);
+            forgot |= self.open.changed.insert(key);
+        }
+        forgot
     }
 
     /// G8-4 — an `enumerate` the visible-numbers rule built
@@ -34687,7 +34832,15 @@ impl<'a> Checker<'a> {
         env: Option<(Symbol, Ty, Mode, Span)>,
     ) -> (Block, Ty, Vec<LocalDecl>, CaptureWatch) {
         let outer_locals = std::mem::take(&mut self.locals);
-        let outer_open = std::mem::take(&mut self.open);
+        // `[STD-19]` — the known-numbers rule holds in a closure as in a
+        // function: what an earlier check of this body found it changes is
+        // not known.
+        let body_span = match &lambda.body {
+            ast::LambdaBody::Expr(expr) => expr.span,
+            ast::LambdaBody::Block(block) => block.span,
+        };
+        let changed = self.lambda_changed.get(&body_span).cloned().unwrap_or_default();
+        let outer_open = std::mem::replace(&mut self.open, OpenState { knowing: true, changed, ..OpenState::default() });
         let outer_scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
         let outer_borrowed_params = std::mem::take(&mut self.borrowed_params);
         let outer_callable_once_locals = std::mem::take(&mut self.callable_once_locals);
@@ -34750,6 +34903,10 @@ impl<'a> Checker<'a> {
             }
         };
 
+        let mut written = HashSet::new();
+        written_in_block(&body, &mut written);
+        let keys: Vec<(Span, Option<Symbol>)> = written.into_iter().map(|local| self.known_key(local)).collect();
+        self.lambda_changed.entry(body_span).or_default().extend(keys);
         let locals = std::mem::replace(&mut self.locals, outer_locals);
         self.open = outer_open;
         self.scopes = outer_scopes;
@@ -41227,6 +41384,23 @@ impl<'a> Checker<'a> {
             && (self.types.is_integral(lhs.ty) || lhs.ty == self.common.int_lit)
             && self.types.is_integral(rhs.ty)
             && !self.types.is_untyped_literal(rhs.ty);
+        // `[TYP-4]` (the owner's ruling of 2026-10-06) — of two whole numbers
+        // of different types, one whose every value the other's type holds
+        // converts to it (`int` preferred where both do); in a generic
+        // function's own check, a side whose type each use decides waits.
+        if lhs.ty != rhs.ty && !shift_by_another_integer && self.whole(lhs.ty) && self.whole(rhs.ty) {
+            let cast = |e: Expr, to: Ty| {
+                let span = e.span;
+                Expr { ty: to, kind: ExprKind::Cast { expr: Box::new(e), to }, span }
+            };
+            let rhs_fits = self.fits_by_value(&rhs, lhs.ty);
+            let lhs_fits = self.fits_by_value(&lhs, rhs.ty);
+            if lhs_fits && (!rhs_fits || rhs.ty == self.common.i64) {
+                lhs = cast(lhs, rhs.ty);
+            } else if rhs_fits || self.defers_to_uses(&lhs) || self.defers_to_uses(&rhs) {
+                rhs = cast(rhs, lhs.ty);
+            }
+        }
         if lhs.ty != rhs.ty && !shift_by_another_integer && lhs.ty != self.common.error && rhs.ty != self.common.error {
             let left = self.types.display(lhs.ty);
             let right = self.types.display(rhs.ty);
@@ -41256,9 +41430,12 @@ impl<'a> Checker<'a> {
                     Some(text) => format!("`{text} as {wide}`"),
                     None => format!("`(…) as {wide}` on the narrower side"),
                 };
-                diagnostic = diagnostic.note(format!(
-                    "Ember does not convert between numeric types implicitly; {cast} makes them agree [TYP-4]"
-                ));
+                let rule = if self.whole(lhs.ty) && self.whole(rhs.ty) {
+                    "Ember converts one whole number to the other's type only where it knows the value fits"
+                } else {
+                    "Ember does not convert between numeric types implicitly"
+                };
+                diagnostic = diagnostic.note(format!("{rule}; {cast} makes them agree [TYP-4]"));
             }
             if !self.types.is_numeric(lhs.ty)
                 && let Some(interface) = operator_method(op).and_then(operator_interface)
@@ -43239,5 +43416,206 @@ fn unparenthesized(expr: &ast::Expr) -> &ast::Expr {
     match &expr.kind {
         ast::ExprKind::Paren(inner) => unparenthesized(inner),
         _ => expr,
+    }
+}
+
+/// `[STD-19]` — the locals `block` changes after declaring them: assigned,
+/// whole or in part, or borrowed mutably (a `mut` argument, a `mut self`
+/// call, a closure that writes what it captures, a `ref mut` binding of a
+/// `match`). A loop's own counter and a declaration are not changes.
+fn written_in_block(block: &Block, out: &mut HashSet<LocalId>) {
+    for stmt in &block.stmts {
+        written_in_stmt(stmt, out);
+    }
+}
+
+fn written_in_stmt(stmt: &Stmt, out: &mut HashSet<LocalId>) {
+    match stmt {
+        Stmt::Let { init, .. } => {
+            if let Some(init) = init {
+                written_in_expr(init, out);
+            }
+        }
+        Stmt::Assign { place, value } => {
+            out.extend(written_root(place));
+            written_in_expr(place, out);
+            written_in_expr(value, out);
+        }
+        Stmt::Destructure { value, bindings, .. } => {
+            written_in_expr(value, out);
+            for binding in bindings {
+                match binding {
+                    DestructureBinding::Let { value, .. } => written_in_expr(value, out),
+                    DestructureBinding::Assign { place, value } => {
+                        out.extend(written_root(place));
+                        written_in_expr(place, out);
+                        written_in_expr(value, out);
+                    }
+                }
+            }
+        }
+        Stmt::Expr(e) | Stmt::Return(Some(e)) => written_in_expr(e, out),
+        Stmt::Return(None) | Stmt::Break { .. } | Stmt::Continue { .. } => {}
+        Stmt::If { cond, then_block, else_block } => {
+            written_in_expr(cond, out);
+            written_in_block(then_block, out);
+            if let Some(block) = else_block {
+                written_in_block(block, out);
+            }
+        }
+        Stmt::While { cond, body, else_block } => {
+            written_in_expr(cond, out);
+            written_in_block(body, out);
+            if let Some(block) = else_block {
+                written_in_block(block, out);
+            }
+        }
+        Stmt::ForRange { start, end, body, else_block, .. } => {
+            written_in_expr(start, out);
+            written_in_expr(end, out);
+            written_in_block(body, out);
+            if let Some(block) = else_block {
+                written_in_block(block, out);
+            }
+        }
+        Stmt::Block(block) | Stmt::Defer(block) => written_in_block(block, out),
+    }
+}
+
+fn written_in_expr(e: &Expr, out: &mut HashSet<LocalId>) {
+    let all = |items: &[Expr], out: &mut HashSet<LocalId>| {
+        for item in items {
+            written_in_expr(item, out);
+        }
+    };
+    match &e.kind {
+        ExprKind::Ref { place, mutable } => {
+            if *mutable {
+                out.extend(written_root(place));
+            }
+            written_in_expr(place, out);
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            if arms.iter().any(|arm| binds_by_mut_ref(&arm.pattern)) {
+                out.extend(written_root(scrutinee));
+            }
+            written_in_expr(scrutinee, out);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    written_in_expr(guard, out);
+                }
+                match &arm.body {
+                    MatchArmBody::Block(block) => written_in_block(block, out),
+                    MatchArmBody::Expr(value) => written_in_expr(value, out),
+                }
+            }
+        }
+        ExprKind::Field { base, .. } | ExprKind::EnumField { base, .. } => written_in_expr(base, out),
+        ExprKind::Call { args, .. }
+        | ExprKind::StructLit { fields: args, .. }
+        | ExprKind::TupleLit(args)
+        | ExprKind::ArrayLit(args)
+        | ExprKind::EnumLit { fields: args, .. }
+        | ExprKind::Builtin { args, .. } => all(args, out),
+        ExprKind::InterfaceCall { receiver, args, .. } => {
+            written_in_expr(receiver, out);
+            all(args, out);
+        }
+        ExprKind::CallIndirect { callee, args, .. } => {
+            written_in_expr(callee, out);
+            all(args, out);
+        }
+        ExprKind::ClassNew { default_fields, args, .. } => {
+            for field in default_fields.iter().flatten() {
+                written_in_expr(field, out);
+            }
+            all(args, out);
+        }
+        ExprKind::Index { base, index } => {
+            written_in_expr(base, out);
+            written_in_expr(index, out);
+        }
+        ExprKind::Binary { lhs, rhs, .. } => {
+            written_in_expr(lhs, out);
+            written_in_expr(rhs, out);
+        }
+        ExprKind::InterfaceUpcast { expr, .. }
+        | ExprKind::DynBoxNew { value: expr, .. }
+        | ExprKind::ArrayRepeat { value: expr, .. }
+        | ExprKind::Deref(expr)
+        | ExprKind::Unary { operand: expr, .. }
+        | ExprKind::Cast { expr, .. }
+        | ExprKind::Widen { expr, .. }
+        | ExprKind::EraseRange(expr)
+        | ExprKind::OverflowScope { expr, .. } => written_in_expr(expr, out),
+        ExprKind::FString { parts, .. } => {
+            for part in parts {
+                if let hir::FStringPart::Value(value, _) = part {
+                    written_in_expr(value, out);
+                }
+            }
+        }
+        ExprKind::Block { block, value } => {
+            written_in_block(block, out);
+            written_in_expr(value, out);
+        }
+        ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Str(_)
+        | ExprKind::CStr(_)
+        | ExprKind::Local(_)
+        | ExprKind::FnValue(_)
+        | ExprKind::Error => {}
+    }
+}
+
+/// The local a place is part of, through fields and elements (not through a
+/// reference it holds: writing there changes what it points to).
+fn written_root(place: &Expr) -> Option<LocalId> {
+    match &place.kind {
+        ExprKind::Local(local) => Some(*local),
+        ExprKind::Field { base, .. } | ExprKind::EnumField { base, .. } | ExprKind::Index { base, .. } => written_root(base),
+        _ => None,
+    }
+}
+
+fn binds_by_mut_ref(pattern: &Pattern) -> bool {
+    match &pattern.kind {
+        PatternKind::Bind { by_ref, sub, .. } => *by_ref == Some(true) || sub.as_deref().is_some_and(binds_by_mut_ref),
+        PatternKind::Variant { fields, .. } | PatternKind::Fields(fields) | PatternKind::Or(fields) => fields.iter().any(binds_by_mut_ref),
+        PatternKind::Wild | PatternKind::Int(_) | PatternKind::Error => false,
+    }
+}
+
+/// Whether `e` reads any of `locals` (statements inside a block or a `match`
+/// are not looked into: a value there is read through what the block gives).
+fn reads_any(e: &Expr, locals: &HashSet<LocalId>) -> bool {
+    let any = |items: &[Expr]| items.iter().any(|item| reads_any(item, locals));
+    match &e.kind {
+        ExprKind::Local(local) => locals.contains(local),
+        ExprKind::Field { base, .. } | ExprKind::EnumField { base, .. } => reads_any(base, locals),
+        ExprKind::Call { args, .. }
+        | ExprKind::StructLit { fields: args, .. }
+        | ExprKind::TupleLit(args)
+        | ExprKind::ArrayLit(args)
+        | ExprKind::EnumLit { fields: args, .. }
+        | ExprKind::Builtin { args, .. } => any(args),
+        ExprKind::InterfaceCall { receiver, args, .. } => reads_any(receiver, locals) || any(args),
+        ExprKind::CallIndirect { callee, args, .. } => reads_any(callee, locals) || any(args),
+        ExprKind::Index { base, index } => reads_any(base, locals) || reads_any(index, locals),
+        ExprKind::Binary { lhs, rhs, .. } => reads_any(lhs, locals) || reads_any(rhs, locals),
+        ExprKind::InterfaceUpcast { expr, .. }
+        | ExprKind::DynBoxNew { value: expr, .. }
+        | ExprKind::ArrayRepeat { value: expr, .. }
+        | ExprKind::Deref(expr)
+        | ExprKind::Ref { place: expr, .. }
+        | ExprKind::Unary { operand: expr, .. }
+        | ExprKind::Cast { expr, .. }
+        | ExprKind::Widen { expr, .. }
+        | ExprKind::EraseRange(expr)
+        | ExprKind::OverflowScope { expr, .. } => reads_any(expr, locals),
+        ExprKind::Block { value, .. } => reads_any(value, locals),
+        _ => false,
     }
 }

@@ -9,7 +9,9 @@
 #$ profiles: debug, release
 # G8-4 (the owner's design, 0.9.10) — a chain counts the two sides' items together, stepping up
 # by need: two `int` counts stay an `int` (stored items and small ranges cannot come near its
-# top); otherwise the count is one level above the wider side's, `u64` -> `u128` -> `u256`. In
+# top); otherwise the count is one level above the wider side's, `u64` -> `u128` -> `u256`, and
+# `len` measures in the smallest type that holds what the compiler knows of the sides (`b`: three
+# items and the three of `small`, an `int`; `c`: two whole `u64` ranges, a `u128`). In
 # generic code it is the two counts together, filled in for each use: `total` gives 5 for two
 # arrays and 6 for two `u64`-counted ranges, each through `to_int()`. A chain of two whole `u64`
 # ranges holds 36,893,488,147,419,103,230 items, and runs backwards, `take`n and `enumerate`d,
@@ -36,7 +38,7 @@ fn main():
     ys: Array[int] = [4, 5]
     small = 0 .. 3
     a: int = xs.iter().chain(ys.iter()).len()
-    b: u128 = xs.iter().copied().chain(small.iter()).len()
+    b: int = xs.iter().copied().chain(small.iter()).len()
     println(a, b)
     big = 0 as u64 .. u64.MAX
     every = 0 as u128 ..= u128.MAX

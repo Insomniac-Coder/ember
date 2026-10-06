@@ -1535,6 +1535,15 @@ fn settle_inclusive_loops(body: &mut Body, types: &TypeTable, common: &CommonTyp
         count += 1;
         let ty = body.local(shape.limit).ty;
         let Some(top) = ember_types::int_max(types, ty).and_then(|top| i128::try_from(top).ok()) else { continue };
+        // An end that is the top itself (`a..`'s loop, `a..=255u8`) keeps
+        // its test and gets no copy: the copy could never run.
+        let at_top = body.blocks.iter().flat_map(|block| &block.stmts).any(|stmt| {
+            matches!(&stmt.kind, StmtKind::Assign { place, rvalue: Rvalue::Use(Operand::Const(Const::Int { value, .. })) }
+                if *place == Place::local(shape.limit) && i128::try_from(*value).is_ok_and(|value| value >= top))
+        });
+        if at_top {
+            continue;
+        }
         let below = Analysis::run(body, types, common, returns)
             .and_then(|ranges| ranges.upper_bounds(shape.header, &copy(shape.limit)))
             .is_some_and(|(hi, _)| hi < top);

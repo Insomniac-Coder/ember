@@ -475,7 +475,10 @@ implementations are all in view (a private interface, `Float`) separate two boun
                incorporated in 0.9.9_Hardened_46. PARTLY REPLACED by the owner's
                design G8-4 (0.9.10_Hardened_1): `len` is the iterator's `Count`,
                and a backwards `enumerate` numbers in its `Position` instead of
-               panicking past `int`'s top (`[STD-19]`).
+               panicking past `int`'s top (`[STD-19]`). Its last panic REPLACED
+               by the owner's ruling of 2026-10-06 (0.9.10_Hardened_2, ADR-140):
+               numbers that could pass `int`'s top step up to a bigger type, so
+               none overflows, forwards or backwards (`[STD-19]`, `[CTL-3b]`).
     Category:  LIBRARY / ITERATORS
     Location:  Ember_v0.9.9_Hardened_45.md [STD-19], [CTL-3b], [MOD-5]
 
@@ -565,7 +568,9 @@ work that its mode's closure cannot hold (a `mut` parameter's place) is `E0900` 
                design G8-4 (0.9.10_Hardened_1): what a caller passes stays an
                `int`, but what Ember hands back (`len`, `count`, `position`,
                `enumerate`'s numbers) is in the iterator's `Count`/`Position`
-               (`[STD-19]`).
+               (`[STD-19]`); and by the owner's rulings of 2026-10-06
+               (0.9.10_Hardened_2, ADR-140) in the smallest type that holds the
+               numbers the compiler knows, an `enumerate`'s never overflowing.
     Category:  LIBRARY / ITERATORS
     Location:  Ember_v0.9.9_Hardened_43.md [STD-19]
 
@@ -2970,7 +2975,9 @@ followed by a name, begins an `extend` block, so a script's `extend[0] = 1` and
 
     ID:        ODR-029
     Status:    CLOSED — ruled 2026-09-25 under the owner's delegation for 0.9.9;
-               incorporated in 0.9.9_Hardened_10
+               incorporated in 0.9.9_Hardened_10. EXTENDED by the owner's ruling of
+               2026-10-06 (0.9.10_Hardened_2, ADR-140): `parse` reads the 256-bit
+               counts `u256` and `i256` over their whole range (`[TXT-10]`)
     Category:  STANDARD LIBRARY / TEXT
     Priority:  —
     Location:  Ember_v0.9.9_Hardened_9.md [TXT-10], §XV module table (`std.string`)

@@ -869,12 +869,12 @@ extend[I: Iterator] StepBy[I] implements Iterator:
         self.started = true
         return self.inner.next()
 
-## Item `k` is numbered `start + k`, so a number past `int`'s top panics, and
-## only then; a `for` over it counts the same way (`[CTL-3b]`). `number` is the
-## next item's, and `past` says the last one given was numbered `int.MAX`.
-## G8-4 — the numbers are `P`s: the iterator's `Position`, `int` for stored items and wider for
-## a range of 64- or 128-bit numbers, so every item has its number; or, where the range's numbers
-## are written in place, the smallest type that holds them (the visible-numbers rule).
+## Item `k` is numbered `start + k`, in `P`, which holds every number (`[STD-19]`): the
+## iterator's `Position` (`int` for stored items, wider for a range of 64- or 128-bit numbers),
+## or, at a call, the smallest type that holds the numbers the compiler knows it gives (the
+## known-numbers rule), stepping up from `int` where they could pass its top. `number` is the
+## next item's, and `past` says the last one given was numbered at `P`'s top, so only an
+## iterator that gives more items than its `Count` holds can number past it.
 pub struct Enumerate[I, P]:
     inner: I
     number: P
@@ -1391,14 +1391,9 @@ extend[I: DoubleEndedIterator + ExactSizeIterator, P: ItemCount] Enumerate[I, P]
             None:
                 return None
 
-    ## The items left out are numbered as `next_back` numbers them, the greatest first, so a
-    ## number past the type's top panics as it would item by item (`[CTL-3b]`, D-457).
+    ## The items left out need no numbers: `P` holds every number they could have had
+    ## (`[STD-19]`).
     fn skip_back(mut self, n: I.Count) -> I.Count:
-        left = self.inner.len()
-        if n.exceeds(0) and left.exceeds(0):
-            at = self.number.plus(P.of_wide(left.to_wide() - 1))
-            if self.past:
-                at.plus(P.of(1))
         return self.inner.skip_back(n)
 
 extend[I: ExactSizeIterator, J: ExactSizeIterator] Zip[I, J] implements ExactSizeIterator:

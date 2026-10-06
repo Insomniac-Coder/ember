@@ -3,20 +3,19 @@
 #$ profiles: debug, release
 #$ stdout: [(9223372036854775806, 1), (9223372036854775807, 2)]
 #$ stdout: [(9223372036854775806, 1)]
-# `[CTL-3b]` — a `for` over adapters gives the items std's adapters give and
-# fails where they fail. Two `rev`s cancel: `Rev(Rev(e)).next()` is
-# `e.next()`, so an `enumerate` under them numbers forwards and panics only
-# at an item whose number passes `int.MAX`, never before the first turn
-# (D-457).
+# `[CTL-3b]` — a `for` over adapters gives the items std's adapters give.
+# Two `rev`s cancel: `Rev(Rev(e)).next()` is `e.next()`, so an `enumerate`
+# under them numbers forwards (D-457). Its numbers could pass `int`'s top, so
+# they are `u64`s (`[STD-19]`, the owner's ruling of 2026-10-06).
 
 fn main():
     xs: Array[int] = [1, 2, 3]
     top = int.MAX - 1
-    a: Array[(int, int)] = []
+    a: Array[(u64, int)] = []
     for i, x in xs.iter().copied().enumerate(start=top).rev().rev().take(2):
         a.push((i, x))
     println(a)
-    b: Array[(int, int)] = []
+    b: Array[(u64, int)] = []
     for i, x in xs.iter().copied().enumerate(start=top).rev().skip(1).rev().take(1):
         b.push((i, x))
     println(b)

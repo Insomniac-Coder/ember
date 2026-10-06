@@ -22,8 +22,8 @@ pages, and the records that keep them consistent.
 
 | | |
 |---|---|
-| Language version being implemented | **0.9.10**, specification `Ember_v0.9.10_Hardened_1` ([what changed from 0.9.9](docs/MIGRATION-0.9.10.md)) |
-| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.10_Hardened_1.md`](docs/spec-source/Ember_v0.9.10_Hardened_1.md) |
+| Language version being implemented | **0.9.10**, specification `Ember_v0.9.10_Hardened_2` ([what changed from 0.9.9](docs/MIGRATION-0.9.10.md)) |
+| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.10_Hardened_2.md`](docs/spec-source/Ember_v0.9.10_Hardened_2.md) |
 | Specification sources | [`tasks/spec-0.9.9/parts/`](tasks/spec-0.9.9/parts/), one file per Part; each `Hardened_N` is their concatenation and is never edited afterwards |
 | Last adopted normative specification | [`docs/spec-source/ember-spec.md`](docs/spec-source/ember-spec.md), 0.8.5_Hardened_1 (0.9.10 is adopted when its gates pass and the owner installs it) |
 | Tests | Rust unit and integration suites; Ember run and conformance suites in [`tests/`](tests/) |
@@ -51,7 +51,12 @@ The latest language work is the owner's design G8-4, which made the language 0.9
 ([`docs/MIGRATION-0.9.10.md`](docs/MIGRATION-0.9.10.md)): every iterator counts and numbers its items
 in a type that holds every count and number it can have (`u64`, `u128` and the 256-bit counts for
 ranges too long for an `int`, stepping up only as far as the values need), and ranges, `rev`,
-`take`, `skip`, `zip` and `chain` leave out a gigantic run of items at once. Before it, the owner's
+`take`, `skip`, `zip` and `chain` leave out a gigantic run of items at once. The owner's rulings of
+2026-10-06 (specification 0.9.10_Hardened_2) then made the size of those numbers come from the
+numbers the compiler knows (names set once and never changed, loop counters, lengths), kept
+`enumerate`'s numbers from ever overflowing by stepping up to a bigger type, let `parse` read the
+256-bit counts, and let a whole number go into another whole-number type by itself where the
+compiler knows it fits. Before G8-4, the owner's
 simplification pass
 ([`docs/proposals/Ember_Simplification_Pass_Revised.md`](docs/proposals/Ember_Simplification_Pass_Revised.md));
 its rulings and current status are tracked in [`docs/OWNER-QUEUE.md`](docs/OWNER-QUEUE.md). It
@@ -123,7 +128,7 @@ notes under the tables say how. With gcc, both programs are built with
 
 > Development is in progress, and attempts will be made to speed the language up in these areas.
 
-More than 10% slower than C: 3 of the 50 programs with MSVC, 2 with clang, 2 with gcc; none with all
+More than 10% slower than C: 3 of the 50 programs with MSVC, 2 with clang, 1 with gcc; none with all
 three.
 
 ![Programs more than 10% slower than C with one compiler: C time, Ember time, Ember divided by C](docs/benchmarks/slower-than-c.svg)

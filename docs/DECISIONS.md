@@ -5016,6 +5016,93 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-140 — the owner's rulings on three of the audit's decisions, and whole numbers that convert (0.9.10_Hardened_2)
+
+2026-10-06. Asked to explain the audit's findings one by one (ADR-139), the owner judged three of the
+agent's decisions wrong and ruled on each ("NOW WORK ON ALL 3 FIXES"); the specification moves to
+0.9.10_Hardened_2 (the owner: "this means a new hardened version"). A fourth ruling followed from
+building the second (item 4).
+
+**1. `parse` reads `u256` and `i256`** (reverses ADR-139's D-528 refusal; the owner: "I LITERALLY
+TOLD YOU THINGS LIKE THIS SHOULD NOT PANIC OR ERROR"). The runtime reads the digits into eight
+32-bit pieces (`parse_digits256`), so each step is plain 64-bit arithmetic on every C compiler, and
+gives the narrower forms' statuses: `Empty`, `Invalid`, and `Overflow` at the digit that passes the
+type's real top (2^256 - 1; 2^255 - 1 above zero and 2^255 below it for `i256`). `ParseKind` gains
+`I256` and `U256`. `TXT-10/accept_parse_256_bit_counts` reads both tops, one past each, a number
+ten times the top, `-1` as a `u256`, `+7`, the empty text and `12x`, on MSVC and clang.
+
+**2. The known-numbers rule replaces the visible-numbers rule** (the owner: "WHY THE FUCK DOES IT
+MAKE THAT ASSUMPTION ABOUT THE RANGE DESPITE HAVING THE NUMBERS??"; "I WANT GENERAL SOLUTIONS NOT
+SPECIFIC FIXES"). ADR-139 had made the stepped-range benchmark compile again by counting `step_by`
+(at most half the items for a step of two) while `n = 2000000` and `round` (0 to 299) were still
+read as any `int`. Now the type of `enumerate`'s numbers and of `len` and `count` comes from what
+the compiler knows (`known_bounds`, `most_items`): numbers written as numbers; a name set once and
+never changed anywhere in its function (`Known::Int`, `Known::Range`, `Known::Items` for an `Array`
+literal); a loop's counter (`for i in a..b`, `range(a, b, step)`, and a range's value in the
+single counted loop through `rev`, `skip`, `take`, `step_by`); `+`, `-`, `*`, `//` and `%` of
+known numbers; the length of a list, a view or text, at most what its items' bytes allow
+(`[HEAP-8]`, the limit the range facts already used) and a fixed array's `N`; and what `take`,
+`skip`, `step_by`, `zip` and `chain` allow with known arguments. Anything else may be any value of
+its type, and an iterator gives at most what its `Count` holds.
+* *Never changed* is proved, not guessed: a variable can also change through a `mut` argument
+  (`bump(n)`) or a `mut self` call, which the source does not show. Each pass over a function's
+  body (`check_body`, as `[TYP-23]`'s open locals already use) learns every name as if never
+  changed and notes which names a count or a number read (`relied`; a name worked out from others
+  relies on them only when it is read itself). At the end of the pass, the checked body's
+  assignments and mutable borrows (`written_in_block`: `=`, `+=`, a `ref mut`, a `mut` argument, a
+  `mut self` receiver, a closure that writes what it captures, a `ref mut` binding of a `match`)
+  are read; a relied name among them is `changed`, and the body is checked again knowing nothing of
+  it. A closure's body, already checked more than once (`synth_lambda`), carries the names an
+  earlier check found changed. `STD-19/reject_a_name_the_body_changes_is_not_known` changes a name
+  each of five ways; `STD-19/accept_known_numbers_follow_names_set_once` is the benchmark's shape
+  with and without `step_by`, counters forwards, backwards and stepped, arithmetic and lengths.
+* `step_by`'s count stays as part of the rule: `step_by(k)` gives at most `ceil(n / k)` of `n`
+  items, which is what it does, counted like `take`, `skip`, `zip` and `chain`. The benchmark no
+  longer needs it: `(round..n).iter().enumerate()` numbers in `int` too.
+
+**3. `enumerate`'s numbers step up instead of overflowing** (replaces G8-4 decision F and ODR-091's
+backwards panic; the owner, asked whether a number that could pass `int`'s top should be kept in a
+bigger kind of number: "YES"). `enumerate` numbers from `start` to `start + n - 1` over at most `n`
+items, in the smallest of `int`, `u64`, `i128`, `u128` and `i256` holding them all
+(`known_position`), stepping up from the iterator's own `Position` where needed: over a list of
+three items from `int.MAX - 1`, `u64`. `xs.enumerate()` and `xs.enumerate(start=1)` stay `int`; a
+start nothing is known of numbers a list in `i128` (design C's copy computes such numbers as
+`int`s when they fit). Python's `enumerate(xs, start)` in a `for` header numbers the same way. In
+generic code an `enumerate` numbers in its iterator's `Position`, filled in for each use.
+Consequences: a counted loop's numbers need no check, so the fused loop's number checks
+(`fused_numbers`, `fused_pulls`, the cut count and the check after the loop) are deleted, and a
+number wider than `int` is a wrapping add; `Enumerate.skip_back` numbers nothing (ADR-139 had made
+it number the greatest item it passed over, to crash as item-by-item did); `Enumerate.next`'s check
+at the type's top can be reached only by an iterator that gives more items than its `Count` holds.
+Six run-fail cases became accept cases.
+
+**4. A whole number converts to another whole-number type where it is known to fit; in a function
+written for any type, `enumerate`'s numbers are checked per use** (the owner, after two failed
+options: "I like this fix", and on its reach: whole numbers only). Building item 2 showed a clash
+in generic functions: the type of `enumerate`'s numbers over a list of `T` depends on `T`'s size
+(how many items a list of it can hold), so the generic check (any `T`: a 1-byte item, numbers past
+`int`'s top: `u64`) and the check of a use (`int`s: `int`) gave `i` two types, and whatever type a
+program gave `last`, `last = i` failed one of them. Two ways that kept one type (the generic
+check's for every use, or each use's own with today's conversions) were rejected as not general.
+* `[TYP-5]` rule 12: at a coercion site, a whole number of another type is converted (as `as`
+  converts, losing nothing then) when `known_bounds` proves every value fits (`fits_by_value`,
+  `type_holds`); `[TYP-4]`: in an operator, a side whose every value the other side's type holds
+  converts to it, to `int` where each would. Floats, `bool` and `char` keep their rules; the
+  `E2020` note for two whole numbers says the new rule.
+* `enumerate`'s numbers are known in the single counted loop (`numbering_values`: start to
+  start + items - 1; `Counter.values`), so `last: u64 = i` over a list of `int`s from 2 converts.
+* `[TYP-17]`: in a generic function's own check (`in_generic_template`), `enumerate`'s numbers over
+  a list of `T` and the names set from them are `per_use`; a conversion or an operator that reads
+  them is not refused there (`defers_to_uses`) but checked in each use's check, whose refusal is
+  reported with "in `labels` used with `T` = `u8`". `known_bounds` now reads the wide types where
+  the numbers are within an `i128`, and `&`, `|`, `^` of numbers not below zero.
+  `TYP-5/accept_a_whole_number_that_fits_converts`, `TYP-5/reject_a_whole_number_that_may_not_fit`,
+  `STD-19/accept_a_generic_function_numbers_per_use`,
+  `STD-19/reject_a_use_that_numbers_past_int_is_refused_there`.
+
+Spec: `[STD-19]`, `[STD-26]`, `[CTL-3b]`, `[TXT-10]`, `[TYP-42]`, `[TYP-4]`, `[TYP-5]`, `[TYP-17]`
+(0.9.10_Hardened_2, Appendix H §H.7). Migration: `docs/MIGRATION-0.9.10.md`.
+
 ## ADR-139 — the audit of the delegated rulings: values a loop or an index could not reach
 
 2026-10-06, the owner's order after 0.9.10_Hardened_1: audit the 52 rulings delegated to the agent

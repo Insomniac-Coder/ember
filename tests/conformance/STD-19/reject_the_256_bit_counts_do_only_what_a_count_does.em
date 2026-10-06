@@ -2,9 +2,8 @@
 #$ rules: STD-19, TYP-1
 # G8-4 (the owner's design, 0.9.10) — `u256` and `i256` are counts: they add, subtract, compare,
 # print and convert with `as`, to and from the other integers. Multiplying, dividing, bit
-# operations, their integer methods, a `MIN` or `MAX`, a float conversion, a range of one and
-# reading one from text are refused (`parse[i256]` stopped the compiler, and `parse[u256]` stopped at
-# `u64.MAX`).
+# operations, their integer methods, a `MIN` or `MAX`, a float conversion and a range of one are
+# refused. Reading one from text is not (`TXT-10/accept_parse_256_bit_counts`).
 
 fn main():
     a: i256 = 6
@@ -30,5 +29,3 @@ fn main():
     y = u.count_ones()      #$ error[E2020]: `count_ones` cannot be applied to `u256`
     z = u256.MIN            #$ error[E1010]: `u256` has no constant `MIN`
     q = u ..= v             #$ error[E2020]: there are no ranges of `u256`
-    m = "5".parse[u256]()  #$ error[E2020]: `parse` does not read `u256`
-    n = "5".parse[i256]()  #$ error[E2020]: `parse` does not read `i256`

@@ -455,9 +455,11 @@ def h2_to_now():
         + '0.9.9.\n\n| Rule | H2 → Hardened_52 |\n|---|---|\n' + diff
 
 
-# 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52.
-CURRENT = ('0.9.10', 1)
+# 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
+# 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
+CURRENT = ('0.9.10', 2)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
+V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -499,7 +501,46 @@ Generated: every rule whose text differs from Hardened_52.
 
 
 def h52_to_now():
-    return H6_HEAD + rule_diff(H52_PARTS, os.path.join(HERE, '..', 'parts'))
+    return H6_HEAD + rule_diff(H52_PARTS, V010_H1_PARTS)
+
+
+H7_HEAD = """
+## H.7 Changes in 0.9.10_Hardened_2 (from 0.9.10_Hardened_1)
+
+**0.9.10_Hardened_2** records the owner's rulings of 2026-10-06 on three decisions of the audit of
+the delegated rulings, and on the type of `enumerate`'s numbers in a function written for any type
+(`docs/DECISIONS.md`, ADR-140). It changes what programs are accepted
+(`docs/MIGRATION-0.9.10.md`):
+
+* `parse` reads `u256` and `i256` over their whole range, with the statuses the narrower integers
+  give; `Overflow` only past the real top or below the real bottom (`[TXT-10]`, `[TYP-42]`). D-528
+  had refused them (`E2020`).
+* The known-numbers rule replaces the visible-numbers rule: `enumerate`'s numbers, and `len` and
+  `count`, are in the smallest type that holds every value, read from the numbers the compiler
+  knows: numbers written as numbers, names set once and never changed, a loop's counter,
+  arithmetic on known numbers, and lengths (`[STD-19]`, `[STD-26]`). Before, a variable counted as
+  any value of its type.
+* `enumerate` numbers in a type that holds every number it can give, stepping up from its
+  iterator's `Position` where the numbers could pass that type's top, so no number of an
+  `enumerate` overflows; a counted loop computes its numbers with no check (`[STD-19]`,
+  `[CTL-3b]`). This replaces G8-4 decision F (a number past `int`'s top panicked) and ODR-091's
+  backwards panic.
+* A whole number converts by itself to another whole-number type where the compiler knows every
+  value it can have fits, at a coercion site and in an operator (`[TYP-5]` rule 12, `[TYP-4]`):
+  after `n = 5`, `y: u64 = n` is accepted. Floats, `bool` and `char` keep their rules.
+* In a function written for any type, where the type of `enumerate`'s numbers depends on the item
+  type, that type and the lines using the numbers are checked for each use, which numbers by what
+  it knows; a use a line does not fit is refused there, naming it (`[TYP-17]`, `[STD-19]`).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_1.
+
+| Rule | 0.9.10_Hardened_1 → 0.9.10_Hardened_2 |
+|---|---|
+"""
+
+
+def v010_h1_to_now():
+    return H7_HEAD + rule_diff(V010_H1_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -522,10 +563,11 @@ def rule_diff(old_folder, new_folder):
 
 
 def header_lines(n):
-    """The front matter's Version and Supersedes lines: 0.9.10_Hardened_1 supersedes every 0.9.9
-    hardening, the last of them `n`."""
-    earlier = ', '.join(f'0.9.9_Hardened_{k}' for k in range(n, 0, -1))
+    """The front matter's Version and Supersedes lines: a 0.9.10 hardening supersedes the earlier
+    0.9.10 ones and every 0.9.9 hardening, the last of them `n`."""
     version, hardening = CURRENT
+    earlier = ', '.join([f'{version}_Hardened_{k}' for k in range(hardening - 1, 0, -1)]
+                        + [f'0.9.9_Hardened_{k}' for k in range(n, 0, -1)])
     return (f'**Version:** {version}_Hardened_{hardening}',
             f'**Supersedes:** {earlier}, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 '
             '(adopted). This document is')
@@ -567,7 +609,8 @@ def main():
         rows.append(f'| {f} | {ids} | {REASON.get(f, "TODO")} |')
     h4 = h1_to_h2()
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
-        HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n')
+        HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
+        + v010_h1_to_now() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

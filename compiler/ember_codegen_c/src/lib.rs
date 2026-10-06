@@ -6476,6 +6476,8 @@ impl Emitter<'_> {
                             }
                             ParseKind::I128 => format!("{RT}parse_i128_status({})", rendered[0]),
                             ParseKind::U128 => format!("{RT}parse_u128_status({})", rendered[0]),
+                            ParseKind::I256 => format!("{RT}parse_i256_status({})", rendered[0]),
+                            ParseKind::U256 => format!("{RT}parse_u256_status({})", rendered[0]),
                             ParseKind::F16 | ParseKind::F32 | ParseKind::F64 => {
                                 format!("{RT}parse_float_status({})", rendered[0])
                             }
@@ -6490,6 +6492,8 @@ impl Emitter<'_> {
                             ParseKind::Unsigned => format!("{RT}parse_unsigned_value({})", rendered[0]),
                             ParseKind::I128 => format!("{RT}parse_i128_value({})", rendered[0]),
                             ParseKind::U128 => format!("{RT}parse_u128_value({})", rendered[0]),
+                            ParseKind::I256 => format!("{RT}parse_i256_value({})", rendered[0]),
+                            ParseKind::U256 => format!("{RT}parse_u256_value({})", rendered[0]),
                             ParseKind::F16 => format!("{RT}parse_f16_value({})", rendered[0]),
                             ParseKind::F32 => format!("{RT}parse_f32_value({})", rendered[0]),
                             ParseKind::F64 => format!("{RT}parse_f64_value({})", rendered[0]),

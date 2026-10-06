@@ -10705,6 +10705,42 @@ formal 1/9 count or Phase 2's estimate.
 
 #### Start here after a context reset — state at 2026-10-04 (autopilot)
 
+**2026-10-06 (later), 0.9.10_Hardened_2: the owner's rulings on three of the audit's decisions**
+(ADR-140; spec `docs/spec-source/Ember_v0.9.10_Hardened_2.md`, Appendix H §H.7;
+`docs/MIGRATION-0.9.10.md`). Asked to explain the audit's findings one by one, the owner judged
+three decisions wrong and ordered all three fixed, then a new hardened version, all benchmarks with
+every slowdown reported, commit, merge into `main` and push. **(1)** `parse` reads `u256` and
+`i256` over their whole range (D-528's refusal reversed; `TXT-10/accept_parse_256_bit_counts`).
+**(2)** The known-numbers rule replaces the visible-numbers rule: `enumerate`'s numbers and
+`len`/`count` take their type from what the compiler knows (names set once and never changed, loop
+counters, arithmetic, lengths), not "any value of the variable's type"; "never changed" is proved by
+re-checking a body whose relied-on name the checked HIR changes (assignment or mutable borrow, so
+`mut` arguments and `mut self` calls count), as `[TYP-23]` already re-checks for open locals; a
+closure's body carries what its earlier check found changed. `s5_range_step_enumerate` gets `int`
+from `n` and `round` (it did not before; ADR-139 had only counted `step_by`). **(3)** `enumerate`
+numbers step up to a bigger type instead of overflowing (G8-4 decision F replaced, owner "YES"):
+the fused loop's number checks are deleted, `Enumerate.skip_back` numbers nothing, and six
+run-fail cases became accept cases. Lessons for the agent (the owner's words this session): never
+refuse or crash on a value the language supports ("things like this should not panic or error");
+never fix one program's shape when the compiler has the numbers to fix the class ("general
+solutions, not specific fixes"); never start building before the owner says go; explain the
+problem with one fixed example, every term defined, the versions named (0.9.9 vs 0.9.10).
+**(4)** Then the owner's fourth ruling (ADR-140 item 4): a whole number converts by itself to another
+whole-number type where the known numbers prove it fits (`[TYP-5]` rule 12, `[TYP-4]`), and in a
+function written for any type, `enumerate`'s numbers over a list of `T` are checked per use
+(`[TYP-17]`), the use named in a refusal. The thermal rules were suspended by the owner until this
+push only. **NEXT SESSION, FIRST (the owner: "for the next session addressing the slow downs
+becomes priority"):** fix the slowdowns. The Hardened_2 run (2026-10-06 09:04-09:18, mains, Windows
+on the performance cores; logs `readme_h2_win.log`, `readme_h2_win_rerun.log`,
+`wsl/readme_h2_gcc.log`, `wsl/readme_h2_gcc_rerun.log` in the session scratchpad) found no program
+slower than the 0.9.10_H1 run: the five it flagged (MSVC `a06_enum_match` 1.18x, clang
+`w13_int_lanes` 1.11x, gcc `p5_million_objects` 1.09x and `p6_million_objects_6_lists` 1.07x, gcc
+`a00_empty` at 0 ms) were disturbances, timed again alone with 21 runs and used in the README
+(0.108 s against 0.115, 0.043 against 0.045, 0.171 against 0.173, 0.238 against 0.235;
+`scratchpad/g8/compare_runs.py`). So the slowdowns to address are the programs still more than 10%
+slower than C: MSVC `a16_map_text`, `p1_read_loop`, `t3_lines`; clang `a10_recursion`,
+`p1_read_loop`; gcc `p5_million_objects` (README: 43 as fast as C, 2 close, 5 slower).
+
 **2026-10-06, autopilot: G8-4 part 2 is built and the language is 0.9.10** (the owner's design,
 `docs/proposals/G8-4-counts-and-positions.md`; spec `docs/spec-source/Ember_v0.9.10_Hardened_1.md`;
 `docs/MIGRATION-0.9.10.md`; ADR-138; defects D-516 to D-524). The owner's order for the rest
@@ -10730,7 +10766,7 @@ scratchpad; two disturbed MSVC cells timed again alone and used: `a09_generics` 
 `t6_char_indices` 0.061 → 0.032 s). Against 2026-10-04 no Ember time moved beyond the machine's
 noise; README: 43 as fast as C, 1 close, 6 slower (MSVC `p1_read_loop` 1.44, `a16_map_text` 1.35,
 `t3_lines`; clang `a10_recursion` 1.72, `p1_read_loop` 1.76; gcc `a00_empty`, `p5_million_objects`).
-Next numbers: ODR-099, D-529, ADR-140, ERR-056.
+Next numbers: ODR-099, D-529, ADR-141, ERR-056.
 
 **Autopilot, 2026-10-04.** The owner: "Activate autopilot mode, your goal will be to fix and
 improve issues with other agent's implementation and then continue developing the language, be
