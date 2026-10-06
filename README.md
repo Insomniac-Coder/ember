@@ -100,7 +100,8 @@ ECS facilities, C++ interop, the interpreter, and hot reload. The open defects a
 ## Benchmarks
 
 Each program below was written twice, in Ember and by hand in C (C++ for the programs that use
-objects, strings, maps or sorting), built by the same C compiler with the same optimisation flags,
+objects, strings, maps or sorting; both are in [`bench/`](bench/), with the scripts that time them),
+built by the same C compiler with the same optimisation flags,
 and timed on 2026-10-06 on one laptop, plugged in: an ASUS ROG Strix G16 (G615LR) with an Intel Core
 Ultra 9 275HX (8 performance cores and 16 slower efficiency cores), 64 GB of DDR5-5600 memory and
 Windows 11 Home (build 26200). The compilers are MSVC 19.44 and clang 22.1 on Windows, and gcc 15.2

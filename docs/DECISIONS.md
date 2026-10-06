@@ -3337,7 +3337,7 @@ at 0.98x to 1.01x timed again 21 times (clang reads the two forms alike).
 
 **Reviewed before commit** by an adversarial workflow the owner approved (three read-only
 reviewers, then one skeptic per finding whose truth turned on the spec's reading; results in
-`build/review-typ9/`). Seventeen findings, fifteen distinct. Fixed: the silent default (above),
+`docs/reviews/typ9/`). Seventeen findings, fifteen distinct. Fixed: the silent default (above),
 class field defaults (not strict, and D-393), a `mut` default (now `E0900`), NaN and infinity in
 relaxed files (above), the attribute on a bodyless method, the repeated `E0104`, `min`/`max`/
 `clamp` facts inside `@fastmath`, defaults doing no float work made closures anyway, two test

@@ -1,0 +1,257 @@
+[
+  {
+    "key": "v2:8ee0732c2bc414fce9f7a23685c469582da23d90e271247b44a77c7e8f28a8aa",
+    "result": {
+      "findings": [
+        {
+          "title": "A default that fails in its float-mode closure is re-checked in the caller's scope, so the E0900 is lost and the call gets an Error argument with no diagnostic",
+          "file": "compiler/ember_typeck/src/lib.rs",
+          "line": 34908,
+          "severity": "major",
+          "category": "wrong-behaviour",
+          "evidence": "fill_default_arguments restores the caller's environment before the fallback runs: `if let Some(previous) = caller_owner { self.self_ty = previous; } if let Some(previous) = caller_types { self.type_params = previous; } ... self.scopes = scopes; let value = if self.sink.rollback(mark) { if in_mode { self.default_not_in_mode(&default, ty, mode, by_address, fp, module, policy, span); } Expr { ty, kind: ExprKind::Error, span } }`. default_not_in_mode (35498-35518) sets only current_module and active_overflow, then `self.check_argument_by(default, ...)`, and emits E0900 only `if !self.sink.rollback(mark)`. That re-check therefore runs in the caller's scopes, type parameters and self_ty, not with `self`, the earlier parameters or the declaration's generic bindings. MIR lowers `hir::ExprKind::Error` as `Operand::Const(Const::Void)` (lower.rs:5465).",
+          "scenario": "`struct Pool: next: int; fn take(mut self) -> int: ...; @fastmath fn add(mut self, x: f64, id: int = self.take()) -> f64: return x * 2.0 + float(id)`, with `fn main(): p = Pool(next = 0); println(p.add(1.0))`. main is strict, so the default goes into a closure. In it `self` is a borrowed lambda parameter (synth_lambda adds it to borrowed_params, 30298-30309), so the mutating call is rejected and the diagnostics are rolled back. The fallback then re-checks `self.take()` in main, where `self` does not exist (E1010). That error is rolled back too, so no E0900 is emitted. The call to add gets an Error/void argument and compilation continues with zero errors. The same happens for any closure failure whose default names an earlier parameter or a type parameter the caller does not have.",
+          "confidence": "medium",
+          "suggested_fix": "Run the fallback check inside the declaration's environment: call default_not_in_mode before restoring scopes, type_params, self_ty and module, or pass them in. If the closure fails and there is no reported declaration error, always emit E0900 rather than returning a silent Error."
+        },
+        {
+          "title": "Class field defaults are evaluated in the constructing function's float mode, against ODR-090's 'a field default is strict wherever evaluated'",
+          "file": "compiler/ember_typeck/src/lib.rs",
+          "line": 35282,
+          "severity": "major",
+          "category": "spec-violation",
+          "evidence": "Only struct construction goes through check_field_default, which has the new `if owner.is_some() && self.active_fp != FpMode::Strict && !same_in_every_float_mode(default) { self.in_float_mode(default, ty, FpMode::Strict) }`. Class construction checks defaults directly in the caller: `default_fields.push(Some(self.check_expr(default_expr, field_ty)));` (35282, user init) and `values.push(self.check_expr(default_expr, field.ty));` (35366, memberwise). MIR materialises them in the constructing body (lower.rs lower_class_new: 'field defaults are materialized immediately after allocation', `self.lower_into(place.clone().field(index), default)`). The comment at 13397 says the same: 'Defaults are materialized by the outer construction call'.",
+          "scenario": "`class Acc: k: f64 = sqrt(2.0) * sqrt(2.0) - 2.0; init(mut self): pass`, with `@fastmath fn f() -> f64: a = Acc(); return a.k`. The default is written into f's `<module>.fastmath.c` and compiled with -ffast-math or /fp:fast. It can be contracted to an fma, or simplified to 0, where strict IEEE gives 4.44e-16. ADR-085 says 'A field default is strict the same way' and the TYP-9 test covers only a struct (Tile).",
+          "confidence": "high",
+          "suggested_fix": "Route class field defaults through the same strict-closure path (or through check_field_default with the class's declaring module). This also gives them the declaration's scope and overflow policy, which they currently lack: the caller's locals are in scope for them."
+        },
+        {
+          "title": "A `mut`-mode parameter default is evaluated in the caller's float mode, silently, although ADR-085 says a default is never evaluated in the wrong mode",
+          "file": "compiler/ember_typeck/src/lib.rs",
+          "line": 34897,
+          "severity": "minor",
+          "category": "missed-case",
+          "evidence": "`let in_mode = fp != self.active_fp && mode != Mode::Mut && !same_in_every_float_mode(&default);` A `mut` default whose mode differs falls through to `self.check_argument_by(&default, ty, mode, by_address)` in the caller's body and translation unit, with no E0900. ADR-085: 'If a closure cannot hold a default that checks as written, E0900 says so; the default is never evaluated in the wrong mode ([TYP-9c])'.",
+          "scenario": "A strict method `fn bump(mut self, mut slot: f64 = self.table[int(self.a * self.b - self.c)])` is called from a `@fastmath` function. The index arithmetic is compiled in the fastmath unit, where it can be contracted to an fma and so select a different element at a rounding boundary. The reverse case (a @fastmath declaration called from strict code) loses the relaxation. No diagnostic says so.",
+          "confidence": "medium",
+          "suggested_fix": "Emit E0900 for a `mut` default that is not `same_in_every_float_mode` when the modes differ, or evaluate the computing sub-expressions (the index) in a closure of the declaration's mode. Also correct the ADR sentence."
+        },
+        {
+          "title": "Inside @fastmath, float facts are still derived from min/max/clamp (picked_ranges), which RNG-4 forbids",
+          "file": "compiler/ember_typeck/src/lib.rs",
+          "line": 23206,
+          "severity": "minor",
+          "category": "spec-violation",
+          "evidence": "range_of gates only Unary and Binary with float_facts_hold. `ExprKind::Block { .. } => { let (lo, hi) = *self.picked_ranges.get(&expr.span)?; self.fits_repr(expr.ty, lo, hi).then_some((lo, hi)) }` is ungated, and so are the picked_ranges.insert sites (21388, 21405). clamp_interval returns `(lower.0, upper.1)` whenever the bounds are ordered, whatever the value. Spec [RNG-4]: 'Inside `@fastmath` no fact about a float is derived' (ODR-090), and RNG-4 lists min, max and clamp among the derived facts.",
+          "scenario": "`type Unit = f32 in 0.0 ..= 1.0; @fastmath fn u(x: f32) -> Unit: return clamp(x, 0.0, 1.0)` is accepted without a check, although the spec says no float fact exists there, so this should be E2215 like reject_a_float_fact_inside_fastmath. The fact happens to be sound, since clamp uses the runtime's strict totalOrder (ember_total_lt_f*), but the compiler does not do what the rule says. The test covers only the comparison arm.",
+          "confidence": "medium",
+          "suggested_fix": "Gate the Block/picked_ranges arm with `!self.types.is_float(expr.ty) || self.active_fp != FpMode::Fast`, or record a spec amendment saying min/max/clamp facts survive @fastmath because totalOrder runs in the strict runtime."
+        },
+        {
+          "title": "@fastmath / @fp(contract) on a bodyless interface method (or abstract class method) is accepted and has no effect",
+          "file": "compiler/ember_typeck/src/lib.rs",
+          "line": 37516,
+          "severity": "minor",
+          "category": "spec-violation",
+          "evidence": "`(&[\"fastmath\", \"fp\"], &[\"fn\"], true)`, and check_item_attributes checks every interface member fn with site \"fn\": `ast::MemberKind::Fn(_) => \"fn\"` then `self.check_attribute_list(&member.attrs, site)`. An abstract interface member has no body to relax. An implementing method's mode comes only from its own attributes (method_signature at 7568 reads the impl member's attrs), so the interface's attribute changes nothing. The spec's table lists `@fastmath` for 'fn' only, while attributes meant for interface methods say 'fn, interface method'.",
+          "scenario": "`interface Shader: @fastmath fn shade(self, x: f64) -> f64` with `implements Shader for Lambert: fn shade(self, x: f64) -> f64: return x * 0.5 + 0.25`. It compiles cleanly, but shade runs strict through the interface and directly. The attribute is silently ignored, against [ATT-6] and [TYP-9c] ('The attribute is never ignored').",
+          "confidence": "medium",
+          "suggested_fix": "Reject @fastmath and @fp on a member fn without a body (interface abstract method, abstract class method, extern class member) with E0104 'does not apply', or give it a defined meaning."
+        },
+        {
+          "title": "Every non-trivial default of another mode becomes a cross-unit closure call, even when it has no float operation",
+          "file": "compiler/ember_typeck/src/lib.rs",
+          "line": 34897,
+          "severity": "minor",
+          "category": "missed-case",
+          "evidence": "The in_mode predicate is purely syntactic: `!same_in_every_float_mode(&default)`, which is true only for a literal, a negated literal, a name, self or a field. An integer or string default such as `n: int = len(xs)` or `r: int = self.w // 8` is still wrapped as `in_float_mode(...)`: a synthesized lambda defined in the other mode's C file and called at every defaulted call.",
+          "scenario": "`@fastmath fn blur(img: Image, radius: int = img.width // 8)` called in a strict loop costs an extra non-inlinable call (another translation unit, no LTO) on each iteration. It also exposes integer-only defaults to the closure failure path above, e.g. a mutating `self.take()`, where the program is valid by the spec. Integer arithmetic is identical in every float mode (ODR-090 says so itself).",
+          "confidence": "medium",
+          "suggested_fix": "Decide on the checked default instead: wrap it only when the HIR contains a float-typed arithmetic, conversion or comparison, or a lambda. Otherwise evaluate it in place."
+        },
+        {
+          "title": "A malformed @fp/@fastmath on an interface default method reports E0104 once per implementing type plus once",
+          "file": "compiler/ember_typeck/src/lib.rs",
+          "line": 7491,
+          "severity": "minor",
+          "category": "wrong-behaviour",
+          "evidence": "fp_mode emits E0104 and is called from method_signature (`let fp = self.fp_mode(attrs);`). For an interface member, method_signature runs once at the interface (6831, `self.method_signature(f, None, &member.attrs, ...)`) and again in register_defaults for every implementing type that does not override it (6483, `self.method_signature(fn_decl, Some(*ty), &member.attrs, member.span, 0)`). The sink does not deduplicate (ember_diag Sink::emit only pushes). register_defaults suppresses the repeated L3014 lint for the per-type copy but not these errors.",
+          "scenario": "`interface Shape: @fp(fast) fn area(self) -> f64: return 0.0`, implemented by Circle and Square, prints three identical E0104 errors for one mistake ([DIA-14]: one mistake, one error). A compile-fail test that lists the expected errors once would not match.",
+          "confidence": "medium",
+          "suggested_fix": "Validate the @fastmath/@fp arguments once, in check_attributes, and make fp_mode silent, or roll back diagnostics around the per-type method_signature copies."
+        }
+      ],
+      "checked_but_fine": [
+        "fp_mode's E0104 forms: @fp with no args, @fp(fast), @fp(contract=x), @fp(\"contract\"), @fp(contract, x) and @fastmath(args) are rejected; @fastmath with @fp(contract) resolves to Fast via max",
+        "fp is copied onto every Signature construction: top-level fns, method_signature, generic function instances (26538), generic method recipe instances (4636, 7099), opaque generic signatures (13154) and interface default copies (clone at 6647)",
+        "active_fp is saved and restored around all three body-check paths (top-level 11442/11525/11641, generic instance 12680/12729, methods 13314/13475), with no early return between save and restore",
+        "Lambdas take active_fp in both the lambda Signature (30402) and the HIR Function (30422), so nested lambdas and lambdas in generic instances and default methods get the enclosing function's mode",
+        "Default interface methods: register_instantiated_default clones the declaration's signature (fp kept) and copies its param_defaults, and check_one_method sets active_fp from it",
+        "fill_default_arguments takes fp from the generic source declaration (generic_of), so generic instances' defaults keep the declaration's mode, and type_params are bound while the closure is synthesized",
+        "Nested defaults: a call inside a default closure compares against the closure's mode because active_fp is swapped around synth_lambda",
+        "The closure evaluates the default exactly once, at the default's position after the written arguments; the capture-free lambda has no side effects of its own",
+        "The HIR fp field reaches MIR Body (lower.rs:373), and the MIR inliner refuses to inline across modes",
+        "refine_ranges_from_condition's float gate applies only to Fast, so @fp(contract) keeps comparison facts, matching the RNG-4 test and ODR-090; integer facts are unaffected",
+        "float_facts_hold drops float arithmetic facts under Contract too, which is conservative and documented in ODR-090",
+        "The @deterministic combination is moot: deterministic is still marked unbuilt in ATTRIBUTE_TABLE and is rejected with E0900, so E4072 cannot arise yet",
+        "@fastmath on a foreign declaration, extern block item, module directive or non-fn item is rejected with E0104 by check_attribute_list",
+        "Struct field defaults with the owner set go through the strict closure; consts use check_field_default with owner None and are folded",
+        "The run-pass default test's expected output (1.002 0.875 1.125 1.75 1.0 / 1.75 2.5) matches the program's arithmetic"
+      ]
+    }
+  },
+  {
+    "key": "v2:2c07533da76d9a157cab1f09911922b0600baaed3617bc99524919f3b6c02032",
+    "result": {
+      "findings": [
+        {
+          "title": "Class field defaults are evaluated in the building function's float mode, not strict as the spec, ODR-090 and ADR-085 say",
+          "file": "compiler/ember_typeck/src/lib.rs",
+          "line": 35282,
+          "severity": "major",
+          "category": "spec-violation",
+          "evidence": "Hardened_45 [TYP-9]: \"a field default is strict, wherever either is evaluated\"; ADR-085: \"A field default is strict the same way.\" Only the struct path (check_field_default, l.35418) wraps the default in `in_float_mode(default, ty, FpMode::Strict)`. The class paths do not: in the init-construction path, l.35282 `default_fields.push(Some(self.check_expr(default_expr, field_ty)));`, and in memberwise construction, l.35366 `values.push(self.check_expr(default_expr, field.ty));`. Both are checked under the caller's `active_fp`, and their HIR lands in the caller's body.",
+          "scenario": "`class Body:\n    m: f64 = SCALE * 0.5 + OFFSET` (module statics), then `@fastmath fn f(): b = Body()`. The default's arithmetic is lowered into f's MIR, so it is emitted into `<module>.fastmath.c` and compiled with -ffast-math (or -ffp-contract=fast under @fp(contract)). It can be contracted or reassociated, on aarch64 or with FMA for example. The spec says this default is strict everywhere, and the attribute is applied to code it does not cover. TYP-9/accept_a_default_keeps_its_declarations_float_mode tests only a struct (`Tile`), so no test catches it.",
+          "confidence": "high",
+          "suggested_fix": "Route both class default sites through the same `active_fp != Strict && !same_in_every_float_mode` wrapper as check_field_default, or better through check_field_default itself. Add a class to the defaults test with a needle that places its literal before the fastmath header."
+        },
+        {
+          "title": "TYP-9 relaxed-unit test does not check the lambda, although ADR-085 says it does",
+          "file": "tests/conformance/TYP-9/accept_a_relaxed_function_is_built_in_its_own_unit.em",
+          "line": 53,
+          "severity": "minor",
+          "category": "test-gap",
+          "evidence": "ADR-085 Tests: \"TYP-9/accept_a_relaxed_function_is_built_in_its_own_unit (... a lambda in its function's unit)\". The only needles are the two unit headers, the two pragmas, the counts and orders of em_fused and em_total, and the interface id. None names the lambda `twice` or its unit. `x * 2.0` is exact, so stdout is the same in any mode.",
+          "scenario": "Replace `fp: self.active_fp` in synth_lambda (l.30402/30422) with `FpMode::Strict`. The lambda body is then emitted in the main unit and compiled strict, and every assertion and both stdout lines still pass. The MIR inliner may also inline the lambda into total, which would hide the placement either way. The lexical-lambda half of ODR-090 has no test.",
+          "confidence": "high",
+          "suggested_fix": "Give the lambda a distinctive float literal and add an assert-c-order that puts it after \"its `fastmath` functions\", or count the lambda's symbol in that unit. Otherwise drop the claim from ADR-085."
+        },
+        {
+          "title": "SIMD-5 run-fail test passes whether or not the @fastmath loop is grouped",
+          "file": "tests/conformance/SIMD-5/run_fail_a_float_total_in_fastmath_reports_its_first_overflow.em",
+          "line": 26,
+          "severity": "minor",
+          "category": "test-gap",
+          "evidence": "Comment: \"A `@fastmath` loop keeping a float total is in vectorisable form, so its checks are grouped (`[SIMD-7]`) ... the panic is still the `-`, the first overflow.\" There is no assert-c needle. The only expectation is `#$ panics: integer overflow in `-``.",
+          "scenario": "Remove the new `&& body.fp != ember_types::FpMode::Fast` in loop_version.rs:1564 so the loop is not admitted. Checks then run one per operation in iteration order. At i=5, `100 - (MIN+100)` overflows in `-` before the `+` at i=9, so the program panics with the same message and the test passes. It never shows the loop was grouped, which is what it claims to test.",
+          "confidence": "high",
+          "suggested_fix": "Add the grouped-check needle used by the accept test (e.g. an assert-c-count on the wrapping form), so the test also fails if the loop is checked one operation at a time."
+        },
+        {
+          "title": "Inside @fastmath, min/max/clamp still produce float range facts, against the new [RNG-4] text",
+          "file": "compiler/ember_typeck/src/lib.rs",
+          "line": 23206,
+          "severity": "minor",
+          "category": "spec-violation",
+          "evidence": "Hardened_45 [RNG-4]: \"Inside `@fastmath` no fact about a float is derived\". range_of gates only Unary (l.23179) and Binary (l.23201) with `float_facts_hold`. The min/max/clamp arm reads `let (lo, hi) = *self.picked_ranges.get(&expr.span)?; self.fits_repr(expr.ty, lo, hi).then_some((lo, hi))` with no mode test. picked_ranges is filled with no mode test either (l.21386-21405).",
+          "scenario": "`@fastmath fn f(x: f32) -> Unit: return clamp(x, 0.0, 1.0)` with `type Unit = f32 in 0.0 ..= 1.0`. It is accepted with no check because a float fact was derived inside @fastmath, which the rule forbids. At run time it is sound only because `ember_total_lt_*` is in the strictly compiled runtime object. The compiler still does not do what the text says, and ADR-085 describes the narrower comparison-plus-operation rule, not the spec's.",
+          "confidence": "medium",
+          "suggested_fix": "Apply `float_facts_hold`, or a Fast-only test, to the Block/picked_ranges arm. Or narrow the spec text to the comparison and operation cases actually built. D-392's planned removal of float min/max/clamp facts would also close it."
+        },
+        {
+          "title": "The spec-folder HANDOFF still calls parts/ the working source for H45 and omits parts-h45 from the frozen list",
+          "file": "tasks/spec-0.9.9/HANDOFF.md",
+          "line": 344,
+          "severity": "minor",
+          "category": "false-record",
+          "evidence": "New line: \"H45 is the latest (ODR-090 ...); `parts/` is the working source for H45, and `parts-h29/` ... and `parts-h44/` are frozen.\" H45 has been cut, and parts-h45/ exists and is byte-identical to parts/ (diff -rq clean).",
+          "scenario": "An agent cutting the next hardening follows this line and edits parts/ as H45's source. It may also refreeze into parts-h45, or diff against parts-h44 instead of parts-h45, which makes Appendix H's generated \"changed since\" list wrong for H46.",
+          "confidence": "high",
+          "suggested_fix": "Change it to \"`parts/` is the working source for H46\" and add `parts-h45/` to the frozen list."
+        },
+        {
+          "title": "COLD-START still says N1\u2013N5 in its second mention",
+          "file": "docs/COLD-START.md",
+          "line": 697,
+          "severity": "minor",
+          "category": "false-record",
+          "evidence": "Line 61 was updated to \"N1\u2013N6\", but l.697 still reads \"Features waiting on another feature are N1\u2013N5 in `docs/NOT-IMPLEMENTED.md` ... and N4/N5 (calls and float totals in vectorisable form).\" N6 is new, and N5 is now only about @parallel.",
+          "scenario": "A cold-start reader gets two different counts in the same file and misses N6, the static-library E0900.",
+          "confidence": "medium",
+          "suggested_fix": "Update l.697 to N1\u2013N6 and describe N5 and N6 as they now stand."
+        },
+        {
+          "title": "ODR-090 is marked as needing no semantic decision, though it made one",
+          "file": "docs/OWNER-QUEUE.md",
+          "line": 66,
+          "severity": "minor",
+          "category": "false-record",
+          "evidence": "Row: \"| ODR-090 | **CLOSED** \u2014 a float mode is lexical ... | Language / floating point / range facts | \u2014 | **No** \u2014 delegated, 2026-09-30, Hardened_45 |\". The column is \"Semantic decision required\". The section chose between two semantic options for defaults and two for [RNG-4] (\"Ruling: 2 and 2\"). The neighbouring delegated ruling ODR-089 is marked \"**Yes** \u2014 delegated\".",
+          "scenario": "An owner scanning the summary for delegated rulings that changed language semantics skips ODR-090, although it changed what a parameter default and a field default compute and which range facts exist.",
+          "confidence": "medium",
+          "suggested_fix": "Mark it \"**Yes** \u2014 delegated, 2026-09-30, Hardened_45\"."
+        },
+        {
+          "title": "ODR-090 leaves range-type construction inside @fastmath open, so a range value can hold NaN",
+          "file": "tasks/spec-0.9.9/parts/p04-types.md",
+          "line": 180,
+          "severity": "minor",
+          "category": "missed-case",
+          "evidence": "The new [RNG-4] text only stops facts being derived inside @fastmath. `T.clamped(v)` is emitted inline as `fmin(fmax(v, lo), hi)` (codegen range_clamp, l.3531-3539; its comment relies on fmax's NaN rule for [RNG-3a] \"NaN clamps to the lower endpoint\"), and the `checked` comparison is emitted the same way. In a @fastmath function both are compiled with -ffast-math (-ffinite-math-only), where gcc and clang may lower fmax/fmin to maxss/minss or drop NaN handling.",
+          "scenario": "`@fastmath fn g(x: f32) -> Unit: return Unit.clamped(x)` with x = NaN can return a `Unit` holding NaN. That breaks [RNG-3a] and the [RNG-9] invariant that strict callers' range_of relies on (\"Anything at a range type is in that range\"). The invariant fails outside the relaxed function, which the ruling was meant to prevent.",
+          "confidence": "low",
+          "suggested_fix": "Rule whether [RNG-3]/[RNG-3a] construction inside @fastmath is emitted strictly, e.g. through a strict runtime helper as TotalLess already is, and state it in [TYP-9] or [RNG-4]."
+        }
+      ],
+      "checked_but_fine": [
+        "Hardened_45.md is byte-identical to `cat parts/p*.md`; its LF SHA-256 matches development-target.json (B3C3898...); parts-h45/ is identical to parts/",
+        "Hardened_45 differs from parts-h44 only in the front matter, [TYP-9], [RNG-4], the Appendix H prose and ODR-090 row, and the [RNG-4]/[TYP-9] 'changed' rows; appx_h.py ODRS and H5_HEAD match p26",
+        "The new [TYP-9]/[RNG-4] text does not contradict [TYP-8]/ODR-084 lexical policy, [FN-5], [DET-5] (@deterministic is still E0900), [CG-C-11], [TYP-9b], or the range-loop fact, which is kept because integer facts are unaffected",
+        "Comparison facts are dropped only for Fast (refine_ranges_from_condition l.22281); integer facts and @fp(contract) comparison facts are kept, as ODR-090 and ADR-085 say",
+        "MIR inliner refuses cross-mode inlining (inline.rs); SIMD-5 admission is gated on FpMode::Fast (loop_version.rs)",
+        "Parameter defaults of another mode go through in_float_mode closures; struct field defaults are strict in relaxed callers",
+        "RNG-4/reject_a_float_fact_inside_fastmath would fail if the fastmath fact were kept, if integer facts were dropped, or if the contract comparison fact were dropped (exact diagnostics)",
+        "TYP-9/accept_a_default_keeps_its_declarations_float_mode needles use first-occurrence ordering correctly: each fails if its default is evaluated in the caller's unit",
+        "D-392 is accurate: false-arm float facts at l.22292-22294 and float Binary/Unary facts in range_of; RNG-4a's true-arm text has been present since H2",
+        "Next numbers ODR-091, D-393, ADR-086 are unused elsewhere; ADR-085 is the last ADR; N6 exists; COLD-START l.61 updated",
+        "Relaxed build flags match ADR-085 (-ffp-contract=fast, -ffast-math for fastmath; MSVC /fp:contract or /fp:fast, /Z7, no /GL); the static library with a relaxed unit is E0900 as N6 records"
+      ]
+    }
+  },
+  {
+    "key": "v2:53c53e974e425657671c8ba7a8201aa47566219d4e57e7a752192f9c0706d5e3",
+    "result": {
+      "findings": [
+        {
+          "title": "Built-in float operations called from a @fastmath function are compiled with -ffast-math: is_nan/is_finite/is_infinite fold to constants, and clang warns",
+          "file": "compiler/ember_codegen_c/src/lib.rs",
+          "line": 5919,
+          "severity": "minor",
+          "category": "wrong-behaviour",
+          "evidence": "`Builtin::FloatLib(f) => { let call = |suffix| format!(\"{}{suffix}({})\", f.c_name(), ...); match (f.is_predicate(), ...) { (true, _) => format!(\"({} != 0)\", call(\"\")), ...` (5916-5921) writes `(isnan(x) != 0)` / `isfinite` / `isinf` straight into the calling body's C, so inside a @fastmath body it lands in `<module>.fastmath.c`. relaxed_gnu_flags (build lib.rs:485) gives that file `-ffast-math`. Other built-ins work the same way: range_clamp's `format!(\"{fmin}({fmax}(({value}), {lo}), {hi})\")` (3595), whose NaN->lo mapping ([RNG-3a]) relies on IEEE fmax, and the header's `ember_ftoi_*` (`if (v != v) { return 0; }`, ember_rt.h:509), which -ffinite-math-only may fold away. Spec [TYP-9]: \"instantiation, inlining and calls keep each function's own\" mode. [CG-C-2]: an accepted program never produces C \"that the C compiler rejects or warns about\".",
+          "scenario": "```\n@fastmath\nfn bad(x: f64) -> bool:\n    return x.is_nan()\n\nfn main():\n    z = 0.0\n    println(bad(z / z))\n```\nOn Linux with gcc or clang, glibc's `isnan` is `__builtin_isnan`, which -ffinite-math-only folds to 0, so the program prints `false`. MSVC's UCRT `isnan` goes through `fpclassify`/`_dclass` and prints `true`: the same program gives different answers on different toolchains. clang 18 and later also warns, by default, on the fastmath unit: `use of NaN is undefined behavior due to the currently enabled floating-point options [-Wnan-infinity-disabled]` (and 'use of infinity' for is_finite/is_infinite), which violates [CG-C-2]. The build does not show it because run() only fails on a non-zero exit. The same mechanism lets `Unit.clamped(nan)` in a @fastmath function become a max/min instruction whose NaN operand order is unspecified. A range value could then hold NaN ([RNG-7]), and an Option[Unit] niche would read Some(nan) as None in strict code.",
+          "confidence": "medium",
+          "suggested_fix": "When the unit is relaxed, write float classification through bit tests, as the header already does for `ember_f64_is_nan` (add is_finite/is_inf equivalents). Do the same for clamped's NaN mapping and ftoi's NaN check. Alternatively, emit these built-in methods as calls into the strict unit, so that \"calls keep each function's own\" holds."
+        },
+        {
+          "title": "@fp(contract) never fuses in a real x86-64 build; the new test sees fusion only because it adds -mfma, which the build never passes",
+          "file": "compiler/ember_build/src/lib.rs",
+          "line": 1002,
+          "severity": "minor",
+          "category": "test-gap",
+          "evidence": "Test: `command.args(relaxed_gnu_flags(Profile::Shipping, false)).arg(\"-mfma\").arg(\"-S\")...; assert!(assembly.contains(\"vfmadd\"), \"a relaxed unit's flags did not let the C compiler fuse\")`. The build side: relaxed_gnu_flags (485) only swaps `-ffp-contract=off` for `-ffp-contract=fast`, and relaxed_msvc_flags (470) adds `/fp:contract` with no `/arch:AVX2`. Neither selects an FMA-capable target. D-325 itself records that CI's \"x86-64 builds target a processor without FMA\". Spec: [TYP-9b] \"`@fp(contract)` permits, and requires the backend to enable, fused multiply-add\". The cost table (spec line 3145) says \"`fma(a, b, c)`, `x.mul_add(b, c)` or `@fp(contract)` give one\". [TYP-9c]/[PHIL-12]: the attribute is never ignored, and a toolchain that cannot honour it gets E9041, which does not exist in ember_diag.",
+          "scenario": "`@fp(contract) fn f(a: f64, b: f64, c: f64) -> f64: return a * b + c` built with `ember build` on x86-64. gcc/clang default to -march=x86-64 and MSVC to /arch:SSE2, so the fastmath/contract object contains mulsd+addsd, exactly the strict code with two roundings. The attribute has no machine-level effect on the owner's platform and no diagnostic is given. The unit test and ADR-085 (\"the relaxed flags let clang fuse `a * b + c`\") still report it working, because the test compiles with an extra `-mfma` that no real build uses.",
+          "confidence": "medium",
+          "suggested_fix": "Choose one explicitly: give the contract unit an FMA-capable target when the build's target has FMA (a target/ISA setting, since `-mfma` alone would SIGILL on older CPUs), or report E9041 or a documented NOT-IMPLEMENTED entry when the target has no FMA. Make the test compile with exactly compile_relaxed_object's flags so that it shows what the build does."
+        }
+      ],
+      "checked_but_fine": [
+        "Per-program objects compared by address are defined once in the main unit and declared extern in relaxed units: interface ids, native fn descriptors, Shared type infos, and class type infos (already external)",
+        "Class itables, access-word tables, class vtables and drop adapters are reached only through the main unit's type info, so the relaxed unit's unused static copies are harmless",
+        "Dyn adapter tables stay static per unit, but no emitted code compares their addresses (only .data/.vtable slot, drop, size and access reads), and devirtualisation compares type infos, which are shared",
+        "No duplicate external symbol: each body is defined only in the unit of its fp, int main only in the main unit, and every generated helper (eq/fmt/clone/drop/array/adapters/debug edges) is static",
+        "Every relaxed-unit reference is declared: prototypes for all bodies, extern type infos/ids/descriptors, and foreign statics collected per unit",
+        "Body copies keep fp: kernels.rs outlining and callable_arguments.rs copies use body.clone(), and only lower.rs builds Body from HIR (verify/borrows/definite_init test bodies are Strict)",
+        "The MIR inliner refuses cross-mode inlining, and no other analysis pass copies code between bodies",
+        "Interface adapter/layout collection scans all bodies in every unit, so the interface-id sets agree across units",
+        "compile_relaxed_object: MSVC drops /GL, maps /Zi to /Z7, keeps /D defines and /MD; gnu keeps -DEMBER_RT_DEBUG_ACCESS; the link uses strict flags, so no crtfastmath/FTZ",
+        "The runtime header has no FP_CONTRACT pragma that would override a relaxed unit's head pragma",
+        "without_outer_parens is safe for every rvalue() BinaryOp form: the generic `(L op R)` always encloses the whole, the other forms are helper calls, no comma expression is produced, and string-literal parens can only make it conservative",
+        "loop_version admits a float total only for FpMode::Fast; Rerun and detect-then-commit restore every carried local of any type, so the total is not double-counted",
+        "Driver: relaxed units are written and compiled for build/run, printed after the main unit for --emit c, and a staticlib is refused before archiving; emit() has a single caller",
+        "The unused static copies in relaxed units are covered by the -Wunused-function/-Wunused-const-variable pragmas for gcc/clang, and MSVC's C4505 is level 4",
+        "The lambda-mode mechanism (active_fp) is indirectly covered by the defaults test's assert-c-order, since the default closures use the same path"
+      ]
+    }
+  }
+]

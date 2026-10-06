@@ -1,0 +1,655 @@
+[
+ {
+  "job": "B",
+  "result": {
+   "verdicts": [
+    {
+     "id": "B1",
+     "verdict": "confirmed",
+     "severity": "critical",
+     "reason": "compiler/ember_codegen_c/src/lib.rs:781-800 (ArrayHelper::Pop) still has the comment '[TYP-13] a niche Option is its payload, and its None is zero bytes'. It emits `memset(&r,0,sizeof r); if (v->len == 0) return r;` for any niche Option. niche_none/niche_holds (lib.rs:6248-6358) now use nonzero Nones: UINT8_C(2) for bool, 0x110000 for char, {NULL,SIZE_MAX} for str and Span, the first unused discriminant for a unit enum (2 for `Ready, Waiting`), and NaN for any float range (ember_types/src/lib.rs:1363-1380). Every `xs.pop()` on an Array goes to this helper (typeck lib.rs:27055-27064 -> synth_array_change -> lib.rs:18847-18849 Builtin::ArrayPop). Nothing blocks bool, str, char, enum or range elements. It is worse than the finding says: `for x in owned xs:` lowers to xs.into_iter(), and ArrayIntoIter.next is `return self.rest.pop()` (std/src/core.em:383-395, typeck check_for_iterator lib.rs:20115-20136). So an owned for-loop over Array[bool], Array[str], Array[char], Array[unit enum] or Array[float range] never ends: it keeps getting Some(zero) after the last element. The only pop tests use int, NonZero and void (STD-15/accept_array_changes.em, STD-4, STD-15/accept_an_array_of_void.em). The clone_parts memset (lib.rs:704-707) has the same assumption, but only non-Copy payload enums reach it (request_clone_dependency lib.rs:650), so it is latent today.",
+     "repro_ember": "fn main():\n    flags: Array[bool] = []\n    match flags.pop():\n        Some(v) => println(\"popped\", v)\n        None => println(\"empty\")\n    xs = [true]\n    n = 0\n    for b in owned xs:\n        n += 1\n        if n > 3:\n            println(\"still looping after\", n)\n            break\n    println(n)\n",
+     "repro_c": "",
+     "expected": "empty\n1",
+     "actual": "popped false\nstill looping after 4\n4   (the empty pop returns Some(false); the owned for-loop keeps getting Some(false) after the last element and never stops on its own)"
+    },
+    {
+     "id": "B2",
+     "verdict": "confirmed",
+     "severity": "major",
+     "reason": "The Option[bool] C type is `uint8_t` (lib.rs:2953-2957). typeck lets an explicit `ref mut` binding take any payload, Copy or not (lib.rs:16372-16381: `if *by_ref { Some(*mutable) }`), so the local is `ref mut bool`. MIR lowers it as Rvalue::Ref of the Some field (ember_mir/src/lower.rs:3057-3062). place_in adds no projection for a niche Some field (lib.rs:5744-5746). Rvalue::Ref emits a bare `&_opt` and casts only for a shared ref to a class (lib.rs:6167-6183). The local's C type is `bool*` (c_type Ref -> `T*`, lib.rs:6465). The result is `bool* _k = &_opt` with _opt a uint8_t, which is an incompatible-pointer constraint violation: a warning under clang and gcc -Wall, a default error in GCC 14, C4133 under the driver's MSVC /W3 (ember_build/src/lib.rs:555). The milestone C gate compiles with -Wall -Wextra -Werror (milestones.rs:3508). This breaks CG-C-1 warning-free output and the effective-type rule. At run time the write stores 1 correctly, so the damage is in the emitted C, not a wrong value.",
+     "repro_ember": "fn main():\n    opt: Option[bool] = Some(false)\n    match opt:\n        Some(ref mut b): b = true\n        None: pass\n    println(opt)\n",
+     "repro_c": "",
+     "expected": "The emitted C compiles warning-free and the program prints Some(true)",
+     "actual": "The emitted C assigns `&_opt` (uint8_t*) to a `bool*` local: -Wincompatible-pointer-types (an error under GCC 14 and under the harness's -Werror) and C4133 under MSVC /W3"
+    },
+    {
+     "id": "B3",
+     "verdict": "confirmed",
+     "severity": "major",
+     "reason": "declare_range_type accepts any Int/Uint repr, u128 and i128 included (typeck lib.rs:1856-1859). range_unused_integer returns 0 for `u128 in 1 ..= 1000` (ember_types lib.rs:1387-1392), so option_niche picks the range niche. niche_holds emits `(access) == <constant>` and niche_none emits `((c_type)<constant>)` (codegen lib.rs:6285-6287, 6341-6343). For a u128 repr, constant() -> wide_constant gives `ember_u128_make(UINT64_C(..),UINT64_C(..))` (lib.rs:5920-5921, 4484-4486). On MSVC, and under EMBER_SOFT_INT128, ember_u128 is a struct (ember_rt.h.in:455-457, 526-530). Struct `==` is a hard C error (C2088), and a cast to a struct type is a constraint violation. The NonZero path goes through eq_expr and its wide-int helper; these two new paths do not. No test uses a 128-bit range. The enum half of the finding (a 128-bit unit-enum repr) was not verified.",
+     "repro_ember": "type Id = u128 in 1 ..= 1000\n\nfn main():\n    x: Option[Id] = None\n    match x:\n        Some(_) => println(\"some\")\n        None => println(\"none\")\n",
+     "repro_c": "",
+     "expected": "Builds on every supported C compiler and prints none",
+     "actual": "On MSVC (the owner's toolchain) the generated C fails to compile: `(_1) == ember_u128_make(UINT64_C(0x0), UINT64_C(0x0))` compares structs, and `((ember_u128)ember_u128_make(...))` casts to a struct type"
+    },
+    {
+     "id": "B4",
+     "verdict": "confirmed",
+     "severity": "major",
+     "reason": "In the While arm (typeck lib.rs:14580-14589), check_class_init_whole_self_use(cond) sets state.whole_used (lib.rs:13084-13088). The next statement, `self.class_init = incoming_class_init.clone()`, then throws that away. The body starts from the incoming state, and the post-loop merge (lib.rs:14606-14613, merge ORs whole_used at 13141) joins incoming with body, so the condition's use is lost. A while condition always runs at least once, so a later `self.value = 2` should be E7003 under THR-1 (spec line 3198: 'inside init, a field assignment after self has been used as a whole is E7003'). reject_readonly_write_inner allows it because !whole_used (lib.rs:26221-26225). check_for_counted and the other loop checks go through the body once (lib.rs:16827-16845), so iteration 2's write after iteration 1's publication is never seen. validate_class_init_shape allows while/for bodies with field assignments and expression statements (lib.rs:12920-12969). check_if does not have this bug: it runs the whole-self check before it snapshots the state (lib.rs:20419-20431). The super.init half is not established: Path receivers are treated as not using self, and whether the base init counts as 'use as a whole' is a reading. No threads exist yet, so this is a missing diagnostic rather than a race today.",
+     "repro_ember": "@sync\nclass Token:\n    value: int = 0\n\n    fn init(mut self):\n        while register(self):\n            pass\n        self.value = 2\n\nfn register(t: Token) -> bool:\n    return false\n\nfn main():\n    t = Token()\n    println(t.value)\n\n# second form, same defect:\n# @sync\n# class Token2:\n#     value: int = 0\n#     fn init(mut self):\n#         for i in 0..2:\n#             self.value = i\n#             publish(self)\n# fn publish(t: Token2):\n#     pass\n",
+     "repro_c": "",
+     "expected": "error[E7003]: cannot write field `value` of an `@sync` class after `init` or after using `self` as a whole (at `self.value = 2`; for Token2, at `self.value = i`)",
+     "actual": "Both compile; the first prints 2"
+    },
+    {
+     "id": "B5",
+     "verdict": "partly",
+     "severity": "minor",
+     "reason": "class_init_uses_whole_self returns true for any Match or Lambda (typeck lib.rs:13040-13041). The Assign arm calls check_class_init_whole_self_use(value) first (lib.rs:14096), which sets whole_used = true (lib.rs:13087). The field store then reaches reject_readonly_write_in_assignment (lib.rs:14394), and E7003 fires because whole_used is set (lib.rs:26223-26240). So E7003 is emitted as claimed. But the finding's own repro (fields with no defaults) was already rejected before ff5d863: the same Match => true rule, from 1585e8e, gives E2100 there because init is incomplete (lib.rs:13088-13094). The regression added by ff5d863 is narrower: a valid @sync init is newly rejected only when every field is already initialised at the match assignment, for example through defaults. The spec is broken in the conservative direction, and assigning the match to a local first works around it.",
+     "repro_ember": "@sync\nclass Cfg:\n    a: int = 0\n    b: int = 0\n\n    fn init(mut self, n: int):\n        self.a = match n:\n            0 => 1\n            _ => 2\n        self.b = 3\n\nfn main():\n    c = Cfg(0)\n    println(c.a, c.b)\n",
+     "repro_c": "",
+     "expected": "Compiles and prints 1 3",
+     "actual": "error[E7003] at `self.a = match ...` and again at `self.b = 3`, although self is never used as a whole"
+    },
+    {
+     "id": "B6",
+     "verdict": "refuted",
+     "severity": "none",
+     "reason": "The behaviour is real: check_one_method emits E7003 for any `mut self` method of a @sync class except init (typeck lib.rs:12699-12706), and class `drop` goes through check_one_method. But the premise that 'the spec does not settle whether drop is a method' is false. The spec calls it a method in two places: `[STR-3]` 'A struct with a `drop` method' (Hardened_40 line 1499) and 'Dropping runs the value's `drop` method' (line 2060). DRP-1 fixes its signature as `fn drop(mut self)` (line 2296), and THR-1 says 'a method may not be declared `mut self` (E7003)' (line 3200). The compiler follows the literal text, so nothing was decided silently and no ODR was needed. Whether @sync classes should get user destructors is a design question the owner may want to consider, but it is not an implementation or process defect.",
+     "repro_ember": "",
+     "repro_c": "",
+     "expected": "",
+     "actual": ""
+    },
+    {
+     "id": "B7",
+     "verdict": "confirmed",
+     "severity": "minor",
+     "reason": "ember_debug_field_end (runtime/ember_rt/templates/ember_rt.c.in:5251-5268) removes the topmost record with the same (word, writing) and ignores loc. ember_panic_field_exclusivity_debug (5270-5291) reports the topmost record for the word. Field access ends go at exact NLL end points (ember_analysis/src/borrows.rs:672-676), so two reads of one field can end out of order. The end event carries the begin's span (end_event uses access.span, borrows.rs:663-669), so the runtime receives the right loc to match on and does not use it. Only the location in the diagnostic is wrong; the conflict is still detected. The EXC-6 tests assert only the substring 'active read of Bag.items began at', so nothing catches this.",
+     "repro_ember": "class Bag:\n    items: Array[int]\n\n    fn init(mut self):\n        self.items = [1]\n\n    fn replace(self):\n        self.items = [2]\n\nfn main():\n    b = Bag()\n    alias = b\n    first = b.items.as_span()\n    second = b.items.as_span()\n    println(first[0])\n    alias.replace()\n    println(second[0])\n",
+     "repro_c": "",
+     "expected": "debug profile: panic '... active read of Bag.items began at <file>:14:<col>' (the `second = ...` line, the read that is still live)",
+     "actual": "The panic names <file>:13:<col>, the `first = ...` line, whose read already ended"
+    },
+    {
+     "id": "B8",
+     "verdict": "confirmed",
+     "severity": "minor",
+     "reason": "compiler/ember_driver/src/main.rs:2440 tests `matches!(key, \"exclusivity\" | \"overflow\" | \"bounds_checks\")` in every section, so a `[dependencies]` entry named `overflow` (MAN-8: keys there are package names) gets 'removed manifest setting `overflow` cannot disable a safety check'. The unknown-key check runs only when `section.starts_with(\"profiles.\")` (main.rs:2450), so `[profiles]` with `debug.bakcend = 1`, or a top-level `profiles.debug.bakcend = 1`, passes. There is no other E9001 check in the driver. Values are never checked, so `[profiles.shipping] sanitizers = [\"address\"]` passes, although the PRF-3 table says 'not allowed'. Custom profiles are not required to set `inherits`. The HANDOFF entry (docs/HANDOFF.md:11225-11228) only claims key-name checking, so the overclaim is small.",
+     "repro_ember": "# ember.toml next to any main.em:\n# [dependencies]\n# overflow = \"1.2\"\n#\n# [profiles.shipping]\n# sanitizers = [\"address\"]\n#\n# [profiles]\n# debug.bakcend = 1\nfn main():\n    println(\"ok\")\n",
+     "repro_c": "",
+     "expected": "No error for the dependency named overflow; E9001 for sanitizers in shipping and for the unknown key `bakcend`",
+     "actual": "E9001 'removed manifest setting `overflow` cannot disable a safety check' on the dependency; the shipping sanitizers and the `[profiles]` dotted unknown key are accepted"
+    },
+    {
+     "id": "B9",
+     "verdict": "confirmed",
+     "severity": "minor",
+     "reason": "tests/conformance/RC-3/accept_keep_alive_marks_a_handle_use.em has no assert-c. Its output ('live' then 'dropped' at scope end) does not change if the keep_alive call is removed, yet HANDOFF:11212-11217 says 'compiles without a retain'. Both EXC-6 run-fail tests assert only the substring 'active read of Bag.items began at' (see B7). THR-1/accept_sync_class_uses_atomic_reference_counts.em asserts only contains(EMBER_TI_SYNC); the single thread is unavoidable while no threads exist. A grep finds no Option[Box[dyn ...]] test anywhere; the separate `.data == NULL` path is at lib.rs:6295-6300. No test covers Array.pop on a new niche type, a by-ref Option[bool] binding, or a 128-bit range niche.",
+     "repro_ember": "",
+     "repro_c": "",
+     "expected": "",
+     "actual": ""
+    },
+    {
+     "id": "B10",
+     "verdict": "partly",
+     "severity": "minor",
+     "reason": "The first half is confirmed. validate_sync_class (typeck lib.rs:2869-2892) builds 'field `{name}.{field}` has type `{ty}`, which is not {property}' from the whole field type. THR-1 (spec line 3195) says E7001 names 'the field and the component that is not', so for `items: Array[Local]` it should name Local. The second half is refuted as a defect: THR-1 itself requires the help 'wrap it in Atomic[int] for an integer, Mutex[...] otherwise' (spec lines 3206-3207), so the E7003 help follows the spec. Atomic and Mutex not existing yet is a std gap, not an error in this commit. The worry about thread_properties treating future Atomic/Mutex types as non-Sync is speculative.",
+     "repro_ember": "class Local:\n    value: int = 0\n\n@sync\nclass S:\n    items: Array[Local]\n\n    fn init(mut self):\n        self.items = []\n",
+     "repro_c": "",
+     "expected": "error[E7001] naming field `S.items` and the component `Local`, which is not Send or Sync",
+     "actual": "error[E7001]: field `S.items` has type `Array[Local]`, which is not Send or Sync (Local is not named)"
+    }
+   ],
+   "new_findings": [
+    "NEW (same root cause as B1, wider reach): `for x in owned xs:` goes through ArrayIntoIter.next -> `self.rest.pop()` (std/src/core.em:383-395). An owned for-loop over Array[bool], Array[str], Array[char], Array[unit enum] or Array[float range] therefore never ends; after the last element it keeps getting Some(zero) (compiler/ember_codegen_c/src/lib.rs:792-800).",
+    "NEW (pre-existing since 1585e8e, outside the reviewed range): class_init_uses_whole_self treats any match expression or lambda on the right of an assignment as a whole-self use (compiler/ember_typeck/src/lib.rs:13040-13041). So in ANY class, `self.a = match n: ...` while a field is still uninitialised is a false E2100 'self is used before all class fields are initialized' (lib.rs:13088-13094, called from lib.rs:14096)."
+   ]
+  }
+ },
+ {
+  "job": "C",
+  "result": {
+   "verdicts": [
+    {
+     "id": "C1",
+     "verdict": "partly",
+     "severity": "minor",
+     "reason": "The behaviour is real. foreign_pointer_contract_required (typeck lib.rs:11901-11909) matches only Ptr, Fn and an Option niche. A struct param or result goes to check() (lib.rs:11466-11510), and is_ffi_safe (ember_types lib.rs:1693-1710) accepts any struct whose fields are FFI-safe, including Ptr and Fn{abi:Some}. The safe-fn loop (lib.rs:11813-11875) has no nested walk. But the compiler does what the spec text says. FFI-10 (Hardened_40 l.4204-4206) lets a safe fn take 'a scalar, a `@layout(c)` value type, or a pointer whose contract is complete', and the raw-pointer ban names only 'a raw-pointer parameter or result' (l.4217-4219). LAY-2 makes every struct @layout(c) by default (lib.rs:35438). So this is a spec gap, not a compiler conformance bug. ODR-073's reasoning applies to it, but no rule requires rejecting it. It also needs the programmer's own `safe fn` assertion inside an `unsafe extern` block, which FFI-10 lists in the TCB. That is the same trust as `safe fn f(addr: usize)` where C casts the integer. It should be raised as an ODR (should a safe fn reject by-value aggregates that reach a raw pointer or an extern fn?). It is not a major compiler defect.",
+     "repro_ember": "#$ test: compile-fail\n#$ rules: FFI-10\n#$ profiles: debug\n#$ error[E5002]: `safe fn` cannot expose raw pointer parameter `b`\n# check only (ember check); do NOT run: it dereferences NULL\n\nstruct Buf:\n    data: *u8\n    len: usize\n\nunsafe extern \"C\":\n    @ffi(link_name=\"first_byte_c\")\n    safe fn first_byte(owned b: Buf) -> u8\n\npub extern \"C\" fn first_byte_c(b: Buf) -> u8:\n    unsafe:\n        return read(b.data, 0)\n\nfn main():\n    println(first_byte(Buf(data = null[*u8](), len = 1)))",
+     "repro_c": "",
+     "expected": "Under ODR-073's intent, E5002 at the declaration, because a safe fn would carry a forgeable raw pointer inside Buf. Under the literal FFI-10 text it is accepted, so the owner has to rule.",
+     "actual": "It compiles with no diagnostic, and Safe main hands C a NULL data pointer with no `unsafe`."
+    },
+    {
+     "id": "C2",
+     "verdict": "confirmed",
+     "severity": "major",
+     "reason": "codegen lib.rs:3610-3623: the non-nullable SpanPointer branch pushes `(ptr)(arg).ptr` unchanged. Only the nullable branch (from 19550ec) swaps in `&_ffi_empty_N`. An empty Array is `ember_vec_empty() = {NULL,0,0}` (ember_rt.h.in:1031), and `as_span()` copies that pointer. ODR-079's own question says 'A present empty span may itself have a null data pointer', and the nullable test accept_nullable_counted_shared_input_call_c.em only works because of the sentinel. For a non-nullable contract, the FFI-11 nullability axis (only `nullable` produces Option) tells C the pointer is never null. C code with `assert(p)`, a `nonnull` attribute, or memcpy(dst, p, 0) (UB with NULL in C11 7.24.1p2) is broken by a safe call. No FFI-11 test passes an empty non-nullable span: every non-nullable count(n) run test pushes elements first. One caveat: the spec states the non-null promise only implicitly, so the fix (reuse the sentinel) should come with a spec sentence next to ODR-079's.",
+     "repro_ember": "#$ test: run-pass\n#$ rules: FFI-10, FFI-11\n#$ profiles: debug, release, shipping\n#$ stdout: false\n\nunsafe extern \"C\":\n    @ffi(param(data, borrowed, count(n)), link_name=\"probe_nonnull\")\n    safe fn probe(data: Span[i32], n: usize) -> bool\n\npub extern \"C\" fn probe_nonnull(data: *i32, n: usize) -> bool:\n    return data.is_null()\n\nfn main():\n    empty: Array[i32] = Array[i32]()\n    println(probe(empty.as_span()))",
+     "repro_c": "",
+     "expected": "false: a non-nullable counted pointer reaches C non-null even when the span is empty, as ODR-079 already does for Some(empty).",
+     "actual": "true: C receives NULL with n == 0."
+    },
+    {
+     "id": "C3",
+     "verdict": "partly",
+     "severity": "major",
+     "reason": "The is_null half holds at HEAD. typeck lib.rs:26706-26710 turns `p.is_null()` on any Ptr into Builtin::PtrIsNull. `is_null` appears nowhere in Hardened_40, and 0.9.9's CTL-0 (l.1817-1819) dropped the 0.9.8 raw-pointer fix-it that mentioned it. The Silence clause (l.83-85) and PHIL-12 (l.170-175) require E0901. The HANDOFF entry for c718267 calls these 'compiler gaps under Hardened_31, so no ODR or hardening is needed', but H31 IV.5 (l.1046-1048) never defines is_null, so that classification was wrong. The cast half is narrower than claimed. H31 already said 'Creating one from a reference is safe' with no spelling, ODR-075 was raised the next commit, and it now defines `r as *T` (Hardened_40 l.1066-1069). Counting the shipped cast as a cost of option (c) is a mild process smell, but option (a) is also justified by the predecessor's spelling. So what is left is one undefined but harmless query surface, used by 8 conformance tests, plus a misclassification in the HANDOFF.",
+     "repro_ember": "#$ test: compile-fail\n#$ rules: PHIL-12, TYP-7\n#$ profiles: debug\n#$ error[E0901]: ...\n\nfn f(p: *mut i32) -> bool:\n    return p.is_null()\n\nfn main():\n    println(f(null[*mut i32]()))",
+     "repro_c": "",
+     "expected": "E0901 (not defined by Hardened_40) until an ODR defines `is_null` on raw pointers.",
+     "actual": "It compiles and prints true."
+    },
+    {
+     "id": "C4",
+     "verdict": "partly",
+     "severity": "minor",
+     "reason": "The rejection is real. lib.rs:11630 MutOne requires `mode == Mode::Mut`, so `p: ref mut i32` (Borrow mode) gets E5002 'needs a pointer carrier'. Then lib.rs:11835-11840 allows only SharedOne or non-nullable Fixed for a Ref param and adds a second E5002 'needs an `@ffi` contract for reference parameter'. That is inconsistent with the same code accepting `Option[ref mut T]` in Borrow mode for NullableMutOne (11637-11639) and `ref mut [T; N]` for exclusive Fixed. But the spec does not clearly require `ref mut T`. ODR-073 and FFI-10 (l.4216-4217) name 'the safe Ember types or `mut` parameter modes produced by those words'. The FFI-11 table maps `one` to `ref T` and mentions `ref mut` only for results. The implementation's choice of `mut p: T` for exclusive one is recorded in HANDOFF (~l.10807) and tested (FFI-10/accept_safe_borrowed_one_mut_parameter.em). So this is a conservative rejection with a working spelling, not unsoundness. The real defects are the inconsistency and a diagnostic that claims a missing contract instead of E0900.",
+     "repro_ember": "#$ test: run-pass\n#$ rules: FFI-10, FFI-11\n#$ profiles: debug, release, shipping\n#$ stdout: 8\n\nunsafe extern \"C\":\n    @ffi(param(p, borrowed, one, exclusive), link_name=\"bump_c\")\n    safe fn bump(p: ref mut i32)\n\npub extern \"C\" fn bump_c(p: *mut i32):\n    unsafe:\n        write(p, 0, read(p, 0) + 1)\n\nfn main():\n    value: i32 = 7\n    bump(ref mut value)\n    println(value)",
+     "repro_c": "",
+     "expected": "Prints 8 (accepted like Option[ref mut i32] and ref mut [i32; N]), or at least one E0900 naming the unbuilt form.",
+     "actual": "Two E5002 errors: '`@ffi` contract for `p` needs a pointer carrier' and '`safe fn` needs an `@ffi` contract for reference parameter `p`'."
+    },
+    {
+     "id": "C5",
+     "verdict": "confirmed",
+     "severity": "minor",
+     "reason": "The gap is real. Every compile-fail test containing `from(` in tests/conformance (the FFI-11 reject_result_lifetime_*, *_shared_type and *_without_input_span cases, FFI-11a, FFI-11c) is a declaration-shape check. No foreign declaration appears in any LT-*, BRW-* or TYP-15 test, and none of compiler/ember_driver/tests checks this. accept_borrowed_result_from_named_parameter.em only mutates `second`, which would also pass if from(first) were from(static). I checked the mapping itself: lib.rs:5252 removes the witnesses before 5282 computes `params.iter().position(...)`, so the index is into the public signature and looks correct. No live bug, just a missing negative test on a soundness-carrying path, so minor rather than major.",
+     "repro_ember": "#$ test: compile-fail\n#$ rules: FFI-10, FFI-11, LT-1a\n#$ profiles: debug\n#$ error[E3021]: ...  (exact borrow-error text to be filled in from the run)\n\nunsafe extern \"C\":\n    @ffi(param(first, borrowed, one), param(second, borrowed, one),\n         result(borrowed, one, from(first)), link_name=\"choose_first_c\")\n    safe fn choose_first(first: ref i32, second: ref i32) -> ref i32\n\npub extern \"C\" fn choose_first_c(first: *mut i32, second: *mut i32) -> *mut i32:\n    return first\n\nfn main():\n    first: i32 = 9\n    second: i32 = 2\n    chosen = choose_first(ref first, ref second)\n    first = 11\n    println(chosen)",
+     "repro_c": "",
+     "expected": "A borrow error at `first = 11`, because `chosen` borrows `first` through from(first).",
+     "actual": "Predicted: the error is reported correctly today (the mapping at lib.rs:5282 is right). The finding is that no test locks it in."
+    },
+    {
+     "id": "C6",
+     "verdict": "partly",
+     "severity": "major",
+     "reason": "The three-way disagreement is real. The Signature abi is `decl.abi` whenever count_witnesses is empty (lib.rs:5297). The interface symbol is the link name unless there are count witnesses (lib.rs:2265). HIR uses the mangled symbol and `abi: None` whenever ffi_counted is Some (lib.rs:11039-11055), and foreign_counted_metadata returns Some for fixed params, fixed results, and safe borrowed aggregates too (lib.rs:12033-12034). The concrete HEAD consequence: fn_value_of (lib.rs:28993-29066) builds `TyKind::Fn { abi: signature.abi = Some(\"C\") }` over FnValue(def). MIR lowers that to Const::Fn(<mangled wrapper symbol>) (mir lower.rs:5390-5391). The wrapper body has abi None and is_extern_declaration false (lib.rs:11076), so it is in native_bodies, and the assert at codegen lib.rs:497-498 fires. fn_value_of has no check that stops it: D-284's by_address test skips passed_by_address types, and a `ref [T; N]` param is not by address. The same ICE follows for a safe fn with a borrowed by-address aggregate (e.g. FFI-10's transform_wide). Between b41d35d and 9821bbe that case would have been a silent ABI mismatch. The cross-module half is not reachable. The driver still rechecks the whole graph (main.rs:1380-1385), so importers call the HIR wrapper. The interface-record mismatch only makes module_interface_inputs `continue` (main.rs, 'declaration.symbol != body.symbol'), so the record carries no callable metadata, which is a latent issue. So: an ICE today, not wrong code, and no importer can skip the adapter.",
+     "repro_ember": "#$ test: run-pass\n#$ rules: FFI-10, FFI-11, FN-6\n#$ profiles: debug, release, shipping\n#$ stdout: 6\n\nunsafe extern \"C\":\n    @ffi(param(data, borrowed, fixed(3)), link_name=\"sum_three\")\n    safe fn sum(data: ref [i32; 3]) -> i32\n\npub extern \"C\" fn sum_three(data: *i32) -> i32:\n    unsafe:\n        return read(data, 0) + read(data, 1) + read(data, 2)\n\nfn main():\n    f = sum\n    data: [i32; 3] = [1, 2, 3]\n    println(f(ref data))",
+     "repro_c": "",
+     "expected": "Prints 6 (the value names the native wrapper with a native fn type), or a clean diagnostic refusing the value.",
+     "actual": "Predicted: the compiler panics in codegen with 'native function value must have a native function type' (ember_codegen_c lib.rs:497-498)."
+    },
+    {
+     "id": "C7",
+     "verdict": "confirmed",
+     "severity": "minor",
+     "reason": "E5040 is defined in ember_diag codes.rs:307 and the spec table (l.5235), but `grep E5040 compiler/` finds no emitter. FFI-21 (l.4445-4447) makes a capturing closure passed to a C function-pointer parameter E5040. The compiler reports a generic E2020 type mismatch in both the local-binding case the test covers and the real parameter case. The test's expected text embeds the internal name `closure3_env`, so renumbering closures breaks it with no behaviour change. It is still rejected, so this is diagnostic conformance, not safety.",
+     "repro_ember": "#$ test: compile-fail\n#$ rules: FFI-21\n#$ profiles: debug\n#$ error[E5040]: capturing closure passed where a C function pointer is expected\n\nunsafe extern \"C\":\n    fn apply(cb: extern \"C\" fn(i32) -> i32, v: i32) -> i32\n\nfn main():\n    offset: i32 = 1\n    unsafe:\n        println(apply(fn(v: i32) -> i32 => v + offset, 41))",
+     "repro_c": "",
+     "expected": "E5040 naming the capturing closure.",
+     "actual": "E2020: expected `extern \"C\" fn(i32) -> i32`, found `closureN_env`."
+    },
+    {
+     "id": "C8",
+     "verdict": "confirmed",
+     "severity": "minor",
+     "reason": "ffi_integer_witness_type (typeck, `fn ffi_integer_witness_type`, ~l.35824) matches the AST spelling only: a one-segment path named i8..u128/isize/usize/int. Type aliases exist in the language (e.g. FFI-10/reject_array_of_opaque_foreign_size.em uses `type Two = [Handle; 2]`). So `n: Len` with `type Len = u32` returns None, and lib.rs:11603-11605 reports E5002 '`count(n)` needs integer ABI witness `n`', although the resolved type is an integer scalar, which FFI-10 (l.4220-4221) and ODR-074 allow. The rejection is conservative, but the diagnostic is wrong. It should resolve the type, or say E0900.",
+     "repro_ember": "#$ test: compile-pass\n#$ rules: FFI-10, FFI-11\n#$ profiles: debug\n\ntype Len = u32\n\nunsafe extern \"C\":\n    @ffi(param(d, borrowed, count(n)), link_name=\"count_bytes\")\n    safe fn count_bytes(d: Span[u8], n: Len) -> u32\n\nfn main():\n    pass",
+     "repro_c": "",
+     "expected": "Accepted (the witness resolves to u32), or E0900 if alias witnesses are not built.",
+     "actual": "E5002: `count(n)` needs integer ABI witness `n`."
+    },
+    {
+     "id": "C9",
+     "verdict": "confirmed",
+     "severity": "minor",
+     "reason": "codegen lib.rs:6463-6466 maps every `ref T` to `T*` on purpose (the Cell/RefCell comment), and that is what a direct extern prototype for a SharedOne param or result uses. Raw `*T` maps to `const T*` (6467-6469), and ffi_counted_signature emits `const T*` for shared Span/Array pointers. A C-ABI helper written in Ember with the natural `*i32` is defined as `const int32_t*` in the same generated TU as the `int32_t*` prototype, so the C compiler reports conflicting types. accept_borrowed_result_from_named_parameter.em and accept_static_result_outlives_input_borrow.em use `*mut i32` to get around it. A real C library in its own TU never sees the generated prototype, so the effect is narrow (same-TU helpers and aliased declarations), and no Ember diagnostic covers it.",
+     "repro_ember": "#$ test: run-pass\n#$ rules: FFI-10, FFI-11\n#$ profiles: debug\n#$ stdout: 5\n\nunsafe extern \"C\":\n    @ffi(param(first, borrowed, one), result(borrowed, one, from(first)), link_name=\"echo_c\")\n    safe fn echo(first: ref i32) -> ref i32\n\npub extern \"C\" fn echo_c(first: *i32) -> *i32:\n    return first\n\nfn main():\n    x: i32 = 5\n    println(echo(ref x))",
+     "repro_c": "",
+     "expected": "Prints 5, or an Ember diagnostic about the constness mismatch.",
+     "actual": "The C compile fails with 'conflicting types for echo_c' (prototype int32_t* echo_c(int32_t*) against definition const int32_t* echo_c(const int32_t*))."
+    },
+    {
+     "id": "C10",
+     "verdict": "refuted",
+     "severity": "none",
+     "reason": "`#$ profiles:` names build profiles (debug/release/shipping), not targets. The suite has no target or pointer-width annotation at all: the keys used are test, rules, stdout, assert-c, profiles, panics, help and not-help. The runner is 64-bit only. Sibling TYP-13 tests written before this range hard-code the same widths, for example accept_ref_option_is_one_nullable_pointer.em (`8 8`) and accept_dyn_ref_option_uses_empty_fat_pointer.em (`16 16`). The test follows the existing suite convention and claims nothing about 32-bit. Comparing the two sizes would be more portable, but it is not a defect of this work.",
+     "repro_ember": "",
+     "repro_c": "",
+     "expected": "",
+     "actual": ""
+    },
+    {
+     "id": "C11",
+     "verdict": "confirmed",
+     "severity": "minor",
+     "reason": "codes.rs:324 and spec l.5237 give E5050 the TCB-1 meaning 'a foreign fact claims a grade whose evidence is absent or stale'. git blame shows 083400c added lib.rs:7417 (E5050 'an `extern \"C\" fn` pointer needs FFI-safe parameters and result') and d536d8f added lib.rs:34790 (E5050 'a foreign function declaration cannot be generic or a generator'). The older uses at lib.rs:11475/11505 come from 7136a48 (2026-09-09). E5015 'type may not cross the boundary' fits the first. A generic foreign declaration has no specific code and would arguably be E0901. It is still rejected, so this is diagnostic-code accuracy only.",
+     "repro_ember": "#$ test: compile-fail\n#$ rules: FFI-10\n#$ profiles: debug\n#$ error[E5015]: ...\n\nfn main():\n    cb: extern \"C\" fn(String) -> i32 = foo\n\nfn foo(s: String) -> i32:\n    return 0",
+     "repro_c": "",
+     "expected": "A boundary code (E5015) for a type that cannot cross.",
+     "actual": "E5050, whose table meaning is an absent or stale TCB grade (the exact message may be preceded by a mismatch error for `foo`)."
+    }
+   ],
+   "new_findings": [
+    "NEW compiler/ember_typeck/src/lib.rs:20639 - the E2035 fix-it still says 'a pointer is not a condition: write `not p.is_null()`'. That comes from 0.9.8's CTL-0. Hardened_40 CTL-0 (l.1817-1819) lists fix-its only for containers/strings, Option and numbers, so the compiler recommends a surface the development target does not define (tied to C3). Minor.",
+    "NEW compiler/ember_driver/src/main.rs (module_interface_inputs, the `declaration.symbol != body.symbol` -> `continue` branch) - a pub safe fn whose wrapper is chosen only by fixed(N), a fixed result or a borrowed by-address aggregate (no count witness) gets an interface record under the raw link name and `abi C` with no callable metadata. The branch treats it as an uninstantiated generic. Latent only, because the whole graph is rechecked today (the cross-module side of C6).",
+    "NEW compiler/ember_typeck/src/lib.rs:12033-12034 with 28993-29066 - besides fixed arrays, a safe fn with a borrowed by-address aggregate param (e.g. FFI-10's `safe fn transform_wide(value: ForeignWide)`) also gets a wrapper while keeping Signature.abi = C. `f = transform_wide` therefore hits the same codegen assert (ember_codegen_c lib.rs:497-498). Between b41d35d and 9821bbe it would have called the by-address wrapper through a by-value C function pointer. Folded into C6."
+   ]
+  }
+ },
+ {
+  "job": "E",
+  "result": {
+   "verdicts": [
+    {
+     "id": "E1",
+     "verdict": "confirmed",
+     "severity": "major",
+     "reason": "At HEAD (863b43d) compiler/ember_mir/src/lower.rs:3155 needs_check returns true for FloorDiv under every policy. Only Saturate has its own arm (lower.rs:2651-2659). Under Wrap the expression goes to lower_checked_binary (lower.rs:5159). For a signed type it emits CheckedBinaryOp and then an unconditional Assert with AssertKind::Overflow(FloorDiv) (lower.rs:5199-5228). Nothing in lower.rs or codegen checks for OverflowPolicy::Wrap: the only Wrap arms are in const_eval.rs:203-276, which folds MIN // -1 to MIN. The runtime helper already writes MIN on this overflow (ember_rt.h.in:756 ember_ck_floordiv_i128 sets *out = a, and the macro at line 318 does the same), so dropping the Assert under Wrap would give the right value. Spec: p04 TYP-28:108-109 says 'MIN // -1 overflows per [TYP-8] (panic by default, MIN under wrapping ...)', and ODR-084 (OWNER-QUEUE.md) says 'For the written operator MIN // -1, wrapping yields MIN' and requires compile-time/run-time parity. No test covers it: CT-4/accept_module_overflow_policy_at_const_eval.em computes DIV in a saturate-module constant, the TYP-8 saturate tests take the Saturate path, and no wrap test uses //. It is a spurious panic, not a silent wrong value, so major rather than critical.",
+     "repro_ember": "#$ test: run-pass\n#$ stdout: -128 -128\n#! module overflow(wrap)\n\nconst D: i8 = i8.MIN // -1i8\n\nfn q(a: i8, b: i8) -> i8:\n    return a // b\n\nfn main():\n    m: i8 = i8.MIN\n    n: i8 = -1\n    println(D, q(m, n))\n",
+     "repro_c": "",
+     "expected": "Prints `-128 -128` (wrapping gives MIN, the same at compile time and at run time).",
+     "actual": "The constant folds to -128, then q panics with `integer overflow in //` at run time (the same happens for `//=` and for i128)."
+    },
+    {
+     "id": "E2",
+     "verdict": "confirmed",
+     "severity": "major",
+     "reason": "Both sum paths build the accumulation as a plain HIR Binary Add in the caller, with no OverflowScope. The array/span path is at compiler/ember_typeck/src/lib.rs:19895-19904 (step = Stmt::Assign { Binary { op: BinOp::Add, lhs: acc, rhs: element } }). The generator path is synth_gather/gather_level at lib.rs:18145-18152. OverflowScope is built only at 19477 (integer methods), 19807 (abs), 32951 and 33456 (defaults), so MIR lowering uses the calling function's self.overflow for sum. Spec: p15 STD-5:230 says 'Integer sums panic on overflow ([TYP-8])'. TYP-8 (p04:97-98): the policies 'change the written operators, not the contracts of called functions'. ODR-084: 'Only written arithmetic operators take this lexical policy. Called functions ... retain their own contracts', and its guidance says 'Synthesized arithmetic implementing a fixed method must retain that method's policy.' sum is a called builtin and has no written operator, so under wrap or saturate it silently gives a wrong value. No test covers sum under a non-panic policy.",
+     "repro_ember": "#$ test: run-fail\n#$ stderr: integer overflow\n@overflow(wrap)\nfn total() -> i8:\n    return sum([100i8, 100i8])\n\nfn main():\n    println(total())\n",
+     "repro_c": "",
+     "expected": "Panics with an integer overflow in the sum (STD-5: integer sums panic, whatever the caller's policy).",
+     "actual": "Prints -56 (127 under @overflow(saturate)), with no signal. The generator form `sum(x for x in xs)` does the same."
+    },
+    {
+     "id": "E3",
+     "verdict": "confirmed",
+     "severity": "major",
+     "reason": "The spec tension is real. p04 TYP-21:477 still says 'Such a method is the operator: `3.add(4)` is `3 + 4`', and lists Pow among the integer interfaces. ODR-084 says 'Only written arithmetic operators take this lexical policy. Called functions and integer methods retain their own contracts', and that pow(e) is 'not a lexical macro'. STD-20:239 fixes pow as 'x ** e under the default panic policy'. In code, synth_number_operator_method (lib.rs:19161-19194) lowers x.add(y) to a plain Binary and x.neg() to 0 - x, with no OverflowScope, so they follow the caller's policy. pow and abs are wrapped in OverflowScope(Panic) (lib.rs:19477). The two methods TYP-21 calls 'the operator' therefore behave differently under the same caller policy. The ODR text leans toward add being fixed, since a method call is not a written operator, which would make the current lowering a violation. TYP-21's wording points the other way. Either the spec must say which, or the implementation is wrong. No test pins x.add(y) under any policy.",
+     "repro_ember": "@overflow(wrap)\nfn f(a: i8, b: i8) -> void:\n    println(a.add(b))\n    println(2i8.pow(7))\n\nfn main():\n    f(127i8, 1i8)\n",
+     "repro_c": "",
+     "expected": "Under ODR-084's 'only written operators' wording, a.add(b) keeps a fixed checked contract and panics, just as pow does. At minimum the spec should decide one way.",
+     "actual": "Prints -128 for a.add(b) (the caller's wrap policy), then panics on 2i8.pow(7) (fixed contract)."
+    },
+    {
+     "id": "E4",
+     "verdict": "partly",
+     "severity": "minor",
+     "reason": "The 'delegation by default' rule was not created by 41c75fe. git log -S shows 'Delegate implementation by default' first appears in 9821bbe, before the reviewed commits. 41c75fe only widened it by adding the Astra/Sol/Luna model routing to docs/AUTOPILOT.md \u00a73 and docs/AGENT-WORKFLOW.md. HEAD still carries the rule, which the uncommitted HANDOFF.md hunk says the owner never made. The working tree already holds the revert (git diff docs/AUTOPILOT.md replaces the paragraph with 'No subagents or workflows while unattended ... go solo'), and sessions on this checkout read the working tree. The exposure is therefore limited to a fresh clone of HEAD until the revert is committed. The remedy is to commit the pending revert, and the commit that introduced the rule is 9821bbe, not 41c75fe.",
+     "repro_ember": "",
+     "repro_c": "",
+     "expected": "",
+     "actual": ""
+    },
+    {
+     "id": "E5",
+     "verdict": "confirmed",
+     "severity": "minor",
+     "reason": "lib.rs:22289-22313 treats Neg applied directly to an Int literal as one negative literal when the operand is untyped or TyKind::Int (signed only; ember_types:2145-2150 signed_min_magnitude matches TyKind::Int only). So `-128i8` is accepted as i8.MIN after a magnitude check against signed_min_magnitude. Unsigned-suffixed `-1u8` falls through to policy-controlled negation (CT-4/accept_wrapped_typed_unsigned_negation.em expects 255 under wrap). Before 863b43d the LEX-24 folding (lib.rs@863b43d~1:21505-21518) applied only when an untyped literal adopted an expected type. p02 LEX-24:128 still covers only 'an untyped integer literal', and the spec has no range rule for suffixed literals at all. The suffixed-signed case is therefore an unspecified extension. DEFECTS.md D-371 mentions the -1u8 half, but no ODR records it. The new tests CT-4 and CT-7/accept_nested_minimum_integer_literals.em depend on it. Low impact.",
+     "repro_ember": "fn main():\n    x: i8 = -128i8\n    println(x)\n",
+     "repro_c": "",
+     "expected": "Unspecified. Read strictly, `-128i8` is `-(128i8)`, and 128i8 does not fit i8, so the program would be rejected; the spec should state the rule.",
+     "actual": "Accepted and prints -128, while `-1u8` is treated as policy-controlled negation (E6004 in a panic-policy const, 255 under wrap)."
+    },
+    {
+     "id": "E6",
+     "verdict": "partly",
+     "severity": "minor",
+     "reason": "The text is stale as the finding says: p12 SIMD-8:73-75 says 'unless the function is @overflow(wrap) or ... wrapping_add', and p10:179 says '@overflow(wrap) or wrapping_*'. But the gap is not new to H40. H39 TYP-8 (parts-h39/p04:86) already allowed `@overflow(wrap)` or `@overflow(saturate)` 'on a function or module', and parts-h39/p12-dod.md is byte-identical to parts/p12-dod.md. SIMD-8 also opens with 'follow the scalar rules', which already carries the lexical policy by reference. So this is an older wording gap that the H40 cut failed to tidy, not an inconsistency introduced by ODR-084.",
+     "repro_ember": "",
+     "repro_c": "",
+     "expected": "",
+     "actual": ""
+    },
+    {
+     "id": "E7",
+     "verdict": "refuted",
+     "severity": "none",
+     "reason": "AUTOPILOT.md:95-98 asks for an ADR only 'if the fix took a decision the spec does not force'. StorageDead for every plain local and the scope_end flag on Drop are internal mechanisms that DRP-7 requires (a destructor must not read an expired borrow); they choose no semantics. The reservation forwarding into default slots is forced by the spec. p05 FN-5:88 says defaults are evaluated 'after the other arguments are bound', which is inside the argument list. p07 BRW-3:55-61 and p18 BCK-5:117-119 say a mut argument's borrow is reserved 'when the argument list begins' and activated at the call, with reads allowed and a live borrow at activation rejected with E3021. That is exactly what FN-5/reject_default_borrow_live_at_mut_activation.em and accept_stored_mut_handle_default_writeback.em check. No decision beyond the spec was taken, so no ADR is required.",
+     "repro_ember": "",
+     "repro_c": "",
+     "expected": "",
+     "actual": ""
+    }
+   ],
+   "new_findings": [
+    "NEW compiler/ember_mir/src/lower.rs:3150-3162 plus 5159-5285: E2's root cause is wider than sum. Any synthesized HIR Binary built in the caller without an OverflowScope takes the caller's policy, for example the generic `T: Add` bound-operator path and the comprehension accumulator in lib.rs:18145-18152. Audit every Binary built in typeck for a missing OverflowScope, the step ADR-068 itself warns about.",
+    "NEW docs/AUTOPILOT.md:84 (history): the unauthorized 'delegation by default' rule entered in 9821bbe, not 41c75fe. The pending working-tree revert of AUTOPILOT.md, AGENT-WORKFLOW.md and HANDOFF.md is uncommitted, so HEAD still carries the rule."
+   ]
+  }
+ },
+ {
+  "job": "D",
+  "result": {
+   "verdicts": [
+    {
+     "id": "D1",
+     "verdict": "confirmed",
+     "severity": "critical",
+     "reason": "The path is reachable. The foreign-field write path only runs when foreign_static_field_assignment_root (compiler/ember_typeck/src/lib.rs:24873) finds the static, and it walks only ast::ExprKind::Field. For `table.values[0]` the outer node is IndexOrInstantiate, so it returns None. The STD-17 index_set probe (lib.rs:14323) does not fire for a fixed array, so the generic path at lib.rs:14368 runs. There, synth builds Index{Field{Builtin ForeignStaticRead}} (index synth at lib.rs:22051; the read comes from foreign_static_use at lib.rs:24833, which does not error for @ffi(immutable) and does not error inside unsafe). is_place (lib.rs:35335) accepts any ExprKind::Index whatever its base, and that has been so since d3138ab, so the 'not a place' E2140 never fires. reject_readonly_write_in_assignment only looks at @sync class fields. The is_mut and in_unsafe checks exist only in the two foreign-static branches (lib.rs:14117, 14200), which are skipped. In MIR, lower_index (ember_mir/src/lower.rs:5501) calls lower_place(Field{Builtin}); lower_place (lower.rs:6181, 6191) sends the Builtin to its `_` arm, which makes a temporary, so the store goes to the temp. Admission (typeck lib.rs:5127-5133) accepts a Struct whose fields are FFI-safe, and is_ffi_safe(Array) (ember_types/src/lib.rs:1707) recurses into the element, so a record with a `[i32; 2]` field is admitted. No FFI-10 test writes through an index. It is memory-safe (only a temporary is written), but the write is silently lost, and on the immutable static it bypasses E2140 and E5002.",
+     "repro_ember": "@derive(Copy)\nstruct Table:\n    values: [i32; 2]\n\nunsafe extern \"C\":\n    static mut table: Table\n    @ffi(immutable)\n    static frozen: Table\n    safe fn read_first() -> i32\n\nfn main():\n    unsafe:\n        table.values[0] = 99\n    println(read_first())\n    frozen.values[0] = 5\n    println(frozen.values[0])\n",
+     "repro_c": "#include <stdint.h>\ntypedef struct { int32_t values[2]; } Table;\nTable table = {{1, 2}};\nconst Table frozen = {{3, 4}};\nint32_t read_first(void) { return table.values[0]; }\n",
+     "expected": "`frozen.values[0] = 5` is rejected: E2140, 'a foreign static without `mut` cannot be assigned' (the same as the existing reject_write_to_immutable_nested_foreign_field.em). With that line removed, the program prints 99 (C's `table` was updated).",
+     "actual": "It compiles with no diagnostic and prints 1, then 3. Both writes go to MIR temporaries, and neither C global changes."
+    },
+    {
+     "id": "D2",
+     "verdict": "confirmed",
+     "severity": "major",
+     "reason": "For `safe fn pair_sum(pair: Pair)` with a non-Copy Pair: passed_by_address(Pair) is true (ember_types/src/lib.rs:1259), so foreign_counted_metadata sets borrowed_aggregate. The safe path then returns Some(FfiCounted) even with no contracts (typeck lib.rs about 12040-12060). As a result, the Function gets symbol = mangle(name,false) (lib.rs:11041), abi = None (lib.rs:11057), and is_extern_declaration = false (lib.rs:11076). The Signature keeps abi = Some(\"C\") because count_witnesses is empty (lib.rs:5297). fn_value_of (lib.rs:29001) rejects only unsafe fns, and its by_address check skips types already passed by address. So it yields FnValue(def) of type Fn{abi: Some(C)}. MIR lowers it to Const::Fn(wrapper symbol) (ember_mir/src/lower.rs:5390). collect_native_fn_values (ember_codegen_c/src/lib.rs:481-500) treats the wrapper as a native body because abi is None and it is not an extern declaration. It then reaches assert!(matches!(.., TyKind::Fn { abi: None, .. })), a release-mode assert, and the compiler panics. accept_foreign_record_function_values.em only calls such declarations directly; accept_safe_foreign_function_value.em uses a scalar `abs`. I did not verify the history claim about b41d35d..7e2f8d1. It does not change the HEAD verdict.",
+     "repro_ember": "struct Pair:\n    left: i32\n    right: i32\n\nunsafe extern \"C\":\n    safe fn pair_sum(pair: Pair) -> i32\n\nfn main():\n    callback: extern \"C\" fn(Pair) -> i32 = pair_sum\n    println(callback(Pair(left = 1, right = 2)))\n",
+     "repro_c": "#include <stdint.h>\ntypedef struct { int32_t left; int32_t right; } Pair;\nint32_t pair_sum(Pair p) { return p.left + p.right; }\n",
+     "expected": "Prints 3. Or, if taking the value is not supported, a clean Ember diagnostic.",
+     "actual": "The compiler panics in codegen: 'native function value must have a native function type' (ember_codegen_c/src/lib.rs:497)."
+    },
+    {
+     "id": "D3",
+     "verdict": "confirmed",
+     "severity": "major",
+     "reason": "emit_class_type_infos (ember_codegen_c/src/lib.rs:2360-2430) writes `extern const ember_type_info em_ti_<Class>;` and then the definition `const ember_type_info em_ti_<Class> = {`, with no `static` in any mode. Its doc comment chose external linkage on purpose, before library mode existed. The name comes from ember_branding::type_info(class name) (ember_branding/src/lib.rs:91), not c_named, so the package type_namespace (lib.rs:123, 2828) is never applied. library_mode switches linkage only for bodies and helpers (lib.rs:3437, 3451, 3597, 3686). The class access-words and itable arrays next to it are `static`. runtime_classes covers every non-generic user class, and std defines no classes, so a user class is needed. A root-module class keeps its bare name. compiler/ember_driver/tests/staticlib.rs contains no class. The failure is loud (a link error), not silent, so major is correct.",
+     "repro_ember": "# package a (kind = \"staticlib\"), src/lib.em\nclass Widget:\n    value: i32\n\n@export(\"a_make\")\nfn a_make() -> i32:\n    w = Widget(value = 1)\n    return w.value\n\n# package b (kind = \"staticlib\"), src/lib.em: the same text with b_make\n# C host: extern int32_t a_make(void), b_make(void); calls both after ember_rt_init.\n# Link a.lib + b.lib + the runtime archive.",
+     "repro_c": "#include <stdint.h>\n#include <stdio.h>\nint32_t a_make(void);\nint32_t b_make(void);\nint main(void) { printf(\"%d %d\\n\", a_make(), b_make()); return 0; }\n",
+     "expected": "The host links (private package symbols have internal linkage, ADR-067) and prints `1 1`.",
+     "actual": "The link fails with a duplicate definition of `em_ti_Widget` (LNK2005 or 'multiple definition')."
+    },
+    {
+     "id": "D4",
+     "verdict": "partly",
+     "severity": "minor",
+     "reason": "The facts hold. thread_properties has `TyKind::CStr => (false, false)` (ember_types/src/lib.rs:1314, added in f989c1b), while Str is (true, true). The static check (typeck lib.rs:5120) therefore rejects `static greeting: cstr`. fb34547's tests/conformance/STA-1/reject_local_static_without_sync.em pins E7002 for exactly that case, and no ODR, ADR or DECISIONS entry explains the choice. But the spec is silent, not contradictory. [THR-8] and [THR-9] (Hardened_40 about line 3180) never mention cstr either way. The non-Sync list (Cell, RefCell, UnsafeCell, raw pointers, Shared, non-@sync handles) and the treatment of `ref T`/`Span[T]` suggest cstr should be Send+Sync, but that is an inference. There is also a possible rationale the finding does not weigh: a `from(static)` nul_terminated result can point at C-owned static or thread-local storage (the strerror kind). So the defect is an unrecorded, conservative compiler choice pinned in a conformance test, which needs an owner ruling or ODR. It over-rejects and never makes an unsafe program compile, so it is minor, not a major spec violation.",
+     "repro_ember": "static GREETING: cstr = c\"hello\"\n\nfn main():\n    pass\n",
+     "repro_c": "",
+     "expected": "Undecided by the spec. If cstr follows `str`/`Span[u8]` ([THR-8]/[THR-9] by analogy), it compiles.",
+     "actual": "error[E7002]: static type `cstr` is not Sync"
+    },
+    {
+     "id": "D5",
+     "verdict": "confirmed",
+     "severity": "minor",
+     "reason": "git log for docs/AUTOPILOT.md and docs/AGENT-WORKFLOW.md shows the edits only in 7e2f8d1, 9821bbe and c14607f (plus 41c75fe), all feature commits. The diffs replace the 'unattended sessions work solo' and per-plan approval text with default delegation, drop the Fable-approval model rule, and add a new 'Current priority (owner, 2026-09-27)' block. Each is labelled 'Owner update, 2026-09-27' and none cites the instruction. AUTOPILOT.md itself has no rule requiring separate commits for rule changes, so this is a transparency and process issue, not a broken rule. Whether the owner authorised it cannot be checked from the repo.",
+     "repro_ember": "",
+     "repro_c": "",
+     "expected": "",
+     "actual": ""
+    },
+    {
+     "id": "D6",
+     "verdict": "confirmed",
+     "severity": "minor",
+     "reason": "compile_object (compiler/ember_build/src/lib.rs:435-466) passes msvc_flags(profile) unchanged except /Zi to /Z7, and msvc_flags(Shipping) is [\"/O2\",\"/GL\",\"/MD\"] (lib.rs:553). So a shipping staticlib built with cl.exe holds LTCG (/GL) objects. The code already knows those need special handling: runtime_object refuses to cache them (lib.rs:615-627). MSVC /GL objects are tied to the compiler version and cannot be read by lld-link or a different MSVC toolset. ADR-067 records the choice ('retaining ... LTO flags'), so it is a known design limit rather than an accident. clang-cl ignores /GL (lib.rs:144), so only real cl.exe builds are affected.",
+     "repro_ember": "",
+     "repro_c": "",
+     "expected": "A shipping .lib contains ordinary COFF objects that any compatible linker can link.",
+     "actual": "A shipping .lib from cl.exe contains /GL LTCG objects. lld-link or a different MSVC version refuses them or needs /LTCG."
+    },
+    {
+     "id": "D7",
+     "verdict": "confirmed",
+     "severity": "minor",
+     "reason": "The collision check (typeck lib.rs:275-293) iterates `functions` only, so runtime symbols (ember_rt_init and others in runtime/ember_rt/templates) and generated globals such as em_ti_* are never compared. The main check tests `main.is_some()`. The driver passes `program.main.is_some() && !staticlib` as has_main (ember_driver/src/main.rs:2262), so a staticlib emits no C `main`, yet `@export(\"main\")` is still rejected. The Ember main's own symbol is `em_main` (mangle, typeck lib.rs:36144), so there is no real clash. The spec ([MNG-2], [FFI-26]) does not require an Ember diagnostic for runtime-name clashes, so this is diagnostic quality plus one over-rejection.",
+     "repro_ember": "@export(\"ember_rt_init\")\nfn f() -> i32:\n    return 1\n\nfn main():\n    println(f())\n",
+     "repro_c": "",
+     "expected": "An Ember diagnostic (E0104) that the export collides with a runtime symbol.",
+     "actual": "Type checking passes; the C compiler or linker then fails with a raw 'conflicting types' or redefinition error for ember_rt_init. Separately, a staticlib package that has `fn main` and `@export(\"main\")` gets E0104 even though no C main is emitted."
+    },
+    {
+     "id": "D8",
+     "verdict": "confirmed",
+     "severity": "minor",
+     "reason": "tests/conformance/FFI-15 has only two CString rejection tests, reject_cstr_outlives_cstring_owner.em and reject_text_view_outlives_cstring_owner.em. Both escape by return. No test anywhere constructs `CString(` outside std (grep over tests and compiler/ember_driver/tests), and none moves or drops the owner while an `as_cstr()` view is live. The invariant rests on the private `bytes` field (std/src/ffi.em:13-14) and on view_of(receiver, cstr, ..., CStringAsCStr) (typeck lib.rs:27121). Both are general mechanisms that other tests probably exercise, which is why this is a test-coverage gap, not a bug.",
+     "repro_ember": "import std.ffi\n\nfn main():\n    value = \"hi\".to_cstring().unwrap()\n    c = value.as_cstr()\n    moved = value\n    println(c.to_str().unwrap())\n    raw = CString(String.from(\"x\"))\n",
+     "repro_c": "",
+     "expected": "Two compile errors: moving `value` while `c` borrows it (a borrow error), and E1052 for the private CString constructor. Worth adding as two conformance tests.",
+     "actual": "Not run (read-only). The mechanisms suggest both are rejected today; the gap is that no test pins it."
+    }
+   ],
+   "new_findings": [
+    "NEW compiler/ember_typeck/src/lib.rs:35337 - is_place accepts any ExprKind::Index whatever its base (unchanged since d3138ab). Any indexed write under a value-producing base, such as `make_table().values[0] = 5` with a struct returned by value holding a fixed array, passes the 'assignment target is not a place' check. MIR lower_place (ember_mir/src/lower.rs:6191) then writes a temporary, so the store is silently lost. D1 is one case of this wider root cause; the fix belongs in is_place (require is_place(base) for the Index arm, except Vec/Span handles whose storage is shared)."
+   ]
+  }
+ },
+ {
+  "job": "F",
+  "result": {
+   "verdicts": [
+    {
+     "id": "F1",
+     "verdict": "confirmed",
+     "severity": "critical",
+     "reason": "Still present at HEAD (borrows.rs shifted by one line, logic unchanged). For a loan-based access (region Some), the loop at borrows.rs:887-905 pushes end_event into inline[(block, statement_count)] when the terminal point is live and no successor is. borrows.rs:941-948 then appends those events after the block's last statement, and codegen emits every statement before the terminator (codegen lib.rs:3778-3781). So the EndAccess runs before the call. regions.rs:1907-1921 makes an argument's region live only at the call point, never at the successor's entry, so this is the normal case whenever the argument's last use is the call. The EXC-18 skip at borrows.rs:845-856 drops an access that starts at a statement-less `next` block outright. Point accesses on calls do span the call (they end on successor edges, borrows.rs:836-842), but a field view passed as `v` or a `_r = &mut b.items` argument temp is not a field place, so no point access covers it. The terminal-end code predates c0c7beb (it was written for Shared), but D-202's field protection depends on it. No test passes a field view or field `mut` argument to a user function as its last use. CLS-7/run_fail_plain_method_writes_a_viewed_field.em keeps the view live after the call.",
+     "repro_ember": "class Bag:\n    items: Array[int]\n\n    fn init(mut self):\n        self.items = [1, 2, 3]\n\n    fn replace(self):\n        self.items = [7]\n\nfn show(v: Span[int], other: Bag):\n    other.replace()\n    println(v[0])\n\nfn main():\n    b = Bag()\n    c = b\n    v = b.items.as_span()\n    show(v, c)\n",
+     "repro_c": "",
+     "expected": "The read access of `v` on Bag.items lasts for the whole call to `show`, so `self.items = [7]` inside `replace` panics: exclusivity violation: write access to Bag.items while a read access to Bag.items is active.",
+     "actual": "main's EndAccess for Bag.items runs just before `show` is called. `replace` finds the word at 0, frees the [1, 2, 3] buffer, and `println(v[0])` reads freed memory: it prints garbage or a stale 1, and ASan reports heap-use-after-free. The same happens with `grow(b.items, c)` where `fn grow(mut xs: Array[int], other: Bag): for x in other.items: xs.push(x)`: the iteration is not refused, and the push reallocates under the iterator."
+    },
+    {
+     "id": "F2",
+     "verdict": "confirmed",
+     "severity": "critical",
+     "reason": "At borrows.rs:806, `let Some(region) = regions.local_region(dest.local) else { continue };` skips every call whose dest has more than one view slot. regions.rs:402-408 returns None whenever slots.len() != 1, so any tuple or struct with two views is skipped. field_return_accesses (borrows.rs:357-369) still builds the callee's summary from its loans, but the caller never begins the access. In the callee, each field loan's access ends at the Return terminal, because start is Normal and not Transfer (borrows.rs:897-903). So after the call nothing holds the fields. receiver_by_address (typeck lib.rs:32543) treats a tuple of views as a view, so such a method is accepted. LT-22/accept_literal_arguments_to_a_multi_region_result.em shows multi-region results compile.",
+     "repro_ember": "class Person:\n    first: String\n    last: String\n\n    fn init(mut self):\n        self.first = \"ann\"\n        self.last = \"lee\"\n\n    fn names(self) -> (str, str):\n        return (self.first.as_str(), self.last.as_str())\n\n    fn rename(mut self):\n        self.first = \"bob\"\n\nfn main():\n    p = Person()\n    (a, b) = p.names()\n    q = p\n    q.rename()\n    println(a, b)\n",
+     "repro_c": "",
+     "expected": "`q.rename()` panics: exclusivity violation: write access to Person.first while a read access to Person.first is active.",
+     "actual": "No access is held after `names` returns. rename's object write succeeds and frees \"ann\", and `println(a, b)` reads freed memory (garbage, or ASan heap-use-after-free)."
+    },
+    {
+     "id": "F3",
+     "verdict": "confirmed",
+     "severity": "critical",
+     "reason": "typeck lib.rs:12732-12734 declares the receiver of any view-returning method as `ref C`, class receivers included since c0c7beb removed the Class/ClassInterface exclusion at lib.rs:32543. codegen c_type(Ref{T}) is `T*` (lib.rs:6466), so the implementation takes `struct Person_obj**`. The adapter's first arm, `ParameterMode::Borrow if class_handle => args.push(format!(\"({receiver_ty})_0\"))` (codegen lib.rs:2129-2131), wins before the by-address arm (2134-2138) and passes `struct Person_obj*`. Class-handle interface calls reach this adapter through the itable (lib.rs:2374-2386 points itable entries at interface_adapter_table), and so do dyn boxes. Lowering passes the method's own symbol and declared mode (lower.rs:1789, 5348). The build uses /W3 or -Wall -Wextra without -Werror (ember_build lib.rs:555,568), so the call compiles with C4047 or -Wincompatible-pointer-types. It is a hard error on GCC 14+, and a warning also breaks [CG-C-1] (codegen lib.rs:3768-3770). The callee then dereferences the header's strong/weak words as a pointer. No test calls a view-returning interface method implemented by a class.",
+     "repro_ember": "interface Named:\n    fn name(self) -> str\n\nclass Person implements Named:\n    label: String\n\n    fn init(mut self):\n        self.label = \"ann\"\n\n    fn name(self) -> str:\n        return self.label\n\nfn main():\n    p = Person()\n    n: Named = p\n    println(n.name())\n",
+     "repro_c": "",
+     "expected": "Prints: ann",
+     "actual": "The adapter calls the implementation with `(struct Person_obj*)_0` where it expects `struct Person_obj**`. The C compiler warns (MSVC C4047, clang -Wincompatible-pointer-types), and GCC 14 refuses the file. At run time `(*_1)->label` treats the header's `strong`/`weak` words as a pointer: an access violation or garbage. A `Box[dyn Named]` built from a Person fails the same way."
+    },
+    {
+     "id": "F4",
+     "verdict": "confirmed",
+     "severity": "critical",
+     "reason": "At borrows.rs:408-418, the Virtual/Interface arm returns `Vec::new()` unless the receiver is Class, ClassInterface or `ref` to one. A dyn-box receiver is Dyn or `ref` Dyn, so it gets nothing. The adapter takes only an object write, and only for `mut self` (codegen lib.rs:2155), never a read for a view result. The static checker ties `n` to `boxed` only, so a write through another handle to the same object passes both checks. Today this is masked by F3, which crashes the same call first. Once F3 is fixed it is a use-after-free in Safe code.",
+     "repro_ember": "interface Named:\n    fn name(self) -> str\n\nclass Person implements Named:\n    label: String\n\n    fn init(mut self):\n        self.label = \"ann\"\n\n    fn name(self) -> str:\n        return self.label\n\n    fn rename(mut self):\n        self.label = \"bob\"\n\nfn main():\n    p = Person()\n    alias = p\n    boxed: Box[dyn Named] = Box(alias)\n    n = boxed.name()\n    p.rename()\n    println(n)\n",
+     "repro_c": "",
+     "expected": "`p.rename()` panics: exclusivity violation: write access to Person.label while a read access to Person.label is active.",
+     "actual": "Today it crashes in the adapter (F3). With F3 fixed, no access is held for `n`: rename frees \"ann\" and `println(n)` reads freed memory."
+    },
+    {
+     "id": "F5",
+     "verdict": "confirmed",
+     "severity": "critical",
+     "reason": "ODR-072 is checked only when the assignment target is literally `self` (typeck lib.rs:14274-14285); class_handle_self (lib.rs:26096) has no other caller. [CLS-7] (p05:239-240) says `self` is the object the method was called on for the whole call. In a `mut self` body, `self` is in mut_param_locals (lower.rs:325-330), so handle_in_shared_memory(*self) is false (lower.rs:6134-6138). Passing `self` to a `mut` handle parameter therefore gives the callee `&mut (*self)`, which is the caller's own handle slot (lower.rs:541-543). The callee's `c = to` re-points main's `a`. After that, every `(*self).f` access is exempt as covered (borrows.rs:1059-1062), so the method writes another object with no check. The caller's EndAccess re-reads `a` (lower.rs:1916-1918) and ends on the wrong object. `mem.swap(self, x)` works the same way.",
+     "repro_ember": "class Bag:\n    items: Array[int]\n\n    fn init(mut self):\n        self.items = [1, 2, 3]\n\n    fn clobber(mut self, other: Bag, v: Span[int]):\n        repoint(self, other)\n        self.items = [9]\n        println(v[0])\n\nfn repoint(mut c: Bag, to: Bag):\n    c = to\n\nfn main():\n    a = Bag()\n    b = Bag()\n    v = b.items.as_span()\n    a.clobber(b, v)\n",
+     "repro_c": "",
+     "expected": "Rejected at compile time: `self` cannot be re-pointed in a class method, here through a `mut` parameter ([CLS-7], ODR-072). At the very least, `self.items = [9]` must not write b's object unchecked.",
+     "actual": "It compiles. `repoint` makes main's `a` (the slot `self` points at) name b's object. `self.items = [9]` is treated as covered, is not checked, and frees the buffer `v` views. `println(v[0])` then reads freed memory. On return, main's object_end_write runs on `a`, which is now b's object, and panics with a misleading \"overlapping access to Bag.items\"."
+    },
+    {
+     "id": "F6",
+     "verdict": "confirmed",
+     "severity": "major",
+     "reason": "field_accesses (borrows.rs:995-999) pushes point_access(place, write) and then point_access(read, read) for each rvalue place, at the same created_at. The insertion loop (borrows.rs:828-837, 931-937) emits both Begins in push order before the statement: the write first, then the read, which then sees WRITER. For a type without drop glue, lower_assign calls lower_into directly (lower.rs:945-947). lower_into lowers `b.data[1]` as `Use(Copy(place))` (lower.rs:2765-2768, 5450-5455), so the result is one Assign that reads and writes Buf.data. Nothing merges or dedups these accesses. The spec table (p08:103-117) gives a field store's write the duration of the store and the drop, and gives the element read its own call-length access, so the two never overlap. No test has this shape outside a `mut self` body, and since 1b9d90b plain methods are affected too.",
+     "repro_ember": "class Buf:\n    data: Array[int]\n\n    fn init(mut self):\n        self.data = [1, 2, 3]\n\nfn main():\n    b = Buf()\n    b.data[0] = b.data[1]\n    println(b.data)\n",
+     "repro_c": "",
+     "expected": "Prints: [2, 2, 3]",
+     "actual": "Panics: exclusivity violation: read access to Buf.data while a write access to Buf.data is active."
+    },
+    {
+     "id": "F7",
+     "verdict": "confirmed",
+     "severity": "major",
+     "reason": "The loan-based access for `_r = &mut b.items` begins at the Ref statement and lasts for `_r`'s whole region (borrows.rs:980-993). Builtin arguments are lowered in order (lower.rs:2599-2634): argument 0 (the `ref mut` receiver) through lower_operand_borrowed first, then argument 1 (`len(b.items)`). So the read of Bag.items for `len` begins while the write word is already WRITER. The static checker accepts this through two-phase reservation (reservation_window). The spec table (p08:108) says a method call on a field is a write for \"the call\", not for argument evaluation. The existing uses of this pattern are all inside `mut self` methods, where the field is covered.",
+     "repro_ember": "class Bag:\n    items: Array[int]\n\n    fn init(mut self):\n        self.items = [1, 2, 3]\n\nfn main():\n    b = Bag()\n    b.items.push(len(b.items))\n    println(b.items)\n",
+     "repro_c": "",
+     "expected": "Prints: [1, 2, 3, 3]",
+     "actual": "Panics: exclusivity violation: read access to Bag.items while a write access to Bag.items is active."
+    },
+    {
+     "id": "F8",
+     "verdict": "confirmed",
+     "severity": "major",
+     "reason": "call_result_accesses (borrows.rs:387-405) maps the summary onto the call's arguments through resolve_ref_temps and never applies field_boundaries' `self_covered` rule. Inside a `mut self` method, `self.get_name()` passes `_t = &(*self)`, which resolves to `(*self).name`, and that field read begins at (next, 0) (borrows.rs:804-817) while the outer caller holds WRITER on every word. For a `mut self` callee that returns a view, lowering pushes the caller's EndAccess{object} as the first original statement of `next` (lower.rs:1915-1918). The EXC-18 Begin is an inline event at (next, 0), and inline events go before original statement 0 (borrows.rs:930-937), so the field begin runs while the object write is still held. No test calls a getter inside a `mut self` method, and none calls a class `mut self` method that returns a view. Note: a bare `println(self.get_name())` can fall into the 845-856 skip, so the repro keeps `n` live across a call.",
+     "repro_ember": "class Person:\n    name: String\n    items: Array[int]\n\n    fn init(mut self):\n        self.name = \"ann\"\n        self.items = [1, 2, 3]\n\n    fn get_name(self) -> str:\n        return self.name\n\n    fn greet(mut self):\n        n = self.get_name()\n        println(n)\n        println(n)\n\n    fn items_view(mut self) -> Span[int]:\n        return self.items.as_span()\n\nfn main():\n    p = Person()\n    p.greet()\n    v = p.items_view()\n    println(v)\n    println(v)\n",
+     "repro_c": "",
+     "expected": "Prints ann, ann, [1, 2, 3], [1, 2, 3].",
+     "actual": "Panics inside greet: exclusivity violation: read access to Person.name while a write access to Person.name is active. With greet removed, `p.items_view()` panics right after it returns: read access to Person.items while a write access to Person.items is active."
+    },
+    {
+     "id": "F9",
+     "verdict": "confirmed",
+     "severity": "major",
+     "reason": "For any Class or ClassInterface receiver of a view-returning virtual or interface call, borrows.rs:408-419 emits an object read and never checks is_sync. codegen access_call turns a class-typed place into `ember_object_begin_read` (lib.rs:3921-3922). That function calls object_require_plain_access first (ember_rt.c.in:1021-1022), which panics on a Sync object (927-933). class_field_has_access_word exempts @sync classes (types lib.rs:1051-1054), but this path does not. @sync classes may hold Array or String fields (THR-1/reject_mutating_collection_field.em only rejects the later write) and may be open. No test combines @sync with a virtual or interface getter. The repro keeps `n` live so the 845-856 skip does not hide the panic.",
+     "repro_ember": "@sync\nopen class Config:\n    name: String\n\n    fn init(mut self):\n        self.name = \"x\"\n\n    virtual fn label(self) -> str:\n        return self.name\n\nfn main():\n    c = Config()\n    n = c.label()\n    println(n)\n    println(n)\n",
+     "repro_c": "",
+     "expected": "Prints x twice.",
+     "actual": "Panics: plain exclusivity access on Sync object."
+    },
+    {
+     "id": "F10",
+     "verdict": "confirmed",
+     "severity": "major",
+     "reason": "The development spec p04-types.md:39-41 ([TYP-27]) now says \"a tuple type has two or more elements (ODR-071)\". The same spec defines one-element tuples: p03-grammar.md:123 `tuple_type := \"(\" \")\" | \"(\" type \",\" ...` accepts `(T,)`, p03:248 `tuple_lit` accepts `(e,)`, and [GRM-38] (p03:301-302) says \"`(e,)` a tuple\". A conformance test relies on one-element tuples: TYP-39/accept_collections_print_as_python_shows_them.em:29 prints `(7,)`. The question in ODR-071 (OWNER-QUEUE:888-891) was only what the type `()` means, so the extra clause was not needed and contradicts normative text. It is a spec defect with no runtime effect today, and the fix is deleting one clause.",
+     "repro_ember": "",
+     "repro_c": "",
+     "expected": "",
+     "actual": ""
+    },
+    {
+     "id": "F11",
+     "verdict": "refuted",
+     "severity": "none",
+     "reason": "A closure cannot name `self`. A lambda body is checked with fresh scopes (typeck check_lambda_body, lib.rs:28327-28331), and its environment parameter is named `env` (lib.rs:28276, 28349). `ast::ExprKind::SelfExpr` is resolved by plain `self.lookup(\"self\")` with no resolve_capture fallback (lib.rs:21652-21660), so `fn() => len(self.items)` is E1010 \"`self` outside a method\" and never reaches the runtime. Going through an alias (`me = self`, then capturing `me`) makes the access through another handle to an object under a `mut self` write, and the spec pins that as a panic: EXC-2/run_fail_a_read_while_a_mut_self_call_writes.em. So there is no false positive to report.",
+     "repro_ember": "",
+     "repro_c": "",
+     "expected": "",
+     "actual": ""
+    },
+    {
+     "id": "F12",
+     "verdict": "partly",
+     "severity": "minor",
+     "reason": "The row is not implemented: callable fields have no word (copy_with makes every TyKind::Fn Copy, types lib.rs:1507), and field_accesses never looks at the callee operand (borrows.rs:1008-1015). The spec wants it, though: [CLO-3] (p06:190-194) makes a `fn` field an owned callable value, which the Copy list (p04:349) leaves out, and [CLO-2] (p06:176-179) calls it under a write access. The failure scenario as written does not compile, however: a capturing lambda's type is its environment struct (typeck lib.rs:28225-28238, 28310), and only capture-free functions or lambdas become `fn` values (lib.rs:28097-28101), which are bare code pointers. Replacing one mid-call frees nothing, so this is a missing panic, not memory unsafety.",
+     "repro_ember": "class Button:\n    on_click: fn(Button) -> void\n\n    fn init(mut self):\n        self.on_click = first\n\n    fn swap(self):\n        self.on_click = second\n\nfn first(b: Button):\n    b.swap()\n    println(\"first ran to the end\")\n\nfn second(b: Button):\n    println(\"second\")\n\nfn main():\n    b = Button()\n    c = b\n    b.on_click(c)\n",
+     "repro_c": "",
+     "expected": "Per [CLO-2] and the [EXC-19] table, `self.on_click = second` is a write to a non-Copy field while the call `b.on_click(c)` holds a write access, so it panics: exclusivity violation: write access to Button.on_click while a write access to Button.on_click is active.",
+     "actual": "No access is taken. It prints \"first ran to the end\" and exits normally; nothing is freed."
+    },
+    {
+     "id": "F13",
+     "verdict": "confirmed",
+     "severity": "minor",
+     "reason": "codegen lib.rs:2156-2168: `let nowhere = format!(\"({}loc){{ NULL, 0, 0 }}\", RT);` is passed to both ember_object_begin_write and ember_object_end_write in the dyn adapter. [EXC-6] (p08:161-164) requires the panic to name the offending access's file, line, column and field. The existing run-fail test checks only the message text.",
+     "repro_ember": "interface Log:\n    fn add(mut self, x: int)\n\nclass Record implements Log:\n    items: Array[int]\n\n    fn init(mut self):\n        self.items = [0]\n\n    fn add(mut self, x: int):\n        self.items.push(x)\n\nclass Holder:\n    log: Log\n\nfn main():\n    record = Record()\n    holder = Holder(record)\n    view = record.items[..1]\n    holder.log.add(1)\n    println(view)\n",
+     "repro_c": "",
+     "expected": "The panic names the location of `holder.log.add(1)` (file:line:column) as well as Record.items.",
+     "actual": "The panic message has no file, line or column for the offending access."
+    },
+    {
+     "id": "F14",
+     "verdict": "confirmed",
+     "severity": "minor",
+     "reason": "codegen lib.rs:2936-2938 emits `uint32_t _access_<field>` next to each non-Copy field and then the raw `field.name` (access_word_member, lib.rs:7028-7030). Identifiers may start with `_` (ember_lexer lib.rs:1002-1003). A user field named `_access_items` therefore duplicates the word's member.",
+     "repro_ember": "class Bag:\n    items: Array[int]\n    _access_items: int\n\n    fn init(mut self):\n        self.items = []\n        self._access_items = 0\n\nfn main():\n    b = Bag()\n    println(b._access_items)\n",
+     "repro_c": "",
+     "expected": "Prints: 0",
+     "actual": "The C compile fails: duplicate member `_access_items` in struct Bag_obj."
+    },
+    {
+     "id": "F15",
+     "verdict": "confirmed",
+     "severity": "minor",
+     "reason": "c0c7beb rewrote all five EXC-8 tests from `holder.child.bump()` to `counter.bump()` and dropped the Holder class; they were not kept alongside. Only tests/run-pass/class_field_mut_method.em and class_field_inherited_mut_method.em call a `mut self` method on a field-held receiver, and neither does it in a loop. After c0c7beb such a receiver's BeginAccess is on the retained copy (lower.rs:532-545). loop_access.rs:143-155 matches setup_references on root = that copy, and mut_self_call_on_root returns None for it, because the copy's Assign is not a StorageLive or Ref (loop_access.rs:268-283). So the shape is no longer hoisted and no test pins it either way. Whether the kept branch is fully dead was not proved, since nothing was run.",
+     "repro_ember": "",
+     "repro_c": "",
+     "expected": "",
+     "actual": ""
+    },
+    {
+     "id": "F16",
+     "verdict": "confirmed",
+     "severity": "minor",
+     "reason": "At codegen lib.rs:7000-7006 the doc comment of c_size starts with \"/// D-182 \u2014 the `index`th out-of-line drop-glue function.\", which belongs to drop_glue_symbol. drop_glue_symbol at lib.rs:7032 has no doc comment.",
+     "repro_ember": "",
+     "repro_c": "",
+     "expected": "",
+     "actual": ""
+    },
+    {
+     "id": "F17",
+     "verdict": "confirmed",
+     "severity": "minor",
+     "reason": "less_behind_pointers (codegen lib.rs:754-756) compares every `TyKind::Vec { .. }` with str_cmp over vec_as_str and ignores the `text` flag, which goes against ADR-061. It is latent: the typeck bound check gives Ord only to sortable types, i.e. numbers or text (lib.rs:18984-18986, 19594-19601, 24604), so no non-text Array reaches ArrayHelper::Less today.",
+     "repro_ember": "",
+     "repro_c": "",
+     "expected": "",
+     "actual": ""
+    }
+   ],
+   "new_findings": [
+    "NEW compiler/ember_analysis/src/borrows.rs:897-904 \u2014 F1's end-before-the-terminator logic predates c0c7beb. It also applies to Shared.get()/get_mut() references whose last use is a call argument: the payload access ends before the callee runs. So `f(s.get(), t)`, where `f` does `t.get_mut()` on a clone of the same Shared and replaces the value, should panic but frees what the reference points to. No Shared test passes get() to a user function as its last use. Not run.",
+    "NEW compiler/ember_mir/src/lower.rs:1916-1918 (part of F5) \u2014 the caller's EndAccess for a `mut self` call re-reads the receiver place after the call rather than using the object it began on. So once the handle is re-pointed (through a `mut` parameter, as in F5), object_end_write runs on a different object and panics with a misleading \"overlapping access\" message, or would clear another object's words."
+   ]
+  }
+ },
+ {
+  "job": "A",
+  "result": {
+   "verdicts": [
+    {
+     "id": "A1",
+     "verdict": "confirmed",
+     "severity": "critical",
+     "reason": "Every step holds at HEAD. (1) coerce() (typeck lib.rs:21057-21068) turns a `[u8; N]` place into a Span through view_of (lib.rs:29156), which makes `Ref{place: h.buf}`: a pointer into the object, not a copy. (2) SpanToStr codegen (codegen_c lib.rs:5138-5141) is `(ember_str){ source.ptr, source.len }`, the same memory. (3) class_field_has_access_word (ember_types lib.rs:1051-1054) is false for a Copy field, so field_boundaries (borrows.rs:1053-1063) opens no access for the loan, and nothing checks at run time. (4) class_instantaneous_field (typeck lib.rs:26345-26358) accepts `alias.buf = [...]` for a Copy field through any handle local, and reject_readonly_write_inner (lib.rs:26274-26279) lets it pass. The static checker keys loans by local, so `alias` does not conflict with a loan rooted at `h`. That is exactly what [EXC-17] promises (spec line 2517: a view of a Copy field, fixed arrays included, 'observes writes made through other handles'). (5) [TXT-1] (line 3889) lets Safe code rely on valid UTF-8, and [TXT-5] (line 3899) requires Span[u8]->str to be zero-copy, so the spec itself conflicts. (6) The runtime relies on the invariant: ember_str_char_at (ember_rt.c.in:1557-1570) reads p[1..3] according to the lead byte with no bounds check, and check_for_text (typeck lib.rs:16886) drives it on every `for c in s`. No test covers a Copy class field as a to_str source; the TXT-2 tests use local Arrays only. The spec conflict needs an ODR from the owner (for example: reject to_str on a view that can observe unchecked writes, or make it copy).",
+     "repro_ember": "class Holder:\n    buf: [u8; 2]\n\nfn text(b: Span[u8]) -> str:\n    return b.to_str().unwrap()\n\nfn main():\n    h = Holder([195, 169])      # \"\u00e9\", valid UTF-8\n    alias = h\n    t = text(h.buf)             # zero-copy str over h.buf; Copy field, no access word\n    alias.buf = [65, 240]       # instantaneous Copy write, never checked ([EXC-17])\n    println(t.as_bytes())       # the str now holds [65, 240]: invalid UTF-8\n    for c in t:                 # 0xF0 decodes as a 4-byte lead: reads 3 bytes past the 2-byte view\n        println(c)\n",
+     "repro_c": "",
+     "expected": "No Safe program can hold a `str` whose bytes are not valid UTF-8 ([TXT-1]). Either the program is rejected at compile time (to_str on a view of a Copy class field), or the conversion copies, or the write is checked. The ODR decides which.",
+     "actual": "The program compiles and runs. It prints [65, 240], showing a str with invalid UTF-8. The loop then decodes 0xF0 as a 4-byte lead and reads 3 bytes past the view's end (C undefined behaviour), printing a garbage char with no panic and no diagnostic."
+    },
+    {
+     "id": "A2",
+     "verdict": "confirmed",
+     "severity": "major",
+     "reason": "lower.rs:253-270 opens class_access only for a `mut self` receiver, and Body.mut_self = class_access.is_some() (lower.rs:394), so a plain method's body has mut_self == false. field_boundaries (borrows.rs:1059-1063) skips self's fields only when body.mut_self holds, so inside a plain method `self.items[...]` or `self.items = ...` emits ember_field_begin_read/write (ember_rt.h.in:1223-1236). The caller of a mut self method runs BeginAccess(mutable) (lower.rs:1894), which calls ember_object_begin_write and sets every field word to EMBER_ACCESS_WRITER (ember_rt.c.in:990-1004). That begin is not elided: access.rs only elides when the root is never used, and here the `ref mut b` receiver temp uses it. A plain call on self from inside the mut self method goes through lower_operand_borrowed and opens nothing; unless_reborrow applies only to mut arguments. So the callee's field begin meets WRITER and panics. [EXC-15] (spec line 2553: accesses to self's fields inside a mut self method 'are covered by it and not checked individually') and [EXC-5] both point to no panic. No test has a mut self method calling a plain method on self when the class has a non-Copy field (EXC-5/accept_a_mut_self_call_on_self_is_a_reborrow.em calls only mut self methods). Reads panicked before D-362. D-362 makes writes (a plain `reset`) reach the same panic. This is a spurious panic, not unsafety, so major.",
+     "repro_ember": "class Bag:\n    items: Array[int]\n\n    fn init(mut self):\n        self.items = [1]\n\n    fn first(self) -> int:\n        return self.items[0]\n\n    fn reset(self):\n        self.items = []\n\n    fn refill(mut self):\n        if self.first() == 1:\n            self.reset()\n        println(len(self.items))\n\nfn main():\n    b = Bag()\n    b.refill()\n",
+     "repro_c": "",
+     "expected": "Prints 0. The plain calls run inside the mut self method's own write access to every field ([EXC-15], [EXC-5]).",
+     "actual": "Predicted panic in `first`: 'exclusivity violation: read access to Bag.items while a write access to Bag.items is active' (with the read removed, the write in `reset` panics the same way)."
+    },
+    {
+     "id": "A3",
+     "verdict": "confirmed",
+     "severity": "minor",
+     "reason": "`git show 1b9d90b -- docs/HANDOFF.md` removes 'Continue solo by lifting the \"mutable class-field access requires a `mut self` class method in this phase\" restriction (`E1010`)' from the Next task line. The branch is still at typeck lib.rs:26274-26285. For a non-Copy field it fires whenever the write is not rooted in the method's receiver: class_instantaneous_field (lib.rs:26347) requires is_copy. tests/compile-fail/class_noncopy_field_write.em (`holder.values = replacement` in main) and class_mut_method_nested_class_write.em still expect it. The spec's access table (line ~2491: 'assigning a field of a non-Copy type (h.items = [], h.name = other) | write') and [CLS-7] make such a write a checked access, not an error. A grep of HANDOFF, DEFECTS and OWNER-QUEUE at HEAD finds nothing that tracks the remaining restriction. It is a real implementation gap that a session reading the docs cannot see. The fault is in the documentation, so minor.",
+     "repro_ember": "class Holder:\n    values: Array[i32]\n\nfn main():\n    h = Holder([1])\n    h.values = [2]\n    println(h.values)\n",
+     "repro_c": "",
+     "expected": "Prints [2]. A non-Copy field store through a handle is a checked write access ([EXC-16], [CLS-7]).",
+     "actual": "E1010 'mutable class-field access requires a `mut self` class method in this phase'. No HANDOFF or DEFECTS entry records it any more."
+    },
+    {
+     "id": "A4",
+     "verdict": "confirmed",
+     "severity": "minor",
+     "reason": "The three D-362 tests (CLS-7/accept_plain_class_method_writes_its_field.em, accept_plain_class_method_writes_copy_field.em and run_fail_plain_method_writes_a_viewed_field.em) cover a whole-field assignment, push, and a Copy-field assignment only. class_method_field_index (typeck lib.rs:13184-13197) now has both a Local arm (by-value receiver) and a Deref arm (by-address receiver, from receiver_by_address at lib.rs:32538). Only the Local arm is exercised for a plain method. Element stores (`self.items[0] = 9`, Index over Field), compound assignment and a view-returning plain method that writes a field are untested. The generic field_accesses pass (borrows.rs:961) makes a regression unlikely, so the gap is small.",
+     "repro_ember": "class Bag:\n    items: Array[int]\n\n    fn init(mut self):\n        self.items = [1, 2]\n\n    fn poke(self):\n        self.items[0] = 9\n        self.items[1] += 1\n\n    fn view_after_write(self) -> Span[int]:\n        self.items = [5, 6]\n        return self.items[..1]\n\nfn main():\n    b = Bag()\n    b.poke()\n    println(b.items)\n    println(b.view_after_write())\n",
+     "repro_c": "",
+     "expected": "Prints [9, 3] then [5]. A suggested regression test, not a known failure.",
+     "actual": "Not known to fail. There is simply no test."
+    },
+    {
+     "id": "A5",
+     "verdict": "partly",
+     "severity": "minor",
+     "reason": "The facts are right. clone_part_lines (codegen_c lib.rs:662-678) sends any type in clone_fns to `dest = symbol(arg)`, a by-value return, and the pointer-taking clone-parts helpers exist only for Tuple and Enum (lib.rs:672, 721). GRM-39/accept_deep_option_equality.em tests a 256-level Option only. But the DEFECTS entry for D-360 scopes its claim to Tuple, Option and Result clones, so it does not overstate the fix. Result and tuples use the same helper path as Option. The failure the finding suggests (a deep derived-Clone struct overflowing the C stack) is unmeasured. A plain wrapper struct does not even grow per level; only one that adds a field at each level does, and the resulting O(n^2) stack is borderline at 256 levels. [GRM-39]/ODR-070's 'never a crash' is about the compiler ending without a diagnostic, not about the compiled program's stack. What remains is a possible uncovered case, not a demonstrated defect.",
+     "repro_ember": "",
+     "repro_c": "",
+     "expected": "",
+     "actual": ""
+    },
+    {
+     "id": "A6",
+     "verdict": "confirmed",
+     "severity": "minor",
+     "reason": "std/src/string.em:13-15 declares `pub enum Utf8Error: Invalid`. The spec names Utf8Error (the std.string table at line 3851, [TXT-2] at line 3892) but gives no shape. Nothing in the docs besides MIGRATION-0.9.9.md:947-948 mentions it, and no ADR records the choice. The sibling ParseError shape has its own ruling (ODR-029), which shows such shapes are normally recorded. TXT-2/accept_validating_bytes_as_text.em tests C0 AF, E2 82, ED A0 80 and F4 90 80 80, but not an E0 overlong (E0 80 80), an F0 overlong (F0 80 80 80) or an F5+ lead. The validator itself (ember_rt.c.in:1576-1610) handles all three correctly, so nothing fails today. The problem is the missing ADR and test coverage.",
+     "repro_ember": "fn main():\n    e0: Array[u8] = [224, 128, 128]\n    f0: Array[u8] = [240, 128, 128, 128]\n    f5: Array[u8] = [245, 128, 128, 128]\n    println(e0.as_span().to_str(), f0.as_span().to_str(), f5.as_span().to_str())\n",
+     "repro_c": "",
+     "expected": "Err(Utf8Error.Invalid) Err(Utf8Error.Invalid) Err(Utf8Error.Invalid). A suggested test, not a known failure.",
+     "actual": "Expected to match today. There is no test to catch a regression, and no ADR records the error's shape."
+    }
+   ],
+   "new_findings": []
+  }
+ }
+]

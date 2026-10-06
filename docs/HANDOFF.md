@@ -10705,6 +10705,29 @@ formal 1/9 count or Phase 2's estimate.
 
 #### Start here after a context reset — state at 2026-10-04 (autopilot)
 
+**2026-10-06 (evening), the project's files in the project.** The owner: "why is ember project so
+big remove the unnecessary fluff", then "WHY WE ARE PLACING PROJECT RELATED STUFF OUTSIDE OF THE
+PROJECT", "don't build anything just move things and remove unnecessary fluff". `target/` (15.7 GB:
+7 GB of test programs in `target/debug/bin`, Cargo caches, about 90 old probe folders) was
+deleted, so the compiler is not built; the benchmark set (50 programs, 50 C/C++ twins, the
+runners, the chart script, the README run's logs) moved from a session scratch folder into
+`bench/`; two review records the docs cite moved to `docs/reviews/`; `/build/` is git-ignored and
+is where benchmark and probe builds go; the scratch folder, four stale git worktrees and the WSL
+copies (13 GB of builds, then every leftover) were deleted. `tools/error_pages.py` and
+`tools/spec_check.py` were not run after this, as they need the compiler built: run them at the
+next build. **To ask the owner** (the owner: "note down the rest of the things and ask me later"):
+(1) the tests build every program into `target/debug/bin` and never delete them (7 GB came back
+each full run): build into a folder deleted afterwards? (2) the linked-program cache
+(`%LOCALAPPDATA%\ember\cache\programs`, ADR-136) keeps every program it ever linked: a size limit,
+oldest first? (3) the clang-built twins of the `p` and `t` sets lack Ember's `-ffp-contract=off
+-fno-fast-math` (`bench/run_windows.py`'s `FP_FLAG_SETS`), while the README says the same flags:
+their work is integers and text, so no number changes, but make it one rule? (4) the review
+workflow for places that treat `T` and `T.Name` differently (above). (5) MSVC `a16_map_text` is
+still 1.14x C++, not analysed further. (6) four old patch files (`ab_*`, WSL `ember`/`ab-final`
+edits) kept in the session scratch folder: delete them? (7) fast-forward `main` to this commit
+once CI is green? (8) for the owner to run, to give the 13 GB freed in WSL back to Windows (its
+disk file stays 27.7 GB until then): `wsl --shutdown`, then `wsl --manage Ubuntu --set-sparse true`.
+
 **2026-10-06 (afternoon), the slow rows** (the owner: "start looking into the slow downs and also
 see if anything can be done about the ones in the greater than 10% slow category ... commit push
 and merge into main also please update the benchmarks too"; the thermal rules were suspended until
@@ -10739,8 +10762,8 @@ same refused `h.get().area()` through `type Thing: Named` with `interface Named:
 percentages unchanged (no rule newly met). Checked: quick check 0 failing, MSVC suite 390 passed,
 gates 0 failed; the new tests on MSVC, clang and (frame buffers, D-529) gcc in WSL, where the
 main thread and a second thread used the buffer and a static buffer was refused. **Benchmarks**
-(one fresh run 2026-10-06, Windows on the performance cores, mains; logs `readme_sb_win.log`,
-`wsl/readme_sb_gcc_final.log` in the session scratchpad): nothing slower than the Hardened_2 run
+(one fresh run 2026-10-06, Windows on the performance cores, mains; logs
+`bench/results/2026-10-06-windows.log` and `-gcc.log`): nothing slower than the Hardened_2 run
 (gcc `p5_million_objects` 1.09x, `p6_million_objects_6_lists` 1.05x and `a00_empty` were flagged
 and timed again alone with 21 runs: 0.171 s and 0.237 s, as before); faster: `p1_read_loop` MSVC
 0.65x, clang 0.55x of the old time, `a16_map_text` MSVC 0.78x, clang 0.73x. README: 43 as fast as
@@ -11045,7 +11068,8 @@ anything needs a review just note it down and ask me about a workflow later".
   branch, which CI already runs (free: the repository is public), and fast-forward `main` when
   green, so the local clang and WSL suites can go; and pinning test runs to the 16 efficiency
   cores (benchmarks keep the performance cores).
-* **Tools for this work** (session scratchpad, see the 2026-10-02 bullet below for the rest):
+* **Tools for this work** (deleted on 2026-10-06 with the session scratch folder; the benchmark
+  set itself is in `bench/`):
   `ab_variants.py <experiment> <cc> <runs> <log> <programs>` builds every program with several
   compiler trees and times them interleaved; `wsl/ab_gcc.py` does it for gcc in WSL (`~/ab-old`,
   `~/ab-final`).
@@ -12586,36 +12610,19 @@ README timing values and benchmark assets are unchanged.
     and `e2cbba3` (ADR-107, D-474 to D-476, ADR-108, the README) are pushed
     and CI is green on both; `5a5a678`'s run took 3 hours (D-474),
     `e2cbba3`'s 48 minutes.
-  * **Where the benchmark tools are.** Not in the repository: in the
-    session scratchpad
-    `C:\Users\ism19\AppData\Local\Temp\claude\C--Users-ism19-Code\ae3a2898-3f0f-4361-99e2-9bbbb0976123\scratchpad`
-    (a new session gets a new scratchpad; copy these from the old one).
-    * Windows, MSVC then clang, held to the performance cores, refused on
-      battery: `python pin_bench.py <log> 11 bench/compare_c.py
-      audit/compare.py a13v3/compare.py wrap/compare.py chain/compare.py
-      text/compare.py`; one program: `python pin_one.py <harness> <cc> <runs>
-      <name part>`.
-    * gcc under WSL: `wsl/sync_and_check.sh` copies the Windows tree's
-      changed files into `~/ember`, builds and runs the conformance suite
-      with gcc; `wsl/stage.sh 11` runs the 50 programs (`wsl/bench/`).
-    * The README: `python readme_adr103.py <gcc log> <windows log>` writes the
-      three charts (`readme_svg_gcc.py`: bold under x0.95) and the counts
-      sentence; the legend already has the bold-green line.
-    * Checks: `gates.sh` (every repository gate); `emit_all.sh <dir>` writes
-      every benchmark program's C for the three compilers, to show a change
-      leaves them byte for byte the same; `ab_old_new.py <cc> <runs>
-      <programs>` times an old compiler's build against the current one's,
-      interleaved. `power_guard.py` must be on `PYTHONPATH` when a script runs
-      from the repository folder.
+  * **Where the benchmark tools are:** in the repository, `bench/` (since 2026-10-06, the owner:
+    "WHY WE ARE PLACING PROJECT RELATED STUFF OUTSIDE OF THE PROJECT"): the 50 programs, their
+    C/C++ twins, the Windows and gcc runners, the README chart script and the latest logs;
+    `bench/README.md` says how to run them. Before that they lived in a session scratch folder,
+    since cleared, with the A/B and probe scripts this handoff names elsewhere.
   * **The owner's rules from 2026-10-02 (also in AUTOPILOT §4 and memory).**
     Benchmarks run once, after every change is in; a run that finds a defect
     means a new run after its fix. No timing of any kind on battery, compile
     speed included. The runners check the power only between harnesses, so
     each run's window is checked against the System log's Kernel-Power event
     105 (power source change). A README value under x0.95 is bold green.
-  * **The WSL clone** `~/ember` sits at `f02ee12` with every later file copied
-    over by `sync_and_check.sh`: before the next sync, stash its leftovers
-    and fast-forward it to `origin/main`.
+  * **The WSL clone** `~/ember` and the other WSL copies were deleted on 2026-10-06: CI runs
+    gcc, and a benchmark run makes its own Linux copy (`bench/gcc/make_tree.sh`) and deletes it.
   * **Open threads, none started:** for gcc, `static inline` only on the
     functions small with their callees counted (ADR-108; would recover
     `a04_map_int` and `a14_map_gap_1024` if `a05_structs` keeps its gain);
@@ -12757,7 +12764,7 @@ README timing values and benchmark assets are unchanged.
   form; what the language defines for NaN and infinity holds in both modes
   (clang and gcc get `-funsafe-math-optimizations`, never the finite-only
   assumption, which makes a NaN argument undefined behaviour). Reviewed
-  before commit by an approved workflow (17 findings; `build/review-typ9/`),
+  before commit by an approved workflow (17 findings; `docs/reviews/typ9/`),
   which also found D-393 (class field defaults saw the caller's locals;
   fixed). Not built: a static library with a relaxed function (`E0900`,
   NOT-IMPLEMENTED N6; needs package-private external names, FFI work the
@@ -12874,7 +12881,8 @@ README timing values and benchmark assets are unchanged.
   ADR-070, D-375, deviation D7).** The owner said "do all fixes check them and
   report the final result". Each fix passed the quick check, the workspace
   suite (305 tests) and the gates, and was measured against hand-written C/C++.
-  * **Benchmark set.** It lives in the session scratchpad: `bench/`, the p-set
+  * **Benchmark set.** It lived in the session scratchpad (in the repository's `bench/` since
+    2026-10-06): `bench/`, the p-set
     with `cref/` twins, and `audit/`, a00–a12 with `.c`/`.cpp` twins. The
     harnesses are `compare_c.py` and `compare.py`, and they use Ember's own C
     flags.
