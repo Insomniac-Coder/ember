@@ -17,26 +17,26 @@
 <text x="1066" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember</text>
 <text x="1140" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember ÷ C</text>
 <line x1="0" y1="57" x2="1164" y2="57" stroke="#30363d"/>
-<text x="16" y="83" fill="#e6edf3" xml:space="preserve">Calls through an interface: area of 1 million shapes, 20 times</text>
-<text x="500" y="83.0" fill="#9198a1" text-anchor="end">97 ms</text>
-<text x="574" y="83.0" fill="#e6edf3" text-anchor="end">99 ms</text>
-<text x="648" y="83.0" fill="#3fb950" text-anchor="end" font-weight="400">×1.02</text>
-<text x="746" y="83.0" fill="#9198a1" text-anchor="end">94 ms</text>
-<text x="820" y="83.0" fill="#e6edf3" text-anchor="end">95 ms</text>
-<text x="894" y="83.0" fill="#3fb950" text-anchor="end" font-weight="400">×1.01</text>
-<text x="992" y="83.0" fill="#9198a1" text-anchor="end">64 ms</text>
-<text x="1066" y="83.0" fill="#e6edf3" text-anchor="end">68 ms</text>
-<text x="1140" y="83.0" fill="#d29922" text-anchor="end" font-weight="400">×1.06</text>
-<rect x="0" y="98" width="1164" height="60" fill="#151b23"/>
-<text x="16" y="123" fill="#e6edf3" xml:space="preserve">Every third number of a list, after skipping some, at most 300,000 of</text>
-<text x="16" y="143" fill="#e6edf3" xml:space="preserve">them (<tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">skip</tspan>, <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">step_by</tspan>, <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">take</tspan>), 300 times</text>
-<text x="500" y="133.0" fill="#9198a1" text-anchor="end">48 ms</text>
-<text x="574" y="133.0" fill="#e6edf3" text-anchor="end">53 ms</text>
-<text x="648" y="133.0" fill="#d29922" text-anchor="end" font-weight="400">×1.10</text>
-<text x="746" y="133.0" fill="#9198a1" text-anchor="end">47 ms</text>
-<text x="820" y="133.0" fill="#e6edf3" text-anchor="end">51 ms</text>
-<text x="894" y="133.0" fill="#d29922" text-anchor="end" font-weight="400">×1.07</text>
-<text x="992" y="133.0" fill="#9198a1" text-anchor="end">47 ms</text>
-<text x="1066" y="133.0" fill="#e6edf3" text-anchor="end">48 ms</text>
-<text x="1140" y="133.0" fill="#3fb950" text-anchor="end" font-weight="400">×1.02</text>
+<text x="16" y="83" fill="#e6edf3" xml:space="preserve">Split a 3 MB text at its commas, counting the parts and their lengths,</text>
+<text x="16" y="103" fill="#e6edf3" xml:space="preserve">200 times: <tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">text.split(&quot;,&quot;)</tspan></text>
+<text x="500" y="93.0" fill="#9198a1" text-anchor="end">55 ms</text>
+<text x="574" y="93.0" fill="#e6edf3" text-anchor="end">58 ms</text>
+<text x="648" y="93.0" fill="#d29922" text-anchor="end" font-weight="400">×1.05</text>
+<text x="746" y="93.0" fill="#9198a1" text-anchor="end">59 ms</text>
+<text x="820" y="93.0" fill="#e6edf3" text-anchor="end">56 ms</text>
+<text x="894" y="93.0" fill="#3fb950" text-anchor="end" font-weight="700">×0.94</text>
+<text x="992" y="93.0" fill="#9198a1" text-anchor="end">46 ms</text>
+<text x="1066" y="93.0" fill="#e6edf3" text-anchor="end">44 ms</text>
+<text x="1140" y="93.0" fill="#3fb950" text-anchor="end" font-weight="400">×0.96</text>
+<rect x="0" y="118" width="1164" height="40" fill="#151b23"/>
+<text x="16" y="143" fill="#e6edf3" xml:space="preserve">Calls through an interface: area of 1 million shapes, 20 times</text>
+<text x="500" y="143.0" fill="#9198a1" text-anchor="end">94 ms</text>
+<text x="574" y="143.0" fill="#e6edf3" text-anchor="end">95 ms</text>
+<text x="648" y="143.0" fill="#3fb950" text-anchor="end" font-weight="400">×1.01</text>
+<text x="746" y="143.0" fill="#9198a1" text-anchor="end">94 ms</text>
+<text x="820" y="143.0" fill="#e6edf3" text-anchor="end">97 ms</text>
+<text x="894" y="143.0" fill="#3fb950" text-anchor="end" font-weight="400">×1.03</text>
+<text x="992" y="143.0" fill="#9198a1" text-anchor="end">65 ms</text>
+<text x="1066" y="143.0" fill="#e6edf3" text-anchor="end">69 ms</text>
+<text x="1140" y="143.0" fill="#d29922" text-anchor="end" font-weight="400">×1.06</text>
 </svg>

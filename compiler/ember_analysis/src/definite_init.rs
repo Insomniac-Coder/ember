@@ -527,6 +527,7 @@ mod tests {
             uncounted_handles: Vec::new(),
             removed_checks: Vec::new(),
             restrict_views: false,
+            stack_buffers: Vec::new(),
         }
     }
 

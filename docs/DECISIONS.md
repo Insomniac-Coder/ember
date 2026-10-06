@@ -5016,6 +5016,86 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-142 — a list in a field holds what the program stores in it; a running total counts every inner turn (D-530)
+
+2026-10-06. The owner asked to look into the benchmarks more than 10% slower than C, and on the
+read-loop benchmark (`p1_read_loop`: MSVC 1.44x, clang 1.77x): "the concept sounds promising ...
+try the other concept too", then "I hope for the class values that cannot be determined the fix
+doesn't cause any slow downs". The benchmark sums `b.items[i]`, where `items` is a list in a class
+field holding `i % 7`; C adds without a check and vectorises, Ember kept the checked `+`.
+
+**1. Field element ranges** (`range_facts.rs`, `field_element_ranges`). The program is compiled
+whole, so a field's lists change only through the stores of the functions in it. For each struct
+or class field that holds a list of integers, every way into its lists is gathered across all
+bodies: a `push` or `insert` through `m = &mut x.items`, an element written by index (plainly or by
+a checked operation), and a whole list given to the field (`x.items = xs` or a struct built with
+it), whose elements are `xs`'s where the function follows `xs` (an `Array()` nothing is pushed
+onto adds nothing). Anything else makes the field unknown for good: the list lent mutably to
+anything but an in-place built-in (a user function, `mem.swap`, an iterator), read or copied whole,
+an element lent mutably, a part of its header written, or given a list that is not a whole local
+(a call's result, a literal). Each store's value comes from its function's own range facts; a
+field's range is the hull of its stores, recomputed with the last round's ranges until it stops
+narrowing (at most three rounds; each round's facts assumed only sound ranges, so each is sound).
+An element read of the field (`x.items[i]`, through any path ending in the field) then has that
+range. A field that cannot be settled keeps its type's range: its reads, and the code made from
+them, are exactly as before; the work is all in the compiler.
+* The soundness tests write a value near `i32`'s top into a field in each way the facts must see,
+  and sum a fixed count of its elements (a count the facts can bound, so the element range alone
+  decides the check): from another function, through a `mut` list parameter (the unknown path:
+  without it the sum wraps to `-2147483626`), by index elsewhere, by replacing the whole list, and
+  in a struct reached through a list of structs. `RNG-4/run_fail_a_list_in_a_field_*` (five),
+  `RNG-4/accept_a_list_in_a_field_holds_what_the_program_stored` (no `ember_ck_` left).
+
+**2. A running total in an inner loop counts every inner turn** (D-530). Extending the bound for
+the benchmark's nested loops showed the old bound unsound: the outer loop's running total took the
+inner loop's `+` as running once per outer turn, so a check after the inner loop could go, and
+`total * 1000` wrapped instead of panicking. `runs_per_turn` now counts the chain's runs in one
+turn of the loop: once outside any inner loop; inside an inner counted loop, its trip count (from
+its counter's start and limit on entry, which nothing in it may change) times the runs inside it,
+for each time a turn enters it; no bound through any other cycle (a `while`). The seeds are made
+again from the seeded facts until no new one appears, so an inner loop starts from its outer
+loop's bound: the benchmark's `total` is at most 300,000 x 1,000 x 6, which an `int` holds.
+
+**Measured** (the performance cores, mains, 9 runs interleaved): `p1_read_loop` MSVC 0.033 s ->
+0.023 s (C 0.023 s), clang 0.029 s -> 0.017 s (C 0.016 s); the same loop over a list in a local
+(element ranges already followed) MSVC 0.034 -> 0.022 s, clang 0.029 -> 0.016 s.
+
+## ADR-141 — a short list or string a function keeps to itself starts in its frame
+
+2026-10-06. The map-of-text benchmark (`a16_map_text`, MSVC 1.35x C++) allocated and freed the
+`f"key{i}"` text of every lookup, which C++'s short-string buffer does not. The owner, offered a
+small-block allocator, a key on the stack or short text in `String`: "will 2 make other things
+faster too?", then "Will stack based allocation work for dynamic arrays?" and "Yes". The
+small-block allocator was measured first and rejected (a16 0.93x, but the million objects 1.08x
+slower).
+
+A local `Array[T]` or `String` gets a 64-byte buffer in its function's frame (`stack_lists.rs`,
+last of the C passes; `uint64_t _sbN[8]`) when every definition of it is `Array()` / `String()` /
+an f-string's start, every other use is a shared borrow, an element read, write or borrow, a drop
+with no flag, `len`, or `m = &mut list` where `m` is set once and is only ever the list an
+in-place built-in changes (a push, an insert, a reserve, a removal, a reorder, or a format of a
+built-in value, never a user type's, whose formatting runs user code); `T` needs no drop and is 1
+to 64 bytes with alignment at most 8; and no call can come back to the function while it runs (on
+a cycle of direct calls, or reaching a call through a value, a vtable, an interface or into foreign
+code), so a recursion's stack is as it was. At most four lists a function; `capacity()` keeps a
+list out, as the capacity would show the buffer.
+
+The list starts as `{buffer, 0, 64 / size}` (`ember_stack_vec`). It grows only through the
+runtime's reallocation, which tells a frame buffer from a heap block by the current thread's stack
+range: the buffer is copied out and never freed or given to `realloc`. Windows x64 reads the range
+from the thread's TEB on each growth (`gs:0x08`, `gs:0x10`), so a fiber's stack is followed; Linux
+looks this thread's range up once (`pthread_getattr_np`) and uses no buffer outside it (a
+coroutine's own stack), the list then starting empty as before; elsewhere no buffer is used. The
+drop frees only a heap block (`if (_N.ptr != _sbN)`).
+* `run-pass/short_lists_start_in_the_frame` (lookup keys, a string and lists that outgrow the
+  buffer part-way, one that does so on some turns of a loop only, a 3-byte element, a format past
+  64 bytes) and `run-pass/a_list_that_leaves_or_recurses_gets_no_frame_buffer` (returned, moved
+  into a field, recursive: no `stack_vec` in the C). On Linux (WSL, gcc) the main thread and a
+  second thread used the buffer and moved out of it, and a static buffer was refused.
+
+**Measured:** `a16_map_text` MSVC 0.122 s -> 0.100 s, clang 0.096 s -> 0.074 s, the hand-written
+prototype's numbers.
+
 ## ADR-140 — the owner's rulings on three of the audit's decisions, and whole numbers that convert (0.9.10_Hardened_2)
 
 2026-10-06. Asked to explain the audit's findings one by one (ADR-139), the owner judged three of the

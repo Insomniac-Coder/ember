@@ -1279,7 +1279,7 @@ impl TypeTable {
 
     /// Whether a value of this type holds a `Cell` or `UnsafeCell` in its
     /// own storage.
-    fn holds_a_cell(&self, ty: Ty) -> bool {
+    pub fn holds_a_cell(&self, ty: Ty) -> bool {
         match self.kind(ty) {
             TyKind::Struct(id) => {
                 let def = self.struct_def(*id);

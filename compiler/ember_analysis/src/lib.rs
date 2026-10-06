@@ -26,6 +26,7 @@ pub mod progress_reduction;
 pub mod long_access_lint;
 pub mod range_facts;
 pub mod regions;
+pub mod stack_lists;
 pub mod stores;
 pub mod strength_reduce;
 pub mod uncounted_handles;
@@ -50,6 +51,7 @@ pub use progress_reduction::{
     ProgressReductionCertificates, verify_progress_reductions_all,
     version_progress_reductions_all,
 };
+pub use stack_lists::give_stack_buffers_all;
 pub use strength_reduce::reduce_induction_values_all;
 pub use uncounted_handles::mark_uncounted_handles_all;
 pub use temporary_owners::transfer_temporary_owners_all;

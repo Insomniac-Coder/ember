@@ -31,6 +31,14 @@
 #define EMBER_MSVC_OVERFLOW 1
 #endif
 
+/* A 16-byte-aligned member: C11's `_Alignas`, or C++'s `alignas` when a C++
+ * host includes this header through an export header. */
+#if defined(__cplusplus)
+#define EMBER_ALIGNED16 alignas(16)
+#else
+#define EMBER_ALIGNED16 _Alignas(16)
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -730,8 +738,8 @@ EMBER_CHECKED_OPS(u128, ember_u128)
 typedef struct __declspec(align(16)) ember_u128 { uint64_t lo; uint64_t hi; } ember_u128;
 typedef struct __declspec(align(16)) ember_i128 { uint64_t lo; uint64_t hi; } ember_i128;
 #else
-typedef struct ember_u128 { _Alignas(16) uint64_t lo; uint64_t hi; } ember_u128;
-typedef struct ember_i128 { _Alignas(16) uint64_t lo; uint64_t hi; } ember_i128;
+typedef struct ember_u128 { EMBER_ALIGNED16 uint64_t lo; uint64_t hi; } ember_u128;
+typedef struct ember_i128 { EMBER_ALIGNED16 uint64_t lo; uint64_t hi; } ember_i128;
 #endif
 
 static inline ember_u128 ember_u128_make(uint64_t hi, uint64_t lo) {
@@ -979,7 +987,7 @@ EMBER_INLINED bool ember_ck_floorrem_i128(ember_i128 a, ember_i128 b, ember_i128
 #if defined(_MSC_VER)
 typedef struct __declspec(align(16)) ember_i256 { uint64_t w[4]; } ember_i256;
 #else
-typedef struct ember_i256 { _Alignas(16) uint64_t w[4]; } ember_i256;
+typedef struct ember_i256 { EMBER_ALIGNED16 uint64_t w[4]; } ember_i256;
 #endif
 
 static inline ember_i256 ember_i256_words(uint64_t w3, uint64_t w2, uint64_t w1, uint64_t w0) {
@@ -1068,7 +1076,7 @@ EMBER_INLINED bool ember_ck_sub_i256(ember_i256 a, ember_i256 b, ember_i256* out
 #if defined(_MSC_VER)
 typedef struct __declspec(align(16)) ember_u256 { uint64_t w[4]; } ember_u256;
 #else
-typedef struct ember_u256 { _Alignas(16) uint64_t w[4]; } ember_u256;
+typedef struct ember_u256 { EMBER_ALIGNED16 uint64_t w[4]; } ember_u256;
 #endif
 
 static inline ember_u256 ember_u256_words(uint64_t w3, uint64_t w2, uint64_t w1, uint64_t w0) {
@@ -1484,6 +1492,37 @@ typedef struct ember_vec {
 } ember_vec;
 
 #define ember_vec_empty() ((ember_vec){ NULL, 0, 0 })
+
+/* ADR-141 — a list the compiler proves its function makes, fills and drops
+ * itself starts in a buffer of the function's frame, `cap` elements long,
+ * and moves to the heap only when it outgrows it: the growth path
+ * (ember_realloc) tells such a buffer from a heap block by the current
+ * thread's stack range, copying out of it and never freeing it. Windows x64
+ * reads that range from the thread's TEB at each growth, so a fiber's stack
+ * is followed. Linux looks this thread's range up once, and a buffer outside
+ * it (a coroutine's stack) is not used: the list starts empty, as before.
+ * Elsewhere no buffer is used. */
+#if defined(_WIN64) && (defined(_M_X64) || defined(__x86_64__))
+#define ember_stack_vec(buffer, cap) ((ember_vec){ (void*)(buffer), 0, (cap) })
+#elif defined(__linux__)
+#if defined(__cplusplus)
+extern thread_local uintptr_t ember_stack_low, ember_stack_high;
+#else
+extern _Thread_local uintptr_t ember_stack_low, ember_stack_high;
+#endif
+void ember_stack_find(void);
+static inline ember_vec ember_stack_vec(void* buffer, size_t cap) {
+    if (ember_stack_high == 0) ember_stack_find();
+    ember_vec v = { NULL, 0, 0 };
+    if ((uintptr_t)buffer - ember_stack_low < ember_stack_high - ember_stack_low) {
+        v.ptr = buffer;
+        v.cap = cap;
+    }
+    return v;
+}
+#else
+#define ember_stack_vec(buffer, cap) ember_vec_empty()
+#endif
 
 /* Make room for at least `want` elements. Growth doubles, so appending in a
  * loop stays linear ([ALC-1]). */

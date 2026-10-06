@@ -1001,10 +1001,53 @@ void* ember_box_new_copy(size_t size, size_t align, const void* value) {
     return boxed;
 }
 
+/* ADR-141 — whether `p` is in the current thread's stack: a list's frame
+ * buffer (ember_stack_vec), which growth copies out of and never frees. A
+ * heap block is never there. */
+#if defined(_WIN64) && (defined(_M_X64) || defined(__x86_64__))
+#include <intrin.h>
+static bool on_stack(const void* p) {
+    /* NT_TIB: StackBase at gs:0x08, StackLimit (its lowest committed byte,
+     * below every live frame) at gs:0x10. */
+    uintptr_t at = (uintptr_t)p;
+    return at >= (uintptr_t)__readgsqword(0x10) && at < (uintptr_t)__readgsqword(0x08);
+}
+#elif defined(__linux__)
+#include <pthread.h>
+/* Declared here: -std=c11 hides the POSIX and GNU declarations. */
+int pthread_getattr_np(pthread_t thread, pthread_attr_t* attr);
+int pthread_attr_getstack(const pthread_attr_t* attr, void** low, size_t* size);
+EMBER_RT_THREAD_LOCAL uintptr_t ember_stack_low;
+EMBER_RT_THREAD_LOCAL uintptr_t ember_stack_high;
+void ember_stack_find(void) {
+    pthread_attr_t attr;
+    void* low = NULL;
+    size_t size = 0;
+    if (pthread_getattr_np(pthread_self(), &attr) == 0) {
+        if (pthread_attr_getstack(&attr, &low, &size) != 0) {
+            low = NULL;
+        }
+        pthread_attr_destroy(&attr);
+    }
+    /* Not found: the range [0, 1), which holds no buffer. */
+    ember_stack_low = low != NULL && size != 0 ? (uintptr_t)low : 0;
+    ember_stack_high = low != NULL && size != 0 ? (uintptr_t)low + size : 1;
+}
+static bool on_stack(const void* p) {
+    return (uintptr_t)p - ember_stack_low < ember_stack_high - ember_stack_low;
+}
+#else
+static bool on_stack(const void* p) {
+    (void)p;
+    return false;
+}
+#endif
+
 void* ember_realloc(void* p, size_t old_size, size_t new_size, size_t align) {
+    bool frame = p != NULL && on_stack(p);
     /* The default allocator's plain blocks grow in place when they can; the
      * counts move as the allocate-copy-free below would move them. */
-    if (p != NULL && g_config.alloc == NULL && g_config.free == NULL && align <= EMBER_MALLOC_ALIGN) {
+    if (p != NULL && !frame && g_config.alloc == NULL && g_config.free == NULL && align <= EMBER_MALLOC_ALIGN) {
         void* grown = realloc(p, new_size == 0 ? 1 : new_size);
         if (grown == NULL) {
             ember_loc loc = { "<allocator>", 0, 0 };
@@ -1020,7 +1063,9 @@ void* ember_realloc(void* p, size_t old_size, size_t new_size, size_t align) {
     if (p != NULL) {
         size_t copy = old_size < new_size ? old_size : new_size;
         memcpy(fresh, p, copy);
-        ember_free(p, old_size, align);
+        if (!frame) {
+            ember_free(p, old_size, align);
+        }
     }
     return fresh;
 }
@@ -1870,7 +1915,8 @@ void ember_vec_reserve(ember_vec* v, size_t elem_size, size_t want) {
 /* `ember_realloc` that reports failure as NULL, the old block untouched: the
  * default allocator's plain blocks still grow in place when they can. */
 static void* try_realloc(void* p, size_t old_size, size_t new_size, size_t align) {
-    if (p != NULL && g_config.alloc == NULL && g_config.free == NULL && align <= EMBER_MALLOC_ALIGN) {
+    bool frame = p != NULL && on_stack(p);
+    if (p != NULL && !frame && g_config.alloc == NULL && g_config.free == NULL && align <= EMBER_MALLOC_ALIGN) {
         void* grown = realloc(p, new_size == 0 ? 1 : new_size);
         if (grown == NULL) {
             return NULL;
@@ -1887,7 +1933,9 @@ static void* try_realloc(void* p, size_t old_size, size_t new_size, size_t align
     }
     if (p != NULL) {
         memcpy(fresh, p, old_size < new_size ? old_size : new_size);
-        ember_free(p, old_size, align);
+        if (!frame) {
+            ember_free(p, old_size, align);
+        }
     }
     return fresh;
 }

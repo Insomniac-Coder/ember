@@ -620,6 +620,7 @@ mod tests {
             uncounted_handles: Vec::new(),
             removed_checks: Vec::new(),
             restrict_views: false,
+            stack_buffers: Vec::new(),
         }
     }
 
@@ -1861,6 +1862,7 @@ mod view_invariant_tests {
             uncounted_handles: Vec::new(),
             removed_checks: Vec::new(),
             restrict_views: false,
+            stack_buffers: Vec::new(),
         };
         (body, types)
     }
@@ -2028,6 +2030,7 @@ mod interface_upcast_invariant_tests {
             uncounted_handles: Vec::new(),
             removed_checks: Vec::new(),
             restrict_views: false,
+            stack_buffers: Vec::new(),
         };
         (body, types)
     }

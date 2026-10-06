@@ -4307,6 +4307,11 @@ impl Emitter<'_> {
                 self.line(&format!("    {elem}* _{local}_ptr;"));
             }
         }
+        // ADR-141 — a list's buffer in the frame: 64 bytes, aligned for any
+        // element it may hold.
+        for buffer in &body.stack_buffers {
+            self.line(&format!("    uint64_t _sb{}[8];", buffer.local.0));
+        }
         if body.locals.iter().any(|d| d.kind != LocalKind::Arg && !self.is_void(d.ty)) {
             self.line("");
         }
@@ -4806,6 +4811,11 @@ impl Emitter<'_> {
                 self.drop_lines(&self.place_in(place, body), ty, &mut lines);
                 if lines.is_empty() {
                     return;
+                }
+                // ADR-141 — a list still in its frame buffer frees nothing.
+                if place.projection.is_empty() && body.stack_buffers.iter().any(|buffer| buffer.local == place.local) {
+                    let local = place.local.0;
+                    lines = vec![format!("if (_{local}.ptr != (void*)_sb{local}) {{ {} }}", lines.join(" "))];
                 }
                 self.emit_line_directive(stmt.span);
                 // `[OWN-3]` — a value moved on some paths and not others is
@@ -5319,6 +5329,17 @@ impl Emitter<'_> {
                 self.line(&format!("    {dest_text} = *(({elem}*)({target}));"));
                 self.line(&format!("    *(({elem}*)({target})) = {value};"));
                 self.set_view_pointer(dest);
+                self.emit_next(next.0 as usize, index);
+            }
+            Terminator::Call {
+                func: FuncRef::Builtin { which: Builtin::ArrayNew | Builtin::StringNew, .. },
+                dest,
+                next,
+                ..
+            } if dest.projection.is_empty() && body.stack_buffers.iter().any(|buffer| buffer.local == dest.local) => {
+                let buffer = body.stack_buffers.iter().find(|buffer| buffer.local == dest.local).unwrap();
+                let local = dest.local.0;
+                self.line(&format!("    _{local} = {RT}stack_vec(_sb{local}, {}u);", buffer.capacity));
                 self.emit_next(next.0 as usize, index);
             }
             Terminator::Call {
@@ -9587,6 +9608,7 @@ mod string_descriptor_view_parts_tests {
             uncounted_handles: Vec::new(),
             removed_checks: Vec::new(),
             restrict_views: false,
+            stack_buffers: Vec::new(),
         }
     }
 

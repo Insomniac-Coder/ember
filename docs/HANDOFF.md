@@ -10705,6 +10705,47 @@ formal 1/9 count or Phase 2's estimate.
 
 #### Start here after a context reset — state at 2026-10-04 (autopilot)
 
+**2026-10-06 (afternoon), the slow rows** (the owner: "start looking into the slow downs and also
+see if anything can be done about the ones in the greater than 10% slow category ... commit push
+and merge into main also please update the benchmarks too"; the thermal rules were suspended until
+this push only, then the owner asked for the laptop to be hibernated). **c19dc27's CI failed** on
+Linux gcc only: `_Alignas(16)` in `ember_rt.h` is not C++ and an export header includes it (D-531,
+fixed with `EMBER_ALIGNED16`); `main` was therefore not moved to c19dc27, and this commit carries
+the fix. Per slow row (the owner's choices in brackets): **`a16_map_text`** (one allocation per
+lookup key) — ADR-141, a short list or string a function keeps to itself starts in a 64-byte
+buffer of its frame [the owner: a small-block allocator was offered, measured and rejected (the
+million objects 1.08x slower); "Will stack based allocation work for dynamic arrays?" "Yes"]: MSVC
+1.35x -> 1.14x C++, clang 1.03x -> 0.84x. **`p1_read_loop`** (a checked sum over a list in a class
+field) — ADR-142, a field's lists hold what the whole program stores in them [the owner: "the
+concept sounds promising", "I hope for the class values that cannot be determined the fix doesn't
+cause any slow downs": a field that cannot be settled keeps its code exactly as before]: MSVC 1.44x
+-> 0.96x, clang 1.77x -> 1.01x, at C's speed. **`p5_million_objects`** — left as it is (the owner:
+"let it be it's just 12% overhead": the object header). **`a10_recursion`** (clang 1.73x: the
+required checked `+` stops clang regrouping fib) and **`t3_lines`** (MSVC: two checked adds per
+line and loop placement, ADR-125) are required checks, not fixable without removing safety.
+Building ADR-142 found two older defects: **D-530 (unsound)**, the running-total bound counted an
+inner loop's `+` once per outer turn, so `y = total * 1000` after an inner loop wrapped instead of
+panicking (now `runs_per_turn` counts inner trip counts; the seeds are remade from seeded facts),
+and **D-529**, the view hoisting moved an inner `for c in s.chars()`'s position out of the outer
+loop so it ran once (now a loan of a local's own storage keeps its value in the loop; a loan of
+what a list or view points to does not, so the particles benchmark keeps its seven views). Four
+OPT-2/SIMD-7 tests whose lists the facts now know lend them to a function so they still test what
+they were written for; their original shapes are now RNG-4 accept tests with no `ember_ck_` left.
+**D-532 (open, next):** a generic function cannot iterate `it.enumerate(start=s)`. Spec unchanged
+(`[RNG-4]` already allows what is proved; D-529/D-530 were implementation defects); README phase
+percentages unchanged (no rule newly met). Checked: quick check 0 failing, MSVC suite 390 passed,
+gates 0 failed; the new tests on MSVC, clang and (frame buffers, D-529) gcc in WSL, where the
+main thread and a second thread used the buffer and a static buffer was refused. **Benchmarks**
+(one fresh run 2026-10-06, Windows on the performance cores, mains; logs `readme_sb_win.log`,
+`wsl/readme_sb_gcc_final.log` in the session scratchpad): nothing slower than the Hardened_2 run
+(gcc `p5_million_objects` 1.09x, `p6_million_objects_6_lists` 1.05x and `a00_empty` were flagged
+and timed again alone with 21 runs: 0.171 s and 0.237 s, as before); faster: `p1_read_loop` MSVC
+0.65x, clang 0.55x of the old time, `a16_map_text` MSVC 0.78x, clang 0.73x. README: 43 as fast as
+C, 2 close, 5 slower (MSVC `a16_map_text` 1.14x, `t3_lines`; clang `a10_recursion`; gcc
+`p5_million_objects` 1.11x and `a00_empty`, the process start at 0 ms, 1.08x to 1.18x from run to
+run). **Next:** D-532; what remains of MSVC's `a16_map_text` gap (1.14x) is not yet measured; the
+thermal rules are back in force.
+
 **2026-10-06 (later), 0.9.10_Hardened_2: the owner's rulings on three of the audit's decisions**
 (ADR-140; spec `docs/spec-source/Ember_v0.9.10_Hardened_2.md`, Appendix H §H.7;
 `docs/MIGRATION-0.9.10.md`). Asked to explain the audit's findings one by one, the owner judged

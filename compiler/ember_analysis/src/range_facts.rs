@@ -39,11 +39,13 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use ember_mir::{
-    AssertKind, BinOp, Body, Builtin, CastKind, CheckKind, CheckProof, Const, FuncRef, LocalId, Operand, Place,
+    AggregateKind, AssertKind, BinOp, Body, Builtin, CastKind, CheckKind, CheckProof, Const, FuncRef, LocalId, Operand, Place,
     Projection, RemovedCheck, Rvalue, Stmt, StmtKind, Terminator, UnOp,
 };
 use ember_types::{Bound, CommonTypes, Ty, TyKind, TypeTable};
 
+use crate::long_access_lint::successors;
+use crate::loop_version::CountedLoop;
 use crate::regions::place_type;
 
 /// Remove every check the range facts prove cannot fail; returns how many.
@@ -51,8 +53,9 @@ use crate::regions::place_type;
 /// can remove what a body reads, so its callable summary is made again.
 pub fn remove_proven_checks_all(bodies: &mut [Body], types: &TypeTable, common: &CommonTypes) -> (usize, usize) {
     let returns = returned_arguments(bodies);
+    let fields = field_element_ranges(bodies, types, common, &returns);
     bodies.iter_mut().fold((0, 0), |(checks, folds), body| {
-        let (more_checks, more_folds) = remove_proven_checks(body, types, common, &returns);
+        let (more_checks, more_folds) = remove_proven_checks(body, types, common, &returns, &fields);
         (checks + more_checks, folds + more_folds)
     })
 }
@@ -425,6 +428,9 @@ pub(crate) struct Analysis<'a> {
     /// Per function symbol, the parameters (by position) it may return: it
     /// returns nothing else, and changes none of them.
     returns: &'a HashMap<String, Vec<usize>>,
+    /// ADR-142 — per field holding integer lists, the range of the elements
+    /// the whole program stores in them.
+    fields: &'a BTreeMap<FieldKey, Interval>,
 }
 
 /// Per function symbol, the parameters (by position) every value it returns
@@ -502,6 +508,17 @@ impl<'a> Analysis<'a> {
         common: &CommonTypes,
         returns: &'a HashMap<String, Vec<usize>>,
     ) -> Option<Analysis<'a>> {
+        Self::run_with_fields(body, types, common, returns, &NO_FIELDS)
+    }
+
+    /// `run`, knowing the elements of the fields' lists (ADR-142).
+    pub(crate) fn run_with_fields(
+        body: &'a Body,
+        types: &'a TypeTable,
+        common: &CommonTypes,
+        returns: &'a HashMap<String, Vec<usize>>,
+        fields: &'a BTreeMap<FieldKey, Interval>,
+    ) -> Option<Analysis<'a>> {
         let isize_max = type_range(types, common.isize)?.hi;
         let mut analysis = Analysis {
             body,
@@ -515,6 +532,7 @@ impl<'a> Analysis<'a> {
             entry: Vec::new(),
             seeds: Vec::new(),
             returns,
+            fields,
         };
         analysis.tracked = analysis.tracked_locals();
         analysis.views = analysis.collect_views();
@@ -545,8 +563,20 @@ impl<'a> Analysis<'a> {
         }
         // Widening loses a running total's range; the loop's trip count
         // gives it back, and a second solve uses it.
-        let seeds = analysis.accumulator_bounds();
-        if !seeds.is_empty() {
+        // A total in a loop inside another starts each inner loop from what
+        // the outer loop's seed gives it (D-530): seeds made from the seeded
+        // facts reach it. Every seed comes from sound facts, so all of them
+        // hold together.
+        for _ in 0..3 {
+            let mut seeds = analysis.seeds.clone();
+            for seed in analysis.accumulator_bounds() {
+                if !seeds.contains(&seed) {
+                    seeds.push(seed);
+                }
+            }
+            if seeds.len() == analysis.seeds.len() {
+                break;
+            }
             analysis.seeds = seeds;
             analysis.solve()?;
         }
@@ -915,6 +945,39 @@ impl<'a> Analysis<'a> {
         out
     }
 
+    /// What one store into a field's lists may write: `None` when no run
+    /// reaches it or it gives an empty list; `Some(None)` for any value.
+    fn field_store_value(&self, elem: Ty, store: FieldStore) -> Option<Option<Interval>> {
+        let Some(full) = type_range(self.types, elem) else { return Some(None) };
+        let value = match store {
+            FieldStore::Element(block, index) => {
+                let state = self.state_before(block, index)?;
+                match &self.body.blocks[block].stmts[index].kind {
+                    StmtKind::Assign { rvalue, .. } => self.value(&state, rvalue, elem).0,
+                    // Stored only if its check passes.
+                    StmtKind::CheckedBinaryOp { op, lhs, rhs, .. } => self.arithmetic_value(&state, *op, lhs, rhs, full, true).0,
+                    _ => None,
+                }
+            }
+            FieldStore::Added(block, arg) => {
+                let data = &self.body.blocks[block];
+                let state = self.state_before(block, data.stmts.len())?;
+                let Terminator::Call { args, .. } = &data.terminator else { return Some(None) };
+                self.operand_range(&state, &args[arg])
+            }
+            FieldStore::Whole(block, index, list) => {
+                self.state_before(block, index)?;
+                match self.lists.stores.get(&list) {
+                    // A followed list nothing is stored in is empty.
+                    Some(stores) if stores.is_empty() => return None,
+                    Some(_) => self.elements.get(&list).copied(),
+                    None => None,
+                }
+            }
+        };
+        Some(value.and_then(|value| value.meet(full)))
+    }
+
     /// Each `count = RangeCount(start, stop, step)` whose count, start, stop
     /// and step are whole locals written only there and once each.
     fn range_counts(&self) -> Vec<(LocalId, LocalId, LocalId, LocalId)> {
@@ -1073,6 +1136,11 @@ impl<'a> Analysis<'a> {
     /// What an element read can hold: `xs[i]` of a followed list or of a
     /// shared view of one, or `*r` of a shared reference to such an element.
     fn element_range(&self, place: &Place) -> Option<Interval> {
+        if let Some((key, _, rest)) = field_of(self.body, self.types, place)
+            && element_rest(rest)
+        {
+            return self.fields.get(&key).copied();
+        }
         let list = match place.projection.as_slice() {
             [Projection::Index(_) | Projection::ConstIndex(_)] => match self.lists.stores.contains_key(&place.local) {
                 true => place.local,
@@ -1819,92 +1887,170 @@ impl<'a> Analysis<'a> {
 
     /// `[RNG-4]` — the range of each running total of a counted loop at its
     /// header. A local the loop changes only by one chain of checked `+` and
-    /// `-` back to itself (`total = total + a + b - c`) changes each turn by
-    /// the sum of its terms' ranges; the loop turns at most as many times as
-    /// its limit less its counter's start allow; so at the header it lies
-    /// between its value on entry and that plus every turn's change. The
-    /// chain is checked, so no turn can wrap: an overflow ends the program
+    /// `-` back to itself (`total = total + a + b - c`) changes each time
+    /// the chain runs by the sum of its terms' ranges; the chain runs at most
+    /// `runs_per_turn` times a turn (more than once in a counted loop inside
+    /// this one, D-530), and the loop turns at most as many times as its
+    /// limit less its counter's start allow; so at the header the total lies
+    /// between its value on entry and that plus every run's change. The
+    /// chain is checked, so no run can wrap: an overflow ends the program
     /// before the next. Only a range within the total's type is kept.
     fn accumulator_bounds(&self) -> Vec<(usize, Var, Interval)> {
         let mut seeds = Vec::new();
         let headers = loop_headers(self.body, &reverse_postorder(self.body));
-        for header in 0..self.body.blocks.len() {
-            if self.entry[header].is_none() {
-                continue;
-            }
-            let Some(shape) = crate::loop_version::counted_loop(self.body, self.types, header) else { continue };
-            let mut inside: Vec<usize> = shape.region.clone();
-            inside.push(header);
-            // Every place a local is written in the loop: (block, statement).
-            let mut writes: HashMap<LocalId, Vec<(usize, usize)>> = HashMap::new();
-            let mut called: HashSet<LocalId> = HashSet::new();
-            for &block in &inside {
-                for (index, stmt) in self.body.blocks[block].stmts.iter().enumerate() {
-                    let place = match &stmt.kind {
-                        StmtKind::Assign { place, .. } => place,
-                        StmtKind::CheckedBinaryOp { dest, .. } => dest,
-                        StmtKind::StorageLive(local) | StmtKind::StorageDead(local) => {
-                            called.insert(*local);
-                            continue;
-                        }
-                        _ => continue,
-                    };
-                    writes.entry(place.local).or_default().push((block, index));
-                }
-                if let Terminator::Call { dest, .. } = &self.body.blocks[block].terminator {
-                    called.insert(dest.local);
-                }
-            }
-            let counter_writes = writes.get(&shape.counter).map_or(0, Vec::len);
-            if writes.contains_key(&shape.limit)
-                || called.contains(&shape.limit)
-                || called.contains(&shape.counter)
-                || counter_writes != 1
-            {
-                continue;
-            }
-            // The state on entry from outside the loop.
-            let mut outside: Option<State> = None;
-            for pred in 0..self.body.blocks.len() {
-                if inside.contains(&pred) {
-                    continue;
-                }
-                if self.branch_only(pred, &headers) {
-                    continue;
-                }
-                let Some(state) = self.entry[pred].clone() else { continue };
-                for (target, state) in self.successors_through_branches(pred, self.exit_state(pred, state), &headers) {
-                    if target == header {
-                        outside = Some(match outside {
-                            None => state,
-                            Some(old) => old.join(&state),
-                        });
-                    }
-                }
-            }
-            let Some(outside) = outside else { continue };
-            let (start, limit) = (self.range(&outside, Var::Local(shape.counter)), self.range(&outside, Var::Local(shape.limit)));
-            let Some(turns) = limit.hi.checked_sub(start.lo).and_then(|n| n.checked_add(i128::from(shape.inclusive))) else {
-                continue;
-            };
-            let turns = turns.max(0);
+        let loops: Vec<CountedLoop> = (0..self.body.blocks.len())
+            .filter(|&header| self.entry[header].is_some())
+            .filter_map(|header| crate::loop_version::counted_loop(self.body, self.types, header))
+            .collect();
+        let predecessors = crate::loop_version::predecessors(self.body);
+        for shape in &loops {
+            let Some((turns, entry, writes, called)) = self.loop_turns(shape, &headers) else { continue };
             for (&acc, places) in &writes {
                 let [(block, index)] = places.as_slice() else { continue };
                 if acc == shape.counter || acc == shape.limit || !self.tracked[acc.0 as usize] || called.contains(&acc) {
                     continue;
                 }
                 let Some(change) = self.chain_change(acc, *block, *index, &writes, 0) else { continue };
-                let entry = self.range(&outside, Var::Local(acc));
-                let low = turns.checked_mul(change.lo.min(0)).and_then(|d| entry.lo.checked_add(d));
-                let high = turns.checked_mul(change.hi.max(0)).and_then(|d| entry.hi.checked_add(d));
+                let Some(runs) = self
+                    .runs_per_turn(&loops, &predecessors, &headers, shape, *block, 0)
+                    .and_then(|per_turn| per_turn.checked_mul(turns))
+                else {
+                    continue;
+                };
+                let start = self.range(&entry, Var::Local(acc));
+                let low = runs.checked_mul(change.lo.min(0)).and_then(|d| start.lo.checked_add(d));
+                let high = runs.checked_mul(change.hi.max(0)).and_then(|d| start.hi.checked_add(d));
                 let (Some(lo), Some(hi)) = (low, high) else { continue };
                 let bound = Interval { lo, hi };
                 if bound.within(self.var_range(Var::Local(acc))) {
-                    seeds.push((header, Var::Local(acc), bound));
+                    seeds.push((shape.header, Var::Local(acc), bound));
                 }
             }
         }
         seeds
+    }
+
+    /// How many times at most counted loop `shape` turns each time it is
+    /// entered, the state on entry from outside it, the places it writes
+    /// each local and the locals a call or a storage marker in it sets:
+    /// `None` when its counter or limit may change other than by its step.
+    #[allow(clippy::type_complexity)]
+    fn loop_turns(
+        &self,
+        shape: &CountedLoop,
+        headers: &HashSet<usize>,
+    ) -> Option<(i128, State, HashMap<LocalId, Vec<(usize, usize)>>, HashSet<LocalId>)> {
+        let mut inside: Vec<usize> = shape.region.clone();
+        inside.push(shape.header);
+        // Every place a local is written in the loop: (block, statement).
+        let mut writes: HashMap<LocalId, Vec<(usize, usize)>> = HashMap::new();
+        let mut called: HashSet<LocalId> = HashSet::new();
+        for &block in &inside {
+            for (index, stmt) in self.body.blocks[block].stmts.iter().enumerate() {
+                let place = match &stmt.kind {
+                    StmtKind::Assign { place, .. } => place,
+                    StmtKind::CheckedBinaryOp { dest, .. } => dest,
+                    StmtKind::StorageLive(local) | StmtKind::StorageDead(local) => {
+                        called.insert(*local);
+                        continue;
+                    }
+                    _ => continue,
+                };
+                writes.entry(place.local).or_default().push((block, index));
+            }
+            if let Terminator::Call { dest, .. } = &self.body.blocks[block].terminator {
+                called.insert(dest.local);
+            }
+        }
+        let counter_writes = writes.get(&shape.counter).map_or(0, Vec::len);
+        if writes.contains_key(&shape.limit)
+            || called.contains(&shape.limit)
+            || called.contains(&shape.counter)
+            || counter_writes != 1
+        {
+            return None;
+        }
+        // The state on entry from outside the loop.
+        let mut outside: Option<State> = None;
+        for pred in 0..self.body.blocks.len() {
+            if inside.contains(&pred) {
+                continue;
+            }
+            if self.branch_only(pred, headers) {
+                continue;
+            }
+            let Some(state) = self.entry[pred].clone() else { continue };
+            for (target, state) in self.successors_through_branches(pred, self.exit_state(pred, state), headers) {
+                if target == shape.header {
+                    outside = Some(match outside {
+                        None => state,
+                        Some(old) => old.join(&state),
+                    });
+                }
+            }
+        }
+        let outside = outside?;
+        let (start, limit) = (self.range(&outside, Var::Local(shape.counter)), self.range(&outside, Var::Local(shape.limit)));
+        let turns = limit.hi.checked_sub(start.lo)?.checked_add(i128::from(shape.inclusive))?;
+        Some((turns.max(0), outside, writes, called))
+    }
+
+    /// How many times at most `block` runs in one turn of counted loop
+    /// `shape`: once; or, inside a counted loop nested in it, that loop's
+    /// turns times the block's runs in one of them, for each time a turn
+    /// enters that loop. `None` on any other cycle through the block (a
+    /// `while` inside).
+    fn runs_per_turn(
+        &self,
+        loops: &[CountedLoop],
+        predecessors: &[Vec<usize>],
+        headers: &HashSet<usize>,
+        shape: &CountedLoop,
+        block: usize,
+        depth: usize,
+    ) -> Option<i128> {
+        if depth > 8 {
+            return None;
+        }
+        let holds = |inner: &CountedLoop, block: usize| inner.header == block || inner.region.contains(&block);
+        let around: Vec<&CountedLoop> = loops
+            .iter()
+            .filter(|inner| inner.header != shape.header && shape.region.contains(&inner.header) && holds(inner, block))
+            .collect();
+        // The outermost counted loop inside `shape` that holds the block.
+        let outermost = around
+            .iter()
+            .find(|inner| !around.iter().any(|other| other.header != inner.header && holds(other, inner.header)));
+        let Some(inner) = outermost else {
+            // In no inner counted loop: on no cycle but `shape`'s own.
+            let next_of = |block: usize| -> Vec<usize> {
+                successors(&self.body.blocks[block].terminator)
+            };
+            let mut seen = HashSet::new();
+            let mut work = next_of(block);
+            while let Some(next) = work.pop() {
+                if next == block {
+                    return None;
+                }
+                if next != shape.header && shape.region.contains(&next) && seen.insert(next) {
+                    work.extend(next_of(next));
+                }
+            }
+            return Some(1);
+        };
+        let mut entries: i128 = 0;
+        for &pred in &predecessors[inner.header] {
+            if !inner.region.contains(&pred) {
+                entries = entries.checked_add(self.runs_per_turn(loops, predecessors, headers, shape, pred, depth + 1)?)?;
+            }
+        }
+        let (turns, _, _, _) = self.loop_turns(inner, headers)?;
+        let within = if block == inner.header {
+            turns.checked_add(1)?
+        } else {
+            self.runs_per_turn(loops, predecessors, headers, inner, block, depth + 1)?.checked_mul(turns)?
+        };
+        entries.checked_mul(within)
     }
 
     /// The change one turn makes to `acc`, written at statement `index` of
@@ -2304,11 +2450,302 @@ fn loop_writes(body: &Body, order: &[usize], headers: &HashSet<usize>) -> HashMa
 // ---------------------------------------------------------------------------
 // Removing the checks.
 
+// ---------------------------------------------------------------------------
+// Field element ranges (ADR-142).
+
+/// A struct or class field that holds a list of integers: the type that has
+/// the field, and the field's index.
+pub(crate) type FieldKey = (Ty, usize);
+
+/// No field's elements known: the facts of a pass that does not gather them.
+static NO_FIELDS: BTreeMap<FieldKey, Interval> = BTreeMap::new();
+
+/// Where values go into the elements of a field's lists.
+#[derive(Clone, Copy, Debug)]
+enum FieldStore {
+    /// Statement `.1` of block `.0` writes one element.
+    Element(usize, usize),
+    /// The call ending block `.0` adds its argument `.1` (`push`, `insert`).
+    Added(usize, usize),
+    /// Statement `.1` of block `.0` gives the field local `.2`'s list whole.
+    Whole(usize, usize, LocalId),
+}
+
+/// The field holding a list of integers that `place` reaches, the lists'
+/// element type, and what follows the field in the place: the list itself
+/// (`[]`), an element, or a part of the list's header.
+fn field_of<'p>(body: &Body, types: &TypeTable, place: &'p Place) -> Option<(FieldKey, Ty, &'p [Projection])> {
+    let at = place.projection.iter().rposition(|step| matches!(step, Projection::Field(_)))?;
+    let Projection::Field(field) = place.projection[at] else { return None };
+    let owner = place_type(body, types, &Place { local: place.local, projection: place.projection[..at].to_vec() });
+    if !matches!(types.kind(owner), TyKind::Struct(_) | TyKind::Class(_)) {
+        return None;
+    }
+    let list = place_type(body, types, &Place { local: place.local, projection: place.projection[..=at].to_vec() });
+    let TyKind::Vec { elem, text: false } = *types.kind(list) else { return None };
+    type_range(types, elem)?;
+    Some(((owner, field), elem, &place.projection[at + 1..]))
+}
+
+fn element_rest(rest: &[Projection]) -> bool {
+    matches!(rest, [Projection::Index(_) | Projection::ConstIndex(_)])
+}
+
+/// Every way `body` puts values into a field's lists, and the fields it may
+/// change some other way: lent mutably to anything but an in-place built-in,
+/// read or copied whole, an element lent mutably, a part of the header
+/// written, or given a list that is not a whole local.
+#[allow(clippy::type_complexity)]
+fn field_stores(body: &Body, types: &TypeTable) -> (Vec<(FieldKey, Ty, FieldStore)>, BTreeSet<FieldKey>) {
+    let mut stores = Vec::new();
+    let mut unknown = BTreeSet::new();
+    // How many times each local is written whole.
+    let mut writes = vec![0usize; body.locals.len()];
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            match &stmt.kind {
+                StmtKind::Assign { place, .. } if place.projection.is_empty() => writes[place.local.0 as usize] += 1,
+                StmtKind::CheckedBinaryOp { dest, overflow, .. } => {
+                    writes[dest.local.0 as usize] += 1;
+                    writes[overflow.local.0 as usize] += 1;
+                }
+                _ => {}
+            }
+        }
+        if let Terminator::Call { dest, .. } = &block.terminator {
+            writes[dest.local.0 as usize] += 1;
+        }
+    }
+    // `m = &mut field`: the lenders, each a whole local written once.
+    let mut lenders: BTreeMap<LocalId, (FieldKey, Ty)> = BTreeMap::new();
+    for (b, block) in body.blocks.iter().enumerate() {
+        for (s, stmt) in block.stmts.iter().enumerate() {
+            let mut reads: Vec<&Operand> = Vec::new();
+            match &stmt.kind {
+                StmtKind::Assign { place, rvalue } => {
+                    if let Some((key, elem, rest)) = field_of(body, types, place) {
+                        let whole_local = match rvalue {
+                            Rvalue::Use(Operand::Move(from) | Operand::Copy(from)) if from.projection.is_empty() => Some(from.local),
+                            _ => None,
+                        };
+                        match (rest, whole_local) {
+                            ([], Some(from)) => stores.push((key, elem, FieldStore::Whole(b, s, from))),
+                            (rest, _) if element_rest(rest) => stores.push((key, elem, FieldStore::Element(b, s))),
+                            _ => {
+                                unknown.insert(key);
+                            }
+                        }
+                    }
+                    match rvalue {
+                        Rvalue::Ref { place: lent, mutable } => {
+                            if let Some((key, elem, rest)) = field_of(body, types, lent)
+                                && *mutable
+                            {
+                                let lender = place.projection.is_empty()
+                                    && place.local != LocalId(0)
+                                    && writes[place.local.0 as usize] == 1;
+                                if lender && rest.is_empty() {
+                                    lenders.insert(place.local, (key, elem));
+                                } else {
+                                    unknown.insert(key);
+                                }
+                            }
+                        }
+                        // A struct built whole: each field from its operand.
+                        Rvalue::Aggregate { kind: AggregateKind::Struct(id), operands } => {
+                            let owner = place_type(body, types, place);
+                            for (field, operand) in operands.iter().enumerate() {
+                                let Some(def) = types.struct_def(*id).fields.get(field) else { continue };
+                                let TyKind::Vec { elem, text: false } = *types.kind(def.ty) else { continue };
+                                if type_range(types, elem).is_none() {
+                                    continue;
+                                }
+                                match operand {
+                                    Operand::Move(from) | Operand::Copy(from) if from.projection.is_empty() => {
+                                        stores.push(((owner, field), elem, FieldStore::Whole(b, s, from.local)));
+                                    }
+                                    _ => {
+                                        unknown.insert((owner, field));
+                                    }
+                                }
+                            }
+                            reads.extend(operands.iter());
+                        }
+                        _ => reads.extend(rvalue_operands(rvalue)),
+                    }
+                }
+                StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
+                    for place in [dest, overflow] {
+                        if let Some((key, elem, rest)) = field_of(body, types, place) {
+                            if element_rest(rest) {
+                                stores.push((key, elem, FieldStore::Element(b, s)));
+                            } else {
+                                unknown.insert(key);
+                            }
+                        }
+                    }
+                    reads.extend([lhs, rhs]);
+                }
+                _ => {}
+            }
+            // The list itself read whole: a copy of its header.
+            for operand in reads {
+                if let Operand::Copy(read) | Operand::Move(read) = operand
+                    && let Some((key, _, [])) = field_of(body, types, read)
+                {
+                    unknown.insert(key);
+                }
+            }
+        }
+        if let Terminator::Call { func, args, dest, .. } = &block.terminator {
+            let which = match func {
+                FuncRef::Builtin { which, .. } => Some(which),
+                _ => None,
+            };
+            if let Some((key, _, rest)) = field_of(body, types, dest)
+                && !(rest.is_empty() && matches!(which, Some(Builtin::ArrayNew)))
+            {
+                unknown.insert(key);
+            }
+            for (k, arg) in args.iter().enumerate() {
+                let (Operand::Copy(place) | Operand::Move(place)) = arg else { continue };
+                if let Some(&(key, elem)) = lenders.get(&place.local)
+                    && place.projection.is_empty()
+                {
+                    match which {
+                        _ if k != 0 => {
+                            unknown.insert(key);
+                        }
+                        Some(Builtin::ArrayPush | Builtin::ArrayInsert) => stores.push((key, elem, FieldStore::Added(b, 1))),
+                        Some(which) if reorders_or_removes(which) || matches!(which, Builtin::ArraySwap | Builtin::ArraySwapRemove) => {}
+                        _ => {
+                            unknown.insert(key);
+                        }
+                    }
+                } else if let Some((key, _, [])) = field_of(body, types, place)
+                    && !matches!(which, Some(Builtin::ArrayLen | Builtin::ArrayCapacity))
+                {
+                    unknown.insert(key);
+                }
+            }
+        }
+    }
+    // A lender named anywhere but its own setting and the calls above.
+    let named = |place: &Place, unknown: &mut BTreeSet<FieldKey>| {
+        if let Some(&(key, _)) = lenders.get(&place.local) {
+            unknown.insert(key);
+        }
+        for step in &place.projection {
+            if let Projection::Index(index) = step
+                && let Some(&(key, _)) = lenders.get(index)
+            {
+                unknown.insert(key);
+            }
+        }
+    };
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            let sets_lender = matches!(&stmt.kind,
+                StmtKind::Assign { place, rvalue: Rvalue::Ref { mutable: true, .. } } if lenders.contains_key(&place.local));
+            if !sets_lender {
+                for_each_place(stmt, &mut |place: &Place| named(place, &mut unknown));
+            }
+        }
+        match &block.terminator {
+            Terminator::Call { args, dest, .. } => {
+                named(dest, &mut unknown);
+                for arg in args {
+                    if let Operand::Copy(place) | Operand::Move(place) = arg
+                        && !place.projection.is_empty()
+                    {
+                        named(place, &mut unknown);
+                    }
+                }
+            }
+            Terminator::SwitchInt { discr: operand, .. } | Terminator::Assert { cond: operand, .. } => {
+                if let Operand::Copy(place) | Operand::Move(place) = operand {
+                    named(place, &mut unknown);
+                }
+            }
+            _ => {}
+        }
+    }
+    (stores, unknown)
+}
+
+/// Per field that holds a list of integers, the range of every element the
+/// program stores in one of its lists, when every way into them is seen and
+/// the range is narrower than the type's (ADR-142). The program is whole:
+/// a field's lists change only through the stores of the functions here.
+/// Each round's ranges come from facts that assumed the last round's, so
+/// each is sound, and they only narrow. A field this cannot settle keeps
+/// its type's range, so nothing about its reads changes.
+pub(crate) fn field_element_ranges(
+    bodies: &[Body],
+    types: &TypeTable,
+    common: &CommonTypes,
+    returns: &HashMap<String, Vec<usize>>,
+) -> BTreeMap<FieldKey, Interval> {
+    let mut gathered: Vec<(usize, Vec<(FieldKey, Ty, FieldStore)>)> = Vec::new();
+    let mut unknown: BTreeSet<FieldKey> = BTreeSet::new();
+    for (index, body) in bodies.iter().enumerate() {
+        let (stores, more) = field_stores(body, types);
+        unknown.extend(more);
+        if !stores.is_empty() {
+            gathered.push((index, stores));
+        }
+    }
+    gathered.retain_mut(|(_, stores)| {
+        stores.retain(|(key, _, _)| !unknown.contains(key));
+        !stores.is_empty()
+    });
+    let mut fields: BTreeMap<FieldKey, Interval> = BTreeMap::new();
+    for _ in 0..3 {
+        // Per field: its element type and the hull of its stores; `None`
+        // when some store may write any value.
+        let mut hulls: BTreeMap<FieldKey, (Ty, Option<Interval>)> = BTreeMap::new();
+        for (index, stores) in &gathered {
+            let analysis = Analysis::run_with_fields(&bodies[*index], types, common, returns, &fields);
+            for &(key, elem, store) in stores {
+                let value = match &analysis {
+                    Some(analysis) => analysis.field_store_value(elem, store),
+                    None => Some(None),
+                };
+                // `None`: a store no run reaches, or of an empty list.
+                let Some(value) = value else { continue };
+                let (_, hull) = hulls.entry(key).or_insert((elem, value));
+                *hull = match (*hull, value) {
+                    (Some(a), Some(b)) => Some(a.hull(b)),
+                    _ => None,
+                };
+            }
+        }
+        let mut next = BTreeMap::new();
+        for (key, (elem, hull)) in hulls {
+            let (Some(hull), Some(full)) = (hull, type_range(types, elem)) else { continue };
+            let mut range = hull.meet(full).unwrap_or(full);
+            if let Some(old) = fields.get(&key) {
+                range = range.meet(*old).unwrap_or(range);
+            }
+            if range != full {
+                next.insert(key, range);
+            }
+        }
+        if next == fields {
+            break;
+        }
+        fields = next;
+    }
+    fields
+}
+
+
 fn remove_proven_checks(
     body: &mut Body,
     types: &TypeTable,
     common: &CommonTypes,
     returns: &HashMap<String, Vec<usize>>,
+    fields: &BTreeMap<FieldKey, Interval>,
 ) -> (usize, usize) {
     // What to change, found on the unchanged body.
     struct Removal {
@@ -2318,7 +2755,7 @@ fn remove_proven_checks(
         checked: Option<(Interval, Interval)>,
     }
     let removals: Vec<Removal> = {
-        let Some(analysis) = Analysis::run(body, types, common, returns) else { return (0, 0) };
+        let Some(analysis) = Analysis::run_with_fields(body, types, common, returns, fields) else { return (0, 0) };
         let mut removals = Vec::new();
         let reached: HashSet<usize> = reverse_postorder(body).into_iter().collect();
         for block in 0..body.blocks.len() {
@@ -2403,7 +2840,8 @@ fn remove_proven_checks(
         removals
     };
     // A branch whose test the facts decide goes one way.
-    let folds = Analysis::run(body, types, common, returns).map_or_else(Vec::new, |analysis| analysis.decided_branches());
+    let folds = Analysis::run_with_fields(body, types, common, returns, fields)
+        .map_or_else(Vec::new, |analysis| analysis.decided_branches());
     for removal in &removals {
         let span = body.blocks[removal.block].terminator_span;
         let Terminator::Assert { next, cond, .. } = body.blocks[removal.block].terminator.clone() else {

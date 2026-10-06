@@ -27,7 +27,8 @@ class Bag:
         self.items = []
 
 # Lent to a function, a list holds values the range facts cannot know
-# (`[RNG-4]`), so the checks this test looks at stay.
+# (`[RNG-4]`; a field's lists too, ADR-142), so the checks this test looks at
+# stay.
 fn unknown[T](mut xs: Array[T]):
     pass
 
@@ -55,6 +56,7 @@ fn main():
     bag = Bag()
     for i in 0..100:
         bag.items.push(i)
+    unknown(bag.items)
     ys: Array[int] = []
     for i in 0..100:
         ys.push(bag.items[i])

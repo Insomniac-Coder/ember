@@ -2439,6 +2439,11 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if command != "check" && options.emit.as_deref() != Some("mir") && !c_for_msvc(&options) {
         ember_analysis::reduce_induction_values_all(&mut bodies, &types, &common);
     }
+    // ADR-141 — last, for C: a short list or string a function makes, fills
+    // and drops itself starts in a buffer of the function's own frame.
+    if command != "check" && options.emit.as_deref() != Some("mir") {
+        ember_analysis::give_stack_buffers_all(&mut bodies, &types);
+    }
     if command == "check" {
         interface_cache
             .commit()

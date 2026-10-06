@@ -944,7 +944,7 @@ fn constant_value(types: &TypeTable, value: u128, ty: Ty) -> i128 {
     }
 }
 
-fn predecessors(body: &Body) -> Vec<Vec<usize>> {
+pub(crate) fn predecessors(body: &Body) -> Vec<Vec<usize>> {
     let mut predecessors = vec![Vec::new(); body.blocks.len()];
     for (index, block) in body.blocks.iter().enumerate() {
         for successor in successors(&block.terminator) {
@@ -3586,6 +3586,25 @@ fn hoist_views(body: &mut Body, types: &TypeTable, summaries: &Summaries) -> usi
     total
 }
 
+/// Whether `place` lies in its local's own storage: reached through fields
+/// and fixed arrays' elements only, not through a reference or into what a
+/// list or a view points to.
+fn in_own_storage(body: &Body, types: &TypeTable, place: &Place) -> bool {
+    for (at, step) in place.projection.iter().enumerate() {
+        match step {
+            Projection::Deref => return false,
+            Projection::Index(_) | Projection::ConstIndex(_) => {
+                let prefix = Place { local: place.local, projection: place.projection[..at].to_vec() };
+                if !matches!(types.kind(place_type(body, types, &prefix)), TyKind::Array { .. }) {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
 /// One computation that moves: a statement, or a block's built-in call.
 #[derive(Clone, Copy, PartialEq)]
 enum Hoisted {
@@ -3609,10 +3628,25 @@ fn hoist_from(body: &mut Body, types: &TypeTable, summaries: &Summaries, shape: 
     // begins or ends in it.
     let mut writes: HashMap<LocalId, usize> = HashMap::new();
     let mut scoped: HashSet<LocalId> = HashSet::new();
+    // D-529 — the locals whose own storage is lent mutably in the loop, or
+    // lent at all while it holds a `Cell`: a loan may change their value (an
+    // iterator's step advances its position through one), so neither a read
+    // of one nor its setting leaves the loop. Their address stays the same,
+    // and a loan of what a list or a view points to (`&mut v[i]`) changes
+    // the elements, not the local.
+    let mut lent: HashSet<LocalId> = HashSet::new();
     for &block in &inside {
         for stmt in &body.blocks[block].stmts {
             match &stmt.kind {
-                StmtKind::Assign { place, .. } => *writes.entry(place.local).or_default() += 1,
+                StmtKind::Assign { place, rvalue } => {
+                    *writes.entry(place.local).or_default() += 1;
+                    if let Rvalue::Ref { place: target, mutable } = rvalue
+                        && (*mutable || types.holds_a_cell(body.local(target.local).ty))
+                        && in_own_storage(body, types, target)
+                    {
+                        lent.insert(target.local);
+                    }
+                }
                 StmtKind::CheckedBinaryOp { dest, overflow, .. } => {
                     *writes.entry(dest.local).or_default() += 1;
                     *writes.entry(overflow.local).or_default() += 1;
@@ -3681,8 +3715,14 @@ fn hoist_from(body: &mut Body, types: &TypeTable, summaries: &Summaries, shape: 
         }
     });
 
-    let unchanged_local = |local: LocalId, hoisted: &HashSet<LocalId>| {
+    // The local's storage is the same all through the loop (it is not
+    // assigned, and its storage neither begins nor ends in it).
+    let unrebound = |local: LocalId, hoisted: &HashSet<LocalId>| {
         hoisted.contains(&local) || (!writes.contains_key(&local) && !scoped.contains(&local))
+    };
+    // ... and its value too: nothing in the loop writes it through a loan.
+    let unchanged_local = |local: LocalId, hoisted: &HashSet<LocalId>| {
+        unrebound(local, hoisted) && (hoisted.contains(&local) || !lent.contains(&local))
     };
     // A place the loop cannot change: an unchanged local, its fields, and
     // memory through a reference no write in the loop can reach.
@@ -3716,6 +3756,7 @@ fn hoist_from(body: &mut Body, types: &TypeTable, summaries: &Summaries, shape: 
     let movable_dest = |place: &Place, read_so_far: &HashSet<LocalId>| {
         place.projection.is_empty()
             && writes.get(&place.local) == Some(&1)
+            && !lent.contains(&place.local)
             && !types.needs_drop(body.local(place.local).ty)
             && !read_so_far.contains(&place.local)
             && !outside.contains(&place.local)
@@ -3751,7 +3792,7 @@ fn hoist_from(body: &mut Body, types: &TypeTable, summaries: &Summaries, shape: 
                         Rvalue::Discriminant(read) => Some(unchanged_place(read, &hoisted_locals)),
                         // The address of a place the loop does not rebind.
                         Rvalue::Ref { place: target, .. } => Some(
-                            unchanged_local(target.local, &hoisted_locals)
+                            unrebound(target.local, &hoisted_locals)
                                 && target.projection.iter().all(|step| matches!(step, Projection::Field(_))),
                         ),
                         Rvalue::Repeat { .. } => None,

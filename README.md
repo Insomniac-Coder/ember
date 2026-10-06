@@ -56,7 +56,10 @@ ranges too long for an `int`, stepping up only as far as the values need), and r
 numbers the compiler knows (names set once and never changed, loop counters, lengths), kept
 `enumerate`'s numbers from ever overflowing by stepping up to a bigger type, let `parse` read the
 256-bit counts, and let a whole number go into another whole-number type by itself where the
-compiler knows it fits. Before G8-4, the owner's
+compiler knows it fits. The same day's speed work gave a short list or string that a function
+keeps to itself a buffer in the function's own frame (no allocation until it outgrows it), and
+let the compiler know the numbers in a list held in an object's field from every place the
+program stores into it, so a sum over it needs no overflow check. Before G8-4, the owner's
 simplification pass
 ([`docs/proposals/Ember_Simplification_Pass_Revised.md`](docs/proposals/Ember_Simplification_Pass_Revised.md));
 its rulings and current status are tracked in [`docs/OWNER-QUEUE.md`](docs/OWNER-QUEUE.md). It
@@ -128,7 +131,7 @@ notes under the tables say how. With gcc, both programs are built with
 
 > Development is in progress, and attempts will be made to speed the language up in these areas.
 
-More than 10% slower than C: 3 of the 50 programs with MSVC, 2 with clang, 1 with gcc; none with all
+More than 10% slower than C: 2 of the 50 programs with MSVC, 1 with clang, 2 with gcc; none with all
 three.
 
 ![Programs more than 10% slower than C with one compiler: C time, Ember time, Ember divided by C](docs/benchmarks/slower-than-c.svg)

@@ -174,6 +174,18 @@ pub struct Body {
     /// view parameters are distinct lists, and each reaches C as a
     /// `restrict` pointer and a length, so MSVC may reorder the loop.
     pub restrict_views: bool,
+    /// ADR-141 — lists and strings that start in a buffer of this function's
+    /// own frame (`stack_lists.rs`); set last, for C only.
+    pub stack_buffers: Vec<StackBuffer>,
+}
+
+/// A list or string whose `Array.new()`/`String.new()` gives it `capacity`
+/// elements in a buffer of its function's frame (ADR-141): it moves to the
+/// heap only when it outgrows them, and its drop frees only a heap block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StackBuffer {
+    pub local: LocalId,
+    pub capacity: u64,
 }
 
 /// One check a proof removed or moved (`[EFF-10]`).
