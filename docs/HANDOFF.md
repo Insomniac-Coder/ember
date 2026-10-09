@@ -10705,6 +10705,47 @@ formal 1/9 count or Phase 2's estimate.
 
 #### Start here after a context reset — state at 2026-10-04 (autopilot)
 
+**2026-10-09, maintenance requested by the owner.** `main` was fast-forwarded and
+pushed to `08a63db` (the existing five-job phase-next CI was green). The four
+named old patches in the Claude session's `worktree_patches` directory were
+deleted; their names, sizes and hashes are retained locally in
+`build/maintenance-20261009/deleted-patches.json`. Enterprise Companion and its
+WSL setup were not changed.
+
+The maintenance batch makes test output directories scope-owned: native
+conformance/CLI outputs, ad-hoc fixture packages and formatter scratch files
+are removed when their owner leaves scope, including assertion unwinding. The
+annotation runner owns a `TemporaryDirectory` for its sweep. Two Rust cleanup
+regressions were first run against the old helper and both failed; the guarded
+rebuild/test took 22 seconds, peaking at 82°C. The new helper uses short unique
+names and never adopts an existing directory. CI covers normal and exceptional
+cleanup, including two Python annotation-runner checks.
+
+**Validation exception for this batch:** the owner reconfirmed the 65°C-for-45s
+start / sustained-above-100°C stop policy and efficiency-core tests, then explicitly
+approved “Use CI for this validation” after subsequent cooling waits could not
+meet the start condition. The local positive run did not start; do not report it
+as passed. Push this maintenance batch to `phase-next`, inspect its CI, and promote
+only after success. CI's specification/error-page jobs cover the two checks that
+were deferred when `target/` was deleted. Benchmark timing still requires the
+owner's machine, mains and the approved thermal/affinity conditions.
+
+The requested program-cache cap **already exists** in ADR-136: above 2 GiB,
+`trim_programs` trims to 1.5 GiB least-recently-used first, at most once an hour
+after storing a program. It is a periodic limit, not an instantaneous ceiling;
+no duplicate cache mechanism was added. The default cache inspected this session
+held about 21 MB of runtime objects and no `programs/` folder. The existing cache
+eviction unit test remains part of the workspace suite.
+
+All clang twin sets now use `-ffp-contract=off -fno-fast-math`; GCC twins use the
+same strict policy too. Old benchmark logs/charts were not relabelled or rerun.
+Two authorized read-only reviews produced eight **unverified** probe candidates,
+recorded in [the associated-type review](reviews/2026-10-09/associated-types.md).
+Run the small compile-only probes before declaring defects or changing type
+checking. MSVC `a16_map_text`'s remaining 1.14× C++ gap is still the next performance
+investigation; no new measurement or optimization is claimed by this maintenance
+batch. The older October 6 notes below are historical where superseded here.
+
 **2026-10-06 (evening), the project's files in the project.** The owner: "why is ember project so
 big remove the unnecessary fluff", then "WHY WE ARE PLACING PROJECT RELATED STUFF OUTSIDE OF THE
 PROJECT", "don't build anything just move things and remove unnecessary fluff". `target/` (15.7 GB:
