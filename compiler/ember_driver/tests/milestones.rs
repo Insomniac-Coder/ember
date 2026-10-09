@@ -20,13 +20,15 @@
 //! token stream: a `compile-fail` test may be expected to fail at the lexer,
 //! so its expectations must be readable even when the file does not tokenise.
 
-use std::hash::{Hash, Hasher};
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, PoisonError};
-use std::time::{SystemTime, UNIX_EPOCH};
+
+#[path = "support/temporary_directory.rs"]
+mod test_directories;
+use test_directories::{TemporaryDirectory, temporary_directory};
 
 use ember_build::interface::{CallableParameterMode, ModuleInterfaceArtifact};
 use ember_build::{LinkRequest, Profile, Toolchain};
@@ -389,9 +391,8 @@ fn assert_exact_diagnostics(
 /// `ember` with `input` piped to its standard input (`#$ stdin:`).
 fn ember_with_input(args: &[&str], root: &Path, input: &[u8]) -> Run {
     use std::io::Write;
-    let mut child = Command::new(EMBER)
-        .args(args)
-        .current_dir(root)
+    let (mut command, _output_directory) = test_command(args, root);
+    let mut child = command
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -407,9 +408,8 @@ fn ember_with_input(args: &[&str], root: &Path, input: &[u8]) -> Run {
 }
 
 fn ember(args: &[&str], root: &Path) -> Run {
-    let output = Command::new(EMBER)
-        .args(args)
-        .current_dir(root)
+    let (mut command, _output_directory) = test_command(args, root);
+    let output = command
         .output()
         .expect("the ember binary runs");
     Run {
@@ -420,10 +420,9 @@ fn ember(args: &[&str], root: &Path) -> Run {
 }
 
 fn ember_with_env(args: &[&str], root: &Path, key: &str, value: &str) -> Run {
-    let output = Command::new(EMBER)
-        .args(args)
+    let (mut command, _output_directory) = test_command(args, root);
+    let output = command
         .env(key, value)
-        .current_dir(root)
         .output()
         .expect("the ember binary runs");
     Run {
@@ -431,6 +430,24 @@ fn ember_with_env(args: &[&str], root: &Path, key: &str, value: &str) -> Run {
         stderr: String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
         exit: output.status.code().unwrap_or(-1),
     }
+}
+
+/// Commands whose artifacts are not inspected afterwards get a private output
+/// directory. Explicit --out-dir callers keep their own directory guard alive
+/// until they have finished inspecting the generated C, headers and binaries.
+fn test_command(args: &[&str], root: &Path) -> (Command, Option<TemporaryDirectory>) {
+    let mut command = Command::new(EMBER);
+    command.args(args).current_dir(root);
+    let directory = if matches!(args.first().copied(), Some("build" | "run" | "check" | "test"))
+        && !args.contains(&"--out-dir")
+    {
+        let directory = temporary_directory("cli");
+        command.arg("--out-dir").arg(&directory);
+        Some(directory)
+    } else {
+        None
+    };
+    (command, directory)
 }
 
 fn compile_cpp_object(
@@ -481,17 +498,37 @@ fn compile_cpp_object(
     }
 }
 
-fn temporary_directory(label: &str) -> PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("the system clock is after the Unix epoch")
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!(
-        "ember-{label}-{}-{nonce}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&path).expect("temporary directory is creatable");
-    path
+#[test]
+fn temporary_test_outputs_are_removed_when_the_case_finishes() {
+    let path = {
+        let directory = temporary_directory("cleanup-normal");
+        let nested = directory.join("release/bin");
+        std::fs::create_dir_all(&nested).expect("test output directory is writable");
+        std::fs::write(nested.join("program"), b"compiled test output").expect("test output is writable");
+        directory.to_path_buf()
+    };
+    let removed = !path.exists();
+    if !removed {
+        std::fs::remove_dir_all(&path).expect("remove the regression test's own failed output");
+    }
+    assert!(removed, "a completed test must not retain its compiled programs");
+}
+
+#[test]
+fn temporary_test_outputs_are_removed_when_the_case_panics() {
+    let directory = temporary_directory("cleanup-panic");
+    let path = directory.to_path_buf();
+    std::fs::write(directory.join("program"), b"compiled test output").expect("test output is writable");
+    let outcome = std::panic::catch_unwind(move || {
+        let _directory = directory;
+        panic!("simulated failing test");
+    });
+    assert!(outcome.is_err());
+    let removed = !path.exists();
+    if !removed {
+        std::fs::remove_dir_all(&path).expect("remove the regression test's own failed output");
+    }
+    assert!(removed, "a failing test must not retain its compiled programs");
 }
 
 /// A managed executable may discard unreachable implementation code, but a
@@ -1545,10 +1582,7 @@ fn dynamic_access_safety_side_table_is_written() {
     let source = format!(
         "tests/run-pass/class_mut_method_access_kept.{SOURCE_EXT}"
     );
-    let out_dir = std::env::temp_dir().join(format!(
-        "ember-safety-side-table-{}",
-        std::process::id()
-    ));
+    let out_dir = temporary_directory("safety-side-table");
     let run = ember(
         &[
             "build",
@@ -1654,10 +1688,7 @@ fn stable_class_loop_access_is_reported_as_hoisted() {
         "tests/conformance/EXC-8/accept_stable_class_receiver_loop.{SOURCE_EXT}"
     );
     for profile in ["debug", "release", "shipping"] {
-        let out_dir = std::env::temp_dir().join(format!(
-            "ember-hoisted-loop-safety-{profile}-{}",
-            std::process::id()
-        ));
+        let out_dir = temporary_directory(&format!("hoisted-loop-safety-{profile}"));
         let run = ember(
             &[
                 "build",
@@ -1982,7 +2013,7 @@ fn exit_drops_that_only_free_memory_go_in_release() {
     let vec_free = format!("{}(", ember_branding::runtime("vec_free"));
     let mut frees = Vec::new();
     for profile in ["debug", "release", "shipping"] {
-        let out_dir = std::env::temp_dir().join(format!("ember-exit-drops-{profile}-{}", std::process::id()));
+        let out_dir = temporary_directory(&format!("exit-drops-{profile}"));
         let run = ember(&["build", &source, "--profile", profile, "--out-dir", &out_dir.to_string_lossy()], &root);
         assert_eq!(run.exit, 0, "{profile} build failed:
 {}", run.stderr);
@@ -2093,10 +2124,7 @@ fn loop_access_hoisting_requires_the_complete_local_proof() {
 #[test]
 fn static_access_elision_is_recorded_in_the_safety_side_table() {
     let root = workspace_root();
-    let out_dir = std::env::temp_dir().join(format!(
-        "ember-static-elision-side-table-{}",
-        std::process::id()
-    ));
+    let out_dir = temporary_directory("static-elision-side-table");
     let run = ember(
         &[
             "build",
@@ -2130,7 +2158,7 @@ fn static_access_elision_is_recorded_in_the_safety_side_table() {
 fn a_check_nothing_held_could_fail_is_removed_and_recorded() {
     let root = workspace_root();
     let source = format!("tests/conformance/EXC-3/accept_a_check_nothing_held_could_fail_is_removed.{SOURCE_EXT}");
-    let out_dir = std::env::temp_dir().join(format!("ember-no-conflicting-hold-{}", std::process::id()));
+    let out_dir = temporary_directory("no-conflicting-hold");
     let run = ember(&["build", &source, "--out-dir", &out_dir.to_string_lossy()], &root);
     assert_eq!(run.exit, 0, "build failed:
 {}", run.stderr);
@@ -2611,10 +2639,7 @@ fn leak_check_is_run_only() {
 #[test]
 fn leak_check_reports_a_live_strong_object_cycle() {
     let root = workspace_root();
-    let out_dir = std::env::temp_dir().join(format!(
-        "ember-leak-check-{}",
-        std::process::id()
-    ));
+    let out_dir = temporary_directory("leak-check");
     let out_dir = out_dir.to_string_lossy().into_owned();
     let report = ember(
         &[
@@ -2666,7 +2691,7 @@ fn leak_check_reports_a_live_strong_object_cycle() {
 fn timings_report_each_stage_and_module() {
     let root = workspace_root();
     let source = format!("tests/conformance/RC-6/accept_count_operations_left_in_loops_are_listed.{SOURCE_EXT}");
-    let out_dir = std::env::temp_dir().join(format!("ember-timings-{}", std::process::id()));
+    let out_dir = temporary_directory("timings");
     let out = out_dir.to_string_lossy().into_owned();
     let built = ember(&["build", &source, "--out-dir", &out, "--timings=json"], &root);
     assert_eq!(built.exit, 0, "build failed:\n{}", built.stderr);
@@ -2739,7 +2764,7 @@ fn the_optimization_report_lists_each_direct_call() {
 #[test]
 fn inspect_counts_lists_count_operations_left_in_loops() {
     let root = workspace_root();
-    let out_dir = std::env::temp_dir().join(format!("ember-inspect-counts-{}", std::process::id()));
+    let out_dir = temporary_directory("inspect-counts");
     let out = out_dir.to_string_lossy().into_owned();
     let stem = "accept_count_operations_left_in_loops_are_listed";
     let program = format!("tests/conformance/RC-6/{stem}.{SOURCE_EXT}");
@@ -2781,7 +2806,7 @@ fn inspect_counts_lists_count_operations_left_in_loops() {
 #[test]
 fn debug_runs_report_leaks_unless_turned_off() {
     let root = workspace_root();
-    let out_dir = std::env::temp_dir().join(format!("ember-leak-default-{}", std::process::id()));
+    let out_dir = temporary_directory("leak-default");
     let out_dir = out_dir.to_string_lossy().into_owned();
     let program = format!("tests/conformance/WK-15/accept_a_debug_run_reports_a_leaked_cycle_by_default.{SOURCE_EXT}");
     let run = |extra: &[&str]| {
@@ -2869,10 +2894,7 @@ fn leak_check_reports_two_independent_strong_components() {
 #[test]
 fn leak_check_reports_a_shared_payload_cycle_without_static_overclaim() {
     let root = workspace_root();
-    let out_dir = std::env::temp_dir().join(format!(
-        "ember-shared-leak-check-{}",
-        std::process::id()
-    ));
+    let out_dir = temporary_directory("shared-leak-check");
     let out_dir = out_dir.to_string_lossy().into_owned();
     let report = ember(
         &[
@@ -2981,16 +3003,10 @@ fn check_file(path: &Path, root: &Path) {
         }
         _ => {}
     }
-    // One short folder per case, named by a hash of its whole relative path:
-    // cases run side by side, and rule directories share file names
-    // (`accept_basic`). Short because Windows' linker cannot write a path over
-    // 260 characters, and the executable is already named after the file;
-    // the path itself as the name put the longest cases over it in CI.
-    let out_dir = std::env::temp_dir().join("ember-tests").join(format!("{:016x}", {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        relative.hash(&mut hasher);
-        hasher.finish()
-    }));
+    // Keep this case's output through all profiles and assertions, then remove
+    // it even when an assertion unwinds. Short unique names also fit MSVC's
+    // path limit and keep concurrent cases with the same filename apart.
+    let out_dir = temporary_directory(&relative);
     let profiles = profiles(&expectations);
 
     // A `compile-fail` test must be rejected, with the diagnostics it names.
@@ -3343,7 +3359,8 @@ fn formatting_is_idempotent_and_preserves_the_tree() {
             );
 
             // Formatting the output again must change nothing.
-            let scratch = std::env::temp_dir().join("ember-fmt-once.em");
+            let directory = temporary_directory("fmt");
+            let scratch = directory.join(ember_branding::source_file("once"));
             std::fs::write(&scratch, &once.stdout).expect("the scratch file is writable");
             let twice = ember(&["fmt", &scratch.to_string_lossy()], &root);
             assert_eq!(
@@ -3370,7 +3387,8 @@ fn formatting_is_idempotent_and_preserves_the_tree() {
 #[test]
 fn module_attributes_format_from_the_parsed_tree() {
     let root = workspace_root();
-    let scratch = std::env::temp_dir().join(ember_branding::source_file("ember-module-attr-fmt"));
+    let directory = temporary_directory("module-attr-fmt");
+    let scratch = directory.join(ember_branding::source_file("main"));
     std::fs::write(&scratch,
         "#! language \"0.9.9\"\n#! module overflow(wrap)\n#! threads any\n\nfn add(a: i8, b: i8) -> i8:\n    return a + b\n")
         .expect("module attribute fixture is writable");
@@ -3390,7 +3408,7 @@ fn module_attributes_format_from_the_parsed_tree() {
 fn hello_world_builds_and_runs() {
     // Phase 0's exit criterion (Part XX.2).
     let root = workspace_root();
-    let out_dir = std::env::temp_dir().join("ember-tests").join("hello");
+    let out_dir = temporary_directory("hello");
     let hello = format!("examples/{}", ember_branding::source_file("hello"));
     let run = ember(
         &[
@@ -3414,7 +3432,7 @@ fn hello_world_builds_and_runs() {
 fn callable_region_summary_changes_invalidate_importers_interface_key() {
     let workspace = workspace_root();
     let test_root =
-        std::env::temp_dir().join(format!("ember-lt40-interface-{}", std::process::id()));
+        temporary_directory("lt40-interface");
     let out_dir = test_root.join("target");
     let helper = ember_branding::source_file("helper");
     let main = ember_branding::source_file("main");
@@ -3526,9 +3544,7 @@ fn callable_region_summary_changes_invalidate_importers_interface_key() {
 #[test]
 fn imported_module_overflow_policy_invalidates_callers_interface_key() {
     let workspace = workspace_root();
-    let test_root = std::env::temp_dir().join(format!(
-        "ember-overflow-interface-{}", std::process::id()
-    ));
+    let test_root = temporary_directory("overflow-interface");
     let out_dir = test_root.join("target");
     let helper = ember_branding::source_file("helper");
     let main = ember_branding::source_file("main");
@@ -3578,10 +3594,7 @@ fn imported_module_overflow_policy_invalidates_callers_interface_key() {
 #[test]
 fn callable_signature_modes_unsafe_and_abi_cross_the_interface_boundary() {
     let workspace = workspace_root();
-    let test_root = std::env::temp_dir().join(format!(
-        "ember-callable-signature-{}",
-        std::process::id()
-    ));
+    let test_root = temporary_directory("callable-signature");
     let out_dir = test_root.join("target");
     let source = ember_branding::source_file("main");
     let _ = std::fs::remove_dir_all(&test_root);
@@ -3629,10 +3642,7 @@ fn callable_signature_modes_unsafe_and_abi_cross_the_interface_boundary() {
 #[test]
 fn generic_callable_bounds_invalidate_importers_without_an_emitted_declaration_body() {
     let workspace = workspace_root();
-    let test_root = std::env::temp_dir().join(format!(
-        "ember-generic-interface-{}",
-        std::process::id()
-    ));
+    let test_root = temporary_directory("generic-interface");
     let out_dir = test_root.join("target");
     let helper = ember_branding::source_file("helper");
     let main = ember_branding::source_file("main");
@@ -3702,10 +3712,7 @@ fn generic_callable_bounds_invalidate_importers_without_an_emitted_declaration_b
 #[test]
 fn generic_callable_parameter_modes_cross_the_interface_boundary() {
     let workspace = workspace_root();
-    let test_root = std::env::temp_dir().join(format!(
-        "ember-callable-mode-interface-{}",
-        std::process::id()
-    ));
+    let test_root = temporary_directory("callable-mode-interface");
     let out_dir = test_root.join("target");
     let helper = ember_branding::source_file("helper");
     let main = ember_branding::source_file("main");
@@ -3780,10 +3787,7 @@ fn generic_callable_parameter_modes_cross_the_interface_boundary() {
 #[test]
 fn visible_member_declarations_preserve_generic_owner_interface_identity() {
     let workspace = workspace_root();
-    let test_root = std::env::temp_dir().join(format!(
-        "ember-member-interface-{}",
-        std::process::id()
-    ));
+    let test_root = temporary_directory("member-interface");
     let out_dir = test_root.join("target");
     let helper = ember_branding::source_file("helper");
     let main = ember_branding::source_file("main");
@@ -3901,10 +3905,7 @@ fn visible_member_declarations_preserve_generic_owner_interface_identity() {
 #[test]
 fn visible_generic_enum_member_declarations_invalidate_importers() {
     let workspace = workspace_root();
-    let test_root = std::env::temp_dir().join(format!(
-        "ember-generic-enum-interface-{}",
-        std::process::id()
-    ));
+    let test_root = temporary_directory("generic-enum-interface");
     let out_dir = test_root.join("target");
     let helper = ember_branding::source_file("helper");
     let main = ember_branding::source_file("main");

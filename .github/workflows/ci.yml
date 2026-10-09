@@ -95,6 +95,8 @@ jobs:
         run: python tools/generate_runtime.py --check
       - name: runtime generator regression
         run: python tools/test_runtime_generation.py
+      - name: annotation output cleanup
+        run: python tools/test_annotation_cleanup.py
       # `[STD-28]` — `std.math`'s vector types are written by a script.
       - name: std.math's vectors match their generator
         run: python tools/gen_math_vectors.py --check

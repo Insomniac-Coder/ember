@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 EMBER = os.environ.get('EMBER') or os.path.join(ROOT, 'target', 'debug', 'ember.exe')
-OUT = os.path.join(tempfile.gettempdir(), 'ember-annotations')
+OUT = None  # Set only while the main run owns its TemporaryDirectory.
 
 if os.name == 'nt':
     # SEM_NOGPFAULTERRORBOX, inherited by every program this starts: a test program that
@@ -159,27 +159,35 @@ def check(path):
     return problems
 
 
-directories = [(d, sorted(glob.glob(os.path.join(d, '*.em')))) for d in sys.argv[1:]]
-everything = sorted({path for _, paths in directories for path in paths})
-# RUST_TEST_THREADS caps the workers, as it does the cargo suite's case sweep:
-# every core at once keeps a laptop's CPU near its thermal limit.
-workers = int(os.environ.get('RUST_TEST_THREADS') or 0) or os.cpu_count()
-with ThreadPoolExecutor(max_workers=workers) as pool:
-    found = dict(zip(everything, pool.map(check, everything)))
+def main():
+    global OUT
+    with tempfile.TemporaryDirectory(prefix="ember-annotations-") as output:
+        OUT = output
+        directories = [(d, sorted(glob.glob(os.path.join(d, '*.em')))) for d in sys.argv[1:]]
+        everything = sorted({path for _, paths in directories for path in paths})
+        # RUST_TEST_THREADS caps the workers, as it does the cargo suite's case sweep:
+        # every core at once keeps a laptop's CPU near its thermal limit.
+        workers = int(os.environ.get('RUST_TEST_THREADS') or 0) or os.cpu_count()
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            found = dict(zip(everything, pool.map(check, everything)))
 
-failures = 0
-for directory, paths in directories:
-    # `[TST-4a]` — the harness stops at a conformance directory with no accept case.
-    if 'conformance' in os.path.normpath(directory).split(os.sep) \
-            and not any(os.path.basename(p).startswith('accept_') for p in paths):
-        failures += 1
-        print(os.path.relpath(directory, ROOT))
-        print('    no accept_* case ([TST-4a])')
-    for path in paths:
-        problems = found[path]
-        if problems:
-            failures += 1
-            print(os.path.relpath(path, ROOT))
-            for problem in problems:
-                print('   ', problem)
-print('failing', failures)
+        failures = 0
+        for directory, paths in directories:
+            # `[TST-4a]` — the harness stops at a conformance directory with no accept case.
+            if 'conformance' in os.path.normpath(directory).split(os.sep) \
+                    and not any(os.path.basename(p).startswith('accept_') for p in paths):
+                failures += 1
+                print(os.path.relpath(directory, ROOT))
+                print('    no accept_* case ([TST-4a])')
+            for path in paths:
+                problems = found[path]
+                if problems:
+                    failures += 1
+                    print(os.path.relpath(path, ROOT))
+                    for problem in problems:
+                        print('   ', problem)
+        print('failing', failures)
+
+
+if __name__ == "__main__":
+    main()
