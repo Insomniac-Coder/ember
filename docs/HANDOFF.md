@@ -10705,6 +10705,42 @@ formal 1/9 count or Phase 2's estimate.
 
 #### Start here after a context reset — state at 2026-10-04 (autopilot)
 
+**2026-10-09, continued map investigation.** The owner then said “don't bother
+about temperature for now, continue working”: temperature waiting/stopping is
+suspended for this work. Mains-only timing and performance-core Windows affinity
+still apply; focused Windows tests use the efficiency cores. The maintenance
+batch below passed all five jobs in CI run `37870835815` and was fast-forwarded
+and pushed to `main` at `b9847ea`; `phase-next` started this investigation there.
+
+The remaining MSVC `a16_map_text` gap was reproduced after noisy initial runs.
+The initial blanket inlining experiment improved Windows maps but regressed
+three GCC integer-map workloads by 9–17%, so it was rejected. The replacement
+uses one integer for `Map.find`'s private result (a nonnegative table position,
+or -1 for absence) and inlines only immutable `Index.index` (ADR-144). All twelve
+callers were updated; public results and safety guarantees retain their behavior.
+Two-digit integer formatting did not improve timings and was discarded.
+The focused conformance test covers all lookup callers, including position zero:
+its compact-return assertion fails with the old representation and passes on
+MSVC/clang/GCC in debug, release and shipping; outputs pass throughout. Existing
+map, collision, missing-key and entry annotation checks also pass. The final
+matched 50-program/three-compiler matrix is complete: MSVC text maps are about
+8% faster, GCC text maps about 10% faster, clang is within measurement noise.
+No selected old/new median exceeds the 5% regression threshold; all 135 non-map
+Ember code sections are byte-identical. The charts now show 46 as fast as C,
+one close and three slower. [Evidence and controls](reviews/2026-10-09/map-performance.md)
+include the corrected b16 C-reference allocation layout and native-filesystem
+GCC run copies (removed afterward). All twelve local repository gate commands
+pass; the retained timing windows have no Windows power-source change events.
+Full-suite CI remains required before promotion. Phase estimates are unchanged
+by this performance work.
+Raw local samples and saved before/after binaries are under
+`build/maintenance-20261009/`; the two versions run interleaved with each twin.
+
+The eight associated-type review probes now reproduce their predicted outcomes,
+and their corrected setup controls pass. Sources and observations are retained
+in [the review](reviews/2026-10-09/associated-types.md). They still need rule
+triage/concrete instantiations and fixes; no type-checker fix is claimed here.
+
 **2026-10-09, maintenance requested by the owner.** `main` was fast-forwarded and
 pushed to `08a63db` (the existing five-job phase-next CI was green). The four
 named old patches in the Claude session's `worktree_patches` directory were

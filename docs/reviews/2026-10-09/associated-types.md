@@ -5,11 +5,29 @@ D-532. One covered capability predicates and operators; the other covered
 projection resolution, inference and bound substitution. Neither reviewer ran
 the compiler, modified source, or launched further agents.
 
-**Status: source-supported candidates, not confirmed defects.** The compiler
-was removed in the preceding cleanup. Native verification is waiting for the
-owner's temperature condition (CPU package at or below 65°C for 45 seconds).
-Small probe programs are prepared in `build/maintenance-20261009/probes/`.
-Run those checks before assigning defect numbers or changing the type checker.
+**Status: the eight probe outcomes reproduced; fixes and broader contract
+triage remain open.** After the owner suspended the temperature condition on
+October 9, all eight compile-only probes ran in under four seconds. Sources
+are retained in [probes/](probes/), with passing setup controls in
+[controls/](controls/). No type-checker change is included in the map-performance
+batch. These small checks do not establish how every concrete instantiation
+behaves or whether each capability issue is specific to projections.
+
+| Probe | Observed result | Passing control |
+|---|---|---|
+| `lookalike_operator` | Accepted `+` with only the unrelated `Lookalike` bound. | A direct parameter with the actual `Add[Output = T]` bound. |
+| `unbounded_comparison` | Accepted `<` with an unconstrained associated type. | Add the `Ord` bound. |
+| `float_projection_print` | E0900: printing `H.Item` is not implemented. | Add an explicit `Display` bound alongside `Float`. |
+| `result_projection` | E2020: expected `Result[S.Item, i64]`, found `Result[Self.Item, i64]`. | Use a concrete `int` result in both signatures. |
+| `method_bound_projection` | E2040: `C` does not implement `Build[Self.Item]`. | Use `Build[int]` in the interface method's bound. |
+| `generic_assoc_bound` | E2040: `Value` does not implement `Tag[T]`. | Use `Tag[int]` in the associated-type constraint. |
+| `assoc_binding_enforcement` | Accepted the implementation whose associated type binds `Item = str`, despite the `Item = int` requirement. | Bind the implementation's `Item` to `int`. |
+| `nested_projection_binding` | E2020: expected `Option[O.Atom]`, found `Option[Self.Atom]`. | Use concrete `int` in the nested binding and result. |
+
+Two initial controls needed repair: `Self.Item` in an `Add` binding did not
+parse, and leaving `S.Item` in the supposedly concrete Result control still
+exercised projection resolution. Neither failed control is evidence for a
+separate defect; the corrected controls above pass.
 
 | Candidate | Source path through `compiler/ember_typeck/src/lib.rs` | Probe | Expected contract |
 |---|---|---|---|
@@ -38,7 +56,7 @@ direct bare projection argument/result substitution, direct associated method
 lookup, declaring-bound selection, and ordinary callable-bound inference.
 Field lookup was only partially inspected.
 
-Next verification should run the eight small compile-only probes, distinguish
-parse/setup errors from the predicted type-checking outcomes, and compare any
-positive result with a direct-parameter or concrete-type control. No broad
-conformance run is needed merely to decide whether these candidates reproduce.
+Next work should trace each reproduced outcome against the governing rule,
+exercise concrete instantiations and direct-parameter equivalents, then add a
+conformance regression before fixing it. No broad conformance run is needed
+merely to triage these small probes.
