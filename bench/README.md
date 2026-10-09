@@ -35,3 +35,18 @@ the performance cores; a row a disturbance clearly hit may be timed again alone
 
 `python bench/run_windows.py --list` shows each program and its twin without building anything.
 Builds go to `build/bench/` (ignored by git); the WSL copy is deleted at the end of a run.
+
+## Stable reference buffers
+
+The `b16_checked` and `b16_wrapped` C twins use page-aligned buffers with offsets
+0, 1024 and 2048 bytes. They allocate the same three logical arrays and execute the
+same loops. On the benchmark laptop, ordinary allocation placement made MSVC's
+unchanged interchanged loop vary from about 0.5 to 7 seconds. Controlled equal
+page offsets reproduced the slow case; distinct offsets gave about 0.46 seconds,
+with the same inner-loop instructions and checksum. This is consistent with
+[Intel's documented false load/store address-alias stalls](https://www.intel.com/content/www/us/en/docs/vtune-profiler/user-guide/2024-2/cpu-metrics-reference.html).
+The separated offsets give the comparison the faster, stable C reference;
+they are applied under all three C compilers, with their usual flags.
+The gaps also keep pending stores away from following loads in clang/GCC's
+streaming loop; the initially tested 64-byte gaps slowed that loop and were
+rejected.

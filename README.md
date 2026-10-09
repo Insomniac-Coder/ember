@@ -102,7 +102,7 @@ ECS facilities, C++ interop, the interpreter, and hot reload. The open defects a
 Each program below was written twice, in Ember and by hand in C (C++ for the programs that use
 objects, strings, maps or sorting; both are in [`bench/`](bench/), with the scripts that time them),
 built by the same C compiler with the same optimisation flags,
-and timed on 2026-10-06 on one laptop, plugged in: an ASUS ROG Strix G16 (G615LR) with an Intel Core
+and timed on 2026-10-09 on one laptop, plugged in: an ASUS ROG Strix G16 (G615LR) with an Intel Core
 Ultra 9 275HX (8 performance cores and 16 slower efficiency cores), 64 GB of DDR5-5600 memory and
 Windows 11 Home (build 26200). The compilers are MSVC 19.44 and clang 22.1 on Windows, and gcc 15.2
 under WSL (Ubuntu 26.04) on the same laptop. The Windows runs are held to the performance cores; WSL
@@ -113,6 +113,8 @@ Ember's time divided by the C's: ×1.00 is the same speed, above 1 is slower, be
 Green is under ×1.05 (less than 5% slower than C, or faster), amber ×1.05 to ×1.10, red over ×1.10;
 a value under ×0.95, in bold green, is a program Ember runs at least 5% faster than C.
 A program goes in the table of its slowest compiler.
+The [matched regression check](docs/reviews/2026-10-09/map-performance.md) compares all 50 programs
+with the preceding implementation on each compiler, and retains the raw samples.
 
 Each compiler's columns compare Ember with the hand-written C built by that compiler. On the rows
 marked ¹ or ², MSVC rearranges the hand-written C's loops, which changes that C's time a lot; on the
@@ -132,7 +134,7 @@ notes under the tables say how. With gcc, both programs are built with
 
 > Development is in progress, and attempts will be made to speed the language up in these areas.
 
-More than 10% slower than C: 2 of the 50 programs with MSVC, 1 with clang, 2 with gcc; none with all
+More than 10% slower than C: 1 of the 50 programs with MSVC, 1 with clang, 1 with gcc; none with all
 three.
 
 ![Programs more than 10% slower than C with one compiler: C time, Ember time, Ember divided by C](docs/benchmarks/slower-than-c.svg)

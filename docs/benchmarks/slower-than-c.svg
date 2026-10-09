@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1164" height="306" viewBox="0 0 1164 306" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14">
-<rect width="1164" height="306" fill="#0d1117" rx="6"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1164" height="206" viewBox="0 0 1164 206" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14">
+<rect width="1164" height="206" fill="#0d1117" rx="6"/>
 <text x="16" y="46" fill="#9198a1" font-size="12">What the program does</text>
 <text x="545.0" y="22" fill="#e6edf3" font-weight="600" text-anchor="middle">MSVC</text>
 <line x1="440" y1="30" x2="650" y2="30" stroke="#30363d"/>
@@ -18,57 +18,35 @@
 <text x="1140" y="46" fill="#9198a1" font-size="12" text-anchor="end">Ember ÷ C</text>
 <line x1="0" y1="57" x2="1164" y2="57" stroke="#30363d"/>
 <text x="16" y="83" fill="#e6edf3" xml:space="preserve">Recursion: Fibonacci of 38, the slow way ³</text>
-<text x="500" y="83.0" fill="#9198a1" text-anchor="end">102 ms</text>
+<text x="500" y="83.0" fill="#9198a1" text-anchor="end">103 ms</text>
 <text x="574" y="83.0" fill="#e6edf3" text-anchor="end">109 ms</text>
-<text x="648" y="83.0" fill="#d29922" text-anchor="end" font-weight="400">×1.07</text>
-<text x="746" y="83.0" fill="#9198a1" text-anchor="end">64 ms</text>
+<text x="648" y="83.0" fill="#d29922" text-anchor="end" font-weight="400">×1.06</text>
+<text x="746" y="83.0" fill="#9198a1" text-anchor="end">63 ms</text>
 <text x="820" y="83.0" fill="#e6edf3" text-anchor="end">111 ms</text>
-<text x="894" y="83.0" fill="#f85149" text-anchor="end" font-weight="400">×1.73</text>
+<text x="894" y="83.0" fill="#f85149" text-anchor="end" font-weight="400">×1.75</text>
 <text x="992" y="83.0" fill="#9198a1" text-anchor="end">26 ms</text>
-<text x="1066" y="83.0" fill="#e6edf3" text-anchor="end">1.0 ms</text>
+<text x="1066" y="83.0" fill="#e6edf3" text-anchor="end">0.5 ms</text>
 <text x="1140" y="83.0" fill="#3fb950" text-anchor="end" font-weight="700">×0.02</text>
-<rect x="0" y="98" width="1164" height="40" fill="#151b23"/>
-<text x="16" y="123" fill="#e6edf3" xml:space="preserve">Start and stop an empty program</text>
-<text x="500" y="123.0" fill="#9198a1" text-anchor="end">5.0 ms</text>
-<text x="574" y="123.0" fill="#e6edf3" text-anchor="end">5.0 ms</text>
-<text x="648" y="123.0" fill="#3fb950" text-anchor="end" font-weight="400">×1.02</text>
-<text x="746" y="123.0" fill="#9198a1" text-anchor="end">4.0 ms</text>
-<text x="820" y="123.0" fill="#e6edf3" text-anchor="end">4.0 ms</text>
-<text x="894" y="123.0" fill="#d29922" text-anchor="end" font-weight="400">×1.05</text>
-<text x="992" y="123.0" fill="#9198a1" text-anchor="end">0.0 ms</text>
-<text x="1066" y="123.0" fill="#e6edf3" text-anchor="end">0.0 ms</text>
-<text x="1140" y="123.0" fill="#f85149" text-anchor="end" font-weight="400">×1.18</text>
-<text x="16" y="163" fill="#e6edf3" xml:space="preserve">Count the lines of a 3 MB text and their lengths, 200 times:</text>
-<text x="16" y="183" fill="#e6edf3" xml:space="preserve"><tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">text.lines()</tspan></text>
-<text x="500" y="173.0" fill="#9198a1" text-anchor="end">57 ms</text>
-<text x="574" y="173.0" fill="#e6edf3" text-anchor="end">66 ms</text>
-<text x="648" y="173.0" fill="#f85149" text-anchor="end" font-weight="400">×1.14</text>
-<text x="746" y="173.0" fill="#9198a1" text-anchor="end">55 ms</text>
-<text x="820" y="173.0" fill="#e6edf3" text-anchor="end">58 ms</text>
-<text x="894" y="173.0" fill="#d29922" text-anchor="end" font-weight="400">×1.06</text>
-<text x="992" y="173.0" fill="#9198a1" text-anchor="end">52 ms</text>
-<text x="1066" y="173.0" fill="#e6edf3" text-anchor="end">51 ms</text>
-<text x="1140" y="173.0" fill="#3fb950" text-anchor="end" font-weight="400">×0.99</text>
-<rect x="0" y="198" width="1164" height="60" fill="#151b23"/>
-<text x="16" y="223" fill="#e6edf3" xml:space="preserve">Map of text keys (&quot;key0&quot;, &quot;key1&quot;, …): 200,000 inserts, then 1 million</text>
-<text x="16" y="243" fill="#e6edf3" xml:space="preserve">lookups</text>
-<text x="500" y="233.0" fill="#9198a1" text-anchor="end">88 ms</text>
-<text x="574" y="233.0" fill="#e6edf3" text-anchor="end">100 ms</text>
-<text x="648" y="233.0" fill="#f85149" text-anchor="end" font-weight="400">×1.14</text>
-<text x="746" y="233.0" fill="#9198a1" text-anchor="end">85 ms</text>
-<text x="820" y="233.0" fill="#e6edf3" text-anchor="end">72 ms</text>
-<text x="894" y="233.0" fill="#3fb950" text-anchor="end" font-weight="700">×0.84</text>
-<text x="992" y="233.0" fill="#9198a1" text-anchor="end">117 ms</text>
-<text x="1066" y="233.0" fill="#e6edf3" text-anchor="end">60 ms</text>
-<text x="1140" y="233.0" fill="#3fb950" text-anchor="end" font-weight="700">×0.51</text>
-<text x="16" y="283" fill="#e6edf3" xml:space="preserve">1 million objects with a name and a list, each read 40 times</text>
-<text x="500" y="283.0" fill="#9198a1" text-anchor="end">237 ms</text>
-<text x="574" y="283.0" fill="#e6edf3" text-anchor="end">217 ms</text>
-<text x="648" y="283.0" fill="#3fb950" text-anchor="end" font-weight="700">×0.91</text>
-<text x="746" y="283.0" fill="#9198a1" text-anchor="end">227 ms</text>
-<text x="820" y="283.0" fill="#e6edf3" text-anchor="end">204 ms</text>
-<text x="894" y="283.0" fill="#3fb950" text-anchor="end" font-weight="700">×0.90</text>
-<text x="992" y="283.0" fill="#9198a1" text-anchor="end">154 ms</text>
-<text x="1066" y="283.0" fill="#e6edf3" text-anchor="end">171 ms</text>
-<text x="1140" y="283.0" fill="#f85149" text-anchor="end" font-weight="400">×1.11</text>
+<rect x="0" y="98" width="1164" height="60" fill="#151b23"/>
+<text x="16" y="123" fill="#e6edf3" xml:space="preserve">Count the lines of a 3 MB text and their lengths, 200 times:</text>
+<text x="16" y="143" fill="#e6edf3" xml:space="preserve"><tspan font-family="ui-monospace, 'SFMono-Regular', Consolas, monospace" font-size="13">text.lines()</tspan></text>
+<text x="500" y="133.0" fill="#9198a1" text-anchor="end">60 ms</text>
+<text x="574" y="133.0" fill="#e6edf3" text-anchor="end">69 ms</text>
+<text x="648" y="133.0" fill="#f85149" text-anchor="end" font-weight="400">×1.16</text>
+<text x="746" y="133.0" fill="#9198a1" text-anchor="end">60 ms</text>
+<text x="820" y="133.0" fill="#e6edf3" text-anchor="end">64 ms</text>
+<text x="894" y="133.0" fill="#d29922" text-anchor="end" font-weight="400">×1.06</text>
+<text x="992" y="133.0" fill="#9198a1" text-anchor="end">53 ms</text>
+<text x="1066" y="133.0" fill="#e6edf3" text-anchor="end">52 ms</text>
+<text x="1140" y="133.0" fill="#3fb950" text-anchor="end" font-weight="400">×0.99</text>
+<text x="16" y="183" fill="#e6edf3" xml:space="preserve">1 million objects with a name and a list, each read 40 times</text>
+<text x="500" y="183.0" fill="#9198a1" text-anchor="end">229 ms</text>
+<text x="574" y="183.0" fill="#e6edf3" text-anchor="end">207 ms</text>
+<text x="648" y="183.0" fill="#3fb950" text-anchor="end" font-weight="700">×0.91</text>
+<text x="746" y="183.0" fill="#9198a1" text-anchor="end">232 ms</text>
+<text x="820" y="183.0" fill="#e6edf3" text-anchor="end">214 ms</text>
+<text x="894" y="183.0" fill="#3fb950" text-anchor="end" font-weight="700">×0.92</text>
+<text x="992" y="183.0" fill="#9198a1" text-anchor="end">150 ms</text>
+<text x="1066" y="183.0" fill="#e6edf3" text-anchor="end">171 ms</text>
+<text x="1140" y="183.0" fill="#f85149" text-anchor="end" font-weight="400">×1.13</text>
 </svg>
