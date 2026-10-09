@@ -19,7 +19,7 @@ TREE = pathlib.Path(os.environ.get('EMBER_TREE', str(pathlib.Path.home() / 'embe
 EMBER = TREE / 'target' / 'release' / 'ember'
 os.environ.setdefault('EMBER_STD', str(TREE / 'std' / 'src'))
 os.environ.setdefault('EMBER_RUNTIME_DIR', str(TREE / 'runtime' / 'ember_rt'))
-FLAGS = ['-O2', '-fvect-cost-model=cheap', '-funroll-loops']
+FLAGS = ['-O2', '-fvect-cost-model=cheap', '-funroll-loops', '-ffp-contract=off', '-fno-fast-math']
 
 
 def build_ember(program, out):

@@ -3,6 +3,8 @@
 The programs behind the README's speed tables: each one written in Ember (`programs/`) and by
 hand in C or C++ (`c/`, the same name), timed against each other with the same C compiler and
 flags. The README shows the latest run, whose logs are in `results/`.
+Every clang and GCC twin uses `-ffp-contract=off -fno-fast-math`, matching
+Ember's strict floating-point policy across all program sets.
 
 | Path | What it is |
 |---|---|

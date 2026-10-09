@@ -28,9 +28,9 @@ CLANG_BIN = pathlib.Path(r'C:\Program Files\LLVM\bin')
 PCORES = 0xC03C03
 # The sets in the order the README's logs hold them, by the programs' first letter.
 SETS = ['p', 'a', 'b', 'w', 's', 't']
-# The sets whose clang twins are built with Ember's floating-point flags; the `p` and `t` sets'
-# twins never were (their work is integers and text).
-FP_FLAG_SETS = {'a', 'b', 'w', 's'}
+# Every clang twin uses Ember's strict floating-point policy, including the
+# object and text sets. The comparison does not depend on the set's contents.
+FP_FLAGS = ['-ffp-contract=off', '-fno-fast-math']
 
 
 class Counters(ctypes.Structure):
@@ -64,16 +64,15 @@ def build_ember(program, cc, out):
     return target / 'release' / 'bin' / f'{program.stem}.exe'
 
 
-def build_twin(letter, source, cc, out):
+def build_twin(source, cc, out):
     exe = out / 'ref' / f'{source.stem}.exe'
     exe.parent.mkdir(parents=True, exist_ok=True)
-    fp = ['-ffp-contract=off', '-fno-fast-math'] if letter in FP_FLAG_SETS else []
     if cc == 'msvc':
         command = ['cmd', '/c', str(HERE / 'cl_build.bat'), str(source), str(exe)]
     elif source.suffix == '.cpp':
-        command = [str(CLANG_BIN / 'clang++.exe'), '-O2', *fp, '-std=c++17', str(source), '-o', str(exe)]
+        command = [str(CLANG_BIN / 'clang++.exe'), '-O2', *FP_FLAGS, '-std=c++17', str(source), '-o', str(exe)]
     else:
-        command = [str(CLANG_BIN / 'clang.exe'), '-O2', *fp, '-std=c11', str(source), '-o', str(exe)]
+        command = [str(CLANG_BIN / 'clang.exe'), '-O2', *FP_FLAGS, '-std=c11', str(source), '-o', str(exe)]
     result = subprocess.run(command, capture_output=True, text=True, timeout=300)
     if result.returncode != 0 or not exe.is_file():
         sys.exit(f'twin build failed: {source.name}\n{result.stdout}{result.stderr}')
@@ -123,7 +122,7 @@ def main():
                 require_mains(f'set {letter} {cc}')
                 out = ROOT / 'build' / 'bench' / cc
                 for _, program, twin in (c for c in chosen if c[0] == letter):
-                    exes = {'ember': build_ember(program, cc, out), 'ref': build_twin(letter, twin, cc, out)}
+                    exes = {'ember': build_ember(program, cc, out), 'ref': build_twin(twin, cc, out)}
                     first = {name: run(exe) for name, exe in exes.items()}
                     if first['ember'][2] != first['ref'][2]:
                         sys.exit(f'{program.stem}: outputs differ: ember {first["ember"][2]!r} vs twin {first["ref"][2]!r}')
