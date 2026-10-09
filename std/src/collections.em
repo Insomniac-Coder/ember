@@ -493,22 +493,24 @@ pub struct Map[K: Eq + Hash, V, H: Hasher + Default = DefaultHasher]:
             return ((hash * 0x517cc1b727220a95) >> self.shift) as int
         return (hash % (places as u64)) as int
 
-    ## Where in `slots` the entry keyed `q` is listed.
-    fn find[Q: AsKey[K] + Hash](self, q: Q, hash: u64) -> Option[int]:
+    ## The table position of `q`, or -1 when absent. Positions are nonnegative,
+    ## so this private result fits one integer (ADR-144). Public lookups still
+    ## return Option values or checked references as their contracts require.
+    fn find[Q: AsKey[K] + Hash](self, q: Q, hash: u64) -> int:
         places = self.slot_count()
         if places == 0:
-            return None
+            return -1
         at = self.home(hash, places)
         if self.wide:
             while true:
                 slot = self.wide_slots[at]
                 if slot == -1:
-                    return None
+                    return -1
                 if slot >= 0:
                     match self.entries[slot]:
                         Some(e):
                             if e.hash == hash and q.is_key(e.key):
-                                return Some(at)
+                                return at
                         None:
                             pass
                 at += 1
@@ -518,18 +520,18 @@ pub struct Map[K: Eq + Hash, V, H: Hasher + Default = DefaultHasher]:
             while true:
                 slot = (self.slots[at] as int)
                 if slot == -1:
-                    return None
+                    return -1
                 if slot >= 0:
                     match self.entries[slot]:
                         Some(e):
                             if e.hash == hash and q.is_key(e.key):
-                                return Some(at)
+                                return at
                         None:
                             pass
                 at += 1
                 if at == places:
                     at = 0
-        return None
+        return -1
 
     ## Lists entry `i` in `slots`, in the first free place from its home, and
     ## says how many used places it walked past.
@@ -599,63 +601,61 @@ pub struct Map[K: Eq + Hash, V, H: Hasher + Default = DefaultHasher]:
 
     pub fn insert(mut self, owned k: K, owned v: V) -> Option[V]:
         hash = self.hash_of(k)
-        match self.find(k, hash):
-            Some(at):
-                match self.entries[self.slot_at(at)]:
-                    Some(ref mut e):
-                        return Some(mem.replace(e.value, v))
-                    None:
-                        panic("a listed entry was removed")
-            None:
-                pass
+        at = self.find(k, hash)
+        if at >= 0:
+            match self.entries[self.slot_at(at)]:
+                Some(ref mut e):
+                    return Some(mem.replace(e.value, v))
+                None:
+                    panic("a listed entry was removed")
         self.push_new(hash, k, v)
         return None
 
     pub fn get[Q: AsKey[K] + Hash](self, q: Q) -> Option[ref V]:
-        match self.find(q, self.hash_of(q)):
-            Some(at):
-                match self.entries[self.slot_at(at)]:
-                    Some(e):
-                        return Some(ref e.value)
-                    None:
-                        return None
-            None:
-                return None
+        at = self.find(q, self.hash_of(q))
+        if at >= 0:
+            match self.entries[self.slot_at(at)]:
+                Some(e):
+                    return Some(ref e.value)
+                None:
+                    return None
+        else:
+            return None
 
     pub fn get_mut[Q: AsKey[K] + Hash](mut self, q: Q) -> Option[ref mut V]:
-        match self.find(q, self.hash_of(q)):
-            Some(at):
-                match self.entries[self.slot_at(at)]:
-                    Some(ref mut e):
-                        return Some(ref mut e.value)
-                    None:
-                        return None
-            None:
-                return None
+        at = self.find(q, self.hash_of(q))
+        if at >= 0:
+            match self.entries[self.slot_at(at)]:
+                Some(ref mut e):
+                    return Some(ref mut e.value)
+                None:
+                    return None
+        else:
+            return None
 
     pub fn contains_key[Q: AsKey[K] + Hash](self, q: Q) -> bool:
-        return self.find(q, self.hash_of(q)).is_some()
+        return self.find(q, self.hash_of(q)) >= 0
 
     ## `k in m` (`[STD-8]`): by key.
     pub fn contains[Q: AsKey[K] + Hash](self, q: Q) -> bool:
-        return self.find(q, self.hash_of(q)).is_some()
+        return self.find(q, self.hash_of(q)) >= 0
 
     pub fn remove[Q: AsKey[K] + Hash](mut self, q: Q) -> Option[V]:
-        match self.find(q, self.hash_of(q)):
-            Some(at):
-                i = self.slot_at(at)
-                self.set_slot(at, -2)
-                old = mem.replace(self.entries[i], None)
-                self.live -= 1
-                if self.entries.len() > 16 and self.live * 2 < self.entries.len():
-                    self.rebuild(self.slot_count())
-                match owned old:
-                    Some(e):
-                        return Some(e.value)
-                    None:
-                        return None
-            None:
-                return None
+        at = self.find(q, self.hash_of(q))
+        if at >= 0:
+            i = self.slot_at(at)
+            self.set_slot(at, -2)
+            old = mem.replace(self.entries[i], None)
+            self.live -= 1
+            if self.entries.len() > 16 and self.live * 2 < self.entries.len():
+                self.rebuild(self.slot_count())
+            match owned old:
+                Some(e):
+                    return Some(e.value)
+                None:
+                    return None
+        else:
+            return None
 
     ## Keeps the entries `keep` accepts, in order.
     pub fn retain(mut self, keep: fn(ref K, ref V) -> bool):
@@ -768,43 +768,42 @@ extend[K: Eq + Hash, V, H: Hasher + Default, Q: AsKey[K] + Hash + Debug] Map[K, 
     type Output = V
 
     ## The value, or a panic naming the key.
+    @inline
     fn index(self, q: Q) -> ref V:
-        match self.find(q, self.hash_of(q)):
-            Some(at):
-                match self.entries[self.slot_at(at)]:
-                    Some(e):
-                        return ref e.value
-                    None:
-                        panic("a listed entry was removed")
-            None:
-                panic(f"key not found: {q!r}; use .get(k) for an Option")
+        at = self.find(q, self.hash_of(q))
+        if at >= 0:
+            match self.entries[self.slot_at(at)]:
+                Some(e):
+                    return ref e.value
+                None:
+                    panic("a listed entry was removed")
+        else:
+            panic(f"key not found: {q!r}; use .get(k) for an Option")
 
     ## `m[q] op= v`: the key must be there.
     fn index_mut(mut self, q: Q) -> ref mut V:
-        match self.find(q, self.hash_of(q)):
-            Some(at):
-                match self.entries[self.slot_at(at)]:
-                    Some(ref mut e):
-                        return ref mut e.value
-                    None:
-                        panic("a listed entry was removed")
-            None:
-                panic(f"key not found: {q!r}; use .get(k) for an Option")
+        at = self.find(q, self.hash_of(q))
+        if at >= 0:
+            match self.entries[self.slot_at(at)]:
+                Some(ref mut e):
+                    return ref mut e.value
+                None:
+                    panic("a listed entry was removed")
+        else:
+            panic(f"key not found: {q!r}; use .get(k) for an Option")
 
 extend[K: Eq + Hash, V, H: Hasher + Default, Q: ToKey[K] + Hash] Map[K, V, H] implements IndexSet[Q, V]:
     ## Replaces, or inserts `q.to_key()` when the key is new (`[STD-12]`).
     fn index_set(mut self, q: Q, owned v: V):
         hash = self.hash_of(q)
-        match self.find(q, hash):
-            Some(at):
-                match self.entries[self.slot_at(at)]:
-                    Some(ref mut e):
-                        e.value = v
-                        return
-                    None:
-                        panic("a listed entry was removed")
-            None:
-                pass
+        at = self.find(q, hash)
+        if at >= 0:
+            match self.entries[self.slot_at(at)]:
+                Some(ref mut e):
+                    e.value = v
+                    return
+                None:
+                    panic("a listed entry was removed")
         self.push_new(hash, q.to_key(), v)
 
 extend[K: Eq + Hash, V: Copy, H: Hasher + Default] Map[K, V, H]:
@@ -861,14 +860,14 @@ pub struct MapEntry[K: Eq + Hash, V, H: Hasher + Default]:
     ## The value, inserting `v` first when the key is new.
     pub fn or_insert(owned self, owned v: V) -> ref mut V:
         i = 0
-        match self.map.find(self.key, self.hash):
-            Some(at):
-                i = self.map.slot_at(at)
-            None:
-                # `push_new` may close up removed entries first, so the new
-                # entry's place is read after it.
-                self.map.push_new(self.hash, self.key, v)
-                i = self.map.entries.len() - 1
+        at = self.map.find(self.key, self.hash)
+        if at >= 0:
+            i = self.map.slot_at(at)
+        else:
+            # `push_new` may close up removed entries first, so the new
+            # entry's place is read after it.
+            self.map.push_new(self.hash, self.key, v)
+            i = self.map.entries.len() - 1
         match self.map.entries[i]:
             Some(ref mut e):
                 return ref mut e.value
@@ -876,26 +875,26 @@ pub struct MapEntry[K: Eq + Hash, V, H: Hasher + Default]:
                 panic("a listed entry was removed")
 
     pub fn or_insert_with(owned self, make: fn() -> V) -> ref mut V:
-        match self.map.find(self.key, self.hash):
-            Some(at):
-                i = self.map.slot_at(at)
-                match self.map.entries[i]:
-                    Some(ref mut e):
-                        return ref mut e.value
-                    None:
-                        panic("a listed entry was removed")
-            None:
-                return self.or_insert(make())
+        at = self.map.find(self.key, self.hash)
+        if at >= 0:
+            i = self.map.slot_at(at)
+            match self.map.entries[i]:
+                Some(ref mut e):
+                    return ref mut e.value
+                None:
+                    panic("a listed entry was removed")
+        else:
+            return self.or_insert(make())
 
 extend[K: Eq + Hash, V: Default, H: Hasher + Default] MapEntry[K, V, H]:
     pub fn or_default(owned self) -> ref mut V:
         i = 0
-        match self.map.find(self.key, self.hash):
-            Some(at):
-                i = self.map.slot_at(at)
-            None:
-                self.map.push_new(self.hash, self.key, V.default())
-                i = self.map.entries.len() - 1
+        at = self.map.find(self.key, self.hash)
+        if at >= 0:
+            i = self.map.slot_at(at)
+        else:
+            self.map.push_new(self.hash, self.key, V.default())
+            i = self.map.entries.len() - 1
         match self.map.entries[i]:
             Some(ref mut e):
                 return ref mut e.value

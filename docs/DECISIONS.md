@@ -5016,6 +5016,59 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-144 — a compact private map-lookup result
+
+2026-10-09. MSVC's text-key map remained about 1.14 times its C++ twin after
+ADR-141. In the emitted assembly, each indexed read called the index method,
+which called `find`; the probe loop then called the key comparison. The index
+method also carried the frame needed by missing-key formatting. The existing
+size heuristic gave `find` external linkage and the index method discretionary
+inlining, which MSVC left as calls.
+
+The private `Map.find` now returns the table position as an `int`, using -1
+for absence. Every valid position is nonnegative; all twelve callers test
+that condition before accessing a slot. This replaces the tagged `Option[int]`
+return record with one integer. On MSVC x64 the old record used hidden return
+storage; the integer can return in a register. Public `get`, `get_mut`, `remove`
+and `insert` still return their existing Option types. Both narrow and wide
+tables, ownership, insertion order and the checked indexing contract retain
+their behavior. No unsafe access or benchmark-specific case is introduced.
+
+Only immutable `Index.index` uses the existing `@inline` attribute. Keeping
+that small adapter in its caller avoids a separate call/frame for each read;
+the native compiler chooses whether to inline the probing loop itself.
+
+**Rejected blanket inlining.** Three shuffled 21-sample MSVC diagnostic rounds measured forced `find` at
+0.924–0.936 of the unchanged executable's time; forcing both methods measured
+0.892–0.923. Forcing only the index method measured 0.970–0.988. A diagnostic
+with generated bounds/overflow panic branches removed measured 0.969–1.013:
+that experiment does not explain the gap as mandatory checks and is not a
+production candidate. The separately compiled unchanged C control measured
+0.982–1.017. C++ varied substantially between rounds, so matched before/after
+results, rather than a single old README ratio, decide whether the change stays.
+The first full matrix exposed GCC regressions of 13%, 9% and 17% on the dense
+and two strided integer-map workloads. Isolated repeats reproduced that
+trade-off, so forcing both methods was rejected.
+
+**Compact-result experiment.** With only the indexed read forced inline, the
+temporary C variants measured 0.877/0.977/0.855/0.893/0.897 of the baseline
+on GCC's five map workloads (21 shuffled samples each). The MSVC text-map
+variant measured 0.906 of baseline in a 31-sample comparison, about 1.04 of
+its C++ twin. These diagnostics selected the library implementation; the final
+source-generated matrix and full validation remain required before promotion.
+
+A general two-digit integer formatter was also tried privately. It measured
+0.997–1.050 of the existing formatter's map time, and added no benefit to the
+inlined variant. It was discarded; the runtime is unchanged.
+
+`STD-12/accept_compact_map_lookup_keeps_checked_semantics` covers owning and
+borrowed text keys, empty maps, table position zero, replacement, mutable lookup,
+all entry helpers, removal and reinsertion. Its compact-return assertion fails
+with the old result representation and passes with the new one in all three
+profiles under MSVC, clang and GCC; outputs agree in both versions. Existing
+collision, close-up and missing-key checks also pass. Final matrix/full-suite
+results are recorded in the handoff before promotion.
+
 ## ADR-143 — an associated type's bound brings its parents (D-532)
 
 2026-10-06. The owner: "Please fix that bug in this session" (D-532, recorded open in 2caffd7). A
