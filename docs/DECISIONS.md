@@ -5016,6 +5016,32 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-145 — one constructor traversal for generic and associated substitution
+
+**Date:** 2026-10-10. **Rules:** `[IFC-4]`, `[TYP-16]`, `[TYP-17]`.
+
+**Context.** Parameter substitution rebuilt Result, nominal enum/class instances
+and built-in wrappers, but two separate associated-type traversals covered
+fewer constructors. This rejected valid signatures and left nested equality
+bindings referring to the interface declaration (D-538).
+
+**Decision.** Share the existing parameter substitution's constructor walk.
+Each caller supplies only its leaf rule: replace a parameter, replace a named
+association, or project an association through an owner. Rebuild instances
+through their existing factories; do not modify interned definitions. Preserve
+function ABI, parameter modes, pointer/reference mutability and array lengths.
+The alternative duplicated the same traversal in three places and retained the
+cause of the mismatch.
+
+**Consequences.** This changes compile-time resolution only. The 50 existing
+release benchmarks produce byte-identical C with the saved pre-change compiler
+and the candidate. Scope is the constructors already supported by parameter
+substitution; this is not a claim of new support for unrelated type forms.
+The specification is unchanged. Focused RED/GREEN evidence and follow-ups are
+in [the review](reviews/2026-10-10/associated-types.md).
+
+---
+
 ## ADR-144 — a compact private map-lookup result
 
 2026-10-09. MSVC's text-key map remained about 1.14 times its C++ twin after

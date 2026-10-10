@@ -14,7 +14,8 @@
 # by the implementation (`matches`), neither overflows the compiler's stack
 # nor is taken for a different signature.
 
-interface Pair[T]:
+# The default equality method requires Eq even when every call uses int.
+interface Pair[T: Eq]:
     fn first(self) -> T
     fn again(self) -> T:
         x: T = self.first()

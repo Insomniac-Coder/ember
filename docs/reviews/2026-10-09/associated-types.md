@@ -5,8 +5,8 @@ D-532. One covered capability predicates and operators; the other covered
 projection resolution, inference and bound substitution. Neither reviewer ran
 the compiler, modified source, or launched further agents.
 
-**Status: the eight probe outcomes reproduced; fixes and broader contract
-triage remain open.** After the owner suspended the temperature condition on
+**Historical probe record. The [October 10 follow-up](../2026-10-10/associated-types.md)
+records contract triage, fixes and regression coverage.** After the owner suspended the temperature condition on
 October 9, all eight compile-only probes ran in under four seconds. Sources
 are retained in [probes/](probes/), with passing setup controls in
 [controls/](controls/). No type-checker change is included in the map-performance

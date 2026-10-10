@@ -1,0 +1,111 @@
+{
+  "tests/conformance/IFC-4/accept_associated_constraints_substitute_interface_arguments.em": [
+    "unexpected E2040 on line 32: `IntOwner`'s `Member` is `IntValue`, which does not implement `Tag[T]`",
+    "unexpected E2040 on line 40: `TextOwner`'s `Member` is `TextValue`, which does not implement `Tag[T]`",
+    "stdout '' is not ['7 11']",
+    "exit 1: \"error[E2040]: `IntOwner`'s `Member` is `IntValue`, which does not implement `Tag[T]`\\n  --> tests/conformance/IFC-4/accept_associated_constraints_substitute_interface_arguments.em:32:28\\n   |\\n32 | exten\""
+  ],
+  "tests/conformance/IFC-4/accept_associated_results_resolve_both_payloads.em": [
+    "unexpected E2040 on line 16: `Numbers.success` does not match the signature required by `Source`",
+    "unexpected E2040 on line 16: `Numbers.failure` does not match the signature required by `Source`",
+    "unexpected E2040 on line 16: `Numbers.nested` does not match the signature required by `Source`",
+    "unexpected E2020 on line 26: expected `Result[S.Item, i64]`, found `Result[Self.Item, i64]`",
+    "unexpected E2020 on line 29: expected `Result[i64, S.Item]`, found `Result[i64, Self.Item]`",
+    "unexpected E2020 on line 32: expected `Option[Result[S.Item, i64]]`, found `Option[Result[Self.Item, i64]]`",
+    "stdout '' is not ['7 11 13 17']",
+    "exit 1: 'error[E2040]: `Numbers.success` does not match the signature required by `Source`\\n  --> tests/conformance/IFC-4/accept_associated_results_resolve_both_payloads.em:16:27\\n   |\\n16 | extend Numbers implem'"
+  ],
+  "tests/conformance/IFC-4/accept_associated_signatures_resolve_nested_container_arguments.em": [
+    "unexpected E2040 on line 30: `Numbers.packet` does not match the signature required by `Source`",
+    "unexpected E2040 on line 30: `Numbers.handle` does not match the signature required by `Source`",
+    "unexpected E2040 on line 30: `Numbers.boxed` does not match the signature required by `Source`",
+    "unexpected E2040 on line 30: `Numbers.cell` does not match the signature required by `Source`",
+    "unexpected E2020 on line 50: expected `Packet[S.Item]`, found `Packet[Self.Item]`",
+    "unexpected E2020 on line 53: expected `Handle[S.Item]`, found `Handle[Self.Item]`",
+    "unexpected E2020 on line 56: expected `Box[S.Item]`, found `Box[Self.Item]`",
+    "unexpected E2020 on line 59: expected `Cell[S.Item]`, found `Cell[Self.Item]`",
+    "stdout '' is not ['7 8 9 10 11 12 13 14 15']",
+    "exit 1: 'error[E2040]: `Numbers.packet` does not match the signature required by `Source`\\n  --> tests/conformance/IFC-4/accept_associated_signatures_resolve_nested_container_arguments.em:30:27\\n   |\\n30 | extend'"
+  ],
+  "tests/conformance/IFC-4/accept_associated_values_that_meet_bound_equalities.em": [],
+  "tests/conformance/IFC-4/accept_generic_associated_equalities_substitute_nested_values.em": [
+    "unexpected E2020 on line 55: expected `Option[i64]`, found `Option[T]`",
+    "unexpected E2020 on line 58: expected `Option[str]`, found `Option[T]`",
+    "stdout '' is not ['7 text', '11 word', 'true true']",
+    "exit 1: 'error[E2020]: expected `Option[i64]`, found `Option[T]`\\n  --> tests/conformance/IFC-4/accept_generic_associated_equalities_substitute_nested_values.em:55:12\\n   |\\n55 |     return o.value().get()\\n   |  '"
+  ],
+  "tests/conformance/IFC-4/accept_method_bounds_resolve_the_receivers_associated_type.em": [
+    "unexpected E2040 on line 31: `C` does not implement `Build[Self.Item]`, which `C` requires",
+    "unexpected E2040 on line 34: `C` does not implement `Build[Self.Item]`, which `C` requires",
+    "stdout '' is not ['7 9']",
+    "exit 1: 'error[E2040]: `C` does not implement `Build[Self.Item]`, which `C` requires\\n  --> tests/conformance/IFC-4/accept_method_bounds_resolve_the_receivers_associated_type.em:31:12\\n   |\\n31 |     return s.gat'"
+  ],
+  "tests/conformance/IFC-4/accept_nested_associated_bindings_keep_the_owners_projection.em": [
+    "unexpected E2020 on line 44: expected `Option[O.Atom]`, found `Option[Self.Atom]`",
+    "stdout '' is not ['Some(9) None', '2.5']",
+    "exit 1: 'error[E2020]: expected `Option[O.Atom]`, found `Option[Self.Atom]`\\n  --> tests/conformance/IFC-4/accept_nested_associated_bindings_keep_the_owners_projection.em:44:12\\n   |\\n44 |     return o.wrapped().'"
+  ],
+  "tests/conformance/IFC-4/reject_associated_values_that_miss_bound_equalities.em": [
+    "missing E2040: '' on line 30",
+    "missing E2040: '' on line 36",
+    "missing E2040: '' on line 45",
+    "expected compilation to fail"
+  ],
+  "tests/conformance/IFC-4/reject_generic_associated_equalities_with_other_instance_values.em": [
+    "missing E2040: '' on line 27",
+    "missing E2040: '' on line 33",
+    "expected compilation to fail"
+  ],
+  "tests/conformance/STD-27/accept_float_printing_with_explicit_text_bounds.em": [],
+  "tests/conformance/STD-27/accept_float_with_explicit_same_named_program_bounds.em": [],
+  "tests/conformance/STD-27/reject_float_does_not_imply_same_named_program_interfaces.em": [
+    "missing E2040: 'Eq' on line 24",
+    "missing E2040: 'Default' on line 25",
+    "missing E2040: 'Eq' on line 28",
+    "missing E2040: 'Default' on line 29",
+    "expected compilation to fail"
+  ],
+  "tests/conformance/STD-27/reject_float_does_not_imply_text_bounds.em": [
+    "missing E2040: '' on line 18",
+    "missing E2040: '' on line 19",
+    "missing E2040: '' on line 22",
+    "missing E2040: '' on line 23",
+    "expected compilation to fail"
+  ],
+  "tests/conformance/STD-27/reject_float_printing_needs_a_text_bound.em": [
+    "missing E2040: '' on line 11",
+    "missing E2040: '' on line 14",
+    "unexpected E0900 on line 11: printing a `T` is not implemented yet",
+    "unexpected E0900 on line 14: printing a `H.Item` is not implemented yet"
+  ],
+  "tests/conformance/TYP-17/accept_comparisons_with_parameter_and_projection_bounds.em": [],
+  "tests/conformance/TYP-17/accept_nominal_operator_bounds_and_ordinary_lookalike_methods.em": [],
+  "tests/conformance/TYP-17/reject_comparisons_without_parameter_or_projection_bounds.em": [
+    "missing E2040: 'Eq' on line 13",
+    "missing E2040: 'Eq' on line 16",
+    "missing E2040: 'Ord' on line 19",
+    "missing E2040: 'Ord' on line 22",
+    "missing E2040: 'Ord' on line 25",
+    "missing E2040: 'Ord' on line 28",
+    "missing E2040: 'Eq' on line 31",
+    "missing E2040: 'Eq' on line 34",
+    "missing E2040: 'Ord' on line 37",
+    "missing E2040: 'Ord' on line 40",
+    "missing E2040: 'Ord' on line 43",
+    "missing E2040: 'Ord' on line 46",
+    "missing E2040: 'Ord' on line 49",
+    "missing E2040: 'Ord' on line 52",
+    "expected compilation to fail"
+  ],
+  "tests/conformance/TYP-17/reject_lookalike_operator_bounds_on_parameters_and_projections.em": [
+    "missing E2040: 'Add' on line 17",
+    "missing E2040: 'Add' on line 20",
+    "missing E2040: 'Neg' on line 23",
+    "missing E2040: 'Neg' on line 26",
+    "missing E2040: 'Pow' on line 29",
+    "missing E2040: 'Pow' on line 32",
+    "missing E2040: 'Add' on line 35",
+    "missing E2040: 'Add' on line 38",
+    "expected compilation to fail"
+  ]
+}

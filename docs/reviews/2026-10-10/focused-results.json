@@ -1,0 +1,20 @@
+{
+  "tests/conformance/IFC-4/accept_associated_constraints_substitute_interface_arguments.em": [],
+  "tests/conformance/IFC-4/accept_associated_results_resolve_both_payloads.em": [],
+  "tests/conformance/IFC-4/accept_associated_signatures_resolve_nested_container_arguments.em": [],
+  "tests/conformance/IFC-4/accept_associated_values_that_meet_bound_equalities.em": [],
+  "tests/conformance/IFC-4/accept_generic_associated_equalities_substitute_nested_values.em": [],
+  "tests/conformance/IFC-4/accept_method_bounds_resolve_the_receivers_associated_type.em": [],
+  "tests/conformance/IFC-4/accept_nested_associated_bindings_keep_the_owners_projection.em": [],
+  "tests/conformance/IFC-4/reject_associated_values_that_miss_bound_equalities.em": [],
+  "tests/conformance/IFC-4/reject_generic_associated_equalities_with_other_instance_values.em": [],
+  "tests/conformance/STD-27/accept_float_printing_with_explicit_text_bounds.em": [],
+  "tests/conformance/STD-27/accept_float_with_explicit_same_named_program_bounds.em": [],
+  "tests/conformance/STD-27/reject_float_does_not_imply_same_named_program_interfaces.em": [],
+  "tests/conformance/STD-27/reject_float_does_not_imply_text_bounds.em": [],
+  "tests/conformance/STD-27/reject_float_printing_needs_a_text_bound.em": [],
+  "tests/conformance/TYP-17/accept_comparisons_with_parameter_and_projection_bounds.em": [],
+  "tests/conformance/TYP-17/accept_nominal_operator_bounds_and_ordinary_lookalike_methods.em": [],
+  "tests/conformance/TYP-17/reject_comparisons_without_parameter_or_projection_bounds.em": [],
+  "tests/conformance/TYP-17/reject_lookalike_operator_bounds_on_parameters_and_projections.em": []
+}

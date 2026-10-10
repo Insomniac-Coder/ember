@@ -10705,6 +10705,29 @@ formal 1/9 count or Phase 2's estimate.
 
 #### Start here after a context reset — state at 2026-10-04 (autopilot)
 
+**2026-10-10, associated-type/generic-bound batch.** After the owner said
+“continue now”, the previous map batch's CI run `37954979905` was confirmed
+successful in all five jobs and `main`/`phase-next` were promoted to `c428d11`.
+The owner then approved fixing the eight associated-type review outcomes.
+D-533–D-539 implement the clear existing contract; ADR-145 shares constructor
+traversal. Float alone does **not** imply Display/Debug (the review assumption
+was corrected), and user interfaces named Eq/Default are not standard traits.
+Eighteen new conformance files cover direct and projected parameters, concrete
+calls and rejection cases. The older Pair fixture now supplies its required Eq.
+[Full evidence and open follow-ups](reviews/2026-10-10/associated-types.md).
+
+All 50 existing release benchmark C outputs are byte-identical before/after;
+README timing values are unchanged. Focused tests run on efficiency cores;
+temperature waiting remains suspended by the owner's instruction. The full
+suite belongs in CI, not another local conformance sweep. This batch is to be
+pushed to `phase-next` and promoted only once all five CI jobs succeed. The
+saved baseline/compiler C evidence is in `build/assoc-20261010/`.
+
+**Next after this batch:** D-540, a separately reproduced declaration-order
+issue with `C: Build[S.Item]`, plus the formatting diagnostic follow-ups listed
+in the review. Do not describe them as fixed. No pending resource reset is
+authorized: the one requested reset was successfully consumed earlier.
+
 **2026-10-09, continued map investigation.** The owner then said “don't bother
 about temperature for now, continue working”: temperature waiting/stopping is
 suspended for this work. Mains-only timing and performance-core Windows affinity

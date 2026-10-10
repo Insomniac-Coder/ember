@@ -6828,25 +6828,9 @@ impl<'a> Checker<'a> {
 
     /// `ty` with each `Self.X` in `map` replaced.
     fn replace_assoc(&mut self, ty: Ty, map: &HashMap<Symbol, Ty>) -> Ty {
-        match self.types.kind(ty).clone() {
+        match *self.types.kind(ty) {
             TyKind::Assoc { name } => map.get(&name).copied().unwrap_or(ty),
-            TyKind::Ref { mutable, inner } => {
-                let inner = self.replace_assoc(inner, map);
-                self.types.intern(TyKind::Ref { mutable, inner })
-            }
-            TyKind::Vec { elem, text } => {
-                let elem = self.replace_assoc(elem, map);
-                self.types.intern(TyKind::Vec { elem, text })
-            }
-            TyKind::Span { elem, mutable } => {
-                let elem = self.replace_assoc(elem, map);
-                self.types.intern(TyKind::Span { elem, mutable })
-            }
-            TyKind::Tuple(items) => {
-                let items = items.into_iter().map(|item| self.replace_assoc(item, map)).collect();
-                self.types.intern(TyKind::Tuple(items))
-            }
-            _ => ty,
+            _ => self.map_type_children(ty, |this, child| this.replace_assoc(child, map)),
         }
     }
 
@@ -7217,7 +7201,9 @@ impl<'a> Checker<'a> {
             if !self.bounds_known {
                 continue;
             }
+            let saved_instance = self.assoc_instance.replace(interface);
             for bound in bounds {
+                let bound = self.bound_for_owner(bound, &[], ty);
                 if !self.implements(value, bound) {
                     let value_shown = self.types.display(value);
                     let bound_shown = self.interface_shown(bound);
@@ -7228,6 +7214,23 @@ impl<'a> Checker<'a> {
                     );
                 }
             }
+            for (bound, associated, wanted) in self.interface_assoc_bindings(interface, name) {
+                let bound = self.bound_for_owner(bound, &[], ty);
+                let wanted = self.substitute_self(wanted, ty);
+                let wanted = self.resolve_assoc(wanted, ty);
+                let outer_instance = self.assoc_instance.replace(bound);
+                let actual = self.project(value, associated);
+                self.assoc_instance = outer_instance;
+                if let Some(actual) = actual && actual != wanted {
+                    let actual = self.types.display(actual);
+                    let wanted = self.types.display(wanted);
+                    let bound = self.interface_shown(bound);
+                    self.error(codes::E2040, span, format!(
+                        "`{shown}`'s `{name}` must meet `{bound}[{associated} = {wanted}]`, but `{associated}` is `{actual}`"
+                    ));
+                }
+            }
+            self.assoc_instance = saved_instance;
         }
         // D-307 — a parent is met as any bound is: by a written
         // `implements`, or by what the compiler provides (a struct's implicit
@@ -8275,6 +8278,14 @@ impl<'a> Checker<'a> {
             .iter()
             .map(|&(assoc, default)| (assoc, self.substitute_ty(default, args)))
             .collect();
+        let assoc = definition.assoc.iter().map(|(name, bounds)| {
+            (*name, bounds.iter().map(|&bound| self.substitute_bound(bound, args)).collect())
+        }).collect();
+        let assoc_bindings = definition.assoc_bindings.iter().map(|(name, bindings)| {
+            (*name, bindings.iter().map(|&(bound, associated, value)| {
+                (self.substitute_bound(bound, args), associated, self.substitute_ty(value, args))
+            }).collect())
+        }).collect();
         self.interfaces.insert(
             instance,
             InterfaceDef {
@@ -8282,8 +8293,8 @@ impl<'a> Checker<'a> {
                 methods,
                 defaults,
                 supertraits,
-                assoc: definition.assoc.clone(),
-                assoc_bindings: definition.assoc_bindings.clone(),
+                assoc,
+                assoc_bindings,
                 assoc_defaults,
                 supertrait_exprs: Vec::new(),
                 declaring_module: definition.declaring_module,
@@ -10944,33 +10955,42 @@ impl<'a> Checker<'a> {
     /// `Buffer[T]` with `T = i32` is `Buffer[i32]`, a different nominal type
     /// with a different layout, not the same one with its fields rewritten.
     fn substitute_ty(&mut self, ty: Ty, args: &[Ty]) -> Ty {
-        match self.types.kind(ty).clone() {
+        match *self.types.kind(ty) {
             TyKind::Param { index, .. } if index == ember_types::SELF_PARAM => self.substituting_self.unwrap_or(ty),
             TyKind::Param { index, .. } => args.get(index as usize).copied().unwrap_or(ty),
+            _ => self.map_type_children(ty, |this, child| this.substitute_ty(child, args)),
+        }
+    }
+
+    /// Rebuild constructed types without changing their canonical definitions.
+    /// Parameter substitution and associated-type resolution must traverse the
+    /// same constructors, including built-in wrappers and nominal instances.
+    fn map_type_children(&mut self, ty: Ty, mut map: impl FnMut(&mut Self, Ty) -> Ty) -> Ty {
+        match self.types.kind(ty).clone() {
             TyKind::Ref { mutable, inner } => {
-                let inner = self.substitute_ty(inner, args);
+                let inner = map(self, inner);
                 self.types.intern(TyKind::Ref { mutable, inner })
             }
             TyKind::Ptr { mutable, inner } => {
-                let inner = self.substitute_ty(inner, args);
+                let inner = map(self, inner);
                 self.types.intern(TyKind::Ptr { mutable, inner })
             }
             TyKind::Span { elem, mutable } => {
-                let elem = self.substitute_ty(elem, args);
+                let elem = map(self, elem);
                 self.types.intern(TyKind::Span { elem, mutable })
             }
             TyKind::Array { elem, len } => {
-                let elem = self.substitute_ty(elem, args);
+                let elem = map(self, elem);
                 self.types.intern(TyKind::Array { elem, len })
             }
             TyKind::Vec { elem, text } => {
-                let elem = self.substitute_ty(elem, args);
+                let elem = map(self, elem);
                 self.types.intern(TyKind::Vec { elem, text })
             }
             TyKind::Tuple(items) => {
                 let items = items
                     .iter()
-                    .map(|&item| self.substitute_ty(item, args))
+                    .map(|&item| map(self, item))
                     .collect();
                 self.types.intern(TyKind::Tuple(items))
             }
@@ -10978,51 +10998,51 @@ impl<'a> Checker<'a> {
                 let params = params
                     .iter()
                     .map(|param| FnParam {
-                        ty: self.substitute_ty(param.ty, args),
+                        ty: map(self, param.ty),
                         mode: param.mode,
                     })
                     .collect();
-                let ret = self.substitute_ty(ret, args);
+                let ret = map(self, ret);
                 self.types.intern(TyKind::Fn { abi, latebound, params, ret })
             }
             TyKind::Struct(id) => {
                 if let Some(inner) = self.boxes.get(&id).copied() {
-                    let inner = self.substitute_ty(inner, args);
+                    let inner = map(self, inner);
                     return self.box_of(inner);
                 }
                 if let Some(inner) = self.shareds.get(&id).copied() {
-                    let inner = self.substitute_ty(inner, args);
+                    let inner = map(self, inner);
                     return self.shared_of(inner);
                 }
                 if let Some(inner) = self.weaks.get(&id).copied() {
-                    let inner = self.substitute_ty(inner, args);
+                    let inner = map(self, inner);
                     return self.weak_of(inner, Span::DUMMY);
                 }
                 if let Some(inner) = self.cells.get(&id).copied() {
-                    let inner = self.substitute_ty(inner, args);
+                    let inner = map(self, inner);
                     return self.cell_of(inner);
                 }
                 if let Some(inner) = self.refcells.get(&id).copied() {
-                    let inner = self.substitute_ty(inner, args);
+                    let inner = map(self, inner);
                     return self.refcell_of(inner);
                 }
                 if let Some(inner) = self.maybe_uninit.get(&id).copied() {
-                    let inner = self.substitute_ty(inner, args);
+                    let inner = map(self, inner);
                     return self.maybe_uninit_of(inner);
                 }
                 if let Some(inner) = self.unsafe_cells.get(&id).copied() {
-                    let inner = self.substitute_ty(inner, args);
+                    let inner = map(self, inner);
                     return self.unsafe_cell_of(inner);
                 }
                 if let Some((inner, mutable)) = self.ref_guards.get(&id).copied() {
-                    let inner = self.substitute_ty(inner, args);
+                    let inner = map(self, inner);
                     return self.ref_guard_of(inner, mutable);
                 }
                 let origin = self.types.struct_def(id).origin.clone();
                 let Some((name, generic_args)) = origin else { return ty };
                 let concrete = generic_args
                     .iter()
-                    .map(|&arg| self.substitute_ty(arg, args))
+                    .map(|&arg| map(self, arg))
                     .collect::<Vec<_>>();
                 if concrete == generic_args {
                     return ty;
@@ -11035,7 +11055,7 @@ impl<'a> Checker<'a> {
                 let Some((name, generic_args)) = origin else { return ty };
                 let concrete = generic_args
                     .iter()
-                    .map(|&arg| self.substitute_ty(arg, args))
+                    .map(|&arg| map(self, arg))
                     .collect::<Vec<_>>();
                 if concrete == generic_args {
                     return ty;
@@ -11048,7 +11068,7 @@ impl<'a> Checker<'a> {
                 if let Some((name, generic_args)) = def.origin {
                     let concrete = generic_args
                         .iter()
-                        .map(|&arg| self.substitute_ty(arg, args))
+                        .map(|&arg| map(self, arg))
                         .collect::<Vec<_>>();
                     if concrete != generic_args {
                         if let Some(decl) = self.generic_enums.get(&name).cloned() {
@@ -11059,14 +11079,14 @@ impl<'a> Checker<'a> {
                 let name = def.name.as_str();
                 if name.starts_with("Option_") && def.variants.len() == 2 {
                     let inner = def.variants[1].fields[0].ty;
-                    let inner = self.substitute_ty(inner, args);
+                    let inner = map(self, inner);
                     return self.option_of(inner);
                 }
                 if name.starts_with("Result_") && def.variants.len() == 2 {
                     let ok = def.variants[0].fields[0].ty;
                     let err = def.variants[1].fields[0].ty;
-                    let ok = self.substitute_ty(ok, args);
-                    let err = self.substitute_ty(err, args);
+                    let ok = map(self, ok);
+                    let err = map(self, err);
                     return self.result_of(ok, err);
                 }
                 ty
@@ -17255,8 +17275,9 @@ impl<'a> Checker<'a> {
                         return;
                     }
                     let shown = self.types.display(place_ty);
+                    let code = if matches!(self.types.kind(place_ty), TyKind::Param { .. }) { codes::E2040 } else { codes::E2020 };
                     let mut diagnostic =
-                        Diagnostic::error(codes::E2020, stmt.span, format!("`{}=` is not defined on `{shown}`", bin.as_str()));
+                        Diagnostic::error(code, stmt.span, format!("`{}=` is not defined on `{shown}`", bin.as_str()));
                     if let Some((method, assign)) = compound_methods(*bin)
                         && let (Some(interface), Some(assign)) = (operator_interface(method), operator_interface(assign))
                     {
@@ -23628,12 +23649,16 @@ impl<'a> Checker<'a> {
     /// its bound's operator interface: with `T: Add[Output = T]`, `a + b`
     /// calls `add` and is a `T`. The bound is the one whose method takes the
     /// other operand's type (`Add[T]` or `Add[f32]`); a literal takes that
-    /// type. The operands come back when no bound offers the operator.
+    /// type. A missing matching nominal bound is E2040.
     fn synth_bound_operator(&mut self, index: u32, lhs: Expr, rhs: Option<Expr>, method: &str, span: Span) -> Result<Expr, (Expr, Option<Expr>)> {
         let name = Symbol::intern(method);
-        let bounds = self.current_generics.get(index as usize).map(|param| param.bounds.clone()).unwrap_or_default();
+        let TyKind::Param { name: parameter_name, .. } = *self.types.kind(lhs.ty) else { return Err((lhs, rhs)) };
+        let bounds = self.generic_bounds(index, parameter_name);
         let mut found = None;
         for bound in bounds {
+            if !self.is_operator_bound(bound, method) {
+                continue;
+            }
             let Some(def) = self.interfaces.get(&bound) else { continue };
             let Some(&(_, declaration, Some(receiver_mode), _)) =
                 def.methods.iter().find(|(m, _, receiver, _)| *m == name && receiver.is_some())
@@ -23654,7 +23679,16 @@ impl<'a> Checker<'a> {
                 break;
             }
         }
-        let Some((bound, declaration, receiver_mode)) = found else { return Err((lhs, rhs)) };
+        let Some((bound, declaration, receiver_mode)) = found else {
+            let shown = self.types.display(lhs.ty);
+            let interface = operator_interface(method).unwrap_or(method);
+            self.sink.emit(
+                Diagnostic::error(codes::E2040, span, format!("`{shown}`'s bounds do not provide a matching `{interface}` operator"))
+                    .help(format!("add a `{interface}` bound with the required operand and output types"))
+                    .note("inside a generic body only the bounds' operations are available [TYP-17]"),
+            );
+            return Ok(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        };
         self.bound_calls.insert(span, bound);
         let concrete = lhs.ty;
         let ret = self.signatures[declaration.0 as usize].ret;
@@ -29857,66 +29891,9 @@ impl<'a> Checker<'a> {
     }
 
     fn resolve_assoc(&mut self, ty: Ty, owner: Ty) -> Ty {
-        match self.types.kind(ty).clone() {
+        match *self.types.kind(ty) {
             TyKind::Assoc { name } => self.project(owner, name).unwrap_or(ty),
-            TyKind::Ref { mutable, inner } => {
-                let inner = self.resolve_assoc(inner, owner);
-                self.types.intern(TyKind::Ref { mutable, inner })
-            }
-            TyKind::Ptr { mutable, inner } => {
-                let inner = self.resolve_assoc(inner, owner);
-                self.types.intern(TyKind::Ptr { mutable, inner })
-            }
-            TyKind::Vec { elem, text } => {
-                let elem = self.resolve_assoc(elem, owner);
-                self.types.intern(TyKind::Vec { elem, text })
-            }
-            TyKind::Array { elem, len } => {
-                let elem = self.resolve_assoc(elem, owner);
-                self.types.intern(TyKind::Array { elem, len })
-            }
-            TyKind::Tuple(items) => {
-                let items: Vec<Ty> =
-                    items.iter().map(|&t| self.resolve_assoc(t, owner)).collect();
-                self.types.intern(TyKind::Tuple(items))
-            }
-            // D-381 — `fn(B, Item) -> B`, a view of `Item`, `Take[Item]`.
-            TyKind::Fn { abi, latebound, params, ret } => {
-                let params = params
-                    .iter()
-                    .map(|param| FnParam { ty: self.resolve_assoc(param.ty, owner), mode: param.mode })
-                    .collect();
-                let ret = self.resolve_assoc(ret, owner);
-                self.types.intern(TyKind::Fn { abi, latebound, params, ret })
-            }
-            TyKind::Span { elem, mutable } => {
-                let elem = self.resolve_assoc(elem, owner);
-                self.types.intern(TyKind::Span { elem, mutable })
-            }
-            TyKind::Struct(id) if !self.types.struct_def(id).name.as_str().starts_with("Option_") => {
-                let Some((name, args)) = self.types.struct_def(id).origin.clone() else { return ty };
-                let resolved: Vec<Ty> = args.iter().map(|&arg| self.resolve_assoc(arg, owner)).collect();
-                if resolved == args {
-                    return ty;
-                }
-                let Some(decl) = self.generic_structs.get(&name).cloned() else { return ty };
-                self.instantiate_struct(name, &decl, &resolved, Span::DUMMY)
-            }
-            // A synthesised `Option[Self.Item]` is a distinct enum per `Item`,
-            // so it has to be rebuilt rather than patched.
-            TyKind::Enum(id) => {
-                let def = self.types.enum_def(id);
-                if !def.name.as_str().starts_with("Option_") {
-                    return ty;
-                }
-                let payload = def.variants[1].fields[0].ty;
-                let resolved = self.resolve_assoc(payload, owner);
-                if resolved == payload {
-                    return ty;
-                }
-                self.option_of(resolved)
-            }
-            _ => ty,
+            _ => self.map_type_children(ty, |this, child| this.resolve_assoc(child, owner)),
         }
     }
 
@@ -29933,12 +29910,12 @@ impl<'a> Checker<'a> {
             return true;
         }
         if let TyKind::Param { index, name } = *self.types.kind(ty) {
-            // `[STD-27]` — `T: Float` provides `Copy`, `Clone`, `Eq`, `Ord`,
-            // `Default`, `Display` and `Debug` as the floats do.
+            // `[STD-27]` — Float's numeric contract does not imply text
+            // formatting; generic code must request Display or Debug.
             let implied = self.float_param(ty)
                 && matches!(
-                    interface.as_str().rsplit('.').next().unwrap_or_default(),
-                    "Copy" | "Clone" | "Eq" | "Ord" | "Default" | "Display" | "Debug"
+                    interface.as_str(),
+                    "Copy" | "std.core.Copy" | "std.core.Clone" | "std.core.Eq" | "std.core.Ord" | "std.core.Default"
                 );
             return implied || self.generic_bounds(index, name).contains(&interface);
         }
@@ -34239,6 +34216,9 @@ impl<'a> Checker<'a> {
         let mut generics = self.prefix_generics(&callers);
         for param in &signature.generics[declared_prefix.len()..] {
             let mut param = self.substitute_generic_param(param, &combined);
+            for bound in &mut param.bounds {
+                *bound = self.bound_resolved_for(*bound, parameter);
+            }
             if let Some(callable) = param.callable.as_mut() {
                 for callable_param in &mut callable.params {
                     callable_param.ty = self.resolve_assoc(callable_param.ty, parameter);
@@ -34246,6 +34226,7 @@ impl<'a> Checker<'a> {
                 callable.ret = self.resolve_assoc(callable.ret, parameter);
             }
             for binding in &mut param.bindings {
+                binding.0 = self.bound_resolved_for(binding.0, parameter);
                 binding.2 = self.resolve_assoc(binding.2, parameter);
             }
             // A method's own projection (`U.Iter`) names its base by slot,
@@ -40296,15 +40277,24 @@ impl<'a> Checker<'a> {
     fn has_operator_method(&mut self, ty: Ty, method: &str) -> bool {
         let name = Symbol::intern(method);
         match *self.types.kind(ty) {
-            TyKind::Param { index, .. } => self.current_generics.get(index as usize).is_some_and(|param| {
-                param.bounds.iter().any(|bound| {
-                    self.interfaces
+            TyKind::Param { index, name: parameter_name } => {
+                self.generic_bounds(index, parameter_name).iter().any(|bound| {
+                    self.is_operator_bound(*bound, method) && self.interfaces
                         .get(bound)
                         .is_some_and(|def| def.methods.iter().any(|(m, _, receiver, _)| *m == name && receiver.is_some()))
                 })
-            }),
+            },
             _ => self.operator_implemented(ty, method),
         }
+    }
+
+    fn is_operator_bound(&self, bound: Symbol, method: &str) -> bool {
+        let Some(interface) = (match method {
+            "index_set" => Some("IndexSet"),
+            _ => operator_interface(method),
+        }) else { return false };
+        let origin = self.open_interface_origin.get(&bound).map_or(bound, |(origin, _)| *origin);
+        origin.as_str() == format!("std.core.{interface}")
     }
 
     /// `[TYP-21]` (D-315) — whether `ty` has the operator whose method is
@@ -40831,11 +40821,14 @@ impl<'a> Checker<'a> {
                         );
                     } else if !self.is_formattable(value.ty) && value.ty != self.common.error {
                         let shown = self.types.display(value.ty);
-                        self.error(
-                            codes::E0900,
-                            arg.value.span,
-                            format!("printing a `{shown}` is not implemented yet"),
-                        );
+                        if matches!(self.types.kind(value.ty), TyKind::Param { .. }) {
+                            self.sink.emit(
+                                Diagnostic::error(codes::E2040, arg.value.span, format!("printing `{shown}` requires a `Display` or `Debug` bound"))
+                                    .help(format!("add `Display` or `Debug` to `{shown}`'s bounds [STD-9]")),
+                            );
+                        } else {
+                            self.error(codes::E0900, arg.value.span, format!("printing a `{shown}` is not implemented yet"));
+                        }
                     }
                     // D-286, `[EXP-1]` — an argument is evaluated where it is
                     // written: a place that is not `Copy` is borrowed there, so
@@ -41252,6 +41245,20 @@ impl<'a> Checker<'a> {
                 kind: ExprKind::Binary { op: hir_op, lhs: Box::new(lhs), rhs: Box::new(rhs) },
                 span,
             };
+        }
+
+        // Bound permission is independent of the representation chosen for
+        // comparison after monomorphization (including Float's IEEE operators).
+        if comparison && matches!(self.types.kind(lhs.ty), TyKind::Param { .. }) {
+            let interface = if matches!(op, ast::BinOp::Eq | ast::BinOp::Ne) { "Eq" } else { "Ord" };
+            if !self.implements(lhs.ty, Symbol::intern(&format!("std.core.{interface}"))) {
+                let shown = self.types.display(lhs.ty);
+                self.sink.emit(
+                    Diagnostic::error(codes::E2040, span, format!("`{}` on `{shown}` requires an `{interface}` bound", op.as_str()))
+                        .help(format!("add `{interface}` to `{shown}`'s bounds [TYP-17]")),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
         }
 
         // `[TYP-17]`, `[TYP-21]` (ODR-040) — an operator on a type parameter
