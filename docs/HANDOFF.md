@@ -10705,6 +10705,27 @@ formal 1/9 count or Phase 2's estimate.
 
 #### Start here after a context reset — state at 2026-10-04 (autopilot)
 
+**2026-10-10, resumed projection-declaration work.** The preceding batch
+`cb9d2df` passed all five jobs in CI run `38024872799` and was fast-forwarded
+and pushed to `main`; both branches matched, with a clean working tree. Its
+exact-commit follow-up was disabled after promotion. The owner then explicitly
+resumed development and authorized the final usage reset. It succeeded (weekly
+usage reset to 0%; available resets now 0). Do not attempt another reset.
+
+D-540 now reserves written parameter slots before creating projections used by
+positional interface bounds. Tests exposed D-541 independently: a generic
+owner method rebased its types but left its projection metadata at the old
+owner-prefixed slot. That base is now rebased too (ADR-146). Six focused tests
+cover both defects. The local baseline and evidence are preserved under
+`build/d540-20261010/`; the full suite still runs in CI before promotion, per the
+owner's validation preference. Temperature waiting remains suspended; focused
+local checks use efficiency cores. No new runtime work is introduced.
+
+The formatting-diagnostic hypotheses in the previous review remain follow-ups;
+this batch deliberately handles declaration and method projection indices only.
+Do not silently reactivate the previous exact-commit automation for a new hash:
+it was authorized specifically for cb9d2df.
+
 **2026-10-10, associated-type/generic-bound batch.** After the owner said
 “continue now”, the previous map batch's CI run `37954979905` was confirmed
 successful in all five jobs and `main`/`phase-next` were promoted to `c428d11`.

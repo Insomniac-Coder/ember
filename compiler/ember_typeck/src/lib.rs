@@ -2448,7 +2448,18 @@ impl<'a> Checker<'a> {
         params: &[ast::GenericParam],
         index_base: usize,
     ) -> Vec<GenericParam> {
-        let mut declared = Vec::new();
+        // Reserve the written slots before a bound can introduce hidden
+        // projection parameters. Later written parameters must keep their
+        // indices even when an earlier bound names `S.Item` (D-540).
+        let mut declared: Vec<GenericParam> = params.iter().map(|param| GenericParam {
+            name: param.name.name,
+            bounds: Vec::new(),
+            callable: None,
+            default: None,
+            projection: None,
+            count_op: None,
+            bindings: Vec::new(),
+        }).collect();
         // The bounds whose `[Name = type]` bindings are read once every
         // parameter is declared: (the parameter's place, the bound, its
         // interface instance).
@@ -2498,11 +2509,11 @@ impl<'a> Checker<'a> {
                     // fn(int) -> int`) is a callable bound, as the parameter
                     // form `f: Op` is; it was taken for an interface.
                     Some(name) if self.names_callable_alias(name) => {
-                        if callables.iter().any(|&(at, _)| at == declared.len()) {
+                        if callables.iter().any(|&(at, _)| at == index) {
                             self.error(codes::E2020, bound.span, "a parameter has one callable bound");
                             continue;
                         }
-                        callables.push((declared.len(), bound));
+                        callables.push((index, bound));
                     }
                     Some(name) => {
                         let resolved = self.resolve_name(name);
@@ -2517,20 +2528,28 @@ impl<'a> Checker<'a> {
                     // D-261 — `Q: AsKey[K]` names an instance of a generic
                     // interface, over the parameters declared before it.
                     None if matches!(&bound.kind, ast::TypeKind::Path { args, .. } if !args.is_empty()) => {
+                        // Positional arguments are resolved now; equality
+                        // payloads still wait until all bounds are known.
+                        let ast::TypeKind::Path { args, .. } = &bound.kind else { unreachable!() };
+                        let positional: Vec<_> = args.iter().filter_map(|arg| match arg {
+                            ast::GenericArg::Type(ty) => Some(ty),
+                            _ => None,
+                        }).collect();
+                        self.declare_projections(&positional, &mut declared, index_base);
                         let Some(instance) = self.bound_interface(bound, ty) else { continue };
                         bounds.push(instance);
-                        pending.push((declared.len(), bound, instance));
+                        pending.push((index, bound, instance));
                     }
                     // D-406, `[CLO-14]` — `F: fn(A) -> R` is the parameter
                     // form's bound written out: a parameter of type `F` is
                     // called like a function. It was dropped, so `F` was
                     // bounded by nothing and could not be called.
                     None if matches!(&bound.kind, ast::TypeKind::Fn { abi: None, .. }) => {
-                        if callables.iter().any(|&(at, _)| at == declared.len()) {
+                        if callables.iter().any(|&(at, _)| at == index) {
                             self.error(codes::E2020, bound.span, "a parameter has one callable bound");
                             continue;
                         }
-                        callables.push((declared.len(), bound));
+                        callables.push((index, bound));
                     }
                     None => {
                         self.error(codes::E2020, bound.span, "a bound is an interface or a callable type (`fn(A) -> R`)");
@@ -2538,7 +2557,9 @@ impl<'a> Checker<'a> {
                 }
             }
             let default = param.default.as_ref().map(|default| self.resolve_type(default));
-            declared.push(GenericParam { name: param.name.name, bounds, callable: None, default, projection: None, count_op: None, bindings });
+            declared[index].bounds = bounds;
+            declared[index].default = default;
+            declared[index].bindings = bindings;
         }
         // `[GRM-8c]` — a binding may name another parameter's associated
         // type (`J: Iterator[Item = I.Item]`, `[STD-19]`'s `chain`): each
@@ -5254,7 +5275,17 @@ impl<'a> Checker<'a> {
         let ret = self.substitute_ty(method.ret, &combined);
         let prefix: Vec<Ty> = (0..base as u32).map(|slot| mentioned.get(&slot).copied().unwrap_or(self.common.error)).collect();
         let mut generics: Vec<GenericParam> = self.prefix_generics(&prefix);
-        generics.extend(method.generics.iter().map(|param| self.substitute_generic_param(param, &combined)));
+        generics.extend(method.generics.iter().map(|param| {
+            let mut param = self.substitute_generic_param(param, &combined);
+            // A method-owned projection follows its base parameter when the
+            // owner's slots are substituted, just as its type values do.
+            if let Some((slot, assoc)) = param.projection
+                && slot as usize >= owner_bindings.len()
+            {
+                param.projection = Some(((base + slot as usize - owner_bindings.len()) as u32, assoc));
+            }
+            param
+        }));
         let signature = Signature {
             params,
             ret: self.substitute_self(ret, ty),

@@ -5016,6 +5016,33 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-146 — stable parameter slots before resolving bound projections
+
+**Date:** 2026-10-10. **Rules:** `[IFC-4]`, `[TYP-16]`, `[TYP-17]`, `[TYP-18]`.
+
+**Context.** A positional interface argument such as `Build[S.Item]` was
+resolved before S.Item's hidden parameter existed (D-540). Creating that
+parameter immediately in the old growing list would steal a slot belonging to
+a later written parameter. Concrete generic-owner methods also substituted
+type values while retaining the old projection-base indices (D-541).
+
+**Decision.** Reserve the declaration's written slots first, while keeping its
+existing sequential name visibility. Before resolving a positional interface
+argument, declare only its projections. Equality-binding and callable payloads
+keep their existing deferred resolution. When an owner instance registers a
+method, move each method-owned projection base by the same offset used for its
+type parameters. Use the existing interface-method rebasing pattern.
+
+**Consequences.** No runtime operation or representation is added. This avoids
+cloning or repeatedly rebuilding all parameter metadata to insert hidden
+parameters, and it preserves later written slots and owner prefixes. The
+specification is unchanged. Six focused regression cases include an independent
+pre-fix failure for D-541. The prior batch at cb9d2df is the saved baseline;
+validation and benchmark code hashes are in the
+[follow-up review](reviews/2026-10-10/projection-declarations.md).
+
+---
+
 ## ADR-145 — one constructor traversal for generic and associated substitution
 
 **Date:** 2026-10-10. **Rules:** `[IFC-4]`, `[TYP-16]`, `[TYP-17]`.
