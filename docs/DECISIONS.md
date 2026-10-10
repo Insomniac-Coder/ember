@@ -5016,6 +5016,33 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-147 — explain missing text capability using its predicate traversal
+
+**Date:** 2026-10-10. **Rules:** `[STD-9]`, `[LEX-19]`, `[TYP-17]`, `[TYP-39]`, `[DIA-14]`.
+
+**Context.** Formatting capability was a boolean walk, while a second walk
+looked only for Debug opt-outs. Print and f-string entry points then chose
+inconsistent diagnostics for generic values and aggregates (D-542).
+
+**Decision.** Return the first unformattable component from the existing
+capability traversal. Its absence is the same boolean predicate as before;
+its presence lets both entry points distinguish a missing generic bound, an
+explicit Debug opt-out, and an unsupported concrete formatter. Transparent
+Box/Cell/reference values retain Display-or-Debug advice; aggregate fields and
+elements recommend Debug. A missing capability gives format-spec validation
+an error type: independent syntax/conversion checks still run, while dependent
+type applicability errors are suppressed.
+
+**Consequences.** This removes the separate opt-out traversal and repeated
+print checks without adding runtime work. It preserves existing formatting
+acceptance rules and concrete implementation-limit reporting. Mixed invalid
+aggregates now explain the first failing field rather than prioritizing any
+later opt-out. The specification is unchanged. D-543 separately reuses existing
+name/slot bound recovery, and D-544 makes comparison permission symmetric.
+[Evidence and coverage](reviews/2026-10-10/formatting-followups.md).
+
+---
+
 ## ADR-146 — stable parameter slots before resolving bound projections
 
 **Date:** 2026-10-10. **Rules:** `[IFC-4]`, `[TYP-16]`, `[TYP-17]`, `[TYP-18]`.

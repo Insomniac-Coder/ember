@@ -10705,6 +10705,26 @@ formal 1/9 count or Phase 2's estimate.
 
 #### Start here after a context reset — state at 2026-10-04 (autopilot)
 
+**2026-10-10, formatting and comparison follow-ups.** The owner requested
+all three remaining follow-ups, then commit/push. The prior batch `562fe85`
+passed all five jobs in CI run `38060826982` and was fast-forwarded and pushed
+to main; both branches were clean and synchronized before this work.
+
+D-542 fixes missing text-bound diagnostics for generic f-strings and aggregates,
+retaining independent malformed-spec errors and concrete formatter limitations.
+D-543 confirms and fixes the imported/displaced projection concern: generic
+owner methods lost text and Float capabilities that free functions retained.
+D-544 checks comparison bounds on both sides without cascading after an unknown
+operand. Thirteen test programs plus one imported support fixture cover these
+paths (ADR-147). Evidence and baseline compiler are in
+`build/formatting-20261010/`; details are in the
+[follow-up review](reviews/2026-10-10/formatting-followups.md).
+
+The full suite still belongs in CI before main promotion. The owner's latest
+preference is to monitor in this session; the old exact-commit automation stays
+disabled. Focused local checks use efficiency cores; temperature waiting remains
+suspended. All usage resets have already been consumed; no further reset exists.
+
 **2026-10-10, resumed projection-declaration work.** The preceding batch
 `cb9d2df` passed all five jobs in CI run `38024872799` and was fast-forwarded
 and pushed to `main`; both branches matched, with a clean working tree. Its

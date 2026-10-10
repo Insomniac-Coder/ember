@@ -10084,36 +10084,47 @@ impl<'a> Checker<'a> {
         None
     }
 
-    /// Whether the runtime has a formatter for this type. `Display` replaces
-    /// this once interfaces carry generics.
+    /// Whether the runtime can format this type with its declared bounds.
     fn is_formattable(&self, ty: Ty) -> bool {
-        self.formattable_in(ty, &mut HashSet::new())
+        self.unformattable_part(ty, &mut HashSet::new()).is_none()
     }
 
-    /// The component of `ty` (itself, an element, a field, a payload) that
-    /// opts out of the implicit `Debug`, for a diagnostic that says so.
-    fn opted_out_of_debug(&self, ty: Ty, seen: &mut HashSet<Ty>) -> Option<Ty> {
-        if self.no_implicit_debug.contains(&ty) {
-            return Some(ty);
+    /// Report the first component preventing formatting. A missing generic
+    /// bound is a contract error, not an unimplemented concrete formatter.
+    fn check_formattable(&mut self, ty: Ty, span: Span, operation: &str) -> bool {
+        let Some(component) = self.unformattable_part(ty, &mut HashSet::new()) else { return true };
+        let shown = self.types.display(ty);
+        let named = self.types.display(component);
+        if self.no_implicit_debug.contains(&component) {
+            let message = if component == ty {
+                format!("`{shown}` does not implement `Debug`, which {operation} it needs")
+            } else {
+                format!("`{named}` does not implement `Debug`, which {operation} a `{shown}` needs")
+            };
+            self.sink.emit(
+                Diagnostic::error(codes::E2040, span, message)
+                    .note(format!("`{named}`'s declaration opts out with `@no_derive(Debug)` [STR-5]")),
+            );
+        } else if matches!(self.types.kind(component), TyKind::Param { .. }) {
+            // Transparent views/wrappers retain the value's Display fallback;
+            // an aggregate's elements and fields instead need Debug.
+            let mut printed = ty;
+            while let Some(inner) = self.types.printed_as(printed).or_else(|| match self.types.kind(printed) {
+                TyKind::Ref { inner, .. } => Some(*inner),
+                TyKind::Range(id) => Some(self.types.range_def(*id).repr),
+                _ => None,
+            }) {
+                printed = inner;
+            }
+            let bound = if component == printed { "`Display` or `Debug`" } else { "`Debug`" };
+            self.sink.emit(
+                Diagnostic::error(codes::E2040, span, format!("{operation} `{shown}` requires {bound} on `{named}`"))
+                    .help(format!("add {bound} to `{named}`'s bounds [TYP-17]")),
+            );
+        } else {
+            self.error(codes::E0900, span, format!("{operation} a `{shown}` is not implemented yet"));
         }
-        if !seen.insert(ty) {
-            return None;
-        }
-        let parts: Vec<Ty> = match self.types.kind(ty) {
-            TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } | TyKind::Array { elem, .. } => vec![*elem],
-            TyKind::Ref { inner, .. } => vec![*inner],
-            TyKind::Tuple(items) => items.clone(),
-            TyKind::Struct(id) => self.types.struct_def(*id).fields.iter().map(|field| field.ty).collect(),
-            TyKind::Enum(id) => self
-                .types
-                .enum_def(*id)
-                .variants
-                .iter()
-                .flat_map(|variant| variant.fields.iter().map(|field| field.ty))
-                .collect(),
-            _ => Vec::new(),
-        };
-        parts.into_iter().find_map(|part| self.opted_out_of_debug(part, seen))
+        false
     }
 
     /// `[TYP-36]` — whether `ty` implements `Display`: the scalars and text,
@@ -10135,80 +10146,68 @@ impl<'a> Checker<'a> {
             }
             TyKind::Ref { inner, .. } => self.has_display(*inner),
             TyKind::Enum(_) if self.is_option(ty) || self.is_result(ty) => self.is_formattable(ty),
-            TyKind::Param { index, .. } => self.param_bound_named(*index, &["Display"]),
+            TyKind::Param { .. } => self.param_bound_named(ty, &["Display"]),
             _ => false,
         }
     }
 
-    /// `seen` holds the user types already being examined: a recursive type
-    /// (`struct Tree: kids: Array[Tree]`) is formattable if the rest is.
-    fn formattable_in(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
-        // ODR-094 — `Box[T]` and `Cell[T]` print as what they hold.
+    /// Find the first component that cannot be formatted. `seen` lets a
+    /// recursive user type be formatted when all its other fields can be.
+    /// The capability predicate and its diagnostic share this traversal.
+    fn unformattable_part(&self, ty: Ty, seen: &mut HashSet<Ty>) -> Option<Ty> {
+        // ODR-094 — Box and Cell format as the value they hold.
         if let Some(inner) = self.types.printed_as(ty) {
-            return self.formattable_in(inner, seen);
+            return self.unformattable_part(inner, seen);
         }
         match self.types.kind(ty) {
-            TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Str => true,
-            TyKind::Range(id) => self.formattable_in(self.types.range_def(*id).repr, seen),
-            // `[TYP-39]` — collections, tuples, `Option` and `Result` show as
-            // Python's `str()` shows them, each element by its `Debug`. The
-            // built-in types' `Debug` is their `Display` with text quoted, so
-            // one test covers both.
-            TyKind::Vec { elem, text } => *text || self.formattable_in(*elem, seen),
-            TyKind::Span { elem, .. } | TyKind::Array { elem, .. } => self.formattable_in(*elem, seen),
-            TyKind::Tuple(items) => items.iter().all(|item| self.formattable_in(*item, seen)),
-            // D-227 — a reference prints as what it points to (`Some(1)` for
-            // an `Option[ref int]`), as a `ref` read through does.
-            TyKind::Ref { inner, .. } => self.formattable_in(*inner, seen),
-            // `[TYP-36]` — a class handle has no `Display`, but its `Debug`
-            // (class and address) is what printing falls back to ([STD-9]).
-            TyKind::Class(_) | TyKind::ClassInterface(_) => true,
-            // Already reported: one error per cascade ([DIA-14]).
-            TyKind::Error => true,
-            // `[TYP-36]` — `void`'s `Debug` is `()`.
-            TyKind::Void => true,
-            // `[STR-5]` — a struct or enum has `Debug` field-wise when every
-            // field does (`Point(x=1, y=2)`, `Shape.Circle(1)`). The
-            // compiler-known wrappers (`Box`, `Cell`, …) have no format yet.
-            // `@no_derive(Debug)` opts out of the implicit one.
-            TyKind::Struct(_) | TyKind::Enum(_) if self.no_implicit_debug.contains(&ty) => false,
+            TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Str
+            | TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Void | TyKind::Error => None,
+            TyKind::Range(id) => self.unformattable_part(self.types.range_def(*id).repr, seen),
+            TyKind::Vec { text: true, .. } => None,
+            // [TYP-39], [STR-5] — aggregate formatting depends on its parts.
+            TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } | TyKind::Array { elem, .. } => {
+                self.unformattable_part(*elem, seen)
+            }
+            TyKind::Tuple(items) => items.iter().find_map(|&item| self.unformattable_part(item, seen)),
+            TyKind::Ref { inner, .. } => self.unformattable_part(*inner, seen),
+            TyKind::Struct(_) | TyKind::Enum(_) if self.no_implicit_debug.contains(&ty) => Some(ty),
             TyKind::Struct(id) => {
                 let def = self.types.struct_def(*id);
-                !is_compiler_known_struct(def.name.as_str())
-                    && (!seen.insert(ty) || def.fields.iter().all(|field| self.formattable_in(field.ty, seen)))
+                if is_compiler_known_struct(def.name.as_str()) {
+                    Some(ty)
+                } else if seen.insert(ty) {
+                    def.fields.iter().find_map(|field| self.unformattable_part(field.ty, seen))
+                } else {
+                    None
+                }
             }
             TyKind::Enum(id) => {
-                !seen.insert(ty)
-                    || self
-                        .types
-                        .enum_def(*id)
-                        .variants
-                        .iter()
-                        .flat_map(|variant| variant.fields.iter())
-                        .all(|field| self.formattable_in(field.ty, seen))
+                if seen.insert(ty) {
+                    self.types.enum_def(*id).variants.iter().flat_map(|variant| variant.fields.iter())
+                        .find_map(|field| self.unformattable_part(field.ty, seen))
+                } else {
+                    None
+                }
             }
-            // `[TYP-36]` — a type parameter formats when a bound says it does;
-            // each instantiation formats its concrete type.
-            TyKind::Param { index, .. } => self.param_bound_named(*index, &["Display", "Debug"]),
-            _ => false,
+            TyKind::Param { .. } => (!self.param_bound_named(ty, &["Display", "Debug"])).then_some(ty),
+            _ => Some(ty),
         }
     }
 
-    /// Whether the generic parameter `index` is bounded by an interface
-    /// whose last name is one of `names` (`Display` in any module's
-    /// spelling, while the standard library does not declare it).
     /// `[STD-27]` (ODR-037) — a type parameter bounded by `std.math.Float`:
     /// the operators, literals and float methods apply to it as to `f32` and
     /// `f64`.
     fn float_param(&self, ty: Ty) -> bool {
-        let TyKind::Param { index, .. } = *self.types.kind(ty) else { return false };
-        let float = Symbol::intern("std.math.Float");
-        self.current_generics.get(index as usize).is_some_and(|param| param.bounds.contains(&float))
+        let TyKind::Param { index, name } = *self.types.kind(ty) else { return false };
+        self.generic_bounds(index, name).contains(&Symbol::intern("std.math.Float"))
     }
 
-    fn param_bound_named(&self, index: u32, names: &[&str]) -> bool {
-        self.current_generics.get(index as usize).is_some_and(|param| {
-            param.bounds.iter().any(|bound| names.contains(&bound.as_str().rsplit('.').next().unwrap_or_default()))
+    /// Read the parameter's actual bounds even when a projected value came
+    /// from a signature whose parameter slots differ from this body's.
+    fn param_bound_named(&self, ty: Ty, names: &[&str]) -> bool {
+        let TyKind::Param { index, name } = *self.types.kind(ty) else { return false };
+        self.generic_bounds(index, name).iter().any(|bound| {
+            names.contains(&bound.as_str().rsplit('.').next().unwrap_or_default())
         })
     }
 
@@ -10301,8 +10300,8 @@ impl<'a> Checker<'a> {
     fn format_spec_applies(&self, spec: &hir::FormatSpec, ty: Ty) -> Result<(), String> {
         // A parameter bounded by `Debug` or `Display` formats in each
         // instance; the opaque body is checked and never emitted.
-        if let TyKind::Param { index, .. } = *self.types.kind(ty)
-            && self.param_bound_named(index, &["Display", "Debug"])
+        if matches!(self.types.kind(ty), TyKind::Param { .. })
+            && self.param_bound_named(ty, &["Display", "Debug"])
             && matches!(spec.kind, None | Some('?' | 's'))
         {
             return Ok(());
@@ -24133,7 +24132,7 @@ impl<'a> Checker<'a> {
             // representation's.
             TyKind::Range(id) => self.totally_ordered(self.types.range_def(id).repr),
             // `[TYP-17]` — a parameter bounded by `Ord`, or `Float` (`[STD-27]`).
-            TyKind::Param { index, .. } => self.param_bound_named(index, &["Ord"]) || self.float_param(ty),
+            TyKind::Param { .. } => self.param_bound_named(ty, &["Ord"]) || self.float_param(ty),
             _ => false,
         }
     }
@@ -26786,19 +26785,18 @@ impl<'a> Checker<'a> {
                             } else {
                                 value
                             };
-                            if !self.is_formattable(value.ty) && value.ty != self.common.error {
-                                let shown = self.types.display(value.ty);
-                                self.error(
-                                    codes::E1010,
-                                    expr.span,
-                                    format!("`{shown}` cannot be formatted yet; `Display` needs generics"),
-                                );
-                            }
+                            let format_ty = if self.check_formattable(value.ty, expr.span, "formatting") {
+                                value.ty
+                            } else {
+                                // Preserve independent syntax/conversion errors,
+                                // but suppress dependent spec-type errors [DIA-14].
+                                self.common.error
+                            };
                             let spec = self.fstring_spec(
                                 format_spec.as_deref(),
                                 *conversion,
                                 echo.is_some(),
-                                value.ty,
+                                format_ty,
                                 expr.span,
                             );
                             checked.push(hir::FStringPart::Value(value, spec));
@@ -40835,32 +40833,7 @@ impl<'a> Checker<'a> {
                     } else {
                         value
                     };
-                    let opted_out = (!self.is_formattable(value.ty))
-                        .then(|| self.opted_out_of_debug(value.ty, &mut HashSet::new()))
-                        .flatten();
-                    if let Some(component) = opted_out {
-                        let shown = self.types.display(value.ty);
-                        let named = self.types.display(component);
-                        let message = if component == value.ty {
-                            format!("`{shown}` does not implement `Debug`, which printing it needs")
-                        } else {
-                            format!("`{named}` does not implement `Debug`, which printing a `{shown}` needs")
-                        };
-                        self.sink.emit(
-                            Diagnostic::error(codes::E2040, arg.value.span, message)
-                                .note(format!("`{named}`'s declaration opts out with `@no_derive(Debug)` [STR-5]")),
-                        );
-                    } else if !self.is_formattable(value.ty) && value.ty != self.common.error {
-                        let shown = self.types.display(value.ty);
-                        if matches!(self.types.kind(value.ty), TyKind::Param { .. }) {
-                            self.sink.emit(
-                                Diagnostic::error(codes::E2040, arg.value.span, format!("printing `{shown}` requires a `Display` or `Debug` bound"))
-                                    .help(format!("add `Display` or `Debug` to `{shown}`'s bounds [STD-9]")),
-                            );
-                        } else {
-                            self.error(codes::E0900, arg.value.span, format!("printing a `{shown}` is not implemented yet"));
-                        }
-                    }
+                    self.check_formattable(value.ty, arg.value.span, "printing");
                     // D-286, `[EXP-1]` — an argument is evaluated where it is
                     // written: a place that is not `Copy` is borrowed there, so
                     // a later argument that changes it conflicts with the
@@ -41280,10 +41253,16 @@ impl<'a> Checker<'a> {
 
         // Bound permission is independent of the representation chosen for
         // comparison after monomorphization (including Float's IEEE operators).
-        if comparison && matches!(self.types.kind(lhs.ty), TyKind::Param { .. }) {
+        if comparison && lhs.ty != self.common.error && rhs.ty != self.common.error
+            && (matches!(self.types.kind(lhs.ty), TyKind::Param { .. })
+                || matches!(self.types.kind(rhs.ty), TyKind::Param { .. }))
+        {
             let interface = if matches!(op, ast::BinOp::Eq | ast::BinOp::Ne) { "Eq" } else { "Ord" };
-            if !self.implements(lhs.ty, Symbol::intern(&format!("std.core.{interface}"))) {
-                let shown = self.types.display(lhs.ty);
+            let bound = Symbol::intern(&format!("std.core.{interface}"));
+            if let Some(ty) = [lhs.ty, rhs.ty].into_iter().find(|&ty| {
+                matches!(self.types.kind(ty), TyKind::Param { .. }) && !self.implements(ty, bound)
+            }) {
+                let shown = self.types.display(ty);
                 self.sink.emit(
                     Diagnostic::error(codes::E2040, span, format!("`{}` on `{shown}` requires an `{interface}` bound", op.as_str()))
                         .help(format!("add `{interface}` to `{shown}`'s bounds [TYP-17]")),

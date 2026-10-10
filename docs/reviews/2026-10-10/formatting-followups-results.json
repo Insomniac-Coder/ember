@@ -1,0 +1,257 @@
+{
+  "baseline_commit": "562fe85741e0ab4da13042909ae035468520a174",
+  "profile": "release",
+  "all_generated_c_identical": true,
+  "program_count": 50,
+  "program_sha256": {
+    "a00_empty": "ded27f9313adeb89785582ec7891703e7a6d69b89848c12c44535d03be1415c4",
+    "a01_int_math": "c5c20983188e7f4cf637b1eb2e9ce64cfb7fa200f684d7f69288edc2b21f3b31",
+    "a02_float_math": "f292ddcecbbce2c04b6a85732784bb659e5759cb81b450f6704d6470f374b366",
+    "a03_strings": "9bad3b7a31f9e2779fe2bf9d55418a058f44a5387d54c4d56c77df178dc4eede",
+    "a04_map_int": "40730e5987102e31fbd25ee00347c9f37c2608cefd45c31124a673ab3432b010",
+    "a05_structs": "69441e92b15cc505ea1fe4096e5f1e3d840b94d0a45ffa50d099e215cdd6263c",
+    "a06_enum_match": "6ac471295c5b9eb0fffac49530a7ad28759b92d3b6135e1b58120ba8be556fde",
+    "a07_virtual_calls": "b8547ce3d12915335e0113ac9b520df5563be15e6e04439873c7aa312b6c928f",
+    "a08_closures": "789b5545e8449df6a128e3bc5a0659d81f1707b2947581481768ce2c72500451",
+    "a09_generics": "369df8235bf0ac452517df25fb870c6e47dd52bb8773b6a8181d6e39e4efcbf9",
+    "a10_recursion": "4afb5703c1a5de53c1aaa59795e4e77c2b8b049033285324311e27d168b8b148",
+    "a11_dod_soa": "d3ed66333b84b8ba7d4fab47ea8e92c7afcf79d4310f94648e3a507583efa747",
+    "a12_sort": "46e5be4b6f0060f489ada02412f43d0c523641c9942368b9ed23c827406d73b5",
+    "a13_map_scrambled": "7ee4c93364fab37ae7b83596980510f5658f0e7869d43ee24b1e83a9b57b3acd",
+    "a14_map_gap_1024": "27f9442345528ab2631d64831b706b2abe5cbb6cdbaadc880ac62ff2f378593c",
+    "a15_map_gap_1048576": "d43b06287f2681c273516d30d42f1758b520259c8d0f70a958651150dbddf390",
+    "a16_map_text": "3cb7ca349692e5938f87f8645e11ba9e3b554f6aeccbf091c9ffc43f4682080e",
+    "b13_checked": "c8c32e30616da4ea19dbc7af9334c35ba89c56ca4e483ca5a5ebfec0ae83b7e7",
+    "b13_wrapped": "363fd0e032da4cf8b5ab2c076a709db9bd184c494845a787ab6e2352e9d8c457",
+    "b14_checked": "5d85e3994731f3e453a3bcc7b9010c6391256e7208e4874d2846f6d5222a26a3",
+    "b14_wrapped": "48a2254d187932c53bfdb0a801d9052465ce4706f1f603195d99fa3cb4083f42",
+    "b15_checked": "a4c8471796320b53a30bf1e1a186fe09c2c788cf6c59b60da83c93f5c6d6471f",
+    "b15_wrapped": "e2e3a610b228ce673e1931452312e4f60f6b3f1ed029e9bf9e61753441788f69",
+    "b16_checked": "684c0621b131ab2bee0e89fea8e40bc8909c91aafa6a52a173ecff72c1af4e1f",
+    "b16_wrapped": "d48aad68d0c1bdbc23aaca4ca0c74a723299f342bdee6f18ff4701d9bd005744",
+    "p1_read_loop": "06d8ff7e313ddcfb2ee9b32349f07c6f9fff73b071024c2c83e8b879f3156845",
+    "p2_view_held": "aa2a1f9a0f37dc8b7ef2f32e2f28aed235a15c83f34d2db5dd9bdb561afb356b",
+    "p3_mut_self_1_field": "32d00b06ccf586618ac25d113440490de2c28b741dcc886b75cd41b288f4dc21",
+    "p3_mut_self_6_fields": "c6be9962be0efd8e4f4d800497b9f410ad3d612742ef9640397023a58fe2db8b",
+    "p4_views_alive_01": "97fd58bca2629c58c66df2923250dfa26ba9ad614f229b756e5a75a6ffab4ce5",
+    "p4_views_alive_04": "f5278d035dd7e465162f124eaf9952304ca3e2634847fac0f8cae5b9ac78e25f",
+    "p4_views_alive_16": "aab15f36572ccc3b661bb44322ba934c9289d3a688f1bc40fb278aac0e0642d7",
+    "p5_million_objects": "94895e364fe40d03d78fb4b3554d03cd407ac8bcb7b6f94f5d12ea4c948c3a2c",
+    "p6_million_objects_6_lists": "60e34027c7ae9ffcd9dd666debb81b12ab3e847f3e34d239835b3cdcdd8f0ff0",
+    "p7_mut_self_calls_a_function": "ca76089cf5824da697c007c1e143f4136bdf6d9c30007e52ff33cea095b91d57",
+    "s1_enumerate_xor": "98a9ad5ae3d3c1c3b3dd2110116b19982aeb33187ac98e876f5d752c2e4dbbf0",
+    "s2_zip_and": "57b2d47d148886d6ead314a650fd0136b40e98b4358c0e7ab2c5908a89456718",
+    "s3_skip_step_take": "23e7af63aff4c832531d366bdf0ca8978963f5d87c80fa231e74e427681fc1aa",
+    "s4_copied_enumerate_skip": "61e9441e74ae9db14d24e70531c04b361937fe2fccb515aa93fbdb247a8ef739",
+    "s5_range_step_enumerate": "ceb8ec038992c43c9330e38fe1b15c2c372d187223e4e08f5ea58d39a3c15043",
+    "t1_chars": "dacdc7603363d0fba9502d0fe67006e6524af176b1b82c9a2e2a9dca173ead50",
+    "t1b_str_loop": "6bfcd93beef19af5a0bb4931772d2d38b10caaf27ed266c45039fcb8305cd02e",
+    "t2_bytes": "30700825aa501b895289ab5f6cffbf3aacc829077b2e57b76192e5f3bc11d450",
+    "t3_lines": "00888e03eb5564cf6ca5b0640e037224597eeef28b285d2eb93ba654a7f5d88b",
+    "t4_split": "e0db92c0a9d52eff541bef47ff944913547244d08f71fbfeb6fbd46de7157567",
+    "t5_words": "ee33b43816fa17110314bdd3f67f0415837fd267a040c24e1140ac2aae291bfc",
+    "t6_char_indices": "da1c6126b5d09510b901c4add3b476b6628a9a97e03856ae2219b4381c31d5e3",
+    "w13_checked": "aee7e83aa2e456553b8d1faa2cf9802e7bcac4561d7e574e5430ef33b4251821",
+    "w13_int_lanes": "8d25a70ccf4d39f3eb986ea4003f577856dd0696b5b8a5422d499e565e0fe799",
+    "w1_sum_loop": "e26ab2c666fea14ced1e6a25d307714bba81ec28bfcaba5cde4c72a80df9d955"
+  },
+  "focused_baseline": {
+    "tests/conformance/DIA-14/accept_bounded_comparisons_and_formatting.em": [],
+    "tests/conformance/DIA-14/reject_unknown_comparison_operands_without_bound_cascades.em": [
+      "unexpected E2040 on line 13: `==` on `T` requires an `Eq` bound",
+      "unexpected E2040 on line 19: `>=` on `H.Item` requires an `Ord` bound"
+    ],
+    "tests/conformance/IFC-4/accept_imported_float_projection_in_generic_owner_methods.em": [
+      "unexpected E2040 on line 30: `S.Item`'s bounds do not provide a matching `Add` operator",
+      "stdout '' is not ['true true']",
+      "exit 1: \"error[E2040]: `S.Item`'s bounds do not provide a matching `Add` operator\\n  --> tests/conformance/IFC-4/accept_imported_float_projection_in_generic_owner_methods.em:30:16\\n   |\\n30 |         return item.\""
+    ],
+    "tests/conformance/IFC-4/accept_imported_float_projection_keeps_numeric_bounds.em": [],
+    "tests/conformance/IFC-4/accept_imported_projection_formatting_through_free_functions.em": [],
+    "tests/conformance/IFC-4/accept_imported_projection_formatting_with_shifted_parameters.em": [
+      "unexpected E1010 on line 36: `S.Item` cannot be formatted yet; `Display` needs generics",
+      "unexpected E1010 on line 36: `S.Item` cannot be formatted yet; `Display` needs generics",
+      "unexpected E2250 on line 36: format spec `!r` does not apply to `S.Item`",
+      "unexpected E1010 on line 36: `S.Item` cannot be formatted yet; `Display` needs generics",
+      "unexpected E2250 on line 36: format spec `:>4` does not apply to `S.Item`",
+      "stdout '' is not ['<7>|7|   7|   7', \"<word>|'word'|word|word\", '<11>|11|  11|  11']",
+      "exit 1: 'error[E1010]: `S.Item` cannot be formatted yet; `Display` needs generics\\n  --> tests/conformance/IFC-4/accept_imported_projection_formatting_with_shifted_parameters.em:36:20\\n   |\\n36 |         return f'"
+    ],
+    "tests/conformance/IFC-4/reject_imported_projection_borrowing_unrelated_text_bounds.em": [
+      "missing E2040: '' on line 26",
+      "unexpected E1010 on line 26: `S.Item` cannot be formatted yet; `Display` needs generics",
+      "unexpected E2250 on line 26: format spec `:>4` does not apply to `S.Item`"
+    ],
+    "tests/conformance/LEX-19/reject_an_independent_bad_spec_beside_a_missing_bound.em": [
+      "missing E2040: '' on line 8",
+      "unexpected E1010 on line 8: `T` cannot be formatted yet; `Display` needs generics"
+    ],
+    "tests/conformance/LEX-19/reject_fstrings_of_values_that_opt_out_of_debug.em": [
+      "missing E2040: 'Debug' on line 13",
+      "missing E2040: 'Debug' on line 14",
+      "missing E2040: 'Debug' on line 15",
+      "missing E2040: 'Debug' on line 17",
+      "unexpected E1010 on line 13: `Secret` cannot be formatted yet; `Display` needs generics",
+      "unexpected E1010 on line 14: `Secret` cannot be formatted yet; `Display` needs generics",
+      "unexpected E2250 on line 14: format spec `!r` does not apply to `Secret`",
+      "unexpected E1010 on line 15: `Secret` cannot be formatted yet; `Display` needs generics",
+      "unexpected E2250 on line 15: format spec `:>8` does not apply to `Secret`",
+      "unexpected E1010 on line 17: `Array[Secret]` cannot be formatted yet; `Display` needs generics"
+    ],
+    "tests/conformance/STD-9/accept_generic_formatting_with_text_bounds.em": [],
+    "tests/conformance/STD-9/reject_generic_formatting_without_text_bounds.em": [
+      "missing E2040: '' on line 14",
+      "missing E2040: '' on line 17",
+      "missing E2040: '' on line 20",
+      "missing E2040: '' on line 23",
+      "missing E2040: '' on line 26",
+      "missing E2040: '' on line 29",
+      "missing E2040: '' on line 32",
+      "missing E2040: '' on line 38",
+      "missing E2040: '' on line 41",
+      "missing E2040: '' on line 44",
+      "missing E2040: '' on line 47",
+      "missing E2040: 'requires `Display` or `Debug`' on line 53",
+      "missing E2040: 'requires `Display` or `Debug`' on line 56",
+      "unexpected E1010 on line 14: `T` cannot be formatted yet; `Display` needs generics",
+      "unexpected E1010 on line 17: `T` cannot be formatted yet; `Display` needs generics",
+      "unexpected E2250 on line 17: format spec `!r` does not apply to `T`",
+      "unexpected E1010 on line 20: `T` cannot be formatted yet; `Display` needs generics",
+      "unexpected E2250 on line 20: format spec `:>8` does not apply to `T`",
+      "unexpected E0900 on line 23: printing a `Array[T]` is not implemented yet",
+      "unexpected E0900 on line 26: printing a `Option[T]` is not implemented yet",
+      "unexpected E0900 on line 29: printing a `(i64, T)` is not implemented yet",
+      "unexpected E0900 on line 32: printing a `Wrapper[T]` is not implemented yet",
+      "unexpected E1010 on line 38: `H.Item` cannot be formatted yet; `Display` needs generics",
+      "unexpected E1010 on line 41: `H.Item` cannot be formatted yet; `Display` needs generics",
+      "unexpected E2250 on line 41: format spec `:>8` does not apply to `H.Item`",
+      "unexpected E0900 on line 44: printing a `Array[H.Item]` is not implemented yet",
+      "unexpected E0900 on line 47: printing a `Option[Array[H.Item]]` is not implemented yet",
+      "unexpected E0900 on line 53: printing a `Box[T]` is not implemented yet",
+      "unexpected E0900 on line 56: printing a `Cell[T]` is not implemented yet"
+    ],
+    "tests/conformance/TYP-17/accept_literal_left_comparisons_with_float_parameters.em": [],
+    "tests/conformance/TYP-17/reject_literal_left_comparisons_without_right_parameter_bounds.em": [
+      "missing E2040: 'Eq' on line 11",
+      "missing E2040: 'Eq' on line 14",
+      "missing E2040: 'Ord' on line 17",
+      "missing E2040: 'Ord' on line 20",
+      "missing E2040: 'Ord' on line 23",
+      "missing E2040: 'Ord' on line 26",
+      "missing E2040: 'Eq' on line 29",
+      "missing E2040: 'Eq' on line 32",
+      "missing E2040: 'Ord' on line 35",
+      "missing E2040: 'Ord' on line 38",
+      "missing E2040: 'Ord' on line 41",
+      "missing E2040: 'Ord' on line 44",
+      "unexpected E2020 on line 11: `==` cannot be applied to `an integer` and `T`",
+      "unexpected E2020 on line 14: `!=` cannot be applied to `an integer` and `T`",
+      "unexpected E2020 on line 17: `<` cannot be applied to `an integer` and `T`",
+      "unexpected E2020 on line 20: `<=` cannot be applied to `an integer` and `T`",
+      "unexpected E2020 on line 23: `>` cannot be applied to `an integer` and `T`",
+      "unexpected E2020 on line 26: `>=` cannot be applied to `an integer` and `T`",
+      "unexpected E2020 on line 29: `==` cannot be applied to `an integer` and `H.Item`",
+      "unexpected E2020 on line 32: `!=` cannot be applied to `an integer` and `H.Item`",
+      "unexpected E2020 on line 35: `<` cannot be applied to `an integer` and `H.Item`",
+      "unexpected E2020 on line 38: `<=` cannot be applied to `an integer` and `H.Item`",
+      "unexpected E2020 on line 41: `>` cannot be applied to `an integer` and `H.Item`",
+      "unexpected E2020 on line 44: `>=` cannot be applied to `an integer` and `H.Item`"
+    ]
+  },
+  "focused_candidate": {
+    "tests/conformance/DIA-14/accept_bounded_comparisons_and_formatting.em": [],
+    "tests/conformance/DIA-14/reject_unknown_comparison_operands_without_bound_cascades.em": [],
+    "tests/conformance/IFC-4/accept_imported_float_projection_in_generic_owner_methods.em": [],
+    "tests/conformance/IFC-4/accept_imported_float_projection_keeps_numeric_bounds.em": [],
+    "tests/conformance/IFC-4/accept_imported_projection_formatting_through_free_functions.em": [],
+    "tests/conformance/IFC-4/accept_imported_projection_formatting_with_shifted_parameters.em": [],
+    "tests/conformance/IFC-4/reject_imported_projection_borrowing_unrelated_text_bounds.em": [],
+    "tests/conformance/LEX-19/reject_an_independent_bad_spec_beside_a_missing_bound.em": [],
+    "tests/conformance/LEX-19/reject_fstrings_of_values_that_opt_out_of_debug.em": [],
+    "tests/conformance/STD-9/accept_generic_formatting_with_text_bounds.em": [],
+    "tests/conformance/STD-9/reject_generic_formatting_without_text_bounds.em": [],
+    "tests/conformance/TYP-17/accept_literal_left_comparisons_with_float_parameters.em": [],
+    "tests/conformance/TYP-17/reject_literal_left_comparisons_without_right_parameter_bounds.em": []
+  },
+  "gates": [
+    {
+      "command": [
+        "hardening_check.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "split_spec.py",
+        "--check",
+        "docs/spec-source/ember-spec.md",
+        "docs/spec"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "rule_index.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "check_branding.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "generate_runtime.py",
+        "--check"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "test_runtime_generation.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "gen_math_vectors.py",
+        "--check"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "unicode_case.py",
+        "--check"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "spec_check.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "error_pages.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "check_det.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "spec_check.py",
+        "--emit-appendix"
+      ],
+      "exit_code": 0
+    }
+  ]
+}
