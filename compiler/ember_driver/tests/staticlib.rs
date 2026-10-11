@@ -156,7 +156,7 @@ fn staticlib_archives_and_headers_link_from_separate_c_and_cpp_hosts() {
             include_dirs: &[lib.clone()], output: executable.clone(), profile,
             obj_dir: objects,
         }).expect("ordinary C host links package and runtime archives");
-        assert_success(&Command::new(&executable).output().expect("C host runs"), "C host");
+        assert_success(&ember_build::output_started(&mut Command::new(&executable)).expect("C host runs"), "C host");
 
         if profile == Profile::Debug {
             let second_build = build(&["build", second_arg.as_str(), "--out-dir", out_arg.as_str()], root);
@@ -175,7 +175,7 @@ fn staticlib_archives_and_headers_link_from_separate_c_and_cpp_hosts() {
                 include_dirs: &[lib.clone()], output: combined.clone(), profile,
                 obj_dir: combined_obj,
             }).expect("two Ember package archives link without private-symbol collisions");
-            assert_success(&Command::new(combined).output().expect("two-library host runs"), "two-library host");
+            assert_success(&ember_build::output_started(&mut Command::new(combined)).expect("two-library host runs"), "two-library host");
 
             let cpp_host = scratch.join("host.cpp");
             std::fs::write(&cpp_host, format!(
@@ -191,7 +191,7 @@ fn staticlib_archives_and_headers_link_from_separate_c_and_cpp_hosts() {
                 include_dirs: &[lib], output: cpp_exe.clone(), profile,
                 obj_dir: cpp_obj_dir,
             }).expect("ordinary C++ host links package and runtime archives");
-            assert_success(&Command::new(cpp_exe).output().expect("C++ host runs"), "C++ host");
+            assert_success(&ember_build::output_started(&mut Command::new(cpp_exe)).expect("C++ host runs"), "C++ host");
         }
     }
 }
@@ -270,7 +270,7 @@ fn manifest_entry_below_src_resolves_sibling_imports_from_package_root() {
     let no_input = build(&["build", "--out-dir", out_arg.as_str()], &sub);
     assert_success(&no_input, "manifest build from nested directory");
     let executable = out.join("debug/bin").join(if cfg!(windows) { "entry.exe" } else { "entry" });
-    let ran = Command::new(&executable).output().expect("nested entry executable runs");
+    let ran = ember_build::output_started(&mut Command::new(&executable)).expect("nested entry executable runs");
     assert_success(&ran, "nested entry executable");
     assert_eq!(String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n"), "42\n");
 

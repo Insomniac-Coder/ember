@@ -581,7 +581,7 @@ fn gcc_executables_keep_c_exports_and_discard_unreachable_native_bodies() {
             );
             assert_eq!(built.exit, 0, "{} cached={cached}: {}", profile.name(), built.stderr);
             let executable = output_dir.join(profile.name()).join("bin/entry");
-            let run = Command::new(&executable).output().expect("managed executable runs");
+            let run = ember_build::output_started(&mut Command::new(&executable)).expect("managed executable runs");
             assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
             assert_eq!(run.stdout, b"7\n");
             assert!(run.stderr.is_empty());
@@ -634,7 +634,7 @@ fn foreign_scalar_statics_read_the_linkers_storage() {
         profile: Profile::Debug,
         obj_dir: objects,
     }).expect("foreign static and C fixture link together");
-    let run = Command::new(output).output().expect("linked program runs");
+    let run = ember_build::output_started(&mut Command::new(output)).expect("linked program runs");
     assert!(run.status.success(), "foreign static program failed: {}",
         String::from_utf8_lossy(&run.stderr));
     assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "41\n7\n9\n10\n22\n484\n1\n2\n");
@@ -666,7 +666,7 @@ fn foreign_scalar_statics_read_the_linkers_storage() {
             profile: Profile::Debug,
             obj_dir: directory.join("obj"),
         }).expect("imported static links to the C fixture");
-        let imported_run = Command::new(imported_exe).output().expect("imported static program runs");
+        let imported_run = ember_build::output_started(&mut Command::new(imported_exe)).expect("imported static program runs");
         assert!(imported_run.status.success());
         assert_eq!(String::from_utf8_lossy(&imported_run.stdout).replace("\r\n", "\n"), "12\n2\n");
     }
@@ -700,7 +700,7 @@ fn foreign_record_statics_exchange_values_with_c() {
         profile: Profile::Debug,
         obj_dir: objects,
     }).expect("foreign record and C fixture link together");
-    let run = Command::new(output).output().expect("linked program runs");
+    let run = ember_build::output_started(&mut Command::new(output)).expect("linked program runs");
     assert!(run.status.success(), "foreign record program failed: {}",
         String::from_utf8_lossy(&run.stderr));
     assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "11\n2\n7\n17\n21\n35\n16\n24\n37\n");
@@ -728,7 +728,7 @@ fn foreign_record_statics_exchange_values_with_c() {
             profile: Profile::Debug,
             obj_dir: directory.join("obj"),
         }).expect("imported foreign record links to the C fixture");
-        let imported_run = Command::new(imported_exe).output().expect("imported record program runs");
+        let imported_run = ember_build::output_started(&mut Command::new(imported_exe)).expect("imported record program runs");
         assert!(imported_run.status.success());
         assert_eq!(String::from_utf8_lossy(&imported_run.stdout).replace("\r\n", "\n"), "5\n23\n32\n34\n21\n23\n");
     }
@@ -781,7 +781,7 @@ fn foreign_record_functions_exchange_values_with_c() {
         profile: Profile::Debug,
         obj_dir: objects,
     }).expect("foreign record function links to the C fixture");
-    let run = Command::new(output).output().expect("linked program runs");
+    let run = ember_build::output_started(&mut Command::new(output)).expect("linked program runs");
     assert!(run.status.success(), "foreign record program failed: {}",
         String::from_utf8_lossy(&run.stderr));
     assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "8\n10\n17\n3\n4\n3\n13\n10\n16\n31\n22\n13\n10\n");
@@ -809,7 +809,7 @@ fn foreign_record_functions_exchange_values_with_c() {
             profile: Profile::Debug,
             obj_dir: directory.join("obj"),
         }).expect("imported foreign record function links to C");
-        let run = Command::new(executable).output().expect("imported record program runs");
+        let run = ember_build::output_started(&mut Command::new(executable)).expect("imported record program runs");
         assert!(run.status.success(), "{label} foreign record program failed: {}",
             String::from_utf8_lossy(&run.stderr));
         assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "17\n10\n");
@@ -848,7 +848,7 @@ fn borrowed_record_export_receives_c_value() {
         profile: Profile::Debug,
         obj_dir: objects,
     }).expect("borrowed record export links to C");
-    let run = Command::new(output).output().expect("linked program runs");
+    let run = ember_build::output_started(&mut Command::new(output)).expect("linked program runs");
     assert!(run.status.success(), "borrowed record export failed: {}",
         String::from_utf8_lossy(&run.stderr));
     assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "10\n3\n21\n10\n13\n811\n10\n19\n15\n7\n8\n");
@@ -881,7 +881,7 @@ fn exported_panic_aborts_inside_c_callback() {
         profile: Profile::Debug,
         obj_dir: objects,
     }).expect("exported panic program links to C");
-    let run = Command::new(output).output().expect("linked program runs");
+    let run = ember_build::output_started(&mut Command::new(output)).expect("linked program runs");
     assert!(!run.status.success(), "exported panic returned through C");
     let stdout = String::from_utf8_lossy(&run.stdout);
     assert!(stdout.contains("before host call"), "C call was not reached: {stdout}");
@@ -916,7 +916,7 @@ fn runtime_thread_attachment_is_thread_local() {
         profile: Profile::Debug,
         obj_dir: objects,
     }).expect("thread attachment host links");
-    let run = Command::new(output).output().expect("thread attachment host runs");
+    let run = ember_build::output_started(&mut Command::new(output)).expect("thread attachment host runs");
     assert!(run.status.success(), "thread attachment failed: {:?}\n{}",
         run.status, String::from_utf8_lossy(&run.stderr));
 }
@@ -984,7 +984,7 @@ fn imported_module_export_keeps_its_c_symbol() {
         profile: Profile::Debug,
         obj_dir: objects,
     }).expect("imported Ember export links to C");
-    let run = Command::new(output).output().expect("linked program runs");
+    let run = ember_build::output_started(&mut Command::new(output)).expect("linked program runs");
     assert!(run.status.success(), "module export failed: {}",
         String::from_utf8_lossy(&run.stderr));
     assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "42");
@@ -1041,7 +1041,7 @@ fn exported_thread_contracts_hold_in_every_profile() {
             "uninitialized_creator",
             "after_shutdown_creator",
         ] {
-            let run = Command::new(&output).arg(mode).output().expect("C thread host runs");
+            let run = ember_build::output_started(Command::new(&output).arg(mode)).expect("C thread host runs");
             if mode == "allowed" {
                 assert!(run.status.success(), "{} {mode}: {:?} {}", profile.name(), run.status,
                     String::from_utf8_lossy(&run.stderr));
@@ -1210,7 +1210,7 @@ fn export_headers_link_from_separate_c_and_cpp_translation_units() {
         },
     )
     .expect("separate C host links against the emitted header");
-    let c_run = Command::new(&c_output).output().expect("C header host runs");
+    let c_run = ember_build::output_started(&mut Command::new(&c_output)).expect("C header host runs");
     assert!(c_run.status.success(), "C header host failed: {}", String::from_utf8_lossy(&c_run.stderr));
 
     let cpp_object = package.join(if cfg!(windows) { "host.obj" } else { "host.o" });
@@ -1230,7 +1230,7 @@ fn export_headers_link_from_separate_c_and_cpp_translation_units() {
         },
     )
     .expect("C++ host links against the C exports");
-    let cpp_run = Command::new(&cpp_output).output().expect("C++ header host runs");
+    let cpp_run = ember_build::output_started(&mut Command::new(&cpp_output)).expect("C++ header host runs");
     assert!(cpp_run.status.success(), "C++ header host failed: {}", String::from_utf8_lossy(&cpp_run.stderr));
 }
 
@@ -1337,7 +1337,7 @@ fn native_callback_adapters_preserve_abi_and_attach_host_threads() {
             profile,
             obj_dir: build.join("obj"),
         }).expect("native callback adapters link to C");
-        let run = Command::new(output).output().expect("native callbacks run on a host thread");
+        let run = ember_build::output_started(&mut Command::new(output)).expect("native callbacks run on a host thread");
         assert!(run.status.success(), "{} callback host failed: {:?}\n{}", profile.name(),
             run.status, String::from_utf8_lossy(&run.stderr));
     }
@@ -4173,7 +4173,7 @@ fn the_128_bit_programs_run_with_the_halves() {
             "{relative} with the halves:\n{}",
             String::from_utf8_lossy(&compiled.stderr)
         );
-        let ran = Command::new(&program).output().expect("the program runs");
+        let ran = ember_build::output_started(&mut Command::new(&program)).expect("the program runs");
         assert_eq!(String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n"), native.stdout, "{relative}");
     }
     let _ = std::fs::remove_dir_all(&dir);

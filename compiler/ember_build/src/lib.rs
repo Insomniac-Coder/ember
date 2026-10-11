@@ -462,8 +462,10 @@ fn probe_linker(toolchain: &Toolchain) -> (Option<String>, Option<bool>) {
 
 /// D-510 — a command's output, tried again when it could not be started at
 /// all: on Linux a file just written cannot be executed ("text file busy")
-/// while another thread's new child still holds it open, for a moment.
-fn output_started(command: &mut Command) -> std::io::Result<std::process::Output> {
+/// while another thread's new child still holds it open, for a moment. The
+/// tests start the programs they link through it too: the program cache
+/// copies one into place while other test threads start processes.
+pub fn output_started(command: &mut Command) -> std::io::Result<std::process::Output> {
     let mut tries = 0;
     loop {
         match command.output() {
