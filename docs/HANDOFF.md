@@ -10705,6 +10705,23 @@ formal 1/9 count or Phase 2's estimate.
 
 #### Start here after a context reset — state at 2026-10-04 (autopilot)
 
+**2026-10-11, D-498 closed (ADR-155), with D-494.** The owner's option B, then (after asking for the
+short-text costs to be looked at first) three fixes and gcc's written-out steps, all picked from
+measured hand-written C: the progress guard multiplies, checked, and an empty rest enters the fast
+loop; `ember_analysis::ascii_runs` (after the progress proof) gives a text loop's ASCII byte its own
+step in a copy of the loop that comes back to one byte test, with MSVC's other bytes handed to
+`StrCharNextWide` (the decoder entry taking the tested lead byte) and, for gcc, eight written-out
+steps in front (gcc's 8x unroll entered through a mispredicting remainder branch); the runtime's u64
+checked multiply goes through the 128-bit product on gcc and clang (gcc's uncprop made the cursor's 0
+the overflow flag). Numbers are in ADR-155 and the D-498 row. **Judge text-loop speed on varied
+text**: one text repeated millions of times (the old kernels) lets the branch predictor learn every
+run length and swings results by 15-50%; `bench/probes/` keeps both kinds. Open from this work:
+D-550 (gcc, short strings mixing ASCII and wide characters, 1.13-1.19x; part is the guard), and two
+entry-point defects found on the way, **D-548** (`fn main(args: Array[String])` does not build) and
+**D-549** (an `Err` from `main` prints nothing and exits 0): the next work. The README's text rows are
+due at the next full benchmark run. Two read-only tracing workflows (3 and 2 Opus agents, owner-approved)
+priced the costs; their results were measured before anything was adopted.
+
 **2026-10-11, the C warning sweep (D-376, in part), D-545, D-391, and a faster CI.**
 `tools/c_warning_sweep.py clang|msvc|gcc` emits the C of every program that compiles (1,690; the
 other 715 are reject tests and `tests/ui` snapshots) and compiles it with warnings as errors (gcc

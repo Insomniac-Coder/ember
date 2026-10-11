@@ -2511,6 +2511,13 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
                 .join("\n")
         );
     }
+    // D-498 (ADR-155) — after the progress proof: this only copies a loop and
+    // steps an ASCII byte the decoder reads anyway; it removes no check.
+    let cold = progress_certificates.checked_fallbacks();
+    if ember_analysis::step_ascii_runs_all(&mut bodies, &mut types, &common, &cold, kernel_target) > 0 {
+        ember_analysis::install_callable_regions_all(&mut bodies, &types);
+        verify_callable_regions_or_panic(&bodies, &types);
+    }
     // `[IMP-7]` / `[VERIFY-3]` — verified MIR is a type-enforced backend
     // boundary. This check is unconditional and follows the final body-pruning
     // transformation, so release builds cannot emit stale or malformed MIR.

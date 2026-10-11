@@ -908,6 +908,10 @@ pub enum Builtin {
     /// byte offset copied as `int`. Both keep `at` on a character boundary
     /// before the end and dispatch to a helper with the same pointer type.
     StrCharNext,
+    /// D-498 (ADR-155) — `StrCharNext` at a cursor whose lead byte, the third
+    /// argument, is already read and 0x80 or above. Only the late ASCII step
+    /// (`ascii_runs`) makes it, for MSVC's C, past every analysis.
+    StrCharNextWide,
     /// `[LEX-19]` — append a value to an f-string's buffer as its spec says.
     FormatWith(FormatSpec),
     /// `[STD-8b]` — `needle in text`, for a `str` needle and a `char` one.
@@ -1327,6 +1331,7 @@ impl Builtin {
             Builtin::ParseStatus { .. } | Builtin::ParseValue { .. } => "parse",
             Builtin::StrToLower => "to_lower",
             Builtin::StrCharNext => "next_char",
+            Builtin::StrCharNextWide => "next_char_wide",
             Builtin::FormatWith(_) => "format",
             Builtin::StrContains | Builtin::StrContainsChar => "contains",
             Builtin::ProcessKey => "process_key",

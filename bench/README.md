@@ -17,6 +17,7 @@ Ember's strict floating-point policy across all program sets.
 | `update_readme.py` | The README's three charts (`docs/benchmarks/*.svg`) and its count of slow programs, from a run's logs. |
 | `compare_runs.py` | Ember's times in one run against another, flagging anything more than 5% slower. |
 | `results/` | The logs of the run the README shows. |
+| `probes/` | Ember programs with no twin, kept for one investigation: `text_loop_repeated_text.em` (one text of 0-60 bytes, millions of calls) and `text_loop_varied_text.em` (random English or Chinese text, or 10000 short random strings) price the text loop's ASCII step (D-498, D-550). Each reads `<mode> <count>` from standard input. |
 
 ## Running
 

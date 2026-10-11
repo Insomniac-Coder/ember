@@ -18,7 +18,8 @@ const MAX_STMTS: usize = 65536;
 const MAX_INIT_CELLS: usize = 262144; // whole-body block × local lattice cells
 
 /// Driver-owned, private evidence. Not a trusted "safe" boolean/checksum.
-/// No later mutating pass may run between verification and for_codegen.
+/// The only mutating pass between verification and for_codegen is the ASCII
+/// step (`ascii_runs`, ADR-155): it copies blocks and removes no check.
 struct ProgressReductionCertificate {
     body_index: usize,
     original: Body,
@@ -36,6 +37,11 @@ impl ProgressReductionCertificates {
     }
     pub fn count(&self) -> usize {
         self.entries.len()
+    }
+    /// Each reduced loop's checked original, by body index and header: it runs
+    /// only when the guard fails (an empty rest, or a sum that may overflow).
+    pub fn checked_fallbacks(&self) -> Vec<(usize, usize)> {
+        self.entries.iter().map(|c| (c.body_index, c.header)).collect()
     }
 }
 
@@ -1209,7 +1215,8 @@ fn apply(body: &mut Body, common: &CommonTypes, p: &Plan) {
     let nonzero = b.temp(common.bool_);
     let room = b.temp(common.u64);
     let acc_bits = b.temp(common.u64);
-    let q = b.temp(common.u64);
+    let product = b.temp(common.u64);
+    let wraps = b.temp(common.bool_);
     let safe = b.temp(common.bool_);
     let mut stmts = vec![
         b.set(
@@ -1241,17 +1248,30 @@ fn apply(body: &mut Body, common: &CommonTypes, p: &Plan) {
             ),
         ],
         nonzero,
-        p.header,
+        // D-498 — nothing left runs no update, a zero product every room
+        // holds: the fast loop, whose own test leaves at once. The checked
+        // loop's way out cost an empty text 1.19x on gcc (its prologue).
+        fast,
         first + 3,
     );
+    // D-498 — the updates the remaining bytes allow, `remaining * upper`, a
+    // checked multiply (one past `u64` is past any room), against the room the
+    // total has: `remaining <= room / upper` without its division, which cost
+    // more than the whole checked loop on a one-byte text. A zero `upper` is a
+    // zero product, which every room holds.
     let mut upper_stmts = Vec::new();
     let upper_bound = b.upper(&p.upper, length, &mut upper_stmts);
-    let has_term = b.temp(common.bool_);
-    upper_stmts.push(b.set(
-        has_term,
-        b.bin(BinOp::Ne, copy(upper_bound), int(0, common.u64)),
+    upper_stmts.push(Stmt::new(
+        StmtKind::CheckedBinaryOp {
+            dest: Place::local(product),
+            overflow: Place::local(wraps),
+            op: BinOp::Mul,
+            lhs: copy(remaining),
+            rhs: copy(upper_bound),
+        },
+        span,
     ));
-    b.block(upper_stmts, has_term, fast, first + 4);
+    b.block(upper_stmts, wraps, first + 4, p.header);
     b.block(
         vec![
             b.set(acc_bits, b.cast(copy(p.acc), common.u64)),
@@ -1259,8 +1279,7 @@ fn apply(body: &mut Body, common: &CommonTypes, p: &Plan) {
                 room,
                 b.bin(BinOp::Sub, int(LIMIT, common.u64), copy(acc_bits)),
             ),
-            b.set(q, b.bin(BinOp::Div, copy(room), copy(upper_bound))),
-            b.set(safe, b.bin(BinOp::Le, copy(remaining), copy(q))),
+            b.set(safe, b.bin(BinOp::Le, copy(product), copy(room))),
         ],
         safe,
         p.header,
@@ -1857,6 +1876,8 @@ enum GuardNode {
     Cast(Arc<GuardExpr>),
     Binary(BinOp, Arc<GuardExpr>, Arc<GuardExpr>),
     Min(Arc<GuardExpr>, Arc<GuardExpr>),
+    /// Whether `remaining * upper` passes `u64` (the checked multiply's flag).
+    Wraps(Arc<GuardExpr>, Arc<GuardExpr>),
 }
 type E = Arc<GuardExpr>;
 fn e(ty: Ty, node: GuardNode) -> E {
@@ -1959,19 +1980,22 @@ fn guard_semantics(
     let upper = upper_expr(&p.upper, &length, c);
     let acc = e(c.u64, GuardNode::Cast(e(c.i64, GuardNode::Acc(p.acc))));
     let room = eb(c.u64, BinOp::Sub, ec(c, LIMIT), acc);
-    let quotient = eb(c.u64, BinOp::Div, room.clone(), upper.clone());
+    let product = eb(c.u64, BinOp::Mul, remaining.clone(), upper.clone());
+    let wraps = e(c.bool_, GuardNode::Wraps(remaining.clone(), upper.clone()));
     let conditions = [
         eb(c.bool_, BinOp::Le, length.clone(), ec(c, LIMIT)),
         eb(c.bool_, BinOp::Le, cursor, native),
         eb(c.bool_, BinOp::Ne, remaining.clone(), ec(c, 0)),
-        eb(c.bool_, BinOp::Ne, upper.clone(), ec(c, 0)),
-        eb(c.bool_, BinOp::Le, remaining, quotient),
+        wraps.clone(),
+        eb(c.bool_, BinOp::Le, product.clone(), room),
     ];
     let edges = [
         (p.header, first + 1),
         (p.header, first + 2),
-        (p.header, first + 3),
-        (fast, first + 4),
+        // Zero remaining enters the fast loop: a zero product, which every
+        // room holds, so the theorem needs no multiply on that edge.
+        (fast, first + 3),
+        (first + 4, p.header),
         (p.header, fast),
     ];
     let mut values = BTreeMap::<LocalId, E>::new();
@@ -2007,6 +2031,29 @@ fn guard_semantics(
             }
         };
         for stmt in &actual.blocks[first + phase].stmts {
+            // Phase 3's one checked multiply: fresh `u64` and `bool`
+            // temporaries, `remaining` times `upper`.
+            if let StmtKind::CheckedBinaryOp { dest, overflow, op: BinOp::Mul, lhs, rhs } = &stmt.kind
+                && phase == 3
+            {
+                let (Some(a), Some(b)) = (operand(lhs, &values), operand(rhs, &values)) else {
+                    return false;
+                };
+                let fresh = |place: &Place| place.projection.is_empty() && place.local.0 as usize >= old_locals;
+                if !fresh(dest)
+                    || !fresh(overflow)
+                    || dest.local == overflow.local
+                    || actual.local(dest.local).ty != c.u64
+                    || actual.local(overflow.local).ty != c.bool_
+                    || !eqe(&a, &remaining)
+                    || !eqe(&b, &upper)
+                {
+                    return false;
+                }
+                values.insert(dest.local, product.clone());
+                values.insert(overflow.local, wraps.clone());
+                continue;
+            }
             let StmtKind::Assign { place, rvalue } = &stmt.kind else {
                 return false;
             };
@@ -2055,20 +2102,12 @@ fn guard_semantics(
                         2 => matches!(op, BinOp::Sub | BinOp::Ne),
                         3 => matches!(
                             op,
-                            BinOp::Add
-                                | BinOp::Sub
-                                | BinOp::Lt
-                                | BinOp::BitXor
-                                | BinOp::BitAnd
-                                | BinOp::Ne
+                            BinOp::Add | BinOp::Sub | BinOp::Lt | BinOp::BitXor | BinOp::BitAnd
                         ),
-                        4 => matches!(op, BinOp::Sub | BinOp::Div | BinOp::Le),
+                        4 => matches!(op, BinOp::Sub | BinOp::Le),
                         _ => false,
                     };
                     if !allowed {
-                        return false;
-                    }
-                    if *op == BinOp::Div && (!eqe(&a, &room) || !eqe(&b, &upper)) {
                         return false;
                     }
                     let comparison = matches!(op, BinOp::Le | BinOp::Lt | BinOp::Ne);

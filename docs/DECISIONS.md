@@ -5016,6 +5016,51 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-155 — an ASCII byte steps around the UTF-8 decoder; the progress guard multiplies (D-498, D-494)
+
+**Date:** 2026-10-11. **Rules:** `[RNG-4]`, `[TYP-8]`, `[TXT-10]`, `[EFF-10]`.
+
+**Context.** D-498: ADR-120's guard divided (`remaining <= room / upper`), and the division cost a
+call on a one-byte text more than the whole checked loop. A checked multiply alone moved MSVC's
+`t6_char_indices` loop across a 64-byte boundary (1.07-1.09x). The owner chose option B on
+2026-10-05: lay the character loop out first, then adopt the multiply. Measuring that showed the
+short-text costs the old kernels hid (one text repeated millions of times lets the branch predictor
+learn every run length); the owner then asked for them to be looked at first, and chose the fixes
+below from measured hand-written C (read-only tracing agents, then timings on all three compilers).
+
+**Decision.**
+1. The guard multiplies `remaining * upper`, checked, against the room the total has; an empty
+   rest (`remaining == 0`) enters the fast loop, which then runs nothing: a zero product every room
+   holds, so the independent guard checker accepts that edge by the same theorem.
+2. `ascii_runs` (after the progress proof, before `for_codegen`): in a loop that steps a `str`
+   with `next_char` and a `usize` cursor, a block reads the byte the decoder would read first; below
+   0x80 it is the character and the cursor moves one, in a copy of the loop whose way back to the
+   decoder is that one test (C compilers take it as the inner loop's header; clang laid out a test
+   copied to the bottom with two more instructions per character). Other bytes go to the decoder.
+   No check is removed and no new memory is read: the decoder reads that byte at that cursor first.
+   The decoder block's statements run after the test, so they may write only locals the test does
+   not read. The progress reduction's checked fallback is left as it is (on MSVC its copy cost an
+   empty text 1.27x).
+3. Per compiler (`KernelTarget`): for MSVC the decoder call becomes `StrCharNextWide`, a decoder
+   entry taking the lead byte the test read (MSVC read and tested it again: Chinese text 1.09x). For
+   gcc, eight written-out steps go in front of the inner loop (for a loop of at most 8 blocks): gcc
+   unrolls the inner loop 8 times and enters it through a branch on the rest's length modulo 8, which
+   mispredicts, so a wide character or a short run no longer reaches it (Chinese text 1.10x, then
+   1.02x).
+4. The runtime's u64 and usize checked multiply goes through the 128-bit product on gcc and clang:
+   gcc kept `__builtin_mul_overflow`'s flag as a 64-bit value and its tree-ssa-uncprop made the
+   cursor's starting 0 that flag, so the first byte address waited on the multiply ("aé🙂" 1.15x).
+
+**Consequences.** Against the loop before D-498 (11-15 interleaved runs, performance cores, mains;
+MSVC / clang / gcc): one byte 0.65 / 0.58 / 0.46; empty 1.03 / 0.84 / 0.96; `t6_char_indices`
+0.86 / 0.91 / 0.52; `t1_chars` 0.83 / 1.01 / 0.56; random English 0.74 / 0.78 / 0.71; random
+Chinese 0.94 / 0.99 / 1.02; 10000 short mixed strings 0.90 / 0.98 / 1.13 (D-550 records gcc's).
+The text programs' README rows are due at the next full benchmark run. The probes are kept in
+`bench/probes/`. Code grows by one copy of a text loop (nine of a small one for gcc). The
+specification is unchanged: this is code generation only.
+
+---
+
 ## ADR-154 — a lambda checked twice is one closure; a view stored through a reference is held to `[TYP-15]` (D-546, D-547)
 
 **Date:** 2026-10-11. **Rules:** `[CLO-14]`, `[TYP-15]`, `[CLS-10]`.

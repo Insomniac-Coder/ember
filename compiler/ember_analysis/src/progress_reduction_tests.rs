@@ -698,7 +698,7 @@ fn independent_guard_checker_rejects_bad_construction_without_replaying_apply() 
         before.blocks.len(),
         before.locals.len()
     ));
-    for defect in 0..5 {
+    for defect in 0..8 {
         // Simulate a bad constructor output. The assertion exercises the
         // independent semantic checker directly, without expected=apply().
         let mut bad = after.clone();
@@ -707,7 +707,7 @@ fn independent_guard_checker_rejects_bad_construction_without_replaying_apply() 
                 if let StmtKind::Assign {
                     rvalue: Rvalue::BinaryOp { op, .. },
                     ..
-                } = &mut bad.blocks[first + 4].stmts[3].kind
+                } = &mut bad.blocks[first + 4].stmts[2].kind
                 {
                     *op = BinOp::Lt;
                 }
@@ -732,6 +732,32 @@ fn independent_guard_checker_rejects_bad_construction_without_replaying_apply() 
                 } = &mut bad.blocks[first + 4].stmts[2].kind
                 {
                     *rhs = copy(remaining);
+                }
+            }
+            // D-498: the multiply squares `remaining` instead of taking `upper`.
+            5 => {
+                let last = bad.blocks[first + 3].stmts.len() - 1;
+                if let StmtKind::CheckedBinaryOp { lhs, rhs, .. } = &mut bad.blocks[first + 3].stmts[last].kind {
+                    *rhs = lhs.clone();
+                }
+            }
+            // D-498: an overflowing product goes to the room test, not the
+            // checked loop.
+            6 => {
+                if let Terminator::SwitchInt { targets, otherwise, .. } = &mut bad.blocks[first + 3].terminator {
+                    let no = targets[0].1;
+                    targets[0].1 = *otherwise;
+                    *otherwise = no;
+                }
+            }
+            // D-498: a remaining rest skips the multiply into the fast loop.
+            7 => {
+                let fast = match &bad.blocks[first + 2].terminator {
+                    Terminator::SwitchInt { targets, .. } => targets[0].1,
+                    _ => unreachable!(),
+                };
+                if let Terminator::SwitchInt { otherwise, .. } = &mut bad.blocks[first + 2].terminator {
+                    *otherwise = fast;
                 }
             }
             3 => {
@@ -795,6 +821,15 @@ fn guard_decision(b: &Body, p: &Plan, length: u64, cursor: u64, acc: i64) -> (bo
     let mut bb = first;
     for _ in 0..5 {
         for s in &b.blocks[bb].stmts {
+            // D-498's checked multiply, modelled exactly in u128.
+            if let StmtKind::CheckedBinaryOp { dest, overflow, op: BinOp::Mul, lhs, rhs } = &s.kind {
+                let a = operand(lhs, &values, p.view, length, p.acc, &mut read_acc);
+                let r = operand(rhs, &values, p.view, length, p.acc, &mut read_acc);
+                let wide = a as u128 * r as u128;
+                values.insert(dest.local, wide as u64);
+                values.insert(overflow.local, u64::from(wide > u64::MAX as u128));
+                continue;
+            }
             let StmtKind::Assign { place, rvalue } = &s.kind else {
                 panic!("non-pure guard")
             };
@@ -866,16 +901,16 @@ fn guard_fixed_extremes_matches_wider_product_sum_and_no_run_skips_acc_read() {
     ];
     for (a, length) in rows {
         let (fast, read) = guard_decision(&after, &p, length, 0, a);
-        let expected = length != 0
-            && length <= LIMIT
-            && (a as i128) + (length as i128) * 7 <= i64::MAX as i128;
+        // D-498: an empty rest runs nothing and enters the fast loop.
+        let expected = length <= LIMIT
+            && (length == 0 || (a as i128) + (length as i128) * 7 <= i64::MAX as i128);
         assert_eq!(fast, expected, "A={a} L={length}");
         if length == 0 || length > LIMIT {
             assert!(!read);
         }
     }
     assert_eq!(guard_decision(&after, &p, 4, 5, 0), (false, false));
-    assert_eq!(guard_decision(&after, &p, 4, 4, i64::MAX), (false, false));
+    assert_eq!(guard_decision(&after, &p, 4, 4, i64::MAX), (true, false));
     // Native32-sized L and a separately u64-sized proof bound: no narrowing.
     let (t, c, mut original) = fixture();
     original.blocks[4].stmts[2] = stmt(11, Rvalue::Use(int(LIMIT, c.i64)));
@@ -887,7 +922,7 @@ fn guard_fixed_extremes_matches_wider_product_sum_and_no_run_skips_acc_read() {
     original.blocks[4].stmts[2] = stmt(11, Rvalue::Use(int(0, c.i64)));
     let (after, certs) = accept(original, &t, &c);
     let p = plan(&certs.entries[0].original, &t, &c, 1).unwrap();
-    assert_eq!(guard_decision(&after, &p, 1, 0, i64::MAX), (true, false)); // no divide or A read when U=0.
+    assert_eq!(guard_decision(&after, &p, 1, 0, i64::MAX), (true, true)); // U=0: a zero product, then the room read (D-498).
 }
 
 #[test]
@@ -911,7 +946,7 @@ fn old_offset_zero_and_post_step_offset_one_have_different_credit() {
     let (old, certs) = accept(original.clone(), &t, &c);
     let p = plan(&certs.entries[0].original, &t, &c, 1).unwrap();
     assert_eq!(p.upper, Upper::BeforeStep);
-    assert_eq!(guard_decision(&old, &p, 1, 0, i64::MAX), (true, false));
+    assert_eq!(guard_decision(&old, &p, 1, 0, i64::MAX), (true, true));
     let post = extra(&mut original, c.i64);
     original.blocks[4]
         .stmts

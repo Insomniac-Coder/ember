@@ -4,11 +4,12 @@
 #$ stdout: [0, 1, 2, 4, 7, 11] [0, 1, 2, 4, 7, 11]
 #$ stdout: [97, 0, 233, 19990, 128512, 1114111]
 #$ stdout: 2 0
-#$ assert-c: contains("ember_str_char_next_usize(")
+#$ assert-c: contains("ember_str_char_next_")
 #$ assert-c: contains("ember_str_char_next(")
 # Stored iterators and explicit next keep std's int cursor and int offsets.
 # Native iteration uses its separately typed unsigned helper, with no pointer
-# cast between the two representations.
+# cast between the two representations: `ember_str_char_next_usize`, or for
+# MSVC behind an ASCII test its `ember_str_char_next_wide_usize` (ADR-155).
 
 @noinline
 fn signed_index(value: int) -> int:

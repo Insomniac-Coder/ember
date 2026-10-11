@@ -17,6 +17,7 @@ pub mod list_locals;
 pub mod reserve_pushes;
 pub mod cycles;
 pub mod access;
+pub mod ascii_runs;
 pub mod definite_init;
 pub mod drops;
 pub mod facts;
@@ -49,6 +50,7 @@ pub use kernels::{KernelTarget, outline_list_kernels_all};
 pub use list_locals::keep_pushed_lists_in_locals_all;
 pub use reserve_pushes::reserve_pushed_lists_all;
 pub use loop_version::{hoist_invariant_views_all, version_bounds_checked_loops_all};
+pub use ascii_runs::step_ascii_runs_all;
 pub use progress_reduction::{
     ProgressReductionCertificates, verify_progress_reductions_all,
     version_progress_reductions_all,

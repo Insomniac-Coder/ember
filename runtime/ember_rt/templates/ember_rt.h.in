@@ -353,6 +353,29 @@ static inline ember_loc ember_loc_unknown(void) { return ember_loc_at(NULL, 0, 0
         return __builtin_mul_overflow(a, b, out);                            \
     }
 
+/* D-498 — the unsigned 64-bit product through the 128-bit one. gcc keeps
+ * `__builtin_mul_overflow`'s flag as a 64-bit value, and where a counter
+ * starts at 0 on the edge the flag is known 0, its tree-ssa-uncprop makes the
+ * counter that flag: a loop's first address then waits on the multiply
+ * (measured: a three-character text loop behind the progress guard, 1.15x).
+ * The 128-bit product's test gives it nothing to reuse; clang is unchanged. */
+#if defined(__SIZEOF_INT128__)
+#define EMBER_CHECKED_OPS_U64_GNU(SUFFIX, TYPE)                              \
+    EMBER_INLINED bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        return __builtin_add_overflow(a, b, out);                            \
+    }                                                                        \
+    EMBER_INLINED bool ember_ck_sub_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        return __builtin_sub_overflow(a, b, out);                            \
+    }                                                                        \
+    EMBER_INLINED bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        unsigned __int128 product = (unsigned __int128)a * b;                \
+        *out = (TYPE)product;                                                \
+        return product > (TYPE)-1;                                           \
+    }
+#else
+#define EMBER_CHECKED_OPS_U64_GNU(SUFFIX, TYPE) EMBER_CHECKED_OPS(SUFFIX, TYPE)
+#endif
+
 #else
 
 /* Narrow signed types: compute in int64_t, which cannot itself overflow for
@@ -472,8 +495,8 @@ EMBER_CHECKED_OPS(isize, ptrdiff_t)
 EMBER_CHECKED_OPS(u8, uint8_t)
 EMBER_CHECKED_OPS(u16, uint16_t)
 EMBER_CHECKED_OPS(u32, uint32_t)
-EMBER_CHECKED_OPS(u64, uint64_t)
-EMBER_CHECKED_OPS(usize, size_t)
+EMBER_CHECKED_OPS_U64_GNU(u64, uint64_t)
+EMBER_CHECKED_OPS_U64_GNU(usize, size_t)
 #else
 EMBER_CHECKED_OPS_SNARROW(i8, int8_t, 8)
 EMBER_CHECKED_OPS_SNARROW(i16, int16_t, 16)
@@ -1837,6 +1860,27 @@ static inline uint32_t NAME(ember_str s, INDEX_TYPE* at) {                  \
 EMBER_TEXT_CHAR_NEXT(ember_str_char_next, int64_t)
 EMBER_TEXT_CHAR_NEXT(ember_str_char_next_usize, size_t)
 #undef EMBER_TEXT_CHAR_NEXT
+/* D-498 — the character at `*at` of the text at `base` whose lead byte `b`,
+ * already read, is 0x80 or above: the ASCII step's other way (ADR-155), which
+ * neither reads that byte again nor tests it against 0x80 (MSVC did both). */
+EMBER_INLINED uint32_t ember_str_char_next_wide_usize(const unsigned char* base, size_t* at, uint32_t b) {
+    const unsigned char* p = base + *at;
+    uint32_t c;
+    int64_t width;
+    if (b < 0xE0) {
+        width = 2;
+        c = ((b & 0x1F) << 6) | (uint32_t)(p[1] & 0x3F);
+    } else if (b < 0xF0) {
+        width = 3;
+        c = ((b & 0x0F) << 12) | ((uint32_t)(p[1] & 0x3F) << 6) | (uint32_t)(p[2] & 0x3F);
+    } else {
+        width = 4;
+        c = ((b & 0x07) << 18) | ((uint32_t)(p[1] & 0x3F) << 12)
+          | ((uint32_t)(p[2] & 0x3F) << 6) | (uint32_t)(p[3] & 0x3F);
+    }
+    *at += (size_t)width;
+    return c;
+}
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
 #endif

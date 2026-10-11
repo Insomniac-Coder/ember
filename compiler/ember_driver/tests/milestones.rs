@@ -4284,7 +4284,9 @@ fn text_iterator_loops_are_counted_loops_without_the_iterator() {
         let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc} C failed:\n{}", c.stderr);
         let main = c_definition(&c.stdout, &ember_branding::mangled("main"));
-        assert!(main.contains("str_char_next_usize("), "{cc}: no native text loop in main:\n{main}");
+        // ADR-155: MSVC's native step behind the ASCII test takes the lead byte.
+        let native = main.contains("str_char_next_usize(") || main.contains("str_char_next_wide_usize(");
+        assert!(native, "{cc}: no native text loop in main:\n{main}");
         assert!(!main.contains("CharIndices_next(") && !main.contains("Bytes_next("), "{cc}: a loop calls `next`:\n{main}");
         if cc == "clang" {
             assert!(main.contains("Chars_next("), "clang: the iterator held in a variable lost its `next`:\n{main}");
@@ -4573,11 +4575,20 @@ fn progress_reduction_emits_a_fast_loop_and_preserves_checked_fallback() {
                 !body.contains("._1"),
                 "{cc}: a text descriptor length was emitted as a tuple field:\n{body}"
             );
+            // D-498 (ADR-155) — the fast loop's ASCII step; on MSVC its other
+            // bytes reach the decoder entry that takes the tested lead byte.
+            let wide = usize::from(cc == "msvc");
             assert_eq!(
                 body.matches("str_char_next_usize(").count(),
-                2,
+                2 - wide,
                 "{cc}: guarded loop and checked fallback missing from {name}:\n{body}"
             );
+            assert_eq!(
+                body.matches("str_char_next_wide_usize(").count(),
+                wide,
+                "{cc}: the wide decoder entry is MSVC's only:\n{body}"
+            );
+            assert!(body.contains("< 128U"), "{cc}: the ASCII step is missing from {name}:\n{body}");
             assert_eq!(
                 body.matches("ck_add_i64(").count(),
                 1,
@@ -4588,6 +4599,9 @@ fn progress_reduction_emits_a_fast_loop_and_preserves_checked_fallback() {
                 1,
                 "{cc}: the fallback's original panic changed:\n{body}"
             );
+            // D-498 — the guard multiplies, checked, and divides nothing.
+            assert_eq!(body.matches("ck_mul_u64(").count(), 1, "{cc}: the guard's checked multiply is missing:\n{body}");
+            assert!(!body.contains(" / "), "{cc}: the guard divides:\n{body}");
         }
         let c = ember(
             &[
@@ -4608,16 +4622,24 @@ fn progress_reduction_emits_a_fast_loop_and_preserves_checked_fallback() {
             c.stderr
         );
         let body = c_definition(&c.stdout, &ember_branding::mangled("effectful"));
+        // One decoder call (MSVC's takes the tested lead byte, ADR-155).
         assert_eq!(
-            body.matches("str_char_next_usize(").count(),
+            body.matches("str_char_next_usize(").count() + body.matches("str_char_next_wide_usize(").count(),
             1,
             "{cc}: unsupported effects were included in a fast loop:\n{body}"
         );
+        // D-498 — the loop and each ASCII copy (ADR-155: one per byte test,
+        // gcc's written-out steps included) keep the check; no add wraps.
         assert_eq!(
             body.matches("ck_add_i64(").count(),
-            1,
+            1 + body.matches("< 128U").count(),
             "{cc}: unsupported effectful accumulation lost its check:\n{body}"
         );
+        assert!(
+            !body.contains(") + (uint64_t)("),
+            "{cc}: unsupported effectful accumulation wraps:\n{body}"
+        );
+        assert!(body.contains("< 128U"), "{cc}: the ASCII step is missing:\n{body}");
     }
 }
 

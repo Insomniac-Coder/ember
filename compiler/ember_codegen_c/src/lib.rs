@@ -6752,6 +6752,13 @@ impl Emitter<'_> {
                         };
                         return format!("{RT}{helper}({}, {})", rendered[0], rendered[1]);
                     }
+                    // Only `ascii_runs` makes it, with a `usize` cursor.
+                    Builtin::StrCharNextWide => {
+                        return format!(
+                            "{RT}str_char_next_wide_usize(({}).ptr, {}, {})",
+                            rendered[0], rendered[1], rendered[2]
+                        );
+                    }
                     Builtin::StrCharCount => {
                         return format!("{RT}str_char_count({})", rendered[0]);
                     }
