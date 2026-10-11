@@ -63,6 +63,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-082 | **CLOSED** — `@ffi(immutable)` on a foreign static asserts a `const` C object and emits a matching declaration | Language / C interop / foreign statics | — | **No** — delegated, 2026-09-27, Hardened_38 |
 | ODR-083 | **CLOSED** — a static free-function export's `creator` thread is anchored to successful module initialization; repeated initialization does not transfer the contract, and reinitialization after shutdown establishes a new creator | Language / C interop / export thread contracts | — | **No** — delegated, 2026-09-27, Hardened_39 |
 | ODR-084 | **CLOSED** — `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts | Language / module attributes / arithmetic | — | **No** — delegated, 2026-09-27, Hardened_40 |
+| ODR-101 | **CLOSED** — the entry module's `main` in a form `[FN-8]` does not list is `E2183` at its name; its one parameter may have any name and mode, its type `Array[String]`; an `E` that is not `Display` is `E2040` | Functions / entry point | — | **Delegated** (the owner, 2026-10-11: "fix that autonomously"), 0.9.10_Hardened_5 |
 | ODR-100 | **CLOSED** — the iterator adapters take over the callable and the iterator they keep; a lambda written at one keeps its borrows; only a callable that must carry the static region moves its captures | Closures / std | — | **Owner** (2026-10-11), 0.9.10_Hardened_4 |
 | ODR-099 | **CLOSED** — where a program turns a callable type into `extern "C" fn`, a function whose value has that type returns no raw pointer into a parameter it borrows by value, which a call from C passes as a copy (`E5042`) | FFI / callbacks | — | **Owner chose the direction** (2026-10-11); the detail ruled under the delegation, 0.9.10_Hardened_3 |
 | ODR-098 | **CLOSED** — String capacity and offsets count bytes; reserve asks for additional bytes, insert takes a char and remove returns one; truncate and clear retain capacity; invalid sizes and UTF-8 boundaries panic in every profile | Library / text | — | **No** — delegated, 2026-10-03, Hardened_52 |
@@ -254,6 +255,38 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-101 — a `main` of another form — **CLOSED**
+
+    ID:        ODR-101
+    Status:    CLOSED — ruled under the delegation, 2026-10-11 (the owner: "fix that
+               autonomously"); incorporated in 0.9.10_Hardened_5
+    Category:  FUNCTIONS / ENTRY POINT
+    Location:  Ember_v0.9.10_Hardened_4.md [FN-8]
+
+**The question.** `[FN-8]` lists the forms `main` may take: `fn main()`, `fn main() ->
+Result[void, E]` with `E: Display`, or either with a first parameter `args:
+Array[String]`. It names no diagnostic for any other form, so the compiler took every
+`main`: `fn main(x: int)` then failed in the C compiler, and `fn main() -> int` or
+`fn main() -> Result[int, String]` exited 0 with the value ignored (D-551, found closing
+D-548 and D-549).
+
+**Ruling.** The entry module's `main` in any other form is `E2183`, reported at its name:
+another parameter than one `Array[String]`, more than one, another return type than `void` or
+`Result[void, E]`, or type parameters. The parameter may have any name and any mode
+(borrowed, `owned`, `mut`): its type is what makes it the command line, as a script's
+`args` is. An `E` that is not `Display` is `E2040`, the unmet bound it is. A `main` in
+another module is `that.main`, not the entry point, and keeps whatever form it has. An
+`extern "C" fn main` is `E0104` already (it is the generated entry point's name).
+
+**Why an error and not a warning.** Nothing calls `main` but the program's start, which
+has no value to give another parameter and no use for another result; a warning would let
+a program build that cannot run as written.
+
+**Tests:** `tests/conformance/FN-8/reject_main_*` (another parameter, two, another return
+type, a value on success, type parameters), `accept_main_takes_its_args_by_any_name`. ADR-157.
 
 ---
 

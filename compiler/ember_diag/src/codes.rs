@@ -212,6 +212,8 @@ codes! {
     // 0.9.9 `[FN-10]`, ODR-023: only `void` and `Result[void, E]` have an
     // implicit value at the end of a body.
     E2182 = (Error, 2182, Types, "[FN-10]", "a function that returns a value can reach the end of its body");
+    // 0.9.10_Hardened_5 `[FN-8]`, ODR-101: the forms `main` may take.
+    E2183 = (Error, 2183, Types, "[FN-8]", "`main` has none of the forms `[FN-8]` allows");
     E2200 = (Error, 2200, Types, "[XVIII.4.4]", "type has infinite size");
     // 0.9.9 `[TYP-28]`: `/` is true division; two integer operands are
     // rejected with the `//` and float fix-its.

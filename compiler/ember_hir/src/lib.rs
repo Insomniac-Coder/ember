@@ -912,6 +912,9 @@ pub enum Builtin {
     /// argument, is already read and 0x80 or above. Only the late ASCII step
     /// (`ascii_runs`) makes it, for MSVC's C, past every analysis.
     StrCharNextWide,
+    /// `[FN-8]` — the command line as `main`'s `args`, an `Array[String]`.
+    /// Only the compiler-written entry (`main_entry`) calls it.
+    ProcessArgs,
     /// `[LEX-19]` — append a value to an f-string's buffer as its spec says.
     FormatWith(FormatSpec),
     /// `[STD-8b]` — `needle in text`, for a `str` needle and a `char` one.
@@ -1332,6 +1335,7 @@ impl Builtin {
             Builtin::StrToLower => "to_lower",
             Builtin::StrCharNext => "next_char",
             Builtin::StrCharNextWide => "next_char_wide",
+            Builtin::ProcessArgs => "args",
             Builtin::FormatWith(_) => "format",
             Builtin::StrContains | Builtin::StrContainsChar => "contains",
             Builtin::ProcessKey => "process_key",

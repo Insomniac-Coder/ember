@@ -11,6 +11,8 @@
 //!
 //! A run test may feed its program standard input, one `#$ stdin: text` line
 //! per input line (`[STD-10]`'s `input`); without one, standard input is closed.
+//! It may pass its program arguments, one `#$ args: text` line per argument
+//! (`[FN-8]`'s `args`).
 //!
 //! `#$` is an ordinary comment to the compiler — `$` has no other meaning
 //! anywhere in Ember — so an annotation can never be mistaken for source and
@@ -51,6 +53,8 @@ struct Expectations {
     stdout: Option<String>,
     /// `#$ stdin:` — one line of standard input per annotation.
     stdin: Option<String>,
+    /// `#$ args:` — one program argument per annotation, after `--`.
+    args: Vec<String>,
     /// `#$ stderr:` — text the run's standard error must contain, one needle
     /// per annotation: the debug leak report (`[WK-15]`) goes there.
     stderr: Vec<String>,
@@ -225,6 +229,9 @@ fn parse_expectations(source: &str) -> Expectations {
         } else if let Some(value) = rest.strip_prefix("panics:") {
             expectations.panics = Some(value.trim().to_string());
             collecting_stdout = false;
+        } else if let Some(value) = rest.strip_prefix("args:") {
+            expectations.args.push(value.trim().to_string());
+            collecting_stdout = false;
         } else if let Some(value) = rest.strip_prefix("stdin:") {
             stdin_lines.push(value.trim().to_string());
             collecting_stdout = false;
@@ -245,7 +252,7 @@ fn parse_expectations(source: &str) -> Expectations {
             // passed. Every annotation is now either understood or refused.
             panic!(
                 "unrecognised `#$` annotation: {rest:?}
-  known keys:                  test, profiles, exit, assert-c, error[…], warning[…], help, not-help, panics, stdout, stderr, stdin, rules, note"
+  known keys:                  test, profiles, exit, assert-c, error[…], warning[…], help, not-help, panics, stdout, stderr, stdin, args, rules, note"
             );
         }
     }
@@ -3128,7 +3135,11 @@ fn check_file(path: &Path, root: &Path) {
     for profile in &profiles {
         // The driver adds the profile's own folder (`[BLD-5]`).
         let out_dir_arg = out_dir.to_string_lossy().into_owned();
-        let arguments = ["run", relative.as_str(), "--out-dir", &out_dir_arg, "--profile", profile];
+        let mut arguments = vec!["run", relative.as_str(), "--out-dir", &out_dir_arg, "--profile", profile];
+        if !expectations.args.is_empty() {
+            arguments.push("--");
+            arguments.extend(expectations.args.iter().map(String::as_str));
+        }
         let run = match &expectations.stdin {
             Some(input) => ember_with_input(&arguments, root, input.as_bytes()),
             None => ember(&arguments, root),
@@ -4752,4 +4763,44 @@ fn one_byte_search_falls_through_when_found() {
     let one_byte = &search[search.find("if (needle.len == 1) {").expect("the one-byte path")..];
     assert!(one_byte.contains("if (from < s.len) {") && one_byte.contains("if (hit != NULL) {"), "the found case does not fall through:\n{search}");
     assert!(!search.contains("return hit ?"), "the answer is a conditional expression:\n{search}");
+}
+
+/// `[FN-8]` (D-548) — `args` is the command line decoded as UTF-8, each
+/// invalid sequence replaced by U+FFFD: raw bytes on Linux, UTF-16 on Windows
+/// (whose C `argv` is in the ANSI code page).
+#[test]
+fn main_args_replace_text_that_is_not_utf8() {
+    let root = workspace_root();
+    let out = temporary_directory("main-args");
+    let program = format!("tests/conformance/FN-8/accept_main_takes_the_command_line.{SOURCE_EXT}");
+    let built = ember(&["build", &program, "--out-dir", &out.to_string_lossy()], &root);
+    assert_eq!(built.exit, 0, "build failed:\n{}", built.stderr);
+    let exe = out.join("debug").join("bin").join(format!(
+        "accept_main_takes_the_command_line{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    #[cfg(unix)]
+    let args: Vec<std::ffi::OsString> = {
+        use std::os::unix::ffi::OsStrExt;
+        [&b"a\xffb"[..], b"\xe2\x82", b"\xf0\x9f\x98\x80", b"\xed\xa0\x80z"]
+            .iter()
+            .map(|bytes| std::ffi::OsStr::from_bytes(bytes).to_os_string())
+            .collect()
+    };
+    #[cfg(unix)]
+    let expected = "4\n[a\u{fffd}b]\n[\u{fffd}]\n[\u{1f600}]\n[\u{fffd}\u{fffd}\u{fffd}z]";
+    #[cfg(windows)]
+    let args: Vec<std::ffi::OsString> = {
+        use std::os::windows::ffi::OsStringExt;
+        vec![
+            std::ffi::OsString::from_wide(&[0x61, 0xD800, 0x62]),
+            std::ffi::OsString::from("\u{1f600}"),
+            std::ffi::OsString::from("caf\u{e9}"),
+        ]
+    };
+    #[cfg(windows)]
+    let expected = "4\n[a\u{fffd}b]\n[\u{1f600}]\n[caf\u{e9}]";
+    let run = ember_build::output_started(Command::new(&exe).args(&args)).expect("the program starts");
+    let stdout = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+    assert_eq!(stdout.trim_end(), expected, "stderr:\n{}", String::from_utf8_lossy(&run.stderr));
 }

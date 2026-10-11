@@ -170,6 +170,7 @@ NEW = {
     'E2102': ('derived `init` uses `self` or an inherited field before `super.init`, or leaves an own field unassigned', ['CLS-11']),
     'E2231': ('`yield` while a `@must_drop` value is live', ['CORO-13']),
     'E2182': ('a function that returns a value can reach the end of its body', ['FN-10']),
+    'E2183': ('`main` has none of the forms `[FN-8]` allows', ['FN-8']),
     'E5067': ('an overlay that states facts is not declared `unsafe overlay`', ['GRM-35', 'TIER-1']),
     'W1003': ('a package module shadows the standard module of the same name', ['MOD-3']),
     'L4003': ('large `Array[int]`/`Array[float]` in a hot loop whose values fit 32 bits', ['LNT-6']),

@@ -4,8 +4,8 @@ conformance run. Matching follows the harness in `ember_driver/tests/milestones.
 with that code whose text (message, labels, notes or helps) contains `text`; one that trails a
 line of code also needs the diagnostic's primary span on that line. A missing diagnostic and an
 unclaimed one both fail. Also `#$ help:`, `#$ not-help:`, and for run tests `#$ stdout:` (with its
-`#$` continuation lines), `#$ stdin:` (one input line each; stdin is otherwise empty) and
-`#$ panics:`. A test uses its first listed profile. Files are checked side by side, one per
+`#$` continuation lines), `#$ stdin:` (one input line each; stdin is otherwise empty),
+`#$ args:` (one program argument each, after `--`), `#$ exit:` and `#$ panics:`. A test uses its first listed profile. Files are checked side by side, one per
 core, and reported in order.
 python tasks/impl-0.9.9/annotations.py tests/conformance/DIA-12 [more directories]
 """
@@ -64,8 +64,14 @@ def expected_stdout(text):
     return out
 
 
-def run(args, path, stdin=None):
-    result = subprocess.run([EMBER, *args, path], cwd=ROOT, capture_output=True, text=True,
+def program_args(text):
+    """`#$ args:` lines, each one argument for the program."""
+    return [line[len('#$ args:'):].strip() for line in text.splitlines() if line.startswith('#$ args:')]
+
+
+def run(args, path, stdin=None, after=()):
+    after = ['--', *after] if after else []
+    result = subprocess.run([EMBER, *args, path, *after], cwd=ROOT, capture_output=True, text=True,
                             input=stdin if stdin is not None else '',
                             encoding='utf-8', errors='replace')
     return result.returncode, result.stdout.replace('\r\n', '\n'), result.stderr
@@ -145,7 +151,9 @@ def check(path):
         problems.append('expected compilation to fail')
     if kind in ('run-pass', 'run-fail'):
         code, out, err = run(['run', '--profile', profile, '--out-dir', out_dir(path)], path,
-                             expected_stdin(text))
+                             expected_stdin(text), program_args(text))
+        exit_line = re.search(r'^#\$ exit:\s*(-?\d+)\s*$', text, re.M)
+        expected_exit = int(exit_line[1]) if exit_line else 0
         stdout = expected_stdout(text)
         if stdout is not None and out.rstrip('\n').split('\n') != stdout:
             problems.append(f'stdout {out.rstrip()!r} is not {stdout!r}')
@@ -154,8 +162,8 @@ def check(path):
         panics = re.search(r'^#\$ panics:\s*(.*)$', text, re.M)
         if kind == 'run-fail' and (code == 0 or (panics and panics[1].strip() not in err)):
             problems.append(f'expected a panic {panics[1].strip() if panics else ""!r}, got exit {code}: {err.strip()[:160]!r}')
-        if kind == 'run-pass' and code != 0:
-            problems.append(f'exit {code}: {err.strip()[:200]!r}')
+        if kind == 'run-pass' and code != expected_exit:
+            problems.append(f'exit {code}, not {expected_exit}: {err.strip()[:200]!r}')
     return problems
 
 

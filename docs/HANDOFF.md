@@ -10705,6 +10705,13 @@ formal 1/9 count or Phase 2's estimate.
 
 #### Start here after a context reset — state at 2026-10-04 (autopilot)
 
+**2026-10-11, D-548 and D-549 fixed (ADR-156).** `fn main(args: Array[String])` builds and runs, with the
+command line decoded as UTF-8 (lossy; UTF-16 on Windows), and an `Err` returned from `main` prints
+`error: <Display>` and exits 1. The checker writes `main_entry` for those forms; `ember run` passes on
+the words after the file and after `--`; tests can say `#$ args:`. Then **D-551**, on the owner's "fix that
+autonomously": ODR-101, 0.9.10_Hardened_5 (ADR-157): a `main` of a form `[FN-8]` does not list is
+`E2183` at its name.
+
 **2026-10-11, D-498 closed (ADR-155), with D-494.** The owner's option B, then (after asking for the
 short-text costs to be looked at first) three fixes and gcc's written-out steps, all picked from
 measured hand-written C: the progress guard multiplies, checked, and an empty rest enters the fast

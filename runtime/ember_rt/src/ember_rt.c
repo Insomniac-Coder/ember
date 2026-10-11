@@ -6640,6 +6640,95 @@ EMBER_PRINTERS(f64, double)
 EMBER_PRINTERS(bool, bool)
 EMBER_PRINTERS(char, uint32_t)
 
+/* -- the command line (`[FN-8]`) --------------------------------------------- */
+
+#if defined(_WIN32)
+/* Declared here, as `rand_s` is, rather than through <windows.h>. */
+__declspec(dllimport) wchar_t* __stdcall GetCommandLineW(void);
+__declspec(dllimport) wchar_t** __stdcall CommandLineToArgvW(const wchar_t* line, int* count);
+__declspec(dllimport) int __stdcall WideCharToMultiByte(unsigned int page, unsigned long flags,
+    const wchar_t* wide, int wide_len, char* out, int out_len, const char* fallback, int* used_fallback);
+__declspec(dllimport) void* __stdcall LocalFree(void* memory);
+#pragma comment(lib, "shell32.lib")
+#endif
+
+static int g_argc;
+static char** g_argv;
+
+void ember_rt_set_args(int argc, char** argv) {
+    g_argc = argc;
+    g_argv = argv;
+}
+
+#if !defined(_WIN32)
+/* Appends `data` to `out`, each maximal ill-formed subsequence (the Unicode
+ * Standard's "substitution of maximal subparts") replaced by one U+FFFD; the
+ * well-formed ranges are `ember_utf8_valid`'s. */
+static void push_utf8_lossy(ember_vec* out, const unsigned char* data, size_t len) {
+    static const unsigned char replacement[3] = { 0xEF, 0xBF, 0xBD };
+    for (size_t i = 0; i < len;) {
+        unsigned char a = data[i];
+        size_t width = 0;
+        unsigned char second_min = 0x80;
+        unsigned char second_max = 0xBF;
+        if (a < 0x80) {
+            width = 1;
+        } else if (a >= 0xC2 && a <= 0xDF) {
+            width = 2;
+        } else if (a >= 0xE0 && a <= 0xEF) {
+            width = 3;
+            if (a == 0xE0) second_min = 0xA0;
+            if (a == 0xED) second_max = 0x9F;
+        } else if (a >= 0xF0 && a <= 0xF4) {
+            width = 4;
+            if (a == 0xF0) second_min = 0x90;
+            if (a == 0xF4) second_max = 0x8F;
+        }
+        size_t good = 1;
+        while (width > 1 && good < width && i + good < len) {
+            unsigned char b = data[i + good];
+            if (b < (good == 1 ? second_min : 0x80) || b > (good == 1 ? second_max : 0xBF)) break;
+            good++;
+        }
+        if (width != 0 && good == width) {
+            for (size_t k = 0; k < width; k++) ember_vec_push(out, 1, &data[i + k]);
+        } else {
+            for (size_t k = 0; k < 3; k++) ember_vec_push(out, 1, &replacement[k]);
+        }
+        i += good;
+    }
+}
+#endif
+
+ember_vec ember_process_args(void) {
+    ember_vec args = ember_vec_empty();
+#if defined(_WIN32)
+    int count = 0;
+    wchar_t** wide = CommandLineToArgvW(GetCommandLineW(), &count);
+    for (int i = 0; wide != NULL && i < count; i++) {
+        ember_vec text = ember_vec_empty();
+        /* CP_UTF8; a lone surrogate becomes U+FFFD. The size counts the NUL. */
+        int size = WideCharToMultiByte(65001, 0, wide[i], -1, NULL, 0, NULL, NULL);
+        if (size > 1) {
+            ember_vec_reserve(&text, 1, (size_t)size);
+            WideCharToMultiByte(65001, 0, wide[i], -1, (char*)text.ptr, size, NULL, NULL);
+            text.len = (size_t)size - 1;
+        }
+        ember_vec_push(&args, sizeof(ember_vec), &text);
+    }
+    if (wide != NULL) {
+        LocalFree(wide);
+    }
+#else
+    for (int i = 0; i < g_argc; i++) {
+        ember_vec text = ember_vec_empty();
+        push_utf8_lossy(&text, (const unsigned char*)g_argv[i], strlen(g_argv[i]));
+        ember_vec_push(&args, sizeof(ember_vec), &text);
+    }
+#endif
+    return args;
+}
+
 /* `[STD-10]` — `input(prompt)`: the prompt, flushed, then one line of
  * standard input without its `\n` (or `\r\n`). The prelude's console
  * functions treat a console failure as fatal: end of input panics, and the

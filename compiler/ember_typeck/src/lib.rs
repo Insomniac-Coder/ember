@@ -265,6 +265,14 @@ pub fn check(
         main = main.or(program.main);
         functions.extend(program.functions);
     }
+    // `[FN-8]` — before the instantiations drain: printing `main`'s error
+    // may need one.
+    if let Some(main) = main
+        && let Some(span) = functions.iter().find(|function| function.def == main).map(|function| function.span)
+        && let Some(entry) = checker.main_entry(main, span)
+    {
+        functions.push(entry);
+    }
     functions.extend(checker.take_derived_clone_bodies());
     // `[TYP-16]` — every instantiation reached while checking gets a real
     // body. One of those can reach another, so this drains until empty.
@@ -13410,6 +13418,14 @@ impl<'a> Checker<'a> {
                 self.error(codes::E0100, decl.name.span, "a bodyless foreign declaration belongs in an `unsafe extern` block");
             }
             self.check_foreign_signature(decl, def, &item.attrs);
+            // `[FN-8]` (ODR-101) — a generic `main` is checked as a template
+            // below, never as the entry point: its form is checked here.
+            if !self.signatures[def.0 as usize].generics.is_empty()
+                && !decl.is_foreign_decl
+                && self.qualified(decl.name.name).is("main")
+            {
+                self.check_main_form(def, decl.name.span);
+            }
 
             // `[TYP-17]` — a generic body is checked **once**, with its
             // parameters opaque, so that using an operation its bounds do not
@@ -13552,6 +13568,7 @@ impl<'a> Checker<'a> {
             let is_main = name.is("main");
             if is_main && !decl.is_foreign_decl {
                 main = Some(def);
+                self.check_main_form(def, decl.name.span);
             }
             let overflow = self.signatures[def.0 as usize].overflow;
             let fp = self.signatures[def.0 as usize].fp;
@@ -34980,6 +34997,218 @@ impl<'a> Checker<'a> {
         let watch = std::mem::replace(&mut self.captures, outer_watch)
             .expect("the watch was installed above");
         (body, body_ty, locals, watch)
+    }
+
+    /// `[FN-8]` (ODR-101) — the entry module's `main` takes no parameter or
+    /// one `Array[String]` (any name, any mode) and returns `void` or
+    /// `Result[void, E]`, with no type parameters; any other form is `E2183`
+    /// at its name. Its `E` must have text to be printed (`E2040`).
+    fn check_main_form(&mut self, main: DefId, name: Span) {
+        let signature = &self.signatures[main.0 as usize];
+        let (params, ret, generic) = (signature.params.clone(), signature.ret, !signature.generics.is_empty());
+        // A C `main` is `E0104` (it is the generated entry point's name).
+        if signature.abi.is_some()
+            || ret == self.common.error
+            || params.iter().any(|(_, ty, _, _)| *ty == self.common.error)
+        {
+            return;
+        }
+        let strings = self.types.intern(TyKind::Vec { elem: self.common.string, text: false });
+        let error = match *self.types.kind(ret) {
+            TyKind::Enum(id) if self.is_result(ret) => {
+                let variants = &self.types.enum_def(id).variants;
+                variants[0].fields.iter().all(|field| field.ty == self.common.void).then(|| variants[1].fields[0].ty)
+            }
+            _ => None,
+        };
+        let wrong = if generic {
+            Some("it has type parameters".to_string())
+        } else if params.len() > 1 {
+            Some(format!("it takes {} parameters", params.len()))
+        } else if let Some((param, ty, _, _)) = params.first().filter(|(_, ty, _, _)| *ty != strings) {
+            Some(format!("it takes `{param}: {}`", self.types.display(*ty)))
+        } else if ret != self.common.void && error.is_none() {
+            Some(format!("it returns `{}`", self.types.display(ret)))
+        } else {
+            None
+        };
+        if let Some(wrong) = wrong {
+            self.sink.emit(
+                Diagnostic::error(codes::E2183, name, format!("`main` has none of the forms `[FN-8]` allows: {wrong}"))
+                    .help("`main` takes nothing or `args: Array[String]`, and returns nothing or `Result[void, E]`")
+                    .note("an `Err` returned from `main` prints `error: <message>` and exits with status 1 [FN-8]"),
+            );
+            return;
+        }
+        if let Some(error) = error {
+            self.check_formattable(error, name, "reporting `main`'s error");
+        }
+    }
+
+    /// `[FN-8]`, `[ERR-12]` — the program's entry when `main` takes the
+    /// command line or returns a `Result`, which the C entry point calls: it
+    /// builds `args`, calls `main`, and returns the status, 0, or 1 after
+    /// printing an `Err` as `error: <Display>` to standard error. An `E` that
+    /// is `Display` but not `Error` prints its message alone (ODR-050); no
+    /// `Error` or `AnyError` exists yet to give a `caused by:` chain. Any other
+    /// `main` keeps the direct call.
+    fn main_entry(&mut self, main: DefId, span: Span) -> Option<Function> {
+        let signature = &self.signatures[main.0 as usize];
+        let (params, ret, overflow, fp) = (signature.params.clone(), signature.ret, signature.overflow, signature.fp);
+        let strings = self.types.intern(TyKind::Vec { elem: self.common.string, text: false });
+        if params.len() > 1 || params.first().is_some_and(|(_, ty, _, _)| *ty != strings) {
+            return None;
+        }
+        let failure = if self.is_result(ret) {
+            let TyKind::Enum(id) = *self.types.kind(ret) else { unreachable!("a Result is an enum") };
+            let variants = &self.types.enum_def(id).variants;
+            if !variants[0].fields.iter().all(|field| field.ty == self.common.void) {
+                return None;
+            }
+            Some((id, variants[1].fields[0].ty))
+        } else if ret == self.common.void {
+            None
+        } else {
+            return None;
+        };
+        if params.is_empty() && failure.is_none() {
+            return None;
+        }
+        // `check_main_form` reported a `main` of another form, or an `E` with
+        // no text, already.
+        if let Some((_, error)) = failure
+            && self.unformattable_part(error, &mut HashSet::new()).is_some()
+        {
+            return None;
+        }
+        let local = |name: Option<&str>, ty: Ty| LocalDecl {
+            name: name.map(Symbol::intern),
+            ty,
+            span,
+            for_iterator: false,
+            loop_borrowed_handle: false,
+            hoisted_into: None,
+        };
+        let mut locals = Vec::new();
+        let mut stmts = Vec::new();
+        let mut call_args = Vec::new();
+        if let Some((_, _, mode, _)) = params.first().copied() {
+            let args = LocalId(locals.len() as u32);
+            locals.push(local(Some("args"), strings));
+            stmts.push(Stmt::Let {
+                local: args,
+                init: Some(Expr { ty: strings, kind: ExprKind::Builtin { which: Builtin::ProcessArgs, args: Vec::new() }, span }),
+            });
+            let value = Expr { ty: strings, kind: ExprKind::Local(args), span };
+            call_args.push(if mode == Mode::Mut {
+                let ty = self.types.intern(TyKind::Ref { mutable: true, inner: strings });
+                Expr { ty, kind: ExprKind::Ref { place: Box::new(value), mutable: true }, span }
+            } else {
+                self.pass_argument(value, strings, mode)
+            });
+        }
+        let status_ty = self.common.i32;
+        let status = |value: u128| Stmt::Return(Some(Expr { ty: status_ty, kind: ExprKind::Int(value), span }));
+        let call = Expr {
+            ty: ret,
+            kind: ExprKind::Call { callee: main, arg_eval_order: None, default_arg_locals: None, args: call_args, latebound: false },
+            span,
+        };
+        match failure {
+            None => {
+                stmts.push(Stmt::Expr(call));
+                stmts.push(status(0));
+            }
+            Some((id, error)) => {
+                let bound = LocalId(locals.len() as u32);
+                locals.push(local(None, error));
+                // As `eprintln(e)` (`synth_print_pieces`): a `String` prints
+                // as the `str` it holds, and a value that is not `Copy`
+                // through a borrow.
+                let read = Expr { ty: error, kind: ExprKind::Local(bound), span };
+                let read = self.read_through(read);
+                let read = self.range_as_repr(read);
+                let read = if matches!(*self.types.kind(read.ty), TyKind::Vec { text: true, .. }) {
+                    self.coerce(read, self.common.str_)
+                } else {
+                    read
+                };
+                let read = if self.types.is_copy(read.ty) {
+                    read
+                } else {
+                    let ty = self.types.intern(TyKind::Ref { mutable: false, inner: read.ty });
+                    Expr { ty, kind: ExprKind::Ref { place: Box::new(read), mutable: false }, span }
+                };
+                let text = |text: &str| Expr { ty: self.common.str_, kind: ExprKind::Str(text.to_string()), span };
+                let report = Expr {
+                    ty: self.common.void,
+                    kind: ExprKind::Builtin { which: Builtin::EPrint, args: vec![text("error: "), read, text("\n")] },
+                    span,
+                };
+                let arm = |variant: usize, fields: Vec<hir::Pattern>, body: Vec<Stmt>| hir::MatchArm {
+                    pattern: hir::Pattern { ty: ret, kind: hir::PatternKind::Variant { enum_id: id, variant, fields }, span },
+                    guard: None,
+                    body: hir::MatchArmBody::Block(Block { stmts: body, span }),
+                    span,
+                };
+                let ok_fields = self.types.enum_def(id).variants[0]
+                    .fields
+                    .iter()
+                    .map(|field| hir::Pattern { ty: field.ty, kind: hir::PatternKind::Wild, span })
+                    .collect();
+                let bind = hir::Pattern { ty: error, kind: hir::PatternKind::Bind { local: bound, sub: None, by_ref: None }, span };
+                let arms = vec![
+                    arm(0, ok_fields, vec![status(0)]),
+                    arm(1, vec![bind], vec![Stmt::Expr(report), status(1)]),
+                ];
+                stmts.push(Stmt::Expr(Expr {
+                    ty: self.common.void,
+                    kind: ExprKind::Match { scrutinee: Box::new(call), arms },
+                    span,
+                }));
+            }
+        }
+        let def = DefId(self.signatures.len() as u32);
+        self.signatures.push(Signature {
+            params: Vec::new(),
+            ret: status_ty,
+            abi: None,
+            is_unsafe: false,
+            overflow,
+            fp,
+            borrows: None,
+            generics: Vec::new(),
+        });
+        let symbol = ember_branding::mangled("main_entry");
+        Some(Function {
+            def,
+            name: Symbol::intern(&symbol),
+            class_init: false,
+            class_init_default_fields: Vec::new(),
+            symbol,
+            is_unsafe: false,
+            abi: None,
+            export_thread_policy: hir::ExportThreadPolicy::Any,
+            params: Vec::new(),
+            locals,
+            ret: status_ty,
+            body: Block { stmts, span },
+            span,
+            overflow,
+            fp,
+            inline: hir::InlineHint::default(),
+            borrows: None,
+            sources: Vec::new(),
+            is_lambda: false,
+            emit_if_used: false,
+            closure_environment: None,
+            closure_captures_by_move: false,
+            class_owner: None,
+            class_virtual_slot: None,
+            is_abstract: false,
+            is_extern_declaration: false,
+            ffi_counted: None,
+        })
     }
 
     /// Record a checked closure body as a function of its own, and return the

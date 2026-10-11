@@ -811,7 +811,8 @@ impl Emitter<'_> {
         }
 
         if has_main && self.unit.is_none() {
-            self.emit_entry_point(leak_check);
+            let entry = bodies.iter().any(|body| body.symbol == ember_branding::mangled("main_entry"));
+            self.emit_entry_point(leak_check, entry);
         }
         self.emit_fmt_fns();
         self.collect_clone_dependencies();
@@ -6609,6 +6610,9 @@ impl Emitter<'_> {
                     Builtin::ArrayNew | Builtin::StringNew => {
                         return format!("{RT}vec_empty()");
                     }
+                    Builtin::ProcessArgs => {
+                        return format!("{RT}process_args()");
+                    }
                     // `[TYP-37]` — floats by totalOrder, everything else by `<`.
                     Builtin::TotalLess => {
                         let (a, b) = (&rendered[0], &rendered[1]);
@@ -8404,20 +8408,29 @@ impl Emitter<'_> {
     /// `[FN-8]` — the C entry point initialises the runtime, calls Ember's
     /// `main`, and shuts down. `[RT-2]`: there are no global constructors, so
     /// this is the only place initialisation can happen.
-    fn emit_entry_point(&mut self, leak_check: bool) {
+    ///
+    /// A `main` that takes `args` or returns a `Result` is called through the
+    /// entry the checker writes (`main_entry`), which returns the status.
+    fn emit_entry_point(&mut self, leak_check: bool, entry: bool) {
         self.line("int main(int argc, char** argv) {");
         self.line(&format!("    {RT}rt_config cfg = {RT}rt_config_default();"));
         if leak_check {
             self.line("    cfg.flags |= EMBER_RT_DEBUG_OBJECTS;");
         }
-        self.line("    (void)argc; (void)argv;");
+        self.line(&format!("    {RT}rt_set_args(argc, argv);"));
         self.line(&format!("    {RT}rt_init(&cfg);"));
         if leak_check {
             self.emit_debug_edge_registrations();
         }
-        self.line(&format!("    {}();", ember_branding::mangled("main")));
-        self.line(&format!("    {RT}rt_shutdown();"));
-        self.line("    return 0;");
+        if entry {
+            self.line(&format!("    int status = (int){}();", ember_branding::mangled("main_entry")));
+            self.line(&format!("    {RT}rt_shutdown();"));
+            self.line("    return status;");
+        } else {
+            self.line(&format!("    {}();", ember_branding::mangled("main")));
+            self.line(&format!("    {RT}rt_shutdown();"));
+            self.line("    return 0;");
+        }
         self.line("}");
     }
 

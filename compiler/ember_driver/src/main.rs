@@ -301,6 +301,9 @@ struct Options {
     /// This is what `[TST-7]`'s gate over the specification's own code blocks
     /// runs.
     syntax_only: bool,
+    /// XVII.1's `ember run [file.em] [args…]`: the program's own
+    /// arguments, `main`'s `args` after its name (`[FN-8]`).
+    program_args: Vec<String>,
 }
 
 fn run(args: &[String]) -> Result<ExitCode, String> {
@@ -346,11 +349,22 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             // source file", which is a confusing way to say "wrong order".
             let mut input = None;
             let mut rest = Vec::new();
+            let mut program_args = Vec::new();
             let mut skip_value = false;
-            for arg in &args[1..] {
+            for (at, arg) in args[1..].iter().enumerate() {
                 if skip_value {
                     rest.push(arg.clone());
                     skip_value = false;
+                    continue;
+                }
+                // XVII.1's `ember run [file.em] [args…]` — after the file, words go to
+                // the program, and so does everything after `--`, dashes included.
+                if command == "run" && arg == "--" {
+                    program_args.extend(args[at + 2..].iter().cloned());
+                    break;
+                }
+                if command == "run" && input.is_some() && !arg.starts_with('-') {
+                    program_args.push(arg.clone());
                     continue;
                 }
                 if arg.starts_with('-') {
@@ -381,7 +395,8 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 }
                 None => return Err(format!("`ember {command}` needs a source file")),
             };
-            let options = parse_options(&rest)?;
+            let mut options = parse_options(&rest)?;
+            options.program_args = program_args;
             if options.leak_check && command != "run" {
                 return Err("`--leak-check` is only valid with `ember run`".to_string());
             }
@@ -2736,6 +2751,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 
     if command == "run" {
         let status = std::process::Command::new(&exe)
+            .args(&options.program_args)
             .status()
             .map_err(|e| e.to_string())?;
         // A status outside 0..=255 (a Windows exception arrives as a large

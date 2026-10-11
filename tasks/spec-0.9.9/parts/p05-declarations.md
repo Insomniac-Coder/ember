@@ -100,11 +100,13 @@ pub fn blend(dst: Array[f32], mut out: Array[f32], owned scratch: Array[f32], we
   the callable type's own parameters (`[LT-7]`). What a callable type means in each position is
   `[CLO-3]`.
 * `[FN-7]` Recursion is permitted; tail calls are not guaranteed to be eliminated.
-* `[FN-8]` *(changed in 0.9.9)* `main` is `fn main()`, `fn main() -> Result[void, E]` for any
+* `[FN-8]` *(changed in 0.9.9)* *(changed in 0.9.10)* `main` is `fn main()`, `fn main() -> Result[void, E]` for any
   `E: Display`, or either form with a first parameter `args: Array[String]`. `args` holds the command
   line, decoded as UTF-8 with invalid bytes replaced by U+FFFD; `std.process.args_os()` returns the raw
   bytes. An `Err` returned from `main` is printed with `Display` to standard error and the process
-  exits with status 1. **Scripts:** the statements at file scope of the entry file (`[GRM-2]`) form, in
+  exits with status 1. The entry module's `main` in any other form (another parameter or more than one,
+  another return type, or type parameters) is `E2183`, reported at its name; an `E` that is not
+  `Display` is `E2040`, an unmet bound (ODR-101). **Scripts:** the statements at file scope of the entry file (`[GRM-2]`) form, in
   source order, the body of an implicit `fn main()`, or `fn main() -> Result[void, AnyError]` when one
   of them uses `?`; items anywhere in the file are declared as usual. A file with such statements that
   also declares `main` has two items named `main` (`E1030`). The names the statements bind are locals

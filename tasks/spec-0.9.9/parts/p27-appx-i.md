@@ -617,7 +617,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FN-5]` | V | Default argument expressions are evaluated at each call, after the … |
 | `[FN-6]` | V | Callable types. A function is a value. A callable type is written … |
 | `[FN-7]` | V | Recursion is permitted; tail calls are not guaranteed to be … |
-| `[FN-8]` | V | `main` is `fn main()`, `fn main() -> Result[void, E]` for any `E: … |
+| `[FN-8]` | V | *(changed in 0.9.10)* `main` is `fn main()`, `fn main() -> … |
 | `[FN-9]` | V | A mode on a class-handle parameter governs the handle, not the … |
 | `[FN-10]` | V | A function whose return type is `Result[void, E]` returns `Ok(())` … |
 

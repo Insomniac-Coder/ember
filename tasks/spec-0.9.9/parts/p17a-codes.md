@@ -80,6 +80,7 @@ reused; retired codes are listed with the reason.
 | `E2180` | `?` outside a function returning `Option` or `Result` | `[ERR-2]` |
 | `E2181` | `?` on an `Option` in a `Result` function, or the reverse | `[ERR-2]` |
 | `E2182` | a function that returns a value can reach the end of its body | `[FN-10]` |
+| `E2183` | `main` has none of the forms `[FN-8]` allows | `[FN-8]` |
 | `E2200` | type has infinite size (a recursive value type without `Box`) | `[TYP-14]` |
 | `E2210` | a value of one range type where another was expected | `[RNG-2]` |
 | `E2211` | constant outside the target range type | `[RNG-3]` |

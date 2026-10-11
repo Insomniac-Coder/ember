@@ -407,6 +407,8 @@ ODRS = [
      '`[FFI-21a]`, `[FN-6]`, `[FN-1]`'),
     ('ODR-100', 'the owner\'s (2026-10-11): the iterator adapters take over the callable and the iterator they keep (`owned`); a lambda written at one keeps the captures `[CLO-2]` infers and the adapter lives no longer than they do; only a consumed callable parameter whose captured state must carry the static region (`thread.spawn`, `jobs.submit`, registries) makes a lambda written there capture by move',
      '`[CLO-15]`, `[CLO-4]`, `[CLO-7]`, `[STD-19]`'),
+    ('ODR-101', 'ruled under the delegation (2026-10-11, the owner: "fix that autonomously"): the entry module\'s `main` in a form `[FN-8]` does not list (another parameter or more than one, another return type, type parameters) is `E2183` at its name; the one parameter may have any name and mode, its type `Array[String]`; an `E` that is not `Display` is `E2040`',
+     '`[FN-8]`'),
 ]
 
 H5_HEAD = """
@@ -447,7 +449,8 @@ and ODR-097, where an implementation may be written; Hardened_51 adds ODR-094, t
 ruling on `collect`'s target, `peekable`'s methods, and how `Box` and `Cell` show; Hardened_52 adds
 ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutation methods.
 0.9.10_Hardened_3 adds ODR-099, a pointer into a parameter C passes as a copy (§H.8);
-0.9.10_Hardened_4 adds ODR-100, what a lambda written at an adapter captures (§H.9).
+0.9.10_Hardened_4 adds ODR-100, what a lambda written at an adapter captures (§H.9);
+0.9.10_Hardened_5 adds ODR-101, a `main` of another form (§H.10).
 
 | ODR | Ruling | Rules |
 |---|---|---|
@@ -463,11 +466,12 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.10', 4)
+CURRENT = ('0.9.10', 5)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
 V010_H3_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h3')
+V010_H4_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h4')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -593,8 +597,30 @@ Generated: every rule whose text differs from 0.9.10_Hardened_3.
 """
 
 
-def v010_h3_to_now():
-    return H9_HEAD + rule_diff(V010_H3_PARTS, os.path.join(HERE, '..', 'parts'))
+def v010_h3_to_h4():
+    return H9_HEAD + rule_diff(V010_H3_PARTS, V010_H4_PARTS)
+
+
+H10_HEAD = """
+## H.10 Changes in 0.9.10_Hardened_5 (from 0.9.10_Hardened_4)
+
+**0.9.10_Hardened_5** records ODR-101, ruled under the owner's delegation on 2026-10-11
+(`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-157). It changes what programs are accepted:
+
+* The entry module's `main` in a form `[FN-8]` does not list is `E2183`, reported at its name: another
+  parameter than one `Array[String]` (any name, any mode), more than one, another return type than
+  `void` or `Result[void, E]`, or type parameters. An `E` that is not `Display` is `E2040`, an unmet
+  bound. Such a `main` used to be accepted and run wrongly (D-551).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_4.
+
+| Rule | 0.9.10_Hardened_4 → 0.9.10_Hardened_5 |
+|---|---|
+"""
+
+
+def v010_h4_to_now():
+    return H10_HEAD + rule_diff(V010_H4_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -664,7 +690,7 @@ def main():
     h4 = h1_to_h2()
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
-        + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_now() + '\n')
+        + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_now() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

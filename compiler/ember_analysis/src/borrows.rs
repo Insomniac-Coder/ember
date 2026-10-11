@@ -1653,6 +1653,7 @@ pub(crate) fn quiet_builtin(types: &TypeTable, which: &Builtin, arg_ty: Ty) -> b
         | Builtin::StrContainsChar
         | Builtin::StrCharNext
         | Builtin::StrCharNextWide
+        | Builtin::ProcessArgs
         | Builtin::StrIsCharBoundary
         | Builtin::StrAsBytes
         | Builtin::StrSliceOk
@@ -3504,6 +3505,7 @@ fn builtin_cannot_reach_a_cell(func: &FuncRef) -> bool {
             | Builtin::StrToLower
             | Builtin::StrCharNext
             | Builtin::StrCharNextWide
+            | Builtin::ProcessArgs
             | Builtin::StrContains
             | Builtin::StrContainsChar
             | Builtin::StrIsCharBoundary

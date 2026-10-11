@@ -5016,6 +5016,64 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-157 — a `main` of another form is `E2183` (ODR-101, D-551)
+
+**Date:** 2026-10-11. **Rules:** `[FN-8]` (0.9.10_Hardened_5).
+
+**Context.** `[FN-8]` listed `main`'s forms but named no diagnostic for another, so the
+compiler took every `main` and the C entry called it with no argument and ignored its result
+(D-551). The owner: "fix that autonomously".
+
+**Decision.** ODR-101, ruled under the delegation and cut as 0.9.10_Hardened_5: the checker
+looks at the entry module's `main` where it finds it (`check_main_form`). Type parameters, more
+than one parameter, a parameter of another type than `Array[String]`, or a return type other
+than `void` or `Result[void, E]` are `E2183` at its name, which says which of these it is; the
+help names the forms. The parameter's name and mode are free. An `E` that is not `Display` is
+`E2040` at the name (it was at the function before). A C `main` stays `E0104`, and a type that
+did not resolve is left to its own error. `main_entry` then builds only for a `main` that passed,
+silently.
+
+**Consequences.** Five reject tests and one accept test; `docs/errors/E2183.md`. No test,
+example or benchmark program had another form.
+
+---
+
+## ADR-156 — the compiler writes `main`'s entry when it takes `args` or returns a `Result` (D-548, D-549)
+
+**Date:** 2026-10-11. **Rules:** `[FN-8]`, `[ERR-12]`, `[FN-10]`; XVII.1's `ember run [file.em] [args…]`.
+
+**Context.** `fn main(args: Array[String])` did not build: the C entry point called `main` with no
+argument (D-548). A `main` returning `Result[void, E]` had its `Err` ignored: nothing on standard
+error, status 0 (D-549). `ember run` refused any word after the file.
+
+**Decision.**
+1. The checker writes a function of its own, `main_entry`, when `main` takes `args`, returns
+   `Result[void, E]`, or both. It builds `args` with the `ProcessArgs` builtin, passes it in
+   `main`'s declared mode (`owned`, borrowed or `mut`), and returns 0, or 1 after printing
+   `error: ` and `e`'s `Display` text to standard error. The printing is the same `EPrint` builtin a
+   source `eprintln(e)` becomes. Being ordinary checked HIR, the entry is lowered, drop-elaborated
+   and verified like any function, so `args` and the error are dropped and a `debug` run's leak
+   check stays clean. An `E` that is not `Display` is `E2040` at `main`. The C `main` calls the
+   entry and returns its status, or calls `main` as before.
+2. The runtime keeps C's `argc`/`argv` (`ember_rt_set_args`, first thing in the C `main`) and
+   `ember_process_args` builds the `Array[String]`, the program's name first as in C. On Windows
+   it reads the UTF-16 command line (`CommandLineToArgvW`; C's `argv` there is in the ANSI code
+   page) and converts it, a lone surrogate becoming U+FFFD. Elsewhere `argv` is decoded with each
+   maximal invalid subsequence replaced by U+FFFD (the Unicode Standard's practice, as Python's
+   `errors="replace"`). The four Win32 functions are declared in the runtime, as `rand_s` is,
+   rather than through `<windows.h>`; `shell32.lib` comes by `#pragma comment(lib, …)`.
+3. `ember run` passes on the words after the file, and everything after `--`, to the program.
+   Test annotations gain `#$ args:` (one argument each, after `--`); the quick check also learns
+   `#$ exit:`.
+
+**Consequences.** `[ERR-12]`'s `caused by:` lines wait for an `Error` interface and `AnyError`,
+neither of which exists yet; a `Display` error prints its message alone, which `[ERR-12]` already
+says for an `E` that is not `Error`. `std.process.args_os()` (the raw bytes) waits for
+`std.process`. A `main` of any other shape keeps the old direct call and runs wrongly (D-551, which
+needs a diagnostic the specification does not name). The specification is unchanged.
+
+---
+
 ## ADR-155 — an ASCII byte steps around the UTF-8 decoder; the progress guard multiplies (D-498, D-494)
 
 **Date:** 2026-10-11. **Rules:** `[RNG-4]`, `[TYP-8]`, `[TXT-10]`, `[EFF-10]`.

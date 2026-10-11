@@ -1887,6 +1887,14 @@ EMBER_INLINED uint32_t ember_str_char_next_wide_usize(const unsigned char* base,
 #endif
 /* `[TXT-2]`: reject malformed, overlong, surrogate and out-of-range UTF-8. */
 bool ember_utf8_valid(ember_span bytes);
+/* `[FN-8]` — the command line `main`'s `args` holds. The C entry point hands
+ * C's `argc`/`argv` to `ember_rt_set_args` before anything else;
+ * `ember_process_args` builds an `Array[String]` of them, the program's name
+ * first as in C, decoded as UTF-8 with each invalid sequence replaced by
+ * U+FFFD. Windows' `argv` is in the ANSI code page, so there the command line
+ * is read as UTF-16 and converted. */
+void ember_rt_set_args(int argc, char** argv);
+ember_vec ember_process_args(void);
 /* Append one valid Unicode scalar to a UTF-8 String. */
 void ember_vec_push_char(ember_vec* out, uint32_t c);
 

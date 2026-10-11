@@ -9,7 +9,8 @@ Hardened_2 adds the owner's rulings of 2026-10-06 on three of the audit's decisi
 reads the 256-bit counts, the known-numbers rule, and `enumerate` numbers that never overflow.
 Hardened_3 (2026-10-11, ODR-099, §H.8) refuses a pointer into a parameter C passes as a copy
 (`[FFI-21a]`, below); Hardened_4 (ODR-100, §H.9) lets a lambda written at an iterator adapter keep its borrows
-(below). The specification is now `Ember_v0.9.10_Hardened_4.md`. This file says what
+(below); Hardened_5 (ODR-101, §H.10) refuses a `main` of a form `[FN-8]` does not list (`E2183`, below).
+The specification is now `Ember_v0.9.10_Hardened_5.md`. This file says what
 changes for a program and how to update one, then records the implementation.
 
 ## 1. What changes for a program
@@ -146,6 +147,15 @@ written at the call keeps borrowing what it uses, so `inspect(fn(v) => seen.push
 (`[CLO-15]`). A named iterator, or a named closure that writes its captures, given to one is moved:
 `.clone()` keeps an iterator. A function that hands back a closure that writes its captures, taken
 borrowed, is `E3013` (it would be a second copy of a mutable borrow): take it `owned`.
+
+### A `main` of another form (Hardened_5)
+
+`main` is `fn main()`, `fn main() -> Result[void, E]` with `E: Display`, or either with one
+`Array[String]` parameter (`[FN-8]`). Any other `main` in the entry module is `E2183` at its name: it
+used to be accepted and then failed in the C compiler (`fn main(x: int)`) or ignored what it returned
+(`fn main() -> int` exited 0). An `E` that is not `Display` is `E2040`. Take the arguments as
+`args: Array[String]`; report a failure by returning `Err`, which prints `error: <message>` and exits
+with status 1.
 
 ## 2. Updating a program
 

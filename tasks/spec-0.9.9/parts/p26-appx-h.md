@@ -283,7 +283,8 @@ and ODR-097, where an implementation may be written; Hardened_51 adds ODR-094, t
 ruling on `collect`'s target, `peekable`'s methods, and how `Box` and `Cell` show; Hardened_52 adds
 ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutation methods.
 0.9.10_Hardened_3 adds ODR-099, a pointer into a parameter C passes as a copy (§H.8);
-0.9.10_Hardened_4 adds ODR-100, what a lambda written at an adapter captures (§H.9).
+0.9.10_Hardened_4 adds ODR-100, what a lambda written at an adapter captures (§H.9);
+0.9.10_Hardened_5 adds ODR-101, a `main` of another form (§H.10).
 
 | ODR | Ruling | Rules |
 |---|---|---|
@@ -367,6 +368,7 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 | ODR-098 | String capacity is measured in bytes; reserve asks for additional bytes; insert takes a byte offset and a char, remove returns that char, truncate keeps a byte prefix, and shrinking retains capacity, with UTF-8 boundary and integer-size checks in every profile (Hardened_52) | `[TXT-11]`, `[TXT-4]`, `[TYP-31]`, `[HEAP-8]` |
 | ODR-099 | the owner's direction (2026-10-11), its detail under the delegation: where a program turns a callable type into `extern "C" fn`, a function whose value has that type returns no raw pointer made from a reference to a parameter it borrows by value, which a call from C passes as a copy that ends with the call (`E5042`); followed through copies, conversions and aggregates, not calls; a value read through the parameter and a pointer stored in it are not into the copy | `[FFI-21a]`, `[FN-6]`, `[FN-1]` |
 | ODR-100 | the owner's (2026-10-11): the iterator adapters take over the callable and the iterator they keep (`owned`); a lambda written at one keeps the captures `[CLO-2]` infers and the adapter lives no longer than they do; only a consumed callable parameter whose captured state must carry the static region (`thread.spawn`, `jobs.submit`, registries) makes a lambda written there capture by move | `[CLO-15]`, `[CLO-4]`, `[CLO-7]`, `[STD-19]` |
+| ODR-101 | ruled under the delegation (2026-10-11, the owner: "fix that autonomously"): the entry module's `main` in a form `[FN-8]` does not list (another parameter or more than one, another return type, type parameters) is `E2183` at its name; the one parameter may have any name and mode, its type `Array[String]`; an `E` that is not `Display` is `E2040` | `[FN-8]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -611,3 +613,19 @@ Generated: every rule whose text differs from 0.9.10_Hardened_3.
 | `[CLO-7]` | changed |
 | `[CLO-15]` | changed |
 | `[STD-19]` | changed |
+
+## H.10 Changes in 0.9.10_Hardened_5 (from 0.9.10_Hardened_4)
+
+**0.9.10_Hardened_5** records ODR-101, ruled under the owner's delegation on 2026-10-11
+(`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-157). It changes what programs are accepted:
+
+* The entry module's `main` in a form `[FN-8]` does not list is `E2183`, reported at its name: another
+  parameter than one `Array[String]` (any name, any mode), more than one, another return type than
+  `void` or `Result[void, E]`, or type parameters. An `E` that is not `Display` is `E2040`, an unmet
+  bound. Such a `main` used to be accepted and run wrongly (D-551).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_4.
+
+| Rule | 0.9.10_Hardened_4 → 0.9.10_Hardened_5 |
+|---|---|
+| `[FN-8]` | changed |
