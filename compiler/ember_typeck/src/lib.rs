@@ -1125,6 +1125,9 @@ struct Checker<'a> {
     /// environment `closureN_env`). It never goes back, so a dropped or
     /// re-checked lambda never lets two closures share a name in the C.
     closure_numbers: usize,
+    /// D-546 — each lambda's last value checked without an error, by its
+    /// span (`synth_lambda`).
+    lambda_values: HashMap<Span, Expr>,
     /// D-257 — how many instances have been made signature-only (they are
     /// over another generic's own parameters). A lambda whose body made one
     /// cannot be emitted.
@@ -1705,6 +1708,7 @@ impl<'a> Checker<'a> {
             closure_calls: HashMap::new(),
             lambdas: Vec::new(),
             closure_numbers: 0,
+            lambda_values: HashMap::new(),
             skipped_instances: 0,
             opaque_lambdas: HashSet::new(),
             derived_clone_methods: Vec::new(),
@@ -20571,6 +20575,9 @@ impl<'a> Checker<'a> {
             self.callable_value_bindings = snapshot.callable_value_bindings.clone();
             self.class_init = snapshot.class_init.clone();
             self.lambdas.truncate(snapshot.lambdas);
+            // The lambdas the pass made are gone, and with them what
+            // `synth_lambda` kept of them (D-546).
+            self.lambda_values.clear();
             self.reported_stmt_attrs = snapshot.reported_stmt_attrs.clone();
             self.reported_defaults = snapshot.reported_defaults.clone();
         };
@@ -34524,7 +34531,26 @@ impl<'a> Checker<'a> {
     /// parameter types are inferred from the expected function type; a lambda
     /// with unannotated parameters in a context without an expected type is
     /// `E2061`".
+    /// D-546 — a lambda checked again against the closure type its last
+    /// check made is that closure: a generic class's arguments are read once
+    /// to infer its type arguments, then checked against the instance, and a
+    /// second closure type would not be the instance's.
     fn synth_lambda(&mut self, lambda: &ast::Lambda, expected: Option<Ty>, span: Span) -> Expr {
+        if let Some(expected) = expected
+            && let Some(value) = self.lambda_values.get(&span)
+            && value.ty == expected
+        {
+            return value.clone();
+        }
+        let errors = self.sink.error_count();
+        let value = self.synth_lambda_fresh(lambda, expected, span);
+        if self.sink.error_count() == errors {
+            self.lambda_values.insert(span, value.clone());
+        }
+        value
+    }
+
+    fn synth_lambda_fresh(&mut self, lambda: &ast::Lambda, expected: Option<Ty>, span: Span) -> Expr {
         let number = self.closure_numbers;
         self.closure_numbers += 1;
         let skipped_before = self.skipped_instances;

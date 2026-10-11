@@ -5016,6 +5016,30 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-154 — a lambda checked twice is one closure; a view stored through a reference is held to `[TYP-15]` (D-546, D-547)
+
+**Date:** 2026-10-11. **Rules:** `[CLO-14]`, `[TYP-15]`, `[CLS-10]`.
+
+**Context.** A generic class's constructor reads its arguments once to infer the class's type
+arguments and checks them again against the instance through `init`; a capturing lambda got a new
+closure type each time, so `Holder(owned fn(v: int) => …)` was `E2020` between two closure types
+(D-546). Fixing that let a class hold a closure that borrows a local, and showed the store analysis
+missed every store through `self` or a reference into a class field or list element (D-547): a
+`Named(t.as_str())` outlived `t` and read freed memory.
+
+**Decision.** `synth_lambda` keeps each lambda's last value checked without an error, by span, and
+returns it when the lambda is checked again against exactly that closure type; the cache is cleared
+when an open local's pass undoes its lambdas (an earlier version left it, and the next pass named a
+lambda body that no longer existed). `store_target` looks past a reference: a class field or a list
+or span element reached before another pointer is the heap's (`heap_boundary`), so a method or
+`init` storing a view there asks its callers for a `static` one, as a direct store does.
+
+**Consequences.** `E3063` at the call for each such store of a non-`static` view, a borrowing
+closure in a class included; no test, example or benchmark program relied on it. The specification
+is unchanged: `[TYP-15]` said so.
+
+---
+
 ## ADR-153 — the adapters take over what they keep; a lambda at one keeps its borrows (ODR-100, D-422)
 
 **Date:** 2026-10-11. **Rules:** `[CLO-15]`, `[CLO-4]`, `[CLO-7]`, `[STD-19]` (0.9.10_Hardened_4),

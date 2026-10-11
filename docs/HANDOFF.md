@@ -10719,7 +10719,9 @@ fixed too (ADR-152: MSVC choked on an inlined clone helper reading 256 boxes dee
 sixteen dereferences now reads through a pointer bound once per statement), so GRM-39 runs in every
 profile. D-422 is fixed by the owner's ODR-100 (0.9.10_Hardened_4, ADR-153): the adapters own what
 they keep, a lambda at one keeps its borrows, and a value holding a mutable borrow is never copied out
-of a borrowed parameter. D-546 (a generic class built from a lambda) was found and recorded. **The
+of a borrowed parameter. D-546 (a generic class built from a lambda) is fixed, and with it D-547, a
+memory-safety gap: a view stored into a class field or list element through `self` or a reference
+was never held to `[TYP-15]` (ADR-154). **The
 owner, 2026-10-11: work on `main` directly** (AUTOPILOT); `phase-next` is retired. Benchmark C changed only by dead pointers removed and `t5_words`' `is_split_space`
 (timed against the previous compiler, interleaved on the P-cores: MSVC x1.004, clang x1.000). The sweep
 found D-545 (a comparison of two untyped literals compared 32-bit integers in C: `-1.5 < -1.0` was

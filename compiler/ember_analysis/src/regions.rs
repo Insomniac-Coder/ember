@@ -2205,10 +2205,17 @@ fn store_target(body: &Body, types: &TypeTable, place: &Place) -> StoreTarget {
     let mut variant = None;
     for (index, projection) in place.projection.iter().enumerate() {
         match (projection, types.kind(ty)) {
-            (Projection::Deref, TyKind::Ref { .. }) => {
+            (Projection::Deref, TyKind::Ref { inner, .. }) => {
+                // D-547 — past the reference, a class object's field or a
+                // list's element is the heap's, wherever the reference points:
+                // `self.name = s` in a method is a store into the object.
+                let rest = &place.projection[index + 1..];
+                if let Some(kind) = heap_boundary(types, *inner, rest) {
+                    return StoreTarget::Unbounded(kind);
+                }
                 return StoreTarget::Through {
                     reference: Place { local: place.local, projection: place.projection[..index].to_vec() },
-                    rest: place.projection[index + 1..].to_vec(),
+                    rest: rest.to_vec(),
                 };
             }
             (Projection::Deref, TyKind::Ptr { .. }) => return StoreTarget::Inline,
@@ -2225,6 +2232,26 @@ fn store_target(body: &Body, types: &TypeTable, place: &Place) -> StoreTarget {
         }
     }
     StoreTarget::Inline
+}
+
+/// The first unbounded place a path from a value of type `ty` reaches before
+/// it goes through another pointer (`store_target`).
+fn heap_boundary(types: &TypeTable, mut ty: Ty, rest: &[Projection]) -> Option<Unbounded> {
+    let mut variant = None;
+    for projection in rest {
+        match (projection, types.kind(ty)) {
+            (Projection::Deref, _) => return None,
+            (Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_), TyKind::Vec { .. }) => {
+                return Some(Unbounded::Element);
+            }
+            (Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_), TyKind::Span { .. }) => {
+                return Some(Unbounded::SpanElement);
+            }
+            (Projection::Field(_), TyKind::Class(_) | TyKind::ClassInterface(_)) => return Some(Unbounded::ClassField),
+            _ => ty = project_type(types, ty, projection, &mut variant),
+        }
+    }
+    None
 }
 
 /// `[TYP-15]` — whether a view read from `place` is `static`: it is in an
