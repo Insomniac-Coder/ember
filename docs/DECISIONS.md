@@ -5016,6 +5016,85 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-163 — `@static_safe` refuses what is left of the aliasing checks; a value holding its owner and a view of it is B5 (D-559, D-558)
+
+**Date:** 2026-10-12 (autopilot). **Rules:** `[EFF-9]`, `[EFF-12]`, `[EFF-13]`, `[EFF-15]`, `[TYP-15]`,
+`[DIA-7a]`, `[DIA-13]` shapes S1 and B5.
+
+**Decision.** (1) `hir::Function` and `mir::Body` carry `static_safe` from the attribute;
+`ember_analysis::check_static_safe_all` runs after `remove_never_firing_checks_all` (the last
+exclusivity proof) and before inlining, so it sees the function's own checks, the same in every
+profile; each `BeginAccess` left (one hoisted for a loop included) and each `RefCell` borrow assert
+is `E4030` at the access, with a help for its kind. A call's whole-object write checks now take the
+call's span. (2) In the borrow checker, a move into a struct or tuple literal while another operand
+of the same literal holds the loan (the borrower or a holder of its region) is `E3024`.
+
+**Consequences.** 26 of the 27 shapes have snapshots; O8 (`E3014`, `E3015`) waits on `@must_drop`
+and scoped threads. One test's expectation changed (`LT-25`).
+
+---
+
+## ADR-162 — `assert_disjoint` and its siblings (`[DSJ-*]`, B11)
+
+**Date:** 2026-10-12 (autopilot). **Rules:** `[DSJ-1]`, `[DSJ-2]`, `[DSJ-4]`, `[DSJ-5]`, `[DSJ-7]`,
+`[DSJ-8]`, `[DSJ-9]`; `[DIA-13]` shape B11.
+
+**Context.** Part IX.8's functions did not exist, so `E3095` (shape B11) had no producer.
+
+**Decision.** `std.mem` declares `assert_disjoint`, `assert_disjoint_or_panic`, `unsafe
+assume_disjoint` (with its `@safety`) and `assert_disjoint_all`; the checker handles them
+(`synth_assert_disjoint`): each operand must be a view (`Span` or `MutSpan`), anything else is
+`E3095` at it; `assume_disjoint` outside `unsafe` is `E3100`; `assert_disjoint_all` takes 2 to 8.
+MIR keeps the views in temporaries, compares every pair with `ViewsOverlap` (in C, two comparisons
+of byte addresses; an empty view overlaps nothing), and builds `Ok`/`Err` of the tuple, the tuple
+behind a panicking assert, or the tuple alone, from ordinary aggregates. The arguments are
+borrow-checked as written: two views of one place conflict there as before (no exception is
+made), so the functions serve what IX.8 describes, views from sources the checker cannot relate.
+
+**Consequences.** Nine conformance cases (`DSJ-1/4/5/7/9`), the B11 snapshot and
+`docs/errors/E3095.md`; 24 of 27 shapes have snapshots. Not built: the `restrict` marking of the
+`Ok` views (D-557) and the `RuntimeCheck(Aliasing)` record (NOT-IMPLEMENTED N9, Phase 4).
+
+---
+
+## ADR-161 — a lambda outliving its captures is `E3026`, shape B9 (ODR-103)
+
+**Date:** 2026-10-12 (autopilot). **Rules:** `[CLO-3]`, `[CLO-4]`, `[THR-10]`, `[DIA-7a]`,
+`[DIA-13]` (0.9.10_Hardened_7).
+
+**Context.** Shape B9 ("closure outlives its captures", `E3026`) had no producer: the rules sent a
+borrowing lambda stored where no view may go to `E3063`, whose help is about `String` copies.
+
+**Decision.** ODR-103: those lambda sites (the owned callable value conversion, the checker's
+stored-view check, `stores.rs`'s, and `[CLO-13]`'s "assigned later") report `E3026`; other views
+keep `E3063`. `docs/errors/E3026.md` is the code's page; `tests/ui/borrow/B9` its snapshot.
+
+**Consequences.** 23 of the catalogue's 27 shapes have snapshots; B5, B11, O8 and S1 wait on
+features (a struct borrowing its own field, `assert_disjoint`, scope guards, `@static_safe`).
+
+---
+
+## ADR-160 — a lambda keeps its type across passes; diagnostics call it a lambda (D-556, D-555)
+
+**Date:** 2026-10-12 (autopilot). **Rules:** `[TYP-23]`, `[CLO-1]`, `[CLO-3]`, `[CLO-4]`, `[DIA-2]`.
+
+**Context.** A body whose open locals (`fs = []`) take their type from a later use is checked
+again with the type it found; a lambda pushed into such a list got a new closure type on the second
+pass, while the list kept the first (D-556). And messages printed the closure environment's
+internal name (D-555).
+
+**Decision.** The checker keeps the lambda each closure environment was made for
+(`closure_env_spans`); a lambda checked against a closure type made for that same lambda reuses it,
+its definition replaced. Generic instances, which check one lambda against different types, are not
+affected. `TypeTable::is_closure_environment` names the test (borrows.rs had its own); the type
+renderer shows such a type as `lambda`, and three sites say what a lambda needs: another lambda in a
+place holding one (help `fn(A) -> R` with `owned fn`), a capturing lambda for `extern "C" fn`, and a
+borrowing lambda stored where no view may go (help `owned fn`, in the checker and in `stores.rs`).
+
+**Consequences.** One test's expected message changed (`FN-6`). Three new cases.
+
+---
+
 ## ADR-159 — owned callable values hold their closure's state (D-554, ODR-102)
 
 **Date:** 2026-10-11 (autopilot). **Rules:** `[CLO-2]`, `[CLO-3]`, `[CLO-10]`, `[CLO-13]`, `[FN-6]`,

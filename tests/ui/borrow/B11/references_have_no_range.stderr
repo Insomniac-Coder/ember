@@ -1,0 +1,10 @@
+error[E3095]: `ref i64` is not a view, so its disjointness cannot be established
+ --> tests/ui/borrow/B11/references_have_no_range.em:6:25
+  |
+6 |     r = assert_disjoint(ref a, ref b)
+  |                         ^^^^^ no address range to compare
+  |
+  = help: `assert_disjoint` compares two views' address ranges: pass a `Span` or `MutSpan` of each
+  = note: disjointness is established for `Span`, `MutSpan` and the views made from them; two single objects are not (DSJ-4)
+
+error: could not compile due to 1 error(s)

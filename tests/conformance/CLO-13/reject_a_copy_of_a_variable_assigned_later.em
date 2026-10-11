@@ -6,6 +6,6 @@
 
 fn main():
     k = 7
-    g: fn() -> int = fn() => k    #$ error[E3063]: this lambda borrows `k`, which is assigned later, so it may not be stored as a value
+    g: fn() -> int = fn() => k    #$ error[E3026]: this lambda borrows `k`, which is assigned later, so it may not be stored as a value
     k = 8
     println(g(), k)

@@ -190,7 +190,7 @@ fn main():
   assigned later keeps the borrow rule, and its error's help is `owned fn`. A closure outlives its
   variables where it becomes an owned callable value (`[CLO-3]`); "assigned after" is an assignment
   later in the body or anywhere in a loop around the closure (ODR-102).
-* `[CLO-3]` *(changed in 0.9.9)* **What `fn(A) -> R` means depends on where it is written.**
+* `[CLO-3]` *(changed in 0.9.9)* *(changed in 0.9.10)* **What `fn(A) -> R` means depends on where it is written.**
   * As a **parameter type** it is a bound, not a representation: the parameter is an implicit generic
     constrained by the callable type, each argument monomorphises the callee, and a call through it is
     a direct call. This is the zero-cost form. It accepts any lambda, local function or function,
@@ -199,8 +199,9 @@ fn main():
     `static` — it is an **owned callable value**: a function pointer plus the callee's captured state,
     owning that state. A value of this kind may be stored anywhere an owned value may. It is filled
     from a function, a capture-free lambda, or an `owned fn` lambda; a lambda that borrows is a view
-    and may only be stored where `[TYP-15]` permits (`E3063` otherwise, whose help is `owned fn`), and
-    one that moves a capture out is `E3030` (`[CLO-6]`). *(changed in 0.9.10)* An owned callable value
+    and may only be stored where `[TYP-15]` permits (`E3026`, shape B9, otherwise, whose help is
+    `owned fn`: a closure outliving what it captures; ODR-103), and
+    one that moves a capture out is `E3030` (`[CLO-6]`). An owned callable value
     moves and its end drops its state; a function, or a lambda that captures nothing, used as a value
     is a plain `Copy` value with no state, which becomes an owned callable value where one is wanted.
     One given to a borrowed parameter is lent mutably: the argument is a mutable place (`E3023` if it

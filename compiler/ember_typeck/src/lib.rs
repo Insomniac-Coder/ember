@@ -22,7 +22,7 @@ use ember_ast as ast;
 use ember_hir as hir;
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_hir::{
-    BinOp, Block, Builtin, DefId, DestructureBinding, Expr, ExprKind, Function, LocalDecl,
+    BinOp, Block, Builtin, DefId, DestructureBinding, DisjointMode, Expr, ExprKind, Function, LocalDecl,
     LocalId, MatchArm, MatchArmBody, Mode, Param, Pattern, PatternKind, Program, Stmt, UnOp,
 };
 use ember_span::{Span, Symbol};
@@ -1550,6 +1550,10 @@ struct Checker<'a> {
     /// `[CLO-13]` — the lambdas of the body being checked that copy what they
     /// capture, with the variables copied.
     copy_captures: Vec<(Vec<LocalId>, Span)>,
+    /// D-556 — the lambda each closure environment type was made for. A
+    /// later pass over a body checks the lambda against the type an earlier
+    /// pass gave a name (`xs = []` then `xs.push(fn() => ...)`), and keeps it.
+    closure_env_spans: HashMap<StructId, Span>,
     /// The expected callable boundary may be late-bound even after a generic
     /// parameter has been monomorphized to a concrete function or closure
     /// type. Keep that source-level fact alongside the local identity.
@@ -1807,6 +1811,7 @@ impl<'a> Checker<'a> {
             callable_once_locals: HashSet::new(),
             callable_parameter_locals: HashSet::new(),
             copy_captures: Vec::new(),
+            closure_env_spans: HashMap::new(),
             latebound_callable_parameter_locals: HashSet::new(),
             callable_value_params: HashMap::new(),
             callable_value_bindings: HashMap::new(),
@@ -2125,6 +2130,20 @@ impl<'a> Checker<'a> {
             return;
         }
         if static_region {
+            return;
+        }
+        // D-555 — a lambda that borrows: its fix is `owned fn`.
+        if self.types.is_closure_environment(ty) {
+            self.sink.emit_classified(
+                Diagnostic::error(
+                    codes::E3026,
+                    span,
+                    format!("this lambda borrows what it captures, so it may not be stored in {place}"),
+                )
+                .primary_label("stored here")
+                .help("write it `owned fn`, which moves or copies each capture into the value, and store it as `fn(A) -> R`")
+                .note("this place has no bounding region, so only a value with no borrow may be stored in it (CLO-4, TYP-15)"),
+            );
             return;
         }
         let shown = self.types.display(ty);
@@ -10612,6 +10631,57 @@ impl<'a> Checker<'a> {
         );
     }
 
+    /// `[DSJ-1]`, `[DSJ-4]`, `[DSJ-5]`, `[DSJ-7]` — two views, consumed and given
+    /// back. Only a view has an address range to compare: anything else is
+    /// `E3095`. The arguments are borrow-checked as written, so two views of
+    /// one place still conflict there; the comparison is for sources the
+    /// checker cannot relate.
+    fn synth_assert_disjoint(&mut self, mode: DisjointMode, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let name = Builtin::AssertDisjoint { mode, result: self.common.error }.name();
+        let arity = if mode == DisjointMode::All { 2..=8 } else { 2..=2 };
+        if !arity.contains(&args.len()) {
+            let wanted = if mode == DisjointMode::All { "2 to 8" } else { "2" };
+            self.error(codes::E2020, span, format!("`{name}` takes {wanted} arguments, found {}", args.len()));
+            return error;
+        }
+        if mode == DisjointMode::Assumed && !self.in_unsafe {
+            self.sink.emit(
+                Diagnostic::error(codes::E3100, span, "`assume_disjoint` requires an `unsafe` block")
+                    .help("use `assert_disjoint`, which checks, or write the call in an `unsafe` block")
+                    .note("two views assumed apart that overlap are undefined behaviour (DSJ-7)"),
+            );
+        }
+        let mut views = Vec::new();
+        for arg in args {
+            let view = self.synth_committed(&arg.value);
+            if view.ty == self.common.error {
+                return error;
+            }
+            if !matches!(self.types.kind(view.ty), TyKind::Span { .. }) {
+                let shown = self.types.display(view.ty);
+                self.sink.emit_classified(
+                    Diagnostic::error(
+                        codes::E3095,
+                        arg.value.span,
+                        format!("`{shown}` is not a view, so its disjointness cannot be established"),
+                    )
+                    .primary_label("no address range to compare")
+                    .help(format!("`{name}` compares two views' address ranges: pass a `Span` or `MutSpan` of each"))
+                    .note("disjointness is established for `Span`, `MutSpan` and the views made from them; two single objects are not (DSJ-4)"),
+                );
+                return error;
+            }
+            views.push(view);
+        }
+        let pair = self.types.intern(TyKind::Tuple(views.iter().map(|view| view.ty).collect()));
+        let result = match mode {
+            DisjointMode::Result | DisjointMode::All => self.result_of(pair, pair),
+            DisjointMode::OrPanic | DisjointMode::Assumed => pair,
+        };
+        Expr { ty: result, kind: ExprKind::Builtin { which: Builtin::AssertDisjoint { mode, result }, args: views }, span }
+    }
+
     /// `[OWN-6]` — `std.mem.take`, `replace`, `swap`, and `forget` are the sanctioned
     /// operations that mutate a place while transferring its old ownership
     /// without first dropping it. They are compiler-known while `std.mem` is
@@ -10625,6 +10695,20 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> Option<Expr> {
         let resolved = self.resolve_name(name);
+        let disjoint = if resolved.is("std.mem.assert_disjoint") {
+            Some(DisjointMode::Result)
+        } else if resolved.is("std.mem.assert_disjoint_or_panic") {
+            Some(DisjointMode::OrPanic)
+        } else if resolved.is("std.mem.assume_disjoint") {
+            Some(DisjointMode::Assumed)
+        } else if resolved.is("std.mem.assert_disjoint_all") {
+            Some(DisjointMode::All)
+        } else {
+            None
+        };
+        if let Some(mode) = disjoint {
+            return Some(self.synth_assert_disjoint(mode, args, span));
+        }
         let operation = if resolved.is("std.mem.replace") {
             "replace"
         } else if resolved.is("std.mem.take") {
@@ -13620,6 +13704,7 @@ impl<'a> Checker<'a> {
                 overflow,
                 fp,
                 inline: inline_hint(&item.attrs),
+                static_safe: has_attribute(&item.attrs, "static_safe"),
                 borrows: self.declared_borrows(def),
                 sources: self.declared_sources(def),
                 is_lambda: false,
@@ -13840,6 +13925,7 @@ impl<'a> Checker<'a> {
                     overflow: signature.overflow,
                     fp: signature.fp,
                     inline: hir::InlineHint::default(),
+                    static_safe: false,
                     borrows: signature.borrows.clone().or_else(|| self.declared_borrows(job.def)),
                     sources: self.declared_sources(job.def),
                     is_lambda: false,
@@ -14768,6 +14854,7 @@ impl<'a> Checker<'a> {
             overflow,
             fp,
             inline: inline_hint(attrs),
+            static_safe: has_attribute(attrs, "static_safe"),
             borrows: self.declared_borrows(def),
             sources: self.declared_sources(def),
             is_lambda: false,
@@ -15110,6 +15197,7 @@ impl<'a> Checker<'a> {
                     overflow: OverflowPolicy::default(),
                     fp: FpMode::Strict,
                     inline: hir::InlineHint::default(),
+                    static_safe: false,
                     borrows: None,
                     sources: self.sources_of(&[(Symbol::intern("self"), ty, Mode::Borrow, span)]),
                     is_lambda: false,
@@ -15647,6 +15735,7 @@ impl<'a> Checker<'a> {
             overflow,
             fp,
             inline: inline_hint(attrs),
+            static_safe: has_attribute(attrs, "static_safe"),
             borrows: self.declared_borrows(def),
             sources: self.declared_sources(def),
             is_lambda: false,
@@ -20636,7 +20725,7 @@ impl<'a> Checker<'a> {
             let name = self.locals[local.0 as usize].name.map_or_else(|| "a capture".to_string(), |name| format!("`{name}`"));
             self.sink.emit_classified(
                 Diagnostic::error(
-                    codes::E3063,
+                    codes::E3026,
                     span,
                     format!("this lambda borrows {name}, which is assigned later, so it may not be stored as a value"),
                 )
@@ -25717,7 +25806,7 @@ impl<'a> Checker<'a> {
             if !owned || self.types.is_view(expr.ty) {
                 self.sink.emit_classified(
                     Diagnostic::error(
-                        codes::E3063,
+                        codes::E3026,
                         span,
                         format!("this lambda borrows what it captures, so it may not be stored as `{wanted_shown}`"),
                     )
@@ -25943,6 +26032,28 @@ impl<'a> Checker<'a> {
         let found = self.types.display(expr.ty);
         let wanted = self.types.display(expected);
         let span = expr.span;
+        // D-555 — each lambda has a type of its own (`[CLO-1]`): a place that
+        // holds one cannot hold another, and the fix is an owned callable value.
+        if self.types.is_closure_environment(expr.ty)
+            && matches!(self.types.kind(expected), TyKind::Fn { abi: Some(_), .. })
+        {
+            self.sink.emit(
+                Diagnostic::error(codes::E2020, span, format!("expected `{wanted}`, found a lambda that captures"))
+                    .primary_label("this lambda captures")
+                    .help("pass the captured values as arguments, or give C a function that captures nothing")
+                    .note("a C function pointer has no room for captured state: `extern \"C\" fn` holds capture-free functions only (CLO-3)"),
+            );
+            return Expr { ty: expected, kind: ExprKind::Error, span };
+        }
+        if self.types.is_closure_environment(expr.ty) && self.types.is_closure_environment(expected) {
+            self.sink.emit(
+                Diagnostic::error(codes::E2020, span, "this place holds another lambda, and each lambda has a type of its own")
+                    .primary_label("a different lambda")
+                    .help("declare the place `fn(A) -> R`, an owned callable value, and write the lambdas `owned fn`")
+                    .note("a lambda's type is its own, whatever its signature (CLO-1); `fn(A) -> R` outside a parameter holds any of them (CLO-3)"),
+            );
+            return Expr { ty: expected, kind: ExprKind::Error, span };
+        }
         let mut diagnostic =
             Diagnostic::error(codes::E2020, span, format!("expected `{wanted}`, found `{found}`"))
                 .primary_label(format!("this is `{found}`"));
@@ -34962,7 +35073,7 @@ impl<'a> Checker<'a> {
             })
             .collect();
         let env_name = Symbol::intern(&format!("closure{number}_env"));
-        let struct_id = self.types.add_struct(StructDef {
+        let env_def = StructDef {
             name: env_name,
             fields,
             span,
@@ -34975,7 +35086,19 @@ impl<'a> Checker<'a> {
             drops_fields: true,
             origin: None,
             declaring_module: self.current_module,
+        };
+        let earlier = expected.and_then(|ty| match *self.types.kind(ty) {
+            TyKind::Struct(id) if self.closure_env_spans.get(&id) == Some(&span) => Some(id),
+            _ => None,
         });
+        let struct_id = match earlier {
+            Some(id) => {
+                *self.types.struct_def_mut(id) = env_def;
+                id
+            }
+            None => self.types.add_struct(env_def),
+        };
+        self.closure_env_spans.insert(struct_id, span);
         let env_ty = self.types.intern(TyKind::Struct(struct_id));
 
         let watch = CaptureWatch {
@@ -35352,6 +35475,7 @@ impl<'a> Checker<'a> {
             overflow,
             fp,
             inline: hir::InlineHint::default(),
+            static_safe: false,
             borrows: None,
             sources: Vec::new(),
             is_lambda: false,
@@ -35438,6 +35562,7 @@ impl<'a> Checker<'a> {
             overflow: self.active_overflow,
             fp: self.active_fp,
             inline: hir::InlineHint::default(),
+            static_safe: false,
             borrows: None,
             sources,
             is_lambda: true,

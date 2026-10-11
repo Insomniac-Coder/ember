@@ -393,6 +393,7 @@ impl<'a> Builder<'a> {
             overflow: self.function.overflow,
             fp: self.function.fp,
             inline: self.function.inline,
+            static_safe: self.function.static_safe,
             export_thread_policy: self.function.export_thread_policy,
             locals: self.locals,
             blocks: self.blocks,
@@ -1418,6 +1419,111 @@ impl<'a> Builder<'a> {
     /// statement's end drops. A local is moved even when its type is `Copy`
     /// (a class handle), so the local no longer owns anything and `[OWN-3]`
     /// reports a later use (D-347, ODR-063).
+    /// `[DSJ-1]`, `[DSJ-5]`, `[DSJ-7]` — keep both views, compare their address
+    /// ranges, and give them back: as `Ok` or `Err`, or as the pair after a
+    /// check that panics, or with no comparison at all.
+    fn lower_assert_disjoint(
+        &mut self,
+        dest: Place,
+        args: &'a [hir::Expr],
+        mode: hir::DisjointMode,
+        result: Ty,
+        span: ember_span::Span,
+    ) {
+        let views: Vec<LocalId> = args
+            .iter()
+            .map(|arg| {
+                let temp = self.temp(arg.ty, span);
+                self.push(StmtKind::StorageLive(temp));
+                self.lower_into(Place::local(temp), arg);
+                temp
+            })
+            .collect();
+        self.at(span);
+        let pair = |views: &[LocalId]| Rvalue::Aggregate {
+            kind: AggregateKind::Tuple,
+            operands: views.iter().map(|view| Operand::Move(Place::local(*view))).collect(),
+        };
+        if mode == hir::DisjointMode::Assumed {
+            self.push(StmtKind::Assign { place: dest, rvalue: pair(&views) });
+            return;
+        }
+        let overlap = self.temp(self.bool_ty, span);
+        self.push(StmtKind::StorageLive(overlap));
+        // Every pair, `[DSJ-9]`'s too; the answers or'ed together.
+        let mut first = true;
+        for i in 0..views.len() {
+            for j in i + 1..views.len() {
+                let answer = if first { overlap } else { self.temp(self.bool_ty, span) };
+                if !first {
+                    self.push(StmtKind::StorageLive(answer));
+                }
+                let compared = self.new_block();
+                self.terminate(Terminator::Call {
+                    func: FuncRef::Builtin {
+                        which: hir::Builtin::ViewsOverlap { a: args[i].ty, b: args[j].ty },
+                        arg_ty: args[i].ty,
+                    },
+                    args: vec![Operand::Copy(Place::local(views[i])), Operand::Copy(Place::local(views[j]))],
+                    dest: Place::local(answer),
+                    next: compared,
+                });
+                self.current = compared;
+                if !first {
+                    self.push(StmtKind::Assign {
+                        place: Place::local(overlap),
+                        rvalue: Rvalue::BinaryOp {
+                            op: hir::BinOp::BitOr,
+                            lhs: Operand::Copy(Place::local(overlap)),
+                            rhs: Operand::Copy(Place::local(answer)),
+                        },
+                    });
+                }
+                first = false;
+            }
+        }
+        if mode == hir::DisjointMode::OrPanic {
+            let next = self.new_block();
+            self.terminate(Terminator::Assert {
+                cond: Operand::Copy(Place::local(overlap)),
+                expected: false,
+                msg: AssertKind::Panic {
+                    message: Operand::Const(Const::Str("assert_disjoint_or_panic: the views overlap".to_string())),
+                },
+                next,
+                span,
+            });
+            self.current = next;
+            self.push(StmtKind::Assign { place: dest, rvalue: pair(&views) });
+            return;
+        }
+        let TyKind::Enum(result_id) = *self.types.kind(result) else {
+            unreachable!("`assert_disjoint` gives a `Result`")
+        };
+        let pair_ty = self.types.enum_def(result_id).variants[0].fields[0].ty;
+        let (ok, err, join) = (self.new_block(), self.new_block(), self.new_block());
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(overlap)),
+            targets: vec![(0, ok)],
+            otherwise: err,
+        });
+        for (block, variant) in [(ok, 0), (err, 1)] {
+            self.current = block;
+            let both = self.temp(pair_ty, span);
+            self.push(StmtKind::StorageLive(both));
+            self.push(StmtKind::Assign { place: Place::local(both), rvalue: pair(&views) });
+            self.push(StmtKind::Assign {
+                place: dest.clone(),
+                rvalue: Rvalue::Aggregate {
+                    kind: AggregateKind::Enum(result_id, variant),
+                    operands: vec![Operand::Move(Place::local(both))],
+                },
+            });
+            self.terminate(Terminator::Goto(join));
+        }
+        self.current = join;
+    }
+
     fn lower_mem_drop(&mut self, value: &'a hir::Expr, elem: Ty, span: ember_span::Span) {
         let operand = match &value.kind {
             hir::ExprKind::Local(_) if self.types.needs_drop(elem) => Operand::Move(self.lower_place(value)),
@@ -2063,7 +2169,9 @@ impl<'a> Builder<'a> {
                 // lowered. The activation of a reserved mutable argument is
                 // the caller's call, so its access/call diagnostic belongs
                 // at this expression's span.
-                if default_arg_locals.is_some() {
+                // The call's whole-object writes are the call's too (`[EXC-6]`
+                // names the access, `E4030` the check), not its last argument's.
+                if default_arg_locals.is_some() || !class_accesses.is_empty() {
                     self.at(expr.span);
                 }
                 for place in &class_accesses {
@@ -2153,6 +2261,9 @@ impl<'a> Builder<'a> {
                     explicit[index] = Some(operand);
                 }
                 lowered_args.extend(explicit.into_iter().flatten());
+                if !class_accesses.is_empty() {
+                    self.at(expr.span);
+                }
                 for place in &class_accesses {
                     self.push(StmtKind::BeginAccess { place: place.clone(), mutable: true });
                 }
@@ -2406,6 +2517,12 @@ impl<'a> Builder<'a> {
                 args,
             } => {
                 self.lower_mem_forget(place, &args[0], *elem, expr.span);
+            }
+            hir::ExprKind::Builtin {
+                which: hir::Builtin::AssertDisjoint { mode, result },
+                args,
+            } => {
+                self.lower_assert_disjoint(place, args, *mode, *result, expr.span);
             }
             hir::ExprKind::Builtin {
                 which: hir::Builtin::MemDrop { elem },

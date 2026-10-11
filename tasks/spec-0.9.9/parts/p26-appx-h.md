@@ -285,7 +285,8 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 0.9.10_Hardened_3 adds ODR-099, a pointer into a parameter C passes as a copy (§H.8);
 0.9.10_Hardened_4 adds ODR-100, what a lambda written at an adapter captures (§H.9);
 0.9.10_Hardened_5 adds ODR-101, a `main` of another form (§H.10);
-0.9.10_Hardened_6 adds ODR-102, owned callable values (§H.11).
+0.9.10_Hardened_6 adds ODR-102, owned callable values (§H.11);
+0.9.10_Hardened_7 adds ODR-103, a lambda outliving its captures is `E3026` (§H.12).
 
 | ODR | Ruling | Rules |
 |---|---|---|
@@ -371,6 +372,7 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 | ODR-100 | the owner's (2026-10-11): the iterator adapters take over the callable and the iterator they keep (`owned`); a lambda written at one keeps the captures `[CLO-2]` infers and the adapter lives no longer than they do; only a consumed callable parameter whose captured state must carry the static region (`thread.spawn`, `jobs.submit`, registries) makes a lambda written there capture by move | `[CLO-15]`, `[CLO-4]`, `[CLO-7]`, `[STD-19]` |
 | ODR-101 | ruled under the delegation (2026-10-11, the owner: "fix that autonomously"): the entry module's `main` in a form `[FN-8]` does not list (another parameter or more than one, another return type, type parameters) is `E2183` at its name; the one parameter may have any name and mode, its type `Array[String]`; an `E` that is not `Display` is `E2040` | `[FN-8]` |
 | ODR-102 | ruled under the delegation (2026-10-11, autopilot): a function or capture-free lambda used as a value is a plain `Copy` value that becomes an owned callable value where one is wanted; an owned callable value moves and drops its state, is lent mutably to a borrowed parameter (`E3023` from a place that is not mutable, `E3022` twice at once), is neither `Send` nor `Sync`, equals another calling the same function with the same state, and given to C panics when it holds state; a lambda copies what it only reads (`[CLO-13]`) where it becomes an owned callable value, "assigned after" being later in the body or anywhere in a loop around it | `[CLO-3]`, `[CLO-10]`, `[CLO-13]`, `[CLO-2]`, `[THR-8]`, `[THR-9]` |
+| ODR-103 | ruled under the delegation (2026-10-12, autopilot): a lambda that borrows, stored or sent where no view may go, is shape B9's `E3026` (a closure outlives what it captures), help `owned fn` or `thread.scope()`; `E3063` stays for other views | `[CLO-3]`, `[CLO-4]`, `[THR-10]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -656,3 +658,20 @@ Generated: every rule whose text differs from 0.9.10_Hardened_5.
 | `[CLO-3]` | changed |
 | `[CLO-10]` | changed |
 | `[CLO-13]` | changed |
+
+## H.12 Changes in 0.9.10_Hardened_7 (from 0.9.10_Hardened_6)
+
+**0.9.10_Hardened_7** records ODR-103, ruled under the owner's delegation on 2026-10-12
+(`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-161). It changes a diagnostic's code only:
+
+* A lambda that borrows, stored where no view may go (an owned callable value, a list, a class
+  field) or sent to a thread, is `E3026`, shape B9 (a closure outlives what it captures), with the
+  help `owned fn` or `thread.scope()`; it was `E3063`, which stays for every other view
+  (`[CLO-3]`, `[CLO-4]`, `[THR-10]`).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_6.
+
+| Rule | 0.9.10_Hardened_6 → 0.9.10_Hardened_7 |
+|---|---|
+| `[CLO-3]` | changed |
+| `[THR-10]` | changed |

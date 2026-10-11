@@ -411,6 +411,8 @@ ODRS = [
      '`[FN-8]`'),
     ('ODR-102', 'ruled under the delegation (2026-10-11, autopilot): a function or capture-free lambda used as a value is a plain `Copy` value that becomes an owned callable value where one is wanted; an owned callable value moves and drops its state, is lent mutably to a borrowed parameter (`E3023` from a place that is not mutable, `E3022` twice at once), is neither `Send` nor `Sync`, equals another calling the same function with the same state, and given to C panics when it holds state; a lambda copies what it only reads (`[CLO-13]`) where it becomes an owned callable value, "assigned after" being later in the body or anywhere in a loop around it',
      '`[CLO-3]`, `[CLO-10]`, `[CLO-13]`, `[CLO-2]`, `[THR-8]`, `[THR-9]`'),
+    ('ODR-103', 'ruled under the delegation (2026-10-12, autopilot): a lambda that borrows, stored or sent where no view may go, is shape B9\'s `E3026` (a closure outlives what it captures), help `owned fn` or `thread.scope()`; `E3063` stays for other views',
+     '`[CLO-3]`, `[CLO-4]`, `[THR-10]`'),
 ]
 
 H5_HEAD = """
@@ -453,7 +455,8 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 0.9.10_Hardened_3 adds ODR-099, a pointer into a parameter C passes as a copy (§H.8);
 0.9.10_Hardened_4 adds ODR-100, what a lambda written at an adapter captures (§H.9);
 0.9.10_Hardened_5 adds ODR-101, a `main` of another form (§H.10);
-0.9.10_Hardened_6 adds ODR-102, owned callable values (§H.11).
+0.9.10_Hardened_6 adds ODR-102, owned callable values (§H.11);
+0.9.10_Hardened_7 adds ODR-103, a lambda outliving its captures is `E3026` (§H.12).
 
 | ODR | Ruling | Rules |
 |---|---|---|
@@ -469,13 +472,14 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.10', 6)
+CURRENT = ('0.9.10', 7)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
 V010_H3_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h3')
 V010_H4_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h4')
 V010_H5_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h5')
+V010_H6_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h6')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -652,8 +656,30 @@ Generated: every rule whose text differs from 0.9.10_Hardened_5.
 """
 
 
-def v010_h5_to_now():
-    return H11_HEAD + rule_diff(V010_H5_PARTS, os.path.join(HERE, '..', 'parts'))
+def v010_h5_to_h6():
+    return H11_HEAD + rule_diff(V010_H5_PARTS, V010_H6_PARTS)
+
+
+H12_HEAD = """
+## H.12 Changes in 0.9.10_Hardened_7 (from 0.9.10_Hardened_6)
+
+**0.9.10_Hardened_7** records ODR-103, ruled under the owner's delegation on 2026-10-12
+(`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-161). It changes a diagnostic's code only:
+
+* A lambda that borrows, stored where no view may go (an owned callable value, a list, a class
+  field) or sent to a thread, is `E3026`, shape B9 (a closure outlives what it captures), with the
+  help `owned fn` or `thread.scope()`; it was `E3063`, which stays for every other view
+  (`[CLO-3]`, `[CLO-4]`, `[THR-10]`).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_6.
+
+| Rule | 0.9.10_Hardened_6 → 0.9.10_Hardened_7 |
+|---|---|
+"""
+
+
+def v010_h6_to_now():
+    return H12_HEAD + rule_diff(V010_H6_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -724,7 +750,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_now() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_now() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

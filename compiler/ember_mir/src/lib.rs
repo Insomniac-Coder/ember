@@ -84,6 +84,8 @@ pub struct Body {
     pub fp: ember_types::FpMode,
     /// `[CG-C-3a]` — `@inline` (always inlined), `@noinline`, `@cold`, `@hot`.
     pub inline: InlineHint,
+    /// `[EFF-13]` — declared `@static_safe` (`ember_analysis::check_static_safe_all`).
+    pub static_safe: bool,
     /// `[FFI-33]` — resolved calling-thread contract of a C export.
     pub export_thread_policy: ExportThreadPolicy,
     pub locals: Vec<LocalDecl>,

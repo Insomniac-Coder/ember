@@ -63,6 +63,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-082 | **CLOSED** — `@ffi(immutable)` on a foreign static asserts a `const` C object and emits a matching declaration | Language / C interop / foreign statics | — | **No** — delegated, 2026-09-27, Hardened_38 |
 | ODR-083 | **CLOSED** — a static free-function export's `creator` thread is anchored to successful module initialization; repeated initialization does not transfer the contract, and reinitialization after shutdown establishes a new creator | Language / C interop / export thread contracts | — | **No** — delegated, 2026-09-27, Hardened_39 |
 | ODR-084 | **CLOSED** — `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts | Language / module attributes / arithmetic | — | **No** — delegated, 2026-09-27, Hardened_40 |
+| ODR-103 | **CLOSED** — a lambda that borrows, stored or sent where no view may go, is `E3026` (shape B9, a closure outlives what it captures), help `owned fn` or `thread.scope()`; `E3063` stays for other views | Diagnostics / closures | — | **Delegated** (autopilot, 2026-10-12), 0.9.10_Hardened_7 |
 | ODR-102 | **CLOSED** — a function or capture-free lambda used as a value is a plain `Copy` value; an owned callable value moves and drops its state, is lent mutably to a borrowed parameter, is neither `Send` nor `Sync`, equals one calling the same function with the same state, and panics given to C when it holds state; `[CLO-13]` copies where a lambda becomes an owned callable value | Closures | — | **Delegated** (autopilot, 2026-10-11), 0.9.10_Hardened_6 |
 | ODR-101 | **CLOSED** — the entry module's `main` in a form `[FN-8]` does not list is `E2183` at its name; its one parameter may have any name and mode, its type `Array[String]`; an `E` that is not `Display` is `E2040` | Functions / entry point | — | **Delegated** (the owner, 2026-10-11: "fix that autonomously"), 0.9.10_Hardened_5 |
 | ODR-100 | **CLOSED** — the iterator adapters take over the callable and the iterator they keep; a lambda written at one keeps its borrows; only a callable that must carry the static region moves its captures | Closures / std | — | **Owner** (2026-10-11), 0.9.10_Hardened_4 |
@@ -256,6 +257,34 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-103 — which code a lambda outliving its captures is — **CLOSED**
+
+    ID:        ODR-103
+    Status:    CLOSED — ruled under the delegation, 2026-10-12 (autopilot); incorporated
+               in 0.9.10_Hardened_7
+    Category:  DIAGNOSTICS / CLOSURES
+    Location:  Ember_v0.9.10_Hardened_6.md [CLO-3], [THR-10], §XIX.6.1 shape B9, `E3026`
+
+**The question.** The shape catalogue gives "closure outlives its captures" shape B9 and the code
+`E3026`, with the help `owned fn`, or a scope (`[THR-5]`); the code table lists `E3026` under
+`[CLO-4]`. But `[CLO-3]` names `E3063` for a borrowing lambda stored as an owned callable value,
+and `[THR-10]` `E3063` for a thread's closure capturing a local: no rule produced `E3026`, and
+shape B9 had no case (`[DIA-13]`).
+
+**Ruling.** A lambda that borrows, stored where no view may go (an owned callable value, a list, a
+class field) or sent to a thread, is `E3026`, shape B9: the help is `owned fn`, or
+`thread.scope()` for a thread. `E3063` stays for every other view. `[CLO-3]` and `[THR-10]` say so.
+
+**Why.** It is the situation the shape names, with the help it asks for; `E3063`'s help (an owned
+`String`, an index) does not apply to a lambda. One code per shape keeps `[DIA-7a]`'s classifier
+exact.
+
+**Tests:** `tests/ui/borrow/B9/lambda_stored_past_its_capture` (snapshot and fix),
+`CLO-3/reject_a_borrowing_lambda_stored_as_a_value`, `CLO-4/reject_a_borrowing_lambda_stored_in_a_list`,
+`CLO-13/reject_a_copy_of_a_variable_assigned_later`; `docs/errors/E3026.md`. ADR-161.
 
 ---
 

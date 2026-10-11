@@ -29,6 +29,7 @@ pub mod long_access_lint;
 pub mod range_facts;
 pub mod regions;
 pub mod stack_lists;
+pub mod static_safe;
 pub mod stores;
 pub mod strength_reduce;
 pub mod uncounted_handles;
@@ -43,6 +44,7 @@ pub use borrows::{
 pub use access::{elide_static_accesses_all, remove_never_firing_checks_all};
 pub use c_entries::{callable_types_given_to_c, check_c_entry_returns_all};
 pub use loop_access::hoist_loop_accesses_all;
+pub use static_safe::check_static_safe_all;
 pub use check_hoisting::hoist_invariant_checks_all;
 pub use copies::{narrow_widened_reads_all, propagate_copies_all};
 pub use exit_drops::skip_exit_drops_all;

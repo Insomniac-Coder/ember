@@ -189,6 +189,9 @@ pub struct Function {
     pub fp: FpMode,
     /// `[CG-C-3a]` — from `@inline`, `@noinline`, `@cold` and `@hot`.
     pub inline: InlineHint,
+    /// `[EFF-12]`, `[EFF-13]` — declared `@static_safe`: no dynamic aliasing
+    /// check may remain in its body.
+    pub static_safe: bool,
     /// `[LT-1a]` — the parameter *positions* `@borrows(…)` names, when the
     /// attribute is written. `None` means elision decides (`[LT-1]`).
     ///
@@ -835,8 +838,29 @@ impl FloatLib {
 
 /// Functions the compiler provides itself in Phase 0, before the standard
 /// library is written in Ember. Each lowers to one `ember_rt` call.
+/// `[DSJ-1]`, `[DSJ-5]`, `[DSJ-7]` — what `assert_disjoint` and its siblings
+/// do with two views that overlap.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum DisjointMode {
+    /// `assert_disjoint`: `Ok((a, b))`, or `Err((a, b))` when they overlap.
+    Result,
+    /// `assert_disjoint_or_panic`: `(a, b)`, or a panic.
+    OrPanic,
+    /// `unsafe assume_disjoint`: `(a, b)`, no comparison.
+    Assumed,
+    /// `[DSJ-9]` `assert_disjoint_all`: two to eight views compared pairwise,
+    /// `Ok` or `Err` as `assert_disjoint`.
+    All,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Builtin {
+    /// `[DSJ-1]` — establish that two views do not overlap (`result` is the
+    /// call's type).
+    AssertDisjoint { mode: DisjointMode, result: Ty },
+    /// `[DSJ-1]`'s two comparisons: whether views of types `a` and `b`
+    /// overlap. Empty views overlap nothing.
+    ViewsOverlap { a: Ty, b: Ty },
     /// `[FFI-10]` — read a hand-declared C global at its linker symbol.
     ForeignStaticRead { symbol: Symbol, immutable: bool },
     /// `[STA-1]` — write a `static mut` C global inside `unsafe`.
@@ -1394,6 +1418,11 @@ impl Builtin {
             Builtin::MemReplace { .. } => "replace",
             Builtin::MemTake { .. } => "take",
             Builtin::MemSwap { .. } => "swap",
+            Builtin::AssertDisjoint { mode: DisjointMode::Result, .. } => "assert_disjoint",
+            Builtin::AssertDisjoint { mode: DisjointMode::OrPanic, .. } => "assert_disjoint_or_panic",
+            Builtin::AssertDisjoint { mode: DisjointMode::Assumed, .. } => "assume_disjoint",
+            Builtin::AssertDisjoint { mode: DisjointMode::All, .. } => "assert_disjoint_all",
+            Builtin::ViewsOverlap { .. } => "views_overlap",
             Builtin::MemForget { .. } => "forget",
             Builtin::MemDrop { .. } => "drop",
             // `[RNG-10]`'s construction set. Named as they are

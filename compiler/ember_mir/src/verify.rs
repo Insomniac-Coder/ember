@@ -584,6 +584,7 @@ mod tests {
             overflow: ember_types::OverflowPolicy::Panic,
             fp: ember_types::FpMode::Strict,
             inline: ember_hir::InlineHint::default(),
+            static_safe: false,
             export_thread_policy: ember_hir::ExportThreadPolicy::Any,
             locals: vec![LocalDecl {
                 ty: ember_types::TypeTable::new().1.void,
@@ -1829,6 +1830,7 @@ mod view_invariant_tests {
             overflow: ember_types::OverflowPolicy::Panic,
             fp: ember_types::FpMode::Strict,
             inline: ember_hir::InlineHint::default(),
+            static_safe: false,
             export_thread_policy: ember_hir::ExportThreadPolicy::Any,
             locals: vec![
                 LocalDecl {
@@ -1978,6 +1980,7 @@ mod interface_upcast_invariant_tests {
             overflow: ember_types::OverflowPolicy::Panic,
             fp: ember_types::FpMode::Strict,
             inline: ember_hir::InlineHint::default(),
+            static_safe: false,
             export_thread_policy: ember_hir::ExportThreadPolicy::Any,
             locals: vec![
                 LocalDecl {

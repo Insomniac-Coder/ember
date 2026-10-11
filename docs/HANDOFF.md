@@ -10721,9 +10721,16 @@ drops, is called from a mutable place, is lent mutably to a borrowed parameter (
 counts a call through a value as using it: a callable parameter looked unused before), is neither
 `Send` nor `Sync`, and given to C panics if it holds state; `[CLO-13]` copies where a lambda becomes
 one. Stored counter closure vs C: MSVC 0.77, clang 1.04. Also the X1 `[DIA-13]` snapshot
-(`tests/ui/borrow/X1`). **Next:** the shapes still without a producer (B5, B9, B11, O8, S1; B9 is
-`E3026`, "a closure outlives what it captures", which `E3063` now covers in owned positions — decide
-where `E3026` belongs), then D-550.
+(`tests/ui/borrow/X1`). Then D-556 (a lambda pushed into an open list `[]` got a second closure type on
+the body's second pass) and D-555 (messages named `closure3_env`): ADR-160. Then ODR-103
+(0.9.10_Hardened_7, ADR-161): a borrowing lambda stored where no view may go is shape B9's `E3026`
+(page and snapshot). **Next:** the shapes still without a producer (B5 a struct field borrowing
+another, B11 `assert_disjoint`, O8 scope guards, S1 `@static_safe`: each waits on its feature —
+check which is buildable now), then D-550. B11 done since (ADR-162: `assert_disjoint`,
+`assert_disjoint_or_panic`, `assume_disjoint`, `assert_disjoint_all`; D-557 open: the `Ok` views are
+not yet `restrict`). Then S1 (D-559: `@static_safe` now refuses the aliasing checks left after
+the proofs, `E4030`) and B5 (D-558: an owner and a view of it in one literal is `E3024`), ADR-163.
+Left: O8 (`E3014`/`E3015`: `@must_drop`, then scoped threads).
 
 **2026-10-11, D-548 and D-549 fixed (ADR-156).** `fn main(args: Array[String])` builds and runs, with the
 command line decoded as UTF-8 (lossy; UTF-16 on Windows), and an `Err` returned from `main` prints

@@ -435,7 +435,17 @@ fn requirement_error(
             "stored here",
         ),
     };
-    let mut diagnostic = Diagnostic::error(codes::E3063, span, message).primary_label(label).help(OWNED_COPY_HELP);
+    // D-555 — a lambda that borrows is a view too; its fix is `owned fn`.
+    let lambda = types.is_closure_environment(requirement.ty);
+    let message = if lambda { message.replacen("`lambda` is a view", "this lambda borrows what it captures", 1) } else { message };
+    let help = if lambda {
+        "write it `owned fn`, which moves or copies each capture into the value, and store it as `fn(A) -> R`"
+    } else {
+        OWNED_COPY_HELP
+    };
+    // ODR-103 — a lambda outliving what it borrows is shape B9's `E3026`.
+    let code = if lambda { codes::E3026 } else { codes::E3063 };
+    let mut diagnostic = Diagnostic::error(code, span, message).primary_label(label).help(help);
     diagnostic = match culprit {
         Some(Culprit::Local(local)) => match local_name(body, local) {
             Some(name) => diagnostic.note(format!(

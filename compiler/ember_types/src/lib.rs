@@ -1725,6 +1725,15 @@ impl TypeTable {
         }
     }
 
+    /// `[CLO-1]` — a lambda's own type: the environment struct the checker
+    /// makes for a capturing lambda, `closure{n}_env`.
+    pub fn is_closure_environment(&self, ty: Ty) -> bool {
+        matches!(self.kind(ty), TyKind::Struct(id) if {
+            let name = self.struct_def(*id).name;
+            name.as_str().starts_with("closure") && name.as_str().ends_with("_env")
+        })
+    }
+
     /// `[TYP-14]` — a type carrying a borrow. View types may not be stored in
     /// class fields, statics, containers or across threads (`[TYP-15]`).
     pub fn is_view(&self, ty: Ty) -> bool {
@@ -1926,6 +1935,9 @@ impl TypeTable {
                 format!("{name}[{}]", self.render(*elem, user))
             }
             TyKind::Opaque(name) => self.render_named(*name, None, user),
+            // `[DIA-2]` (D-555) — a closure's environment is the compiler's
+            // name for a lambda's own type, never shown.
+            TyKind::Struct(_) if user && self.is_closure_environment(ty) => "lambda".to_string(),
             TyKind::Struct(id) => {
                 let def = self.struct_def(*id);
                 self.render_named(def.name, def.origin.as_ref().or(self.written_as.get(id)), user)

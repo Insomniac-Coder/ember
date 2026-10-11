@@ -200,7 +200,7 @@ Every rule of this document, by family, with the Part that defines it.
 |---|---|---|
 | `[CLO-1]` | VI | A lambda or local function has a unique anonymous type implementing … |
 | `[CLO-2]` | VI | Captures are inferred per variable: read only ⇒ shared borrow; … |
-| `[CLO-3]` | VI | What `fn(A) -> R` means depends on where it is written. * As a … |
+| `[CLO-3]` | VI | *(changed in 0.9.10)* What `fn(A) -> R` means depends on where it is … |
 | `[CLO-4]` | VI | *(changed in 0.9.10)* A non-`owned` lambda cannot outlive what it … |
 | `[CLO-5]` | VI | A closure capturing a class handle holds a strong reference; the … |
 | `[CLO-6]` | VI | A lambda that moves one of its captures out of itself (into an … |
@@ -1206,7 +1206,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[THR-7]` | XI | `@sync` means exactly two things: the class's handles may cross … |
 | `[THR-8]` | XI | A type is `Send` when a value of it may be moved to another thread. … |
 | `[THR-9]` | XI | A type is `Sync` when several threads may read one value of it at the … |
-| `[THR-10]` | XI | `thread.spawn(owned f: fn() -> R) -> JoinHandle[R]` runs `f` on a new … |
+| `[THR-10]` | XI | *(changed in 0.9.10)* `thread.spawn(owned f: fn() -> R) -> … |
 | `[THR-11]` | XI | `scope.spawn(f: fn() -> R) -> ScopedJoinHandle[R]` accepts a closure … |
 | `[THR-12]` | XI | Tasks that must run in sequence and share data use two scopes in … |
 | `[THR-13]` | XI | The data-race guarantee. In Safe Ember a memory location is reachable … |

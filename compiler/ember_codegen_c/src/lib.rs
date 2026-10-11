@@ -6568,10 +6568,25 @@ impl Emitter<'_> {
                     }
                 }
                 let arg_ty = &printed;
+                // `[DSJ-1]` — two comparisons; an empty view overlaps nothing.
+                if let Builtin::ViewsOverlap { a, b } = which {
+                    let size = |view: &Ty| match self.types.kind(*view) {
+                        TyKind::Span { elem, .. } => c_size(&self.c_type(*elem)),
+                        _ => unreachable!("`assert_disjoint` takes views"),
+                    };
+                    let (x, y) = (&rendered[0], &rendered[1]);
+                    return format!(
+                        "(({x}).len != 0 && ({y}).len != 0 && (const char*)({x}).ptr < (const char*)({y}).ptr + ({y}).len * {} && (const char*)({y}).ptr < (const char*)({x}).ptr + ({x}).len * {})",
+                        size(b), size(a)
+                    );
+                }
                 // `Array` and `String` share one runtime buffer; the element
                 // size is passed at each call, which is how a single
                 // implementation serves every element type.
                 match which {
+                    Builtin::AssertDisjoint { .. } | Builtin::ViewsOverlap { .. } => {
+                        unreachable!("`assert_disjoint` is lowered in MIR; its comparison is written above")
+                    }
                     Builtin::ForeignStaticRead { symbol, immutable } => {
                         self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*arg_ty, *immutable));
                         return symbol.to_string();
@@ -10093,6 +10108,7 @@ mod string_descriptor_view_parts_tests {
             overflow: ember_types::OverflowPolicy::Panic,
             fp: FpMode::Strict,
             inline: ember_mir::InlineHint::default(),
+            static_safe: false,
             export_thread_policy: ember_mir::ExportThreadPolicy::Any,
             locals: vec![
                 LocalDecl {

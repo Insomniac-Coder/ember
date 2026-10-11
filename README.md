@@ -31,15 +31,15 @@ pages, and the records that keep them consistent.
 | Language decisions | Current owner decisions (ODRs) in [`docs/OWNER-QUEUE.md`](docs/OWNER-QUEUE.md) |
 | CI | Linux (Clang, GCC) and Windows (MSVC, clang-cl); every push to `main` |
 
-Phase estimates against 0.9.10 (2026-10-11; weighted by the size of each phase's rules;
+Phase estimates against 0.9.10 (2026-10-12; weighted by the size of each phase's rules;
 method in [`docs/HANDOFF.md`](docs/HANDOFF.md)):
 
 | Phase | Scope | Done |
 |---|---|---:|
 | 1 | Core language (Parts II–VI) | 99% |
-| 2 | Ownership, borrowing, regions | 89% |
+| 2 | Ownership, borrowing, regions | 90% |
 | 3 | Classes, reference counting, exclusivity | 65% |
-| 4 | Effects, compile time, reflection, derives | 13% |
+| 4 | Effects, compile time, reflection, derives | 14% |
 | 5 | C interoperability | 14% |
 | 6 | Concurrency and data-oriented design | 4% |
 | 7 | C++ interoperability and the interpreter | 0% |

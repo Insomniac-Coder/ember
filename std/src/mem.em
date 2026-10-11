@@ -31,6 +31,27 @@ pub fn take[T: Default](mut place: T) -> T:
 pub fn swap[T](mut a: T, mut b: T):
     pass
 
+## `[DSJ-1]` — two views from sources the program knows do not overlap: `Ok`
+## when their address ranges are apart, `Err` with both unchanged when they
+## overlap. Compiler-known; the operands must be views (`E3095` otherwise).
+pub fn assert_disjoint[A, B](owned a: A, owned b: B) -> Result[(A, B), (A, B)]:
+    pass
+
+## `[DSJ-9]` — two to eight views compared pairwise; compiler-known, so the
+## declaration shows two.
+pub fn assert_disjoint_all[A, B](owned a: A, owned b: B) -> Result[(A, B), (A, B)]:
+    pass
+
+## `[DSJ-5]` — `assert_disjoint`, panicking when the views overlap.
+pub fn assert_disjoint_or_panic[A, B](owned a: A, owned b: B) -> (A, B):
+    pass
+
+## `[DSJ-7]` — the views do not overlap, unchecked: violating it is undefined
+## behaviour.
+@safety("The two views' address ranges do not overlap.")
+pub unsafe fn assume_disjoint[A, B](owned a: A, owned b: B) -> (A, B):
+    pass
+
 ## Consumes the value without running its destructor. `[THR-6]`'s rejection
 ## for `@must_drop` values becomes active with that later type mechanism; this
 ## operation does not invent a parallel marker in the meantime.

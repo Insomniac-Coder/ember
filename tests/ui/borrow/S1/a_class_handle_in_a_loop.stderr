@@ -1,0 +1,10 @@
+error[E4030]: `@static_safe` function `fill` keeps an exclusivity check on a class object here
+  --> tests/ui/borrow/S1/a_class_handle_in_a_loop.em:10:9
+   |
+10 |         b.add(i)
+   |         ^^^^^^^^ checked at run time
+   |
+   = help: hoist the handle into a local the code does not reassign, so the access is proved when it compiles, or use value types or a query yielding `ref mut`
+   = note: `@static_safe` allows bounds, arithmetic and stale-handle checks, but no check of who else holds the data (EFF-12, EFF-13)
+
+error: could not compile due to 1 error(s)

@@ -532,7 +532,7 @@ mod tests {
         let body = Body {
             name: "owners".to_string(), symbol: "owners".to_string(),
             is_unsafe: false, abi: None, overflow: ember_types::OverflowPolicy::Panic,
-            fp: ember_types::FpMode::Strict, inline: ember_mir::InlineHint::default(),
+            fp: ember_types::FpMode::Strict, inline: ember_mir::InlineHint::default(), static_safe: false,
             export_thread_policy: ember_mir::ExportThreadPolicy::Any,
             locals, blocks: Vec::new(), arg_count: 0, param_modes: Vec::new(),
             span: Span::DUMMY, borrows: None, sources: Vec::new(), is_lambda: false,

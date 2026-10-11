@@ -2367,6 +2367,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[EXC-3]`/`[EXC-3a]` — last, once every held interval is final: remove
     // the checks that nothing held anywhere in the program could make fail.
     ember_analysis::remove_never_firing_checks_all(&mut bodies, &types);
+    // `[EFF-13]` — what is left of the dynamic aliasing checks is the verdict
+    // a `@static_safe` function answers for, before inlining mixes callers'
+    // and callees' checks.
+    if ember_analysis::check_static_safe_all(&bodies, &mut sink) > 0 {
+        return Ok(finish(&sink, &map, options));
+    }
     // `[CLO-3]` — a known function passed to a callable parameter gets the
     // callee's own copy, calling it directly; first, so every copy is
     // optimised like any other body.

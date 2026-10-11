@@ -99,10 +99,10 @@ fn main():
     println(total)
 ```
 
-* `[THR-10]` *(new in 0.9.9)* `thread.spawn(owned f: fn() -> R) -> JoinHandle[R]` runs `f` on a new
+* `[THR-10]` *(new in 0.9.9)* *(changed in 0.9.10)* `thread.spawn(owned f: fn() -> R) -> JoinHandle[R]` runs `f` on a new
   thread. The closure's captured state and `R` MUST be `Send` (`E7004`, naming the capture) and MUST
   carry only the static region: a thread may outlive every local of its creator, so a captured view of
-  a local is `E3063`, whose help is `thread.scope()` (`[THR-5]`). `h.join() -> R` waits and returns the
+  a local is `E3026` (shape B9, ODR-103), whose help is `thread.scope()` (`[THR-5]`). `h.join() -> R` waits and returns the
   result. Dropping a `JoinHandle` detaches the thread.
 * `[THR-16]` *(new in 0.9.9)* When `main` returns, or `process.exit` is called, the process ends: other
   threads stop without running destructors, no static is freed and no drop runs. The `debug` leak

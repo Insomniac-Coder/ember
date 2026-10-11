@@ -1,0 +1,10 @@
+error[E3026]: this lambda borrows what it captures, so it may not be stored as `fn() -> i64`
+ --> tests/ui/borrow/B9/lambda_stored_past_its_capture.em:5:24
+  |
+5 |         callbacks.push(fn() => name.len())
+  |                        ^^^^^^^^^^^^^^^^^^ stored here
+  |
+  = help: write it `owned fn`, which moves or copies each capture into the value
+  = note: a `fn` type outside a parameter is an owned callable value; a lambda that borrows is a view, and this place has no bounding region (CLO-3, TYP-15)
+
+error: could not compile due to 1 error(s)

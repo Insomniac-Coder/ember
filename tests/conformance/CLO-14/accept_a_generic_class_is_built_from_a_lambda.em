@@ -7,7 +7,7 @@
 # is built from a lambda: the argument is read once to infer the type argument
 # and checked again against the instance, and both are the one closure. One
 # that captures by move holds what it took; one that captures nothing holds no
-# borrow. One that borrows a local is `[TYP-15]`'s `E3063` (a class field holds
+# borrow. One that borrows a local is `E3026` (ODR-103: a class field holds
 # only `static` views), even a local holding a string literal: the capture is
 # a reference to the local.
 

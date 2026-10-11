@@ -2854,13 +2854,8 @@ fn check_return_regions(
         } else if match types.kind(decl.ty) {
             TyKind::Fn { .. } => true,
             // A callable parameter instantiated with a lambda has the lambda's
-            // environment type, named `closure{n}_env` by typeck's
-            // `push_closure`. ponytail: matched by that name, since StructDef
-            // has no closure flag; add one if another pass needs to know.
-            TyKind::Struct(id) => {
-                let name = types.struct_def(*id).name;
-                name.as_str().starts_with("closure") && name.as_str().ends_with("_env")
-            }
+            // environment type.
+            TyKind::Struct(_) => types.is_closure_environment(decl.ty),
             _ => false,
         } {
             // `[CLO-3]` — a callable parameter is never a source.
@@ -4195,6 +4190,40 @@ fn check_point(
             // ends a temporary with its statement, while a view of it lives on
             // (`t = head(make())`). That is a value not living long enough,
             // and the user sees the expression, never the temporary.
+            // `[TYP-15]`, shape B5 — a struct or tuple literal that moves one
+            // operand while another operand holds the loan on it: one field
+            // would borrow another of the same value, which the move would
+            // carry away from under it.
+            if matches!(access, Access::Move)
+                && let Some(StmtKind::Assign {
+                    rvalue: Rvalue::Aggregate { kind: AggregateKind::Struct(_) | AggregateKind::Tuple, operands },
+                    ..
+                }) = body.blocks[point.block].stmts.get(point.index).map(|stmt| &stmt.kind)
+                && operands.iter().any(|operand| match operand {
+                    Operand::Move(moved) => moved.local == loan_place.local,
+                    _ => false,
+                })
+                && operands.iter().any(|operand| match operand {
+                    Operand::Copy(held) | Operand::Move(held) => {
+                        held.local != loan_place.local
+                            && (held.local == loan.borrower
+                                || regions.holders(loan.capability.validity_interval.0).contains(&held.local))
+                    }
+                    Operand::Const(_) => false,
+                })
+            {
+                sink.emit_classified(
+                    Diagnostic::error(
+                        codes::E3024,
+                        span,
+                        format!("`{name}` would be moved into this value while another of its fields borrows it"),
+                    )
+                    .primary_label(format!("`{name}` and a view of it would both be fields of this value"))
+                    .help("store an index or a `Handle` into the owner instead of a view of it, or keep the owner outside the value")
+                    .note("a field cannot borrow another field of the same value: moving the value would move what the view points into (TYP-15)"),
+                );
+                continue;
+            }
             let dropped_temporary = body.local(loan_place.local).name.is_none()
                 && matches!(
                     body.blocks[point.block].stmts.get(point.index).map(|stmt| &stmt.kind),
@@ -4791,6 +4820,7 @@ mod callable_region_metadata_tests {
             overflow: ember_types::OverflowPolicy::Panic,
             fp: ember_types::FpMode::Strict,
             inline: ember_mir::InlineHint::default(),
+            static_safe: false,
             export_thread_policy: ember_mir::ExportThreadPolicy::Any,
             locals: vec![LocalDecl {
                 ty: common.void,

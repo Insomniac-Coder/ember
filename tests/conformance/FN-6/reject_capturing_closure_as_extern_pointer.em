@@ -1,7 +1,7 @@
 #$ test: compile-fail
 #$ rules: FN-6, FFI-9
 #$ profiles: debug
-#$ error[E2020]: expected `extern "C" fn(i32) -> i32`, found `closure3_env`
+#$ error[E2020]: expected `extern "C" fn(i32) -> i32`, found a lambda that captures
 
 fn main():
     offset: i32 = 1
