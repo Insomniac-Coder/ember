@@ -3978,6 +3978,57 @@ fn visible_generic_enum_member_declarations_invalidate_importers() {
     let _ = std::fs::remove_dir_all(&test_root);
 }
 
+/// D-391 / `[LT-40]` — two programs in one folder share its interface cache,
+/// so a standard module's record must not depend on which program wrote it.
+/// A generic type's method bound over the type's parameter (`Q: Keyed[K]`)
+/// once took a program-wide number, which shifted `std.collections`' own
+/// `ToKey[K]` bounds: the second program found the first one's record "stale" and
+/// stopped with an internal error.
+#[test]
+fn programs_sharing_a_folder_share_its_interface_cache() {
+    let workspace = workspace_root();
+    let test_root = temporary_directory("shared-interface-cache");
+    let out_dir = test_root.join("target");
+    let _ = std::fs::remove_dir_all(&test_root);
+    std::fs::create_dir_all(&test_root).expect("create shared-cache folder");
+    let plain = ember_branding::source_file("plain");
+    let bounded = ember_branding::source_file("bounded");
+    std::fs::write(test_root.join(&plain), "fn main():
+    println(1)
+").expect("write plain program");
+    std::fs::write(
+        test_root.join(&bounded),
+        "interface Keyed[K]:
+    fn make_key(self) -> K
+
+struct Keys[K]:
+    keys: Array[K] = []
+
+    fn has[Q: Keyed[K]](self, q: Q) -> bool:
+        return false
+
+fn main():
+    println(2)
+",
+    )
+    .expect("write bounded program");
+    for program in [&plain, &bounded, &plain] {
+        let output = Command::new(EMBER)
+            .args(["check", program, "--out-dir", &out_dir.to_string_lossy()])
+            .current_dir(&test_root)
+            .env(ember_branding::std_path_var(), workspace.join("std"))
+            .output()
+            .expect("the Ember compiler runs");
+        assert!(
+            output.status.success(),
+            "{program} failed after another program filled the folder's cache:
+{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&test_root);
+}
+
 fn cached_interface(out_dir: &Path, module: &str) -> ModuleInterfaceArtifact {
     let directory = out_dir.join("debug").join("interface");
     for package in std::fs::read_dir(&directory).expect("interface cache has a package directory") {
@@ -4327,8 +4378,8 @@ fn inline_header_functions_and_inline_attributes_reach_the_c() {
     let c = ember(&["build", &iterators, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
     let std_string = ember_branding::mangled("std_string");
-    assert!(c.stdout.contains(&format!("EMBER_INLINED {} {std_string}_Chars_next(", ember_branding::mangled("Option_char"))), "`Chars.next` is not forced inline:\n{}", c.stdout);
-    assert!(c.stdout.contains(&format!("static inline {std_string}_Chars {}(", ember_branding::mangled("str_chars"))), "`str.chars` is not static inline:\n{}", c.stdout);
+    assert!(c.stdout.contains(&format!("EMBER_INLINED EMBER_MAYBE_UNUSED {} {std_string}_Chars_next(", ember_branding::mangled("Option_char"))), "`Chars.next` is not forced inline:\n{}", c.stdout);
+    assert!(c.stdout.contains(&format!("static inline EMBER_MAYBE_UNUSED {std_string}_Chars {}(", ember_branding::mangled("str_chars"))), "`str.chars` is not static inline:\n{}", c.stdout);
     let attributes = format!("tests/conformance/CG-C-3a/accept_inline_noinline_cold_and_hot.{SOURCE_EXT}");
     for cc in ["msvc", "clang"] {
         let c = ember(&["build", &attributes, "--emit", "c", "--profile", "release", "--cc", cc], &root);

@@ -1742,11 +1742,28 @@ pub fn verify_callable_region_metadata(body: &Body) -> Vec<Violation> {
 /// transformation. A verifier failure is a compiler defect, so the caller
 /// reports the collected internal violations rather than translating
 /// untrusted MIR.
+/// D-545 — every local has a concrete type by code generation: an untyped
+/// literal's type (`[LEX-16]`, `[LEX-17]`) is decided by its context or its
+/// default during type checking. One left open has no C type (the backend
+/// would guess `int32_t`, and `-1.5 < -1.0` compared integers).
+pub fn verify_concrete_literals(body: &Body, types: &TypeTable) -> Vec<Violation> {
+    body.locals
+        .iter()
+        .enumerate()
+        .filter(|(_, decl)| types.is_untyped_literal(decl.ty))
+        .map(|(index, decl)| Violation {
+            body: body.symbol.to_string(),
+            message: format!("local _{index} still has the untyped literal type `{}`", types.display(decl.ty)),
+        })
+        .collect()
+}
+
 pub fn for_codegen<'a>(
     bodies: &'a [Body],
     types: &'a TypeTable,
 ) -> Result<VerifiedMir<'a>, Vec<Violation>> {
     let mut violations: Vec<Violation> = bodies.iter().flat_map(verify).collect();
+    violations.extend(bodies.iter().flat_map(|body| verify_concrete_literals(body, types)));
     violations.extend(bodies.iter().flat_map(|body| verify_views(body, types)));
     violations.extend(
         bodies

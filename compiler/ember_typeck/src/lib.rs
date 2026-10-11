@@ -2901,6 +2901,19 @@ impl<'a> Checker<'a> {
             .collect()
     }
 
+    /// D-391 — a bound as a module's interface record names it. An instance
+    /// over parameters is numbered program-wide (`interface_instance_name`),
+    /// so one module's record would differ with the program compiling it and
+    /// a later program found the cached one "stale"; the record names the
+    /// interface and its canonical arguments (`ToKey[$P0]`) instead.
+    fn recorded_bound_name(&self, bound: Symbol) -> String {
+        let Some((name, args)) = self.open_interface_origin.get(&bound) else { return bound.to_string() };
+        match args.iter().map(|&arg| self.types.canonical_name(arg)).collect::<Result<Vec<_>, _>>() {
+            Ok(args) => format!("{name}[{}]", args.join(",")),
+            Err(_) => bound.to_string(),
+        }
+    }
+
     fn callable_declaration(
         &self,
         span: Span,
@@ -2922,7 +2935,7 @@ impl<'a> Checker<'a> {
             generics: generics
                 .iter()
                 .map(|parameter| CallableDeclarationGeneric {
-                    bounds: parameter.bounds.iter().map(ToString::to_string).collect(),
+                    bounds: parameter.bounds.iter().map(|&bound| self.recorded_bound_name(bound)).collect(),
                     callable: parameter.callable.as_ref().map(|bound| {
                         CallableDeclarationCallableBound {
                             parameters: bound.params.clone(),
@@ -41382,10 +41395,20 @@ impl<'a> Checker<'a> {
             }
             // Both untyped: `1 + 2` stays untyped and is defaulted later.
             (true, true) => {
-                if self.types.is_float(lhs.ty) || self.types.is_float(rhs.ty) {
+                let float = self.types.is_float(lhs.ty) || self.types.is_float(rhs.ty);
+                if float {
                     let float_lit = self.common.float_lit;
                     lhs = self.adopt_literal(lhs, float_lit);
                     rhs = self.adopt_literal(rhs, float_lit);
+                }
+                // D-545 — a comparison's value is a `bool`, so nothing later
+                // defaults its operands: they take their default types here
+                // (`[LEX-16]`, `[LEX-17]`: `int`, `f64`). Left untyped,
+                // `-1.5 < -1.0` compared two `int32_t`s in C and was false.
+                if hir_op.is_comparison() {
+                    let default = if float { self.common.f64 } else { self.common.i64 };
+                    lhs = self.adopt_literal(lhs, default);
+                    rhs = self.adopt_literal(rhs, default);
                 }
             }
             (false, false) => {}

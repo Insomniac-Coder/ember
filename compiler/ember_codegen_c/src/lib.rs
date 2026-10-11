@@ -851,7 +851,10 @@ impl Emitter<'_> {
             let helper = self.array_helper(ArrayHelper::Clone, *elem);
             out.push(format!("{dest} = {helper}(({source}).ptr, ({source}).len);"));
         } else if let Some((symbol, by_address)) = self.clone_fns.get(&ty) {
-            let argument = if *by_address { format!("&({source})") } else { source.to_string() };
+            // The source is read through `src`, a `const` pointer; a `clone`
+            // takes its receiver by an unqualified address and only reads it
+            // (`-Wincompatible-pointer-types-discards-qualifiers`, `[CG-C-1]`).
+            let argument = if *by_address { format!("({}*)&({source})", self.c_type(ty)) } else { source.to_string() };
             out.push(format!("{dest} = {symbol}({argument});"));
         } else if matches!(self.types.kind(ty), TyKind::Tuple(_) | TyKind::Enum(_)) {
             let helper = self.clone_parts_helper(ty);
@@ -2408,6 +2411,11 @@ impl Emitter<'_> {
                     &mut lines,
                 );
                 self.line(&format!("static void {name}(void* _0) {{"));
+                // A payload that needs no drop leaves the parameter unread
+                // (`-Wunused-parameter`, `[CG-C-1]`).
+                if lines.is_empty() {
+                    self.line("    (void)_0;");
+                }
                 for line in lines {
                     self.line(&format!("    {line}"));
                 }
@@ -3910,12 +3918,13 @@ impl Emitter<'_> {
     /// its identity (an interface's id, a function value's descriptor, a
     /// `Shared` type's information): defined once, in the main unit, with
     /// external linkage when relaxed units share it. `None` in a relaxed
-    /// unit, which declares it `extern`.
+    /// unit, which declares it `extern`. One the program never reaches is no
+    /// warning (`EMBER_MAYBE_UNUSED`, `[CG-C-1]`).
     fn shared_definition(&self) -> Option<&'static str> {
         match (self.unit, self.split) {
             (Some(_), _) => None,
             (None, true) => Some(""),
-            (None, false) => Some("static "),
+            (None, false) => Some("static EMBER_MAYBE_UNUSED "),
         }
     }
 
@@ -4162,7 +4171,9 @@ impl Emitter<'_> {
 
     /// A body's linkage: `[CG-C-3]`'s inline ones (`inline_bodies`), or
     /// internal in a library, where a host may link two Ember archives;
-    /// after `[CG-C-3a]`'s hints.
+    /// after `[CG-C-3a]`'s hints. An internal one may end up uncalled (the MIR
+    /// inliner copied it into its one caller), which is no warning
+    /// (`EMBER_MAYBE_UNUSED`, `[CG-C-1]`).
     fn linkage(&self, body: &Body) -> String {
         let mut out = String::new();
         if body.inline.never {
@@ -4175,9 +4186,9 @@ impl Emitter<'_> {
             out.push_str("EMBER_HOT ");
         }
         out.push_str(match self.inline_bodies.get(&body.symbol) {
-            Some(true) => "EMBER_INLINED ",
-            Some(false) => "static inline ",
-            None if self.library_mode && body.abi.as_deref() != Some("C") => "static ",
+            Some(true) => "EMBER_INLINED EMBER_MAYBE_UNUSED ",
+            Some(false) => "static inline EMBER_MAYBE_UNUSED ",
+            None if self.library_mode && body.abi.as_deref() != Some("C") => "static EMBER_MAYBE_UNUSED ",
             None => "",
         });
         out
@@ -4268,7 +4279,7 @@ impl Emitter<'_> {
                 restrict_params.insert(local);
             }
         }
-        let unread_all = unread_locals(body);
+        let unread_all = unread_locals(body, &|place: &Place| self.is_void(self.place_ty(place, body)));
         // Byte reductions require a total and counter that no pointer can
         // observe through their addresses. Cache the conservative roots once
         // for the body, rather than scanning the whole CFG for every loop.
@@ -4350,10 +4361,14 @@ impl Emitter<'_> {
         // is legal Ember — and the assignment that binds it then trips
         // `-Wunused-but-set-variable`. `[CG-C-1]` requires warning-free output,
         // so each such local is discarded once, explicitly.
-        // A `void` local is never declared, so it cannot be discarded either.
+        // A `void` local is never declared, so it cannot be discarded either;
+        // a `void` parameter is (as `uint8_t`, `signature`), and is discarded.
         let unread: Vec<usize> = unread_all
             .into_iter()
-            .filter(|index| !self.is_void(body.locals[*index].ty) && !hidden_tests.contains(index))
+            .filter(|index| {
+                let decl = &body.locals[*index];
+                (decl.kind == LocalKind::Arg || !self.is_void(decl.ty)) && !hidden_tests.contains(index)
+            })
             .collect();
         if !unread.is_empty() {
             let discards: Vec<String> =
@@ -4648,6 +4663,17 @@ impl Emitter<'_> {
             StmtKind::Assign { place, rvalue } => {
                 let ty = self.place_ty(place, body);
                 if self.is_void(ty) {
+                    return;
+                }
+                // A copy of a plain value into itself (an optimisation can
+                // leave `x = x`) does nothing, and is `-Wself-assign`
+                // (`[CG-C-1]`); a handle's copy also counts, so it stays.
+                if let Rvalue::Use(Operand::Copy(from) | Operand::Move(from)) = rvalue
+                    && from == place
+                    && self.types.is_copy(ty)
+                    && !self.types.needs_drop(ty)
+                    && !matches!(self.types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_))
+                {
                     return;
                 }
                 self.emit_line_directive(stmt.span);
@@ -7575,12 +7601,18 @@ impl Emitter<'_> {
                 )
             }
             Rvalue::BinaryOp { op, lhs, rhs } => {
-                format!(
-                    "({} {} {})",
-                    self.operand(lhs, body),
-                    op.c_operator(),
-                    self.operand(rhs, body)
-                )
+                let mut right = self.operand(rhs, body);
+                // `[CG-C-1]` — a generic `a == a` at an integer type is a
+                // self-comparison clang and gcc warn about; the right side
+                // through a cast to its own type is the same value, unwarned.
+                if op.is_comparison()
+                    && let (Operand::Copy(l) | Operand::Move(l), Operand::Copy(r) | Operand::Move(r)) = (lhs, rhs)
+                    && l == r
+                    && let Some(ty) = self.operand_type(rhs, body)
+                {
+                    right = format!("({})({right})", self.c_type(ty));
+                }
+                format!("({} {} {right})", self.operand(lhs, body), op.c_operator())
             }
             Rvalue::UnaryOp { op: ember_mir::UnOp::Neg, operand }
                 if self.operand_type(operand, body).is_some_and(|ty| self.half(ty)) =>
@@ -7590,9 +7622,10 @@ impl Emitter<'_> {
             Rvalue::UnaryOp { op, operand } => {
                 let wide = self.operand_type(operand, body).and_then(|ty| self.wide_int(ty));
                 // A negated integer constant is one constant, the least
-                // value included (D-311).
+                // value included (D-311); an unsigned one (`-0`) too, which
+                // MSVC would warn about as `-0U` (`[CG-C-1]`).
                 if let (ember_mir::UnOp::Neg, Operand::Const(Const::Int { value, ty }), None) = (op, operand, wide)
-                    && matches!(self.types.kind(*ty), TyKind::Int(_))
+                    && matches!(self.types.kind(*ty), TyKind::Int(_) | TyKind::Uint(_))
                 {
                     return self.int_literal(value.wrapping_neg(), *ty);
                 }
@@ -8545,7 +8578,7 @@ fn interface_cache_plan(body: &Body) -> BTreeMap<InterfaceCacheKey, String> {
 /// A method that ignores its receiver — `fn sides(self) -> i32: return 4` — is
 /// ordinary Ember, and so is a `_`-shaped parameter, but both trip
 /// `-Wunused-parameter`.
-fn unread_locals(body: &Body) -> Vec<usize> {
+fn unread_locals(body: &Body, void_place: &dyn Fn(&Place) -> bool) -> Vec<usize> {
     let mut read = vec![false; body.locals.len()];
 
     fn read_place(place: &Place, read: &mut [bool]) {
@@ -8556,12 +8589,6 @@ fn unread_locals(body: &Body) -> Vec<usize> {
             }
         }
     }
-    fn read_operand(operand: &Operand, read: &mut [bool]) {
-        match operand {
-            Operand::Copy(place) | Operand::Move(place) => read_place(place, read),
-            Operand::Const(_) => {}
-        }
-    }
     // A projection on the left of an assignment reads the local it starts
     // from: `x.f = 1` needs `x`.
     fn write_place(place: &Place, read: &mut [bool]) {
@@ -8569,10 +8596,22 @@ fn unread_locals(body: &Body) -> Vec<usize> {
             read_place(place, read);
         }
     }
+    // A `void` value has no C representation (`is_void`): reading one (`*u ==
+    // ()`) reads nothing in the C, neither its local nor its index.
+    let read_operand = |operand: &Operand, read: &mut [bool]| {
+        if let Operand::Copy(place) | Operand::Move(place) = operand
+            && !void_place(place)
+        {
+            read_place(place, read);
+        }
+    };
 
     for block in &body.blocks {
         for stmt in &block.stmts {
             match &stmt.kind {
+                // An assignment of a `void` value is not written out
+                // (`emit_stmt`), so what it reads is not read in the C.
+                StmtKind::Assign { place, .. } if void_place(place) => {}
                 StmtKind::Assign { place, rvalue } => {
                     write_place(place, &mut read);
                     match rvalue {
@@ -8589,6 +8628,9 @@ fn unread_locals(body: &Body) -> Vec<usize> {
                         }
                         Rvalue::Repeat { value, .. } => read_operand(value, &mut read),
                         Rvalue::Discriminant(place) => read_place(place, &mut read),
+                        // A reference to a `void` place is
+                        // `ember_void_place()` (`rvalue`): it reads nothing.
+                        Rvalue::Ref { place, .. } if void_place(place) => {}
                         // Taking a local's address counts as using it: the
                         // callee may write through the reference.
                         Rvalue::Ref { place, .. } => {
@@ -8759,16 +8801,30 @@ fn folded_refs(body: &Body, types: &TypeTable) -> BTreeMap<usize, (Rvalue, Ty)> 
 }
 
 /// The views that get a typed pointer of their own: a view local set only
-/// whole, never inside a loop, and never borrowed. Keyed by the local, with
-/// its element type.
+/// whole, never inside a loop, never borrowed, and indexed somewhere (the
+/// pointer is read only by `place_in`'s `_N_ptr[i]`; one never read would be
+/// set for nothing, a C warning, `[CG-C-1]`). Keyed by the local, with its
+/// element type.
 fn view_pointers(body: &Body, types: &TypeTable) -> BTreeMap<usize, Ty> {
     let in_cycles = blocks_in_cycles(body);
+    let mut places = Vec::new();
+    for block in &body.blocks {
+        block.stmts.iter().for_each(|stmt| stmt_places(stmt, &mut places));
+        terminator_places(&block.terminator, &mut places);
+    }
+    let indexed: BTreeSet<usize> = places
+        .iter()
+        .filter(|place| matches!(place.projection.first(), Some(Projection::Index(_))))
+        .map(|place| place.local.0 as usize)
+        .collect();
     let mut candidates: BTreeMap<usize, Ty> = body
         .locals
         .iter()
         .enumerate()
         .filter_map(|(index, decl)| match types.kind(decl.ty) {
-            TyKind::Span { elem, .. } if matches!(decl.kind, LocalKind::Arg | LocalKind::User | LocalKind::Temp) => {
+            TyKind::Span { elem, .. }
+                if matches!(decl.kind, LocalKind::Arg | LocalKind::User | LocalKind::Temp) && indexed.contains(&index) =>
+            {
                 Some((index, *elem))
             }
             _ => None,
@@ -9168,64 +9224,92 @@ fn operand_locals(operand: &Operand, out: &mut Vec<LocalId>) {
 }
 
 fn rvalue_locals(rvalue: &Rvalue, out: &mut Vec<LocalId>) {
-    match rvalue {
-        Rvalue::Use(o) | Rvalue::UnaryOp { operand: o, .. } | Rvalue::Cast { operand: o, .. } => operand_locals(o, out),
-        Rvalue::BinaryOp { lhs, rhs, .. } => {
-            operand_locals(lhs, out);
-            operand_locals(rhs, out);
-        }
-        Rvalue::Aggregate { operands, .. } => operands.iter().for_each(|o| operand_locals(o, out)),
-        Rvalue::Repeat { value, .. } => operand_locals(value, out),
-        Rvalue::Discriminant(place) | Rvalue::Ref { place, .. } => place_locals(place, out),
-    }
+    let mut places = Vec::new();
+    rvalue_places(rvalue, &mut places);
+    places.into_iter().for_each(|place| place_locals(place, out));
 }
 
 /// Every local a statement names, its places' index locals included.
 fn stmt_locals(stmt: &Stmt, out: &mut Vec<LocalId>) {
+    if let StmtKind::StorageLive(l) | StmtKind::StorageDead(l) = &stmt.kind {
+        out.push(*l);
+    }
+    let mut places = Vec::new();
+    stmt_places(stmt, &mut places);
+    places.into_iter().for_each(|place| place_locals(place, out));
+}
+
+/// Every local a terminator names.
+fn terminator_locals(terminator: &Terminator, out: &mut Vec<LocalId>) {
+    let mut places = Vec::new();
+    terminator_places(terminator, &mut places);
+    places.into_iter().for_each(|place| place_locals(place, out));
+}
+
+fn operand_places<'b>(operand: &'b Operand, out: &mut Vec<&'b Place>) {
+    if let Operand::Copy(place) | Operand::Move(place) = operand {
+        out.push(place);
+    }
+}
+
+fn rvalue_places<'b>(rvalue: &'b Rvalue, out: &mut Vec<&'b Place>) {
+    match rvalue {
+        Rvalue::Use(o) | Rvalue::UnaryOp { operand: o, .. } | Rvalue::Cast { operand: o, .. } => operand_places(o, out),
+        Rvalue::BinaryOp { lhs, rhs, .. } => {
+            operand_places(lhs, out);
+            operand_places(rhs, out);
+        }
+        Rvalue::Aggregate { operands, .. } => operands.iter().for_each(|o| operand_places(o, out)),
+        Rvalue::Repeat { value, .. } => operand_places(value, out),
+        Rvalue::Discriminant(place) | Rvalue::Ref { place, .. } => out.push(place),
+    }
+}
+
+/// Every place a statement names.
+fn stmt_places<'b>(stmt: &'b Stmt, out: &mut Vec<&'b Place>) {
     match &stmt.kind {
         StmtKind::Assign { place, rvalue } => {
-            place_locals(place, out);
-            rvalue_locals(rvalue, out);
+            out.push(place);
+            rvalue_places(rvalue, out);
         }
         StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
-            place_locals(dest, out);
-            place_locals(overflow, out);
-            operand_locals(lhs, out);
-            operand_locals(rhs, out);
+            out.push(dest);
+            out.push(overflow);
+            operand_places(lhs, out);
+            operand_places(rhs, out);
         }
         StmtKind::Drop { place, .. }
         | StmtKind::BeginAccess { place, .. }
         | StmtKind::BeginAccessTransfer { place, .. }
         | StmtKind::EndAccess { place, .. }
-        | StmtKind::EndAccessTransfer { place, .. } => place_locals(place, out),
-        StmtKind::StorageLive(l) | StmtKind::StorageDead(l) => out.push(*l),
-        StmtKind::Nop => {}
+        | StmtKind::EndAccessTransfer { place, .. } => out.push(place),
+        StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
     }
 }
 
-/// Every local a terminator names.
-fn terminator_locals(terminator: &Terminator, out: &mut Vec<LocalId>) {
+/// Every place a terminator names.
+fn terminator_places<'b>(terminator: &'b Terminator, out: &mut Vec<&'b Place>) {
     match terminator {
-        Terminator::SwitchInt { discr, .. } => operand_locals(discr, out),
+        Terminator::SwitchInt { discr, .. } => operand_places(discr, out),
         Terminator::Call { args, dest, func, .. } => {
-            args.iter().for_each(|a| operand_locals(a, out));
-            place_locals(dest, out);
+            args.iter().for_each(|a| operand_places(a, out));
+            out.push(dest);
             if let FuncRef::Indirect { operand, .. } = func {
-                operand_locals(operand, out);
+                operand_places(operand, out);
             }
         }
         Terminator::Assert { cond, msg, .. } => {
-            operand_locals(cond, out);
+            operand_places(cond, out);
             match msg {
                 AssertKind::Bounds { len, index } => {
-                    operand_locals(len, out);
-                    operand_locals(index, out);
+                    operand_places(len, out);
+                    operand_places(index, out);
                 }
                 AssertKind::RefCellBorrow { file, line } => {
-                    operand_locals(file, out);
-                    operand_locals(line, out);
+                    operand_places(file, out);
+                    operand_places(line, out);
                 }
-                AssertKind::Panic { message } => operand_locals(message, out),
+                AssertKind::Panic { message } => operand_places(message, out),
                 _ => {}
             }
         }
@@ -9467,7 +9551,10 @@ fn render_float(value: f64, is_f32: bool) -> String {
     }
     if value.is_infinite() {
         let sign = if value < 0.0 { "-" } else { "" };
-        return format!("{sign}EMBER_INF_F64");
+        // The cast keeps an `f32` one from being a `double` narrowed by
+        // assignment, which MSVC warns about (C4244, `[CG-C-1]`).
+        let cast = if is_f32 { "(float)" } else { "" };
+        return format!("{sign}{cast}EMBER_INF_F64");
     }
     for precision in 1..=17 {
         let text = format!("{value:.*e}", precision);

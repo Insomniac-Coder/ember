@@ -10705,6 +10705,26 @@ formal 1/9 count or Phase 2's estimate.
 
 #### Start here after a context reset — state at 2026-10-04 (autopilot)
 
+**2026-10-11, the C warning sweep (D-376, in part), D-545, D-391, and a faster CI.**
+`tools/c_warning_sweep.py clang|msvc|gcc` emits the C of every program that compiles (1,690; the
+other 715 are reject tests and `tests/ui` snapshots) and compiles it with warnings as errors (gcc
+from WSL: copy the tree to Linux's disk as `bench/gcc/make_tree.sh` does, adding tests/, examples/,
+bench/programs and the tool; delete the copy after). ADR-148 lists the C generation fixes: clang now
+reports nothing, and gcc and MSVC nothing from their front ends. **Next:** what gcc and MSVC report
+only at -O2 is still open under D-376 (gcc 20 programs, MSVC 28; the kinds and programs are in its
+row). Check CTL-1's `-Warray-bounds` (`char[3]`) first: it may be a real read past the end. The sweep
+found D-545 (a comparison of two untyped literals compared 32-bit integers in C: `-1.5 < -1.0` was
+false; ADR-149) and D-391 (open since 2026-09-30: two programs in one folder share its interface
+cache, and one program's bound numbering changed `std.collections`' record; ADR-150, with a test that
+fails without the fix). The owner asked for a faster workflow that keeps every test and check, and
+picked the CI change: tests now run in a `ci` cargo profile (optimised, `debug_assertions` and
+overflow checks kept, so the MIR verifier still runs; one suite share 27.9 s -> 6.6 s locally), each
+platform's tests over four machines (everything but the conformance suite, and three thirds of it
+by `EMBER_TEST_SHARD=i/3`), and a fast-forward of `main` to a commit that passed on `phase-*` is not
+tested again. CI took 72 minutes per run before. Local: `cargo test --workspace --profile ci` is the
+fast full suite. The owner did not pick slimmer docs, fewer report-and-wait points, or parallel
+agents (offered 2026-10-11).
+
 **2026-10-11, the other agent's work reviewed** (the owner: "Another agent worked on this language for a
 bit you need to verify their work, fix the things if there are any issues and then continue"). The
 nine commits 9ccf28e to 4337870 (authored as Gunslinger; CI green on all five jobs at every pushed

@@ -5016,6 +5016,96 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-150 — a module's interface record names a bound the same way in every program (D-391)
+
+**Date:** 2026-10-11. **Rules:** `[LT-40]`, `[BLD-2]`.
+
+**Context.** Every program in one folder shares that folder's interface cache
+(`target/<profile>/interface/<folder>`), so a module's record written by one
+program is checked against the summary the next program computes, and a
+difference with the same cache key is an internal error (D-391). A bound with
+arguments over a parameter (`Q: Keyed[K]`, `ToKey[K]`) is an interface instance
+the type checker numbers program-wide (`interface_instance_name`, D-261), and the
+record named bounds by that symbol: a program whose own generic type has such a
+method bound shifted the numbers of `std.collections`' bounds (`ToKey_K0_4`
+against `ToKey_K0_5`), so the second program in the folder stopped. The compiler
+identity in the key, the first suspect, was not the cause.
+
+**Decision.** The record names such a bound by its interface and its canonical
+arguments (`std.collections.ToKey[$P0]`, `recorded_bound_name`); a bound without
+arguments keeps its name. Nothing reads the bound names back: they are part of
+the record's identity only, so the numbering inside the type checker stays.
+
+**Consequences.** A module's record no longer depends on the program compiling
+it. `programs_sharing_a_folder_share_its_interface_cache` fails without the fix;
+checking every one of the 2,405 test, example and benchmark programs in turn
+into its folder's shared cache gives no internal error. Records written before
+carry the old names and are replaced as ordinary invalidations (the key changes
+with the compiler). The specification is unchanged.
+
+---
+
+## ADR-149 — a compared literal takes its default type at the comparison (D-545)
+
+**Date:** 2026-10-11. **Rules:** `[LEX-16]`, `[LEX-17]`.
+
+**Context.** Untyped literals are defaulted where their value is used (`int`,
+`float`). A comparison's value is a `bool`, so when both operands were untyped
+literals nothing defaulted them, and they reached C as locals of the untyped
+literal type, which C generation spells `int32_t`: `-1.5 < -1.0` compared -1 with
+-1 and printed `false`.
+
+**Decision.** In a comparison of two untyped literals, both operands take their
+default type there (`int`, or `float` when either is a float literal). The MIR
+verifier run before C generation (`for_codegen`) gains
+`verify_concrete_literals`: a local of an untyped literal type reaching C is an
+internal error instead of a silent `int32_t`.
+
+**Consequences.** The new LEX-17 case runs in all three profiles; a scan of
+every program's MIR found no other untyped local. The specification is
+unchanged.
+
+---
+
+## ADR-148 — a sweep of every program's C under all three C compilers, and what it fixed (D-376, in part)
+
+**Date:** 2026-10-11. **Rules:** `[CG-C-1]`.
+
+**Context.** `[CG-C-1]`: the C compiles without warnings under `-std=c11 -Wall
+-Wextra` (clang, gcc) and `/W3` (MSVC). One milestone test checked one program;
+a sweep found 424 of the programs warning under clang.
+
+**Decision.** `tools/c_warning_sweep.py clang|msvc|gcc` emits the C of every
+program that compiles (tests, examples, benchmarks; each relaxed `@fastmath`/`@fp`
+unit as its own translation unit) and compiles it with warnings as errors: clang
+checks the syntax (its warnings all come from its front end), gcc and MSVC
+compile at `-O2`/`/O2`, where some of theirs come from. The fixes are in C
+generation, each the general one:
+
+- Internal functions and per-program constants the program may not reach (a body
+  the MIR inliner copied into its one caller, a type's unused type information)
+  are `EMBER_MAYBE_UNUSED` (`__attribute__((unused))` for gcc and clang; MSVC
+  warns about neither at `/W3`).
+- A view gets its typed pointer (`_N_ptr`) only when some place indexes it, the
+  pointer's only reader.
+- A local of a `void` type, which has no C value, is not counted as read and gets
+  no `(void)` discard; a `dyn` adapter's empty drop discards its parameter.
+- An assignment of a plain copyable value to itself is not emitted; a clone's
+  by-address argument is cast to the parameter's type.
+- A comparison of a place with itself (a generic `a == a` at an integer type)
+  casts its right side to its own type: the same value, and no self-comparison
+  warning. A negated unsigned constant (`-0`) is folded like a signed one; an
+  `f32` infinity is cast from the `double` one.
+
+**Consequences.** Of the 1,690 programs that produce C (the other 715 are
+reject tests and diagnostic snapshots), none warns under clang, and none under
+gcc 15.2 or MSVC from their front ends (2026-10-11). What those two report only
+while optimising is still open under D-376: gcc 20 programs, MSVC 28 (listed
+there). The sweep found D-545 and, through programs that produced no C, D-391.
+It is a tool, not yet a CI job. The specification is unchanged.
+
+---
+
 ## ADR-147 — explain missing text capability using its predicate traversal
 
 **Date:** 2026-10-10. **Rules:** `[STD-9]`, `[LEX-19]`, `[TYP-17]`, `[TYP-39]`, `[DIA-14]`.

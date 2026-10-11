@@ -113,6 +113,16 @@ static EMBER_INLINE uint64_t ember_sum_bytes(const void* raw, size_t len, bool s
 #define EMBER_COLD
 #endif
 
+/* `[CG-C-1]` — an internal function or constant the program may never reach
+ * (a body the MIR inliner copied into its one caller, a type's unused type
+ * information) is not a warning: gcc and clang drop it without one. MSVC
+ * warns about neither at /W3. */
+#if defined(__GNUC__) || defined(__clang__)
+#define EMBER_MAYBE_UNUSED __attribute__((unused))
+#else
+#define EMBER_MAYBE_UNUSED
+#endif
+
 /* `[CG-C-3a]` — `@hot`: a function gcc and clang optimise harder. MSVC has
  * no such hint. */
 #if defined(__GNUC__) || defined(__clang__)
