@@ -24,8 +24,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use ember_types::{TyKind, TypeTable};
 
 use ember_mir::{
-    AggregateKind, BasicBlock, BasicBlockId, Body, FuncRef, LocalId, Operand, ParameterMode, Place, Projection, Rvalue,
-    Stmt, StmtKind, Terminator,
+    AggregateKind, BasicBlock, BasicBlockId, Body, Const, FuncRef, LocalId, Operand, ParameterMode, Place, Projection,
+    Rvalue, Stmt, StmtKind, Terminator,
 };
 
 /// Inline every function called from exactly one place into that place;
@@ -70,7 +70,7 @@ pub fn inline_single_calls_all(bodies: &mut Vec<Body>, types: &TypeTable, only_c
                     && bodies[callee].fp == bodies[*caller].fp
                     && inlinable(&bodies[callee], types)
                     && !calls_itself(&bodies[callee])
-                    && (!only_checked || holds_a_check(&bodies[callee])))
+                    && (!only_checked || holds_a_check(&bodies[callee]) || calls_a_parameter(&bodies[callee], types)))
                     .then_some((symbol, (*caller, *block, callee)))
             })
             .collect();
@@ -106,6 +106,17 @@ pub fn inline_single_calls_all(bodies: &mut Vec<Body>, types: &TypeTable, only_c
 
 /// Whether a body holds a check the range facts could remove: an assertion
 /// (bounds, overflow, division by zero, ...) or a checked operation.
+/// D-571 — whether the body calls through a callable value it was given: at
+/// its one call site the value may be a known function, which
+/// `call_known_callables_all` then calls directly, so it is inlined there for
+/// every C compiler.
+fn calls_a_parameter(body: &Body, types: &TypeTable) -> bool {
+    body.blocks.iter().any(|data| {
+        matches!(&data.terminator, Terminator::Call { func: FuncRef::Indirect { operand: Operand::Copy(p) | Operand::Move(p), ty, .. }, .. }
+            if body.local(p.local).kind == ember_mir::LocalKind::Arg && matches!(types.kind(*ty), TyKind::Fn { abi: None, .. }))
+    })
+}
+
 fn holds_a_check(body: &Body) -> bool {
     body.blocks.iter().any(|data| {
         matches!(data.terminator, Terminator::Assert { .. })
@@ -220,6 +231,204 @@ fn calls_itself(body: &Body) -> bool {
     body.blocks.iter().any(|block| {
         matches!(&block.terminator, Terminator::Call { func: FuncRef::Direct { symbol, .. }, .. } if *symbol == body.symbol)
     })
+}
+
+/// D-571 — a call through a callable value that is a known function calls
+/// that function. The value is a local set once, from a constant function,
+/// and nothing changes it after: everything that names it, or a reference
+/// taken to it (followed through copies), is its own setting, a storage
+/// marker, its drop, or a call through it, and a call through a value never
+/// changes which function the value holds (ODR-102). The C compiler sees the
+/// same only when it can follow the value through memory: MSVC could not
+/// (a counted loop calling a lambda passed as a value, 1.83x the C++, and
+/// 3.4x through a copy, D-571), clang and gcc only with a copy.
+pub fn call_known_callables_all(bodies: &mut [Body], types: &TypeTable) -> usize {
+    bodies.iter_mut().map(|body| call_known_callables(body, types)).sum()
+}
+
+fn call_known_callables(body: &mut Body, types: &TypeTable) -> usize {
+    // What a local is set to, when it is set exactly once, as a whole, and
+    // by nothing else (no call's result, no checked operation).
+    let assigned_once = |local: LocalId| -> Option<Rvalue> {
+        let mut found = None;
+        let mut count = 0;
+        for data in &body.blocks {
+            for stmt in &data.stmts {
+                match &stmt.kind {
+                    StmtKind::Assign { place, rvalue } if place.local == local => {
+                        count += 1;
+                        found = place.projection.is_empty().then(|| rvalue.clone());
+                    }
+                    StmtKind::CheckedBinaryOp { dest, overflow, .. } if dest.local == local || overflow.local == local => {
+                        count += 2;
+                    }
+                    _ => {}
+                }
+            }
+            if let Terminator::Call { dest, .. } = &data.terminator
+                && dest.local == local
+            {
+                count += 2;
+            }
+        }
+        if count == 1 { found } else { None }
+    };
+    let mut rewrites: Vec<(usize, String)> = Vec::new();
+    for (index, data) in body.blocks.iter().enumerate() {
+        let Terminator::Call { func: FuncRef::Indirect { operand: Operand::Copy(callee) | Operand::Move(callee), ty, .. }, .. } =
+            &data.terminator
+        else {
+            continue;
+        };
+        if !matches!(types.kind(*ty), TyKind::Fn { abi: None, .. }) {
+            continue;
+        }
+        // The value: the callee itself, or what a chain of references reaches.
+        let mut family: HashSet<LocalId> = HashSet::new();
+        let value = match callee.projection.as_slice() {
+            [] => callee.local,
+            [Projection::Deref] => {
+                let mut reference = callee.local;
+                let mut found = None;
+                for _ in 0..8 {
+                    family.insert(reference);
+                    match assigned_once(reference) {
+                        Some(Rvalue::Use(Operand::Copy(from) | Operand::Move(from))) if from.projection.is_empty() => {
+                            reference = from.local
+                        }
+                        Some(Rvalue::Ref { place, .. }) if place.projection.is_empty() => {
+                            found = Some(place.local);
+                            break;
+                        }
+                        _ => break,
+                    }
+                }
+                let Some(value) = found else { continue };
+                value
+            }
+            _ => continue,
+        };
+        let Some(Rvalue::Use(Operand::Const(Const::Fn(symbol)))) = assigned_once(value) else { continue };
+        family.insert(value);
+        // Every reference to the value, wherever it is taken, joins the family.
+        loop {
+            let before = family.len();
+            for data in &body.blocks {
+                for stmt in &data.stmts {
+                    if let StmtKind::Assign { place, rvalue } = &stmt.kind
+                        && place.projection.is_empty()
+                        && match rvalue {
+                            Rvalue::Ref { place: of, .. } => of.local == value,
+                            Rvalue::Use(Operand::Copy(from) | Operand::Move(from)) => {
+                                from.projection.is_empty() && family.contains(&from.local) && from.local != value
+                            }
+                            _ => false,
+                        }
+                    {
+                        family.insert(place.local);
+                    }
+                }
+            }
+            if family.len() == before {
+                break;
+            }
+        }
+        if family_only_set_and_called(body, &family, value) {
+            rewrites.push((index, symbol.clone()));
+        }
+    }
+    for (index, symbol) in &rewrites {
+        if let Terminator::Call { func, .. } = &mut body.blocks[*index].terminator {
+            *func = FuncRef::Direct { symbol: symbol.clone(), latebound: false };
+        }
+    }
+    rewrites.len()
+}
+
+/// Whether every mention of the value and its references is a setting of one
+/// of them (the value's own constant, a reference to it, a copy of one), a
+/// storage marker, the value's drop, or a call through one of them.
+fn family_only_set_and_called(body: &Body, family: &HashSet<LocalId>, value: LocalId) -> bool {
+    let named = |place: &Place| family.contains(&place.local);
+    let operand_named = |operand: &Operand| matches!(operand, Operand::Copy(p) | Operand::Move(p) if named(p));
+    for data in &body.blocks {
+        for stmt in &data.stmts {
+            match &stmt.kind {
+                StmtKind::Assign { place, rvalue } => {
+                    let setting = place.projection.is_empty()
+                        && family.contains(&place.local)
+                        && match rvalue {
+                            Rvalue::Use(Operand::Const(Const::Fn(_))) => place.local == value,
+                            Rvalue::Ref { place: of, .. } => of.local == value && of.projection.is_empty(),
+                            Rvalue::Use(Operand::Copy(from) | Operand::Move(from)) => {
+                                from.projection.is_empty() && family.contains(&from.local) && from.local != value
+                            }
+                            _ => false,
+                        };
+                    if setting {
+                        continue;
+                    }
+                    if named(place) {
+                        return false;
+                    }
+                    let mentions = match rvalue {
+                        Rvalue::Use(o) | Rvalue::UnaryOp { operand: o, .. } | Rvalue::Cast { operand: o, .. } | Rvalue::Repeat { value: o, .. } => {
+                            operand_named(o)
+                        }
+                        Rvalue::BinaryOp { lhs, rhs, .. } => operand_named(lhs) || operand_named(rhs),
+                        Rvalue::Aggregate { operands, .. } => operands.iter().any(operand_named),
+                        Rvalue::Ref { place, .. } | Rvalue::Discriminant(place) => named(place),
+                    };
+                    if mentions {
+                        return false;
+                    }
+                }
+                StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
+                StmtKind::Drop { place, .. } if place.local == value && place.projection.is_empty() => {}
+                StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
+                    if named(dest) || named(overflow) || operand_named(lhs) || operand_named(rhs) {
+                        return false;
+                    }
+                }
+                other => {
+                    if stmt_mentions(other, family) {
+                        return false;
+                    }
+                }
+            }
+        }
+        match &data.terminator {
+            Terminator::Call { func, args, dest, .. } => {
+                let through = matches!(func, FuncRef::Indirect { operand: Operand::Copy(p) | Operand::Move(p), .. }
+                    if family.contains(&p.local)
+                        && (p.projection.is_empty() && p.local == value
+                            || p.projection == [Projection::Deref] && p.local != value));
+                let other_callee = !through
+                    && matches!(func, FuncRef::Indirect { operand: Operand::Copy(p) | Operand::Move(p), .. } if named(p));
+                if other_callee || args.iter().any(operand_named) || named(dest) {
+                    return false;
+                }
+            }
+            Terminator::SwitchInt { discr, .. } => {
+                if operand_named(discr) {
+                    return false;
+                }
+            }
+            Terminator::Assert { cond, .. } => {
+                if operand_named(cond) {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+/// Any other statement naming one of the family (conservatively: by its debug form).
+fn stmt_mentions(kind: &StmtKind, family: &HashSet<LocalId>) -> bool {
+    let text = format!("{kind:?}");
+    family.iter().any(|local| text.contains(&format!("{local:?}")))
 }
 
 /// `[CG-C-3]`, ADR-107 — for MSVC: a `for` loop's step through a standard

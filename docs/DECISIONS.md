@@ -5016,6 +5016,31 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-169 — A callable value that is a known function is called directly (D-571)
+
+**Date:** 2026-10-12 (autopilot). **Rules:** `[CLO-3]`, `[CLO-10]`, ODR-102, `[RNG-4]`, ADR-081.
+
+**Context.** D-554 made a written `fn` type outside a parameter an owned callable value, so
+`step: fn(int) -> int = fn(x) => x * 3 + 1` passed to `apply` was called through the value: the C
+compilers could not keep its entry known across calls, and the lambda behind its thunk was not
+inlined, so the loop kept the lambda's overflow checks (D-571: 1.6-1.9x the C++).
+
+**Decision.** `call_known_callables_all` (MIR, after the single-call inliner): a call through a
+value whose local is set exactly once, to a constant function, and that nothing else names but
+references to it (followed through copies), storage markers, its drop and calls through it, becomes
+a direct call to that function; a call through a value never changes which function it holds
+(ODR-102). The single-call inliner then runs again, so that function, now called from one place,
+is inlined and the caller's facts can remove its checks. For clang and gcc (ADR-081: only functions
+holding a check) the inliner also takes a function that calls through one of its callable
+parameters, since at its one call site the value may be known.
+
+**Consequences.** `a08_closures`: MSVC 1.01x, clang 1.03x the C++ (were 1.84x, 1.55x). A value
+assigned twice, a stateful closure's value and one passed by reference to anything (`swap`) keep
+the call through the value. A C helper calling through a copy of the value (so the original is
+never written) fixed clang alone and made MSVC 3.4x slower; it was withdrawn.
+
+---
+
 ## ADR-168 — On Windows a view parameter goes as its two words (D-569, D-570)
 
 **Date:** 2026-10-12 (autopilot). **Rules:** `[CG-C-1]`, `[TXT-10]`, `[FN-1]`.

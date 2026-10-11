@@ -1819,6 +1819,23 @@ fn loop_nests_over_separate_lists_get_restrict_functions_for_msvc() {
 {}", clang.stdout);
 }
 
+/// D-571 — a lambda passed as a callable value that is set once is called
+/// directly, inlined, and its overflow checks proved away by the loop's
+/// facts, on every C compiler: `a08_closures` calls nothing through the
+/// value and checks nothing in its loop.
+#[test]
+fn a_known_callable_value_is_called_directly() {
+    let root = workspace_root();
+    let source = format!("bench/programs/a08_closures.{SOURCE_EXT}");
+    for cc in ["msvc", "clang", "gcc"] {
+        let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", cc], &root);
+        assert_eq!(c.exit, 0, "{cc}: C failed:\n{}", c.stderr);
+        let main = c_definition(&c.stdout, &ember_branding::mangled("main"));
+        assert!(!main.contains(".native))("), "{cc}: the loop calls through the value:\n{main}");
+        assert!(!main.contains("ck_mul_i64("), "{cc}: the lambda's check stayed:\n{main}");
+    }
+}
+
 /// D-569 — on Windows a function only ever called directly takes each `str`
 /// or span parameter as its pointer and length (the platform passes a
 /// 16-byte struct through memory); one used as a value keeps the view whole.

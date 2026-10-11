@@ -2384,6 +2384,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // the slower unsigned `max` (`cmovbe`) for values it proves non-negative
     // (ADR-081). MSVC's inliner is weaker, so for it every such function.
     ember_analysis::inline_single_calls_all(&mut bodies, &types, !c_for_msvc(&options));
+    // D-571 — a call through a value that is a known function calls it, and
+    // that function, now called from one place, is inlined there too.
+    if ember_analysis::call_known_callables_all(&mut bodies, &types) > 0 {
+        ember_analysis::inline_single_calls_all(&mut bodies, &types, !c_for_msvc(&options));
+        ember_analysis::install_callable_regions_all(&mut bodies, &types);
+    }
     // ADR-107 — MSVC keeps a struct whose address goes to a function in
     // memory, inlined or not: a `for` loop's step through a standard
     // iterator is inlined and the iterator becomes a plain local.

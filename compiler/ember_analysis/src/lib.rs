@@ -63,7 +63,7 @@ pub use uncounted_handles::mark_uncounted_handles_all;
 pub use temporary_owners::transfer_temporary_owners_all;
 pub use range_facts::remove_proven_checks_all;
 pub use callable_arguments::specialize_callable_arguments_all;
-pub use inline::{inline_loop_steps_all, inline_single_calls_all};
+pub use inline::{call_known_callables_all, inline_loop_steps_all, inline_single_calls_all};
 pub use long_access_lint::lint_long_term_access_across_dynamic_calls_all;
 pub use cycles::{
     inspect_ownership_graph, lint_strong_cycles, OwnershipCycle, OwnershipEdge, OwnershipEdgeKind,
