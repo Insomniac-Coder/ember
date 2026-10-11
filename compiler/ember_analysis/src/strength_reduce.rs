@@ -453,8 +453,15 @@ pub(crate) fn stmt_reads(stmt: &Stmt, read: &mut [bool]) {
             }
         }
         StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
-            place_reads(dest, read);
-            place_reads(overflow, read);
+            // As an assignment's place: a whole destination is written, not
+            // read. Counted as read, a loop's overflow flag looked live on
+            // entry, and a moved loop (`kernels`) was passed it unset, which
+            // gcc and MSVC warn about (`[CG-C-1]`).
+            for place in [dest, overflow] {
+                if !place.projection.is_empty() {
+                    place_reads(place, read);
+                }
+            }
             operand_reads(lhs, read);
             operand_reads(rhs, read);
         }

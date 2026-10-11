@@ -4438,8 +4438,11 @@ impl Emitter<'_> {
         // it: MSVC does not unroll a loop setting a function-wide variable.
         // An inner block may redeclare a name, so the body's C is unchanged.
         // For MSVC only: clang then lost a range it had used (ADR-086).
-        let carried = self.carried_scalars(counted, body, locals);
-        if !carried.is_empty() {
+        // `[CG-C-1]` — one the loop sets before any read, and nothing reads
+        // after it, has no value to copy either way: copied in, it was read
+        // unset, which gcc and MSVC warn about. It is only declared.
+        let (carried, private) = self.carried_scalars(counted, body, locals);
+        if !carried.is_empty() || !private.is_empty() {
             self.line("    {");
             for &local in &carried {
                 self.line(&format!("    {} _{local}_in = _{local};", self.c_type(body.locals[local].ty)));
@@ -4447,6 +4450,11 @@ impl Emitter<'_> {
             self.line("    {");
             for &local in &carried {
                 self.line(&format!("    {} _{local} = _{local}_in;", self.c_type(body.locals[local].ty)));
+            }
+            // Set and perhaps never read (an element index the body does not
+            // use): the discard keeps that from being a warning.
+            for &local in &private {
+                self.line(&format!("    {} _{local}; (void)_{local};", self.c_type(body.locals[local].ty)));
             }
         }
         let (counter, limit) = (counted.counter.0, counted.limit.0);
@@ -4490,7 +4498,7 @@ impl Emitter<'_> {
             self.emit_for_body(counted, body, locals);
             self.line("    }");
         }
-        if !carried.is_empty() {
+        if !carried.is_empty() || !private.is_empty() {
             for &local in &carried {
                 self.line(&format!("    _{local}_in = _{local};"));
             }
@@ -4560,7 +4568,8 @@ impl Emitter<'_> {
         // A loop that carries a scalar from turn to turn (a running total:
         // each turn waits for the one before, `[SIMD-7]`) gains nothing from
         // more turns per pass.
-        if !self.carried_scalars(counted, body, locals).is_empty() {
+        let (carried, private) = self.carried_scalars(counted, body, locals);
+        if !carried.is_empty() || !private.is_empty() {
             return None;
         }
         // A call counts with the statements MSVC inlines in its place; a call
@@ -4586,9 +4595,12 @@ impl Emitter<'_> {
     /// never takes (no reference could see the copy instead of the local).
     /// Not the counter, which the `for` header steps, nor a local the loop
     /// declares itself (`locals`).
-    fn carried_scalars(&self, counted: &ForLoop, body: &Body, locals: &[usize]) -> Vec<usize> {
+    /// The scalars `emit_for_loop` gives a block-local: those whose value
+    /// goes in or out (copied), and those the loop always sets before reading
+    /// that nothing outside it reads (declared only).
+    fn carried_scalars(&self, counted: &ForLoop, body: &Body, locals: &[usize]) -> (Vec<usize>, Vec<usize>) {
         if !self.for_msvc {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         }
         let mut set = BTreeSet::new();
         for &block in &counted.chain {
@@ -4612,7 +4624,8 @@ impl Emitter<'_> {
                 _ => None,
             })
             .collect();
-        set.into_iter()
+        let carried: Vec<usize> = set
+            .into_iter()
             .filter(|&local| {
                 local != counted.counter.0 as usize
                     && !locals.contains(&local)
@@ -4625,7 +4638,50 @@ impl Emitter<'_> {
                         TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(FloatTy::F32 | FloatTy::F64)
                     )
             })
-            .collect()
+            .collect();
+        if carried.is_empty() {
+            return (carried, Vec::new());
+        }
+        // Read outside the loop's blocks, or in them before the loop sets it
+        // (the chain runs in order, so the first mention decides).
+        let void_place = |place: &Place| self.is_void(self.place_ty(place, body));
+        let in_chain: BTreeSet<usize> = counted.chain.iter().copied().collect();
+        let mut read_outside = vec![false; body.locals.len()];
+        for (_, block) in body.blocks.iter().enumerate().filter(|(index, _)| !in_chain.contains(index)) {
+            block.stmts.iter().for_each(|stmt| stmt_c_reads(stmt, &mut read_outside, &void_place));
+            terminator_c_reads(&block.terminator, &mut read_outside, &void_place);
+        }
+        let set_first = |local: usize| {
+            for &block in &counted.chain {
+                let data = &body.blocks[block];
+                for stmt in &data.stmts {
+                    let mut read = vec![false; body.locals.len()];
+                    stmt_c_reads(stmt, &mut read, &void_place);
+                    if read[local] {
+                        return false;
+                    }
+                    let whole = |place: &Place| place.local.0 as usize == local && place.projection.is_empty();
+                    match &stmt.kind {
+                        StmtKind::Assign { place, .. } if whole(place) => return true,
+                        StmtKind::CheckedBinaryOp { dest, overflow, .. } if whole(dest) || whole(overflow) => return true,
+                        _ => {}
+                    }
+                }
+                let mut read = vec![false; body.locals.len()];
+                terminator_c_reads(&data.terminator, &mut read, &void_place);
+                if read[local] {
+                    return false;
+                }
+                if let Terminator::Call { dest, .. } = &data.terminator
+                    && dest.local.0 as usize == local
+                    && dest.projection.is_empty()
+                {
+                    return true;
+                }
+            }
+            false
+        };
+        carried.into_iter().partition(|&local| read_outside[local] || !set_first(local))
     }
 
     /// After a view with a pointer of its own is set, its pointer is too.
@@ -8580,118 +8636,123 @@ fn interface_cache_plan(body: &Body) -> BTreeMap<InterfaceCacheKey, String> {
 /// `-Wunused-parameter`.
 fn unread_locals(body: &Body, void_place: &dyn Fn(&Place) -> bool) -> Vec<usize> {
     let mut read = vec![false; body.locals.len()];
-
-    fn read_place(place: &Place, read: &mut [bool]) {
-        read[place.local.0 as usize] = true;
-        for projection in &place.projection {
-            if let Projection::Index(local) = projection {
-                read[local.0 as usize] = true;
-            }
-        }
-    }
-    // A projection on the left of an assignment reads the local it starts
-    // from: `x.f = 1` needs `x`.
-    fn write_place(place: &Place, read: &mut [bool]) {
-        if !place.projection.is_empty() {
-            read_place(place, read);
-        }
-    }
-    // A `void` value has no C representation (`is_void`): reading one (`*u ==
-    // ()`) reads nothing in the C, neither its local nor its index.
-    let read_operand = |operand: &Operand, read: &mut [bool]| {
-        if let Operand::Copy(place) | Operand::Move(place) = operand
-            && !void_place(place)
-        {
-            read_place(place, read);
-        }
-    };
-
     for block in &body.blocks {
-        for stmt in &block.stmts {
-            match &stmt.kind {
-                // An assignment of a `void` value is not written out
-                // (`emit_stmt`), so what it reads is not read in the C.
-                StmtKind::Assign { place, .. } if void_place(place) => {}
-                StmtKind::Assign { place, rvalue } => {
-                    write_place(place, &mut read);
-                    match rvalue {
-                        Rvalue::Use(o) | Rvalue::UnaryOp { operand: o, .. } => {
-                            read_operand(o, &mut read)
-                        }
-                        Rvalue::Cast { operand, .. } => read_operand(operand, &mut read),
-                        Rvalue::BinaryOp { lhs, rhs, .. } => {
-                            read_operand(lhs, &mut read);
-                            read_operand(rhs, &mut read);
-                        }
-                        Rvalue::Aggregate { operands, .. } => {
-                            operands.iter().for_each(|o| read_operand(o, &mut read))
-                        }
-                        Rvalue::Repeat { value, .. } => read_operand(value, &mut read),
-                        Rvalue::Discriminant(place) => read_place(place, &mut read),
-                        // A reference to a `void` place is
-                        // `ember_void_place()` (`rvalue`): it reads nothing.
-                        Rvalue::Ref { place, .. } if void_place(place) => {}
-                        // Taking a local's address counts as using it: the
-                        // callee may write through the reference.
-                        Rvalue::Ref { place, .. } => {
-                            read[place.local.0 as usize] = true;
-                            read_place(place, &mut read);
-                        }
-                    }
-                }
-                StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
-                    write_place(dest, &mut read);
-                    write_place(overflow, &mut read);
-                    read_operand(lhs, &mut read);
-                    read_operand(rhs, &mut read);
-                }
-                // A drop reads what it is dropping, and its flag.
-                StmtKind::Drop { place, flag, .. } => {
-                    read_place(place, &mut read);
-                    if let Some(flag) = flag {
-                        read[flag.0 as usize] = true;
-                    }
-                }
-                StmtKind::BeginAccess { place, .. }
-                | StmtKind::BeginAccessTransfer { place, .. }
-                | StmtKind::EndAccess { place, .. }
-                | StmtKind::EndAccessTransfer { place, .. } => {
-                    read_place(place, &mut read);
-                }
-                StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
-            }
-        }
-        match &block.terminator {
-            Terminator::SwitchInt { discr, .. } => read_operand(discr, &mut read),
-            Terminator::Call { args, dest, .. } => {
-                args.iter().for_each(|a| read_operand(a, &mut read));
-                write_place(dest, &mut read);
-            }
-            Terminator::Assert { cond, msg, .. } => {
-                read_operand(cond, &mut read);
-                if let AssertKind::Bounds { len, index } = msg {
-                    read_operand(len, &mut read);
-                    read_operand(index, &mut read);
-                }
-                if let AssertKind::RefCellBorrow { file, line } = msg {
-                    read_operand(file, &mut read);
-                    read_operand(line, &mut read);
-                }
-                if let AssertKind::Panic { message } = msg {
-                    read_operand(message, &mut read);
-                }
-            }
-            Terminator::Return => read[RETURN_LOCAL.0 as usize] = true,
-            Terminator::Goto(_) | Terminator::Unreachable => {}
-        }
+        block.stmts.iter().for_each(|stmt| stmt_c_reads(stmt, &mut read, void_place));
+        terminator_c_reads(&block.terminator, &mut read, void_place);
     }
-
     body.locals
         .iter()
         .enumerate()
         .filter(|(index, decl)| decl.kind != LocalKind::Return && !read[*index])
         .map(|(index, _)| index)
         .collect()
+}
+
+fn c_read_place(place: &Place, read: &mut [bool]) {
+    read[place.local.0 as usize] = true;
+    for projection in &place.projection {
+        if let Projection::Index(local) = projection {
+            read[local.0 as usize] = true;
+        }
+    }
+}
+
+// A projection on the left of an assignment reads the local it starts from:
+// `x.f = 1` needs `x`.
+fn c_write_place(place: &Place, read: &mut [bool]) {
+    if !place.projection.is_empty() {
+        c_read_place(place, read);
+    }
+}
+
+// A `void` value has no C representation (`is_void`): reading one (`*u ==
+// ()`) reads nothing in the C, neither its local nor its index.
+fn c_read_operand(operand: &Operand, read: &mut [bool], void_place: &dyn Fn(&Place) -> bool) {
+    if let Operand::Copy(place) | Operand::Move(place) = operand
+        && !void_place(place)
+    {
+        c_read_place(place, read);
+    }
+}
+
+/// The locals a statement's C reads, set in `read`. A whole destination is
+/// written, not read.
+fn stmt_c_reads(stmt: &Stmt, read: &mut [bool], void_place: &dyn Fn(&Place) -> bool) {
+    match &stmt.kind {
+        // An assignment of a `void` value is not written out (`emit_stmt`), so
+        // what it reads is not read in the C.
+        StmtKind::Assign { place, .. } if void_place(place) => {}
+        StmtKind::Assign { place, rvalue } => {
+            c_write_place(place, read);
+            match rvalue {
+                Rvalue::Use(o) | Rvalue::UnaryOp { operand: o, .. } | Rvalue::Cast { operand: o, .. } => {
+                    c_read_operand(o, read, void_place)
+                }
+                Rvalue::BinaryOp { lhs, rhs, .. } => {
+                    c_read_operand(lhs, read, void_place);
+                    c_read_operand(rhs, read, void_place);
+                }
+                Rvalue::Aggregate { operands, .. } => operands.iter().for_each(|o| c_read_operand(o, read, void_place)),
+                Rvalue::Repeat { value, .. } => c_read_operand(value, read, void_place),
+                Rvalue::Discriminant(place) => c_read_place(place, read),
+                // A reference to a `void` place is `ember_void_place()`
+                // (`rvalue`): it reads nothing.
+                Rvalue::Ref { place, .. } if void_place(place) => {}
+                // Taking a local's address counts as using it: the callee may
+                // write through the reference.
+                Rvalue::Ref { place, .. } => c_read_place(place, read),
+            }
+        }
+        StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
+            c_write_place(dest, read);
+            c_write_place(overflow, read);
+            c_read_operand(lhs, read, void_place);
+            c_read_operand(rhs, read, void_place);
+        }
+        // A drop reads what it is dropping, and its flag.
+        StmtKind::Drop { place, flag, .. } => {
+            c_read_place(place, read);
+            if let Some(flag) = flag {
+                read[flag.0 as usize] = true;
+            }
+        }
+        StmtKind::BeginAccess { place, .. }
+        | StmtKind::BeginAccessTransfer { place, .. }
+        | StmtKind::EndAccess { place, .. }
+        | StmtKind::EndAccessTransfer { place, .. } => c_read_place(place, read),
+        StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
+    }
+}
+
+/// The locals a terminator's C reads, set in `read`.
+fn terminator_c_reads(terminator: &Terminator, read: &mut [bool], void_place: &dyn Fn(&Place) -> bool) {
+    match terminator {
+        Terminator::SwitchInt { discr, .. } => c_read_operand(discr, read, void_place),
+        Terminator::Call { args, dest, func, .. } => {
+            args.iter().for_each(|a| c_read_operand(a, read, void_place));
+            c_write_place(dest, read);
+            if let FuncRef::Indirect { operand, .. } = func {
+                c_read_operand(operand, read, void_place);
+            }
+        }
+        Terminator::Assert { cond, msg, .. } => {
+            c_read_operand(cond, read, void_place);
+            match msg {
+                AssertKind::Bounds { len, index } => {
+                    c_read_operand(len, read, void_place);
+                    c_read_operand(index, read, void_place);
+                }
+                AssertKind::RefCellBorrow { file, line } => {
+                    c_read_operand(file, read, void_place);
+                    c_read_operand(line, read, void_place);
+                }
+                AssertKind::Panic { message } => c_read_operand(message, read, void_place),
+                _ => {}
+            }
+        }
+        Terminator::Return => read[RETURN_LOCAL.0 as usize] = true,
+        Terminator::Goto(_) | Terminator::Unreachable => {}
+    }
 }
 
 /// A branch on a comparison held in a temporary that nothing else names:
