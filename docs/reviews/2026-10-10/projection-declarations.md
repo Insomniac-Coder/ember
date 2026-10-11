@@ -36,7 +36,7 @@ baseline/final focused results and all 50 release benchmark C hashes. Every
 benchmark's C is byte-identical before/after. This protects the existing runtime
 code without claiming new timing measurements or changing README numbers.
 The local compiler snapshots, intermediate failures, C outputs and gate logs
-remain in `build/d540-20261010/`. The full workspace matrix runs in CI before
+remain in `build/d540-20261010/` (deleted 2026-10-11 under the owner's disk rule; the results are recorded in docs/reviews). The full workspace matrix runs in CI before
 main promotion; the owner requested avoiding another local full conformance run.
 
 Read-only review checked stable slots, deferred equality/callable handling,

@@ -67,4 +67,4 @@ candidate. Runtime and standard-library sources are unchanged, so no runtime
 work was added to those benchmarks. This is code-identity evidence, not a new
 timing claim; README figures retain their existing measurements. Raw checks,
 compiler snapshots, generated C and gate logs are under
-`build/formatting-20261010/`.
+`build/formatting-20261010/` (deleted 2026-10-11 under the owner's disk rule; the results are recorded in docs/reviews).

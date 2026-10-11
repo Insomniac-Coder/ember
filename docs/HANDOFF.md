@@ -10705,6 +10705,24 @@ formal 1/9 count or Phase 2's estimate.
 
 #### Start here after a context reset — state at 2026-10-04 (autopilot)
 
+**2026-10-11, the other agent's work reviewed** (the owner: "Another agent worked on this language for a
+bit you need to verify their work, fix the things if there are any issues and then continue"). The
+nine commits 9ccf28e to 4337870 (authored as Gunslinger; CI green on all five jobs at every pushed
+head; `main` at 4337870) were read and checked: a fresh release build, the quick check over every
+conformance folder (0 failing, their 39 new test files included), `ember check` of every example and
+benchmark program (51, none failing), and the README's charts and slow count regenerated from
+`bench/results/2026-10-09-*.log` byte for byte. The type-checker changes are general (one shared
+constructor walk for substitution and associated types, operator and comparison bounds checked by
+the standard interface's identity, not a method's name) and follow the specification: `[STD-27]`
+gives `T: Float` `Copy`, `Eq`, `Ord` and `Default` but not `Display`/`Debug`, so D-539's narrowing is
+a conformance fix. The map change is private to `Map` (public `Option` results unchanged). The b16
+twins' buffer offsets make the C reference faster and steadier, not slower. Two small notes, left
+as they are: `T: Float` still implies `Clone` (harmless: every float is `Copy`), and
+`is_operator_bound` formats a string per check. Their local evidence folders in `build/` (253 MB:
+baseline compilers, generated C, assembly, executables) were deleted under the owner's disk rule;
+the results stay in `docs/reviews/`. The full suite runs in CI (the owner's validation
+preference); the thermal rules hold for long local runs.
+
 **2026-10-10, formatting and comparison follow-ups.** The owner requested
 all three remaining follow-ups, then commit/push. The prior batch `562fe85`
 passed all five jobs in CI run `38060826982` and was fast-forwarded and pushed
@@ -10717,7 +10735,7 @@ owner methods lost text and Float capabilities that free functions retained.
 D-544 checks comparison bounds on both sides without cascading after an unknown
 operand. Thirteen test programs plus one imported support fixture cover these
 paths (ADR-147). Evidence and baseline compiler are in
-`build/formatting-20261010/`; details are in the
+`build/formatting-20261010/` (deleted 2026-10-11 under the owner's disk rule; the results are recorded in docs/reviews); details are in the
 [follow-up review](reviews/2026-10-10/formatting-followups.md).
 
 The full suite still belongs in CI before main promotion. The owner's latest
@@ -10737,7 +10755,7 @@ positional interface bounds. Tests exposed D-541 independently: a generic
 owner method rebased its types but left its projection metadata at the old
 owner-prefixed slot. That base is now rebased too (ADR-146). Six focused tests
 cover both defects. The local baseline and evidence are preserved under
-`build/d540-20261010/`; the full suite still runs in CI before promotion, per the
+`build/d540-20261010/` (deleted 2026-10-11 under the owner's disk rule; the results are recorded in docs/reviews); the full suite still runs in CI before promotion, per the
 owner's validation preference. Temperature waiting remains suspended; focused
 local checks use efficiency cores. No new runtime work is introduced.
 
@@ -10762,7 +10780,7 @@ README timing values are unchanged. Focused tests run on efficiency cores;
 temperature waiting remains suspended by the owner's instruction. The full
 suite belongs in CI, not another local conformance sweep. This batch is to be
 pushed to `phase-next` and promoted only once all five CI jobs succeed. The
-saved baseline/compiler C evidence is in `build/assoc-20261010/`.
+saved baseline/compiler C evidence is in `build/assoc-20261010/` (deleted 2026-10-11 under the owner's disk rule; the results are recorded in docs/reviews).
 
 **Next after this batch:** D-540, a separately reproduced declaration-order
 issue with `C: Build[S.Item]`, plus the formatting diagnostic follow-ups listed
@@ -10798,7 +10816,7 @@ pass; the retained timing windows have no Windows power-source change events.
 Full-suite CI remains required before promotion. Phase estimates are unchanged
 by this performance work.
 Raw local samples and saved before/after binaries are under
-`build/maintenance-20261009/`; the two versions run interleaved with each twin.
+`build/maintenance-20261009/` (deleted 2026-10-11 under the owner's disk rule; the results are recorded in docs/reviews); the two versions run interleaved with each twin.
 
 The eight associated-type review probes now reproduce their predicted outcomes,
 and their corrected setup controls pass. Sources and observations are retained
@@ -10809,7 +10827,7 @@ triage/concrete instantiations and fixes; no type-checker fix is claimed here.
 pushed to `08a63db` (the existing five-job phase-next CI was green). The four
 named old patches in the Claude session's `worktree_patches` directory were
 deleted; their names, sizes and hashes are retained locally in
-`build/maintenance-20261009/deleted-patches.json`. Enterprise Companion and its
+`build/maintenance-20261009/deleted-patches.json` (deleted 2026-10-11 under the owner's disk rule; the results are recorded in docs/reviews). Enterprise Companion and its
 WSL setup were not changed.
 
 The maintenance batch makes test output directories scope-owned: native
@@ -10856,18 +10874,13 @@ runners, the chart script, the README run's logs) moved from a session scratch f
 is where benchmark and probe builds go; the scratch folder, four stale git worktrees and the WSL
 copies (13 GB of builds, then every leftover) were deleted. `tools/error_pages.py` and
 `tools/spec_check.py` were not run after this, as they need the compiler built: run them at the
-next build. **To ask the owner** (the owner: "note down the rest of the things and ask me later"):
-(1) the tests build every program into `target/debug/bin` and never delete them (7 GB came back
-each full run): build into a folder deleted afterwards? (2) the linked-program cache
-(`%LOCALAPPDATA%\ember\cache\programs`, ADR-136) keeps every program it ever linked: a size limit,
-oldest first? (3) the clang-built twins of the `p` and `t` sets lack Ember's `-ffp-contract=off
--fno-fast-math` (`bench/run_windows.py`'s `FP_FLAG_SETS`), while the README says the same flags:
-their work is integers and text, so no number changes, but make it one rule? (4) the review
-workflow for places that treat `T` and `T.Name` differently (above). (5) MSVC `a16_map_text` is
-still 1.14x C++, not analysed further. (6) four old patch files (`ab_*`, WSL `ember`/`ab-final`
-edits) kept in the session scratch folder: delete them? (7) fast-forward `main` to this commit
-once CI is green? (8) for the owner to run, to give the 13 GB freed in WSL back to Windows (its
-disk file stays 27.7 GB until then): `wsl --shutdown`, then `wsl --manage Ubuntu --set-sparse true`.
+next build (both pass, 2026-10-11). **The owner's list of 2026-10-06, all settled by 2026-10-11:**
+(1) the tests delete their programs (9ccf28e); (2) the program cache was already capped (ADR-136:
+2 GiB, trimmed to 1.5 GiB least recently used first), the list was wrong to say otherwise;
+(3) every twin uses the strict float flags (2a54e03); (4) the `T`/`T.Name` review found and fixed
+D-533 to D-544; (5) MSVC `a16_map_text` left the slow list with the compact map lookup (4dd9c58,
+ADR-144); (6) the old patch files are gone; (7) `main` follows `phase-next` after green CI;
+(8) the WSL disk file is 18 GB, and what it holds now is another project's (nothing of Ember's).
 
 **2026-10-06 (afternoon), the slow rows** (the owner: "start looking into the slow downs and also
 see if anything can be done about the ones in the greater than 10% slow category ... commit push

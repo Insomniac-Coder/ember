@@ -35,7 +35,7 @@ Eighteen new conformance files provide acceptance/rejection pairs and concrete
 execution checks. The saved baseline is the compiler from `c428d11`, copied
 before rebuilding. [Final baseline results](baseline-results.json) reproduce 13 failing regression
 files and five passing controls. All 18 pass with the candidate. The initial
-RED run and intermediary slice checks are retained in `build/assoc-20261010/`.
+RED run and intermediary slice checks are retained in `build/assoc-20261010/` (deleted 2026-10-11 under the owner's disk rule; the results are recorded in docs/reviews).
 [Focused final results](focused-results.json) record the annotations check.
 The older Pair default-method test now explicitly requires Eq, which its
 comparison needed under TYP-17; its behavior assertions are retained.
@@ -53,7 +53,7 @@ successful compilation and exact output equality. Runtime and standard-library
 sources are unchanged in this batch, so the existing benchmark execution code
 has no added work. This is a code-identity check, not a new timing claim; README
 numbers remain the measured October 9 results. Local evidence and generated C
-are preserved under `build/assoc-20261010/`.
+are preserved under `build/assoc-20261010/` (deleted 2026-10-11 under the owner's disk rule; the results are recorded in docs/reviews).
 
 ## Follow-up findings
 
