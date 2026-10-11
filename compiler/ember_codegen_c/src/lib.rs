@@ -170,6 +170,7 @@ pub fn emit(
         split,
         for_msvc,
         payload_zeros: BTreeMap::new(),
+        deep_bindings: Vec::new(),
         library_mode,
         type_namespace,
         line_directives: true,
@@ -386,6 +387,10 @@ struct Emitter<'a> {
     /// For MSVC, each payload enum some local is set to a payload-free
     /// variant of, with its type: it has a zero constant (`emit_payload_zeros`).
     payload_zeros: BTreeMap<EnumId, Ty>,
+    /// `[GRM-39]` (D-514) — for the statement being written, each pointer a
+    /// place past `DEREF_NESTING` dereferences reads last, bound to a C local
+    /// (`bind_deep_places`); `place_in` reads through it.
+    deep_bindings: Vec<(Place, String)>,
     library_mode: bool,
     type_namespace: String,
     line_directives: bool,
@@ -4741,6 +4746,64 @@ impl Emitter<'_> {
     }
 
     fn emit_stmt(&mut self, stmt: &Stmt, body: &Body) {
+        let mut places = Vec::new();
+        stmt_places(stmt, &mut places);
+        let bound = self.bind_deep_places(&places, body);
+        self.emit_stmt_unbound(stmt, body);
+        self.unbind_deep_places(bound);
+    }
+
+    /// `[GRM-39]` (D-514) — each place of a statement past `DEREF_NESTING`
+    /// dereferences reads through a C local holding the pointer its last
+    /// dereference reads, set once in a block around the statement. A String
+    /// clone whose two arguments each read 256 boxes deep did not finish under
+    /// MSVC's `/O2` once it inlined the clone's helper; with the pointer bound
+    /// it builds at once. The loads are the same. A reference to a `Cell`,
+    /// whose `const` the place casts away (`place_in`), is left as it is.
+    fn bind_deep_places(&mut self, places: &[&Place], body: &Body) -> bool {
+        let mut bound = false;
+        for place in places {
+            let derefs: Vec<usize> = place
+                .projection
+                .iter()
+                .enumerate()
+                .filter(|(_, step)| matches!(step, Projection::Deref))
+                .map(|(index, _)| index)
+                .collect();
+            let Some(&last) = derefs.last() else { continue };
+            if derefs.len() <= DEREF_NESTING {
+                continue;
+            }
+            let pointer = Place { local: place.local, projection: place.projection[..last].to_vec() };
+            if self.deep_bindings.iter().any(|(bound, _)| *bound == pointer) {
+                continue;
+            }
+            let ty = self.place_ty(&pointer, body);
+            if matches!(self.types.kind(ty), TyKind::Ref { mutable: false, inner }
+                if matches!(self.types.kind(*inner), TyKind::Struct(id) if self.cell_inner_id(*id).is_some()))
+            {
+                continue;
+            }
+            if !bound {
+                self.line("    {");
+                bound = true;
+            }
+            let name = format!("_deep{}", self.deep_bindings.len());
+            let value = self.place_in(&pointer, body);
+            self.line(&format!("    {} {name} = {value};", self.c_type(ty)));
+            self.deep_bindings.push((pointer, name));
+        }
+        bound
+    }
+
+    fn unbind_deep_places(&mut self, bound: bool) {
+        if bound {
+            self.deep_bindings.clear();
+            self.line("    }");
+        }
+    }
+
+    fn emit_stmt_unbound(&mut self, stmt: &Stmt, body: &Body) {
         match &stmt.kind {
             StmtKind::Assign { place, .. }
                 if place.projection.is_empty()
@@ -5328,6 +5391,14 @@ impl Emitter<'_> {
     }
 
     fn emit_terminator(&mut self, terminator: &Terminator, body: &Body, index: usize) {
+        let mut places = Vec::new();
+        terminator_places(terminator, &mut places);
+        let bound = self.bind_deep_places(&places, body);
+        self.emit_terminator_unbound(terminator, body, index);
+        self.unbind_deep_places(bound);
+    }
+
+    fn emit_terminator_unbound(&mut self, terminator: &Terminator, body: &Body, index: usize) {
         match terminator {
             Terminator::Goto(target) => {
                 // A jump to the next block in order is a fallthrough.
@@ -7338,8 +7409,26 @@ impl Emitter<'_> {
     fn place_in(&self, place: &Place, body: &Body) -> String {
         let mut out = format!("_{}", place.local.0);
         let mut at = Cursor { ty: body.local(place.local).ty, variant: None };
+        let mut start = 0;
+        // `bind_deep_places`: the longest bound pointer this place reads.
+        if let Some((pointer, name)) = self
+            .deep_bindings
+            .iter()
+            .filter(|(pointer, _)| {
+                pointer.local == place.local
+                    && place.projection.starts_with(&pointer.projection)
+                    && place.projection.get(pointer.projection.len()) == Some(&Projection::Deref)
+            })
+            .max_by_key(|(pointer, _)| pointer.projection.len())
+        {
+            for projection in &place.projection[..=pointer.projection.len()] {
+                at = self.project(at, projection);
+            }
+            out = format!("(*{name})");
+            start = pointer.projection.len() + 1;
+        }
         let mut derefs = 0;
-        for (position, projection) in place.projection.iter().enumerate() {
+        for (position, projection) in place.projection.iter().enumerate().skip(start) {
             match projection {
                 // A view with a pointer of its own indexes through it.
                 Projection::Index(local) if position == 0 && self.view_pointers.contains_key(&(place.local.0 as usize)) => {
@@ -9859,6 +9948,7 @@ mod string_descriptor_view_parts_tests {
             split: false,
             for_msvc: false,
             payload_zeros: BTreeMap::new(),
+            deep_bindings: Vec::new(),
             library_mode: false,
             type_namespace: String::new(),
             line_directives: false,

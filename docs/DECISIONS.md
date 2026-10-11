@@ -5016,6 +5016,31 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-152 — a place past sixteen dereferences reads through a pointer bound once per statement (D-514)
+
+**Date:** 2026-10-11. **Rules:** `[GRM-39]`, `[CG-C-2]`.
+
+**Context.** `[GRM-39]` wants a value 256 boxes deep to compile on every C compiler. MSVC's `/O2`
+did not finish GRM-39's program (D-514). Bisected on its C: keeping the drop glues and `em_main`
+out of line changed nothing; keeping the String clone's helper (`em_array_helper_0`) out of line
+built it in 2 s. The helper's two arguments, a String's `.ptr` and `.len`, each read 256 boxes
+deep; once MSVC inlined the helper, its optimiser did not finish. Reading that place once, into a
+pointer, built it in 1 s with the helper still inlinable.
+
+**Decision.** In the C generator, each place of a statement or terminator past `DEREF_NESTING`
+(16, D-511's threshold) dereferences reads through a C local holding the pointer its last
+dereference reads, declared once in a block around the statement (`bind_deep_places`, consulted
+by `place_in`). The local has the pointer's own C type, so `const` is kept; a reference to a
+`Cell`, whose `const` `place_in` casts away, is left unbound. Marking such helpers `noinline`
+was the other shape: it costs a call on every String and Array clone, in hot code too.
+
+**Consequences.** The loads are the same, and only places past sixteen dereferences change: no
+benchmark's C does. GRM-39's test runs in the debug, release and shipping profiles (MSVC and
+clang checked by hand in each), and the `[CG-C-1]` sweep gives every program a verdict under MSVC
+`/O2`. The specification is unchanged.
+
+---
+
 ## ADR-151 — a function C may call returns no pointer into a parameter C passes as a copy (ODR-099)
 
 **Date:** 2026-10-11. **Rules:** `[FFI-21a]` (new, 0.9.10_Hardened_3), `[FN-6]`, `[FN-1]`,
