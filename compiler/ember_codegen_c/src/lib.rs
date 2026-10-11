@@ -4174,7 +4174,14 @@ impl Emitter<'_> {
             };
             let env_c = self.c_type(env);
             let boxed = format!("!(sizeof({env_c}) <= sizeof(void*[3]) && _Alignof({env_c}) <= _Alignof(void*))");
-            let find = format!("    {env_c}* _e = ({boxed}) ? *({env_c}**)_env : ({env_c}*)_env;");
+            // The words are `void*` storage: the environment is copied out of
+            // them and back, never read through a pointer of another type,
+            // which C's aliasing rules make undefined (gcc -O3 broke it). An
+            // allocation's pointer is copied out the same way.
+            let find = format!(
+                "    {env_c} _l;\n    {env_c}* _e = &_l;\n    if ({boxed}) {{ memcpy(&_e, _env, sizeof _e); }} else {{ memcpy(&_l, _env, sizeof _l); }}"
+            );
+            let store = format!("    if (!({boxed})) {{ memcpy(_env, &_l, sizeof _l); }}");
             let mut args = body.args();
             let (_, env_param) = args.next().expect("a closure takes its environment first");
             let env_argument = if matches!(self.types.kind(env_param.ty), TyKind::Ref { .. } | TyKind::Ptr { .. }) {
@@ -4196,8 +4203,11 @@ impl Emitter<'_> {
             self.line(&find);
             if self.is_void(ret) {
                 self.line(&format!("    {closure}({arguments});"));
+                self.line(&store);
             } else {
-                self.line(&format!("    return {closure}({arguments});"));
+                self.line(&format!("    {} _r = {closure}({arguments});", self.c_type(ret)));
+                self.line(&store);
+                self.line("    return _r;");
             }
             self.line("}");
             let mut drops = Vec::new();
