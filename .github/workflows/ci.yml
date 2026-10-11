@@ -14,35 +14,13 @@ env:
 
 permissions:
   contents: read
-  actions: read
 
 jobs:
-  # `main` is only ever fast-forwarded to a commit that passed on its `phase-*`
-  # branch; that same commit is not tested a second time. Any other push to
-  # `main` runs everything.
-  already-passed:
-    runs-on: ubuntu-latest
-    outputs:
-      passed: ${{ steps.check.outputs.passed }}
-    steps:
-      - id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          passed=false
-          if [ "${{ github.event_name }}" = push ] && [ "${{ github.ref }}" = refs/heads/main ]; then
-            runs=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${{ github.sha }}&status=success"               --jq '[.workflow_runs[] | select(.head_branch != "main")] | length')
-            if [ "$runs" -gt 0 ]; then passed=true; fi
-          fi
-          echo "passed=$passed" >> "$GITHUB_OUTPUT"
-
   # Each platform's tests run on four machines at once: one runs every test
   # but the conformance suite, three run a third of its cases each
   # (`EMBER_TEST_SHARD`). Every test still runs on every platform. The tests
   # use the `ci` profile: an optimised compiler with the debug checks kept.
   build-and-test:
-    needs: already-passed
-    if: needs.already-passed.outputs.passed != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -87,8 +65,6 @@ jobs:
           fi
 
   documents:
-    needs: already-passed
-    if: needs.already-passed.outputs.passed != 'true'
     runs-on: ubuntu-latest
     name: specification and registry
     steps:

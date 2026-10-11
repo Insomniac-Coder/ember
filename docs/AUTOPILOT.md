@@ -313,11 +313,12 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   clang-cl. Use `python3` if `python` is missing.
 - **Never edit repository files while the full suite runs**: it reads the runtime's C and the
   test directories during the run.
-- **Batches go through `phase-next` first** (the owner, 2026-10-05: "Okay cool lets do that").
-  Locally run the MSVC suite and the gates; commit, and push the branch as `phase-next`, which CI
-  runs (Linux clang and gcc, Windows MSVC and clang-cl; free, the repository is public). When CI is
-  green, fast-forward `main` to that commit and push it. This replaces the local clang and WSL gcc
-  suites for correctness; gcc *timing* still runs in WSL when benchmarking.
+- **Work on `main` directly** (the owner, 2026-10-11: "I'd like you to work on main directly"; it
+  replaces 2026-10-05's `phase-next` first). Locally run the MSVC suite (`cargo test --workspace
+  --profile ci`) and the gates; commit on `main` and push it. CI runs every push (Linux clang and
+  gcc, Windows MSVC and clang-cl, about ten minutes); a failure is fixed on `main` at once. CI
+  replaces the local clang and WSL gcc suites for correctness; gcc *timing* still runs in WSL when
+  benchmarking.
 - **Commit and push to `main` about every ten tasks**, and always before stopping, only after
   the quick check, the full suite and every gate pass. The owner, 2026-10-05: "since we are taking
   longer breaks between each runs we can increase the number of tasks we do in one commit go up
