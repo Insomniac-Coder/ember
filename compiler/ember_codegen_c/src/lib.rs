@@ -676,10 +676,26 @@ impl Emitter<'_> {
                 }
             }
         }
+        // Only a callable type the program turns into `extern "C" fn`
+        // (`CastKind::FnToC`) needs a C entry: one nothing reads would be code
+        // for nothing, and one lending a parameter's copy to a function
+        // returning a pointer into it is `[FFI-21a]`'s `E5042` where C may
+        // call it.
+        let mut given_to_c = BTreeSet::new();
+        for body in bodies {
+            for stmt in body.blocks.iter().flat_map(|block| &block.stmts) {
+                if let StmtKind::Assign { rvalue: Rvalue::Cast { kind: CastKind::FnToC, operand: Operand::Copy(from) | Operand::Move(from), .. }, .. } =
+                    &stmt.kind
+                {
+                    given_to_c.insert(self.place_ty(from, body));
+                }
+            }
+        }
         let mut serial = 0;
         for (symbol, signature) in signatures {
             let TyKind::Fn { params, ret, .. } = self.types.kind(signature) else { unreachable!() };
-            let ffi_safe = params.iter().all(|param|
+            let ffi_safe = given_to_c.contains(&signature)
+                && params.iter().all(|param|
                 self.types.is_ffi_safe(param.ty) && !self.types.needs_drop(param.ty))
                 && self.types.is_ffi_safe(*ret) && !self.types.needs_drop(*ret);
             let (descriptor, adapter) = loop {

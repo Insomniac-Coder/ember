@@ -541,6 +541,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-17f]` | Annex C | `ember inspect` reports each bridge operation that is a thunk call … |
 | `[FFI-20a]` | XVI | A declaration the importer cannot represent is recorded with the … |
 | `[FFI-21]` | XVI | A C function-pointer parameter accepts a capture-free Ember function … |
+| `[FFI-21a]` | XVI | *(new in 0.9.10)* A parameter C passes as a copy. C passes a … |
 | `[FFI-22]` | XVI | Every exported function and trampoline first attaches the calling … |
 | `[FFI-23]` | XVI | `Retained.pin(v)` hands an Ember-owned object to C for keeping: for a … |
 | `[FFI-24]` | Annex C | Every imported C++ function has an exception policy, with a default. … |

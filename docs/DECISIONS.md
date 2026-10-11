@@ -5016,6 +5016,38 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-151 — a function C may call returns no pointer into a parameter C passes as a copy (ODR-099)
+
+**Date:** 2026-10-11. **Rules:** `[FFI-21a]` (new, 0.9.10_Hardened_3), `[FN-6]`, `[FN-1]`,
+`[CG-C-1]`.
+
+**Context.** A borrowed parameter is the caller's own value (`[FN-1]`), passed by address. When a
+function's value becomes an `extern "C" fn` (`[FN-6]`), its C entry receives a by-value argument
+the way C passes it, a copy, and lends the function that copy, which ends when the call returns.
+`FFI-21/accept_native_callback_adapters`' `fn native_address(value: Pair) -> *Pair: return
+ref_to_ptr(ref value)` is right for Ember callers and, through C, returned the C entry's own copy:
+MSVC's C4172, the last warning of D-376's sweep. Its value is never given to C: every function
+value of an FFI-safe type had a C entry.
+
+**Decision.** The owner chose a new diagnostic (2026-10-11); the detail, under the delegation, is
+ODR-099: `E5042` where a program turns a callable type into `extern "C" fn` and a function whose
+value has that type returns a raw pointer made from a reference to such a parameter or a part of
+it (`ember_analysis::c_entries`: a forward may-analysis of the locals holding such an address,
+through copies, conversions, references to parts and aggregates; a value read through the
+parameter, a pointer stored in it, and a pointer another call returns are not followed). It is an
+error: no C caller can use the pointer, and an error leaves no C to warn. The C generator emits a
+C entry only for a callable type some `CastKind::FnToC` converts (the descriptor's `c` is `NULL`
+otherwise, and nothing reads it).
+
+**Consequences.** MSVC `/O2` now reports nothing in the C of any program (D-376), GRM-39's
+256-deep program excepted (no verdict, D-514). `tests/conformance/FFI-21a/` refuses the address of
+a parameter and of its field (through a local) and accepts a pointer parameter returned, a field
+read through the copy, a pointer held in it, and the address of what an Ember caller lent. Not
+covered, noted in ODR-099: a pointer to a local or an `owned` parameter, returned from any
+function, dangles whoever calls it.
+
+---
+
 ## ADR-150 — a module's interface record names a bound the same way in every program (D-391)
 
 **Date:** 2026-10-11. **Rules:** `[LT-40]`, `[BLD-2]`.

@@ -307,6 +307,7 @@ codes! {
     E5030 = (Error, 5030, Ffi, "[FFI-17]", "`std::function` cannot be imported");
     E5040 = (Error, 5040, Ffi, "[FFI-21]", "capturing closure passed where a C function pointer is expected");
     E5041 = (Error, 5041, Ffi, "[FFI-21]", "retained callback needs a release function in the overlay");
+    E5042 = (Error, 5042, Ffi, "[FFI-21a]", "a function C may call returns a pointer into a parameter C passes as a copy");
     E5002 = (Error, 5002, Ffi, "[DIA-18]", "foreign call requires `unsafe`: its contract is incomplete");
     E5011 = (Error, 5011, Ffi, "[FFI-30]", "one C identity imported with two different layouts");
     E5012 = (Error, 5012, Ffi, "[FFI-11]", "pointer contract has no count");

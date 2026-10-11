@@ -296,6 +296,17 @@ unsafe overlay c "vulkan/vulkan.h":
   only the static region (`E3063`); `retained` returns a `Retained` token whose drop unregisters
   through the declared `destroys(f)` (`E5041` if none is declared), and with `once` the trampoline
   frees the box after the first call.
+* `[FFI-21a]` *(new in 0.9.10)* **A parameter C passes as a copy.** C passes a function's arguments by
+  value. When a function's value becomes an `extern "C" fn` (`[FN-6]`), a parameter it borrows
+  (`[FN-1]`) whose type is not a pointer is, for a call from C, a copy the call makes, which ends when
+  the call returns; called from Ember, it is still the caller's value. Where a program turns a
+  callable type into `extern "C" fn`, a function whose value has that type MUST NOT return a raw
+  pointer into such a parameter: one made from a reference to it or to a part of it
+  (`ref_to_ptr(ref value)`, `ref_to_ptr(ref value.field)`), passed through copies, conversions and
+  aggregates in the function, is `E5042`, shown where it is returned and where the type becomes
+  `extern "C" fn`. A value read through the parameter, and a pointer stored in it, are not into the
+  copy. A pointer returned from a call to another function is not followed. A function that must give
+  C back a pointer it was given takes that parameter as a pointer (`*T`).
 * `[FFI-22]` *(changed in 0.9.9)* Every exported function and trampoline first attaches the calling
   thread to the runtime (`ember_rt_thread_attach()`, a thread-local check after the first time). A
   callback's captures, and a handle passed to foreign code as `retained`, MUST be `Send` (`[THR-8]`, `E7004`)

@@ -161,6 +161,7 @@ reused; retired codes are listed with the reason.
 | `E5034` | unsupported C++ construct | `[FFI-17]` |
 | `E5040` | capturing closure passed where a C function pointer is expected | `[FFI-21]` |
 | `E5041` | retained callback needs a release function in the overlay | `[FFI-21]` |
+| `E5042` | a function C may call returns a pointer into a parameter C passes as a copy | `[FFI-21a]` |
 | `E5050` | a foreign fact claims a grade whose evidence is absent or stale | `[TCB-1]` |
 | `E5051` | a foreign callee retains a pointer its contract does not declare `retained` | `[FFI-35a]` |
 | `E5052` | `adopt` on a handle whose overlay declares `adopt = false` | `[FFI-36b]` |

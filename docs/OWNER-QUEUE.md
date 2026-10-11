@@ -63,6 +63,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-082 | **CLOSED** — `@ffi(immutable)` on a foreign static asserts a `const` C object and emits a matching declaration | Language / C interop / foreign statics | — | **No** — delegated, 2026-09-27, Hardened_38 |
 | ODR-083 | **CLOSED** — a static free-function export's `creator` thread is anchored to successful module initialization; repeated initialization does not transfer the contract, and reinitialization after shutdown establishes a new creator | Language / C interop / export thread contracts | — | **No** — delegated, 2026-09-27, Hardened_39 |
 | ODR-084 | **CLOSED** — `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts | Language / module attributes / arithmetic | — | **No** — delegated, 2026-09-27, Hardened_40 |
+| ODR-099 | **CLOSED** — where a program turns a callable type into `extern "C" fn`, a function whose value has that type returns no raw pointer into a parameter it borrows by value, which a call from C passes as a copy (`E5042`) | FFI / callbacks | — | **Owner chose the direction** (2026-10-11); the detail ruled under the delegation, 0.9.10_Hardened_3 |
 | ODR-098 | **CLOSED** — String capacity and offsets count bytes; reserve asks for additional bytes, insert takes a char and remove returns one; truncate and clear retain capacity; invalid sizes and UTF-8 boundaries panic in every profile | Library / text | — | **No** — delegated, 2026-10-03, Hardened_52 |
 | ODR-097 | **CLOSED** — an implementation may also be written in the package that declares one of its interface's arguments, where, reading its type and then those arguments, the first type the package declares comes before any of the implementation's type parameters standing alone; anywhere else it is `E2121` | Types / implementations | — | **No** — delegated, 2026-10-01, Hardened_50 |
 | ODR-096 | **CLOSED** — of two instances of one generic interface that a call's or an operator's arguments fit, the one whose parameter types are the arguments' own (an untyped literal as its default type) is chosen before one reached through a coercion, for every type; two that fit equally are `E2070`; an operator chooses as its method does | Types / interface resolution | — | **No** — delegated, 2026-10-01, Hardened_49 |
@@ -254,6 +255,43 @@ immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
+
+## ODR-099 — a pointer into a parameter C passes as a copy — **CLOSED**
+
+    ID:        ODR-099
+    Status:    CLOSED — the owner chose a new diagnostic, 2026-10-11; its detail ruled
+               under the delegation; incorporated in 0.9.10_Hardened_3
+    Category:  FFI / CALLBACKS
+    Location:  Ember_v0.9.10_Hardened_2.md [FN-6], [FN-1], [FFI-21]
+
+**The question.** `[FN-1]` makes a borrowed parameter the caller's own value, and
+`[FN-6]` lets a capture-free function coerce to `extern "C" fn`. C passes its
+arguments by value, so the C entry that coercion needs lends the function a copy
+of each by-value parameter, which ends when the call returns. A function that
+returns `ref_to_ptr(ref value)` is right when Ember calls it and hands C a
+dangling pointer when C does. The `[CG-C-1]` sweep found MSVC warning about it
+(C4172) in `FFI-21/accept_native_callback_adapters`, whose function's value is
+never given to C: every function value of an FFI-safe type had a C entry.
+
+**Options put to the owner.** (1) Record MSVC's warning as true and change
+nothing. (2) A new diagnostic, a spec change. **The owner chose 2.**
+
+**The detail (delegated).** An error, not a warning: no C program can use a
+pointer into a copy that is gone, and an error leaves no C behind to warn. It
+applies where C can call the function: a program that turns a callable type
+into `extern "C" fn` subjects every function whose value has that type. The
+pointer is followed through copies, conversions and aggregates in the
+function; a value read through the parameter and a pointer stored in it are
+not into the copy; a pointer returned from another call is not followed. Only
+a borrowed parameter whose type is not a pointer is a copy (`passed by
+address`); `mut` parameters are pointers C passes. A function only Ember calls
+is unchanged. Separately, a C entry is now emitted only for a callable type
+the program turns into `extern "C" fn`, so a program that never does has none.
+
+**Ruling.** `[FFI-21a]`, `E5042` (ADR-151). Tests:
+`tests/conformance/FFI-21a/`. Not covered here, noted for later: a raw pointer
+to a local or an `owned` parameter returned from any function dangles whoever
+calls it.
 
 ## ODR-098 — String mutation and capacity contracts — **CLOSED**
 

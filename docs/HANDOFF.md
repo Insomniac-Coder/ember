@@ -10712,9 +10712,9 @@ from WSL: copy the tree to Linux's disk as `bench/gcc/make_tree.sh` does, adding
 bench/programs and the tool; delete the copy after). ADR-148 lists the C generation fixes: clang
 and gcc (at -O2) now report nothing; at -O2, gcc and MSVC found two real defects (values read before anything
 set them), fixed; MSVC's C4700 on a payload-free enum value is fixed by a zero payload copy (the
-owner's pick; no benchmark moved). **Next:** FFI-21's C4172, MSVC's last warning: the owner chose a
-new diagnostic for a function C may call that returns a pointer into a by-value parameter (ODR,
-spec hardening). Benchmark C changed only by dead pointers removed and `t5_words`' `is_split_space`
+owner's pick; no benchmark moved); FFI-21's C4172, MSVC's last, by the owner's choice of a new
+diagnostic: `[FFI-21a]`/`E5042` (ODR-099, 0.9.10_Hardened_3, ADR-151), with C entries emitted only
+for callable types a program gives C. D-376 is fixed: no C compiler warns in any program's C. Benchmark C changed only by dead pointers removed and `t5_words`' `is_split_space`
 (timed against the previous compiler, interleaved on the P-cores: MSVC x1.004, clang x1.000). The sweep
 found D-545 (a comparison of two untyped literals compared 32-bit integers in C: `-1.5 < -1.0` was
 false; ADR-149) and D-391 (open since 2026-09-30: two programs in one folder share its interface

@@ -125,6 +125,7 @@ RETIRED.pop('E0105')
 OVERRIDE.pop('W0001')
 
 NEW = {
+    'E5042': ('a function C may call returns a pointer into a parameter C passes as a copy', ['FFI-21a']),
     'E0008': ('unterminated character literal', ['LEX-22']),
     'E0110': ('function declared without a body outside an interface, extern block or abstract class', ['GRM-33']),
     'E0111': ('`ref` of an expression that is not a place', ['GRM-36']),

@@ -6,6 +6,7 @@
 //! helpers.
 
 pub mod borrows;
+pub mod c_entries;
 pub mod callable_arguments;
 pub mod check_hoisting;
 pub mod copies;
@@ -39,6 +40,7 @@ pub use borrows::{
     insert_shared_accesses_all, install_callable_regions_all, verify_callable_regions_all,
 };
 pub use access::{elide_static_accesses_all, remove_never_firing_checks_all};
+pub use c_entries::{callable_types_given_to_c, check_c_entry_returns_all};
 pub use loop_access::hoist_loop_accesses_all;
 pub use check_hoisting::hoist_invariant_checks_all;
 pub use copies::{narrow_widened_reads_all, propagate_copies_all};

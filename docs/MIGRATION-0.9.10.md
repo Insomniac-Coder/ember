@@ -6,8 +6,10 @@ when it counts or numbers an iterator's items. The language version moves to 0.9
 rule for this change). The specification is `docs/spec-source/Ember_v0.9.10_Hardened_2.md`:
 Hardened_1 was the design as first built (Appendix H §H.6 lists the rules it changed), and
 Hardened_2 adds the owner's rulings of 2026-10-06 on three of the audit's decisions (§H.7): `parse`
-reads the 256-bit counts, the known-numbers rule, and `enumerate` numbers that never overflow. This
-file says what changes for a program and how to update one, then records the implementation.
+reads the 256-bit counts, the known-numbers rule, and `enumerate` numbers that never overflow.
+Hardened_3 (2026-10-11, ODR-099, §H.8) refuses a pointer into a parameter C passes as a copy
+(`[FFI-21a]`, below). The specification is now `Ember_v0.9.10_Hardened_3.md`. This file says what
+changes for a program and how to update one, then records the implementation.
 
 ## 1. What changes for a program
 
@@ -127,6 +129,13 @@ are `E2020`. `parse` reads them over their whole range (Hardened_2, the owner's 
   otherwise; `count()` returns `Count`, `position()` an `Option[Count]`; `ExactSizeIterator.len`
   returns `Count`.
 * `Enumerate` takes its number type as a parameter: `Enumerate[I, P]`.
+
+### A pointer into a parameter C passes as a copy (Hardened_3)
+
+Where a program turns a callable type into `extern "C" fn`, a function whose value has that type
+may not return a raw pointer into a parameter it borrows by value: called from C, that parameter is
+a copy the call makes, which ends when the call returns (`[FFI-21a]`, `E5042`). Take the parameter
+as a pointer (`*T`) to give C back the pointer it passed. A function only Ember calls is unchanged.
 
 ## 2. Updating a program
 

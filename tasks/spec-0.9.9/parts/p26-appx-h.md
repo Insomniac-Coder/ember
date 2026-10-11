@@ -282,6 +282,7 @@ instances of one generic interface; Hardened_50 adds ODR-095, which operators a 
 and ODR-097, where an implementation may be written; Hardened_51 adds ODR-094, the owner's
 ruling on `collect`'s target, `peekable`'s methods, and how `Box` and `Cell` show; Hardened_52 adds
 ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutation methods.
+0.9.10_Hardened_3 adds ODR-099, a pointer into a parameter C passes as a copy (§H.8).
 
 | ODR | Ruling | Rules |
 |---|---|---|
@@ -363,6 +364,7 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 | ODR-097 | an implementation may also be written in the package that declares one of its interface's arguments, where, reading its type and then those arguments, the first type the package declares comes before any of the implementation's type parameters standing alone; anywhere else it is `E2121` (Hardened_50) | `[TYP-20]` |
 | ODR-094 | the owner's: `collect[C]()` builds any `C` implementing `std.core.FromIterator[Item]` (`Array`, `Set`, `Map` from pairs, `String` from `char`s and `String`s, and a program's types), `C` written or the type the call is expected to give; `peekable` gives `peek`, `peek_mut`, `next_if` and `next_if_eq`; `Option`'s `as_ref` and `as_mut` reference the payload where it is; `Box[T]` and `Cell[T]` show as the `T` they hold (Hardened_51) | `[STD-19]`, `[ERR-4]`, `[TYP-39]` |
 | ODR-098 | String capacity is measured in bytes; reserve asks for additional bytes; insert takes a byte offset and a char, remove returns that char, truncate keeps a byte prefix, and shrinking retains capacity, with UTF-8 boundary and integer-size checks in every profile (Hardened_52) | `[TXT-11]`, `[TXT-4]`, `[TYP-31]`, `[HEAP-8]` |
+| ODR-099 | the owner's direction (2026-10-11), its detail under the delegation: where a program turns a callable type into `extern "C" fn`, a function whose value has that type returns no raw pointer made from a reference to a parameter it borrows by value, which a call from C passes as a copy that ends with the call (`E5042`); followed through copies, conversions and aggregates, not calls; a value read through the parameter and a pointer stored in it are not into the copy | `[FFI-21a]`, `[FN-6]`, `[FN-1]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -570,3 +572,19 @@ Generated: every rule whose text differs from 0.9.10_Hardened_1.
 | `[TYP-5]` | changed |
 | `[TYP-17]` | changed |
 | `[TYP-42]` | changed |
+
+## H.8 Changes in 0.9.10_Hardened_3 (from 0.9.10_Hardened_2)
+
+**0.9.10_Hardened_3** records ODR-099, the owner's choice of 2026-10-11 (`docs/OWNER-QUEUE.md`,
+`docs/DECISIONS.md` ADR-151). It changes what programs are accepted:
+
+* Where a program turns a callable type into `extern "C" fn`, a function whose value has that type
+  returns no raw pointer into a parameter it borrows by value: C passes the argument as a copy that
+  ends when the call returns (`[FFI-21a]`, `E5042`). The same function called from Ember borrows
+  the caller's value, as before.
+
+Generated: every rule whose text differs from 0.9.10_Hardened_2.
+
+| Rule | 0.9.10_Hardened_2 → 0.9.10_Hardened_3 |
+|---|---|
+| `[FFI-21a]` | added |
