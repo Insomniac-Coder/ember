@@ -47,3 +47,12 @@ unsafe_code = "deny"
 
 [profile.release]
 debug = 1
+
+# The test build CI uses (`cargo test --profile ci`): optimised like a release, with every check
+# a debug build has left on (`debug_assertions`, which runs the MIR verifier, and overflow
+# checks). The compiler the suite runs is 2.9x faster than unoptimised (19 conformance programs,
+# 14.0 s -> 4.9 s, 2026-10-11).
+[profile.ci]
+inherits = "release"
+debug-assertions = true
+overflow-checks = true

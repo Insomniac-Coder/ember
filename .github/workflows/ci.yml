@@ -12,35 +12,62 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
+  # `main` is only ever fast-forwarded to a commit that passed on its `phase-*`
+  # branch; that same commit is not tested a second time. Any other push to
+  # `main` runs everything.
+  already-passed:
+    runs-on: ubuntu-latest
+    outputs:
+      passed: ${{ steps.check.outputs.passed }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          passed=false
+          if [ "${{ github.event_name }}" = push ] && [ "${{ github.ref }}" = refs/heads/main ]; then
+            runs=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${{ github.sha }}&status=success"               --jq '[.workflow_runs[] | select(.head_branch != "main")] | length')
+            if [ "$runs" -gt 0 ]; then passed=true; fi
+          fi
+          echo "passed=$passed" >> "$GITHUB_OUTPUT"
+
+  # Each platform's tests run on four machines at once: one runs every test
+  # but the conformance suite, three run a third of its cases each
+  # (`EMBER_TEST_SHARD`). Every test still runs on every platform. The tests
+  # use the `ci` profile: an optimised compiler with the debug checks kept.
   build-and-test:
+    needs: already-passed
+    if: needs.already-passed.outputs.passed != 'true'
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            cc: clang
-          - os: ubuntu-latest
-            cc: gcc
-          - os: windows-latest
-            cc: msvc
-          - os: windows-latest
-            cc: clang-cl
-    runs-on: ${{ matrix.os }}
-    name: ${{ matrix.os }} / ${{ matrix.cc }}
+        platform:
+          - { os: ubuntu-latest, cc: clang }
+          - { os: ubuntu-latest, cc: gcc }
+          - { os: windows-latest, cc: msvc }
+          - { os: windows-latest, cc: clang-cl }
+        part: [rest, 1/3, 2/3, 3/3]
+    runs-on: ${{ matrix.platform.os }}
+    name: ${{ matrix.platform.os }} / ${{ matrix.platform.cc }} / ${{ matrix.part }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
       - name: Build
-        run: cargo build --workspace --locked
+        run: cargo build --workspace --locked --profile ci
       # The platform's own shell: on Windows, Git's bash would put its own
       # `link` ahead of the MSVC linker and Rust could not link the tests.
       - name: Test
-        run: ${{ runner.os == 'Windows' && 'python' || 'python3' }} tools/run_logged.py test-output.txt cargo test --workspace --locked
+        run: ${{ runner.os == 'Windows' && 'python' || 'python3' }} tools/run_logged.py test-output.txt cargo test --locked --profile ci ${{ matrix.part == 'rest' && '--workspace -- --skip the_conformance_suite_runs' || '-p ember_driver --test milestones -- --exact the_conformance_suite_runs' }}
         env:
-          EMBER_CC: ${{ matrix.cc }}
+          EMBER_CC: ${{ matrix.platform.cc }}
+          EMBER_TEST_SHARD: ${{ matrix.part != 'rest' && matrix.part || '' }}
 
       # A job's log can only be read when signed in; its annotations can be
       # read by anyone. On a failure, the end of the output becomes one.
@@ -60,6 +87,8 @@ jobs:
           fi
 
   documents:
+    needs: already-passed
+    if: needs.already-passed.outputs.passed != 'true'
     runs-on: ubuntu-latest
     name: specification and registry
     steps:

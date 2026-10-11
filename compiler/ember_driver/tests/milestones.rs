@@ -4242,6 +4242,19 @@ fn the_conformance_suite_runs() {
         }
         cases.extend(files);
     }
+    // CI splits the cases over machines: `EMBER_TEST_SHARD=i/n` keeps every
+    // n-th case from the i-th, so n jobs between them run every case.
+    if let Ok(shard) = std::env::var("EMBER_TEST_SHARD")
+        && !shard.is_empty()
+    {
+        let (index, count) = shard
+            .split_once('/')
+            .and_then(|(i, n)| Some((i.parse::<usize>().ok()?, n.parse::<usize>().ok()?)))
+            .filter(|&(i, n)| (1..=n).contains(&i))
+            .unwrap_or_else(|| panic!("EMBER_TEST_SHARD={shard}: expected i/n with 1 <= i <= n"));
+        cases = cases.into_iter().skip(index - 1).step_by(count).collect();
+        println!("conformance share {index}/{count}: {} cases", cases.len());
+    }
     report_failures("tests/conformance", &run_cases(&cases, |path| check_file(path, &root)));
 }
 
