@@ -4788,7 +4788,7 @@ fn main_args_replace_text_that_is_not_utf8() {
             .collect()
     };
     #[cfg(unix)]
-    let expected = "4\n[a\u{fffd}b]\n[\u{fffd}]\n[\u{1f600}]\n[\u{fffd}\u{fffd}\u{fffd}z]";
+    let expected = "5\n[a\u{fffd}b]\n[\u{fffd}]\n[\u{1f600}]\n[\u{fffd}\u{fffd}\u{fffd}z]";
     #[cfg(windows)]
     let args: Vec<std::ffi::OsString> = {
         use std::os::windows::ffi::OsStringExt;
@@ -4802,5 +4802,11 @@ fn main_args_replace_text_that_is_not_utf8() {
     let expected = "4\n[a\u{fffd}b]\n[\u{1f600}]\n[caf\u{e9}]";
     let run = ember_build::output_started(Command::new(&exe).args(&args)).expect("the program starts");
     let stdout = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
-    assert_eq!(stdout.trim_end(), expected, "stderr:\n{}", String::from_utf8_lossy(&run.stderr));
+    // Escaped: a CI runner's log writer fails on an emoji in a failure message.
+    assert_eq!(
+        stdout.trim_end().escape_default().to_string(),
+        expected.escape_default().to_string(),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&run.stderr).escape_default()
+    );
 }
