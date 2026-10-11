@@ -722,6 +722,13 @@ impl Emitter<'_> {
             }
             Some(FpMode::Fast) => self.line("/* [CG-C-11] @fastmath: compiled with the relaxed flags ([TYP-9]). */"),
         }
+        // `[CG-C-1]` — every division by zero is defined in Ember: a float one
+        // is IEEE's (`[TYP-29]`), an integer one is checked before it divides.
+        // MSVC's "potential divide by 0" (C4723), which it reports after
+        // folding a zero into a division, is about neither.
+        self.line("#if defined(_MSC_VER) && !defined(__clang__)");
+        self.line("#pragma warning(disable: 4723)");
+        self.line("#endif");
         // A relaxed unit repeats the program's tables and helpers its own
         // functions may not use; the main unit uses them.
         if self.unit.is_some() {
@@ -4642,46 +4649,13 @@ impl Emitter<'_> {
         if carried.is_empty() {
             return (carried, Vec::new());
         }
-        // Read outside the loop's blocks, or in them before the loop sets it
-        // (the chain runs in order, so the first mention decides).
+        // Its value goes in when a path from the loop's start (into its body,
+        // or straight out when it runs no turn) reads it before setting it.
         let void_place = |place: &Place| self.is_void(self.place_ty(place, body));
-        let in_chain: BTreeSet<usize> = counted.chain.iter().copied().collect();
-        let mut read_outside = vec![false; body.locals.len()];
-        for (_, block) in body.blocks.iter().enumerate().filter(|(index, _)| !in_chain.contains(index)) {
-            block.stmts.iter().for_each(|stmt| stmt_c_reads(stmt, &mut read_outside, &void_place));
-            terminator_c_reads(&block.terminator, &mut read_outside, &void_place);
-        }
-        let set_first = |local: usize| {
-            for &block in &counted.chain {
-                let data = &body.blocks[block];
-                for stmt in &data.stmts {
-                    let mut read = vec![false; body.locals.len()];
-                    stmt_c_reads(stmt, &mut read, &void_place);
-                    if read[local] {
-                        return false;
-                    }
-                    let whole = |place: &Place| place.local.0 as usize == local && place.projection.is_empty();
-                    match &stmt.kind {
-                        StmtKind::Assign { place, .. } if whole(place) => return true,
-                        StmtKind::CheckedBinaryOp { dest, overflow, .. } if whole(dest) || whole(overflow) => return true,
-                        _ => {}
-                    }
-                }
-                let mut read = vec![false; body.locals.len()];
-                terminator_c_reads(&data.terminator, &mut read, &void_place);
-                if read[local] {
-                    return false;
-                }
-                if let Terminator::Call { dest, .. } = &data.terminator
-                    && dest.local.0 as usize == local
-                    && dest.projection.is_empty()
-                {
-                    return true;
-                }
-            }
-            false
-        };
-        carried.into_iter().partition(|&local| read_outside[local] || !set_first(local))
+        carried.into_iter().partition(|&local| {
+            read_before_set(body, counted.chain[0], local, &void_place)
+                || read_before_set(body, counted.exit, local, &void_place)
+        })
     }
 
     /// After a view with a pointer of its own is set, its pointer is too.
@@ -8926,19 +8900,62 @@ fn view_pointers(body: &Body, types: &TypeTable) -> BTreeMap<usize, Ty> {
     candidates
 }
 
+fn block_successors(terminator: &Terminator) -> Vec<usize> {
+    match terminator {
+        Terminator::Goto(t) | Terminator::Call { next: t, .. } | Terminator::Assert { next: t, .. } => vec![t.0 as usize],
+        Terminator::SwitchInt { targets, otherwise, .. } => {
+            targets.iter().map(|(_, t)| t.0 as usize).chain(std::iter::once(otherwise.0 as usize)).collect()
+        }
+        Terminator::Return | Terminator::Unreachable => Vec::new(),
+    }
+}
+
+/// Whether some path from the start of `from` reads `local` in the C before
+/// setting the whole of it.
+fn read_before_set(body: &Body, from: usize, local: usize, void_place: &dyn Fn(&Place) -> bool) -> bool {
+    let whole = |place: &Place| place.local.0 as usize == local && place.projection.is_empty();
+    // Only `local`'s entry is looked at, cleared before each walk.
+    let mut read = vec![false; body.locals.len()];
+    let mut seen = BTreeSet::new();
+    let mut work = vec![from];
+    'blocks: while let Some(block) = work.pop() {
+        if !seen.insert(block) {
+            continue;
+        }
+        let data = &body.blocks[block];
+        for stmt in &data.stmts {
+            read[local] = false;
+            stmt_c_reads(stmt, &mut read, void_place);
+            if read[local] {
+                return true;
+            }
+            match &stmt.kind {
+                StmtKind::Assign { place, .. } if whole(place) => continue 'blocks,
+                StmtKind::CheckedBinaryOp { dest, overflow, .. } if whole(dest) || whole(overflow) => continue 'blocks,
+                StmtKind::StorageDead(dead) if dead.0 as usize == local => continue 'blocks,
+                _ => {}
+            }
+        }
+        read[local] = false;
+        terminator_c_reads(&data.terminator, &mut read, void_place);
+        if read[local] {
+            return true;
+        }
+        if let Terminator::Call { dest, .. } = &data.terminator
+            && whole(dest)
+        {
+            continue;
+        }
+        work.extend(block_successors(&data.terminator));
+    }
+    false
+}
+
 /// Whether each block lies on a cycle of the control-flow graph: Tarjan's
 /// strongly connected components, iteratively.
 fn blocks_in_cycles(body: &Body) -> Vec<bool> {
     let n = body.blocks.len();
-    let successors = |block: usize| -> Vec<usize> {
-        match &body.blocks[block].terminator {
-            Terminator::Goto(t) | Terminator::Call { next: t, .. } | Terminator::Assert { next: t, .. } => vec![t.0 as usize],
-            Terminator::SwitchInt { targets, otherwise, .. } => {
-                targets.iter().map(|(_, t)| t.0 as usize).chain(std::iter::once(otherwise.0 as usize)).collect()
-            }
-            Terminator::Return | Terminator::Unreachable => Vec::new(),
-        }
-    };
+    let successors = |block: usize| block_successors(&body.blocks[block].terminator);
     let mut index_of = vec![usize::MAX; n];
     let mut low = vec![0usize; n];
     let mut on_stack = vec![false; n];

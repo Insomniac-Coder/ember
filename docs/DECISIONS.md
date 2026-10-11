@@ -5097,11 +5097,31 @@ generation, each the general one:
   warning. A negated unsigned constant (`-0`) is folded like a signed one; an
   `f32` infinity is cast from the `double` one.
 
+Compiling at `-O2` found what the front ends could not (2026-10-11, later the
+same day):
+
+- Values read before anything set them, which C leaves undefined: the
+  analyses' shared read walk (`strength_reduce::stmt_reads`) counted a checked
+  operation's destination and overflow flag as reads, so a loop's overflow flag
+  looked live on entry and a loop moved into its own function was passed it
+  unset; and MSVC's block-locals for a loop's scalars (ADR-086) copied in one
+  the loop sets before reading. A whole destination is now a write, as an
+  assignment's is; a scalar is copied in only when a path from the loop's start
+  reads it before setting it (`read_before_set`), otherwise only declared.
+- MSVC's "potential divide by 0" (C4723) is off in generated units: Ember
+  defines every division by zero (a float one is IEEE's, `[TYP-29]`; an
+  integer one is checked first), so it can only report intended code. C4700,
+  "uninitialized local variable used", stays on: it found the two defects
+  above.
+- gcc's `-Warray-bounds` is off around the runtime's UTF-8 decoder only: text
+  is valid UTF-8, and gcc, inlining it over a three-byte literal, reported the
+  fourth byte of a four-byte character, a read no valid text makes.
+
 **Consequences.** Of the 1,690 programs that produce C (the other 715 are
 reject tests and diagnostic snapshots), none warns under clang, and none under
 gcc 15.2 or MSVC from their front ends (2026-10-11). What those two report only
-while optimising is still open under D-376: gcc 20 programs, MSVC 28 (listed
-there). The sweep found D-545 and, through programs that produced no C, D-391.
+while optimising was gcc 20 programs and MSVC 28; after the fixes above, gcc
+reports none and MSVC four, listed under D-376 for the owner. The sweep found D-545 and, through programs that produced no C, D-391.
 It is a tool, not yet a CI job. The specification is unchanged.
 
 ---

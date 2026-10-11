@@ -1778,7 +1778,15 @@ size_t ember_char_utf8_len(uint32_t c);
  * `split_whitespace` 10% (D-496). MSVC's measured
  * faster shape advances once after decoding; clang and GCC keep the
  * branch-local advances. Finding the width again from the decoded scalar
- * would cost a second chain of comparisons. */
+ * would cost a second chain of comparisons.
+ * `[CG-C-1]`: text is valid UTF-8, so a lead byte of a four-byte character has
+ * its three continuation bytes. gcc does not know that: inlined over a short
+ * literal ("ab", `char[3]`), it reports the fourth byte's read as past the
+ * end (-Warray-bounds), on a path no valid text takes. */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
 #if defined(_MSC_VER) && !defined(__clang__)
 #define EMBER_TEXT_CHAR_NEXT(NAME, INDEX_TYPE)                              \
 EMBER_INLINED uint32_t NAME(ember_str s, INDEX_TYPE* at) {                  \
@@ -1830,6 +1838,9 @@ static inline uint32_t NAME(ember_str s, INDEX_TYPE* at) {                  \
 EMBER_TEXT_CHAR_NEXT(ember_str_char_next, int64_t)
 EMBER_TEXT_CHAR_NEXT(ember_str_char_next_usize, size_t)
 #undef EMBER_TEXT_CHAR_NEXT
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 /* `[TXT-2]`: reject malformed, overlong, surrogate and out-of-range UTF-8. */
 bool ember_utf8_valid(ember_span bytes);
 /* Append one valid Unicode scalar to a UTF-8 String. */

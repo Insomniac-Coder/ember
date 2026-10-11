@@ -10709,10 +10709,12 @@ formal 1/9 count or Phase 2's estimate.
 `tools/c_warning_sweep.py clang|msvc|gcc` emits the C of every program that compiles (1,690; the
 other 715 are reject tests and `tests/ui` snapshots) and compiles it with warnings as errors (gcc
 from WSL: copy the tree to Linux's disk as `bench/gcc/make_tree.sh` does, adding tests/, examples/,
-bench/programs and the tool; delete the copy after). ADR-148 lists the C generation fixes: clang now
-reports nothing, and gcc and MSVC nothing from their front ends. **Next:** what gcc and MSVC report
-only at -O2 is still open under D-376 (gcc 20 programs, MSVC 28; the kinds and programs are in its
-row). Check CTL-1's `-Warray-bounds` (`char[3]`) first: it may be a real read past the end. The sweep
+bench/programs and the tool; delete the copy after). ADR-148 lists the C generation fixes: clang
+and gcc (at -O2) now report nothing; at -O2, gcc and MSVC found two real defects (values read before anything
+set them), fixed. **Next:** MSVC /O2 warns in four programs, two kinds that need the owner (D-376's
+row): C4700 on a payload-free enum value (only the tag is set, a speed choice, D-360/ADR-106) and
+C4172 in FFI-21. Benchmark C changed only by dead pointers removed and `t5_words`' `is_split_space`
+(timed against the previous compiler, interleaved on the P-cores: MSVC x1.004, clang x1.000). The sweep
 found D-545 (a comparison of two untyped literals compared 32-bit integers in C: `-1.5 < -1.0` was
 false; ADR-149) and D-391 (open since 2026-09-30: two programs in one folder share its interface
 cache, and one program's bound numbering changed `std.collections`' record; ADR-150, with a test that
