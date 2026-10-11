@@ -17,8 +17,8 @@ class Derived[T](Base):
     marker: T
 
     fn init(mut self, value: i32, marker: T):
-        super.init(value)
         self.marker = marker
+        super.init(value)
 
 fn main():
     item = Derived[bool](42, false)

@@ -606,6 +606,7 @@ static void debug_print_component(
     size_t strong_count = 0;
     bool statically_predicted = false;
     const debug_edge* suggestion = NULL;
+    const debug_edge* named = NULL;
     for (size_t k = 0; k < member_count; ++k) {
         size_t m = members[k];
         for (size_t at = first[m]; at < first[m + 1]; ++at) {
@@ -615,6 +616,9 @@ static void debug_print_component(
             }
             strong_count += 1;
             statically_predicted = statically_predicted || edge->statically_predicted;
+            if (named == NULL) {
+                named = edge;
+            }
             if (suggestion == NULL && edge->weak_replacement != NULL) {
                 suggestion = edge;
             }
@@ -639,6 +643,10 @@ static void debug_print_component(
             "  suggested weak edge: %s (replace with %s)\n",
             suggestion->field,
             suggestion->weak_replacement);
+    } else if (named != NULL) {
+        /* `[WK-4]` names the edge to weaken; `[WK-10]` offers no rewrite of a
+         * type that is not a plain handle (an `Option`, a collection). */
+        fprintf(out, "  suggested weak edge: %s (no automatic rewrite: its type is not a plain handle)\n", named->field);
     } else {
         fputs("  suggested weak edge: none\n", out);
     }

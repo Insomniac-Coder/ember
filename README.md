@@ -38,7 +38,7 @@ method in [`docs/HANDOFF.md`](docs/HANDOFF.md)):
 |---|---|---:|
 | 1 | Core language (Parts II–VI) | 99% |
 | 2 | Ownership, borrowing, regions | 90% |
-| 3 | Classes, reference counting, exclusivity | 65% |
+| 3 | Classes, reference counting, exclusivity | 66% |
 | 4 | Effects, compile time, reflection, derives | 14% |
 | 5 | C interoperability | 14% |
 | 6 | Concurrency and data-oriented design | 4% |

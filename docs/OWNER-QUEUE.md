@@ -64,6 +64,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-083 | **CLOSED** — a static free-function export's `creator` thread is anchored to successful module initialization; repeated initialization does not transfer the contract, and reinitialization after shutdown establishes a new creator | Language / C interop / export thread contracts | — | **No** — delegated, 2026-09-27, Hardened_39 |
 | ODR-084 | **CLOSED** — `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts | Language / module attributes / arithmetic | — | **No** — delegated, 2026-09-27, Hardened_40 |
 | ODR-103 | **CLOSED** — a lambda that borrows, stored or sent where no view may go, is `E3026` (shape B9, a closure outlives what it captures), help `owned fn` or `thread.scope()`; `E3063` stays for other views | Diagnostics / closures | — | **Delegated** (autopilot, 2026-10-12), 0.9.10_Hardened_7 |
+| ODR-104 | **CLOSED** — a `return` from a class `init` hands the object to its caller, so every field without a default is assigned on that path (`E2100`); `mut self` in a class `init` means the same as `self` | Language / classes | — | **Delegated** (autopilot, 2026-10-12), 0.9.10_Hardened_8 |
 | ODR-102 | **CLOSED** — a function or capture-free lambda used as a value is a plain `Copy` value; an owned callable value moves and drops its state, is lent mutably to a borrowed parameter, is neither `Send` nor `Sync`, equals one calling the same function with the same state, and panics given to C when it holds state; `[CLO-13]` copies where a lambda becomes an owned callable value | Closures | — | **Delegated** (autopilot, 2026-10-11), 0.9.10_Hardened_6 |
 | ODR-101 | **CLOSED** — the entry module's `main` in a form `[FN-8]` does not list is `E2183` at its name; its one parameter may have any name and mode, its type `Array[String]`; an `E` that is not `Display` is `E2040` | Functions / entry point | — | **Delegated** (the owner, 2026-10-11: "fix that autonomously"), 0.9.10_Hardened_5 |
 | ODR-100 | **CLOSED** — the iterator adapters take over the callable and the iterator they keep; a lambda written at one keeps its borrows; only a callable that must carry the static region moves its captures | Closures / std | — | **Owner** (2026-10-11), 0.9.10_Hardened_4 |
@@ -257,6 +258,36 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-104 — a constructor's `return` and its receiver — **CLOSED**
+
+    ID:        ODR-104
+    Status:    CLOSED — ruled under the delegation, 2026-10-12 (autopilot); incorporated
+               in 0.9.10_Hardened_8
+    Category:  LANGUAGE / CLASSES
+    Location:  Ember_v0.9.10_Hardened_7.md [CLS-2], [STR-6], [CLS-7]
+
+**The question.** `[CLS-2]` requires every field without a default to be assigned "before `self`
+is used as a whole", and lists the uses: a method call, passing, storing or returning it, a closure
+capturing it. A bare `return` in the middle of `init` is none of those in so many words, yet it
+hands the half-built object to the caller of `Name(…)` (D-565: the compiler let it through, and the
+caller read an uninitialised `String`). And `[STR-6]` says `mut self` is accepted in a struct
+`init` and means the same; `[CLS-2]` writes `fn init(self, …)` and says nothing of `mut self`,
+which the compiler had required (D-563).
+
+**Ruling.** A `return` from a class `init`, like the end of its body, hands the object to its
+caller, so every field without a default is assigned on that path (`E2100`). `mut self` is
+accepted in a class `init` and means the same as `self`, as for a struct. `[CLS-2]` says both.
+
+**Why.** The constructor's result is the object, so leaving it is the last use as a whole; reading
+it as anything less is a memory-safety hole. A constructor builds an object nobody else holds yet,
+so `[EXC-15]`'s whole-object write access has nothing to exclude: the two spellings cannot differ.
+
+**Tests:** `CLS-2/reject_an_early_return_leaves_a_field_unset`,
+`CLS-2/accept_an_init_with_locals_an_early_return_and_a_lambda`,
+`CLS-2/accept_a_constructor_spelled_with_plain_self`. ADR-165.
 
 ---
 

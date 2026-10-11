@@ -2703,9 +2703,12 @@ fn leak_check_reports_a_live_strong_object_cycle() {
         "leak-check omitted static-cycle correlation:\n{}",
         report.stderr
     );
+    // `[WK-4]` names the edge to weaken; `[WK-10]` offers no rewrite of its
+    // `Option` type.
     assert!(
-        report.stderr.contains("suggested weak edge: none"),
-        "leak-check offered a Weak rewrite for an Option ownership contract:\n{}",
+        report.stderr.contains("suggested weak edge: Node.next (no automatic rewrite")
+            && !report.stderr.contains("replace with"),
+        "leak-check did not name the edge, or offered a Weak rewrite for an Option ownership contract:\n{}",
         report.stderr
     );
     assert!(

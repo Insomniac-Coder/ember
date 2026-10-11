@@ -5016,6 +5016,55 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-165 — Class construction as `[CLS-2]` and `[CLS-11]` write it (D-563..D-566, ODR-104)
+
+**Date:** 2026-10-12 (autopilot). **Rules:** `[CLS-2]`, `[CLS-11]`, `[CLS-7]`, `[CLO-2]`, `[STR-6]`.
+
+**Context.** Probing Part V.5 found a class constructor had to be spelled `init(mut self, …)`
+(D-563); a derived `init` could assign its own fields after `super.init`, so a base `init` calling
+an override read them uninitialised, and `E2102` was never emitted (D-564); an early `return` left
+fields unset, and the constructor admitted no locals (D-565); a closure could not mention `self`
+(D-566).
+
+**Decision.** (1) Signature collection gives a class `init`'s plain receiver `mut self`'s form;
+lowering already opened no whole-object access for a constructor. (2) `super.init(…)` checks every
+own field on every path (`E2102`, naming each once, after which it counts as set); an inherited read
+or write, or a whole use of `self`, before it is `E2102`. (3) `return` in a constructor reports the
+fields unset on its path and ends the path: the field state is `None` there, and every merge skips a
+`None` side. The statement slice admits locals, declarations, compound writes to a direct field (the
+read is checked) and `unsafe` blocks; a target written through `self` other than a direct field, a
+`with`, a `defer` and a second plain write of a field stay outside it (`E1010`). (4) `self` resolves
+through the capture watch inside a lambda; a lambda body runs with no constructor state, and in a
+constructor a lambda whose capture probe found `self` is a whole use. Writing a field through a
+captured handle still makes the closure mutable, as through any borrowed handle (`[FN-1]`).
+
+**Consequences.** Thirteen existing tests set an own field after `super.init`; they now set it
+before. `docs/errors/E2102.md`; `tests/conformance/CLS-11/`; four `CLS-2` cases; one `CLO-2` case.
+
+---
+
+## ADR-164 — `@must_drop` (`[THR-6]`, shape O8)
+
+**Date:** 2026-10-12 (autopilot). **Rules:** `[THR-6]`, `[OWN-6]`, `[DIA-13]` shape O8.
+
+**Context.** The attribute was accepted but did nothing (`E0900` as unbuilt), so `E3015` had no
+producer and shape O8 no case.
+
+**Decision.** The type table keeps the declared `@must_drop` structs and classes by declared name
+(generic instances share it); `is_must_drop` adds what owns one (a struct, enum, tuple, array or
+collection holding one; never a reference), and `must_drop_container` finds a `Box`, `Shared`,
+`SyncShared`, `Array` or `std.collections` instance holding one. `E3015` at: `mem.forget` of one; a
+class field holding one; a struct field, local or parameter whose type has such a container; an
+`owned fn` capturing one; and a `return` of one the function made (a construction of a declared
+`@must_drop` type, or a local initialised by one; a value from a parameter or a call may be
+returned, so the standard library's generic code is unaffected). Not built: holding one across a
+`yield` (`E2231`, coroutines) and `[THR-5]`'s scope binding (`E3014`, `thread.scope`).
+
+**Consequences.** All 27 shapes of the catalogue have UI snapshots (`[DIA-13]`). `THR-6/` has an
+accept and a reject case; `docs/errors/E3015.md`.
+
+---
+
 ## ADR-163 — `@static_safe` refuses what is left of the aliasing checks; a value holding its owner and a view of it is B5 (D-559, D-558)
 
 **Date:** 2026-10-12 (autopilot). **Rules:** `[EFF-9]`, `[EFF-12]`, `[EFF-13]`, `[EFF-15]`, `[TYP-15]`,

@@ -23,8 +23,8 @@ class Derived[T](Base[T]):
     flag: bool
 
     fn init(mut self, weak: Weak[Shared[Token]], marker: T, flag: bool):
-        super.init(weak, marker)
         self.flag = flag
+        super.init(weak, marker)
 
 fn main():
     strong = Shared(Token(7))

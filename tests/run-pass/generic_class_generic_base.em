@@ -13,8 +13,8 @@ class Derived[T](Base[T]):
     marker: bool
 
     fn init(mut self, value: T, marker: bool):
-        super.init(value)
         self.marker = marker
+        super.init(value)
 
 fn main():
     item = Derived[i32](42, false)

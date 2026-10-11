@@ -469,6 +469,9 @@ pub struct TypeTable {
     /// `[ARN-11]` — the structs declared `@derive(Zeroable)`, by declared
     /// name (a generic struct's instances share its name as their origin).
     zeroable_derived: HashSet<Symbol>,
+    /// `[THR-6]` — the structs and classes declared `@must_drop`, by declared
+    /// name (a generic one's instances share it as their origin).
+    must_drop_declared: HashSet<Symbol>,
     next_infer: u32,
     /// Pointer width of the target, in bytes. 8 for every v1 target.
     pointer_size: u64,
@@ -543,6 +546,7 @@ impl TypeTable {
             ranges: Vec::new(),
             written_as: HashMap::new(),
             zeroable_derived: HashSet::new(),
+            must_drop_declared: HashSet::new(),
             next_infer: 0,
             pointer_size: 8,
         };
@@ -1609,6 +1613,89 @@ impl TypeTable {
             TyKind::Param { .. } | TyKind::Assoc { .. } => params,
             TyKind::Infer(_) => false,
             TyKind::Dyn { .. } | TyKind::Opaque(_) => false,
+        }
+    }
+
+    /// `[THR-6]` — record a struct's or class's `@must_drop`.
+    pub fn declare_must_drop(&mut self, name: Symbol) {
+        self.must_drop_declared.insert(name);
+    }
+
+    /// `[THR-6]` — a struct or class declared `@must_drop` itself (not one
+    /// that only holds such a value).
+    pub fn is_declared_must_drop(&self, ty: Ty) -> bool {
+        let declared = match self.kind(ty) {
+            TyKind::Struct(id) => {
+                let def = self.struct_def(*id);
+                def.origin.as_ref().map_or(def.name, |(origin, _)| *origin)
+            }
+            TyKind::Class(id) => {
+                let def = self.class_def(*id);
+                def.origin.as_ref().map_or(def.name, |(origin, _)| *origin)
+            }
+            _ => return false,
+        };
+        self.must_drop_declared.contains(&declared)
+    }
+
+    /// `[THR-6]` — a value whose drop a safety guarantee depends on: a type
+    /// declared `@must_drop`, or one owning such a value (a struct, enum,
+    /// tuple, array or generic type holding one). A reference to one is not.
+    pub fn is_must_drop(&self, ty: Ty) -> bool {
+        self.must_drop_with(ty, &mut HashSet::new())
+    }
+
+    fn must_drop_with(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+        if self.must_drop_declared.is_empty() || !seen.insert(ty) {
+            return false;
+        }
+        match self.kind(ty) {
+            TyKind::Struct(id) => {
+                let def = self.struct_def(*id);
+                let declared = def.origin.as_ref().map_or(def.name, |(origin, _)| *origin);
+                self.must_drop_declared.contains(&declared)
+                    || def.fields.iter().any(|field| self.must_drop_with(field.ty, seen))
+            }
+            TyKind::Class(id) => {
+                let def = self.class_def(*id);
+                let declared = def.origin.as_ref().map_or(def.name, |(origin, _)| *origin);
+                self.must_drop_declared.contains(&declared)
+            }
+            TyKind::Enum(id) => self.enum_def(*id).variants.iter()
+                .any(|variant| variant.fields.iter().any(|field| self.must_drop_with(field.ty, seen))),
+            TyKind::Tuple(items) => items.iter().any(|&item| self.must_drop_with(item, seen)),
+            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } => self.must_drop_with(*elem, seen),
+            _ => false,
+        }
+    }
+
+    /// `[THR-6]` — the `Box`, `Shared`, `SyncShared` or collection in `ty` (or
+    /// in a tuple, array or enum it is made of) that would hold a `@must_drop`
+    /// value. A program's own struct holding one is checked where it is
+    /// declared, so its fields are not searched here.
+    pub fn must_drop_container(&self, ty: Ty) -> Option<Ty> {
+        if self.must_drop_declared.is_empty() {
+            return None;
+        }
+        match self.kind(ty) {
+            TyKind::Vec { elem, .. } => {
+                if self.is_must_drop(*elem) { Some(ty) } else { self.must_drop_container(*elem) }
+            }
+            TyKind::Struct(id) => {
+                let (name, args) = self.struct_def(*id).origin.as_ref()?;
+                let container = matches!(name.as_str(), "Box" | "Shared" | "SyncShared")
+                    || name.as_str().starts_with("std.collections.");
+                if container && args.iter().any(|&arg| self.is_must_drop(arg)) {
+                    return Some(ty);
+                }
+                args.iter().find_map(|&arg| self.must_drop_container(arg))
+            }
+            TyKind::Enum(id) => self.enum_def(*id).variants.iter()
+                .flat_map(|variant| variant.fields.iter())
+                .find_map(|field| self.must_drop_container(field.ty)),
+            TyKind::Tuple(items) => items.iter().find_map(|&item| self.must_drop_container(item)),
+            TyKind::Array { elem, .. } => self.must_drop_container(*elem),
+            _ => None,
         }
     }
 

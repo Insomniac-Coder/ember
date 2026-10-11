@@ -218,7 +218,7 @@ Every rule of this document, by family, with the Part that defines it.
 | Rule | Part | Begins |
 |---|---|---|
 | `[CLS-1]` | V | A class instance lives on the heap with the header of `[OBJ-1]`. … |
-| `[CLS-2]` | V | `fn init(self, …)` is the constructor. Before any `init` body runs, … |
+| `[CLS-2]` | V | *(changed in 0.9.10)* `fn init(self, …)` is the constructor. Before … |
 | `[CLS-3]` | V | A class with no `init` and no base class gets a memberwise … |
 | `[CLS-4]` | V | A class is final unless declared `open` or `abstract`. Methods are … |
 | `[CLS-5]` | V | Interface calls on a class are dispatched statically unless the … |

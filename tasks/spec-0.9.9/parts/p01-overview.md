@@ -136,7 +136,7 @@ class Emitter:
     particles: Array[Particle] = []
     spawn_rate: f32 = 100.0
 
-    fn init(self, name: String):
+    fn init(self, owned name: String):
         self.name = name
 
     fn spawn(self, count: int):

@@ -16,8 +16,8 @@ class Derived(Base):
     extra: i32
 
     fn init(mut self, value: i32, extra: i32):
-        super.init(value)
         self.extra = extra
+        super.init(value)
 
 fn main():
     item = Derived(19, 23)

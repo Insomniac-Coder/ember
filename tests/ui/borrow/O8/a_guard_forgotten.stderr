@@ -1,0 +1,10 @@
+error[E3015]: `Guard` holds a `@must_drop` value, which may not be forgotten
+  --> tests/ui/borrow/O8/a_guard_forgotten.em:12:16
+   |
+12 |     mem.forget(g)
+   |                ^ its drop could be skipped or put off
+   |
+   = help: keep it in a local and let its scope end it, or bind it with `with`
+   = note: a `@must_drop` value's drop is a safety guarantee: it may not be forgotten, stored in a class field, `Shared`, `SyncShared`, `Box` or a collection, captured by an `owned fn`, or returned from the function that made it (THR-6)
+
+error: could not compile due to 1 error(s)

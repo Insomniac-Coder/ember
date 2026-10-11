@@ -6579,6 +6579,8 @@ impl Emitter<'_> {
                 }
                 let arg_ty = &printed;
                 // `[DSJ-1]` — two comparisons; an empty view overlaps nothing.
+                // As integers: `<` between pointers into two objects is
+                // undefined in C.
                 if let Builtin::ViewsOverlap { a, b } = which {
                     let size = |view: &Ty| match self.types.kind(*view) {
                         TyKind::Span { elem, .. } => c_size(&self.c_type(*elem)),
@@ -6586,7 +6588,7 @@ impl Emitter<'_> {
                     };
                     let (x, y) = (&rendered[0], &rendered[1]);
                     return format!(
-                        "(({x}).len != 0 && ({y}).len != 0 && (const char*)({x}).ptr < (const char*)({y}).ptr + ({y}).len * {} && (const char*)({y}).ptr < (const char*)({x}).ptr + ({x}).len * {})",
+                        "(({x}).len != 0 && ({y}).len != 0 && (uintptr_t)({x}).ptr < (uintptr_t)({y}).ptr + ({y}).len * {} && (uintptr_t)({y}).ptr < (uintptr_t)({x}).ptr + ({x}).len * {})",
                         size(b), size(a)
                     );
                 }

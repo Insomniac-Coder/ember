@@ -2341,7 +2341,7 @@ fn projected_type(types: &TypeTable, mut ty: Ty, path: &[Projection]) -> Ty {
 }
 
 /// One projection step of a type; a step that does not apply leaves it.
-fn project_type(types: &TypeTable, ty: Ty, projection: &Projection, variant: &mut Option<usize>) -> Ty {
+pub(crate) fn project_type(types: &TypeTable, ty: Ty, projection: &Projection, variant: &mut Option<usize>) -> Ty {
     match (projection, types.kind(ty)) {
         (Projection::Downcast(v), TyKind::Enum(_)) => {
             *variant = Some(*v);

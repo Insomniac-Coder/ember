@@ -25,8 +25,8 @@ class Bag(Base):
     items: Array[int]
 
     fn init(mut self):
-        super.init()
         self.items = [1, 2, 3]
+        super.init()
 
     fn grow(mut self):
         self.items.push(4)

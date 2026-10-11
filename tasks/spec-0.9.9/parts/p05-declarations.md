@@ -209,11 +209,13 @@ class Door(Script):
 
 * `[CLS-1]` A class instance lives on the heap with the header of `[OBJ-1]`. `Name(args)` allocates,
   runs the constructor and returns a handle with strong count 1.
-* `[CLS-2]` *(changed in 0.9.9)* `fn init(self, …)` is the constructor. Before any `init` body runs,
+* `[CLS-2]` *(changed in 0.9.9)* *(changed in 0.9.10)* `fn init(self, …)` is the constructor. Before any `init` body runs,
   every field default of the class and of its bases is evaluated and stored. Every field without a
   default MUST then be assigned on every path before `self` is used as a whole (`E2100`); `self` is
   used as a whole by a method call on it, by passing, storing or returning it, and by a closure
-  capturing it. Several constructors are written as associated functions that call `Self(…)`.
+  capturing it. A `return` from `init`, like the end of its body, hands the object to its caller,
+  so every such field is assigned on that path too. `mut self` is accepted in an `init` and means
+  the same (as `[STR-6]`). Several constructors are written as associated functions that call `Self(…)`.
 * `[CLS-3]` A class with no `init` and no base class gets a memberwise constructor as a struct does.
 * `[CLS-10]` *(new in 0.9.9)* A derived class with no `init` gets its base's constructor: `Door(entity)`
   evaluates `Door`'s field defaults and then runs `Script.init(entity)`. A derived class with a field

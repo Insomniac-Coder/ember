@@ -10705,6 +10705,25 @@ formal 1/9 count or Phase 2's estimate.
 
 #### Start here after a context reset — state at 2026-10-04 (autopilot)
 
+**2026-10-12 (autopilot), a Part V.5 class probe sweep: D-560..D-566, ODR-104 (0.9.10_Hardened_8).**
+CI went green on `fb5b02e` (closure thunks copy their state with `memcpy`: gcc -O3's strict
+aliasing broke the cast read; local checks never run gcc -O3 code, so any type pun goes through
+`memcpy`). D-560: a program's own `alloc`/`free`/`read`/`write` was taken for the memory builtin.
+D-561: a leak report through an `Option` field named no edge to weaken. D-562: `[CLS-7a]` missed
+`self.keeper.saved = Some(self)` (a class field has no MIR deref; the escape check now follows the
+place's types). D-563: a class `init` had to be `init(mut self, …)`; plain `self`, the spec's
+spelling, now works. D-564: a derived `init` could set its own fields after `super.init` (an
+override called from the base `init` read them uninitialised); `E2102` now reports it and the other
+`[CLS-11]` cases (13 tests reordered). D-565: an early `return` from `init` left fields unset; it is
+now checked, and `init` admits locals, compound writes and `unsafe` blocks. D-566: a closure in a
+method can capture `self`. ADR-165, ODR-104 (`[CLS-2]`: a constructor's `return` is a use as a whole;
+`mut self` means the same), and the overview's `Emitter` example takes `owned name` (it moved a
+borrowed `String`; `check_examples` only parses). The rest of Part V.5
+checked correct (`[CLS-3]`, `[CLS-5]` static interface dispatch, `[CLS-6]` destruction order,
+`[CLS-8]` `@sync` classes); D-567: `[CLS-9]`'s `let` field write has no code (it borrows `E1010`).
+**Next:** D-567 (ODR-105, a code of its own), D-557, D-550, and ask the owner about the EXC-10
+review workflow.
+
 **2026-10-11 (autopilot, the owner: "go on autopilot now"), EXC-10 and D-552 (ADR-158); D-554 found.**
 CI on `4a28ea6` failed on Linux only: the unix half of `main_args_replace_text_that_is_not_utf8`
 passes four words, so the count is 5 (fixed in `40292d0`, green; its failure text is now escaped,
@@ -10730,7 +10749,9 @@ check which is buildable now), then D-550. B11 done since (ADR-162: `assert_disj
 `assert_disjoint_or_panic`, `assume_disjoint`, `assert_disjoint_all`; D-557 open: the `Ok` views are
 not yet `restrict`). Then S1 (D-559: `@static_safe` now refuses the aliasing checks left after
 the proofs, `E4030`) and B5 (D-558: an owner and a view of it in one literal is `E3024`), ADR-163.
-Left: O8 (`E3014`/`E3015`: `@must_drop`, then scoped threads).
+Then `@must_drop` (ADR-164, `[THR-6]`, `E3015`): **all 27 shapes have UI snapshots** (Phase 2's
+`[DIA-13]` exit item; `E3014` waits on `thread.scope`). **Next:** D-557 (`assert_disjoint`'s `Ok` views
+`restrict`), D-550 (gcc short mixed strings), and ask the owner about the EXC-10 review workflow.
 
 **2026-10-11, D-548 and D-549 fixed (ADR-156).** `fn main(args: Array[String])` builds and runs, with the
 command line decoded as UTF-8 (lossy; UTF-16 on Windows), and an `Err` returned from `main` prints

@@ -19,8 +19,8 @@ class Derived[T](Base[T]):
     flag: bool
 
     fn init(mut self, value: i32, marker: T, flag: bool):
-        super.init(value, marker)
         self.flag = flag
+        super.init(value, marker)
 
 fn main():
     item = Derived[bool](42, false, true)

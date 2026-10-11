@@ -502,7 +502,8 @@ fn check_drop_self_escapes(
         for stmt in &block.stmts {
             if let StmtKind::Assign { place, rvalue } = &stmt.kind {
                 if rvalue_copies_drop_self(rvalue, &aliases, self_local)
-                    && ((!place.projection.is_empty() && !is_self_interior(place, self_local))
+                    && ((!place.projection.is_empty()
+                        && !is_in_self_storage(body, types, place, self_local))
                         || is_owned_closure_environment_local(
                             body,
                             types,
@@ -662,6 +663,36 @@ fn report_drop_self_escape(sink: &mut Sink, span: Span) {
 /// Whether a move leaves through `drop`'s `self`: rooted at it, past the borrow.
 fn is_self_interior(place: &Place, self_local: LocalId) -> bool {
     place.local == self_local && !place.projection.is_empty()
+}
+
+/// A place in the storage of the object being destroyed (D-562): reached from
+/// `self` without stepping into another object through a class handle,
+/// reference, pointer or view held in one of its fields. `self.keeper.saved`
+/// is `(*self).0.0`, a field of the `Keeper`, which outlives the drop.
+fn is_in_self_storage(body: &Body, types: &TypeTable, place: &Place, self_local: LocalId) -> bool {
+    if place.local != self_local || place.projection.is_empty() {
+        return false;
+    }
+    let mut ty = body.local(self_local).ty;
+    let mut variant = None;
+    let mut at_self = true;
+    for projection in &place.projection {
+        let leaves = !at_self
+            && match (projection, types.kind(ty)) {
+                (Projection::Deref, _) | (Projection::Field(_), TyKind::Class(_)) => true,
+                (
+                    Projection::Index(_) | Projection::ConstIndex(_) | Projection::Column(_),
+                    TyKind::Span { .. } | TyKind::Ptr { .. },
+                ) => true,
+                _ => false,
+            };
+        if leaves {
+            return false;
+        }
+        at_self = at_self && matches!(projection, Projection::Deref);
+        ty = crate::regions::project_type(types, ty, projection, &mut variant);
+    }
+    true
 }
 
 /// `[DRP-5]`, `[EXP-6]` — a `drop` body may not move out through `mut self`.

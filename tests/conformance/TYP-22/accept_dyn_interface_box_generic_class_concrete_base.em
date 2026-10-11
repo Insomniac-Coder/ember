@@ -18,8 +18,8 @@ class Pixel[T](Base) implements Render:
     marker: T
 
     fn init(mut self, value: i32, marker: T):
-        super.init(value)
         self.marker = marker
+        super.init(value)
 
     fn render(self) -> i32:
         return self.value

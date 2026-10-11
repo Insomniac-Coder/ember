@@ -1554,6 +1554,12 @@ struct Checker<'a> {
     /// later pass over a body checks the lambda against the type an earlier
     /// pass gave a name (`xs = []` then `xs.push(fn() => ...)`), and keeps it.
     closure_env_spans: HashMap<StructId, Span>,
+    /// The first local of the body being checked: those before it are its
+    /// parameters (`[THR-6]`'s return rule).
+    body_locals_from: usize,
+    /// `[THR-6]` — the locals of the body being checked that hold a
+    /// `@must_drop` value it made.
+    made_must_drop: HashSet<LocalId>,
     /// The expected callable boundary may be late-bound even after a generic
     /// parameter has been monomorphized to a concrete function or closure
     /// type. Keep that source-level fact alongside the local identity.
@@ -1812,6 +1818,8 @@ impl<'a> Checker<'a> {
             callable_parameter_locals: HashSet::new(),
             copy_captures: Vec::new(),
             closure_env_spans: HashMap::new(),
+            body_locals_from: 0,
+            made_must_drop: HashSet::new(),
             latebound_callable_parameter_locals: HashSet::new(),
             callable_value_params: HashMap::new(),
             callable_value_bindings: HashMap::new(),
@@ -3257,6 +3265,9 @@ impl<'a> Checker<'a> {
                     if has_derive(&item.attrs, "Zeroable") {
                         self.types.derive_zeroable(name);
                     }
+                    if has_attribute(&item.attrs, "must_drop") {
+                        self.types.declare_must_drop(name);
+                    }
                     let id = self.types.add_struct(StructDef {
                         name,
                         fields: Vec::new(),
@@ -3337,6 +3348,7 @@ impl<'a> Checker<'a> {
                 continue;
             };
             self.validate_sync_class(id);
+            self.validate_must_drop_class(id);
             let Some(base) = self.types.class_def(id).base else { continue };
             self.validate_sync_base(id, base, decl.base.as_ref().map_or(decl.name.span, |b| b.span));
             // `[CLS-10]` — with no `init`, the base's constructor builds the
@@ -3393,6 +3405,47 @@ impl<'a> Checker<'a> {
                 format!("class `{}` and its base `{}` must both be `@sync` or both be non-`@sync`", derived.name, parent.name),
             );
         }
+    }
+
+    /// `[THR-6]` — a class field holds no `@must_drop` value: the object may
+    /// outlive every scope, and the drop a guarantee depends on with it.
+    fn validate_must_drop_class(&mut self, id: ClassId) {
+        let def = self.types.class_def(id);
+        let offenders: Vec<(Symbol, Ty, Span)> = def.fields.iter()
+            .filter(|field| self.types.is_must_drop(field.ty) || self.types.must_drop_container(field.ty).is_some())
+            .map(|field| (field.name, field.ty, field.ty_span))
+            .collect();
+        for (field, ty, span) in offenders {
+            self.must_drop_error(span, ty, &format!("stored in the class field `{field}`"));
+        }
+    }
+
+    /// `[THR-6]` — whether `expr` makes a value of a type declared
+    /// `@must_drop`.
+    fn makes_must_drop(&self, expr: &Expr) -> bool {
+        matches!(expr.kind, ExprKind::StructLit { .. } | ExprKind::ClassNew { .. })
+            && self.types.is_declared_must_drop(expr.ty)
+    }
+
+    /// `[THR-6]` — `E3015` for a `Box`, `Shared` or collection holding one.
+    fn must_drop_container_error(&mut self, span: Span, container: Ty) {
+        let shown = self.types.display(container);
+        self.must_drop_report(span, format!("`{shown}` would hold a `@must_drop` value"));
+    }
+
+    /// `[THR-6]` — `E3015`: where a `@must_drop` value may not go.
+    fn must_drop_error(&mut self, span: Span, ty: Ty, place: &str) {
+        let shown = self.types.display(ty);
+        self.must_drop_report(span, format!("`{shown}` holds a `@must_drop` value, which may not be {place}"));
+    }
+
+    fn must_drop_report(&mut self, span: Span, message: String) {
+        self.sink.emit_classified(
+            Diagnostic::error(codes::E3015, span, message)
+                .primary_label("its drop could be skipped or put off")
+                .help("keep it in a local and let its scope end it, or bind it with `with`")
+                .note("a `@must_drop` value's drop is a safety guarantee: it may not be forgotten, stored in a class field, `Shared`, `SyncShared`, `Box` or a collection, captured by an `owned fn`, or returned from the function that made it (THR-6)"),
+        );
     }
 
     fn validate_sync_class(&mut self, id: ClassId) {
@@ -3911,6 +3964,9 @@ impl<'a> Checker<'a> {
             }
             if has_derive(&item.attrs, "Zeroable") {
                 self.types.derive_zeroable(name);
+            }
+            if has_attribute(&item.attrs, "must_drop") {
+                self.types.declare_must_drop(name);
             }
             self.generic_structs.insert(
                 name,
@@ -5870,6 +5926,14 @@ impl<'a> Checker<'a> {
                     let def = self.types.struct_def_mut(id);
                     def.fields = fields;
                     def.has_drop = has_drop;
+                    // `[THR-6]` — a `Box`, `Shared` or collection field of a
+                    // `@must_drop` value.
+                    let held: Vec<(Ty, Span)> = self.types.struct_def(id).fields.iter()
+                        .filter_map(|field| self.types.must_drop_container(field.ty).map(|container| (container, field.ty_span)))
+                        .collect();
+                    for (container, span) in held {
+                        self.must_drop_container_error(span, container);
+                    }
 
                     if has_derive(&item.attrs, "Copy") {
                         let ty = self.named_types[&self.qualified(decl.name.name)];
@@ -8710,14 +8774,18 @@ impl<'a> Checker<'a> {
                     if receiver.is_some() {
                         self.error(codes::E1030, param.span, "two receivers on one method");
                     }
-                    receiver = Some(mode_of(param.mode));
+                    // `[CLS-2]` spells a class constructor `fn init(self, …)`.
+                    // A constructor opens no whole-object access either way
+                    // (`[EXC-15]` starts once the object can be observed), so
+                    // its receiver is the object being built, as `mut self`
+                    // writes it (D-563).
+                    let class_init = decl.name.name.is("init")
+                        && param.mode == ast::Mode::Borrow
+                        && self_ty.is_some_and(|ty| matches!(self.types.kind(ty), TyKind::Class(_)));
+                    let mode = if class_init { Mode::Mut } else { mode_of(param.mode) };
+                    receiver = Some(mode);
                     if let Some(self_ty) = self_ty {
-                        params.push((
-                            Symbol::intern("self"),
-                            self_ty,
-                            mode_of(param.mode),
-                            param.span,
-                        ));
+                        params.push((Symbol::intern("self"), self_ty, mode, param.span));
                     }
                 }
                 ast::ParamKind::Named { name, ty } => {
@@ -10749,6 +10817,9 @@ impl<'a> Checker<'a> {
             return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
         }
         let elem = explicit.first().copied().unwrap_or(first.ty);
+        if operation == "forget" && self.types.is_must_drop(elem) {
+            self.must_drop_error(args[0].value.span, elem, "forgotten");
+        }
         if operation == "forget" {
             return Some(Expr {
                 ty: self.common.void,
@@ -10876,6 +10947,15 @@ impl<'a> Checker<'a> {
         let usize_ty = self.common.usize;
         let void = self.common.void;
         let resolved = self.resolve_name(name);
+        // D-560 — a function the program declares as `alloc`, `free`, `read`
+        // or `write` is that function: those raw-memory primitives are bare
+        // names of last resort. (`size_of` and `align_of` are `std.mem`'s own
+        // declarations, which these built-ins stand for.)
+        if ["alloc", "free", "read", "write"].iter().any(|primitive| name.is(primitive))
+            && self.fn_ids.contains_key(&resolved)
+        {
+            return None;
+        }
         let (which, arity, needs_unsafe) = if name.is("alloc") {
             (Builtin::MemAlloc, 1, true)
         } else if name.is("free") {
@@ -12485,6 +12565,7 @@ impl<'a> Checker<'a> {
         self.types.class_def_mut(id).fields = fields;
         if !args.iter().any(|&arg| self.types.is_generic(arg)) {
             self.validate_sync_class(id);
+            self.validate_must_drop_class(id);
             if let Some(base) = base {
                 self.validate_sync_base(id, base, span);
             }
@@ -15769,9 +15850,14 @@ impl<'a> Checker<'a> {
         for stmt in &block.stmts {
             match &stmt.kind {
                 ast::StmtKind::Pass => {}
-                ast::StmtKind::Assign { targets, op: None, .. }
+                ast::StmtKind::Assign { targets, .. }
                     if targets.len() == 1 && Self::class_init_target_name(&targets[0]).is_some() => {}
-                ast::StmtKind::Expr(_) => {}
+                // A local's own statements do not touch the object's fields;
+                // every expression in them is checked for reads of `self`.
+                ast::StmtKind::Assign { targets, .. }
+                    if !targets.iter().any(Self::rooted_at_self) => {}
+                ast::StmtKind::Decl { .. } | ast::StmtKind::Expr(_) => {}
+                ast::StmtKind::Unsafe(body) => self.validate_class_init_shape(body, span),
                 ast::StmtKind::If(if_stmt) => {
                     self.validate_class_init_shape(&if_stmt.then_block, span);
                     match if_stmt.else_block.as_deref() {
@@ -15807,7 +15893,7 @@ impl<'a> Checker<'a> {
                     self.error(
                         codes::E1010,
                         stmt.span,
-                        "class `init` currently supports direct field assignments, `pass`, `if`, block-bodied `match` arms, and loop bodies",
+                        "class `init` currently supports locals, direct field assignments, `pass`, `if`, block-bodied `match` arms, `unsafe` blocks and loop bodies",
                     );
                 }
             }
@@ -15882,7 +15968,9 @@ impl<'a> Checker<'a> {
             }
             // A lambda may capture `self`; classify it as whole-self until the
             // ordinary capture/lifetime checks establish the safe boundary.
-            ast::ExprKind::Lambda(_) => true,
+            // A closure uses `self` as a whole when it captures it; its
+            // capture probe decides that (`synth_lambda_fresh`).
+            ast::ExprKind::Lambda(_) => false,
             ast::ExprKind::Match { .. } => true,
             ast::ExprKind::Tuple(items) | ast::ExprKind::ArrayLit(items) | ast::ExprKind::SetLit(items) => {
                 items.iter().any(Self::class_init_uses_whole_self)
@@ -15928,15 +16016,24 @@ impl<'a> Checker<'a> {
     /// `self.field` projection is a field access and is checked separately.
     fn check_class_init_whole_self_use(&mut self, expr: &ast::Expr) {
         if self.class_init.is_some() && Self::class_init_uses_whole_self(expr) {
-            let complete = self.class_init_is_complete();
-            if let Some(state) = self.class_init.as_mut() { state.whole_used = true; }
-            if complete { return; }
-            self.error(
-                codes::E2100,
-                expr.span,
-                "`self` is used before all class fields are initialized",
-            );
+            self.class_init_whole_self_used(expr.span);
         }
+    }
+
+    fn class_init_whole_self_used(&mut self, span: Span) {
+        let complete = self.class_init_is_complete();
+        let before_base = self
+            .class_init
+            .as_ref()
+            .is_some_and(|state| self.types.class_def(state.owner).base.is_some() && !state.base_initialized);
+        if let Some(state) = self.class_init.as_mut() { state.whole_used = true; }
+        if complete { return; }
+        // `[CLS-11]` — a derived object is not whole until its base is.
+        if before_base {
+            self.error(codes::E2102, span, "`self` is used before `super.init(...)`");
+            return;
+        }
+        self.error(codes::E2100, span, "`self` is used before all class fields are initialized");
     }
 
     fn report_missing_class_init_fields(&mut self, span: Span) {
@@ -15978,6 +16075,8 @@ impl<'a> Checker<'a> {
         right: Option<ClassInitState>,
     ) -> Option<ClassInitState> {
         match (left, right) {
+            // Inside a constructor, `None` is a path that returned.
+            (None, right) => right,
             (Some(mut left), Some(right)) if left.owner == right.owner && left.receiver == right.receiver => {
                 for (left, right) in left.initialized.iter_mut().zip(right.initialized) {
                     *left = left.join(right);
@@ -15997,6 +16096,18 @@ impl<'a> Checker<'a> {
             merged = Self::merge_class_init_paths(Some(merged), Some(path))?;
         }
         Some(merged)
+    }
+
+    /// An assignment target written through `self` (`self.a.b`, `self.xs[i]`).
+    fn rooted_at_self(expr: &ast::Expr) -> bool {
+        match &expr.kind {
+            ast::ExprKind::SelfExpr => true,
+            ast::ExprKind::Field { base, .. }
+            | ast::ExprKind::TupleField { base, .. }
+            | ast::ExprKind::IndexOrInstantiate { base, .. } => Self::rooted_at_self(base),
+            ast::ExprKind::Tuple(items) => items.iter().any(Self::rooted_at_self),
+            _ => false,
+        }
     }
 
     fn class_init_target_name(expr: &ast::Expr) -> Option<Symbol> {
@@ -16050,7 +16161,7 @@ impl<'a> Checker<'a> {
             .map_or(0, |base| self.types.class_field_count(base));
         if index < base_count && !state.base_initialized {
             self.error(
-                codes::E2100,
+                codes::E2102,
                 span,
                 "inherited class field is read before `super.init(...)`",
             );
@@ -16084,7 +16195,7 @@ impl<'a> Checker<'a> {
             .map_or(0, |base| self.types.class_field_count(base));
         if index < base_count && !base_initialized {
             self.error(
-                codes::E2100,
+                codes::E2102,
                 place.span,
                 "inherited class field is assigned before `super.init(...)`",
             );
@@ -16152,16 +16263,40 @@ impl<'a> Checker<'a> {
     /// `super.init(...)` call. A second call is rejected before it can make
     /// the base constructor run twice.
     fn mark_class_init_base(&mut self, span: Span) {
-        let Some(state) = self.class_init.as_mut() else { return };
+        let Some(state) = self.class_init.as_ref() else { return };
         if state.base_initialized {
             self.error(codes::E1010, span, "`super.init(...)` may be called only once");
             return;
         }
+        let owner = state.owner;
         let base_count = self
             .types
-            .class_def(state.owner)
+            .class_def(owner)
             .base
             .map_or(0, |base| self.types.class_field_count(base));
+        // `[CLS-11]` — the base constructor may call a `virtual` method this
+        // class overrides, so every own field holds a value before it runs.
+        let unassigned: Vec<(usize, Symbol)> = state
+            .initialized
+            .iter()
+            .enumerate()
+            .skip(base_count)
+            .filter(|(_, status)| !matches!(status, ClassFieldInit::Default | ClassFieldInit::Init))
+            .filter_map(|(index, _)| self.types.class_field_at(owner, index).map(|field| (index, field.name)))
+            .collect();
+        for (_, field) in &unassigned {
+            self.error(
+                codes::E2102,
+                span,
+                format!("field `{field}` is not assigned on every path before `super.init(...)`"),
+            );
+        }
+        let Some(state) = self.class_init.as_mut() else { return };
+        // Each field is reported once, here: a later write or the return does
+        // not report it again ([DIA-14]).
+        for (index, _) in unassigned {
+            state.initialized[index] = ClassFieldInit::Default;
+        }
         for status in state.initialized.iter_mut().take(base_count) {
             *status = ClassFieldInit::Init;
         }
@@ -16226,6 +16361,10 @@ impl<'a> Checker<'a> {
     }
 
     fn declare(&mut self, name: Option<Symbol>, ty: Ty, span: Span) -> LocalId {
+        // `[THR-6]` — a `Box`, `Shared` or collection of a `@must_drop` value.
+        if name.is_some() && let Some(container) = self.types.must_drop_container(ty) {
+            self.must_drop_container_error(span, container);
+        }
         let id = LocalId(self.locals.len() as u32);
         self.locals.push(LocalDecl {
             name,
@@ -17008,6 +17147,9 @@ impl<'a> Checker<'a> {
                 out.push(Stmt::Expr(expr));
             }
             ast::StmtKind::Decl { pattern, ty, init } => {
+                if let Some(init) = init {
+                    self.check_class_init_whole_self_use(init);
+                }
                 let Some(name) = binding_name(pattern) else {
                     self.error(codes::E1010, stmt.span, "this pattern is not supported yet");
                     return;
@@ -17285,6 +17427,9 @@ impl<'a> Checker<'a> {
                             self.local_ranges.insert(local, range);
                         }
                         self.learn(local, &init);
+                        if self.makes_must_drop(&init) {
+                            self.made_must_drop.insert(local);
+                        }
                         out.push(Stmt::Let { local, init: Some(init) });
                         return;
                     }
@@ -17546,6 +17691,12 @@ impl<'a> Checker<'a> {
                 }
                 if op.is_none() {
                     self.mark_class_init_field(&place);
+                } else if let Some(index) = self.class_init_field_index(&place)
+                    && let Some(status) = self.class_init.as_mut().and_then(|state| state.initialized.get_mut(index))
+                    && matches!(status, ClassFieldInit::Uninit | ClassFieldInit::Maybe)
+                {
+                    // Its read was reported above; the write still sets it ([DIA-14]).
+                    *status = ClassFieldInit::Init;
                 }
                 out.push(Stmt::Assign { place, value });
             }
@@ -17905,7 +18056,17 @@ impl<'a> Checker<'a> {
                 }
                 let ret_ty = self.ret_ty;
                 let value = match value {
-                    Some(expr) => Some(self.check_expr(expr, ret_ty)),
+                    Some(expr) => {
+                        let value = self.check_expr(expr, ret_ty);
+                        // `[THR-6]` — a `@must_drop` value this function made
+                        // may not leave it (one from a caller or a callee may).
+                        let made = self.makes_must_drop(&value)
+                            || matches!(value.kind, ExprKind::Local(local) if self.made_must_drop.contains(&local));
+                        if made {
+                            self.must_drop_error(value.span, value.ty, "returned from the function that made it");
+                        }
+                        Some(value)
+                    }
                     None => {
                         if ret_ty != self.common.void {
                             let shown = self.types.display(ret_ty);
@@ -17918,6 +18079,13 @@ impl<'a> Checker<'a> {
                         None
                     }
                 };
+                // `[CLS-2]` — a constructor's `return` hands the object to its
+                // caller, so every field holds a value on this path (D-565).
+                // The path ends here: no merge after it sees its state.
+                if self.class_init.is_some() {
+                    self.report_missing_class_init_fields(span);
+                    self.class_init = None;
+                }
                 out.push(Stmt::Return(value));
             }
             ast::Jump::Break { label } => {
@@ -20663,6 +20831,8 @@ impl<'a> Checker<'a> {
             reported_defaults: self.reported_defaults.clone(),
         };
         let outer_copies = std::mem::take(&mut self.copy_captures);
+        let outer_body_locals = std::mem::replace(&mut self.body_locals_from, self.locals.len());
+        let outer_made = std::mem::take(&mut self.made_must_drop);
         let body = loop {
             self.open.known.clear();
             self.open.relied.clear();
@@ -20735,6 +20905,8 @@ impl<'a> Checker<'a> {
             );
         }
         self.open = outer;
+        self.body_locals_from = outer_body_locals;
+        self.made_must_drop = outer_made;
         body
     }
 
@@ -26597,6 +26769,9 @@ impl<'a> Checker<'a> {
                 let name = Symbol::intern("self");
                 match self.lookup(name) {
                     Some(local) => self.read_local_expecting(local, span, expected),
+                    // `[CLO-2]` — a closure in a method captures its receiver
+                    // as it captures any other local of the method.
+                    None if let Some(captured) = self.resolve_capture(name, span) => captured,
                     None => {
                         self.error(codes::E1010, span, "`self` outside a method");
                         Expr { ty: self.common.error, kind: ExprKind::Error, span }
@@ -34930,6 +35105,10 @@ impl<'a> Checker<'a> {
             self.sink.emit(diagnostic);
         }
         let captured = probe.found;
+        // `[CLS-2]` — a closure capturing `self` uses it as a whole.
+        if self.class_init.is_some() && captured.iter().any(|(name, _)| name.is("self")) {
+            self.class_init_whole_self_used(span);
+        }
 
         // A capture-free closure is "a plain value type" (`[CLO-1]`), and Part
         // IV §9's `fn(A) -> R` is that type, so it can be stored in a `fn`
@@ -35036,6 +35215,14 @@ impl<'a> Checker<'a> {
         // only reads `Copy` variables copies them (a handle is retained), so
         // it may outlive them. One of them assigned later keeps the borrow
         // rule: `check_body` reports that once the whole body is known.
+        // `[THR-6]` — an `owned fn` may be stored anywhere, its captures with it.
+        if lambda.is_owned {
+            for (name, ty) in &captured {
+                if self.types.is_must_drop(*ty) {
+                    self.must_drop_error(span, *ty, &format!("captured by an `owned fn` (`{name}`)"));
+                }
+            }
+        }
         let by_copy = !lambda.is_owned
             && mutable_capture_fields.is_empty()
             && expected.is_some_and(|ty| matches!(self.types.kind(ty), TyKind::Fn { abi: None, stateless: false, .. }))
@@ -35209,6 +35396,9 @@ impl<'a> Checker<'a> {
         let outer_ret = self.ret_ty;
         let outer_watch = self.captures.replace(watch);
         self.ret_ty = ret.unwrap_or(self.common.void);
+        // A lambda's `return` leaves the lambda, not a class `init` around it;
+        // capturing `self` already needed every field (`[CLS-2]`).
+        let outer_class_init = self.class_init.take();
 
         // The environment is parameter zero, so the emitted function has
         // `[CLO-6]`'s `call(self, args)` shape.
@@ -35272,6 +35462,7 @@ impl<'a> Checker<'a> {
         self.latebound_callable_parameter_locals = outer_latebound_callable_parameter_locals;
         self.callable_value_bindings = outer_callable_value_bindings;
         self.ret_ty = outer_ret;
+        self.class_init = outer_class_init;
         let watch = std::mem::replace(&mut self.captures, outer_watch)
             .expect("the watch was installed above");
         (body, body_ty, locals, watch)
@@ -42927,7 +43118,7 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["reflect"], &["struct", "enum", "class", "type"], false),
     (&["borrows"], &["fn"], true),
     (&["safety"], &["fn"], true),
-    (&["must_drop"], &["struct", "class"], false),
+    (&["must_drop"], &["struct", "class"], true),
     (&["non_exhaustive"], &["enum"], false),
     (&["component"], &["struct"], false),
     (&["soa"], &["field"], false),

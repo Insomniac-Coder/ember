@@ -413,6 +413,8 @@ ODRS = [
      '`[CLO-3]`, `[CLO-10]`, `[CLO-13]`, `[CLO-2]`, `[THR-8]`, `[THR-9]`'),
     ('ODR-103', 'ruled under the delegation (2026-10-12, autopilot): a lambda that borrows, stored or sent where no view may go, is shape B9\'s `E3026` (a closure outlives what it captures), help `owned fn` or `thread.scope()`; `E3063` stays for other views',
      '`[CLO-3]`, `[CLO-4]`, `[THR-10]`'),
+    ('ODR-104', 'ruled under the delegation (2026-10-12, autopilot): a `return` from a class `init`, like the end of its body, hands the object to its caller, so every field without a default is assigned on that path (`E2100`); `mut self` in a class `init` is accepted and means the same as `self`',
+     '`[CLS-2]`, `[STR-6]`'),
 ]
 
 H5_HEAD = """
@@ -456,7 +458,8 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 0.9.10_Hardened_4 adds ODR-100, what a lambda written at an adapter captures (§H.9);
 0.9.10_Hardened_5 adds ODR-101, a `main` of another form (§H.10);
 0.9.10_Hardened_6 adds ODR-102, owned callable values (§H.11);
-0.9.10_Hardened_7 adds ODR-103, a lambda outliving its captures is `E3026` (§H.12).
+0.9.10_Hardened_7 adds ODR-103, a lambda outliving its captures is `E3026` (§H.12);
+0.9.10_Hardened_8 adds ODR-104, a constructor's `return` and its receiver (§H.13).
 
 | ODR | Ruling | Rules |
 |---|---|---|
@@ -472,7 +475,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.10', 7)
+CURRENT = ('0.9.10', 8)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -480,6 +483,7 @@ V010_H3_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h3')
 V010_H4_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h4')
 V010_H5_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h5')
 V010_H6_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h6')
+V010_H7_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h7')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -678,8 +682,33 @@ Generated: every rule whose text differs from 0.9.10_Hardened_6.
 """
 
 
-def v010_h6_to_now():
-    return H12_HEAD + rule_diff(V010_H6_PARTS, os.path.join(HERE, '..', 'parts'))
+def v010_h6_to_h7():
+    return H12_HEAD + rule_diff(V010_H6_PARTS, V010_H7_PARTS)
+
+
+H13_HEAD = """
+## H.13 Changes in 0.9.10_Hardened_8 (from 0.9.10_Hardened_7)
+
+**0.9.10_Hardened_8** records ODR-104, ruled under the owner's delegation on 2026-10-12
+(`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-165):
+
+* A `return` from a class `init`, like the end of its body, hands the object to its caller, so every
+  field without a default is assigned on that path (`E2100`) (`[CLS-2]`).
+* `mut self` is accepted in a class `init` and means the same as `self`, as for a struct (`[CLS-2]`,
+  `[STR-6]`).
+
+It also corrects the overview's `Emitter` example, which moved a borrowed `String` into a field
+(`[FN-1]`): its parameter is `owned name: String`.
+
+Generated: every rule whose text differs from 0.9.10_Hardened_7.
+
+| Rule | 0.9.10_Hardened_7 → 0.9.10_Hardened_8 |
+|---|---|
+"""
+
+
+def v010_h7_to_now():
+    return H13_HEAD + rule_diff(V010_H7_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -750,7 +779,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_now() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_now() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

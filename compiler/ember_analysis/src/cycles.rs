@@ -597,6 +597,14 @@ fn report_cycle(types: &TypeTable, cycle: &[StrongEdge], sink: &mut Sink) {
             edge.type_span,
             replacement.clone(),
         );
+    } else {
+        // `[WK-6]` names the field to make `Weak` even where `[WK-10]` offers
+        // no rewrite of its type (an `Option`, a collection, a generic recipe).
+        let owner = class_name(types, ClassId(first.field_owner as u32));
+        diagnostic = diagnostic.help(format!(
+            "if `{owner}.{}` is a back-reference, make it hold a `Weak` handle",
+            first.field
+        ));
     }
     for edge in cycle.iter().skip(1) {
         let owner = class_name(types, ClassId(edge.field_owner as u32));
