@@ -1323,6 +1323,24 @@ fn program_file(program: &Path, search: Option<std::ffi::OsString>) -> Option<Pa
 mod tests {
     use super::*;
 
+    /// Runs a program a test has just written. On Linux another test thread
+    /// may fork while this one still holds the new file open for writing;
+    /// until that child execs, its copy of the descriptor keeps the file
+    /// busy, and starting it fails with "Text file busy" (CI, D-573). That
+    /// is over within moments, so the start is retried for up to a second.
+    fn run_fresh(command: &mut Command) -> std::io::Result<std::process::Output> {
+        let mut tries = 0;
+        loop {
+            match command.output() {
+                Err(error) if error.kind() == std::io::ErrorKind::ExecutableFileBusy && tries < 100 => {
+                    tries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                result => return result,
+            }
+        }
+    }
+
     /// ADR-098 — gcc's release build asks for the vectoriser cost model that
     /// takes a loop with a scalar tail; clang (which does by default), the
     /// other profiles and MSVC get nothing extra.
@@ -1365,7 +1383,7 @@ mod tests {
                 sources: &[source.clone()], include_dirs: &[], output: program(name),
                 profile: Profile::Debug, obj_dir: dir.join("obj"),
             }, None, Some(&cache)).expect("the program builds");
-            let output = Command::new(program(name)).output().expect("the program runs");
+            let output = run_fresh(&mut Command::new(program(name))).expect("the program runs");
             String::from_utf8_lossy(&output.stdout).trim().to_string()
         };
         let kept = || {
@@ -1536,7 +1554,7 @@ int main(int argc, char** argv) {
                     compile_and_link(&toolchain, &request).unwrap();
                 }
                 for mode in ["default", "configured", "panic"] {
-                    let output = Command::new(&executable).arg(mode).output().unwrap();
+                    let output = run_fresh(Command::new(&executable).arg(mode)).unwrap();
                     if mode == "panic" {
                         assert_eq!(output.status.signal(), Some(6));
                         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1762,7 +1780,7 @@ int main(int argc, char** argv) {
             include_dirs: &[runtime.join("include")], output: program.clone(),
             profile: Profile::Release, obj_dir: dir.join("obj"),
         }).expect("the guarded byte-sum oracle compiles");
-        let output = Command::new(program).output().expect("the guarded oracle runs");
+        let output = run_fresh(&mut Command::new(program)).expect("the guarded oracle runs");
         assert!(output.status.success(), "guarded oracle failed: {}", String::from_utf8_lossy(&output.stderr));
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
         let _ = std::fs::remove_dir_all(&dir);
@@ -1784,7 +1802,7 @@ int main(int argc, char** argv) {
             include_dirs: &[runtime.join("include")], output: program.clone(),
             profile: Profile::Release, obj_dir: dir.join("obj"),
         }).expect("the guarded scalar-decoder oracle compiles");
-        let output = Command::new(program).output().expect("the guarded oracle runs");
+        let output = run_fresh(&mut Command::new(program)).expect("the guarded oracle runs");
         assert!(output.status.success(), "guarded decoder oracle failed: {}", String::from_utf8_lossy(&output.stderr));
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
         let _ = std::fs::remove_dir_all(&dir);
@@ -1855,7 +1873,7 @@ int main(int argc, char** argv) {
             include_dirs: &[runtime.join("include")], output: program.clone(),
             profile: Profile::Release, obj_dir: dir.join("obj"),
         }).expect("the Sync-count oracle compiles");
-        let output = Command::new(program).output().expect("the Sync-count oracle runs");
+        let output = run_fresh(&mut Command::new(program)).expect("the Sync-count oracle runs");
         assert!(output.status.success(), "Sync counts failed: {}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
         let _ = std::fs::remove_dir_all(&dir);

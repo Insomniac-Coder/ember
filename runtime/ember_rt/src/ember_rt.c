@@ -6651,13 +6651,22 @@ EMBER_PRINTERS(char, uint32_t)
 /* -- the command line (`[FN-8]`) --------------------------------------------- */
 
 #if defined(_WIN32)
-/* Declared here, as `rand_s` is, rather than through <windows.h>. */
+/* Declared here, as `rand_s` is, rather than through <windows.h>.
+ * `CommandLineToArgvW` is shell32's, which loads a dozen more libraries:
+ * imported, every program loaded them at start, whether it read its command
+ * line or not, wherever the linker kept this function (clang: +2.5 ms and
+ * 0.4 MB for an empty program, D-572). It is looked up when it is needed.
+ * Each declaration is the SDK's own, type for type, so that a host including
+ * <windows.h> after this file still compiles (`HMODULE` and `FARPROC`). */
+struct HINSTANCE__;
+typedef long long (__stdcall* ember_farproc)();
+typedef wchar_t** (__stdcall* ember_split_command_line)(const wchar_t* line, int* count);
 __declspec(dllimport) wchar_t* __stdcall GetCommandLineW(void);
-__declspec(dllimport) wchar_t** __stdcall CommandLineToArgvW(const wchar_t* line, int* count);
+__declspec(dllimport) struct HINSTANCE__* __stdcall LoadLibraryW(const wchar_t* name);
+__declspec(dllimport) ember_farproc __stdcall GetProcAddress(struct HINSTANCE__* module, const char* name);
 __declspec(dllimport) int __stdcall WideCharToMultiByte(unsigned int page, unsigned long flags,
     const wchar_t* wide, int wide_len, char* out, int out_len, const char* fallback, int* used_fallback);
 __declspec(dllimport) void* __stdcall LocalFree(void* memory);
-#pragma comment(lib, "shell32.lib")
 #endif
 
 static int g_argc;
@@ -6712,7 +6721,11 @@ ember_vec ember_process_args(void) {
     ember_vec args = ember_vec_empty();
 #if defined(_WIN32)
     int count = 0;
-    wchar_t** wide = CommandLineToArgvW(GetCommandLineW(), &count);
+    struct HINSTANCE__* shell = LoadLibraryW(L"shell32.dll");
+    ember_split_command_line split = shell == NULL
+        ? NULL
+        : (ember_split_command_line)GetProcAddress(shell, "CommandLineToArgvW");
+    wchar_t** wide = split == NULL ? NULL : split(GetCommandLineW(), &count);
     for (int i = 0; wide != NULL && i < count; i++) {
         ember_vec text = ember_vec_empty();
         /* CP_UTF8; a lone surrogate becomes U+FFFD. The size counts the NUL. */
