@@ -10737,10 +10737,12 @@ on Windows a function only ever called directly takes a `str`/span parameter as 
 caller's field stores then a 16-byte copy stalled every call); MSVC short text 1.3x C -> 0.72-0.84x,
 `a16_map_text` MSVC x0.873. The full benchmark run then found D-571 (ADR-169): `a08_closures`
 1.6-1.9x the C++ since D-554 (a lambda passed as an owned callable value was called through it);
-a known function value is now called directly and inlined: MSVC 1.01x, clang 1.03x. **Next:** a
-fresh full README benchmark run (the 03:51 run also showed clang rows 8-16% slower and gcc p5/p6
-10-19% slower: re-time alone to tell heat from change), the README, and ASK the owner: D-550's
-layout, the EXC-10 review workflow.
+a known function value is now called directly and inlined: MSVC 1.01x, clang 1.03x. The clang
+rows' 5% drift was D-572 (shell32 loaded at every start: 4.6 -> 7 ms for an empty program); fixed,
+with D-573 (a build test that hit "Text file busy" on Linux CI). README benchmarks from one fresh
+run at 05:11 (2026-10-12): 46 as fast as C, 1 close, 3 slow (MSVC `t3_lines`, clang
+`a10_recursion`, gcc `p5_million_objects`); every flagged row moved with its own twin. **Next:**
+ASK the owner: D-550's layout, the EXC-10 review workflow; then the slow rows.
 
 **2026-10-11 (autopilot, the owner: "go on autopilot now"), EXC-10 and D-552 (ADR-158); D-554 found.**
 CI on `4a28ea6` failed on Linux only: the unix half of `main_args_replace_text_that_is_not_utf8`
