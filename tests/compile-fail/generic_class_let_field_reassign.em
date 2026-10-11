@@ -8,7 +8,7 @@ class Version[T]:
     let value: T
 
     fn replace(mut self, value: T):
-        self.value = value      #$ error[E1010]: cannot assign to `let` field `Version[T].value` outside its `init`
+        self.value = value      #$ error[E2104]: cannot assign to `let` field `Version[T].value` outside its `init`
 
 fn main():
     version = Version[i32](1)

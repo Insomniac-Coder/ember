@@ -1329,6 +1329,7 @@ fn same_cast(a: &CastKind, b: &CastKind) -> bool {
             | (CastKind::FnToC, CastKind::FnToC)
             | (CastKind::ClassUpcast, CastKind::ClassUpcast)
             | (CastKind::ClassUpcastBorrowed, CastKind::ClassUpcastBorrowed)
+            | (CastKind::ViewsDisjoint, CastKind::ViewsDisjoint)
     )
 }
 fn same_rvalue(a: &Rvalue, b: &Rvalue) -> bool {

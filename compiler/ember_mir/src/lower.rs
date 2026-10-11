@@ -1444,8 +1444,18 @@ impl<'a> Builder<'a> {
             kind: AggregateKind::Tuple,
             operands: views.iter().map(|view| Operand::Move(Place::local(*view))).collect(),
         };
+        // The views of a proved pair are marked as such (`[SIMD-3]`(d)).
+        let marked = |this: &mut Self, dest: Place, ty: Ty| {
+            let both = this.temp(ty, span);
+            this.push(StmtKind::StorageLive(both));
+            this.push(StmtKind::Assign { place: Place::local(both), rvalue: pair(&views) });
+            this.push(StmtKind::Assign {
+                place: dest,
+                rvalue: Rvalue::Cast { kind: CastKind::ViewsDisjoint, operand: Operand::Move(Place::local(both)), to: ty },
+            });
+        };
         if mode == hir::DisjointMode::Assumed {
-            self.push(StmtKind::Assign { place: dest, rvalue: pair(&views) });
+            marked(self, dest, result);
             return;
         }
         let overlap = self.temp(self.bool_ty, span);
@@ -1494,7 +1504,7 @@ impl<'a> Builder<'a> {
                 span,
             });
             self.current = next;
-            self.push(StmtKind::Assign { place: dest, rvalue: pair(&views) });
+            marked(self, dest, result);
             return;
         }
         let TyKind::Enum(result_id) = *self.types.kind(result) else {
@@ -1511,7 +1521,11 @@ impl<'a> Builder<'a> {
             self.current = block;
             let both = self.temp(pair_ty, span);
             self.push(StmtKind::StorageLive(both));
-            self.push(StmtKind::Assign { place: Place::local(both), rvalue: pair(&views) });
+            if variant == 0 {
+                marked(self, Place::local(both), pair_ty);
+            } else {
+                self.push(StmtKind::Assign { place: Place::local(both), rvalue: pair(&views) });
+            }
             self.push(StmtKind::Assign {
                 place: dest.clone(),
                 rvalue: Rvalue::Aggregate {

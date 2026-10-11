@@ -1,4 +1,4 @@
-//! A loop nest over separate lists, in a function of its own, for MSVC.
+//! A loop over separate lists, in a function of its own whose lists are `restrict`.
 //!
 //! MSVC turns a nest's two loops around (each element read and written once,
 //! its rounds in a register) only when it knows the lists the nest reads and
@@ -22,6 +22,14 @@
 //! written in as that constant (a count or a start the program fixes stays
 //! fixed, which MSVC needs). The caller makes the views and calls it.
 //!
+//! A list the loop writes is apart from every other list it names only by a
+//! derived fact (`[SIMD-3]`, D-568): two list locals (owners), views made in
+//! the function from two different list locals, or views taken out of one
+//! tuple proved apart (`assert_disjoint`'s `Ok`, `split_at`). Two views being
+//! live at once proves nothing, and neither does a parameter mode. A loop
+//! whose written views all carry a proved fact (`[DSJ-3]`) moves for every C
+//! compiler, a single loop included (D-557).
+//!
 //! For gcc (ADR-098): gcc vectorises a loop over two lists it cannot prove
 //! apart only with a run-time overlap test, which its `-O2` cost model never
 //! adds, and it takes `restrict` from a function's parameters, not from a
@@ -34,8 +42,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use ember_mir::{
-    AssertKind, BasicBlock, BasicBlockId, BinOp, Body, Builtin, Const, FuncRef, LocalDecl, LocalId, LocalKind, Operand,
-    ParameterMode, Place, Projection, Rvalue, Stmt, StmtKind, Terminator,
+    AggregateKind, AssertKind, BasicBlock, BasicBlockId, BinOp, Body, Builtin, CastKind, Const, FuncRef, LocalDecl, LocalId,
+    LocalKind, Operand, ParameterMode, Place, Projection, Rvalue, Stmt, StmtKind, Terminator,
 };
 use ember_types::{CommonTypes, Ty, TyKind, TypeTable};
 
@@ -47,6 +55,9 @@ use crate::loop_version::{CountedLoop, counted_loop};
 pub enum KernelTarget {
     Msvc,
     Gcc,
+    /// Only loops over views proved apart (`[DSJ-3]`): clang adds its own
+    /// overlap test before a vectorised loop otherwise.
+    Clang,
 }
 
 /// Moves the qualifying loop nests of every body into bodies of their own,
@@ -112,21 +123,15 @@ struct Uses {
 fn outline_one(body: &mut Body, types: &mut TypeTable, common: &CommonTypes, made: usize, target: KernelTarget) -> Option<Body> {
     let loops: Vec<CountedLoop> = (0..body.blocks.len()).filter_map(|header| counted_loop(body, types, header)).collect();
     // For MSVC a nest: a counted loop whose turn holds another counted
-    // loop's header. For gcc any counted loop.
-    let nests: Vec<&CountedLoop> = loops
+    // loop's header, or a loop over views proved apart. For gcc any counted
+    // loop; for clang one over views proved apart (`try_outline`).
+    let outermost: Vec<&CountedLoop> = loops
         .iter()
-        .filter(|shape| {
-            target == KernelTarget::Gcc
-                || loops.iter().any(|inner| inner.header != shape.header && shape.region.contains(&inner.header))
-        })
-        .collect();
-    let outermost: Vec<&CountedLoop> = nests
-        .iter()
-        .copied()
-        .filter(|shape| !nests.iter().any(|outer| outer.header != shape.header && outer.region.contains(&shape.header)))
+        .filter(|shape| !loops.iter().any(|outer| outer.header != shape.header && outer.region.contains(&shape.header)))
         .collect();
     for shape in outermost {
-        if let Some(kernel) = try_outline(body, types, common, shape, made, target) {
+        let nest = loops.iter().any(|inner| inner.header != shape.header && shape.region.contains(&inner.header));
+        if let Some(kernel) = try_outline(body, types, common, shape, nest, made, target) {
             return Some(kernel);
         }
     }
@@ -138,6 +143,7 @@ fn try_outline(
     types: &mut TypeTable,
     common: &CommonTypes,
     shape: &CountedLoop,
+    nest: bool,
     made: usize,
     target: KernelTarget,
 ) -> Option<Body> {
@@ -237,6 +243,23 @@ fn try_outline(
     if lists.is_empty() {
         return None;
     }
+    // `[SIMD-3]` — each list the loop writes is apart from every other by a
+    // derived fact.
+    let origins: Vec<Option<Origin>> = lists.iter().map(|&list| origin(body, types, list)).collect();
+    for (i, list) in lists.iter().enumerate() {
+        if written.contains(list) && (0..lists.len()).any(|j| j != i && !apart(origins[i], origins[j])) {
+            return None;
+        }
+    }
+    // `[DSJ-3]` — views `assert_disjoint` proved apart are marked `restrict`
+    // for every C compiler, whatever the loop's shape.
+    let proved = !written.is_empty()
+        && lists.iter().zip(&origins).all(|(list, origin)| !written.contains(list) || matches!(origin, Some(Origin::Proved(..))));
+    match target {
+        KernelTarget::Clang if !proved => return None,
+        KernelTarget::Msvc if !nest && !proved => return None,
+        _ => {}
+    }
     // A list the nest writes it never reads: then no round builds on an
     // element's last value, and MSVC's reordering (each element taken once,
     // its rounds in a register) only removes memory traffic. Where a round
@@ -247,52 +270,12 @@ fn try_outline(
     // then MSVC adds several rounds at once (ADR-080).
     // (For MSVC only: gcc does not turn the loops around, ADR-098.)
     if target == KernelTarget::Msvc
+        && nest
         && written
             .iter()
             .any(|&l| uses[&l.0].element_read && !adds_the_same_each_round(body, types, &inside, shape, l, &written))
     {
         return None;
-    }
-    // Distinct lists: follow the compiler's header copies (`_45 = _4`) back
-    // to the list they copy; a list the nest writes shares its elements with
-    // no other.
-    let root = |mut local: LocalId| -> LocalId {
-        for _ in 0..8 {
-            let decl = &body.locals[local.0 as usize];
-            if decl.kind != LocalKind::Temp {
-                break;
-            }
-            let mut source = None;
-            let mut defs = 0;
-            for data in &body.blocks {
-                for stmt in &data.stmts {
-                    if let StmtKind::Assign { place, rvalue } = &stmt.kind
-                        && place.local == local
-                    {
-                        defs += 1;
-                        if let Rvalue::Use(Operand::Copy(from) | Operand::Move(from)) = rvalue
-                            && from.projection.is_empty()
-                        {
-                            source = Some(from.local);
-                        }
-                    }
-                }
-            }
-            match source {
-                Some(from) if defs == 1 => local = from,
-                _ => break,
-            }
-        }
-        local
-    };
-    let roots: Vec<LocalId> = lists.iter().map(|&l| root(l)).collect();
-    for (i, &list) in lists.iter().enumerate() {
-        if !written.contains(&list) {
-            continue;
-        }
-        if roots.iter().enumerate().any(|(j, other)| j != i && *other == roots[i]) {
-            return None;
-        }
     }
 
     // Every other local the nest names: a scalar (passed in when its value
@@ -458,6 +441,8 @@ fn try_outline(
     kernel.uncounted_handles = Vec::new();
     kernel.removed_checks = Vec::new();
     kernel.restrict_views = true;
+    // The kernel is `EMBER_NOINLINE` already; the function's own hint (`@noinline`) is not its.
+    kernel.inline = Default::default();
 
     // The caller: the views made, then the call, then on from where the nest
     // left; the nest's own blocks are no longer reached.
@@ -751,6 +736,167 @@ fn adds_the_same_each_round(
         (true, false) => same.operand(rhs, 16),
         (false, true) => same.operand(lhs, 16),
         _ => false,
+    }
+}
+
+/// Where a list of the loop comes from, as far as `[SIMD-3]` can tell.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Origin {
+    /// A list local, or a view of one made in this function: (b), two
+    /// different list locals are apart.
+    List(LocalId),
+    /// Element `index` of a tuple of views proved pairwise apart: (c)
+    /// `split_at`, (d) `assert_disjoint`.
+    Proved(LocalId, usize),
+}
+
+fn apart(a: Option<Origin>, b: Option<Origin>) -> bool {
+    match (a, b) {
+        (Some(Origin::List(a)), Some(Origin::List(b))) => a != b,
+        (Some(Origin::Proved(t, i)), Some(Origin::Proved(u, j))) => t == u && i != j,
+        _ => false,
+    }
+}
+
+enum Def<'a> {
+    Value(&'a Rvalue),
+    Call(&'a FuncRef, &'a [Operand]),
+}
+
+/// What sets `local`: its one assignment or call, if it has exactly one. A
+/// write through it (`xs[i] = v`, `*r = v`) sets what it points at, not it.
+fn single_def(body: &Body, local: LocalId) -> Option<Def<'_>> {
+    let sets = |place: &Place| {
+        place.local == local
+            && !matches!(place.projection.first(), Some(Projection::Index(_) | Projection::ConstIndex(_) | Projection::Deref))
+    };
+    let mut found = None;
+    let mut count = 0;
+    for data in &body.blocks {
+        for stmt in &data.stmts {
+            match &stmt.kind {
+                StmtKind::Assign { place, rvalue } if sets(place) => {
+                    count += 1;
+                    found = place.projection.is_empty().then_some(Def::Value(rvalue));
+                }
+                StmtKind::CheckedBinaryOp { dest, overflow, .. } if sets(dest) || sets(overflow) => {
+                    count += 1;
+                    found = None;
+                }
+                _ => {}
+            }
+        }
+        if let Terminator::Call { func, args, dest, .. } = &data.terminator
+            && dest.local == local
+        {
+            count += 1;
+            found = dest.projection.is_empty().then_some(Def::Call(func, args));
+        }
+    }
+    if count == 1 { found } else { None }
+}
+
+/// The origin of a list of the loop (`[SIMD-3]`). A list is an owner: a list
+/// local, or a list parameter (a caller cannot give one list as a `mut`
+/// parameter and another at once); the compiler's copies of one (`_45 =
+/// _4`, `_t = *_2`) and references to one are followed back to it. A view is
+/// followed through copies, `as_span`/`as_mut_span` of a list, and the tuple
+/// of a proved pair it was taken out of, matched or destructured. A view set
+/// more than once has none (`[DSJ-2]`: reassigning drops the fact), and
+/// neither has a view parameter.
+fn origin(body: &Body, types: &TypeTable, list: LocalId) -> Option<Origin> {
+    let mut local = list;
+    for _ in 0..16 {
+        let decl = &body.locals[local.0 as usize];
+        let def = single_def(body, local);
+        let temp = decl.kind == LocalKind::Temp;
+        let followed = |place: &Place| place.projection.is_empty() || place.projection == [Projection::Deref];
+        match types.kind(decl.ty) {
+            TyKind::Vec { .. } | TyKind::Ref { .. } => {
+                if let TyKind::Ref { inner, .. } = types.kind(decl.ty)
+                    && !matches!(types.kind(*inner), TyKind::Vec { .. })
+                {
+                    return None;
+                }
+                match def {
+                    Some(Def::Value(Rvalue::Use(Operand::Copy(from) | Operand::Move(from)) | Rvalue::Ref { place: from, .. }))
+                        if temp && followed(from) =>
+                    {
+                        local = from.local;
+                        continue;
+                    }
+                    _ => {}
+                }
+                // A reference the compiler set any other way is not followed.
+                if matches!(types.kind(decl.ty), TyKind::Ref { .. }) && decl.kind != LocalKind::Arg {
+                    return None;
+                }
+                return Some(Origin::List(local));
+            }
+            TyKind::Span { .. } => match def {
+                Some(Def::Value(Rvalue::Use(Operand::Copy(from) | Operand::Move(from)))) => {
+                    if from.projection.is_empty() {
+                        local = from.local;
+                        continue;
+                    }
+                    return proved_element(body, from);
+                }
+                Some(Def::Call(FuncRef::Builtin { which: Builtin::SpanFrom { .. }, .. }, [Operand::Copy(reference) | Operand::Move(reference)]))
+                    if reference.projection.is_empty() =>
+                {
+                    local = reference.local;
+                }
+                _ => return None,
+            },
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// `place` is one element of a proved tuple: `pair.k` where `pair` is the
+/// proved tuple (`assume_disjoint`, `assert_disjoint_or_panic`,
+/// `split_at`), or `(result as Ok).0.k` where every `Ok` that sets `result`
+/// holds one.
+fn proved_element(body: &Body, place: &Place) -> Option<Origin> {
+    let (tuple, index) = match place.projection.as_slice() {
+        [Projection::Field(index)] => (place.local, *index),
+        [Projection::Downcast(variant), Projection::Field(0), Projection::Field(index)] => {
+            let mut tuple = None;
+            for data in &body.blocks {
+                for stmt in &data.stmts {
+                    if let StmtKind::Assign { place: set, rvalue } = &stmt.kind
+                        && set.local == place.local
+                    {
+                        match rvalue {
+                            Rvalue::Aggregate { kind: AggregateKind::Enum(_, v), operands } if set.projection.is_empty() => {
+                                if v != variant {
+                                    continue;
+                                }
+                                let [Operand::Move(inner) | Operand::Copy(inner)] = operands.as_slice() else { return None };
+                                if !inner.projection.is_empty() || tuple.is_some_and(|t| t != inner.local) {
+                                    return None;
+                                }
+                                tuple = Some(inner.local);
+                            }
+                            _ => return None,
+                        }
+                    }
+                }
+                if let Terminator::Call { dest, .. } = &data.terminator
+                    && dest.local == place.local
+                {
+                    return None;
+                }
+            }
+            (tuple?, *index)
+        }
+        _ => return None,
+    };
+    match single_def(body, tuple)? {
+        Def::Value(Rvalue::Cast { kind: CastKind::ViewsDisjoint, .. })
+        | Def::Call(FuncRef::Builtin { which: Builtin::SpanSplitAt { .. }, .. }, _) => Some(Origin::Proved(tuple, index)),
+        _ => None,
     }
 }
 

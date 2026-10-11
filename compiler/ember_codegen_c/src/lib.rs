@@ -8037,6 +8037,8 @@ impl Emitter<'_> {
                     ember_mir::UnOp::BitNot => format!("(~{operand})"),
                 }
             }
+            // `[DSJ-1]` — a proved pair is the pair itself.
+            Rvalue::Cast { kind: CastKind::ViewsDisjoint, operand, .. } => self.operand(operand, body),
             Rvalue::Cast { kind, operand, to } => {
                 if matches!(kind, CastKind::Widen | CastKind::Numeric)
                     && let Some(from) = self.operand_type(operand, body)
@@ -8097,6 +8099,7 @@ impl Emitter<'_> {
                     | CastKind::ClassUpcastBorrowed => {
                         format!("(({ty}){value})")
                     }
+                    CastKind::ViewsDisjoint => value,
                 }
             }
             Rvalue::Aggregate { kind: AggregateKind::Callable, operands } => {

@@ -245,7 +245,7 @@ class Door(Script):
 * `[CLS-7a]` Inside `drop`, `self` MUST NOT be stored anywhere that outlives the call (`E3016`).
 * `[CLS-8]` *(changed in 0.9.9)* A class is `Sync` only as `[THR-1]` allows; every field of a `Sync`
   class is immutable after `init`.
-* `[CLS-9]` A `let` field is assignable only in `init`.
+* `[CLS-9]` *(changed in 0.9.10)* A `let` field is assignable only in `init` (`E2104`).
 * `[CLS-9a]` A `let` field of a non-`Copy` type may still be mutated *through* (`self.items.push(v)`);
   `let` fixes the binding, not the value.
 

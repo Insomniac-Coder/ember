@@ -65,6 +65,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-084 | **CLOSED** — `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts | Language / module attributes / arithmetic | — | **No** — delegated, 2026-09-27, Hardened_40 |
 | ODR-103 | **CLOSED** — a lambda that borrows, stored or sent where no view may go, is `E3026` (shape B9, a closure outlives what it captures), help `owned fn` or `thread.scope()`; `E3063` stays for other views | Diagnostics / closures | — | **Delegated** (autopilot, 2026-10-12), 0.9.10_Hardened_7 |
 | ODR-104 | **CLOSED** — a `return` from a class `init` hands the object to its caller, so every field without a default is assigned on that path (`E2100`); `mut self` in a class `init` means the same as `self` | Language / classes | — | **Delegated** (autopilot, 2026-10-12), 0.9.10_Hardened_8 |
+| ODR-105 | **CLOSED** — a `let` field assigned outside its `init` is `E2104` | Diagnostics / classes | — | **Delegated** (autopilot, 2026-10-12), 0.9.10_Hardened_9 |
 | ODR-102 | **CLOSED** — a function or capture-free lambda used as a value is a plain `Copy` value; an owned callable value moves and drops its state, is lent mutably to a borrowed parameter, is neither `Send` nor `Sync`, equals one calling the same function with the same state, and panics given to C when it holds state; `[CLO-13]` copies where a lambda becomes an owned callable value | Closures | — | **Delegated** (autopilot, 2026-10-11), 0.9.10_Hardened_6 |
 | ODR-101 | **CLOSED** — the entry module's `main` in a form `[FN-8]` does not list is `E2183` at its name; its one parameter may have any name and mode, its type `Array[String]`; an `E` that is not `Display` is `E2040` | Functions / entry point | — | **Delegated** (the owner, 2026-10-11: "fix that autonomously"), 0.9.10_Hardened_5 |
 | ODR-100 | **CLOSED** — the iterator adapters take over the callable and the iterator they keep; a lambda written at one keeps its borrows; only a callable that must carry the static region moves its captures | Closures / std | — | **Owner** (2026-10-11), 0.9.10_Hardened_4 |
@@ -258,6 +259,30 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-105 — the code of a `let` field assigned outside `init` — **CLOSED**
+
+    ID:        ODR-105
+    Status:    CLOSED — ruled under the delegation, 2026-10-12 (autopilot); incorporated
+               in 0.9.10_Hardened_9
+    Category:  DIAGNOSTICS / CLASSES
+    Location:  Ember_v0.9.10_Hardened_8.md [CLS-9], [DIA-6a]
+
+**The question.** `[CLS-9]` makes a `let` field assignable only in `init`, but the code table gives
+the rule no code; the compiler reported it as `E1010`, which the table gives `[MOD-3]` ("cannot
+find name in this scope") (D-567).
+
+**Ruling.** `E2104`, "assignment to a `let` field outside its `init`", beside `E2103` (assignment to
+`self` in a class method). `[CLS-9]` names it.
+
+**Why.** `[DIA-6a]` gives every diagnostic one code with one meaning; a borrowed code sends the
+reader to the wrong page.
+
+**Tests:** `CLS-9/reject_a_let_field_assigned_outside_init`, `CLS-9/accept_a_let_field_set_in_init_and_changed_through`,
+`tests/compile-fail/class_let_field_reassign.em`, `generic_class_let_field_reassign.em`;
+`docs/errors/E2104.md`. ADR-166.
 
 ---
 

@@ -226,7 +226,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[CLS-7]` | V | Inside a class method, `self` is a handle. Any method may read and … |
 | `[CLS-7a]` | V | Inside `drop`, `self` MUST NOT be stored anywhere that outlives the … |
 | `[CLS-8]` | V | A class is `Sync` only as `[THR-1]` allows; every field of a `Sync` … |
-| `[CLS-9]` | V | A `let` field is assignable only in `init`. |
+| `[CLS-9]` | V | *(changed in 0.9.10)* A `let` field is assignable only in `init` … |
 | `[CLS-9a]` | V | A `let` field of a non-`Copy` type may still be mutated *through* … |
 | `[CLS-10]` | V | A derived class with no `init` gets its base's constructor: … |
 | `[CLS-11]` | V | Construction is two-phase. In a derived `init`, the code before … |

@@ -6,10 +6,10 @@ class Version:
     let value: i32
 
     fn replace(mut self):
-        self.value = 2      #$ error[E1010]: cannot assign to `let` field `Version.value` outside its `init`
+        self.value = 2      #$ error[E2104]: cannot assign to `let` field `Version.value` outside its `init`
 
     fn increment(mut self):
-        self.value += 1     #$ error[E1010]: cannot assign to `let` field `Version.value` outside its `init`
+        self.value += 1     #$ error[E2104]: cannot assign to `let` field `Version.value` outside its `init`
 
 fn main():
     version = Version(1)

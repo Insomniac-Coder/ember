@@ -10721,8 +10721,13 @@ method can capture `self`. ADR-165, ODR-104 (`[CLS-2]`: a constructor's `return`
 borrowed `String`; `check_examples` only parses). The rest of Part V.5
 checked correct (`[CLS-3]`, `[CLS-5]` static interface dispatch, `[CLS-6]` destruction order,
 `[CLS-8]` `@sync` classes); D-567: `[CLS-9]`'s `let` field write has no code (it borrows `E1010`).
-**Next:** D-567 (ODR-105, a code of its own), D-557, D-550, and ask the owner about the EXC-10
-review workflow.
+Then D-567 fixed: ODR-105 (0.9.10_Hardened_9, ADR-166), `E2104`.
+Then D-557 with D-568 (ADR-167): the `restrict` kernels assumed any two views apart (`[SIMD-3]`
+forbids it; gcc's `Err` arm of `assert_disjoint` got `restrict`); now each list has a derived
+origin, and views `assert_disjoint` or `split_at` proved apart are `restrict` for every C compiler
+(`CastKind::ViewsDisjoint` marks the proved tuple; clang runs the pass for those loops only).
+Measured: no speed change (the C compilers' own overlap tests already vectorise the loop).
+**Next:** D-550, and ask the owner about the EXC-10 review workflow.
 
 **2026-10-11 (autopilot, the owner: "go on autopilot now"), EXC-10 and D-552 (ADR-158); D-554 found.**
 CI on `4a28ea6` failed on Linux only: the unix half of `main_args_replace_text_that_is_not_utf8`

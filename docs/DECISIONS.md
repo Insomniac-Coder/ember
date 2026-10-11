@@ -5016,6 +5016,47 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-167 — The `restrict` kernels derive their alias facts; views proved apart are `restrict` everywhere (D-568, D-557)
+
+**Date:** 2026-10-12 (autopilot). **Rules:** `[SIMD-3]`, `[DSJ-1]`..`[DSJ-3]`, `[SPN-3]`.
+
+**Context.** `[DSJ-3]` says the backend marks the views `assert_disjoint` proves apart `restrict`;
+nothing did (D-557). Looking at why, the kernel pass that gives loops `restrict` parameters
+(ADR-079 for MSVC, ADR-098 for gcc) took two locals with different roots as apart, so for gcc the
+`Err` arm, where the views overlap, got `restrict` too (D-568), against `[SIMD-3]`'s "derived, never
+assumed".
+
+**Decision.** (1) The lowering marks a proved tuple: `assert_disjoint`'s `Ok` payload,
+`assert_disjoint_or_panic`'s and `assume_disjoint`'s result are `CastKind::ViewsDisjoint` of the
+tuple, the same value in C. (2) `kernels.rs` gives each list of a loop an origin: a list local or
+list parameter is its own (followed back through the compiler's copies and references); a view is
+followed through copies and `as_span`/`as_mut_span` to its list; an element taken out of a marked
+tuple, or out of `split_at`'s pair, is that element of that tuple (through a `match` on the
+`Result`: every `Ok` that sets it must hold the one marked tuple). A local set more than once has
+no origin (`[DSJ-2]`), nor has a view parameter. A list the loop writes must be apart from every
+other: different owners, or different elements of one proved tuple. (3) A loop whose written views
+all come from a proved tuple moves for every C compiler: MSVC takes it even when it is not a nest
+(its turn-around conditions apply to nests only), and the driver now runs the pass for clang, which
+moves only such loops. A kernel no longer inherits its function's `@noinline` (MSVC C4141).
+
+**Consequences.** Kernel counts over the benchmark programs and 453 tests are unchanged but for
+`DSJ-1`'s `blend`. The proved loop runs at the same speed (`bench/probes/disjoint_views_blend.em`:
+MSVC x0.996, clang x0.999): the C compilers vectorise it behind their own overlap test already.
+Not done: `[SIMD-3]`(a), two ranges of one owner the borrow checker proves apart (`xs[0..k]` and
+`xs[k..n]`), which stay unproved.
+
+---
+
+## ADR-166 — `E2104` for a `let` field assigned outside `init` (D-567, ODR-105)
+
+**Date:** 2026-10-12 (autopilot). **Rules:** `[CLS-9]`, `[DIA-6a]`.
+
+**Decision.** The check that already rejected the write (`cannot assign to let field ... outside
+its init`) reports `E2104` instead of `E1010`; `codes.rs` declares it, so the generated code table
+lists it. `docs/errors/E2104.md`; `tests/conformance/CLS-9/`.
+
+---
+
 ## ADR-165 — Class construction as `[CLS-2]` and `[CLS-11]` write it (D-563..D-566, ODR-104)
 
 **Date:** 2026-10-12 (autopilot). **Rules:** `[CLS-2]`, `[CLS-11]`, `[CLS-7]`, `[CLO-2]`, `[STR-6]`.

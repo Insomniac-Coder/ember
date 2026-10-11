@@ -1819,6 +1819,28 @@ fn loop_nests_over_separate_lists_get_restrict_functions_for_msvc() {
 {}", clang.stdout);
 }
 
+/// D-557, D-568 — `[DSJ-3]`: the loop over views `assert_disjoint` proved
+/// apart runs in a `restrict` function for every C compiler, as do
+/// `split_at`'s halves. `[SIMD-3]`: the `Err` arm's views and two view
+/// parameters prove nothing, so nothing of `unproved` moves, and only the `Ok`
+/// arm of `scale` does (its loop and the copy loop versioning makes of it).
+#[test]
+fn views_proved_apart_get_restrict_functions_and_nothing_else_does() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/DSJ-3/accept_views_proved_apart_loop_in_a_restrict_function.{SOURCE_EXT}");
+    for cc in ["msvc", "clang", "gcc"] {
+        let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", cc], &root);
+        assert_eq!(c.exit, 0, "{cc} C failed:\n{}", c.stderr);
+        let kernels = |name: &str| c.stdout.matches(&format!("{}_loop", ember_branding::mangled(name))).count();
+        // Each kernel is named twice: its prototype and its definition, and
+        // once more where it is called.
+        assert_eq!(kernels("scale"), 6, "{cc}: the Ok arm's loop and its versioned copy, and nothing of the Err arm:\n{}", c.stdout);
+        assert!(kernels("halves") > 0, "{cc}: split_at's halves are apart:\n{}", c.stdout);
+        assert_eq!(kernels("unproved"), 0, "{cc}: two view parameters prove nothing:\n{}", c.stdout);
+        assert!(!c.stdout.contains("EMBER_NOINLINE EMBER_NOINLINE"), "{cc}: a kernel keeps its function's own hint");
+    }
+}
+
 /// ADR-099 — for clang and gcc, a list an innermost loop only pushes onto is
 /// kept in a local for the loop and written back on every way out
 /// (`list_locals.rs`): the C writes the object's list back from a local. Not

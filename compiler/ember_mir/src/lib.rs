@@ -1102,6 +1102,12 @@ pub enum CastKind {
         layout: Vec<Option<ember_hir::InterfaceSlot>>,
         implementations: Vec<Option<InterfaceAdapterMethod>>,
     },
+    /// `[DSJ-1]`, `[SIMD-3]`(d) — a tuple of views proved pairwise apart
+    /// (`assert_disjoint`'s `Ok`, `assert_disjoint_or_panic`,
+    /// `assume_disjoint`), the same value. The fact belongs to the tuple and
+    /// what is taken out of it (`[DSJ-2]`): the C backend's `restrict`
+    /// kernels read it back from here.
+    ViewsDisjoint,
 }
 
 pub use ember_hir::{BinOp, Builtin, FormatSpec, IntBits, IntOp, ParseKind, UnOp};

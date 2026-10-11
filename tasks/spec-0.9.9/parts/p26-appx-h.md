@@ -287,7 +287,8 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 0.9.10_Hardened_5 adds ODR-101, a `main` of another form (§H.10);
 0.9.10_Hardened_6 adds ODR-102, owned callable values (§H.11);
 0.9.10_Hardened_7 adds ODR-103, a lambda outliving its captures is `E3026` (§H.12);
-0.9.10_Hardened_8 adds ODR-104, a constructor's `return` and its receiver (§H.13).
+0.9.10_Hardened_8 adds ODR-104, a constructor's `return` and its receiver (§H.13);
+0.9.10_Hardened_9 adds ODR-105, `E2104` for a `let` field assigned outside `init` (§H.14).
 
 | ODR | Ruling | Rules |
 |---|---|---|
@@ -375,6 +376,7 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 | ODR-102 | ruled under the delegation (2026-10-11, autopilot): a function or capture-free lambda used as a value is a plain `Copy` value that becomes an owned callable value where one is wanted; an owned callable value moves and drops its state, is lent mutably to a borrowed parameter (`E3023` from a place that is not mutable, `E3022` twice at once), is neither `Send` nor `Sync`, equals another calling the same function with the same state, and given to C panics when it holds state; a lambda copies what it only reads (`[CLO-13]`) where it becomes an owned callable value, "assigned after" being later in the body or anywhere in a loop around it | `[CLO-3]`, `[CLO-10]`, `[CLO-13]`, `[CLO-2]`, `[THR-8]`, `[THR-9]` |
 | ODR-103 | ruled under the delegation (2026-10-12, autopilot): a lambda that borrows, stored or sent where no view may go, is shape B9's `E3026` (a closure outlives what it captures), help `owned fn` or `thread.scope()`; `E3063` stays for other views | `[CLO-3]`, `[CLO-4]`, `[THR-10]` |
 | ODR-104 | ruled under the delegation (2026-10-12, autopilot): a `return` from a class `init`, like the end of its body, hands the object to its caller, so every field without a default is assigned on that path (`E2100`); `mut self` in a class `init` is accepted and means the same as `self` | `[CLS-2]`, `[STR-6]` |
+| ODR-105 | ruled under the delegation (2026-10-12, autopilot): a `let` field assigned outside its `init` is `E2104`, a code of its own beside `E2103` | `[CLS-9]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -696,3 +698,17 @@ Generated: every rule whose text differs from 0.9.10_Hardened_7.
 | Rule | 0.9.10_Hardened_7 → 0.9.10_Hardened_8 |
 |---|---|
 | `[CLS-2]` | changed |
+
+## H.14 Changes in 0.9.10_Hardened_9 (from 0.9.10_Hardened_8)
+
+**0.9.10_Hardened_9** records ODR-105, ruled under the owner's delegation on 2026-10-12
+(`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-166). It gives a diagnostic a code only:
+
+* A `let` field assigned outside its `init` is `E2104` (`[CLS-9]`); the code table gave the rule
+  none.
+
+Generated: every rule whose text differs from 0.9.10_Hardened_8.
+
+| Rule | 0.9.10_Hardened_8 → 0.9.10_Hardened_9 |
+|---|---|
+| `[CLS-9]` | changed |

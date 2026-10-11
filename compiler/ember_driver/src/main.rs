@@ -2432,13 +2432,14 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // own whose list parameters are `restrict` (ADR-079); MSVC reorders such
     // a nest only then. For gcc: a loop over two lists or more that writes
     // one, which gcc vectorises only then (ADR-098). clang does both where
-    // the loop is.
+    // the loop is; for it, and for MSVC's single loops, only a loop over
+    // views `assert_disjoint` proved apart moves (`[DSJ-3]`).
     let kernel_target = if c_for_msvc(&options) {
         Some(ember_analysis::KernelTarget::Msvc)
     } else if c_for_gcc(&options) {
         Some(ember_analysis::KernelTarget::Gcc)
     } else {
-        None
+        Some(ember_analysis::KernelTarget::Clang)
     };
     if command != "check"
         && let Some(target) = kernel_target

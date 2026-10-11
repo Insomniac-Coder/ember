@@ -64,6 +64,7 @@ reused; retired codes are listed with the reason.
 | `E2101` | derived class with a field that has no default needs an `init` | `[CLS-10]` |
 | `E2102` | derived `init` uses `self` or an inherited field before `super.init`, or leaves an own field unassigned | `[CLS-11]` |
 | `E2103` | assignment to `self` in a class method | `[CLS-7]` |
+| `E2104` | assignment to a `let` field outside its `init` | `[CLS-9]` |
 | `E2110` | override of a method that is not virtual | `[CLS-4]` |
 | `E2111` | a method that replaces an inherited virtual one without `override` | `[CLS-4]` |
 | `E2120` | inherent extension of a type from another package | `[IFC-2]` |

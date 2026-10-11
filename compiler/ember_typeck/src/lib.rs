@@ -32164,7 +32164,7 @@ impl<'a> Checker<'a> {
                             let owner = self.types.intern(TyKind::Class(owner_id));
                             let owner = self.types.display(owner);
                             self.error(
-                                codes::E1010,
+                                codes::E2104,
                                 span,
                                 format!(
                                     "cannot assign to `let` field `{owner}.{field_name}` outside its `init`"
