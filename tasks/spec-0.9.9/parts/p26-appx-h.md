@@ -284,7 +284,8 @@ ruling on `collect`'s target, `peekable`'s methods, and how `Box` and `Cell` sho
 ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutation methods.
 0.9.10_Hardened_3 adds ODR-099, a pointer into a parameter C passes as a copy (§H.8);
 0.9.10_Hardened_4 adds ODR-100, what a lambda written at an adapter captures (§H.9);
-0.9.10_Hardened_5 adds ODR-101, a `main` of another form (§H.10).
+0.9.10_Hardened_5 adds ODR-101, a `main` of another form (§H.10);
+0.9.10_Hardened_6 adds ODR-102, owned callable values (§H.11).
 
 | ODR | Ruling | Rules |
 |---|---|---|
@@ -369,6 +370,7 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 | ODR-099 | the owner's direction (2026-10-11), its detail under the delegation: where a program turns a callable type into `extern "C" fn`, a function whose value has that type returns no raw pointer made from a reference to a parameter it borrows by value, which a call from C passes as a copy that ends with the call (`E5042`); followed through copies, conversions and aggregates, not calls; a value read through the parameter and a pointer stored in it are not into the copy | `[FFI-21a]`, `[FN-6]`, `[FN-1]` |
 | ODR-100 | the owner's (2026-10-11): the iterator adapters take over the callable and the iterator they keep (`owned`); a lambda written at one keeps the captures `[CLO-2]` infers and the adapter lives no longer than they do; only a consumed callable parameter whose captured state must carry the static region (`thread.spawn`, `jobs.submit`, registries) makes a lambda written there capture by move | `[CLO-15]`, `[CLO-4]`, `[CLO-7]`, `[STD-19]` |
 | ODR-101 | ruled under the delegation (2026-10-11, the owner: "fix that autonomously"): the entry module's `main` in a form `[FN-8]` does not list (another parameter or more than one, another return type, type parameters) is `E2183` at its name; the one parameter may have any name and mode, its type `Array[String]`; an `E` that is not `Display` is `E2040` | `[FN-8]` |
+| ODR-102 | ruled under the delegation (2026-10-11, autopilot): a function or capture-free lambda used as a value is a plain `Copy` value that becomes an owned callable value where one is wanted; an owned callable value moves and drops its state, is lent mutably to a borrowed parameter (`E3023` from a place that is not mutable, `E3022` twice at once), is neither `Send` nor `Sync`, equals another calling the same function with the same state, and given to C panics when it holds state; a lambda copies what it only reads (`[CLO-13]`) where it becomes an owned callable value, "assigned after" being later in the body or anywhere in a loop around it | `[CLO-3]`, `[CLO-10]`, `[CLO-13]`, `[CLO-2]`, `[THR-8]`, `[THR-9]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -629,3 +631,28 @@ Generated: every rule whose text differs from 0.9.10_Hardened_4.
 | Rule | 0.9.10_Hardened_4 → 0.9.10_Hardened_5 |
 |---|---|
 | `[FN-8]` | changed |
+
+## H.11 Changes in 0.9.10_Hardened_6 (from 0.9.10_Hardened_5)
+
+**0.9.10_Hardened_6** records ODR-102, ruled under the owner's delegation on 2026-10-11 while building
+owned callable values (`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-159, D-554). It changes what
+programs are accepted:
+
+* A function, or a lambda that captures nothing, used as a value is a plain `Copy` value; it becomes
+  an owned callable value where one is wanted. An owned callable value moves and drops its state
+  (`[CLO-3]`).
+* An owned callable value given to a borrowed parameter is lent mutably: from a place that is not
+  mutable it is `E3023`, and the same value given twice to one call is `E3022` (`[CLO-2]`, `[CLO-3]`).
+* An owned callable value is neither `Send` nor `Sync`; two are equal when they call the same function
+  with the same state (`[CLO-10]`). Converting one to `extern "C" fn` reads its C entry without moving
+  it, and panics if it holds captured state (`[CLO-3]`).
+* A lambda copies what it only reads where it becomes an owned callable value; "assigned after" is an
+  assignment later in the body or anywhere in a loop around it (`[CLO-13]`).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_5.
+
+| Rule | 0.9.10_Hardened_5 → 0.9.10_Hardened_6 |
+|---|---|
+| `[CLO-3]` | changed |
+| `[CLO-10]` | changed |
+| `[CLO-13]` | changed |

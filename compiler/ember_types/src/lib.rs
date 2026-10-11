@@ -182,7 +182,12 @@ pub enum TyKind {
     Vec { elem: Ty, text: bool },
     /// A mode-bearing callable type. `latebound` is a compile-time callable
     /// boundary fact; it is not runtime metadata or an ABI field.
-    Fn { abi: Option<Symbol>, latebound: bool, params: Vec<FnParam>, ret: Ty },
+    /// `stateless` (ODR-102): the type of a function, or of a lambda that
+    /// captures nothing, used as a value — `Copy`, nothing to drop. Written
+    /// `fn(A) -> R` outside a parameter is an owned callable value
+    /// (`[CLO-3]`): it may hold captured state, so it moves and drops. Both
+    /// have one representation, and the first converts to the second.
+    Fn { abi: Option<Symbol>, latebound: bool, stateless: bool, params: Vec<FnParam>, ret: Ty },
     /// `[TYP-22]` — an unsized interface value. The interface identities are
     /// retained in declaration order; runtime fat-pointer/vtable lowering is
     /// a later backend slice, so this kind must never acquire a guessed
@@ -751,7 +756,7 @@ impl TypeTable {
                     items.iter().map(|&t| self.substitute_self(t, concrete)).collect();
                 self.intern(TyKind::Tuple(items))
             }
-            TyKind::Fn { abi, latebound, params, ret } => {
+            TyKind::Fn { abi, latebound, stateless, params, ret } => {
                 let params = params
                     .iter()
                     .map(|param| FnParam {
@@ -760,7 +765,7 @@ impl TypeTable {
                     })
                     .collect();
                 let ret = self.substitute_self(ret, concrete);
-                self.intern(TyKind::Fn { abi, latebound, params, ret })
+                self.intern(TyKind::Fn { abi, latebound, stateless, params, ret })
             }
             _ => ty,
         }
@@ -795,7 +800,7 @@ impl TypeTable {
                 let items: Vec<Ty> = items.iter().map(|&t| self.substitute(t, args)).collect();
                 self.intern(TyKind::Tuple(items))
             }
-            TyKind::Fn { abi, latebound, params, ret } => {
+            TyKind::Fn { abi, latebound, stateless, params, ret } => {
                 let params = params
                     .iter()
                     .map(|param| FnParam {
@@ -804,7 +809,7 @@ impl TypeTable {
                     })
                     .collect();
                 let ret = self.substitute(ret, args);
-                self.intern(TyKind::Fn { abi, latebound, params, ret })
+                self.intern(TyKind::Fn { abi, latebound, stateless, params, ret })
             }
             _ => ty,
         }
@@ -925,8 +930,8 @@ impl TypeTable {
             // type's identity.  Inference may solve the nested types, but it
             // must never erase `borrow`/`mut`/`owned` on its way there.
             (
-                TyKind::Fn { abi: a_abi, latebound: a_latebound, params: a, ret: a_ret },
-                TyKind::Fn { abi: b_abi, latebound: b_latebound, params: b, ret: b_ret },
+                TyKind::Fn { abi: a_abi, latebound: a_latebound, params: a, ret: a_ret, .. },
+                TyKind::Fn { abi: b_abi, latebound: b_latebound, params: b, ret: b_ret, .. },
             ) if a.len() == b.len()
                     && a_abi == b_abi
                     && a_latebound == b_latebound
@@ -1180,6 +1185,14 @@ impl TypeTable {
                     field_offsets: vec![0, self.pointer_size],
                 }
             }
+            // `[CLO-10]` — an owned callable value: its entry (held in the
+            // value, so a call is one indirect call), its descriptor and three
+            // words of captured state.
+            TyKind::Fn { abi: None, .. } => Layout {
+                size: self.pointer_size * 5,
+                align: self.pointer_size,
+                field_offsets: vec![0, self.pointer_size, self.pointer_size * 2],
+            },
             TyKind::Ref { .. } | TyKind::Ptr { .. } | TyKind::Fn { .. } | TyKind::CStr => {
                 Layout::scalar(self.pointer_size)
             }
@@ -1321,6 +1334,9 @@ impl TypeTable {
         }
         let both = |child, visiting: &mut HashSet<Ty>| self.thread_properties(child, visiting);
         let result = match self.kind(ty) {
+            // ODR-102 — an owned callable value hides what it captured, so it
+            // stays on the thread that made it.
+            TyKind::Fn { abi: None, stateless: false, .. } => (false, false),
             TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_)
             | TyKind::Float(_) | TyKind::Void | TyKind::Never | TyKind::Str
             | TyKind::Range(_) | TyKind::Fn { .. } | TyKind::Error => (true, true),
@@ -1534,6 +1550,9 @@ impl TypeTable {
 
     fn copy_with(&self, ty: Ty, params: bool) -> bool {
         match self.kind(ty) {
+            // `[CLO-3]` — an owned callable value owns its captured state,
+            // so it moves; only `extern fn` is `Copy` (Part VI's list).
+            TyKind::Fn { abi: None, stateless, .. } => *stateless,
             TyKind::Bool
             | TyKind::Char
             | TyKind::Int(_)
@@ -1700,6 +1719,8 @@ impl TypeTable {
             // the element type is.
             TyKind::Vec { .. } => true,
             TyKind::Dyn { .. } => true,
+            // `[CLO-10]` — whatever state it captured ends with it.
+            TyKind::Fn { abi: None, stateless: false, .. } => true,
             _ => false,
         }
     }
@@ -1968,7 +1989,7 @@ impl TypeTable {
                 format!("{kw}{}", self.render(*inner, user))
             }
             TyKind::Array { elem, len } => format!("[{}; {len}]", self.render(*elem, user)),
-            TyKind::Fn { abi, latebound, params, ret } => {
+            TyKind::Fn { abi, latebound, params, ret, .. } => {
                 let inner: Vec<String> = params
                     .iter()
                     .map(|param| {
@@ -2085,11 +2106,13 @@ impl TypeTable {
             }
             TyKind::Vec { text: true, .. } => "String".to_string(),
             TyKind::Vec { elem, .. } => format!("Array[{}]", self.canonical_name(*elem)?),
-            TyKind::Fn { abi, latebound, params, ret } => {
+            TyKind::Fn { abi, latebound, stateless, params, ret } => {
                 let mut out = if let Some(abi) = abi {
                     format!("extern \"{abi}\" fn(")
                 } else if *latebound {
                     String::from("@latebound fn(")
+                } else if *stateless {
+                    String::from("plain fn(")
                 } else {
                     String::from("fn(")
                 };

@@ -67,6 +67,17 @@ followed.
 | **Can a program notice** | yes: the library does not build |
 | **Plan** | name a library's functions with its package prefix (as its public types are, `package_type_namespace`) and give the ones a relaxed unit shares external linkage; then build the relaxed objects into the archive |
 
+## N8 — the `Alloc` report of an owned callable value's boxed state
+
+| | |
+|---|---|
+| **Rule** | `[CLO-10]`: "larger captured state is placed in one heap allocation, which carries the `Alloc` effect and is reported by `ember inspect --alloc`" |
+| **The feature** | the effect on a closure made into an owned callable value whose environment does not fit three words, and its line in the allocation report |
+| **Requires** | the effect system and `ember inspect --alloc` (Phase 4), which do not exist for any allocation yet |
+| **Meanwhile** | the state is allocated (`ember_box_new_copy`) and freed by the value's drop, as the rule says; nothing reports it |
+| **Can a program notice** | no: no effect is checked and no report exists |
+| **Plan** | when `Alloc` is tracked, give `AggregateKind::Callable` the effect where C's layout puts the environment past the three words (decided from the same `sizeof` the backend tests) |
+
 ## N7 — a default doing float work that its mode's closure cannot hold
 
 | | |

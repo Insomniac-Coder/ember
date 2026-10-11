@@ -183,11 +183,13 @@ fn main():
   its type does not say whether it writes its captured state; one stored in a class field is called
   under a write access to that field (§VIII.3), so the closure cannot replace or free itself while it
   runs.
-* `[CLO-13]` *(new in 0.9.9)* A read-only capture of a `Copy` variable whose storage would end while
+* `[CLO-13]` *(new in 0.9.9)* *(changed in 0.9.10)* A read-only capture of a `Copy` variable whose storage would end while
   the closure is still live, and which is not assigned after the closure is created, is captured by
   **copy** instead of by borrow (for a handle, a retain). The difference cannot be observed; it lets a
   closure created in a loop use the loop variable after the iteration ends. A captured variable that is
-  assigned later keeps the borrow rule, and its error's help is `owned fn`.
+  assigned later keeps the borrow rule, and its error's help is `owned fn`. A closure outlives its
+  variables where it becomes an owned callable value (`[CLO-3]`); "assigned after" is an assignment
+  later in the body or anywhere in a loop around the closure (ODR-102).
 * `[CLO-3]` *(changed in 0.9.9)* **What `fn(A) -> R` means depends on where it is written.**
   * As a **parameter type** it is a bound, not a representation: the parameter is an implicit generic
     constrained by the callable type, each argument monomorphises the callee, and a call through it is
@@ -197,14 +199,24 @@ fn main():
     `static` — it is an **owned callable value**: a function pointer plus the callee's captured state,
     owning that state. A value of this kind may be stored anywhere an owned value may. It is filled
     from a function, a capture-free lambda, or an `owned fn` lambda; a lambda that borrows is a view
-    and may only be stored where `[TYP-15]` permits (`E3063` otherwise, whose help is `owned fn`).
-  * `extern "C" fn(A) -> R` is a C function pointer: capture-free functions only.
+    and may only be stored where `[TYP-15]` permits (`E3063` otherwise, whose help is `owned fn`), and
+    one that moves a capture out is `E3030` (`[CLO-6]`). *(changed in 0.9.10)* An owned callable value
+    moves and its end drops its state; a function, or a lambda that captures nothing, used as a value
+    is a plain `Copy` value with no state, which becomes an owned callable value where one is wanted.
+    One given to a borrowed parameter is lent mutably: the argument is a mutable place (`E3023` if it
+    is not), nothing else reaches it during the call (`E3022`), and the callee may call it and lend it
+    on (ODR-102).
+  * `extern "C" fn(A) -> R` is a C function pointer: capture-free functions only. Converting a stored
+    owned callable value to one reads its C entry without moving it; a value holding captured state
+    has none, and the conversion panics (ODR-102).
 * `[CLO-14]` *(new in 0.9.9)* A callable type may also be written as an explicit generic bound,
   `fn apply[F: fn(int) -> int](f: F, x: int)`, with the meaning of the parameter form of `[CLO-3]`;
   a parameter so bounded is called like a function. `Callable[…]` is not source syntax.
-* `[CLO-10]` *(new in 0.9.9)* An owned callable value holds up to **three pointer-sized words** of captured state inline
+* `[CLO-10]` *(new in 0.9.9)* *(changed in 0.9.10)* An owned callable value holds up to **three pointer-sized words** of captured state inline
   and makes no allocation; larger captured state is placed in one heap allocation, which carries the
-  `Alloc` effect and is reported by `ember inspect --alloc`. Calling one is one indirect call.
+  `Alloc` effect and is reported by `ember inspect --alloc`. Calling one is one indirect call. Its type
+  does not say what it captured, so it is neither `Send` nor `Sync` (`[THR-8]`, `[THR-9]`); two are
+  equal (`==`) when they call the same function with the same state (ODR-102).
 * `[CLO-4]` *(changed in 0.9.9)* *(changed in 0.9.10)* A non-`owned` lambda cannot outlive what it
   borrows: storing it, returning it or passing it to an `owned` parameter follows the view rules
   (`[TYP-15]`); a value a callee returns holding it lives no longer than its captures. A lambda written

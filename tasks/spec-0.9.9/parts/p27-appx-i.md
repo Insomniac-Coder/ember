@@ -206,10 +206,10 @@ Every rule of this document, by family, with the Part that defines it.
 | `[CLO-6]` | VI | A lambda that moves one of its captures out of itself (into an … |
 | `[CLO-6a]` | VI | An owned `once fn` value, including one inside a `Box` or a … |
 | `[CLO-7]` | VI | *(changed in 0.9.10)* Standard-library APIs that keep a callback … |
-| `[CLO-10]` | VI | An owned callable value holds up to three pointer-sized words of … |
+| `[CLO-10]` | VI | *(changed in 0.9.10)* An owned callable value holds up to three … |
 | `[CLO-11]` | VI | A call `recv.name(args)` where `recv`'s type has no method `name` but … |
 | `[CLO-12]` | VI | A local function (`[GRM-28]`) is a named closure: it captures like a … |
-| `[CLO-13]` | VI | A read-only capture of a `Copy` variable whose storage would end … |
+| `[CLO-13]` | VI | *(changed in 0.9.10)* A read-only capture of a `Copy` variable whose … |
 | `[CLO-14]` | VI | A callable type may also be written as an explicit generic bound, `fn … |
 | `[CLO-15]` | VI | *(changed in 0.9.10)* A lambda written directly as the argument of a … |
 

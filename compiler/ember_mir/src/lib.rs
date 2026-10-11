@@ -1046,6 +1046,10 @@ pub enum AggregateKind {
     /// One variant of an enum, with its payload in field order. The whole
     /// value — tag and payload together — is built in one statement.
     Enum(EnumId, usize),
+    /// `[CLO-3]`, `[CLO-10]` — an owned callable value made from an `owned fn`
+    /// closure: the operands are the closure body (`Const::Fn`) and its
+    /// environment, which the value takes over.
+    Callable,
 }
 
 /// One concrete implementation used by a compiler-generated dynamic-interface
@@ -1691,6 +1695,7 @@ fn dump_rvalue(rvalue: &Rvalue, types: &ember_types::TypeTable) -> String {
                     let def = types.enum_def(*id);
                     format!("{}.{}", def.name, def.variants[*variant].name)
                 }
+                AggregateKind::Callable => "callable".to_string(),
             };
             format!("{name}({})", inner.join(", "))
         }

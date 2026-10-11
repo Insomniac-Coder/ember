@@ -226,6 +226,9 @@ pub fn emit(
             })
             .collect(),
         native_fn_values: BTreeMap::new(),
+        closure_values: BTreeMap::new(),
+        statement_span: std::cell::Cell::new(ember_span::Span::DUMMY),
+        gives_values_to_c: false,
         foreign_statics: std::cell::RefCell::new(BTreeMap::new()),
         drop_glue: std::cell::RefCell::new(Vec::new()),
         eq_fns: std::cell::RefCell::new(Vec::new()),
@@ -474,6 +477,14 @@ struct Emitter<'a> {
     ffi_export_value_params: BTreeMap<String, Vec<bool>>,
     /// Capture-free native function values used by MIR, keyed by body symbol.
     native_fn_values: BTreeMap<String, NativeFnValue>,
+    /// `[CLO-10]` — each `owned fn` closure made into an owned callable
+    /// value, by its body's symbol: its descriptor and environment type.
+    closure_values: BTreeMap<String, (String, Ty)>,
+    /// The span of the statement being emitted, for a check inside an
+    /// expression that has none of its own.
+    statement_span: std::cell::Cell<ember_span::Span>,
+    /// A stored callable value is given to C somewhere (`CastKind::FnToC`).
+    gives_values_to_c: bool,
     /// C globals used by a generated body, collected while rendering calls.
     foreign_statics: std::cell::RefCell<BTreeMap<String, (Ty, bool)>>,
     /// D-182 — aggregate types whose drop is emitted as an out-of-line
@@ -696,6 +707,7 @@ impl Emitter<'_> {
                 }
             }
         }
+        self.gives_values_to_c = !given_to_c.is_empty();
         let mut serial = 0;
         for (symbol, signature) in signatures {
             let TyKind::Fn { params, ret, .. } = self.types.kind(signature) else { unreachable!() };
@@ -718,6 +730,31 @@ impl Emitter<'_> {
                 adapter: ffi_safe.then_some(adapter),
                 signature,
             });
+        }
+        for body in bodies {
+            for stmt in body.blocks.iter().flat_map(|block| &block.stmts) {
+                let StmtKind::Assign { rvalue: Rvalue::Aggregate { kind: AggregateKind::Callable, operands }, .. } =
+                    &stmt.kind
+                else {
+                    continue;
+                };
+                let [Operand::Const(Const::Fn(closure)), env] = &operands[..] else {
+                    unreachable!("an owned callable value is made of a closure and its environment")
+                };
+                if self.closure_values.contains_key(closure) {
+                    continue;
+                }
+                let env = self.operand_type(env, body).expect("an environment has a type");
+                let descriptor = loop {
+                    let descriptor = format!("{RT}closure_value_{serial}");
+                    serial += 1;
+                    if !used.contains(&descriptor) {
+                        used.insert(descriptor.clone());
+                        break descriptor;
+                    }
+                };
+                self.closure_values.insert(closure.clone(), (descriptor, env));
+            }
         }
     }
 
@@ -781,6 +818,7 @@ impl Emitter<'_> {
         self.line(CLONE_PARTS_PROTOTYPES);
         self.line(ARRAY_HELPER_PROTOTYPES);
         self.line(FMT_FN_PROTOTYPES);
+        self.emit_closure_values(bodies);
         // Class tables first: an interface adapter can call through one (D-375).
         self.emit_virtual_tables();
         self.emit_interface_adapters();
@@ -1243,6 +1281,7 @@ impl Emitter<'_> {
             return format!("({RT}f16_to_f64({a}) == {RT}f16_to_f64({b}))");
         }
         match self.types.kind(ty) {
+            TyKind::Fn { abi: None, .. } => return format!("{RT}fn_value_eq({a}, {b})"),
             TyKind::Struct(_) | TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Vec { .. } => {}
             TyKind::Enum(id) if !self.types.enum_def(*id).is_unit_only() => {}
             _ => return format!("(({a}) == ({b}))"),
@@ -1826,11 +1865,44 @@ impl Emitter<'_> {
     /// which is declaration order, so a struct's fields are always already
     /// complete types.
     fn emit_type_declarations(&mut self) {
+        // `[CLO-10]` — an owned callable value is its entry, its descriptor
+        // and three words of captured state; the entry takes the state's
+        // address first, and `drop` (NULL when there is nothing to drop) ends
+        // it. The entry is copied into the value so that a call loads it from
+        // the value itself, as a C struct of state and function pointer does.
         if self.types.all().any(|(_, kind)| matches!(kind, TyKind::Fn { abi: None, .. })) {
             self.line(&format!("struct {RT}native_fn_descriptor {{"));
             self.line("    void (*native)(void);");
             self.line("    void (*c)(void);");
+            self.line("    void (*drop)(void*);");
             self.line("};");
+            self.line(&format!("struct {RT}fn_value {{"));
+            self.line("    void (*native)(void);");
+            self.line(&format!("    const struct {RT}native_fn_descriptor* d;"));
+            self.line("    void* w[3];");
+            self.line("};");
+            // Two values are equal when they call the same entry with the
+            // same state.
+            self.line(&format!("static inline EMBER_MAYBE_UNUSED bool {RT}fn_value_eq(struct {RT}fn_value a, struct {RT}fn_value b) {{"));
+            self.line("    return a.d == b.d && a.w[0] == b.w[0] && a.w[1] == b.w[1] && a.w[2] == b.w[2];");
+            self.line("}");
+            if self.gives_values_to_c {
+                self.line(&format!("static inline EMBER_MAYBE_UNUSED void (*{RT}fn_value_c_entry(const struct {RT}fn_value* v, {RT}loc loc))(void) {{"));
+                self.line("    static const char message[] = \"a callable value holding captured state has no C entry\";");
+                self.line(&format!("    if (!v->d->c) {{ {RT}panic(message, sizeof message - 1, loc); }}"));
+                self.line("    return v->d->c;");
+                self.line("}");
+            }
+            // An environment that fits the three words is held in them; a
+            // larger one in one allocation, whose pointer is the first word.
+            if !self.closure_values.is_empty() {
+                self.line(&format!("static inline EMBER_MAYBE_UNUSED struct {RT}fn_value {RT}fn_value_make(const struct {RT}native_fn_descriptor* d, const void* env, size_t size, size_t align) {{"));
+                self.line(&format!("    struct {RT}fn_value v = {{d->native, d, {{0, 0, 0}}}};"));
+                self.line("    if (size <= sizeof v.w && align <= _Alignof(void*)) { memcpy(v.w, env, size); }");
+                self.line(&format!("    else {{ v.w[0] = {RT}box_new_copy(size, align, env); }}"));
+                self.line("    return v;");
+                self.line("}");
+            }
         }
         // Foreign incomplete structs have no Ember definition. Their tag must
         // exist before any imported prototype mentions a pointer to one.
@@ -1853,14 +1925,21 @@ impl Emitter<'_> {
         }
         self.line("/* types */");
         // Every struct is forward-declared, so one may hold a pointer to
-        // another defined later. An alias is complete where it stands.
+        // another defined later. An alias is complete where it stands; an
+        // owned callable type's is complete already (`[CLO-10]`).
+        let callable = format!("struct {RT}fn_value");
         for (name, definition) in &plan {
-            if matches!(definition, Definition::Struct(_)) {
-                self.line(&format!("typedef struct {name} {name};"));
+            match definition {
+                Definition::Struct(_) => self.line(&format!("typedef struct {name} {name};")),
+                Definition::Alias(underlying) if *underlying == callable => {
+                    self.line(&format!("typedef {underlying} {name};"));
+                }
+                _ => {}
             }
         }
         for (name, definition) in &plan {
             match definition {
+                Definition::Alias(underlying) if *underlying == callable => {}
                 Definition::Alias(underlying) => {
                     self.line(&format!("typedef {underlying} {name};"));
                 }
@@ -3449,7 +3528,7 @@ impl Emitter<'_> {
             TypeNode::Structural(ty) if matches!(self.types.kind(ty), TyKind::Fn { .. }) => {
                 let TyKind::Fn { abi, params, ret, .. } = self.types.kind(ty) else { unreachable!() };
                 if abi.is_none() {
-                    return Definition::Alias(format!("const struct {RT}native_fn_descriptor*"));
+                    return Definition::Alias(format!("struct {RT}fn_value"));
                 }
                 let rendered: Vec<String> = params
                     .iter()
@@ -3520,6 +3599,10 @@ impl Emitter<'_> {
     /// a tuple drops in reverse; an array drops its elements in index order.
     fn drop_lines(&self, access: &str, ty: Ty, out: &mut Vec<String>) {
         match self.types.kind(ty) {
+            // `[CLO-10]` — an owned callable value ends its captured state.
+            TyKind::Fn { abi: None, .. } => {
+                out.push(format!("if (({access}).d && ({access}).d->drop) {{ ({access}).d->drop((void*)&({access}).w); }}"));
+            }
             // `[OWN-7]` — class handles are language-level `Copy` values, but
             // the copy is a strong-reference copy rather than a raw pointer
             // duplicate.  The matching retain is emitted at the assignment
@@ -4049,13 +4132,90 @@ impl Emitter<'_> {
                 }
                 self.line("}");
             }
+            // `[CLO-10]` — the native entry takes the value's state first;
+            // a function holds none.
+            let thunk = format!("{descriptor}_native");
+            let declarations = std::iter::once("void* _env".to_string())
+                .chain(params.iter().enumerate()
+                    .map(|(index, param)| format!("{} _cb{index}", self.callable_param_c_type(*param, false))))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let arguments = (0..params.len()).map(|index| format!("_cb{index}")).collect::<Vec<_>>().join(", ");
+            self.line(&format!("static EMBER_MAYBE_UNUSED {} {thunk}({declarations}) {{", self.c_type(ret)));
+            self.line("    (void)_env;");
+            if self.is_void(ret) {
+                self.line(&format!("    {}({arguments});", body.symbol));
+            } else {
+                self.line(&format!("    return {}({arguments});", body.symbol));
+            }
+            self.line("}");
             let c_entry = adapter.map_or_else(|| "NULL".to_string(),
                 |adapter| format!("(void (*)(void)){adapter}"));
             self.line(&format!("{linkage}const struct {RT}native_fn_descriptor {descriptor} = {{"));
-            self.line(&format!("    (void (*)(void)){}, {c_entry}", body.symbol));
+            self.line(&format!("    (void (*)(void)){thunk}, {c_entry}, NULL"));
             self.line("};");
         }
         if !self.native_fn_values.is_empty() { self.line(""); }
+    }
+
+    /// `[CLO-10]` — each owned closure value's entry, drop and descriptor.
+    /// Whether the environment sits in the value's three words or in an
+    /// allocation is C's own constant test, so the thunks agree with
+    /// `fn_value_make` whatever layout the C compiler picks.
+    fn emit_closure_values(&mut self, bodies: &[Body]) {
+        let values: Vec<(String, String, Ty)> = self.closure_values.iter()
+            .map(|(closure, (descriptor, env))| (closure.clone(), descriptor.clone(), *env))
+            .collect();
+        for (closure, descriptor, env) in values {
+            let Some(body) = bodies.iter().find(|body| body.symbol == closure) else { continue };
+            let Some(linkage) = self.shared_definition() else {
+                self.line(&format!("extern const struct {RT}native_fn_descriptor {descriptor};"));
+                continue;
+            };
+            let env_c = self.c_type(env);
+            let boxed = format!("!(sizeof({env_c}) <= sizeof(void*[3]) && _Alignof({env_c}) <= _Alignof(void*))");
+            let find = format!("    {env_c}* _e = ({boxed}) ? *({env_c}**)_env : ({env_c}*)_env;");
+            let mut args = body.args();
+            let (_, env_param) = args.next().expect("a closure takes its environment first");
+            let env_argument = if matches!(self.types.kind(env_param.ty), TyKind::Ref { .. } | TyKind::Ptr { .. }) {
+                "_e".to_string()
+            } else {
+                "*_e".to_string()
+            };
+            let params: Vec<(usize, Ty)> = args.map(|(id, decl)| (id.0 as usize, decl.ty)).collect();
+            let declarations = std::iter::once("void* _env".to_string())
+                .chain(params.iter().map(|(id, ty)| format!("{} _{id}", self.c_member_type(*ty))))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let arguments = std::iter::once(env_argument)
+                .chain(params.iter().map(|(id, _)| format!("_{id}")))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let ret = body.return_ty();
+            self.line(&format!("static EMBER_MAYBE_UNUSED {} {descriptor}_native({declarations}) {{", self.c_type(ret)));
+            self.line(&find);
+            if self.is_void(ret) {
+                self.line(&format!("    {closure}({arguments});"));
+            } else {
+                self.line(&format!("    return {closure}({arguments});"));
+            }
+            self.line("}");
+            let mut drops = Vec::new();
+            match self.drop_glue_call("(*_e)", env) {
+                Some(call) => drops.push(call),
+                None => self.drop_lines("(*_e)", env, &mut drops),
+            }
+            self.line(&format!("static EMBER_MAYBE_UNUSED void {descriptor}_drop(void* _env) {{"));
+            self.line(&find);
+            for line in drops {
+                self.line(&format!("    {line}"));
+            }
+            self.line(&format!("    if ({boxed}) {{ {RT}free(_e, sizeof({env_c}), _Alignof({env_c})); }}"));
+            self.line("}");
+            self.line(&format!("{linkage}const struct {RT}native_fn_descriptor {descriptor} = {{"));
+            self.line(&format!("    (void (*)(void)){descriptor}_native, NULL, {descriptor}_drop"));
+            self.line("};");
+        }
     }
 
     fn signature(&self, body: &Body) -> String {
@@ -4805,6 +4965,7 @@ impl Emitter<'_> {
     }
 
     fn emit_stmt_unbound(&mut self, stmt: &Stmt, body: &Body) {
+        self.statement_span.set(stmt.span);
         match &stmt.kind {
             StmtKind::Assign { place, .. }
                 if place.projection.is_empty()
@@ -5313,6 +5474,7 @@ impl Emitter<'_> {
                 // aggregate shape so nested class handles are retained before
                 // the C initializer duplicates their pointer bits.
                 let operand_types: Vec<Ty> = match kind {
+                    AggregateKind::Callable => Vec::new(),
                     AggregateKind::Struct(id) => self
                         .types
                         .struct_def(*id)
@@ -6366,8 +6528,14 @@ impl Emitter<'_> {
                     let parameters = if parameters.is_empty() { "void".to_string() }
                         else { parameters.join(", ") };
                     let callee = self.operand(callee, body);
-                    return format!("(({} (*)({parameters}))(({callee})->native))({})",
-                        self.c_type(*ret), rendered.join(", "));
+                    let parameters = if parameters == "void" { "void*".to_string() }
+                        else { format!("void*, {parameters}") };
+                    let arguments = std::iter::once(format!("(void*)&({callee}).w"))
+                        .chain(rendered)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return format!("(({} (*)({parameters}))(({callee}).native))({arguments})",
+                        self.c_type(*ret));
                 }
                 format!("({})({})", self.operand(callee, body), rendered.join(", "))
             }
@@ -7672,8 +7840,8 @@ impl Emitter<'_> {
             Const::CStrLiteral(bytes) => c_bytes_literal(bytes),
             // A native value selects a static descriptor. An already-C
             // function remains a raw C function pointer.
-            Const::Fn(symbol) => self.native_fn_values.get(symbol)
-                .map_or_else(|| symbol.clone(), |value| format!("&{}", value.descriptor)),
+            Const::Fn(symbol) => self.native_fn_values.get(symbol).map_or_else(|| symbol.clone(),
+                |value| format!("((struct {RT}fn_value){{{0}.native, &{0}, {{0, 0, 0}}}})", value.descriptor)),
             Const::Void => "0".to_string(),
             Const::OverflowShift { per_word } => {
                 let shift = format!("{}_OVERFLOW_SHIFT", ember_branding::SYMBOL_PREFIX.to_uppercase());
@@ -7792,6 +7960,13 @@ impl Emitter<'_> {
                     self.operand(rhs, body)
                 )
             }
+            Rvalue::BinaryOp { op: op @ (ember_mir::BinOp::Eq | ember_mir::BinOp::Ne), lhs, rhs }
+                if self.operand_type(lhs, body)
+                    .is_some_and(|ty| matches!(self.types.kind(ty), TyKind::Fn { abi: None, .. })) =>
+            {
+                let eq = format!("{RT}fn_value_eq({}, {})", self.operand(lhs, body), self.operand(rhs, body));
+                if *op == ember_mir::BinOp::Eq { eq } else { format!("(!{eq})") }
+            }
             Rvalue::BinaryOp { op, lhs, rhs } => {
                 let mut right = self.operand(rhs, body);
                 // `[CG-C-1]` — a generic `a == a` at an integer type is a
@@ -7861,7 +8036,10 @@ impl Emitter<'_> {
                     return format!("(({ty})(uintptr_t)({value}))");
                 }
                 match kind {
-                    CastKind::FnToC => format!("(({ty})(({value})->c))"),
+                    // ODR-102 — a value holding captured state has no C
+                    // entry: giving it to C panics.
+                    CastKind::FnToC => format!("(({ty}){RT}fn_value_c_entry(&({value}), {}))",
+                        self.location(self.statement_span.get())),
                     CastKind::InterfaceUpcast { concrete, interfaces, .. } => {
                         let table_identity = dyn_table_identity(interfaces);
                         let table = self.interface_adapter_table(*concrete, &table_identity);
@@ -7893,6 +8071,15 @@ impl Emitter<'_> {
                         format!("(({ty}){value})")
                     }
                 }
+            }
+            Rvalue::Aggregate { kind: AggregateKind::Callable, operands } => {
+                let [Operand::Const(Const::Fn(closure)), env] = &operands[..] else {
+                    unreachable!("an owned callable value is made of a closure and its environment")
+                };
+                let (descriptor, env_ty) = &self.closure_values[closure];
+                let env_c = self.c_type(*env_ty);
+                format!("{RT}fn_value_make(&{descriptor}, &({}), sizeof({env_c}), _Alignof({env_c}))",
+                    self.operand(env, body))
             }
             Rvalue::Aggregate { kind, operands } => {
                 let values: Vec<String> = operands.iter().map(|o| self.operand(o, body)).collect();
@@ -9996,6 +10183,9 @@ mod string_descriptor_view_parts_tests {
             restrict_kernels: BTreeMap::new(),
             ffi_export_value_params: BTreeMap::new(),
             native_fn_values: BTreeMap::new(),
+            closure_values: BTreeMap::new(),
+            statement_span: std::cell::Cell::new(ember_span::Span::DUMMY),
+            gives_values_to_c: false,
             foreign_statics: Default::default(),
             drop_glue: Default::default(),
             eq_fns: Default::default(),

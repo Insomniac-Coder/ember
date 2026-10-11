@@ -1,0 +1,14 @@
+error[E3080]: `b.items` is borrowed here and mutably borrowed elsewhere
+ --> tests/ui/borrow/X1/push_while_a_view_of_the_field_lives.em:7:5
+  |
+6 |     view = b.items[..]
+  |            ------- borrow of `b.items` starts here
+7 |     b.items.push(4)
+  |     ^^^^^^^^^^^^^^^ conflicting access here
+8 |     println(view)
+  |             ---- borrow later used here
+  |
+  = help: end the borrow before this: `view` is what keeps it alive, so shorten its last use or put it in a block of its own
+  = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error: could not compile due to 1 error(s)

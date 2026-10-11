@@ -22,9 +22,11 @@ fn forward[T](owned value: T) -> T:
 fn main():
     holder = Holder(callback = add_one)
     holder.callback = add_two
+    # Reading the C entry leaves the value in place; the next line moves it
+    # (an owned callable value moves, ODR-102).
+    foreign: extern "C" fn(i32) -> i32 = holder.callback
     native: fn(i32) -> i32 = holder.callback
     println(native(40))
-    foreign: extern "C" fn(i32) -> i32 = holder.callback
     println(foreign(40))
     callbacks = [add_one, add_two]
     for callback in callbacks:

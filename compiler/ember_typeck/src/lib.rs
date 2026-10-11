@@ -427,6 +427,8 @@ struct ClosureCall {
     /// A closure that moves a non-`Copy` capture out of its owned environment
     /// implements `CallableOnce`, not `Callable` (`[CLO-2]`/`[CLO-6]`).
     once: bool,
+    /// An `owned fn`: its environment owns what it captured (`[CLO-2]`).
+    owned: bool,
 }
 
 /// Whose field default `check_field_default` checks.
@@ -765,7 +767,7 @@ enum TyShape {
     Array(u64),
     Vec(bool),
     Tuple,
-    Fn(Option<Symbol>, bool, Vec<ember_types::FnParamMode>),
+    Fn(Option<Symbol>, bool, bool, Vec<ember_types::FnParamMode>),
     /// Any other type: equal only to itself.
     Leaf(Ty),
 }
@@ -1545,6 +1547,9 @@ struct Checker<'a> {
     /// Callable parameters retain their source spelling for diagnostics after
     /// monomorphisation replaces a `fn(...)` bound with a private closure type.
     callable_parameter_locals: HashSet<LocalId>,
+    /// `[CLO-13]` — the lambdas of the body being checked that copy what they
+    /// capture, with the variables copied.
+    copy_captures: Vec<(Vec<LocalId>, Span)>,
     /// The expected callable boundary may be late-bound even after a generic
     /// parameter has been monomorphized to a concrete function or closure
     /// type. Keep that source-level fact alongside the local identity.
@@ -1801,6 +1806,7 @@ impl<'a> Checker<'a> {
             borrowed_params: HashSet::new(),
             callable_once_locals: HashSet::new(),
             callable_parameter_locals: HashSet::new(),
+            copy_captures: Vec::new(),
             latebound_callable_parameter_locals: HashSet::new(),
             callable_value_params: HashMap::new(),
             callable_value_bindings: HashMap::new(),
@@ -2587,7 +2593,7 @@ impl<'a> Checker<'a> {
         }
         for (at, bound) in callables {
             let resolved = self.resolve_type(bound);
-            if let TyKind::Fn { abi: None, latebound, params, ret } = self.types.kind(resolved).clone() {
+            if let TyKind::Fn { abi: None, latebound, params, ret, .. } = self.types.kind(resolved).clone() {
                 declared[at].callable = Some(CallableBound { params, ret, once: false, latebound });
             }
         }
@@ -2707,7 +2713,7 @@ impl<'a> Checker<'a> {
         index_base: usize,
     ) -> Ty {
         let resolved = self.resolve_type(ty);
-        let TyKind::Fn { abi: None, latebound, params, ret } = self.types.kind(resolved) else { return resolved };
+        let TyKind::Fn { abi: None, latebound, params, ret, .. } = self.types.kind(resolved) else { return resolved };
         let bound = CallableBound {
             params: params.clone(),
             ret: *ret,
@@ -5518,8 +5524,8 @@ impl<'a> Checker<'a> {
                 self.match_generic_extension_type(*pattern_elem, *actual_elem, bindings)
             }
             (
-                TyKind::Fn { abi: pattern_abi, latebound: pattern_latebound, params: pattern_params, ret: pattern_ret },
-                TyKind::Fn { abi: actual_abi, latebound: actual_latebound, params: actual_params, ret: actual_ret },
+                TyKind::Fn { abi: pattern_abi, latebound: pattern_latebound, params: pattern_params, ret: pattern_ret, .. },
+                TyKind::Fn { abi: actual_abi, latebound: actual_latebound, params: actual_params, ret: actual_ret, .. },
             ) => {
                 pattern_abi == actual_abi && pattern_latebound == actual_latebound
                     && pattern_params.len() == actual_params.len()
@@ -9461,8 +9467,8 @@ impl<'a> Checker<'a> {
             TyKind::Array { elem, len } => (TyShape::Array(len), vec![elem]),
             TyKind::Vec { elem, text } => (TyShape::Vec(text), vec![elem]),
             TyKind::Tuple(items) => (TyShape::Tuple, items),
-            TyKind::Fn { abi, latebound, params, ret } => (
-                TyShape::Fn(abi, latebound, params.iter().map(|param| param.mode).collect()),
+            TyKind::Fn { abi, latebound, stateless, params, ret } => (
+                TyShape::Fn(abi, latebound, stateless, params.iter().map(|param| param.mode).collect()),
                 params.iter().map(|param| param.ty).chain([ret]).collect(),
             ),
             _ => (TyShape::Leaf(ty), Vec::new()),
@@ -9697,9 +9703,12 @@ impl<'a> Checker<'a> {
                         "`extern \"C\" fn` pointers with drop-bearing values are not implemented yet");
                     return self.common.error;
                 }
+                // ODR-102 — written outside a parameter, `fn(A) -> R` is an
+                // owned callable value; `extern "C" fn` is a C pointer.
                 self.types.intern(TyKind::Fn {
                     abi: abi.as_ref().map(|abi| Symbol::intern(abi)),
                     latebound: *latebound,
+                    stateless: abi.is_some(),
                     params,
                     ret,
                 })
@@ -11049,7 +11058,7 @@ impl<'a> Checker<'a> {
                     .collect();
                 self.types.intern(TyKind::Tuple(items))
             }
-            TyKind::Fn { abi, latebound, params, ret } => {
+            TyKind::Fn { abi, latebound, stateless, params, ret } => {
                 let params = params
                     .iter()
                     .map(|param| FnParam {
@@ -11058,7 +11067,7 @@ impl<'a> Checker<'a> {
                     })
                     .collect();
                 let ret = map(self, ret);
-                self.types.intern(TyKind::Fn { abi, latebound, params, ret })
+                self.types.intern(TyKind::Fn { abi, latebound, stateless, params, ret })
             }
             TyKind::Struct(id) => {
                 if let Some(inner) = self.boxes.get(&id).copied() {
@@ -11948,7 +11957,7 @@ impl<'a> Checker<'a> {
             TyKind::Span { elem, mutable } => {
                 format!("{}_{}", if mutable { "MutSpan" } else { "Span" }, self.instance_stem(elem))
             }
-            TyKind::Fn { abi, latebound, params, ret } => {
+            TyKind::Fn { abi, latebound, stateless, params, ret } => {
                 let mut out = String::from("fn");
                 if let Some(abi) = abi {
                     out.push_str("extern");
@@ -11956,6 +11965,9 @@ impl<'a> Checker<'a> {
                 }
                 if latebound {
                     out.push_str("late");
+                }
+                if stateless && abi.is_none() {
+                    out.push_str("plain");
                 }
                 out.push_str(&params.len().to_string());
                 for param in &params {
@@ -13990,8 +14002,13 @@ impl<'a> Checker<'a> {
         if !seen.insert(ty) {
             return false;
         }
-        if self.types.needs_drop(ty)
-            || matches!(self.types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Vec { .. }) {
+        // A native callable value is native-only, which the export header
+        // refuses on its own; what its parameters and result reach is asked
+        // below. ODR-102's drop for its state is not C's to see.
+        if !matches!(self.types.kind(ty), TyKind::Fn { .. })
+            && (self.types.needs_drop(ty)
+                || matches!(self.types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Vec { .. }))
+        {
             return true;
         }
         match self.types.kind(ty) {
@@ -20556,11 +20573,13 @@ impl<'a> Checker<'a> {
             reported_stmt_attrs: self.reported_stmt_attrs.clone(),
             reported_defaults: self.reported_defaults.clone(),
         };
+        let outer_copies = std::mem::take(&mut self.copy_captures);
         let body = loop {
             self.open.known.clear();
             self.open.relied.clear();
             self.open.deps.clear();
             self.open.per_use.clear();
+            self.copy_captures.clear();
             let body = self.check_block(block);
             // A name a count or a number relied on, that the body changes,
             // is known no more: another pass (`[STD-19]`).
@@ -20598,6 +20617,34 @@ impl<'a> Checker<'a> {
             self.reported_stmt_attrs = snapshot.reported_stmt_attrs.clone();
             self.reported_defaults = snapshot.reported_defaults.clone();
         };
+        // `[CLO-13]` — a variable assigned after a lambda copied it keeps the
+        // borrow rule, which an owned callable value cannot hold. After: later
+        // in the body, or anywhere in a loop around the lambda.
+        let mut assignments = Vec::new();
+        assignments_in_block(block, &mut Vec::new(), &mut assignments);
+        for (locals, span) in std::mem::replace(&mut self.copy_captures, outer_copies) {
+            let assigned_after = |local: &LocalId| {
+                let decl = &self.locals[local.0 as usize];
+                assignments.iter().any(|assignment: &Assignment| {
+                    Some(assignment.name) == decl.name
+                        && assignment.target != decl.span
+                        && (assignment.at.start > span.start
+                            || assignment.loops.iter().any(|loop_span| loop_span.start <= span.start && span.end <= loop_span.end))
+                })
+            };
+            let Some(&local) = locals.iter().find(|local| assigned_after(local)) else { continue };
+            let name = self.locals[local.0 as usize].name.map_or_else(|| "a capture".to_string(), |name| format!("`{name}`"));
+            self.sink.emit_classified(
+                Diagnostic::error(
+                    codes::E3063,
+                    span,
+                    format!("this lambda borrows {name}, which is assigned later, so it may not be stored as a value"),
+                )
+                .primary_label("stored here")
+                .help("write it `owned fn`, which copies the value it has when the lambda is made")
+                .note("a lambda copies a variable it only reads unless the variable is assigned after it is made (CLO-13)"),
+            );
+        }
         self.open = outer;
         body
     }
@@ -25629,8 +25676,8 @@ impl<'a> Checker<'a> {
         // ordinary identity or declaration semantics. The resulting HIR type
         // is the expected boundary so calls through a local retain it.
         if let (
-            TyKind::Fn { abi: None, latebound: false, params: found_params, ret: found_ret },
-            TyKind::Fn { abi: None, latebound: true, params: expected_params, ret: expected_ret },
+            TyKind::Fn { abi: None, latebound: false, params: found_params, ret: found_ret, .. },
+            TyKind::Fn { abi: None, latebound: true, params: expected_params, ret: expected_ret, .. },
         ) = (self.types.kind(expr.ty), self.types.kind(expected))
             && found_params.len() == expected_params.len()
             && found_params
@@ -25641,11 +25688,64 @@ impl<'a> Checker<'a> {
         {
             return Expr { ty: expected, ..expr };
         }
+        // ODR-102 — a function, or a lambda that captures nothing, is an owned
+        // callable value holding no state: the same bits, nothing to drop.
+        if let (
+            TyKind::Fn { abi: None, latebound: found_late, stateless: true, params: found, ret: found_ret },
+            TyKind::Fn { abi: None, latebound: wanted_late, stateless: false, params: wanted, ret: wanted_ret },
+        ) = (self.types.kind(expr.ty), self.types.kind(expected))
+            && found_late == wanted_late && found == wanted && found_ret == wanted_ret
+        {
+            return Expr { ty: expected, ..expr };
+        }
+        // `[CLO-3]`, `[CLO-10]` — a closure where an owned callable value is
+        // wanted: an `owned fn` gives the value its environment; a lambda
+        // that borrows is a view (`E3063`), and one that moves a capture out
+        // can be called only once (`E3030`).
+        if let TyKind::Struct(id) = *self.types.kind(expr.ty)
+            && let Some(closure) = self.closure_calls.get(&id).map(|call| (call.def, call.once, call.owned))
+            && let TyKind::Fn { abi: None, stateless: false, params: wanted, ret: wanted_ret, .. } =
+                self.types.kind(expected).clone()
+            && let Some(signature) = self.callable_signature_of_value(expr.ty)
+            && let TyKind::Fn { params: found, ret: found_ret, .. } = self.types.kind(signature).clone()
+            && found == wanted
+            && found_ret == wanted_ret
+        {
+            let (def, once, owned) = closure;
+            let span = expr.span;
+            let wanted_shown = self.types.display(expected);
+            if !owned || self.types.is_view(expr.ty) {
+                self.sink.emit_classified(
+                    Diagnostic::error(
+                        codes::E3063,
+                        span,
+                        format!("this lambda borrows what it captures, so it may not be stored as `{wanted_shown}`"),
+                    )
+                    .primary_label("stored here")
+                    .help("write it `owned fn`, which moves or copies each capture into the value")
+                    .note(concat!(
+                        "a `fn` type outside a parameter is an owned callable value; a lambda that ",
+                        "borrows is a view, and this place has no bounding region (CLO-3, TYP-15)"
+                    )),
+                );
+                return Expr { ty: expected, kind: ExprKind::Error, span };
+            }
+            if once {
+                self.sink.emit_classified(
+                    Diagnostic::error(codes::E3030, span, "closure would move a captured value out")
+                        .primary_label("this closure is callable only once")
+                        .help(format!("`{wanted_shown}` may be called many times; take `once fn` where it is called once"))
+                        .note("the closure moves a non-`Copy` capture out of its environment [CLO-6]"),
+                );
+                return Expr { ty: expected, kind: ExprKind::Error, span };
+            }
+            return Expr { ty: expected, kind: ExprKind::MakeCallable { closure: def, env: Box::new(expr) }, span };
+        }
         // `[FN-6]` — conversion to a C callback crosses an ABI boundary.
         // Retain the native function type until MIR can select its C adapter.
         if let (
-                TyKind::Fn { abi: None, latebound: false, params: found, ret: found_ret },
-                TyKind::Fn { abi: Some(abi), latebound: false, params: wanted, ret: wanted_ret },
+                TyKind::Fn { abi: None, latebound: false, params: found, ret: found_ret, .. },
+                TyKind::Fn { abi: Some(abi), latebound: false, params: wanted, ret: wanted_ret, .. },
             ) = (self.types.kind(expr.ty), self.types.kind(expected))
             && abi.is("C") && found == wanted && found_ret == wanted_ret
             && found.iter().all(|param|
@@ -25971,6 +26071,7 @@ impl<'a> Checker<'a> {
                 Some(self.types.intern(TyKind::Fn {
                     abi: None,
                     latebound: false,
+                    stateless: true,
                     params,
                     ret: signature.ret,
                 }))
@@ -29220,6 +29321,7 @@ impl<'a> Checker<'a> {
         let signature = self.types.intern(TyKind::Fn {
             abi: None,
             latebound: bound.latebound,
+            stateless: true,
             params: bound.params,
             ret: bound.ret,
         });
@@ -29484,6 +29586,7 @@ impl<'a> Checker<'a> {
         Some(self.types.intern(TyKind::Fn {
             abi: None,
             latebound: bound.latebound,
+            stateless: true,
             params,
             ret,
         }))
@@ -34439,6 +34542,33 @@ impl<'a> Checker<'a> {
         Expr { ty: self.common.error, kind: ExprKind::Error, span }
     }
 
+    /// ODR-102 — a parameter whose own type is an owned callable value. A
+    /// written `fn(A) -> R` parameter is a bound, so such a parameter is an
+    /// instance's, and every caller lends its argument mutably: calling it,
+    /// or lending it on, needs nothing more.
+    fn is_lent_callable(&self, place: &Expr) -> bool {
+        let local = match &place.kind {
+            ExprKind::Local(local) => *local,
+            ExprKind::Deref(inner) => match inner.kind {
+                ExprKind::Local(local) => local,
+                _ => return false,
+            },
+            _ => return false,
+        };
+        if self.callable_parameter_locals.contains(&local) {
+            return true;
+        }
+        if !self.borrowed_params.contains(&local) {
+            return false;
+        }
+        let declared = self.locals[local.0 as usize].ty;
+        let ty = match self.types.kind(declared) {
+            TyKind::Ref { inner, .. } => *inner,
+            _ => declared,
+        };
+        matches!(self.types.kind(ty), TyKind::Fn { abi: None, stateless: false, .. })
+    }
+
     /// `[CLO-3]` — a call through a value of function type.
     fn synth_indirect_call(
         &mut self,
@@ -34448,9 +34578,20 @@ impl<'a> Checker<'a> {
         consumes_callee: bool,
         latebound_override: bool,
     ) -> Expr {
-        let TyKind::Fn { latebound, params, ret, .. } = self.types.kind(callee.ty).clone() else {
+        let TyKind::Fn { latebound, stateless, params, ret, .. } = self.types.kind(callee.ty).clone() else {
             unreachable!("checked by the caller")
         };
+        // `[CLO-2]` — an owned callable value may write its captured state, so
+        // it is called from a mutable place. A callable parameter is lent
+        // mutably by its caller (ODR-102).
+        if !stateless && is_place(&callee.kind) {
+            if !self.is_lent_callable(&callee) {
+                self.reject_readonly_write(&callee, span);
+                if !self.reject_write_through_shared_ref(&callee, span) {
+                    self.reject_borrowed_parameter_write(&callee, span, false);
+                }
+            }
+        }
         let latebound = latebound || latebound_override;
         if args.len() != params.len() {
             let shown = self.types.display(callee.ty);
@@ -34699,6 +34840,7 @@ impl<'a> Checker<'a> {
             let ty = self.types.intern(TyKind::Fn {
                 abi: None,
                 latebound: false,
+                stateless: true,
                 params: params
                     .iter()
                     .map(|(_, t, mode, _)| FnParam {
@@ -34779,6 +34921,19 @@ impl<'a> Checker<'a> {
             )
         };
         let requires_mut = !probe_once && !mutable_capture_fields.is_empty();
+        // `[CLO-13]` — where an owned callable value is wanted, a lambda that
+        // only reads `Copy` variables copies them (a handle is retained), so
+        // it may outlive them. One of them assigned later keeps the borrow
+        // rule: `check_body` reports that once the whole body is known.
+        let by_copy = !lambda.is_owned
+            && mutable_capture_fields.is_empty()
+            && expected.is_some_and(|ty| matches!(self.types.kind(ty), TyKind::Fn { abi: None, stateless: false, .. }))
+            && captured.iter().all(|(_, ty)| self.types.is_copy(*ty));
+        if by_copy {
+            let locals = captured.iter().filter_map(|(name, _)| self.lookup(*name)).collect();
+            self.copy_captures.push((locals, span));
+        }
+        let owned = lambda.is_owned || by_copy;
 
         // Otherwise it is "a unique anonymous struct implementing `Callable`"
         // (`[CLO-1]`), and this builds that struct: one field per capture, in
@@ -34790,7 +34945,7 @@ impl<'a> Checker<'a> {
             .enumerate()
             .map(|(index, (name, ty))| FieldDef {
                 name: *name,
-                ty: if lambda.is_owned {
+                ty: if owned {
                     *ty
                 } else {
                     self.types.intern(TyKind::Ref {
@@ -34811,7 +34966,7 @@ impl<'a> Checker<'a> {
             name: env_name,
             fields,
             span,
-            derives_copy: if lambda.is_owned {
+            derives_copy: if owned {
                 captured.iter().all(|(_, ty)| self.types.is_copy(*ty))
             } else {
                 !requires_mut
@@ -34828,7 +34983,7 @@ impl<'a> Checker<'a> {
             owned_loop_borrowed_handles,
             found: captured.clone(),
             env: Some((LocalId(0), struct_id)),
-            captures_by_move: lambda.is_owned,
+            captures_by_move: owned,
         };
         let body_env_mode = if probe_once {
             Mode::Owned
@@ -34848,7 +35003,7 @@ impl<'a> Checker<'a> {
         // `[CLO-2]` — an `owned fn` stays reusable when it merely reads its
         // directly owned captures. It becomes `CallableOnce` only when the
         // typed body actually consumes a non-`Copy` capture.
-        let once = lambda.is_owned && self.closure_body_moves_capture(&body, LocalId(0));
+        let once = owned && self.closure_body_moves_capture(&body, LocalId(0));
         debug_assert_eq!(once, probe_once, "closure probe and final body disagree about CallableOnce");
         let call_mode = if once {
             Mode::Owned
@@ -34866,13 +35021,13 @@ impl<'a> Checker<'a> {
                 Symbol::intern("env"),
                 env_ty,
                 call_mode,
-                lambda.is_owned,
+                owned,
             )),
             span,
             number,
             skipped_before,
         );
-        self.closure_calls.insert(struct_id, ClosureCall { def, once });
+        self.closure_calls.insert(struct_id, ClosureCall { def, once, owned: owned });
 
         // The closure *value* is its environment. Ordinary closures borrow
         // each captured local; `owned fn` moves or copies each capture into
@@ -34882,7 +35037,7 @@ impl<'a> Checker<'a> {
             let Some(local) = self.lookup(*name) else { continue };
             let source_ty = self.locals[local.0 as usize].ty;
             let place = Expr { ty: source_ty, kind: ExprKind::Local(local), span };
-            if lambda.is_owned {
+            if owned {
                 values.push(if source_ty == *ty { place } else { self.read_through(place) });
             } else {
                 let mutable = mutable_capture_fields.contains(&index);
@@ -35422,6 +35577,13 @@ impl<'a> Checker<'a> {
                 fields.insert(field);
             }
         }
+        // `[CLO-2]` — calling an owned callable value may write its state.
+        if let ExprKind::CallIndirect { callee, .. } = &expr.kind
+            && matches!(self.types.kind(callee.ty), TyKind::Fn { abi: None, stateless: false, .. })
+            && let Some(field) = Self::closure_capture_field_index(callee, environment)
+        {
+            fields.insert(field);
+        }
 
         match &expr.kind {
             ExprKind::Call { args, .. }
@@ -35490,6 +35652,7 @@ impl<'a> Checker<'a> {
             | ExprKind::Deref(base)
             | ExprKind::Ref { place: base, .. }
             | ExprKind::Cast { expr: base, .. }
+            | ExprKind::MakeCallable { env: base, .. }
             | ExprKind::InterfaceUpcast { expr: base, .. }
             | ExprKind::Widen { expr: base, .. }
             | ExprKind::OverflowScope { expr: base, .. }
@@ -35677,6 +35840,7 @@ impl<'a> Checker<'a> {
             | ExprKind::EnumField { base, .. }
             | ExprKind::Deref(base)
             | ExprKind::Cast { expr: base, .. }
+            | ExprKind::MakeCallable { env: base, .. }
             | ExprKind::InterfaceUpcast { expr: base, .. }
             | ExprKind::Widen { expr: base, .. }
             | ExprKind::OverflowScope { expr: base, .. }
@@ -35729,6 +35893,7 @@ impl<'a> Checker<'a> {
             ExprKind::Deref(base)
             | ExprKind::Ref { place: base, .. }
             | ExprKind::Cast { expr: base, .. }
+            | ExprKind::MakeCallable { env: base, .. }
             | ExprKind::InterfaceUpcast { expr: base, .. }
             | ExprKind::Widen { expr: base, .. }
             | ExprKind::OverflowScope { expr: base, .. }
@@ -35829,7 +35994,7 @@ impl<'a> Checker<'a> {
             }
             _ => Vec::new(),
         };
-        let ty = self.types.intern(TyKind::Fn { abi: signature.abi, latebound: false, params, ret });
+        let ty = self.types.intern(TyKind::Fn { abi: signature.abi, latebound: false, stateless: true, params, ret });
         // D-284 (ODR-048) — an instance may take a parameter by address, as
         // its generic's declaration does, where a callable type of the same
         // parameters takes a copy; the two calls would disagree.
@@ -36569,6 +36734,7 @@ impl<'a> Checker<'a> {
                 let fn_ty = self.types.intern(TyKind::Fn {
                     abi: None,
                     latebound: false,
+                    stateless: true,
                     params: vec![FnParam { ty: inner, mode: FnParamMode::Borrow }],
                     ret: inner,
                 });
@@ -39910,6 +40076,24 @@ impl<'a> Checker<'a> {
     /// `check_argument` for a parameter whose passing the callee decides
     /// (`param_by_address`, D-284).
     fn check_argument_by(&mut self, arg: &ast::Expr, param_ty: Ty, mode: Mode, by_address: bool) -> Expr {
+        // ODR-102 — an owned callable value is called from a mutable place
+        // (`[CLO-2]`), so one given to a borrowed parameter is lent mutably:
+        // the callee may call it, and nothing else reaches it meanwhile.
+        if mode == Mode::Borrow
+            && matches!(self.types.kind(param_ty), TyKind::Fn { abi: None, stateless: false, .. })
+        {
+            let value = self.check_expr(arg, param_ty);
+            if !is_place(&value.kind) || value.ty == self.common.error {
+                return self.borrow_argument(value, param_ty);
+            }
+            self.reject_readonly_write_in_mut_argument(&value, arg.span);
+            if !self.is_lent_callable(&value) && !self.reject_write_through_shared_ref(&value, arg.span) {
+                self.reject_borrowed_parameter_write(&value, arg.span, false);
+            }
+            let span = value.span;
+            let ty = self.types.intern(TyKind::Ref { mutable: true, inner: param_ty });
+            return Expr { ty, kind: ExprKind::Ref { place: Box::new(value), mutable: true }, span };
+        }
         if mode == Mode::Borrow && by_address {
             let value = self.check_expr(arg, param_ty);
             return self.borrow_argument(value, param_ty);
@@ -40432,7 +40616,7 @@ impl<'a> Checker<'a> {
             .iter()
             .map(|(_, local)| FnParam { ty: self.locals[local.0 as usize].ty, mode: FnParamMode::Borrow })
             .collect();
-        let fn_ty = self.types.intern(TyKind::Fn { abi: None, latebound: false, params, ret: ty });
+        let fn_ty = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: true, params, ret: ty });
         let ident = |name: Symbol| ast::Ident { name, span };
         let lambda = ast::Lambda {
             is_owned: false,
@@ -40496,6 +40680,7 @@ impl<'a> Checker<'a> {
             | ExprKind::Ref { place: base, .. }
             | ExprKind::EraseRange(base)
             | ExprKind::OverflowScope { expr: base, .. }
+            | ExprKind::MakeCallable { env: base, .. }
             | ExprKind::ArrayRepeat { value: base, .. } => self.float_work(base),
             ExprKind::Index { base, index } => self.float_work(base) || self.float_work(index),
             ExprKind::Binary { lhs, rhs, .. } => {
@@ -43730,6 +43915,61 @@ fn unparenthesized(expr: &ast::Expr) -> &ast::Expr {
 /// whole or in part, or borrowed mutably (a `mut` argument, a `mut self`
 /// call, a closure that writes what it captures, a `ref mut` binding of a
 /// `match`). A loop's own counter and a declaration are not changes.
+/// `[CLO-13]` — a name assigned (or declared by assignment) in a body: the
+/// target's span, the statement's, and the loops around it.
+struct Assignment {
+    name: Symbol,
+    target: Span,
+    at: Span,
+    loops: Vec<Span>,
+}
+
+fn assignments_in_block(block: &ast::Block, loops: &mut Vec<Span>, out: &mut Vec<Assignment>) {
+    for stmt in &block.stmts {
+        match &stmt.kind {
+            ast::StmtKind::Assign { targets, .. } => {
+                for target in targets {
+                    if let ast::ExprKind::Path { segments } = &target.kind
+                        && segments.len() == 1
+                    {
+                        out.push(Assignment { name: segments[0].name, target: target.span, at: stmt.span, loops: loops.clone() });
+                    }
+                }
+            }
+            ast::StmtKind::If(branch) => assignments_in_if(branch, loops, out),
+            ast::StmtKind::While { body, else_block, .. } | ast::StmtKind::For { body, else_block, .. } => {
+                loops.push(stmt.span);
+                assignments_in_block(body, loops, out);
+                loops.pop();
+                if let Some(block) = else_block {
+                    assignments_in_block(block, loops, out);
+                }
+            }
+            ast::StmtKind::Match { arms, .. } => {
+                for arm in arms {
+                    if let ast::MatchArmBody::Block(block) = &arm.body {
+                        assignments_in_block(block, loops, out);
+                    }
+                }
+            }
+            ast::StmtKind::With { body, .. }
+            | ast::StmtKind::Defer(body)
+            | ast::StmtKind::Unsafe(body)
+            | ast::StmtKind::Comptime(body) => assignments_in_block(body, loops, out),
+            ast::StmtKind::Decl { .. } | ast::StmtKind::Expr(_) | ast::StmtKind::Pass => {}
+        }
+    }
+}
+
+fn assignments_in_if(branch: &ast::IfStmt, loops: &mut Vec<Span>, out: &mut Vec<Assignment>) {
+    assignments_in_block(&branch.then_block, loops, out);
+    match branch.else_block.as_deref() {
+        Some(ast::ElseBranch::Block(block)) => assignments_in_block(block, loops, out),
+        Some(ast::ElseBranch::If(inner)) => assignments_in_if(inner, loops, out),
+        None => {}
+    }
+}
+
 fn written_in_block(block: &Block, out: &mut HashSet<LocalId>) {
     for stmt in &block.stmts {
         written_in_stmt(stmt, out);
@@ -43852,6 +44092,7 @@ fn written_in_expr(e: &Expr, out: &mut HashSet<LocalId>) {
         | ExprKind::Deref(expr)
         | ExprKind::Unary { operand: expr, .. }
         | ExprKind::Cast { expr, .. }
+        | ExprKind::MakeCallable { env: expr, .. }
         | ExprKind::Widen { expr, .. }
         | ExprKind::EraseRange(expr)
         | ExprKind::OverflowScope { expr, .. } => written_in_expr(expr, out),
@@ -43919,6 +44160,7 @@ fn reads_any(e: &Expr, locals: &HashSet<LocalId>) -> bool {
         | ExprKind::Ref { place: expr, .. }
         | ExprKind::Unary { operand: expr, .. }
         | ExprKind::Cast { expr, .. }
+        | ExprKind::MakeCallable { env: expr, .. }
         | ExprKind::Widen { expr, .. }
         | ExprKind::EraseRange(expr)
         | ExprKind::OverflowScope { expr, .. } => reads_any(expr, locals),

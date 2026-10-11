@@ -10714,12 +10714,16 @@ only counts, proof `inner_loop_reused`. **D-552**: MSVC's checked narrow add/sub
 overflow intrinsics (a field add was 7x checked C: widening loads defeat store forwarding). The
 nest `counter.bump()` x 4 x 100M: MSVC 638 -> 85.2 ms (checked C 84.9), clang 86 -> 41 ms (checked
 C 48 with the counter escaped). EXC-10 still wants the review workflow the owner asked to be asked
-about (list below). **Next: D-554** — an owned callable value (`fn(A) -> R` outside a parameter)
-holds no captured state: `[CLO-10]`'s representation (3 words inline, else one allocation, a drop
-in the descriptor), `[CLO-3]`'s `E3063` for a borrowing lambda there, `[CLO-13]`'s copy captures,
-and the value is not `Copy` (Part VI's list has `extern fn` only); whether a type-erased `fn` is
-`Send` needs an ODR. After it: the `[DIA-13]` snapshots still missing (X1 has a producer, `E3080`;
-B5, B9, B11, O8, S1 have none), then D-550.
+about (list below). Then **D-554** (ADR-159, ODR-102, 0.9.10_Hardened_6): owned callable
+values hold their closure's state — `{entry, descriptor, three words}`, larger state boxed; a
+function's value stays `Copy` (`TyKind::Fn::stateless`) and converts; an owned callable value moves,
+drops, is called from a mutable place, is lent mutably to a borrowed parameter (the region pass now
+counts a call through a value as using it: a callable parameter looked unused before), is neither
+`Send` nor `Sync`, and given to C panics if it holds state; `[CLO-13]` copies where a lambda becomes
+one. Stored counter closure vs C: MSVC 0.77, clang 1.04. Also the X1 `[DIA-13]` snapshot
+(`tests/ui/borrow/X1`). **Next:** the shapes still without a producer (B5, B9, B11, O8, S1; B9 is
+`E3026`, "a closure outlives what it captures", which `E3063` now covers in owned positions — decide
+where `E3026` belongs), then D-550.
 
 **2026-10-11, D-548 and D-549 fixed (ADR-156).** `fn main(args: Array[String])` builds and runs, with the
 command line decoded as UTF-8 (lossy; UTF-16 on Windows), and an `Err` returned from `main` prints

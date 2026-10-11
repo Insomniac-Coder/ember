@@ -50,7 +50,7 @@ no estimate changes follow from it.
 | `TYP-9` float controls | Built 2026-09-30 (ADR-085): a C unit per float mode, compiled with its flags ([CG-C-11]); the boundaries (lambdas, defaults, range facts) ruled in ODR-090, Hardened_45. Not built: a static library with a relaxed function (`E0900`, NOT-IMPLEMENTED N6), and a default doing float work no closure of its mode can hold (`E0900`, N7). |
 | `CTL-3b` counted loops | Built since (2026-10-11 check): `tests/conformance/CTL-3b/` covers `step_by`, `rev`, adapter chains and wide `enumerate` as one counted loop. |
 | `EXP-4` temporary iterable | Covered since (2026-10-11 check): `EXP-4/accept_a_loop_over_a_view_a_call_made_from_a_temporary` and eleven other cases. |
-| `CLO-3`, `CLO-10`, `CLO-13` | **Open, D-554** (found 2026-10-11): an owned callable value cannot hold captured state, and copy captures are not built. |
+| `CLO-3`, `CLO-10`, `CLO-13` | Built 2026-10-11 (D-554, ADR-159, ODR-102): owned callable values with state, copy captures; the boxed state's `Alloc` report waits on Phase 4 (N8). |
 
 ## Phase 3 — Part VIII rules against their cases (2026-10-04, autopilot)
 

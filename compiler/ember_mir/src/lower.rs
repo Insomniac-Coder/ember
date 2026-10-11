@@ -5679,8 +5679,8 @@ impl<'a> Builder<'a> {
         self.at(expr.span);
         match &expr.kind {
             hir::ExprKind::Binary { op, lhs, rhs } => {
-                let lhs = self.lower_operand(lhs);
-                let rhs = self.lower_operand(rhs);
+                let lhs = self.lower_compared(lhs);
+                let rhs = self.lower_compared(rhs);
                 Rvalue::BinaryOp { op: *op, lhs, rhs }
             }
             hir::ExprKind::Unary { op, operand } => {
@@ -5688,7 +5688,17 @@ impl<'a> Builder<'a> {
                 Rvalue::UnaryOp { op: *op, operand }
             }
             hir::ExprKind::Cast { expr: inner, to } => {
-                let operand = self.lower_operand(inner);
+                // `[FN-6]` — a C entry is read from a stored value, which
+                // stays where it is (ODR-102: an owned callable value moves).
+                let reads_c_entry = matches!(self.types.kind(*to), TyKind::Fn { abi: Some(_), .. })
+                    && matches!(&inner.kind, hir::ExprKind::Local(_) | hir::ExprKind::Field { .. }
+                        | hir::ExprKind::Index { .. } | hir::ExprKind::Deref(_));
+                let operand = if reads_c_entry {
+                    self.at(inner.span);
+                    Operand::Copy(self.lower_place(inner))
+                } else {
+                    self.lower_operand(inner)
+                };
                 let kind = match (self.types.kind(inner.ty), self.types.kind(*to)) {
                     (TyKind::Fn { abi: None, .. }, TyKind::Fn { abi: Some(abi), .. })
                         if abi.is("C") => CastKind::FnToC,
@@ -5770,6 +5780,11 @@ impl<'a> Builder<'a> {
             hir::ExprKind::FnValue(def) => {
                 Rvalue::Use(Operand::Const(Const::Fn(self.program.function(*def).symbol.clone())))
             }
+            hir::ExprKind::MakeCallable { closure, env } => {
+                let closure = Operand::Const(Const::Fn(self.program.function(*closure).symbol.clone()));
+                let env = self.lower_operand_kept(env);
+                Rvalue::Aggregate { kind: AggregateKind::Callable, operands: vec![closure, env] }
+            }
             hir::ExprKind::Widen { expr: inner, to } => {
                 let operand = self.lower_operand(inner);
                 Rvalue::Cast { kind: CastKind::Widen, operand, to: *to }
@@ -5813,6 +5828,19 @@ impl<'a> Builder<'a> {
             }
             _ => Rvalue::Use(self.lower_operand(expr)),
         }
+    }
+
+    /// An operand of `==`: ODR-102 compares two owned callable values where
+    /// they are, without moving either.
+    fn lower_compared(&mut self, expr: &'a hir::Expr) -> Operand {
+        if matches!(self.types.kind(expr.ty), TyKind::Fn { abi: None, stateless: false, .. })
+            && matches!(&expr.kind, hir::ExprKind::Local(_) | hir::ExprKind::Field { .. }
+                | hir::ExprKind::Index { .. } | hir::ExprKind::Deref(_))
+        {
+            self.at(expr.span);
+            return Operand::Copy(self.lower_place(expr));
+        }
+        self.lower_operand(expr)
     }
 
     fn lower_operand(&mut self, expr: &'a hir::Expr) -> Operand {

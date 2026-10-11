@@ -399,6 +399,10 @@ pub enum ExprKind {
     /// `[FN-6]` — a named function used as a value. Its type is the
     /// `fn(A) -> R` it coerces to.
     FnValue(DefId),
+    /// `[CLO-3]`, `[CLO-10]` — an `owned fn` closure where an owned callable
+    /// value is wanted: `closure` is its body, and the value takes over its
+    /// environment `env`. Its type is the `fn(A) -> R`.
+    MakeCallable { closure: DefId, env: Box<Expr> },
     /// A call through a value of function type, rather than to a name. An
     /// `owned f: fn(...) -> R` parameter is `CallableOnce`, so this records
     /// that the callee itself must be consumed; its argument modes remain the
@@ -1795,6 +1799,9 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
             format!("@dyn {interface}::slot{slot}({})", inner.join(", "))
         }
         ExprKind::FnValue(def) => format!("fn#{}", def.0),
+        ExprKind::MakeCallable { closure, env } => {
+            format!("callable#{}({})", closure.0, dump_expr(env, function, types))
+        }
         ExprKind::CallIndirect { callee, args, consumes_callee, latebound } => {
             let inner: Vec<String> = args.iter().map(|a| dump_expr(a, function, types)).collect();
             let mode = if *consumes_callee { "owned " } else { "" };

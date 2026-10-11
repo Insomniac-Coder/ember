@@ -29,7 +29,9 @@ fn neg(x: int) -> int:
 fn pick(b: bool) -> fn(int) -> int:
     return double if b else triple
 
-fn through(h: ref H, x: int) -> int:
+# `[CLO-2]` — a callable field is an owned callable value, called from a
+# mutable place (ODR-102).
+fn through(mut h: H, x: int) -> int:
     return h.f(x) + 1
 
 class Button:

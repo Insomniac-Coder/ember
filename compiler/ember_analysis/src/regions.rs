@@ -391,7 +391,7 @@ impl Regions {
         }
 
         regions.values_at = regions.infer_value_states(body, types, call_contract);
-        regions.apply_value_states(body, call_contract, &slot_liveness);
+        regions.apply_value_states(body, types, call_contract, &slot_liveness);
         regions
     }
 
@@ -1310,6 +1310,9 @@ impl Regions {
                     result.insert(destination, fact.clone());
                 }
             }
+            // An owned callable value's environment holds no view (the
+            // checker refuses one, `[TYP-15]`): no region flows into it.
+            Rvalue::Aggregate { kind: AggregateKind::Callable, .. } => {}
             Rvalue::Aggregate { kind, operands } => {
                 for (field, operand) in operands.iter().enumerate() {
                     let mut projection = destination.projection.clone();
@@ -1578,6 +1581,7 @@ impl Regions {
     fn apply_value_states(
         &mut self,
         body: &Body,
+        types: &TypeTable,
         call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
         slot_liveness: &HashMap<Point, HashSet<RegionVid>>,
     ) {
@@ -1603,7 +1607,7 @@ impl Regions {
         }
 
         self.accesses.iter_mut().for_each(HashSet::clear);
-        for (point, place, operation) in self.access_events(body, call_contract) {
+        for (point, place, operation) in self.access_events(body, types, call_contract) {
             let Some(state) = self.values_at.get(&point) else { continue };
             let mut reached = self.fact_for_place(state, &place);
             reached.merge(&self.through_facts(state, &place));
@@ -1637,6 +1641,7 @@ impl Regions {
     fn access_events(
         &self,
         body: &Body,
+        types: &TypeTable,
         call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
     ) -> Vec<(Point, Place, RegionAccessKind)> {
         let mut events = Vec::new();
@@ -1675,7 +1680,16 @@ impl Regions {
                 Terminator::SwitchInt { discr, .. } => {
                     self.operand_access_event(point, discr, &mut events)
                 }
-                Terminator::Call { func, args, .. } => match call_contract(func).access {
+                Terminator::Call { func, args, .. } => {
+                // A call through a value reads it; an owned callable value's
+                // call may write the state it holds (`[CLO-2]`, ODR-102).
+                if let FuncRef::Indirect { operand, ty, .. } = func {
+                    self.operand_access_event_with(point, operand, RegionAccessKind::Read, &mut events);
+                    if matches!(types.kind(*ty), TyKind::Fn { abi: None, stateless: false, .. }) {
+                        self.operand_access_event_with(point, operand, RegionAccessKind::BorrowMut, &mut events);
+                    }
+                }
+                match call_contract(func).access {
                     CallAccessContract::All => {
                         for argument in args {
                             for operation in ALL_REGION_ACCESSES {
@@ -1700,7 +1714,8 @@ impl Regions {
                             }
                         }
                     }
-                },
+                }
+                }
                 Terminator::Assert { cond, msg, .. } => {
                     self.operand_access_event(point, cond, &mut events);
                     if let ember_mir::AssertKind::RefCellBorrow { file, line } = msg {
@@ -2505,6 +2520,7 @@ fn aggregate_field_projection(kind: AggregateKind, field: usize) -> Vec<Projecti
         AggregateKind::Enum(_, variant) => {
             vec![Projection::Downcast(variant), Projection::Field(field)]
         }
+        AggregateKind::Callable => Vec::new(),
     }
 }
 

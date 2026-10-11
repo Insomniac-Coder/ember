@@ -5016,6 +5016,53 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-159 — owned callable values hold their closure's state (D-554, ODR-102)
+
+**Date:** 2026-10-11 (autopilot). **Rules:** `[CLO-2]`, `[CLO-3]`, `[CLO-10]`, `[CLO-13]`, `[FN-6]`,
+`[THR-8]`, `[THR-9]` (0.9.10_Hardened_6).
+
+**Context.** A `fn(A) -> R` outside a parameter was a pointer to a static descriptor, so only
+functions and capture-free lambdas could fill one; an `owned fn` there was `E2020` naming
+`closure3_env` (D-554). `[CLO-13]`'s copy captures were not built either.
+
+**Decision.** (1) Representation (`[CLO-10]`): the value is five words, `{entry, descriptor,
+w[3]}`; the descriptor holds the entry, the C entry (`[FN-6]`) and a drop. An environment that
+fits the three words (C's own `sizeof`/`_Alignof`, so the thunks and the constructor agree with
+whatever the C compiler lays out) is copied into them, a larger one into one allocation
+(`ember_box_new_copy`). Every entry takes the state's address first: a function gets a one-line
+thunk, a closure a thunk that finds its environment and calls the closure body. The entry is
+copied into the value: with only the descriptor in it, a call loaded the descriptor and then the
+entry, and the dependent load cost clang 19% against a C struct of state and function pointer.
+(2) Types (ODR-102): `TyKind::Fn` gains `stateless`. A function or capture-free lambda used as a
+value is `stateless` (`Copy`, no drop) and converts to the written type, an owned callable value
+(moves, drops; `MakeCallable` in HIR, `AggregateKind::Callable` in MIR, from an `owned fn` or a
+copy-capturing lambda); a borrowing lambda there is `E3063`, a call-once one `E3030`. (3) Calls
+(`[CLO-2]`): through an owned callable value from a place that is not mutable is `E3023`; given to a
+borrowed parameter it is lent mutably (`ref mut`), and a borrowed parameter whose own type is an
+owned callable value (only an instance's, as a written `fn` parameter is a bound) may be called and
+lent on. The region pass counts a call through a value as a read of it, and of an owned callable
+value as a mutable borrow: it did not count the callee at all, so a callable parameter called
+through looked unused and two lends of one value were not `E3022`. Capture inference counts such a
+call through a capture as a write. (4) `==` compares entry and state words; converting to
+`extern "C" fn` reads the C entry in place and panics when the value holds state; the value is
+neither `Send` nor `Sync`. (5) `[CLO-13]`: where a lambda becomes an owned callable value and only
+reads `Copy` variables, it copies them; one assigned later in the body or anywhere in a loop around
+the lambda keeps the borrow rule (`E3063`, help `owned fn`), checked on the AST after the body.
+
+**Consequences.** A stored counter closure called 100 million times (`total + c()`), performance
+cores, mains, 15 interleaved runs: MSVC 64.4 ms against 83.7 ms for the C twin (0.77), clang 66.7 ms
+against 64.4 ms (1.04; the closure's overflow panic sets up a frame on its hot path). No README
+benchmark builds a stateful value; `a08_closures`' call stays inlined. Two tests changed under the
+ruling: `CLO-11/accept_a_callable_field_is_called` takes `mut h` to call a field, and
+`FFI-21/accept_stored_native_function_conversion` reads the C entry before it moves the field.
+The export check (`E5015`) asks of a `fn` only what its parameters and result
+reach, as before: a native callable is native-only, which the header step refuses on its own. The
+C helpers are emitted only where a program makes or converts such a value, so other programs' C is
+unchanged. Not built: the `Alloc` effect and `ember inspect --alloc` report of a boxed environment
+(NOT-IMPLEMENTED N8, Phase 4).
+
+---
+
 ## ADR-158 — an outer loop holds its inner loop's access; MSVC checks narrow arithmetic by flag (D-553, D-552)
 
 **Date:** 2026-10-11 (autopilot). **Rules:** `[EXC-8]`, `[EXC-9]`, `[EXC-10]`, `[EXC-12]`; `[TYP-8]`.

@@ -63,6 +63,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-082 | **CLOSED** — `@ffi(immutable)` on a foreign static asserts a `const` C object and emits a matching declaration | Language / C interop / foreign statics | — | **No** — delegated, 2026-09-27, Hardened_38 |
 | ODR-083 | **CLOSED** — a static free-function export's `creator` thread is anchored to successful module initialization; repeated initialization does not transfer the contract, and reinitialization after shutdown establishes a new creator | Language / C interop / export thread contracts | — | **No** — delegated, 2026-09-27, Hardened_39 |
 | ODR-084 | **CLOSED** — `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts | Language / module attributes / arithmetic | — | **No** — delegated, 2026-09-27, Hardened_40 |
+| ODR-102 | **CLOSED** — a function or capture-free lambda used as a value is a plain `Copy` value; an owned callable value moves and drops its state, is lent mutably to a borrowed parameter, is neither `Send` nor `Sync`, equals one calling the same function with the same state, and panics given to C when it holds state; `[CLO-13]` copies where a lambda becomes an owned callable value | Closures | — | **Delegated** (autopilot, 2026-10-11), 0.9.10_Hardened_6 |
 | ODR-101 | **CLOSED** — the entry module's `main` in a form `[FN-8]` does not list is `E2183` at its name; its one parameter may have any name and mode, its type `Array[String]`; an `E` that is not `Display` is `E2040` | Functions / entry point | — | **Delegated** (the owner, 2026-10-11: "fix that autonomously"), 0.9.10_Hardened_5 |
 | ODR-100 | **CLOSED** — the iterator adapters take over the callable and the iterator they keep; a lambda written at one keeps its borrows; only a callable that must carry the static region moves its captures | Closures / std | — | **Owner** (2026-10-11), 0.9.10_Hardened_4 |
 | ODR-099 | **CLOSED** — where a program turns a callable type into `extern "C" fn`, a function whose value has that type returns no raw pointer into a parameter it borrows by value, which a call from C passes as a copy (`E5042`) | FFI / callbacks | — | **Owner chose the direction** (2026-10-11); the detail ruled under the delegation, 0.9.10_Hardened_3 |
@@ -255,6 +256,55 @@ new artifact must be `_3` and that `_2` must not be edited. Accordingly, this
 resolution is recorded in `Ember_v0.9.8_Hardened_3.md`, authored from immutable
 immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
+
+---
+
+## ODR-102 — owned callable values — **CLOSED**
+
+    ID:        ODR-102
+    Status:    CLOSED — ruled under the delegation, 2026-10-11 (autopilot: "rule spec
+               ambiguities myself"); incorporated in 0.9.10_Hardened_6
+    Category:  CLOSURES
+    Location:  Ember_v0.9.10_Hardened_5.md [CLO-2], [CLO-3], [CLO-10], [CLO-13]
+
+**The question.** Building `[CLO-10]`'s owned callable values (D-554: a `fn(A) -> R` outside a
+parameter held no captured state) met five points the rules leave open. `[CLO-3]` makes such a
+value own its state, and Part VI's `Copy` list names `extern fn` but not `fn`, so it moves; but a
+named function passed on as a value (`relay(double)`, which hands `g` to `map`) worked only
+because it was `Copy`. `[CLO-2]` calls an owned callable value from a mutable place, but a
+callable parameter is borrowed (`apply(step, 4)`). Its type hides what it captured, so whether it
+may cross threads is unknown. `[FN-6]` converts a stored value to `extern "C" fn`, which a value
+holding state cannot be. And `[CLO-13]` copies a variable whose storage "would end while the
+closure is still live", without saying where that is decided.
+
+**Ruling.**
+
+* A function, or a lambda that captures nothing, used as a value is a plain `Copy` value with no
+  state; it becomes an owned callable value where one is wanted (the same bits, nothing to drop).
+  An owned callable value moves, and its end drops its state.
+* An owned callable value given to a borrowed parameter is lent mutably: the argument is a mutable
+  place (`E3023` if it is not, as for a `mut` argument), nothing else reaches it during the call
+  (the same value twice is `E3022`), and the callee may call it and lend it on. A value that is not
+  a place is passed as one. Called through a borrowed place otherwise, it is `E3023`.
+* An owned callable value is neither `Send` nor `Sync` (`[THR-8]`, `[THR-9]`): a `@sync` class
+  cannot hold one (`E7001`). A program that sends work writes the closure where it is consumed,
+  whose captures the bound sees (`[THR-10]`).
+* Two owned callable values are equal when they call the same function with the same state.
+* Converting a stored owned callable value to `extern "C" fn` reads its C entry without moving it;
+  one holding captured state has none, and the conversion panics.
+* `[CLO-13]`'s copy applies where a lambda becomes an owned callable value; "assigned after" is an
+  assignment later in the body, or anywhere in a loop around the lambda.
+
+**Why.** The first keeps every program that passes functions around as before, and makes an owned
+callable value's move the only new obligation. The mutable lend is what `[CLO-2]` asks of a call,
+made where the value is given, so the borrow checker sees the exclusive access a call needs; the
+alternative, a shared call that writes state, can run a closure twice over the same state when a
+`Shared` reaches back to it. The others follow from a type that does not say what it holds.
+
+**Tests:** `tests/conformance/CLO-10/` (two), `CLO-13/` (two), `CLO-3/reject_a_borrowing_lambda_stored_as_a_value`,
+`CLO-6/reject_a_once_closure_stored_as_a_value`, `CLO-2/reject_calling_an_owned_callable_value_from_a_borrowed_place`,
+`CLO-2/reject_lending_one_owned_callable_value_twice`, `FFI-21/run_fail_a_callable_value_holding_state_has_no_c_entry`,
+`THR-1/reject_a_sync_class_holding_an_owned_callable_value`. ADR-159.
 
 ---
 
