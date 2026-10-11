@@ -5016,6 +5016,33 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-168 — On Windows a view parameter goes as its two words (D-569, D-570)
+
+**Date:** 2026-10-12 (autopilot). **Rules:** `[CG-C-1]`, `[TXT-10]`, `[FN-1]`.
+
+**Context.** Against a hand-written C twin of the varied-text probe, a function over short
+strings was 1.27-1.36x C with MSVC and 1.08-1.20x with clang on Windows, and at C's speed on
+Linux. The Windows x64 convention passes a struct larger than eight bytes (a `str`, a span: a
+pointer and a length) by the caller writing a copy to memory and passing its address; the caller
+had just built the view with two 8-byte stores, and the copy reads it back with one 16-byte load,
+which no store forwards. A twin passing the same struct by value ran as slowly with clang.
+
+**Decision.** `split_view_params` (codegen, Windows only): a function only ever called directly
+(its symbol never a function value or an interface adapter's method; not virtual, foreign,
+exported, a lambda, a `restrict` kernel or `main`; never in a static library, whose header fixes
+its signatures) takes each `str` or span parameter as `pointer _N_p, size_t _N_n`, and its body
+begins `T _N = { _N_p, _N_n };`. Direct calls pass `(arg).ptr, (arg).len`. `check_split_views` reads
+the emitted C and stops the build if such a function is named other than in a call; a call of the
+wrong shape fails the C compile (both break-tested). Linux passes the two words in registers already
+and its C is unchanged.
+
+**Consequences.** Against the twin, MSVC short text 0.72-0.84x C (was 1.26-1.34x), clang 0.96-1.02x
+(was 1.09-1.19x); long text unchanged. Of the benchmark programs four changed C: `a16_map_text`
+MSVC x0.873, the others within noise. The README's rows are due at the next full benchmark run. A
+`str` result (also 16 bytes, returned through memory on Windows) is unchanged.
+
+---
+
 ## ADR-167 — The `restrict` kernels derive their alias facts; views proved apart are `restrict` everywhere (D-568, D-557)
 
 **Date:** 2026-10-12 (autopilot). **Rules:** `[SIMD-3]`, `[DSJ-1]`..`[DSJ-3]`, `[SPN-3]`.

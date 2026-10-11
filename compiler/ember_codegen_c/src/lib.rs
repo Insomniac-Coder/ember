@@ -131,6 +131,112 @@ const INLINE_STATEMENTS: usize = 40;
 /// clang's default limit of 256 (D-358).
 const DEREF_NESTING: usize = 16;
 
+/// D-569 — on Windows a struct larger than eight bytes, such as a `str` or a
+/// span (a pointer and a length), is passed by the caller writing a copy to
+/// memory and passing its address; a view the caller has just built field by
+/// field is then read back whole, which no store forwards (measured: MSVC
+/// 1.27-1.36x the C on a function over short strings, 0.75-0.84x as two
+/// words). Linux passes the two words in registers already. So on Windows a
+/// function only ever called directly takes each such parameter as its two
+/// words, and rebuilds the view on entry. A function whose address is taken
+/// (a function value, an interface adapter), a virtual, foreign, exported,
+/// lambda or `restrict` kernel body keeps its C type; `check_split_views`
+/// proves nothing else names one.
+fn split_view_params(bodies: &[Body], types: &TypeTable) -> BTreeMap<String, Vec<bool>> {
+    if !cfg!(windows) {
+        return BTreeMap::new();
+    }
+    fn note<'a>(operand: &'a Operand, taken: &mut BTreeSet<&'a str>) {
+        if let Operand::Const(Const::Fn(symbol)) = operand {
+            taken.insert(symbol.as_str());
+        }
+    }
+    let mut taken: BTreeSet<&str> = BTreeSet::new();
+    for body in bodies {
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                match &stmt.kind {
+                    StmtKind::Assign { rvalue, .. } => match rvalue {
+                        Rvalue::Use(o) | Rvalue::UnaryOp { operand: o, .. } | Rvalue::Repeat { value: o, .. } => {
+                            note(o, &mut taken)
+                        }
+                        Rvalue::Cast { operand, kind, .. } => {
+                            note(operand, &mut taken);
+                            if let CastKind::InterfaceUpcast { implementations, .. }
+                            | CastKind::ClassInterfaceUpcast { implementations, .. } = kind
+                            {
+                                taken.extend(implementations.iter().flatten().map(|method| method.symbol.as_str()));
+                            }
+                        }
+                        Rvalue::BinaryOp { lhs, rhs, .. } => {
+                            note(lhs, &mut taken);
+                            note(rhs, &mut taken);
+                        }
+                        Rvalue::Aggregate { operands, .. } => operands.iter().for_each(|o| note(o, &mut taken)),
+                        Rvalue::Ref { .. } | Rvalue::Discriminant(_) => {}
+                    },
+                    StmtKind::CheckedBinaryOp { lhs, rhs, .. } => {
+                        note(lhs, &mut taken);
+                        note(rhs, &mut taken);
+                    }
+                    _ => {}
+                }
+            }
+            match &block.terminator {
+                Terminator::Call { func, args, .. } => {
+                    if let FuncRef::Indirect { operand, .. } = func {
+                        note(operand, &mut taken);
+                    }
+                    args.iter().for_each(|o| note(o, &mut taken));
+                }
+                Terminator::SwitchInt { discr, .. } => note(discr, &mut taken),
+                Terminator::Assert { cond, .. } => note(cond, &mut taken),
+                _ => {}
+            }
+        }
+    }
+    bodies
+        .iter()
+        .filter(|body| {
+            body.abi.is_none()
+                && !body.is_extern_declaration
+                && !body.is_abstract
+                && !body.restrict_views
+                && !body.is_lambda
+                && body.closure_environment.is_none()
+                && body.class_virtual_slot.is_none()
+                && body.ffi_counted.is_none()
+                && body.name != "main"
+                && !taken.contains(body.symbol.as_str())
+        })
+        .filter_map(|body| {
+            let split: Vec<bool> =
+                body.args().map(|(_, decl)| matches!(types.kind(decl.ty), TyKind::Str | TyKind::Span { .. })).collect();
+            split.contains(&true).then(|| (body.symbol.clone(), split))
+        })
+        .collect()
+}
+
+/// D-569 — every mention of a function whose views go as two words is its
+/// prototype, its definition or a direct call: a symbol named any other way
+/// (its address taken by code this backend writes) would be called with the
+/// wrong shape, so the backend stops here instead.
+fn check_split_views(split: &BTreeMap<String, Vec<bool>>, c: &str) {
+    for symbol in split.keys() {
+        let mut from = 0;
+        while let Some(at) = c[from..].find(symbol.as_str()).map(|i| from + i) {
+            from = at + symbol.len();
+            let before = c[..at].chars().next_back();
+            let after = c[from..].chars().next();
+            let whole = !before.is_some_and(|b| b.is_ascii_alphanumeric() || b == '_')
+                && !after.is_some_and(|a| a.is_ascii_alphanumeric() || a == '_');
+            if whole && after != Some('(') {
+                panic!("internal error: `{symbol}`, whose views go as two words (D-569), is named other than in a call");
+            }
+        }
+    }
+}
+
 fn class_itable_symbol(class: &str) -> String {
     ember_branding::mangled(&format!("itables_{class}"))
 }
@@ -213,6 +319,7 @@ pub fn emit(
                 (body.symbol.clone(), views)
             })
             .collect(),
+        split_views: if library_mode { BTreeMap::new() } else { split_view_params(bodies, types) },
         ffi_export_value_params: bodies
             .iter()
             .filter(|body| body.abi.as_deref() == Some("C") && !body.is_extern_declaration)
@@ -266,12 +373,14 @@ pub fn emit(
     };
     let mut emitter = make(None);
     write(&mut emitter);
+    check_split_views(&emitter.split_views, &emitter.out);
     let header_source = header::render(&emitter, bodies, package_name);
     let mut direct_calls = emitter.direct_calls.take();
     let mut relaxed_units = Vec::new();
     for mode in modes {
         let mut unit = make(Some(mode));
         write(&mut unit);
+        check_split_views(&unit.split_views, &unit.out);
         direct_calls.append(&mut unit.direct_calls.take());
         relaxed_units.push((mode, unit.out));
     }
@@ -472,6 +581,9 @@ struct Emitter<'a> {
     /// ADR-079: the bodies whose views are passed as `restrict` element
     /// pointers, with each parameter's element type when it is a view.
     restrict_kernels: BTreeMap<String, Vec<Option<Ty>>>,
+    /// D-569: the bodies whose `str` and span parameters go as two words
+    /// (`split_view_params`), which of them, by symbol.
+    split_views: BTreeMap<String, Vec<bool>>,
     /// Borrowed Ember aggregates arrive as addresses internally, but an
     /// exported C function receives their record values at the ABI boundary.
     ffi_export_value_params: BTreeMap<String, Vec<bool>>,
@@ -4244,11 +4356,20 @@ impl Emitter<'_> {
             return format!("EMBER_NOINLINE {ret} {}({params})", body.symbol);
         }
         let ffi_values = self.ffi_export_value_params.get(&body.symbol);
+        let split = self.split_views.get(&body.symbol);
         let params: Vec<String> = body
             .args()
             .enumerate()
             .map(|(index, (id, decl))| {
-                if ffi_values.is_some_and(|values| values.get(index) == Some(&true)) {
+                if split.is_some_and(|split| split.get(index) == Some(&true)) {
+                    // The view's own pointer type: `str`'s bytes, a span's or a mutable span's elements.
+                    let pointer = match self.types.kind(decl.ty) {
+                        TyKind::Str => "const unsigned char*",
+                        TyKind::Span { mutable: true, .. } => "void*",
+                        _ => "const void*",
+                    };
+                    format!("{pointer} _{0}_p, size_t _{0}_n", id.0)
+                } else if ffi_values.is_some_and(|values| values.get(index) == Some(&true)) {
                     let TyKind::Ref { inner, .. } = self.types.kind(decl.ty) else { unreachable!() };
                     format!("{} _ffi{}", self.c_member_type(*inner), id.0)
                 } else {
@@ -4453,6 +4574,14 @@ impl Emitter<'_> {
             for (index, (id, decl)) in body.args().enumerate() {
                 if values[index] {
                     self.line(&format!("    {} _{} = &_ffi{};", self.c_type(decl.ty), id.0, id.0));
+                }
+            }
+        }
+        // D-569 — a view parameter that came as two words.
+        if let Some(split) = self.split_views.get(&body.symbol).cloned() {
+            for (index, (id, decl)) in body.args().enumerate() {
+                if split[index] {
+                    self.line(&format!("    {} _{1} = {{ _{1}_p, _{1}_n }}; (void)_{1};", self.c_type(decl.ty), id.0));
                 }
             }
         }
@@ -6373,6 +6502,14 @@ impl Emitter<'_> {
                     for (argument, by_value) in rendered.iter_mut().zip(values) {
                         if *by_value {
                             *argument = format!("*({argument})");
+                        }
+                    }
+                }
+                // D-569 — a view goes to such a body as its two words.
+                if let Some(split) = self.split_views.get(symbol) {
+                    for (argument, split) in rendered.iter_mut().zip(split) {
+                        if *split {
+                            *argument = format!("({argument}).ptr, ({argument}).len");
                         }
                     }
                 }
@@ -10212,6 +10349,7 @@ mod string_descriptor_view_parts_tests {
             upcast_copies: BTreeSet::new(),
             direct_param_modes: BTreeMap::new(),
             restrict_kernels: BTreeMap::new(),
+            split_views: BTreeMap::new(),
             ffi_export_value_params: BTreeMap::new(),
             native_fn_values: BTreeMap::new(),
             closure_values: BTreeMap::new(),

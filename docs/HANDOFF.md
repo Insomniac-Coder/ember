@@ -10732,9 +10732,11 @@ the gcc gap on mixed text is the decoder's way back through the eight written-ou
 into the inner loop gives C's speed on all varied text but halves the README text rows' lead
 (0.5x C -> 1.0-1.14x), so both layouts are recorded in the D-550 row for the OWNER TO CHOOSE (ask).
 Found with it: D-569 (Windows passes a `str` through memory: clang's whole short-text gap) and D-570
-(MSVC short text 1.27-1.36x C, cause partly unknown). **Next:** D-569 (a general fix: a view's
-pointer and length as two C parameters on Windows), D-570, and ASK the owner: D-550's layout, the
-EXC-10 review workflow.
+(MSVC short text 1.27-1.36x C, cause partly unknown). Then D-569 and D-570 fixed together (ADR-168):
+on Windows a function only ever called directly takes a `str`/span parameter as its two words (the
+caller's field stores then a 16-byte copy stalled every call); MSVC short text 1.3x C -> 0.72-0.84x,
+`a16_map_text` MSVC x0.873. **Next:** a full README benchmark run (rows changed since the last:
+`a16`, the text programs), and ASK the owner: D-550's layout, the EXC-10 review workflow.
 
 **2026-10-11 (autopilot, the owner: "go on autopilot now"), EXC-10 and D-552 (ADR-158); D-554 found.**
 CI on `4a28ea6` failed on Linux only: the unix half of `main_args_replace_text_that_is_not_utf8`

@@ -1819,6 +1819,25 @@ fn loop_nests_over_separate_lists_get_restrict_functions_for_msvc() {
 {}", clang.stdout);
 }
 
+/// D-569 — on Windows a function only ever called directly takes each `str`
+/// or span parameter as its pointer and length (the platform passes a
+/// 16-byte struct through memory); one used as a value keeps the view whole.
+/// Elsewhere the C keeps every view whole.
+#[test]
+fn view_parameters_go_as_two_words_on_windows() {
+    let root = workspace_root();
+    let source = format!("tests/run-pass/views_passed_as_two_words.{SOURCE_EXT}");
+    for cc in if cfg!(windows) { &["msvc", "clang"][..] } else { &["clang"][..] } {
+        let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", cc], &root);
+        assert_eq!(c.exit, 0, "{cc}: C failed:\n{}", c.stderr);
+        let count = ember_branding::mangled("count_spaces");
+        let first = ember_branding::mangled("first_len");
+        let split = format!("{count}(const unsigned char* _1_p, size_t _1_n, int64_t _2)");
+        assert_eq!(c.stdout.contains(&split), cfg!(windows), "{cc}: count_spaces's text parameter:\n{}", c.stdout);
+        assert!(!c.stdout.contains(&format!("{first}(const unsigned char*")), "{cc}: a function used as a value keeps its view whole");
+    }
+}
+
 /// D-557, D-568 — `[DSJ-3]`: the loop over views `assert_disjoint` proved
 /// apart runs in a `restrict` function for every C compiler, as do
 /// `split_at`'s halves. `[SIMD-3]`: the `Err` arm's views and two view
