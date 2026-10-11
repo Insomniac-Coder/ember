@@ -10705,6 +10705,22 @@ formal 1/9 count or Phase 2's estimate.
 
 #### Start here after a context reset — state at 2026-10-04 (autopilot)
 
+**2026-10-11 (autopilot, the owner: "go on autopilot now"), EXC-10 and D-552 (ADR-158); D-554 found.**
+CI on `4a28ea6` failed on Linux only: the unix half of `main_args_replace_text_that_is_not_utf8`
+passes four words, so the count is 5 (fixed in `40292d0`, green; its failure text is now escaped,
+since an emoji in it crashed the runner's log writer). Then **D-553**: `[EXC-10]` built
+(`outer_loop`/`lift` in `loop_access.rs`): a hoisted access moves out to each loop around it that
+only counts, proof `inner_loop_reused`. **D-552**: MSVC's checked narrow add/sub/mul go through its
+overflow intrinsics (a field add was 7x checked C: widening loads defeat store forwarding). The
+nest `counter.bump()` x 4 x 100M: MSVC 638 -> 85.2 ms (checked C 84.9), clang 86 -> 41 ms (checked
+C 48 with the counter escaped). EXC-10 still wants the review workflow the owner asked to be asked
+about (list below). **Next: D-554** — an owned callable value (`fn(A) -> R` outside a parameter)
+holds no captured state: `[CLO-10]`'s representation (3 words inline, else one allocation, a drop
+in the descriptor), `[CLO-3]`'s `E3063` for a borrowing lambda there, `[CLO-13]`'s copy captures,
+and the value is not `Copy` (Part VI's list has `extern fn` only); whether a type-erased `fn` is
+`Send` needs an ODR. After it: the `[DIA-13]` snapshots still missing (X1 has a producer, `E3080`;
+B5, B9, B11, O8, S1 have none), then D-550.
+
 **2026-10-11, D-548 and D-549 fixed (ADR-156).** `fn main(args: Array[String])` builds and runs, with the
 command line decoded as UTF-8 (lossy; UTF-16 on Windows), and an `Err` returned from `main` prints
 `error: <Display>` and exits 1. The checker writes `main_entry` for those forms; `ember run` passes on
@@ -11074,11 +11090,10 @@ anything needs a review just note it down and ask me about a workflow later".
 * **For a review workflow later** (the owner asked to be asked): ADR-114's temporary-owner
   transfer (851 lines on reference counts, where an error frees an object early) and ADR-120's
   progress reduction (3,100 lines with its verifier); and this session's ADR-127 (where every
-  temporary ends: a mistake there skips or doubles a destructor). Also EXC-10's design (an inner
-  loop reusing an outer loop's hoisted access): `[EXC-8]`'s hoisting (`loop_access.rs`) takes one
-  counted loop whose turn makes one direct call, so EXC-10 first needs `[EXC-8]` widened to loops
-  that hold other loops, under every condition of `[EXC-9]`; holding an access longer can turn a
-  program that runs into one that panics, so it is soundness work to design with a review.
+  temporary ends: a mistake there skips or doubles a destructor). Also EXC-10 (an inner
+  loop reusing an outer loop's hoisted access): **built solo on autopilot 2026-10-11 (D-553,
+  ADR-158, `outer_loop`/`lift` in `loop_access.rs`)**; holding an access longer can turn a
+  program that runs into one that panics, so its conditions still want the review.
   And ADR-134 (D-460): a receiver's borrow changed from a temporary copy to the local itself,
   which decides what a view keeps alive. And D-467's interface half: an interface call's view
   result still holds the whole object; the fix (a per-class accessor in each interface table that

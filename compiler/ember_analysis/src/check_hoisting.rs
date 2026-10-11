@@ -192,7 +192,7 @@ fn plan_for(
 /// A statement anything outside the function could see nothing of: storage
 /// markers, and a local set from values (no call, no check, no write through
 /// memory).
-fn pure(stmt: &Stmt) -> bool {
+pub(crate) fn pure(stmt: &Stmt) -> bool {
     match &stmt.kind {
         StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => true,
         StmtKind::Assign { place, rvalue } => {
@@ -209,7 +209,7 @@ fn pure(stmt: &Stmt) -> bool {
 /// A built-in that begins no access and runs no Ember code: list and text
 /// growth and reads, and printing text or numbers. Removing or clearing
 /// elements drops them, which runs code unless they are plain values.
-fn runs_no_ember_code(body: &Body, types: &TypeTable, which: &Builtin, args: &[Operand]) -> bool {
+pub(crate) fn runs_no_ember_code(body: &Body, types: &TypeTable, which: &Builtin, args: &[Operand]) -> bool {
     match which {
         Builtin::ArrayPush
         | Builtin::ArrayLen

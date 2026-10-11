@@ -5016,6 +5016,42 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-158 — an outer loop holds its inner loop's access; MSVC checks narrow arithmetic by flag (D-553, D-552)
+
+**Date:** 2026-10-11 (autopilot). **Rules:** `[EXC-8]`, `[EXC-9]`, `[EXC-10]`, `[EXC-12]`; `[TYP-8]`.
+
+**Context.** `[EXC-8]`'s hoisting (`loop_access.rs`) holds one counted loop's access for the loop,
+but a loop around it began and ended that access on every turn (D-553): two calls the C compiler
+cannot see through per outer turn, so the object went back to memory each time. Timing the nest
+against C then showed MSVC's checked narrow add at 7x the same checked C (D-552).
+
+**Decision.** (1) After the inner hoisting, each hoisted access moves out to the smallest natural
+loop strictly around its bracket (begin to end) when that loop has one way out, holds at most 256
+blocks, and outside the bracket only counts: assignments to locals, checked arithmetic, storage
+markers, branches and built-in calls that run no Ember code; no other begin or end of an access, no
+drop, no use of the receiver. A `&mut` of the receiver handle is never copied anywhere in the
+function, and inside the loop it reaches only the bracket's own direct calls, so the handle names
+one object for the whole hold (a reference taken before the loop cannot be live in it: the borrow
+checker forbids using the receiver while it lives). The loop is copied without the bracket's begin
+and end: the original runs until its first inner turn begins the access, then the copy runs and
+its way out ends it. A nest whose inner loop never runs checks nothing, and the first check fails
+where it failed before; a panic aborts (`[PAN-1]`), so nothing runs under the longer hold but the
+bracket's own proven code. The step repeats, so three loops deep the access moves twice. The record
+names the outer loop and the proof `inner_loop_reused`. (2) On MSVC x64 the narrow checked adds and
+subtracts use the compiler's overflow and carry intrinsics, and the 16- and 32-bit signed multiplies
+`_mul_overflow_i16/32`; the operation then works at the field's own width.
+
+**Consequences.** The nest `for r in 0..n: for i in 0..4: counter.bump()` (100 million turns),
+performance cores, mains, 15 interleaved runs: MSVC 638 ms before, 85.2 ms after, checked C 84.9 ms;
+clang 86 ms before, 41.0 ms after, checked C 48.2 ms with the counter escaped as Ember's is (a
+`calloc`'d counter the C compiler sees start at zero lets clang drop the checks: 13 ms, not a like
+reference). The intrinsics match the 64-bit form on 28.2 billion operand pairs. Three conformance
+tests and a milestone. Not changed: the 8-bit multiplies, gcc and clang (their builtins already
+work at width). Still to do: a review workflow over the EXC-10 conditions, which the owner asked to
+be asked about.
+
+---
+
 ## ADR-157 — a `main` of another form is `E2183` (ODR-101, D-551)
 
 **Date:** 2026-10-11. **Rules:** `[FN-8]` (0.9.10_Hardened_5).

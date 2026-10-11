@@ -7,7 +7,7 @@
 //! to that distinct field reference. Every shape outside that narrow proof
 //! boundary remains an ordinary `[EXC-1]` dynamic access.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use ember_mir::{
     BasicBlock, BasicBlockId, Body, CallableAccessSummary, FuncRef, HoistedAccess,
@@ -49,7 +49,199 @@ fn hoist_loop_accesses(
         apply(body, candidate);
         count += 1;
     }
+    // `[EXC-10]` — then each held access moves out to the loops around it.
+    while let Some((record, outer)) =
+        (0..body.hoisted_accesses.len()).find_map(|record| outer_loop(body, types, record).map(|outer| (record, outer)))
+    {
+        lift(body, record, outer);
+        count += 1;
+    }
     count
+}
+
+/// The loop around a hoisted access that may hold it instead (`[EXC-10]`),
+/// its blocks in order and the one block its every way out reaches.
+struct Outer {
+    header: usize,
+    blocks: Vec<usize>,
+    exit: usize,
+}
+
+/// A loop held access: copying the outer loop doubles it, so a large one stays.
+const MAX_OUTER_BLOCKS: usize = 256;
+
+/// `[EXC-10]`, `[EXC-9]` — the smallest loop strictly around access `record`'s
+/// bracket that makes no other access, drops nothing, runs no Ember code and
+/// never names the receiver. Its handle stays the one object: no `&mut` of it
+/// is taken anywhere but for the bracket's own proven calls (a `mut self`
+/// call cannot re-point `self`, ODR-072). The bracket's own inside was
+/// proved by `[EXC-8]` (or by an earlier step of this one).
+fn outer_loop(body: &Body, types: &TypeTable, record: usize) -> Option<Outer> {
+    let access = &body.hoisted_accesses[record];
+    let (preheader, postheader) = (access.preheader.0 as usize, access.postheader.0 as usize);
+    let receiver = access.place.local;
+    if !access.place.projection.is_empty() {
+        return None;
+    }
+    // The bracket: what runs from its begin to its end.
+    let mut bracket = HashSet::from([preheader]);
+    let mut work = vec![preheader];
+    while let Some(block) = work.pop() {
+        if block == postheader {
+            continue;
+        }
+        for next in crate::long_access_lint::successors(&body.blocks[block].terminator) {
+            if bracket.insert(next) {
+                work.push(next);
+            }
+        }
+    }
+    if !bracket.contains(&postheader) {
+        return None;
+    }
+    let order = crate::range_facts::reverse_postorder(body);
+    let headers = crate::range_facts::loop_headers(body, &order);
+    let (header, blocks) = crate::range_facts::natural_loops(body, &order, &headers)
+        .into_iter()
+        .filter(|(header, blocks)| !bracket.contains(header) && bracket.iter().all(|block| blocks.contains(block)))
+        .min_by_key(|(_, blocks)| blocks.len())?;
+    if blocks.len() > MAX_OUTER_BLOCKS {
+        return None;
+    }
+    let mut exits = HashSet::new();
+    for &block in &blocks {
+        for next in crate::long_access_lint::successors(&body.blocks[block].terminator) {
+            if !blocks.contains(&next) {
+                exits.insert(next);
+            }
+        }
+    }
+    let [exit] = exits.into_iter().collect::<Vec<_>>()[..] else { return None };
+    // A reference to the whole handle is the bracket's call setup only: never
+    // copied anywhere, and in the loop passed only to the bracket's calls.
+    // A call after the loop (another nest's) cannot re-point it inside.
+    let mut references = HashSet::new();
+    for data in &body.blocks {
+        for stmt in &data.stmts {
+            if let StmtKind::Assign { place, rvalue: Rvalue::Ref { place: borrowed, mutable: true } } = &stmt.kind
+                && borrowed.local == receiver
+                && borrowed.projection.is_empty()
+            {
+                references.insert(place.local);
+            }
+        }
+    }
+    for (index, data) in body.blocks.iter().enumerate() {
+        let in_bracket = bracket.contains(&index);
+        for stmt in &data.stmts {
+            let defines = matches!(&stmt.kind, StmtKind::Assign { place, rvalue: Rvalue::Ref { place: borrowed, .. } }
+                if references.contains(&place.local) && borrowed.local == receiver);
+            if !defines && references.iter().any(|&reference| statement_mentions_local(stmt, reference)) {
+                return None;
+            }
+        }
+        if blocks.contains(&index)
+            && references.iter().any(|&reference| terminator_mentions_local(&data.terminator, reference))
+            && !(in_bracket && matches!(&data.terminator, Terminator::Call { func: FuncRef::Direct { .. }, .. }))
+        {
+            return None;
+        }
+    }
+    // Outside the bracket, the loop only counts: pure statements, built-ins
+    // that run no Ember code, branches; never the receiver.
+    // The bracket's call setup (`&mut` of the receiver, above) may come
+    // before its begin, in the loop's turn.
+    let sets_up = |stmt: &Stmt| matches!(&stmt.kind,
+        StmtKind::Assign { place, rvalue: Rvalue::Ref { place: borrowed, .. } }
+            if references.contains(&place.local) && borrowed.local == receiver && borrowed.projection.is_empty());
+    for &block in blocks.iter().filter(|block| !bracket.contains(block)) {
+        let data = &body.blocks[block];
+        if data.stmts.iter().any(|stmt| !matches!(&stmt.kind,
+                StmtKind::Assign { .. } | StmtKind::CheckedBinaryOp { .. }
+                | StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop)
+            || (statement_mentions_local(stmt, receiver) && !sets_up(stmt))
+            || matches!(&stmt.kind, StmtKind::Assign { place, .. } if !place.projection.is_empty()))
+            || terminator_mentions_local(&data.terminator, receiver)
+        {
+            return None;
+        }
+        if let Terminator::Call { func, args, .. } = &data.terminator {
+            let FuncRef::Builtin { which, .. } = func else { return None };
+            if !crate::check_hoisting::runs_no_ember_code(body, types, which, args) {
+                return None;
+            }
+        }
+    }
+    // Inside it, only its own begin and end.
+    for &block in &bracket {
+        for (index, stmt) in body.blocks[block].stmts.iter().enumerate() {
+            let own = (block == preheader && index == access.preheader_statement)
+                || (block == postheader
+                    && matches!(&stmt.kind, StmtKind::EndAccess { place, mutable }
+                        if *place == access.place && *mutable == access.mutable));
+            if !own && matches!(&stmt.kind, StmtKind::BeginAccess { .. } | StmtKind::EndAccess { .. }
+                | StmtKind::BeginAccessTransfer { .. } | StmtKind::EndAccessTransfer { .. })
+            {
+                return None;
+            }
+        }
+    }
+    let mut blocks: Vec<usize> = blocks.into_iter().collect();
+    blocks.sort_unstable();
+    Some(Outer { header, blocks, exit })
+}
+
+/// `[EXC-10]` — the outer loop holds the access. Its turns run as written
+/// until the first one whose inner loop begins the access; from that begin
+/// a copy of the loop without the bracket's begin and end runs, and its way
+/// out ends the access. A loop whose inner loops never run checks nothing,
+/// as before, and the first check fails where it failed before.
+fn lift(body: &mut Body, record: usize, outer: Outer) {
+    let access = body.hoisted_accesses[record].clone();
+    let (preheader, postheader) = (access.preheader.0 as usize, access.postheader.0 as usize);
+    let first = body.blocks.len();
+    let copies: BTreeMap<usize, usize> = outer.blocks.iter().enumerate().map(|(i, &b)| (b, first + i)).collect();
+    let end_block = first + outer.blocks.len();
+    let id = |b: usize| BasicBlockId(b as u32);
+    let held = |target: BasicBlockId| {
+        let target = target.0 as usize;
+        id(if target == outer.exit { end_block } else { copies.get(&target).copied().unwrap_or(target) })
+    };
+    let end = body.blocks[postheader]
+        .stmts
+        .iter()
+        .find(|stmt| matches!(&stmt.kind, StmtKind::EndAccess { place, mutable }
+            if *place == access.place && *mutable == access.mutable))
+        .cloned()
+        .expect("a hoisted access ends in its postheader");
+    let mut copied = Vec::new();
+    for &block in &outer.blocks {
+        let mut data = body.blocks[block].clone();
+        if block == preheader {
+            data.stmts.remove(access.preheader_statement);
+        }
+        if block == postheader {
+            data.stmts.retain(|stmt| !matches!(&stmt.kind, StmtKind::EndAccess { place, mutable }
+                if *place == access.place && *mutable == access.mutable && stmt.span == end.span));
+        }
+        crate::loop_version::retarget(&mut data.terminator, held);
+        copied.push(data);
+    }
+    copied.push(BasicBlock {
+        stmts: vec![end],
+        terminator: Terminator::Goto(id(outer.exit)),
+        terminator_span: body.blocks[postheader].terminator_span,
+    });
+    // After its begin, the original goes on in the copy that holds it.
+    crate::loop_version::retarget(&mut body.blocks[preheader].terminator, |target| {
+        copies.get(&(target.0 as usize)).map_or(target, |&copy| id(copy))
+    });
+    let loop_span = body.blocks[outer.header].terminator_span;
+    body.blocks.extend(copied);
+    let access = &mut body.hoisted_accesses[record];
+    access.postheader = id(end_block);
+    access.loop_span = loop_span;
+    access.proof = HoistedAccessProof::InnerLoopReused;
 }
 
 /// A closed access contained in the exact CFG shape `lower_for_range` emits.

@@ -1772,6 +1772,30 @@ fn stable_class_loop_access_is_reported_as_hoisted() {
     }
 }
 
+/// `[EXC-10]`, `[EXC-12]` — each nest's loop around the inner loop holds the
+/// inner loop's access, and the report names that loop and its proof.
+#[test]
+fn an_outer_loop_reports_the_inner_access_it_holds() {
+    let root = workspace_root();
+    let name = "accept_an_outer_loop_holds_its_inner_loops_access";
+    let source = format!("tests/conformance/EXC-10/{name}.{SOURCE_EXT}");
+    for profile in ["debug", "release", "shipping"] {
+        let out_dir = temporary_directory(&format!("outer-loop-safety-{profile}"));
+        let run = ember(&["build", &source, "--profile", profile, "--out-dir", &out_dir.to_string_lossy()], &root);
+        assert_eq!(run.exit, 0, "{profile} build failed:\n{}", run.stderr);
+        let side_table = out_dir.join(profile).join("inspect").join(format!("{name}.safety.json"));
+        let report = ember(&["inspect", "--safety", &side_table.to_string_lossy()], &root);
+        assert_eq!(report.exit, 0, "{profile} inspect failed:\n{}", report.stderr);
+        for line in [26, 30, 34] {
+            assert!(
+                report.stdout.contains(&format!("{name}.{SOURCE_EXT}:{line}:17  proof: inner_loop_reused")),
+                "{profile} the loop on line {line} does not hold its inner access:\n{}",
+                report.stdout
+            );
+        }
+    }
+}
+
 /// ADR-079 — for MSVC, a loop nest that writes separate lists it never reads
 /// runs in a function of its own whose list parameters are `restrict`, the
 /// counts the program fixes written in; for clang the nest stays in place.

@@ -268,6 +268,9 @@ pub enum HoistedAccessProof {
     /// A check every turn makes on a handle the loop never changes, in a
     /// loop that begins and ends no access and runs no Ember code.
     NoAccessInLoop,
+    /// `[EXC-10]` — an inner loop's hoisted access, held by the loop around it,
+    /// which makes no other access and runs no Ember code.
+    InnerLoopReused,
 }
 
 impl HoistedAccessProof {
@@ -275,6 +278,7 @@ impl HoistedAccessProof {
         match self {
             Self::StableReceiverDirectCall => "stable_receiver_direct_call",
             Self::NoAccessInLoop => "no_access_in_loop",
+            Self::InnerLoopReused => "inner_loop_reused",
         }
     }
 }

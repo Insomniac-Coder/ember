@@ -484,6 +484,39 @@ static inline ember_loc ember_loc_unknown(void) { return ember_loc_at(NULL, 0, 0
         EMBER_CHECKED_MUL_U64_BODY(a, b, out)                                \
     }
 
+#if defined(EMBER_MSVC_OVERFLOW)
+/* D-552 — the narrow adds and subtracts, and the 16- and 32-bit signed
+ * multiplies, through MSVC's own overflow intrinsics. Computed in 64 bits,
+ * each operand was read with a widening load (`movsxd`), and a load of
+ * another width than the store just made to the same field waits out the
+ * whole store-forwarding latency: a loop adding 1 to a 32-bit field ran 7x
+ * the same checked C (325 against 47 ms). The 8-bit signed and the unsigned
+ * multiplies keep the 64-bit form. */
+#define EMBER_CHECKED_ADDSUB_MSVC(SUFFIX, TYPE, ADD, SUB)                     \
+    EMBER_INLINED bool ember_ck_add_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        return ADD(0, a, b, out) != 0;                                       \
+    }                                                                        \
+    EMBER_INLINED bool ember_ck_sub_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        return SUB(0, a, b, out) != 0;                                       \
+    }
+#define EMBER_CHECKED_MUL_MSVC(SUFFIX, TYPE, MUL)                            \
+    EMBER_INLINED bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        return MUL(a, b, out) != 0;                                          \
+    }
+#define EMBER_CHECKED_MUL_SWIDE(SUFFIX, TYPE, BITS)                          \
+    EMBER_INLINED bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        int64_t wide = (int64_t)a * (int64_t)b;                              \
+        *out = (TYPE)wide;                                                   \
+        return wide < EMBER_SMIN(BITS) || wide > EMBER_SMAX(BITS);           \
+    }
+#define EMBER_CHECKED_MUL_UWIDE(SUFFIX, TYPE, BITS)                          \
+    EMBER_INLINED bool ember_ck_mul_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
+        uint64_t wide = (uint64_t)a * (uint64_t)b;                           \
+        *out = (TYPE)wide;                                                   \
+        return wide > EMBER_UMAX(BITS);                                      \
+    }
+#endif
+
 #endif /* builtin overflow */
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -497,6 +530,23 @@ EMBER_CHECKED_OPS(u16, uint16_t)
 EMBER_CHECKED_OPS(u32, uint32_t)
 EMBER_CHECKED_OPS_U64_GNU(u64, uint64_t)
 EMBER_CHECKED_OPS_U64_GNU(usize, size_t)
+#elif defined(EMBER_MSVC_OVERFLOW)
+EMBER_CHECKED_ADDSUB_MSVC(i8, int8_t, _add_overflow_i8, _sub_overflow_i8)
+EMBER_CHECKED_MUL_SWIDE(i8, int8_t, 8)
+EMBER_CHECKED_ADDSUB_MSVC(i16, int16_t, _add_overflow_i16, _sub_overflow_i16)
+EMBER_CHECKED_MUL_MSVC(i16, int16_t, _mul_overflow_i16)
+EMBER_CHECKED_ADDSUB_MSVC(i32, int32_t, _add_overflow_i32, _sub_overflow_i32)
+EMBER_CHECKED_MUL_MSVC(i32, int32_t, _mul_overflow_i32)
+EMBER_CHECKED_OPS_S64(i64, int64_t)
+EMBER_CHECKED_OPS_S64(isize, ptrdiff_t)
+EMBER_CHECKED_ADDSUB_MSVC(u8, uint8_t, _addcarry_u8, _subborrow_u8)
+EMBER_CHECKED_MUL_UWIDE(u8, uint8_t, 8)
+EMBER_CHECKED_ADDSUB_MSVC(u16, uint16_t, _addcarry_u16, _subborrow_u16)
+EMBER_CHECKED_MUL_UWIDE(u16, uint16_t, 16)
+EMBER_CHECKED_ADDSUB_MSVC(u32, uint32_t, _addcarry_u32, _subborrow_u32)
+EMBER_CHECKED_MUL_UWIDE(u32, uint32_t, 32)
+EMBER_CHECKED_OPS_U64(u64, uint64_t)
+EMBER_CHECKED_OPS_U64(usize, size_t)
 #else
 EMBER_CHECKED_OPS_SNARROW(i8, int8_t, 8)
 EMBER_CHECKED_OPS_SNARROW(i16, int16_t, 16)

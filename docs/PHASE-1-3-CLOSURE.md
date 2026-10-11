@@ -48,8 +48,9 @@ no estimate changes follow from it.
 | `CT-4` constant evaluation | Supported arithmetic forms are covered by focused cases for lexical/module policy, imported wrapped constants, typed unsigned negation, and nested signed-minimum literals. Comptime calls and powers, plus const-generic evaluation, remain gated; do not infer CT-4 closure from this batch. Current annotation and workspace verification pass for the covered cases. |
 | `TYP-10` shifts and `STD-20` fixed integer methods | Invalid shift amounts now panic regardless of overflow policy; fixed-contract methods retain checked semantics, including `MIN.rem_trunc(-1) == 0` while a zero divisor still panics. The focused fixtures and current full verification pass. |
 | `TYP-9` float controls | Built 2026-09-30 (ADR-085): a C unit per float mode, compiled with its flags ([CG-C-11]); the boundaries (lambdas, defaults, range facts) ruled in ODR-090, Hardened_45. Not built: a static library with a relaxed function (`E0900`, NOT-IMPLEMENTED N6), and a default doing float work no closure of its mode can hold (`E0900`, N7). |
-| `CTL-3b` counted loops | `step_by` and composed counted-loop adapters are absent. This needs dependency/iterator design; do not treat existing range-loop tests as that coverage. |
-| `EXP-4` temporary iterable | An indirect borrowed iterable temporary is an investigation lead only; no current reproduction or defect has been confirmed. |
+| `CTL-3b` counted loops | Built since (2026-10-11 check): `tests/conformance/CTL-3b/` covers `step_by`, `rev`, adapter chains and wide `enumerate` as one counted loop. |
+| `EXP-4` temporary iterable | Covered since (2026-10-11 check): `EXP-4/accept_a_loop_over_a_view_a_call_made_from_a_temporary` and eleven other cases. |
+| `CLO-3`, `CLO-10`, `CLO-13` | **Open, D-554** (found 2026-10-11): an owned callable value cannot hold captured state, and copy captures are not built. |
 
 ## Phase 3 — Part VIII rules against their cases (2026-10-04, autopilot)
 
@@ -67,12 +68,11 @@ complete. Ten rules had none; RC-2b, RC-2c and RC-2d now do (two were defects: D
 | RC-1 | 38 | EXC-1 | 96 | EXC-7 | 3 | WK-1..3 | 2-3 |
 | RC-2 | 1 | EXC-2 | 11 | EXC-8 | 7 | WK-4 | 1 (new) |
 | RC-2a | 2 | EXC-14 | 5 | EXC-9 | 5 | WK-5..9 | 1-12 |
-| RC-2b | 1 (new) | EXC-15 | 27 | EXC-10 | **0** | WK-11..14 | 45-125 |
+| RC-2b | 1 (new) | EXC-15 | 27 | EXC-10 | 3 (new) | WK-11..14 | 45-125 |
 | RC-2c | 1 (new) | EXC-16..19 | 2-29 | EXC-11 | 1 | WK-15 | 1 (new) |
 | RC-2d | 1 (new) | | | EXC-12 | 5 | OPT-1 | **0** |
 
-Still without a case: EXC-10 (an inner loop reuses an outer loop's
-hoisted access; a known gap, below) and OPT-1 (stack promotion by escape analysis, a MAY). WK-4 and WK-15 have cases
+Still without a case: OPT-1 (stack promotion by escape analysis, a MAY). WK-4 and WK-15 have cases
 since D-507 (the debug leak report, on by default, naming each object's shortest cycle), and
 OBJ-4 a case checking that a class object is made by the runtime's `ember_obj_new`; RC-6
 since ADR-131 (`ember inspect --counts`, which had not been built); DSP-5 since ADR-132, with
@@ -99,7 +99,6 @@ Current bounded evidence:
   retaining and releasing one Sync object, and weak upgrades racing the last release) passes with
   MSVC, clang and gcc and fails with the atomic add made plain. Writing it found D-509 (a Sync
   retain was a compare-exchange loop, not `[RT-10]`'s one inline atomic add), fixed there.
-* `EXC-10`: current loop hoisting covers canonical single loops; nested-loop
-  access reuse remains an implementation gap. A check (an access begun and
-  ended at once) is now hoisted out of any loop, nested or not, that changes
-  no access and runs no Ember code (ADR-070 item 16); a held access is not.
+* `EXC-10`: built 2026-10-11 (D-553, ADR-158): a hoisted access moves out to
+  each loop around it that only counts, with three cases and a milestone; a
+  review workflow over its conditions is still to be asked for.
