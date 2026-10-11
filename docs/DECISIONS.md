@@ -5113,6 +5113,15 @@ same day):
   integer one is checked first), so it can only report intended code. C4700,
   "uninitialized local variable used", stays on: it found the two defects
   above.
+- For MSVC, a local set to a payload-free variant also copies its payload from
+  a zero constant of its type (`emit_payload_zeros`; the owner's pick of two,
+  2026-10-11). Only the tag was written, a speed choice: a compound
+  initializer made MSVC expand a deep `Option` recursively (D-360), and zeroing
+  the value took its address (ADR-106). The constant has no initializer and
+  the copy takes no address; MSVC drops it where nothing reads the payload.
+  Six benchmarks' MSVC C changed (two lines each), timed against the previous
+  compiler interleaved on the P-cores: x0.990 to x1.012, a13 again x1.000 and
+  x1.002. gcc and clang, which did not warn, keep the tag-only C.
 - gcc's `-Warray-bounds` is off around the runtime's UTF-8 decoder only: text
   is valid UTF-8, and gcc, inlining it over a three-byte literal, reported the
   fourth byte of a four-byte character, a read no valid text makes.
@@ -5121,7 +5130,8 @@ same day):
 reject tests and diagnostic snapshots), none warns under clang, and none under
 gcc 15.2 or MSVC from their front ends (2026-10-11). What those two report only
 while optimising was gcc 20 programs and MSVC 28; after the fixes above, gcc
-reports none and MSVC four, listed under D-376 for the owner. The sweep found D-545 and, through programs that produced no C, D-391.
+reports none and MSVC one (FFI-21's C4172, for which the owner chose a new
+diagnostic). The sweep found D-545 and, through programs that produced no C, D-391.
 It is a tool, not yet a CI job. The specification is unchanged.
 
 ---

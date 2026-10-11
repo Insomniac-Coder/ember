@@ -169,6 +169,7 @@ pub fn emit(
         unit,
         split,
         for_msvc,
+        payload_zeros: BTreeMap::new(),
         library_mode,
         type_namespace,
         line_directives: true,
@@ -382,6 +383,9 @@ struct Emitter<'a> {
     /// The C is for MSVC, whose loop optimiser wants some shapes clang and
     /// gcc do not (`carried_scalars`).
     for_msvc: bool,
+    /// For MSVC, each payload enum some local is set to a payload-free
+    /// variant of, with its type: it has a zero constant (`emit_payload_zeros`).
+    payload_zeros: BTreeMap<EnumId, Ty>,
     library_mode: bool,
     type_namespace: String,
     line_directives: bool,
@@ -748,6 +752,7 @@ impl Emitter<'_> {
         self.collect_interface_methods(bodies);
         self.collect_interface_adapters(bodies);
         self.emit_interface_vtable_types();
+        self.emit_payload_zeros(bodies);
         self.emit_prototypes(bodies);
         self.emit_native_fn_values(bodies);
         self.line(DROP_GLUE_PROTOTYPES);
@@ -3886,6 +3891,42 @@ impl Emitter<'_> {
         }
     }
 
+    /// `[CG-C-1]` — a local set to a payload-free variant sets only its tag
+    /// (`emit_stmt`), and MSVC's optimiser reports the payload that a branch
+    /// the tag rules out reads as uninitialized (C4700). For MSVC such a local
+    /// also copies its payload from a zero constant of its type: one with no
+    /// initializer (a compound one made MSVC expand a deep `Option`
+    /// recursively, D-360) whose address is never taken (zeroing the value
+    /// kept it in memory, ADR-106). The C compiler drops the copy where
+    /// nothing reads the payload.
+    fn emit_payload_zeros(&mut self, bodies: &[Body]) {
+        if !self.for_msvc {
+            return;
+        }
+        for body in bodies {
+            for stmt in body.blocks.iter().flat_map(|block| &block.stmts) {
+                if let StmtKind::Assign { place, rvalue: Rvalue::Aggregate { kind: AggregateKind::Enum(id, _), operands } } =
+                    &stmt.kind
+                    && place.projection.is_empty()
+                    && operands.is_empty()
+                    && self.tag_only_variant(*id)
+                {
+                    self.payload_zeros.insert(*id, body.local(place.local).ty);
+                }
+            }
+        }
+        for ty in self.payload_zeros.values().copied().collect::<Vec<_>>() {
+            let c_type = self.c_type(ty);
+            self.line(&format!("static EMBER_MAYBE_UNUSED const {c_type} {};", payload_zero_name(&c_type)));
+        }
+    }
+
+    /// Whether a payload-free variant of this enum sets only its tag
+    /// (`emit_stmt`): a payload enum without a niche.
+    fn tag_only_variant(&self, id: EnumId) -> bool {
+        !self.types.enum_def(id).is_unit_only() && self.types.option_niche(id).is_none()
+    }
+
     fn emit_prototypes(&mut self, bodies: &[Body]) {
         if bodies.is_empty() {
             return;
@@ -4756,11 +4797,16 @@ impl Emitter<'_> {
                 // than their stores (ADR-106: `bytes()` 19x the C loop).
                 if let Rvalue::Aggregate { kind: AggregateKind::Enum(id, variant), operands } = rvalue
                     && operands.is_empty()
-                    && !self.types.enum_def(*id).is_unit_only()
-                    && self.types.option_niche(*id).is_none()
+                    && self.tag_only_variant(*id)
                 {
                     let tag = self.types.enum_def(*id).variants[*variant].discriminant;
                     self.line(&format!("    ({lhs}).tag = {tag};"));
+                    if place.projection.is_empty()
+                        && let Some(&ty) = self.payload_zeros.get(id)
+                    {
+                        let zero = payload_zero_name(&self.c_type(ty));
+                        self.line(&format!("    ({lhs}).payload = {zero}.payload;"));
+                    }
                     return;
                 }
                 if self.emit_fields(place, rvalue, body) {
@@ -9601,6 +9647,12 @@ fn access_word_member(field: &str) -> String {
     format!("_access_{field}")
 }
 
+/// The zero constant a payload enum's locals copy their payload from
+/// (`emit_payload_zeros`).
+fn payload_zero_name(c_type: &str) -> String {
+    format!("{RT}zero_{c_type}")
+}
+
 fn drop_glue_symbol(index: usize) -> String {
     ember_branding::mangled(&format!("drop_glue_{index}"))
 }
@@ -9790,6 +9842,7 @@ mod string_descriptor_view_parts_tests {
             unit: None,
             split: false,
             for_msvc: false,
+            payload_zeros: BTreeMap::new(),
             library_mode: false,
             type_namespace: String::new(),
             line_directives: false,
