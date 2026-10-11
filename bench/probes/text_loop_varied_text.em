@@ -1,5 +1,6 @@
 # D-498/D-550 probe: random text. Input: `<mode> <count>`. 0 English-like 1.1 MB, 1 Chinese-like,
-# 2 10000 short strings of 0-3 mixed words, 3 the same of ASCII words, 4 mixed without empty strings.
+# 2 10000 short strings of 0-3 mixed words, 3 the same of ASCII words, 4 mixed without empty strings,
+# 5 10000 strings of 4-30 mixed words, 6 the same of ASCII words. C twin: text_loop_varied_text.c.
 @noinline
 fn reduce(text: str, initial: int) -> int:
     total = initial
@@ -30,13 +31,15 @@ fn main():
             count = (seed // 65536) % 4
             if mode >= 3:
                 count = 1 + (seed // 65536) % 3
+            if mode >= 5:
+                count = 4 + (seed // 65536) % 27
             for w in 0..count:
                 if w > 0:
                     s.push_str(" ")
                 seed = (seed * 1103515245 + 12345) % 2147483648
                 kind = (seed // 65536) % 10
                 seed = (seed * 1103515245 + 12345) % 2147483648
-                if kind < 7 or mode == 3:
+                if kind < 7 or mode == 3 or mode == 6:
                     s.push_str(pick(seed, ascii_words))
                 elif kind < 9:
                     s.push_str(pick(seed, latin_words))

@@ -10727,7 +10727,14 @@ forbids it; gcc's `Err` arm of `assert_disjoint` got `restrict`); now each list 
 origin, and views `assert_disjoint` or `split_at` proved apart are `restrict` for every C compiler
 (`CastKind::ViewsDisjoint` marks the proved tuple; clang runs the pass for those loops only).
 Measured: no speed change (the C compilers' own overlap tests already vectorise the loop).
-**Next:** D-550, and ask the owner about the EXC-10 review workflow.
+Then D-550, measured against a C twin of the varied-text probe (`bench/probes/text_loop_varied_text.c`):
+the gcc gap on mixed text is the decoder's way back through the eight written-out steps; going on
+into the inner loop gives C's speed on all varied text but halves the README text rows' lead
+(0.5x C -> 1.0-1.14x), so both layouts are recorded in the D-550 row for the OWNER TO CHOOSE (ask).
+Found with it: D-569 (Windows passes a `str` through memory: clang's whole short-text gap) and D-570
+(MSVC short text 1.27-1.36x C, cause partly unknown). **Next:** D-569 (a general fix: a view's
+pointer and length as two C parameters on Windows), D-570, and ASK the owner: D-550's layout, the
+EXC-10 review workflow.
 
 **2026-10-11 (autopilot, the owner: "go on autopilot now"), EXC-10 and D-552 (ADR-158); D-554 found.**
 CI on `4a28ea6` failed on Linux only: the unix half of `main_args_replace_text_that_is_not_utf8`
