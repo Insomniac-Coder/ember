@@ -244,7 +244,10 @@ anything this Part leaves open.
   consumers can also be called directly on an `Iterable` value, borrowing it as `iter()` would:
   `xs.enumerate()` is `xs.iter().enumerate()`, and a method of the collection's own of the same name
   (`Array.join`) takes precedence. An adapter takes the iterator it wraps (`owned self`), and so
-  does a consumer. What a caller passes is an `int` (ODR-089): `take(n)` gives at most `n` items and
+  does a consumer; an adapter also takes over what it keeps: `zip` and `chain` their other iterator,
+  and the adapters that apply a callable that callable (`owned`), so a named iterator given to `zip`
+  is moved (`.clone()` keeps the caller's), and a lambda written at the call keeps its captures
+  (`[CLO-15]`). What a caller passes is an `int` (ODR-089): `take(n)` gives at most `n` items and
   `skip(n)` leaves out the first `n`, `nth(n)` is the item at index `n` (`None` past the end),
   `step_by(k)` gives the first item and then every `k`-th, and `enumerate(start=0)` numbers from
   `start` as `[STD-26]`'s `enumerate` does. A negative count or index, or a `k` of zero or less,

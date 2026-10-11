@@ -282,7 +282,8 @@ instances of one generic interface; Hardened_50 adds ODR-095, which operators a 
 and ODR-097, where an implementation may be written; Hardened_51 adds ODR-094, the owner's
 ruling on `collect`'s target, `peekable`'s methods, and how `Box` and `Cell` show; Hardened_52 adds
 ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutation methods.
-0.9.10_Hardened_3 adds ODR-099, a pointer into a parameter C passes as a copy (§H.8).
+0.9.10_Hardened_3 adds ODR-099, a pointer into a parameter C passes as a copy (§H.8);
+0.9.10_Hardened_4 adds ODR-100, what a lambda written at an adapter captures (§H.9).
 
 | ODR | Ruling | Rules |
 |---|---|---|
@@ -365,6 +366,7 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 | ODR-094 | the owner's: `collect[C]()` builds any `C` implementing `std.core.FromIterator[Item]` (`Array`, `Set`, `Map` from pairs, `String` from `char`s and `String`s, and a program's types), `C` written or the type the call is expected to give; `peekable` gives `peek`, `peek_mut`, `next_if` and `next_if_eq`; `Option`'s `as_ref` and `as_mut` reference the payload where it is; `Box[T]` and `Cell[T]` show as the `T` they hold (Hardened_51) | `[STD-19]`, `[ERR-4]`, `[TYP-39]` |
 | ODR-098 | String capacity is measured in bytes; reserve asks for additional bytes; insert takes a byte offset and a char, remove returns that char, truncate keeps a byte prefix, and shrinking retains capacity, with UTF-8 boundary and integer-size checks in every profile (Hardened_52) | `[TXT-11]`, `[TXT-4]`, `[TYP-31]`, `[HEAP-8]` |
 | ODR-099 | the owner's direction (2026-10-11), its detail under the delegation: where a program turns a callable type into `extern "C" fn`, a function whose value has that type returns no raw pointer made from a reference to a parameter it borrows by value, which a call from C passes as a copy that ends with the call (`E5042`); followed through copies, conversions and aggregates, not calls; a value read through the parameter and a pointer stored in it are not into the copy | `[FFI-21a]`, `[FN-6]`, `[FN-1]` |
+| ODR-100 | the owner's (2026-10-11): the iterator adapters take over the callable and the iterator they keep (`owned`); a lambda written at one keeps the captures `[CLO-2]` infers and the adapter lives no longer than they do; only a consumed callable parameter whose captured state must carry the static region (`thread.spawn`, `jobs.submit`, registries) makes a lambda written there capture by move | `[CLO-15]`, `[CLO-4]`, `[CLO-7]`, `[STD-19]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -588,3 +590,24 @@ Generated: every rule whose text differs from 0.9.10_Hardened_2.
 | Rule | 0.9.10_Hardened_2 → 0.9.10_Hardened_3 |
 |---|---|
 | `[FFI-21a]` | added |
+
+## H.9 Changes in 0.9.10_Hardened_4 (from 0.9.10_Hardened_3)
+
+**0.9.10_Hardened_4** records ODR-100, the owner's choice of 2026-10-11 (`docs/OWNER-QUEUE.md`,
+`docs/DECISIONS.md` ADR-153). It changes what programs are accepted:
+
+* The iterator adapters take over the callable and the other iterator they keep (`owned`); a named
+  iterator given to `zip` or `chain` is moved (`[STD-19]`).
+* A lambda written at an adapter keeps the captures `[CLO-2]` infers; the adapter lives no longer
+  than they do. Only a consumed callable parameter whose captured state must carry the static region
+  (`thread.spawn`, `jobs.submit`, registries) makes a lambda written there capture by move
+  (`[CLO-15]`, `[CLO-4]`, `[CLO-7]`).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_3.
+
+| Rule | 0.9.10_Hardened_3 → 0.9.10_Hardened_4 |
+|---|---|
+| `[CLO-4]` | changed |
+| `[CLO-7]` | changed |
+| `[CLO-15]` | changed |
+| `[STD-19]` | changed |

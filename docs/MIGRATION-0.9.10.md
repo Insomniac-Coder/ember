@@ -8,7 +8,8 @@ Hardened_1 was the design as first built (Appendix H §H.6 lists the rules it ch
 Hardened_2 adds the owner's rulings of 2026-10-06 on three of the audit's decisions (§H.7): `parse`
 reads the 256-bit counts, the known-numbers rule, and `enumerate` numbers that never overflow.
 Hardened_3 (2026-10-11, ODR-099, §H.8) refuses a pointer into a parameter C passes as a copy
-(`[FFI-21a]`, below). The specification is now `Ember_v0.9.10_Hardened_3.md`. This file says what
+(`[FFI-21a]`, below); Hardened_4 (ODR-100, §H.9) lets a lambda written at an iterator adapter keep its borrows
+(below). The specification is now `Ember_v0.9.10_Hardened_4.md`. This file says what
 changes for a program and how to update one, then records the implementation.
 
 ## 1. What changes for a program
@@ -136,6 +137,15 @@ Where a program turns a callable type into `extern "C" fn`, a function whose val
 may not return a raw pointer into a parameter it borrows by value: called from C, that parameter is
 a copy the call makes, which ends when the call returns (`[FFI-21a]`, `E5042`). Take the parameter
 as a pointer (`*T`) to give C back the pointer it passed. A function only Ember calls is unchanged.
+
+### What the iterator adapters keep (Hardened_4)
+
+The adapters take over what they keep: `map`, `filter`, `filter_map`, `take_while`, `skip_while`,
+`inspect` and `flat_map` their callable, `zip` and `chain` their other iterator (`[STD-19]`). A lambda
+written at the call keeps borrowing what it uses, so `inspect(fn(v) => seen.push(v))` fills `seen`
+(`[CLO-15]`). A named iterator, or a named closure that writes its captures, given to one is moved:
+`.clone()` keeps an iterator. A function that hands back a closure that writes its captures, taken
+borrowed, is `E3013` (it would be a second copy of a mutable borrow): take it `owned`.
 
 ## 2. Updating a program
 

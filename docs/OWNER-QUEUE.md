@@ -63,6 +63,7 @@ because a future agent who cannot find where a decision was made will reopen it.
 | ODR-082 | **CLOSED** — `@ffi(immutable)` on a foreign static asserts a `const` C object and emits a matching declaration | Language / C interop / foreign statics | — | **No** — delegated, 2026-09-27, Hardened_38 |
 | ODR-083 | **CLOSED** — a static free-function export's `creator` thread is anchored to successful module initialization; repeated initialization does not transfer the contract, and reinitialization after shutdown establishes a new creator | Language / C interop / export thread contracts | — | **No** — delegated, 2026-09-27, Hardened_39 |
 | ODR-084 | **CLOSED** — `#! module name(args)` attaches existing module attributes; overflow is lexical to declarations, defaults, and comptime expressions, while integer methods retain fixed contracts | Language / module attributes / arithmetic | — | **No** — delegated, 2026-09-27, Hardened_40 |
+| ODR-100 | **CLOSED** — the iterator adapters take over the callable and the iterator they keep; a lambda written at one keeps its borrows; only a callable that must carry the static region moves its captures | Closures / std | — | **Owner** (2026-10-11), 0.9.10_Hardened_4 |
 | ODR-099 | **CLOSED** — where a program turns a callable type into `extern "C" fn`, a function whose value has that type returns no raw pointer into a parameter it borrows by value, which a call from C passes as a copy (`E5042`) | FFI / callbacks | — | **Owner chose the direction** (2026-10-11); the detail ruled under the delegation, 0.9.10_Hardened_3 |
 | ODR-098 | **CLOSED** — String capacity and offsets count bytes; reserve asks for additional bytes, insert takes a char and remove returns one; truncate and clear retain capacity; invalid sizes and UTF-8 boundaries panic in every profile | Library / text | — | **No** — delegated, 2026-10-03, Hardened_52 |
 | ODR-097 | **CLOSED** — an implementation may also be written in the package that declares one of its interface's arguments, where, reading its type and then those arguments, the first type the package declares comes before any of the implementation's type parameters standing alone; anywhere else it is `E2121` | Types / implementations | — | **No** — delegated, 2026-10-01, Hardened_50 |
@@ -255,6 +256,27 @@ immediate predecessor `_2`; `_2` remains untouched. The ODR changes only
 diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
+
+## ODR-100 — what a lambda written at an iterator adapter captures — **CLOSED**
+
+    ID:        ODR-100
+    Status:    CLOSED — the owner's choice, 2026-10-11; incorporated in 0.9.10_Hardened_4
+    Category:  CLOSURES / STANDARD LIBRARY
+    Location:  Ember_v0.9.10_Hardened_3.md [CLO-15], [CLO-4], [CLO-7], [STD-19]
+
+**The question.** D-422's fix makes the adapters take over the callable they keep. `[CLO-15]` said a
+lambda written directly at a consumed callable parameter captures by move, so
+`xs.iter().inspect(fn(v) => seen.push(v))` would move `seen` into the lambda and `println(seen)`
+afterwards would be `E3040`.
+
+**Options put to the owner.** (1) The lambda keeps borrowing; the closure moves into the adapter,
+and the view rules keep the iterator from outliving what it borrows; move capture stays only where
+the callable must carry the static region (threads, retained callbacks). A spec refinement. (2) The
+lambda moves what it captures, as `[CLO-15]` read; no spec change, and common iterator code stops
+compiling. **The owner chose 1.**
+
+**Ruling.** `[CLO-15]`, `[CLO-4]`, `[CLO-7]` and `[STD-19]` say so (ADR-153); `zip` and `chain` take
+their other iterator over as well, so a named one is moved.
 
 ## ODR-099 — a pointer into a parameter C passes as a copy — **CLOSED**
 

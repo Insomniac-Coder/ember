@@ -138,19 +138,6 @@ pub fn check_all_with_installed_callable_regions(
         .filter(|body| is_method_body(body))
         .map(|body| body.symbol.clone())
         .collect();
-    // `[CLO-4]` is decided at a call boundary by both the callee's declared
-    // parameter mode and the concrete closure environment's capture mode.
-    // Keep those facts in MIR rather than guessing from a generated symbol or
-    // treating all `owned` values as escaping views.
-    let direct_param_modes: HashMap<String, Vec<ParameterMode>> = bodies
-        .iter()
-        .map(|body| (body.symbol.clone(), body.param_modes.clone()))
-        .collect();
-    let borrowing_closure_environments: HashSet<StructId> = bodies
-        .iter()
-        .filter(|body| !body.closure_captures_by_move)
-        .filter_map(|body| body.closure_environment)
-        .collect();
     // Borrow checking consumes the installed MIR/interface metadata, not the
     // temporary inference table. That makes the artifact a real producer /
     // consumer boundary rather than a duplicate cache beside the analysis.
@@ -191,8 +178,6 @@ pub fn check_all_with_installed_callable_regions(
             &call_contract,
             &capture_paths,
             &owned_closure_environments,
-            &borrowing_closure_environments,
-            &direct_param_modes,
             &invalid_result_bodies,
             &is_method,
             dynamic.contains(&body.symbol),
@@ -2948,69 +2933,6 @@ fn check_multi_result_summary(
 }
 
 
-/// `[CLO-4]`, `[TYP-15]` — an ordinary capturing closure contains reference
-/// fields. Passing it by `owned` mode gives the callee ownership of a value it
-/// may retain beyond this call, so the same unbounded-storage boundary applies
-/// at the call itself. This is deliberately narrower than rejecting all
-/// owned view arguments: it applies only to compiler-generated environments
-/// that capture by reference, and consults actual region provenance so a
-/// future static environment remains valid.
-fn check_owned_closure_argument_regions(
-    body: &Body,
-    types: &TypeTable,
-    regions: &Regions,
-    borrowing_closure_environments: &HashSet<StructId>,
-    direct_param_modes: &HashMap<String, Vec<ParameterMode>>,
-    sink: &mut Sink,
-) {
-    for (block_index, block) in body.blocks.iter().enumerate() {
-        let Terminator::Call { func: FuncRef::Direct { symbol, .. }, args, .. } = &block.terminator
-        else {
-            continue;
-        };
-        let Some(modes) = direct_param_modes.get(symbol) else {
-            // An imported callable needs its parameter modes in its interface
-            // artifact before this check can make a storage claim. The
-            // separate-compilation boundary remains conservative elsewhere.
-            continue;
-        };
-        let point = Point {
-            block: block_index,
-            index: block.stmts.len(),
-        };
-        for (argument, mode) in args.iter().zip(modes) {
-            if *mode != ParameterMode::Owned {
-                continue;
-            }
-            let (Operand::Copy(place) | Operand::Move(place)) = argument else {
-                continue;
-            };
-            let TyKind::Struct(environment) = *types.kind(place_ty(body, types, place)) else {
-                continue;
-            };
-            if !borrowing_closure_environments.contains(&environment)
-                || regions.is_static_operand_at(argument, point)
-            {
-                continue;
-            }
-            sink.emit_classified(
-                Diagnostic::error(
-                    codes::E3063,
-                    block.terminator_span,
-                    "a closure that captures by reference cannot be passed to an `owned` callable parameter",
-                )
-                .primary_label("moved across an ownership boundary here")
-                .help(
-                    "use `owned fn` to capture owned values, or take the callable as a borrowed or `mut` parameter and invoke it before its captures end",
-                )
-                .note(
-                    "an ordinary closure is a view over its captures; an `owned` callable parameter may retain that view (CLO-4, TYP-15)",
-                ),
-            );
-        }
-    }
-}
-
 /// `[LT-42]` with `[TYP-15]` — an `owned fn` environment owns its captures and
 /// can therefore escape the frame that constructed it. A captured view is
 /// consequently valid only when every carried region is static. This is
@@ -3083,8 +3005,6 @@ pub fn check(body: &Body, types: &TypeTable, sink: &mut Sink) {
         &HashMap::new(),
         &HashSet::new(),
         &HashSet::new(),
-        &HashMap::new(),
-        &HashSet::new(),
         &is_method,
         false,
         &HashMap::new(),
@@ -3098,8 +3018,6 @@ fn check_body(
     call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
     capture_paths: &HashMap<Point, Vec<Vec<Projection>>>,
     owned_closure_environments: &HashSet<StructId>,
-    borrowing_closure_environments: &HashSet<StructId>,
-    direct_param_modes: &HashMap<String, Vec<ParameterMode>>,
     invalid_result_bodies: &HashSet<String>,
     is_method: &dyn Fn(&FuncRef) -> bool,
     dynamic: bool,
@@ -3113,14 +3031,10 @@ fn check_body(
         capture_paths,
     );
     stores::check_stores(body, types, &regions, call_contract, dynamic, names, sink);
-    check_owned_closure_argument_regions(
-        body,
-        types,
-        &regions,
-        borrowing_closure_environments,
-        direct_param_modes,
-        sink,
-    );
+    // `[CLO-4]`, `[CLO-15]` (ODR-100) — an ordinary closure passed to an
+    // `owned` parameter (an iterator adapter's) is a view the callee holds:
+    // the value it returns carries the closure's regions, as any view, so
+    // nothing here refuses the call itself (D-422).
     check_owned_closure_capture_regions(body, types, &regions, owned_closure_environments, sink);
     // A function that hands back a parameter has no loan of its own, and
     // `[LT-1a]` is about exactly that function. A reference to a view

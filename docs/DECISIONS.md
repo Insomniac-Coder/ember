@@ -5016,6 +5016,43 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-153 — the adapters take over what they keep; a lambda at one keeps its borrows (ODR-100, D-422)
+
+**Date:** 2026-10-11. **Rules:** `[CLO-15]`, `[CLO-4]`, `[CLO-7]`, `[STD-19]` (0.9.10_Hardened_4),
+`[FN-1]`, `[CLO-2]`.
+
+**Context.** D-422 (the 2026-10-01 review's G3-1 and G3-5). The adapters took their callable, and
+`zip`/`chain` their other iterator, borrowed, and moved it into the adapter. The drop analysis let a
+value with nothing to drop leave a borrowed parameter as a bit copy (D-041), so a closure that writes
+its captures, or an `iter_mut()` iterator, could be copied out: `fn steal[F: fn(int)](f: F) -> F:
+return f` gave the caller a second live mutable borrow, which `other = bump` refuses (`E3050`). A
+callable that needs dropping (an `owned fn` capturing a `String`) was `E3013` inside std. The fix
+makes the adapters own what they keep, and `[CLO-15]` said a lambda written at a consumed callable
+parameter captures by move: `inspect(fn(v) => seen.push(v))` would have moved `seen`.
+
+**Decision.** The owner chose (2026-10-11, of two): a lambda written at an adapter keeps the
+captures `[CLO-2]` infers; only a consumed callable parameter whose captured state must carry the
+static region (`thread.spawn`, `jobs.submit`, registries) moves them (ODR-100). In the compiler:
+
+* `check_borrowed_moves`: a value holding a mutable borrow (`ref mut`, `MutSpan`, in any field) is
+  not a bit copy; moving it out of a borrowed parameter is `E3013` (also for a view parameter), with
+  a note naming the second borrow.
+* std: `map`, `filter`, `filter_map`, `take_while`, `skip_while`, `inspect`, `flat_map` take
+  `owned f`; `zip` and `chain` take `owned other`.
+* The borrow checker's refusal of any ordinary closure at an `owned` callable parameter
+  (`check_owned_closure_argument_regions`, `E3063`) is removed. Probed before removing it: a closure
+  returned through a generic `keep` is region-tracked (`E3022` when the caller writes what it
+  captured), and a borrowing closure becomes neither an owned callable value nor a list element of
+  another closure type, so it reaches no storage the regions do not see. `[CLO-15]`'s move capture
+  is not built: no API that requires static captures exists yet (`thread.spawn` is Phase 6).
+
+**Consequences.** A named iterator given to `zip` or `chain` is moved (`.clone()` keeps it); a named
+closure that writes its captures, given to an adapter, is moved too. All 150 benchmark C files are
+byte-identical but for source line numbers. D-546 (a generic class built from a lambda) was found
+probing, and predates this.
+
+---
+
 ## ADR-152 — a place past sixteen dereferences reads through a pointer bound once per statement (D-514)
 
 **Date:** 2026-10-11. **Rules:** `[GRM-39]`, `[CG-C-2]`.

@@ -499,41 +499,43 @@ pub interface Iterator:
         return Enumerate(self, Position.of(start), false)
 
     ## Pairs of an item of each, until either runs out.
-    fn zip[J: Iterator](owned self, other: J) -> Zip[Self, J]:
+    fn zip[J: Iterator](owned self, owned other: J) -> Zip[Self, J]:
         return Zip(self, other)
 
     ## This iterator's items, then `other`'s, which are of the same type.
-    fn chain[J: Iterator[Item = Item]](owned self, other: J) -> Chain[Self, J]:
+    fn chain[J: Iterator[Item = Item]](owned self, owned other: J) -> Chain[Self, J]:
         return Chain(self, other, false)
 
     ## What `f` makes of each item. The adapter holds `f` itself, not a
     ## pointer to it, so nothing is allocated and each call is direct
-    ## (`[CLO-14]`).
-    fn map[R, F: fn(Item) -> R](owned self, f: F) -> Map[Self, R, F]:
+    ## (`[CLO-14]`). It takes `f` over: a lambda written at the call keeps
+    ## the captures `[CLO-2]` infers (`[CLO-15]`), and the iterator lives no
+    ## longer than they do (`[CLO-4]`). The other adapters do the same.
+    fn map[R, F: fn(Item) -> R](owned self, owned f: F) -> Map[Self, R, F]:
         return Map(self, f)
 
     ## The items `pred` holds for.
-    fn filter[F: fn(Item) -> bool](owned self, pred: F) -> Filter[Self, F]:
+    fn filter[F: fn(Item) -> bool](owned self, owned pred: F) -> Filter[Self, F]:
         return Filter(self, pred)
 
     ## What `f` gives for each item it gives something for.
-    fn filter_map[R, F: fn(Item) -> Option[R]](owned self, f: F) -> FilterMap[Self, R, F]:
+    fn filter_map[R, F: fn(Item) -> Option[R]](owned self, owned f: F) -> FilterMap[Self, R, F]:
         return FilterMap(self, f)
 
     ## The items before the first one `pred` does not hold for.
-    fn take_while[F: fn(Item) -> bool](owned self, pred: F) -> TakeWhile[Self, F]:
+    fn take_while[F: fn(Item) -> bool](owned self, owned pred: F) -> TakeWhile[Self, F]:
         return TakeWhile(self, pred, false)
 
     ## The items from the first one `pred` does not hold for.
-    fn skip_while[F: fn(Item) -> bool](owned self, pred: F) -> SkipWhile[Self, F]:
+    fn skip_while[F: fn(Item) -> bool](owned self, owned pred: F) -> SkipWhile[Self, F]:
         return SkipWhile(self, pred, false)
 
     ## The items, each given to `f` first.
-    fn inspect[F: fn(Item)](owned self, f: F) -> Inspect[Self, F]:
+    fn inspect[F: fn(Item)](owned self, owned f: F) -> Inspect[Self, F]:
         return Inspect(self, f)
 
     ## The items of each iterable `f` makes of an item, one after another.
-    fn flat_map[U: IntoIterator, F: fn(Item) -> U](owned self, f: F) -> FlatMap[Self, U, F]:
+    fn flat_map[U: IntoIterator, F: fn(Item) -> U](owned self, owned f: F) -> FlatMap[Self, U, F]:
         return FlatMap(self, f, None)
 
     ## The items of each item, one after another, when the items are

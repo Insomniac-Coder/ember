@@ -205,10 +205,11 @@ fn main():
 * `[CLO-10]` *(new in 0.9.9)* An owned callable value holds up to **three pointer-sized words** of captured state inline
   and makes no allocation; larger captured state is placed in one heap allocation, which carries the
   `Alloc` effect and is reported by `ember inspect --alloc`. Calling one is one indirect call.
-* `[CLO-4]` *(changed in 0.9.9)* A non-`owned` lambda cannot outlive what it borrows: storing it,
-  returning it or passing it to an `owned` parameter follows the view rules (`[TYP-15]`), except that a
-  lambda written directly as the argument of a consumed callable parameter captures by move
-  (`[CLO-15]`).
+* `[CLO-4]` *(changed in 0.9.9)* *(changed in 0.9.10)* A non-`owned` lambda cannot outlive what it
+  borrows: storing it, returning it or passing it to an `owned` parameter follows the view rules
+  (`[TYP-15]`); a value a callee returns holding it lives no longer than its captures. A lambda written
+  directly as the argument of a consumed callable parameter whose captured state MUST carry only the
+  static region captures by move instead (`[CLO-15]`).
 * `[CLO-5]` A closure capturing a class handle holds a strong reference; the usual cycle caution
   applies (`[WK-1]`).
 * `[CLO-6]` *(changed in 0.9.9)* A lambda that moves one of its captures out of itself (into an
@@ -218,15 +219,21 @@ fn main():
 * `[CLO-6a]` *(changed in 0.9.9)* An owned `once fn` value, including one inside a `Box` or a
   collection, is callable: the call moves the value out of its place (the place becomes empty, and a
   collection element is removed by the calling API, e.g. `jobs.pop_front()`).
-* `[CLO-7]` *(changed in 0.9.9)* Standard-library APIs that store or send a callback (`thread.spawn`,
-  `jobs.submit`, event registries) take it as a
-  consumed callable parameter (`owned f: fn(A) -> R`) or `once fn`, so a lambda written at the call
-  site captures by move (`[CLO-15]`).
-* `[CLO-15]` *(new in 0.9.9)* A lambda written directly as the argument of a consumed callable
-  parameter (`owned f: fn(A) -> R`, which `thread.spawn`, `jobs.submit` and callback registries
-  declare, `[CLO-7]`) captures by move, as if written `owned fn`: `thread.spawn(fn() => work(x))` moves
-  `x` into the thread. `owned fn` is needed only for a lambda that is stored before it is passed, or
-  stored in a field or a local.
+* `[CLO-7]` *(changed in 0.9.9)* *(changed in 0.9.10)* Standard-library APIs that keep a callback
+  beyond the caller's borrows or send it to another thread (`thread.spawn`, `jobs.submit`, event
+  registries) take it as a consumed callable parameter (`owned f: fn(A) -> R`) or `once fn` whose
+  captured state MUST carry only the static region (`[THR-10]`, `[JOB-2]`), so a lambda written at the
+  call site captures by move (`[CLO-15]`). The iterator adapters take their callable over too, without
+  that requirement (`[STD-19]`).
+* `[CLO-15]` *(new in 0.9.9)* *(changed in 0.9.10)* A lambda written directly as the argument of a
+  consumed callable parameter whose captured state MUST carry only the static region (`thread.spawn`,
+  `jobs.submit`, callback registries, `[CLO-7]`) captures by move, as if written `owned fn`:
+  `thread.spawn(fn() => work(x))` moves `x` into the thread. At any other consumed callable parameter
+  (an iterator adapter's, `[STD-19]`) the lambda keeps the captures `[CLO-2]` infers: the callee holds
+  a view, and what it returns holding the lambda lives no longer than they do (`[CLO-4]`), so
+  `xs.iter().inspect(fn(v) => seen.push(v))` fills the caller's `seen`, which is the caller's again
+  once the iterator is gone. `owned fn` is needed only for a lambda that is stored before it is
+  passed, or stored in a field or a local.
 * `[CLO-11]` *(new in 0.9.9)* A call `recv.name(args)` where `recv`'s type has no method `name` but has a field `name`
   of callable type calls that field. A method of that name takes precedence.
 * `[CLO-12]` *(new in 0.9.9)* A local function (`[GRM-28]`) is a named closure: it captures like a lambda and follows

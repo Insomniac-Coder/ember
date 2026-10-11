@@ -17,12 +17,12 @@
 #$ assert-c-count: contains("Zip_std_core_RangeIter_i64_std_core_RangeIter_i64_next") == 0
 #$ assert-c-count: contains("Zip_std_core_RangeIter_u64_std_core_RangeIter_u64_next") == 0
 # `[CTL-3b]` — `zip` with a range's iterator made in place (`(5..7).iter()`)
-# is one counted loop, forwards and backwards. `zip` takes its argument
-# borrowed (`[FN-2]`), so the iterator arrives as a borrow of a temporary,
-# which the fused loop reads through (D-515); it ran std's `Zip` before. So a
-# range too long for an `int` to count zips backwards without asking for its
-# length. A named iterator stays the caller's: std's `Zip` copies it, it is
-# not moved, and its next item afterwards is the one before the loop.
+# is one counted loop, forwards and backwards: the fused loop reads the
+# temporary iterator in place (D-515); it ran std's `Zip` before. So a range
+# too long for an `int` to count zips backwards without asking for its length.
+# `zip` takes its argument over (`[STD-19]`, ODR-100): a named iterator passed
+# to it is moved, and `.clone()` keeps the caller's, whose next item afterwards
+# is the one before the loop.
 
 fn main():
     xs: Array[int] = [10, 20, 30]
@@ -40,6 +40,6 @@ fn main():
             break
     it = (0 .. 5).iter()
     it.next()
-    for x, i in xs.iter().zip(it):
+    for x, i in xs.iter().zip(it.clone()):
         println(x, i)
     println(it.next())

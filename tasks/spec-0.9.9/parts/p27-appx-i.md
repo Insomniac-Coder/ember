@@ -201,17 +201,17 @@ Every rule of this document, by family, with the Part that defines it.
 | `[CLO-1]` | VI | A lambda or local function has a unique anonymous type implementing … |
 | `[CLO-2]` | VI | Captures are inferred per variable: read only ⇒ shared borrow; … |
 | `[CLO-3]` | VI | What `fn(A) -> R` means depends on where it is written. * As a … |
-| `[CLO-4]` | VI | A non-`owned` lambda cannot outlive what it borrows: storing it, … |
+| `[CLO-4]` | VI | *(changed in 0.9.10)* A non-`owned` lambda cannot outlive what it … |
 | `[CLO-5]` | VI | A closure capturing a class handle holds a strong reference; the … |
 | `[CLO-6]` | VI | A lambda that moves one of its captures out of itself (into an … |
 | `[CLO-6a]` | VI | An owned `once fn` value, including one inside a `Box` or a … |
-| `[CLO-7]` | VI | Standard-library APIs that store or send a callback (`thread.spawn`, … |
+| `[CLO-7]` | VI | *(changed in 0.9.10)* Standard-library APIs that keep a callback … |
 | `[CLO-10]` | VI | An owned callable value holds up to three pointer-sized words of … |
 | `[CLO-11]` | VI | A call `recv.name(args)` where `recv`'s type has no method `name` but … |
 | `[CLO-12]` | VI | A local function (`[GRM-28]`) is a named closure: it captures like a … |
 | `[CLO-13]` | VI | A read-only capture of a `Copy` variable whose storage would end … |
 | `[CLO-14]` | VI | A callable type may also be written as an explicit generic bound, `fn … |
-| `[CLO-15]` | VI | A lambda written directly as the argument of a consumed callable … |
+| `[CLO-15]` | VI | *(changed in 0.9.10)* A lambda written directly as the argument of a … |
 
 ## CLS
 

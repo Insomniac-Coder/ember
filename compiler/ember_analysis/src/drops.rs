@@ -899,6 +899,27 @@ fn deref_through_ref(place: &Place, body: &Body, types: &TypeTable) -> bool {
 /// `ref mut`/`MutSpan[T]` reborrows travel as whole-local moves). `drop`'s
 /// own `self` keeps `check_drop_moves`' specific messages and is skipped
 /// here, so one move is never two errors.
+/// Whether a value of this type holds a mutable borrow (`ref mut`, a
+/// `MutSpan`), directly or in a field: copying it would make two.
+fn holds_mutable_borrow(types: &TypeTable, ty: Ty, depth: usize) -> bool {
+    if depth > 16 {
+        return true;
+    }
+    match types.kind(ty) {
+        TyKind::Ref { mutable, .. } => *mutable,
+        TyKind::Span { mutable, .. } => *mutable,
+        TyKind::Struct(id) => types.struct_def(*id).fields.iter().any(|field| holds_mutable_borrow(types, field.ty, depth + 1)),
+        TyKind::Tuple(items) => items.iter().any(|&item| holds_mutable_borrow(types, item, depth + 1)),
+        TyKind::Array { elem, .. } => holds_mutable_borrow(types, *elem, depth + 1),
+        TyKind::Enum(id) => types
+            .enum_def(*id)
+            .variants
+            .iter()
+            .any(|variant| variant.fields.iter().any(|field| holds_mutable_borrow(types, field.ty, depth + 1))),
+        _ => false,
+    }
+}
+
 fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usize {
     let drop_self_local = drop_self(body, types);
     let mut errors = 0;
@@ -923,8 +944,12 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
         // is the double-destroy, and a `Panel` of `i32`s has nothing to
         // destroy twice — `retitle` in `tests/conformance/MOD-2/` moves a
         // borrowed one on every run). `Copy` types never reach here at all:
-        // lowering emits `Copy` for them.
-        if !types.needs_drop(moved_place_ty(place, body, types)) {
+        // lowering emits `Copy` for them. A value holding a mutable borrow (a
+        // closure that writes its captures, `[CLO-1]`) is not a copy either:
+        // two copies would be two live mutable borrows of one place (D-422,
+        // the `E3050` a direct copy gets).
+        let moved = moved_place_ty(place, body, types);
+        if !types.needs_drop(moved) && !holds_mutable_borrow(types, moved, 0) {
             return;
         }
         let through_ref = place
@@ -939,7 +964,7 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
             TyKind::Ref { mutable: false, inner } if types.passed_by_address(*inner)
         );
         let borrowed = body.borrowed_params.contains(&place.local)
-            && (by_address || !types.is_view(body.local(place.local).ty));
+            && (by_address || !types.is_view(body.local(place.local).ty) || holds_mutable_borrow(types, moved, 0));
         if through_ref && !borrowed {
             sink.emit_classified(
                 Diagnostic::error(codes::E3013, span, "cannot move out of a reference")
@@ -949,10 +974,15 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
             );
             errors += 1;
         } else if borrowed {
+            let note = if types.needs_drop(moved) {
+                "a borrowed parameter is owned by its caller [FN-1]; moving it out destroys the value twice — once here, once with the caller"
+            } else {
+                "a borrowed parameter is its caller's value [FN-1]; it holds a mutable borrow, and moving it out would leave the caller a second one [CLO-2]"
+            };
             sink.emit_classified(
                 Diagnostic::error(codes::E3013, span, "cannot move out of a borrowed parameter")
                     .primary_label("moved out here")
-                    .note("a borrowed parameter is owned by its caller [FN-1]; moving it out destroys the value twice — once here, once with the caller")
+                    .note(note)
                     .help("take an `owned` parameter if the function needs ownership, or borrow the value instead of moving it"),
             );
             errors += 1;
