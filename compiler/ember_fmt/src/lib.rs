@@ -693,6 +693,9 @@ impl Printer<'_> {
                 self.line("unsafe:");
                 self.block(block);
             }
+            // `[GRM-28]` — printed as any function is; the catch-all would
+            // flatten its body as it once did `unsafe:`'s.
+            ast::StmtKind::LocalFn(decl) => self.function("", decl),
             // Anything the printer does not reshape is copied through.
             _ => {
                 let text = self.text(stmt.span).to_string();

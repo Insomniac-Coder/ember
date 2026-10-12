@@ -188,7 +188,7 @@ impl Parser<'_> {
                 self.expect_punct(Punct::Colon);
                 StmtKind::Defer(self.parse_block())
             }
-            TokenKind::Keyword(Kw::Unsafe) => {
+            TokenKind::Keyword(Kw::Unsafe) if !self.at_kw_at(1, Kw::Fn) => {
                 self.unsafe_sites.push(self.span());
                 self.bump();
                 self.expect_punct(Punct::Colon);
@@ -198,6 +198,22 @@ impl Parser<'_> {
                 self.bump();
                 self.expect_punct(Punct::Colon);
                 StmtKind::Comptime(self.parse_block())
+            }
+            // `[GRM-28]` — `fn name(` declares a local function; `fn(` is a
+            // lambda, an expression.
+            TokenKind::Keyword(Kw::Fn | Kw::Unsafe)
+                if self.at_kw(Kw::Fn) && matches!(self.peek_at(1), TokenKind::Ident(_))
+                    || self.at_kw(Kw::Unsafe) && self.at_kw_at(1, Kw::Fn) =>
+            {
+                let decl = self.parse_fn();
+                if decl.body.is_none() {
+                    self.report(
+                        Diagnostic::error(codes::E0110, decl.name.span, format!("`{}` is declared without a body", decl.name.name))
+                            .primary_label("a function here needs a body")
+                            .help("add ':' and a body"),
+                    );
+                }
+                StmtKind::LocalFn(Box::new(decl))
             }
             _ => {
                 // `[ATT-3]` — an attribute may not precede a simple statement.

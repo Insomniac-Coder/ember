@@ -36,7 +36,7 @@ method in [`docs/HANDOFF.md`](docs/HANDOFF.md)):
 
 | Phase | Scope | Done |
 |---|---|---:|
-| 1 | Core language (Parts II–VI) | 95% |
+| 1 | Core language (Parts II–VI) | 96% |
 | 2 | Ownership, borrowing, regions | 92% |
 | 3 | Classes, reference counting, exclusivity | 66% |
 | 4 | Effects, compile time, reflection, derives | 14% |

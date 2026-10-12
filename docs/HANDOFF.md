@@ -10774,8 +10774,9 @@ globs from any module, `E1031`; `E1040` was a retired code still emitted) and D-
 files carry no `SAFETY` note. Then D-584: `[LEX-23]` notes recorded, `[UNS-8]`'s `W3012` emitted,
 notes written at the 98 sites (`ember tcb` is still unbuilt). Phase 1's untested rules are now all
 tested but the PHIL/VER principles, `[CLO-7]` (thread/job APIs, Phase 6), `[PAN-2]`/`[RNG-10a]`
-(effects and derives, Phase 4), `[TYP-2]` and the five unbuilt features. **Next:** build the five
-unbuilt features (local functions, lazy statics, `some` returns,
+(effects and derives, Phase 4), `[TYP-2]` and the five unbuilt features. Then D-585: local functions
+(ADR-172; generic/`unsafe`/`gen` ones and a call from a closure inside one are `E0900`); README
+Phase 1 96% (`rule_sizes.py 96 92 66 14 14 4 6`). **Next:** the four unbuilt features left (local functions, lazy statics, `some` returns,
 `comptime(e)`, const generics last, largest); ASK the owner: D-550's layout, the EXC-10 review
 workflow.
 

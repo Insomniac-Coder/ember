@@ -312,6 +312,21 @@ pub fn check(
     }
 }
 
+/// `[GRM-28]` — a local function whose body is being checked: a call to
+/// `name` in it is a call to itself, the function `def` reserved before the
+/// body, through its own environment once `env` says how it is passed.
+#[derive(Clone)]
+struct LocalFnSelf {
+    name: Symbol,
+    def: DefId,
+    /// The closure nesting of its own body (`Checker::lambda_depth`).
+    depth: usize,
+    /// How its environment is passed: `None` while it may capture nothing
+    /// (and in the capture probes), set for the final check of a body that
+    /// captures.
+    env: Option<Mode>,
+}
+
 #[derive(Clone)]
 struct Signature {
     params: Vec<(Symbol, Ty, Mode, Span)>,
@@ -1139,6 +1154,11 @@ struct Checker<'a> {
     /// environment `closureN_env`). It never goes back, so a dropped or
     /// re-checked lambda never lets two closures share a name in the C.
     closure_numbers: usize,
+    /// `[GRM-28]` — the local functions whose bodies are being checked,
+    /// innermost last.
+    local_fn_self: Vec<LocalFnSelf>,
+    /// How many closure bodies enclose the code being checked.
+    lambda_depth: usize,
     /// D-546 — each lambda's last value checked without an error, by its
     /// span (`synth_lambda`).
     lambda_values: HashMap<Span, Expr>,
@@ -1740,6 +1760,8 @@ impl<'a> Checker<'a> {
             closure_calls: HashMap::new(),
             lambdas: Vec::new(),
             closure_numbers: 0,
+            local_fn_self: Vec::new(),
+            lambda_depth: 0,
             lambda_values: HashMap::new(),
             skipped_instances: 0,
             opaque_lambdas: HashSet::new(),
@@ -15987,7 +16009,7 @@ impl<'a> Checker<'a> {
                 // every expression in them is checked for reads of `self`.
                 ast::StmtKind::Assign { targets, .. }
                     if !targets.iter().any(Self::rooted_at_self) => {}
-                ast::StmtKind::Decl { .. } | ast::StmtKind::Expr(_) => {}
+                ast::StmtKind::Decl { .. } | ast::StmtKind::Expr(_) | ast::StmtKind::LocalFn(_) => {}
                 ast::StmtKind::Unsafe(body) => self.validate_class_init_shape(body, span),
                 ast::StmtKind::If(if_stmt) => {
                     self.validate_class_init_shape(&if_stmt.then_block, span);
@@ -17968,6 +17990,7 @@ impl<'a> Checker<'a> {
                 }
                 out.push(Stmt::Expr(matched));
             }
+            ast::StmtKind::LocalFn(decl) => self.check_local_fn(decl, stmt.span, out),
             _ => {
                 self.error(
                     codes::E1010,
@@ -28179,6 +28202,15 @@ impl<'a> Checker<'a> {
             }
             _ => (callee, Vec::new()),
         };
+        // `[GRM-28]` — in a local function's own body, its name is itself,
+        // unless a local there shadows it.
+        if let ast::ExprKind::Path { segments } = &callee.kind
+            && let [name] = segments.as_slice()
+            && self.lookup(name.name).is_none()
+            && let Some(own) = self.local_fn_self.iter().rev().find(|own| own.name == name.name).cloned()
+        {
+            return self.synth_local_fn_self_call(own, args, span);
+        }
         // `[CLO-3]` — "Calling: `f(args)`". A local of function type is
         // called through its value rather than by name. Checked before the
         // path lookup, because a local shadows an item of the same name.
@@ -29783,6 +29815,127 @@ impl<'a> Checker<'a> {
                 .note("the closure moves a non-`Copy` capture out of its environment [CLO-2]"),
             );
         }
+    }
+
+    /// `[GRM-28]` — a local function calling itself: directly while it
+    /// captures nothing, else through the environment it was itself given,
+    /// as `synth_closure_call` passes one.
+    fn synth_local_fn_self_call(&mut self, own: LocalFnSelf, args: &[ast::Arg], span: Span) -> Expr {
+        if own.depth != self.lambda_depth {
+            self.sink.emit(
+                Diagnostic::error(codes::E0900, span, format!("calling `{}` from a closure inside it is not supported yet", own.name))
+                    .note("a local function may call itself from its own body [GRM-28]; a lambda inside it would have to capture it"),
+            );
+            return Expr { ty: self.signatures[own.def.0 as usize].ret, kind: ExprKind::Error, span };
+        }
+        let Some(mode) = own.env else {
+            return self.synth_known_function_call(own.def, args, span, false);
+        };
+        let signature: Vec<(Ty, Mode)> =
+            self.signatures[own.def.0 as usize].params.iter().map(|(_, ty, mode, _)| (*ty, *mode)).collect();
+        let ret = self.signatures[own.def.0 as usize].ret;
+        if args.len() != signature.len() {
+            self.error(
+                codes::E2020,
+                span,
+                format!("`{}` takes {} arguments, found {}", own.name, signature.len(), args.len()),
+            );
+            return Expr { ty: ret, kind: ExprKind::Error, span };
+        }
+        let env = self.read_local_expecting(LocalId(0), span, None);
+        let env = if matches!(self.types.kind(env.ty), TyKind::Ref { .. }) { self.read_through(env) } else { env };
+        let environment = match mode {
+            Mode::Mut => self.pass_receiver(env, Mode::Mut, span),
+            _ => env,
+        };
+        let mut call_args = vec![environment];
+        for (arg, &(param_ty, mode)) in args.iter().zip(&signature) {
+            call_args.push(self.check_argument(&arg.value, param_ty, mode));
+        }
+        Expr {
+            ty: ret,
+            kind: ExprKind::Call { callee: own.def, arg_eval_order: None, default_arg_locals: None, args: call_args, latebound: false },
+            span,
+        }
+    }
+
+    /// `[GRM-28]`, `[CLO-12]` — `fn name(…):` in a block is a named
+    /// closure: it captures as a lambda does (`[CLO-2]`), and is in scope from
+    /// its declaration to the end of the block, its own body included, so it
+    /// may call itself. Its function is reserved before the body is checked,
+    /// which is what a call to itself names.
+    fn check_local_fn(&mut self, decl: &ast::FnDecl, span: Span, out: &mut Vec<Stmt>) {
+        let unbuilt = if !decl.generics.is_empty() {
+            Some("a generic local function")
+        } else if decl.is_unsafe {
+            Some("an `unsafe` local function")
+        } else if decl.is_gen {
+            Some("a local generator")
+        } else if decl.abi.is_some() {
+            Some("a local function with a foreign ABI")
+        } else {
+            None
+        };
+        if let Some(what) = unbuilt {
+            self.sink.emit(
+                Diagnostic::error(codes::E0900, decl.name.span, format!("{what} is not supported yet"))
+                    .note("a local function is a named closure [GRM-28]; declare this one at module level"),
+            );
+            // Its uses are this error's, not each one another.
+            let error = self.common.error;
+            self.declare(Some(decl.name.name), error, decl.name.span);
+            return;
+        }
+        let Some(body) = &decl.body else { return };
+        if decl.params.iter().any(|param| matches!(param.kind, ast::ParamKind::Receiver { .. })) {
+            self.error(codes::E2020, decl.name.span, "a local function has no receiver");
+            return;
+        }
+        let mut param_tys = Vec::new();
+        for param in &decl.params {
+            if let ast::ParamKind::Named { ty, .. } = &param.kind {
+                param_tys.push(FnParam { ty: self.resolve_type(ty), mode: fn_param_mode(param.mode) });
+            }
+        }
+        let ret = decl.ret.as_ref().map_or(self.common.void, |ty| self.resolve_type(ty));
+        let def = DefId(self.signatures.len() as u32);
+        self.signatures.push(Signature {
+            params: decl
+                .params
+                .iter()
+                .zip(&param_tys)
+                .map(|(param, fn_param)| {
+                    let name = match &param.kind {
+                        ast::ParamKind::Named { name, .. } => name.name,
+                        ast::ParamKind::Receiver { .. } => Symbol::intern("self"),
+                    };
+                    (name, fn_param.ty, hir_mode(fn_param.mode), param.span)
+                })
+                .collect(),
+            ret,
+            abi: None,
+            is_unsafe: false,
+            overflow: self.active_overflow,
+            fp: self.active_fp,
+            borrows: None,
+            generics: Vec::new(),
+        });
+        // A stateless `fn` type: the parameter types and the result, with
+        // none of the copy-capture a stored callable value would ask for.
+        let expected = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: true, params: param_tys, ret });
+        let lambda = ast::Lambda {
+            is_owned: false,
+            params: decl.params.clone(),
+            ret: decl.ret.clone(),
+            body: ast::LambdaBody::Block(body.clone()),
+        };
+        self.local_fn_self.push(LocalFnSelf { name: decl.name.name, def, depth: self.lambda_depth + 1, env: None });
+        let value = self.synth_lambda_fresh(&lambda, Some(expected), span, Some(def));
+        self.local_fn_self.pop();
+        // A call through the local reads it; MIR makes the call direct when
+        // the value is a known function (ADR-169).
+        let local = self.declare(Some(decl.name.name), value.ty, decl.name.span);
+        out.push(Stmt::Let { local, init: Some(value) });
     }
 
     /// `[CLO-1]`, `[CLO-6]` — call a closure through its environment.
@@ -35237,14 +35390,14 @@ impl<'a> Checker<'a> {
             return value.clone();
         }
         let errors = self.sink.error_count();
-        let value = self.synth_lambda_fresh(lambda, expected, span);
+        let value = self.synth_lambda_fresh(lambda, expected, span, None);
         if self.sink.error_count() == errors {
             self.lambda_values.insert(span, value.clone());
         }
         value
     }
 
-    fn synth_lambda_fresh(&mut self, lambda: &ast::Lambda, expected: Option<Ty>, span: Span) -> Expr {
+    fn synth_lambda_fresh(&mut self, lambda: &ast::Lambda, expected: Option<Ty>, span: Span, reserved: Option<DefId>) -> Expr {
         let number = self.closure_numbers;
         self.closure_numbers += 1;
         let skipped_before = self.skipped_instances;
@@ -35376,7 +35529,7 @@ impl<'a> Checker<'a> {
             let (body, body_ty, locals, _) =
                 self.check_lambda_body(lambda, &params, ret, watch, None);
             let ret = ret.unwrap_or(body_ty);
-            let def = self.push_closure(&params, ret, locals, body, None, span, number, skipped_before);
+            let def = self.push_closure(&params, ret, locals, body, None, span, number, skipped_before, reserved);
             let ty = self.types.intern(TyKind::Fn {
                 abi: None,
                 latebound: false,
@@ -35552,6 +35705,12 @@ impl<'a> Checker<'a> {
         } else {
             Mode::Borrow
         };
+        // `[GRM-28]` — a local function calls itself through this environment.
+        if let Some(own) = self.local_fn_self.last_mut()
+            && reserved == Some(own.def)
+        {
+            own.env = Some(body_env_mode);
+        }
         let (body, body_ty, locals, _) = self.check_lambda_body(
             lambda,
             &params,
@@ -35586,6 +35745,7 @@ impl<'a> Checker<'a> {
             span,
             number,
             skipped_before,
+            reserved,
         );
         self.closure_calls.insert(struct_id, ClosureCall { def, once, owned: owned });
 
@@ -35649,6 +35809,7 @@ impl<'a> Checker<'a> {
         // A lambda's `return` leaves the lambda, not a class `init` around it;
         // capturing `self` already needed every field (`[CLS-2]`).
         let outer_class_init = self.class_init.take();
+        self.lambda_depth += 1;
 
         // The environment is parameter zero, so the emitted function has
         // `[CLO-6]`'s `call(self, args)` shape.
@@ -35713,6 +35874,7 @@ impl<'a> Checker<'a> {
         self.callable_value_bindings = outer_callable_value_bindings;
         self.ret_ty = outer_ret;
         self.class_init = outer_class_init;
+        self.lambda_depth -= 1;
         let watch = std::mem::replace(&mut self.captures, outer_watch)
             .expect("the watch was installed above");
         (body, body_ty, locals, watch)
@@ -35945,8 +36107,9 @@ impl<'a> Checker<'a> {
         span: Span,
         number: usize,
         skipped_before: usize,
+        reserved: Option<DefId>,
     ) -> DefId {
-        let def = DefId(self.signatures.len() as u32);
+        let def = reserved.unwrap_or(DefId(self.signatures.len() as u32));
         let closure_environment = env.as_ref().and_then(|(_, ty, _, _)| match self.types.kind(*ty) {
             TyKind::Struct(id) => Some(*id),
             _ => None,
@@ -35976,7 +36139,7 @@ impl<'a> Checker<'a> {
         {
             self.opaque_lambdas.insert(def);
         }
-        self.signatures.push(Signature {
+        let signature = Signature {
             params: signature_params,
             ret,
             abi: None,
@@ -35985,7 +36148,11 @@ impl<'a> Checker<'a> {
             fp: self.active_fp,
             borrows: None,
             generics: Vec::new(),
-        });
+        };
+        match reserved {
+            Some(def) => self.signatures[def.0 as usize] = signature,
+            None => self.signatures.push(signature),
+        }
         let symbol = format!("{}closure{number}", ember_branding::mangle_prefix());
         self.lambdas.push(Function {
             def,
@@ -44524,7 +44691,9 @@ fn assignments_in_block(block: &ast::Block, loops: &mut Vec<Span>, out: &mut Vec
             | ast::StmtKind::Defer(body)
             | ast::StmtKind::Unsafe(body)
             | ast::StmtKind::Comptime(body) => assignments_in_block(body, loops, out),
-            ast::StmtKind::Decl { .. } | ast::StmtKind::Expr(_) | ast::StmtKind::Pass => {}
+            // A local function's body is a closure's: its assignments are
+            // not the enclosing block's.
+            ast::StmtKind::Decl { .. } | ast::StmtKind::Expr(_) | ast::StmtKind::Pass | ast::StmtKind::LocalFn(_) => {}
         }
     }
 }

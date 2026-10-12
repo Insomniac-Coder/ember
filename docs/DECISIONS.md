@@ -5016,6 +5016,32 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-172 — A local function is a lambda with its own name (`[GRM-28]`, `[CLO-12]`, D-585)
+
+**Date:** 2026-10-12 (autopilot). **Rules:** `[GRM-28]`, `[CLO-12]`, `[CLO-1]`..`[CLO-6]`.
+
+**Context.** A local function must capture exactly as a lambda does (`[CLO-12]`), so lifting it to a
+module function with its captures as extra parameters is out: that borrows the captures at each call,
+where a closure borrows them from its declaration to its last use (`x = 2` between the two must be
+refused). What a lambda lacks is a name its own body can call.
+
+**Decision.** (1) The parser reads `fn name(` (and `unsafe fn`) in statement position as
+`StmtKind::LocalFn`; `fn(` stays a lambda. (2) Typeck checks it as a lambda, with three additions:
+its function's `DefId` and signature are reserved before the body is checked (`push_closure` fills the
+reserved slot); while the body is checked, a call to its name that no local there shadows is a call to
+that `DefId` (`LocalFnSelf`); and that call passes the closure's own environment (parameter 0) in the
+environment's mode, which is set only for the final check, so the capture probes see a capture-free
+call and recursion never makes a capture look written. (3) Afterwards the name is a local holding the
+closure value, in scope to the end of the block; calls through it are ordinary closure calls, and MIR
+makes them direct when the value is a known function (ADR-169). (4) A generic, `unsafe`, `gen` or
+foreign-ABI local function, and a call to a local function from a lambda inside it (which would have
+to capture the function itself), are `E0900`.
+
+**Consequences.** Mutual recursion between local functions is not possible: each is in scope from its
+declaration on, as `[GRM-28]` says. The formatter prints a local function as it prints any.
+
+---
+
 ## ADR-171 — The runtime checks its caller's ABI version (`[VER-4]`, D-583)
 
 **Date:** 2026-10-12 (autopilot). **Rules:** `[VER-4]`, `[RT-6]`, `[ABI-1]`, `[FFI-27]`.

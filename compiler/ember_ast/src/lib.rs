@@ -529,6 +529,9 @@ pub enum StmtKind {
     Defer(Block),
     Unsafe(Block),
     Comptime(Block),
+    /// `[GRM-28]` — `fn name(…):` inside a block: a local function, which is
+    /// a named closure (`[CLO-12]`).
+    LocalFn(Box<FnDecl>),
 }
 
 #[derive(Clone, Debug)]
