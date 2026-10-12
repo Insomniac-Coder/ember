@@ -3,6 +3,10 @@
  * for it first at the same time; the others wait for it, then see its value.
  * The accessor is the one the compiler writes for a lazily initialised
  * static. */
+#if !defined(_WIN32)
+/* `-std=c11` hides POSIX: `nanosleep` needs it asked for. */
+#define _POSIX_C_SOURCE 200809L
+#endif
 #include "ember_rt.h"
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
