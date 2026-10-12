@@ -255,7 +255,44 @@ impl Parser<'_> {
 
         let id = self.next_id();
         let kind = self.parse_item_kind()?;
+        self.check_fn_bodies(&kind);
         Some(Item { id, attrs, vis, doc, kind, span: start.to(self.prev_span()) })
+    }
+
+    /// `[GRM-33]` — a bodiless `fn_decl` is legal only in an `interface`, an
+    /// `extern` block, or as a `virtual` method of an `abstract class`.
+    fn check_fn_bodies(&mut self, kind: &ItemKind) {
+        // The bodiless methods among `members`, but a virtual one of an
+        // abstract class.
+        let bodiless = |members: &[Member], abstract_class: bool| -> Vec<Ident> {
+            members
+                .iter()
+                .filter_map(|member| match &member.kind {
+                    MemberKind::Fn(decl)
+                        if decl.body.is_none() && !(abstract_class && decl.dispatch == Dispatch::Virtual) =>
+                    {
+                        Some(decl.name.clone())
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let names = match kind {
+            ItemKind::Fn(decl) if decl.body.is_none() && !self.in_extern_block => vec![decl.name.clone()],
+            ItemKind::Struct(decl) => bodiless(&decl.members, false),
+            ItemKind::Enum(decl) => bodiless(&decl.members, false),
+            ItemKind::Extend(decl) => bodiless(&decl.members, false),
+            ItemKind::Class(decl) => bodiless(&decl.members, decl.openness == Openness::Abstract),
+            _ => Vec::new(),
+        };
+        let names: Vec<Ident> = names.into_iter().filter(|name| !self.damaged_signatures.contains(&name.span)).collect();
+        for name in names {
+            self.report(
+                Diagnostic::error(codes::E0110, name.span, format!("`{}` is declared without a body", name.name))
+                    .primary_label("a function here needs a body")
+                    .help("add ':' and a body"),
+            );
+        }
     }
 
     fn parse_item_kind(&mut self) -> Option<ItemKind> {
@@ -593,6 +630,7 @@ impl Parser<'_> {
             Dispatch::Static
         };
         self.expect_kw(Kw::Fn);
+        let signature_start = self.pos;
         let name = self.expect_member_name();
         let generics = self.parse_generic_params();
 
@@ -612,6 +650,12 @@ impl Parser<'_> {
         // A body is present unless this is an interface or extern signature.
         let body = if self.eat_punct(Punct::Colon) { Some(self.parse_block()) } else { None };
         if body.is_none() {
+            if self.tokens[signature_start..=self.pos.min(self.tokens.len() - 1)]
+                .iter()
+                .any(|token| matches!(token.kind, TokenKind::Error))
+            {
+                self.damaged_signatures.push(name.span);
+            }
             self.expect_newline();
         }
 

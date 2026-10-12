@@ -153,6 +153,8 @@ codes! {
     E0107 = (Error, 107, Parse, "[GRM-16]", "a jump expression may not be an operand");
     E0108 = (Error, 108, Parse, "[ATT-3]", "attribute is not permitted on this statement");
     E0109 = (Error, 109, Parse, "[GRM-15]", "`owned` is not permitted in expression position");
+    E0110 = (Error, 110, Parse, "[GRM-33]", "function declared without a body outside an interface, extern block or abstract class");
+    E0111 = (Error, 111, Parse, "[GRM-36]", "`ref` of an expression that is not a place");
     E0112 = (Error, 112, Parse, "[GRM-39]", "nested more deeply than the compiler accepts");
     // 0.9.9 `[CLI-19]`: a construct the specification defines and this
     // compiler does not implement yet is rejected by name, never silently.
@@ -162,7 +164,7 @@ codes! {
     E1010 = (Error, 1010, Resolve, "[MOD-3]", "cannot find name in this scope");
     E1020 = (Error, 1020, Resolve, "[GRM-4]", "name is already declared in this block");
     E1030 = (Error, 1030, Resolve, "[TYP-26]", "two items with the same name in one scope");
-    E1040 = (Error, 1040, Resolve, "[MOD-3]", "wildcard import from a module that is not a prelude");
+    E1031 = (Error, 1031, Resolve, "[MOD-8]", "a name bound by two glob imports is used");
     E1041 = (Error, 1041, Resolve, "[MOD-4]", "import cycle between packages");
     E1050 = (Error, 1050, Resolve, "[MOD-7]", "field is read-only outside its module");
     E1051 = (Error, 1051, Resolve, "[MOD-7]", "`read` visibility is valid on fields only");

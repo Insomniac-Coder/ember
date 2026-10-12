@@ -466,6 +466,9 @@ pub struct TypeTable {
     /// (`Cell[i32]`). Kept apart from `origin`, which also decides how a
     /// type resolves.
     written_as: HashMap<StructId, (Symbol, Vec<Ty>)>,
+    /// `[TYP-35]` — for a generic instance, the arguments of the parameters no
+    /// field names (its phantom parameters).
+    phantoms: HashMap<Ty, Vec<Ty>>,
     /// `[ARN-11]` — the structs declared `@derive(Zeroable)`, by declared
     /// name (a generic struct's instances share its name as their origin).
     zeroable_derived: HashSet<Symbol>,
@@ -545,6 +548,7 @@ impl TypeTable {
             enums: Vec::new(),
             ranges: Vec::new(),
             written_as: HashMap::new(),
+            phantoms: HashMap::new(),
             zeroable_derived: HashSet::new(),
             must_drop_declared: HashSet::new(),
             next_infer: 0,
@@ -1391,6 +1395,13 @@ impl TypeTable {
                 .fold((true, true), |a, b| (a.0 && b.0, a.1 && b.1)),
             TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } => both(*elem, visiting),
         };
+        // `[TYP-35]` — a phantom parameter counts as a field of its type.
+        let result = match self.kind(ty) {
+            TyKind::Struct(_) | TyKind::Enum(_) => self.phantoms(ty).iter()
+                .map(|&arg| both(arg, visiting))
+                .fold(result, |a, b| (a.0 && b.0, a.1 && b.1)),
+            _ => result,
+        };
         visiting.remove(&ty);
         result
     }
@@ -1937,6 +1948,19 @@ impl TypeTable {
     }
 
     /// Render a type the way a diagnostic should show it.
+    /// `[TYP-35]` — record a generic instance's phantom arguments.
+    pub fn set_phantoms(&mut self, ty: Ty, args: Vec<Ty>) {
+        if !args.is_empty() {
+            self.phantoms.insert(ty, args);
+        }
+    }
+
+    /// `[TYP-35]` — a generic instance's phantom arguments: each counts for
+    /// `Send` and `Sync` as a field of its type would.
+    pub fn phantoms(&self, ty: Ty) -> &[Ty] {
+        self.phantoms.get(&ty).map_or(&[], Vec::as_slice)
+    }
+
     /// D-232 — record how a compiler-built generic struct is written.
     pub fn set_written_as(&mut self, id: StructId, generic: &str, args: Vec<Ty>) {
         self.written_as.insert(id, (Symbol::intern(generic), args));

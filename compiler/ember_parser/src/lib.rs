@@ -51,6 +51,9 @@ pub(crate) struct Parser<'a> {
     in_ffi_attribute: bool,
     /// The `extern_item` grammar admits an uninitialized `static` only here.
     in_extern_block: bool,
+    /// `[GRM-33]` — the name spans of functions whose signature holds a token
+    /// the lexer already reported: a missing body there is that error's.
+    damaged_signatures: Vec<Span>,
 }
 
 pub use ember_ast::NESTING_LIMIT;
@@ -71,6 +74,7 @@ impl<'a> Parser<'a> {
             too_deep: false,
             in_ffi_attribute: false,
             in_extern_block: false,
+            damaged_signatures: Vec::new(),
         }
     }
 

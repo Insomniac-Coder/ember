@@ -5016,6 +5016,29 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-171 — The runtime checks its caller's ABI version (`[VER-4]`, D-583)
+
+**Date:** 2026-10-12 (autopilot). **Rules:** `[VER-4]`, `[RT-6]`, `[ABI-1]`, `[FFI-27]`.
+
+**Context.** `ember_rt_init` could not compare versions: nothing told it which header its caller was
+built against, and `ember_rt_config` had no size, so a field added later would be read past the end
+of an older caller's struct.
+
+**Decision.** (1) `EMBER_RUNTIME_ABI` (the name the rules use) is 2. (2) `ember_rt_config` leads with
+`size_t size`, and `ember_rt_config_default()` is `static inline` in the header, so `size` is the
+struct as the *caller* was compiled; the runtime copies no more than `size` bytes over its defaults.
+(3) `ember_rt_init(cfg)` stays the spelling every host writes, as a macro for
+`ember_rt_init_v2(cfg, EMBER_RUNTIME_ABI)`: the entry point's name carries the number, so a caller
+built for another version fails to link (`[ABI-1]`), and the runtime still compares the two, printing
+both and returning `EMBER_RT_INIT_ABI_MISMATCH` (3) before touching anything (`[VER-4]`). A `#error`
+in the header keeps the `_v2` suffix and the macro's value together.
+
+**Consequences.** Hosts recompile against the new header (the version moved, as `[VER-4]` requires
+of any change); source that calls `ember_rt_init(&cfg)` or `ember_rt_init(NULL)` is unchanged.
+`ember_module_init`'s check (`[ABI-3]`) is a later step with the module protocol.
+
+---
+
 ## ADR-170 — A method call borrows only the fields of its receiver the method uses (`[BRW-10]`, D-574)
 
 **Date:** 2026-10-12 (autopilot). **Rules:** `[BRW-10]`, `[BRW-4]`, `[LT-42]`.

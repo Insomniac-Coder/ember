@@ -10761,9 +10761,20 @@ not count for `Send`/`Sync`. Probed correct, tests to add: `[LEX-2]`, `[LEX-4]`,
 `[LEX-8]`, `[LEX-9]`, `[LEX-10]`, `[LEX-11a]`, `[LEX-12]`, `[LEX-13]`, `[LEX-14]`, `[LEX-18]`,
 `[LEX-20]`, `[LEX-25]`, `[GRM-1]`, `[GRM-3]`, `[GRM-6]`, `[GRM-7]`, `[GRM-10]`, `[GRM-11]`,
 `[GRM-20]`, `[GRM-30]`, `[FN-3]`, `[FN-4]`, `[FN-7]`, `[CTL-9]`, `[CLO-5]`, `[TYP-35]`'s identity
-half. Not yet probed: `[MOD-8]` (`E1031` is not a code), `[VER-4]`, `[LEX-23]`, `[PAN-3]`. **Next:**
-fix the six defects, add the tests, then build the five unbuilt features (const generics last,
-largest); ASK the owner: D-550's layout, the EXC-10 review workflow.
+half. Not yet probed: `[MOD-8]` (`E1031` is not a code), `[VER-4]`, `[LEX-23]`, `[PAN-3]`. Then fixed:
+D-576 (`E0110`), D-577 (a `const` in a pattern bound a new name, so the arm matched everything: the
+worst of them), D-578 (`W1002`), D-579 (`E0001`), D-580 (phantom `Send`/`Sync`), D-581 (`E0111`);
+`[LEX-7]` was not a defect (the probe's backslash was eaten by the shell). Tests for those and for
+the rules probed correct: 42 conformance files and one milestone; `[GRM-20]`'s case sits in `ATT-1/`
+(every statement attribute is `E0900` for now, so it has no accept case). Then D-582 (`[MOD-8]`:
+globs from any module, `E1031`; `E1040` was a retired code still emitted) and D-583 (`[VER-4]`:
+`EMBER_RUNTIME_ABI` 2, `ember_rt_init_v2` compares versions, `ember_rt_config.size`; ADR-171);
+`[PAN-3]` holds because nothing runs after a panic (`PAN-1/run_fail_no_drop_runs_after_a_panic`).
+`[LEX-23]` is observable only through `[UNS-8]`'s `W3012`, never emitted: 104 `unsafe` sites in 85
+files carry no `SAFETY` note. **Next:** `[LEX-23]` + `W3012` (lexer side table, the check, notes at
+those sites); then build the five unbuilt features (local functions, lazy statics, `some` returns,
+`comptime(e)`, const generics last, largest); ASK the owner: D-550's layout, the EXC-10 review
+workflow.
 
 **2026-10-11 (autopilot, the owner: "go on autopilot now"), EXC-10 and D-552 (ADR-158); D-554 found.**
 CI on `4a28ea6` failed on Linux only: the unix half of `main_args_replace_text_that_is_not_utf8`

@@ -16,7 +16,7 @@ use ember_build::interface::{
 };
 use ember_build::{Layout, LinkRequest, Profile, Toolchain};
 use ember_diag::{Diagnostic, Sink, codes};
-use ember_span::{SourceMap, Span};
+use ember_span::{LoadError, SourceMap, Span};
 use ember_types::TypeTable;
 
 const USAGE: &str = "\
@@ -553,7 +553,14 @@ fn cycle_analysis(
 ) -> Result<ExitCode, String> {
     let (entry, root_dir) = resolve_cycle_analysis_root(input)?;
     let mut map = SourceMap::new();
-    let file = map.load(&entry).map_err(|error| error.to_string())?;
+    let file = match map.load(&entry) {
+        Ok(file) => file,
+        Err(error @ LoadError::NotUtf8(_)) => {
+            eprintln!("{}", ember_diag::render(&load_diagnostic(&error, Span::DUMMY), &map));
+            return Ok(ExitCode::FAILURE);
+        }
+        Err(error) => return Err(error.to_string()),
+    };
     let source = map.file(file).text.clone();
     let mut sink = Sink::new();
     let lexed = ember_lexer::lex(file, &source, &mut sink);
@@ -1241,7 +1248,14 @@ fn print_safety_report(
 
 fn format_file(input: &Path, check_only: bool, write: bool) -> Result<ExitCode, String> {
     let mut map = SourceMap::new();
-    let file = map.load(input).map_err(|e| e.to_string())?;
+    let file = match map.load(input) {
+        Ok(file) => file,
+        Err(error @ LoadError::NotUtf8(_)) => {
+            eprintln!("{}", ember_diag::render(&load_diagnostic(&error, Span::DUMMY), &map));
+            return Ok(ExitCode::FAILURE);
+        }
+        Err(error) => return Err(error.to_string()),
+    };
     let source = map.file(file).text.clone();
 
     let mut sink = Sink::new();
@@ -1399,11 +1413,7 @@ fn load_modules(
         let file = match map.load(&file_path) {
             Ok(file) => file,
             Err(error) => {
-                sink.emit(ember_diag::Diagnostic::error(
-                    ember_diag::codes::E1010,
-                    ember_span::Span::DUMMY,
-                    format!("cannot read `{}`: {error}", file_path.display()),
-                ));
+                sink.emit(load_diagnostic(&error, ember_span::Span::DUMMY));
                 continue;
             }
         };
@@ -1493,11 +1503,7 @@ fn load_modules(
             let file = match map.load(&file_path) {
                 Ok(file) => file,
                 Err(error) => {
-                    sink.emit(ember_diag::Diagnostic::error(
-                        ember_diag::codes::E1010,
-                        span,
-                        format!("cannot read `{}`: {error}", file_path.display()),
-                    ));
+                    sink.emit(load_diagnostic(&error, span));
                     continue;
                 }
             };
@@ -2200,11 +2206,17 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         start_timings();
     }
     let mut map = SourceMap::new();
-    let file = map.load(input).map_err(|e| e.to_string())?;
-    let source = map.file(file).text.clone();
-
     let mut sink = Sink::new();
     sink.deny_warnings = options.deny_warnings;
+    let file = match map.load(input) {
+        Ok(file) => file,
+        Err(error @ LoadError::NotUtf8(_)) => {
+            sink.emit(load_diagnostic(&error, Span::DUMMY));
+            return Ok(finish(&sink, &map, options));
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    let source = map.file(file).text.clone();
 
     // Lex.
     let lexed = ember_lexer::lex(file, &source, &mut sink);
@@ -3032,6 +3044,16 @@ fn report_timings(options: &Options) {
         eprintln!("  {stage:<22}{:>10.2}  {module}", ms(*took));
     }
     eprintln!("  {:<22}{:>10.2}", "total", ms(last - start));
+}
+
+/// Why a source file could not be loaded: `E0001` when it is not UTF-8
+/// (`[LEX-1]`), `E1010` when it cannot be read.
+fn load_diagnostic(error: &LoadError, span: Span) -> Diagnostic {
+    match error {
+        LoadError::NotUtf8(path) => Diagnostic::error(codes::E0001, span, format!("`{}` is not valid UTF-8", path.display()))
+            .help("source files are UTF-8; save it in that encoding"),
+        LoadError::Io(path, _) => Diagnostic::error(codes::E1010, span, format!("cannot read `{}`: {error}", path.display())),
+    }
 }
 
 fn finish(sink: &Sink, map: &SourceMap, options: &Options) -> ExitCode {

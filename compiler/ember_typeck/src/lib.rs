@@ -126,6 +126,7 @@ pub fn check(
     checker.lint_return_intersection = lint_return_intersection;
     checker.prefixes = modules.iter().map(|m| m.path.join(".")).collect();
     checker.visible = vec![HashMap::new(); modules.len()];
+    checker.ambiguous_globs = vec![HashMap::new(); modules.len()];
     checker.namespaces = vec![HashMap::new(); modules.len()];
     checker.module_overflow = vec![default_overflow; modules.len()];
 
@@ -1121,6 +1122,9 @@ struct Checker<'a> {
     struct_ids: HashMap<Symbol, StructId>,
     class_ids: HashMap<Symbol, ClassId>,
     enum_ids: HashMap<Symbol, EnumId>,
+    /// `[GRM-12]` — each variant name, with the enums declaring a variant of
+    /// that name; built at the first fresh binding a pattern makes.
+    variant_owners: Option<HashMap<Symbol, Vec<Symbol>>>,
     /// Every named type in scope — structs, classes, and enums.
     named_types: HashMap<Symbol, Ty>,
     fn_ids: HashMap<Symbol, DefId>,
@@ -1235,6 +1239,9 @@ struct Checker<'a> {
     /// Per module: the names it can write, mapped to the qualified name each
     /// one means. Its own items plus whatever it imported.
     visible: Vec<HashMap<Symbol, Symbol>>,
+    /// `[MOD-8]` — per module: each name two glob imports bind to different
+    /// items, with the modules they came from. Using one is `E1031`.
+    ambiguous_globs: Vec<HashMap<Symbol, Vec<String>>>,
     /// Declaration spans for module items, keyed by their canonical names.
     /// N1 uses each span's file identity before considering its offset, so
     /// imported aliases never compare unrelated source coordinates.
@@ -1689,6 +1696,7 @@ impl<'a> Checker<'a> {
             struct_ids: HashMap::new(),
             class_ids: HashMap::new(),
             enum_ids: HashMap::new(),
+            variant_owners: None,
             named_types: HashMap::new(),
             fn_ids: HashMap::new(),
             foreign_declarations: HashMap::new(),
@@ -1717,6 +1725,7 @@ impl<'a> Checker<'a> {
             foreign_statics: HashMap::new(),
             prefixes: vec![String::new()],
             visible: vec![HashMap::new()],
+            ambiguous_globs: vec![HashMap::new()],
             item_spans: HashMap::new(),
             item_visibility: HashMap::new(),
             namespaces: vec![HashMap::new()],
@@ -3148,6 +3157,9 @@ impl<'a> Checker<'a> {
 
         for (index, loaded) in modules.iter().enumerate() {
             self.current_module = index;
+            // `[MOD-8]` — the glob imports, bound after everything else.
+            let mut globs: Vec<(usize, String)> = Vec::new();
+            let mut explicit: HashSet<Symbol> = HashSet::new();
             for import in &loaded.module.imports {
                 let (segments, binding) = match &import.kind {
                     ast::ImportKind::Module { path, alias } => (path, Some(alias)),
@@ -3194,11 +3206,7 @@ impl<'a> Checker<'a> {
                     // `from a.b import x, y as z` binds each item by name.
                     (ast::ImportKind::Items { items, glob, .. }, _) => {
                         if *glob {
-                            self.error(
-                                codes::E1040,
-                                import.span,
-                                "`import *` is only allowed from a `@prelude` module",
-                            );
+                            globs.push((target, key.clone()));
                             continue;
                         }
                         for item in items {
@@ -3231,12 +3239,72 @@ impl<'a> Checker<'a> {
                             };
                             let bound = item.alias.map(|a| a.name).unwrap_or(item.name.name);
                             self.visible[index].insert(bound, qualified);
+                            explicit.insert(bound);
                         }
                     }
                     _ => {}
                 }
             }
+            self.bind_globs(index, &globs, &explicit, modules);
         }
+    }
+
+    /// `[MOD-8]` — `from m import *` binds every `pub` item of `m`. The
+    /// module's own declarations and its explicit imports shadow a glob; a
+    /// glob shadows the prelude. A name two globs bind to different items is
+    /// bound to neither, and using it is `E1031` (`report_ambiguous_glob`).
+    fn bind_globs(&mut self, index: usize, globs: &[(usize, String)], explicit: &HashSet<Symbol>, modules: &[LoadedModule]) {
+        let own: HashSet<Symbol> = modules[index].module.items.iter().filter_map(item_name).collect();
+        let mut bound: Vec<(Symbol, Vec<(Symbol, String)>)> = Vec::new();
+        for (target, key) in globs {
+            let prefix = self.prefixes[*target].clone();
+            for item in &modules[*target].module.items {
+                let Some(name) = item_name(item) else { continue };
+                if item.vis.kind == ast::VisKind::Private || own.contains(&name) || explicit.contains(&name) {
+                    continue;
+                }
+                let qualified = if prefix.is_empty() { name } else { Symbol::intern(&format!("{prefix}.{name}")) };
+                let at = match bound.iter().position(|(bound_name, _)| *bound_name == name) {
+                    Some(at) => at,
+                    None => {
+                        bound.push((name, Vec::new()));
+                        bound.len() - 1
+                    }
+                };
+                if !bound[at].1.iter().any(|(already, _)| *already == qualified) {
+                    bound[at].1.push((qualified, key.clone()));
+                }
+            }
+        }
+        for (name, sources) in bound {
+            match sources.as_slice() {
+                [(qualified, _)] => {
+                    self.visible[index].insert(name, *qualified);
+                }
+                _ => {
+                    self.visible[index].remove(&name);
+                    self.ambiguous_globs[index].insert(name, sources.into_iter().map(|(_, key)| key).collect());
+                }
+            }
+        }
+    }
+
+    /// `[MOD-8]` — `E1031` when `name` is one that two glob imports bind
+    /// here; then nothing else is reported for it.
+    fn report_ambiguous_glob(&mut self, name: Symbol, span: Span) -> bool {
+        let Some(sources) = self.ambiguous_globs.get(self.current_module).and_then(|names| names.get(&name)).cloned() else {
+            return false;
+        };
+        self.sink.emit(
+            Diagnostic::error(
+                codes::E1031,
+                span,
+                format!("`{name}` is bound by two glob imports, from `{}` and `{}`", sources[0], sources[1]),
+            )
+            .primary_label("which one is meant cannot be told")
+            .help(format!("import the one you mean by name, `from {} import {name}`", sources[0])),
+        );
+        true
     }
 
     // -- collection ---------------------------------------------------------
@@ -3448,6 +3516,24 @@ impl<'a> Checker<'a> {
         );
     }
 
+    /// `[TYP-35]` — the arguments of a generic declaration's phantom
+    /// parameters: those no field type names, directly or through a
+    /// projection (`T.Item`).
+    fn phantom_args(&self, params: &[GenericParam], fields: impl Iterator<Item = Ty>, args: &[Ty]) -> Vec<Ty> {
+        let mut named = BTreeMap::new();
+        let mut seen = HashSet::new();
+        fields.for_each(|ty| self.params_in(ty, &mut named, &mut seen));
+        let projected: Vec<u32> = named
+            .keys()
+            .filter_map(|&index| params.get(index as usize)?.projection.map(|(base, _)| base))
+            .collect();
+        args.iter()
+            .enumerate()
+            .filter(|&(index, _)| !named.contains_key(&(index as u32)) && !projected.contains(&(index as u32)))
+            .map(|(_, &arg)| arg)
+            .collect()
+    }
+
     fn validate_sync_class(&mut self, id: ClassId) {
         let def = self.types.class_def(id);
         if !def.is_sync { return; }
@@ -3468,6 +3554,22 @@ impl<'a> Checker<'a> {
                 Diagnostic::error(codes::E7001, span,
                     format!("field `{name}.{field}` has type `{}`, which is not {property}", self.types.display(ty)))
                     .help(format!("give `{field}` a Send and Sync type before declaring `{name}` `@sync`")),
+            );
+        }
+        // `[TYP-35]` — a phantom parameter counts as a field of its type.
+        let span = self.types.class_def(id).span;
+        let class_ty = self.types.intern(TyKind::Class(id));
+        for arg in self.types.phantoms(class_ty).to_vec() {
+            let property = match (self.types.is_send(arg), self.types.is_sync(arg)) {
+                (true, true) => continue,
+                (false, false) => "Send or Sync",
+                (false, true) => "Send",
+                (true, false) => "Sync",
+            };
+            self.sink.emit(
+                Diagnostic::error(codes::E7001, span,
+                    format!("`{}` has the type argument `{}`, which is not {property}", self.types.display(class_ty), self.types.display(arg)))
+                    .note("a type parameter no field names counts for `Send` and `Sync` as a field of its type would (TYP-35)"),
             );
         }
     }
@@ -8203,11 +8305,13 @@ impl<'a> Checker<'a> {
         let written = segments[0].name;
         let name = self.resolve_name(written);
         let Some(definition) = self.interfaces.get(&name).cloned() else {
-            self.error(
-                codes::E1010,
-                ty.span,
-                format!("cannot find interface `{written}` in this scope"),
-            );
+            if !self.report_ambiguous_glob(written, ty.span) {
+                self.error(
+                    codes::E1010,
+                    ty.span,
+                    format!("cannot find interface `{written}` in this scope"),
+                );
+            }
             return None;
         };
         if args.is_empty() && definition.generic_params.is_empty() {
@@ -9266,7 +9370,9 @@ impl<'a> Checker<'a> {
             if self.interfaces.contains_key(&resolved) || tabled || !self.reported_unresolved_bounds.insert(span) {
                 continue;
             }
-            self.error(codes::E1010, span, format!("cannot find interface `{written}` in this scope"));
+            if !self.report_ambiguous_glob(written, span) {
+                self.error(codes::E1010, span, format!("cannot find interface `{written}` in this scope"));
+            }
         }
     }
 
@@ -9918,6 +10024,9 @@ impl<'a> Checker<'a> {
                 if let Some(&ty) = self.named_types.get(&resolved) {
                     return ty;
                 }
+                if self.report_ambiguous_glob(name, segments[0].span) {
+                    return self.common.error;
+                }
                 let diagnostic = Diagnostic::error(
                     codes::E1010,
                     segments[0].span,
@@ -10148,6 +10257,9 @@ impl<'a> Checker<'a> {
         } else {
             let is_known_type = self.named_types.contains_key(&resolved_name)
                 || self.interfaces.contains_key(&resolved_name);
+            if !is_known_type && self.report_ambiguous_glob(name, name_span) {
+                return self.common.error;
+            }
             let message = if self.named_types.contains_key(&resolved_name) {
                 format!("`{name}` does not take type arguments in this phase")
             } else {
@@ -11508,7 +11620,11 @@ impl<'a> Checker<'a> {
                 Some(definition) => {
                     let _ = self.instantiate_interface(name, &definition, &args, span);
                 }
-                None => self.error(codes::E1010, span, format!("cannot find interface `{name}` in this scope")),
+                None => {
+                    if !self.report_ambiguous_glob(name, span) {
+                        self.error(codes::E1010, span, format!("cannot find interface `{name}` in this scope"));
+                    }
+                }
             }
         }
     }
@@ -12257,6 +12373,8 @@ impl<'a> Checker<'a> {
             })
             .collect();
         self.types.struct_def_mut(id).fields = fields;
+        let phantoms = self.phantom_args(&decl.generic_params, decl.fields.iter().map(|field| field.ty), args);
+        self.types.set_phantoms(ty, phantoms);
 
         // The methods are substituted the same way, each getting a `DefId` of
         // its own.
@@ -12413,6 +12531,12 @@ impl<'a> Checker<'a> {
             })
             .collect();
         self.types.enum_def_mut(id).variants = variants;
+        let phantoms = self.phantom_args(
+            &decl.generic_params,
+            decl.variants.iter().flat_map(|variant| variant.fields.iter().map(|field| field.ty)),
+            args,
+        );
+        self.types.set_phantoms(ty, phantoms);
         // An instance over generic parameters answers no per-instance
         // question: `@derive(Copy)`, `Clone` and abstract methods are asked of
         // each concrete instance.
@@ -12563,6 +12687,8 @@ impl<'a> Checker<'a> {
             })
             .collect();
         self.types.class_def_mut(id).fields = fields;
+        let phantoms = self.phantom_args(&decl.generic_params, decl.fields.iter().map(|field| field.ty), args);
+        self.types.set_phantoms(ty, phantoms);
         if !args.iter().any(|&arg| self.types.is_generic(arg)) {
             self.validate_sync_class(id);
             self.validate_must_drop_class(id);
@@ -17422,11 +17548,13 @@ impl<'a> Checker<'a> {
                         && !self.is_capture_candidate(segments[0].name)
                     {
                         if op.is_some() {
-                            self.error(
-                                codes::E1010,
-                                target.span,
-                                format!("cannot find `{}` in this scope", segments[0].name),
-                            );
+                            if !self.report_ambiguous_glob(segments[0].name, target.span) {
+                                self.error(
+                                    codes::E1010,
+                                    target.span,
+                                    format!("cannot find `{}` in this scope", segments[0].name),
+                                );
+                            }
                             return;
                         }
                         if self.declare_open(segments[0].name, value, stmt.span, out) {
@@ -19747,11 +19875,16 @@ impl<'a> Checker<'a> {
             ast::PatternKind::Lit(lit) => self.check_literal_pattern(lit, expected, span),
 
             // `[GRM-12]` — an identifier is a unit variant if one is in scope
-            // for this type, and a fresh binding otherwise.
+            // for this type, a `const` if one of that name is in scope, and a
+            // fresh binding otherwise.
             ast::PatternKind::Bind { name, sub, by_ref, mutable } => {
                 if sub.is_none() && !by_ref {
                     if let Some((id, index)) = self.variant_named(&[*name], expected) {
                         return self.variant_pattern(id, index, &[], false, expected, span);
+                    }
+                    let qualified = self.resolve_name(name.name);
+                    if self.constants.contains_key(&qualified) || self.expr_consts.contains_key(&qualified) {
+                        return self.const_pattern(*name, qualified, expected, span);
                     }
                 }
                 // `[GRM-13]` — `ref x` / `ref mut x` always borrow; a plain
@@ -19771,7 +19904,10 @@ impl<'a> Checker<'a> {
                 // first one is that same local, not a new one.
                 let local = match self.or_bindings.as_ref().and_then(|b| b.get(&name.name)) {
                     Some(&existing) => existing,
-                    None => self.declare(Some(name.name), local_ty, span),
+                    None => {
+                        self.warn_binding_shadows_variant(*name, expected);
+                        self.declare(Some(name.name), local_ty, span)
+                    }
                 };
                 let sub = sub.as_ref().map(|s| Box::new(self.check_pattern(s, expected)));
                 hir::Pattern { ty: expected, kind: hir::PatternKind::Bind { local, sub, by_ref }, span }
@@ -19928,6 +20064,49 @@ impl<'a> Checker<'a> {
     /// (`[LEX-24]`, D-310), so an unsigned type cannot hold it and a signed
     /// type holds its least value. The pattern keeps the value's two's
     /// complement bits, so a `u128` above `i128`'s range matches too.
+    /// `[GRM-12]` — a `const` named in pattern position matches its value, as
+    /// the literal it folds to would.
+    fn const_pattern(&mut self, name: ast::Ident, qualified: Symbol, expected: Ty, span: Span) -> hir::Pattern {
+        let error = hir::Pattern { ty: self.common.error, kind: hir::PatternKind::Wild, span };
+        let value = if self.constants.contains_key(&qualified) {
+            self.constant_use(qualified, span)
+        } else {
+            match self.settle_const(ConstKey::Item(qualified), span) {
+                Some(entry) => self.expr_const_use(entry, span),
+                None => return error,
+            }
+        };
+        if value.ty == self.common.error || expected == self.common.error {
+            return error;
+        }
+        let (negative, magnitude) = match &value.kind {
+            ExprKind::Unary { op: UnOp::Neg, operand } => match operand.kind {
+                ExprKind::Int(v) => (true, Some(ast::Literal::Int { value: v, suffix: None })),
+                _ => (false, None),
+            },
+            ExprKind::Int(v) if value.ty == self.common.char_ => {
+                (false, char::from_u32(*v as u32).map(ast::Literal::Char))
+            }
+            ExprKind::Int(v) => (false, Some(ast::Literal::Int { value: *v, suffix: None })),
+            ExprKind::Bool(v) => (false, Some(ast::Literal::Bool(*v))),
+            _ => (false, None),
+        };
+        let typed_alike = value.ty == expected || self.types.is_untyped_literal(value.ty);
+        match magnitude {
+            Some(lit) if typed_alike => self.check_literal_pattern(&ast::PatternLit { negative, lit }, expected, span),
+            _ => {
+                let shown = self.types.display(value.ty);
+                let wanted = self.types.display(expected);
+                self.sink.emit(
+                    Diagnostic::error(codes::E2020, span, format!("the constant `{}` cannot match a value of type `{wanted}`", name.name))
+                        .primary_label(format!("a constant of type `{shown}`"))
+                        .note("a constant in a pattern matches as the integer, `bool` or `char` literal it stands for, of the matched type"),
+                );
+                error
+            }
+        }
+    }
+
     fn check_literal_pattern(
         &mut self,
         pattern: &ast::PatternLit,
@@ -19968,6 +20147,51 @@ impl<'a> Checker<'a> {
                 hir::Pattern { ty: self.common.error, kind: hir::PatternKind::Wild, span }
             }
         }
+    }
+
+    /// `[GRM-12]` — `W1002`: a fresh binding named like a variant of an enum
+    /// in scope here, other than the one matched. It matches anything, where
+    /// a reader takes it for that variant.
+    fn warn_binding_shadows_variant(&mut self, name: ast::Ident, expected: Ty) {
+        if self.variant_owners.is_none() {
+            let mut owners: HashMap<Symbol, Vec<Symbol>> = HashMap::new();
+            for (&enum_name, &id) in &self.enum_ids {
+                let def = self.types.enum_def(id);
+                if def.origin.is_none() {
+                    def.variants.iter().for_each(|variant| owners.entry(variant.name).or_default().push(enum_name));
+                }
+            }
+            for (&enum_name, decl) in &self.generic_enums {
+                decl.variants.iter().for_each(|variant| owners.entry(variant.name).or_default().push(enum_name));
+            }
+            for list in owners.values_mut() {
+                list.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+                list.dedup();
+            }
+            self.variant_owners = Some(owners);
+        }
+        let matched = match *self.types.kind(expected) {
+            TyKind::Enum(id) => {
+                let def = self.types.enum_def(id);
+                Some(def.origin.as_ref().map_or(def.name, |(generic, _)| *generic))
+            }
+            _ => None,
+        };
+        let short = |owner: Symbol| owner.as_str().rsplit('.').next().unwrap_or(owner.as_str()).to_string();
+        let Some(owner) = self.variant_owners.as_ref().and_then(|owners| owners.get(&name.name)).and_then(|owners| {
+            owners
+                .iter()
+                .copied()
+                .find(|&owner| Some(owner) != matched && self.resolve_name(Symbol::intern(&short(owner))) == owner)
+        }) else {
+            return;
+        };
+        let variant = format!("{}.{}", short(owner), name.name);
+        self.sink.emit(
+            Diagnostic::warning(codes::W1002, name.span, format!("`{}` binds a new name, which matches any value", name.name))
+                .primary_label(format!("not the variant `{variant}`"))
+                .help(format!("write `{variant}` to match the variant, or rename the binding")),
+        );
     }
 
     /// Resolve `Shape.Circle`, or bare `Circle` when the scrutinee's type says
@@ -26850,6 +27074,9 @@ impl<'a> Checker<'a> {
                 if let Some(captured) = self.resolve_capture(name, span) {
                     return captured;
                 }
+                if self.report_ambiguous_glob(name, span) {
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
                 let mut diagnostic = Diagnostic::error(
                     codes::E1010,
                     span,
@@ -27791,11 +28018,13 @@ impl<'a> Checker<'a> {
                         self.reject_borrowed_parameter_write(&inner, place.span, true);
                     }
                 }
+                // `[GRM-36]` — the operand of `ref` is a place: a local, a
+                // field, an index or a dereferenced reference.
                 if !is_place(&inner.kind) {
-                    self.error(
-                        codes::E2140,
-                        place.span,
-                        "only a place can be borrowed",
+                    self.sink.emit(
+                        Diagnostic::error(codes::E0111, place.span, "only a place can be borrowed")
+                            .primary_label("this is a value, not a place")
+                            .help("bind the value to a local first, then borrow the local"),
                     );
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
@@ -28558,6 +28787,9 @@ impl<'a> Checker<'a> {
                     let shown = self.types.display(ty);
                     self.error(codes::E2020, name_span, format!("`{name}` has type `{shown}`, which cannot be called"));
                 }
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            if segments.len() == 1 && self.report_ambiguous_glob(name, name_span) {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             let mut diagnostic = Diagnostic::error(

@@ -1910,6 +1910,34 @@ fn a_devirtualised_interface_call_searches_out_of_line() {
     assert!(!c.stdout.contains(&inline), "an inline table search remains:\n{}", c.stdout);
 }
 
+/// D-579 — `[LEX-1]`: a source file that is not UTF-8 is `E0001`, whether it
+/// is the one compiled or a module it imports; a byte-order mark is accepted
+/// and ignored. A conformance file cannot hold such bytes, so they are
+/// written here.
+#[test]
+fn a_source_file_that_is_not_utf8_is_e0001() {
+    let root = workspace_root();
+    let directory = temporary_directory("not-utf8");
+    let bad = directory.join(ember_branding::source_file("bad"));
+    std::fs::write(&bad, b"fn main():\n    println(\"\xff\")\n").unwrap();
+    let checked = ember(&["check", &bad.to_string_lossy()], &root);
+    assert_ne!(checked.exit, 0);
+    assert!(checked.stderr.contains("error[E0001]: "), "{}", checked.stderr);
+    let helper = directory.join(ember_branding::source_file("helper"));
+    std::fs::write(&helper, b"pub fn one() -> int:\n    return 1  # \xfe\n").unwrap();
+    let entry = directory.join(ember_branding::source_file("entry"));
+    std::fs::write(&entry, b"import helper\n\nfn main():\n    println(helper.one())\n").unwrap();
+    let imported = ember(&["check", &entry.to_string_lossy()], &root);
+    assert_ne!(imported.exit, 0);
+    assert!(imported.stderr.contains("error[E0001]: "), "{}", imported.stderr);
+    let marked = directory.join(ember_branding::source_file("marked"));
+    std::fs::write(&marked, b"\xef\xbb\xbffn main():\n    println(1)\n").unwrap();
+    let out = directory.join("out");
+    let run = ember(&["run", &marked.to_string_lossy(), "--out-dir", &out.to_string_lossy()], &root);
+    assert_eq!(run.exit, 0, "{}", run.stderr);
+    assert_eq!(run.stdout, "1\n");
+}
+
 /// D-450 — `[STD-10]`, `[TXT-1]`, `[TXT-2]`: `input()` returns a `String`,
 /// which is valid UTF-8, and only a `_lossy` form may substitute U+FFFD, so a
 /// line that is not UTF-8 is a console failure and panics; a valid line with

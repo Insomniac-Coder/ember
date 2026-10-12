@@ -1879,6 +1879,31 @@ int main(int argc, char** argv) {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// D-583 — `[VER-4]`: `ember_rt_init` refuses a caller compiled against
+    /// another runtime ABI, naming both versions, and reads no
+    /// `ember_rt_config` field past the caller's `size`.
+    #[test]
+    fn the_runtime_checks_its_callers_abi_version() {
+        let requested = std::env::var(ember_branding::cc_var()).ok();
+        let toolchain = Toolchain::detect(requested.as_deref()).expect("a C toolchain");
+        let runtime = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+        let dir = std::env::temp_dir().join(format!("abi-version-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("obj")).expect("the test directory is creatable");
+        let program = dir.join(if cfg!(windows) { "abi_version.exe" } else { "abi_version" });
+        compile_and_link(&toolchain, &LinkRequest {
+            sources: &[runtime.join("tests/abi_version.c"), runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX))],
+            include_dirs: &[runtime.join("include")], output: program.clone(),
+            profile: Profile::Release, obj_dir: dir.join("obj"),
+        }).expect("the ABI-version oracle compiles");
+        let output = run_fresh(&mut Command::new(program)).expect("the ABI-version oracle runs");
+        assert!(output.status.success(), "the ABI-version oracle failed: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("ABI version 2, and its caller was compiled against version 3"), "{stderr}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// `[RT-11]` — even sequential host-thread operations must not share
     /// allocation counters. Cross-thread frees belong to the freeing thread.
     #[test]

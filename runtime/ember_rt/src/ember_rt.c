@@ -859,21 +859,25 @@ void ember_debug_leak_report(FILE* out) {
     free(objects);
 }
 
-ember_rt_config ember_rt_config_default(void) {
-    ember_rt_config cfg;
-    cfg.alloc = NULL;
-    cfg.free = NULL;
-    cfg.log = NULL;
-    cfg.on_panic = NULL;
-    cfg.flags = 0;
-    return cfg;
-}
-
-int ember_rt_init(const ember_rt_config* cfg) {
+int ember_rt_init_v2(const ember_rt_config* cfg, uint32_t caller_abi) {
+    /* [VER-4] A caller compiled against another runtime ABI is refused,
+     * naming both versions, before anything is touched. */
+    if (caller_abi != EMBER_RUNTIME_ABI) {
+        fprintf(stderr, "ember_rt_init: this runtime has ABI version %u, and its caller was compiled against version %u\n",
+            (unsigned)EMBER_RUNTIME_ABI, (unsigned)caller_abi);
+        return EMBER_RT_INIT_ABI_MISMATCH;
+    }
     if (g_initialised) {
         return 0; /* idempotent */
     }
-    g_config = cfg ? *cfg : ember_rt_config_default();
+    ember_rt_config config = ember_rt_config_default();
+    if (cfg) {
+        /* [VER-4] No field past the caller's `size` is read. */
+        size_t known = cfg->size < sizeof config ? cfg->size : sizeof config;
+        memcpy(&config, cfg, known);
+        config.size = sizeof config;
+    }
+    g_config = config;
     g_main_generation = object_load_u32(&g_thread_generation);
     g_initialised = true;
     ember_rt_thread_attach();
@@ -898,7 +902,7 @@ void ember_rt_shutdown(void) {
     g_initialised = false;
 }
 
-uint32_t ember_rt_abi_version(void) { return EMBER_RT_ABI; }
+uint32_t ember_rt_abi_version(void) { return EMBER_RUNTIME_ABI; }
 
 void ember_rt_thread_attach(void) {
     if (!runtime_thread_attached()) {

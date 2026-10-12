@@ -1,0 +1,24 @@
+/* [VER-4]: ember_rt_init refuses a caller compiled against another runtime ABI,
+ * naming both versions, and reads no ember_rt_config field past the caller's
+ * `size`. */
+#include "ember_rt.h"
+#include <stddef.h>
+#include <stdio.h>
+
+int main(void) {
+    if (ember_rt_abi_version() != EMBER_RUNTIME_ABI) return 1;
+    /* A caller built for the next version: refused, the runtime untouched. */
+    if (ember_rt_init_v2(NULL, EMBER_RUNTIME_ABI + 1) != EMBER_RT_INIT_ABI_MISMATCH) return 2;
+    /* A caller that knows the fields up to `alloc` only: `free` past its size
+     * holds garbage, which the runtime must never call. */
+    ember_rt_config cfg = ember_rt_config_default();
+    cfg.size = offsetof(ember_rt_config, free);
+    cfg.free = (void (*)(void*, size_t, size_t))(uintptr_t)1;
+    if (ember_rt_init(&cfg) != 0) return 3;
+    void* p = ember_alloc(16, 8);
+    if (p == NULL) return 4;
+    ember_free(p, 16, 8);
+    ember_rt_shutdown();
+    printf("ok\n");
+    return 0;
+}

@@ -58,6 +58,9 @@ PAGE_MANIFESTS = {
     },
 }
 
+# `<0xFF>` in an example: that one byte, for a page about bytes that are not
+# UTF-8.
+BYTE = re.compile(r"<0x([0-9A-F]{2})>")
 # A fenced block and its info string.
 FENCE = re.compile(r"^```ember,(fails|fixed)\s*$(.*?)^```\s*$", re.M | re.S)
 # Codes the compiler can actually emit. A page is required for those; a code
@@ -121,7 +124,13 @@ def run(source: str, work: Path, manifest: str | None = None, command: str = "ch
         manifest_path.unlink(missing_ok=True)
     else:
         manifest_path.write_text(manifest, encoding="utf-8", newline="\n")
-    path.write_text(source, encoding="utf-8", newline="\n")
+    # A page shows a byte that is not text (`E0001`'s) as `<0xFF>`.
+    parts = BYTE.split(source)
+    raw = b"".join(
+        bytes([int(part, 16)]) if index % 2 else part.encode("utf-8")
+        for index, part in enumerate(parts)
+    )
+    path.write_bytes(raw)
     arguments = [str(ember()), command, str(path)]
     if command == "run":
         arguments += ["--out-dir", str(work / "out")]

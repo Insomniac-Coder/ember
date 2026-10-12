@@ -53,9 +53,11 @@ extern "C" {
  * `EMBER_SYM(alloc)` would not be. */
 #define EMBER_SYMBOL_PREFIX ember
 
-/* The ABI version macro of Part XVIII §9. Bumped when anything below changes
- * shape; ember_rt_abi_version() reports what the linked library was built as. */
-#define EMBER_RT_ABI 1
+/* [VER-4], [RT-6] The runtime ABI version. Bumped when anything below changes
+ * shape; ember_rt_abi_version() reports what the linked library was built as.
+ * 2: ember_rt_config gained its leading size, and ember_rt_init carries the
+ * caller's version. */
+#define EMBER_RUNTIME_ABI 2
 
 /* -- portability shims ---------------------------------------------------- */
 
@@ -2273,8 +2275,11 @@ void ember_eprintln_char(uint32_t v);
 /* -- lifecycle and embedding ------------------------------------------------ */
 
 /* [FFI-27] The embedding API. A host may route allocation and logging into its
- * own systems. */
+ * own systems. [VER-4]: fields are only ever added at the end, behind `size`,
+ * which is the struct's size as its caller was compiled; the runtime reads no
+ * field past it, and takes the default for those it does not reach. */
 typedef struct ember_rt_config {
+    size_t size;
     void* (*alloc)(size_t size, size_t align);
     void (*free)(void* p, size_t size, size_t align);
     void (*log)(int level, const char* msg, size_t len);
@@ -2282,8 +2287,24 @@ typedef struct ember_rt_config {
     uint32_t flags;
 } ember_rt_config;
 
-ember_rt_config ember_rt_config_default(void);
-int ember_rt_init(const ember_rt_config* cfg);
+/* The defaults, sized as this header declares the struct: inline, so `size`
+ * is the caller's view and not the library's. */
+static inline ember_rt_config ember_rt_config_default(void) {
+    ember_rt_config cfg = { sizeof(ember_rt_config), NULL, NULL, NULL, NULL, 0 };
+    return cfg;
+}
+
+/* [VER-4], [ABI-1] `ember_rt_init(cfg)` passes the runtime ABI version its
+ * caller was compiled against. The entry point's name carries the number, so
+ * a caller built for another version fails to link; the runtime compares the
+ * two besides, and on a mismatch names both and returns
+ * EMBER_RT_INIT_ABI_MISMATCH. */
+#define EMBER_RT_INIT_ABI_MISMATCH 3
+int ember_rt_init_v2(const ember_rt_config* cfg, uint32_t caller_abi);
+#define ember_rt_init(cfg) ember_rt_init_v2((cfg), EMBER_RUNTIME_ABI)
+#if EMBER_RUNTIME_ABI != 2
+#error "rename ember_rt_init_v2 with the runtime ABI version"
+#endif
 void ember_rt_shutdown(void);
 uint32_t ember_rt_abi_version(void);
 
