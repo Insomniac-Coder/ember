@@ -362,14 +362,33 @@ pub fn emit(
             .collect(),
     }
     };
+    // `[STA-3]` — every static initialised on first access, by its
+    // initialiser's symbol: declared in each unit, defined in the main one.
+    let lazy_statics: BTreeMap<String, (Ty, String)> = bodies
+        .iter()
+        .flat_map(|body| &body.blocks)
+        .filter_map(|block| match &block.terminator {
+            Terminator::Call { func: FuncRef::Builtin { which: Builtin::LazyStatic { name, init, ty }, .. }, .. } => {
+                Some((init.to_string(), (*ty, name.to_string())))
+            }
+            _ => None,
+        })
+        .collect();
     let write = |emitter: &mut Emitter<'_>| {
         emitter.collect_native_fn_values(bodies);
         emitter.emit_module(bodies, module_name, has_main, leak_check);
-        let foreign_declarations = emitter.foreign_statics.borrow().iter()
+        let mut foreign_declarations = emitter.foreign_statics.borrow().iter()
             .map(|(symbol, (ty, immutable))| format!("extern {}{} {symbol};\n",
                 if *immutable { "const " } else { "" }, emitter.c_type(*ty)))
             .collect::<String>();
+        for (init, (ty, _)) in &lazy_statics {
+            foreign_declarations.push_str(&format!("{}* {init}_static(void);\n", emitter.c_type(*ty)));
+        }
         emitter.out = emitter.out.replace(FOREIGN_STATIC_DECLARATIONS, &foreign_declarations);
+        if emitter.unit.is_none() {
+            let definitions = emitter.lazy_static_definitions(&lazy_statics);
+            emitter.out.push_str(&definitions);
+        }
     };
     let mut emitter = make(None);
     write(&mut emitter);
@@ -3385,7 +3404,10 @@ impl Emitter<'_> {
             | TyKind::Infer(_)
             | TyKind::IntLit
             | TyKind::FloatLit
-            | TyKind::Error => {}
+            | TyKind::Error
+            // `[TYP-41]` — generic code's only; no instance has one.
+            | TyKind::ArrayN { .. }
+            | TyKind::Const(_) => {}
         }
     }
 
@@ -4535,6 +4557,24 @@ impl Emitter<'_> {
     /// after `[CG-C-3a]`'s hints. An internal one may end up uncalled (the MIR
     /// inliner copied it into its one caller), which is no warning
     /// (`EMBER_MAYBE_UNUSED`, `[CG-C-1]`).
+    /// `[STA-3]` — each lazily initialised static's one storage, and the
+    /// accessor that runs its initialiser the first time any thread asks:
+    /// the runtime holds one lock across a thread's chain of initialisations,
+    /// so another thread waits and a static reached again on its own chain
+    /// is the initialisation-cycle panic.
+    fn lazy_static_definitions(&self, statics: &BTreeMap<String, (Ty, String)>) -> String {
+        let mut out = String::new();
+        for (init, (ty, name)) in statics {
+            let c_type = self.c_type(*ty);
+            let shown = name.rsplit('.').next().unwrap_or(name);
+            out.push_str(&format!(
+                "\n{c_type}* {init}_static(void) {{\n    static {c_type} storage;\n    static uint32_t state;\n    if ({rt}rt_static_begin(&state, \"{shown}\")) {{\n        storage = {init}();\n        {rt}rt_static_end(&state);\n    }}\n    return &storage;\n}}\n",
+                rt = RT,
+            ));
+        }
+        out
+    }
+
     fn linkage(&self, body: &Body) -> String {
         let mut out = String::new();
         if body.inline.never {
@@ -6740,6 +6780,8 @@ impl Emitter<'_> {
                         self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*arg_ty, *immutable));
                         return symbol.to_string();
                     }
+                    // `[STA-3]` — the accessor `lazy_static_definitions` writes.
+                    Builtin::LazyStatic { init, .. } => return format!("{init}_static()"),
                     Builtin::ForeignStaticWrite { symbol } => {
                         self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*arg_ty, false));
                         return format!("({symbol} = {})", rendered[0]);
@@ -8754,7 +8796,7 @@ impl Emitter<'_> {
             // A generic parameter never reaches the backend: monomorphisation
             // substitutes it away, and a body still holding one was never
             // instantiated.
-            TyKind::Param { .. } | TyKind::Assoc { .. } => "void*".into(),
+            TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::ArrayN { .. } | TyKind::Const(_) => "void*".into(),
             TyKind::Infer(_) | TyKind::IntLit | TyKind::FloatLit => "int32_t".into(),
         }
     }

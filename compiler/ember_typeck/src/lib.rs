@@ -29,7 +29,7 @@ use ember_span::{Span, Symbol};
 use ember_types::{FpMode, 
     Bound, ClassDef, ClassId, ClassOpenness, CommonTypes, EnumDef, EnumId, FieldDef, FieldVis,
     OverflowPolicy, RangeDef, StructDef, StructId, Ty, TyKind, TypeTable, UintTy, VariantDef,
-    FnParam, FnParamMode, int_max,
+    FnParam, FnParamMode, int_max, ConstError, ConstNorm, ConstOp,
 };
 
 /// One parsed module and where it sits in the package (`[MOD-1]`). The root
@@ -254,6 +254,7 @@ pub fn check(
     // V.7 — every constant expression, now that every type it can name is
     // known.
     checker.settle_consts();
+    checker.settle_statics();
     // `[TYP-17]` — each generic type's methods, and each generic extension's,
     // are checked once with the parameters opaque, as a generic function's
     // body is (D-248).
@@ -416,6 +417,9 @@ struct GenericParam {
     /// the bound's interface instance, the associated type's name, and the
     /// type the bound says it is. Inside the body `a + b` is then a `T`.
     bindings: Vec<(Symbol, Symbol, Ty)>,
+    /// `[TYP-41]` — `const N: int`: the type of the value this parameter
+    /// stands for. Its argument is a `TyKind::Const`.
+    const_ty: Option<Ty>,
 }
 
 /// `[CLO-3]`, `[CLO-6]` — the signature a `fn(A) -> R` parameter may be called
@@ -724,6 +728,24 @@ enum ConstState {
 /// collection ends (`settle_consts`), in its declaring module and, for a
 /// type's, with `Self` that type: so constants may name each other in any
 /// order.
+/// `[STA-3]` — a `static` whose initialiser is not a literal, waiting for
+/// `settle_statics` to fold it or give it a first-access initialiser.
+struct PendingStatic {
+    name: Symbol,
+    ty: Ty,
+    decl: ast::ConstDecl,
+    module: usize,
+    span: Span,
+}
+
+/// `[STA-3]` — a `static` initialised on first access.
+#[derive(Clone, Copy)]
+struct LazyStatic {
+    ty: Ty,
+    /// The function its initialiser was checked as.
+    init: Symbol,
+}
+
 #[derive(Clone)]
 struct PendingConst {
     decl: ast::ConstDecl,
@@ -1321,6 +1343,9 @@ struct Checker<'a> {
     /// `interface`, where the implementing type is not yet known. `None` where
     /// `Self` has no meaning, which is `E2020`.
     self_ty: Option<Ty>,
+    /// `[TYP-41]` — the type whose method is being checked, whose generic
+    /// declaration says what its `const` parameters' values are.
+    method_owner: Option<Ty>,
     /// `[IFC-4]` — the associated type names in scope while an interface
     /// declaration is read.
     assoc_scope: std::collections::BTreeSet<Symbol>,
@@ -1389,6 +1414,10 @@ struct Checker<'a> {
     /// pass: a range type's bound may name one before constants are collected
     /// (D-329).
     const_values: HashMap<Symbol, (ast::Expr, usize)>,
+    /// `[STA-3]` — statics waiting for `settle_statics`.
+    pending_statics: Vec<PendingStatic>,
+    /// `[STA-3]` — statics initialised on first access, by qualified name.
+    lazy_statics: HashMap<Symbol, LazyStatic>,
     /// How many constants `const_bound` is following, against a cycle.
     const_bound_depth: usize,
     /// `(instance, index in generic_extensions)` for each extension an
@@ -1772,6 +1801,7 @@ impl<'a> Checker<'a> {
             no_implicit_debug: HashSet::new(),
             captures: None,
             self_ty: None,
+            method_owner: None,
             assoc_scope: std::collections::BTreeSet::new(),
             assoc_owner: None,
             assoc_values: HashMap::new(),
@@ -1796,6 +1826,8 @@ impl<'a> Checker<'a> {
             const_order: Vec::new(),
             substituting_self: None,
             const_values: HashMap::new(),
+            pending_statics: Vec::new(),
+            lazy_statics: HashMap::new(),
             const_bound_depth: 0,
             applied_extensions: HashSet::new(),
             emit_if_used_methods: HashSet::new(),
@@ -2535,6 +2567,7 @@ impl<'a> Checker<'a> {
             projection: None,
             count_op: None,
             bindings: Vec::new(),
+            const_ty: None,
         }).collect();
         // The bounds whose `[Name = type]` bindings are read once every
         // parameter is declared: (the parameter's place, the bound, its
@@ -2544,14 +2577,19 @@ impl<'a> Checker<'a> {
         // projections are declared: `F: fn(I.Item) -> R` names `I`'s `Item`.
         let mut callables: Vec<(usize, &ast::TypeExpr)> = Vec::new();
         for (index, param) in params.iter().enumerate() {
-            // A const generic is a value, not a type; `[TYP-16]`'s type
-            // parameters are what this phase handles.
-            if param.const_ty.is_some() {
-                self.error(
-                    codes::E1010,
-                    param.span,
-                    "a const generic is not supported yet in this phase",
-                );
+            // `[TYP-41]` — `const N: int` stands for a value. Inside the
+            // declaration it is the parameter of the array lengths and const
+            // arguments that name it; its argument is a `TyKind::Const`.
+            if let Some(const_ty) = &param.const_ty {
+                let value_ty = self.resolve_type(const_ty);
+                if !self.types.is_integral(value_ty) && value_ty != self.common.error {
+                    let shown = self.types.display(value_ty);
+                    self.error(codes::E2020, const_ty.span, format!("a `const` parameter is an integer, and `{shown}` is not one"));
+                }
+                let form = ConstNorm::param((index_base + index) as u32, param.name.name);
+                let ty = self.types.intern(TyKind::Const(form));
+                self.type_params.insert(param.name.name, ty);
+                declared[index].const_ty = Some(value_ty);
                 continue;
             }
             let ty = self
@@ -2790,6 +2828,7 @@ impl<'a> Checker<'a> {
             projection: None,
             count_op: None,
             bindings: Vec::new(),
+            const_ty: None,
         });
         param_ty
     }
@@ -4542,6 +4581,78 @@ impl<'a> Checker<'a> {
 
     /// V.7 — every `const` evaluated, used or not, so each declaration's
     /// errors are reported.
+    /// `[STA-3]` — "a static whose initialiser can be evaluated at compile
+    /// time is placed in the image with no initialisation code. Any other
+    /// initialiser runs once, on first access." One that folds to a scalar or
+    /// a string is a constant (repeated to a fixed point: a static may read
+    /// another); every other one, an aggregate included so that it has one
+    /// storage, is checked as a function of no arguments and read through
+    /// `Builtin::LazyStatic`.
+    fn settle_statics(&mut self) {
+        let mut pending = std::mem::take(&mut self.pending_statics);
+        loop {
+            let mut progress = false;
+            let mut left = Vec::new();
+            for item in pending {
+                let mark = self.sink.mark();
+                let errors = self.sink.error_count();
+                let module = std::mem::replace(&mut self.current_module, item.module);
+                let scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
+                let type_params = std::mem::take(&mut self.type_params);
+                let self_ty = self.self_ty.take();
+                let entry = self.expr_const(&item.decl);
+                self.current_module = module;
+                self.scopes = scopes;
+                self.type_params = type_params;
+                self.self_ty = self_ty;
+                let scalar = entry.folded.as_ref().is_some_and(|folded| folded.is_scalar());
+                if entry.ok && scalar && self.sink.error_count() == errors {
+                    self.expr_consts.insert(item.name, ConstState::Done(entry));
+                    progress = true;
+                } else {
+                    self.sink.rollback(mark);
+                    left.push(item);
+                }
+            }
+            pending = left;
+            if !progress || pending.is_empty() {
+                break;
+            }
+        }
+        // Named first, so that one initialiser may read another.
+        for item in &pending {
+            self.lazy_statics.insert(item.name, LazyStatic { ty: item.ty, init: Symbol::intern("") });
+        }
+        for item in pending {
+            let module = std::mem::replace(&mut self.current_module, item.module);
+            let lambda = ast::Lambda {
+                is_owned: false,
+                params: Vec::new(),
+                ret: item.decl.ty.clone(),
+                body: ast::LambdaBody::Expr(Box::new(item.decl.value.clone())),
+            };
+            let expected = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: true, params: Vec::new(), ret: item.ty });
+            let value = self.synth_lambda_fresh(&lambda, Some(expected), item.span, None);
+            self.current_module = module;
+            let ExprKind::FnValue(def) = value.kind else { continue };
+            let Some(function) = self.lambdas.iter().find(|function| function.def == def) else { continue };
+            let init = Symbol::intern(&function.symbol);
+            self.lazy_statics.insert(item.name, LazyStatic { ty: item.ty, init });
+        }
+    }
+
+    /// `[STA-3]` — a use of a static initialised on first access: the value
+    /// its accessor refers to, which is `static` (`[LT-3]`).
+    fn lazy_static_use(&mut self, name: Symbol, value: LazyStatic, span: Span) -> Expr {
+        let reference = self.types.intern(TyKind::Ref { mutable: false, inner: value.ty });
+        let access = Expr {
+            ty: reference,
+            kind: ExprKind::Builtin { which: Builtin::LazyStatic { name, init: value.init, ty: value.ty }, args: Vec::new() },
+            span,
+        };
+        Expr { ty: value.ty, kind: ExprKind::Deref(Box::new(access)), span }
+    }
+
     fn settle_consts(&mut self) {
         for (key, span) in self.const_order.clone() {
             let _ = self.settle_const(key, span);
@@ -5431,6 +5542,7 @@ impl<'a> Checker<'a> {
                 projection: None,
                 count_op: None,
                 bindings: Vec::new(),
+                const_ty: None,
             })
             .collect()
     }
@@ -5441,7 +5553,7 @@ impl<'a> Checker<'a> {
                 out.insert(index, ty);
             }
             TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => self.params_in(inner, out, seen),
-            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => self.params_in(elem, out, seen),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => self.params_in(elem, out, seen),
             TyKind::Tuple(items) => items.iter().for_each(|&item| self.params_in(item, out, seen)),
             TyKind::Fn { params, ret, .. } => {
                 params.iter().for_each(|param| self.params_in(param.ty, out, seen));
@@ -6296,7 +6408,6 @@ impl<'a> Checker<'a> {
                         "a `static`",
                         static_region,
                     );
-                    let value = self.check_expr(initializer, ty);
                     if decl.is_mut {
                         self.error(
                             codes::E1010,
@@ -6305,20 +6416,29 @@ impl<'a> Checker<'a> {
                         );
                         continue;
                     }
-                    if !matches!(
-                        value.kind,
-                        ExprKind::Int(_) | ExprKind::Float(_) | ExprKind::Bool(_) | ExprKind::Str(_) | ExprKind::CStr(_)
-                    ) && value.ty != self.common.error
-                        // Already reported: the value did not check ([DIA-14]).
-                        && !matches!(value.kind, ExprKind::Error)
-                    {
-                        self.error(
-                            codes::E2130,
-                            initializer.span,
-                            "a `static` initialiser must be comptime-evaluable, so a literal here",
-                        );
+                    // `[STA-3]` — anything but a literal is folded, or given a
+                    // first-access initialiser, once every constant and
+                    // signature is known (`settle_statics`).
+                    if !is_literal_initializer(initializer) {
+                        let name = self.qualified(decl.name.name);
+                        if self.constants.contains_key(&name) || self.pending_statics.iter().any(|pending| pending.name == name) {
+                            self.error(
+                                codes::E1030,
+                                decl.name.span,
+                                format!("`{}` is already declared in this module", decl.name.name),
+                            );
+                            continue;
+                        }
+                        self.pending_statics.push(PendingStatic {
+                            name,
+                            ty,
+                            decl: ast::ConstDecl { name: decl.name, ty: Some(decl.ty.clone()), value: initializer.clone() },
+                            module: self.current_module,
+                            span: item.span,
+                        });
                         continue;
                     }
+                    let value = self.check_expr(initializer, ty);
                     let const_name = self.qualified(decl.name.name);
                     if self.constants.contains_key(&const_name) {
                         self.error(
@@ -7930,7 +8050,7 @@ impl<'a> Checker<'a> {
         match self.types.kind(ty) {
             TyKind::Param { index, .. } => inside && *index == ember_types::SELF_PARAM,
             TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => self.nests_self(*inner, inside),
-            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => self.nests_self(*elem, true),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => self.nests_self(*elem, true),
             TyKind::Tuple(items) => items.iter().any(|&item| self.nests_self(item, true)),
             TyKind::Fn { params, ret, .. } => {
                 params.iter().any(|param| self.nests_self(param.ty, true)) || self.nests_self(*ret, true)
@@ -9953,11 +10073,15 @@ impl<'a> Checker<'a> {
                 }
                 self.types.intern(TyKind::Dyn { interfaces })
             }
-            ast::TypeKind::Array { elem, len } => {
+            ast::TypeKind::Array { elem, len: written } => {
                 let elem = self.resolve_type(elem);
-                match self.const_len(len) {
-                    Some(len) => self.types.intern(TyKind::Array { elem, len }),
-                    None => self.common.error,
+                let Some(len) = self.const_arg(written) else { return self.common.error };
+                match self.types.array_of(elem, len) {
+                    Some(ty) => ty,
+                    None => {
+                        self.error(codes::E2131, written.span, "an array length is not negative and fits a `u64`");
+                        self.common.error
+                    }
                 }
             }
             // `[IFC-4]` — `T.Real`: an associated type of a type parameter.
@@ -9980,16 +10104,19 @@ impl<'a> Checker<'a> {
                 let name = segments[0].name;
                 let mut resolved = Vec::with_capacity(args.len());
                 for arg in args {
-                    let ast::GenericArg::Type(t) = arg else {
-                        let arg_span = match arg {
-                            ast::GenericArg::Const(expr) => expr.span,
-                            ast::GenericArg::Assoc { name, .. } => name.span,
-                            ast::GenericArg::Type(_) => unreachable!(),
-                        };
-                        self.error(codes::E1010, arg_span, "expected a type argument");
-                        return self.common.error;
+                    let t = match arg {
+                        ast::GenericArg::Type(t) => t,
+                        // `[TYP-41]` — `Matrix[2, 3]`.
+                        ast::GenericArg::Const(expr) => {
+                            resolved.push((self.const_argument_type(expr), expr.span));
+                            continue;
+                        }
+                        ast::GenericArg::Assoc { name, .. } => {
+                            self.error(codes::E1010, name.span, "expected a type argument");
+                            return self.common.error;
+                        }
                     };
-                    resolved.push((self.resolve_type(t), t.span));
+                    resolved.push((self.generic_type_argument(t), t.span));
                 }
                 // `[OBJ-2]` applies to generic interfaces as well: first
                 // materialize the written contract, then use its concrete
@@ -10108,11 +10235,18 @@ impl<'a> Checker<'a> {
         }
         let mut resolved = Vec::with_capacity(args.len());
         for arg in args {
-            let ast::GenericArg::Type(t) = arg else {
-                self.error(codes::E1010, span, "expected a type argument");
-                return self.common.error;
+            let t = match arg {
+                ast::GenericArg::Type(t) => t,
+                ast::GenericArg::Const(expr) => {
+                    resolved.push((self.const_argument_type(expr), expr.span));
+                    continue;
+                }
+                ast::GenericArg::Assoc { .. } => {
+                    self.error(codes::E1010, span, "expected a type argument");
+                    return self.common.error;
+                }
             };
-            resolved.push((self.resolve_type(t), t.span));
+            resolved.push((self.generic_type_argument(t), t.span));
         }
         if let Some(definition) = self.interfaces.get(&qualified).cloned() {
             let types = resolved.iter().map(|(ty, _)| *ty).collect::<Vec<_>>();
@@ -10309,34 +10443,260 @@ impl<'a> Checker<'a> {
     /// The `N` of `[T; N]`. Part IV.3 makes it a const generic; until const
     /// generics and `const` items exist it has to be written as a literal,
     /// and anything else is reported rather than guessed at.
-    fn const_len(&mut self, expr: &ast::Expr) -> Option<u64> {
-        let mut expr = expr;
-        while let ast::ExprKind::Paren(inner) = &expr.kind {
-            expr = inner;
+    /// `[TYP-41]` — why a length or const argument within `ty` does not
+    /// compute with `args`, if one does not.
+    fn const_failure(&self, ty: Ty, args: &[Ty]) -> Option<ConstError> {
+        match self.types.kind(ty) {
+            TyKind::ArrayN { elem, len } => {
+                self.types.substitute_const(len, args).err().or_else(|| self.const_failure(*elem, args))
+            }
+            TyKind::Const(value) => self.types.substitute_const(value, args).err(),
+            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => self.const_failure(*inner, args),
+            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => self.const_failure(*elem, args),
+            TyKind::Tuple(items) => items.iter().find_map(|&item| self.const_failure(item, args)),
+            TyKind::Struct(id) => self.types.struct_def(*id).origin.as_ref()?.1.iter().find_map(|&arg| self.const_failure(arg, args)),
+            TyKind::Enum(id) => self.types.enum_def(*id).origin.as_ref()?.1.iter().find_map(|&arg| self.const_failure(arg, args)),
+            _ => None,
         }
-        if let ast::ExprKind::Lit(ast::Literal::Int { value, .. }) = &expr.kind {
-            if let Ok(len) = u64::try_from(*value) {
-                return Some(len);
+    }
+
+    /// `[TYP-41]` — the first pair of const arguments in which two types
+    /// of one shape differ: array lengths, or the arguments of two instances
+    /// of one generic.
+    fn const_mismatch(&self, a: Ty, b: Ty) -> Option<(ConstNorm, ConstNorm)> {
+        let length = |ty: Ty| match self.types.kind(ty) {
+            TyKind::Array { elem, len } => Some((*elem, ConstNorm::constant(i128::from(*len)))),
+            TyKind::ArrayN { elem, len } => Some((*elem, len.clone())),
+            _ => None,
+        };
+        if let (Some((left_elem, left)), Some((right_elem, right))) = (length(a), length(b)) {
+            if left != right {
+                return Some((left, right));
+            }
+            return self.const_mismatch(left_elem, right_elem);
+        }
+        let origin = |ty: Ty| match *self.types.kind(ty) {
+            TyKind::Struct(id) => self.types.struct_def(id).origin.clone(),
+            TyKind::Enum(id) => self.types.enum_def(id).origin.clone(),
+            TyKind::Class(id) => self.types.class_def(id).origin.clone(),
+            _ => None,
+        };
+        let (Some((left_name, left_args)), Some((right_name, right_args))) = (origin(a), origin(b)) else { return None };
+        if left_name != right_name {
+            return None;
+        }
+        left_args.iter().zip(&right_args).find_map(|(&x, &y)| match (self.types.kind(x), self.types.kind(y)) {
+            (TyKind::Const(left), TyKind::Const(right)) if left != right => Some((left.clone(), right.clone())),
+            _ if x != y => self.const_mismatch(x, y),
+            _ => None,
+        })
+    }
+
+    /// `[TYP-41]` — the type of `name`'s value, when it is a `const`
+    /// parameter of the declaration being checked or of the generic type
+    /// whose method this is.
+    fn const_param_type(&self, name: Symbol) -> Option<Ty> {
+        if let Some(param) = self.current_generics.iter().find(|param| param.name == name) {
+            return param.const_ty;
+        }
+        let owner = self.method_owner?;
+        let generic = match *self.types.kind(owner) {
+            TyKind::Struct(id) => self.types.struct_def(id).origin.as_ref().map(|(generic, _)| *generic),
+            TyKind::Enum(id) => self.types.enum_def(id).origin.as_ref().map(|(generic, _)| *generic),
+            TyKind::Class(id) => self.types.class_def(id).origin.as_ref().map(|(generic, _)| *generic),
+            _ => None,
+        }?;
+        let params = self
+            .generic_structs
+            .get(&generic)
+            .map(|recipe| &recipe.generic_params)
+            .or_else(|| self.generic_enums.get(&generic).map(|recipe| &recipe.generic_params))
+            .or_else(|| self.generic_classes.get(&generic).map(|recipe| &recipe.generic_params))?;
+        params.iter().find(|param| param.name == name)?.const_ty
+    }
+
+    /// `[TYP-41]` — `N`, a `const` parameter, as a value: its number in an
+    /// instance; in the generic body, checked once and never emitted, a value
+    /// of its type.
+    fn const_param_value(&mut self, name: Symbol, span: Span) -> Option<Expr> {
+        let &bound = self.type_params.get(&name)?;
+        let value = match self.types.kind(bound) {
+            TyKind::Const(value) => value.as_constant(),
+            TyKind::Param { .. } => None,
+            _ => return None,
+        };
+        let value_ty = self.const_param_type(name)?;
+        Some(match value {
+            Some(number) if number < 0 => Expr {
+                ty: value_ty,
+                kind: ExprKind::Unary {
+                    op: UnOp::Neg,
+                    operand: Box::new(Expr { ty: value_ty, kind: ExprKind::Int(number.unsigned_abs()), span }),
+                },
+                span,
+            },
+            Some(number) => Expr { ty: value_ty, kind: ExprKind::Int(number as u128), span },
+            None => Expr { ty: value_ty, kind: ExprKind::Error, span },
+        })
+    }
+
+    /// `[TYP-41]` — a const argument (an array length, or one written in a
+    /// generic's brackets) as its normal form: any expression compile time
+    /// evaluates over constants and the declaration's own `const`
+    /// parameters. `+`, `-` and `*` are seen through, `//`, `%`, the shifts
+    /// and the bitwise operators kept whole; an evaluation that overflows or
+    /// divides by zero is `E6004` here, where the argument is written.
+    /// `[TYP-41]` — a name in a const argument: a `const` parameter (its
+    /// form, or its number in an instance) or an integer constant.
+    fn const_named(&mut self, name: Symbol, span: Span) -> Option<ConstNorm> {
+        if let Some(&bound) = self.type_params.get(&name) {
+            match self.types.kind(bound).clone() {
+                TyKind::Const(value) => return Some(value),
+                TyKind::Param { index, name }
+                    if self.current_generics.get(index as usize).is_some_and(|param| param.const_ty.is_some()) =>
+                {
+                    return Some(ConstNorm::param(index, name));
+                }
+                _ => {}
             }
         }
-        // A `const` is a value known at compile time, so it may be a length.
-        if let ast::ExprKind::Path { segments } = &expr.kind {
-            if segments.len() == 1 {
-                if let Some(ExprKind::Int(value)) =
-                    self.constants.get(&segments[0].name).map(|c| &c.kind)
-                {
-                    if let Ok(len) = u64::try_from(*value) {
-                        return Some(len);
+        let qualified = self.resolve_name(name);
+        if let Some(ExprKind::Int(value)) = self.constants.get(&qualified).map(|c| &c.kind) {
+            return i128::try_from(*value).ok().map(ConstNorm::constant);
+        }
+        if self.expr_consts.contains_key(&qualified)
+            && let Some(entry) = self.settle_const(ConstKey::Item(qualified), span)
+            && let Some(value) = entry.folded.as_ref().and_then(|folded| folded.as_integer())
+        {
+            return Some(ConstNorm::constant(value));
+        }
+        None
+    }
+
+    /// `[TYP-41]` — an argument for `param`: a const argument for a `const`
+    /// parameter, a type for any other, and a number that fits the
+    /// parameter's type (rule 1: one that does not overflows, `E6004`).
+    fn const_argument_fits(&mut self, param: &GenericParam, ty: Ty, span: Span) -> bool {
+        let given = match self.types.kind(ty) {
+            TyKind::Const(value) => Some(value.clone()),
+            _ => None,
+        };
+        match (param.const_ty, given) {
+            (None, None) => true,
+            // A generic's own body, read with its parameters left open.
+            (Some(_), None) if matches!(self.types.kind(ty), TyKind::Param { .. }) => true,
+            (Some(_), None) => {
+                let shown = self.types.display(ty);
+                self.error(codes::E2020, span, format!("`{}` is a `const` parameter, so its argument is a number, not `{shown}`", param.name));
+                false
+            }
+            (None, Some(value)) => {
+                self.error(codes::E2020, span, format!("`{}` is a type parameter, so its argument is a type, not `{value}`", param.name));
+                false
+            }
+            (Some(value_ty), Some(value)) => {
+                let Some(number) = value.as_constant() else { return true };
+                let high = int_max(self.types, value_ty).map_or(i128::MAX, |max| i128::try_from(max).unwrap_or(i128::MAX));
+                let low = match ember_types::signed_min_magnitude(self.types, value_ty) {
+                    Some(magnitude) => i128::try_from(magnitude).map_or(i128::MIN, |magnitude| -magnitude),
+                    None => 0,
+                };
+                if (low..=high).contains(&number) {
+                    return true;
+                }
+                let shown = self.types.display(value_ty);
+                self.error(codes::E6004, span, format!("the const argument `{number}` for `{}` does not fit `{shown}`", param.name));
+                false
+            }
+        }
+    }
+
+    /// `[TYP-41]` — a bracketed argument written as a type: a constant's
+    /// name there is a const argument.
+    fn generic_type_argument(&mut self, written: &ast::TypeExpr) -> Ty {
+        if let ast::TypeKind::Path { segments, args } = &written.kind
+            && let [single] = segments.as_slice()
+            && args.is_empty()
+            && !self.type_params.contains_key(&single.name)
+        {
+            let qualified = self.resolve_name(single.name);
+            if (self.constants.contains_key(&qualified) || self.expr_consts.contains_key(&qualified))
+                && !self.named_types.contains_key(&qualified)
+                && let Some(value) = self.const_named(single.name, written.span)
+            {
+                return self.types.intern(TyKind::Const(value));
+            }
+        }
+        self.resolve_type(written)
+    }
+
+    fn const_arg(&mut self, expr: &ast::Expr) -> Option<ConstNorm> {
+        let fail = |this: &mut Self, error: ConstError| {
+            let what = match error {
+                ConstError::Overflow => "overflows",
+                ConstError::DivisionByZero => "divides by zero",
+                ConstError::NegativeShift => "shifts by a negative amount or by 128 or more",
+            };
+            this.error(codes::E6004, expr.span, format!("evaluating this const argument {what}"));
+            None
+        };
+        match &expr.kind {
+            ast::ExprKind::Paren(inner) => self.const_arg(inner),
+            ast::ExprKind::Lit(ast::Literal::Int { value, .. }) => match i128::try_from(*value) {
+                Ok(value) => Some(ConstNorm::constant(value)),
+                Err(_) => fail(self, ConstError::Overflow),
+            },
+            ast::ExprKind::Unary { op: ast::UnOp::Neg, operand } => {
+                let value = self.const_arg(operand)?;
+                value.neg().or_else(|error| fail(self, error).ok_or(error)).ok()
+            }
+            ast::ExprKind::Binary { op, lhs, rhs } => {
+                let (left, right) = (self.const_arg(lhs)?, self.const_arg(rhs)?);
+                let result = match op {
+                    ast::BinOp::Add => left.add(&right),
+                    ast::BinOp::Sub => left.sub(&right),
+                    ast::BinOp::Mul => left.mul(&right),
+                    ast::BinOp::FloorDiv => ConstNorm::opaque(ConstOp::FloorDiv, &left, &right),
+                    ast::BinOp::Rem => ConstNorm::opaque(ConstOp::Rem, &left, &right),
+                    ast::BinOp::Shl => ConstNorm::opaque(ConstOp::Shl, &left, &right),
+                    ast::BinOp::Shr => ConstNorm::opaque(ConstOp::Shr, &left, &right),
+                    ast::BinOp::BitAnd => ConstNorm::opaque(ConstOp::BitAnd, &left, &right),
+                    ast::BinOp::BitOr => ConstNorm::opaque(ConstOp::BitOr, &left, &right),
+                    ast::BinOp::BitXor => ConstNorm::opaque(ConstOp::BitXor, &left, &right),
+                    _ => {
+                        self.error(codes::E2131, expr.span, format!("`{}` does not make a const argument", op.as_str()));
+                        return None;
                     }
+                };
+                match result {
+                    Ok(value) => Some(value),
+                    Err(error) => fail(self, error),
                 }
             }
+            ast::ExprKind::Path { segments } if segments.len() == 1 => {
+                let name = segments[0].name;
+                let value = self.const_named(name, expr.span);
+                if value.is_none() {
+                    self.error(codes::E2131, expr.span, format!("`{name}` is not a constant, so it cannot be a const argument"));
+                }
+                value
+            }
+            ast::ExprKind::Call { .. } => {
+                self.sink.emit(
+                    Diagnostic::error(codes::E0900, expr.span, "a function computing a const argument is not supported yet")
+                        .note("calling a function at compile time needs the compile-time evaluator (`[CT-1]`)"),
+                );
+                None
+            }
+            _ => {
+                self.error(
+                    codes::E2131,
+                    expr.span,
+                    "a const argument is a number, a constant, a `const` parameter, or arithmetic of them",
+                );
+                None
+            }
         }
-        self.error(
-            codes::E2131,
-            expr.span,
-            "an array length must be an integer literal or a `const` in this phase",
-        );
-        None
     }
 
     /// Whether the runtime can format this type with its declared bounds.
@@ -10396,7 +10756,7 @@ impl<'a> Checker<'a> {
             // ODR-093 — a range value shows as its representation's value.
             TyKind::Range(id) => self.has_display(self.types.range_def(*id).repr),
             TyKind::Error => true,
-            TyKind::Vec { .. } | TyKind::Span { .. } | TyKind::Array { .. } | TyKind::Tuple(_) => {
+            TyKind::Vec { .. } | TyKind::Span { .. } | TyKind::Array { .. } | TyKind::ArrayN { .. } | TyKind::Tuple(_) => {
                 self.is_formattable(ty)
             }
             TyKind::Ref { inner, .. } => self.has_display(*inner),
@@ -10420,7 +10780,7 @@ impl<'a> Checker<'a> {
             TyKind::Range(id) => self.unformattable_part(self.types.range_def(*id).repr, seen),
             TyKind::Vec { text: true, .. } => None,
             // [TYP-39], [STR-5] — aggregate formatting depends on its parts.
-            TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } | TyKind::Array { elem, .. } => {
+            TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => {
                 self.unformattable_part(*elem, seen)
             }
             TyKind::Tuple(items) => items.iter().find_map(|&item| self.unformattable_part(item, seen)),
@@ -10657,7 +11017,7 @@ impl<'a> Checker<'a> {
             // `@no_derive(Eq)` opts out of the implicit one.
             TyKind::Struct(_) | TyKind::Enum(_) if self.no_implicit_eq.contains(&ty) => false,
             TyKind::Tuple(items) => items.iter().all(|&item| self.has_implicit_eq_in(item, seen)),
-            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } => {
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } => {
                 self.has_implicit_eq_in(*elem, seen)
             }
             TyKind::Struct(id) => {
@@ -11317,6 +11677,26 @@ impl<'a> Checker<'a> {
     /// `Buffer[T]` with `T = i32` is `Buffer[i32]`, a different nominal type
     /// with a different layout, not the same one with its fields rewritten.
     fn substitute_ty(&mut self, ty: Ty, args: &[Ty]) -> Ty {
+        // `[TYP-41]` — a length or const argument naming parameters is
+        // computed again with their arguments; one that does not compute was
+        // reported where it is written.
+        match self.types.kind(ty).clone() {
+            TyKind::ArrayN { elem, len } => {
+                let elem = self.substitute_ty(elem, args);
+                let len = self.types.substitute_const(&len, args);
+                return match len.ok().and_then(|len| self.types.array_of(elem, len)) {
+                    Some(ty) => ty,
+                    None => self.common.error,
+                };
+            }
+            TyKind::Const(value) => {
+                return match self.types.substitute_const(&value, args) {
+                    Ok(value) => self.types.intern(TyKind::Const(value)),
+                    Err(_) => self.common.error,
+                };
+            }
+            _ => {}
+        }
         match *self.types.kind(ty) {
             TyKind::Param { index, .. } if index == ember_types::SELF_PARAM => self.substituting_self.unwrap_or(ty),
             TyKind::Param { index, .. } => args.get(index as usize).copied().unwrap_or(ty),
@@ -11344,6 +11724,10 @@ impl<'a> Checker<'a> {
             TyKind::Array { elem, len } => {
                 let elem = map(self, elem);
                 self.types.intern(TyKind::Array { elem, len })
+            }
+            TyKind::ArrayN { elem, len } => {
+                let elem = map(self, elem);
+                self.types.intern(TyKind::ArrayN { elem, len })
             }
             TyKind::Vec { elem, text } => {
                 let elem = map(self, elem);
@@ -11483,7 +11867,7 @@ impl<'a> Checker<'a> {
             .map(|&(instance, name, value)| (self.substitute_bound(instance, args), name, self.substitute_ty(value, args)))
             .collect();
         let count_op = param.count_op.map(|(op, a, b)| (op, self.substitute_ty(a, args), self.substitute_ty(b, args)));
-        GenericParam { name: param.name, bounds, callable, default, projection: param.projection, count_op, bindings }
+        GenericParam { name: param.name, bounds, callable, default, projection: param.projection, count_op, bindings, const_ty: param.const_ty.map(|ty| self.substitute_ty(ty, args)) }
     }
 
     /// A parameter that neither an explicit argument nor inference fixed takes
@@ -12321,6 +12705,10 @@ impl<'a> Checker<'a> {
             );
             return self.common.error;
         }
+        // `[TYP-41]` — each const argument for a `const` parameter, fitting its type.
+        if decl.generic_params.iter().zip(args).any(|(param, &arg)| arg != self.common.error && !self.const_argument_fits(&param.clone(), arg, span)) {
+            return self.common.error;
+        }
         // `[STD-11]`, `[TYP-15]` (ODR-069, SP-013) — a `Map`'s keys and
         // values and a `Set`'s elements follow the one storage rule: views are
         // allowed, and each stored one must be `static`, which the region check
@@ -12506,6 +12894,10 @@ impl<'a> Checker<'a> {
             );
             return self.common.error;
         }
+        // `[TYP-41]` — each const argument for a `const` parameter, fitting its type.
+        if decl.generic_params.iter().zip(args).any(|(param, &arg)| arg != self.common.error && !self.const_argument_fits(&param.clone(), arg, span)) {
+            return self.common.error;
+        }
         let instance = self.generic_instance_name(name, args);
         if let Some(&ty) = self.named_types.get(&instance) {
             return ty;
@@ -12638,6 +13030,10 @@ impl<'a> Checker<'a> {
                 span,
                 format!("`{name}` takes {} type arguments, found {}", decl.params.len(), args.len()),
             );
+            return self.common.error;
+        }
+        // `[TYP-41]` — each const argument for a `const` parameter, fitting its type.
+        if decl.generic_params.iter().zip(args).any(|(param, &arg)| arg != self.common.error && !self.const_argument_fits(&param.clone(), arg, span)) {
             return self.common.error;
         }
         let instance = self.generic_instance_name(name, args);
@@ -13279,7 +13675,7 @@ impl<'a> Checker<'a> {
                     .any(|field| visit(this, field.ty, seen)),
                 TyKind::Ref { inner, .. }
                 | TyKind::Ptr { inner, .. }
-                | TyKind::Array { elem: inner, .. }
+                | TyKind::Array { elem: inner, .. } | TyKind::ArrayN { elem: inner, .. }
                 | TyKind::Vec { elem: inner, .. }
                 | TyKind::Span { elem: inner, .. } => visit(this, *inner, seen),
                 TyKind::Tuple(items) => items.iter().any(|&item| visit(this, item, seen)),
@@ -13684,7 +14080,7 @@ impl<'a> Checker<'a> {
     /// is an array at all.
     fn expected_elem(&self, expected: Option<Ty>) -> Option<Ty> {
         match self.types.kind(expected?) {
-            TyKind::Array { elem, .. } => Some(*elem),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => Some(*elem),
             _ => None,
         }
     }
@@ -14005,6 +14401,8 @@ impl<'a> Checker<'a> {
                 for (param, &ty) in generics.iter().zip(key.args.iter()) {
                     self.type_params.insert(param.name, ty);
                 }
+                // `[TYP-41]` — what a `const` parameter's value is a number of.
+                self.current_generics = generics.clone();
                 let source_params = self.signatures[key.def.0 as usize].params.clone();
                 self.callable_value_params = source_params
                     .iter()
@@ -14331,7 +14729,7 @@ impl<'a> Checker<'a> {
         match self.types.kind(ty) {
             TyKind::Ptr { inner, .. } | TyKind::Ref { inner, .. } =>
                 self.exported_owner_reachable(*inner, seen),
-            TyKind::Span { elem, .. } | TyKind::Array { elem, .. } =>
+            TyKind::Span { elem, .. } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } =>
                 self.exported_owner_reachable(*elem, seen),
             TyKind::Struct(id) => self.types.struct_def(*id).fields.iter()
                 .any(|field| self.exported_owner_reachable(field.ty, seen)),
@@ -15478,7 +15876,7 @@ impl<'a> Checker<'a> {
             let self_name = Symbol::intern("Self");
             let opaque_self = self.types.intern(TyKind::Param { index: self_index as u32, name: self_name });
             let mut self_param =
-                GenericParam { name: self_name, bounds: vec![bound], callable: None, default: None, projection: None, count_op: None, bindings: Vec::new() };
+                GenericParam { name: self_name, bounds: vec![bound], callable: None, default: None, projection: None, count_op: None, bindings: Vec::new(), const_ty: None };
             self.close_bounds(&mut self_param.bounds, &mut self_param.bindings);
             let saved_self = self.self_ty.replace(opaque_self);
             let saved_params = std::mem::take(&mut self.type_params);
@@ -15783,6 +16181,7 @@ impl<'a> Checker<'a> {
         self.callable_once_locals.clear();
         self.callable_parameter_locals.clear();
         self.latebound_callable_parameter_locals.clear();
+        self.method_owner = Some(owner);
         self.ret_ty = self.signatures[def.0 as usize].ret;
         let outer_overflow = std::mem::replace(&mut self.active_overflow,
             self.signatures[def.0 as usize].overflow);
@@ -21227,7 +21626,7 @@ impl<'a> Checker<'a> {
         let fixed = match open.kind {
             OpenKind::Array => match *self.types.kind(ty) {
                 TyKind::Vec { .. } => ty,
-                TyKind::Span { elem, .. } | TyKind::Array { elem, .. } if !assigned => {
+                TyKind::Span { elem, .. } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } if !assigned => {
                     self.types.intern(TyKind::Vec { elem, text: false })
                 }
                 _ => return,
@@ -21290,7 +21689,7 @@ impl<'a> Checker<'a> {
                 let str_ty = self.common.str_;
                 (self.coerce(base, str_ty), true)
             }
-            TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::Span { elem, mutable: false } => {
+            TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Span { elem, mutable: false } => {
                 let view_ty = self.types.intern(TyKind::Span { elem, mutable: false });
                 (self.coerce(base, view_ty), false)
             }
@@ -21453,7 +21852,7 @@ impl<'a> Checker<'a> {
                         return None;
                     }
                     match *self.types.kind(value.ty) {
-                        TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::Span { elem, mutable: false } => {
+                        TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Span { elem, mutable: false } => {
                             sources.push((value, elem));
                         }
                         _ => {
@@ -23314,7 +23713,7 @@ impl<'a> Checker<'a> {
             return None;
         }
         let elem = match *self.types.kind(value.ty) {
-            TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::Span { elem, mutable: false } => elem,
+            TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Span { elem, mutable: false } => elem,
             _ => {
                 let shown = self.types.display(value.ty);
                 self.error(
@@ -23428,7 +23827,7 @@ impl<'a> Checker<'a> {
             return Some(self.synth_eq_of(a, b, span));
         }
         let scalar = match self.types.kind(ty) {
-            TyKind::Struct(_) | TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Str | TyKind::Vec { .. } | TyKind::Span { .. } => false,
+            TyKind::Struct(_) | TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::ArrayN { .. } | TyKind::Str | TyKind::Vec { .. } | TyKind::Span { .. } => false,
             TyKind::Enum(id) => self.types.enum_def(*id).is_unit_only(),
             _ => true,
         };
@@ -23527,7 +23926,7 @@ impl<'a> Checker<'a> {
             return negated(Expr { ty: bool_ty, kind: ExprKind::Builtin { which, args: vec![text, value] }, span });
         }
         let elem = match *self.types.kind(haystack.ty) {
-            TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::Span { elem, .. } => elem,
+            TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Span { elem, .. } => elem,
             // `[STD-8]` — a type with a `contains` method: `k in m`.
             _ if self.lookup_method(haystack.ty, Symbol::intern("contains")).is_some() => {
                 let name = ast::Ident { name: Symbol::intern("contains"), span };
@@ -24008,7 +24407,7 @@ impl<'a> Checker<'a> {
         let value = self.synth_committed(&args[0].value);
         let value = self.read_through(value);
         let elem = match *self.types.kind(value.ty) {
-            TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::Span { elem, .. } => elem,
+            TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Span { elem, .. } => elem,
             _ if value.ty == self.common.error => return error,
             // ODR-034 — `sorted(m)` is the keys, `sorted(s)` the elements.
             _ if self.collection_named(value.ty).is_some() => {
@@ -24059,7 +24458,7 @@ impl<'a> Checker<'a> {
         }
         // A fixed array is read through a view; an `Array` and a view have
         // the pointer and length the copy starts from.
-        let value = if matches!(self.types.kind(value.ty), TyKind::Array { .. }) {
+        let value = if matches!(self.types.kind(value.ty), TyKind::Array { .. } | TyKind::ArrayN { .. }) {
             let span_ty = self.types.intern(TyKind::Span { elem, mutable: false });
             self.coerce(value, span_ty)
         } else {
@@ -24992,7 +25391,7 @@ impl<'a> Checker<'a> {
                     return Some(error);
                 }
                 let elem = match *self.types.kind(iterable.ty) {
-                    TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::Span { elem, mutable: false } => elem,
+                    TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Span { elem, mutable: false } => elem,
                     _ => {
                         let shown = self.types.display(iterable.ty);
                         self.error(
@@ -25344,7 +25743,7 @@ impl<'a> Checker<'a> {
         }
         // `[CTL-1]` — a fixed array and a shared view are iterated the same
         // way, through a view of their elements.
-        if let TyKind::Array { elem, .. } | TyKind::Span { elem, mutable: false } =
+        if let TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Span { elem, mutable: false } =
             *self.types.kind(iterable.ty)
         {
             return self.check_for_indexed(label, (iterable, elem), pattern, false, false, None, body, else_block, span);
@@ -25886,7 +26285,7 @@ impl<'a> Checker<'a> {
     /// wrong suggestion costs more than none.
     fn truthiness_fix(&self, ty: Ty) -> Option<String> {
         match self.types.kind(ty) {
-            TyKind::Vec { .. } | TyKind::Str | TyKind::Array { .. } => {
+            TyKind::Vec { .. } | TyKind::Str | TyKind::Array { .. } | TyKind::ArrayN { .. } => {
                 Some("a container is not a condition: write `not xs.is_empty()`".to_string())
             }
             TyKind::Int(_) | TyKind::Uint(_) => {
@@ -26378,7 +26777,7 @@ impl<'a> Checker<'a> {
         // keeps the container borrowed for the view's region.
         if let TyKind::Span { elem: want, mutable } = *self.types.kind(expected) {
             let source = match *self.types.kind(expr.ty) {
-                TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } => Some(elem),
+                TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => Some(elem),
                 _ => None,
             };
             if source == Some(want) {
@@ -26488,6 +26887,20 @@ impl<'a> Checker<'a> {
                     .primary_label("a different lambda")
                     .help("declare the place `fn(A) -> R`, an owned callable value, and write the lambdas `owned fn`")
                     .note("a lambda's type is its own, whatever its signature (CLO-1); `fn(A) -> R` outside a parameter holds any of them (CLO-3)"),
+            );
+            return Expr { ty: expected, kind: ExprKind::Error, span };
+        }
+        // `[TYP-41]` rule 3 — two const arguments that name parameters are
+        // one only when their normal forms are; when they are not, the
+        // diagnostic says they could not be shown equal, not that they differ.
+        if let Some((left, right)) = self.const_mismatch(expected, expr.ty)
+            && (left.mentions_params() || right.mentions_params())
+        {
+            self.sink.emit(
+                Diagnostic::error(codes::E2020, span, format!("expected `{wanted}`, found `{found}`, and `{left}` and `{right}` could not be shown equal"))
+                    .primary_label(format!("this is `{found}`"))
+                    .note(format!("in normal form these are `{left}` and `{right}`; `+`, `-` and `*` are seen through, any other operation kept whole [TYP-41]"))
+                    .help("compute the value once, in one shared expression or a `const` parameter taken for it"),
             );
             return Expr { ty: expected, kind: ExprKind::Error, span };
         }
@@ -27049,6 +27462,9 @@ impl<'a> Checker<'a> {
                 if let Some(local) = self.lookup(name) {
                     return self.read_local_expecting(local, span, expected);
                 }
+                if let Some(value) = self.const_param_value(name, span) {
+                    return value;
+                }
                 // A `const` or `static` is substituted where its name appears.
                 let qualified = self.resolve_name(name);
                 if self.constants.contains_key(&qualified) {
@@ -27056,6 +27472,9 @@ impl<'a> Checker<'a> {
                 }
                 if self.foreign_statics.contains_key(&qualified) {
                     return self.foreign_static_use(qualified, span);
+                }
+                if let Some(&value) = self.lazy_statics.get(&qualified) {
+                    return self.lazy_static_use(qualified, value, span);
                 }
                 if self.expr_consts.contains_key(&qualified) {
                     return match self.settle_const(ConstKey::Item(qualified), span) {
@@ -27181,7 +27600,7 @@ impl<'a> Checker<'a> {
                 {
                     let qualified = self.qualified_in_module(module, name.name);
                     if self.constants.contains_key(&qualified) || self.expr_consts.contains_key(&qualified)
-                        || self.foreign_statics.contains_key(&qualified) {
+                        || self.foreign_statics.contains_key(&qualified) || self.lazy_statics.contains_key(&qualified) {
                         if !self.item_accessible(module, qualified) {
                             self.report_item_not_visible(module, qualified, name.span);
                             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
@@ -27191,6 +27610,9 @@ impl<'a> Checker<'a> {
                         }
                         if self.foreign_statics.contains_key(&qualified) {
                             return self.foreign_static_use(qualified, span);
+                        }
+                        if let Some(&value) = self.lazy_statics.get(&qualified) {
+                            return self.lazy_static_use(qualified, value, span);
                         }
                         return match self.settle_const(ConstKey::Item(qualified), span) {
                             Some(entry) => self.expr_const_use(entry, span),
@@ -27301,15 +27723,21 @@ impl<'a> Checker<'a> {
             }
 
             // `[value; count]`.
-            ast::ExprKind::ArrayRepeat { value, count } => {
-                let Some(count) = self.const_len(count) else {
+            ast::ExprKind::ArrayRepeat { value, count: written } => {
+                let Some(count) = self.const_arg(written) else {
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 };
                 let value = match self.expected_elem(expected) {
                     Some(want) => self.check_expr(value, want),
                     None => self.synth_committed(value),
                 };
-                let ty = self.types.intern(TyKind::Array { elem: value.ty, len: count });
+                let Some(ty) = self.types.array_of(value.ty, count.clone()) else {
+                    self.error(codes::E2131, written.span, "an array length is not negative and fits a `u64`");
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                };
+                // `[TYP-41]` — a count naming a `const` parameter is in a
+                // generic body, which is checked once and never emitted.
+                let count = count.as_constant().map_or(0, |count| count as u64);
                 Expr { ty, kind: ExprKind::ArrayRepeat { value: Box::new(value), count }, span }
             }
 
@@ -27374,7 +27802,7 @@ impl<'a> Checker<'a> {
                 }
                 let elem = match self.types.kind(base.ty) {
                     // `[SPN-2]` — "Indexing a `Span` is bounds-checked".
-                    TyKind::Array { elem, .. }
+                    TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. }
                     | TyKind::Vec { elem, text: false }
                     | TyKind::Span { elem, .. } => Some(*elem),
                     _ => None,
@@ -28949,8 +29377,8 @@ impl<'a> Checker<'a> {
             }
             ast::ExprKind::ArrayRepeat { value, count } => {
                 let elem = self.type_from_expr(value);
-                match self.const_len(count) {
-                    Some(len) => self.types.intern(TyKind::Array { elem, len }),
+                match self.const_arg(count).and_then(|len| self.types.array_of(elem, len)) {
+                    Some(ty) => ty,
                     None => self.common.error,
                 }
             }
@@ -29189,7 +29617,23 @@ impl<'a> Checker<'a> {
                 checked_args[index] = Some(value);
                 continue;
             }
-            let value = self.synth(&arg.value);
+            let value = match (&arg.value.kind, self.types.kind(param_ty).clone()) {
+                // `[TYP-41]` — a list literal where a fixed array is wanted
+                // is one, of its own length, which then solves `N`.
+                (ast::ExprKind::ArrayLit(items), TyKind::ArrayN { elem, .. }) if !items.is_empty() => {
+                    let elem = if self.types.is_generic(elem) {
+                        let quiet = self.sink.mark();
+                        let first = self.synth_committed(&items[0]);
+                        self.sink.rollback(quiet);
+                        first.ty
+                    } else {
+                        elem
+                    };
+                    let fixed = self.types.intern(TyKind::Array { elem, len: items.len() as u64 });
+                    self.check_expr(&arg.value, fixed)
+                }
+                _ => self.synth(&arg.value),
+            };
             if self.types.is_untyped_literal(value.ty) {
                 deferred_literals.push((index, param_ty, value));
                 continue;
@@ -29351,6 +29795,41 @@ impl<'a> Checker<'a> {
         for (param, &ty) in generics.iter().zip(substitution.iter()) {
             if ty == self.common.error {
                 unmet = true;
+                continue;
+            }
+            if !self.const_argument_fits(param, ty, span) {
+                unmet = true;
+                continue;
+            }
+        }
+        // `[TYP-41]` rule 1 — a length or const argument of the signature
+        // that does not compute with these arguments is `E6004` here.
+        if !unmet {
+            let mut signature: Vec<Ty> = declared.iter().map(|(_, ty, _, _)| *ty).collect();
+            signature.push(ret);
+            for ty in signature {
+                if let Some(error) = self.const_failure(ty, &substitution) {
+                    let what = match error {
+                        ConstError::Overflow => "overflows",
+                        ConstError::DivisionByZero => "divides by zero",
+                        ConstError::NegativeShift => "shifts by a negative amount or by 128 or more",
+                    };
+                    let used = generics
+                        .iter()
+                        .zip(&substitution)
+                        .filter(|(param, _)| param.const_ty.is_some())
+                        .map(|(param, &arg)| format!("`{}` = {}", param.name, self.types.display(arg)))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.error(codes::E6004, span, format!("a const argument of `{name}`'s signature {what} with {used}"));
+                    unmet = true;
+                    break;
+                }
+            }
+        }
+        for (param, &ty) in generics.iter().zip(substitution.iter()) {
+            // A `const` parameter has no bounds; its fit was checked above.
+            if ty == self.common.error || param.const_ty.is_some() {
                 continue;
             }
             for bound in self.missed_bounds(ty, &param.bounds, &substitution) {
@@ -29535,7 +30014,23 @@ impl<'a> Checker<'a> {
                 checked_args[index] = Some(value);
                 continue;
             }
-            let value = self.synth(&arg.value);
+            let value = match (&arg.value.kind, self.types.kind(param_ty).clone()) {
+                // `[TYP-41]` — a list literal where a fixed array is wanted
+                // is one, of its own length, which then solves `N`.
+                (ast::ExprKind::ArrayLit(items), TyKind::ArrayN { elem, .. }) if !items.is_empty() => {
+                    let elem = if self.types.is_generic(elem) {
+                        let quiet = self.sink.mark();
+                        let first = self.synth_committed(&items[0]);
+                        self.sink.rollback(quiet);
+                        first.ty
+                    } else {
+                        elem
+                    };
+                    let fixed = self.types.intern(TyKind::Array { elem, len: items.len() as u64 });
+                    self.check_expr(&arg.value, fixed)
+                }
+                _ => self.synth(&arg.value),
+            };
             if self.types.is_untyped_literal(value.ty) {
                 deferred_literals.push((index, param_ty, value));
                 continue;
@@ -30088,6 +30583,30 @@ impl<'a> Checker<'a> {
         solved: &mut Vec<Option<Ty>>,
         fixed: usize,
     ) -> bool {
+        let fits = self.unify_generic_argument_shapes(declared, actual, generics, solved, fixed);
+        // `[TYP-41]` — a `const` parameter met as an array's length: the
+        // unifier, which cannot make a constant, left the array there.
+        for (slot, param) in generics.iter().enumerate() {
+            if param.const_ty.is_none() {
+                continue;
+            }
+            if let Some(Some(met)) = solved.get(slot)
+                && let TyKind::Array { len, .. } = *self.types.kind(*met)
+            {
+                solved[slot] = Some(self.types.intern(TyKind::Const(ConstNorm::constant(i128::from(len)))));
+            }
+        }
+        fits
+    }
+
+    fn unify_generic_argument_shapes(
+        &mut self,
+        declared: Ty,
+        actual: Ty,
+        generics: &[GenericParam],
+        solved: &mut Vec<Option<Ty>>,
+        fixed: usize,
+    ) -> bool {
         // `[TYP-5]` rule 7 — a `T` argument is auto-borrowed for a `ref T`
         // parameter, so inference reads through the borrow. (The unifier
         // accepts a shape mismatch without solving anything, so this is
@@ -30105,7 +30624,7 @@ impl<'a> Checker<'a> {
             while let TyKind::Ref { inner, .. } = *self.types.kind(seen) {
                 seen = inner;
             }
-            if let TyKind::Vec { elem: have, text: false } | TyKind::Array { elem: have, .. } = *self.types.kind(seen) {
+            if let TyKind::Vec { elem: have, text: false } | TyKind::Array { elem: have, .. } | TyKind::ArrayN { elem: have, .. } = *self.types.kind(seen) {
                 return self.types.unify_with_fixed(elem, have, solved, fixed);
             }
         }
@@ -30407,6 +30926,7 @@ impl<'a> Checker<'a> {
                 projection: Some(((index_base + base_index) as u32, assoc.name)),
                 count_op: None,
                 bindings: Vec::new(),
+                const_ty: None,
             });
             self.projection_params.insert((base, assoc.name), ty);
             // D-407 — and the bindings its bounds write (`Iter: Iterator[Item
@@ -30572,6 +31092,7 @@ impl<'a> Checker<'a> {
             projection: None,
             count_op: Some((op, a, b)),
             bindings: Vec::new(),
+            const_ty: None,
         });
         let ty = self.types.intern(TyKind::Param { index: index as u32, name });
         if self.declaring_count_ops {
@@ -30724,6 +31245,7 @@ impl<'a> Checker<'a> {
             projection: Some((index, name)),
             count_op: None,
             bindings: Vec::new(),
+            const_ty: None,
         });
         // D-407 — and the bindings its bounds write: `U.Iter`'s `Item` is
         // `U.Item` (`type Iter: Iterator[Item = Item]`).
@@ -33463,7 +33985,7 @@ impl<'a> Checker<'a> {
         let iterator_has = matches!(name.name.as_str(), "sum" | "product" | "copied" | "cloned" | "rev")
             || self.interfaces.get(&iterator).is_some_and(|def| def.methods.iter().any(|(method, ..)| *method == name.name));
         let iterable = self.lookup_method(receiver_ty, Symbol::intern("iter")).is_some()
-            || matches!(self.types.kind(receiver_ty), TyKind::Vec { text: false, .. } | TyKind::Span { .. } | TyKind::Array { .. });
+            || matches!(self.types.kind(receiver_ty), TyKind::Vec { text: false, .. } | TyKind::Span { .. } | TyKind::Array { .. } | TyKind::ArrayN { .. });
         if !iterator_has || !iterable || name.name.is("next") {
             return None;
         }
@@ -36781,10 +37303,39 @@ impl<'a> Checker<'a> {
     /// `[GRM-8b]` — the arguments of `name[…]` read as types: each one
     /// parsed as an expression is reinterpreted as a type or a const-generic
     /// argument by the ordinary rules.
+    /// `[TYP-41]` — whether a bracketed argument is a const argument: a
+    /// number, arithmetic, or the name of a constant or `const` parameter.
+    fn is_const_argument(&self, expr: &ast::Expr) -> bool {
+        match &expr.kind {
+            ast::ExprKind::Lit(ast::Literal::Int { .. })
+            | ast::ExprKind::Binary { .. }
+            | ast::ExprKind::Unary { op: ast::UnOp::Neg, .. } => true,
+            ast::ExprKind::Paren(inner) => self.is_const_argument(inner),
+            ast::ExprKind::Path { segments } if segments.len() == 1 => {
+                let name = segments[0].name;
+                let qualified = self.resolve_name(name);
+                self.type_params.get(&name).is_some_and(|&ty| matches!(self.types.kind(ty), TyKind::Const(_)))
+                    || self.constants.contains_key(&qualified)
+                    || self.expr_consts.contains_key(&qualified)
+            }
+            _ => false,
+        }
+    }
+
+    /// `[TYP-41]` — a const argument written in a generic's brackets, as
+    /// the `TyKind::Const` it stands for.
+    fn const_argument_type(&mut self, expr: &ast::Expr) -> Ty {
+        match self.const_arg(expr) {
+            Some(value) => self.types.intern(TyKind::Const(value)),
+            None => self.common.error,
+        }
+    }
+
     fn explicit_type_arguments(&mut self, args: &[ast::TypeOrExpr]) -> Vec<Ty> {
         args.iter()
             .map(|a| match a {
-                ast::TypeOrExpr::Type(ty) => self.resolve_type(ty),
+                ast::TypeOrExpr::Expr(e) if self.is_const_argument(e) => self.const_argument_type(e),
+                ast::TypeOrExpr::Type(ty) => self.generic_type_argument(ty),
                 ast::TypeOrExpr::Expr(e) => self.type_from_expr(e),
                 ast::TypeOrExpr::Binding { name, .. } => {
                     let name = name.name;
@@ -37750,7 +38301,7 @@ impl<'a> Checker<'a> {
             TyKind::Tuple(items) => items.clone().iter().all(|&item| self.hashes(item, seen)),
             // D-489 — std's structural Hash is for shared Span only. MutSpan
             // reaches the explicit-implementation fallback below.
-            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, mutable: false } => {
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, mutable: false } => {
                 self.hashes(*elem, seen)
             }
             TyKind::Enum(id) if self.types.enum_def(*id).is_unit_only() => true,
@@ -37861,7 +38412,7 @@ impl<'a> Checker<'a> {
                 let value = Expr { ty: repr, kind: ExprKind::EraseRange(Box::new(receiver)), span };
                 stmts.push(Stmt::Expr(self.synth_hash_of(value, recv_span, args, span)));
             }
-            TyKind::Array { elem, .. } => {
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => {
                 let view = self.types.intern(TyKind::Span { elem, mutable: false });
                 let value = self.coerce(receiver, view);
                 stmts.push(Stmt::Expr(self.synth_hash_of(value, recv_span, args, span)));
@@ -37984,7 +38535,7 @@ impl<'a> Checker<'a> {
     /// The kinds whose `hash` `synth_hash_of` builds rather than calls.
     fn hash_provided(&self, ty: Ty) -> bool {
         match self.types.kind(ty) {
-            TyKind::Void | TyKind::Range(_) | TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Class(_) => true,
+            TyKind::Void | TyKind::Range(_) | TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::ArrayN { .. } | TyKind::Class(_) => true,
             TyKind::Enum(id) => self.types.enum_def(*id).is_unit_only() || self.derives_hash(ty),
             TyKind::Struct(_) => self.derives_hash(ty),
             _ => false,
@@ -38028,7 +38579,7 @@ impl<'a> Checker<'a> {
         match self.types.kind(ty) {
             TyKind::Struct(_) | TyKind::Enum(_) if self.methods.contains_key(&(ty, Symbol::intern("eq"))) => true,
             TyKind::Tuple(items) => items.clone().iter().any(|&item| self.needs_written_eq(item, seen)),
-            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => {
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => {
                 self.needs_written_eq(*elem, seen)
             }
             TyKind::Struct(id) => {
@@ -38063,7 +38614,7 @@ impl<'a> Checker<'a> {
             };
             return Expr { ty: bool_ty, kind, span };
         }
-        if let TyKind::Array { elem, .. } | TyKind::Vec { elem, text: false } | TyKind::Span { elem, .. } = *self.types.kind(ty) {
+        if let TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, text: false } | TyKind::Span { elem, .. } = *self.types.kind(ty) {
             let view = self.types.intern(TyKind::Span { elem, mutable: false });
             let (lhs, rhs) = (self.coerce(lhs, view), self.coerce(rhs, view));
             self.extend_instance_at_use(view);
@@ -38152,7 +38703,7 @@ impl<'a> Checker<'a> {
         match self.types.kind(ty) {
             TyKind::Struct(_)
             | TyKind::Tuple(_)
-            | TyKind::Array { .. }
+            | TyKind::Array { .. } | TyKind::ArrayN { .. }
             | TyKind::Str
             | TyKind::Vec { .. }
             | TyKind::Span { .. } => false,
@@ -42747,6 +43298,16 @@ fn is_literal_value(kind: &ExprKind) -> bool {
 }
 
 /// A literal constant's copy, for one use at `span`.
+/// `[STA-3]` — an initialiser that is a literal as written, which a static
+/// keeps as its value with nothing more to decide.
+fn is_literal_initializer(expr: &ast::Expr) -> bool {
+    match &expr.kind {
+        ast::ExprKind::Lit(_) => true,
+        ast::ExprKind::Unary { op: ast::UnOp::Neg, operand } => matches!(operand.kind, ast::ExprKind::Lit(_)),
+        _ => false,
+    }
+}
+
 fn literal_copy(value: &Expr, span: Span) -> Expr {
     let kind = match &value.kind {
         ExprKind::Int(v) => ExprKind::Int(*v),

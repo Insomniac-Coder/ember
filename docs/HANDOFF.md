@@ -10776,9 +10776,31 @@ notes written at the 98 sites (`ember tcb` is still unbuilt). Phase 1's untested
 tested but the PHIL/VER principles, `[CLO-7]` (thread/job APIs, Phase 6), `[PAN-2]`/`[RNG-10a]`
 (effects and derives, Phase 4), `[TYP-2]` and the five unbuilt features. Then D-585: local functions
 (ADR-172; generic/`unsafe`/`gen` ones and a call from a closure inside one are `E0900`); README
-Phase 1 96% (`rule_sizes.py 96 92 66 14 14 4 6`). **Next:** the four unbuilt features left (local functions, lazy statics, `some` returns,
-`comptime(e)`, const generics last, largest); ASK the owner: D-550's layout, the EXC-10 review
-workflow.
+Phase 1 96% (`rule_sizes.py 96 92 66 14 14 4 6`). Then D-586: `[STA-3]` statics initialised on first
+access (`Builtin::LazyStatic`, `ember_rt_static_begin`/`end`); README Phase 1 97% (`rule_sizes.py 97 92 66 14 14 4 6`: 60.52%, Overall 61%). Left in Phase 1:
+`[TYP-41]` const generics (its "a function may compute one" needs the compile-time evaluator,
+Phase 4), `[TYP-32]`/`[GRM-31]` `some` return types, `[GRM-32]` `comptime(e)` (the evaluator,
+Phase 4). Then D-587: const generics (ADR-173: `TyKind::Const`, `TyKind::ArrayN`, `ConstNorm`);
+README Phase 1 99%. Phase 3 at 66% may be understated (every rule but `[CLS-5]`/`[CLS-8]` has
+cases; the closure ledger asks the owner to review before raising it): ASK.
+
+**PAUSED (owner, 2026-10-12 ~09:50): "pause the work after you're done finishing the current work".**
+The owner then asked that the README percentages be made accurate. Found: `rule_sizes.py` maps 638 of
+the target's 935 rules; 297 (14,497 of 46,723 words: STD, ERR, TXT, ARN, UNS, DIA, CG-C, CLI, GPU,
+tooling, ...) count toward no phase, so "Overall" leaves out about 30% of the spec, and 345 rules have
+no test naming them. Planned (not run; the owner: "let's talk about this later"): a two-phase audit
+workflow, 25 auditors (one per family group) then 25 adversarial verifiers, each rule classified done /
+partial (fraction) / not built with file:line evidence, percentages weighted by words. The inputs are
+prepared: `build/phase-audit/prepare.py` (every rule's text, words, phase and the tests that name it,
+into `rules.json`) and `jobs.py` (the 25 job files). Owner's decisions: **keep the current family
+mapping and give the 297 unmapped rules the phase Part XXI of 0.9.8_Hardened_3 gives their work**
+(`UNMAPPED` in `prepare.py`); **post-1.0 work (the LLVM backend, v2; the package registry client,
+v1.1; the GPU host model, v0.6) is counted separately**, in its own row outside the 1.0 Overall. Still
+to ask: concurrency (the owner usually wants 2-3 at a time). **Next, when resumed:** that audit, if
+the owner agrees; then `some` return types (`[TYP-32]`/`[GRM-31]`: an opaque type callers use through
+its interface only; checking each caller twice, once seeing the concrete type for the real HIR and
+once seeing only the interface for the diagnostics, reuses the existing machinery). ASK the owner:
+D-550's layout, the EXC-10 review workflow, whether to raise Phase 3.
 
 **2026-10-11 (autopilot, the owner: "go on autopilot now"), EXC-10 and D-552 (ADR-158); D-554 found.**
 CI on `4a28ea6` failed on Linux only: the unix half of `main_args_replace_text_that_is_not_utf8`

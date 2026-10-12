@@ -2308,6 +2308,15 @@ int ember_rt_init_v2(const ember_rt_config* cfg, uint32_t caller_abi);
 void ember_rt_shutdown(void);
 uint32_t ember_rt_abi_version(void);
 
+/* [STA-3] A static initialised on first access. The generated accessor calls
+ * begin with the static's state word (zero until then): 1 means this thread
+ * runs the initialiser now and calls end after it; 0 means the value is
+ * there. A thread waits while another initialises, and a static reached
+ * again on its own thread's chain of initialisers is the panic
+ * `static initialisation cycle: A -> B -> A`. */
+int ember_rt_static_begin(uint32_t* state, const char* name);
+void ember_rt_static_end(uint32_t* state);
+
 /* Per-thread attach. Idempotent and cheap after the first call ([FFI-22]). */
 void ember_rt_thread_attach(void);
 void ember_rt_thread_detach(void);

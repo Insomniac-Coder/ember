@@ -35,6 +35,21 @@ enum FoldedKind {
 }
 
 impl Folded {
+    /// `[TYP-41]` — the integer this value is, when it is one.
+    pub(crate) fn as_integer(&self) -> Option<i128> {
+        match self.kind {
+            FoldedKind::Scalar(Num::Signed(value)) => Some(value),
+            FoldedKind::Scalar(Num::Unsigned(value)) => i128::try_from(value).ok(),
+            _ => None,
+        }
+    }
+
+    /// `[STA-3]` — a number, `bool`, `char` or string: what a `static` keeps
+    /// as a constant rather than in storage of its own.
+    pub(crate) fn is_scalar(&self) -> bool {
+        matches!(self.kind, FoldedKind::Scalar(_) | FoldedKind::Str(_))
+    }
+
     /// The value as literals, for one use at `span`.
     pub(crate) fn to_expr(&self, span: Span) -> Expr {
         let ty = self.ty;

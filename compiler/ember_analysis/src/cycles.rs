@@ -277,10 +277,11 @@ fn collect_strong_targets(
                 collect_strong_targets(types, *item, seen, targets);
             }
         }
-        TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } => {
+        TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } => {
             collect_strong_targets(types, *elem, seen, targets);
         }
         TyKind::Bool
+        | TyKind::Const(_)
         | TyKind::Char
         | TyKind::Int(_)
         | TyKind::Uint(_)
@@ -351,10 +352,11 @@ fn collect_weak_targets(
                 collect_weak_targets(types, *item, seen, targets);
             }
         }
-        TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } => {
+        TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } => {
             collect_weak_targets(types, *elem, seen, targets);
         }
         TyKind::Bool
+        | TyKind::Const(_)
         | TyKind::Char
         | TyKind::Int(_)
         | TyKind::Uint(_)
@@ -417,10 +419,11 @@ fn contains_unknown_owner_inner(types: &TypeTable, ty: Ty, seen: &mut HashSet<Ty
         TyKind::Tuple(items) => items
             .iter()
             .any(|item| contains_unknown_owner_inner(types, *item, seen)),
-        TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } => {
+        TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } => {
             contains_unknown_owner_inner(types, *elem, seen)
         }
         TyKind::Bool
+        | TyKind::Const(_)
         | TyKind::Char
         | TyKind::Int(_)
         | TyKind::Uint(_)

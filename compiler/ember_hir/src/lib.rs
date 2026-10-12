@@ -866,6 +866,11 @@ pub enum Builtin {
     ViewsOverlap { a: Ty, b: Ty },
     /// `[FFI-10]` — read a hand-declared C global at its linker symbol.
     ForeignStaticRead { symbol: Symbol, immutable: bool },
+    /// `[STA-3]` — a reference to the one value of a `static` whose
+    /// initialiser runs on first access: `init`, a function of no
+    /// arguments, the first time any thread asks. `name` is the static's, for
+    /// the initialisation-cycle panic.
+    LazyStatic { name: Symbol, init: Symbol, ty: Ty },
     /// `[STA-1]` — write a `static mut` C global inside `unsafe`.
     ForeignStaticWrite { symbol: Symbol },
     /// `[STA-1]` — update one field of a C record global in place.
@@ -1333,6 +1338,7 @@ impl Builtin {
     pub fn name(self) -> &'static str {
         match self {
             Builtin::ForeignStaticRead { .. } => "foreign_static_read",
+            Builtin::LazyStatic { .. } => "lazy_static",
             Builtin::ForeignStaticWrite { .. } => "foreign_static_write",
             Builtin::ForeignStaticFieldWrite { .. } => "foreign_static_field_write",
             Builtin::Println => "println",

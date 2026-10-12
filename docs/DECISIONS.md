@@ -5016,6 +5016,38 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-173 — Const generics ride on the type arguments (`[TYP-41]`, D-587)
+
+**Date:** 2026-10-12 (autopilot). **Rules:** `[TYP-41]`, `[TYP-16]`, `[TYP-18]`, `[CT-1]`.
+
+**Context.** Generic functions and types are checked once with their parameters open, then re-checked
+from source per instance with the parameters bound; instance keys, substitution and inference all
+work on a list of type arguments. A `const` parameter needs the same machinery with a number where a
+type would be.
+
+**Decision.** (1) A const argument is a type: `TyKind::Const(ConstNorm)`, the value's normal form
+(`[TYP-41]` rule 2: terms of an integer coefficient times sorted atoms, a parameter or an opaque
+operation over normal forms; `+ - *` seen through, `// % << >> & | ^` kept whole, numbers computed).
+It sits in the argument list beside type arguments, so instance keys, names and substitution need
+nothing new. (2) A length that names a parameter is `TyKind::ArrayN { elem, len }`; `array_of` turns
+a number back into `Array`, so instances, MIR and C never see `ArrayN`. Equal normal forms intern to
+one type, which is rule 2's equality. (3) While a generic's signature is read, `N` is bound to
+`Const(N)`; a body check binds it to `Param`, an instance to `Const(number)`; `N` in an expression is
+the number in an instance and an opaque value of its type in the once-checked body. (4) Inference:
+`[T; N]` against `[T; 3]` solves `N`, and `Matrix[N, N]` against `Matrix[2, 2]`; the unifier cannot
+intern, so it leaves the array met in the slot and `unify_generic_argument` makes the constant. A
+list literal where `[T; N]` is wanted is a fixed array of its own length. (5) A bracketed argument is
+a const argument by its shape: a number, arithmetic, or the name of a constant or `const` parameter.
+(6) Rule 1 and 3 diagnostics: a const argument that does not fit its parameter's type, or a signature
+that does not compute with an instance's arguments, is `E6004` at the use; a type mismatch whose only
+difference is normal forms naming parameters says they "could not be shown equal" and prints both.
+
+**Consequences.** `N + 1` against `[T; 4]` does not solve `N` (only a bare parameter is solved); the
+argument is then written out. A const argument a function computes waits for the compile-time
+evaluator (`E0900`).
+
+---
+
 ## ADR-172 — A local function is a lambda with its own name (`[GRM-28]`, `[CLO-12]`, D-585)
 
 **Date:** 2026-10-12 (autopilot). **Rules:** `[GRM-28]`, `[CLO-12]`, `[CLO-1]`..`[CLO-6]`.

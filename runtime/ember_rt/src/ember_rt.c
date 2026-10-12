@@ -904,6 +904,63 @@ void ember_rt_shutdown(void) {
 
 uint32_t ember_rt_abi_version(void) { return EMBER_RUNTIME_ABI; }
 
+/* [STA-3] One lock for every first-access initialisation, held by a thread
+ * across its whole chain of them (an initialiser that reads another static),
+ * so a thread that finds a static running holds the lock: the chain is its
+ * own, and the static is on it. */
+static uint32_t g_static_lock;
+static EMBER_RT_THREAD_LOCAL uint32_t g_static_depth;
+#define EMBER_RT_STATIC_CHAIN 32
+static EMBER_RT_THREAD_LOCAL const char* g_static_chain[EMBER_RT_STATIC_CHAIN];
+
+int ember_rt_static_begin(uint32_t* state, const char* name) {
+    if (object_load_u32(state) == 2) {
+        return 0;
+    }
+    if (g_static_depth == 0) {
+        uint32_t expected = 0;
+        while (!object_compare_exchange_u32(&g_static_lock, &expected, 1)) {
+            expected = 0;
+        }
+    }
+    uint32_t now = object_load_u32(state);
+    if (now == 2) {
+        if (g_static_depth == 0) {
+            (void)object_fetch_sub_u32(&g_static_lock, 1);
+        }
+        return 0;
+    }
+    if (now == 1) {
+        char message[512];
+        size_t used = (size_t)snprintf(message, sizeof message, "static initialisation cycle: ");
+        uint32_t shown = g_static_depth < EMBER_RT_STATIC_CHAIN ? g_static_depth : EMBER_RT_STATIC_CHAIN;
+        for (uint32_t i = 0; i < shown && used < sizeof message; ++i) {
+            used += (size_t)snprintf(message + used, sizeof message - used, "%s -> ", g_static_chain[i]);
+        }
+        if (used < sizeof message) {
+            used += (size_t)snprintf(message + used, sizeof message - used, "%s", name);
+        }
+        if (used > sizeof message - 1) {
+            used = sizeof message - 1;
+        }
+        ember_panic(message, used, ember_loc_unknown());
+    }
+    (void)object_fetch_add_u32(state, 1); /* 0 -> 1: running */
+    if (g_static_depth < EMBER_RT_STATIC_CHAIN) {
+        g_static_chain[g_static_depth] = name;
+    }
+    g_static_depth += 1;
+    return 1;
+}
+
+void ember_rt_static_end(uint32_t* state) {
+    (void)object_fetch_add_u32(state, 1); /* 1 -> 2: there */
+    g_static_depth -= 1;
+    if (g_static_depth == 0) {
+        (void)object_fetch_sub_u32(&g_static_lock, 1);
+    }
+}
+
 void ember_rt_thread_attach(void) {
     if (!runtime_thread_attached()) {
         g_attached_generation = object_load_u32(&g_thread_generation);

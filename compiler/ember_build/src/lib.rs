@@ -1879,6 +1879,28 @@ int main(int argc, char** argv) {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// D-586 — `[STA-3]`: a lazily initialised static's initialiser runs once
+    /// when four threads ask for it first together; the rest wait for it.
+    #[test]
+    fn a_lazy_static_initialises_once_across_threads() {
+        let requested = std::env::var(ember_branding::cc_var()).ok();
+        let toolchain = Toolchain::detect(requested.as_deref()).expect("a C toolchain");
+        let runtime = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+        let dir = std::env::temp_dir().join(format!("lazy-static-threads-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("obj")).expect("the test directory is creatable");
+        let program = dir.join(if cfg!(windows) { "lazy_static_threads.exe" } else { "lazy_static_threads" });
+        compile_and_link(&toolchain, &LinkRequest {
+            sources: &[runtime.join("tests/lazy_static_threads.c"), runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX))],
+            include_dirs: &[runtime.join("include")], output: program.clone(),
+            profile: Profile::Release, obj_dir: dir.join("obj"),
+        }).expect("the lazy-static oracle compiles");
+        let output = run_fresh(&mut Command::new(program)).expect("the lazy-static oracle runs");
+        assert!(output.status.success(), "the lazy-static oracle failed ({:?}): {}", output.status.code(), String::from_utf8_lossy(&output.stderr));
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// D-583 — `[VER-4]`: `ember_rt_init` refuses a caller compiled against
     /// another runtime ABI, naming both versions, and reads no
     /// `ember_rt_config` field past the caller's `size`.

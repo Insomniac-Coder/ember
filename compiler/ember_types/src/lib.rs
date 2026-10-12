@@ -12,6 +12,9 @@ use std::fmt;
 
 use ember_span::{Span, Symbol};
 
+mod const_norm;
+pub use const_norm::{ConstAtom, ConstError, ConstNorm, ConstOp};
+
 /// An interned type. Equality is identity.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Ty(u32);
@@ -173,6 +176,12 @@ pub enum TyKind {
     Ref { mutable: bool, inner: Ty },
     Ptr { mutable: bool, inner: Ty },
     Array { elem: Ty, len: u64 },
+    /// `[TYP-41]` — `[T; n]` whose length names a `const` parameter, in
+    /// generic code; a length that is a number is `Array`.
+    ArrayN { elem: Ty, len: ConstNorm },
+    /// `[TYP-41]` — a const generic argument where a type argument would be:
+    /// its value's normal form, a number once every parameter is known.
+    Const(ConstNorm),
     /// `Array[T]` — a growable, heap-allocated sequence. Part XX.1 makes this
     /// a compiler-known type until Phase 2's generics let the standard library
     /// write it in Ember. `String` is this with `u8` elements and `text` set:
@@ -636,7 +645,8 @@ impl TypeTable {
     /// walk never ends (D-182).
     fn is_generic_in(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
         match self.kind(ty) {
-            TyKind::Param { .. } => true,
+            TyKind::Param { .. } | TyKind::ArrayN { .. } => true,
+            TyKind::Const(value) => value.mentions_params(),
             TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => {
                 self.is_generic_in(*inner, seen)
             }
@@ -691,7 +701,7 @@ impl TypeTable {
         match self.kind(ty) {
             TyKind::Dyn { .. } | TyKind::Opaque(_) => true,
             TyKind::Ref { .. } | TyKind::Ptr { .. } => false,
-            TyKind::Array { elem, .. }
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. }
             | TyKind::Vec { elem, .. }
             | TyKind::Span { elem, .. } => self.has_unsized_by_value_in(*elem, seen),
             TyKind::Tuple(items) => {
@@ -779,8 +789,40 @@ impl TypeTable {
         }
     }
 
+    /// `[TYP-41]` — `[elem; len]`: an `Array` when the length is a number
+    /// (`None` when it is not one an array can have), else an `ArrayN`.
+    pub fn array_of(&mut self, elem: Ty, len: ConstNorm) -> Option<Ty> {
+        match len.as_constant() {
+            Some(value) => Some(self.intern(TyKind::Array { elem, len: u64::try_from(value).ok()? })),
+            None => Some(self.intern(TyKind::ArrayN { elem, len })),
+        }
+    }
+
+    /// `[TYP-41]` — a const argument's form with each parameter replaced by
+    /// the argument `args` gives it, where that is a const argument.
+    pub fn substitute_const(&self, norm: &ConstNorm, args: &[Ty]) -> Result<ConstNorm, ConstError> {
+        norm.substitute(&|index| match args.get(index as usize).map(|&arg| self.kind(arg)) {
+            Some(TyKind::Const(value)) => Some(value.clone()),
+            Some(TyKind::Param { index, name }) => Some(ConstNorm::param(*index, *name)),
+            _ => None,
+        })
+    }
+
     pub fn substitute(&mut self, ty: Ty, args: &[Ty]) -> Ty {
         match self.kind(ty).clone() {
+            // A length that does not compute was reported where the argument
+            // is written (`[TYP-41]` rule 1); here it stays as it was.
+            TyKind::ArrayN { elem, len } => {
+                let elem = self.substitute(elem, args);
+                match self.substitute_const(&len, args) {
+                    Ok(len) => self.array_of(elem, len).unwrap_or(ty),
+                    Err(_) => ty,
+                }
+            }
+            TyKind::Const(value) => match self.substitute_const(&value, args) {
+                Ok(value) => self.intern(TyKind::Const(value)),
+                Err(_) => ty,
+            },
             TyKind::Param { index, .. } => {
                 args.get(index as usize).copied().unwrap_or(ty)
             }
@@ -863,6 +905,47 @@ impl TypeTable {
             | (TyKind::Ptr { inner: a, .. }, TyKind::Ptr { inner: b, .. })
             | (TyKind::Array { elem: a, .. }, TyKind::Array { elem: b, .. }) => {
                 self.unify_with_fixed(a, b, args, fixed)
+            }
+            // `[TYP-41]` — a length that is one `const` parameter is solved by
+            // the length met; any other is checked once substituted.
+            (TyKind::ArrayN { elem: a, len }, TyKind::Array { elem: b, len: met }) => {
+                if let Some(slot) = len.as_param().map(|index| index as usize)
+                    && slot < args.len()
+                    && slot >= fixed
+                {
+                    // The table cannot make the constant here, so the slot
+                    // holds the array met, whose length the checker reads.
+                    match args[slot] {
+                        Some(existing) => {
+                            let agrees = match self.kind(existing) {
+                                TyKind::Const(value) => value.as_constant() == Some(i128::from(met)),
+                                TyKind::Array { len: other, .. } => *other == met,
+                                _ => false,
+                            };
+                            if !agrees {
+                                return false;
+                            }
+                        }
+                        None => args[slot] = Some(actual),
+                    }
+                }
+                self.unify_with_fixed(a, b, args, fixed)
+            }
+            (TyKind::ArrayN { elem: a, .. }, TyKind::ArrayN { elem: b, .. }) => self.unify_with_fixed(a, b, args, fixed),
+            // `[TYP-41]` — a const argument that is one `const` parameter is
+            // solved by the argument met (`Matrix[N, N]` against `Matrix[2, 2]`).
+            (TyKind::Const(form), TyKind::Const(_)) => {
+                let Some(slot) = form.as_param().map(|index| index as usize) else { return true };
+                if slot >= args.len() || slot < fixed {
+                    return true;
+                }
+                match args[slot] {
+                    Some(existing) => existing == actual,
+                    None => {
+                        args[slot] = Some(actual);
+                        true
+                    }
+                }
             }
             // A `String` is no `Array[T]` (D-201).
             (TyKind::Vec { elem: a, text: a_text }, TyKind::Vec { elem: b, text: b_text }) if a_text == b_text => {
@@ -1149,6 +1232,8 @@ impl TypeTable {
     /// No reordering (`@layout(rust)` is v2).
     pub fn layout(&self, ty: Ty) -> Layout {
         match self.kind(ty) {
+            // `[TYP-41]` — generic code's only; an instance's are numbers.
+            TyKind::ArrayN { .. } | TyKind::Const(_) => Layout::ZERO,
             TyKind::Bool => Layout::scalar(1),
             TyKind::Char => Layout::scalar(4),
             // G8-4 — four 64-bit words, aligned as an `i128` is.
@@ -1310,7 +1395,7 @@ impl TypeTable {
                     || def.fields.iter().any(|f| self.holds_a_cell(f.ty))
             }
             TyKind::Tuple(items) => items.iter().any(|&t| self.holds_a_cell(t)),
-            TyKind::Array { elem, .. } => self.holds_a_cell(*elem),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => self.holds_a_cell(*elem),
             TyKind::Enum(id) => self
                 .enum_def(*id)
                 .variants
@@ -1342,6 +1427,8 @@ impl TypeTable {
         }
         let both = |child, visiting: &mut HashSet<Ty>| self.thread_properties(child, visiting);
         let result = match self.kind(ty) {
+            // `[TYP-41]` — a number, sent and shared as one is.
+            TyKind::Const(_) => (true, true),
             // ODR-102 — an owned callable value hides what it captured, so it
             // stays on the thread that made it.
             TyKind::Fn { abi: None, stateless: false, .. } => (false, false),
@@ -1393,7 +1480,7 @@ impl TypeTable {
                 .fold((true, true), |a, b| (a.0 && b.0, a.1 && b.1)),
             TyKind::Tuple(items) => items.iter().map(|&item| both(item, visiting))
                 .fold((true, true), |a, b| (a.0 && b.0, a.1 && b.1)),
-            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } => both(*elem, visiting),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } => both(*elem, visiting),
         };
         // `[TYP-35]` — a phantom parameter counts as a field of its type.
         let result = match self.kind(ty) {
@@ -1567,6 +1654,7 @@ impl TypeTable {
 
     fn copy_with(&self, ty: Ty, params: bool) -> bool {
         match self.kind(ty) {
+            TyKind::Const(_) => true,
             // `[CLO-3]` — an owned callable value owns its captured state,
             // so it moves; only `extern fn` is `Copy` (Part VI's list).
             TyKind::Fn { abi: None, stateless, .. } => *stateless,
@@ -1590,7 +1678,7 @@ impl TypeTable {
             TyKind::Span { mutable, .. } => !mutable,
             // `ref T` is Copy; `ref mut T` is move-only and reborrowable.
             TyKind::Ref { mutable, .. } => !mutable,
-            TyKind::Array { elem, .. } => self.copy_with(*elem, params),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => self.copy_with(*elem, params),
             TyKind::Tuple(items) => items.iter().all(|&t| self.copy_with(t, params)),
             TyKind::Struct(id) => {
                 let def = self.struct_def(*id);
@@ -1677,7 +1765,7 @@ impl TypeTable {
             TyKind::Enum(id) => self.enum_def(*id).variants.iter()
                 .any(|variant| variant.fields.iter().any(|field| self.must_drop_with(field.ty, seen))),
             TyKind::Tuple(items) => items.iter().any(|&item| self.must_drop_with(item, seen)),
-            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } => self.must_drop_with(*elem, seen),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } => self.must_drop_with(*elem, seen),
             _ => false,
         }
     }
@@ -1707,7 +1795,7 @@ impl TypeTable {
                 .flat_map(|variant| variant.fields.iter())
                 .find_map(|field| self.must_drop_container(field.ty)),
             TyKind::Tuple(items) => items.iter().find_map(|&item| self.must_drop_container(item)),
-            TyKind::Array { elem, .. } => self.must_drop_container(*elem),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => self.must_drop_container(*elem),
             _ => None,
         }
     }
@@ -1729,13 +1817,14 @@ impl TypeTable {
     /// inside its declared validity interval.
     pub fn is_builtin_zeroable(&self, ty: Ty) -> bool {
         match self.kind(ty) {
+            TyKind::Const(_) => true,
             TyKind::Bool
             | TyKind::Char
             | TyKind::Int(_)
             | TyKind::Uint(_)
             | TyKind::Float(_)
             | TyKind::Ptr { .. } => true,
-            TyKind::Array { elem, .. } => self.is_builtin_zeroable(*elem),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => self.is_builtin_zeroable(*elem),
             TyKind::Tuple(items) => items.iter().all(|&item| self.is_builtin_zeroable(item)),
             // The compiler-known `MaybeUninit[T]` wrapper accepts every byte
             // pattern because it makes no validity claim about its payload.
@@ -1814,7 +1903,7 @@ impl TypeTable {
                         .any(|v| v.fields.iter().any(|f| self.needs_drop(f.ty)))
             }
             TyKind::Tuple(items) => items.iter().any(|&t| self.needs_drop(t)),
-            TyKind::Array { elem, .. } => self.needs_drop(*elem),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => self.needs_drop(*elem),
             // An `Array[T]` or a `String` always owns a heap buffer, whatever
             // the element type is.
             TyKind::Vec { .. } => true,
@@ -1841,7 +1930,7 @@ impl TypeTable {
             // Part IV §1's View category, in full.
             TyKind::Ref { .. } | TyKind::Str | TyKind::CStr | TyKind::Span { .. } => true,
             TyKind::Tuple(items) => items.iter().any(|&t| self.is_view(t)),
-            TyKind::Array { elem, .. } => self.is_view(*elem),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => self.is_view(*elem),
             TyKind::Struct(id) => {
                 self.struct_def(*id).fields.iter().any(|f| self.is_view(f.ty))
             }
@@ -1866,7 +1955,7 @@ impl TypeTable {
         match self.kind(ty) {
             TyKind::Ref { mutable, .. } | TyKind::Span { mutable, .. } => *mutable,
             TyKind::Tuple(items) => items.iter().any(|&t| self.has_mutable_view(t)),
-            TyKind::Array { elem, .. } => self.has_mutable_view(*elem),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => self.has_mutable_view(*elem),
             TyKind::Struct(id) => self.struct_def(*id).fields.iter().any(|f| self.has_mutable_view(f.ty)),
             TyKind::Enum(id) => {
                 self.enum_def(*id).variants.iter().any(|v| v.fields.iter().any(|f| self.has_mutable_view(f.ty)))
@@ -1891,7 +1980,7 @@ impl TypeTable {
             TyKind::Enum(id) => self.option_niche(*id).is_some_and(|niche| {
                 matches!(self.kind(niche.payload), TyKind::Fn { abi: Some(_), .. } | TyKind::CStr)
             }),
-            TyKind::Array { elem, .. } => self.is_ffi_safe(*elem),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => self.is_ffi_safe(*elem),
             TyKind::Struct(id) => {
                 self.struct_def(*id).fields.iter().all(|f| self.is_ffi_safe(f.ty))
             }
@@ -2114,6 +2203,8 @@ impl TypeTable {
                 format!("{kw}{}", self.render(*inner, user))
             }
             TyKind::Array { elem, len } => format!("[{}; {len}]", self.render(*elem, user)),
+            TyKind::ArrayN { elem, len } => format!("[{}; {len}]", self.render(*elem, user)),
+            TyKind::Const(value) => value.to_string(),
             TyKind::Fn { abi, latebound, params, ret, .. } => {
                 let inner: Vec<String> = params
                     .iter()
@@ -2229,6 +2320,8 @@ impl TypeTable {
             TyKind::Array { elem, len } => {
                 format!("[{};{len}]", self.canonical_name(*elem)?)
             }
+            TyKind::ArrayN { elem, len } => format!("[{};{len}]", self.canonical_name(*elem)?),
+            TyKind::Const(value) => format!("const {value}"),
             TyKind::Vec { text: true, .. } => "String".to_string(),
             TyKind::Vec { elem, .. } => format!("Array[{}]", self.canonical_name(*elem)?),
             TyKind::Fn { abi, latebound, stateless, params, ret } => {
