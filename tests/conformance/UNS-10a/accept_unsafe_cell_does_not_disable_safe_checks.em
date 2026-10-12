@@ -5,7 +5,7 @@ from std.mem import UnsafeCell
 
 fn main():
     cell = UnsafeCell(1)
-    unsafe:
+    unsafe:  # SAFETY(aliasing): nothing else reaches this storage while it is used
         pointer = cell.get()
         write(pointer, 0, 2)
     # Leaving the unsafe block restores the ordinary safe boundary; consuming

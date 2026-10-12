@@ -4,7 +4,7 @@
 #$ stdout: true
 
 fn main():
-    unsafe:
+    unsafe:  # SAFETY: this test sets up what the operation requires
         p: *mut i32 = 0 as *mut i32
         bits: usize = p as usize
         println(bits == 0)

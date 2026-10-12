@@ -1,0 +1,20 @@
+#$ test: run-pass
+#$ rules: LEX-23, UNS-8
+#$ stdout: 6
+#$ stdout: 7
+## `[UNS-8]` — an `unsafe:` block or `unsafe fn` with no safety note is
+## `W3012`; a `SAFETY(...)` whose category is not one of `ffi`, `layout`,
+## `aliasing`, `intrinsic`, `performance` or `uninit` is no note (D-584).
+
+unsafe extern "C":
+    fn abs(x: i32) -> i32
+
+unsafe fn bare(x: i32) -> i32:    #$ warning[W3012]: this `unsafe` has no safety note
+    return abs(x)
+
+fn main():
+    unsafe:    #$ warning[W3012]: this `unsafe` has no safety note
+        println(bare(-6))
+    # SAFETY(weird): not a category
+    unsafe:    #$ warning[W3012]: this `unsafe` has no safety note
+        println(bare(-7))

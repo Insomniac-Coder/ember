@@ -8,7 +8,7 @@ unsafe extern "C":
     safe fn sum(left: ref [i32; 2], right: ref [i32; 2]) -> i32
 
 pub extern "C" fn sum_pairs(left: *i32, right: *i32) -> i32:
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         return read(left, 0) + read(left, 1) + read(right, 0) + read(right, 1)
 
 fn main():

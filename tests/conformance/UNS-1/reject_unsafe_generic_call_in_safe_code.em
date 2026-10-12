@@ -3,7 +3,7 @@
 #$ profiles: debug
 #$ error[E3100]: calling an `unsafe fn` requires an `unsafe` block
 
-unsafe fn same[T](x: T) -> T:
+unsafe fn same[T](x: T) -> T:  # SAFETY: this test sets up what the operation requires
     return x
 
 fn main():

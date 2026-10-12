@@ -9,7 +9,7 @@ unsafe extern "C":
     safe fn copy(input: Span[i32], n: usize) -> Span[i32]
 
 pub extern "C" fn copy_counted(input: *i32, n: usize) -> *i32:
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         result: *mut i32 = alloc[i32](n)
         write(result, 0, read(input, 0) + 1)
         return result as *i32

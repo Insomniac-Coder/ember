@@ -189,6 +189,7 @@ impl Parser<'_> {
                 StmtKind::Defer(self.parse_block())
             }
             TokenKind::Keyword(Kw::Unsafe) => {
+                self.unsafe_sites.push(self.span());
                 self.bump();
                 self.expect_punct(Punct::Colon);
                 StmtKind::Unsafe(self.parse_block())

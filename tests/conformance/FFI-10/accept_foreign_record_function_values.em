@@ -31,13 +31,13 @@ fn main():
     swapped = swap_pair(original)
     println(swapped.left)
     println(swapped.right)
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         println(weighted_pair(original, 3))
     values: Array[i32] = Array[i32]()
     values.push(1)
     values.push(2)
     println(pair_and_values(original, values.as_span()))
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         callback = get_pair_callback()
         println(callback(original))
     wide = ForeignWide(a = 10, b = 20, c = 30)

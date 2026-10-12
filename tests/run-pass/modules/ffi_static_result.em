@@ -3,7 +3,7 @@ unsafe extern "C":
     pub safe fn static_result(input: ref i32) -> ref i32
 
 extern "C" fn ffi_static_result_c(input: *mut i32) -> *mut i32:
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         number: *mut i32 = alloc[i32](1)
         write(number, 0, 40 + read(input, 0))
         return number

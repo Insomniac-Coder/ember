@@ -17,6 +17,6 @@ unsafe extern "C":
     static frozen: Table
 
 fn main():
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         table.values[0] = 99
     frozen.values[0] = 5

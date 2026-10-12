@@ -3,7 +3,7 @@
 #$ profiles: debug
 #$ warning[L3015]: undocumented unsafe obligation
 
-pub unsafe fn operation(x: i32) -> i32:
+pub unsafe fn operation(x: i32) -> i32:  # SAFETY: this test sets up what the operation requires
     return x
 
 fn main():

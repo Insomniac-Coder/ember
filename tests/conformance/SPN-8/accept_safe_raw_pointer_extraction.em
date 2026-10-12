@@ -14,7 +14,7 @@ fn main():
     read_pointer: *i32 = mutable.as_ptr()
     write_pointer: *mut i32 = mutable.as_mut_ptr()
     mutable[0] = 9
-    unsafe:
+    unsafe:  # SAFETY: this test sets up what the operation requires
         println(read(shared_pointer, 0))
         println(read(read_pointer, 1))
         write(write_pointer, 1, 10)

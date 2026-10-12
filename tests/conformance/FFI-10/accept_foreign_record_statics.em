@@ -32,7 +32,7 @@ unsafe extern "C":
 fn main():
     println(frozen_pair.left + frozen_pair.right)
     println(frozen_nested.inner.value)
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         println(shared_pair.left + shared_pair.right)
         shared_pair = ForeignPair(left = 8, right = 9)
         println(read_pair_sum())

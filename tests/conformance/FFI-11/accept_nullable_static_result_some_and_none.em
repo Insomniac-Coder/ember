@@ -11,9 +11,9 @@ unsafe extern "C":
 # The allocated Some value lives for the process; None is the C null pointer.
 pub extern "C" fn process_optional(present: bool) -> *mut i32:
     if not present:
-        unsafe:
+        unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
             return 0 as *mut i32
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         number: *mut i32 = alloc[i32](1)
         write(number, 0, 42)
         return number

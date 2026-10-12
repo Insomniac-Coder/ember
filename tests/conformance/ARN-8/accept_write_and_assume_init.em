@@ -7,7 +7,7 @@ fn main():
     slot: MaybeUninit[i32] = MaybeUninit[i32].uninit()
     written: ref mut i32 = slot.write(41)
     println(written)
-    unsafe:
+    unsafe:  # SAFETY(uninit): every slot is written before it is read
         value: i32 = slot.assume_init()
         println(value + 1)
 #$ stdout: 41

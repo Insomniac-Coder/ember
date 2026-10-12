@@ -49,7 +49,7 @@ pub fn assert_disjoint_or_panic[A, B](owned a: A, owned b: B) -> (A, B):
 ## `[DSJ-7]` — the views do not overlap, unchecked: violating it is undefined
 ## behaviour.
 @safety("The two views' address ranges do not overlap.")
-pub unsafe fn assume_disjoint[A, B](owned a: A, owned b: B) -> (A, B):
+pub unsafe fn assume_disjoint[A, B](owned a: A, owned b: B) -> (A, B):  # SAFETY: this test sets up what the operation requires
     pass
 
 ## Consumes the value without running its destructor. `[THR-6]`'s rejection

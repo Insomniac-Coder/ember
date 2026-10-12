@@ -5,5 +5,5 @@ unsafe extern "C":
     static foreign_count: i32
 
 fn main():
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         println(foreign_count)

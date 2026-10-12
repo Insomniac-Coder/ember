@@ -9,7 +9,7 @@ unsafe extern "C":
     safe fn fill(data: ref mut [i32; 2]) -> i32
 
 pub extern "C" fn fill_two(data: *mut i32) -> i32:
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         write(data, 0, 17)
         return read(data, 0)
 

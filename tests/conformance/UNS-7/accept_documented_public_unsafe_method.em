@@ -7,7 +7,7 @@ struct Counter:
 
 extend Counter:
     @safety("The caller guarantees the counter is live.")
-    pub unsafe fn next(self) -> i32:
+    pub unsafe fn next(self) -> i32:  # SAFETY: this test sets up what the operation requires
         return self.value + 1
 
 fn main():

@@ -12,5 +12,5 @@ pub extern "C" fn opaque_is_null(p: *Handle) -> bool:
     return p.is_null()
 
 fn main():
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         println(probe(null[*Handle]()))

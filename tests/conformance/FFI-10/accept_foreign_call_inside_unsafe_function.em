@@ -6,9 +6,9 @@
 unsafe extern "C":
     fn abs(x: i32) -> i32
 
-unsafe fn magnitude(x: i32) -> i32:
+unsafe fn magnitude(x: i32) -> i32:  # SAFETY(ffi): each foreign call matches its C declaration
     return abs(x)
 
 fn main():
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         println(magnitude(-42))

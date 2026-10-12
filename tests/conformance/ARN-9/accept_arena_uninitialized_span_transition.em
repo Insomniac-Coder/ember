@@ -8,7 +8,7 @@ fn main():
     println(first)
     slots.write_at(1, 20)
     slots.write_at(2, 30)
-    unsafe:
+    unsafe:  # SAFETY(uninit): every slot is written before it is read
         values: MutSpan[i32] = slots.assume_init()
         println(values[1])
         println(values[2])

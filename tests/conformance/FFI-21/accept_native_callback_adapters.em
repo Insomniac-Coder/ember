@@ -7,7 +7,7 @@ unsafe extern "C":
 
 @export("reserved_static_value")
 fn read_reserved_globals() -> i32:
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         return ember_native_fn_value_0 + ember_native_fn_c_entry_1
 
 struct Pair:

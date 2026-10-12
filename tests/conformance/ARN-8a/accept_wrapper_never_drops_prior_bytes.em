@@ -22,7 +22,7 @@ fn main():
     slot: MaybeUninit[Bag] = MaybeUninit[Bag].uninit()
     slot.write(make(1))
     slot.write(make(2))
-    unsafe:
+    unsafe:  # SAFETY(uninit): every slot is written before it is read
         _value: Bag = slot.assume_init()
         println(99)
 #$ stdout: 99

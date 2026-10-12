@@ -11,7 +11,7 @@ unsafe extern "C":
 pub extern "C" fn maybe_fresh_mut_number(present: bool) -> *mut i32:
     if not present:
         return null[*mut i32]()
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         number: *mut i32 = alloc[i32](1)
         write(number, 0, 42)
         return number

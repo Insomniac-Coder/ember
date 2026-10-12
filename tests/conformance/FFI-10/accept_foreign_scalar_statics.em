@@ -14,7 +14,7 @@ unsafe extern "C":
     fn bump_changing_counter() -> i32
 
 fn main():
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         println(raw_counter)
         println(changing_counter)
         changing_counter = 9

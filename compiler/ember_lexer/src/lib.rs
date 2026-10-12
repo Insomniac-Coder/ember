@@ -22,6 +22,33 @@ pub struct Comment {
     /// formatter needs in order to decide between a leading and a trailing
     /// comment.
     pub own_line: bool,
+    /// `[LEX-23]` — set when the comment is a safety note.
+    pub safety: Option<SafetyNote>,
+}
+
+/// `[LEX-23]` — a comment whose text begins `SAFETY:` or
+/// `SAFETY(<category>):`: the safety note of the `unsafe:` block or
+/// `unsafe fn` on the next line, or on its own line when it trails one.
+/// `[UNS-8]` reads it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SafetyNote {
+    /// The category, when one is written.
+    pub category: Option<&'static str>,
+}
+
+/// `[LEX-23]` — the categories a safety note may name.
+pub const SAFETY_CATEGORIES: [&str; 6] = ["ffi", "layout", "aliasing", "intrinsic", "performance", "uninit"];
+
+/// `[LEX-23]` — the safety note a line comment's text (after `#`) is, if any.
+/// A category outside `SAFETY_CATEGORIES` makes it no note.
+pub fn safety_note(text: &str) -> Option<SafetyNote> {
+    let text = text.trim_start();
+    if text.starts_with("SAFETY:") {
+        return Some(SafetyNote { category: None });
+    }
+    let rest = text.strip_prefix("SAFETY(")?;
+    let (category, _) = rest.split_once("):")?;
+    SAFETY_CATEGORIES.iter().find(|known| **known == category).map(|known| SafetyNote { category: Some(*known) })
 }
 
 pub struct LexResult {
@@ -346,7 +373,7 @@ impl<'a> Lexer<'a> {
                 self.tokens.push(tok);
             }
         } else {
-            self.comments.push(Comment { span, own_line });
+            self.comments.push(Comment { span, own_line, safety: safety_note(&text) });
         }
 
         if own_line {

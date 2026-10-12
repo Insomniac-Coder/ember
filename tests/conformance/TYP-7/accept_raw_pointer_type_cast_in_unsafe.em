@@ -4,7 +4,7 @@
 #$ stdout: 7
 
 fn main():
-    unsafe:
+    unsafe:  # SAFETY: this test sets up what the operation requires
         value: *mut i32 = alloc[i32](1)
         bytes: *mut u8 = value as *mut u8
         restored: *mut i32 = bytes as *mut i32

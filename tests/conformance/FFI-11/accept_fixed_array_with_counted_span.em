@@ -8,7 +8,7 @@ unsafe extern "C":
     safe fn mixed(prefix: ref [i32; 2], n: usize, rest: Span[i32]) -> i32
 
 pub extern "C" fn sum_fixed_and_counted(prefix: *i32, n: usize, rest: *i32) -> i32:
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         return read(prefix, 0) + read(prefix, 1) + n as i32 + read(rest, 0)
 
 fn main():

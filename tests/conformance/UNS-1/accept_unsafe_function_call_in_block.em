@@ -3,9 +3,9 @@
 #$ profiles: debug, release, shipping
 #$ stdout: 42
 
-unsafe fn increase(x: i32) -> i32:
+unsafe fn increase(x: i32) -> i32:  # SAFETY: this test sets up what the operation requires
     return x + 1
 
 fn main():
-    unsafe:
+    unsafe:  # SAFETY: this test sets up what the operation requires
         println(increase(41))

@@ -6,7 +6,7 @@ from std.mem import UnsafeCell
 fn main():
     cell = UnsafeCell(1)
     value: i32 = 2
-    unsafe:
+    unsafe:  # SAFETY(aliasing): nothing else reaches this storage while it is used
         _pointer = cell.get()
         first: ref mut i32 = ref mut value
         second: ref mut i32 = ref mut value #$ error[E3022]: already mutably borrowed

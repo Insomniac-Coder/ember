@@ -8,7 +8,7 @@ unsafe extern "C":
     safe fn sum(data: ref [i32; 3]) -> i32
 
 pub extern "C" fn sum_three(data: *i32) -> i32:
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         return read(data, 0) + read(data, 1) + read(data, 2)
 
 fn main():

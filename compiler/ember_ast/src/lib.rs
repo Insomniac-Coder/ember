@@ -37,6 +37,9 @@ pub struct Module {
     /// parser gathers them, in order, into a synthesised `fn main()` in
     /// `items`; only the entry file may have them.
     pub script: Option<Script>,
+    /// `[UNS-8]` — the `unsafe` keyword of each `unsafe:` block and each
+    /// `unsafe fn` with a body, in source order: each needs a safety note.
+    pub unsafe_sites: Vec<Span>,
     pub span: Span,
 }
 

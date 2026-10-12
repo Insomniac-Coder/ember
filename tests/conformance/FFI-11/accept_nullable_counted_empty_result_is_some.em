@@ -9,7 +9,7 @@ unsafe extern "C":
     safe fn maybe(input: Span[i32], n: usize) -> Option[Span[i32]]
 
 pub extern "C" fn empty_some(input: *i32, n: usize) -> *i32:
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         storage: *mut i32 = alloc[i32](1)
         return storage as *i32
 

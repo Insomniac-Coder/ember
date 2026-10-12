@@ -11,7 +11,7 @@ unsafe extern "C":
     safe fn fresh(input: Option[Span[i32]], n: usize) -> Span[i32]
 
 pub extern "C" fn fresh_at_optional_count(input: *i32, n: usize) -> *i32:
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         data: *mut i32 = alloc[i32](2)
         write(data, 0, 52)
         write(data, 1, 53)

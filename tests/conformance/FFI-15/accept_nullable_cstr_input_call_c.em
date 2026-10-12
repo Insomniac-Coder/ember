@@ -13,7 +13,7 @@ pub extern "C" fn length_if_present(text: Option[cstr]) -> usize:
         None:
             return 0
         Some(value):
-            unsafe:
+            unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
                 return strlen(value)
 
 unsafe extern "C":

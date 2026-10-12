@@ -38,5 +38,5 @@ fn main():
     solid: Solid = Cube(1.0)
     println(solid.volume() * 6.0)
     println(Row(3).size())
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         println(abs(-4))

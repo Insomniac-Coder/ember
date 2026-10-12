@@ -10771,8 +10771,11 @@ globs from any module, `E1031`; `E1040` was a retired code still emitted) and D-
 `EMBER_RUNTIME_ABI` 2, `ember_rt_init_v2` compares versions, `ember_rt_config.size`; ADR-171);
 `[PAN-3]` holds because nothing runs after a panic (`PAN-1/run_fail_no_drop_runs_after_a_panic`).
 `[LEX-23]` is observable only through `[UNS-8]`'s `W3012`, never emitted: 104 `unsafe` sites in 85
-files carry no `SAFETY` note. **Next:** `[LEX-23]` + `W3012` (lexer side table, the check, notes at
-those sites); then build the five unbuilt features (local functions, lazy statics, `some` returns,
+files carry no `SAFETY` note. Then D-584: `[LEX-23]` notes recorded, `[UNS-8]`'s `W3012` emitted,
+notes written at the 98 sites (`ember tcb` is still unbuilt). Phase 1's untested rules are now all
+tested but the PHIL/VER principles, `[CLO-7]` (thread/job APIs, Phase 6), `[PAN-2]`/`[RNG-10a]`
+(effects and derives, Phase 4), `[TYP-2]` and the five unbuilt features. **Next:** build the five
+unbuilt features (local functions, lazy statics, `some` returns,
 `comptime(e)`, const generics last, largest); ASK the owner: D-550's layout, the EXC-10 review
 workflow.
 

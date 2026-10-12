@@ -9,7 +9,7 @@ unsafe extern "C":
     safe fn fresh(input: Span[i32], n: usize) -> MutSpan[i32]
 
 pub extern "C" fn fresh_mut_span(input: *i32, n: usize) -> *mut i32:
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         data: *mut i32 = alloc[i32](n)
         write(data, 0, 31)
         return data

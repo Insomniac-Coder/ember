@@ -9,7 +9,7 @@ unsafe extern "C":
     safe fn choose_first(first: ref i32, second: ref i32) -> ref i32
 
 pub extern "C" fn choose_first_c(first: *mut i32, second: *mut i32) -> *mut i32:
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         if read(second, 0) == 0:
             return first
     return first

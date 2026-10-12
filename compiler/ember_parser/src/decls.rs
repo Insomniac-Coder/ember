@@ -613,6 +613,7 @@ impl Parser<'_> {
         if is_safe {
             self.bump();
         }
+        let unsafe_site = self.span();
         let is_unsafe = self.eat_kw(Kw::Unsafe);
         // `["extern" string_lit]` — the ABI a definition uses. It sits after
         // `unsafe`, matching `unsafe extern "C":` for the block form.
@@ -648,6 +649,10 @@ impl Parser<'_> {
         let where_clause = self.parse_where_clause();
 
         // A body is present unless this is an interface or extern signature.
+        // `[UNS-8]` — an `unsafe fn` with one needs a safety note.
+        if is_unsafe && self.at_punct(Punct::Colon) && !self.in_extern_block {
+            self.unsafe_sites.push(unsafe_site);
+        }
         let body = if self.eat_punct(Punct::Colon) { Some(self.parse_block()) } else { None };
         if body.is_none() {
             if self.tokens[signature_start..=self.pos.min(self.tokens.len() - 1)]

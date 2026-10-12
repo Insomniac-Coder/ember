@@ -9,7 +9,7 @@ unsafe extern "C":
     safe fn echo(input: MutSpan[i32], n: usize) -> Span[i32]
 
 pub extern "C" fn echo_mut_counted(input: *mut i32, n: usize) -> *i32:
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         return input as *i32
 
 fn main():

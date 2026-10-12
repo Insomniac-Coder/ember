@@ -7,7 +7,7 @@ fn first[T](span: Span[T]) -> ref T:
         Some(item):
             return item
         None:
-            unsafe:
+            unsafe:  # SAFETY: this test sets up what the operation requires
                 return span.get_unchecked(0)
 
 fn first_mut[T](mut span: MutSpan[T]) -> ref mut T:
@@ -16,7 +16,7 @@ fn first_mut[T](mut span: MutSpan[T]) -> ref mut T:
         Some(item):
             return item
         None:
-            unsafe:
+            unsafe:  # SAFETY: this test sets up what the operation requires
                 return span.get_unchecked(0)
 
 fn main():

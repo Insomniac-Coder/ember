@@ -7,7 +7,7 @@ struct Counter:
     value: i32
 
 extend Counter:
-    unsafe fn next(self) -> i32:
+    unsafe fn next(self) -> i32:  # SAFETY: this test sets up what the operation requires
         return self.value + 1
 
 fn main():

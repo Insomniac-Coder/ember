@@ -11,6 +11,6 @@ from std.mem import assume_disjoint
 fn main():
     x: Array[int] = [1, 2, 3]
     y: Array[int] = [4]
-    unsafe:
+    unsafe:  # SAFETY: this test sets up what the operation requires
         (u, v) = assume_disjoint(x[..1], y[..])
         println(u[0] + v[0])

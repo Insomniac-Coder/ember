@@ -6,5 +6,5 @@ unsafe extern "C":
     static mut foreign_flag: bool
 
 fn main():
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         foreign_flag += true

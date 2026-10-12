@@ -8,7 +8,7 @@ fn main():
     second = first
     first.write(10i64)
     second.write(20i64)
-    unsafe:
+    unsafe:  # SAFETY(uninit): every slot is written before it is read
         a: i64 = first.assume_init()
         b: i64 = second.assume_init()
         println(a)

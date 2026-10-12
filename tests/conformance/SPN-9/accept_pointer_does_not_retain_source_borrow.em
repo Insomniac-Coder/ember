@@ -7,7 +7,7 @@ fn main():
     view = values.as_mut_span()
     pointer: *mut i32 = view.as_mut_ptr()
     view[0] = 2
-    unsafe:
+    unsafe:  # SAFETY: this test sets up what the operation requires
         write(pointer, 0, 3)
     println(view[0])
     _detached: *i32 = values.as_span().as_ptr()

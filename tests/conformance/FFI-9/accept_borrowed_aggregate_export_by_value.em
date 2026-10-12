@@ -34,7 +34,7 @@ fn main():
     println(call_exported_pair_mix())
     callback: extern "C" fn(ForeignPair) -> i32 = exported_pair_score
     println(callback(pair))
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         println(call_pair_callback(callback))
     println(named_pair_score(pair))
     println(call_named_pair_export())

@@ -11,7 +11,7 @@ unsafe extern "C":
 pub extern "C" fn sum_optional_fixed(data: *i32) -> i32:
     if data.is_null():
         return 0
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         return read(data, 0) + read(data, 1)
 
 fn main():

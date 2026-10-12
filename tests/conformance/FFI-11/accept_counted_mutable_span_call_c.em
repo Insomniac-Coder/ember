@@ -9,7 +9,7 @@ unsafe extern "C":
     safe fn fill(data: MutSpan[u8], n: usize) -> i32
 
 pub extern "C" fn fill_bytes(data: *mut u8, n: usize) -> i32:
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         write(data, 0, 7)
     return n as i32
 

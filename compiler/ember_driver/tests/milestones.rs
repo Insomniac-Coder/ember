@@ -654,8 +654,8 @@ fn foreign_scalar_statics_read_the_linkers_storage() {
         "unsafe extern \"C\":\n    @ffi(immutable, link_name=\"aliased_count\")\n    pub static renamed_count: i32\n    pub static mut changing_counter: i32\n    pub safe fn read_changing_counter() -> i32\n")
         .expect("foreign static module is writable");
     for (label, source) in [
-        ("from_import", "from imported import renamed_count, changing_counter, read_changing_counter\nfn main():\n    unsafe:\n        changing_counter = 12\n    println(read_changing_counter())\n    println(renamed_count)\n"),
-        ("qualified", "import imported\nfn main():\n    unsafe:\n        imported.changing_counter = 12\n    println(imported.read_changing_counter())\n    println(imported.renamed_count)\n"),
+        ("from_import", "from imported import renamed_count, changing_counter, read_changing_counter\nfn main():\n    unsafe:  # SAFETY(ffi): each foreign item is used as its C declaration states\n        changing_counter = 12\n    println(read_changing_counter())\n    println(renamed_count)\n"),
+        ("qualified", "import imported\nfn main():\n    unsafe:  # SAFETY(ffi): each foreign item is used as its C declaration states\n        imported.changing_counter = 12\n    println(imported.read_changing_counter())\n    println(imported.renamed_count)\n"),
     ] {
         std::fs::write(&entry, source).expect("importing module is writable");
         let entry_arg = entry.to_string_lossy().into_owned();
@@ -718,8 +718,8 @@ fn foreign_record_statics_exchange_values_with_c() {
         "@derive(Copy)\npub struct ForeignPair:\n    pub left: i32\n    pub right: i32\n@derive(Copy)\npub struct ForeignInner:\n    pub value: i32\n@derive(Copy)\npub struct ForeignOuter:\n    pub inner: ForeignInner\n    pub other: i32\nunsafe extern \"C\":\n    pub static mut shared_pair: ForeignPair\n    @ffi(immutable)\n    pub static frozen_pair: ForeignPair\n    pub safe fn read_pair_sum() -> i32\n    pub static mut nested_pair: ForeignOuter\n    pub safe fn read_nested_total() -> i32\n")
         .expect("foreign record module is writable");
     for (label, source) in [
-        ("from_import", "from imported import ForeignPair, shared_pair, frozen_pair, read_pair_sum, nested_pair, read_nested_total\nfn main():\n    println(frozen_pair.left)\n    unsafe:\n        shared_pair = ForeignPair(left = 11, right = 12)\n        println(read_pair_sum())\n        shared_pair.left = 20\n        println(read_pair_sum())\n        shared_pair.right += 2\n        println(read_pair_sum())\n        nested_pair.inner.value = 15\n        println(read_nested_total())\n        nested_pair.inner.value += 2\n        println(read_nested_total())\n"),
-        ("qualified", "import imported\nfn main():\n    println(imported.frozen_pair.left)\n    unsafe:\n        imported.shared_pair = imported.ForeignPair(left = 11, right = 12)\n        println(imported.read_pair_sum())\n        imported.shared_pair.left = 20\n        println(imported.read_pair_sum())\n        imported.shared_pair.right += 2\n        println(imported.read_pair_sum())\n        imported.nested_pair.inner.value = 15\n        println(imported.read_nested_total())\n        imported.nested_pair.inner.value += 2\n        println(imported.read_nested_total())\n"),
+        ("from_import", "from imported import ForeignPair, shared_pair, frozen_pair, read_pair_sum, nested_pair, read_nested_total\nfn main():\n    println(frozen_pair.left)\n    unsafe:  # SAFETY(ffi): each foreign item is used as its C declaration states\n        shared_pair = ForeignPair(left = 11, right = 12)\n        println(read_pair_sum())\n        shared_pair.left = 20\n        println(read_pair_sum())\n        shared_pair.right += 2\n        println(read_pair_sum())\n        nested_pair.inner.value = 15\n        println(read_nested_total())\n        nested_pair.inner.value += 2\n        println(read_nested_total())\n"),
+        ("qualified", "import imported\nfn main():\n    println(imported.frozen_pair.left)\n    unsafe:  # SAFETY(ffi): each foreign item is used as its C declaration states\n        imported.shared_pair = imported.ForeignPair(left = 11, right = 12)\n        println(imported.read_pair_sum())\n        imported.shared_pair.left = 20\n        println(imported.read_pair_sum())\n        imported.shared_pair.right += 2\n        println(imported.read_pair_sum())\n        imported.nested_pair.inner.value = 15\n        println(imported.read_nested_total())\n        imported.nested_pair.inner.value += 2\n        println(imported.read_nested_total())\n"),
     ] {
         std::fs::write(&entry, source).expect("foreign record entry is writable");
         let entry_arg = entry.to_string_lossy().into_owned();
@@ -743,7 +743,7 @@ fn foreign_record_statics_exchange_values_with_c() {
         "@derive(Copy)\npub struct ForeignPair:\n    pub(read) left: i32\n    pub right: i32\nunsafe extern \"C\":\n    pub static mut shared_pair: ForeignPair\n")
         .expect("read-only foreign record module is writable");
     std::fs::write(&entry,
-        "import imported\nfn main():\n    unsafe:\n        imported.shared_pair.left = 20\n")
+        "import imported\nfn main():\n    unsafe:  # SAFETY(ffi): each foreign item is used as its C declaration states\n        imported.shared_pair.left = 20\n")
         .expect("read-only foreign record entry is writable");
     let entry_arg = entry.to_string_lossy().into_owned();
     let readonly = ember(&["check", &entry_arg], &root);
@@ -754,7 +754,7 @@ fn foreign_record_statics_exchange_values_with_c() {
         "@derive(Copy)\npub struct ForeignInner:\n    pub(read) value: i32\n@derive(Copy)\npub struct ForeignOuter:\n    pub inner: ForeignInner\nunsafe extern \"C\":\n    pub static mut nested_pair: ForeignOuter\n")
         .expect("nested read-only foreign record module is writable");
     std::fs::write(&entry,
-        "import imported\nfn main():\n    unsafe:\n        imported.nested_pair.inner.value = 20\n")
+        "import imported\nfn main():\n    unsafe:  # SAFETY(ffi): each foreign item is used as its C declaration states\n        imported.nested_pair.inner.value = 20\n")
         .expect("nested read-only foreign record entry is writable");
     let nested_readonly = ember(&["check", &entry_arg], &root);
     assert_ne!(nested_readonly.exit, 0, "a nested pub(read) field was writable from another module");
@@ -799,8 +799,8 @@ fn foreign_record_functions_exchange_values_with_c() {
         "pub struct ForeignPair:\n    pub left: i32\n    pub right: i32\nunsafe extern \"C\":\n    pub safe fn mutate_pair_copy(pair: ForeignPair) -> i32\n    @ffi(link_name=\"foreign_pair_weighted\")\n    pub fn weighted_pair(pair: ForeignPair, weight: i32) -> i32\n")
         .expect("foreign record module is writable");
     for (label, source) in [
-        ("from_import", "from imported import ForeignPair, mutate_pair_copy, weighted_pair\nfn main():\n    pair = ForeignPair(left = 3, right = 4)\n    println(mutate_pair_copy(pair))\n    unsafe:\n        println(weighted_pair(pair, 2))\n"),
-        ("qualified", "import imported\nfn main():\n    pair = imported.ForeignPair(left = 3, right = 4)\n    println(imported.mutate_pair_copy(pair))\n    unsafe:\n        println(imported.weighted_pair(pair, 2))\n"),
+        ("from_import", "from imported import ForeignPair, mutate_pair_copy, weighted_pair\nfn main():\n    pair = ForeignPair(left = 3, right = 4)\n    println(mutate_pair_copy(pair))\n    unsafe:  # SAFETY(ffi): each foreign item is used as its C declaration states\n        println(weighted_pair(pair, 2))\n"),
+        ("qualified", "import imported\nfn main():\n    pair = imported.ForeignPair(left = 3, right = 4)\n    println(imported.mutate_pair_copy(pair))\n    unsafe:  # SAFETY(ffi): each foreign item is used as its C declaration states\n        println(imported.weighted_pair(pair, 2))\n"),
     ] {
         std::fs::write(&entry, source).expect("foreign record entry is writable");
         let entry_arg = entry.to_string_lossy().into_owned();
@@ -1910,7 +1910,7 @@ fn a_devirtualised_interface_call_searches_out_of_line() {
     assert!(!c.stdout.contains(&inline), "an inline table search remains:\n{}", c.stdout);
 }
 
-/// D-579 — `[LEX-1]`: a source file that is not UTF-8 is `E0001`, whether it
+/// D-579 — `[LEX-1]`, `[LEX-2]`: a source file that is not UTF-8 is `E0001`, whether it
 /// is the one compiled or a module it imports; a byte-order mark is accepted
 /// and ignored. A conformance file cannot hold such bytes, so they are
 /// written here.
@@ -1936,6 +1936,13 @@ fn a_source_file_that_is_not_utf8_is_e0001() {
     let run = ember(&["run", &marked.to_string_lossy(), "--out-dir", &out.to_string_lossy()], &root);
     assert_eq!(run.exit, 0, "{}", run.stderr);
     assert_eq!(run.stdout, "1\n");
+    // `[LEX-2]` — CRLF and LF are one line ending: a multiline string holds
+    // LF, and indentation reads the same.
+    let crlf = directory.join(ember_branding::source_file("crlf"));
+    std::fs::write(&crlf, b"fn main():\r\n    text = \"\"\"\r\n    a\r\n    b\r\n    \"\"\"\r\n    println(text.len())\r\n").unwrap();
+    let run = ember(&["run", &crlf.to_string_lossy(), "--out-dir", &out.to_string_lossy()], &root);
+    assert_eq!(run.exit, 0, "{}", run.stderr);
+    assert_eq!(run.stdout, "4\n");
 }
 
 /// D-450 — `[STD-10]`, `[TXT-1]`, `[TXT-2]`: `input()` returns a `String`,

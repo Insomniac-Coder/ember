@@ -15,7 +15,7 @@ pub extern "C" fn inspect_optional_mut_span(data: *mut i32, n: usize) -> i32:
         return 1
     if n == 0:
         return 2
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         write(data, 0, 41)
     return 3
 

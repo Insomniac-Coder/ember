@@ -11,7 +11,7 @@ unsafe extern "C":
 pub extern "C" fn optional_pair(present: bool) -> *i32:
     if not present:
         return null[*i32]()
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         data: *mut i32 = alloc[i32](2)
         write(data, 0, 14)
         write(data, 1, 15)

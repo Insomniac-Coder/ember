@@ -9,7 +9,7 @@ unsafe extern "C":
     safe fn pair() -> ref mut [i32; 2]
 
 pub extern "C" fn fresh_mut_pair() -> *mut i32:
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         data: *mut i32 = alloc[i32](2)
         write(data, 0, 8)
         write(data, 1, 9)

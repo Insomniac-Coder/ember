@@ -3,9 +3,9 @@
 #$ profiles: debug, release, shipping
 #$ stdout: 42
 
-unsafe fn same[T](x: T) -> T:
+unsafe fn same[T](x: T) -> T:  # SAFETY: this test sets up what the operation requires
     return x
 
 fn main():
-    unsafe:
+    unsafe:  # SAFETY: this test sets up what the operation requires
         println(same(42))

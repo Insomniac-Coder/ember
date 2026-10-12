@@ -4,5 +4,5 @@
 #$ error[E0104]: `@safety` requires one string obligation
 
 @safety(42)
-unsafe fn operation(x: i32) -> i32:
+unsafe fn operation(x: i32) -> i32:  # SAFETY: this test sets up what the operation requires
     return x

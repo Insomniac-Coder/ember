@@ -54,6 +54,8 @@ pub(crate) struct Parser<'a> {
     /// `[GRM-33]` — the name spans of functions whose signature holds a token
     /// the lexer already reported: a missing body there is that error's.
     damaged_signatures: Vec<Span>,
+    /// `[UNS-8]` — see `Module::unsafe_sites`.
+    unsafe_sites: Vec<Span>,
 }
 
 pub use ember_ast::NESTING_LIMIT;
@@ -75,6 +77,7 @@ impl<'a> Parser<'a> {
             in_ffi_attribute: false,
             in_extern_block: false,
             damaged_signatures: Vec::new(),
+            unsafe_sites: Vec::new(),
         }
     }
 
@@ -569,7 +572,8 @@ impl<'a> Parser<'a> {
             Script { main: items.len() - 1, placement, first }
         });
 
-        Module { directives, imports, items, script, span: start.to(self.prev_span()) }
+        let unsafe_sites = std::mem::take(&mut self.unsafe_sites);
+        Module { directives, imports, items, script, unsafe_sites, span: start.to(self.prev_span()) }
     }
 
     fn parse_directive(&mut self) -> Option<ember_ast::Directive> {

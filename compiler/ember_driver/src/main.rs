@@ -1510,6 +1510,9 @@ fn load_modules(
             let text = map.file(file).text.clone();
             let lexed = ember_lexer::lex(file, &text, sink);
             let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
+            if names.first().map(String::as_str) != Some(ember_branding::STD_PACKAGE) {
+                check_safety_notes(&parsed, &lexed.comments, map, sink);
+            }
             mark("read and parse", &names.join("."));
             queue.push((names, parsed));
         }
@@ -2230,6 +2233,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 
     // Parse.
     let module = ember_parser::parse(file, &source, lexed.tokens, &mut sink);
+    check_safety_notes(&module, &lexed.comments, &map, &mut sink);
     mark("parse", "main");
     if options.emit.as_deref() == Some("ast") {
         print!("{}", ember_ast::dump(&module));
@@ -3044,6 +3048,29 @@ fn report_timings(options: &Options) {
         eprintln!("  {stage:<22}{:>10.2}  {module}", ms(*took));
     }
     eprintln!("  {:<22}{:>10.2}", "total", ms(last - start));
+}
+
+/// `[UNS-8]` — `W3012` for each `unsafe:` block or `unsafe fn` with no
+/// safety note (`[LEX-23]`): a `SAFETY` comment alone on the line before it,
+/// or at the end of its first line.
+fn check_safety_notes(module: &ember_ast::Module, comments: &[ember_lexer::Comment], map: &SourceMap, sink: &mut Sink) {
+    if module.unsafe_sites.is_empty() {
+        return;
+    }
+    let line = |span: Span| map.file(span.file).line_col(span.start).line;
+    let noted: std::collections::HashSet<_> =
+        comments.iter().filter(|comment| comment.safety.is_some()).map(|comment| (line(comment.span), comment.own_line)).collect();
+    for &site in &module.unsafe_sites {
+        let at = line(site);
+        if noted.contains(&(at, false)) || (at > 1 && noted.contains(&(at - 1, true))) {
+            continue;
+        }
+        sink.emit(
+            Diagnostic::warning(codes::W3012, site, "this `unsafe` has no safety note")
+                .primary_label("nothing here says why it is sound")
+                .help("write `# SAFETY: <why it is sound>` on the line before it or at the end of this line; `SAFETY(ffi)`, `(layout)`, `(aliasing)`, `(intrinsic)`, `(performance)` or `(uninit)` names its category"),
+        );
+    }
 }
 
 /// Why a source file could not be loaded: `E0001` when it is not UTF-8

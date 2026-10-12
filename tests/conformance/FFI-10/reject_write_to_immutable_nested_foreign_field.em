@@ -15,5 +15,5 @@ unsafe extern "C":
     static foreign_outer: Outer
 
 fn main():
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         foreign_outer.inner.value = 12

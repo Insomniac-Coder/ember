@@ -18,12 +18,12 @@ struct Buffer[T]:
     cap: usize
 
 fn make[T](cap: usize) -> Buffer[T]:
-    unsafe:
+    unsafe:  # SAFETY: this test sets up what the operation requires
         return Buffer(alloc[T](cap), 0, cap)
 
 fn grow[T](mut b: Buffer[T]):
     bigger: usize = b.cap * 2
-    unsafe:
+    unsafe:  # SAFETY: this test sets up what the operation requires
         fresh: *mut T = alloc[T](bigger)
         i: usize = 0
         while i < b.len:
@@ -36,16 +36,16 @@ fn grow[T](mut b: Buffer[T]):
 fn push[T](mut b: Buffer[T], v: T):
     if b.len == b.cap:
         grow(b)
-    unsafe:
+    unsafe:  # SAFETY: this test sets up what the operation requires
         write(b.ptr, b.len, v)
     b.len = b.len + 1
 
 fn at[T](b: Buffer[T], i: usize) -> T:
-    unsafe:
+    unsafe:  # SAFETY: this test sets up what the operation requires
         return read(b.ptr, i)
 
 fn release[T](mut b: Buffer[T]):
-    unsafe:
+    unsafe:  # SAFETY: this test sets up what the operation requires
         free(b.ptr, b.cap)
     b.cap = 0
     b.len = 0

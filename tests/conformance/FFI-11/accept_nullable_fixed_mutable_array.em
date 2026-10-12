@@ -12,7 +12,7 @@ unsafe extern "C":
 pub extern "C" fn fill_optional_fixed(data: *mut i32) -> i32:
     if data.is_null():
         return 0
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         write(data, 0, 23)
     return 1
 

@@ -8,7 +8,7 @@ unsafe extern "C":
     safe fn counted(marker: i32, n: usize, data: Span[u8]) -> i32
 
 pub extern "C" fn probe_order(marker: i32, n: usize, data: *u8) -> i32:
-    unsafe:
+    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
         return marker + n as i32 + read(data, 0) as i32
 
 fn main():

@@ -10,7 +10,7 @@
 # `unsafe` block. Outside one they are `E3100`.
 fn sum_of_squares(n: usize) -> i32:
     total: i32 = 0
-    unsafe:
+    unsafe:  # SAFETY: this test sets up what the operation requires
         p: *mut i32 = alloc[i32](n)
         i: usize = 0
         while i < n:
@@ -29,7 +29,7 @@ fn sum_of_squares(n: usize) -> i32:
 # still dropped at the end of the function.
 fn still_checked() -> int:
     xs: Array[i32] = Array()
-    unsafe:
+    unsafe:  # SAFETY: this test sets up what the operation requires
         xs.push(4)
         xs.push(5)
     return xs.len()
