@@ -412,6 +412,7 @@ impl<'a> Builder<'a> {
             closure_captures_by_move: self.function.closure_captures_by_move,
             class_owner: self.function.class_owner,
             class_virtual_slot: self.function.class_virtual_slot,
+            borrows_used_fields: self.function.borrows_used_fields,
             is_abstract: self.function.is_abstract,
             is_extern_declaration: self.function.is_extern_declaration,
             ffi_counted: self.function.ffi_counted.clone(),

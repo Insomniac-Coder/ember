@@ -13794,6 +13794,7 @@ impl<'a> Checker<'a> {
                 closure_captures_by_move: false,
                 class_owner: None,
                 class_virtual_slot: None,
+                borrows_used_fields: false,
                 is_abstract: false,
                 is_extern_declaration: decl.is_foreign_decl && ffi_counted.is_none(),
                 ffi_counted,
@@ -14015,6 +14016,7 @@ impl<'a> Checker<'a> {
                     closure_captures_by_move: false,
                     class_owner: Some(class_owner),
                     class_virtual_slot: self.class_virtual_slots.get(&job.def).copied(),
+                    borrows_used_fields: false,
                     is_abstract: true,
                     is_extern_declaration: false,
                     ffi_counted: None,
@@ -14944,6 +14946,7 @@ impl<'a> Checker<'a> {
             closure_captures_by_move: false,
             class_owner: None,
             class_virtual_slot: None,
+            borrows_used_fields: false,
             is_abstract: false,
             is_extern_declaration: false,
             ffi_counted: None,
@@ -15287,6 +15290,7 @@ impl<'a> Checker<'a> {
                     closure_captures_by_move: false,
                     class_owner,
                     class_virtual_slot: None,
+                    borrows_used_fields: false,
                     is_abstract: false,
                     is_extern_declaration: false,
                     ffi_counted: None,
@@ -15828,6 +15832,7 @@ impl<'a> Checker<'a> {
                 _ => None,
             },
             class_virtual_slot: self.class_virtual_slots.get(&def).copied(),
+            borrows_used_fields: self.borrows_used_fields(owner, decl, def),
             is_abstract: false,
             is_extern_declaration: false,
             ffi_counted: None,
@@ -16728,6 +16733,19 @@ impl<'a> Checker<'a> {
     /// package. Keep package visibility aligned with those existing roots.
     fn same_package(&self, left: usize, right: usize) -> bool {
         self.is_std_module(left) == self.is_std_module(right)
+    }
+
+    /// `[BRW-10]` — a call to a struct's or enum's method borrows only the
+    /// fields of its receiver the body uses, unless the method is visible
+    /// outside its package: a program's methods are seen by no other package
+    /// (a static library exports C functions only), `std`'s are seen by every
+    /// program unless private to `std`.
+    fn borrows_used_fields(&self, owner: Ty, decl: &ast::FnDecl, def: DefId) -> bool {
+        matches!(self.types.kind(owner), TyKind::Struct(_) | TyKind::Enum(_))
+            && decl.params.first().is_some_and(|param| matches!(param.kind, ast::ParamKind::Receiver { .. }))
+            && self.method_vis.get(&def).is_none_or(|(vis, module)| {
+                !self.is_std_module(*module) || *vis != ast::VisKind::Public
+            })
     }
 
     fn is_std_module(&self, module: usize) -> bool {
@@ -35675,6 +35693,7 @@ impl<'a> Checker<'a> {
             closure_captures_by_move: false,
             class_owner: None,
             class_virtual_slot: None,
+            borrows_used_fields: false,
             is_abstract: false,
             is_extern_declaration: false,
             ffi_counted: None,
@@ -35762,6 +35781,7 @@ impl<'a> Checker<'a> {
             closure_captures_by_move,
             class_owner: None,
             class_virtual_slot: None,
+            borrows_used_fields: false,
             is_abstract: false,
             is_extern_declaration: false,
             ffi_counted: None,

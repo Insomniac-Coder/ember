@@ -10296,6 +10296,7 @@ mod string_descriptor_view_parts_tests {
             closure_captures_by_move: false,
             class_owner: None,
             class_virtual_slot: None,
+            borrows_used_fields: false,
             is_abstract: false,
             is_extern_declaration: false,
             ffi_counted: None,

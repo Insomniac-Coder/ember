@@ -30,7 +30,7 @@
 //! handing one back — and `regions.rs` is what replaced it.
 
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_mir::{
@@ -275,7 +275,7 @@ fn infer_shared_return_accesses(
     bodies: &[Body],
     types: &TypeTable,
     call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
-    capture_contracts: &HashMap<StructId, CallAccessContract>,
+    capture_contracts: &CaptureContracts,
     slots: &VirtualSlots,
 ) -> (HashMap<String, SharedReturnAccess>, HashSet<String>, FieldReturns) {
     let mut summaries = HashMap::new();
@@ -1944,14 +1944,205 @@ fn contracts_from_metadata(
         .collect()
 }
 
+/// The verified summaries that narrow a compiler-made borrow to the fields it
+/// is taken for: a closure's capture (`[LT-42]`) and a method call's receiver
+/// (`[BRW-10]`).
+struct CaptureContracts {
+    closures: HashMap<StructId, CallAccessContract>,
+    /// `[BRW-10]` — for each method a call to which borrows only the fields of
+    /// its receiver its body uses, those fields.
+    methods: HashMap<String, Vec<Vec<Projection>>>,
+}
+
+/// `[BRW-10]` — for each method a call to which borrows only the fields its
+/// body uses, those fields of its receiver, each by its first field: read from
+/// the method's MIR (`receiver_field_uses`) and closed over the methods of the
+/// same kind it hands its receiver to. A method that uses its receiver any
+/// other way borrows all of it, as does one handing it to such a method, and
+/// has no entry.
+fn receiver_fields(bodies: &[Body]) -> HashMap<String, Vec<Vec<Projection>>> {
+    let eligible: HashSet<&str> =
+        bodies.iter().filter(|body| body.borrows_used_fields && body.arg_count >= 1).map(|body| body.symbol.as_str()).collect();
+    let direct: HashMap<&str, (BTreeSet<usize>, BTreeSet<String>)> = bodies
+        .iter()
+        .filter(|body| eligible.contains(body.symbol.as_str()))
+        .filter_map(|body| Some((body.symbol.as_str(), receiver_field_uses(body, &eligible)?)))
+        .collect();
+    let mut whole: HashSet<&str> = eligible.iter().copied().filter(|symbol| !direct.contains_key(symbol)).collect();
+    loop {
+        let before = whole.len();
+        for (symbol, (_, callees)) in &direct {
+            if callees.iter().any(|callee| whole.contains(callee.as_str())) {
+                whole.insert(symbol);
+            }
+        }
+        if whole.len() == before {
+            break;
+        }
+    }
+    let mut fields: HashMap<&str, BTreeSet<usize>> = direct
+        .iter()
+        .filter(|(symbol, _)| !whole.contains(*symbol))
+        .map(|(symbol, (own, _))| (*symbol, own.clone()))
+        .collect();
+    loop {
+        let mut changed = false;
+        for (symbol, (_, callees)) in &direct {
+            if whole.contains(symbol) {
+                continue;
+            }
+            let reached: BTreeSet<usize> =
+                callees.iter().filter_map(|callee| fields.get(callee.as_str())).flatten().copied().collect();
+            let own = fields.get_mut(symbol).expect("every method not borrowing its whole receiver has fields");
+            let size = own.len();
+            own.extend(reached);
+            changed |= own.len() != size;
+        }
+        if !changed {
+            break;
+        }
+    }
+    fields
+        .into_iter()
+        .filter(|(_, used)| !used.is_empty())
+        .map(|(symbol, used)| (symbol.to_string(), used.into_iter().map(|field| vec![Projection::Field(field)]).collect()))
+        .collect()
+}
+
+/// `[BRW-10]` — the fields of its receiver (argument 0, a reference) a
+/// method's own body uses, and the methods of the same kind it hands its
+/// receiver to; `None` when it uses its receiver any other way.
+fn receiver_field_uses(body: &Body, eligible: &HashSet<&str>) -> Option<(BTreeSet<usize>, BTreeSet<String>)> {
+    let receiver = LocalId(1);
+    let mut fields = BTreeSet::new();
+    let mut callees = BTreeSet::new();
+    let field = |place: &Place, fields: &mut BTreeSet<usize>| -> Option<()> {
+        if place.local != receiver {
+            return Some(());
+        }
+        let [Projection::Deref, Projection::Field(f), ..] = place.projection.as_slice() else { return None };
+        fields.insert(*f);
+        Some(())
+    };
+    // A temporary that carries the receiver to one call of such a method.
+    let carried = |point: Point, local: LocalId| -> Option<String> {
+        if body.local(local).kind != LocalKind::Temp {
+            return None;
+        }
+        match capture_temporary_uses(body, point, local).as_slice() {
+            [CaptureTemporaryUse::Receiver(symbol)] if eligible.contains(symbol.as_str()) => Some(symbol.clone()),
+            _ => None,
+        }
+    };
+    let operand_place = |operand: &Operand| match operand {
+        Operand::Copy(place) | Operand::Move(place) => Some(place.clone()),
+        Operand::Const(_) => None,
+    };
+    for (block_index, block) in body.blocks.iter().enumerate() {
+        for (index, stmt) in block.stmts.iter().enumerate() {
+            let point = Point { block: block_index, index };
+            match &stmt.kind {
+                StmtKind::Assign { place, rvalue } => {
+                    field(place, &mut fields)?;
+                    match rvalue {
+                        Rvalue::Ref { place: of, .. } if of.local == receiver && of.projection == [Projection::Deref] => {
+                            if !place.projection.is_empty() {
+                                return None;
+                            }
+                            callees.insert(carried(point, place.local)?);
+                        }
+                        Rvalue::Use(Operand::Copy(of) | Operand::Move(of)) if of.local == receiver && of.projection.is_empty() => {
+                            if !place.projection.is_empty() {
+                                return None;
+                            }
+                            callees.insert(carried(point, place.local)?);
+                        }
+                        Rvalue::Use(o) | Rvalue::UnaryOp { operand: o, .. } | Rvalue::Cast { operand: o, .. } | Rvalue::Repeat { value: o, .. } => {
+                            if let Some(of) = operand_place(o) {
+                                field(&of, &mut fields)?;
+                            }
+                        }
+                        Rvalue::BinaryOp { lhs, rhs, .. } => {
+                            for o in [lhs, rhs] {
+                                if let Some(of) = operand_place(o) {
+                                    field(&of, &mut fields)?;
+                                }
+                            }
+                        }
+                        Rvalue::Aggregate { operands, .. } => {
+                            for o in operands {
+                                if let Some(of) = operand_place(o) {
+                                    field(&of, &mut fields)?;
+                                }
+                            }
+                        }
+                        Rvalue::Ref { place: of, .. } | Rvalue::Discriminant(of) => field(of, &mut fields)?,
+                    }
+                }
+                StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
+                    field(dest, &mut fields)?;
+                    field(overflow, &mut fields)?;
+                    for o in [lhs, rhs] {
+                        if let Some(of) = operand_place(o) {
+                            field(&of, &mut fields)?;
+                        }
+                    }
+                }
+                StmtKind::BeginAccess { place, .. }
+                | StmtKind::BeginAccessTransfer { place, .. }
+                | StmtKind::EndAccess { place, .. }
+                | StmtKind::EndAccessTransfer { place, .. }
+                | StmtKind::Drop { place, .. } => field(place, &mut fields)?,
+                StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
+            }
+        }
+        match &block.terminator {
+            Terminator::Call { func, args, dest, .. } => {
+                field(dest, &mut fields)?;
+                if let FuncRef::Indirect { operand, .. } = func
+                    && let Some(of) = operand_place(operand)
+                {
+                    field(&of, &mut fields)?;
+                }
+                for (argument, operand) in args.iter().enumerate() {
+                    let Some(of) = operand_place(operand) else { continue };
+                    match func {
+                        // The receiver handed on as the receiver of a method of the same kind.
+                        FuncRef::Direct { symbol, .. }
+                            if argument == 0 && of.local == receiver && of.projection.is_empty() && eligible.contains(symbol.as_str()) =>
+                        {
+                            callees.insert(symbol.clone());
+                        }
+                        _ => field(&of, &mut fields)?,
+                    }
+                }
+            }
+            Terminator::SwitchInt { discr, .. } => {
+                if let Some(of) = operand_place(discr) {
+                    field(&of, &mut fields)?;
+                }
+            }
+            Terminator::Assert { cond, .. } => {
+                if let Some(of) = operand_place(cond) {
+                    field(&of, &mut fields)?;
+                }
+            }
+            Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => {}
+        }
+    }
+    Some((fields, callees))
+}
+
 /// `[LT-42]` — a capturing closure's environment type is compiler-generated
 /// and carried explicitly by MIR. Its access contract is therefore a verified
 /// source for narrowing the *synthetic* `&capture` used to construct that
 /// environment. No user-written `ref T` is eligible for this treatment.
+/// `[BRW-10]` — and a method's, for the receiver borrow a call to it takes.
 fn closure_capture_contracts(
     bodies: &[Body],
     contracts: &HashMap<String, CallRegionContract>,
-) -> HashMap<StructId, CallAccessContract> {
+) -> CaptureContracts {
+    let methods = receiver_fields(bodies);
     let mut result = HashMap::new();
     for body in bodies {
         let Some(environment) = body.closure_environment else { continue };
@@ -1965,7 +2156,7 @@ fn closure_capture_contracts(
             result.remove(&environment);
         }
     }
-    result
+    CaptureContracts { closures: result, methods }
 }
 
 /// Locate synthetic capture borrows in a closure creator. A borrow is exact
@@ -1975,14 +2166,14 @@ fn closure_capture_contracts(
 /// whole-place borrow.
 fn capture_borrow_paths(
     body: &Body,
-    closure_contracts: &HashMap<StructId, CallAccessContract>,
+    contracts: &CaptureContracts,
 ) -> HashMap<Point, Vec<Vec<Projection>>> {
     let mut result = HashMap::new();
     for (block_index, block) in body.blocks.iter().enumerate() {
         for (index, stmt) in block.stmts.iter().enumerate() {
             let StmtKind::Assign {
                 place: destination,
-                rvalue: Rvalue::Ref { mutable: false, .. },
+                rvalue: Rvalue::Ref { mutable, .. },
             } = &stmt.kind
             else {
                 continue;
@@ -1991,11 +2182,20 @@ fn capture_borrow_paths(
                 continue;
             }
             let uses = capture_temporary_uses(body, Point { block: block_index, index }, destination.local);
-            let [CaptureTemporaryUse::Environment { environment, field }] = uses.as_slice() else {
-                continue;
+            let paths = match uses.as_slice() {
+                [CaptureTemporaryUse::Environment { environment, field }] if !mutable => {
+                    let Some(contract) = contracts.closures.get(environment) else { continue };
+                    let Some(paths) = capture_field_paths(contract, *field) else { continue };
+                    paths
+                }
+                // `[BRW-10]` — the receiver of one call to a method that
+                // borrows only the fields its body uses.
+                [CaptureTemporaryUse::Receiver(symbol)] => {
+                    let Some(paths) = contracts.methods.get(symbol) else { continue };
+                    paths.clone()
+                }
+                _ => continue,
             };
-            let Some(contract) = closure_contracts.get(environment) else { continue };
-            let Some(paths) = capture_field_paths(contract, *field) else { continue };
             result.insert(Point { block: block_index, index }, paths);
         }
     }
@@ -2008,6 +2208,8 @@ fn capture_borrow_paths(
 /// creator fall back to the ordinary whole-place borrow.
 enum CaptureTemporaryUse {
     Environment { environment: StructId, field: usize },
+    /// The receiver (argument 0) of a direct call.
+    Receiver(String),
     Other,
 }
 
@@ -2052,8 +2254,16 @@ fn capture_temporary_uses(
                 if let FuncRef::Indirect { operand, .. } = func {
                     capture_operand_use(operand, local, || CaptureTemporaryUse::Other, &mut uses);
                 }
-                for operand in args {
-                    capture_operand_use(operand, local, || CaptureTemporaryUse::Other, &mut uses);
+                for (argument, operand) in args.iter().enumerate() {
+                    match func {
+                        FuncRef::Direct { symbol, .. } if argument == 0 => capture_operand_use(
+                            operand,
+                            local,
+                            || CaptureTemporaryUse::Receiver(symbol.clone()),
+                            &mut uses,
+                        ),
+                        _ => capture_operand_use(operand, local, || CaptureTemporaryUse::Other, &mut uses),
+                    }
                 }
             }
             Terminator::Assert { cond, msg, .. } => {
@@ -2587,7 +2797,7 @@ fn infer_invalid_result_bodies(
     bodies: &[Body],
     types: &TypeTable,
     call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
-    capture_contracts: &HashMap<StructId, CallAccessContract>,
+    capture_contracts: &CaptureContracts,
 ) -> HashSet<String> {
     let known: HashSet<&str> = bodies.iter().map(|body| body.symbol.as_str()).collect();
     let regions: Vec<Regions> = bodies
@@ -4412,7 +4622,7 @@ fn check_point(
                     .note(if loan.arena_scope {
                         "a ScopedArena holds its parent's mutable borrow for the scope's whole region (ARN-6)"
                     } else if method_root.is_some() {
-                        "a method takes all of `self`, so disjoint fields do not stay disjoint across a call (BRW-4)"
+                        "a call borrows the fields of `self` its method uses (BRW-10); this method uses all of `self`, so the other fields do not stay disjoint across the call (BRW-4)"
                     } else if indexed_conflict {
                         "computed indices may overlap; a structural split proves non-overlap (BRW-5)"
                     } else {
@@ -4848,6 +5058,7 @@ mod callable_region_metadata_tests {
             closure_captures_by_move: false,
             class_owner: None,
             class_virtual_slot: None,
+            borrows_used_fields: false,
             is_abstract: false,
             is_extern_declaration: false,
             ffi_counted: None,

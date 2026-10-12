@@ -1267,6 +1267,23 @@ impl Regions {
                             result.insert(destination, fact.clone());
                         }
                     }
+                    // The reference's own slot holds this loan too, as an
+                    // unnarrowed borrow's does: a call's result taken from
+                    // the reference (`result <- arg0`, `[BRW-10]`'s getter)
+                    // keeps the narrowed fields borrowed.
+                    let mut own = self.holding_facts(state, place);
+                    own.roots.insert(loan);
+                    if self.borrows_own_storage(place) {
+                        own.origins.insert(match body.local(place.local).kind {
+                            LocalKind::Arg => Origin::Param(place.local),
+                            _ => Origin::Local(place.local),
+                        });
+                    }
+                    for slot in &self.local_regions[destination.local.0 as usize] {
+                        if slot.projection == destination.projection {
+                            result.entry(slot.region).or_insert_with(|| own.clone()).merge(&own);
+                        }
+                    }
                     return result;
                 }
                 let Some(loan) = self.loan_region.get(&point).copied() else { return result };

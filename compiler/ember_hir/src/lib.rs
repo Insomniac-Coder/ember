@@ -228,6 +228,9 @@ pub struct Function {
     /// `[DSP-2]` — the vtable slot assigned to a virtual or override method.
     /// `None` means ordinary static dispatch.
     pub class_virtual_slot: Option<usize>,
+    /// `[BRW-10]` — a struct or enum method not visible outside its package:
+    /// a call to it borrows only the fields of its receiver its body uses.
+    pub borrows_used_fields: bool,
     /// A bodyless `virtual` declaration on an abstract class. It carries the
     /// checked callable and vtable signature but is never emitted as a C
     /// function; a concrete override supplies its slot implementation.

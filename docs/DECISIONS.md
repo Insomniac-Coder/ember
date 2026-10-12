@@ -5016,6 +5016,32 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-170 — A method call borrows only the fields of its receiver the method uses (`[BRW-10]`, D-574)
+
+**Date:** 2026-10-12 (autopilot). **Rules:** `[BRW-10]`, `[BRW-4]`, `[LT-42]`.
+
+**Context.** `[BRW-10]` was never built: every method call borrowed its whole receiver, so `w.bump()`
+inside `for name in w.names` was `E3020` even though `bump` touches only `w.count`.
+
+**Decision.** (1) typeck sets `borrows_used_fields` on a struct's or enum's method with a receiver,
+unless it is a `pub` method declared in `std`: no other package sees a program's methods (a static
+library exports `extern "C"` functions only), while every program sees `std`'s. (2) `receiver_fields`
+(borrows.rs) reads each such method's MIR: every place it names through its receiver must be a field
+of it (`(*self).f…`), recorded by its first field; handing the receiver itself (or a reborrow of it,
+through a temporary used once) to another such method as its receiver adds that method's fields, to a
+fixed point; any other use of the receiver, or handing it to a method borrowing all of its own,
+borrows all of it. (3) The narrowing reuses the closures' capture paths (`[LT-42]`): a borrow whose
+temporary's one use is the receiver of a direct call to such a method takes those fields as its paths,
+for the access check, the loans and the regions alike. (4) The narrowed borrow's reference keeps its
+own region slot holding the loan, so a view the method returns (`result <- arg0`) keeps the narrowed
+fields borrowed; without it `p.first_a()` then `p.a.push(4)` compiled (a dangling view).
+
+**Consequences.** Calls to a method touching fields other than the ones a loop or a view holds now
+compile; a field the method reads is borrowed as the call borrows (mutably for a `mut self` method).
+A generic struct's methods qualify as any other. `std`'s `pub` methods keep the whole borrow.
+
+---
+
 ## ADR-169 — A callable value that is a known function is called directly (D-571)
 
 **Date:** 2026-10-12 (autopilot). **Rules:** `[CLO-3]`, `[CLO-10]`, ODR-102, `[RNG-4]`, ADR-081.

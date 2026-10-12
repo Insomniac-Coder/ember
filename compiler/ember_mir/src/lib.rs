@@ -145,6 +145,8 @@ pub struct Body {
     /// select vtables.  It is not runtime metadata in the Ember value ABI.
     pub class_owner: Option<ember_types::ClassId>,
     pub class_virtual_slot: Option<usize>,
+    /// See `ember_hir::Function::borrows_used_fields` (`[BRW-10]`).
+    pub borrows_used_fields: bool,
     /// See `ember_hir::Function::is_abstract`. This body is declaration
     /// metadata for virtual-table layout, not executable code.
     pub is_abstract: bool,

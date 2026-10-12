@@ -10741,8 +10741,12 @@ a known function value is now called directly and inlined: MSVC 1.01x, clang 1.0
 rows' 5% drift was D-572 (shell32 loaded at every start: 4.6 -> 7 ms for an empty program); fixed,
 with D-573 (a build test that hit "Text file busy" on Linux CI). README benchmarks from one fresh
 run at 05:11 (2026-10-12): 46 as fast as C, 1 close, 3 slow (MSVC `t3_lines`, clang
-`a10_recursion`, gcc `p5_million_objects`); every flagged row moved with its own twin. **Next:**
-ASK the owner: D-550's layout, the EXC-10 review workflow; then the slow rows.
+`a10_recursion`, gcc `p5_million_objects`); every flagged row moved with its own twin. Then the
+rules no test names, by phase: Phase 3 all but `[CLS-5]`/`[CLS-8]` (both probed correct), Phase 2 eight,
+of which `[BRW-10]` (88 words) was never built: D-574 fixed (ADR-170, a method call borrows only the
+receiver fields its body uses); README Phase 2 92%. **Next:** the other untested Phase 2 rules
+(`[LT-39]`, `[DRP-4]`, `[LT-23]`, `[CELL-8]`, `[LT-34]`, `[LT-43]`, `[CELL-3]`), then Phase 1's; ASK the
+owner: D-550's layout, the EXC-10 review workflow.
 
 **2026-10-11 (autopilot, the owner: "go on autopilot now"), EXC-10 and D-552 (ADR-158); D-554 found.**
 CI on `4a28ea6` failed on Linux only: the unix half of `main_args_replace_text_that_is_not_utf8`

@@ -4,6 +4,10 @@ struct Pair:
 
     fn set_y(mut self, value: i32):
         self.y = value
+        show(self)
+
+fn show(p: Pair):
+    println(p.y)
 
 fn main():
     pair = Pair(1, 2)
