@@ -1375,7 +1375,9 @@ impl TypeTable {
                 } else if def.name.as_str().starts_with("Cell_")
                     || def.name.as_str().starts_with("RefCell_")
                 {
-                    (def.fields.iter().all(|field| both(field.ty, visiting).0), false)
+                    // `[CELL-3]`, `[CELL-8]` — `Send` is the payload's (`value`);
+                    // a `RefCell`'s borrow-site pointer is its own bookkeeping.
+                    (both(def.fields[0].ty, visiting).0, false)
                 } else {
                     def.fields.iter().map(|field| both(field.ty, visiting))
                         .fold((true, true), |a, b| (a.0 && b.0, a.1 && b.1))

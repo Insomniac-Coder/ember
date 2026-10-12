@@ -10744,9 +10744,26 @@ run at 05:11 (2026-10-12): 46 as fast as C, 1 close, 3 slow (MSVC `t3_lines`, cl
 `a10_recursion`, gcc `p5_million_objects`); every flagged row moved with its own twin. Then the
 rules no test names, by phase: Phase 3 all but `[CLS-5]`/`[CLS-8]` (both probed correct), Phase 2 eight,
 of which `[BRW-10]` (88 words) was never built: D-574 fixed (ADR-170, a method call borrows only the
-receiver fields its body uses); README Phase 2 92%. **Next:** the other untested Phase 2 rules
-(`[LT-39]`, `[DRP-4]`, `[LT-23]`, `[CELL-8]`, `[LT-34]`, `[LT-43]`, `[CELL-3]`), then Phase 1's; ASK the
-owner: D-550's layout, the EXC-10 review workflow.
+receiver fields its body uses); README Phase 2 92%. Then tests for `[LT-23]`, `[LT-34]`, `[DRP-4]`
+(its panic half), `[CELL-3]`, `[CELL-8]`, all probed correct but one: every `RefCell` was `!Send`
+through its private borrow-site pointer (D-575 fixed). Phase 2's two left wait on other phases:
+`[LT-39]` on reflection (Phase 4), `[LT-43]` on `gen fn` (Phase 7a, `E2221` is never emitted), as does
+`[DRP-4]`'s `@noalloc` half (effects, Phase 4). Then Phase 1's 64 untested rules (2485 of its 13924
+words), probed: README Phase 1 **99% was wrong, now 95%** (`rule_sizes.py 95 92 66 14 14 4 6` gives
+59.7%, Overall 60%). Unbuilt, about 560 words: `[TYP-41]` const generics (E1010 "not supported yet in
+this phase"; 340 words alone, added by SP-007 on 2026-09-26, before the 99% of 2026-10-01),
+`[TYP-32]`/`[GRM-31]` `some` return types (do not parse), `[STA-3]` statics initialised on first
+access (E2130), `[GRM-28]`/`[CLO-12]` local functions (do not parse), `[GRM-32]` `comptime(e)`.
+Defects found: `[GRM-33]` a bodiless `fn` outside an interface is accepted silently (`E0110` missing),
+`[GRM-36]` `ref` of a value is `E2140` not `E0111`, `[LEX-1]` invalid UTF-8 has no `E0001`, `[LEX-7]`
+a trailing backslash does not join lines, `[GRM-12]` no `W1002`, `[TYP-35]` a phantom parameter does
+not count for `Send`/`Sync`. Probed correct, tests to add: `[LEX-2]`, `[LEX-4]`, `[LEX-5]`, `[LEX-6]`,
+`[LEX-8]`, `[LEX-9]`, `[LEX-10]`, `[LEX-11a]`, `[LEX-12]`, `[LEX-13]`, `[LEX-14]`, `[LEX-18]`,
+`[LEX-20]`, `[LEX-25]`, `[GRM-1]`, `[GRM-3]`, `[GRM-6]`, `[GRM-7]`, `[GRM-10]`, `[GRM-11]`,
+`[GRM-20]`, `[GRM-30]`, `[FN-3]`, `[FN-4]`, `[FN-7]`, `[CTL-9]`, `[CLO-5]`, `[TYP-35]`'s identity
+half. Not yet probed: `[MOD-8]` (`E1031` is not a code), `[VER-4]`, `[LEX-23]`, `[PAN-3]`. **Next:**
+fix the six defects, add the tests, then build the five unbuilt features (const generics last,
+largest); ASK the owner: D-550's layout, the EXC-10 review workflow.
 
 **2026-10-11 (autopilot, the owner: "go on autopilot now"), EXC-10 and D-552 (ADR-158); D-554 found.**
 CI on `4a28ea6` failed on Linux only: the unix half of `main_args_replace_text_that_is_not_utf8`

@@ -36,7 +36,7 @@ method in [`docs/HANDOFF.md`](docs/HANDOFF.md)):
 
 | Phase | Scope | Done |
 |---|---|---:|
-| 1 | Core language (Parts II–VI) | 99% |
+| 1 | Core language (Parts II–VI) | 95% |
 | 2 | Ownership, borrowing, regions | 92% |
 | 3 | Classes, reference counting, exclusivity | 66% |
 | 4 | Effects, compile time, reflection, derives | 14% |
@@ -45,7 +45,7 @@ method in [`docs/HANDOFF.md`](docs/HANDOFF.md)):
 | 7 | C++ interoperability and the interpreter | 0% |
 | 7a | Iteration, determinism, cost control | 6% |
 | 8 | Hardening and 1.0 | 17% |
-| | Overall | 61% |
+| | Overall | 60% |
 
 The latest language work is the owner's design G8-4, which made the language 0.9.10
 ([`docs/MIGRATION-0.9.10.md`](docs/MIGRATION-0.9.10.md)): every iterator counts and numbers its items
