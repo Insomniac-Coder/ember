@@ -5016,6 +5016,29 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-180 — `SyncShared[T]` is `Shared[T]` with the sync flag in its type information (`[HEAP-10]`, `[THR-8]`, `[THR-9]`)
+
+**Context.** `[HEAP-10]` gives `std.sync.SyncShared[T]`: shared ownership across threads, atomic
+counts, `get() -> ref T` only. The runtime's counted blocks already choose plain or atomic counts
+by their type information's `EMBER_TI_SYNC` flag (a `@sync` class's), for retain, release, weak
+retain/release and the weak upgrade's compare-exchange loop.
+
+**Decision.** `SyncShared` is declared in `std/src/sync.em` for its name (imported, not in the
+prelude, resolved like `std.mem.UnsafeCell`), and built by the type checker exactly as `Shared` is
+(`counted_of(inner, sync)`): a Copy wrapper of the payload pointer with origin `SyncShared`, made by
+`SyncShared(value)` through `SharedNew`. Its type information carries `EMBER_TI_SYNC`. `get_mut` is
+`E1010` with a note. Ownership facts treat it as `Shared` (drop elaboration, cycle collection's
+strong edges, exit drops); the checked accesses of `[EXC-2]` do not apply (it lends `ref T` alone,
+and the runtime refuses a plain access on a sync object), so neither the access placement
+(`access.rs`) nor the access transfer across calls (`borrows.rs`) sees it: its loans are ordinary
+static loans. `Send` and `Sync` when `T` is both, and so is its `Weak` (`[THR-8]`); construction is
+not refused for other `T` (as Rust's `Arc`): the markers refuse it where it would cross threads.
+
+**Speed.** Copies into a two-slot array, 50M (`bench/probes/sync_shared_copies`), clang: 521.7 ms
+against 517.0 ms for C's same atomic increment/decrement (x1.009).
+
+---
+
 ## ADR-179 — `Once` is written in `std` on an `Atomic[u32]`; `std` alone may sleep on a word (`[THR-3]`, `[THR-9]`)
 
 **Context.** `[THR-3]` gives `Once` one sentence: it "runs an initialiser exactly once". Its waiting

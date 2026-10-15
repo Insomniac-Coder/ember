@@ -177,6 +177,8 @@ fn unique_owner_local(
     source.map(|local| (local, Some(temporary)))
 }
 
+/// Only `Shared`: a `SyncShared` lends `ref T` alone, so it has no accesses to check, and its
+/// object's access word is not atomic (`[HEAP-10]`).
 fn is_shared_owner(body: &Body, types: &TypeTable, local: ember_mir::LocalId) -> bool {
     let TyKind::Struct(id) = types.kind(body.local(local).ty) else {
         return false;

@@ -1,7 +1,7 @@
 #$ test: run-fail
 #$ rules: HEAP-3, HEAP-5, HEAP-6, EXC-1, RC-5
 #$ profiles: debug, release, shipping
-#$ panics: exclusivity violation: overlapping access
+#$ panics: exclusivity violation: overlapping access to Shared[Counter]
 
 struct Counter:
     value: i32

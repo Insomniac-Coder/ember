@@ -1450,8 +1450,12 @@ impl TypeTable {
             TyKind::Struct(id) => {
                 let def = self.struct_def(*id);
                 if let Some((name, args)) = &def.origin {
-                    if name.is("Shared") || name.is("SyncShared") {
-                        (false, false) // SyncShared is not lowered yet.
+                    if name.is("Shared") {
+                        (false, false) // `[HEAP-10]`
+                    } else if name.is("SyncShared") && args.len() == 1 {
+                        // `[THR-8]`, `[THR-9]` — any thread may read the value and drop the last owner.
+                        let (send, sync) = both(args[0], visiting);
+                        (send && sync, send && sync)
                     } else if name.is("Box") && args.len() == 1 {
                         both(args[0], visiting)
                     } else if name.is("Weak") && args.len() == 1 {
@@ -1906,7 +1910,7 @@ impl TypeTable {
                 matches!(
                     &def.origin,
                     Some((name, args))
-                        if (name.is("Weak") || name.is("Shared")) && args.len() == 1
+                        if (name.is("Weak") || name.is("Shared") || name.is("SyncShared")) && args.len() == 1
                 ) || def.has_drop
                     || (def.drops_fields && def.fields.iter().any(|f| self.needs_drop(f.ty)))
             }

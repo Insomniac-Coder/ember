@@ -77,10 +77,9 @@ fn memory_only(types: &TypeTable, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
                 // A weak handle never drops its target.
                 Some((name, args)) if name.is("Weak") && args.len() == 1 => true,
                 // The last shared handle, or a box, drops what it holds.
-                Some((name, args)) if (name.is("Shared") || name.is("Box")) && args.len() == 1 => {
+                Some((name, args)) if (name.is("Shared") || name.is("SyncShared") || name.is("Box")) && args.len() == 1 => {
                     memory_only(types, args[0], seen)
                 }
-                Some((name, _)) if name.is("SyncShared") => false,
                 _ => !def.drops_fields || def.fields.iter().all(|field| memory_only(types, field.ty, seen)),
             }
         }

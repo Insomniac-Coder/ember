@@ -3530,7 +3530,8 @@ impl Emitter<'_> {
         for (id, inner) in shareds {
             let info = self.shared_type_info_symbol(id);
             let inner_c = self.c_type(inner);
-            let display = format!("Shared[{}]", self.types.display(inner));
+            let sync = self.types.struct_def(id).origin.as_ref().is_some_and(|(name, _)| name.is("SyncShared"));
+            let display = format!("{}[{}]", if sync { "SyncShared" } else { "Shared" }, self.types.display(inner));
             self.line(&format!("{linkage}const {} {info} = {{", ember_branding::runtime("type_info")));
             self.line(&format!(
                 "    (uint32_t)(EMBER_OBJ_PAYLOAD_OFFSET({inner_c_align}) + {inner_c_size}),", inner_c_align = c_align(&inner_c), inner_c_size = c_size(&inner_c)
@@ -3538,7 +3539,8 @@ impl Emitter<'_> {
             self.line(&format!(
                 "    (uint32_t)(({inner_c_align} > _Alignof({RT}obj_header)) ? {inner_c_align} : _Alignof({RT}obj_header)),", inner_c_align = c_align(&inner_c)
             ));
-            self.line("    UINT32_C(0),");
+            // `[HEAP-10]` — a `SyncShared`'s counts are atomic; the runtime reads it here.
+            self.line(if sync { "    EMBER_TI_SYNC," } else { "    UINT32_C(0)," });
             self.line(&format!("    {},", c_string_literal(&display)));
             self.line("    NULL,");
             if self.types.needs_drop(inner) {
@@ -3584,7 +3586,7 @@ impl Emitter<'_> {
     fn shared_inner_id(&self, id: StructId) -> Option<Ty> {
         let def = self.types.struct_def(id);
         match &def.origin {
-            Some((name, args)) if name.is("Shared") && args.len() == 1 => Some(args[0]),
+            Some((name, args)) if (name.is("Shared") || name.is("SyncShared")) && args.len() == 1 => Some(args[0]),
             _ => None,
         }
     }
@@ -5386,7 +5388,8 @@ impl Emitter<'_> {
                 self.emit_line_directive(stmt.span);
                 let operation = if *mutable { "begin_write" } else { "begin_read" };
                 let object = self.access_object(place, body);
-                let what = c_string_literal(&body.symbol);
+                // D-595 — the type the user wrote, never the C symbol.
+                let what = c_string_literal(&self.types.display(self.place_ty(place, body)));
                 let location = self.location(stmt.span);
                 self.line(&format!(
                     "    {RT}access_{operation}({object}, {what}, {location});"
@@ -5503,7 +5506,9 @@ impl Emitter<'_> {
                 access_word_member(&field)
             );
         }
-        let what = c_string_literal(&body.symbol);
+        // D-595 — what the user wrote (`Shared[i64]`), never the C symbol: that leaked into the
+        // panic, and a symbol D-569 passes as two words may appear only in calls.
+        let what = c_string_literal(&self.types.display(self.place_ty(place, body)));
         format!("{RT}access_{operation}({}, {what}, {location})", self.access_object(place, body))
     }
 

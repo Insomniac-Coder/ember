@@ -10877,7 +10877,13 @@ Then `Once` (ADR-179): written in `std` on an `Atomic[u32]`, its waiters sleepin
 `wait`/`wake_all` builtins; `call_once` x0.80 of C. `THR-9` waits only on `SyncShared`. CI on
 `bf96ba9` failed on Linux clang: the runtime's C tests `#include` `ember_rt.c` after their own
 headers, so `unistd.h` had hidden `syscall`; `ember_rt.c` now declares it (fixed in `3d38ec6`).
-Next: `SyncShared` (`Shared` with atomic counts, `get` only, its `Weak`), then threads.
+Then `SyncShared` (ADR-180): `Shared` with `EMBER_TI_SYNC` in its type information, `get` only;
+copies x1.009 of C. `THR-8` and `THR-9` done. Its probe found D-595 (fixed): any function with a
+`str` parameter calling `Shared.get` stopped the compiler on Windows (the access check's text was
+the function's C symbol, which also leaked into every overlapping-access panic). **Next: threads**
+(`thread.spawn`/`JoinHandle`, `thread.scope`: a backend trampoline; `[THR-10]`/`[THR-11]`, `E7004`/
+`E7005`), then channels (`[THR-15]`), then `SoA`. Check first: `ember_rt_static_begin` keeps its
+depth and chain in plain globals, which are not per-thread.
 
 **2026-10-15, `Mutex` and `RwLock` (ADR-177), the dependency map's step 4 begun.** `std.sync.Mutex`
 and `RwLock` with their guards: a lock word in the value, inline compare-exchange/swap in

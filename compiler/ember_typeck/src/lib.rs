@@ -1515,6 +1515,8 @@ struct Checker<'a> {
     /// control-block operations as class handles rather than bitwise pointer
     /// duplication.
     shareds: HashMap<StructId, Ty>,
+    /// `[HEAP-10]` — which of `shareds` are `SyncShared`.
+    sync_shareds: HashSet<StructId>,
     /// `[WK-1]` — every compiler-known `Weak[C]` and the class handle it can
     /// upgrade. The wrapper has a private class-pointer field, but unlike the
     /// class handle it retains only the runtime control block.
@@ -1898,6 +1900,7 @@ impl<'a> Checker<'a> {
             cells: HashMap::new(),
             boxes: HashMap::new(),
             shareds: HashMap::new(),
+            sync_shareds: HashSet::new(),
             weaks: HashMap::new(),
             refcells: HashMap::new(),
             maybe_uninit: HashMap::new(),
@@ -10421,12 +10424,12 @@ impl<'a> Checker<'a> {
             let (inner, _) = args[0];
             return self.box_of(inner);
         }
-        if name.is("Shared") {
+        if name.is("Shared") || self.is_sync_shared_name(name) {
             if !require(self, 1) {
                 return self.common.error;
             }
             let (inner, _) = args[0];
-            return self.shared_of(inner);
+            return self.counted_of(inner, !name.is("Shared"));
         }
         if name.is("Weak") {
             if !require(self, 1) {
@@ -11840,8 +11843,9 @@ impl<'a> Checker<'a> {
                     return self.box_of(inner);
                 }
                 if let Some(inner) = self.shareds.get(&id).copied() {
+                    let sync = self.sync_shareds.contains(&id);
                     let inner = map(self, inner);
-                    return self.shared_of(inner);
+                    return self.counted_of(inner, sync);
                 }
                 if let Some(inner) = self.weaks.get(&id).copied() {
                     let inner = map(self, inner);
@@ -13418,8 +13422,11 @@ impl<'a> Checker<'a> {
     /// formation can remain ordinary HIR. The backend maps the wrapper itself
     /// to the runtime object header and materializes that pointer at the
     /// payload offset; no raw field is visible to source programs.
-    fn shared_of(&mut self, inner: Ty) -> Ty {
-        let name = self.unique_instance_name("Shared", &[inner]);
+    /// `[HEAP-10]` — with `sync`, `std.sync.SyncShared[T]`: the same representation, with atomic
+    /// counts (its type information says so) and no checked accesses (`get` only).
+    fn counted_of(&mut self, inner: Ty, sync: bool) -> Ty {
+        let kind = if sync { "SyncShared" } else { "Shared" };
+        let name = self.unique_instance_name(kind, &[inner]);
         if let Some(&ty) = self.named_types.get(&name) {
             return ty;
         }
@@ -13440,13 +13447,26 @@ impl<'a> Checker<'a> {
             derives_copy: true,
             has_drop: false,
             drops_fields: false,
-            origin: Some((Symbol::intern("Shared"), vec![inner])),
+            origin: Some((Symbol::intern(kind), vec![inner])),
             declaring_module: ember_types::COMPILER_MODULE,
         });
         let ty = self.types.intern(TyKind::Struct(id));
         self.named_types.insert(name, ty);
         self.shareds.insert(id, inner);
+        if sync {
+            self.sync_shareds.insert(id);
+        }
         ty
+    }
+
+    /// `[HEAP-10]` — `SyncShared` is `std.sync`'s, not in the prelude: resolve it through the
+    /// imports, as `UnsafeCell`.
+    fn is_sync_shared_name(&self, name: Symbol) -> bool {
+        self.resolve_name(name).is("std.sync.SyncShared")
+    }
+
+    fn is_sync_shared(&self, ty: Ty) -> bool {
+        matches!(self.types.kind(ty), TyKind::Struct(id) if self.sync_shareds.contains(id))
     }
 
     fn shared_inner(&self, ty: Ty) -> Option<Ty> {
@@ -26023,7 +26043,7 @@ impl<'a> Checker<'a> {
         match self.types.kind(ty) {
             TyKind::Class(_) => true,
             TyKind::Struct(id) => self.types.struct_def(*id).origin.as_ref().is_some_and(
-                |(name, arguments)| name.is("Shared") && arguments.len() == 1,
+                |(name, arguments)| (name.is("Shared") || name.is("SyncShared")) && arguments.len() == 1,
             ),
             _ => false,
         }
@@ -29457,12 +29477,15 @@ impl<'a> Checker<'a> {
         // `[HEAP-3]` — `Shared(value)` creates the first strong owner. Like
         // Box construction it consumes the ordinary argument value; unlike
         // Box its compiler-known wrapper is Copy by strong retain.
-        if name.is("Shared") {
+        // `[HEAP-10]` — `SyncShared(value)` likewise, with atomic counts.
+        let sync_shared = self.is_sync_shared_name(name);
+        if name.is("Shared") || sync_shared {
+            let shown = if sync_shared { "SyncShared" } else { "Shared" };
             if explicit.len() > 1 {
                 self.error(
                     codes::E2020,
                     span,
-                    format!("`Shared` takes one type argument, found {}", explicit.len()),
+                    format!("`{shown}` takes one type argument, found {}", explicit.len()),
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
@@ -29470,7 +29493,7 @@ impl<'a> Checker<'a> {
                 self.error(
                     codes::E2020,
                     span,
-                    format!("`Shared` takes one argument, found {}", args.len()),
+                    format!("`{shown}` takes one argument, found {}", args.len()),
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
@@ -29484,7 +29507,7 @@ impl<'a> Checker<'a> {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             let inner = value.ty;
-            let shared = self.shared_of(inner);
+            let shared = self.counted_of(inner, sync_shared);
             return Expr {
                 ty: shared,
                 kind: ExprKind::Builtin {
@@ -38439,19 +38462,21 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let sync = self.is_sync_shared(receiver.ty);
         let mutable = match name.name.as_str() {
             "get" => false,
-            "get_mut" => true,
+            "get_mut" if !sync => true,
             _ => {
-                self.error(
+                let kind = if sync { "SyncShared" } else { "Shared" };
+                let mut diagnostic = Diagnostic::error(
                     codes::E1010,
                     name.span,
-                    format!(
-                        "`Shared[{}]` has no method named `{}`",
-                        self.types.display(inner),
-                        name.name
-                    ),
+                    format!("`{kind}[{}]` has no method named `{}`", self.types.display(inner), name.name),
                 );
+                if sync && name.name.is("get_mut") {
+                    diagnostic = diagnostic.note("a `SyncShared` gives `get` only: mutate through the value's own locks or atomics [HEAP-10]");
+                }
+                self.sink.emit(diagnostic);
                 return error;
             }
         };

@@ -254,7 +254,7 @@ fn collect_strong_targets(
                 return;
             }
             if let Some((name, arguments)) = &def.origin
-                && (name.is("Shared") || name.is("Box"))
+                && (name.is("Shared") || name.is("SyncShared") || name.is("Box"))
             {
                 for argument in arguments {
                     collect_strong_targets(types, *argument, seen, targets);

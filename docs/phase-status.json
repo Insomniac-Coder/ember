@@ -60,8 +60,6 @@
     "CT-3": "there is no compile-time evaluator, so no step or heap limit; `E6001` is raised only for a constant that depends on itself",
     "CT-4": "there is no compile-time evaluator: constants are folded, functions are not called (see CT-1)",
     "DRV-1": "only `Copy`, `Clone`, `Hash`, the implicit `Eq` and `Zeroable` on a struct derive; every other derive is E0900 (ember_typeck)",
-    "THR-8": "`SyncShared` is not built (Phase 6)",
-    "THR-9": "`SyncShared` is not built (Phase 6)",
     "THR-14": "`Atomic[i128]` and `Atomic[u128]` are `E0900`: 128-bit atomics are not built (Phase 6)",
     "CTL-3b": "`SoA` is not built, so there are no `SoA` columns to iterate (Phase 6)",
     "BRW-5": "`SoA` is not built, so its columns are not one of the ways to hold two mutable views (Phase 6)",
