@@ -121,6 +121,12 @@ jobs:
       - name: error pages compile as documented
         run: python tools/error_pages.py
 
+      # The README's phase table is computed from the tests and
+      # docs/phase-status.json, never entered by hand: a figure rises only when
+      # a rule gets a passing test and nothing records it unfinished.
+      - name: README phase table matches the evidence
+        run: python tools/phase_progress.py --check
+
       # `[DET-4]` — std.math.det gives the bits of its model, bit for bit.
       - name: std.math.det matches its model
         run: python tools/check_det.py

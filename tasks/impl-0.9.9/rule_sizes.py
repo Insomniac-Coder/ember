@@ -1,8 +1,7 @@
 """The phase table's weights: each phase's rules' length in words, in the development target.
 
-Usage: python tasks/impl-0.9.9/rule_sizes.py P1 P2 P3 P4 P5 P6 P7a
-(the phases' current percentages, in that order) prints each phase's size and the overall
-percentage weighted by size. With no arguments it prints the sizes only.
+Usage: python tasks/impl-0.9.9/rule_sizes.py prints each phase's size. The README's percentages
+are not entered here or anywhere by hand: `tools/phase_progress.py` computes them from the tests.
 
 Phases are the 0.9.8 plan's (Part XXI of 0.9.8_Hardened_3), by rule family: Phase 1 is every rule
 in Parts I-VI except `CLS` (Phase 3) and `CORO` (Phase 7a); the others are the families below.
@@ -10,7 +9,6 @@ in Parts I-VI except `CLS` (Phase 3) and `CORO` (Phase 7a); the others are the f
 import json
 import pathlib
 import re
-import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PHASES = {
@@ -64,11 +62,6 @@ def main():
     print(f'target {target}')
     for phase in ORDER:
         print(f'phase {phase:>2}: {sizes[phase][0]:3} rules, {sizes[phase][1]:5} words')
-    if len(sys.argv) == len(ORDER) + 1:
-        done = dict(zip(ORDER, map(float, sys.argv[1:])))
-        total = sum(sizes[phase][1] for phase in ORDER)
-        overall = sum(done[phase] * sizes[phase][1] for phase in ORDER) / total
-        print(f'overall, weighted by words: {overall:.1f}%')
 
 
 if __name__ == '__main__':

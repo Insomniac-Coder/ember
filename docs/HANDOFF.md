@@ -10802,6 +10802,25 @@ its interface only; checking each caller twice, once seeing the concrete type fo
 once seeing only the interface for the diagnostics, reuses the existing machinery). ASK the owner:
 D-550's layout, the EXC-10 review workflow, whether to raise Phase 3.
 
+**2026-10-15: the README's percentages are computed, never typed in (owner: "the percentage should go
+up only if something has been fulfilled").** The hand-set figures (Phase 1 99 → 95 → 96 → 97 → 99)
+broke that rule. Now `tools/phase_progress.py` computes the table: a rule is done only when a passing
+test exercises it (a `#$ rules:` line in `tests/`, or a `[RULE]` citation in a crate's `tests/`, a
+`#[cfg(test)]` module or a runtime test template; a test expecting `E0900` counts only for the meta
+rules ATT-6/CLI-19/PHIL-12, a parse-only test only for LEX/GRM) **and** `docs/phase-status.json` does
+not list it under `unfinished`. All 935 rules count: the 297 unmapped families take the phase Part XXI
+gives their work (`unmapped_families`), CG-LL and GPU go in an "After 1.0" row outside the Overall.
+`unfinished` holds every rule a test names that is not fulfilled, with what is missing: E0900 sites,
+NOT-IMPLEMENTED.md, and a hand pass over the done rules for anything they name that is not built
+(effects/`Alloc`/`@noalloc`/`Nondet`, `Mutex`/`RwLock`/`Atomic`/`Once`/`SyncShared`, `SoA`, the
+compile-time evaluator, `ember fmt`/`ember test`/`inspect --alloc`, overlays, `@export_table`). There is
+no way to mark a rule done by hand; `rule_sizes.py` lost its percentage arguments. CI runs
+`phase_progress.py --check`, so a new test that fulfils a rule needs `--write` in the same commit, and
+a rule fixed for good has its `unfinished` entry removed. First figures: P1 73, P2 62, P3 92, P4 5,
+P5 17, P6 16, P7 0, P7a 3, P8 23, Overall 52, After 1.0 0. Caveat: the hand pass searched the done
+rules for unbuilt features by name; it did not read every done rule against the compiler, which is
+what the deferred audit would do, so a few false "done" may remain (each found goes into `unfinished`).
+
 **2026-10-11 (autopilot, the owner: "go on autopilot now"), EXC-10 and D-552 (ADR-158); D-554 found.**
 CI on `4a28ea6` failed on Linux only: the unix half of `main_args_replace_text_that_is_not_utf8`
 passes four words, so the count is 5 (fixed in `40292d0`, green; its failure text is now escaped,

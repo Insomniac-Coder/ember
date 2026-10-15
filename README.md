@@ -31,21 +31,25 @@ pages, and the records that keep them consistent.
 | Language decisions | Current owner decisions (ODRs) in [`docs/OWNER-QUEUE.md`](docs/OWNER-QUEUE.md) |
 | CI | Linux (Clang, GCC) and Windows (MSVC, clang-cl); every push to `main` |
 
-Phase estimates against 0.9.10 (2026-10-12; weighted by the size of each phase's rules;
-method in [`docs/HANDOFF.md`](docs/HANDOFF.md)):
+How much of each phase's rules in 0.9.10 is fulfilled, computed by
+[`tools/phase_progress.py`](tools/phase_progress.py) and never entered by hand: a rule counts only
+when a passing test exercises it and [`docs/phase-status.json`](docs/phase-status.json) does not
+record it unfinished, weighted by the size of each rule; CI fails if this table differs from what
+the tool computes. Work planned for after 1.0 has its own row, outside the overall figure:
 
 | Phase | Scope | Done |
 |---|---|---:|
-| 1 | Core language (Parts II–VI) | 99% |
-| 2 | Ownership, borrowing, regions | 92% |
-| 3 | Classes, reference counting, exclusivity | 66% |
-| 4 | Effects, compile time, reflection, derives | 14% |
-| 5 | C interoperability | 14% |
-| 6 | Concurrency and data-oriented design | 4% |
+| 1 | Core language (Parts II–VI) | 73% |
+| 2 | Ownership, borrowing, regions | 62% |
+| 3 | Classes, reference counting, exclusivity | 92% |
+| 4 | Effects, compile time, reflection, derives | 5% |
+| 5 | C interoperability | 17% |
+| 6 | Concurrency and data-oriented design | 16% |
 | 7 | C++ interoperability and the interpreter | 0% |
-| 7a | Iteration, determinism, cost control | 6% |
-| 8 | Hardening and 1.0 | 17% |
-| | Overall | 61% |
+| 7a | Iteration, determinism, cost control | 3% |
+| 8 | Hardening and 1.0 | 23% |
+| | Overall (1.0) | 52% |
+| | After 1.0: the LLVM backend (v2), the GPU host model (v0.6) | 0% |
 
 The latest language work is the owner's design G8-4, which made the language 0.9.10
 ([`docs/MIGRATION-0.9.10.md`](docs/MIGRATION-0.9.10.md)): every iterator counts and numbers its items

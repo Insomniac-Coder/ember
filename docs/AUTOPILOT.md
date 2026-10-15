@@ -356,7 +356,10 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   goes in unexplained, however standard it is.
 - **Say each defect's status plainly**: fixed or open.
 - **Phase status is a table first**: phase, name, one bold percentage, a text bar, and an overall
-  row weighted by the length of each phase's rules (`tasks/impl-0.9.9/rule_sizes.py`).
+  row weighted by the length of each phase's rules. The figures are `tools/phase_progress.py`'s,
+  never typed in: a percentage rises only when a rule is fulfilled (it has a passing test and
+  `docs/phase-status.json` does not list it unfinished; owner, 2026-10-15). After a change, run it
+  with `--write`; CI fails when the README differs.
 - **Explaining code**: answer the literal question in one plain sentence. If the owner cannot
   follow a file, treat it as a design problem, not a reason to explain at greater length.
 - **Options are shown as real code, one example per option**, never picked for him while he is
