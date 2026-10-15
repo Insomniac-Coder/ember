@@ -1055,6 +1055,18 @@ void ember_mutex_wake(uint32_t* word) {
     word_wake_one(word);
 }
 
+void ember_atomic_wait32(uint32_t* word, uint32_t expected) {
+    word_wait(word, expected);
+}
+
+void ember_atomic_wake_one(uint32_t* word) {
+    word_wake_one(word);
+}
+
+void ember_atomic_wake_all(uint32_t* word) {
+    word_wake_all(word);
+}
+
 void ember_atomic_order_refused(uint8_t tag, const char* operation, ember_loc loc) {
     static const char* const names[5] = {"Relaxed", "Acquire", "Release", "AcqRel", "SeqCst"};
     char message[128];

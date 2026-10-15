@@ -12574,7 +12574,9 @@ impl<'a> Checker<'a> {
         };
         // D-236 — the arguments were checked once, above; they now take the
         // instance's field types.
-        self.check_memberwise_constructor(id, args.len(), span);
+        if !self.check_memberwise_constructor(id, args.len(), span) {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         let field_tys: Vec<Ty> = self.types.struct_def(id).fields.iter().map(|field| field.ty).collect();
         let values = values
             .into_iter()
@@ -33206,10 +33208,20 @@ impl<'a> Checker<'a> {
     ///
     /// "It is `pub` iff all fields are `pub` (a `pub(read)` field makes it
     /// private to the declaring module, since construction is a write)."
-    fn check_memberwise_constructor(&mut self, id: StructId, given: usize, span: Span) {
+    /// False when the call is refused outright and its arguments should not
+    /// be checked against the fields (a `std.sync` type built wrongly).
+    fn check_memberwise_constructor(&mut self, id: StructId, given: usize, span: Span) -> bool {
         let def = self.types.struct_def(id);
         if def.declaring_module == self.current_module {
-            return;
+            return true;
+        }
+        // `[THR-9]` — `Once()` starts not run; its state is its own.
+        if self.prefixes[def.declaring_module].as_str() == "std.sync" && def.name.as_str().rsplit('.').next() == Some("Once") {
+            if given != 0 {
+                self.error(codes::E2020, span, "`Once()` takes no arguments");
+                return false;
+            }
+            return true;
         }
         // `[THR-3]` — `std.sync`'s compiler-known types are built from their value alone
         // (`Mutex([])`); what else they hold is the runtime's.
@@ -33220,10 +33232,9 @@ impl<'a> Checker<'a> {
             if given != 1 {
                 let shown = origin.as_str().rsplit('.').next().unwrap_or("");
                 self.error(codes::E2020, span, format!("`{shown}(value)` takes one argument, the value it holds"));
-            } else if let Some(held) = atomic {
-                self.refuse_atomic_value(held, span);
+                return false;
             }
-            return;
+            return !atomic.is_some_and(|held| self.refuse_atomic_value(held, span));
         }
         let owner = self.types.intern(TyKind::Struct(id));
         let owner = self.types.display(owner);
@@ -33233,7 +33244,7 @@ impl<'a> Checker<'a> {
             .iter()
             .find(|f| f.vis != FieldVis::Public || f.read_only_outside)
             .map(|f| (f.name.to_string(), f.vis, f.read_only_outside));
-        let Some((field, vis, read_only)) = blocking else { return };
+        let Some((field, vis, read_only)) = blocking else { return true };
         let why = if read_only {
             format!("`{field}` is `pub(read)`, and construction is a write")
         } else if vis == FieldVis::Package {
@@ -33256,6 +33267,7 @@ impl<'a> Checker<'a> {
                 "because constructing writes them all [STR-1]"
             )),
         );
+        true
     }
 
     /// `[FN-1]` — what a `mut` parameter is inside the callee.
@@ -38872,7 +38884,13 @@ impl<'a> Checker<'a> {
         let method = name.name.as_str();
         let integer = matches!(self.types.kind(inner), TyKind::Int(_) | TyKind::Uint(_));
         let bitwise = integer || inner == self.common.bool_;
+        // `[THR-9]` — sleeping on a 32-bit word, for `std`'s own primitives (`Once`).
+        let word = self.is_std_module(self.current_module)
+            && matches!(self.types.kind(inner), TyKind::Uint(ember_types::UintTy::U32) | TyKind::Int(ember_types::IntTy::I32));
         let (form, operands) = match method {
+            "wait" if word => (Form::Plain(Op::Wait), 1),
+            "wake_one" if word => (Form::Plain(Op::WakeOne), 0),
+            "wake_all" if word => (Form::Plain(Op::WakeAll), 0),
             "load" => (Form::Plain(Op::Load), 0),
             "store" => (Form::Plain(Op::Store), 1),
             "swap" => (Form::Plain(Op::Swap), 1),
@@ -38950,7 +38968,7 @@ impl<'a> Checker<'a> {
         let block = |stmts, value: Expr| Expr { ty: value.ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(value) }, span };
         match form {
             Form::Plain(op) => {
-                let ty = if op == Op::Store { void } else { inner };
+                let ty = if matches!(op, Op::Store | Op::Wait | Op::WakeOne | Op::WakeAll) { void } else { inner };
                 call(op, borrowed, values, order_value, ty)
             }
             Form::Checking(op) => {
@@ -42457,7 +42475,9 @@ impl<'a> Checker<'a> {
         // `[STR-1]` — the synthesised memberwise constructor "is `pub` iff all
         // fields are `pub` (a `pub(read)` field makes it private to the
         // declaring module, since construction is a write; `[MOD-7]`)".
-        self.check_memberwise_constructor(id, args.len(), span);
+        if !self.check_memberwise_constructor(id, args.len(), span) {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         let field_info: Vec<(Symbol, Ty, bool)> = self
             .types
             .struct_def(id)

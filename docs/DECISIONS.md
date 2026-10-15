@@ -5016,7 +5016,33 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
-## ADR-178 — `Atomic[T]` is its value and the C compilers' atomics; a constant order is checked at compile time (`[THR-14]`)
+## ADR-179 — `Once` is written in `std` on an `Atomic[u32]`; `std` alone may sleep on a word (`[THR-3]`, `[THR-9]`)
+
+**Context.** `[THR-3]` gives `Once` one sentence: it "runs an initialiser exactly once". Its waiting
+threads must sleep, not spin, while the first runs the initialiser, and Ember code had no way to
+sleep on a word.
+
+**Decision.** `Once` is a plain struct in `std/src/sync.em`, `state: Atomic[u32]` (0 new, 1
+running, 2 done), with `call_once(self, f: once fn())` and `is_completed(self) -> bool` in Ember:
+an acquire load returns at once when done; otherwise a compare-exchange from 0 to 1 elects the
+runner, which runs `f`, stores 2 (release) and wakes every sleeper; the others sleep while the
+state is 1. `Once()` takes no arguments (the constructor check knows it, as it knows the locks'
+one-argument constructors, and a refused one no longer checks its arguments against the private
+fields). Sleeping is three builtins on a 32-bit `Atomic` — `wait(expected)`, `wake_one()`,
+`wake_all()` — that only `std` modules can call (the runtime's `WaitOnAddress`/`futex` word waits,
+the locks' own). They are not public: `[THR-14]` names no such operations, and a public form (as
+C++20's `atomic::wait`) would be an ODR.
+
+**Speed.** `call_once` on a `Once` that has run, 100M times (`bench/probes/once_completed`), clang:
+36.2 ms against 45.1 ms for C's same acquire-load check (x0.80; Ember also proves the loop's adds
+cannot overflow, which the C twin checks).
+
+**Not built.** A `call_once` from inside its own run never returns (Rust allows that or a panic);
+the run-once state of `[STA-3]`'s lazy statics is still the runtime's own (`ember_rt_static_begin`).
+
+---
+
+ `Atomic[T]` is its value and the C compilers' atomics; a constant order is checked at compile time (`[THR-14]`)
 
 **Context.** `[THR-14]` gives `Atomic[T]` for the integer types, `bool` and raw pointers, an
 `order: MemoryOrder = MemoryOrder.SeqCst` on every operation, `E7006` for an order an operation

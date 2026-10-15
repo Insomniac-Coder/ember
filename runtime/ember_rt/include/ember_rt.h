@@ -1564,6 +1564,12 @@ EMBER_INLINED int ember_atomic_order(uint8_t tag, unsigned refused, const char* 
                     : EMBER_ORDER_SEQ_CST;
 }
 
+/* `[THR-9]` — sleeping on a 32-bit word for `std`'s own primitives: `wait` returns once the word is
+ * not `expected`, or spuriously (callers check again); `wake_*` wakes one or every sleeper. */
+void ember_atomic_wait32(uint32_t* word, uint32_t expected);
+void ember_atomic_wake_one(uint32_t* word);
+void ember_atomic_wake_all(uint32_t* word);
+
 /* A compare-exchange that fails only loads: its order without the release half. */
 EMBER_INLINED int ember_atomic_failure_order(int order) {
     return order == EMBER_ORDER_ACQ_REL ? EMBER_ORDER_ACQUIRE

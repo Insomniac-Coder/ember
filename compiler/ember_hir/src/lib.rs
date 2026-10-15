@@ -768,6 +768,11 @@ pub enum AtomicOp {
     FetchAnd,
     FetchOr,
     FetchXor,
+    /// `[THR-9]` — `std` only, on a 32-bit `Atomic`: sleep while the value is the operand (or
+    /// until woken; callers check again), and wake one or every sleeper.
+    Wait,
+    WakeOne,
+    WakeAll,
 }
 
 impl AtomicOp {
@@ -782,6 +787,9 @@ impl AtomicOp {
             AtomicOp::FetchAnd => "fetch_and",
             AtomicOp::FetchOr => "fetch_or",
             AtomicOp::FetchXor => "fetch_xor",
+            AtomicOp::Wait => "wait",
+            AtomicOp::WakeOne => "wake_one",
+            AtomicOp::WakeAll => "wake_all",
         }
     }
 

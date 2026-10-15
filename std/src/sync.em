@@ -23,6 +23,11 @@
 ## `Release` or `AcqRel`, nor a store `Acquire` or `AcqRel` (`E7006`). An `Atomic` is `Send` and
 ## `Sync`.
 ##
+## `[THR-9]` — `Once` runs an initialiser exactly once: the first `o.call_once(f)`, on any thread,
+## runs `f`; every other call waits until that run has finished, then returns without running its
+## own. `o.is_completed()` tells whether the run has finished. A `Once` is `Send` and `Sync`. A
+## `call_once` inside the run it is waiting for never returns.
+##
 ## The compiler knows these types by their names here (as it knows `std.collections`'s arena
 ## collections), lowers `lock` and `try_lock` to the runtime's lock word (`ember_mutex_lock`,
 ## `ember_mutex_try_lock`) and a guard's end to `ember_mutex_unlock`. The word is private, starts
@@ -57,3 +62,24 @@ pub struct RwLockReadGuard[T]:
 @view
 pub struct RwLockWriteGuard[T]:
     value: ref mut T
+
+pub struct Once:
+    state: Atomic[u32] = Atomic(0)
+
+    pub fn call_once(self, f: once fn()):
+        if self.state.load(MemoryOrder.Acquire) == ONCE_DONE:
+            return
+        if self.state.compare_exchange(ONCE_NEW, ONCE_RUNNING, MemoryOrder.Acquire).is_ok():
+            f()
+            self.state.store(ONCE_DONE, MemoryOrder.Release)
+            self.state.wake_all()
+            return
+        while self.state.load(MemoryOrder.Acquire) != ONCE_DONE:
+            self.state.wait(ONCE_RUNNING)
+
+    pub fn is_completed(self) -> bool:
+        return self.state.load(MemoryOrder.Acquire) == ONCE_DONE
+
+const ONCE_NEW: u32 = 0
+const ONCE_RUNNING: u32 = 1
+const ONCE_DONE: u32 = 2

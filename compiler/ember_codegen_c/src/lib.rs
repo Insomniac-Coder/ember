@@ -2209,6 +2209,12 @@ impl Emitter<'_> {
             }
         };
         let p = &rendered[0];
+        match op {
+            Op::Wait => return format!("{RT}atomic_wait32((uint32_t*)({p}), (uint32_t)({}))", rendered[1]),
+            Op::WakeOne => return format!("{RT}atomic_wake_one((uint32_t*)({p}))"),
+            Op::WakeAll => return format!("{RT}atomic_wake_all((uint32_t*)({p}))"),
+            _ => {}
+        }
         let name = match op {
             Op::Load => "LOAD",
             Op::Store => "STORE",
@@ -2219,6 +2225,7 @@ impl Emitter<'_> {
             Op::FetchAnd => "FETCH_AND",
             Op::FetchOr => "FETCH_OR",
             Op::FetchXor => "FETCH_XOR",
+            Op::Wait | Op::WakeOne | Op::WakeAll => unreachable!("written above"),
         };
         match op {
             Op::FetchAnd | Op::FetchOr | Op::FetchXor if boolean => {

@@ -10872,8 +10872,12 @@ ran a stale compiler; the gcc one builds its own and was clean).
 **2026-10-15, `Atomic[T]` (ADR-178).** `std.sync.Atomic` and `MemoryOrder`: `load`/`store`/`swap`/
 `compare_exchange` and the `fetch_` family (`checked_`/`wrapping_`), `E7006` for a constant order an
 operation refuses, a run-time check for one held in a variable. `STA-1` done; `THR-14` waits only
-on 128-bit atomics (`E0900`); `THR-9` on `Once`/`SyncShared`. Speed: `fetch_add` x1.002 of C
-(clang, `bench/probes/atomic_counter`). Next: `Once`, `SyncShared`, then threads.
+on 128-bit atomics (`E0900`). Speed: `fetch_add` x1.002 of C (clang, `bench/probes/atomic_counter`).
+Then `Once` (ADR-179): written in `std` on an `Atomic[u32]`, its waiters sleeping through std-only
+`wait`/`wake_all` builtins; `call_once` x0.80 of C. `THR-9` waits only on `SyncShared`. CI on
+`bf96ba9` failed on Linux clang: the runtime's C tests `#include` `ember_rt.c` after their own
+headers, so `unistd.h` had hidden `syscall`; `ember_rt.c` now declares it (fixed in `3d38ec6`).
+Next: `SyncShared` (`Shared` with atomic counts, `get` only, its `Weak`), then threads.
 
 **2026-10-15, `Mutex` and `RwLock` (ADR-177), the dependency map's step 4 begun.** `std.sync.Mutex`
 and `RwLock` with their guards: a lock word in the value, inline compare-exchange/swap in

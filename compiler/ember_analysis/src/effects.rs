@@ -610,6 +610,7 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         B::MutexTryLock => (Effects::SYNC | Effects::LOCK, "`Mutex.try_lock`"),
         B::RwLockAcquire { .. } => (Effects::SYNC | Effects::LOCK | Effects::BLOCK, "`RwLock.read`/`write`"),
         B::RwLockTryAcquire { .. } => (Effects::SYNC | Effects::LOCK, "`RwLock.try_read`/`try_write`"),
+        B::Atomic { op: ember_mir::AtomicOp::Wait, .. } => (Effects::SYNC | Effects::BLOCK, "a wait on an `Atomic`"),
         B::Atomic { .. } => (Effects::SYNC, "an `Atomic` operation"),
         // `[DSJ-1]` — it establishes a static fact; `@static_safe` allows it (`[EFF-12]`).
         B::AssertDisjoint { .. } => (Effects::CHECK_ALIASING, "`assert_disjoint`"),
