@@ -10902,8 +10902,10 @@ captures; D-597 (channel x1.35 on Windows) is open. Then `SoA` stage A (ADR-184)
 push/pop/get/swap_remove/clear/reserve; integrate x0.81 of C. D-599 fixed on the way (`E3011` had no
 producer: moving out of an `Array` element leaked the rest). ASK the owner: a writable column
 borrowed shared where a `Span` is expected (an interpretation of `[SOA-2]` with `[TYP-5]` rule 6).
-**Next:** `SoA` stage B (proxies, `ps[i] = v`, `load`, iteration, `retain`, `sort_by_key`,
-`@soa(flatten)`, `ArenaSoA`), then the compile-time evaluator, `some` return types, coroutines.
+Then stage B (ADR-184): `SoARef`/`SoAMut` proxies, `ps[i] = v`, `load`, `for p in ps`/`iter_mut`,
+`retain` and `sort_by_key` in std (`retain` x1.044 of C). Left of `SoA`: `@soa(flatten)`,
+`ArenaSoA`. **Next:** the compile-time evaluator (`[CT-*]`, `comptime(e)`, const generics computed
+by functions), `some` return types, coroutines.
 
 **2026-10-15, `Mutex` and `RwLock` (ADR-177), the dependency map's step 4 begun.** `std.sync.Mutex`
 and `RwLock` with their guards: a lock word in the value, inline compare-exchange/swap in

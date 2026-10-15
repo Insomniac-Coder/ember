@@ -1470,6 +1470,10 @@ impl TypeTable {
                     } else if name.is("std.sync.MutexGuard") && args.len() == 1 {
                         // `[THR-3]` — a guard is not `Send`: it is unlocked where it was taken.
                         (false, both(args[0], visiting).1)
+                    } else if (name.is("SoARef") || name.is("SoAMut")) && args.len() == 1 {
+                        // `[SOA-6]` — a reference to the `SoA` and an index.
+                        let (send, sync) = both(args[0], visiting);
+                        if name.is("SoARef") { (sync, sync) } else { (send, false) }
                     } else if name.is("SoA") && args.len() == 1 {
                         // `[SOA-1]` — its columns are `T`'s fields, behind private pointers.
                         both(args[0], visiting)

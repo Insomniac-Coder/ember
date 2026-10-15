@@ -5041,8 +5041,20 @@ drop. `Send`/`Sync` as `T`.
 (`bench/probes/soa_integrate`), clang: 17.3 ms against 21.4 ms for C's three columns in one aligned
 block (x0.81; `[BEN-6]` allows 1.10).
 
-**Not built (stage B).** The element as a whole (`SoARef`/`SoAMut`, `ps[i] = v`, `load`, `for p in
-ps`, `iter_mut`), `retain`, `sort_by_key`, `@soa(flatten)`, `ArenaSoA`, an `SoA` in generic code.
+**Stage B.** `ps[i]` used whole is a proxy, `SoARef[T]` or `SoAMut[T]` (compiler-built views
+`{soa: ref (mut) SoA[T], index}`, nameable in source): an `SoAMut` borrows all of `ps` mutably for
+its life, so `push` while one lives conflicts; a proxy's fields are the same checked column places;
+`load()` gathers a clone; an `SoAMut` passes where an `SoARef` is wanted (a shared reborrow).
+`ps[i] = v` moves `v`'s fields into the columns, each old one dropped. `for p in ps` and `for p in
+ps.iter_mut()` are counted loops binding a proxy per index (`[CTL-3b]`). `retain` and
+`sort_by_key` are Ember in `std/src/core.em` (`extend[T] SoA[T]`; `SoA` is a built-in generic for
+extensions, an `SoA[T]` over a parameter is a template with no columns, checked again per use),
+on std-only builtins `swap`, `truncate`, `move_slot`, `drop_at`, `set_len`: `retain` drops a
+rejected element where it stands and moves a kept one down once (a swap-based version was x1.116
+of C). Speed: `retain` of a million particles (`bench/probes/soa_retain`) x1.044 of C's in-place
+compaction.
+
+**Not built.** `@soa(flatten)`, `ArenaSoA`.
 
 ---
 

@@ -2025,6 +2025,38 @@ extend[T] Array[T]:
                 at = next
             order[at] = at
 
+## `[SOA-3]` — an `SoA`'s `retain` and `sort_by_key`, which move whole elements (every column
+## together) with `swap` and drop with `truncate`, the compiler's own `SoA` operations for std.
+extend[T] SoA[T]:
+    ## Keeps the elements `keep` is true of, in their order: one dropped where it stands, one kept
+    ## moved down over the first empty slot, so each element is moved at most once.
+    pub fn retain(mut self, keep: fn(SoARef[T]) -> bool):
+        kept = 0
+        for i in range(self.len()):
+            if keep(self[i]):
+                if kept != i:
+                    self.move_slot(i, kept)
+                kept += 1
+            else:
+                self.drop_at(i)
+        self.set_len(kept)
+
+    ## Sorts the elements by `key` of each, calling it once per element. Stable: elements with
+    ## equal keys keep their order.
+    pub fn sort_by_key[K: Ord](mut self, key: fn(SoARef[T]) -> K):
+        keys: Array[K] = []
+        for i in range(self.len()):
+            keys.push(key(self[i]))
+        order = stable_order(keys, fn(a, b) => a.cmp(b))
+        for start in range(self.len()):
+            at = start
+            while order[at] != start:
+                next = order[at]
+                self.swap(at, next)
+                order[at] = at
+                at = next
+            order[at] = at
+
 extend[T] MutSpan[T]:
     ## `[SPN-5]` (ODR-068) — mutable references to the elements at `i` and
     ## `j` at once, or `None` when either index is out of range or they are

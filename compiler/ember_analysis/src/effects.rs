@@ -628,6 +628,7 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
             (Effects::ALLOC, "growing an `SoA`")
         }
         B::SoA { op: ember_mir::SoAOp::SwapRemove, .. } => (Effects::PANIC, "`SoA.swap_remove`"),
+        B::SoA { op: ember_mir::SoAOp::Truncate | ember_mir::SoAOp::DropAt, .. } => (Effects::NONE, "dropping an `SoA`'s elements"),
         B::SoA { .. } => (Effects::NONE, "an `SoA` operation"),
         B::ScopeSpawn { .. } => (Effects::SYNC | Effects::ALLOC, "`Scope.spawn`"),
         B::ScopedJoin => (Effects::SYNC | Effects::BLOCK, "`ScopedJoinHandle.join`"),

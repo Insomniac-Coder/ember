@@ -777,6 +777,19 @@ pub enum SoAOp {
     Reserve,
     /// `[ref mut ps, i]`: moves element `i` out, the last into its place; panics out of range.
     SwapRemove,
+    /// `ps.iter()`/`ps.iter_mut()`, which only a `for` header takes: `[ps]`.
+    Iter { mutable: bool },
+    /// std's own: `[ref mut ps, i, j]`, both in range: elements `i` and `j` change places.
+    Swap,
+    /// std's own: `[ref mut ps, n]`: the elements from `n` on are dropped.
+    Truncate,
+    /// std's own, for `retain`: `[ref mut ps, from, to]`: element `from` moved over slot `to`,
+    /// which holds nothing (moved out or dropped).
+    MoveSlot,
+    /// std's own, for `retain`: `[ref mut ps, i]`: element `i`'s fields dropped, its slot left empty.
+    DropAt,
+    /// std's own, for `retain`: `[ref mut ps, n]`: the length set, the slots past it already empty.
+    SetLen,
 }
 
 impl SoAOp {
@@ -791,6 +804,12 @@ impl SoAOp {
             SoAOp::Clear => "clear",
             SoAOp::Reserve => "reserve",
             SoAOp::SwapRemove => "swap_remove",
+            SoAOp::Iter { mutable } => if mutable { "iter_mut" } else { "iter" },
+            SoAOp::Swap => "swap",
+            SoAOp::Truncate => "truncate",
+            SoAOp::MoveSlot => "move_slot",
+            SoAOp::DropAt => "drop_at",
+            SoAOp::SetLen => "set_len",
         }
     }
 }

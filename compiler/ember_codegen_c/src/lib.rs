@@ -2202,10 +2202,11 @@ impl Emitter<'_> {
         }
         self.line("/* [SOA-1] SoA helpers */");
         for (id, element) in soas {
+            // A generic body's `SoA[T]` is never emitted; each use is checked again concretely.
+            let TyKind::Struct(element_id) = *self.types.kind(element) else { continue };
             let name = self.c_named(&self.types.struct_def(id).name.to_string());
             let soa_c = self.c_type(self.types.find(&TyKind::Struct(id)).expect("an SoA's type is interned"));
             let element_c = self.c_type(element);
-            let TyKind::Struct(element_id) = *self.types.kind(element) else { continue };
             let fields: Vec<(String, Ty)> = self.types.struct_def(element_id).fields.iter().map(|f| (f.name.to_string(), f.ty)).collect();
             let count = fields.len().max(1);
             // Layout.
@@ -2281,6 +2282,52 @@ impl Emitter<'_> {
                 self.line("    }");
             }
             self.line("    s->len = 0;");
+            self.line("}");
+            // swap (std's, in range): each column's two elements change places
+            self.line(&format!("static inline EMBER_MAYBE_UNUSED void {name}_swap({soa_c}* s, int64_t i, int64_t j) {{"));
+            for (field, ty) in &fields {
+                let c = self.c_type(*ty);
+                self.line(&format!("    {{ {c} t = s->col_{field}[i]; s->col_{field}[i] = s->col_{field}[j]; s->col_{field}[j] = t; }}"));
+            }
+            self.line("}");
+            // move_slot and drop_at (std's, for retain)
+            self.line(&format!("static inline EMBER_MAYBE_UNUSED void {name}_move_slot({soa_c}* s, int64_t from, int64_t to) {{"));
+            for (field, _) in &fields {
+                self.line(&format!("    s->col_{field}[to] = s->col_{field}[from];"));
+            }
+            self.line("}");
+            self.line(&format!("static inline EMBER_MAYBE_UNUSED void {name}_drop_at({soa_c}* s, int64_t i) {{"));
+            let mut slot_drops = Vec::new();
+            for (field, ty) in &fields {
+                if self.types.needs_drop(*ty) {
+                    self.drop_lines(&format!("s->col_{field}[i]"), *ty, &mut slot_drops);
+                }
+            }
+            if slot_drops.is_empty() {
+                self.line("    (void)s; (void)i;");
+            }
+            for line in slot_drops {
+                self.line(&format!("    {line}"));
+            }
+            self.line("}");
+            // truncate (std's): the elements from n on dropped
+            self.line(&format!("static inline EMBER_MAYBE_UNUSED void {name}_truncate({soa_c}* s, int64_t n) {{"));
+            let mut tail_drops = Vec::new();
+            for (field, ty) in &fields {
+                if self.types.needs_drop(*ty) {
+                    self.drop_lines(&format!("s->col_{field}[i]"), *ty, &mut tail_drops);
+                }
+            }
+            self.line("    if (n < 0) { n = 0; }");
+            self.line("    if ((size_t)n >= s->len) { return; }");
+            if !tail_drops.is_empty() {
+                self.line("    for (size_t i = (size_t)n; i < s->len; ++i) {");
+                for line in tail_drops {
+                    self.line(&format!("        {line}"));
+                }
+                self.line("    }");
+            }
+            self.line("    s->len = (size_t)n;");
             self.line("}");
             // reserve
             self.line(&format!("static inline EMBER_MAYBE_UNUSED void {name}_reserve({soa_c}* s, int64_t n) {{"));
@@ -7167,6 +7214,12 @@ impl Emitter<'_> {
                                 format!("(({view}){{ *({}), {} }})", r(0), r(1))
                             }
                             ember_mir::SoAOp::Element { .. } => unreachable!("a field access takes an element apart"),
+                            ember_mir::SoAOp::Iter { .. } => unreachable!("a `for` header takes `iter`"),
+                            ember_mir::SoAOp::Swap => format!("{name}_swap({}, {}, {})", r(0), r(1), r(2)),
+                            ember_mir::SoAOp::Truncate => format!("{name}_truncate({}, {})", r(0), r(1)),
+                            ember_mir::SoAOp::MoveSlot => format!("{name}_move_slot({}, {}, {})", r(0), r(1), r(2)),
+                            ember_mir::SoAOp::DropAt => format!("{name}_drop_at({}, {})", r(0), r(1)),
+                            ember_mir::SoAOp::SetLen => format!("(({})->len = (size_t)({}))", r(0), r(1)),
                             ember_mir::SoAOp::Push => format!("{name}_push({}, {})", r(0), r(1)),
                             ember_mir::SoAOp::TakeLast => format!("{name}_take_last({})", r(0)),
                             ember_mir::SoAOp::Len => format!("((int64_t)({})->len)", r(0)),
