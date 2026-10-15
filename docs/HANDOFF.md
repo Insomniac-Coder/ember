@@ -10880,10 +10880,13 @@ headers, so `unistd.h` had hidden `syscall`; `ember_rt.c` now declares it (fixed
 Then `SyncShared` (ADR-180): `Shared` with `EMBER_TI_SYNC` in its type information, `get` only;
 copies x1.009 of C. `THR-8` and `THR-9` done. Its probe found D-595 (fixed): any function with a
 `str` parameter calling `Shared.get` stopped the compiler on Windows (the access check's text was
-the function's C symbol, which also leaked into every overlapping-access panic). **Next: threads**
-(`thread.spawn`/`JoinHandle`, `thread.scope`: a backend trampoline; `[THR-10]`/`[THR-11]`, `E7004`/
-`E7005`), then channels (`[THR-15]`), then `SoA`. Check first: `ember_rt_static_begin` keeps its
-depth and chain in plain globals, which are not per-thread.
+the function's C symbol, which also leaked into every overlapping-access panic). Then threads
+(ADR-181): `thread.spawn`/`JoinHandle` (`E7004` new, with its page), a packet and trampoline per
+`JoinHandle[R]`, `CreateThread`/pthreads; spawn+join x1.000 of C. `[THR-16]`: no leak report while
+another thread runs. D-596 fixed on the way (a lambda returning a bare literal kept an untyped
+result; the large one stopped the compiler). The static-initialiser depth was already thread-local.
+**Next:** `thread.scope` (`[THR-5]`, `[THR-11]`: borrowing tasks joined at the block's end, `E3014`
+for a `Scope` not bound by `with`, `E7005`), then channels (`[THR-15]`), then `SoA`.
 
 **2026-10-15, `Mutex` and `RwLock` (ADR-177), the dependency map's step 4 begun.** `std.sync.Mutex`
 and `RwLock` with their guards: a lock word in the value, inline compare-exchange/swap in

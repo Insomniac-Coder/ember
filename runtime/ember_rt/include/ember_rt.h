@@ -1577,6 +1577,27 @@ EMBER_INLINED int ember_atomic_failure_order(int order) {
                                         : order;
 }
 
+/* `[THR-10]` — a thread `thread.spawn` started: the head of the packet the generated code allocates,
+ * which holds the function to run and the slot for its result after it. The handle and the thread
+ * each hold one of `refs`: the thread lets go when its function has returned, the handle when it is
+ * joined or dropped (detached), and whichever is last drops a result nobody took (`drop_result`,
+ * NULL when it needs none) and frees the packet. `join` waits; its caller then takes the result and
+ * frees the packet with `thread_free`. */
+typedef struct ember_thread ember_thread;
+struct ember_thread {
+    void (*run)(ember_thread* thread);
+    void (*drop_result)(ember_thread* thread);
+    uintptr_t os;
+    uint32_t refs;
+    uint32_t size;
+    uint32_t align;
+};
+void ember_thread_start(ember_thread* thread, void (*run)(ember_thread*), void (*drop_result)(ember_thread*),
+                        uint32_t size, uint32_t align, ember_loc loc);
+void ember_thread_join(ember_thread* thread);
+void ember_thread_free(ember_thread* thread);
+void ember_thread_detach(ember_thread* thread);
+
 /* `[THR-3]` — a `Mutex` is one 32-bit word: 0 unlocked, 1 locked, 2 locked with a thread waiting.
  * A new one is a zero word, so it needs no constructor, and it may move while unlocked. Locking
  * takes the word from 0 to 1 here, inline; a lock another thread holds is waited for in the

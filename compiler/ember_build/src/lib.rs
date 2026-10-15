@@ -558,7 +558,8 @@ fn compile_and_link_impl(
                 command.arg(source);
             }
             if !cfg!(windows) {
-                command.arg("-lm");
+                // `[THR-10]` — the runtime starts threads with pthreads.
+                command.arg("-lm").arg("-pthread");
             }
             if retained_symbols.is_some() && executable_section_gc_supported(toolchain) {
                 command.arg("-Xlinker").arg("--gc-sections");

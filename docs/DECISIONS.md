@@ -5016,6 +5016,37 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-181 — `thread.spawn` is a builtin over an owned callable value; each `JoinHandle[R]` gets a packet (`[THR-10]`, `[THR-16]`)
+
+**Context.** `[THR-10]` gives `thread.spawn(owned f: fn() -> R) -> JoinHandle[R]`, `h.join() -> R` and
+detach on drop, with `E7004` naming a capture that is not `Send` and `E3063` for a captured view.
+A written `fn` parameter is a bound (the closure's own type), so `std` cannot store `f`, and an
+owned callable value's captures are not known (ADR-159: it is neither `Send` nor `Sync`).
+
+**Decision.** `std/src/thread.em` declares `spawn` and `JoinHandle[R]` (one private pointer) for
+their names; the compiler gives both their meaning. At the call the type checker sees the closure:
+each capture must be `Send` and not a view, the result `Send`, and the argument a function of no
+arguments; a callable value whose captures are not visible is refused. The closure becomes an
+owned callable value (`Builtin::ThreadSpawn`). For each `JoinHandle[R]` the backend writes a packet
+`{ember_thread head; struct ember_fn_value f; R result}`, the function the new thread runs (call
+the value, keep the result, drop the value), a drop for a result nobody took, and the spawn and
+join helpers. The runtime (`ember_thread_start`/`join`/`detach`/`free`: `CreateThread` on
+Windows, pthreads elsewhere, `-pthread` on the link) gives the handle and the thread one reference
+each: whichever lets go last drops an untaken result and frees the packet. `join` moves the handle
+(`Builtin::ThreadJoin`); dropping one detaches. The new thread attaches to the runtime as a host
+thread does. Effects: spawn `Sync`+`Alloc`, join `Sync`+`Block`, a detach `Sync`.
+- **`[THR-16]`.** The runtime counts running threads; the debug leak report runs only when none is
+  (another may still own, change or free objects, and the table would be freed under it), and
+  otherwise says how many are still running.
+
+**Speed.** Spawn and join 20 thousand threads (`bench/probes/thread_spawn_join`), clang: 916.5 ms
+against 916.7 ms for C's `CreateThread`/`WaitForSingleObject` with a heap packet (x1.000).
+
+**Not built.** A captured `static` view (a string literal) is refused with the views of locals,
+as every owned callable value refuses views. `thread.scope` (`[THR-5]`, `[THR-11]`).
+
+---
+
 ## ADR-180 — `SyncShared[T]` is `Shared[T]` with the sync flag in its type information (`[HEAP-10]`, `[THR-8]`, `[THR-9]`)
 
 **Context.** `[HEAP-10]` gives `std.sync.SyncShared[T]`: shared ownership across threads, atomic

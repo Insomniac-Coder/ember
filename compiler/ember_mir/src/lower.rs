@@ -3061,6 +3061,8 @@ impl<'a> Builder<'a> {
                     hir::Builtin::BoxNew { .. }
                         | hir::Builtin::SharedNew { .. }
                         | hir::Builtin::ArrayFromLiteral
+                        | hir::Builtin::ThreadSpawn
+                        | hir::Builtin::ThreadJoin
                 );
                 let args: Vec<Operand> = args
                     .iter()

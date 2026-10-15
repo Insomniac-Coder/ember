@@ -962,6 +962,7 @@ impl Emitter<'_> {
         }
         self.emit_class_type_infos();
         self.emit_shared_type_infos();
+        self.emit_thread_helpers();
 
         for body in bodies {
             if body.is_abstract || body.is_extern_declaration {
@@ -2174,6 +2175,87 @@ impl Emitter<'_> {
     /// destructor. Derived classes inherit the obligation even when they do
     /// not declare their own `drop`, because `[CLS-6]` still requires the base
     /// destructor to run.
+    /// `[THR-10]` — the `JoinHandle[R]` type for a thread whose function returns `result`, and the
+    /// C name its helpers are named after.
+    fn join_handle_for(&self, result: Ty) -> Option<(Ty, String)> {
+        self.types.all().find_map(|(ty, kind)| match kind {
+            TyKind::Struct(id) => match &self.types.struct_def(*id).origin {
+                Some((origin, args)) if origin.as_str() == "std.thread.JoinHandle" && args.first() == Some(&result) => {
+                    Some((ty, self.c_named(&self.types.struct_def(*id).name.to_string())))
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+    }
+
+    /// `[THR-10]` — for each `JoinHandle[R]`: the packet a thread runs from (the runtime's head,
+    /// the owned callable value, the result), the function the runtime calls on the new thread
+    /// (it calls the value, keeps the result and drops the value), a drop for a result nobody
+    /// took, and the spawn and join the builtins call. Static in every unit that needs them.
+    fn emit_thread_helpers(&mut self) {
+        let handles: Vec<(String, Ty)> = self
+            .types
+            .structs()
+            .filter_map(|(_, def)| match &def.origin {
+                Some((origin, args)) if origin.as_str() == "std.thread.JoinHandle" && args.len() == 1 => {
+                    Some((self.c_named(&def.name.to_string()), args[0]))
+                }
+                _ => None,
+            })
+            .collect();
+        if handles.is_empty() {
+            return;
+        }
+        self.line("/* [THR-10] threads */");
+        for (name, result) in handles {
+            let packet = format!("{name}_packet");
+            let void = matches!(self.types.kind(result), TyKind::Void);
+            let result_c = if void { "void".to_string() } else { self.c_type(result) };
+            let slot = if void { String::new() } else { format!(" {result_c} result;") };
+            self.line(&format!("struct {packet} {{ {RT}thread head; struct {RT}fn_value f;{slot} }};"));
+            self.line(&format!("static inline EMBER_MAYBE_UNUSED void {name}_run({RT}thread* raw) {{"));
+            self.line(&format!("    struct {packet}* p = (struct {packet}*)raw;"));
+            let call = format!("(({result_c} (*)(void*))(p->f.native))((void*)&p->f.w)");
+            self.line(&if void { format!("    {call};") } else { format!("    p->result = {call};") });
+            self.line("    if (p->f.d && p->f.d->drop) { p->f.d->drop((void*)&p->f.w); }");
+            self.line("}");
+            let drops = !void && self.types.needs_drop(result);
+            if drops {
+                let mut lines = Vec::new();
+                self.drop_lines(&format!("((struct {packet}*)raw)->result"), result, &mut lines);
+                self.line(&format!("static inline EMBER_MAYBE_UNUSED void {name}_drop({RT}thread* raw) {{"));
+                for line in lines {
+                    self.line(&format!("    {line}"));
+                }
+                self.line("}");
+            }
+            let drop = if drops { format!("{name}_drop") } else { "NULL".to_string() };
+            self.line(&format!(
+                "static inline EMBER_MAYBE_UNUSED {RT}thread* {name}_spawn(struct {RT}fn_value f, {RT}loc loc) {{"
+            ));
+            self.line(&format!(
+                "    struct {packet}* p = (struct {packet}*){RT}alloc(sizeof(struct {packet}), _Alignof(struct {packet}));"
+            ));
+            self.line("    p->f = f;");
+            self.line(&format!(
+                "    {RT}thread_start(&p->head, {name}_run, {drop}, (uint32_t)sizeof(struct {packet}), (uint32_t)_Alignof(struct {packet}), loc);"
+            ));
+            self.line("    return &p->head;");
+            self.line("}");
+            self.line(&format!("static inline EMBER_MAYBE_UNUSED {result_c} {name}_join({RT}thread* raw) {{"));
+            self.line(&format!("    {RT}thread_join(raw);"));
+            if !void {
+                self.line(&format!("    {result_c} result = ((struct {packet}*)raw)->result;"));
+            }
+            self.line(&format!("    {RT}thread_free(raw);"));
+            if !void {
+                self.line("    return result;");
+            }
+            self.line("}");
+        }
+    }
+
     /// `[THR-14]` — one atomic operation through the runtime header's macros, which take the value's
     /// width (a `bool` is 8 bits, a raw pointer 64), its address, the operands and the order. An
     /// order the type checker did not see as a constant is the last operand, checked here as the
@@ -3920,6 +4002,11 @@ impl Emitter<'_> {
                             let mutex_c = self.c_type(mutex);
                             out.push(format!("{RT}mutex_unlock(&(({mutex_c}*){access}.value)->word);"));
                         }
+                        return;
+                    }
+                    // `[THR-10]` — a handle dropped unjoined detaches its thread.
+                    Some("std.thread.JoinHandle") => {
+                        out.push(format!("{RT}thread_detach(({RT}thread*)({access}).thread);"));
                         return;
                     }
                     Some(guard @ ("std.sync.RwLockReadGuard" | "std.sync.RwLockWriteGuard")) => {
@@ -6892,6 +6979,22 @@ impl Emitter<'_> {
                     Builtin::RwLockAcquire { write } => return format!("{RT}rwlock_acquire({}, {write})", rendered[0]),
                     Builtin::RwLockTryAcquire { write } => return format!("{RT}rwlock_try_acquire({}, {write})", rendered[0]),
                     Builtin::Atomic { op, order } => return self.atomic_call(*op, *order, *arg_ty, &rendered, span),
+                    // `[THR-10]` — through the helpers `emit_thread_helpers` writes for each `JoinHandle[R]`.
+                    Builtin::ThreadSpawn => {
+                        let TyKind::Fn { ret, .. } = *self.types.kind(*arg_ty) else { unreachable!("spawn runs an owned callable value") };
+                        let (handle, name) = self.join_handle_for(ret).expect("the type checker made the `JoinHandle`");
+                        return format!(
+                            "(({}){{(uint8_t*){name}_spawn({}, {})}})",
+                            self.c_type(handle),
+                            rendered[0],
+                            self.location(span)
+                        );
+                    }
+                    Builtin::ThreadJoin => {
+                        let TyKind::Struct(id) = *self.types.kind(*arg_ty) else { unreachable!("join takes the handle") };
+                        let name = self.c_named(&self.types.struct_def(id).name.to_string());
+                        return format!("{name}_join(({RT}thread*)({}).thread)", rendered[0]);
+                    }
                     Builtin::ForeignStaticWrite { symbol } => {
                         self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*arg_ty, false));
                         return format!("({symbol} = {})", rendered[0]);

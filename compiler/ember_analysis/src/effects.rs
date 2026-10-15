@@ -457,7 +457,10 @@ impl SiteBuilder<'_> {
             // `[THR-3]` — a `MutexGuard`'s end releases its lock: a synchronising operation.
             TyKind::Struct(id)
                 if self.types.struct_def(id).origin.as_ref().is_some_and(|(origin, _)| {
-                    matches!(origin.as_str(), "std.sync.MutexGuard" | "std.sync.RwLockReadGuard" | "std.sync.RwLockWriteGuard")
+                    matches!(
+                        origin.as_str(),
+                        "std.sync.MutexGuard" | "std.sync.RwLockReadGuard" | "std.sync.RwLockWriteGuard" | "std.thread.JoinHandle"
+                    )
                 }) =>
             {
                 effects |= Effects::SYNC;
@@ -612,6 +615,8 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         B::RwLockTryAcquire { .. } => (Effects::SYNC | Effects::LOCK, "`RwLock.try_read`/`try_write`"),
         B::Atomic { op: ember_mir::AtomicOp::Wait, .. } => (Effects::SYNC | Effects::BLOCK, "a wait on an `Atomic`"),
         B::Atomic { .. } => (Effects::SYNC, "an `Atomic` operation"),
+        B::ThreadSpawn => (Effects::SYNC | Effects::ALLOC, "`thread.spawn`"),
+        B::ThreadJoin => (Effects::SYNC | Effects::BLOCK, "`JoinHandle.join`"),
         // `[DSJ-1]` — it establishes a static fact; `@static_safe` allows it (`[EFF-12]`).
         B::AssertDisjoint { .. } => (Effects::CHECK_ALIASING, "`assert_disjoint`"),
         B::WeakUpgrade { .. } => (Effects::CHECK_STALE, "`Weak.upgrade`"),

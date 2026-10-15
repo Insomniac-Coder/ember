@@ -11507,6 +11507,9 @@ impl<'a> Checker<'a> {
         if let Some(built) = self.synth_mem_ownership_builtin(name, args, explicit, span) {
             return Some(built);
         }
+        if self.resolve_name(name).is("std.thread.spawn") {
+            return Some(self.synth_thread_spawn(args, explicit, span));
+        }
         // `[HASH-2]` — `std.collections`'s own `process_key(which)`, the
         // process's hash key, which the runtime draws.
         if self.resolve_name(name).is("std.collections.process_key") {
@@ -35269,6 +35272,19 @@ impl<'a> Checker<'a> {
             }
             return self.synth_cell_method(receiver, inner, name, args, span);
         }
+        // `[THR-10]` — `h.join()` waits for the thread and gives its result; it takes `h`.
+        if let Some(result) = self.lock_inner(receiver.ty, "std.thread.JoinHandle") {
+            if !name.name.is("join") {
+                let shown = self.types.display(receiver.ty);
+                self.error(codes::E1010, name.span, format!("`{shown}` has no method named `{}`", name.name));
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            if !explicit.is_empty() || !args.is_empty() {
+                self.error(codes::E2020, span, "`join` takes no arguments");
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return Expr { ty: result, kind: ExprKind::Builtin { which: Builtin::ThreadJoin, args: vec![receiver] }, span };
+        }
         // `[THR-14]` — `std.sync.Atomic`'s operations are builtins on its value.
         if let Some(inner) = self.lock_inner(receiver.ty, "std.sync.Atomic") {
             if !explicit.is_empty() {
@@ -37050,6 +37066,10 @@ impl<'a> Checker<'a> {
                 };
                 let value = match ret {
                     Some(ty) if ty != self.common.void => self.check_expr(expr, ty),
+                    // D-596 — with no result type expected, a literal body takes its default type
+                    // (`i64`, `f64`), as any expression does: kept untyped, the lambda was a
+                    // `fn() -> an integer`, which converted to no `fn` type and whose C was `int32_t`.
+                    None => self.synth_committed(expr),
                     _ => self.synth(expr),
                 };
                 let ty = value.ty;
@@ -38866,6 +38886,90 @@ impl<'a> Checker<'a> {
             self.types.struct_def_mut(id).has_drop = true;
         }
         guard
+    }
+
+    /// `[THR-10]` — `JoinHandle[R]`, whose end detaches the thread (the backend's drop).
+    fn join_handle_of(&mut self, result: Ty, span: Span) -> Ty {
+        let handle = self.instantiate_named_generic("std.thread.JoinHandle", &[result], span);
+        if let TyKind::Struct(id) = *self.types.kind(handle) {
+            self.types.struct_def_mut(id).has_drop = true;
+        }
+        handle
+    }
+
+    /// `[THR-10]` — `thread.spawn(f)`. `f` runs on another thread, which may outlive every local
+    /// here: what it captures must be `Send` and may not be a view (`E7004` and `E3063`, each
+    /// naming the capture), and what it returns must be `Send`. It becomes an owned callable
+    /// value, which the new thread calls and drops.
+    fn synth_thread_spawn(&mut self, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if args.len() != 1 || args[0].name.is_some() || explicit.len() > 1 {
+            self.error(codes::E2020, span, "`thread.spawn` takes one function, the work the new thread does");
+            return error;
+        }
+        let f = self.synth_committed(&args[0].value);
+        if f.ty == self.common.error {
+            return error;
+        }
+        let shown = self.types.display(f.ty);
+        let signature = self.callable_signature_of_value(f.ty);
+        let Some(TyKind::Fn { params, ret, .. }) = signature.map(|signature| self.types.kind(signature).clone()) else {
+            self.error(codes::E2020, args[0].span, format!("`thread.spawn` takes a function of no arguments, found `{shown}`"));
+            return error;
+        };
+        if !params.is_empty() {
+            self.error(codes::E2020, args[0].span, format!("`thread.spawn` takes a function of no arguments, found `{shown}`"));
+            return error;
+        }
+        let mut refused = false;
+        if let TyKind::Struct(id) = *self.types.kind(f.ty)
+            && self.closure_calls.contains_key(&id)
+        {
+            let captures: Vec<(Symbol, Ty)> = self.types.struct_def(id).fields.iter().map(|field| (field.name, field.ty)).collect();
+            for (capture, ty) in captures {
+                let ty_shown = self.types.display(ty);
+                if self.types.is_view(ty) {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E3063, args[0].span, format!("the thread's function captures `{capture}`, a view (`{ty_shown}`)"))
+                            .primary_label("the thread may outlive what it views")
+                            .help("borrow it inside `with scope = thread.scope():`, which joins its threads before the block ends [THR-5]")
+                            .note("a thread may outlive every local of the code that started it [THR-10]"),
+                    );
+                    refused = true;
+                } else if !self.types.is_send(ty) {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E7004, args[0].span, format!("the thread's function captures `{capture}`, a `{ty_shown}`, which is not Send"))
+                            .note("what a thread's function captures moves to that thread [THR-10]"),
+                    );
+                    refused = true;
+                }
+            }
+        } else if !matches!(self.types.kind(f.ty), TyKind::Fn { stateless: true, .. }) {
+            self.sink.emit(
+                Diagnostic::error(codes::E7004, args[0].span, format!("a `{shown}` value may hold anything, so it is not Send"))
+                    .help("pass the lambda itself, `owned fn() => …`, so what it captures can be checked")
+                    .note("what a thread's function captures moves to that thread [THR-10]"),
+            );
+            refused = true;
+        }
+        if !self.types.is_send(ret) {
+            let ret_shown = self.types.display(ret);
+            self.sink.emit(
+                Diagnostic::error(codes::E7004, args[0].span, format!("the thread's function returns a `{ret_shown}`, which is not Send"))
+                    .note("`join` takes the result on another thread [THR-10]"),
+            );
+            refused = true;
+        }
+        if refused {
+            return error;
+        }
+        let callable_ty = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: false, params: Vec::new(), ret });
+        let callable = self.coerce(f, callable_ty);
+        if callable.ty == self.common.error || matches!(callable.kind, ExprKind::Error) {
+            return error;
+        }
+        let handle = self.join_handle_of(ret, span);
+        Expr { ty: handle, kind: ExprKind::Builtin { which: Builtin::ThreadSpawn, args: vec![callable] }, span }
     }
 
     /// `[THR-14]` — whether an `Atomic` may not hold `held` (an integer, a `bool` or a raw pointer

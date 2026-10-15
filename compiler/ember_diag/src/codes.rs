@@ -358,6 +358,7 @@ codes! {
     E7001 = (Error, 7001, Concurrency, "[THR-1]", "`@sync` class has a field that is not Send and Sync, or a mismatched base");
     E7002 = (Error, 7002, Concurrency, "[STA-1]", "static has a type that is not Sync");
     E7003 = (Error, 7003, Concurrency, "[THR-1]", "write to a `@sync` class field outside `init`, or a `mut self` method");
+    E7004 = (Error, 7004, Concurrency, "[THR-10], [THR-11], [FFI-22]", "value crossing a thread boundary is not Send");
     E7006 = (Error, 7006, Concurrency, "[THR-14]", "memory order an atomic operation does not support");
     E7011 = (Error, 7011, Concurrency, "[PAR-2a]", "parallel loop has a loop-carried dependency");
     E7010 = (Error, 7010, Concurrency, "[PAR-2]", "parallel loop writes to a shared place");

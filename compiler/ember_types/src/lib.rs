@@ -1470,6 +1470,9 @@ impl TypeTable {
                     } else if name.is("std.sync.MutexGuard") && args.len() == 1 {
                         // `[THR-3]` — a guard is not `Send`: it is unlocked where it was taken.
                         (false, both(args[0], visiting).1)
+                    } else if name.is("std.thread.JoinHandle") {
+                        // `[THR-10]` — the result is `Send`, and only `join` takes it.
+                        (true, true)
                     } else if name.is("std.sync.Atomic") {
                         // `[THR-9]` — every access is atomic; it holds plain values only.
                         (true, true)

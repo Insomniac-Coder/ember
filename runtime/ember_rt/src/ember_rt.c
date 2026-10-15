@@ -44,6 +44,9 @@ static uint32_t object_fetch_add_u32(uint32_t* value, uint32_t amount);
 static uint32_t object_fetch_sub_u32(uint32_t* value, uint32_t amount);
 static bool object_compare_exchange_u32(uint32_t* value, uint32_t* expected, uint32_t desired);
 static uint32_t g_thread_generation = 1;
+/* [THR-16] Threads `thread.spawn` started that have not ended: the debug leak report runs only
+ * when none is. */
+static uint32_t g_threads_running;
 #if defined(_MSC_VER)
 #define EMBER_RT_THREAD_LOCAL __declspec(thread)
 #else
@@ -894,9 +897,17 @@ void ember_rt_shutdown(void) {
         return;
     }
     if (debug_objects_enabled()) {
-        ember_debug_leak_report(stderr);
-        debug_clear_live_objects();
-        debug_clear_type_edges();
+        /* [THR-16] Another thread still running may still own, change or free objects: say so
+         * rather than report its objects as leaks or free the table under it. */
+        uint32_t running = object_load_u32(&g_threads_running);
+        if (running == 0) {
+            ember_debug_leak_report(stderr);
+            debug_clear_live_objects();
+            debug_clear_type_edges();
+        } else {
+            fprintf(stderr, "ember runtime: no leak report: %u other thread%s still running [THR-16]\n",
+                    (unsigned)running, running == 1 ? " is" : "s are");
+        }
     }
     fflush(stdout);
     fflush(stderr);
@@ -1053,6 +1064,95 @@ void ember_mutex_lock_contended(uint32_t* word) {
 
 void ember_mutex_wake(uint32_t* word) {
     word_wake_one(word);
+}
+
+/* [THR-10] Threads. The new thread attaches to the runtime, runs its function, detaches and lets go
+ * of its packet. */
+#if !defined(_WIN32)
+#include <pthread.h>
+#endif
+
+static void thread_let_go(ember_thread* thread) {
+    if (object_fetch_sub_u32(&thread->refs, 1) == 1) {
+        if (thread->drop_result != NULL) {
+            thread->drop_result(thread);
+        }
+        ember_free(thread, thread->size, thread->align);
+    }
+}
+
+#if defined(_WIN32)
+static DWORD WINAPI thread_main(LPVOID raw) {
+#else
+static void* thread_main(void* raw) {
+#endif
+    ember_thread* thread = (ember_thread*)raw;
+    ember_rt_thread_attach();
+    thread->run(thread);
+    ember_rt_thread_detach();
+    thread_let_go(thread);
+    (void)object_fetch_sub_u32(&g_threads_running, 1);
+#if defined(_WIN32)
+    return 0;
+#else
+    return NULL;
+#endif
+}
+
+void ember_thread_start(ember_thread* thread, void (*run)(ember_thread*), void (*drop_result)(ember_thread*),
+                        uint32_t size, uint32_t align, ember_loc loc) {
+    static const char message[] = "could not start a thread";
+    thread->run = run;
+    thread->drop_result = drop_result;
+    thread->refs = 2;
+    thread->size = size;
+    thread->align = align;
+    (void)object_fetch_add_u32(&g_threads_running, 1);
+#if defined(_WIN32)
+    HANDLE handle = CreateThread(NULL, 0, thread_main, thread, 0, NULL);
+    if (handle == NULL) {
+        ember_panic(message, sizeof message - 1, loc);
+    }
+    thread->os = (uintptr_t)handle;
+#else
+    pthread_t id;
+    if (pthread_create(&id, NULL, thread_main, thread) != 0) {
+        ember_panic(message, sizeof message - 1, loc);
+    }
+    _Static_assert(sizeof(pthread_t) <= sizeof(uintptr_t), "a thread id fits a word");
+    thread->os = 0;
+    memcpy(&thread->os, &id, sizeof id);
+#endif
+}
+
+#if !defined(_WIN32)
+static pthread_t thread_os(const ember_thread* thread) {
+    pthread_t id;
+    memcpy(&id, &thread->os, sizeof id);
+    return id;
+}
+#endif
+
+void ember_thread_join(ember_thread* thread) {
+#if defined(_WIN32)
+    (void)WaitForSingleObject((HANDLE)thread->os, INFINITE);
+    (void)CloseHandle((HANDLE)thread->os);
+#else
+    (void)pthread_join(thread_os(thread), NULL);
+#endif
+}
+
+void ember_thread_free(ember_thread* thread) {
+    ember_free(thread, thread->size, thread->align);
+}
+
+void ember_thread_detach(ember_thread* thread) {
+#if defined(_WIN32)
+    (void)CloseHandle((HANDLE)thread->os);
+#else
+    (void)pthread_detach(thread_os(thread));
+#endif
+    thread_let_go(thread);
 }
 
 void ember_atomic_wait32(uint32_t* word, uint32_t expected) {

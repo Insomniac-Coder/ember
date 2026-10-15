@@ -1442,6 +1442,12 @@ pub enum Builtin {
     /// which was not a constant. A compare-exchange's operands are `ref mut` the expected value
     /// (replaced by the value found when it fails) and the new one; it gives whether it stored.
     Atomic { op: AtomicOp, order: Option<MemoryOrder> },
+    /// `[THR-10]` — `thread.spawn(f)`: the argument is the owned callable value the new thread
+    /// runs; it gives the `JoinHandle[R]`.
+    ThreadSpawn,
+    /// `[THR-10]` — `h.join()`: the argument is the handle, moved; it gives what the thread's
+    /// function returned.
+    ThreadJoin,
     /// `[ARN-1]`, `[ARN-4]` — `Arena.with_capacity(bytes)`. The Arena itself
     /// is a compiler-known move-only struct; the runtime state it owns is
     /// opaque to Ember source.
@@ -1679,6 +1685,8 @@ impl Builtin {
             Builtin::RwLockTryAcquire { write: false } => "try_read",
             Builtin::RwLockTryAcquire { write: true } => "try_write",
             Builtin::Atomic { op, .. } => op.name(),
+            Builtin::ThreadSpawn => "spawn",
+            Builtin::ThreadJoin => "join",
             Builtin::ArenaWithCapacity => "with_capacity",
             Builtin::ArenaAlloc { .. }
             | Builtin::FixedArenaAlloc { .. }
