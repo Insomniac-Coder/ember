@@ -78,11 +78,45 @@ def tested_rules():
     for path in sources:
         found.update(RULE.findall(path.read_text(encoding='utf-8', errors='replace')))
     for path in (ROOT / 'compiler').glob('*/src/**/*.rs'):
-        text = path.read_text(encoding='utf-8', errors='replace')
-        at = text.find('#[cfg(test)]')
-        if at >= 0:
-            found.update(RULE.findall(text[at:]))
+        for module in test_modules(path.read_text(encoding='utf-8', errors='replace')):
+            found.update(RULE.findall(module))
     return found
+
+
+def test_modules(text):
+    """The bodies of a Rust file's `#[cfg(test)] mod name { … }` blocks, and nothing else: a
+    `#[cfg(test)]` helper in the middle of a file must not make the code after it count."""
+    for start in re.finditer(r'#\[cfg\(test\)\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*\{', text):
+        depth, i = 1, start.end()
+        while depth and i < len(text):
+            raw = re.match(r'r(#*)"', text[i:i + 8]) if text[i] == 'r' and not text[i - 1].isalnum() else None
+            char = re.match(r"'(\\.[^']*|[^\\'])'", text[i:i + 12]) if text[i] == "'" else None
+            if text.startswith('//', i):
+                i = text.find('\n', i)
+                i = len(text) if i < 0 else i
+            elif raw:
+                end = text.find('"' + raw.group(1), i + len(raw.group(0)))
+                i = len(text) if end < 0 else end + 1 + len(raw.group(1))
+            elif text[i] == '"':
+                i += 1
+                while i < len(text) and text[i] != '"':
+                    i += 2 if text[i] == '\\' else 1
+                i += 1
+            elif char:
+                i += len(char.group(0))
+            else:
+                depth += {'{': 1, '}': -1}.get(text[i], 0)
+                i += 1
+        yield text[start.end():i]
+
+
+def _check_test_modules():
+    source = ('fn a() { "[A-1]" }\n#[cfg(test)]\nfn helper() {}\nfn b() { "[B-1]" }\n'
+              '#[cfg(test)]\nmod tests {\n    // a } in a comment\n    const S: &str = "}{";\n'
+              '    const R: &str = r#"a "}" b"#;\n    const C: char = \'}\';\n    const Q: char = \'\\\'\';\n'
+              '    fn t() { let _ = "[C-1]"; }\n}\nfn after() { "[D-1]" }\n')
+    found = set(RULE.findall(''.join(test_modules(source))))
+    assert found == {'C-1'}, found
 
 
 def compute():
@@ -136,6 +170,7 @@ def readme_table(text):
 
 
 def main():
+    _check_test_modules()
     phases = compute()
     new = table(phases)
     readme = ROOT / 'README.md'

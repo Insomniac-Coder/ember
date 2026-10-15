@@ -1,5 +1,5 @@
 #$ test: run-fail
-#$ rules: STD-21, PAN-1
+#$ rules: STD-21, STD-28, PAN-1
 #$ panics: inverse of a singular matrix; use try_inverse
 #$ stdout: true
 #$ profiles: debug, release, shipping

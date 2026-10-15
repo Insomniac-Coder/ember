@@ -1,5 +1,5 @@
 #$ test: compile-fail
-#$ rules: THR-1
+#$ rules: THR-1, CLS-8
 #$ profiles: debug
 #$ error[E7003]: cannot write field `value` of an `@sync` class after `init` or after using `self` as a whole
 

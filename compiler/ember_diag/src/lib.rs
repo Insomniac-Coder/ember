@@ -555,6 +555,36 @@ mod tests {
         assert!(text.contains("= note: `Array[i32]` is not Copy"), "{text}");
     }
 
+    /// `[DIA-1]` — a diagnostic has a code, one primary span, labelled secondary spans, a help
+    /// with a machine-applicable fix-it, and notes; `--json` gives the same structure, field for
+    /// field, beside the rendered text.
+    #[test]
+    fn json_carries_the_same_structure_as_the_rendering() {
+        let (map, id) = fixture();
+        let d = Diagnostic::error(codes::E3040, Span::new(id, 73, 75), "use of moved value `ps`")
+            .primary_label("value used here after move")
+            .secondary(Span::new(id, 46, 48), "value moved into `take` here")
+            .help("pass a clone")
+            .suggest("pass a clone", Span::new(id, 46, 48), "ps.clone()")
+            .note("`Array[i32]` is not Copy");
+        let json = to_json(&d, &map);
+        assert_eq!(json["code"], "E3040");
+        assert_eq!(json["message"], "use of moved value `ps`");
+        let labels = json["labels"].as_array().expect("labels");
+        assert_eq!(labels.len(), 2);
+        assert_eq!(labels.iter().filter(|label| label["primary"] == true).count(), 1);
+        assert_eq!(labels[0]["message"], "value used here after move");
+        assert_eq!(labels[0]["span"]["line_start"], 5);
+        assert_eq!(labels[1]["message"], "value moved into `take` here");
+        assert_eq!(labels[1]["span"]["line_start"], 3);
+        assert_eq!(json["helps"][0], "pass a clone");
+        assert_eq!(json["notes"][0], "`Array[i32]` is not Copy");
+        let edit = &json["suggestions"][0]["edits"][0];
+        assert_eq!(edit["replacement"], "ps.clone()");
+        assert_eq!(edit["span"]["byte_start"], 46);
+        assert_eq!(json["rendered"], render(&d, &map));
+    }
+
     #[test]
     fn a_diagnostic_with_no_span_still_renders() {
         let map = SourceMap::new();

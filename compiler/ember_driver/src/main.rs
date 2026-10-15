@@ -27,6 +27,8 @@ usage:
                                       compile a bin or staticlib package
     ember run   <file.em> [options]   compile and run
     ember check <file.em>             type-check without generating code
+    ember fmt <file.em> [--check|--write]
+                                      print the file in the canonical layout
     ember explain <CODE>              describe a diagnostic code
     ember explain --cycle <path> <Class[.field]>
                                       explain one ownership-cycle target

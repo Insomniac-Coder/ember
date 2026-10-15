@@ -31754,9 +31754,14 @@ impl<'a> Checker<'a> {
                                     self.error(codes::E0104, attr.span, "duplicate `on_panic` in `@export`");
                                 }
                                 saw_panic = true;
+                                // `[FFI-25]` — `abort` is the only form in this version:
+                                // another is not admitted, not something still to come.
                                 if !export_abort_policy(arg) {
-                                    self.error(codes::E0900, attr.span,
-                                        "only `on_panic=abort` is implemented for exported functions");
+                                    self.sink.emit(
+                                        Diagnostic::error(codes::E0104, attr.span,
+                                            "`on_panic` in `@export` must be `abort`")
+                                            .note("a panic below an exported function aborts the process; no panic unwinds into C [FFI-25]"),
+                                    );
                                 }
                             }
                             ast::AttrArg::Named { name, .. } if name.name.is("threads") => {
@@ -32040,7 +32045,9 @@ impl<'a> Checker<'a> {
                 continue;
             }
             // `[STR-5]`, `[DRV-1]` — `Copy` and `Clone` are derived; `Eq` is
-            // already implicit. No other derive is built.
+            // already implicit; `Hash`, and `Zeroable` on a struct. The other
+            // built-in derives are not built yet (`E0900`); `[DRV-2]`, a name
+            // that is no built-in derive never will be in this version.
             if name == "derive" {
                 for arg in &attr.args {
                     let derived = match arg {
@@ -32051,11 +32058,24 @@ impl<'a> Checker<'a> {
                         }
                         _ => "",
                     };
-                    if !matches!(derived, "Copy" | "Clone" | "Eq" | "Hash") && !(derived == "Zeroable" && site == "struct") {
-                        let span = match arg {
-                            ast::AttrArg::Expr(expr) => expr.span,
-                            ast::AttrArg::Named { value, .. } => value.span,
+                    let span = match arg {
+                        ast::AttrArg::Expr(expr) => expr.span,
+                        ast::AttrArg::Named { value, .. } => value.span,
+                    };
+                    if !BUILT_IN_DERIVES.contains(&derived) {
+                        let message = if derived.is_empty() {
+                            "a derive is named by one of the built-in derives".to_string()
+                        } else {
+                            format!("`{derived}` is not a built-in derive")
                         };
+                        self.sink.emit(
+                            Diagnostic::error(codes::E0104, span, message)
+                                .help("derive one of the built-in derives: user-defined derives are not in this version, and `macro` is reserved for them [DRV-2]")
+                                .note(format!("the built-in derives are {} [DRV-1]", BUILT_IN_DERIVES.map(|d| format!("`{d}`")).join(", "))),
+                        );
+                        continue;
+                    }
+                    if !matches!(derived, "Copy" | "Clone" | "Eq" | "Hash") && !(derived == "Zeroable" && site == "struct") {
                         self.sink.emit(
                             Diagnostic::error(
                                 codes::E0900,
@@ -32955,10 +32975,18 @@ impl<'a> Checker<'a> {
         }
         // A class receiver is borrowed as a handle, while its object's
         // fields use their own runtime access words. Writing one field does
-        // not re-point the borrowed handle (`[CLS-7]`, `[EXC-19]`).
+        // not re-point the borrowed handle (`[CLS-7]`, `[EXC-19]`). `[FN-9]`:
+        // the same for every borrowed handle parameter, whose mode governs
+        // the handle, not the object: a write through it is the object's,
+        // under Part VIII's exclusivity rules.
         let mut current = place;
         loop {
             if self.class_method_field_index(current).is_some() { return false; }
+            if let ExprKind::Field { base, .. } = &current.kind
+                && matches!(self.types.kind(base.ty), TyKind::Class(_))
+            {
+                return false;
+            }
             current = match &current.kind {
                 ExprKind::Field { base, .. } | ExprKind::Index { base, .. } | ExprKind::Deref(base) => base,
                 _ => break,
@@ -40982,7 +41010,11 @@ impl<'a> Checker<'a> {
         // borrowed.
         self.reject_readonly_write_in_mut_argument(&receiver, span);
         let through_shared_ref = self.reject_write_through_shared_ref(&receiver, span);
-        if !through_shared_ref {
+        // `[FN-9]` — a class method's `mut self` is a write access to the
+        // object, never a re-pointing of the handle (ODR-072), so a borrowed
+        // handle parameter may call one, under Part VIII's exclusivity rules.
+        let class_handle = matches!(self.types.kind(receiver.ty), TyKind::Class(_));
+        if !through_shared_ref && !class_handle {
             self.reject_borrowed_parameter_write(&receiver, span, false);
         }
         if !is_place(&receiver.kind) {
@@ -44060,6 +44092,13 @@ enum Gather<'a> {
     Any,
     All,
 }
+
+/// `[DRV-1]` — the built-in derives, in the specification's order. `[DRV-2]`: there are no
+/// others in this version.
+const BUILT_IN_DERIVES: [&str; 13] = [
+    "Copy", "Clone", "Eq", "Debug", "Display", "Ord", "Hash", "Default", "Error", "Serialize",
+    "Deserialize", "Zeroable", "Component",
+];
 
 /// `[ATT-1]` (0.9.9) — the attribute table: each name, the declarations it
 /// applies to, and whether its effect is built. `[ATT-6]` rejects a listed

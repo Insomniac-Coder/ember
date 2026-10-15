@@ -1,5 +1,5 @@
 #$ test: compile-fail
-#$ rules: THR-1, THR-8, THR-9
+#$ rules: THR-1, THR-8, THR-9, CLS-8
 #$ profiles: debug
 #$ error[E7001]: field `Shared.item` has type `Local`, which is not Send or Sync
 

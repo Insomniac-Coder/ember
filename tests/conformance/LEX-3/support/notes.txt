@@ -1,0 +1,2 @@
+pub fn note() -> str:
+    return "a module only in a .txt file"

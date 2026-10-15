@@ -1,5 +1,5 @@
 #$ test: run-pass
-#$ rules: STD-21
+#$ rules: STD-21, STD-28
 #$ profiles: debug, release, shipping
 #$ stdout: true true true true true
 #$ true true true true

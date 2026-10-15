@@ -40,10 +40,11 @@ fn contains(src: &str, needle: &str) -> bool {
 #[test]
 fn only_the_current_language_may_be_named() {
     // `[VER-8]` (0.9.9) — before 1.0 there is one language, the current one.
-    let out = run("#! language \"0.9.9\"\nfn main():\n    pass\n");
+    let current = ember_parser::LANGUAGE_VERSION;
+    let out = run(&format!("#! language \"{current}\"\nfn main():\n    pass\n"));
     assert!(out.codes.is_empty(), "the current version was rejected:\n{}", out.messages);
-    assert!(out.dump.contains("language = \"0.9.9\""), "{}", out.dump);
-    for version in ["0.8.3", "0.9", "0.9.8", "1.0"] {
+    assert!(out.dump.contains(&format!("language = \"{current}\"")), "{}", out.dump);
+    for version in ["0.8.3", "0.9", "0.9.8", "0.9.9", "1.0"] {
         let source = format!("#! language \"{version}\"\nfn main():\n    pass\n");
         let out = run(&source);
         assert_eq!(out.codes, ["E0006"], "{version}");
@@ -53,7 +54,7 @@ fn only_the_current_language_may_be_named() {
 
 #[test]
 fn thread_directives_roundtrip_through_formatter() {
-    let source = "#! language \"0.9.9\"\n#! threads main\nfn main():\n    pass\n";
+    let source = &format!("#! language \"{}\"\n#! threads main\nfn main():\n    pass\n", ember_parser::LANGUAGE_VERSION);
     let mut map = SourceMap::new();
     let file = map.add("<original>", source.to_string());
     let mut sink = Sink::new();
@@ -62,7 +63,7 @@ fn thread_directives_roundtrip_through_formatter() {
     assert!(sink.diagnostics().is_empty(), "{}", sink.render(&map));
     let expected = ember_ast::dump(&module);
     let formatted = ember_fmt::format(&module, source, &lexed.comments);
-    assert!(formatted.starts_with("#! language \"0.9.9\"\n#! threads main\n"),
+    assert!(formatted.starts_with(&format!("#! language \"{}\"\n#! threads main\n", ember_parser::LANGUAGE_VERSION)),
         "{formatted}");
 
     let mut formatted_map = SourceMap::new();
@@ -73,6 +74,69 @@ fn thread_directives_roundtrip_through_formatter() {
         formatted_tokens, &mut formatted_sink);
     assert!(formatted_sink.diagnostics().is_empty(), "{}", formatted_sink.render(&formatted_map));
     assert_eq!(expected, ember_ast::dump(&formatted_module));
+}
+
+/// `[FMT-3]` — the formatter never emits `;` outside `[T; N]` and `[v; N]`: over every test and
+/// standard-library source that parses, each `;` token of the formatted text sits directly inside
+/// square brackets. (A `;` in a string or a comment is no token.)
+#[test]
+fn the_formatter_emits_semicolons_only_in_fixed_arrays() {
+    // The compiler's own stack (`ember_driver`'s `COMPILER_STACK`): the corpus nests deeply.
+    std::thread::Builder::new()
+        .stack_size(256 << 20)
+        .spawn(semicolons_only_in_fixed_arrays)
+        .expect("the checking thread starts")
+        .join()
+        .expect("every `;` sits inside square brackets");
+}
+
+fn semicolons_only_in_fixed_arrays() {
+    use ember_lexer::{Punct, TokenKind};
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut sources = Vec::new();
+    let mut pending = vec![root.join("tests"), root.join("std")];
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory).expect("the corpus reads").flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|e| e == "em") {
+                sources.push(path);
+            }
+        }
+    }
+    sources.sort();
+    let mut fixed_arrays = 0;
+    for path in &sources {
+        let Ok(bytes) = std::fs::read(path) else { continue };
+        let Some(text) = ember_span::normalise(&bytes) else { continue };
+        let mut map = SourceMap::new();
+        let file = map.add(path.to_string_lossy().into_owned(), text.clone());
+        let mut sink = Sink::new();
+        let lexed = ember_lexer::lex(file, &text, &mut sink);
+        let module = ember_parser::parse(file, &text, lexed.tokens, &mut sink);
+        if sink.has_errors() {
+            continue;
+        }
+        let formatted = ember_fmt::format(&module, &text, &lexed.comments);
+        let mut formatted_map = SourceMap::new();
+        let formatted_file = formatted_map.add(path.to_string_lossy().into_owned(), formatted.clone());
+        let mut formatted_sink = Sink::new();
+        let mut open: Vec<Punct> = Vec::new();
+        for token in ember_lexer::lex(formatted_file, &formatted, &mut formatted_sink).tokens {
+            let TokenKind::Punct(punct) = token.kind else { continue };
+            if punct.is_open_bracket() {
+                open.push(punct);
+            } else if punct.is_close_bracket() {
+                open.pop();
+            } else if punct == Punct::Semi {
+                assert_eq!(open.last(), Some(&Punct::LBracket),
+                    "{}: the formatter wrote a `;` outside square brackets:\n{formatted}", path.display());
+                fixed_arrays += 1;
+            }
+        }
+    }
+    assert!(fixed_arrays > 0, "the corpus has no `[T; N]` or `[v; N]` to check");
 }
 
 // -- items -------------------------------------------------------------------

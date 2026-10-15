@@ -1,4 +1,4 @@
-#! language "0.9.9"
+#! language "0.9.10"
 #$ test: run-pass
 #$ rules: VER-8
 #$ profiles: debug

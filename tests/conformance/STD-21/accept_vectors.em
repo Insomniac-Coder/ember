@@ -1,5 +1,5 @@
 #$ test: run-pass
-#$ rules: STD-21, TYP-21, STR-1
+#$ rules: STD-21, STD-28, TYP-21, STR-1
 #$ profiles: debug, release, shipping
 #$ stdout: Vec3(x=3.0, y=4.0, z=5.0) Vec3(x=-1.0, y=0.0, z=1.0) Vec3(x=2.0, y=4.0, z=6.0) Vec3(x=0.5, y=1.0, z=1.5) Vec3(x=-1.0, y=-2.0, z=-3.0)
 #$ Vec3(x=2.0, y=4.0, z=6.0) Vec3(x=2.0, y=4.0, z=6.0) Vec3(x=0.5, y=1.0, z=1.5) Vec3(x=2.0, y=3.0, z=4.0) Vec3(x=1.0, y=0.0, z=-1.0)

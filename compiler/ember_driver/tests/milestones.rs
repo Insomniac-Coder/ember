@@ -861,7 +861,8 @@ fn borrowed_record_export_receives_c_value() {
     assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "10\n3\n21\n10\n13\n811\n10\n19\n15\n7\n8\n");
 }
 
-/// `[FFI-25]` — a C caller cannot observe an Ember panic as a return or unwind.
+/// `[FFI-25]`, `[FFI-4]` — a C caller cannot observe an Ember panic as a return or unwind: the
+/// panic aborts the process inside the Ember function, so it never crosses into the C code.
 #[test]
 fn exported_panic_aborts_inside_c_callback() {
     let root = workspace_root();
@@ -1007,10 +1008,10 @@ fn exported_thread_contracts_hold_in_every_profile() {
     let creator_imported = directory.join(ember_branding::source_file("creator_defaults"));
     let entry = directory.join(ember_branding::source_file("entry"));
     std::fs::write(&imported,
-        "#! language \"0.9.9\"\n#! threads main\n@export(\"default_score\")\npub fn default_value() -> i32:\n    return 43\n@export(\"override_score\", threads=any)\npub fn override_value() -> i32:\n    return 44\n")
+        "#! language \"0.9.10\"\n#! threads main\n@export(\"default_score\")\npub fn default_value() -> i32:\n    return 43\n@export(\"override_score\", threads=any)\npub fn override_value() -> i32:\n    return 44\n")
         .expect("default policy module is writable");
     std::fs::write(&creator_imported,
-        "#! language \"0.9.9\"\n#! threads creator\n@export(\"creator_default_score\")\npub fn default_value() -> i32:\n    return 46\n@export(\"creator_override_score\", threads=any)\npub fn override_value() -> i32:\n    return 47\n")
+        "#! language \"0.9.10\"\n#! threads creator\n@export(\"creator_default_score\")\npub fn default_value() -> i32:\n    return 46\n@export(\"creator_override_score\", threads=any)\npub fn override_value() -> i32:\n    return 47\n")
         .expect("creator default policy module is writable");
     std::fs::write(&entry,
         "import thread_defaults\nimport creator_defaults\n@export(\"main_score\", threads=main, on_panic=abort)\npub fn main_value() -> i32:\n    return 41\n@export(\"creator_score\", threads=creator)\npub fn creator_value() -> i32:\n    return 45\n@export(\"any_score\", threads=any)\npub fn any_value() -> i32:\n    return 42\n")
@@ -3521,7 +3522,7 @@ fn module_attributes_format_from_the_parsed_tree() {
     let directory = temporary_directory("module-attr-fmt");
     let scratch = directory.join(ember_branding::source_file("main"));
     std::fs::write(&scratch,
-        "#! language \"0.9.9\"\n#! module overflow(wrap)\n#! threads any\n\nfn add(a: i8, b: i8) -> i8:\n    return a + b\n")
+        "#! language \"0.9.10\"\n#! module overflow(wrap)\n#! threads any\n\nfn add(a: i8, b: i8) -> i8:\n    return a + b\n")
         .expect("module attribute fixture is writable");
     let path = scratch.to_string_lossy();
     let once = ember(&["fmt", &path], &root);
@@ -4929,4 +4930,51 @@ fn main_args_replace_text_that_is_not_utf8() {
         "stderr:\n{}",
         String::from_utf8_lossy(&run.stderr).escape_default()
     );
+}
+
+/// `[RT-2]` — the runtime has no global constructors: nothing in its C runs before the
+/// program's `main`, which starts it by calling `ember_rt_init` (the conformance case
+/// `RT-2/accept_main_initialises_the_runtime` checks that half on the emitted C).
+#[test]
+fn runtime_has_no_global_constructors() {
+    let runtime = ember_branding::runtime("rt");
+    let templates = workspace_root().join("runtime").join(&runtime).join("templates");
+    for name in [format!("{runtime}.c.in"), format!("{}.in", ember_branding::runtime_header())] {
+        let text = std::fs::read_to_string(templates.join(&name)).expect("the runtime template reads");
+        for needle in ["__attribute__((constructor", "__attribute__ ((constructor", ".CRT$XC", "init_seg"] {
+            assert!(!text.contains(needle), "{name} asks for code before `main`: `{needle}`");
+        }
+    }
+}
+
+/// `[VER-1]` — three version numbers, each moving on its own: the language version is the
+/// development target's (`#! language` may name only it, `[VER-8]`; D-591 was the compiler still
+/// on 0.9.9 under a 0.9.10 document), the compiler's is its package's, and the runtime's ABI
+/// version is `EMBER_RUNTIME_ABI`.
+#[test]
+fn the_three_versions_are_separate() {
+    let root = workspace_root();
+    let pin = std::fs::read_to_string(root.join("docs/spec-source/development-target.json")).expect("the pin reads");
+    let path = pin.split("\"path\": \"").nth(1).and_then(|rest| rest.split('"').next()).expect("the pin names a document");
+    let document = std::fs::read_to_string(root.join(path)).expect("the development target reads");
+    let version = document
+        .lines()
+        .find_map(|line| line.strip_prefix("**Version:** "))
+        .expect("the document states its version");
+    let language = version.split("_Hardened").next().expect("a version");
+    assert_eq!(ember_parser::LANGUAGE_VERSION, language, "the compiler's language is not the document's");
+
+    let run = ember(&["--version"], &root);
+    assert_eq!(run.exit, 0);
+    assert_eq!(run.stdout.trim(), format!("{} {}", ember_branding::CLI_NAME, env!("CARGO_PKG_VERSION")));
+
+    let header = std::fs::read_to_string(
+        root.join("runtime").join(ember_branding::runtime("rt")).join("templates").join(format!("{}.in", ember_branding::runtime_header())),
+    )
+    .expect("the runtime header reads");
+    let abi = header
+        .lines()
+        .find_map(|line| line.strip_prefix(&format!("#define {}_RUNTIME_ABI ", ember_branding::SYMBOL_PREFIX.to_uppercase())))
+        .expect("the runtime header defines its ABI version");
+    assert!(abi.trim().parse::<u32>().is_ok(), "the runtime ABI version is a number: {abi}");
 }

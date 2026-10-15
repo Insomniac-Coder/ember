@@ -1,4 +1,5 @@
-/* [RC-4], [WK-12]: a Sync object's counts under several threads at once. Retains and releases
+/* [RC-4], [WK-12], [RT-10]: a Sync object's counts under several threads at once, through the
+ * header's inline counting. Retains and releases
  * made from every thread balance exactly, and a weak handle upgraded while the last strong handle
  * is released never brings the object back: an upgrade either holds the object alive or finds it
  * gone, and the object is deinitialised exactly once. */

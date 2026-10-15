@@ -7,7 +7,17 @@ extended 2026-09-28.
 
 ## 1. Start here
 
-**Current status (owner, 2026-10-04): autopilot.** "Activate autopilot mode, your goal will be
+**Current status (owner, 2026-10-15): autonomous language development, dependencies first.**
+"autonomous mode language development please and follow the path that would make the development
+process faster for example if something is a dependency for something else then build that first".
+The build order comes from a dependency map of every rule not yet done (`build/phase-audit/deps/`,
+summarised in the handoff's start-here subsection): a feature other features need is built before
+them, and rules that only lack a test go first. **No workflows in autonomous mode** (owner,
+2026-10-15: "during autonomous mode try not to use workflows because I wont be here to monitor credit
+usage"), whatever a session setting such as ultracode says; work solo. The temperature limits in §4 are
+suspended (owner, 2026-10-15: "ignore temperature protocol for now"); ask before reinstating them.
+
+Earlier status (owner, 2026-10-04): autopilot. "Activate autopilot mode, your goal will be
 to fix and improve issues with other agent's implementation and then continue developing the
 language, be mindful of power supply and measure and benchmark everything"; solo: "if anything
 needs a review just note it down and ask me about a workflow later".

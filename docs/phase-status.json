@@ -2,7 +2,7 @@
   "_what": "Input to tools/phase_progress.py, which computes the README's phase table. A rule counts as done only when a passing test exercises it and it is not listed under `unfinished`. There is deliberately no way to mark a rule done by hand: a percentage rises only when a rule gets a test and its `unfinished` entry, if any, is removed because the rule is fulfilled.",
   "meta_rules": {
     "_what": "Rules whose subject is refusing what is not built, so a test expecting E0900 is evidence that they hold.",
-    "rules": ["ATT-6", "CLI-19", "PHIL-12"]
+    "rules": ["ATT-6", "CLI-19", "PHIL-12", "EFF-23"]
   },
   "unmapped_families": {
     "_what": "The phase of each family tasks/impl-0.9.9/rule_sizes.py does not map, from the work Part XXI of 0.9.8_Hardened_3 gives it (owner, 2026-10-15: keep the current mapping, place the rest by the plan).",
@@ -24,7 +24,6 @@
     "ARN-11": "deriving `Zeroable` is refused (E0900): tests/conformance/ARN-11/reject_zeroable_the_compiler_cannot_prove.em",
     "FFI-10": "foreign statics: non-Copy or borrowed record types, writing an element of a foreign static array, and non-C declaration blocks are refused (E0900): tests/conformance/FFI-10/reject_*",
     "FFI-11": "only `@ffi` link names and borrowed-one pointer contracts are built (E0900): tests/conformance/FFI-11/reject_exclusive_and_aliased_result.em",
-    "FFI-25": "only `on_panic=abort` is built for exports (E0900): tests/conformance/FFI-25/reject_non_abort_export_policy.em",
     "FFI-26": "export names that are not C identifiers, and generic exports, are refused (E0900): tests/conformance/FFI-26/reject_unsupported_export_forms.em",
     "FFI-39": "`extern class` is not built: docs/NOT-IMPLEMENTED.md N2, tests/conformance/FFI-39/reject_it_is_not_implemented_yet.em",
     "FFI-49": "`link_name`s that are not C identifiers, and `@ffi` contracts beyond link names, are refused (E0900): tests/conformance/FFI-49/reject_*",
@@ -83,7 +82,7 @@
     "DSJ-4": "`SoA` is not built, so `assert_disjoint` cannot apply to its columns (Phase 6)",
     "SIMD-3": "`SoA` is not built, so case (c)'s distinct columns give no alias fact (Phase 6)",
     "WK-15": "`ember test` is not built; only `ember run` reports leaks",
-    "FMT-1": "`ember fmt` is not built",
+    "FMT-1": "`ember fmt` is built (and checked over the corpus), but `ember fmt --migrate`, which the rule gives the rewriting of source, is not (`[CLI-20]`)",
     "BLD-2": "there are no effect sets, so a changed one cannot be part of a module's interface hash",
     "FFI-1": "a foreign declaration's contract has no effects or thread rule yet; contracts beyond link names are E0900 (see FFI-11)",
     "FFI-2": "overlays (§XVI.4) are not built, so a call's missing facts cannot be supplied by one",

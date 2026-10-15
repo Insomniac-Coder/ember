@@ -17,7 +17,7 @@ mod body;
 /// one. A source file does not select a version; a `#! language` directive is
 /// accepted only when it names this one. Selectable versions begin at 1.0
 /// (`[VER-2]`).
-pub const LANGUAGE_VERSION: &str = "0.9.9";
+pub const LANGUAGE_VERSION: &str = "0.9.10";
 
 /// Parse one file's token stream into a [`Module`].
 ///
