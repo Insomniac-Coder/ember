@@ -1,12 +1,12 @@
 #$ test: compile-fail
-#$ rules: CLI-19, GRM-25
-#$ error[E0900]: a computed operand in the middle of a comparison chain is not implemented yet
-#$ help: bind it to a local first, then compare the local
+#$ rules: CLI-19
+#$ error[E0900]: deriving `Error` is not implemented yet
 # A construct the specification defines and this compiler does not implement
 # is rejected by name, never accepted with another meaning.
 
-fn next() -> int:
-    return 5
+@derive(Error)
+enum Failure:
+    Lost
 
 fn main():
-    println(0 < next() < 10)
+    println(1)

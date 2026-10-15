@@ -752,6 +752,29 @@ struct GenericClass {
 }
 
 /// `[GRM-34]` — the built-in generic types an `extend[...]` may name.
+/// `[STD-13]` — a Python method name Ember spells otherwise (Appendix E): `E2072`, whose help names
+/// Ember's method. There is no second name.
+fn python_method_name(shown: &str, name: ast::Ident) -> Option<Diagnostic> {
+    let ember = match name.name.as_str() {
+        "append" => "push",
+        "index" => "index_of",
+        "strip" => "trim",
+        "lstrip" => "trim_start",
+        "rstrip" => "trim_end",
+        "splitlines" => "lines",
+        "startswith" => "starts_with",
+        "endswith" => "ends_with",
+        "upper" => "to_upper",
+        "lower" => "to_lower",
+        _ => return None,
+    };
+    Some(
+        Diagnostic::error(codes::E2072, name.span, format!("no method `{}` on `{shown}`", name.name))
+            .help(format!("Ember's name for it is `{ember}`"))
+            .note("a Python method Ember spells otherwise has one name, Ember's (Appendix E) [STD-13]"),
+    )
+}
+
 const BUILTIN_GENERICS: [&str; 6] = ["Array", "Span", "MutSpan", "Option", "Result", "SoA"];
 
 /// V.7 — a `const` that is not a bare literal: a constant expression
@@ -17215,7 +17238,8 @@ impl<'a> Checker<'a> {
             .rev()
             .flat_map(|scope| scope.iter())
             .filter_map(|(name, local)| {
-                if !seen.insert(*name) {
+                // `[DIA-24]` — of the right kind: a local is never a type.
+                if !values || !seen.insert(*name) {
                     return None;
                 }
                 let declaration = self.locals.get(local.0 as usize)?;
@@ -17230,6 +17254,15 @@ impl<'a> Checker<'a> {
                 .iter()
                 .filter_map(|(name, qualified)| {
                     if values && self.interfaces.contains_key(qualified) {
+                        return None;
+                    }
+                    // `[DIA-24]` — where a type is expected, only types.
+                    let is_type = self.named_types.contains_key(qualified)
+                        || self.generic_structs.contains_key(qualified)
+                        || self.generic_enums.contains_key(qualified)
+                        || self.generic_classes.contains_key(qualified)
+                        || self.interfaces.contains_key(qualified);
+                    if !values && !is_type {
                         return None;
                     }
                     let declaration = self.item_spans.get(qualified)?;
@@ -17872,6 +17905,13 @@ impl<'a> Checker<'a> {
                     return;
                 }
                 let expr = self.synth(expr);
+                // `[ERR-5]` — a `Result` is `@must_use`: one an expression statement drops is unused.
+                if self.is_result(expr.ty) {
+                    self.sink.emit(
+                        Diagnostic::warning(codes::W2190, expr.span, "unused `Result`, which may be an error")
+                            .help("handle it with `?` or `match`, or write `_ = …` to drop it on purpose"),
+                    );
+                }
                 out.push(Stmt::Expr(expr));
             }
             ast::StmtKind::Decl { pattern, ty, init } => {
@@ -29090,12 +29130,13 @@ impl<'a> Checker<'a> {
                             "casting between raw pointer types requires `unsafe`"
                         });
                     }
-                    if pointer_integer_cast && (matches!(self.types.kind(inner.ty),
-                        TyKind::Int(ember_types::IntTy::I128) | TyKind::Uint(UintTy::U128))
-                        || matches!(self.types.kind(to),
-                            TyKind::Int(ember_types::IntTy::I128) | TyKind::Uint(UintTy::U128))) {
-                        self.error(codes::E0900, span,
-                            "raw pointer casts involving 128-bit integers are not implemented yet");
+                    // A 128-bit integer goes through `usize`, which holds any address: a
+                    // pointer zero-extends, and an integer keeps its low bits.
+                    let wide = |ty: Ty| matches!(self.types.kind(ty), TyKind::Int(ember_types::IntTy::I128) | TyKind::Uint(UintTy::U128));
+                    if pointer_integer_cast && (wide(inner.ty) || wide(to)) {
+                        let usize = self.common.usize;
+                        let address = Expr { ty: usize, kind: ExprKind::Cast { expr: Box::new(inner), to: usize }, span };
+                        return Expr { ty: to, kind: ExprKind::Cast { expr: Box::new(address), to }, span };
                     }
                 } else if !char_cast && !reference_pointer_cast
                     && (!self.types.is_numeric(inner.ty) || !self.types.is_numeric(to)) {
@@ -36077,6 +36118,10 @@ impl<'a> Checker<'a> {
                 return call;
             }
             let shown = self.types.display(receiver.ty);
+            if let Some(diagnostic) = python_method_name(&shown, name) {
+                self.sink.emit(diagnostic);
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             let mut diagnostic = Diagnostic::error(
                 codes::E1010,
                 name.span,
@@ -39713,10 +39758,13 @@ impl<'a> Checker<'a> {
                 if !ok {
                     let (ty, verb, marker) = what;
                     let ty_shown = self.types.display(ty);
-                    self.sink.emit(
+                    let mut diagnostic =
                         Diagnostic::error(code, args[0].span, format!("the task {verb} `{capture}`, a `{ty_shown}`, which is not {marker}"))
-                            .note("a scoped task runs on another thread while the block goes on [THR-11]"),
-                    );
+                            .note("a scoped task runs on another thread while the block goes on [THR-11]");
+                    if let Some(advice) = self.sync_class_advice(ty) {
+                        diagnostic = diagnostic.help(advice);
+                    }
+                    self.sink.emit(diagnostic);
                     refused = true;
                 }
             }
@@ -39750,6 +39798,25 @@ impl<'a> Checker<'a> {
             }
         };
         Expr { ty: handle, kind: ExprKind::Builtin { which: Builtin::ScopeSpawn { closure }, args: vec![borrowed, task] }, span }
+    }
+
+    /// `[THR-2]` — for a handle of a class that is not `@sync`: `@sync` offered when every field
+    /// is `Send` and `Sync` (`[THR-1]` could hold), else the field that keeps it from being.
+    fn sync_class_advice(&self, ty: Ty) -> Option<String> {
+        let TyKind::Class(id) = *self.types.kind(ty) else { return None };
+        let def = self.types.class_def(id);
+        if def.is_sync {
+            return None;
+        }
+        let name = self.types.class_display_name(id);
+        match def.fields.iter().find(|f| !(self.types.is_send(f.ty) && self.types.is_sync(f.ty))) {
+            None => Some(format!("declare it `@sync class {name}`: its fields are all `Send` and `Sync` [THR-1]")),
+            Some(field) => Some(format!(
+                "`@sync` would not help: `{name}.{}` is a `{}`, which is not `Send` and `Sync` [THR-1]",
+                field.name,
+                self.types.display(field.ty)
+            )),
+        }
     }
 
     /// `[THR-10]` — `JoinHandle[R]`, whose end detaches the thread (the backend's drop).
@@ -39801,10 +39868,13 @@ impl<'a> Checker<'a> {
                     );
                     refused = true;
                 } else if !self.types.is_send(ty) {
-                    self.sink.emit(
+                    let mut diagnostic =
                         Diagnostic::error(codes::E7004, args[0].span, format!("the thread's function captures `{capture}`, a `{ty_shown}`, which is not Send"))
-                            .note("what a thread's function captures moves to that thread [THR-10]"),
-                    );
+                            .note("what a thread's function captures moves to that thread [THR-10]");
+                    if let Some(advice) = self.sync_class_advice(ty) {
+                        diagnostic = diagnostic.help(advice);
+                    }
+                    self.sink.emit(diagnostic);
                     refused = true;
                 }
             }
@@ -42756,6 +42826,10 @@ impl<'a> Checker<'a> {
                 return call;
             }
             let shown = self.types.display(receiver.ty);
+            if let Some(diagnostic) = python_method_name(&shown, name) {
+                self.sink.emit(diagnostic);
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             let diagnostic =
                 Diagnostic::error(codes::E1010, name.span, format!("`{shown}` has no method named `{}`", name.name));
             let diagnostic = self.note_unmet_extension_bound(diagnostic, receiver.ty, name.name);
@@ -44355,44 +44429,86 @@ impl<'a> Checker<'a> {
     /// evaluated at most once, left to right, stopping at the first false
     /// comparison. A middle operand is shared by two comparisons; it is
     /// written into both when reading it twice cannot be observed (a name, a
-    /// literal, a field or an index of those). Any other middle operand is
-    /// `E0900` for now, with the help to bind it to a local.
+    /// literal, a field or an index of those). Any other operand before the
+    /// last is bound to a hidden local where its turn comes, in a block that
+    /// holds the rest of the chain, so nothing after a false comparison runs.
     fn synth_compare_chain(
         &mut self,
         first: &ast::Expr,
         rest: &[(ast::BinOp, ast::Expr)],
         span: Span,
     ) -> Expr {
-        for (_, operand) in &rest[..rest.len() - 1] {
-            if !Self::rereadable(operand) {
-                self.sink.emit(
-                    Diagnostic::error(
-                        codes::E0900,
-                        operand.span,
-                        "a computed operand in the middle of a comparison chain is not implemented yet",
-                    )
-                    .help("bind it to a local first, then compare the local")
-                    .note("the operand must be evaluated once and compared twice [GRM-25]"),
-                );
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let computed = rest[..rest.len() - 1].iter().any(|(_, operand)| !Self::rereadable(operand));
+        self.scopes.push(HashMap::new());
+        let (stmts, left) = if computed && !Self::rereadable(first) {
+            match self.bind_chain_operand(first) {
+                Some(bound) => bound,
+                None => {
+                    self.scopes.pop();
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
             }
+        } else {
+            (Vec::new(), first.clone())
+        };
+        let chain = self.chain_links(left, rest, span);
+        self.scopes.pop();
+        Self::with_stmts(stmts, chain, span)
+    }
+
+    /// The comparisons of a chain from `left` on: `left op right and …`.
+    fn chain_links(&mut self, left: ast::Expr, rest: &[(ast::BinOp, ast::Expr)], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let (op, right) = &rest[0];
+        let last = rest.len() == 1;
+        let (stmts, right) = if last || Self::rereadable(right) {
+            (Vec::new(), right.clone())
+        } else {
+            match self.bind_chain_operand(right) {
+                Some(bound) => bound,
+                None => return error,
+            }
+        };
+        let link = self.synth_binary(*op, &left, &right, left.span.to(right.span));
+        if last {
+            return link;
         }
-        let mut left = first;
-        let mut links = Vec::new();
-        for (op, right) in rest {
-            links.push(self.synth_binary(*op, left, right, left.span.to(right.span)));
-            left = right;
+        let tail = self.chain_links(right, &rest[1..], span);
+        let both = Expr {
+            ty: self.common.bool_,
+            kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(link), rhs: Box::new(tail) },
+            span,
+        };
+        Self::with_stmts(stmts, both, span)
+    }
+
+    /// A computed operand of a chain, evaluated into a hidden local: the
+    /// statement, and a name for the local the comparisons read. An operand
+    /// of untyped literals alone is pure and keeps its place (it takes its
+    /// type from its neighbours); `None` when it does not check.
+    fn bind_chain_operand(&mut self, operand: &ast::Expr) -> Option<(Vec<Stmt>, ast::Expr)> {
+        let value = self.synth(operand);
+        if value.ty == self.common.error {
+            return None;
         }
-        let bool_ty = self.common.bool_;
-        let mut chain = links.pop().expect("a chain has two comparisons");
-        while let Some(link) = links.pop() {
-            chain = Expr {
-                ty: bool_ty,
-                kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(link), rhs: Box::new(chain) },
-                span,
-            };
+        if self.types.is_untyped_literal(value.ty) {
+            return Some((Vec::new(), operand.clone()));
         }
-        chain
+        let hidden = Symbol::intern(&format!("$chain{}", self.locals.len()));
+        let local = self.declare(Some(hidden), value.ty, operand.span);
+        let name = ast::Expr {
+            id: ast::NodeId::DUMMY,
+            kind: ast::ExprKind::Path { segments: vec![ast::Ident { name: hidden, span: operand.span }] },
+            span: operand.span,
+        };
+        Some((vec![Stmt::Let { local, init: Some(value) }], name))
+    }
+
+    fn with_stmts(stmts: Vec<Stmt>, value: Expr, span: Span) -> Expr {
+        if stmts.is_empty() {
+            return value;
+        }
+        Expr { ty: value.ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(value) }, span }
     }
 
     /// `[FN-10]` (0.9.9) — what happens when control reaches the end of a

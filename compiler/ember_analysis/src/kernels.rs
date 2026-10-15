@@ -43,7 +43,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use ember_mir::{
     AggregateKind, AssertKind, BasicBlock, BasicBlockId, BinOp, Body, Builtin, CastKind, Const, FuncRef, LocalDecl, LocalId,
-    LocalKind, Operand, ParameterMode, Place, Projection, Rvalue, Stmt, StmtKind, Terminator,
+    LocalKind, Operand, ParameterMode, Place, Projection, Rvalue, SoAOp, Stmt, StmtKind, Terminator,
 };
 use ember_types::{CommonTypes, Ty, TyKind, TypeTable};
 
@@ -254,7 +254,7 @@ fn try_outline(
     // `[DSJ-3]` — views `assert_disjoint` proved apart are marked `restrict`
     // for every C compiler, whatever the loop's shape.
     let proved = !written.is_empty()
-        && lists.iter().zip(&origins).all(|(list, origin)| !written.contains(list) || matches!(origin, Some(Origin::Proved(..))));
+        && lists.iter().zip(&origins).all(|(list, origin)| !written.contains(list) || matches!(origin, Some(Origin::Proved(..) | Origin::Column(..))));
     match target {
         KernelTarget::Clang if !proved => return None,
         KernelTarget::Msvc if !nest && !proved => return None,
@@ -748,12 +748,17 @@ enum Origin {
     /// Element `index` of a tuple of views proved pairwise apart: (c)
     /// `split_at`, (d) `assert_disjoint`.
     Proved(LocalId, usize),
+    /// Column `field` of the `SoA` local (or `SoA` parameter): (c) distinct
+    /// columns of one container are apart.
+    Column(LocalId, usize),
 }
 
 fn apart(a: Option<Origin>, b: Option<Origin>) -> bool {
     match (a, b) {
         (Some(Origin::List(a)), Some(Origin::List(b))) => a != b,
-        (Some(Origin::Proved(t, i)), Some(Origin::Proved(u, j))) => t == u && i != j,
+        (Some(Origin::Proved(t, i)), Some(Origin::Proved(u, j))) | (Some(Origin::Column(t, i)), Some(Origin::Column(u, j))) => {
+            t == u && i != j
+        }
         _ => false,
     }
 }
@@ -846,12 +851,28 @@ fn origin(body: &Body, types: &TypeTable, list: LocalId) -> Option<Origin> {
                 {
                     local = reference.local;
                 }
+                Some(Def::Call(
+                    FuncRef::Builtin { which: Builtin::SoA { op: SoAOp::Column { .. }, .. }, .. },
+                    [Operand::Copy(reference) | Operand::Move(reference), _],
+                )) if reference.projection.is_empty() => return column(body, reference.local),
                 _ => return None,
             },
             _ => return None,
         }
     }
     None
+}
+
+/// The column a column view's pointer borrow names: `&mut ps.k` or
+/// `&mut (*ps).k` (`[SIMD-3]` (c)). A view borrows its `SoA`, so the `SoA`
+/// does not change while two of its columns are live; two columns named
+/// through one reference set twice are columns of one `SoA` or of two.
+fn column(body: &Body, reference: LocalId) -> Option<Origin> {
+    let Some(Def::Value(Rvalue::Ref { place, .. })) = single_def(body, reference) else { return None };
+    match place.projection.as_slice() {
+        [Projection::Field(k)] | [Projection::Deref, Projection::Field(k)] => Some(Origin::Column(place.local, *k)),
+        _ => None,
+    }
 }
 
 /// `place` is one element of a proved tuple: `pair.k` where `pair` is the

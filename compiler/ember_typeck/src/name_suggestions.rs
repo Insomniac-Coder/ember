@@ -12,9 +12,10 @@ pub(super) struct Candidate {
     pub(super) canonical_name: String,
 }
 
-/// `[DIA-12]` N1 — rank in-scope candidates by Damerau–Levenshtein distance,
-/// then same-file proximity or cross-file canonical identity. Only close
-/// spellings are offered, at most three, with deterministic tie-breaks.
+/// `[DIA-12]` N1, `[DIA-24]` — rank in-scope candidates by Damerau–Levenshtein
+/// distance, then same-file proximity or cross-file canonical identity. Only
+/// close spellings are offered (at most 1 apart for names of up to 4
+/// characters, 2 otherwise), at most three, with deterministic tie-breaks.
 pub(super) fn rank(
     written: &str,
     use_span: Span,
@@ -42,7 +43,8 @@ pub(super) fn rank(
         .into_values()
         .filter_map(|candidate| {
             let distance = damerau_levenshtein(written, &candidate.name);
-            (distance <= 2 || distance * 3 <= written_length).then_some((distance, candidate))
+            let limit = if written_length <= 4 { 1 } else { 2 };
+            (distance <= limit).then_some((distance, candidate))
         })
         .collect();
     ranked.sort_by(|(left_distance, left), (right_distance, right)| {

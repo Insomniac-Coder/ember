@@ -10904,8 +10904,15 @@ producer: moving out of an `Array` element leaked the rest). ASK the owner: a wr
 borrowed shared where a `Span` is expected (an interpretation of `[SOA-2]` with `[TYP-5]` rule 6).
 Then stage B (ADR-184): `SoARef`/`SoAMut` proxies, `ps[i] = v`, `load`, `for p in ps`/`iter_mut`,
 `retain` and `sort_by_key` in std (`retain` x1.044 of C). Left of `SoA`: `@soa(flatten)`,
-`ArenaSoA`. **Next:** the compile-time evaluator (`[CT-*]`, `comptime(e)`, const generics computed
-by functions), `some` return types, coroutines.
+`ArenaSoA`. Then ADR-185, to the 66% mark the owner set: distinct `SoA` columns are an alias fact
+(`[SIMD-3]` done: their loop gets `restrict` columns for every C compiler); a comparison chain binds
+a computed middle operand to a hidden local (`[GRM-25]` done); `W2190` for a dropped `Result`
+(`[ERR-5]`); pointer casts with 128-bit integers go through `usize` (`[TYP-6]`); `E2072` for Python
+method names (`[STD-13]`); D-600 (suggestion distance and kind, `[DIA-24]`); `@sync` advice on
+`E7004`/`E7005` (`[THR-2]`); tests for `[THR-13]`, `[PHIL-8]`. `[THR-10]`'s static-view capture
+needs an owned callable value that may hold a `static` view (ADR-159 says it holds none);
+`[CLO-7]` waits for `jobs.submit`. **Next:** the compile-time evaluator (`[CT-*]`, `comptime(e)`,
+const generics computed by functions), `some` return types, coroutines.
 
 **2026-10-15, `Mutex` and `RwLock` (ADR-177), the dependency map's step 4 begun.** `std.sync.Mutex`
 and `RwLock` with their guards: a lock word in the value, inline compare-exchange/swap in

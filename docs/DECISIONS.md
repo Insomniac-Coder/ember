@@ -5016,6 +5016,39 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-185 — Distinct `SoA` columns are an alias fact; a comparison chain binds its computed operands; a dropped `Result` warns (`[SIMD-3]`, `[GRM-25]`, `[ERR-5]`, `[TYP-6]`, `[STD-13]`, `[DIA-24]`)
+
+**`[SIMD-3]` (c).** A column view is the call `column(&ps.k, len)` (or `&(*ps).k` for an `SoA`
+parameter). `kernels.rs`'s `origin()` gives it `Origin::Column(ps, k)`: two columns of one `SoA`
+local with different fields are apart, and count as proved for every C compiler, as `split_at`'s
+halves do (`[DSJ-3]`). Nothing more is needed: a column view borrows its `SoA`, so the `SoA` cannot
+change while two of its columns are live; two columns named through one reference set twice are of
+one `SoA` or of two, both apart. Columns of two different `SoA` locals are not marked: the target
+rule names distinct columns of one container. A loop over `ps.x` and `ps.v` now runs in a function
+whose two column pointers are `restrict` (milestone test `distinct_soa_columns_get_restrict_functions`).
+
+**`[GRM-25]`.** A middle operand that is not rereadable (a call, an arithmetic of calls) was
+`E0900`. Each such operand before the last is now bound to a hidden local (`$chainN`) where its turn
+comes, in a block holding the rest of the chain: `f() < g() < h()` is `{ t0 = f(); t1 = g(); t0 < t1
+and (t1 < h()) }`, so each operand runs once, left to right, and nothing after a false comparison
+runs. The first operand is bound too when it is computed and a later middle is, or `g()` would run
+before `f()`. An operand of untyped literals alone is pure and keeps its place, so it still takes its
+type from its neighbours (`x < 2 * 3` with `x: u8`). A rereadable operand (a name, a field) is read
+where it is compared, the convention the chain already used.
+
+**`[ERR-5]`.** `W2190` had no producer. An expression statement whose type is a `Result` is now
+`W2190`, a call's and a method's alike (`r.map(f)` makes a new `Result`); `_ = …` drops one on
+purpose. No test, std module or page dropped one.
+
+**`[TYP-6]`.** A pointer cast to or from a 128-bit integer was `E0900`. It goes through `usize`,
+which holds any address: a pointer zero-extends, and an integer keeps its low bits, as every other
+integer-to-integer conversion does.
+
+**`[STD-13]`, `[DIA-24]`.** A Python method name Ember spells otherwise (`append`, `strip`,
+`startswith`, `upper`, `splitlines`, …) is `E2072` with Ember's name as help. Name suggestions keep
+the rule's distance (at most 1 apart up to 4 characters, 2 otherwise; D-600) and kind (a type where
+a type is expected: a local is never offered there).
+
 ## ADR-184 — `SoA[T]` is a struct of column pointers into one block; a column is a view of its own field (`[SOA-1]`..`[SOA-7]`, stage A)
 
 **Context.** `[SOA-1]`..`[SOA-7]` give `SoA[T]` for any struct `T`: one column per field, columns

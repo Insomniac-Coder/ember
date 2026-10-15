@@ -5,6 +5,5 @@ error[E1010]: cannot find field `xx` on `Point`
   |                   ^^
   |
   = help: did you mean `x`?
-  = help: did you mean `y`?
 
 error: could not compile due to 1 error(s)

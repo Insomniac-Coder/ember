@@ -189,6 +189,7 @@ codes! {
     E2062 = (Error, 2062, Types, "[TYP-23]", "ambiguous type");
     E2070 = (Error, 2070, Types, "[TYP-24]", "ambiguous interface method");
     E2071 = (Error, 2071, Types, "[SOA-1]", "`SoA[T]` of a type that is not a struct");
+    E2072 = (Error, 2072, Types, "[STD-13]", "no method or field of that name (with the Ember name for a Python one)");
     E2073 = (Error, 2073, Types, "[STD-26]", "`len` of a string");
     E2230 = (Error, 2230, Types, "[CTL-10]", "a name assigned in every branch at different types");
     E2228 = (Error, 2228, Types, "[CLO-3]", "callable parameter mode mismatch");

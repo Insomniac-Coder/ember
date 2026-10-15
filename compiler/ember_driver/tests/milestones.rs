@@ -1878,6 +1878,25 @@ fn views_proved_apart_get_restrict_functions_and_nothing_else_does() {
     }
 }
 
+/// `[SIMD-3]` (c) — distinct `SoA` columns are apart: the loop over two
+/// columns of one `SoA` runs in a function of its own whose column pointers
+/// are `restrict`, for every C compiler.
+#[test]
+fn distinct_soa_columns_get_restrict_functions() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/SIMD-3/accept_distinct_soa_columns_loop_in_a_restrict_function.{SOURCE_EXT}");
+    for cc in ["msvc", "clang", "gcc"] {
+        let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", cc], &root);
+        assert_eq!(c.exit, 0, "{cc} C failed:
+{}", c.stderr);
+        let kernel = format!("{}_loop", ember_branding::mangled("step"));
+        assert!(c.stdout.contains(&kernel), "{cc}: the columns' loop did not move:
+{}", c.stdout);
+        assert!(c.stdout.contains("float* restrict _1_ptr, float* restrict _2_ptr"), "{cc}: the columns are not restrict:
+{}", c.stdout);
+    }
+}
+
 /// ADR-099 — for clang and gcc, a list an innermost loop only pushes onto is
 /// kept in a local for the loop and written back on every way out
 /// (`list_locals.rs`): the C writes the object's list back from a local. Not
