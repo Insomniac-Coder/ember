@@ -1459,6 +1459,21 @@ impl TypeTable {
                         (sync, sync)
                     } else if name.is("std.mem.UnsafeCell") && args.len() == 1 {
                         (both(args[0], visiting).0, false)
+                    } else if name.is("std.sync.Mutex") && args.len() == 1 {
+                        // `[THR-9]` — one thread at a time holds its `ref mut T`.
+                        let send = both(args[0], visiting).0;
+                        (send, send)
+                    } else if name.is("std.sync.MutexGuard") && args.len() == 1 {
+                        // `[THR-3]` — a guard is not `Send`: it is unlocked where it was taken.
+                        (false, both(args[0], visiting).1)
+                    } else if name.is("std.sync.RwLock") && args.len() == 1 {
+                        // `[THR-9]` — several threads hold a `ref T` at once.
+                        let (send, sync) = both(args[0], visiting);
+                        (send, send && sync)
+                    } else if (name.is("std.sync.RwLockReadGuard") || name.is("std.sync.RwLockWriteGuard"))
+                        && args.len() == 1
+                    {
+                        (false, both(args[0], visiting).1)
                     } else {
                         def.fields.iter().map(|field| both(field.ty, visiting))
                             .fold((true, true), |a, b| (a.0 && b.0, a.1 && b.1))

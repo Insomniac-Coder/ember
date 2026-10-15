@@ -1,0 +1,80 @@
+/* [THR-3]: an `RwLock` word lets readers share it and a writer have it alone: four threads
+ * alternate writes (adding one to two counts, which must stay equal) and reads (which must never
+ * see them differ), and no write is lost. */
+#if !defined(_WIN32)
+/* `-std=c11` hides POSIX: the test's threads need it asked for. */
+#define _POSIX_C_SOURCE 200809L
+#endif
+#include "ember_rt.h"
+#include <stdio.h>
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <pthread.h>
+#endif
+
+#define WORKERS 4
+#define ROUNDS 50000
+
+static uint32_t g_word;
+static volatile int64_t g_a;
+static volatile int64_t g_b;
+static volatile int g_torn;
+
+#if defined(_WIN32)
+static DWORD WINAPI worker(void* raw) {
+#else
+static void* worker(void* raw) {
+#endif
+    (void)raw;
+    for (int i = 0; i < ROUNDS; ++i) {
+        ember_rwlock_acquire(&g_word, true);
+        g_a = g_a + 1;
+        g_b = g_b + 1;
+        ember_rwlock_release(&g_word, true);
+        ember_rwlock_acquire(&g_word, false);
+        if (g_a != g_b) g_torn = 1;
+        ember_rwlock_release(&g_word, false);
+    }
+#if defined(_WIN32)
+    return 0;
+#else
+    return NULL;
+#endif
+}
+
+int main(void) {
+    if (!ember_rwlock_try_acquire(&g_word, false)) return 2;
+    if (!ember_rwlock_try_acquire(&g_word, false)) return 2;
+    if (ember_rwlock_try_acquire(&g_word, true)) return 3;
+    ember_rwlock_release(&g_word, false);
+    ember_rwlock_release(&g_word, false);
+    if (!ember_rwlock_try_acquire(&g_word, true)) return 3;
+    if (ember_rwlock_try_acquire(&g_word, false)) return 3;
+    ember_rwlock_release(&g_word, true);
+#if defined(_WIN32)
+    HANDLE threads[WORKERS];
+    for (int i = 0; i < WORKERS; ++i) {
+        threads[i] = CreateThread(NULL, 0, worker, NULL, 0, NULL);
+        if (!threads[i]) return 4;
+    }
+    for (int i = 0; i < WORKERS; ++i) {
+        if (WaitForSingleObject(threads[i], INFINITE) != WAIT_OBJECT_0) return 4;
+        CloseHandle(threads[i]);
+    }
+#else
+    pthread_t threads[WORKERS];
+    for (int i = 0; i < WORKERS; ++i) {
+        if (pthread_create(&threads[i], NULL, worker, NULL)) return 4;
+    }
+    for (int i = 0; i < WORKERS; ++i) {
+        if (pthread_join(threads[i], NULL)) return 4;
+    }
+#endif
+    if (g_torn) return 5;
+    if (g_a != (int64_t)WORKERS * ROUNDS || g_b != g_a) return 6;
+    if (g_word != 0) return 7;
+    puts("ok");
+    return 0;
+}

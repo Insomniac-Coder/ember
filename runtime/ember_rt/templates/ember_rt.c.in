@@ -9,6 +9,11 @@
 /* gcc: -ffp-contract=off, which the build passes; it ignores the pragma
  * with a warning. */
 
+/* `-std=c11` hides the POSIX and Linux declarations the waiting below uses (`syscall`). */
+#if defined(__linux__) && !defined(_DEFAULT_SOURCE)
+#define _DEFAULT_SOURCE
+#endif
+
 #include "ember_rt.h"
 
 #include <inttypes.h>
@@ -957,6 +962,158 @@ void ember_rt_static_end(uint32_t* state) {
     g_static_depth -= 1;
     if (g_static_depth == 0) {
         (void)object_fetch_sub_u32(&g_static_lock, 1);
+    }
+}
+
+/* -- waiting on a word ([THR-3]) ---------------------------------------------
+ *
+ * A thread that finds a lock taken sleeps until the word changes from the value it saw: no
+ * spinning past a few turns, no kernel object per lock. */
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#if defined(_MSC_VER)
+#pragma comment(lib, "synchronization.lib")
+#endif
+static void word_wait(uint32_t* word, uint32_t seen) {
+    (void)WaitOnAddress((volatile void*)word, &seen, sizeof seen, INFINITE);
+}
+static void word_wake_one(uint32_t* word) {
+    WakeByAddressSingle((void*)word);
+}
+static void word_wake_all(uint32_t* word) {
+    WakeByAddressAll((void*)word);
+}
+#elif defined(__linux__)
+#include <linux/futex.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+static void word_wait(uint32_t* word, uint32_t seen) {
+    (void)syscall(SYS_futex, word, FUTEX_WAIT_PRIVATE, seen, NULL, NULL, 0);
+}
+static void word_wake_one(uint32_t* word) {
+    (void)syscall(SYS_futex, word, FUTEX_WAKE_PRIVATE, 1, NULL, NULL, 0);
+}
+static void word_wake_all(uint32_t* word) {
+    (void)syscall(SYS_futex, word, FUTEX_WAKE_PRIVATE, INT32_MAX, NULL, NULL, 0);
+}
+#else
+#include <sched.h>
+static void word_wait(uint32_t* word, uint32_t seen) {
+    (void)word;
+    (void)seen;
+    sched_yield();
+}
+static void word_wake_one(uint32_t* word) {
+    (void)word;
+}
+static void word_wake_all(uint32_t* word) {
+    (void)word;
+}
+#endif
+
+void ember_mutex_lock_contended(uint32_t* word) {
+    /* A short spin first: most locks are held for a few instructions. */
+    for (int turn = 0; turn < 64; ++turn) {
+        uint32_t unlocked = 0;
+        if (object_load_u32(word) == 0 && object_compare_exchange_u32(word, &unlocked, 1)) {
+            return;
+        }
+    }
+    /* Then mark it contended (2) and sleep while it stays taken. Taking it with 2 is safe: at
+     * worst the next unlock wakes a thread that need not have been woken. */
+    for (;;) {
+        uint32_t seen = object_load_u32(word);
+        if (seen == 0) {
+            uint32_t unlocked = 0;
+            if (object_compare_exchange_u32(word, &unlocked, 2)) {
+                return;
+            }
+            continue;
+        }
+        if (seen == 1) {
+            uint32_t held = 1;
+            if (!object_compare_exchange_u32(word, &held, 2)) {
+                continue;
+            }
+        }
+        word_wait(word, 2);
+    }
+}
+
+void ember_mutex_wake(uint32_t* word) {
+    word_wake_one(word);
+}
+
+/* [THR-3] An `RwLock` is one word too: the writer bit, a waiting bit, and the number of readers
+ * below them. Readers share it while no writer holds it; a writer takes it from nothing. A thread
+ * that must wait sets the waiting bit and sleeps on the word; whoever leaves the lock free with
+ * the bit set clears it and wakes them all, and each tries again. (No order between waiting
+ * readers and writers is promised.) */
+#define RW_WRITER 0x80000000u
+#define RW_WAITING 0x40000000u
+#define RW_READERS 0x3FFFFFFFu
+
+static bool rwlock_take(uint32_t* word, bool write) {
+    uint32_t seen = object_load_u32(word);
+    for (;;) {
+        bool free = write ? (seen & ~RW_WAITING) == 0
+                          : (seen & RW_WRITER) == 0 && (seen & RW_READERS) < RW_READERS;
+        if (!free) {
+            return false;
+        }
+        uint32_t taken = write ? (seen | RW_WRITER) : seen + 1;
+        if (object_compare_exchange_u32(word, &seen, taken)) {
+            return true;
+        }
+    }
+}
+
+bool ember_rwlock_try_acquire(uint32_t* word, bool write) {
+    return rwlock_take(word, write);
+}
+
+void ember_rwlock_acquire(uint32_t* word, bool write) {
+    for (;;) {
+        if (rwlock_take(word, write)) {
+            return;
+        }
+        uint32_t seen = object_load_u32(word);
+        if ((seen & RW_WAITING) == 0) {
+            if (!object_compare_exchange_u32(word, &seen, seen | RW_WAITING)) {
+                continue;
+            }
+            seen |= RW_WAITING;
+        }
+        bool held = write ? (seen & ~RW_WAITING) != 0 : (seen & RW_WRITER) != 0;
+        if (held) {
+            word_wait(word, seen);
+        }
+    }
+}
+
+void ember_rwlock_release(uint32_t* word, bool write) {
+    uint32_t before;
+    if (write) {
+        before = EMBER_WORD_RELEASE_SWAP(word, 0u);
+    } else {
+        before = object_fetch_sub_u32(word, 1);
+        if (((before - 1) & (RW_READERS | RW_WRITER)) != 0) {
+            return;
+        }
+        /* The last reader: clear the waiting bit if it is there, and wake. */
+        uint32_t seen = before - 1;
+        while ((seen & RW_WAITING) != 0
+               && !object_compare_exchange_u32(word, &seen, seen & ~RW_WAITING)) {
+        }
+    }
+    if ((before & RW_WAITING) != 0) {
+        word_wake_all(word);
     }
 }
 

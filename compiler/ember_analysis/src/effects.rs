@@ -454,6 +454,14 @@ impl SiteBuilder<'_> {
         let mut callees = Vec::new();
         let mut parts: Vec<Ty> = Vec::new();
         match self.types.kind(ty).clone() {
+            // `[THR-3]` — a `MutexGuard`'s end releases its lock: a synchronising operation.
+            TyKind::Struct(id)
+                if self.types.struct_def(id).origin.as_ref().is_some_and(|(origin, _)| {
+                    matches!(origin.as_str(), "std.sync.MutexGuard" | "std.sync.RwLockReadGuard" | "std.sync.RwLockWriteGuard")
+                }) =>
+            {
+                effects |= Effects::SYNC;
+            }
             TyKind::Struct(id) => {
                 let def = self.types.struct_def(id);
                 if def.has_drop {
@@ -525,7 +533,11 @@ impl SiteBuilder<'_> {
 const RELAXED: &str = "a function with `@fastmath` or `@fp(contract)`";
 
 fn drop_description(effects: Effects) -> &'static str {
-    if effects == Effects::SYNC { "releasing a `@sync` handle" } else { "dropping a value whose drop is not known here" }
+    if effects == Effects::SYNC {
+        "releasing a `@sync` handle or a lock"
+    } else {
+        "dropping a value whose drop is not known here"
+    }
 }
 
 fn rvalue_operands(rvalue: &Rvalue) -> Vec<&Operand> {
@@ -593,6 +605,11 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         B::RefCellBorrow | B::RefCellBorrowMut | B::RefCellTryBorrow | B::RefCellTryBorrowMut => {
             (Effects::CHECK_ALIASING, "a `RefCell` borrow check")
         }
+        // `[EFF-18]` — a blocking lock is `Sync + Lock + Block`; `try_lock` is `Sync + Lock`.
+        B::MutexLock => (Effects::SYNC | Effects::LOCK | Effects::BLOCK, "`Mutex.lock`"),
+        B::MutexTryLock => (Effects::SYNC | Effects::LOCK, "`Mutex.try_lock`"),
+        B::RwLockAcquire { .. } => (Effects::SYNC | Effects::LOCK | Effects::BLOCK, "`RwLock.read`/`write`"),
+        B::RwLockTryAcquire { .. } => (Effects::SYNC | Effects::LOCK, "`RwLock.try_read`/`try_write`"),
         // `[DSJ-1]` — it establishes a static fact; `@static_safe` allows it (`[EFF-12]`).
         B::AssertDisjoint { .. } => (Effects::CHECK_ALIASING, "`assert_disjoint`"),
         B::WeakUpgrade { .. } => (Effects::CHECK_STALE, "`Weak.upgrade`"),

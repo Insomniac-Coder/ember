@@ -5016,6 +5016,45 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-177 — `Mutex` and `RwLock` are a lock word in the value, guards shaped like `RefCell`'s (`[THR-3]`, `[THR-9]`, `[CELL-8]`)
+
+**Context.** `std.sync` had no locks, so `[CELL-8]`'s "promote single-threaded code to shared code
+by a type change", `[STA-1]`'s `static REG: Mutex[Registry]` and the `Sync` rows of `[THR-9]` could
+not be written.
+
+**Decision.** `Mutex[T]` and `RwLock[T]` are structs declared in `std/src/sync.em`: the value and one
+private `u32` lock word, which starts at 0 (so a lock is built by `Mutex(value)` and is a constant
+or a lazily built static like any struct; `E2020` for any other argument list). The compiler knows
+them by origin, as it knows the arena collections. `m.lock()`, `rw.read()`, `rw.write()` and their
+`try_` forms borrow the lock shared and are builtins (`MutexLock`, `MutexTryLock`, `RwLockAcquire`,
+`RwLockTryAcquire`) that lower to the runtime on the word's address; the guard (`MutexGuard`,
+`RwLockReadGuard`, `RwLockWriteGuard`, all `@view`) holds `ref mut T` (`ref T` for a read guard),
+reads through to it as `RefMut` does, and its drop releases the lock. The borrow checker treats a
+lock's `value` as it treats a `RefCell`'s: a guard's loan is a run-time-checked loan, so two guards
+of one lock may overlap in the program text and the lock orders them at run time (`L3011`, the
+`RefCell` double-borrow lint, stays `RefCell`'s).
+- **The runtime.** A mutex word is 0 free, 1 held, 2 held with waiters: the uncontended lock is one
+  inline compare-exchange, the unlock one inline swap, and only a swap that saw 2 calls out to wake.
+  A waiting thread spins 64 turns then sleeps on the word (`WaitOnAddress` on Windows, `futex` on
+  Linux, `sched_yield` elsewhere). An `RwLock` word is a writer bit, a waiting bit and a reader count;
+  whoever frees it with the waiting bit set wakes every waiter, and no order between waiting readers
+  and writers is promised. No poisoning: a panic aborts (`[PAN-1]`).
+- **Send and Sync** (`[THR-9]`). `Mutex[T]` is `Send` and `Sync` when `T` is `Send`; `RwLock[T]` is
+  `Send` when `T` is and `Sync` when `T` is `Send` and `Sync`; no guard is `Send`.
+- **Effects** (`[EFF-21]`). `lock`/`read`/`write` are `Sync`, `Lock` and `Block`; the `try_` forms
+  are `Sync` and `Lock`; a guard's end is `Sync`.
+
+**Speed** (AUTOPILOT §4). Uncontended `with g = m.lock(): g += i % 7`, 50M times
+(`bench/probes/mutex_uncontended`), clang: 487 ms against 565 ms for C with the platform's own
+`SRWLOCK` (x0.86): the lock and unlock are inline, `SRWLOCK`'s are calls.
+
+**Not built.** Threads (`thread.spawn`, `thread.scope`): until they exist the locks are proved under
+threads by the runtime's own C tests (`mutex_threads`, `rwlock_threads`: four threads, every
+platform compiler), and Ember programs use them on one thread. `Atomic`, `Once`, `SyncShared`. With
+unwinding (v2) a guard would be released during the unwind (`[THR-3]`); today there is no unwind.
+
+---
+
 ## ADR-176 — A `once fn` parameter is taken over, its `owned` implied (`[FN-6]`, `[CLO-6]`, `[ERR-4]`)
 
 **Context.** `once fn(…) -> R` did not parse. A closure that gives away a capture was accepted

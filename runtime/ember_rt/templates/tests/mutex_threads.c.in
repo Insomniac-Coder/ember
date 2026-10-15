@@ -1,0 +1,68 @@
+/* [THR-3]: a mutex word serialises every thread's critical section: four threads each add one
+ * to a shared count 200000 times under the lock, and no addition is lost. The lock is a zero
+ * word to start with, and contended locking sleeps on the word and is woken by the unlock. */
+#if !defined(_WIN32)
+/* `-std=c11` hides POSIX: the test's threads need it asked for. */
+#define _POSIX_C_SOURCE 200809L
+#endif
+#include "ember_rt.h"
+#include <stdio.h>
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <pthread.h>
+#endif
+
+#define WORKERS 4
+#define ROUNDS 200000
+
+static uint32_t g_word;
+static volatile int64_t g_count;
+
+#if defined(_WIN32)
+static DWORD WINAPI worker(void* raw) {
+#else
+static void* worker(void* raw) {
+#endif
+    (void)raw;
+    for (int i = 0; i < ROUNDS; ++i) {
+        ember_mutex_lock(&g_word);
+        g_count = g_count + 1;
+        ember_mutex_unlock(&g_word);
+    }
+#if defined(_WIN32)
+    return 0;
+#else
+    return NULL;
+#endif
+}
+
+int main(void) {
+    if (!ember_mutex_try_lock(&g_word)) return 2;
+    if (ember_mutex_try_lock(&g_word)) return 3;
+    ember_mutex_unlock(&g_word);
+#if defined(_WIN32)
+    HANDLE threads[WORKERS];
+    for (int i = 0; i < WORKERS; ++i) {
+        threads[i] = CreateThread(NULL, 0, worker, NULL, 0, NULL);
+        if (!threads[i]) return 4;
+    }
+    for (int i = 0; i < WORKERS; ++i) {
+        if (WaitForSingleObject(threads[i], INFINITE) != WAIT_OBJECT_0) return 4;
+        CloseHandle(threads[i]);
+    }
+#else
+    pthread_t threads[WORKERS];
+    for (int i = 0; i < WORKERS; ++i) {
+        if (pthread_create(&threads[i], NULL, worker, NULL)) return 4;
+    }
+    for (int i = 0; i < WORKERS; ++i) {
+        if (pthread_join(threads[i], NULL)) return 4;
+    }
+#endif
+    if (g_count != (int64_t)WORKERS * ROUNDS) return 5;
+    if (g_word != 0) return 6;
+    puts("ok");
+    return 0;
+}

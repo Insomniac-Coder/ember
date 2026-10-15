@@ -2174,6 +2174,19 @@ impl Emitter<'_> {
     /// destructor. Derived classes inherit the obligation even when they do
     /// not declare their own `drop`, because `[CLS-6]` still requires the base
     /// destructor to run.
+    /// `[THR-3]` — the lock (`std.sync.Mutex[T]` or `RwLock[T]`, by `lock`) a guard was taken from.
+    fn lock_for_guard(&self, guard: Ty, lock: &str) -> Option<Ty> {
+        let TyKind::Struct(id) = *self.types.kind(guard) else { return None };
+        let (_, args) = self.types.struct_def(id).origin.as_ref()?;
+        self.types.all().find_map(|(ty, kind)| match kind {
+            TyKind::Struct(found) => {
+                let (origin, lock_args) = self.types.struct_def(*found).origin.as_ref()?;
+                (origin.as_str() == lock && lock_args == args).then_some(ty)
+            }
+            _ => None,
+        })
+    }
+
     fn class_has_user_drop(&self, id: ClassId) -> bool {
         let mut current = Some(id);
         while let Some(class) = current {
@@ -3831,6 +3844,28 @@ impl Emitter<'_> {
                 // `drop` method: the release is the drop glue, and there is no
                 // `drop_symbol` to call.
                 let guard_name = def.name.as_str();
+                // `[THR-3]` — a `MutexGuard`'s end releases the lock. The guard points at the
+                // mutex's `value`, its first field, so that pointer is the mutex's own; the word
+                // is its field `word`. Like `RefMut`, it has no `drop` method to call.
+                let guard_of = def.origin.as_ref().map(|(origin, _)| origin.as_str().to_string());
+                match guard_of.as_deref() {
+                    Some("std.sync.MutexGuard") => {
+                        if let Some(mutex) = self.lock_for_guard(ty, "std.sync.Mutex") {
+                            let mutex_c = self.c_type(mutex);
+                            out.push(format!("{RT}mutex_unlock(&(({mutex_c}*){access}.value)->word);"));
+                        }
+                        return;
+                    }
+                    Some(guard @ ("std.sync.RwLockReadGuard" | "std.sync.RwLockWriteGuard")) => {
+                        let write = guard == "std.sync.RwLockWriteGuard";
+                        if let Some(lock) = self.lock_for_guard(ty, "std.sync.RwLock") {
+                            let lock_c = self.c_type(lock);
+                            out.push(format!("{RT}rwlock_release(&(({lock_c}*){access}.value)->word, {write});"));
+                        }
+                        return;
+                    }
+                    _ => {}
+                }
                 // `[ARN-1]`/`[ARN-2]` — Arena owns its chunks, but never
                 // drops the values inside them individually. It has no
                 // source-level destructor; this compiler-provided glue
@@ -6782,6 +6817,11 @@ impl Emitter<'_> {
                     }
                     // `[STA-3]` — the accessor `lazy_static_definitions` writes.
                     Builtin::LazyStatic { init, .. } => return format!("{init}_static()"),
+                    // `[THR-3]` — on the lock word, whose address lowering passes.
+                    Builtin::MutexLock => return format!("{RT}mutex_lock({})", rendered[0]),
+                    Builtin::MutexTryLock => return format!("{RT}mutex_try_lock({})", rendered[0]),
+                    Builtin::RwLockAcquire { write } => return format!("{RT}rwlock_acquire({}, {write})", rendered[0]),
+                    Builtin::RwLockTryAcquire { write } => return format!("{RT}rwlock_try_acquire({}, {write})", rendered[0]),
                     Builtin::ForeignStaticWrite { symbol } => {
                         self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*arg_ty, false));
                         return format!("({symbol} = {})", rendered[0]);

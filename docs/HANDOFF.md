@@ -10869,6 +10869,17 @@ way: `tools/error_pages.py` (and so the gates) ran `target/release` from the mor
 `target/release`, so the full check now builds release first (the earlier MSVC/clang sweeps today
 ran a stale compiler; the gcc one builds its own and was clean).
 
+**2026-10-15, `Mutex` and `RwLock` (ADR-177), the dependency map's step 4 begun.** `std.sync.Mutex`
+and `RwLock` with their guards: a lock word in the value, inline compare-exchange/swap in
+`ember_rt.h`, `WaitOnAddress`/`futex` waits in `ember_rt.c`, runtime C tests under four threads
+(`a_mutex_word_serialises_threads`, `an_rwlock_word_shares_reads_and_serialises_writes`, MSVC, clang
+and gcc). `CELL-8` and `DRP-6` are done; `STA-1` waits on `Atomic`, `THR-9` on `Atomic`/`Once`/
+`SyncShared`. D-594 fixed on the way (`mem.drop(g)` of a guard dropped what it read through to; a
+`MutexGuard` deadlocked). Speed: uncontended lock x0.86 of C's `SRWLOCK` (clang). Trap: the bench
+runner (`bench/run_windows.py`) builds with `target/release`; rebuild it before timing. Next:
+`Atomic[T]` with `MemoryOrder` (`E7006`), `Once`, `SyncShared`, then `thread.spawn`/`JoinHandle`
+and `thread.scope` (a backend trampoline), channels; then `SoA`.
+
 **2026-10-15, `once fn` (ADR-176).** `once fn` parameter types (CLO-6, the `owned` implied), the
 `Option`/`Result` helpers take them (ERR-4, NOT-IMPLEMENTED N3 removed). CLO-6 and CLO-6a had
 been counted done by tests using `owned` callables; a `once fn` value is still `E0900` (CLO-6a).

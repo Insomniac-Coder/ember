@@ -1463,6 +1463,52 @@ EMBER_INLINED void ember_release_plain(ember_obj_header* object) {
     atomic_fetch_sub_explicit((volatile _Atomic(uint32_t)*)(word), 1u, memory_order_acq_rel)
 #endif
 
+#if defined(__GNUC__) || defined(__clang__)
+#define EMBER_WORD_ACQUIRE(word, from, to) \
+    __atomic_compare_exchange_n((word), &(from), (to), false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)
+#define EMBER_WORD_RELEASE_SWAP(word, to) __atomic_exchange_n((word), (to), __ATOMIC_RELEASE)
+#elif defined(_MSC_VER)
+#define EMBER_WORD_ACQUIRE(word, from, to) \
+    ((uint32_t)_InterlockedCompareExchange((volatile long*)(word), (long)(to), (long)(from)) == (from))
+#define EMBER_WORD_RELEASE_SWAP(word, to) ((uint32_t)_InterlockedExchange((volatile long*)(word), (long)(to)))
+#else
+#define EMBER_WORD_ACQUIRE(word, from, to) \
+    atomic_compare_exchange_strong_explicit((volatile _Atomic(uint32_t)*)(word), &(from), (to), \
+        memory_order_acquire, memory_order_relaxed)
+#define EMBER_WORD_RELEASE_SWAP(word, to) \
+    atomic_exchange_explicit((volatile _Atomic(uint32_t)*)(word), (to), memory_order_release)
+#endif
+
+/* `[THR-3]` — a `Mutex` is one 32-bit word: 0 unlocked, 1 locked, 2 locked with a thread waiting.
+ * A new one is a zero word, so it needs no constructor, and it may move while unlocked. Locking
+ * takes the word from 0 to 1 here, inline; a lock another thread holds is waited for in the
+ * runtime (on the word itself: WaitOnAddress on Windows, a futex on Linux), and unlocking calls
+ * the runtime only to wake a waiter. There is no poisoning: a panic aborts (`[PAN-1]`). */
+void ember_mutex_lock_contended(uint32_t* word);
+void ember_mutex_wake(uint32_t* word);
+
+EMBER_INLINED bool ember_mutex_try_lock(uint32_t* word) {
+    uint32_t unlocked = 0;
+    return EMBER_WORD_ACQUIRE(word, unlocked, 1u);
+}
+
+EMBER_INLINED void ember_mutex_lock(uint32_t* word) {
+    if (!ember_mutex_try_lock(word)) {
+        ember_mutex_lock_contended(word);
+    }
+}
+
+/* `[THR-3]` — an `RwLock`'s word: shared (`write` false) or exclusive (`write` true). */
+void ember_rwlock_acquire(uint32_t* word, bool write);
+bool ember_rwlock_try_acquire(uint32_t* word, bool write);
+void ember_rwlock_release(uint32_t* word, bool write);
+
+EMBER_INLINED void ember_mutex_unlock(uint32_t* word) {
+    if (EMBER_WORD_RELEASE_SWAP(word, 0u) == 2u) {
+        ember_mutex_wake(word);
+    }
+}
+
 /* A Sync retain that found the count at zero or at its maximum: a panic. */
 EMBER_NORETURN void ember_obj_retain_failed(ember_obj_header* object);
 /* A Sync release that found the count at one (the object deinitialises) or

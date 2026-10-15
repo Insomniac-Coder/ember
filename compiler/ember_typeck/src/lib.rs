@@ -11376,7 +11376,17 @@ impl<'a> Checker<'a> {
             return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
         }
 
-        let first = match explicit.first().copied() {
+        // `[DRP-1]` — `mem.drop(g)` and `mem.forget(g)` end the guard itself: a guard named here is
+        // not read through to what it guards (D-594: the lock, or the `RefCell` borrow, stayed
+        // held to the end of the scope).
+        let named_guard = match &args[0].value.kind {
+            ast::ExprKind::Path { segments } if segments.len() == 1 && matches!(operation, "drop" | "forget") => self
+                .lookup(segments[0].name)
+                .map(|local| self.locals[local.0 as usize].ty)
+                .filter(|&ty| self.ref_guard_inner(ty).is_some()),
+            _ => None,
+        };
+        let first = match explicit.first().copied().or(named_guard) {
             Some(expected) => self.check_expr(&args[0].value, expected),
             None => self.synth_committed(&args[0].value),
         };
@@ -12564,7 +12574,7 @@ impl<'a> Checker<'a> {
         };
         // D-236 — the arguments were checked once, above; they now take the
         // instance's field types.
-        self.check_memberwise_constructor(id, span);
+        self.check_memberwise_constructor(id, args.len(), span);
         let field_tys: Vec<Ty> = self.types.struct_def(id).fields.iter().map(|field| field.ty).collect();
         let values = values
             .into_iter()
@@ -33196,9 +33206,20 @@ impl<'a> Checker<'a> {
     ///
     /// "It is `pub` iff all fields are `pub` (a `pub(read)` field makes it
     /// private to the declaring module, since construction is a write)."
-    fn check_memberwise_constructor(&mut self, id: StructId, span: Span) {
+    fn check_memberwise_constructor(&mut self, id: StructId, given: usize, span: Span) {
         let def = self.types.struct_def(id);
         if def.declaring_module == self.current_module {
+            return;
+        }
+        // `[THR-3]` — `std.sync`'s compiler-known types are built from their value alone
+        // (`Mutex([])`); what else they hold is the runtime's.
+        if let Some((origin, _)) = &def.origin
+            && SYNC_VALUE_TYPES.contains(&origin.as_str())
+        {
+            if given != 1 {
+                let shown = origin.as_str().rsplit('.').next().unwrap_or("");
+                self.error(codes::E2020, span, format!("`{shown}(value)` takes one argument, the value it holds"));
+            }
             return;
         }
         let owner = self.types.intern(TyKind::Struct(id));
@@ -35209,6 +35230,30 @@ impl<'a> Checker<'a> {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             return self.synth_cell_method(receiver, inner, name, args, span);
+        }
+        // `[THR-3]` — `std.sync.RwLock`'s `read`, `write` and their `try_` forms likewise.
+        if let Some(inner) = self.lock_inner(receiver.ty, "std.sync.RwLock") {
+            if !explicit.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return self.synth_rwlock_method(receiver, inner, name, args, span);
+        }
+        // `[THR-3]` — `std.sync.Mutex`'s `lock` and `try_lock` are builtins on its lock word.
+        if let Some(inner) = self.mutex_inner(receiver.ty) {
+            if !explicit.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return self.synth_mutex_method(receiver, inner, name, args, span);
         }
         // `[CELL-5]` — a `RefCell` is likewise an ordinary struct here; its
         // `borrow` family are builtins (ADR-019).
@@ -38737,6 +38782,104 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[THR-3]` — the payload type, if this is a `std.sync.Mutex[T]`.
+    fn mutex_inner(&self, ty: Ty) -> Option<Ty> {
+        self.lock_inner(ty, "std.sync.Mutex")
+    }
+
+    /// `[THR-3]` — the payload type, if this is the `std.sync` lock type `origin` of one.
+    fn lock_inner(&self, ty: Ty, origin: &str) -> Option<Ty> {
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
+        match &self.types.struct_def(id).origin {
+            Some((found, args)) if found.as_str() == origin && args.len() == 1 => Some(args[0]),
+            _ => None,
+        }
+    }
+
+    /// `[THR-3]` — `MutexGuard[T]`, the view `lock` gives: it reads through to `ref mut T`, as a
+    /// `RefMut` does (`ref_guards`), and its end releases the lock (the backend's drop).
+    fn mutex_guard_of(&mut self, inner: Ty, span: Span) -> Ty {
+        self.lock_guard_of("std.sync.MutexGuard", inner, true, span)
+    }
+
+    /// A lock's guard type, registered to read through (mutably or not) and to release the lock
+    /// at its end.
+    fn lock_guard_of(&mut self, path: &str, inner: Ty, mutable: bool, span: Span) -> Ty {
+        let guard = self.instantiate_named_generic(path, &[inner], span);
+        // The lock word's address, which lowering passes to the runtime.
+        let word = self.common.u32;
+        self.types.intern(TyKind::Ref { mutable: true, inner: word });
+        if let TyKind::Struct(id) = *self.types.kind(guard) {
+            self.ref_guards.insert(id, (inner, mutable));
+            self.types.struct_def_mut(id).has_drop = true;
+        }
+        guard
+    }
+
+    /// `[THR-3]` — `rw.read()`/`rw.write()` wait for the lock and give a guard; `try_read` and
+    /// `try_write` give one only when it is free. All borrow `rw` shared.
+    fn synth_rwlock_method(&mut self, receiver: Expr, inner: Ty, name: ast::Ident, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let method = name.name.as_str();
+        let (write, trying) = match method {
+            "read" => (false, false),
+            "write" => (true, false),
+            "try_read" => (false, true),
+            "try_write" => (true, true),
+            _ => {
+                let shown = self.types.display(receiver.ty);
+                self.error(codes::E1010, name.span, format!("`{shown}` has no method named `{method}`"));
+                return error;
+            }
+        };
+        if !args.is_empty() {
+            self.error(codes::E2020, span, format!("`{method}` takes 0 arguments, found {}", args.len()));
+            return error;
+        }
+        if !is_place(&receiver.kind) {
+            self.error(codes::E2140, span, format!("`{method}` needs a lock to take, not a temporary"));
+            return error;
+        }
+        let shared = self.types.intern(TyKind::Ref { mutable: false, inner: receiver.ty });
+        let borrowed = Expr { ty: shared, kind: ExprKind::Ref { place: Box::new(receiver), mutable: false }, span };
+        let path = if write { "std.sync.RwLockWriteGuard" } else { "std.sync.RwLockReadGuard" };
+        let guard = self.lock_guard_of(path, inner, write, span);
+        if !trying {
+            return Expr { ty: guard, kind: ExprKind::Builtin { which: Builtin::RwLockAcquire { write }, args: vec![borrowed] }, span };
+        }
+        let option = self.option_of(guard);
+        Expr { ty: option, kind: ExprKind::Builtin { which: Builtin::RwLockTryAcquire { write }, args: vec![borrowed] }, span }
+    }
+
+    /// `[THR-3]` — `m.lock()` waits for the lock and gives a guard; `m.try_lock()` gives one only
+    /// when the lock is free. Both borrow `m` shared: the lock, not the borrow checker, keeps two
+    /// threads from holding `ref mut T` at once.
+    fn synth_mutex_method(&mut self, receiver: Expr, inner: Ty, name: ast::Ident, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let method = name.name.as_str();
+        if !matches!(method, "lock" | "try_lock") {
+            let shown = self.types.display(receiver.ty);
+            self.error(codes::E1010, name.span, format!("`{shown}` has no method named `{method}`"));
+            return error;
+        }
+        if !args.is_empty() {
+            self.error(codes::E2020, span, format!("`{method}` takes 0 arguments, found {}", args.len()));
+            return error;
+        }
+        if !is_place(&receiver.kind) {
+            self.error(codes::E2140, span, format!("`{method}` needs a mutex to lock, not a temporary"));
+            return error;
+        }
+        let shared = self.types.intern(TyKind::Ref { mutable: false, inner: receiver.ty });
+        let borrowed = Expr { ty: shared, kind: ExprKind::Ref { place: Box::new(receiver), mutable: false }, span };
+        let guard = self.mutex_guard_of(inner, span);
+        if method == "lock" {
+            return Expr { ty: guard, kind: ExprKind::Builtin { which: Builtin::MutexLock, args: vec![borrowed] }, span };
+        }
+        let option = self.option_of(guard);
+        Expr { ty: option, kind: ExprKind::Builtin { which: Builtin::MutexTryLock, args: vec![borrowed] }, span }
+    }
+
     /// `[ARN-4]` — construct the growing arena with one initial chunk.
     fn synth_arena_construction(
         &mut self,
@@ -42072,7 +42215,7 @@ impl<'a> Checker<'a> {
         // `[STR-1]` — the synthesised memberwise constructor "is `pub` iff all
         // fields are `pub` (a `pub(read)` field makes it private to the
         // declaring module, since construction is a write; `[MOD-7]`)".
-        self.check_memberwise_constructor(id, span);
+        self.check_memberwise_constructor(id, args.len(), span);
         let field_info: Vec<(Symbol, Ty, bool)> = self
             .types
             .struct_def(id)
@@ -44676,6 +44819,10 @@ enum Gather<'a> {
     Any,
     All,
 }
+
+/// `[THR-3]`, `[THR-14]` — the `std.sync` value types the compiler knows, built from their value
+/// alone.
+const SYNC_VALUE_TYPES: [&str; 2] = ["std.sync.Mutex", "std.sync.RwLock"];
 
 /// `[DRV-1]` — the built-in derives, in the specification's order. `[DRV-2]`: there are no
 /// others in this version.

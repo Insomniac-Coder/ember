@@ -1342,6 +1342,18 @@ pub enum Builtin {
     RefCellTryBorrow,
     /// `[CELL-6]` — `c.try_borrow_mut() -> Option[RefMut[T]]`.
     RefCellTryBorrowMut,
+    /// `[THR-3]` — `m.lock() -> MutexGuard[T]`: waits for the lock and takes it. In MIR, the
+    /// runtime's `ember_mutex_lock` on the lock word.
+    MutexLock,
+    /// `[THR-3]` — `m.try_lock() -> Option[MutexGuard[T]]`: never waits. In MIR,
+    /// `ember_mutex_try_lock`, which gives whether it took the lock.
+    MutexTryLock,
+    /// `[THR-3]` — `rw.read()` (`write` false) or `rw.write()`: waits and takes the lock, giving
+    /// a guard. In MIR, `ember_rwlock_acquire` on the lock word.
+    RwLockAcquire { write: bool },
+    /// `[THR-3]` — `rw.try_read()` or `rw.try_write()`: never waits. In MIR,
+    /// `ember_rwlock_try_acquire`, which gives whether it took the lock.
+    RwLockTryAcquire { write: bool },
     /// `[ARN-1]`, `[ARN-4]` — `Arena.with_capacity(bytes)`. The Arena itself
     /// is a compiler-known move-only struct; the runtime state it owns is
     /// opaque to Ember source.
@@ -1572,6 +1584,12 @@ impl Builtin {
             Builtin::RefCellBorrowMut => "borrow_mut",
             Builtin::RefCellTryBorrow => "try_borrow",
             Builtin::RefCellTryBorrowMut => "try_borrow_mut",
+            Builtin::MutexLock => "lock",
+            Builtin::MutexTryLock => "try_lock",
+            Builtin::RwLockAcquire { write: false } => "read",
+            Builtin::RwLockAcquire { write: true } => "write",
+            Builtin::RwLockTryAcquire { write: false } => "try_read",
+            Builtin::RwLockTryAcquire { write: true } => "try_write",
             Builtin::ArenaWithCapacity => "with_capacity",
             Builtin::ArenaAlloc { .. }
             | Builtin::FixedArenaAlloc { .. }

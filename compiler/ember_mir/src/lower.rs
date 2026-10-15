@@ -1756,6 +1756,105 @@ impl<'a> Builder<'a> {
     /// `AssertKind::RefCellBorrow`; success increments (`borrow`) or sets to
     /// `-1` (`borrow_mut`), stores the *current* location, and builds the
     /// guard (`Ref`/`RefMut` struct) from a borrow of `value`.
+    /// `[THR-3]` — `m.lock()`, `rw.read()`, `rw.write()` and their `try_` forms. The guard's
+    /// region rests on a loan of the lock's `value` (mutable unless it is a read guard), which the
+    /// borrow checker lets overlap as it lets `RefCell` guards: the lock refuses a second holder
+    /// at run time. The runtime takes the lock through the address of the `word`; a `try_` form
+    /// gives `Some(guard)` when it took the lock, else `None`.
+    fn lower_lock(
+        &mut self,
+        place: Place,
+        borrowed: &'a hir::Expr,
+        which: hir::Builtin,
+        result_ty: Ty,
+        span: ember_span::Span,
+    ) {
+        let trying = matches!(which, hir::Builtin::MutexTryLock | hir::Builtin::RwLockTryAcquire { .. });
+        let mutable = !matches!(
+            which,
+            hir::Builtin::RwLockAcquire { write: false } | hir::Builtin::RwLockTryAcquire { write: false }
+        );
+        let hir::ExprKind::Ref { place: mutex_hir, .. } = &borrowed.kind else {
+            return;
+        };
+        self.at(span);
+        let mutex_place = self.lower_place(mutex_hir);
+        let value_place = mutex_place.clone().field(0);
+        let word_place = mutex_place.field(1);
+        let word_ty = {
+            let TyKind::Struct(mutex_id) = *self.types.kind(mutex_hir.ty) else { return };
+            self.types.struct_def(mutex_id).fields[1].ty
+        };
+        // The word's address: in C a reference is a pointer.
+        // Interned by the type checker with the guard (`mutex_guard_of`).
+        let Some(word_ref_ty) = self.types.find(&TyKind::Ref { mutable: true, inner: word_ty }) else { return };
+        let word_ref = self.temp(word_ref_ty, span);
+        self.push(StmtKind::Assign {
+            place: Place::local(word_ref),
+            rvalue: Rvalue::Ref { place: word_place, mutable: true },
+        });
+        let guard_ty = if trying {
+            let TyKind::Enum(option) = *self.types.kind(result_ty) else { return };
+            self.types.enum_def(option).variants[1].fields[0].ty
+        } else {
+            result_ty
+        };
+        let TyKind::Struct(guard_id) = *self.types.kind(guard_ty) else { return };
+        let ref_field_ty = self.types.struct_def(guard_id).fields[0].ty;
+        let taken = self.temp(if trying { self.bool_ty } else { self.void_ty }, span);
+        let next = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Builtin { which, arg_ty: word_ref_ty },
+            args: vec![Operand::Copy(Place::local(word_ref))],
+            dest: Place::local(taken),
+            next,
+        });
+        self.current = next;
+        self.at(span);
+        let build_guard = |this: &mut Self, into: Place| {
+            let ref_temp = this.temp(ref_field_ty, span);
+            this.push(StmtKind::Assign {
+                place: Place::local(ref_temp),
+                rvalue: Rvalue::Ref { place: value_place.clone(), mutable },
+            });
+            let operand = this.read(Place::local(ref_temp), ref_field_ty);
+            this.push(StmtKind::Assign {
+                place: into,
+                rvalue: Rvalue::Aggregate { kind: AggregateKind::Struct(guard_id), operands: vec![operand] },
+            });
+        };
+        if !trying {
+            build_guard(self, place);
+            return;
+        }
+        let TyKind::Enum(option) = *self.types.kind(result_ty) else { return };
+        let some_bb = self.new_block();
+        let none_bb = self.new_block();
+        let join = self.new_block();
+        self.terminate(Terminator::SwitchInt {
+            discr: Operand::Copy(Place::local(taken)),
+            targets: vec![(0, none_bb)],
+            otherwise: some_bb,
+        });
+        self.current = some_bb;
+        self.at(span);
+        let guard = self.temp(guard_ty, span);
+        build_guard(self, Place::local(guard));
+        self.push(StmtKind::Assign {
+            place: place.clone(),
+            rvalue: Rvalue::Aggregate { kind: AggregateKind::Enum(option, 1), operands: vec![Operand::Move(Place::local(guard))] },
+        });
+        self.terminate(Terminator::Goto(join));
+        self.current = none_bb;
+        self.at(span);
+        self.push(StmtKind::Assign {
+            place,
+            rvalue: Rvalue::Aggregate { kind: AggregateKind::Enum(option, 0), operands: Vec::new() },
+        });
+        self.terminate(Terminator::Goto(join));
+        self.current = join;
+    }
+
     fn lower_refcell_borrow(
         &mut self,
         place: Place,
@@ -2635,6 +2734,13 @@ impl<'a> Builder<'a> {
             }
             hir::ExprKind::Builtin { which: hir::Builtin::RefCellTryBorrow, args } => {
                 self.lower_refcell_try_borrow(place, &args[0], false, expr.ty, expr.span);
+            }
+            hir::ExprKind::Builtin { which: which @ (hir::Builtin::MutexLock | hir::Builtin::MutexTryLock), args }
+            | hir::ExprKind::Builtin {
+                which: which @ (hir::Builtin::RwLockAcquire { .. } | hir::Builtin::RwLockTryAcquire { .. }),
+                args,
+            } => {
+                self.lower_lock(place, &args[0], which.clone(), expr.ty, expr.span);
             }
             hir::ExprKind::Builtin { which: hir::Builtin::RefCellTryBorrowMut, args } => {
                 self.lower_refcell_try_borrow(place, &args[0], true, expr.ty, expr.span);

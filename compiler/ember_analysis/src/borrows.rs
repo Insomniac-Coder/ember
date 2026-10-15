@@ -1439,7 +1439,7 @@ fn field_accesses(body: &Body, types: &TypeTable, regions: &Regions) -> Vec<Shar
 fn inside_a_cell(body: &Body, types: &TypeTable, place: &Place) -> bool {
     (0..place.projection.len()).any(|at| {
         let prefix = Place { local: place.local, projection: place.projection[..at].to_vec() };
-        is_refcell_ty(types, place_ty(body, types, &prefix))
+        is_guarded_cell_ty(types, place_ty(body, types, &prefix))
     })
 }
 
@@ -3768,6 +3768,12 @@ fn check_refcell_call(
             // after the fact; that would leave the consumer coupled to one
             // lowering representation instead of the verified capability.
             loan.capability.reference_kind == ReferenceKind::RuntimeGuard
+                // A mutex guard held across a call is ordinary: L3011 is `RefCell`'s.
+                && loan.capability.source_place().is_none_or(|source| {
+                    let mut parent = source.clone();
+                    parent.projection.pop();
+                    is_refcell_ty(types, place_ty(body, types, &parent))
+                })
         })
         .collect();
     live.sort_by_key(|loan| (loan.created_at.block, loan.created_at.index));
@@ -4963,6 +4969,15 @@ fn is_refcell_ty(types: &TypeTable, ty: Ty) -> bool {
     }
 }
 
+/// Whether a struct type guards its `value` at run time: a `RefCell[T]`, whose counter does, or
+/// a `std.sync.Mutex[T]`, whose lock does (`[THR-3]`). A loan of the `value` is a guard's, and
+/// what lies inside the cell is the cell's own business.
+fn is_guarded_cell_ty(types: &TypeTable, ty: Ty) -> bool {
+    is_refcell_ty(types, ty)
+        || matches!(types.kind(ty), TyKind::Struct(id)
+            if types.struct_def(*id).origin.as_ref().is_some_and(|(origin, _)| matches!(origin.as_str(), "std.sync.Mutex" | "std.sync.RwLock")))
+}
+
 /// Whether this loan is a guard's loan: a borrow of a `RefCell`'s `value`
 /// field (parent is a `RefCell`). Whole-cell borrows (e.g. a `mut` argument
 /// taking the cell for a call) are `RefCell` loans but not guard loans: they
@@ -4974,7 +4989,7 @@ fn is_guard_loan(body: &Body, types: &TypeTable, place: &Place) -> bool {
     }
     let mut parent = place.clone();
     parent.projection.pop();
-    is_refcell_ty(types, place_ty(body, types, &parent))
+    is_guarded_cell_ty(types, place_ty(body, types, &parent))
 }
 
 fn operand_read(operand: &Operand, out: &mut Vec<(Place, Access)>) {
