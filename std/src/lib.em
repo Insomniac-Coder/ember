@@ -2,7 +2,9 @@
 ##
 ## Part XV lists the module set. What exists so far:
 ##
-##   `std.core`  Part IV §8's interfaces, and `Ordering`
+##   `std.core`  Part IV §8's interfaces, `Ordering`, and Part XIII's `Error`,
+##               `From` and `AnyError`
+##   `std.fmt`  the `Formatter` a written `Display` or `Debug` writes through
 ##   `std.math`  Part XV's scalar mathematics
 ##   `std.collections`  `Map`, `Set` and hashing (`[STD-11]`, `[HASH-1]`), and
 ##                      `[ARN-5]`'s Arena-backed collection declarations

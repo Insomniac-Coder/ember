@@ -215,6 +215,7 @@ codes! {
     E2160 = (Error, 2160, Types, "[CTL-7]", "control flow cannot leave a `defer` block");
     E2170 = (Error, 2170, Types, "[IX.5]", "cannot take a reference to a field of a packed struct");
     E2180 = (Error, 2180, Types, "[ERR-2]", "`?` outside a function returning `Option` or `Result`");
+    E2181 = (Error, 2181, Types, "[ERR-2]", "`?` on an `Option` in a `Result` function, or the reverse");
     // 0.9.9 `[FN-10]`, ODR-023: only `void` and `Result[void, E]` have an
     // implicit value at the end of a body.
     E2182 = (Error, 2182, Types, "[FN-10]", "a function that returns a value can reach the end of its body");

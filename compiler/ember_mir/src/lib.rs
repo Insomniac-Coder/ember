@@ -1112,6 +1112,11 @@ pub enum CastKind {
     /// what is taken out of it (`[DSJ-2]`): the C backend's `restrict`
     /// kernels read it back from here.
     ViewsDisjoint,
+    /// ADR-186, `[ERR-8]` — a borrowed `Box[dyn I]` read as the `ref T` its
+    /// value was made from, once its type is known to be `T`
+    /// (`AnyError.downcast_ref`): the box's data pointer, borrowed as the
+    /// box is.
+    InterfaceDowncast,
 }
 
 pub use ember_hir::{AtomicOp, BinOp, Builtin, FormatSpec, IntBits, IntOp, MemoryOrder, ParseKind, SoAOp, UnOp};
@@ -1478,6 +1483,14 @@ pub fn prune_unused_implicit(
                 FuncRef::Builtin { which: Builtin::CloneParts { ty }, .. } => {
                     clone_dependencies(*ty, types, &clone_of, &mut reached, &mut Default::default());
                 }
+                // ADR-186 — formatting a value runs the written `Debug` of
+                // each part of it that has one, which the backend calls.
+                FuncRef::Builtin {
+                    which: Builtin::Format | Builtin::FormatWith(_) | Builtin::Print | Builtin::EPrint,
+                    arg_ty,
+                } => reached.extend(
+                    types.debug_writers_reached(*arg_ty).into_iter().filter_map(|writer| by_symbol.get(writer).copied()),
+                ),
                 _ => {}
             }
         }

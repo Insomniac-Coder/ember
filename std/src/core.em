@@ -7,6 +7,7 @@
 ## written, and grows as the compiler does.
 
 import std.mem
+from std.fmt import Formatter, FmtError
 
 ## `[ENM-3]` — a unit-only enum, so `Copy`, `Eq`, `Hash` and `Debug` come free
 ## and it converts to its repr with `as`.
@@ -32,6 +33,176 @@ pub interface Default:
 
 pub interface Clone:
     fn clone(self) -> Self
+
+## Part IV §8 — a value's text, as `f"{x}"`, `print(x)` and `main`'s error
+## write it. The numbers, `bool`, `char`, text, the collections, tuples,
+## `Option`, `Result`, `Box` and `Cell` have it from the table of
+## `[TYP-36]`, which the compiler writes; a struct, an enum or a class has it
+## only by implementing it, and writes its text through `f` (`std.fmt`).
+pub interface Display:
+    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]
+
+## Part IV §8 — a `T` made into the implementing type: `F.from(v)`. `e?`
+## converts a failure into the function's error type with it (`[ERR-2]`).
+pub interface From[T]:
+    fn from(owned value: T) -> Self
+
+## Part IV §8 — a value's structure, as `f"{x!r}"` writes it and as it shows
+## inside another value's text (an element, a field, a payload). Every type
+## the table gives text has it, and a struct or an enum field-wise without
+## asking (`[STR-5]`); one it writes replaces that one.
+pub interface Debug:
+    fn fmt_debug(self, mut f: Formatter) -> Result[void, FmtError]
+
+## `[ERR-3]` — an error type: its text (`Display`), its structure (`Debug`),
+## and the error that caused it, if one did. `@derive(Error)` writes `Display`
+## from `@error("…")` attributes and `source` from an `@from` variant.
+pub interface Error: Debug + Display:
+    fn source(self) -> Option[ref dyn Error]:
+        return None
+
+## `[ERR-8]` — any error: one error of any type implementing `Error`, boxed,
+## with the context messages `context` and `with_context` added to it
+## (`[ERR-10]`), the last added outermost. `?` converts any error into one
+## with its `From`, allocating once, on the failure path (`[ERR-11]`). It is
+## not an `Error` itself: its `From[E]` is for every `E: Error`, and every
+## type's own `From` (`[ERR-7]`) moves an `AnyError` on through `?`.
+## `identity` is the boxed error's type (`type_identity`), for `is` and
+## `downcast_ref`.
+pub struct AnyError:
+    error: Box[dyn Error]
+    identity: u128
+    context: Array[String]
+
+extend[E: Error] AnyError implements From[E]:
+    fn from(owned value: E) -> AnyError:
+        return AnyError(Box(value), type_identity[E](), [])
+
+## `[ERR-10]` — its text is each context message, the last added first, then
+## the error's own: `reading app.cfg: line 3: expected `key = value``.
+extend AnyError implements Display:
+    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
+        at = self.context.len()
+        while at > 0:
+            at -= 1
+            f.write_str(self.context[at])?
+            f.write_str(": ")?
+        return self.error.fmt(f)
+
+## `AnyError(<the error's Debug>)`, and the context messages when there are
+## any, oldest first.
+extend AnyError implements Debug:
+    fn fmt_debug(self, mut f: Formatter) -> Result[void, FmtError]:
+        f.write_str("AnyError(")?
+        self.error.fmt_debug(f)?
+        if self.context.len() > 0:
+            f.write_str(f", context={self.context}")?
+        return f.write_str(")")
+
+extend AnyError:
+    ## The error's cause, past the text this one shows: the boxed error's
+    ## `source` (`[ERR-12]` prints one `caused by:` line for each).
+    pub fn source(self) -> Option[ref dyn Error]:
+        return self.error.source()
+
+    ## Whether the boxed error is an `E`.
+    pub fn is[E](self) -> bool:
+        return self.identity == type_identity[E]()
+
+    ## The boxed error, as the `E` it is, or `None` when it is another type.
+    pub fn downcast_ref[E](self) -> Option[ref E]:
+        if self.identity != type_identity[E]():
+            return None
+        unsafe:  # SAFETY: `identity` is the boxed value's type's, so the box holds an `E`
+            return Some(dyn_payload[E](self.error))
+
+## `[ERR-12]` — how `main` reports an `Err` that is an `Error`: its text,
+## then one `caused by:` line for each cause in its chain.
+fn report_error[E: Error](e: E):
+    eprintln(f"error: {e}")
+    report_causes(e.source())
+
+## `[ERR-12]` — the same for an `AnyError`, whose text holds its context
+## messages and whose causes are its error's (`AnyError.source`).
+fn report_any_error(e: AnyError):
+    eprintln(f"error: {e}")
+    report_causes(e.source())
+
+fn report_causes(first: Option[ref dyn Error]):
+    cause = first
+    while true:
+        match cause:
+            Some(c):
+                eprintln(f"caused by: {c}")
+                cause = c.source()
+            None:
+                return
+
+## `[ERR-10]` — `r.context(msg)`: the error, if any, with `msg`'s text added
+## outermost, so it displays as `msg: <what it displayed>`. The compiler
+## converts `r`'s error into an `AnyError` first (`[ERR-8]`); the text is
+## made only on failure.
+fn result_context[T, M: Display](owned r: Result[T, AnyError], msg: M) -> Result[T, AnyError]:
+    match owned r:
+        Ok(v):
+            return Ok(v)
+        Err(e):
+            e.context.push(f"{msg}")
+            return Err(e)
+
+## `[ERR-10]` — `r.with_context(f)`: as `context`, with the message `f`
+## makes, called only on failure.
+fn result_with_context[T, M: Display](owned r: Result[T, AnyError], f: once fn() -> M) -> Result[T, AnyError]:
+    match owned r:
+        Ok(v):
+            return Ok(v)
+        Err(e):
+            e.context.push(f"{f()}")
+            return Err(e)
+
+## `[ERR-4]` — `o.context(msg)` on an `Option`: `Ok` of its value, or for
+## `None` an `AnyError` whose text is `msg`'s (`Missing`); the text is made
+## only for `None`.
+fn option_context[T, M: Display](owned o: Option[T], msg: M) -> Result[T, AnyError]:
+    match owned o:
+        Some(v):
+            return Ok(v)
+        None:
+            return Err(AnyError.from(Missing(f"{msg}")))
+
+## `[ERR-4]` — `o.with_context(f)`: as `context`, with the message `f`
+## makes, called only for `None`.
+fn option_with_context[T, M: Display](owned o: Option[T], f: once fn() -> M) -> Result[T, AnyError]:
+    match owned o:
+        Some(v):
+            return Ok(v)
+        None:
+            return Err(AnyError.from(Missing(f"{f()}")))
+
+## The error an `Option`'s `context` makes of a `None`: its text alone.
+@derive(Error)
+@error("{text}")
+struct Missing:
+    text: String
+
+## `[ERR-8]` — a type's identity: a 128-bit hash of its canonical name, the
+## same for one type in every module and every build. Compiler-known.
+fn type_identity[T]() -> u128:
+    pass
+
+## `[ERR-8]` — the boxed `dyn Error`, borrowed, as the `ref E` it was made
+## from. Compiler-known; the box must hold an `E`.
+unsafe fn dyn_payload[E](boxed: Box[dyn Error]) -> ref E:  # SAFETY: the caller has checked the boxed value is an `E`
+    pass
+
+## `[ERR-7]` — every type converts from itself, unchanged, so `?` passes on
+## an error of the function's own error type as it is (a move: `[ERR-2]`
+## makes no call when the two types are one). An extension over a type
+## parameter standing alone is every type's (ADR-186); a program's own
+## `extend T implements From[T]` would be a second one (`E2041`).
+extend[T] T implements From[T]:
+    fn from(owned value: T) -> T:
+        return value
 
 ## Part IV §8 — the operator interfaces. `a + b` on a type that is not a
 ## number calls its `Add.add(a, b)` (`[TYP-21]`); `Rhs` is the right operand's
@@ -1746,8 +1917,8 @@ extend[T: Integer] RangeFromIter[T] implements Iterator:
         self.at = self.at.forward_by(T.narrow_count(n.less(T.FullCount.of(1))))
         return T.FullCount.of(0)
 
-## Part IV §8 also declares `Hash`, `Display`, `Debug`, and the operator
-## interfaces; they remain staged with their dependent surface.
+## Part IV §8 also declares `Hash`, which `std.collections` holds with the
+## hashers.
 
 ## `[ERR-4]` (ODR-025) — the `Option` and `Result` methods that take a
 ## function. `x.map(f)` is a call of `option_map(x, f)`: the compiler routes the

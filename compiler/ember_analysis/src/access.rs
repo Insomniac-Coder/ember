@@ -317,6 +317,11 @@ fn terminator_uses_root(
 /// those reach accesses taken on concrete classes the pass cannot see. A
 /// class with a `drop` holds a write of its whole object while it runs (the
 /// runtime begins it, D-453), so its family counts as holding one.
+///
+/// D-604 — "the program" is what it can run: the bodies the program's own
+/// reach (`program_bodies`). A standard-library body nothing calls was read
+/// too, so once `std.core` had `AnyError`'s `dyn Error` calls every program
+/// kept every check.
 pub fn remove_never_firing_checks_all(bodies: &mut [Body], types: &TypeTable) -> usize {
     let mut held_write: HashSet<(ClassId, String)> = HashSet::new();
     let mut held_any: HashSet<(ClassId, String)> = HashSet::new();
@@ -328,7 +333,8 @@ pub fn remove_never_firing_checks_all(bodies: &mut [Body], types: &TypeTable) ->
         .map(|(id, _)| class_family(types, id))
         .collect();
     let mut object_any_family: HashSet<ClassId> = object_write_family.clone();
-    for body in bodies.iter() {
+    let runs = program_bodies(bodies, types);
+    for body in bodies.iter().zip(&runs).filter(|(_, runs)| **runs).map(|(body, _)| body) {
         for basic_block in &body.blocks {
             if let Terminator::Call { func: FuncRef::Interface { .. } | FuncRef::DynBoxNew { .. }, .. } = basic_block.terminator {
                 return 0;
@@ -400,6 +406,76 @@ pub fn remove_never_firing_checks_all(bodies: &mut [Body], types: &TypeTable) ->
         }
     }
     removed
+}
+
+/// D-604 — which bodies the program can run: each of its own (a symbol
+/// outside `std`), and every body one of those reaches: by a call, a
+/// function value, an interface table, a static's initialiser, or as a
+/// written `Debug` formatting a value runs (ADR-186).
+fn program_bodies(bodies: &[Body], types: &TypeTable) -> Vec<bool> {
+    let std_prefix = ember_branding::mangled("std.");
+    let index: std::collections::HashMap<&str, usize> =
+        bodies.iter().enumerate().map(|(at, body)| (body.symbol.as_str(), at)).collect();
+    let mut runs: Vec<bool> = bodies.iter().map(|body| !body.symbol.starts_with(&std_prefix)).collect();
+    let mut work: Vec<usize> = (0..bodies.len()).filter(|&at| runs[at]).collect();
+    fn function(operand: &Operand) -> Option<&str> {
+        match operand {
+            Operand::Const(ember_mir::Const::Fn(symbol)) => Some(symbol.as_str()),
+            _ => None,
+        }
+    }
+    while let Some(at) = work.pop() {
+        let mut reached: Vec<&str> = Vec::new();
+        for basic_block in &bodies[at].blocks {
+            for stmt in &basic_block.stmts {
+                let StmtKind::Assign { rvalue, .. } = &stmt.kind else { continue };
+                match rvalue {
+                    ember_mir::Rvalue::Use(operand)
+                    | ember_mir::Rvalue::UnaryOp { operand, .. }
+                    | ember_mir::Rvalue::Repeat { value: operand, .. } => reached.extend(function(operand)),
+                    ember_mir::Rvalue::BinaryOp { lhs, rhs, .. } => reached.extend(function(lhs).into_iter().chain(function(rhs))),
+                    ember_mir::Rvalue::Aggregate { operands, .. } => reached.extend(operands.iter().filter_map(function)),
+                    ember_mir::Rvalue::Cast { kind, operand, .. } => {
+                        reached.extend(function(operand));
+                        if let ember_mir::CastKind::InterfaceUpcast { implementations, .. }
+                        | ember_mir::CastKind::ClassInterfaceUpcast { implementations, .. } = kind
+                        {
+                            reached.extend(implementations.iter().flatten().map(|method| method.symbol.as_str()));
+                        }
+                    }
+                    ember_mir::Rvalue::Discriminant(_) | ember_mir::Rvalue::Ref { .. } => {}
+                }
+            }
+            let Terminator::Call { func, args, .. } = &basic_block.terminator else { continue };
+            reached.extend(args.iter().filter_map(function));
+            match func {
+                FuncRef::Direct { symbol, .. } => reached.push(symbol),
+                FuncRef::DynBoxNew { implementations, .. } => {
+                    reached.extend(implementations.iter().flatten().map(|method| method.symbol.as_str()))
+                }
+                FuncRef::Indirect { operand, .. } => reached.extend(function(operand)),
+                FuncRef::Builtin { which: ember_mir::Builtin::LazyStatic { init, .. }, .. } => reached.push(init.as_str()),
+                FuncRef::Builtin {
+                    which:
+                        ember_mir::Builtin::Format
+                        | ember_mir::Builtin::FormatWith(_)
+                        | ember_mir::Builtin::Print
+                        | ember_mir::Builtin::EPrint,
+                    arg_ty,
+                } => reached.extend(types.debug_writers_reached(*arg_ty)),
+                _ => {}
+            }
+        }
+        for symbol in reached {
+            if let Some(&next) = index.get(symbol)
+                && !runs[next]
+            {
+                runs[next] = true;
+                work.push(next);
+            }
+        }
+    }
+    runs
 }
 
 /// An access begun and ended back to back: `[EXC-19]`'s check.

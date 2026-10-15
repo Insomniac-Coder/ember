@@ -121,6 +121,7 @@ fn compile_command(args: &[String]) -> ExitCode {
 fn retain_referenced_standard_bodies(
     bodies: &mut Vec<ember_mir::Body>,
     standard_files: &std::collections::BTreeSet<ember_span::FileId>,
+    types: &TypeTable,
 ) {
     use std::collections::{BTreeMap, BTreeSet};
 
@@ -148,6 +149,25 @@ fn retain_referenced_standard_bodies(
         };
         let mut referenced = BTreeSet::new();
         collect_body_function_symbols(&bodies[index], &mut referenced);
+        // ADR-186 — formatting a value runs the written `Debug` of each part
+        // of it that has one, which the backend calls.
+        for block in &bodies[index].blocks {
+            if let ember_mir::Terminator::Call {
+                func:
+                    ember_mir::FuncRef::Builtin {
+                        which:
+                            ember_mir::Builtin::Format
+                            | ember_mir::Builtin::FormatWith(_)
+                            | ember_mir::Builtin::Print
+                            | ember_mir::Builtin::EPrint,
+                        arg_ty,
+                    },
+                ..
+            } = &block.terminator
+            {
+                referenced.extend(types.debug_writers_reached(*arg_ty).into_iter().map(str::to_string));
+            }
+        }
         for target in referenced {
             if by_symbol.contains_key(&target) && keep.insert(target.clone()) {
                 pending.push(target);
@@ -257,6 +277,19 @@ fn collect_rvalue_function_symbols(
     out: &mut std::collections::BTreeSet<String>,
 ) {
     match rvalue {
+        // D-602 — a `ref dyn I` (or class-interface) table names the bodies
+        // that fill it, as a `Box[dyn I]`'s does: one only a table names
+        // was dropped, and the table's C named a function never emitted.
+        ember_mir::Rvalue::Cast {
+            kind:
+                ember_mir::CastKind::InterfaceUpcast { implementations, .. }
+                | ember_mir::CastKind::ClassInterfaceUpcast { implementations, .. },
+            operand,
+            ..
+        } => {
+            out.extend(implementations.iter().flatten().map(|implementation| implementation.symbol.clone()));
+            collect_operand_function_symbols(operand, out);
+        }
         ember_mir::Rvalue::Use(operand)
         | ember_mir::Rvalue::UnaryOp { operand, .. }
         | ember_mir::Rvalue::Cast { operand, .. } => collect_operand_function_symbols(operand, out),
@@ -2732,7 +2765,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             .filter(|loaded| loaded.path.first().is_some_and(|package| package == ember_branding::STD_PACKAGE))
             .map(|loaded| loaded.module.span.file)
             .collect();
-        retain_referenced_standard_bodies(&mut bodies, &standard_files);
+        retain_referenced_standard_bodies(&mut bodies, &standard_files, &types);
     }
     let module_name = input
         .file_stem()

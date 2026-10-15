@@ -15,6 +15,7 @@
 mod usefulness;
 mod name_suggestions;
 mod const_eval;
+mod errors;
 mod comptime;
 
 pub use comptime::{ComptimeAnswer, ComptimeAnswers, ComptimeRequest};
@@ -123,6 +124,9 @@ pub fn check(
     debug_assertions: bool,
     comptime_answers: &ComptimeAnswers,
 ) -> CheckOutput {
+    // `[ERR-3]` — `@derive(Error)` is the `extend` blocks it stands for.
+    let derived = errors::desugar_error_derives(modules, sink);
+    let modules: &[LoadedModule] = derived.as_deref().unwrap_or(modules);
     // A blanket implementation's parameters move onto its methods first, so
     // every later pass sees one shape (`desugar_blanket_extensions`).
     let desugared = desugar_blanket_extensions(modules);
@@ -290,7 +294,14 @@ pub fn check(
     functions.extend(checker.take_derived_clone_bodies());
     // `[TYP-16]` — every instantiation reached while checking gets a real
     // body. One of those can reach another, so this drains until empty.
+    // ADR-186 — with the writer of each written `Debug` an instance made
+    // along the way has.
+    checker.request_debug_writers();
     functions.extend(checker.check_instantiations(modules));
+    while checker.request_debug_writers() {
+        functions.extend(checker.check_instantiations(modules));
+    }
+    checker.publish_debug_writers(&functions);
     // `[CLO-1]` — the functions capture-free closures lowered to. They have no
     // name in source, so they are gathered as they are checked and appended
     // here rather than found by walking the modules again.
@@ -1269,6 +1280,9 @@ struct BlanketImpl {
 struct ImplRecord {
     shape: TyShape,
     args: Vec<Ty>,
+    /// The implementing type itself, when there is one to name (ADR-186:
+    /// a universal implementation is compared with it).
+    whole: Option<Ty>,
     interface: Symbol,
     interface_args: Vec<Ty>,
     instance: Symbol,
@@ -1916,6 +1930,16 @@ struct Checker<'a> {
     generic_extensions: HashMap<Symbol, Vec<GenericExtension>>,
     /// `[TYP-19]` — the blanket implementations.
     blankets: Vec<BlanketImpl>,
+    /// `[TYP-19]` (ADR-186) — `extend[T] T implements I[…]`: every type's,
+    /// given to one when asked (`apply_universal`), each `(type, index)` once.
+    universal_extensions: Vec<GenericExtension>,
+    /// ADR-186 — each concrete type with a written `Debug`, and the
+    /// `std.fmt.write_debug` instance the backend calls to format it.
+    debug_writer_defs: Vec<(Ty, DefId)>,
+    /// Each universal implementation's interfaces, as origins over its
+    /// parameter: `[(std.core.From, [T])]`.
+    universal_interfaces: Vec<Vec<(Symbol, Vec<Ty>)>>,
+    applied_universal: HashSet<(Ty, usize)>,
     /// V.7 — `const`s whose value is a constant expression, by qualified
     /// name, and those a type declares (`Vec2.ZERO`), by type and name; and
     /// every one of them in declaration order, for `settle_consts`.
@@ -2365,6 +2389,10 @@ impl<'a> Checker<'a> {
             generic_classes: HashMap::new(),
             generic_extensions: HashMap::new(),
             blankets: Vec::new(),
+            universal_extensions: Vec::new(),
+            debug_writer_defs: Vec::new(),
+            universal_interfaces: Vec::new(),
+            applied_universal: HashSet::new(),
             expr_consts: HashMap::new(),
             assoc_consts: HashMap::new(),
             const_order: Vec::new(),
@@ -3726,7 +3754,7 @@ impl<'a> Checker<'a> {
             (
                 "std.core",
                 &[
-                    "Eq", "Ord", "Ordering", "Default", "Clone", "Iterator", "IntoIterator", "Range", "RangeInclusive", "RangeFrom",
+                    "Eq", "Ord", "Ordering", "Default", "Clone", "Display", "Debug", "From", "Error", "AnyError", "Iterator", "IntoIterator", "Range", "RangeInclusive", "RangeFrom",
                     "RangeTo", "Add", "Sub", "Mul", "Div", "FloorDiv", "Rem", "Pow", "Neg", "Not", "BitAnd", "BitOr",
                     "BitXor", "Shl", "Shr", "AddAssign", "SubAssign", "MulAssign", "DivAssign", "FloorDivAssign",
                     "RemAssign", "PowAssign", "BitAndAssign", "BitOrAssign", "BitXorAssign", "ShlAssign", "ShrAssign",
@@ -4889,6 +4917,10 @@ impl<'a> Checker<'a> {
             if !self.is_generic_extension(decl) {
                 continue;
             }
+            if errors::universal_target(decl) {
+                self.collect_universal_extension(decl, item, item_index);
+                continue;
+            }
             let ast::TypeKind::Path { segments, args } = &decl.target.kind else {
                 continue;
             };
@@ -5918,13 +5950,19 @@ impl<'a> Checker<'a> {
         }
         let free = &full[full.len() - blanket.free..];
         for (method, declaration, receiver, has_default) in methods {
-            let Some(entry) = self.methods.get(&(ty, method)).copied() else {
+            // ADR-186 — an associated function (`From.from`) is the type's
+            // associated one, as a method is its method.
+            let entry = match receiver {
+                Some(_) => self.methods.get(&(ty, method)).map(|entry| (entry.def, Some(entry.receiver))),
+                None => self.associated.get(&(ty, method)).map(|entry| (entry.def, None)),
+            };
+            let Some((def, actual_receiver)) = entry else {
                 if !has_default {
                     self.error(codes::E2040, blanket.span, format!("`{shown}` implements `{named}` but does not define `{method}`"));
                 }
                 continue;
             };
-            let actual = self.signatures[entry.def.0 as usize].clone();
+            let actual = self.signatures[def.0 as usize].clone();
             // A method with generics of its own besides the blanket's is not
             // compared here.
             if actual.generics.len() != free.len() {
@@ -5940,10 +5978,14 @@ impl<'a> Checker<'a> {
             let expected_ret = self.substitute_self(expected.ret, ty);
             let expected_ret = self.resolve_assoc(expected_ret, ty);
             self.assoc_instance = saved_instance;
-            let actual_params: Vec<(Ty, Mode)> =
-                actual.params.iter().skip(1).map(|&(_, param, mode, _)| (self.substitute_ty(param, free), mode)).collect();
+            let actual_params: Vec<(Ty, Mode)> = actual
+                .params
+                .iter()
+                .skip(usize::from(actual_receiver.is_some()))
+                .map(|&(_, param, mode, _)| (self.substitute_ty(param, free), mode))
+                .collect();
             let actual_ret = self.substitute_ty(actual.ret, free);
-            if receiver != Some(entry.receiver) || actual_params != expected_params || actual_ret != expected_ret {
+            if receiver != actual_receiver || actual_params != expected_params || actual_ret != expected_ret {
                 self.error(codes::E2040, blanket.span, format!("`{shown}.{method}` does not match the signature required by `{named}`"));
             }
         }
@@ -5955,6 +5997,7 @@ impl<'a> Checker<'a> {
         // A built-in instance takes its extensions, and so their
         // implementations, when first used (`Array[f32]`'s `Index[int]`).
         self.extend_instance_at_use(ty);
+        self.apply_universal_interface(ty, interface);
         self.implements(ty, interface) || self.apply_blanket(ty, interface)
     }
 
@@ -5978,6 +6021,11 @@ impl<'a> Checker<'a> {
     fn is_generic_extension(&self, decl: &ast::ExtendDecl) -> bool {
         if decl.generics.is_empty() {
             return false;
+        }
+        // ADR-186 — over a parameter standing alone: collected with them,
+        // and given to each type when asked (`apply_universal`).
+        if errors::universal_target(decl) {
+            return true;
         }
         let ast::TypeKind::Path { segments, args } = &decl.target.kind else {
             return false;
@@ -9258,6 +9306,14 @@ impl<'a> Checker<'a> {
         // can distinguish an interface parameter from a generic method's.
         let saved_type_params = std::mem::take(&mut self.type_params);
         let generic_params = self.declare_generics(&decl.generics);
+        // ADR-186 — an interface may name itself in its own methods
+        // (`[ERR-3]`'s `source(self) -> Option[ref dyn Error]`): it is entered
+        // before them, as D-390 enters a generic instance, and is checked to
+        // be `dyn`-compatible once complete (`check_self_dyn`).
+        let names_itself = generic_params.is_empty() && errors::members_name(decl, decl.name.name);
+        if names_itself {
+            self.interfaces.insert(name, InterfaceDef::entered(self.current_module));
+        }
         // `[IFC-4]` — associated types first: a method signature may mention
         // one, so they have to be in scope before the signatures are read.
         let assoc: Vec<Symbol> = decl
@@ -9420,6 +9476,9 @@ impl<'a> Checker<'a> {
                 dyn_sized_defaults,
             },
         );
+        if names_itself {
+            self.check_self_dyn(name, span);
+        }
     }
 
     /// Resolve an interface use in an `implements` or `dyn` position. Unlike a
@@ -9856,7 +9915,12 @@ impl<'a> Checker<'a> {
                     .map(|(interface, _)| *interface);
                 let entry = owner
                     .and_then(|interface| self.interface_methods.get(&(concrete, interface, name)))
-                    .or_else(|| self.methods.get(&(concrete, name)))?;
+                    .or_else(|| self.methods.get(&(concrete, name)))
+                    .copied();
+                // ADR-186 — `Debug` a type has without writing it.
+                let Some(entry) = entry else {
+                    return self.implicit_fmt_debug(concrete, name, owner).map(Some);
+                };
                 Some(Some(hir::InterfaceAdapterSlot {
                     implementation: entry.def,
                     receiver: entry.receiver,
@@ -10265,15 +10329,22 @@ impl<'a> Checker<'a> {
                     return None;
                 }
                 (Some(_), Some(_)) | (Some(_), None) => {}
-                (None, Some(_)) => return None,
+                // ADR-186 — one an interface instance gives behind the type's
+                // own (`AnyError`'s `From[AnyError]` beside its blanket
+                // `from`) is that instance's only, as for a method.
+                (None, Some(_)) => {}
             }
         }
+        let behind_inherent = from_interface.is_some()
+            && self.associated.get(&(ty, name)).is_some_and(|existing| existing.from_interface.is_none());
         let def = DefId(self.signatures.len() as u32);
         self.signatures.push(signature);
         if let Some(interface) = from_interface {
             self.interface_associated.insert((ty, interface, name), AssociatedEntry { def, from_interface });
         }
-        self.associated.insert((ty, name), AssociatedEntry { def, from_interface });
+        if !behind_inherent {
+            self.associated.insert((ty, name), AssociatedEntry { def, from_interface });
+        }
         Some(def)
     }
 
@@ -10630,6 +10701,7 @@ impl<'a> Checker<'a> {
                 records.push(ImplRecord {
                     shape: TyShape::Named(name),
                     args: args.clone(),
+                    whole: owner,
                     interface,
                     interface_args,
                     instance,
@@ -10646,6 +10718,7 @@ impl<'a> Checker<'a> {
                 records.push(ImplRecord {
                     shape: shape.clone(),
                     args: args.clone(),
+                    whole: Some(blanket.target),
                     interface,
                     interface_args,
                     instance: interface,
@@ -10655,7 +10728,8 @@ impl<'a> Checker<'a> {
                 });
             }
         }
-        let generic: HashSet<Span> = records.iter().map(|record| record.span).collect();
+        let mut generic: HashSet<Span> = records.iter().map(|record| record.span).collect();
+        generic.extend(self.universal_extensions.iter().map(|extension| extension.span));
         let concrete: Vec<(Ty, Symbol, Span)> = self
             .implemented
             .iter()
@@ -10670,6 +10744,7 @@ impl<'a> Checker<'a> {
             records.push(ImplRecord {
                 shape,
                 args,
+                whole: Some(ty),
                 interface,
                 interface_args,
                 instance,
@@ -10679,6 +10754,7 @@ impl<'a> Checker<'a> {
             });
         }
         records.sort_by_key(|record| (record.span.file, record.span.start));
+        self.report_universal_overlaps(&records);
         let mut by_interface: HashMap<Symbol, Vec<usize>> = HashMap::new();
         for (at, record) in records.iter().enumerate() {
             by_interface.entry(record.interface).or_default().push(at);
@@ -11442,6 +11518,13 @@ impl<'a> Checker<'a> {
             self.sink.emit(diagnostic);
             return self.common.error;
         };
+        // `[ERR-9]` — `Result[T]` is `Result[T, AnyError]`.
+        if name.is("Result")
+            && args.len() == 1
+            && let Some(&any_error) = self.named_types.get(&Symbol::intern("std.core.AnyError"))
+        {
+            return self.result_of(args[0].0, any_error);
+        }
         if !require(self, arity) {
             return self.common.error;
         }
@@ -11807,6 +11890,11 @@ impl<'a> Checker<'a> {
             TyKind::Ref { inner, .. } => self.has_display(*inner),
             TyKind::Enum(_) if self.is_option(ty) || self.is_result(ty) => self.is_formattable(ty),
             TyKind::Param { .. } => self.param_bound_named(ty, &["Display"]),
+            // ADR-186 — a struct, an enum or a class by its written `Display`;
+            // a `dyn` value when its interfaces include it.
+            TyKind::Struct(_) if self.dyn_reaches(ty, "std.core.Display") => true,
+            TyKind::Dyn { .. } => self.dyn_reaches(ty, "std.core.Display"),
+            TyKind::Struct(_) | TyKind::Enum(_) | TyKind::Class(_) => self.written_display(ty),
             _ => false,
         }
     }
@@ -11818,6 +11906,10 @@ impl<'a> Checker<'a> {
         // ODR-094 — Box and Cell format as the value they hold.
         if let Some(inner) = self.types.printed_as(ty) {
             return self.unformattable_part(inner, seen);
+        }
+        // ADR-186 — a written `Debug` replaces the field-wise one.
+        if self.written_debug(ty) {
+            return None;
         }
         match self.types.kind(ty) {
             TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Str
@@ -12122,7 +12214,7 @@ impl<'a> Checker<'a> {
         }
         // `[ERR-2]` — the enclosing function has to be able to carry the
         // failure onwards.
-        if (is_option && !self.is_option(ret_ty)) || (is_result && !self.is_result(ret_ty)) {
+        if !self.is_option(ret_ty) && !self.is_result(ret_ty) {
             let shown = self.types.display(value.ty);
             let returning = self.types.display(ret_ty);
             self.error(
@@ -12130,6 +12222,11 @@ impl<'a> Checker<'a> {
                 span,
                 format!("`?` on a `{shown}` needs the function to return one too, not `{returning}`"),
             );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        // `[ERR-2]` — an `Option` in a `Result` function, or the reverse.
+        if is_option != self.is_option(ret_ty) {
+            self.report_try_across(value.ty, ret_ty, inner.span, span);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
 
@@ -12170,27 +12267,26 @@ impl<'a> Checker<'a> {
         let carried: Vec<Ty> = failure_fields.iter().map(|f| f.ty).collect();
         let ret_failure = &self.types.enum_def(ret_id).variants[failure].fields;
         let ret_carried: Vec<Ty> = ret_failure.iter().map(|f| f.ty).collect();
-        if carried != ret_carried {
-            let from = self.types.display(value.ty);
-            let to = self.types.display(ret_ty);
-            self.error(
-                codes::E2180,
-                span,
-                format!("`?` cannot carry a `{from}` failure out of a function returning `{to}`"),
-            );
-            self.error_note_from_conversion(span);
-            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        }
         let mut binds = Vec::new();
         let mut reads = Vec::new();
-        for &ty in &carried {
-            let local = self.declare(None, ty, span);
-            binds.push(hir::Pattern {
-                ty,
-                kind: hir::PatternKind::Bind { local, sub: None, by_ref: None },
-                span,
-            });
-            reads.push(Expr { ty, kind: ExprKind::Local(local), span });
+        if carried != ret_carried {
+            // `[ERR-2]` — `Err(F.from(e))`; one type to itself is a move.
+            let (&from, &to) = (carried.first().expect("an Err payload"), ret_carried.first().expect("an Err payload"));
+            let Some((local, converted)) = self.convert_failure(from, to, value.ty, ret_ty, span) else {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            };
+            binds.push(hir::Pattern { ty: from, kind: hir::PatternKind::Bind { local, sub: None, by_ref: None }, span });
+            reads.push(converted);
+        } else {
+            for &ty in &carried {
+                let local = self.declare(None, ty, span);
+                binds.push(hir::Pattern {
+                    ty,
+                    kind: hir::PatternKind::Bind { local, sub: None, by_ref: None },
+                    span,
+                });
+                reads.push(Expr { ty, kind: ExprKind::Local(local), span });
+            }
         }
         let err_arm = hir::MatchArm {
             pattern: hir::Pattern {
@@ -12222,20 +12318,6 @@ impl<'a> Checker<'a> {
             },
             span,
         }
-    }
-
-    /// `[ERR-2]` says the failure is converted with `From`. Without generics
-    /// there is no `From`, so the types have to match exactly and the
-    /// diagnostic says so.
-    fn error_note_from_conversion(&mut self, span: Span) {
-        self.sink.emit(
-            Diagnostic::error(
-                codes::E2180,
-                span,
-                "the failure types must match exactly in this phase of the compiler",
-            )
-            .note("`[ERR-2]`'s `F.from(e)` conversion needs `From`, which needs generics"),
-        );
     }
 
     /// `[DSJ-1]`, `[DSJ-4]`, `[DSJ-5]`, `[DSJ-7]` — two views, consumed and given
@@ -12474,6 +12556,9 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> Option<Expr> {
         if let Some(built) = self.synth_mem_ownership_builtin(name, args, explicit, span) {
+            return Some(built);
+        }
+        if let Some(built) = self.synth_error_builtin(name, args, explicit, span) {
             return Some(built);
         }
         if self.resolve_name(name).is("std.thread.spawn") {
@@ -17256,6 +17341,10 @@ impl<'a> Checker<'a> {
                     let Some(block) = &fn_decl.body else { continue };
                     // Only the entries that came from this interface's default
                     // — a type that wrote its own method keeps that one.
+                    // D-603 — one written in an `extend T implements I` block
+                    // is `I`'s too; only a copy is the default's, and the
+                    // default's body was checked for the written one as well
+                    // (two C bodies of one symbol, or the default called).
                     let has_receiver = fn_decl
                         .params
                         .iter()
@@ -17264,7 +17353,7 @@ impl<'a> Checker<'a> {
                         let Some(entry) = self.methods.get(&(*ty, fn_decl.name.name)) else {
                             continue;
                         };
-                        if entry.from_interface != Some(interface) {
+                        if entry.from_interface != Some(interface) || !self.default_copies.contains(&entry.def) {
                             continue;
                         }
                         entry.def
@@ -17277,7 +17366,7 @@ impl<'a> Checker<'a> {
                         else {
                             continue;
                         };
-                        if entry.from_interface != Some(interface) {
+                        if entry.from_interface != Some(interface) || !self.default_copies.contains(&entry.def) {
                             continue;
                         }
                         entry.def
@@ -20202,7 +20291,7 @@ impl<'a> Checker<'a> {
         } else {
             value
         };
-        if !self.is_formattable(value.ty) {
+        if !self.has_text(value.ty) {
             if value.ty != self.common.error {
                 let shown = self.types.display(value.ty);
                 self.error(codes::E2040, span, format!("`{shown}` has no text: it implements neither `Display` nor `Debug`"));
@@ -20211,9 +20300,10 @@ impl<'a> Checker<'a> {
         }
         let string_ty = self.common.string;
         let buffer_ref = self.types.intern(TyKind::Ref { mutable: true, inner: string_ty });
+        let piece = self.plain_text_piece(value);
         Expr {
             ty: string_ty,
-            kind: ExprKind::FString { parts: vec![hir::FStringPart::Value(value, None)], buffer_ref },
+            kind: ExprKind::FString { parts: vec![piece], buffer_ref },
             span,
         }
     }
@@ -21256,13 +21346,15 @@ impl<'a> Checker<'a> {
                     parts.push(hir::FStringPart::Value(message, None));
                     parts.push(hir::FStringPart::Text(": ".to_string()));
                 }
-                if self.is_formattable(error_ty) {
+                if self.has_text(error_ty) {
                     let shown = if matches!(*self.types.kind(error_ty), TyKind::Vec { text: true, .. }) {
                         self.coerce(failed_value, str_ty)
                     } else {
                         failed_value
                     };
-                    parts.push(hir::FStringPart::Value(shown, None));
+                    // ADR-186 — the error's `Display`, written or the table's.
+                    let piece = self.plain_text_piece(shown);
+                    parts.push(piece);
                 } else {
                     parts.push(hir::FStringPart::Text("called `unwrap` on an `Err` value".to_string()));
                 }
@@ -29681,6 +29773,37 @@ impl<'a> Checker<'a> {
                             } else {
                                 value
                             };
+                            // ADR-186 — `{x}` of a type with a written
+                            // `Display` writes through its `fmt`.
+                            let value = if format_spec.is_none() && conversion.is_none() && echo.is_none() {
+                                match self.plain_text_piece(value) {
+                                    hir::FStringPart::Value(value, _) => value,
+                                    written => {
+                                        checked.push(written);
+                                        continue;
+                                    }
+                                }
+                            } else if format_spec.is_none() && (*conversion == Some('r') || (echo.is_some() && conversion.is_none())) {
+                                match self.dyn_debug_piece(value) {
+                                    Ok(written) => {
+                                        checked.push(written);
+                                        continue;
+                                    }
+                                    Err(value) => value,
+                                }
+                            } else if *conversion == Some('s') {
+                                // `{x!s}` and `{x!s:>8}` — the written text,
+                                // which a spec then pads as text.
+                                match self.written_display_text(value) {
+                                    Ok(text) => {
+                                        let str_ty = self.common.str_;
+                                        self.coerce(text, str_ty)
+                                    }
+                                    Err(value) => value,
+                                }
+                            } else {
+                                value
+                            };
                             let format_ty = if self.check_formattable(value.ty, expr.span, "formatting") {
                                 value.ty
                             } else {
@@ -30663,7 +30786,16 @@ impl<'a> Checker<'a> {
             }
             if let Some((inner, interfaces)) = dyn_target {
                 let concrete = value.ty;
-                let Some(implementations) = self.dyn_concrete_adapter(concrete, &interfaces)
+                // ADR-186 — a parameter bounded by the interfaces, in a body
+                // checked with its parameters opaque (never emitted): each
+                // instance boxes its own type, with that type's table.
+                let opaque = matches!(self.types.kind(concrete), TyKind::Param { .. })
+                    && interfaces.iter().all(|&interface| self.implements(concrete, interface));
+                let adapter = match opaque {
+                    true => Some(vec![None; self.dyn_vtable_layout(&interfaces).len()]),
+                    false => self.dyn_concrete_adapter(concrete, &interfaces),
+                };
+                let Some(implementations) = adapter
                 else {
                     self.error(
                         codes::E2020,
@@ -33108,6 +33240,11 @@ impl<'a> Checker<'a> {
             "std.core.Clone" => self.is_cloneable(ty),
             "std.core.Eq" => self.has_implicit_eq(ty),
             "std.collections.Hash" => self.hashes(ty, &mut HashSet::new()),
+            // ADR-186 — the table's `Display` (`[TYP-36]`): what the compiler
+            // writes for the numbers, text and the collections; and `Debug`,
+            // which it writes field-wise for the rest (`[STR-5]`).
+            "std.core.Display" => self.has_display(ty),
+            "std.core.Debug" => self.is_formattable(ty),
             // `[TYP-36]` — `void`'s `Default` is `()`; `void` cannot be
             // extended, so the compiler answers it (D-463).
             "std.core.Default" => matches!(self.types.kind(ty), TyKind::Void),
@@ -33895,7 +34032,7 @@ impl<'a> Checker<'a> {
                                 span,
                                 format!("deriving `{derived}` is not implemented yet"),
                             )
-                            .note("`Copy`, `Clone` and `Hash` can be derived, and `Zeroable` on a struct; `Eq` is implicit [STR-5]"),
+                            .note("`Copy`, `Clone`, `Hash` and `Error` can be derived, and `Zeroable` on a struct; `Eq` is implicit [STR-5]"),
                         );
                     }
                 }
@@ -34177,6 +34314,7 @@ impl<'a> Checker<'a> {
         // A built-in generic instance takes its extensions at first use, an
         // associated function's as a method's (`[GRM-34]`).
         self.extend_instance_at_use(owner);
+        self.apply_universal_member(owner, name.name);
         let Some(&entry) = self.associated.get(&(owner, name.name)) else {
             let shown = self.types.display(owner);
             self.error(
@@ -36443,6 +36581,18 @@ impl<'a> Checker<'a> {
             }
             return self.view_of(receiver, self.common.cstr, false, Builtin::CStringAsCStr);
         }
+        // `[ERR-10]`, `[ERR-4]` — `context` and `with_context`, into an
+        // `AnyError`.
+        if (self.is_result(receiver.ty) || self.is_option(receiver.ty))
+            && matches!(name.name.as_str(), "context" | "with_context")
+            && explicit.is_empty()
+            && !self.methods.contains_key(&(receiver.ty, name.name))
+        {
+            if self.is_option(receiver.ty) {
+                return self.synth_wrapper_callback(receiver, "option", name, args, expected, span);
+            }
+            return self.synth_result_context(receiver, name, args, expected, span);
+        }
         // `[ERR-4]` (ODR-025) — the methods that take a function are
         // `std.core`'s `option_*`/`result_*` generics.
         let helper = if self.is_option(receiver.ty)
@@ -38540,6 +38690,9 @@ impl<'a> Checker<'a> {
             Some((id, error)) => {
                 let bound = LocalId(locals.len() as u32);
                 locals.push(local(None, error));
+                // ADR-186, `[ERR-12]` — an `Error` or an `AnyError` with its
+                // chain, a written `Display` with its text.
+                let chain = self.main_error_report(error, bound, span);
                 // As `eprintln(e)` (`synth_print_pieces`): a `String` prints
                 // as the `str` it holds, and a value that is not `Copy`
                 // through a borrow.
@@ -38558,11 +38711,11 @@ impl<'a> Checker<'a> {
                     Expr { ty, kind: ExprKind::Ref { place: Box::new(read), mutable: false }, span }
                 };
                 let text = |text: &str| Expr { ty: self.common.str_, kind: ExprKind::Str(text.to_string()), span };
-                let report = Expr {
+                let report = chain.unwrap_or_else(|| Expr {
                     ty: self.common.void,
                     kind: ExprKind::Builtin { which: Builtin::EPrint, args: vec![text("error: "), read, text("\n")] },
                     span,
-                };
+                });
                 let arm = |variant: usize, fields: Vec<hir::Pattern>, body: Vec<Stmt>| hir::MatchArm {
                     pattern: hir::Pattern { ty: ret, kind: hir::PatternKind::Variant { enum_id: id, variant, fields }, span },
                     guard: None,
@@ -38955,10 +39108,8 @@ impl<'a> Checker<'a> {
                 self.collect_mutated_capture_fields_expr(index, environment, fields);
             }
             ExprKind::FString { parts, .. } => {
-                for part in parts {
-                    if let hir::FStringPart::Value(value, _) = part {
-                        self.collect_mutated_capture_fields_expr(value, environment, fields);
-                    }
+                for value in parts.iter().filter_map(hir::FStringPart::value) {
+                    self.collect_mutated_capture_fields_expr(value, environment, fields);
                 }
             }
             ExprKind::Binary { lhs, rhs, .. } => {
@@ -39141,12 +39292,10 @@ impl<'a> Checker<'a> {
                     || self.closure_expr_moves_capture(index, environment, false)
             }
             ExprKind::Ref { place, .. } => self.closure_expr_moves_capture(place, environment, false),
-            ExprKind::FString { parts, .. } => parts.iter().any(|part| match part {
-                hir::FStringPart::Text(_) => false,
-                hir::FStringPart::Value(value, _) => {
-                    self.closure_expr_moves_capture(value, environment, false)
-                }
-            }),
+            ExprKind::FString { parts, .. } => parts
+                .iter()
+                .filter_map(hir::FStringPart::value)
+                .any(|value| self.closure_expr_moves_capture(value, environment, false)),
             ExprKind::Binary { lhs, rhs, .. } => {
                 self.closure_expr_moves_capture(lhs, environment, false)
                     || self.closure_expr_moves_capture(rhs, environment, false)
@@ -46321,6 +46470,15 @@ impl<'a> Checker<'a> {
                     } else {
                         value
                     };
+                    // ADR-186 — a written `Display` is printed as the text its
+                    // `fmt` writes.
+                    let value = match self.written_display_text(value) {
+                        Ok(text) => {
+                            let str_ty = self.common.str_;
+                            self.coerce(text, str_ty)
+                        }
+                        Err(value) => value,
+                    };
                     self.check_formattable(value.ty, arg.value.span, "printing");
                     // D-286, `[EXP-1]` — an argument is evaluated where it is
                     // written: a place that is not `Copy` is borrowed there, so
@@ -49180,10 +49338,8 @@ fn written_in_expr(e: &Expr, out: &mut HashSet<LocalId>) {
         | ExprKind::EraseRange(expr)
         | ExprKind::OverflowScope { expr, .. } => written_in_expr(expr, out),
         ExprKind::FString { parts, .. } => {
-            for part in parts {
-                if let hir::FStringPart::Value(value, _) = part {
-                    written_in_expr(value, out);
-                }
+            for value in parts.iter().filter_map(hir::FStringPart::value) {
+                written_in_expr(value, out);
             }
         }
         ExprKind::Block { block, value } => {

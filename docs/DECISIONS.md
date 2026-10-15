@@ -5229,6 +5229,114 @@ call (`const_call_value`). `zeros[side()]()` is a const argument too (a call is 
 
 **Defect.** D-601: an item-level `comptime:` block was accepted and never run.
 
+## ADR-186 — The error stack: a written `Display` and `Debug`, `From` for every type, `?` through `from`, `Error` and `@derive(Error)`, `AnyError` and `context` (`[ERR-1]`..`[ERR-3]`, `[ERR-7]`..`[ERR-12]`, `[STR-5]`, `[TYP-36]`)
+
+**Context.** Part XIII was unbuilt: `@derive(Error)` was `E0900`, `@error` not an attribute, `From`,
+`Error` and `AnyError` did not exist, and `?` required one error type. Underneath, a struct, an
+enum or a class could not implement `Display` (no `Formatter`, no `FmtError`; `implements Display`
+was `E1010`), a written `Debug` could not replace the implicit one, an extension could not be
+every type's, and nothing could print a `dyn` value. Each of those is built here, generally, and
+the error stack on top of them.
+
+**Decisions.**
+
+1. **`std.fmt`** (new): `@view struct Formatter: out: ref mut String`, the text being built;
+   `write_str(mut self, s: str) -> Result[void, FmtError]` appends (Rust's name; the spec names no
+   method). `FmtError` is a unit-only enum (`Failed`): text built in a `String` never fails;
+   `format_to`'s fixed buffer (unbuilt) can. `std.core` declares `Display` (`fmt`) and `Debug`
+   (`fmt_debug`) as Part IV §8 writes them, and exports them (and `From`, `Error`, `AnyError`) in
+   the prelude.
+2. **The table stays the compiler's.** The numbers, text, collections, `Option`/`Result`, `Box`
+   and `Cell` meet `Display`/`Debug` bounds as before (`implements` answers them like `Ord` and
+   `Clone`); declaring each in `std` is AUTOPILOT §2's B5, still open.
+3. **A written `Display`** is used wherever a value becomes text: an f-string hole, `{x!s}` (then
+   padded by a spec, as Python's `str()`), `print`, `to_string`, `unwrap`/`expect`'s panic text and
+   `main`'s error. The piece is `hir::FStringPart::Write`: a direct call of
+   `std.fmt.write_display[T](value, mut out: String)` with the buffer the f-string is building, so
+   nothing is allocated beyond what `fmt` writes; MIR and the analyses see the call. A `Box` is
+   read through, a `Cell` copied out (`get`'s rule: its `fmt` may run while the cell is `set`; a
+   non-`Copy` value is `E0900`). A plain spec on such a value stays `E2250` (Python's
+   `object.__format__` refuses one too); `!s` first pads its text.
+4. **A written `Debug`** replaces the field-wise one everywhere, nested included: typeck makes
+   `std.fmt.write_debug[T]` for each concrete type that writes one and records its symbol in the
+   type table (`TypeTable::debug_writer`); the C backend's per-type format function calls it. A
+   `Format`/`Print` builtin reaches the writers of the parts its type shows
+   (`debug_writers_reached`), for pruning, the driver's `std` retention, effects and D-604.
+5. **`dyn` values print** through their table: `{e}`/`print(e)` with `std.fmt.write_display[ref dyn
+   I]` (or `Box[dyn I]`) when `I`'s interfaces reach `Display`, `{e!r}` with `write_debug` when they
+   reach `Debug`. A type in a `dyn` table of an interface needing `Debug` that writes none gets
+   `std.fmt.implicit_fmt_debug[T]` in the `fmt_debug` slot (its field-wise text, built then written:
+   one temporary `String`, only through `dyn`). A `dyn` value inside a collection or field is still
+   unformattable (`E0900`, `[TYP-36]`'s open entry).
+6. **An extension over a type parameter standing alone** (`extend[T] T implements I[…]`) is every
+   type's: recorded as a generic extension and given to a type the first time a member of it is
+   called on the type or its interface is asked of it (`apply_universal`), as an instance is given a
+   generic extension. Only the interface's package may write one (ODR-097). Another implementation
+   any type could share it is `E2041` where it is written (`report_universal_overlaps`), concrete,
+   over parameters, or a blanket one. Only one parameter, the target, is built (`E0900` otherwise).
+   `std.core` writes `[ERR-7]`'s `extend[T] T implements From[T]` this way.
+7. **`?` converts** (`[ERR-2]`): a failure of another type is `Err(F.from(e))`, checked as a written
+   `F.from(e)` is (the instance of `From` chosen by the argument's type); the same type is a move. No
+   `From[E]` is `E2040`, naming it. `?` across `Option` and `Result` is `E2181`, whose suggestions
+   are `.ok_or(err)` and `.ok()`.
+8. **`Error`** is `interface Error: Debug + Display` with `source(self) -> Option[ref dyn Error]`
+   defaulting to `None`. An interface naming itself as `dyn` in its methods is entered before them
+   and checked `dyn`-compatible once complete (`E2050`).
+9. **`@derive(Error)`** is written out before anything is checked (`desugar_error_derives`), as the
+   `extend` blocks it stands for: `Display, Error` with `fmt` matching on the variant (by reference)
+   and writing the `@error` text as an f-string whose `{name}`/`{0}` read the fields (`{{`, `!r`,
+   `:spec` as in an f-string), `source` returning an `@from` variant's field, and `From[X]` for each
+   `@from` variant. On a struct the one `@error` is the struct's. `Debug` is the field-wise one; a
+   `@no_derive(Debug)` is overruled, since `Error` needs it. A variant without a text, a second
+   `@error`, `@from` on a variant without one field, or either attribute elsewhere is `E0104`; a
+   placeholder naming no field `E1010`; an `@from` field that is no error `E2020` at the `@from`.
+   The generated `fmt` writes `f.write_str(f"…")`, whose text the backend builds in a stack buffer
+   (64 bytes) before copying it: no heap for a short text.
+10. **`AnyError`** is `struct AnyError: error: Box[dyn Error], identity: u128, context:
+    Array[String]` in `std.core`, with `extend[E: Error] AnyError implements From[E]` (a blanket,
+    D-605). Its text is each context message, the last added first, then the error's; its `Debug`
+    `AnyError(<the error's Debug>[, context=[…]])`; `source` the error's `source`. `is[E]()` and
+    `downcast_ref[E]()` compare `identity`, a 128-bit FNV-1a hash of the error type's canonical name
+    made by the compiler (`type_identity[E]()`, as Rust's `TypeId` is a 128-bit hash: two types
+    share one only by a hash collision), and `downcast_ref` reads the box's data pointer as `ref E`
+    (`dyn_payload[E]`, a new `CastKind::InterfaceDowncast`, borrowed as the box is). A `str` name
+    was tried first: it made `AnyError` a view type. It does not implement `Error`. An associated
+    function an interface instance gives behind a type's own (`AnyError`'s `From[AnyError]` beside
+    its blanket `from`) is now kept as that instance's (`register_associated`).
+11. **`Result[T]`** is `Result[T, AnyError]` (`[ERR-9]`).
+12. **`r.context(msg)` and `r.with_context(f)`** (`[ERR-10]`): the compiler converts `r`'s error into
+    an `AnyError` (as `?` does; `E2040` when it cannot), then `std.core`'s
+    `result_context`/`result_with_context` push the message's text, made only on failure. An
+    `Option`'s (`[ERR-4]` lists `context` for both) makes a `None` an `AnyError` whose text is the
+    message (`Missing`).
+13. **`[ERR-11]`**: converting into an `AnyError` is one allocation (the box; an empty `Array` is
+    none), on the failure path, carrying `Alloc` through `DynBoxNew`; a concrete type moves.
+14. **`[ERR-12]`**: `main`'s `Err` of an `Error` is reported by `std.core.report_error[E]`, of an
+    `AnyError` by `report_any_error`: `error: <Display>`, then `caused by: <Display>` for each
+    `source`. A written `Display` that is not an `Error` prints its text alone.
+15. **`is` as a method name.** `[ERR-8]` names the method `is[E]()`; `[LEX-15]` says "The table
+    above is the complete reserved set" and the table holds `is`. Following AUTOPILOT §4 ("A reserved
+    word that blocks a standard-library method name becomes a contextual keyword") and ODR-040's
+    `not`, the parser takes `is` as a method name immediately after `fn` and `.`. **The spec
+    needs an ODR** adding `is` to `[LEX-15]`'s sentence about `not`: ASK the owner.
+16. A type parameter bounded by the interfaces of a `Box[dyn …]` it is boxed into is accepted in a
+    body checked with its parameters opaque (`AnyError.from`'s `Box(value)`); each instance boxes
+    its own type with that type's table.
+
+**Defects found and fixed on the way:** D-602 (a `std` body named only by a `ref dyn` table was
+dropped from the C), D-603 (a method written in an `extend … implements I` block was also given
+`I`'s default body), D-604 (`[EXC-3]`'s whole-program pass read bodies the program never runs, so
+`AnyError`'s `dyn` calls kept every class check in every program), D-605 (a blanket
+implementation of an associated function was `E2040`).
+
+**Consequences.** Every rule of Part XIII but `[ERR-6]` (FFI status overlays, deferred) has its
+behaviour and tests (`tests/conformance/ERR-2`, `ERR-3`, `ERR-7` to `ERR-12`). Speed: `?` on one
+error type is unchanged (a move); a written `Display` costs a direct call to `write_display` and the
+user's `fmt` (inlinable, no allocation); converting into `AnyError` costs the one allocation
+`[ERR-11]` requires, on the failure path only. Not timed against C yet: the formatting path's
+twin is written (`bench/probes/display_format.em` and `.c`: a written `Display` into a new `String`
+against `snprintf` into a new buffer) and runs with the next benchmark batch.
+
 ## ADR-185 — Distinct `SoA` columns are an alias fact; a comparison chain binds its computed operands; a dropped `Result` warns (`[SIMD-3]`, `[GRM-25]`, `[ERR-5]`, `[TYP-6]`, `[STD-13]`, `[DIA-24]`)
 
 **`[SIMD-3]` (c).** A column view is the call `column(&ps.k, len)` (or `&(*ps).k` for an `SoA`

@@ -689,6 +689,15 @@ impl SiteBuilder<'_> {
                         }
                     }
                     Builtin::MemDrop { elem } => self.drop_sites(*elem, span, sites),
+                    // ADR-186 — formatting a value runs the written `Debug`
+                    // of each part of it that has one.
+                    Builtin::Format | Builtin::FormatWith(_) | Builtin::Print | Builtin::EPrint => {
+                        for writer in self.types.debug_writers_reached(*arg_ty) {
+                            if let Some(&callee) = self.index.get(writer) {
+                                sites.push(Site { effects: Effects::ALL, span, origin: Origin::Call(callee) });
+                            }
+                        }
+                    }
                     // `[STA-3]` — the first access runs the initialiser.
                     Builtin::LazyStatic { init, .. } => {
                         if let Some(&callee) = self.index.get(init.as_str()) {

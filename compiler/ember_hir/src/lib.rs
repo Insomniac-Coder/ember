@@ -590,6 +590,20 @@ pub enum FStringPart {
     /// A value, and how `{x:spec}`, `{x!r}` or `{x=}` asks for it to be
     /// written (`[LEX-19]`); `None` is its plain text, as `print` writes it.
     Value(Expr, Option<FormatSpec>),
+    /// ADR-186 — a value whose type has a written `Display`: `writer` is
+    /// `std.fmt.write_display`'s instance for its type, called with `value`
+    /// (passed as that borrowed parameter takes it) and the text being built.
+    Write { writer: DefId, value: Expr },
+}
+
+impl FStringPart {
+    /// The value this piece writes, if it is not literal text.
+    pub fn value(&self) -> Option<&Expr> {
+        match self {
+            FStringPart::Text(_) => None,
+            FStringPart::Value(value, _) | FStringPart::Write { value, .. } => Some(value),
+        }
+    }
 }
 
 /// `[TXT-10]` (ODR-029) — what `parse` reads.
@@ -2250,6 +2264,9 @@ fn dump_expr(expr: &Expr, function: &Function, types: &ember_types::TypeTable) -
                 .map(|p| match p {
                     FStringPart::Text(text) => format!("{text:?}"),
                     FStringPart::Value(e, _) => format!("{{{}}}", dump_expr(e, function, types)),
+                    FStringPart::Write { writer, value } => {
+                        format!("{{{} by {}}}", dump_expr(value, function, types), writer.0)
+                    }
                 })
                 .collect();
             format!("f({})", inner.join(" "))

@@ -1306,7 +1306,8 @@ pub fn verify_views(body: &Body, types: &TypeTable) -> Vec<Violation> {
                         crate::CastKind::ClassUpcastBorrowed
                         | crate::CastKind::InterfaceUpcast { .. }
                         | crate::CastKind::ClassInterfaceUpcast { .. }
-                        | crate::CastKind::ViewsDisjoint,
+                        | crate::CastKind::ViewsDisjoint
+                        | crate::CastKind::InterfaceDowncast,
                     ..
                 } => None,
                 Rvalue::Cast { .. } => Some("a cast"),

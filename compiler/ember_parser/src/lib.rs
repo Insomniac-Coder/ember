@@ -318,12 +318,18 @@ impl<'a> Parser<'a> {
     /// is a keyword only where an operand is expected. Part IV §8's `Not`
     /// interface has the method `not` (`~x`), and a reserved word that blocks
     /// a standard-library method name is contextual (ODR-040, as ODR-030 made
-    /// `extend`).
+    /// `extend`). ADR-186 — so is `is`, which is an operator only between two
+    /// operands: `[ERR-8]`'s `AnyError` has the method `is[E]()`.
     fn expect_member_name(&mut self) -> Ident {
-        if let TokenKind::Keyword(Kw::Not) = self.peek() {
+        let name = match self.peek() {
+            TokenKind::Keyword(Kw::Not) => Some("not"),
+            TokenKind::Keyword(Kw::Is) => Some("is"),
+            _ => None,
+        };
+        if let Some(name) = name {
             let span = self.span();
             self.bump();
-            return Ident { name: Symbol::intern("not"), span };
+            return Ident { name: Symbol::intern(name), span };
         }
         self.expect_ident()
     }

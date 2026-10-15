@@ -10939,6 +10939,26 @@ target). D-620 (a captured `u128` was boxed with no `Alloc`) and D-621 (`[compti
 `RT-4`. Trap: `check_branding.py` flags a path written with the compiler crate's name in a test;
 build it from `CARGO_MANIFEST_DIR`.
 
+**2026-10-15, the error stack (ADR-186), built in a worktree beside the evaluator.** Part XIII but
+`[ERR-6]` (FFI overlays, deferred): `std.fmt` (`Formatter`, `FmtError`, `write_str`); a written
+`Display` used wherever a value becomes text (`hir::FStringPart::Write`, a direct call of
+`std.fmt.write_display`, no allocation); a written `Debug` replacing the field-wise one everywhere
+(`TypeTable::debug_writer`, called by the C backend's format functions); `dyn` values printed
+through their table; `extend[T] T implements I` (an extension over a parameter standing alone, given
+to a type when asked: `apply_universal`), which `std.core` uses for `[ERR-7]`'s identity `From`;
+`?` converting with `F.from(e)` (`E2040` without one, `E2181` across `Option`/`Result`, new page);
+`Error`; `@derive(Error)` written out as `extend` blocks before checking
+(`ember_typeck/src/errors.rs`, where the rest of this lives); `AnyError` (a boxed `dyn Error`, a
+128-bit type identity for `is`/`downcast_ref`, context messages), `Result[T]`,
+`context`/`with_context` (on `Option` too), `main`'s `caused by:` chain. Defects D-602..D-605 fixed on
+the way (D-604: `[EXC-3]`'s whole-program pass now reads only the bodies the program can run, or
+`AnyError`'s `dyn` calls would have kept every class check in every program). **ASK the owner:**
+`is` is a method name after `fn` and `.` (`AnyError.is[E]()`), as ODR-040 made `not`, but
+`[LEX-15]` still reserves it everywhere: it needs an ODR. **Not yet timed against C:** a written
+`Display` formatted into a `String` against `snprintf`; the twin is written
+(`bench/probes/display_format.em`/`.c`, same output) and waits for the next benchmark batch. Open: a `dyn` value inside a collection or field is still unformattable (`[TYP-36]`'s
+entry); a `Cell` of a non-`Copy` value with a written `Display` is `E0900`.
+
 **2026-10-15, `Mutex` and `RwLock` (ADR-177), the dependency map's step 4 begun.** `std.sync.Mutex`
 and `RwLock` with their guards: a lock word in the value, inline compare-exchange/swap in
 `ember_rt.h`, `WaitOnAddress`/`futex` waits in `ember_rt.c`, runtime C tests under four threads

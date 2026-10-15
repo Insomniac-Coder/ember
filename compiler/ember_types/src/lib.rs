@@ -484,6 +484,11 @@ pub struct TypeTable {
     /// `[THR-6]` — the structs and classes declared `@must_drop`, by declared
     /// name (a generic one's instances share it as their origin).
     must_drop_declared: HashSet<Symbol>,
+    /// ADR-186, `[STR-5]` — the function writing a type's written `Debug`
+    /// text (`std.fmt.write_debug`'s instance for it, `(value, mut out:
+    /// String)`), by symbol: formatting the type, alone or inside another
+    /// value, calls it in place of the field-wise text.
+    debug_writers: HashMap<Ty, String>,
     next_infer: u32,
     /// Pointer width of the target, in bytes. 8 for every v1 target.
     pointer_size: u64,
@@ -573,6 +578,7 @@ impl TypeTable {
             phantoms: HashMap::new(),
             zeroable_derived: HashSet::new(),
             must_drop_declared: HashSet::new(),
+            debug_writers: HashMap::new(),
             next_infer: 0,
             constant_statics: Vec::new(),
             pointer_size: 8,
@@ -1849,6 +1855,50 @@ impl TypeTable {
             TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => self.must_drop_container(*elem),
             _ => None,
         }
+    }
+
+    /// ADR-186 — record the function writing `ty`'s written `Debug`.
+    pub fn set_debug_writer(&mut self, ty: Ty, symbol: String) {
+        self.debug_writers.insert(ty, symbol);
+    }
+
+    /// ADR-186 — the function writing `ty`'s written `Debug`, if it has one.
+    pub fn debug_writer(&self, ty: Ty) -> Option<&str> {
+        self.debug_writers.get(&ty).map(String::as_str)
+    }
+
+    /// ADR-186 — the written `Debug` writers formatting a `ty` runs: its own,
+    /// or those of the parts its field-wise text shows (an element, a field,
+    /// a payload, what a reference, a `Box` or a `Cell` holds).
+    pub fn debug_writers_reached(&self, ty: Ty) -> Vec<&str> {
+        let mut out = Vec::new();
+        let mut seen = HashSet::new();
+        let mut pending = vec![ty];
+        while let Some(ty) = pending.pop() {
+            if !seen.insert(ty) {
+                continue;
+            }
+            if let Some(writer) = self.debug_writer(ty) {
+                out.push(writer);
+                continue;
+            }
+            match self.kind(ty) {
+                TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => pending.push(*inner),
+                TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => {
+                    pending.push(*elem)
+                }
+                TyKind::Tuple(items) => pending.extend(items.iter().copied()),
+                TyKind::Struct(id) => {
+                    pending.extend(self.printed_as(ty));
+                    pending.extend(self.struct_def(*id).fields.iter().map(|field| field.ty));
+                }
+                TyKind::Enum(id) => {
+                    pending.extend(self.enum_def(*id).variants.iter().flat_map(|variant| variant.fields.iter().map(|field| field.ty)))
+                }
+                _ => {}
+            }
+        }
+        out
     }
 
     /// `[ARN-11]` — record a struct's `@derive(Zeroable)`; each instance is

@@ -1710,6 +1710,13 @@ impl Emitter<'_> {
                     format!("for (size_t i = 0; i < {{len}}; ++i) {{ if (i) {} {item} }}", text(", "))
                 };
                 let body = match self.types.kind(ty).clone() {
+                    // ADR-186, `[STR-5]` — a written `Debug` replaces the
+                    // field-wise text: its writer takes the value as its
+                    // borrowed parameter does, and the text being built.
+                    _ if let Some(writer) = self.types.debug_writer(ty) => {
+                        let value = if self.types.passed_by_address(ty) { format!("({c_ty}*)(v)") } else { "*v".to_string() };
+                        format!("{writer}({value}, out);")
+                    }
                     TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => {
                         format!("{} {} {}", text("["), each(self, elem, "v->ptr").replace("{len}", "v->len"), text("]"))
                     }
@@ -8956,6 +8963,7 @@ impl Emitter<'_> {
                         format!("(({ty}){value})")
                     }
                     CastKind::ViewsDisjoint => value,
+                    CastKind::InterfaceDowncast => format!("(({ty})(({value})->data))"),
                 }
             }
             Rvalue::Aggregate { kind: AggregateKind::Callable, operands } => {

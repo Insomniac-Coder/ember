@@ -3327,6 +3327,23 @@ impl<'a> Builder<'a> {
                         rvalue: Rvalue::Ref { place: place.clone(), mutable: true },
                     });
                     let target = Operand::Copy(Place::local(buffer));
+                    // ADR-186 — a written `Display`: its writer is called with
+                    // the value, borrowed, and the text being built, which its
+                    // `mut out: String` parameter takes by address.
+                    if let hir::FStringPart::Write { writer, value } = part {
+                        let operand = self.lower_operand_borrowed(value);
+                        let symbol = self.program.function(*writer).symbol.clone();
+                        let next = self.new_block();
+                        let sink = self.temp(void, expr.span);
+                        self.terminate(Terminator::Call {
+                            func: FuncRef::Direct { symbol, latebound: false },
+                            args: vec![operand, target],
+                            dest: Place::local(sink),
+                            next,
+                        });
+                        self.current = next;
+                        continue;
+                    }
                     let (which, args, arg_ty) = match part {
                         hir::FStringPart::Text(text) => (
                             hir::Builtin::StringPush,
@@ -3343,6 +3360,7 @@ impl<'a> Builder<'a> {
                             };
                             (which, vec![target, operand], value.ty)
                         }
+                        hir::FStringPart::Write { .. } => unreachable!("written above"),
                     };
                     let next = self.new_block();
                     // The append writes through the buffer, not into a
@@ -3389,7 +3407,7 @@ impl<'a> Builder<'a> {
                     TyKind::Char => 4,
                     _ => return None,
                 },
-                hir::FStringPart::Value(_, Some(_)) => return None,
+                hir::FStringPart::Value(_, Some(_)) | hir::FStringPart::Write { .. } => return None,
             };
         }
         Some(room)
@@ -6083,6 +6101,14 @@ impl<'a> Builder<'a> {
                             && self.types.class_is_subclass_of(*derived, *base)
                         {
                             CastKind::ClassUpcastBorrowed
+                        } else if let TyKind::Struct(boxed) = self.types.kind(*derived)
+                            && self
+                                .types
+                                .compiler_box_inner(*boxed)
+                                .is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. }))
+                            && !matches!(self.types.kind(*base), TyKind::Dyn { .. })
+                        {
+                            CastKind::InterfaceDowncast
                         } else {
                             CastKind::Numeric
                         }
