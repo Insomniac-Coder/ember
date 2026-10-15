@@ -2620,6 +2620,8 @@ fn builtin_contract(func: &FuncRef) -> Option<CallRegionContract> {
         // `[THR-11]` — a scoped thread's handle borrows its scope (argument 0): it may not
         // outlive the `with` block, whose end frees the thread.
         Builtin::ScopeSpawn { .. } => vec![vec![Projection::Field(0)]],
+        // `[SOA-2]` — a column view borrows its column's pointer field (argument 0).
+        Builtin::SoA { op: ember_mir::SoAOp::Column { .. }, .. } => vec![Vec::new()],
         Builtin::StrSplitOnce { some, .. } => (0..2)
             .map(|index| vec![Projection::Downcast(*some), Projection::Field(0), Projection::Field(index)])
             .collect(),

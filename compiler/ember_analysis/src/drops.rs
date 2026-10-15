@@ -983,6 +983,18 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
         if !types.needs_drop(moved) && !holds_mutable_borrow(types, moved, 0) {
             return;
         }
+        // `[EXP-6]` (D-599) — an element of an array, `Array`, `Span` or `SoA` column stays in its
+        // container, which drops it again: moving it out is `E3011`.
+        if place.projection.iter().any(|p| matches!(p, Projection::Index(_) | Projection::ConstIndex(_))) {
+            sink.emit_classified(
+                Diagnostic::error(codes::E3011, span, "cannot move out of an element")
+                    .primary_label("moved out here")
+                    .note("the container still holds the element and drops it with the rest [EXP-6]")
+                    .help("clone it, or take it out with `mem.take`, `mem.replace`, `swap`, `pop` or `remove`"),
+            );
+            errors += 1;
+            return;
+        }
         let through_ref = place
             .projection
             .iter()

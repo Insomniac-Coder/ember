@@ -624,6 +624,11 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         B::ThreadSpawn => (Effects::SYNC | Effects::ALLOC, "`thread.spawn`"),
         B::ThreadJoin => (Effects::SYNC | Effects::BLOCK, "`JoinHandle.join`"),
         B::ThreadScope => (Effects::ALLOC, "`thread.scope`"),
+        B::SoA { op: ember_mir::SoAOp::WithCapacity | ember_mir::SoAOp::Push | ember_mir::SoAOp::Reserve, .. } => {
+            (Effects::ALLOC, "growing an `SoA`")
+        }
+        B::SoA { op: ember_mir::SoAOp::SwapRemove, .. } => (Effects::PANIC, "`SoA.swap_remove`"),
+        B::SoA { .. } => (Effects::NONE, "an `SoA` operation"),
         B::ScopeSpawn { .. } => (Effects::SYNC | Effects::ALLOC, "`Scope.spawn`"),
         B::ScopedJoin => (Effects::SYNC | Effects::BLOCK, "`ScopedJoinHandle.join`"),
         // `[DSJ-1]` — it establishes a static fact; `@static_safe` allows it (`[EFF-12]`).

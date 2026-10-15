@@ -10897,8 +10897,13 @@ checker refuses two tasks writing one place (`E3022`) or the block writing what 
 are new producers with pages. Scoped spawn+join x1.007 of C. D-598 fixed on the way (a lambda
 giving a capture to a `mut` parameter was `E3023`). Concurrency (Part XI.1-XI.3) is built but
 for `[THR-4]`'s lock-order report, `[THR-14]`'s 128-bit atomics and `[THR-10]`'s static-view
-captures; D-597 (channel x1.35 on Windows) is open. **Next:** `SoA` (`[CTL-3b]`, `[BRW-5]`,
-`[DSJ-4]` wait on it), then the compile-time evaluator, `some` return types, coroutines.
+captures; D-597 (channel x1.35 on Windows) is open. Then `SoA` stage A (ADR-184): `SoA[T]` as column pointers into one
+64-byte-aligned block, columns as views of their own fields (disjoint borrows), `ps[i].f` places,
+push/pop/get/swap_remove/clear/reserve; integrate x0.81 of C. D-599 fixed on the way (`E3011` had no
+producer: moving out of an `Array` element leaked the rest). ASK the owner: a writable column
+borrowed shared where a `Span` is expected (an interpretation of `[SOA-2]` with `[TYP-5]` rule 6).
+**Next:** `SoA` stage B (proxies, `ps[i] = v`, `load`, iteration, `retain`, `sort_by_key`,
+`@soa(flatten)`, `ArenaSoA`), then the compile-time evaluator, `some` return types, coroutines.
 
 **2026-10-15, `Mutex` and `RwLock` (ADR-177), the dependency map's step 4 begun.** `std.sync.Mutex`
 and `RwLock` with their guards: a lock word in the value, inline compare-exchange/swap in

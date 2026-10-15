@@ -5016,6 +5016,36 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-184 — `SoA[T]` is a struct of column pointers into one block; a column is a view of its own field (`[SOA-1]`..`[SOA-7]`, stage A)
+
+**Context.** `[SOA-1]`..`[SOA-7]` give `SoA[T]` for any struct `T`: one column per field, columns
+as disjoint `Span`/`MutSpan` places, element proxies whose fields are places in one column, the
+container operations, one heap block with 64-byte-aligned columns.
+
+**Decision (stage A).** `SoA[T]` is built by the type checker (`soa_of`, prelude name) as a struct
+of one private pointer per field of `T` (`col_<field>: *mut F`), then `len` and `cap`; not a
+struct is `E2071` (new page). `ps.f` is `Builtin::SoA { op: Column }` over a borrow of `col_f`
+itself and the length: two columns are two places, so they borrow at once (`[BRW-4]`), and
+`push`/`clear`/`reserve`/`swap_remove`, which borrow all of `ps`, conflict with a live column. A
+column is a `MutSpan` where `ps` is writable and a `Span` otherwise; where a `Span` is expected a
+writable column is borrowed shared, as an `Array` place converts by `[TYP-5]` rule 6 (Part XII.1's
+own `integrate(ps.pos, ps.vel, …)` needs it; *an interpretation: ASK the owner*). `ps[i].f` is the
+place `col_f[i]` (MIR bounds-checks it against `len`), so `ps[i].f -= x` reads and writes it once.
+`get` gathers a clone of each field from shared columns (`T: Clone`), `pop` moves the last element
+out, both `None` when absent; `swap_remove` panics out of range. The backend writes per `SoA[T]`
+the block layout (each column at the larger of 64 bytes and its alignment, `[SOA-7]`), growth (one
+new block, columns copied, old freed), push, take, clear (fields dropped), reserve, swap_remove and
+drop. `Send`/`Sync` as `T`.
+
+**Speed.** Part XII.1's `integrate` over 100 thousand particles, 200 steps
+(`bench/probes/soa_integrate`), clang: 17.3 ms against 21.4 ms for C's three columns in one aligned
+block (x0.81; `[BEN-6]` allows 1.10).
+
+**Not built (stage B).** The element as a whole (`SoARef`/`SoAMut`, `ps[i] = v`, `load`, `for p in
+ps`, `iter_mut`), `retain`, `sort_by_key`, `@soa(flatten)`, `ArenaSoA`, an `SoA` in generic code.
+
+---
+
 ## ADR-183 — `thread.scope`: a task's closure flows into its `Scope`, so its borrows last the block (`[THR-5]`, `[THR-11]`, `[THR-12]`)
 
 **Context.** `[THR-11]` lets a scoped task borrow anything that outlives its `with` block, with

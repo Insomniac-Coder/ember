@@ -1470,6 +1470,9 @@ impl TypeTable {
                     } else if name.is("std.sync.MutexGuard") && args.len() == 1 {
                         // `[THR-3]` — a guard is not `Send`: it is unlocked where it was taken.
                         (false, both(args[0], visiting).1)
+                    } else if name.is("SoA") && args.len() == 1 {
+                        // `[SOA-1]` — its columns are `T`'s fields, behind private pointers.
+                        both(args[0], visiting)
                     } else if name.is("std.thread.Scope") || name.is("std.thread.ScopedJoinHandle") {
                         // `[THR-5]` — they stay in the block that made them.
                         (false, false)

@@ -971,6 +971,7 @@ impl Emitter<'_> {
         self.emit_class_type_infos();
         self.emit_shared_type_infos();
         self.emit_thread_helpers();
+        self.emit_soa_helpers();
 
         for body in bodies {
             if body.is_abstract || body.is_extern_declaration {
@@ -2183,6 +2184,137 @@ impl Emitter<'_> {
     /// destructor. Derived classes inherit the obligation even when they do
     /// not declare their own `drop`, because `[CLS-6]` still requires the base
     /// destructor to run.
+    /// `[SOA-1]`..`[SOA-7]` — for each `SoA[T]`: the layout of its one block for a capacity (each
+    /// column at the larger of 64 bytes and its element's alignment, `[SOA-7]`), growth (one new
+    /// block, the columns copied over, the old one freed), and the operations, each keeping the
+    /// columns aligned element for element. Static in every unit that needs them.
+    fn emit_soa_helpers(&mut self) {
+        let soas: Vec<(StructId, Ty)> = self
+            .types
+            .structs()
+            .filter_map(|(id, def)| match &def.origin {
+                Some((origin, args)) if origin.as_str() == "SoA" && args.len() == 1 => Some((id, args[0])),
+                _ => None,
+            })
+            .collect();
+        if soas.is_empty() {
+            return;
+        }
+        self.line("/* [SOA-1] SoA helpers */");
+        for (id, element) in soas {
+            let name = self.c_named(&self.types.struct_def(id).name.to_string());
+            let soa_c = self.c_type(self.types.find(&TyKind::Struct(id)).expect("an SoA's type is interned"));
+            let element_c = self.c_type(element);
+            let TyKind::Struct(element_id) = *self.types.kind(element) else { continue };
+            let fields: Vec<(String, Ty)> = self.types.struct_def(element_id).fields.iter().map(|f| (f.name.to_string(), f.ty)).collect();
+            let count = fields.len().max(1);
+            // Layout.
+            self.line(&format!("static inline EMBER_MAYBE_UNUSED size_t {name}_layout(size_t cap, size_t* at) {{"));
+            self.line("    size_t end = 0;");
+            for (k, (_, ty)) in fields.iter().enumerate() {
+                let c = self.c_type(*ty);
+                self.line(&format!("    {{ size_t a = _Alignof({c}) > 64 ? _Alignof({c}) : 64; end = (end + a - 1) / a * a; at[{k}] = end; end += cap * sizeof({c}); }}"));
+            }
+            self.line("    return end;");
+            self.line("}");
+            // Growth.
+            self.line(&format!("static inline EMBER_MAYBE_UNUSED void {name}_grow({soa_c}* s, size_t need) {{"));
+            self.line("    size_t cap = s->cap ? s->cap : 8;");
+            self.line("    while (cap < need) { cap *= 2; }");
+            self.line(&format!("    size_t at[{count}];"));
+            self.line(&format!("    size_t size = {name}_layout(cap, at);"));
+            self.line(&format!("    unsigned char* block = (unsigned char*){RT}alloc(size ? size : 1, 64);"));
+            for (k, (field, ty)) in fields.iter().enumerate() {
+                let c = self.c_type(*ty);
+                self.line(&format!("    if (s->len) {{ memcpy(block + at[{k}], s->col_{field}, s->len * sizeof({c})); }}"));
+            }
+            if let Some((first, _)) = fields.first() {
+                self.line("    if (s->cap) {");
+                self.line(&format!("        size_t old[{count}];"));
+                self.line(&format!("        size_t old_size = {name}_layout(s->cap, old);"));
+                self.line(&format!("        {RT}free(s->col_{first}, old_size ? old_size : 1, 64);"));
+                self.line("    }");
+            }
+            for (k, (field, ty)) in fields.iter().enumerate() {
+                let c = self.c_type(*ty);
+                self.line(&format!("    s->col_{field} = ({c}*)(block + at[{k}]);"));
+            }
+            self.line("    s->cap = cap;");
+            self.line("}");
+            // with_capacity
+            self.line(&format!("static inline EMBER_MAYBE_UNUSED {soa_c} {name}_with_capacity(int64_t n) {{"));
+            self.line(&format!("    {soa_c} s;"));
+            self.line("    memset(&s, 0, sizeof s);");
+            self.line(&format!("    if (n > 0) {{ {name}_grow(&s, (size_t)n); }}"));
+            self.line("    return s;");
+            self.line("}");
+            // push
+            self.line(&format!("static inline EMBER_MAYBE_UNUSED void {name}_push({soa_c}* s, {element_c} v) {{"));
+            self.line(&format!("    if (s->len == s->cap) {{ {name}_grow(s, s->len + 1); }}"));
+            for (field, _) in &fields {
+                self.line(&format!("    s->col_{field}[s->len] = v.{field};"));
+            }
+            self.line("    s->len += 1;");
+            self.line("}");
+            // take_last
+            self.line(&format!("static inline EMBER_MAYBE_UNUSED {element_c} {name}_take_last({soa_c}* s) {{"));
+            self.line("    s->len -= 1;");
+            self.line(&format!("    {element_c} v;"));
+            for (field, _) in &fields {
+                self.line(&format!("    v.{field} = s->col_{field}[s->len];"));
+            }
+            self.line("    return v;");
+            self.line("}");
+            // clear: each element's fields dropped
+            self.line(&format!("static inline EMBER_MAYBE_UNUSED void {name}_clear({soa_c}* s) {{"));
+            let mut drops = Vec::new();
+            for (field, ty) in &fields {
+                if self.types.needs_drop(*ty) {
+                    self.drop_lines(&format!("s->col_{field}[i]"), *ty, &mut drops);
+                }
+            }
+            if !drops.is_empty() {
+                self.line("    for (size_t i = 0; i < s->len; ++i) {");
+                for line in drops {
+                    self.line(&format!("        {line}"));
+                }
+                self.line("    }");
+            }
+            self.line("    s->len = 0;");
+            self.line("}");
+            // reserve
+            self.line(&format!("static inline EMBER_MAYBE_UNUSED void {name}_reserve({soa_c}* s, int64_t n) {{"));
+            self.line(&format!("    if (n > 0 && s->len + (size_t)n > s->cap) {{ {name}_grow(s, s->len + (size_t)n); }}"));
+            self.line("}");
+            // swap_remove
+            self.line(&format!("static inline EMBER_MAYBE_UNUSED {element_c} {name}_swap_remove({soa_c}* s, int64_t i, {RT}loc loc) {{"));
+            self.line(&format!("    if (i < 0 || (size_t)i >= s->len) {{ {RT}panic_bounds((size_t)i, s->len, loc); }}"));
+            self.line(&format!("    {element_c} v;"));
+            for (field, _) in &fields {
+                self.line(&format!("    v.{field} = s->col_{field}[i];"));
+            }
+            self.line("    s->len -= 1;");
+            self.line("    if ((size_t)i != s->len) {");
+            for (field, _) in &fields {
+                self.line(&format!("        s->col_{field}[i] = s->col_{field}[s->len];"));
+            }
+            self.line("    }");
+            self.line("    return v;");
+            self.line("}");
+            // drop
+            self.line(&format!("static inline EMBER_MAYBE_UNUSED void {name}_drop({soa_c}* s) {{"));
+            self.line(&format!("    {name}_clear(s);"));
+            if let Some((first, _)) = fields.first() {
+                self.line("    if (s->cap) {");
+                self.line(&format!("        size_t at[{count}];"));
+                self.line(&format!("        size_t size = {name}_layout(s->cap, at);"));
+                self.line(&format!("        {RT}free(s->col_{first}, size ? size : 1, 64);"));
+                self.line("    }");
+            }
+            self.line("}");
+        }
+    }
+
     /// `[THR-10]` — the `JoinHandle[R]` type for a thread whose function returns `result`, and the
     /// C name its helpers are named after.
     fn join_handle_for(&self, result: Ty) -> Option<(Ty, String)> {
@@ -4019,6 +4151,12 @@ impl Emitter<'_> {
                             let mutex_c = self.c_type(mutex);
                             out.push(format!("{RT}mutex_unlock(&(({mutex_c}*){access}.value)->word);"));
                         }
+                        return;
+                    }
+                    // `[SOA-1]` — its elements' fields, then its block.
+                    Some("SoA") => {
+                        let name = self.c_named(&def.name.to_string());
+                        out.push(format!("{name}_drop(&({access}));"));
                         return;
                     }
                     // `[THR-5]` — a scope's end joins its threads.
@@ -7016,6 +7154,26 @@ impl Emitter<'_> {
                         let TyKind::Struct(id) = *self.types.kind(*arg_ty) else { unreachable!("join takes the handle") };
                         let name = self.c_named(&self.types.struct_def(id).name.to_string());
                         return format!("{name}_join(({RT}thread*)({}).thread)", rendered[0]);
+                    }
+                    // `[SOA-1]`..`[SOA-7]` — through the helpers `emit_soa_helpers` writes.
+                    Builtin::SoA { op, soa } => {
+                        let TyKind::Struct(id) = *self.types.kind(*soa) else { unreachable!("an SoA is a struct") };
+                        let name = self.c_named(&self.types.struct_def(id).name.to_string());
+                        let r = |i: usize| rendered[i].clone();
+                        return match op {
+                            ember_mir::SoAOp::WithCapacity => format!("{name}_with_capacity({})", r(0)),
+                            ember_mir::SoAOp::Column { mutable } => {
+                                let view = if *mutable { format!("{RT}mutspan") } else { format!("{RT}span") };
+                                format!("(({view}){{ *({}), {} }})", r(0), r(1))
+                            }
+                            ember_mir::SoAOp::Element { .. } => unreachable!("a field access takes an element apart"),
+                            ember_mir::SoAOp::Push => format!("{name}_push({}, {})", r(0), r(1)),
+                            ember_mir::SoAOp::TakeLast => format!("{name}_take_last({})", r(0)),
+                            ember_mir::SoAOp::Len => format!("((int64_t)({})->len)", r(0)),
+                            ember_mir::SoAOp::Clear => format!("{name}_clear({})", r(0)),
+                            ember_mir::SoAOp::Reserve => format!("{name}_reserve({}, {})", r(0), r(1)),
+                            ember_mir::SoAOp::SwapRemove => format!("{name}_swap_remove({}, {}, {})", r(0), r(1), self.location(span)),
+                        };
                     }
                     // `[THR-5]` — a scope's task list; its end (the drop) joins them.
                     Builtin::ThreadScope => {

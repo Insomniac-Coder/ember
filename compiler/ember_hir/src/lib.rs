@@ -755,6 +755,46 @@ pub enum PatternKind {
     Error,
 }
 
+/// `[SOA-1]`..`[SOA-7]` — the operations on an `SoA[T]`. Arguments are listed with each; `ps` is
+/// the `SoA` (borrowed as the operation needs), `i` an `int`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SoAOp {
+    /// `SoA[T].with_capacity(n)`: `[n]`.
+    WithCapacity,
+    /// `ps.f`: `[borrow of the column's pointer field, the length]`; gives `Span[F]` or `MutSpan[F]`.
+    Column { mutable: bool },
+    /// `ps[i]`, which only a field access (`ps[i].f`) takes apart: `[ps, i]`.
+    Element { mutable: bool },
+    /// `[ref mut ps, value]`.
+    Push,
+    /// `[ref mut ps]`, the length known above zero: moves the last element out.
+    TakeLast,
+    /// `[ref ps]`: the length, an `int`.
+    Len,
+    /// `[ref mut ps]`.
+    Clear,
+    /// `[ref mut ps, n]`.
+    Reserve,
+    /// `[ref mut ps, i]`: moves element `i` out, the last into its place; panics out of range.
+    SwapRemove,
+}
+
+impl SoAOp {
+    pub fn name(self) -> &'static str {
+        match self {
+            SoAOp::WithCapacity => "with_capacity",
+            SoAOp::Column { .. } => "column",
+            SoAOp::Element { .. } => "index",
+            SoAOp::Push => "push",
+            SoAOp::TakeLast => "pop",
+            SoAOp::Len => "len",
+            SoAOp::Clear => "clear",
+            SoAOp::Reserve => "reserve",
+            SoAOp::SwapRemove => "swap_remove",
+        }
+    }
+}
+
 /// `[THR-14]` — the atomic operations the C compilers give, which `Atomic[T]`'s methods are built
 /// from. `FetchAdd` and `FetchSub` wrap.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1457,6 +1497,8 @@ pub enum Builtin {
     ScopeSpawn { closure: Option<DefId> },
     /// `[THR-11]` — `h.join()` on a `ScopedJoinHandle`: the handle, moved; gives the result.
     ScopedJoin,
+    /// `[SOA-1]`..`[SOA-7]` — an operation on `soa`, an `SoA[T]` type.
+    SoA { op: SoAOp, soa: Ty },
     /// `[ARN-1]`, `[ARN-4]` — `Arena.with_capacity(bytes)`. The Arena itself
     /// is a compiler-known move-only struct; the runtime state it owns is
     /// opaque to Ember source.
@@ -1699,6 +1741,7 @@ impl Builtin {
             Builtin::ThreadScope => "scope",
             Builtin::ScopeSpawn { .. } => "spawn",
             Builtin::ScopedJoin => "join",
+            Builtin::SoA { op, .. } => op.name(),
             Builtin::ArenaWithCapacity => "with_capacity",
             Builtin::ArenaAlloc { .. }
             | Builtin::FixedArenaAlloc { .. }

@@ -3064,6 +3064,7 @@ impl<'a> Builder<'a> {
                     | hir::Builtin::WeakEmpty { .. }
                     | hir::Builtin::ThreadScope
                     | hir::Builtin::ScopeSpawn { .. } => expr.ty,
+                    hir::Builtin::SoA { soa, .. } => *soa,
                     hir::Builtin::SizeOf => args.last().map(|a| a.ty).unwrap_or(expr.ty),
                     _ => args.first().map(|a| a.ty).unwrap_or(expr.ty),
                 };
@@ -3083,6 +3084,7 @@ impl<'a> Builder<'a> {
                         | hir::Builtin::FixedArenaAlloc { .. }
                         | hir::Builtin::ScopedArenaAlloc { .. }
                 );
+                let spill_second = spill_second || matches!(which, hir::Builtin::SoA { op: hir::SoAOp::Push, .. });
                 let spill_first = matches!(
                     which,
                     hir::Builtin::BoxNew { .. }
@@ -6211,6 +6213,18 @@ impl<'a> Builder<'a> {
     /// the backend — the check is then visible to every MIR analysis, the
     /// same choice `[TYP-8]`'s arithmetic checks make.
     fn lower_index(&mut self, base: &'a hir::Expr, index: &'a hir::Expr, span: ember_span::Span) -> Place {
+        // `[SOA-6]` — `ps[i].f`: column `f`'s pointer indexed, checked against `ps`'s length (the
+        // field after the columns).
+        let soa_len = match (&base.kind, self.types.kind(base.ty)) {
+            (hir::ExprKind::Field { base: soa, .. }, TyKind::Ptr { .. }) => match *self.types.kind(soa.ty) {
+                TyKind::Struct(id) => {
+                    let def = self.types.struct_def(id);
+                    def.origin.as_ref().is_some_and(|(origin, _)| origin.as_str() == "SoA").then(|| def.fields.len() - 2)
+                }
+                _ => None,
+            },
+            _ => None,
+        };
         let fixed_len = match self.types.kind(base.ty) {
             TyKind::Array { len, .. } => Some(*len),
             // An `Array[T]`'s length is a field, read at the point of use;
@@ -6222,9 +6236,14 @@ impl<'a> Builder<'a> {
             _ => Some(0),
         };
         let base = self.lower_place(base);
-        let len: Operand = match fixed_len {
-            Some(len) => Operand::Const(Const::Int { value: len as u128, ty: self.usize_ty }),
-            None => Operand::Copy(base.clone().field(1)),
+        let len: Operand = match (soa_len, fixed_len) {
+            (Some(len_field), _) => {
+                let mut soa = base.clone();
+                soa.projection.pop();
+                Operand::Copy(soa.field(len_field))
+            }
+            (None, Some(len)) => Operand::Const(Const::Int { value: len as u128, ty: self.usize_ty }),
+            (None, None) => Operand::Copy(base.clone().field(1)),
         };
 
         self.at(span);
