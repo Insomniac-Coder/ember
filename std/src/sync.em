@@ -35,14 +35,24 @@
 ## `[THR-9]`). The compiler builds it as it builds `Shared`; the declaration here gives it its
 ## name.
 ##
+## `[THR-15]` — `channel[T](capacity=n)` makes a queue of at most `n` values (one or more) that any
+## number of `Sender[T]`s fill and one `Receiver[T]` empties, in order; `channel_unbounded[T]()` one
+## with no bound, which allocates as it grows. `tx.send(v)` waits while the queue is full and gives
+## `v` back in a `SendError` once the receiver is gone; `rx.recv()` waits while it is empty and gives
+## `None` once every sender is gone and the queue is empty. `try_send` and `try_recv` never wait.
+## `for v in rx:` receives until `None`. A `Sender` is `Send`, `Sync` and `Clone`; a `Receiver` is
+## `Send`. Written here in Ember: a `Mutex` around a ring of values, and two event counts a waiting
+## side sleeps on, bumped only when it is asleep.
+##
 ## The compiler knows these types by their names here (as it knows `std.collections`'s arena
 ## collections), lowers `lock` and `try_lock` to the runtime's lock word (`ember_mutex_lock`,
-## `ember_mutex_try_lock`) and a guard's end to `ember_mutex_unlock`. The word is private, starts
-## at 0, and is the runtime's alone.
+## `ember_mutex_try_lock`) and a guard's end to `ember_mutex_unlock`. The word is private, one
+## pointer wide, starts at 0, and is the runtime's alone: on Windows the system's SRWLOCK, elsewhere
+## a futex word.
 
 pub struct Mutex[T]:
     value: T
-    word: u32 = 0
+    word: usize = 0
 
 @view
 pub struct MutexGuard[T]:
@@ -60,7 +70,7 @@ pub struct Atomic[T]:
 
 pub struct RwLock[T]:
     value: T
-    word: u32 = 0
+    word: usize = 0
 
 @view
 pub struct RwLockReadGuard[T]:
@@ -93,3 +103,177 @@ const ONCE_DONE: u32 = 2
 
 pub struct SyncShared[T]:
     value: *mut T
+
+pub struct SendError[T]:
+    ## The value that was not sent.
+    pub value: T
+    ## True once the receiver is gone; false when `try_send` found the queue full.
+    pub disconnected: bool
+
+## A first-in, first-out ring of `slots`, `count` of them full from `head` on, and who is asleep on
+## it: changed only under the channel's lock, so a value that finds nobody asleep costs the lock
+## and nothing more. A bounded channel's ring is its capacity; an unbounded one's doubles when full.
+struct ChannelQueue[T]:
+    slots: Array[Option[T]]
+    head: int
+    count: int
+    receiver_waiting: bool
+    receiver_gone: bool
+    senders_waiting: int
+
+    fn push(mut self, owned value: T):
+        if self.count == self.slots.len():
+            self.grow()
+        at = self.head + self.count
+        if at >= self.slots.len():
+            at -= self.slots.len()
+        self.slots[at] = Some(value)
+        self.count += 1
+
+    fn pop(mut self) -> Option[T]:
+        if self.count == 0:
+            return None
+        value = mem.replace(self.slots[self.head], None)
+        self.head += 1
+        if self.head == self.slots.len():
+            self.head = 0
+        self.count -= 1
+        return value
+
+    fn grow(mut self):
+        size = self.slots.len()
+        bigger: Array[Option[T]] = []
+        for i in range(self.count):
+            at = self.head + i
+            if at >= size:
+                at -= size
+            bigger.push(mem.replace(self.slots[at], None))
+        wanted = 16 if size == 0 else size * 2
+        while bigger.len() < wanted:
+            bigger.push(None)
+        self.slots = bigger
+        self.head = 0
+
+struct ChannelState[T]:
+    queue: Mutex[ChannelQueue[T]]
+    ## 0: no bound.
+    capacity: int
+    senders: Atomic[u32]
+    ## Bumped, under the lock, by a send or the last sender's end that found the receiver asleep.
+    arrivals: Atomic[u32]
+    ## Bumped, under the lock, by a receive or the receiver's end that found senders asleep.
+    departures: Atomic[u32]
+
+pub struct Sender[T]:
+    state: SyncShared[ChannelState[T]]
+
+    pub fn send(self, owned value: T) -> Result[void, SendError[T]]:
+        state = self.state.get()
+        waited = false
+        while true:
+            seen: u32 = 0
+            with q = state.queue.lock():
+                if waited:
+                    q.senders_waiting -= 1
+                if q.receiver_gone:
+                    return Err(SendError(value, true))
+                if state.capacity == 0 or q.count < state.capacity:
+                    q.push(value)
+                    if q.receiver_waiting:
+                        q.receiver_waiting = false
+                        state.arrivals.wrapping_fetch_add(1)
+                        state.arrivals.wake_one()
+                    return Ok(())
+                q.senders_waiting += 1
+                seen = state.departures.load()
+            waited = true
+            state.departures.wait(seen)
+        return Ok(())
+
+    pub fn try_send(self, owned value: T) -> Result[void, SendError[T]]:
+        state = self.state.get()
+        with q = state.queue.lock():
+            if q.receiver_gone:
+                return Err(SendError(value, true))
+            if state.capacity == 0 or q.count < state.capacity:
+                q.push(value)
+                if q.receiver_waiting:
+                    q.receiver_waiting = false
+                    state.arrivals.wrapping_fetch_add(1)
+                    state.arrivals.wake_one()
+                return Ok(())
+        return Err(SendError(value, false))
+
+    fn drop(mut self):
+        state = self.state.get()
+        if state.senders.fetch_sub(1) == 1:
+            with q = state.queue.lock():
+                if q.receiver_waiting:
+                    q.receiver_waiting = false
+                    state.arrivals.wrapping_fetch_add(1)
+                    state.arrivals.wake_one()
+
+extend[T] Sender[T] implements Clone:
+    fn clone(self) -> Sender[T]:
+        self.state.get().senders.fetch_add(1, MemoryOrder.Relaxed)
+        return Sender(self.state)
+
+pub struct Receiver[T]:
+    state: SyncShared[ChannelState[T]]
+
+    pub fn recv(mut self) -> Option[T]:
+        state = self.state.get()
+        while true:
+            seen: u32 = 0
+            with q = state.queue.lock():
+                match q.pop():
+                    Some(value):
+                        if q.senders_waiting > 0:
+                            state.departures.wrapping_fetch_add(1)
+                            state.departures.wake_one()
+                        return Some(value)
+                    None:
+                        if state.senders.load() == 0:
+                            return None
+                        q.receiver_waiting = true
+                        seen = state.arrivals.load()
+            state.arrivals.wait(seen)
+        return None
+
+    pub fn try_recv(mut self) -> Option[T]:
+        state = self.state.get()
+        with q = state.queue.lock():
+            value = q.pop()
+            if value.is_some() and q.senders_waiting > 0:
+                state.departures.wrapping_fetch_add(1)
+                state.departures.wake_one()
+            return value
+
+    pub fn next(mut self) -> Option[T]:
+        return self.recv()
+
+    fn drop(mut self):
+        state = self.state.get()
+        with q = state.queue.lock():
+            q.receiver_gone = true
+            if q.senders_waiting > 0:
+                state.departures.wrapping_fetch_add(1)
+                state.departures.wake_all()
+
+extend[T] Receiver[T] implements Iterator:
+    type Item = T
+
+pub fn channel[T](capacity: int) -> (Sender[T], Receiver[T]):
+    assert(capacity >= 1, "a channel holds at least one value")
+    return open_channel[T](capacity)
+
+pub fn channel_unbounded[T]() -> (Sender[T], Receiver[T]):
+    return open_channel[T](0)
+
+fn open_channel[T](capacity: int) -> (Sender[T], Receiver[T]):
+    slots: Array[Option[T]] = []
+    while slots.len() < capacity:
+        slots.push(None)
+    queue = ChannelQueue(slots, 0, 0, false, false, 0)
+    state = SyncShared(ChannelState(Mutex(queue), capacity, Atomic(1), Atomic(0), Atomic(0)))
+    return (Sender(state), Receiver(state))

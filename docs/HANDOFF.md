@@ -10885,8 +10885,16 @@ the function's C symbol, which also leaked into every overlapping-access panic).
 `JoinHandle[R]`, `CreateThread`/pthreads; spawn+join x1.000 of C. `[THR-16]`: no leak report while
 another thread runs. D-596 fixed on the way (a lambda returning a bare literal kept an untyped
 result; the large one stopped the compiler). The static-initialiser depth was already thread-local.
-**Next:** `thread.scope` (`[THR-5]`, `[THR-11]`: borrowing tasks joined at the block's end, `E3014`
-for a `Scope` not bound by `with`, `E7005`), then channels (`[THR-15]`), then `SoA`.
+Then channels (ADR-182), written in `std` on the locks; measuring them moved the lock word to one
+pointer, an SRWLOCK on Windows (ADR-177's word lock was 3.4x it under contention), with Rust's
+futex-mutex spinning and glibc's one-thread fast path elsewhere. Channels are 1.35x C on Windows
+(D-597 open: condition variables and a shorter critical section are the next step), 0.65x on
+Linux. Probes: `bench/probes/mutex_contended`, `channel_throughput`; Linux timings by building the
+compiler in WSL (`bench/gcc/make_tree.sh`) and timing there. **Next:** `thread.scope` (`[THR-5]`,
+`[THR-11]`). The design problem: a spawned closure's borrows must stay live until the `with` block
+ends, so the closure cannot just move into a heap packet (its loans would end at the spawn and a
+conflicting write after it would pass). Teach the borrow checker that loans reaching a scoped
+spawn live until the `Scope` local's drop. Then `SoA`.
 
 **2026-10-15, `Mutex` and `RwLock` (ADR-177), the dependency map's step 4 begun.** `std.sync.Mutex`
 and `RwLock` with their guards: a lock word in the value, inline compare-exchange/swap in

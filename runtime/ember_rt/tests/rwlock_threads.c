@@ -18,7 +18,7 @@
 #define WORKERS 4
 #define ROUNDS 50000
 
-static uint32_t g_word;
+static uintptr_t g_word;
 static volatile int64_t g_a;
 static volatile int64_t g_b;
 static volatile int g_torn;

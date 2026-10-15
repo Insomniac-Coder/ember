@@ -1466,10 +1466,12 @@ EMBER_INLINED void ember_release_plain(ember_obj_header* object) {
 #define EMBER_WORD_ACQUIRE(word, from, to) \
     __atomic_compare_exchange_n((word), &(from), (to), false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)
 #define EMBER_WORD_RELEASE_SWAP(word, to) __atomic_exchange_n((word), (to), __ATOMIC_RELEASE)
+#define EMBER_WORD_SWAP_ACQUIRE(word, to) __atomic_exchange_n((word), (to), __ATOMIC_ACQUIRE)
 #elif defined(_MSC_VER)
 #define EMBER_WORD_ACQUIRE(word, from, to) \
     ((uint32_t)_InterlockedCompareExchange((volatile long*)(word), (long)(to), (long)(from)) == (from))
 #define EMBER_WORD_RELEASE_SWAP(word, to) ((uint32_t)_InterlockedExchange((volatile long*)(word), (long)(to)))
+#define EMBER_WORD_SWAP_ACQUIRE(word, to) ((uint32_t)_InterlockedExchange((volatile long*)(word), (long)(to)))
 #else
 #define EMBER_WORD_ACQUIRE(word, from, to) \
     atomic_compare_exchange_strong_explicit((volatile _Atomic(uint32_t)*)(word), &(from), (to), \
@@ -1597,35 +1599,100 @@ void ember_thread_join(ember_thread* thread);
 void ember_thread_free(ember_thread* thread);
 void ember_thread_detach(ember_thread* thread);
 
-/* `[THR-3]` — a `Mutex` is one 32-bit word: 0 unlocked, 1 locked, 2 locked with a thread waiting.
- * A new one is a zero word, so it needs no constructor, and it may move while unlocked. Locking
- * takes the word from 0 to 1 here, inline; a lock another thread holds is waited for in the
- * runtime (on the word itself: WaitOnAddress on Windows, a futex on Linux), and unlocking calls
- * the runtime only to wake a waiter. There is no poisoning: a panic aborts (`[PAN-1]`). */
+/* `[THR-3]` — a `Mutex` or `RwLock` is its value and one pointer-sized word, zero when free, so it
+ * needs no constructor and may move while unlocked. On Windows the word is the system's own
+ * SRWLOCK (the platform lock C programs use there; it spins and sleeps as well as anything can),
+ * taken shared by an `RwLock`'s readers. Elsewhere it is the runtime's: a mutex's low 32 bits are 0
+ * unlocked, 1 locked, 2 locked with a thread asleep on it; taking a free one is one inline
+ * compare-exchange and freeing it one swap, which calls the runtime only to wake a sleeper. There
+ * is no poisoning: a panic aborts (`[PAN-1]`). */
+#if defined(_WIN32)
+struct _RTL_SRWLOCK;
+__declspec(dllimport) void __stdcall AcquireSRWLockExclusive(struct _RTL_SRWLOCK* lock);
+__declspec(dllimport) void __stdcall ReleaseSRWLockExclusive(struct _RTL_SRWLOCK* lock);
+__declspec(dllimport) unsigned char __stdcall TryAcquireSRWLockExclusive(struct _RTL_SRWLOCK* lock);
+__declspec(dllimport) void __stdcall AcquireSRWLockShared(struct _RTL_SRWLOCK* lock);
+__declspec(dllimport) void __stdcall ReleaseSRWLockShared(struct _RTL_SRWLOCK* lock);
+__declspec(dllimport) unsigned char __stdcall TryAcquireSRWLockShared(struct _RTL_SRWLOCK* lock);
+#define EMBER_SRW(word) ((struct _RTL_SRWLOCK*)(word))
+
+EMBER_INLINED bool ember_mutex_try_lock(void* word) {
+    return TryAcquireSRWLockExclusive(EMBER_SRW(word)) != 0;
+}
+
+EMBER_INLINED void ember_mutex_lock(void* word) {
+    AcquireSRWLockExclusive(EMBER_SRW(word));
+}
+
+EMBER_INLINED void ember_mutex_unlock(void* word) {
+    ReleaseSRWLockExclusive(EMBER_SRW(word));
+}
+
+/* `[THR-3]` — an `RwLock`'s word: shared (`write` false) or exclusive (`write` true). */
+EMBER_INLINED bool ember_rwlock_try_acquire(void* word, bool write) {
+    return (write ? TryAcquireSRWLockExclusive(EMBER_SRW(word)) : TryAcquireSRWLockShared(EMBER_SRW(word))) != 0;
+}
+
+EMBER_INLINED void ember_rwlock_acquire(void* word, bool write) {
+    if (write) {
+        AcquireSRWLockExclusive(EMBER_SRW(word));
+    } else {
+        AcquireSRWLockShared(EMBER_SRW(word));
+    }
+}
+
+EMBER_INLINED void ember_rwlock_release(void* word, bool write) {
+    if (write) {
+        ReleaseSRWLockExclusive(EMBER_SRW(word));
+    } else {
+        ReleaseSRWLockShared(EMBER_SRW(word));
+    }
+}
+#else
 void ember_mutex_lock_contended(uint32_t* word);
 void ember_mutex_wake(uint32_t* word);
 
-EMBER_INLINED bool ember_mutex_try_lock(uint32_t* word) {
+/* As glibc's mutexes do, these skip their atomics while the process has one thread:
+ * `ember_threads_started` turns 1, for good, before a second thread starts or a foreign one
+ * attaches (`ember_rt_thread_attach`), and until then taking or freeing a lock is a plain write. A
+ * lock held across that moment holds 1, which the atomic paths read as held. */
+extern uint32_t ember_threads_started;
+#define EMBER_ONE_THREAD() (__atomic_load_n(&ember_threads_started, __ATOMIC_RELAXED) == 0)
+
+EMBER_INLINED bool ember_mutex_try_lock(void* word) {
+    uint32_t* lock = (uint32_t*)word;
+    if (EMBER_ONE_THREAD()) {
+        if (*lock != 0) {
+            return false;
+        }
+        *lock = 1;
+        return true;
+    }
     uint32_t unlocked = 0;
-    return EMBER_WORD_ACQUIRE(word, unlocked, 1u);
+    return EMBER_WORD_ACQUIRE(lock, unlocked, 1u);
 }
 
-EMBER_INLINED void ember_mutex_lock(uint32_t* word) {
+EMBER_INLINED void ember_mutex_lock(void* word) {
     if (!ember_mutex_try_lock(word)) {
-        ember_mutex_lock_contended(word);
+        ember_mutex_lock_contended((uint32_t*)word);
+    }
+}
+
+EMBER_INLINED void ember_mutex_unlock(void* word) {
+    if (EMBER_ONE_THREAD()) {
+        *(uint32_t*)word = 0;
+        return;
+    }
+    if (EMBER_WORD_RELEASE_SWAP((uint32_t*)word, 0u) == 2u) {
+        ember_mutex_wake((uint32_t*)word);
     }
 }
 
 /* `[THR-3]` — an `RwLock`'s word: shared (`write` false) or exclusive (`write` true). */
-void ember_rwlock_acquire(uint32_t* word, bool write);
-bool ember_rwlock_try_acquire(uint32_t* word, bool write);
-void ember_rwlock_release(uint32_t* word, bool write);
-
-EMBER_INLINED void ember_mutex_unlock(uint32_t* word) {
-    if (EMBER_WORD_RELEASE_SWAP(word, 0u) == 2u) {
-        ember_mutex_wake(word);
-    }
-}
+void ember_rwlock_acquire(void* word, bool write);
+bool ember_rwlock_try_acquire(void* word, bool write);
+void ember_rwlock_release(void* word, bool write);
+#endif
 
 /* A Sync retain that found the count at zero or at its maximum: a panic. */
 EMBER_NORETURN void ember_obj_retain_failed(ember_obj_header* object);

@@ -38879,7 +38879,7 @@ impl<'a> Checker<'a> {
     fn lock_guard_of(&mut self, path: &str, inner: Ty, mutable: bool, span: Span) -> Ty {
         let guard = self.instantiate_named_generic(path, &[inner], span);
         // The lock word's address, which lowering passes to the runtime.
-        let word = self.common.u32;
+        let word = self.common.usize;
         self.types.intern(TyKind::Ref { mutable: true, inner: word });
         if let TyKind::Struct(id) = *self.types.kind(guard) {
             self.ref_guards.insert(id, (inner, mutable));

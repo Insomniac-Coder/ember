@@ -46,6 +46,14 @@ static uint32_t g_thread_generation = 1;
 /* [THR-16] Threads `thread.spawn` started that have not ended: the debug leak report runs only
  * when none is. */
 static uint32_t g_threads_running;
+/* [THR-3] 1, for good, once a second thread has started or attached; the locks' fast paths skip
+ * their atomics until then (off Windows; see the header). */
+uint32_t ember_threads_started;
+
+static void threads_have_started(void) {
+    uint32_t none = 0;
+    (void)object_compare_exchange_u32(&ember_threads_started, &none, 1);
+}
 #if defined(_MSC_VER)
 #define EMBER_RT_THREAD_LOCAL __declspec(thread)
 #else
@@ -1032,38 +1040,57 @@ static void word_wake_all(uint32_t* word) {
 }
 #endif
 
+/* A hint to the processor that this is a spin-wait (x86's `pause`, ARM's `yield`). */
+#if defined(_MSC_VER)
+#define EMBER_CPU_RELAX() YieldProcessor()
+#elif (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(__i386__))
+#define EMBER_CPU_RELAX() __builtin_ia32_pause()
+#elif (defined(__GNUC__) || defined(__clang__)) && defined(__aarch64__)
+#define EMBER_CPU_RELAX() __asm__ __volatile__("yield")
+#else
+#define EMBER_CPU_RELAX() ((void)0)
+#endif
+
+#if !defined(_WIN32)
+/* Spin while another thread holds the lock and nobody sleeps on it, reading only, for about as
+ * long as a short critical section takes; give back what the word holds. A thread that finds
+ * sleepers (2) does not spin: it would only delay its own sleep. */
+static uint32_t mutex_spin(uint32_t* word) {
+    for (int turn = 100;; --turn) {
+        uint32_t seen = object_load_u32(word);
+        if (seen != 1 || turn == 0) {
+            return seen;
+        }
+        EMBER_CPU_RELAX();
+    }
+}
+
+/* The lock was taken: spin a little, take it if it came free, else mark it contended (2) with one
+ * swap, which also takes it if it came free meanwhile, and sleep while it stays contended; after
+ * each wake, spin again. Taking it as 2 is safe: at worst the next unlock wakes a thread that need
+ * not have been woken. (Rust's standard library's futex mutex works the same way.) */
 void ember_mutex_lock_contended(uint32_t* word) {
-    /* A short spin first: most locks are held for a few instructions. */
-    for (int turn = 0; turn < 64; ++turn) {
+    uint32_t seen = mutex_spin(word);
+    if (seen == 0) {
         uint32_t unlocked = 0;
-        if (object_load_u32(word) == 0 && object_compare_exchange_u32(word, &unlocked, 1)) {
+        if (object_compare_exchange_u32(word, &unlocked, 1)) {
             return;
         }
+        seen = unlocked;
     }
-    /* Then mark it contended (2) and sleep while it stays taken. Taking it with 2 is safe: at
-     * worst the next unlock wakes a thread that need not have been woken. */
     for (;;) {
-        uint32_t seen = object_load_u32(word);
-        if (seen == 0) {
-            uint32_t unlocked = 0;
-            if (object_compare_exchange_u32(word, &unlocked, 2)) {
-                return;
-            }
-            continue;
-        }
-        if (seen == 1) {
-            uint32_t held = 1;
-            if (!object_compare_exchange_u32(word, &held, 2)) {
-                continue;
-            }
+        if (seen != 2 && EMBER_WORD_SWAP_ACQUIRE(word, 2u) == 0) {
+            return;
         }
         word_wait(word, 2);
+        seen = mutex_spin(word);
     }
 }
 
 void ember_mutex_wake(uint32_t* word) {
     word_wake_one(word);
 }
+#endif
 
 /* [THR-10] Threads. The new thread attaches to the runtime, runs its function, detaches and lets go
  * of its packet. */
@@ -1107,6 +1134,7 @@ void ember_thread_start(ember_thread* thread, void (*run)(ember_thread*), void (
     thread->size = size;
     thread->align = align;
     (void)object_fetch_add_u32(&g_threads_running, 1);
+    threads_have_started();
 #if defined(_WIN32)
     HANDLE handle = CreateThread(NULL, 0, thread_main, thread, 0, NULL);
     if (handle == NULL) {
@@ -1155,6 +1183,14 @@ void ember_thread_detach(ember_thread* thread) {
 }
 
 void ember_atomic_wait32(uint32_t* word, uint32_t expected) {
+    /* A short spin first: the other side often changes the word within a few hundred cycles, and a
+     * sleep and a wake cost far more. */
+    for (int turn = 0; turn < 100; ++turn) {
+        if (object_load_u32(word) != expected) {
+            return;
+        }
+        EMBER_CPU_RELAX();
+    }
     word_wait(word, expected);
 }
 
@@ -1174,6 +1210,7 @@ void ember_atomic_order_refused(uint8_t tag, const char* operation, ember_loc lo
     ember_panic(message, length > 0 ? (size_t)length : 0, loc);
 }
 
+#if !defined(_WIN32)
 /* [THR-3] An `RwLock` is one word too: the writer bit, a waiting bit, and the number of readers
  * below them. Readers share it while no writer holds it; a writer takes it from nothing. A thread
  * that must wait sets the waiting bit and sleeps on the word; whoever leaves the lock free with
@@ -1198,11 +1235,12 @@ static bool rwlock_take(uint32_t* word, bool write) {
     }
 }
 
-bool ember_rwlock_try_acquire(uint32_t* word, bool write) {
-    return rwlock_take(word, write);
+bool ember_rwlock_try_acquire(void* raw, bool write) {
+    return rwlock_take((uint32_t*)raw, write);
 }
 
-void ember_rwlock_acquire(uint32_t* word, bool write) {
+void ember_rwlock_acquire(void* raw, bool write) {
+    uint32_t* word = (uint32_t*)raw;
     for (;;) {
         if (rwlock_take(word, write)) {
             return;
@@ -1221,7 +1259,8 @@ void ember_rwlock_acquire(uint32_t* word, bool write) {
     }
 }
 
-void ember_rwlock_release(uint32_t* word, bool write) {
+void ember_rwlock_release(void* raw, bool write) {
+    uint32_t* word = (uint32_t*)raw;
     uint32_t before;
     if (write) {
         before = EMBER_WORD_RELEASE_SWAP(word, 0u);
@@ -1240,10 +1279,14 @@ void ember_rwlock_release(uint32_t* word, bool write) {
         word_wake_all(word);
     }
 }
+#endif
 
 void ember_rt_thread_attach(void) {
     if (!runtime_thread_attached()) {
         g_attached_generation = object_load_u32(&g_thread_generation);
+        if (g_main_generation != g_attached_generation) {
+            threads_have_started();
+        }
     }
 }
 

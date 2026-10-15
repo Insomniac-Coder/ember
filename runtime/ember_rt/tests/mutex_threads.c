@@ -18,7 +18,7 @@
 #define WORKERS 4
 #define ROUNDS 200000
 
-static uint32_t g_word;
+static uintptr_t g_word;
 static volatile int64_t g_count;
 
 #if defined(_WIN32)
@@ -40,6 +40,10 @@ static void* worker(void* raw) {
 }
 
 int main(void) {
+#if !defined(_WIN32)
+    /* Its threads are started here, not by `thread.spawn`: say there are several (see the header). */
+    ember_threads_started = 1;
+#endif
     if (!ember_mutex_try_lock(&g_word)) return 2;
     if (ember_mutex_try_lock(&g_word)) return 3;
     ember_mutex_unlock(&g_word);

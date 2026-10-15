@@ -5016,6 +5016,36 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-182 — Channels in `std` on the locks; the lock word is pointer-sized, an SRWLOCK on Windows (`[THR-15]`, `[THR-3]`)
+
+**Context.** `[THR-15]` gives `channel[T](capacity=n)`/`channel_unbounded[T]()`, a many-producer,
+one-consumer queue; `send` waits while it is full and gives the value back in a `SendError` once the
+receiver is gone; `recv` gives `None` once every sender is gone; `try_send`/`try_recv` never wait;
+a `Receiver` is iterable; `Sender` is `Send`, `Sync` and `Clone`, `Receiver` `Send`. Measuring
+them showed ADR-177's own lock losing to the platform's under contention.
+
+**Decision.** (1) Channels are Ember in `std/src/sync.em`: a `SyncShared` state holding a
+`Mutex`-guarded ring (`Array[Option[T]]`, the capacity, or doubling when unbounded), the flags of
+who is asleep (changed only under the lock, so a value that finds nobody asleep costs the lock and
+nothing more), and two `Atomic[u32]` event counts the sleeping side waits on (std-only `wait`/
+`wake_one`/`wake_all`, ADR-179). A `Sender`'s `drop` wakes the receiver when it was the last;
+`Clone` counts senders; a `Receiver`'s `drop` wakes waiting senders; `SendError[T]` holds `value`
+and `disconnected` (false when `try_send` found the queue full). (2) The lock word is one pointer
+wide (`word: usize`, the runtime API takes `void*`). On Windows it is the system's SRWLOCK
+(exclusive for `Mutex` and an `RwLock`'s writers, shared for its readers): ADR-177's word lock was
+3.4x SRWLOCK with two threads fighting over it (a 64-turn spin, then a sleep and a wake for nearly
+every hand-off), and the same algorithm with longer spins stayed 3x. Elsewhere the word is the
+runtime's, now spinning as Rust's standard library's futex mutex does (100 turns with a pause hint,
+not while others sleep, again after each wake), and, as glibc's mutexes do, taking and freeing a
+lock is a plain write until a second thread starts or attaches (`ember_threads_started`). `wait`
+spins 100 turns before it sleeps. ADR-177's other choices stand.
+
+**Speed** (clang on Windows, performance cores; gcc on Linux in WSL, noisier). Uncontended lock
+x1.014 of SRWLOCK (Windows), x0.36 of a glibc mutex (Linux); two threads on one lock x0.992
+(Windows), x1.01 (Linux). Channel throughput x1.35 (Windows, D-597 open), x0.65 (Linux).
+
+---
+
 ## ADR-181 — `thread.spawn` is a builtin over an owned callable value; each `JoinHandle[R]` gets a packet (`[THR-10]`, `[THR-16]`)
 
 **Context.** `[THR-10]` gives `thread.spawn(owned f: fn() -> R) -> JoinHandle[R]`, `h.join() -> R` and
@@ -5131,6 +5161,8 @@ libatomic, per compiler). `_Atomic T` in C imports (`[FFI-8]`, `E5016`). MSVC on
 ---
 
 ## ADR-177 — `Mutex` and `RwLock` are a lock word in the value, guards shaped like `RefCell`'s (`[THR-3]`, `[THR-9]`, `[CELL-8]`)
+
+*The runtime half is revised by ADR-182: the word is pointer-sized, an SRWLOCK on Windows.*
 
 **Context.** `std.sync` had no locks, so `[CELL-8]`'s "promote single-threaded code to shared code
 by a type change", `[STA-1]`'s `static REG: Mutex[Registry]` and the `Sync` rows of `[THR-9]` could
