@@ -5016,6 +5016,25 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-176 — A `once fn` parameter is taken over, its `owned` implied (`[FN-6]`, `[CLO-6]`, `[ERR-4]`)
+
+**Context.** `once fn(…) -> R` did not parse. A closure that gives away a capture was accepted
+only by an `owned f: fn(…)` parameter (the `CallableOnce` bound), and the `Option`/`Result`
+helpers, which `[ERR-4]` gives `once fn` callbacks, took `fn(…)` (NOT-IMPLEMENTED N3).
+
+**Decision.** `once` is a word before `fn` in a type (`TypeKind::Fn { once }`). A parameter whose
+type is a `once fn` is parsed with the `owned` mode implied (the formatter does not write it): it
+is the existing `CallableOnce` bound, so it accepts a closure callable once and any other,
+including one borrowing the caller's locals (`[CLO-3]`; an `owned` callable parameter already
+accepts those), it is passed by move, and calling it consumes it (a second call is `E3040`). The
+helpers in `std/src/core.em` take `once fn`. The `E3030` help for a `fn` parameter names
+`once fn`.
+
+**Not built.** A `once fn` *value* (`[CLO-6a]`: a local, field, `Box` or collection element whose
+call empties its place) is `E0900`, refused rather than read as a plain `fn`.
+
+---
+
 ## ADR-175 — Generator expressions, comprehensions and Python's built-ins over any iterable (`[GRM-27]`, `[GRM-38]`, `[STD-26]`)
 
 **Context.** Comprehensions, `sum`/`any`/`all`, `enumerate`/`zip`/`reversed` and `sorted` took

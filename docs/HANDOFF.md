@@ -10869,6 +10869,12 @@ way: `tools/error_pages.py` (and so the gates) ran `target/release` from the mor
 `target/release`, so the full check now builds release first (the earlier MSVC/clang sweeps today
 ran a stale compiler; the gcc one builds its own and was clean).
 
+**2026-10-15, `once fn` (ADR-176).** `once fn` parameter types (CLO-6, the `owned` implied), the
+`Option`/`Result` helpers take them (ERR-4, NOT-IMPLEMENTED N3 removed). CLO-6 and CLO-6a had
+been counted done by tests using `owned` callables; a `once fn` value is still `E0900` (CLO-6a).
+FN-6 waits on `unsafe fn` callable values; CLO-7 on threads. Next: `Atomic`/`Mutex`/`RwLock`/
+`Once`/`SyncShared`, threads, then `SoA`.
+
 **2026-10-15, the dependency map's step 3: iteration over any source (ADR-175).** Generator
 expressions as values, set and map comprehensions, comprehensions/`sum`/`any`/`all`/`enumerate`/
 `zip`/`reversed`/`sorted` over anything a `for` iterates, `range(a, b, step)` as a value,

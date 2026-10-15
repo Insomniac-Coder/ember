@@ -23,17 +23,6 @@ followed.
 | **Can a program notice** | yes, as a rejection |
 | **Plan** | Phase 7, with the importer. ERR-037 |
 
-## N3 — `once fn` callbacks of the `Option`/`Result` helpers (formerly D6)
-
-| | |
-|---|---|
-| **Rule** | `[ERR-4]` (ODR-025): `map`, `map_err`, `and_then`, `or_else`, `unwrap_or_else`, `ok_or_else` and `filter` take `f: once fn(…)` |
-| **The feature** | a `once fn` is called at most once, so the closure passed may give away a capture; a lambda written at the call site keeps the captures it infers |
-| **Requires** | `once fn` as a parameter type: a bound that consumes the callee value when called, without `owned`'s storage rule, carried to MIR so `check_owned_closure_argument_regions` does not apply |
-| **Meanwhile** | the `std.core` helpers take `f: fn(…)`, `[CLO-3]`'s bound: a closure that moves a capture out is `E3030`, with a help naming the method. The compiler refuses more, never less |
-| **Can a program notice** | yes: `name.map(owned fn(s) => join(s, tail))` is `E3030` |
-| **Plan** | build `once fn` parameter types, then change the helpers' `fn(` to `once fn(`. Target M1. ODR-025 |
-
 ## N4 — a call inside a loop in vectorisable form
 
 | | |
@@ -84,10 +73,10 @@ followed.
 |---|---|
 | **Rule** | `[CLO-10]`: "larger captured state is placed in one heap allocation, which carries the `Alloc` effect and is reported by `ember inspect --alloc`" |
 | **The feature** | the effect on a closure made into an owned callable value whose environment does not fit three words, and its line in the allocation report |
-| **Requires** | the effect system and `ember inspect --alloc` (Phase 4), which do not exist for any allocation yet |
-| **Meanwhile** | the state is allocated (`ember_box_new_copy`) and freed by the value's drop, as the rule says; nothing reports it |
-| **Can a program notice** | no: no effect is checked and no report exists |
-| **Plan** | when `Alloc` is tracked, give `AggregateKind::Callable` the effect where C's layout puts the environment past the three words (decided from the same `sizeof` the backend tests) |
+| **Requires** | `ember inspect --alloc` (Phase 4), which does not exist for any allocation yet |
+| **Meanwhile** | the state is allocated (`ember_box_new_copy`) and freed by the value's drop, as the rule says, and carries `Alloc` (`ember_analysis::effects`, 2026-10-15: a `@noalloc` function making one is `E4001`); nothing reports it |
+| **Can a program notice** | only by the missing report |
+| **Plan** | give `ember inspect --alloc` the allocation sites `ember_analysis::effects` already finds |
 
 ## N7 — a default doing float work that its mode's closure cannot hold
 

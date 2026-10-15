@@ -1774,6 +1774,8 @@ struct Checker<'a> {
     module_overflow: Vec<OverflowPolicy>,
     /// `[DET-8]` — the modules written `#! module deterministic`: every function in one is.
     module_deterministic: Vec<bool>,
+    /// `[CLO-6]` — the callable type being resolved is a parameter's `once fn` bound.
+    once_fn_parameter: bool,
     /// The lexical policy while checking a body or an inserted default.
     active_overflow: OverflowPolicy,
     /// `[TYP-9]` — the float mode of the function being checked, which a
@@ -1974,6 +1976,7 @@ impl<'a> Checker<'a> {
             default_overflow: OverflowPolicy::default(),
             module_overflow: Vec::new(),
             module_deterministic: Vec::new(),
+            once_fn_parameter: false,
             active_overflow: OverflowPolicy::default(),
             active_fp: FpMode::Strict,
             lint_return_intersection: false,
@@ -2866,7 +2869,9 @@ impl<'a> Checker<'a> {
         generics: &mut Vec<GenericParam>,
         index_base: usize,
     ) -> Ty {
+        self.once_fn_parameter = matches!(ty.kind, ast::TypeKind::Fn { once: true, .. });
         let resolved = self.resolve_type(ty);
+        self.once_fn_parameter = false;
         let TyKind::Fn { abi: None, latebound, params, ret, .. } = self.types.kind(resolved) else { return resolved };
         let bound = CallableBound {
             params: params.clone(),
@@ -10065,7 +10070,17 @@ impl<'a> Checker<'a> {
             // type; they coerce to `fn(A) -> R`". The written type is the
             // coercion target, which every named function fits and which
             // `[CLO-3]`'s closure parameter is a generic over.
-            ast::TypeKind::Fn { abi, latebound, params, ret } => {
+            ast::TypeKind::Fn { abi, latebound, params, ret, once } => {
+                // `[CLO-6a]` — a `once fn` is built as a parameter's bound; as a value that is
+                // called and so emptied, it is not.
+                if *once && !std::mem::take(&mut self.once_fn_parameter) {
+                    self.error(
+                        codes::E0900,
+                        ty.span,
+                        "a `once fn` value outside a parameter is not implemented yet",
+                    );
+                    return self.common.error;
+                }
                 if abi.as_deref().is_some_and(|abi| abi != "C") {
                     self.error(
                         codes::E1010,
@@ -30795,14 +30810,13 @@ impl<'a> Checker<'a> {
             if !self.closure_calls.get(&id).is_some_and(|closure| closure.once) {
                 continue;
             }
-            // `[ERR-4]` — a routed method's parameter is not the user's to
-            // change (DEVIATIONS: `once fn` is not built yet).
+            // A routed method's parameter is not the user's to change.
             let help = match self.routed_method {
                 Some(method) => format!(
                     "move a clone of the capture into the closure, or use `mem.take` when it implements `Default`: \
                      `{method}` takes a `fn(…)`, which a closure that gives away its captures does not satisfy"
                 ),
-                None => "declare the parameter `owned f: fn(...) -> ...` so it accepts `CallableOnce`, or use `mem.take` when the capture implements `Default`; clone only as a last resort".to_string(),
+                None => "declare the parameter `f: once fn(...) -> ...` when it is called at most once, or use `mem.take` when the capture implements `Default`; clone only as a last resort".to_string(),
             };
             self.sink.emit_classified(
                 Diagnostic::error(

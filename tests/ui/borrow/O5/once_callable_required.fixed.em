@@ -1,7 +1,7 @@
 fn consume(owned values: Array[i32]) -> i32:
     return values[0]
 
-fn invoke(owned f: fn() -> i32) -> i32:
+fn invoke(f: once fn() -> i32) -> i32:
     return f()
 
 fn main():

@@ -603,8 +603,9 @@ pub fn type_str(ty: &TypeExpr) -> String {
         TypeKind::Tuple(items) => {
             format!("({})", items.iter().map(type_str).collect::<Vec<_>>().join(", "))
         }
-        TypeKind::Fn { abi, latebound, params, ret } => {
+        TypeKind::Fn { abi, latebound, once, params, ret } => {
             let latebound = if *latebound { "@latebound " } else { "" };
+            let once = if *once { "once " } else { "" };
             let abi = abi.as_ref().map(|a| format!("extern {a:?} ")).unwrap_or_default();
             let ret = ret.as_ref().map(|r| format!(" -> {}", type_str(r))).unwrap_or_default();
             let params = params
@@ -618,7 +619,7 @@ pub fn type_str(ty: &TypeExpr) -> String {
                     format!("{mode}{}", type_str(&param.ty))
                 })
                 .collect::<Vec<_>>();
-            format!("{latebound}{abi}fn({}){ret}", params.join(", "))
+            format!("{latebound}{once}{abi}fn({}){ret}", params.join(", "))
         }
         TypeKind::Dyn(bounds) => {
             format!("dyn {}", bounds.iter().map(type_str).collect::<Vec<_>>().join(" + "))

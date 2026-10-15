@@ -466,6 +466,8 @@ pub enum TypeKind {
     Fn {
         abi: Option<String>,
         latebound: bool,
+        /// `[FN-6]`, `[CLO-6]` — `once fn(…) -> R`: called at most once.
+        once: bool,
         params: Vec<CallableTypeParam>,
         ret: Option<Box<TypeExpr>>,
     },

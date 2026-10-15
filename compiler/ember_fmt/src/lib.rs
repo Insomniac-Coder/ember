@@ -458,9 +458,12 @@ impl Printer<'_> {
     }
 
     fn param(&mut self, param: &ast::Param) -> String {
+        let once = matches!(&param.kind, ast::ParamKind::Named { ty, .. } if matches!(ty.kind, ast::TypeKind::Fn { once: true, .. }));
         let mode = match param.mode {
             ast::Mode::Borrow => "",
             ast::Mode::Mut => "mut ",
+            // `[CLO-6]` — a `once fn` parameter is taken over; the parser implies `owned`.
+            ast::Mode::Owned if once => "",
             ast::Mode::Owned => "owned ",
         };
         match &param.kind {

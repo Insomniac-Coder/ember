@@ -695,6 +695,9 @@ impl Parser<'_> {
         self.expect_punct(Punct::Colon);
         let ty = self.parse_type();
         let default = self.eat_punct(Punct::Eq).then(|| self.parse_expr());
+        // `[CLO-6]` — calling a `once fn` parameter consumes it, so it is taken over as an
+        // `owned` one is; `owned` is implied and need not be written.
+        let mode = if matches!(ty.kind, TypeKind::Fn { once: true, .. }) { Mode::Owned } else { mode };
         Param {
             id,
             mode,
@@ -1161,6 +1164,17 @@ impl Parser<'_> {
                 self.expect_punct(Punct::RBracket);
                 TypeKind::Array { elem, len }
             }
+            // `[FN-6]` — `once fn(…) -> R`, a callable called at most once (`[CLO-6]`); `once`
+            // is a word only here.
+            TokenKind::Ident(word)
+                if word.is("once") && matches!(self.peek_at(1), TokenKind::Keyword(Kw::Fn)) =>
+            {
+                self.bump();
+                match self.parse_type().kind {
+                    TypeKind::Fn { abi, latebound, params, ret, .. } => TypeKind::Fn { abi, latebound, once: true, params, ret },
+                    other => other,
+                }
+            }
             TokenKind::Keyword(Kw::Extern) | TokenKind::Keyword(Kw::Fn) => {
                 let abi = if self.eat_kw(Kw::Extern) {
                     match self.peek().clone() {
@@ -1197,7 +1211,7 @@ impl Parser<'_> {
                 }
                 self.expect_punct(Punct::RParen);
                 let ret = self.eat_punct(Punct::Arrow).then(|| Box::new(self.parse_type()));
-                TypeKind::Fn { abi, latebound, params, ret }
+                TypeKind::Fn { abi, latebound, once: false, params, ret }
             }
             _ => {
                 let segments = self.parse_dotted_path();

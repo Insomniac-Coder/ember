@@ -46,7 +46,6 @@
     "CLS-2": "a class `init` assigning a field twice, or overwriting a conditionally initialised one, is refused (`in this phase`): ember_typeck",
     "GRM-38": "a generator expression with a second `for` is refused as a value (E0900): its `flat_map` over inner generators that borrow both their source and the outer clause's names gets no single source relation from the region analysis (`FlatMap.next`, E3065)",
     "GRM-25": "a computed operand in the middle of a comparison chain is refused (E0900): tests/conformance/CLI-19/reject_an_unimplemented_construct_by_name.em",
-    "ERR-4": "the `Option`/`Result` helpers take `fn`, not `once fn`: docs/NOT-IMPLEMENTED.md N3",
     "SIMD-5": "a loop calling a function, or with a float running total, is not put in vectorisable form: docs/NOT-IMPLEMENTED.md N4, N5",
     "DSJ-5": "`assert_disjoint` records no `RuntimeCheck(Aliasing)` site: docs/NOT-IMPLEMENTED.md N9",
     "CLO-10": "the boxed state carries `Alloc`, but `ember inspect --alloc`, which must report it, is not built",
@@ -76,8 +75,7 @@
     "FFI-1": "a foreign declaration's contract has no effects or thread rule yet; contracts beyond link names are E0900 (see FFI-11)",
     "FFI-2": "overlays (§XVI.4) are not built, so a call's missing facts cannot be supplied by one",
     "FFI-33c": "`@export_table` is not built (ATTRIBUTE_TABLE in ember_typeck)",
-    "CLO-6": "`once fn` types do not parse: a once-only closure is accepted only by an `owned` callable parameter (docs/NOT-IMPLEMENTED.md N3)",
-    "CLO-6a": "`once fn` types do not parse, so there is no owned `once fn` value to call",
+    "CLO-6a": "a `once fn` is built as a parameter's bound only: as a value (a local, a field, a `Box` or a collection element), whose call empties its place, it is refused (E0900)",
     "EFF-19": "`@realtime` is always the default set (`@noalloc @nolock @noblock @nopanic(explicit)`); a manifest's `[realtime] contracts` is not read"
   }
 }
