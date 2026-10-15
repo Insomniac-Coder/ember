@@ -1526,6 +1526,23 @@ pub enum Builtin {
     ScopeSpawn { closure: Option<DefId> },
     /// `[THR-11]` — `h.join()` on a `ScopedJoinHandle`: the handle, moved; gives the result.
     ScopedJoin,
+    /// `[JOB-2]` — `jobs.scope()`: gives the `JobScope`, whose end waits for its jobs.
+    JobScope,
+    /// `[JOB-2]`, `[JOB-3]` — `s.submit(f)` and `s.submit_after(deps, f)` (`after`): the
+    /// arguments are a borrow of the `JobScope`, the `deps` (a `Span[ScopedJob]`) when `after`,
+    /// and either the closure itself (`closure`: its body; its borrows flow into the scope) or,
+    /// for a function, its owned callable value. Gives the `ScopedJob`.
+    JobScopeSubmit { closure: Option<DefId>, after: bool },
+    /// `[JOB-1]`, `[JOB-2]` — `jobs.submit(f)`: the closure itself (`closure`: its body; it owns
+    /// what it captured) or an owned callable value. Gives the `JobHandle`.
+    JobSubmit { closure: Option<DefId> },
+    /// `[JOB-2]` — `jobs.wait(h)`: the `JobHandle`.
+    JobWait,
+    /// `[PAR-1]`, `[PAR-3]` — a `@parallel` loop: `[start, end, chunk, body]`, and with reductions
+    /// `ref mut` the running results last. `body` is the closure over one chunk, `fn(lo, hi)`,
+    /// giving its reductions (`closure`, its function; `None` when it captures nothing and is the
+    /// function's value); `combine`, a function folding one chunk's results into the running ones.
+    ParallelFor { closure: Option<DefId>, combine: Option<DefId> },
     /// `[SOA-1]`..`[SOA-7]` — an operation on `soa`, an `SoA[T]` type.
     SoA { op: SoAOp, soa: Ty },
     /// `[ARN-1]`, `[ARN-4]` — `Arena.with_capacity(bytes)`. The Arena itself
@@ -1773,6 +1790,11 @@ impl Builtin {
             Builtin::ThreadScope => "scope",
             Builtin::ScopeSpawn { .. } => "spawn",
             Builtin::ScopedJoin => "join",
+            Builtin::JobScope => "scope",
+            Builtin::JobScopeSubmit { after: false, .. } | Builtin::JobSubmit { .. } => "submit",
+            Builtin::JobScopeSubmit { after: true, .. } => "submit_after",
+            Builtin::JobWait => "wait",
+            Builtin::ParallelFor { .. } => "parallel for",
             Builtin::SoA { op, .. } => op.name(),
             Builtin::ArenaWithCapacity => "with_capacity",
             Builtin::ArenaAlloc { .. }

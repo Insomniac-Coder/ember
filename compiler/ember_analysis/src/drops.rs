@@ -1704,7 +1704,7 @@ pub fn elaborate_all(bodies: &mut [Body], types: &TypeTable, sink: &mut Sink) ->
 pub fn check_scope_moves_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) -> usize {
     let is_scope = |ty| {
         matches!(types.kind(ty), TyKind::Struct(id)
-            if types.struct_def(*id).origin.as_ref().is_some_and(|(origin, _)| origin.as_str() == "std.thread.Scope"))
+            if types.struct_def(*id).origin.as_ref().is_some_and(|(origin, _)| matches!(origin.as_str(), "std.thread.Scope" | "std.jobs.JobScope")))
     };
     let mut errors = 0;
     for body in bodies {
@@ -1713,11 +1713,18 @@ pub fn check_scope_moves_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink
                 && place.projection.is_empty()
                 && is_scope(body.local(place.local).ty)
             {
-                sink.emit(
+                let jobs = matches!(types.kind(body.local(place.local).ty), TyKind::Struct(id)
+                    if types.struct_def(*id).origin.as_ref().is_some_and(|(origin, _)| origin.as_str() == "std.jobs.JobScope"));
+                let diagnostic = if jobs {
+                    Diagnostic::error(codes::E3014, span, "a `JobScope` may not be moved")
+                        .help("use it where the `with` binds it; `s.submit` borrows it")
+                        .note("a scope's jobs borrow the block's places, so it ends where the block does [JOB-2]")
+                } else {
                     Diagnostic::error(codes::E3014, span, "a `Scope` may not be moved")
                         .help("use it where the `with` binds it; `scope.spawn` borrows it")
-                        .note("a scope's threads borrow the block's places, so it ends where the block does [THR-5]"),
-                );
+                        .note("a scope's threads borrow the block's places, so it ends where the block does [THR-5]")
+                };
+                sink.emit(diagnostic);
                 errors += 1;
             }
         };

@@ -164,8 +164,23 @@ pub fn check_all_with_installed_callable_regions(
         .iter()
         .flat_map(|body| {
             body.blocks.iter().filter_map(move |block| match &block.terminator {
-                Terminator::Call { func: FuncRef::Builtin { which: Builtin::ScopeSpawn { closure: Some(_) }, .. }, args, .. } => {
+                Terminator::Call {
+                    func: FuncRef::Builtin { which: Builtin::ScopeSpawn { closure: Some(_) } | Builtin::JobScopeSubmit { closure: Some(_), .. }, .. },
+                    args,
+                    ..
+                } => {
                     match args.last() {
+                        Some(Operand::Move(place) | Operand::Copy(place)) => match types.kind(place_ty(body, types, place)) {
+                            TyKind::Struct(id) => Some(*id),
+                            _ => None,
+                        },
+                        _ => None,
+                    }
+                }
+                // `[PAR-1]` — a `@parallel` loop's chunks run before the loop ends: its closure is
+                // as bounded as a scoped task's.
+                Terminator::Call { func: FuncRef::Builtin { which: Builtin::ParallelFor { closure: Some(_), .. }, .. }, args, .. } => {
+                    match args.get(4) {
                         Some(Operand::Move(place) | Operand::Copy(place)) => match types.kind(place_ty(body, types, place)) {
                             TyKind::Struct(id) => Some(*id),
                             _ => None,
@@ -2620,6 +2635,8 @@ fn builtin_contract(func: &FuncRef) -> Option<CallRegionContract> {
         // `[THR-11]` — a scoped thread's handle borrows its scope (argument 0): it may not
         // outlive the `with` block, whose end frees the thread.
         Builtin::ScopeSpawn { .. } => vec![vec![Projection::Field(0)]],
+        // `[JOB-2]` — a scope's job's handle borrows its scope (argument 0), as a scoped thread's.
+        Builtin::JobScopeSubmit { .. } => vec![vec![Projection::Field(0)]],
         // `[SOA-2]` — a column view borrows its column's pointer field (argument 0).
         Builtin::SoA { op: ember_mir::SoAOp::Column { .. }, .. } => vec![Vec::new()],
         Builtin::StrSplitOnce { some, .. } => (0..2)

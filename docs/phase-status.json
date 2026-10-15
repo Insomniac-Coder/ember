@@ -46,7 +46,6 @@
     "CLO-10": "the boxed state carries `Alloc`, but `ember inspect --alloc`, which must report it, is not built",
     "UNS-8": "`ember tcb`, which lists every `unsafe` block with its note, is not built (D-584)",
     "ABI-3": "`ember_module_init` does not check the runtime ABI version (ADR-171)",
-    "CLO-7": "the thread and job APIs that take consumed callbacks are not built (Phase 6)",
     "EFF-16": "`@nopanic(explicit)` is checked (`E4040`, whose note says which checks it allows), but `ember inspect --safety` does not report it beside the function's `RuntimeCheck` facts",
     "STD-1": "`std.simd` and `std.arena` are not in std/src, and nothing checks that every `std.core`, `std.mem` and `std.math` function is free of `Alloc`",
     "STD-14": "nothing checks that a standard function failing on a caller's bug has a non-panicking twin, or that every allocating one is documented as allocating",

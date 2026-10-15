@@ -9,6 +9,7 @@
 ##   `std.mem`  `[UNS-10]`'s lowest-level interior-mutability primitive
 ##   `std.sync`  locks, atomics, `Once` and `SyncShared` (Part XI.2)
 ##   `std.thread`  `spawn` and `JoinHandle` (`[THR-10]`)
+##   `std.jobs`  the job system: `submit`, `wait`, `scope` (Part XI.5)
 ##
 ## `Option`, `Result`, `Array` and `String` are still compiler-known: Part XX.1
 ## makes them so "until Phase 2's generics let the standard library write

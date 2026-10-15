@@ -5016,6 +5016,79 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-190 — `@parallel` loops: a closure over chunks, deterministic chunking, reductions folded in chunk order (`[PAR-1]`..`[PAR-4]`, `[PAR-2a]`)
+
+**Shape.** The checker turns `@parallel(chunk=c, reduce=[v: op, …]) for i in a..b: body` into a
+closure `fn(lo, hi)` that runs `for i in lo..hi: body` with a copy of each reduction variable started
+at its operator's identity, and returns the copies; and a call of the `ParallelFor` builtin with
+`a`, `b` (one past the end for `..=`), `c` (0 when not written), the closure, and, with reductions,
+a combiner (a stateless function folding one chunk's results into the running ones in each
+operator's own checked arithmetic) and a `ref mut` to the running results, which start at the
+variables' values and are stored back after the call. A reduction is `+`, `*`, `max`, `min` of
+numbers, `&`, `|`, `^` of integers, `and`, `or` of `bool`s (`E2020` otherwise).
+
+**Runtime.** `ember_parallel_for` keeps the loop's record in its own frame. The chunks are
+`[a + k·c, …)`, a function of the trip count and `c` alone (`c` of 0 is about 64 chunks, none under
+1024 turns), so where they fall never depends on the machine. The calling thread runs chunks, and as
+many idle workers as there are chunks to share take the next one each; a helper is a job of the pool
+whose 8-byte state points at the record, submitted only if a slot is free now (`job_try_submit`), so
+a full pool means fewer helpers, never an allocation or a wait. With reductions, each chunk writes its
+results to a window of 32 slots in the caller's frame and stamps its slot; whoever finishes the chunk
+that is next in order folds every finished chunk in order, and no chunk more than 32 past the last
+folded one is started. The result is the serial loop's whatever thread ran which chunk, floating
+point included. The loop's end waits for the helpers (their scope count), helping meanwhile.
+
+**Independence (`[PAR-2]`, `[PAR-2a]`).** On the body's syntax: no `return`, `yield`, `break` of the
+loop or `continue` of an outer one (`E7010`); a name of the enclosing code written only when it is a
+reduction; an element written only of a `MutSpan` or an `SoA` column (`E7010` for any other place),
+and every access to it, reads included, at `i + k` for one constant `k` (`E7010` when an index is not
+of that form, `E7011` naming both offsets when two differ); a written span given to a call is `E7010`.
+The closure's captures are then checked as a scoped task's: borrowed shared `Sync` (a span read is
+`Sync` when its elements are), held `Send`. Its environment is bounded by the call, as a scoped job's
+(`borrows.rs`), so it may copy views that are not `static`. Effects: the loop is `Sync` and `Block`,
+the closure's and the combiner's effects are the function's own, and it allocates nothing (`[PAR-4]`).
+
+**Not built.** `[PAR-2b]`: the analysis runs before inlining, so a call that would be inlined is
+refused as one the compiler cannot see through; that is stricter than the rule, not looser. Not yet
+measured against a C loop split over threads by hand.
+
+**On the way.** D-640: a loop writing a borrowed `MutSpan`, once versioned (`[OPT-2]`), changed the
+function's callable-region summary and nothing made it again, so `[VERIFY-3]` stopped the compiler; the
+driver now installs the summaries again after versioning, as after the other passes that rewrite bodies.
+
+## ADR-189 — The job system: fixed slots with 64 bytes of state each, ids of slot and generation (`[JOB-1]`..`[JOB-3]`, `[CLO-7]`)
+
+**Runtime.** A pool of worker threads (the logical cores less one, at least one; `ember_jobs_set_workers`
+before the first job chooses otherwise), started by the first submission, and 1024 job slots. A slot
+holds the job's entry, its drop, and its captured state in 64 bytes (`[JOB-1]`), or a pointer to one
+allocation when the state is larger. A lock guards the free list, a first-in-first-out ready queue and
+the list of jobs waiting on others; idle workers sleep on a signal word each ready job moves on. A
+job's id is its slot index and that slot's generation, which moves on when the job ends, so an id
+needs no allocation and a finished job's id stays finished. A scope is its count of unfinished jobs,
+in the `JobScope` value itself (`jobs.scope()` allocates nothing); its end waits for zero. Waiting (a
+handle, a scope's end, a full queue) runs other ready jobs first, so a job may wait for another.
+`submit_after` stores up to six dependencies in the slot; with more it first helps until at most six
+are unfinished (so it carries `Block`, and allocates nothing the source does not show). Measured
+under three workers by `tests/job_pool.c` (`ember_build`'s `the_job_pool_runs_every_job_once_in_order`).
+
+**Language.** `std.jobs` declares `JobHandle`, `JobScope` (`@must_drop @view`, its count inside) and
+`ScopedJob` (copyable, a view of its scope), and the compiler knows `submit`, `wait`, `scope`,
+`s.submit` and `s.submit_after` by those names, as it knows `std.thread`'s. A job's function is checked
+where a `fn()` is wanted (a lambda's value is dropped) and kept as the closure: its environment is
+copied into the slot, and a per-closure entry (`<descriptor>_job`) calls the body on it there, with a
+drop (`<descriptor>_job_drop`) when the environment needs one; a callable value is the state itself
+(40 bytes). `jobs.submit` takes an owned closure whose captures are `Send` and no view, as
+`thread.spawn`'s (`E7004`, `E3063`; the checks are now one function for both, with each one's words);
+a scope's jobs are checked as a scope's threads (`E7004`/`E7005`), their closures flow into the
+`JobScope` in the region pass and their handles borrow it, so two jobs of a scope writing one place are
+`E3022` whatever `submit_after` orders (`[JOB-3]`). `E3014` keeps the `JobScope` in its `with`. Effects:
+submitting is `Sync`, and `Alloc` when the closure's environment may exceed 64 bytes (C's layout of
+its captures, worked out in `effects::layout`; a type it cannot size is taken not to fit); waiting and
+a scope's end are `Sync` and `Block`.
+
+**Not built.** `[JOB-5]`'s `jobs.local_arena()` needs a view whose region is the job's own; `@parallel`
+loops (`[PAR-*]`) are the next step on this pool.
+
 ## ADR-187 — The compile-time evaluator runs the program's own code in a process of its own (`[CT-1]`..`[CT-7]`, `[TYP-41]`)
 
 **What is evaluated.** The checker makes each compile-time expression a function of its own

@@ -1491,7 +1491,9 @@ impl TypeTable {
                     } else if name.is("SoA") && args.len() == 1 {
                         // `[SOA-1]` — its columns are `T`'s fields, behind private pointers.
                         both(args[0], visiting)
-                    } else if name.is("std.thread.Scope") || name.is("std.thread.ScopedJoinHandle") {
+                    } else if name.is("std.thread.Scope") || name.is("std.thread.ScopedJoinHandle")
+                        || name.is("std.jobs.JobScope") || name.is("std.jobs.ScopedJob")
+                    {
                         // `[THR-5]` — they stay in the block that made them.
                         (false, false)
                     } else if name.is("std.thread.JoinHandle") {

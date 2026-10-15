@@ -10917,8 +10917,15 @@ function built by the ordinary backend into an evaluator program the driver runs
 the answers; limits, `E6001`/`E6004`/`E6010`/`E6005`, `read_file`/`env` inside the package, a value
 cache keyed by the evaluator's C and its inputs, heap results cloned per `comptime(e)` and constant
 statics in the image; `[TYP-41]` rule 2's calls on `const` parameters. `[CT-1]`..`[CT-7]` and
-`[TYP-41]` done; D-601 fixed. **Next:** the job system and `@parallel` (`[JOB-*]`, `[PAR-*]`,
-`[CLO-7]`), `some` return types, coroutines.
+`[TYP-41]` done; D-601 fixed. Then the job system (ADR-189): a pool of workers over 1024 slots
+holding each job's state in 64 bytes, ids of slot and generation, scopes as counts in the
+`JobScope`, `submit_after` dependencies; `jobs.submit`/`wait`/`scope`/`submit`/`submit_after` with the
+thread checks shared; `[JOB-1]`..`[JOB-3]`, `[CLO-7]` done. Then `@parallel` loops (ADR-190): the
+body a closure over chunks fixed by the trip count, helpers from the pool only when a slot is free,
+reductions folded in chunk order through a 32-slot window in the caller's frame, the independence
+analysis on the body's syntax (`E7010`/`E7011`); `[PAR-1]`..`[PAR-4]`, `[PAR-2a]` done; D-640 fixed.
+**Next:** `[PAR-2b]` (read through inlined calls), a speed comparison with a hand-split C loop,
+`[JOB-5]`'s `local_arena`, `some` return types, coroutines.
 
 **2026-10-15, `Mutex` and `RwLock` (ADR-177), the dependency map's step 4 begun.** `std.sync.Mutex`
 and `RwLock` with their guards: a lock word in the value, inline compare-exchange/swap in

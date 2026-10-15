@@ -2805,6 +2805,63 @@ impl<'a> Builder<'a> {
                 });
                 self.current = next;
             }
+            // `[JOB-1]`, `[JOB-2]`, `[JOB-3]` — as a scoped thread's task: the scope's borrow and the
+            // `deps` (a scope's job), the closure's body, and its environment, moved into the job.
+            hir::ExprKind::Builtin {
+                which: which @ (hir::Builtin::JobScopeSubmit { closure: Some(closure), .. } | hir::Builtin::JobSubmit { closure: Some(closure) }),
+                args,
+            } => {
+                let (env_arg, leading) = args.split_last().expect("a job has its function");
+                let mut operands: Vec<Operand> = leading.iter().map(|arg| self.lower_operand(arg)).collect();
+                let env = match self.lower_operand(env_arg) {
+                    Operand::Copy(source) if self.types.needs_drop(env_arg.ty) => {
+                        let temp = self.temp(env_arg.ty, expr.span);
+                        self.push(StmtKind::Assign { place: Place::local(temp), rvalue: Rvalue::Use(Operand::Copy(source)) });
+                        Operand::Move(Place::local(temp))
+                    }
+                    operand => operand,
+                };
+                operands.push(Operand::Const(Const::Fn(self.program.function(*closure).symbol.clone())));
+                operands.push(env);
+                self.at(expr.span);
+                let next = self.new_block();
+                self.terminate(Terminator::Call {
+                    func: FuncRef::Builtin { which: *which, arg_ty: expr.ty },
+                    args: operands,
+                    dest: place,
+                    next,
+                });
+                self.current = next;
+            }
+            // `[PAR-1]` — `[start, end, chunk, body, env]`, then with reductions `[combine, results]`:
+            // the chunk closure's body and its environment (borrowed for the call: the chunks run
+            // before it returns; none when it captures nothing), the combiner, the running results.
+            hir::ExprKind::Builtin { which: which @ hir::Builtin::ParallelFor { closure, combine }, args } => {
+                let mut operands: Vec<Operand> = args[..3].iter().map(|arg| self.lower_operand(arg)).collect();
+                match closure {
+                    Some(closure) => {
+                        operands.push(Operand::Const(Const::Fn(self.program.function(*closure).symbol.clone())));
+                        operands.push(self.lower_operand(&args[3]));
+                    }
+                    None => {
+                        operands.push(self.lower_operand(&args[3]));
+                        operands.push(Operand::Const(Const::Void));
+                    }
+                }
+                if let Some(combine) = combine {
+                    operands.push(Operand::Const(Const::Fn(self.program.function(*combine).symbol.clone())));
+                    operands.extend(args[4..].iter().map(|arg| self.lower_operand(arg)));
+                }
+                self.at(expr.span);
+                let next = self.new_block();
+                self.terminate(Terminator::Call {
+                    func: FuncRef::Builtin { which: *which, arg_ty: args[3].ty },
+                    args: operands,
+                    dest: place,
+                    next,
+                });
+                self.current = next;
+            }
             hir::ExprKind::Builtin { which: hir::Builtin::RefCellTryBorrowMut, args } => {
                 self.lower_refcell_try_borrow(place, &args[0], true, expr.ty, expr.span);
             }
@@ -3074,7 +3131,10 @@ impl<'a> Builder<'a> {
                     | hir::Builtin::MaybeUninitUninit { .. }
                     | hir::Builtin::WeakEmpty { .. }
                     | hir::Builtin::ThreadScope
-                    | hir::Builtin::ScopeSpawn { .. } => expr.ty,
+                    | hir::Builtin::ScopeSpawn { .. }
+                    | hir::Builtin::JobScope
+                    | hir::Builtin::JobScopeSubmit { .. }
+                    | hir::Builtin::JobSubmit { .. } => expr.ty,
                     hir::Builtin::SoA { soa, .. } => *soa,
                     hir::Builtin::SizeOf => args.last().map(|a| a.ty).unwrap_or(expr.ty),
                     _ => args.first().map(|a| a.ty).unwrap_or(expr.ty),

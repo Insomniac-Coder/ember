@@ -333,6 +333,375 @@ pub fn check(
     }
 }
 
+/// One access to a place a `@parallel` loop's body may write: the offset from the loop's index,
+/// when it is `i + k` for a constant `k`.
+struct ParallelAccess {
+    offset: Option<i128>,
+    write: bool,
+    span: Span,
+}
+
+/// `[PAR-2]` — the walk over a `@parallel` loop's body: the places of the enclosing code it
+/// indexes (`xs`, `ps.col`), how, and what keeps the iterations from being independent.
+struct ParallelWalk {
+    index: Symbol,
+    label: Option<Symbol>,
+    reduced: HashSet<Symbol>,
+    /// Names the body declares: its own, one per iteration.
+    declared: HashSet<Symbol>,
+    /// Loops of the body itself the walk is inside.
+    loops: usize,
+    accesses: BTreeMap<String, Vec<ParallelAccess>>,
+    problems: Vec<(Span, String)>,
+    /// Places given whole to a call (`[PAR-2b]`), with their types and where.
+    passed: Vec<(String, Ty, Span)>,
+}
+
+impl ParallelWalk {
+    fn block(&mut self, checker: &Checker<'_>, block: &ast::Block) {
+        for stmt in &block.stmts {
+            self.stmt(checker, stmt);
+        }
+    }
+
+    fn stmt(&mut self, checker: &Checker<'_>, stmt: &ast::Stmt) {
+        match &stmt.kind {
+            ast::StmtKind::Expr(expr) => self.expr(checker, expr),
+            ast::StmtKind::Decl { pattern, init, .. } => {
+                if let Some(init) = init {
+                    self.expr(checker, init);
+                }
+                self.bind(pattern);
+            }
+            ast::StmtKind::Assign { targets, value, .. } => {
+                self.expr(checker, value);
+                for target in targets {
+                    self.target(checker, target);
+                }
+            }
+            ast::StmtKind::For { pattern, iter, body, else_block, .. } => {
+                self.expr(checker, iter);
+                self.bind(pattern);
+                self.loops += 1;
+                self.block(checker, body);
+                self.loops -= 1;
+                if let Some(block) = else_block {
+                    self.block(checker, block);
+                }
+            }
+            ast::StmtKind::While { cond, body, else_block, .. } => {
+                self.condition(checker, cond);
+                self.loops += 1;
+                self.block(checker, body);
+                self.loops -= 1;
+                if let Some(block) = else_block {
+                    self.block(checker, block);
+                }
+            }
+            ast::StmtKind::If(branch) => self.if_stmt(checker, branch),
+            ast::StmtKind::Match { scrutinee, arms } => self.arms(checker, scrutinee, arms),
+            ast::StmtKind::Pass => {}
+            _ => self.problems.push((stmt.span, "this statement is not one a `@parallel` loop's body may hold".to_string())),
+        }
+    }
+
+    fn condition(&mut self, checker: &Checker<'_>, cond: &ast::Condition) {
+        match cond {
+            ast::Condition::Expr(e) => self.expr(checker, e),
+            ast::Condition::Pattern { pattern, value } => {
+                self.expr(checker, value);
+                self.bind(pattern);
+            }
+        }
+    }
+
+    fn if_stmt(&mut self, checker: &Checker<'_>, branch: &ast::IfStmt) {
+        self.condition(checker, &branch.cond);
+        self.block(checker, &branch.then_block);
+        match branch.else_block.as_deref() {
+            Some(ast::ElseBranch::Block(block)) => self.block(checker, block),
+            Some(ast::ElseBranch::If(next)) => self.if_stmt(checker, next),
+            None => {}
+        }
+    }
+
+    fn arms(&mut self, checker: &Checker<'_>, scrutinee: &ast::Expr, arms: &[ast::MatchArm]) {
+        self.expr(checker, scrutinee);
+        for arm in arms {
+            self.bind(&arm.pattern);
+            if let Some(guard) = &arm.guard {
+                self.expr(checker, guard);
+            }
+            match &arm.body {
+                ast::MatchArmBody::Block(block) => self.block(checker, block),
+                ast::MatchArmBody::Expr(e) => self.expr(checker, e),
+            }
+        }
+    }
+
+    fn bind(&mut self, pattern: &ast::Pattern) {
+        if let ast::PatternKind::Bind { name, sub, .. } = &pattern.kind {
+            self.declared.insert(name.name);
+            if let Some(sub) = sub {
+                self.bind(sub);
+            }
+        }
+    }
+
+    /// A name of the enclosing code (not the body's own, nor the index).
+    fn outer(&self, checker: &Checker<'_>, name: Symbol) -> bool {
+        name != self.index && !self.declared.contains(&name) && checker.lookup(name).is_some()
+    }
+
+    /// The place `expr` names, when it is a `MutSpan` or `SoA` column of the enclosing code.
+    fn place_of(&self, checker: &Checker<'_>, expr: &ast::Expr) -> Option<(String, Ty)> {
+        match &expr.kind {
+            ast::ExprKind::Paren(inner) => self.place_of(checker, inner),
+            ast::ExprKind::Path { segments } if segments.len() == 1 && self.outer(checker, segments[0].name) => {
+                let local = checker.lookup(segments[0].name)?;
+                Some((segments[0].name.to_string(), checker.locals[local.0 as usize].ty))
+            }
+            ast::ExprKind::Field { base, name } => {
+                let ast::ExprKind::Path { segments } = &base.kind else { return None };
+                if segments.len() != 1 || !self.outer(checker, segments[0].name) {
+                    return None;
+                }
+                let local = checker.lookup(segments[0].name)?;
+                let mut ty = checker.locals[local.0 as usize].ty;
+                if let TyKind::Ref { inner, .. } = checker.types.kind(ty) {
+                    ty = *inner;
+                }
+                checker.soa_inner(ty)?;
+                Some((format!("{}.{}", segments[0].name, name.name), ty))
+            }
+            _ => None,
+        }
+    }
+
+    fn offset(&self, expr: &ast::Expr) -> Option<i128> {
+        let is_index = |e: &ast::Expr| matches!(&e.kind, ast::ExprKind::Path { segments } if segments.len() == 1 && segments[0].name == self.index);
+        let literal = |e: &ast::Expr| match &e.kind {
+            ast::ExprKind::Lit(ast::Literal::Int { value, .. }) => i128::try_from(*value).ok(),
+            _ => None,
+        };
+        match &expr.kind {
+            ast::ExprKind::Paren(inner) => self.offset(inner),
+            _ if is_index(expr) => Some(0),
+            ast::ExprKind::Binary { op: ast::BinOp::Add, lhs, rhs } if is_index(lhs) => literal(rhs),
+            ast::ExprKind::Binary { op: ast::BinOp::Add, lhs, rhs } if is_index(rhs) => literal(lhs),
+            ast::ExprKind::Binary { op: ast::BinOp::Sub, lhs, rhs } if is_index(lhs) => literal(rhs).map(|k| -k),
+            _ => None,
+        }
+    }
+
+    fn target(&mut self, checker: &Checker<'_>, target: &ast::Expr) {
+        match &target.kind {
+            ast::ExprKind::Path { segments } if segments.len() == 1 => {
+                let name = segments[0].name;
+                if self.outer(checker, name) {
+                    if !self.reduced.contains(&name) {
+                        self.problems.push((target.span, format!("the parallel loop writes `{name}`, which its chunks share")));
+                    }
+                } else {
+                    // `[GRM-4]` — a name not in scope is declared here: the body's own.
+                    self.declared.insert(name);
+                }
+            }
+            ast::ExprKind::IndexOrInstantiate { base, args } => {
+                for arg in args {
+                    if let ast::TypeOrExpr::Expr(e) = arg {
+                        self.expr(checker, e);
+                    }
+                }
+                match self.place_of(checker, base) {
+                    Some((place, ty)) => {
+                        let ty = match checker.types.kind(ty) {
+                            TyKind::Ref { inner, .. } => *inner,
+                            _ => ty,
+                        };
+                        let span_like = matches!(checker.types.kind(ty), TyKind::Span { mutable: true, .. }) || checker.soa_inner(ty).is_some();
+                        if !span_like {
+                            let shown = checker.types.display(ty);
+                            self.problems.push((target.span, format!("the parallel loop writes `{place}`, a `{shown}`; it may write a `MutSpan` or an `SoA` column")));
+                            return;
+                        }
+                        let offset = match args.as_slice() {
+                            [ast::TypeOrExpr::Expr(e)] => self.offset(e),
+                            _ => None,
+                        };
+                        self.accesses.entry(place).or_default().push(ParallelAccess { offset, write: true, span: target.span });
+                    }
+                    None => self.inner_target(checker, base, target.span),
+                }
+            }
+            ast::ExprKind::Field { base, .. } | ast::ExprKind::TupleField { base, .. } => self.inner_target(checker, base, target.span),
+            ast::ExprKind::Tuple(items) => {
+                for item in items {
+                    self.target(checker, item);
+                }
+            }
+            _ => self.expr(checker, target),
+        }
+    }
+
+    /// A write through `base`: allowed into the body's own values only.
+    fn inner_target(&mut self, checker: &Checker<'_>, base: &ast::Expr, span: Span) {
+        let mut root = base;
+        loop {
+            match &root.kind {
+                ast::ExprKind::Field { base, .. } | ast::ExprKind::TupleField { base, .. } | ast::ExprKind::Paren(base) => root = base,
+                ast::ExprKind::IndexOrInstantiate { base, .. } => root = base,
+                _ => break,
+            }
+        }
+        if let ast::ExprKind::Path { segments } = &root.kind
+            && segments.len() == 1
+            && !self.outer(checker, segments[0].name)
+        {
+            self.expr(checker, base);
+            return;
+        }
+        self.problems.push((span, "the parallel loop writes through a place its chunks share".to_string()));
+    }
+
+    fn expr(&mut self, checker: &Checker<'_>, expr: &ast::Expr) {
+        match &expr.kind {
+            ast::ExprKind::Jump(ast::Jump::Return(_)) => self.problems.push((expr.span, "a `@parallel` loop's body may not `return`".to_string())),
+            ast::ExprKind::Jump(ast::Jump::Break { .. }) if self.loops == 0 => {
+                self.problems.push((expr.span, "a `@parallel` loop's body may not `break` out of it".to_string()));
+            }
+            ast::ExprKind::Jump(ast::Jump::Continue { label: Some(label) }) if Some(label.name) != self.label => {
+                self.problems.push((expr.span, "a `@parallel` loop's body may not `continue` an outer loop".to_string()));
+            }
+            ast::ExprKind::Yield(_) => self.problems.push((expr.span, "a `@parallel` loop's body may not `yield`".to_string())),
+            ast::ExprKind::IndexOrInstantiate { base, args } => {
+                for arg in args {
+                    if let ast::TypeOrExpr::Expr(e) = arg {
+                        self.expr(checker, e);
+                    }
+                }
+                match self.place_of(checker, base) {
+                    Some((place, _)) => {
+                        let offset = match args.as_slice() {
+                            [ast::TypeOrExpr::Expr(e)] => self.offset(e),
+                            _ => None,
+                        };
+                        self.accesses.entry(place).or_default().push(ParallelAccess { offset, write: false, span: expr.span });
+                    }
+                    None => self.expr(checker, base),
+                }
+            }
+            ast::ExprKind::Call { callee, args } => {
+                self.expr(checker, callee);
+                for arg in args {
+                    self.argument(checker, &arg.value);
+                }
+            }
+            ast::ExprKind::MethodCall { recv, args, .. } => {
+                self.argument(checker, recv);
+                for arg in args {
+                    self.argument(checker, &arg.value);
+                }
+            }
+            ast::ExprKind::Field { base, .. } | ast::ExprKind::TupleField { base, .. } => {
+                if self.place_of(checker, expr).is_none() {
+                    self.expr(checker, base);
+                }
+            }
+            ast::ExprKind::Unary { operand, .. } | ast::ExprKind::Paren(operand) | ast::ExprKind::Try(operand) | ast::ExprKind::Owned(operand) => self.expr(checker, operand),
+            ast::ExprKind::Cast { expr: inner, .. } | ast::ExprKind::Downcast { expr: inner, .. } => self.expr(checker, inner),
+            ast::ExprKind::Binary { lhs, rhs, .. } | ast::ExprKind::Logical { lhs, rhs, .. } => {
+                self.expr(checker, lhs);
+                self.expr(checker, rhs);
+            }
+            ast::ExprKind::CompareChain { first, rest } => {
+                self.expr(checker, first);
+                for (_, e) in rest {
+                    self.expr(checker, e);
+                }
+            }
+            ast::ExprKind::Ternary { then_expr, cond, else_expr } => {
+                self.expr(checker, then_expr);
+                self.expr(checker, cond);
+                self.expr(checker, else_expr);
+            }
+            ast::ExprKind::Range { lo, hi, .. } => {
+                for e in lo.iter().chain(hi.iter()) {
+                    self.expr(checker, e);
+                }
+            }
+            ast::ExprKind::Tuple(items) | ast::ExprKind::ArrayLit(items) | ast::ExprKind::SetLit(items) => {
+                for item in items {
+                    self.expr(checker, item);
+                }
+            }
+            ast::ExprKind::MapLit(entries) => {
+                for (k, v) in entries {
+                    self.expr(checker, k);
+                    self.expr(checker, v);
+                }
+            }
+            ast::ExprKind::ArrayRepeat { value, count } => {
+                self.expr(checker, value);
+                self.expr(checker, count);
+            }
+            ast::ExprKind::FString(parts) => {
+                for part in parts {
+                    if let ast::FStringPart::Expr { expr, .. } = part {
+                        self.expr(checker, expr);
+                    }
+                }
+            }
+            ast::ExprKind::Match { scrutinee, arms } => self.arms(checker, scrutinee, arms),
+            ast::ExprKind::RefOf { place, .. } => self.argument(checker, place),
+            // A lambda or a comprehension in the body is its own code: one that reaches a place the
+            // loop writes cannot be read through.
+            ast::ExprKind::Lambda(_) | ast::ExprKind::Comprehension { .. } => {}
+            _ => {}
+        }
+    }
+
+    /// An argument (or a receiver): a place given whole to a call is noted (`[PAR-2b]`).
+    fn argument(&mut self, checker: &Checker<'_>, value: &ast::Expr) {
+        if let Some((place, ty)) = self.place_of(checker, value) {
+            self.passed.push((place, ty, value.span));
+            return;
+        }
+        self.expr(checker, value);
+    }
+}
+
+/// `[THR-10]`, `[THR-11]`, `[JOB-2]` — how a diagnostic about a task on another thread names it.
+struct TaskWords {
+    who: &'static str,
+    outlives: &'static str,
+    scope_help: &'static str,
+    outlive_note: &'static str,
+    moves_note: &'static str,
+    scoped_who: &'static str,
+    scoped_note: &'static str,
+}
+
+const THREAD_WORDS: TaskWords = TaskWords {
+    who: "the thread's function",
+    outlives: "the thread may outlive what it views",
+    scope_help: "borrow it inside `with scope = thread.scope():`, which joins its threads before the block ends [THR-5]",
+    outlive_note: "a thread may outlive every local of the code that started it [THR-10]",
+    moves_note: "what a thread's function captures moves to that thread [THR-10]",
+    scoped_who: "the task",
+    scoped_note: "a scoped task runs on another thread while the block goes on [THR-11]",
+};
+
+const JOB_WORDS: TaskWords = TaskWords {
+    who: "the job's function",
+    outlives: "the job may outlive what it views",
+    scope_help: "borrow it inside `with s = jobs.scope():`, which waits for its jobs before the block ends [JOB-2]",
+    outlive_note: "a job may outlive every local of the code that submitted it [JOB-2]",
+    moves_note: "what a job's function captures moves to the job [JOB-2]",
+    scoped_who: "the job",
+    scoped_note: "a scope's job runs on another thread while the block goes on [JOB-2]",
+};
+
 /// `[GRM-28]` — a local function whose body is being checked: a call to
 /// `name` in it is a call to itself, the function `def` reserved before the
 /// body, through its own environment once `env` says how it is passed.
@@ -12113,6 +12482,16 @@ impl<'a> Checker<'a> {
         if self.resolve_name(name).is("std.thread.scope") {
             return Some(self.synth_thread_scope(args, span));
         }
+        // `[JOB-2]` — the job system's entry points.
+        if self.resolve_name(name).is("std.jobs.submit") {
+            return Some(self.synth_jobs_submit(args, explicit, span));
+        }
+        if self.resolve_name(name).is("std.jobs.scope") {
+            return Some(self.synth_jobs_scope(args, span));
+        }
+        if self.resolve_name(name).is("std.jobs.wait") {
+            return Some(self.synth_jobs_wait(args, span));
+        }
         // `[HASH-2]` — `std.collections`'s own `process_key(which)`, the
         // process's hash key, which the runtime draws.
         if self.resolve_name(name).is("std.collections.process_key") {
@@ -18509,6 +18888,13 @@ impl<'a> Checker<'a> {
         // `[ATT-6]` (0.9.9) — `@simd`, `@parallel`, `@unroll` and `@allow`
         // have no effect built, and an attribute is never accepted and
         // ignored. Their names and places are the parser's (`[ATT-2]`).
+        // `[PAR-1]` — a `@parallel` loop is built; the other loop attributes are not.
+        if let Some(attr) = stmt.attrs.iter().find(|attr| attr.path.len() == 1 && attr.path[0].name.is("parallel"))
+            && stmt.attrs.len() == 1
+        {
+            self.check_parallel_for(attr, stmt, out);
+            return;
+        }
         for attr in &stmt.attrs {
             if self.reported_stmt_attrs.insert(attr.span) {
                 let name = attr.path.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".");
@@ -36145,6 +36531,14 @@ impl<'a> Checker<'a> {
             }
             return self.synth_soa_method(receiver, inner, name, args, span);
         }
+        // `[JOB-2]`, `[JOB-3]` — `s.submit(f)` and `s.submit_after(deps, f)`.
+        if self.is_job_scope(receiver.ty) {
+            if !matches!(name.name.as_str(), "submit" | "submit_after") {
+                self.error(codes::E1010, name.span, format!("`std.jobs.JobScope` has no method named `{}`", name.name));
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return self.synth_job_scope_submit(receiver, name.name.is("submit_after"), args, &explicit, span);
+        }
         // `[THR-11]` — `scope.spawn(f)`; `h.join()` on a scoped handle.
         if self.is_scope(receiver.ty) {
             if !name.name.is("spawn") {
@@ -40388,40 +40782,11 @@ impl<'a> Checker<'a> {
             self.error(codes::E2020, args[0].span, format!("`spawn` takes a function of no arguments, found `{shown}`"));
             return error;
         }
-        let mut refused = false;
         let closure = match *self.types.kind(f.ty) {
             TyKind::Struct(id) => self.closure_calls.get(&id).map(|call| call.def),
             _ => None,
         };
-        if let (Some(_), &TyKind::Struct(id)) = (closure, self.types.kind(f.ty)) {
-            let captures: Vec<(Symbol, Ty)> = self.types.struct_def(id).fields.iter().map(|field| (field.name, field.ty)).collect();
-            for (capture, ty) in captures {
-                let (code, what, ok) = match *self.types.kind(ty) {
-                    TyKind::Ref { mutable: false, inner } => (codes::E7005, (inner, "borrows", "Sync"), self.types.is_sync(inner)),
-                    TyKind::Ref { mutable: true, inner } => (codes::E7004, (inner, "borrows mutably", "Send"), self.types.is_send(inner)),
-                    _ => (codes::E7004, (ty, "captures", "Send"), self.types.is_send(ty)),
-                };
-                if !ok {
-                    let (ty, verb, marker) = what;
-                    let ty_shown = self.types.display(ty);
-                    let mut diagnostic =
-                        Diagnostic::error(code, args[0].span, format!("the task {verb} `{capture}`, a `{ty_shown}`, which is not {marker}"))
-                            .note("a scoped task runs on another thread while the block goes on [THR-11]");
-                    if let Some(advice) = self.sync_class_advice(ty) {
-                        diagnostic = diagnostic.help(advice);
-                    }
-                    self.sink.emit(diagnostic);
-                    refused = true;
-                }
-            }
-        } else if !matches!(self.types.kind(f.ty), TyKind::Fn { stateless: true, .. }) {
-            self.sink.emit(
-                Diagnostic::error(codes::E7004, args[0].span, format!("a `{shown}` value may hold anything, so it is not Send"))
-                    .help("pass the lambda itself, `fn() => …`, so what it captures can be checked")
-                    .note("a scoped task runs on another thread while the block goes on [THR-11]"),
-            );
-            refused = true;
-        }
+        let mut refused = self.scoped_task_refused(f.ty, closure, args[0].span, &THREAD_WORDS);
         if !self.types.is_send(ret) {
             let ret_shown = self.types.display(ret);
             self.sink.emit(
@@ -40444,6 +40809,671 @@ impl<'a> Checker<'a> {
             }
         };
         Expr { ty: handle, kind: ExprKind::Builtin { which: Builtin::ScopeSpawn { closure }, args: vec![borrowed, task] }, span }
+    }
+
+    /// `[PAR-1]`..`[PAR-4]` — `@parallel(chunk=…, reduce=[…]) for i in a..b: body`. The body
+    /// becomes a closure over one chunk, `fn(lo, hi)`, run on the job system's workers and the
+    /// calling thread at once (`ParallelFor`), so it is accepted only when its iterations are
+    /// independent (`parallel_independent`). A reduction variable has a copy per chunk, starting
+    /// at its operator's identity; the chunks' results are folded into it in chunk order after
+    /// the loop.
+    fn check_parallel_for(&mut self, attr: &ast::Attribute, stmt: &ast::Stmt, out: &mut Vec<Stmt>) {
+        let span = stmt.span;
+        let ast::StmtKind::For { label, pattern, iter, body, else_block } = &stmt.kind else { return };
+        let refuse = |this: &mut Self, at: Span, message: String| {
+            this.sink.emit(
+                Diagnostic::error(codes::E7010, at, message)
+                    .help("make the iterations independent: an `Atomic`, `chunks_mut`, or `@parallel(reduce=…)`")
+                    .note("a `@parallel` loop's chunks run at once [PAR-2]"),
+            );
+        };
+        let Some(index) = binding_name(pattern) else {
+            refuse(self, pattern.span, "a `@parallel` loop binds one name, its index".to_string());
+            return;
+        };
+        let ast::ExprKind::Range { lo: Some(lo), hi: Some(hi), inclusive } = &iter.kind else {
+            refuse(self, iter.span, "a `@parallel` loop counts over a range `a..b`".to_string());
+            return;
+        };
+        if let Some(block) = else_block {
+            refuse(self, block.span, "a `@parallel` loop has no `else`".to_string());
+            return;
+        }
+        // The attribute's arguments.
+        let mut chunk = None;
+        let mut reduce: Vec<(ast::Ident, ast::Ident)> = Vec::new();
+        for arg in &attr.args {
+            match arg {
+                ast::AttrArg::Named { name, value } if name.name.is("chunk") => chunk = Some(value),
+                ast::AttrArg::Named { name, value } if name.name.is("reduce") => {
+                    let ast::ExprKind::ArrayLit(items) = &value.kind else {
+                        self.error(codes::E0104, value.span, "`reduce` is a list of `name: operator`");
+                        return;
+                    };
+                    for item in items {
+                        match &item.kind {
+                            ast::ExprKind::Tuple(pair) => match pair.as_slice() {
+                                [ast::Expr { kind: ast::ExprKind::Path { segments: var }, .. }, ast::Expr { kind: ast::ExprKind::Path { segments: op }, .. }]
+                                    if var.len() == 1 && op.len() == 1 => reduce.push((var[0], op[0])),
+                                _ => {
+                                    self.error(codes::E0104, item.span, "`reduce` is a list of `name: operator`");
+                                    return;
+                                }
+                            },
+                            _ => {
+                                self.error(codes::E0104, item.span, "`reduce` is a list of `name: operator`");
+                                return;
+                            }
+                        }
+                    }
+                }
+                ast::AttrArg::Named { name, .. } => {
+                    self.error(codes::E0104, name.span, format!("`@parallel` has no argument `{}`; it takes `chunk` and `reduce`", name.name));
+                    return;
+                }
+                ast::AttrArg::Expr(value) => {
+                    self.error(codes::E0104, value.span, "`@parallel`'s arguments are named: `chunk=…`, `reduce=[…]`");
+                    return;
+                }
+            }
+        }
+        // `[PAR-3]` — each reduction variable is a number or a `bool` of the enclosing code, with
+        // an operator its type has.
+        let mut reductions: Vec<(Symbol, LocalId, Ty, String)> = Vec::new();
+        for (var, op) in &reduce {
+            let Some(local) = self.lookup(var.name) else {
+                self.error(codes::E1010, var.span, format!("cannot find `{}` in this scope", var.name));
+                return;
+            };
+            let ty = self.locals[local.0 as usize].ty;
+            let op_name = op.name.as_str().to_string();
+            let numeric = self.types.is_numeric(ty);
+            let integral = self.types.is_integral(ty);
+            let fits = match op_name.as_str() {
+                "+" | "*" | "max" | "min" => numeric,
+                "&" | "|" | "^" => integral,
+                "and" | "or" => ty == self.common.bool_,
+                _ => false,
+            };
+            if !fits {
+                let shown = self.types.display(ty);
+                self.sink.emit(
+                    Diagnostic::error(codes::E2020, op.span, format!("`{}` cannot reduce `{}`, a `{shown}`", op_name, var.name))
+                        .note("a reduction is `+`, `*`, `max` or `min` of numbers, `&`, `|` or `^` of integers, or `and` or `or` of `bool`s [PAR-3]"),
+                );
+                return;
+            }
+            reductions.push((var.name, local, ty, op_name));
+        }
+        // `[PAR-2]`, `[PAR-2a]` — the iterations are independent.
+        let reduced: HashSet<Symbol> = reductions.iter().map(|(name, ..)| *name).collect();
+        if !self.parallel_independent(index, *label, body, &reduced) {
+            return;
+        }
+        // The chunk's closure.
+        let int = self.common.i64;
+        let dummy = ast::NodeId::DUMMY;
+        let at = |kind: ast::ExprKind| ast::Expr { id: dummy, kind, span };
+        let name = |text: &str| ast::Ident { name: Symbol::intern(text), span };
+        let path = |text: &str| at(ast::ExprKind::Path { segments: vec![name(text)] });
+        let type_named = |this: &Self, ty: Ty| ast::TypeExpr {
+            id: dummy,
+            kind: ast::TypeKind::Path { segments: vec![ast::Ident { name: Symbol::intern(&this.types.display(ty)), span }], args: Vec::new() },
+            span,
+        };
+        let mut stmts = Vec::new();
+        for (var, _, ty, op) in &reductions {
+            let identity = self.reduction_identity(*ty, op, span);
+            stmts.push(ast::Stmt {
+                id: dummy,
+                attrs: Vec::new(),
+                kind: ast::StmtKind::Decl {
+                    pattern: ast::Pattern { id: dummy, kind: ast::PatternKind::Bind { name: ast::Ident { name: *var, span }, by_ref: false, mutable: false, sub: None }, span },
+                    ty: Some(type_named(self, *ty)),
+                    init: Some(identity),
+                },
+                span,
+            });
+        }
+        let range = at(ast::ExprKind::Range { lo: Some(Box::new(path("$lo"))), hi: Some(Box::new(path("$hi"))), inclusive: false });
+        stmts.push(ast::Stmt {
+            id: dummy,
+            attrs: Vec::new(),
+            kind: ast::StmtKind::For { label: *label, pattern: pattern.clone(), iter: range, body: body.clone(), else_block: None },
+            span,
+        });
+        let results: Vec<Ty> = reductions.iter().map(|(_, _, ty, _)| *ty).collect();
+        let result_ty = match results.as_slice() {
+            [] => self.common.void,
+            [one] => *one,
+            many => self.types.intern(TyKind::Tuple(many.to_vec())),
+        };
+        if !results.is_empty() {
+            let value = match reductions.as_slice() {
+                [(var, ..)] => path(var.as_str()),
+                many => at(ast::ExprKind::Tuple(many.iter().map(|(var, ..)| path(var.as_str())).collect())),
+            };
+            stmts.push(ast::Stmt { id: dummy, attrs: Vec::new(), kind: ast::StmtKind::Expr(at(ast::ExprKind::Jump(ast::Jump::Return(Some(Box::new(value)))))), span });
+        }
+        let param = |text: &str, this: &Self| ast::Param {
+            id: dummy,
+            mode: ast::Mode::Borrow,
+            kind: ast::ParamKind::Named { name: name(text), ty: type_named(this, int) },
+            default: None,
+            span,
+        };
+        let lambda = ast::Lambda {
+            is_owned: false,
+            params: vec![param("$lo", self), param("$hi", self)],
+            ret: None,
+            body: ast::LambdaBody::Block(ast::Block { id: dummy, stmts, span: body.span }),
+        };
+        let lo_value = self.check_expr(lo, int);
+        let hi_value = self.check_expr(hi, int);
+        // `..=`: one past the last index, which the range holds.
+        let end_value = if *inclusive {
+            Expr { ty: int, kind: ExprKind::Binary { op: BinOp::Add, lhs: Box::new(hi_value), rhs: Box::new(Expr { ty: int, kind: ExprKind::Int(1), span }) }, span }
+        } else {
+            hi_value
+        };
+        let chunk_value = match chunk {
+            Some(value) => self.check_expr(value, int),
+            None => Expr { ty: int, kind: ExprKind::Int(0), span },
+        };
+        let expected = self.types.intern(TyKind::Fn {
+            abi: None,
+            latebound: false,
+            stateless: false,
+            params: vec![ember_types::FnParam { ty: int, mode: ember_types::FnParamMode::Borrow }, ember_types::FnParam { ty: int, mode: ember_types::FnParamMode::Borrow }],
+            ret: result_ty,
+        });
+        let closure_value = self.synth_lambda_fresh(&lambda, Some(expected), span, None);
+        if closure_value.ty == self.common.error {
+            return;
+        }
+        let closure = match *self.types.kind(closure_value.ty) {
+            TyKind::Struct(id) => self.closure_calls.get(&id).map(|call| call.def),
+            _ => None,
+        };
+        // `[PAR-2]` — every chunk shares what the closure captures, at once.
+        if self.parallel_captures_refused(closure_value.ty, closure, span) {
+            return;
+        }
+        let mut args = vec![lo_value, end_value, chunk_value, closure_value];
+        // `[PAR-3]` — the running results, which the chunks' are folded into in chunk order.
+        let mut combine = None;
+        if !reductions.is_empty() {
+            let acc = self.declare(None, result_ty, span);
+            let initial: Vec<Expr> = reductions.iter().map(|(_, local, ty, _)| Expr { ty: *ty, kind: ExprKind::Local(*local), span }).collect();
+            let init = match initial.as_slice() {
+                [one] => one.clone(),
+                _ => Expr { ty: result_ty, kind: ExprKind::TupleLit(initial), span },
+            };
+            out.push(Stmt::Let { local: acc, init: Some(init) });
+            combine = self.reduction_combiner(&reductions, result_ty, span);
+            if combine.is_none() {
+                return;
+            }
+            let acc_ref = self.types.intern(TyKind::Ref { mutable: true, inner: result_ty });
+            args.push(Expr { ty: acc_ref, kind: ExprKind::Ref { place: Box::new(Expr { ty: result_ty, kind: ExprKind::Local(acc), span }), mutable: true }, span });
+            out.push(Stmt::Expr(Expr { ty: self.common.void, kind: ExprKind::Builtin { which: Builtin::ParallelFor { closure, combine }, args }, span }));
+            for (position, (_, local, ty, _)) in reductions.iter().enumerate() {
+                let whole = Expr { ty: result_ty, kind: ExprKind::Local(acc), span };
+                let value = if reductions.len() == 1 { whole } else { Expr { ty: *ty, kind: ExprKind::Field { base: Box::new(whole), index: position }, span } };
+                out.push(Stmt::Assign { place: Expr { ty: *ty, kind: ExprKind::Local(*local), span }, value });
+            }
+            return;
+        }
+        out.push(Stmt::Expr(Expr { ty: self.common.void, kind: ExprKind::Builtin { which: Builtin::ParallelFor { closure, combine }, args }, span }));
+    }
+
+    /// `[PAR-3]` — the identity of a reduction's operator at `ty`: what a chunk's copy starts at.
+    fn reduction_identity(&mut self, ty: Ty, op: &str, span: Span) -> ast::Expr {
+        let dummy = ast::NodeId::DUMMY;
+        let at = |kind: ast::ExprKind| ast::Expr { id: dummy, kind, span };
+        let shown = self.types.display(ty);
+        let ident = |text: &str| ast::Ident { name: Symbol::intern(text), span };
+        let constant = |name: &str| at(ast::ExprKind::Field { base: Box::new(at(ast::ExprKind::Path { segments: vec![ident(&shown)] })), name: ident(name) });
+        let cast = |value: u128| at(ast::ExprKind::Cast {
+            expr: Box::new(at(ast::ExprKind::Lit(ast::Literal::Int { value, suffix: None }))),
+            ty: ast::TypeExpr { id: dummy, kind: ast::TypeKind::Path { segments: vec![ident(&shown)], args: Vec::new() }, span },
+        });
+        let float = self.types.is_float(ty);
+        match op {
+            "+" | "|" | "^" => cast(0),
+            "*" => cast(1),
+            "&" if ember_types::is_signed(self.types, ty) == Some(true) => at(ast::ExprKind::Unary { op: ast::UnOp::Neg, operand: Box::new(cast(1)) }),
+            "&" => constant("MAX"),
+            "max" if float => at(ast::ExprKind::Unary { op: ast::UnOp::Neg, operand: Box::new(constant("INF")) }),
+            "max" => constant("MIN"),
+            "min" if float => constant("INF"),
+            "min" => constant("MAX"),
+            "and" => at(ast::ExprKind::Lit(ast::Literal::Bool(true))),
+            _ => at(ast::ExprKind::Lit(ast::Literal::Bool(false))),
+        }
+    }
+
+    /// `[PAR-3]` — the function folding one chunk's results into the running ones, in each
+    /// reduction's own arithmetic (an overflow panics, as `+` does anywhere).
+    fn reduction_combiner(&mut self, reductions: &[(Symbol, LocalId, Ty, String)], result_ty: Ty, span: Span) -> Option<DefId> {
+        let dummy = ast::NodeId::DUMMY;
+        let at = |kind: ast::ExprKind| ast::Expr { id: dummy, kind, span };
+        let ident = |text: &str| ast::Ident { name: Symbol::intern(text), span };
+        let path = |text: &str| at(ast::ExprKind::Path { segments: vec![ident(text)] });
+        let part = |side: &str, position: usize| {
+            if reductions.len() == 1 { path(side) } else { at(ast::ExprKind::TupleField { base: Box::new(path(side)), index: position as u32 }) }
+        };
+        let folded: Vec<ast::Expr> = reductions.iter().enumerate().map(|(position, (_, _, _, op))| {
+            let (a, b) = (part("$a", position), part("$b", position));
+            match op.as_str() {
+                "+" => at(ast::ExprKind::Binary { op: ast::BinOp::Add, lhs: Box::new(a), rhs: Box::new(b) }),
+                "*" => at(ast::ExprKind::Binary { op: ast::BinOp::Mul, lhs: Box::new(a), rhs: Box::new(b) }),
+                "&" => at(ast::ExprKind::Binary { op: ast::BinOp::BitAnd, lhs: Box::new(a), rhs: Box::new(b) }),
+                "|" => at(ast::ExprKind::Binary { op: ast::BinOp::BitOr, lhs: Box::new(a), rhs: Box::new(b) }),
+                "^" => at(ast::ExprKind::Binary { op: ast::BinOp::BitXor, lhs: Box::new(a), rhs: Box::new(b) }),
+                "and" => at(ast::ExprKind::Logical { op: ast::LogicalOp::And, lhs: Box::new(a), rhs: Box::new(b) }),
+                "or" => at(ast::ExprKind::Logical { op: ast::LogicalOp::Or, lhs: Box::new(a), rhs: Box::new(b) }),
+                other => at(ast::ExprKind::Call {
+                    callee: Box::new(path(other)),
+                    args: vec![ast::Arg { name: None, value: a, span }, ast::Arg { name: None, value: b, span }],
+                }),
+            }
+        }).collect();
+        let value = if folded.len() == 1 { folded.into_iter().next().expect("one") } else { at(ast::ExprKind::Tuple(folded)) };
+        let param_type = |this: &Self| {
+            let parts: Vec<ast::TypeExpr> = reductions.iter().map(|(_, _, ty, _)| ast::TypeExpr {
+                id: dummy,
+                kind: ast::TypeKind::Path { segments: vec![ident(&this.types.display(*ty))], args: Vec::new() },
+                span,
+            }).collect();
+            if parts.len() == 1 { parts.into_iter().next().expect("one") } else { ast::TypeExpr { id: dummy, kind: ast::TypeKind::Tuple(parts), span } }
+        };
+        let param = |text: &str, this: &Self| ast::Param {
+            id: dummy,
+            mode: ast::Mode::Borrow,
+            kind: ast::ParamKind::Named { name: ident(text), ty: param_type(this) },
+            default: None,
+            span,
+        };
+        let lambda = ast::Lambda { is_owned: false, params: vec![param("$a", self), param("$b", self)], ret: None, body: ast::LambdaBody::Expr(Box::new(value)) };
+        let param_ty = |ty: Ty| ember_types::FnParam { ty, mode: ember_types::FnParamMode::Borrow };
+        let expected = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: true, params: vec![param_ty(result_ty), param_ty(result_ty)], ret: result_ty });
+        let combiner = self.synth_lambda_fresh(&lambda, Some(expected), span, None);
+        match combiner.kind {
+            ExprKind::FnValue(def) => Some(def),
+            _ => None,
+        }
+    }
+
+    /// `[PAR-2]` — what the chunks share: each capture is read by all of them at once, so what it
+    /// borrows shared is `Sync` (`E7005`) and what it holds `Send` (`E7004`); one borrowed mutably
+    /// is a `MutSpan` or an `SoA` whose elements `parallel_independent` showed apart.
+    fn parallel_captures_refused(&mut self, f_ty: Ty, closure: Option<DefId>, span: Span) -> bool {
+        let (Some(_), &TyKind::Struct(id)) = (closure, self.types.kind(f_ty)) else { return false };
+        let captures: Vec<(Symbol, Ty)> = self.types.struct_def(id).fields.iter().map(|field| (field.name, field.ty)).collect();
+        let mut refused = false;
+        for (capture, ty) in captures {
+            let (code, message) = match *self.types.kind(ty) {
+                TyKind::Ref { mutable: true, inner } => {
+                    let spans = matches!(self.types.kind(inner), TyKind::Span { mutable: true, .. }) || self.soa_inner(inner).is_some();
+                    if spans || self.types.is_send(inner) && matches!(self.types.kind(inner), TyKind::Span { .. }) {
+                        continue;
+                    }
+                    let shown = self.types.display(inner);
+                    (codes::E7010, format!("the parallel loop writes `{capture}`, a `{shown}`, which its chunks share"))
+                }
+                // A span only read here: its chunks read its elements at once.
+                TyKind::Ref { mutable: false, inner } if let TyKind::Span { elem, .. } = *self.types.kind(inner) && self.types.is_sync(elem) => continue,
+                TyKind::Ref { mutable: false, inner } if !self.types.is_sync(inner) => {
+                    let shown = self.types.display(inner);
+                    (codes::E7005, format!("the parallel loop's chunks borrow `{capture}`, a `{shown}`, which is not Sync"))
+                }
+                TyKind::Ref { .. } => continue,
+                _ if !self.types.is_send(ty) => {
+                    let shown = self.types.display(ty);
+                    (codes::E7004, format!("the parallel loop's chunks capture `{capture}`, a `{shown}`, which is not Send"))
+                }
+                _ => continue,
+            };
+            self.sink.emit(
+                Diagnostic::error(code, span, message)
+                    .help("make the iterations independent: an `Atomic`, `chunks_mut`, or `@parallel(reduce=…)`")
+                    .note("a `@parallel` loop's chunks run at once, on several threads [PAR-2]"),
+            );
+            refused = true;
+        }
+        refused
+    }
+
+    /// `[PAR-2]`, `[PAR-2a]` — whether a `@parallel` loop's iterations are independent: no `break`,
+    /// `return`, `yield` or `continue` of an outer loop; and each place written in the body is a
+    /// `MutSpan` or `SoA` column of the enclosing code (or a reduction, or the body's own), every
+    /// access to which, reads included, is at `i + k` for one constant `k`. A call the analysis
+    /// cannot see into that is given such a place defeats it (`[PAR-2b]`). Reports what fails.
+    fn parallel_independent(&mut self, index: Symbol, label: Option<ast::Ident>, body: &ast::Block, reduced: &HashSet<Symbol>) -> bool {
+        let mut walk = ParallelWalk { index, label: label.map(|l| l.name), reduced: reduced.clone(), declared: HashSet::new(), loops: 0, accesses: BTreeMap::new(), problems: Vec::new(), passed: Vec::new() };
+        walk.block(self, body);
+        let mut ok = walk.problems.is_empty();
+        for (span, message) in std::mem::take(&mut walk.problems) {
+            self.sink.emit(
+                Diagnostic::error(codes::E7010, span, message)
+                    .help("make the iterations independent: an `Atomic`, `chunks_mut`, or `@parallel(reduce=…)`")
+                    .note("a `@parallel` loop's chunks run at once [PAR-2]"),
+            );
+        }
+        // `[PAR-2b]` — a `MutSpan` or `SoA` column given to a call the analysis does not read
+        // through: the call may write any element of it.
+        let mut handed: HashSet<String> = HashSet::new();
+        for (place, ty, span) in std::mem::take(&mut walk.passed) {
+            let ty = match self.types.kind(ty) {
+                TyKind::Ref { inner, .. } => *inner,
+                _ => ty,
+            };
+            let writable = matches!(self.types.kind(ty), TyKind::Span { mutable: true, .. }) || self.soa_inner(ty).is_some();
+            if !writable || !handed.insert(place.clone()) {
+                continue;
+            }
+            self.sink.emit(
+                Diagnostic::error(codes::E7010, span, format!("the parallel loop gives `{place}` to a call, which may write any element of it"))
+                    .help("write the element in the loop itself, at `i` plus a constant")
+                    .note("a `@parallel` loop's chunks run at once [PAR-2]"),
+            );
+            ok = false;
+        }
+        for (place, accesses) in &walk.accesses {
+            if !accesses.iter().any(|access| access.write) || handed.contains(place) {
+                continue;
+            }
+            let mut offsets: Vec<(i128, Span)> = Vec::new();
+            for access in accesses {
+                match access.offset {
+                    Some(k) => offsets.push((k, access.span)),
+                    None => {
+                        self.sink.emit(
+                            Diagnostic::error(codes::E7010, access.span, format!("the parallel loop writes `{place}`, and reaches it here at an index that is not `{index}` plus a constant"))
+                                .help("index it by the loop's own index, `i + k`, or make it a reduction")
+                                .note("a `@parallel` loop's chunks run at once [PAR-2]"),
+                        );
+                        ok = false;
+                    }
+                }
+            }
+            if let Some(&(first, first_span)) = offsets.first()
+                && let Some(&(other, other_span)) = offsets.iter().find(|(k, _)| *k != first)
+            {
+                let show = |k: i128| if k == 0 { index.to_string() } else if k > 0 { format!("{index} + {k}") } else { format!("{index} - {}", -k) };
+                self.sink.emit(
+                    Diagnostic::error(codes::E7011, other_span, format!("parallel loop has a loop-carried dependency on `{place}`"))
+                        .secondary(first_span, format!("it is reached at `{}` here", show(first)))
+                        .primary_label(format!("and at `{}` here", show(other)))
+                        .help("write it as two `@parallel` loops, as a reduction, or as a serial loop")
+                        .note("every access to a place a parallel loop writes is at one offset from its index [PAR-2a]"),
+                );
+                ok = false;
+            }
+        }
+        ok
+    }
+
+    /// `[THR-10]`, `[JOB-2]` — what a function that runs on another thread, and may outlive every
+    /// local here, captures: each capture `Send` (`E7004`) and no view (`E3063`); a callable value
+    /// of unknown captures is refused (`E7004`). Whether it refused.
+    fn owned_task_refused(&mut self, f: &Expr, arg_span: Span, words: &TaskWords) -> bool {
+        let mut refused = false;
+        if let TyKind::Struct(id) = *self.types.kind(f.ty)
+            && self.closure_calls.contains_key(&id)
+        {
+            let captures: Vec<(Symbol, Ty)> = self.types.struct_def(id).fields.iter().map(|field| (field.name, field.ty)).collect();
+            for (capture, ty) in captures {
+                let ty_shown = self.types.display(ty);
+                if self.types.is_view(ty) {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E3063, arg_span, format!("{} captures `{capture}`, a view (`{ty_shown}`)", words.who))
+                            .primary_label(words.outlives)
+                            .help(words.scope_help)
+                            .note(words.outlive_note),
+                    );
+                    refused = true;
+                } else if !self.types.is_send(ty) {
+                    let mut diagnostic =
+                        Diagnostic::error(codes::E7004, arg_span, format!("{} captures `{capture}`, a `{ty_shown}`, which is not Send", words.who))
+                            .note(words.moves_note);
+                    if let Some(advice) = self.sync_class_advice(ty) {
+                        diagnostic = diagnostic.help(advice);
+                    }
+                    self.sink.emit(diagnostic);
+                    refused = true;
+                }
+            }
+        } else if !matches!(self.types.kind(f.ty), TyKind::Fn { stateless: true, .. }) {
+            let shown = self.types.display(f.ty);
+            self.sink.emit(
+                Diagnostic::error(codes::E7004, arg_span, format!("a `{shown}` value may hold anything, so it is not Send"))
+                    .help("pass the lambda itself, `owned fn() => …`, so what it captures can be checked")
+                    .note(words.moves_note),
+            );
+            refused = true;
+        }
+        refused
+    }
+
+    /// `[JOB-2]` — `jobs.submit(f)`. As `thread.spawn`'s function, `f` may outlive every local
+    /// here: what it captures must be `Send` and may not be a view. It gives nothing. The closure
+    /// itself goes to the builtin, so its state is copied into the job's slot (`[JOB-1]`).
+    fn synth_jobs_submit(&mut self, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if args.len() != 1 || args[0].name.is_some() || !explicit.is_empty() {
+            self.error(codes::E2020, span, "`jobs.submit` takes one function, the work the job does");
+            return error;
+        }
+        let f = self.synth_job_function(&args[0].value);
+        if f.ty == self.common.error {
+            return error;
+        }
+        if !self.job_function(&f, args[0].span, "jobs.submit") {
+            return error;
+        }
+        if self.owned_task_refused(&f, args[0].span, &JOB_WORDS) {
+            return error;
+        }
+        let Some(handle) = self.named_types.get(&Symbol::intern("std.jobs.JobHandle")).copied() else {
+            self.error(codes::E1010, span, "cannot find `std.jobs.JobHandle`");
+            return error;
+        };
+        let closure = match *self.types.kind(f.ty) {
+            TyKind::Struct(id) => self.closure_calls.get(&id).map(|call| call.def),
+            _ => None,
+        };
+        let task = match closure {
+            Some(_) => f,
+            None => {
+                let void = self.common.void;
+                let callable_ty = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: false, params: Vec::new(), ret: void });
+                self.coerce(f, callable_ty)
+            }
+        };
+        if matches!(task.kind, ExprKind::Error) {
+            return error;
+        }
+        Expr { ty: handle, kind: ExprKind::Builtin { which: Builtin::JobSubmit { closure }, args: vec![task] }, span }
+    }
+
+    /// `[JOB-2]` — a job's function, checked where a `fn()` is wanted (so a lambda's value is
+    /// dropped, as anywhere a `fn()` is wanted), but kept as the closure it is.
+    fn synth_job_function(&mut self, expr: &ast::Expr) -> Expr {
+        let void = self.common.void;
+        let expected = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: false, params: Vec::new(), ret: void });
+        let value = self.synth_with_expectation(expr, Some(expected));
+        self.commit(value)
+    }
+
+    /// `[JOB-2]` — a job's function takes nothing and gives nothing.
+    fn job_function(&mut self, f: &Expr, arg_span: Span, what: &str) -> bool {
+        let shown = self.types.display(f.ty);
+        let signature = self.callable_signature_of_value(f.ty);
+        match signature.map(|signature| self.types.kind(signature).clone()) {
+            Some(TyKind::Fn { params, ret, .. }) if params.is_empty() && ret == self.common.void => true,
+            _ => {
+                self.error(codes::E2020, arg_span, format!("`{what}` takes a function of no arguments that gives nothing, found `{shown}`"));
+                false
+            }
+        }
+    }
+
+    /// `[JOB-2]` — `jobs.wait(h)`.
+    fn synth_jobs_wait(&mut self, args: &[ast::Arg], span: Span) -> Expr {
+        let Some(handle) = self.named_types.get(&Symbol::intern("std.jobs.JobHandle")).copied() else {
+            self.error(codes::E1010, span, "cannot find `std.jobs.JobHandle`");
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        let [arg] = args else {
+            self.error(codes::E2020, span, "`jobs.wait` takes the `JobHandle` of the job to wait for");
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        let h = self.check_expr(&arg.value, handle);
+        Expr { ty: self.common.void, kind: ExprKind::Builtin { which: Builtin::JobWait, args: vec![h] }, span }
+    }
+
+    /// `[JOB-2]` — `std.jobs.JobScope`, marked so every pass knows it (its end waits for its jobs).
+    fn job_scope_ty(&mut self, span: Span) -> Ty {
+        let Some(scope) = self.named_types.get(&Symbol::intern("std.jobs.JobScope")).copied() else {
+            self.error(codes::E1010, span, "cannot find `std.jobs.JobScope`");
+            return self.common.error;
+        };
+        if let TyKind::Struct(id) = *self.types.kind(scope) {
+            let def = self.types.struct_def_mut(id);
+            def.has_drop = true;
+            def.origin = Some((Symbol::intern("std.jobs.JobScope"), Vec::new()));
+        }
+        scope
+    }
+
+    fn is_job_scope(&self, ty: Ty) -> bool {
+        matches!(self.types.kind(ty), TyKind::Struct(id)
+            if self.types.struct_def(*id).origin.as_ref().is_some_and(|(origin, _)| origin.as_str() == "std.jobs.JobScope"))
+    }
+
+    /// `[JOB-2]` — `jobs.scope()`, which only a `with` item may be (`E3014`), as `thread.scope()`.
+    fn synth_jobs_scope(&mut self, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if !args.is_empty() {
+            self.error(codes::E2020, span, "`jobs.scope` takes no arguments");
+            return error;
+        }
+        if self.with_scope_item != Some(span) {
+            self.sink.emit(
+                Diagnostic::error(codes::E3014, span, "`jobs.scope()` must be bound by `with`")
+                    .help("write `with s = jobs.scope():`; the block's end waits for its jobs")
+                    .note("a scope's jobs may borrow the block's places, so the scope lives exactly as long as the block [JOB-2]"),
+            );
+            return error;
+        }
+        let scope = self.job_scope_ty(span);
+        Expr { ty: scope, kind: ExprKind::Builtin { which: Builtin::JobScope, args: Vec::new() }, span }
+    }
+
+    /// `[JOB-2]`, `[JOB-3]` — `s.submit(f)` and `s.submit_after(deps, f)`. As a scoped thread's
+    /// task (`[THR-11]`), `f` may borrow: what it borrows shared must be `Sync` (`E7005`), what it
+    /// borrows mutably or captures `Send` (`E7004`); its borrows flow into the scope and last
+    /// until the block ends. `deps` orders the job after others of the scope; the borrow rules
+    /// treat every job of the scope as running at once all the same.
+    fn synth_job_scope_submit(&mut self, receiver: Expr, after: bool, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let wanted = if after { 2 } else { 1 };
+        let what = if after { "submit_after" } else { "submit" };
+        if args.len() != wanted || args.iter().any(|arg| arg.name.is_some()) || !explicit.is_empty() {
+            let shape = if after { "the jobs to wait for and one function" } else { "one function, the work the job does" };
+            self.error(codes::E2020, span, format!("`{what}` takes {shape}"));
+            return error;
+        }
+        if !is_place(&receiver.kind) {
+            self.error(codes::E2140, span, format!("`{what}` needs the `with` block's scope"));
+            return error;
+        }
+        let Some(scoped) = self.named_types.get(&Symbol::intern("std.jobs.ScopedJob")).copied() else {
+            self.error(codes::E1010, span, "cannot find `std.jobs.ScopedJob`");
+            return error;
+        };
+        // Marked as `std.thread.Scope` is, so every pass knows it (`[THR-5]`: it stays in the block).
+        if let TyKind::Struct(id) = *self.types.kind(scoped) {
+            self.types.struct_def_mut(id).origin = Some((Symbol::intern("std.jobs.ScopedJob"), Vec::new()));
+        }
+        let deps = if after {
+            let span_ty = self.types.intern(TyKind::Span { elem: scoped, mutable: false });
+            let deps = self.check_expr(&args[0].value, span_ty);
+            if deps.ty == self.common.error {
+                return error;
+            }
+            Some(deps)
+        } else {
+            None
+        };
+        let f_arg = &args[wanted - 1];
+        let outer = self.scoped_task_lambda.replace(f_arg.value.span);
+        let f = self.synth_job_function(&f_arg.value);
+        self.scoped_task_lambda = outer;
+        if f.ty == self.common.error || !self.job_function(&f, f_arg.span, what) {
+            return error;
+        }
+        let closure = match *self.types.kind(f.ty) {
+            TyKind::Struct(id) => self.closure_calls.get(&id).map(|call| call.def),
+            _ => None,
+        };
+        if self.scoped_task_refused(f.ty, closure, f_arg.span, &JOB_WORDS) {
+            return error;
+        }
+        let shared = self.types.intern(TyKind::Ref { mutable: false, inner: receiver.ty });
+        let borrowed = Expr { ty: shared, kind: ExprKind::Ref { place: Box::new(receiver), mutable: false }, span };
+        let task = match closure {
+            Some(_) => f,
+            None => {
+                let void = self.common.void;
+                let callable_ty = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: false, params: Vec::new(), ret: void });
+                self.coerce(f, callable_ty)
+            }
+        };
+        let mut call_args = vec![borrowed];
+        call_args.extend(deps);
+        call_args.push(task);
+        Expr { ty: scoped, kind: ExprKind::Builtin { which: Builtin::JobScopeSubmit { closure, after }, args: call_args }, span }
+    }
+
+    /// `[THR-11]`, `[JOB-2]` — what a scope's task captures: borrowed shared, `Sync` (`E7005`);
+    /// borrowed mutably or captured, `Send` (`E7004`); a callable value of unknown captures is
+    /// refused (`E7004`). Whether it refused.
+    fn scoped_task_refused(&mut self, f_ty: Ty, closure: Option<DefId>, arg_span: Span, words: &TaskWords) -> bool {
+        let mut refused = false;
+        if let (Some(_), &TyKind::Struct(id)) = (closure, self.types.kind(f_ty)) {
+            let captures: Vec<(Symbol, Ty)> = self.types.struct_def(id).fields.iter().map(|field| (field.name, field.ty)).collect();
+            for (capture, ty) in captures {
+                let (code, what, ok) = match *self.types.kind(ty) {
+                    TyKind::Ref { mutable: false, inner } => (codes::E7005, (inner, "borrows", "Sync"), self.types.is_sync(inner)),
+                    TyKind::Ref { mutable: true, inner } => (codes::E7004, (inner, "borrows mutably", "Send"), self.types.is_send(inner)),
+                    _ => (codes::E7004, (ty, "captures", "Send"), self.types.is_send(ty)),
+                };
+                if !ok {
+                    let (ty, verb, marker) = what;
+                    let ty_shown = self.types.display(ty);
+                    let mut diagnostic =
+                        Diagnostic::error(code, arg_span, format!("{} {verb} `{capture}`, a `{ty_shown}`, which is not {marker}", words.scoped_who))
+                            .note(words.scoped_note);
+                    if let Some(advice) = self.sync_class_advice(ty) {
+                        diagnostic = diagnostic.help(advice);
+                    }
+                    self.sink.emit(diagnostic);
+                    refused = true;
+                }
+            }
+        } else if !matches!(self.types.kind(f_ty), TyKind::Fn { stateless: true, .. }) {
+            let shown = self.types.display(f_ty);
+            self.sink.emit(
+                Diagnostic::error(codes::E7004, arg_span, format!("a `{shown}` value may hold anything, so it is not Send"))
+                    .help("pass the lambda itself, `fn() => …`, so what it captures can be checked")
+                    .note(words.scoped_note),
+            );
+            refused = true;
+        }
+        refused
     }
 
     /// `[THR-2]` — for a handle of a class that is not `@sync`: `@sync` offered when every field
@@ -40498,40 +41528,7 @@ impl<'a> Checker<'a> {
             self.error(codes::E2020, args[0].span, format!("`thread.spawn` takes a function of no arguments, found `{shown}`"));
             return error;
         }
-        let mut refused = false;
-        if let TyKind::Struct(id) = *self.types.kind(f.ty)
-            && self.closure_calls.contains_key(&id)
-        {
-            let captures: Vec<(Symbol, Ty)> = self.types.struct_def(id).fields.iter().map(|field| (field.name, field.ty)).collect();
-            for (capture, ty) in captures {
-                let ty_shown = self.types.display(ty);
-                if self.types.is_view(ty) {
-                    self.sink.emit(
-                        Diagnostic::error(codes::E3063, args[0].span, format!("the thread's function captures `{capture}`, a view (`{ty_shown}`)"))
-                            .primary_label("the thread may outlive what it views")
-                            .help("borrow it inside `with scope = thread.scope():`, which joins its threads before the block ends [THR-5]")
-                            .note("a thread may outlive every local of the code that started it [THR-10]"),
-                    );
-                    refused = true;
-                } else if !self.types.is_send(ty) {
-                    let mut diagnostic =
-                        Diagnostic::error(codes::E7004, args[0].span, format!("the thread's function captures `{capture}`, a `{ty_shown}`, which is not Send"))
-                            .note("what a thread's function captures moves to that thread [THR-10]");
-                    if let Some(advice) = self.sync_class_advice(ty) {
-                        diagnostic = diagnostic.help(advice);
-                    }
-                    self.sink.emit(diagnostic);
-                    refused = true;
-                }
-            }
-        } else if !matches!(self.types.kind(f.ty), TyKind::Fn { stateless: true, .. }) {
-            self.sink.emit(
-                Diagnostic::error(codes::E7004, args[0].span, format!("a `{shown}` value may hold anything, so it is not Send"))
-                    .help("pass the lambda itself, `owned fn() => …`, so what it captures can be checked")
-                    .note("what a thread's function captures moves to that thread [THR-10]"),
-            );
-            refused = true;
-        }
+        let mut refused = self.owned_task_refused(&f, args[0].span, &THREAD_WORDS);
         if !self.types.is_send(ret) {
             let ret_shown = self.types.display(ret);
             self.sink.emit(

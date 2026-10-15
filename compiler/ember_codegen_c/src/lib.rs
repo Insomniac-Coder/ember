@@ -367,6 +367,7 @@ fn emit_with(
             .collect(),
         native_fn_values: BTreeMap::new(),
         closure_values: BTreeMap::new(),
+        job_closures: BTreeSet::new(),
         comptime: None,
         statement_span: std::cell::Cell::new(ember_span::Span::DUMMY),
         gives_values_to_c: false,
@@ -539,6 +540,9 @@ fn json_string(value: &str) -> String {
 }
 
 struct Emitter<'a> {
+    /// `[JOB-1]` — the closures a job runs: each gets an entry taking its state where the job's
+    /// slot holds it, and a drop for that state.
+    job_closures: BTreeSet<String>,
     /// `[CT-1]` — the requests, when this is the compile-time evaluator's
     /// program (`emit_comptime`).
     comptime: Option<Vec<ComptimeRoot>>,
@@ -901,13 +905,30 @@ impl Emitter<'_> {
             });
         }
         for body in bodies {
-            // `[THR-11]` — a scoped task's closure becomes a callable value in the backend.
+            // `[THR-11]` — a scoped task's closure becomes a callable value in the backend;
+            // `[JOB-1]` — a job's closure is called on its state where its slot holds it.
             let scoped = body.blocks.iter().filter_map(|block| match &block.terminator {
                 Terminator::Call { func: FuncRef::Builtin { which: Builtin::ScopeSpawn { closure: Some(_) }, .. }, args, .. } => {
                     Some(&args[1..])
                 }
+                Terminator::Call {
+                    func: FuncRef::Builtin { which: Builtin::JobSubmit { closure: Some(_) } | Builtin::JobScopeSubmit { closure: Some(_), .. }, .. },
+                    args,
+                    ..
+                } => Some(&args[args.len() - 2..]),
                 _ => None,
             });
+            for block in &body.blocks {
+                if let Terminator::Call {
+                    func: FuncRef::Builtin { which: Builtin::JobSubmit { closure: Some(_) } | Builtin::JobScopeSubmit { closure: Some(_), .. }, .. },
+                    args,
+                    ..
+                } = &block.terminator
+                    && let [.., Operand::Const(Const::Fn(closure)), _] = &args[..]
+                {
+                    self.job_closures.insert(closure.clone());
+                }
+            }
             let made = body.blocks.iter().flat_map(|block| &block.stmts).filter_map(|stmt| match &stmt.kind {
                 StmtKind::Assign { rvalue: Rvalue::Aggregate { kind: AggregateKind::Callable, operands }, .. } => {
                     Some(&operands[..])
@@ -1014,6 +1035,7 @@ impl Emitter<'_> {
         self.emit_thread_helpers();
         self.emit_soa_helpers();
         self.emit_constant_statics();
+        self.emit_parallel_helpers(bodies);
         if self.comptime.is_some() && self.unit.is_none() {
             self.emit_comptime_env_helpers(bodies);
         }
@@ -2084,6 +2106,22 @@ impl Emitter<'_> {
                 self.line("    return v->d->c;");
                 self.line("}");
             }
+            // `[JOB-1]` — a job given a callable value holds the value as its state.
+            self.line(&format!("static EMBER_MAYBE_UNUSED void {RT}job_run_fn(void* state) {{"));
+            self.line(&format!("    struct {RT}fn_value* v = (struct {RT}fn_value*)state;"));
+            self.line("    ((void (*)(void*))v->native)((void*)v->w);");
+            self.line("}");
+            self.line(&format!("static EMBER_MAYBE_UNUSED void {RT}job_drop_fn(void* state) {{"));
+            self.line(&format!("    struct {RT}fn_value* v = (struct {RT}fn_value*)state;"));
+            self.line("    if (v->d && v->d->drop) { v->d->drop((void*)v->w); }");
+            self.line("}");
+            self.line(&format!(
+                "static EMBER_MAYBE_UNUSED uint64_t {RT}job_submit_fn(uint32_t* scope, struct {RT}fn_value v, const void* deps, size_t n, size_t stride, size_t offset, {RT}loc loc) {{"
+            ));
+            self.line(&format!(
+                "    return {RT}job_submit(scope, {RT}job_run_fn, {RT}job_drop_fn, &v, sizeof v, _Alignof(struct {RT}fn_value), deps, n, stride, offset, loc);"
+            ));
+            self.line("}");
             // An environment that fits the three words is held in them; a
             // larger one in one allocation, whose pointer is the first word.
             if !self.closure_values.is_empty() {
@@ -4261,6 +4299,11 @@ impl Emitter<'_> {
                         out.push(format!("{RT}scope_end(({access}).tasks);"));
                         return;
                     }
+                    // `[JOB-2]` — a job scope's end waits for its jobs.
+                    Some("std.jobs.JobScope") => {
+                        out.push(format!("{RT}job_scope_end(&({access}).pending);"));
+                        return;
+                    }
                     // `[THR-10]` — a handle dropped unjoined detaches its thread.
                     Some("std.thread.JoinHandle") => {
                         out.push(format!("{RT}thread_detach(({RT}thread*)({access}).thread);"));
@@ -4773,7 +4816,7 @@ impl Emitter<'_> {
                 .chain(params.iter().map(|(id, ty)| format!("{} _{id}", self.c_member_type(*ty))))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let arguments = std::iter::once(env_argument)
+            let arguments = std::iter::once(env_argument.clone())
                 .chain(params.iter().map(|(id, _)| format!("_{id}")))
                 .collect::<Vec<_>>()
                 .join(", ");
@@ -4804,6 +4847,26 @@ impl Emitter<'_> {
             self.line(&format!("{linkage}const struct {RT}native_fn_descriptor {descriptor} = {{"));
             self.line(&format!("    (void (*)(void)){descriptor}_native, NULL, {descriptor}_drop"));
             self.line("};");
+            // `[JOB-1]` — the job's entry and drop, on the state its slot holds as it is.
+            if self.job_closures.contains(&closure) {
+                let job_argument = if env_argument == "_e" { "(_e)" } else { "(*_e)" };
+                self.line(&format!("static EMBER_MAYBE_UNUSED void {descriptor}_job(void* _state) {{"));
+                self.line(&format!("    {env_c}* _e = ({env_c}*)_state;"));
+                self.line(&format!("    {closure}({job_argument});"));
+                self.line("}");
+                let mut job_drops = Vec::new();
+                match self.drop_glue_call("(*_e)", env) {
+                    Some(call) => job_drops.push(call),
+                    None => self.drop_lines("(*_e)", env, &mut job_drops),
+                }
+                self.line(&format!("static EMBER_MAYBE_UNUSED void {descriptor}_job_drop(void* _state) {{"));
+                self.line(&format!("    {env_c}* _e = ({env_c}*)_state;"));
+                self.line("    (void)_e;");
+                for line in job_drops {
+                    self.line(&format!("    {line}"));
+                }
+                self.line("}");
+            }
         }
     }
 
@@ -7298,6 +7361,77 @@ impl Emitter<'_> {
                             ember_mir::SoAOp::SwapRemove => format!("{name}_swap_remove({}, {}, {})", r(0), r(1), self.location(span)),
                         };
                     }
+                    // `[JOB-2]` — a scope's count of jobs not ended, which its end waits on.
+                    Builtin::JobScope => return format!("(({}){{NULL, 0}})", self.c_type(*arg_ty)),
+                    // `[JOB-1]`..`[JOB-3]` — the job's entry, drop and state (its closure's
+                    // environment, or the callable value), the scope's count, and the jobs first.
+                    Builtin::JobSubmit { closure } | Builtin::JobScopeSubmit { closure, .. } => {
+                        let (scope, deps) = match which {
+                            Builtin::JobScopeSubmit { after, .. } => {
+                                let scope = format!("&(({})->pending)", rendered[0]);
+                                let deps = if *after {
+                                    let TyKind::Struct(id) = *self.types.kind(*arg_ty) else { unreachable!("a scope's job is a `ScopedJob`") };
+                                    let record = self.c_named(&self.types.struct_def(id).name.to_string());
+                                    format!("({0}).ptr, ({0}).len, sizeof({record}), offsetof({record}, id)", rendered[1])
+                                } else {
+                                    "NULL, 0, 0, 0".to_string()
+                                };
+                                (scope, deps)
+                            }
+                            _ => ("NULL".to_string(), "NULL, 0, 0, 0".to_string()),
+                        };
+                        let id = match (closure, &args[..]) {
+                            (Some(_), [.., Operand::Const(Const::Fn(body_symbol)), env]) => {
+                                let (descriptor, env_ty) = self.closure_values.get(body_symbol).cloned().expect("the scan registered the job");
+                                let env_c = self.c_type(env_ty);
+                                let drop = if self.types.needs_drop(env_ty) { format!("{descriptor}_job_drop") } else { "NULL".to_string() };
+                                format!(
+                                    "{RT}job_submit({scope}, {descriptor}_job, {drop}, &({}), sizeof({env_c}), _Alignof({env_c}), {deps}, {})",
+                                    self.operand(env, body),
+                                    self.location(span)
+                                )
+                            }
+                            _ => format!("{RT}job_submit_fn({scope}, {}, {deps}, {})", rendered[rendered.len() - 1], self.location(span)),
+                        };
+                        return match which {
+                            Builtin::JobSubmit { .. } => format!("(({}){{{id}}})", self.c_type(*arg_ty)),
+                            _ => format!("(({}){{NULL, {id}}})", self.c_type(*arg_ty)),
+                        };
+                    }
+                    Builtin::JobWait => return format!("{RT}job_wait(({}).id)", rendered[0]),
+                    // `[PAR-1]`..`[PAR-4]` — the runtime runs the chunks on the pool and here; with
+                    // reductions, a window of 32 chunks' results and their stamps live in this frame.
+                    Builtin::ParallelFor { .. } => {
+                        let Operand::Const(Const::Fn(chunk)) = &args[3] else { unreachable!("a parallel loop's body is a function") };
+                        let env = match &args[4] {
+                            Operand::Const(Const::Void) => "NULL".to_string(),
+                            env => format!("(void*)&({})", self.operand(env, body)),
+                        };
+                        let (fold, acc, size, window, stamps) = match (args.get(5), args.get(6)) {
+                            (Some(Operand::Const(Const::Fn(combine))), Some(acc)) => {
+                                let acc_ty = match self.operand_type(acc, body).map(|ty| self.types.kind(ty).clone()) {
+                                    Some(TyKind::Ref { inner, .. }) => inner,
+                                    _ => unreachable!("the running results are borrowed"),
+                                };
+                                let acc_c = self.c_type(acc_ty);
+                                (
+                                    format!("{combine}_fold"),
+                                    format!("(void*){}", self.operand(acc, body)),
+                                    format!("sizeof({acc_c})"),
+                                    format!("(unsigned char*)({acc_c}[32]){{0}}"),
+                                    "(int64_t[32]){0}".to_string(),
+                                )
+                            }
+                            _ => ("NULL".to_string(), "NULL".to_string(), "0".to_string(), "NULL".to_string(), "NULL".to_string()),
+                        };
+                        return format!(
+                            "{RT}parallel_for({}, {}, {}, {chunk}_chunk, {fold}, {env}, {acc}, {size}, {window}, {stamps}, 32u, {})",
+                            rendered[0],
+                            rendered[1],
+                            rendered[2],
+                            self.location(span)
+                        );
+                    }
                     // `[THR-5]` — a scope's task list; its end (the drop) joins them.
                     Builtin::ThreadScope => {
                         return format!("(({}){{NULL, (uint8_t*){RT}scope_new()}})", self.c_type(*arg_ty));
@@ -9371,6 +9505,78 @@ impl Emitter<'_> {
         self.line("}");
     }
 
+    /// `[PAR-1]`, `[PAR-3]` — for each `@parallel` loop's chunk function, the entry the runtime
+    /// calls for one chunk (`<body>_chunk`: the function on its environment, `lo` and `hi`, its
+    /// reductions stored to `partial`), and for each combiner the fold of one chunk's reductions
+    /// into the running ones (`<combine>_fold`).
+    fn emit_parallel_helpers(&mut self, bodies: &[Body]) {
+        if self.unit.is_some() {
+            return;
+        }
+        let mut chunks: BTreeSet<String> = BTreeSet::new();
+        let mut folds: BTreeSet<String> = BTreeSet::new();
+        for body in bodies {
+            for block in &body.blocks {
+                if let Terminator::Call { func: FuncRef::Builtin { which: Builtin::ParallelFor { .. }, .. }, args, .. } = &block.terminator {
+                    if let Operand::Const(Const::Fn(symbol)) = &args[3] {
+                        chunks.insert(symbol.clone());
+                    }
+                    if let Some(Operand::Const(Const::Fn(symbol))) = args.get(5) {
+                        folds.insert(symbol.clone());
+                    }
+                }
+            }
+        }
+        let argument = |this: &Self, ty: Ty, value: &str| -> String {
+            if matches!(this.types.kind(ty), TyKind::Ref { .. } | TyKind::Ptr { .. }) { format!("&({value})") } else { value.to_string() }
+        };
+        for symbol in chunks {
+            let Some(function) = bodies.iter().find(|body| body.symbol == symbol) else { continue };
+            let params: Vec<Ty> = function.args().map(|(_, decl)| decl.ty).collect();
+            let ret = function.return_ty();
+            self.line(&format!("static EMBER_MAYBE_UNUSED void {symbol}_chunk(void* _env, int64_t _lo, int64_t _hi, void* _partial) {{"));
+            let mut call_args = Vec::new();
+            if params.len() == 3 {
+                let env = params[0];
+                let env_c = match self.types.kind(env) {
+                    TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => self.c_type(*inner),
+                    _ => self.c_type(env),
+                };
+                call_args.push(if matches!(self.types.kind(env), TyKind::Ref { .. } | TyKind::Ptr { .. }) {
+                    format!("({env_c}*)_env")
+                } else {
+                    format!("*({env_c}*)_env")
+                });
+            } else {
+                self.line("    (void)_env;");
+            }
+            call_args.push("_lo".to_string());
+            call_args.push("_hi".to_string());
+            let call = format!("{symbol}({})", call_args.join(", "));
+            if self.is_void(ret) {
+                self.line("    (void)_partial;");
+                self.line(&format!("    {call};"));
+            } else {
+                self.line(&format!("    *({}*)_partial = {call};", self.c_type(ret)));
+            }
+            self.line("}");
+        }
+        for symbol in folds {
+            let Some(function) = bodies.iter().find(|body| body.symbol == symbol) else { continue };
+            let params: Vec<Ty> = function.args().map(|(_, decl)| decl.ty).collect();
+            let ret = function.return_ty();
+            let ret_c = self.c_type(ret);
+            self.line(&format!("static EMBER_MAYBE_UNUSED void {symbol}_fold(void* _env, void* _acc, const void* _part) {{"));
+            self.line("    (void)_env;");
+            self.line(&format!("    {ret_c} _a = *({ret_c}*)_acc;"));
+            self.line(&format!("    {ret_c} _b = *(const {ret_c}*)_part;"));
+            let a = argument(self, params[0], "_a");
+            let b = argument(self, params[1], "_b");
+            self.line(&format!("    *({ret_c}*)_acc = {symbol}({a}, {b});"));
+            self.line("}");
+        }
+    }
+
     /// `[CT-5]`, `[STA-3]` — each static the evaluator computed, as constant
     /// data: its heap parts (an `Array`'s elements, a `String`'s bytes) are
     /// constant arrays of their own, which nothing grows or frees (a static
@@ -11255,6 +11461,7 @@ mod string_descriptor_view_parts_tests {
         usize_ty: Ty,
     ) -> Emitter<'a> {
         Emitter {
+            job_closures: BTreeSet::new(),
             comptime: None,
             types,
             map,

@@ -151,6 +151,43 @@ impl Parser<'_> {
         if self.at_ident() && self.at_punct_at(1, Punct::Eq) {
             let name = self.expect_ident();
             self.bump(); // '='
+            // `[PAR-3]` — `reduce=[total: +, best: max]`: each a name and an operator, kept as
+            // `(name, operator)` pairs in a list, the operator a path of its own spelling.
+            if name.name.is("reduce") && self.at_punct(Punct::LBracket) {
+                let start = self.span();
+                self.bump();
+                let mut items = Vec::new();
+                while !self.at_punct(Punct::RBracket) {
+                    let var = self.expect_ident();
+                    self.expect_punct(Punct::Colon);
+                    let op_span = self.span();
+                    let op = match self.peek().clone() {
+                        TokenKind::Punct(Punct::Plus) => "+".to_string(),
+                        TokenKind::Punct(Punct::Star) => "*".to_string(),
+                        TokenKind::Punct(Punct::Amp) => "&".to_string(),
+                        TokenKind::Punct(Punct::Pipe) => "|".to_string(),
+                        TokenKind::Punct(Punct::Caret) => "^".to_string(),
+                        TokenKind::Keyword(Kw::And) => "and".to_string(),
+                        TokenKind::Keyword(Kw::Or) => "or".to_string(),
+                        TokenKind::Ident(word) => word.as_str().to_string(),
+                        _ => {
+                            self.expect_ident();
+                            break;
+                        }
+                    };
+                    self.bump();
+                    let path = |ident: Ident| Expr { id: NodeId::DUMMY, kind: ExprKind::Path { segments: vec![ident] }, span: ident.span };
+                    let op = Ident { name: op.as_str().into(), span: op_span };
+                    let span = var.span.to(op_span);
+                    items.push(Expr { id: NodeId::DUMMY, kind: ExprKind::Tuple(vec![path(var), path(op)]), span });
+                    if !self.eat_punct(Punct::Comma) {
+                        break;
+                    }
+                }
+                self.expect_punct(Punct::RBracket);
+                let value = Expr { id: NodeId::DUMMY, kind: ExprKind::ArrayLit(items), span: start.to(self.prev_span()) };
+                return Some(AttrArg::Named { name, value });
+            }
             let value = self.parse_expr();
             return Some(AttrArg::Named { name, value });
         }

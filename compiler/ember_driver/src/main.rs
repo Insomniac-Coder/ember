@@ -2490,7 +2490,11 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // all provably in bounds at entry runs a copy without its bounds checks;
     // then `[SIMD-7]` groups the overflow checks of every loop in
     // vectorisable form.
-    ember_analysis::version_bounds_checked_loops_all(&mut bodies, &types, &common);
+    // A versioned copy writes an element of a `MutSpan` through its index where the checked loop
+    // called the runtime, which the summaries count as a write of the view: make them again.
+    if ember_analysis::version_bounds_checked_loops_all(&mut bodies, &types, &common) != (0, 0) {
+        ember_analysis::install_callable_regions_all(&mut bodies, &types);
+    }
     // `[EXC-8]` — a dynamic exclusivity check every turn of a loop makes on
     // an unchanged handle, where nothing in the loop can change an access,
     // runs once before it; after versioning, so each copy of a loop is done.

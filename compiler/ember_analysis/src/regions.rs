@@ -1043,7 +1043,8 @@ impl Regions {
             }
             // `[THR-11]` — a scoped task's closure (its last argument) is held by the scope until
             // the `with` block ends: its borrows last as long as the `Scope`.
-            FuncRef::Builtin { which: Builtin::ScopeSpawn { .. }, .. } => {
+            // `[JOB-2]` — and a scope's job, as a scope's thread.
+            FuncRef::Builtin { which: Builtin::ScopeSpawn { .. } | Builtin::JobScopeSubmit { .. }, .. } => {
                 if let (Some(task), Some(target)) = (args.last(), pointee(0)) {
                     flows.push((self.fact_for_operand(state, task), target));
                 }

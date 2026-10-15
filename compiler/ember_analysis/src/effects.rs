@@ -39,6 +39,43 @@ struct Site {
     origin: Origin,
 }
 
+/// `[JOB-1]` — whether a job's state of type `ty` surely fits its slot: 64 bytes, aligned to at most
+/// 16, by C's layout. A type whose size is not worked out here does not.
+fn job_state_fits(types: &TypeTable, ty: Ty) -> bool {
+    layout(types, ty).is_some_and(|(size, align)| size <= 64 && align <= 16)
+}
+
+/// C's size and alignment of a value of `ty`, where they follow from its parts alone.
+fn layout(types: &TypeTable, ty: Ty) -> Option<(u64, u64)> {
+    use ember_types::{FloatTy, IntTy, UintTy};
+    let record = |parts: &mut dyn Iterator<Item = Ty>| -> Option<(u64, u64)> {
+        let (mut size, mut align) = (0u64, 1u64);
+        for part in parts {
+            let (part_size, part_align) = layout(types, part)?;
+            size = size.div_ceil(part_align) * part_align + part_size;
+            align = align.max(part_align);
+        }
+        Some((size.div_ceil(align) * align, align))
+    };
+    Some(match types.kind(ty) {
+        TyKind::Void => (0, 1),
+        TyKind::Bool | TyKind::Int(IntTy::I8) | TyKind::Uint(UintTy::U8) => (1, 1),
+        TyKind::Int(IntTy::I16) | TyKind::Uint(UintTy::U16) | TyKind::Float(FloatTy::F16) => (2, 2),
+        TyKind::Int(IntTy::I32) | TyKind::Uint(UintTy::U32) | TyKind::Float(FloatTy::F32) | TyKind::Char => (4, 4),
+        TyKind::Int(IntTy::I64 | IntTy::Isize) | TyKind::Uint(UintTy::U64 | UintTy::Usize) | TyKind::Float(FloatTy::F64) => (8, 8),
+        TyKind::Ref { .. } | TyKind::Ptr { .. } | TyKind::Class(_) | TyKind::ClassInterface(_) => (8, 8),
+        TyKind::Str | TyKind::Span { .. } => (16, 8),
+        TyKind::Vec { .. } => (24, 8),
+        TyKind::Array { elem, len } => {
+            let (size, align) = layout(types, *elem)?;
+            (size.checked_mul(*len)?, align)
+        }
+        TyKind::Tuple(items) => record(&mut items.iter().copied())?,
+        TyKind::Struct(id) => record(&mut types.struct_def(*id).fields.iter().map(|field| field.ty))?,
+        _ => return None,
+    })
+}
+
 /// Each body's effect set, in `bodies`' order (`[EFF-1]`).
 pub fn effect_sets(bodies: &[Body], types: &TypeTable) -> Vec<Effects> {
     Graph::new(bodies, types).effects
@@ -341,6 +378,23 @@ impl SiteBuilder<'_> {
                         self.sync_copy(body, operand, span, &mut sites);
                     }
                     self.call_sites(func, span, &mut sites);
+                    // `[PAR-4]` — a `@parallel` loop runs its chunk closure and its combiner here.
+                    if let FuncRef::Builtin { which: Builtin::ParallelFor { .. }, .. } = func {
+                        for operand in args {
+                            if let Operand::Const(ember_mir::Const::Fn(symbol)) = operand
+                                && let Some(&callee) = self.index.get(symbol.as_str())
+                            {
+                                sites.push(Site { effects: Effects::ALL, span, origin: Origin::Call(callee) });
+                            }
+                        }
+                    }
+                    // `[JOB-1]` — a job's state that may not fit its slot's 64 bytes is one allocation.
+                    if let FuncRef::Builtin { which: Builtin::JobSubmit { closure: Some(_) } | Builtin::JobScopeSubmit { closure: Some(_), .. }, .. } = func
+                        && let Some(Operand::Copy(place) | Operand::Move(place)) = args.last()
+                        && !job_state_fits(self.types, place_type(body, self.types, place))
+                    {
+                        sites.push(Site { effects: Effects::ALLOC, span, origin: Origin::Operation("a job's state, larger than its slot") });
+                    }
                 }
                 Terminator::Assert { msg, span, .. } => {
                     let (effects, operation) = match msg {
@@ -469,9 +523,9 @@ impl SiteBuilder<'_> {
         let mut callees = Vec::new();
         let mut parts: Vec<Ty> = Vec::new();
         match self.types.kind(ty).clone() {
-            // `[THR-5]` — a `Scope`'s end joins its threads: it waits.
+            // `[THR-5]`, `[JOB-2]` — a `Scope`'s end joins its threads, a `JobScope`'s waits for its jobs.
             TyKind::Struct(id)
-                if self.types.struct_def(id).origin.as_ref().is_some_and(|(origin, _)| origin.as_str() == "std.thread.Scope") =>
+                if self.types.struct_def(id).origin.as_ref().is_some_and(|(origin, _)| matches!(origin.as_str(), "std.thread.Scope" | "std.jobs.JobScope")) =>
             {
                 effects |= Effects::SYNC | Effects::BLOCK;
             }
@@ -647,6 +701,16 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         B::SoA { .. } => (Effects::NONE, "an `SoA` operation"),
         B::ScopeSpawn { .. } => (Effects::SYNC | Effects::ALLOC, "`Scope.spawn`"),
         B::ScopedJoin => (Effects::SYNC | Effects::BLOCK, "`ScopedJoinHandle.join`"),
+        // `[JOB-1]`, `[JOB-2]` — a job is handed to the pool; one with more than six jobs to wait
+        // for first waits for all but six of them to end. A state larger than its slot is one
+        // allocation (`call` sites, below).
+        B::JobScope => (Effects::NONE, "`jobs.scope`"),
+        B::JobScopeSubmit { after: true, .. } => (Effects::SYNC | Effects::BLOCK, "`JobScope.submit_after`"),
+        B::JobScopeSubmit { .. } => (Effects::SYNC, "`JobScope.submit`"),
+        B::JobSubmit { .. } => (Effects::SYNC, "`jobs.submit`"),
+        B::JobWait => (Effects::SYNC | Effects::BLOCK, "`jobs.wait`"),
+        // `[PAR-4]` — a `@parallel` loop waits for its chunks, and allocates nothing.
+        B::ParallelFor { .. } => (Effects::SYNC | Effects::BLOCK, "a `@parallel` loop"),
         // `[DSJ-1]` — it establishes a static fact; `@static_safe` allows it (`[EFF-12]`).
         B::AssertDisjoint { .. } => (Effects::CHECK_ALIASING, "`assert_disjoint`"),
         B::WeakUpgrade { .. } => (Effects::CHECK_STALE, "`Weak.upgrade`"),

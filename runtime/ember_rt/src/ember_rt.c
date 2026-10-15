@@ -1266,6 +1266,476 @@ void ember_atomic_order_refused(uint8_t tag, const char* operation, ember_loc lo
     ember_panic(message, length > 0 ? (size_t)length : 0, loc);
 }
 
+/* [JOB-1]..[JOB-3], [PAR-1] The job system (the header says what it promises). The slots are one
+ * array; a lock guards the free list, the ready queue (first in, first out) and the list of jobs
+ * waiting on others, each a list of slot indices through `next` (index + 1; 0 ends it). Idle
+ * workers sleep on `g_job_signal`, which each new ready job moves on. */
+#if !defined(_WIN32)
+#include <sched.h>
+#endif
+#define JOB_SLOTS 1024u
+#define JOB_INLINE 64u
+#define JOB_DEPS 6u
+
+enum { JOB_FREE = 0, JOB_WAITING = 1, JOB_READY = 2, JOB_RUNNING = 3 };
+
+typedef struct job_slot {
+    EMBER_ALIGNED16 unsigned char inline_state[JOB_INLINE];
+    void (*run)(void*);
+    void (*drop)(void*);
+    void* heap;
+    size_t heap_size;
+    size_t heap_align;
+    uint32_t* scope;
+    uint64_t* more_deps;
+    uint64_t deps[JOB_DEPS];
+    uint32_t dep_count;
+    uint32_t generation;
+    uint32_t status;
+    uint32_t next;
+} job_slot;
+
+static job_slot g_job_slots[JOB_SLOTS];
+static void* g_jobs_lock;
+static uint32_t g_job_free_head;
+static uint32_t g_job_ready_head;
+static uint32_t g_job_ready_tail;
+static uint32_t g_job_waiting_head;
+static uint32_t g_job_signal;
+static uint32_t g_jobs_started;
+static uint32_t g_job_workers_wanted;
+static uint32_t g_job_workers;
+static uint32_t g_jobs_init_lock;
+
+void ember_jobs_set_workers(int64_t count) {
+    g_job_workers_wanted = count > 0 ? (uint32_t)(count > 1024 ? 1024 : count) : 0;
+}
+
+static uint32_t jobs_logical_cores(void) {
+#if defined(_WIN32)
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    return info.dwNumberOfProcessors > 0 ? (uint32_t)info.dwNumberOfProcessors : 1u;
+#else
+    long n = sysconf(_SC_NPROCESSORS_ONLN);
+    return n > 0 ? (uint32_t)n : 1u;
+#endif
+}
+
+static void* job_state(job_slot* slot) {
+    return slot->heap != NULL ? slot->heap : (void*)slot->inline_state;
+}
+
+static uint64_t job_id(uint32_t index) {
+    return ((uint64_t)g_job_slots[index].generation << 32) | (uint64_t)index;
+}
+
+/* Whether the job `id` names has ended (its slot's generation moved on). */
+static bool job_done(uint64_t id) {
+    uint32_t index = (uint32_t)(id & 0xffffffffu);
+    if (index >= JOB_SLOTS) {
+        return true;
+    }
+    return object_load_u32(&g_job_slots[index].generation) != (uint32_t)(id >> 32);
+}
+
+/* Under the lock: whether every job the waiting slot needs has ended. */
+static bool job_deps_done(job_slot* slot) {
+    for (uint32_t i = 0; i < slot->dep_count; ++i) {
+        uint64_t dep = i < JOB_DEPS ? slot->deps[i] : slot->more_deps[i - JOB_DEPS];
+        if (!job_done(dep)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* Under the lock: the slot joins the ready queue, and an idle worker is told. */
+static void job_make_ready(uint32_t index) {
+    job_slot* slot = &g_job_slots[index];
+    slot->status = JOB_READY;
+    slot->next = 0;
+    if (g_job_ready_tail == 0) {
+        g_job_ready_head = index + 1;
+    } else {
+        g_job_slots[g_job_ready_tail - 1].next = index + 1;
+    }
+    g_job_ready_tail = index + 1;
+    (void)object_fetch_add_u32(&g_job_signal, 1);
+}
+
+/* Under the lock: the first ready job, taken off the queue, or JOB_SLOTS when there is none. */
+static uint32_t job_take_ready(void) {
+    if (g_job_ready_head == 0) {
+        return JOB_SLOTS;
+    }
+    uint32_t index = g_job_ready_head - 1;
+    g_job_ready_head = g_job_slots[index].next;
+    if (g_job_ready_head == 0) {
+        g_job_ready_tail = 0;
+    }
+    g_job_slots[index].status = JOB_RUNNING;
+    return index;
+}
+
+/* Runs the job in `index` (taken off the queue), then ends it: its state is dropped and freed, its
+ * generation moves on, its scope counts it out, and the jobs waiting on it may start. */
+static void job_run(uint32_t index) {
+    job_slot* slot = &g_job_slots[index];
+    void* state = job_state(slot);
+    slot->run(state);
+    if (slot->drop != NULL) {
+        slot->drop(state);
+    }
+    if (slot->heap != NULL) {
+        ember_free(slot->heap, slot->heap_size, slot->heap_align);
+        slot->heap = NULL;
+    }
+    if (slot->more_deps != NULL) {
+        ember_free(slot->more_deps, (slot->dep_count - JOB_DEPS) * sizeof(uint64_t), _Alignof(uint64_t));
+        slot->more_deps = NULL;
+    }
+    uint32_t* scope = slot->scope;
+    ember_mutex_lock(&g_jobs_lock);
+    (void)object_fetch_add_u32(&slot->generation, 1);
+    slot->status = JOB_FREE;
+    slot->scope = NULL;
+    slot->next = g_job_free_head;
+    g_job_free_head = index + 1;
+    /* The jobs that waited on this one, and may start now. */
+    uint32_t* link = &g_job_waiting_head;
+    while (*link != 0) {
+        uint32_t waiting = *link - 1;
+        if (job_deps_done(&g_job_slots[waiting])) {
+            *link = g_job_slots[waiting].next;
+            job_make_ready(waiting);
+        } else {
+            link = &g_job_slots[waiting].next;
+        }
+    }
+    ember_mutex_unlock(&g_jobs_lock);
+    word_wake_all(&g_job_signal);
+    word_wake_all(&slot->generation);
+    if (scope != NULL && object_fetch_sub_u32(scope, 1) == 1) {
+        word_wake_all(scope);
+    }
+}
+
+/* Runs one ready job if there is one; whether it did. */
+static bool job_help(void) {
+    ember_mutex_lock(&g_jobs_lock);
+    uint32_t index = job_take_ready();
+    ember_mutex_unlock(&g_jobs_lock);
+    if (index == JOB_SLOTS) {
+        return false;
+    }
+    job_run(index);
+    return true;
+}
+
+#if defined(_WIN32)
+static DWORD WINAPI job_worker(LPVOID unused) {
+#else
+static void* job_worker(void* unused) {
+#endif
+    (void)unused;
+    ember_rt_thread_attach();
+    for (;;) {
+        uint32_t seen = object_load_u32(&g_job_signal);
+        if (!job_help()) {
+            word_wait(&g_job_signal, seen);
+        }
+    }
+#if defined(_WIN32)
+    return 0;
+#else
+    return NULL;
+#endif
+}
+
+static void job_yield(void) {
+#if defined(_WIN32)
+    (void)SwitchToThread();
+#else
+    (void)sched_yield();
+#endif
+}
+
+/* The free list and the workers, once: the first submission sets them up while later ones wait. */
+static void jobs_start(ember_loc loc) {
+    if (object_load_u32(&g_jobs_started) != 0) {
+        return;
+    }
+    while (object_fetch_add_u32(&g_jobs_init_lock, 1) != 0) {
+        (void)object_fetch_sub_u32(&g_jobs_init_lock, 1);
+        job_yield();
+        if (object_load_u32(&g_jobs_started) != 0) {
+            return;
+        }
+    }
+    if (object_load_u32(&g_jobs_started) == 0) {
+        for (uint32_t i = 0; i < JOB_SLOTS; ++i) {
+            g_job_slots[i].next = i + 1 < JOB_SLOTS ? i + 2 : 0;
+        }
+        g_job_free_head = 1;
+        uint32_t workers = g_job_workers_wanted;
+        if (workers == 0) {
+            uint32_t cores = jobs_logical_cores();
+            workers = cores > 1 ? cores - 1 : 1;
+        }
+        threads_have_started();
+        (void)object_fetch_add_u32(&g_job_workers, workers);
+        for (uint32_t i = 0; i < workers; ++i) {
+            static const char message[] = "could not start a job worker";
+#if defined(_WIN32)
+            HANDLE handle = CreateThread(NULL, 0, job_worker, NULL, 0, NULL);
+            if (handle == NULL) {
+                ember_panic(message, sizeof message - 1, loc);
+            }
+            (void)CloseHandle(handle);
+#else
+            pthread_t id;
+            if (pthread_create(&id, NULL, job_worker, NULL) != 0) {
+                ember_panic(message, sizeof message - 1, loc);
+            }
+            (void)pthread_detach(id);
+#endif
+        }
+        (void)object_fetch_add_u32(&g_jobs_started, 1);
+    }
+    (void)object_fetch_sub_u32(&g_jobs_init_lock, 1);
+}
+
+uint64_t ember_job_submit(uint32_t* scope, void (*run)(void*), void (*drop)(void*), const void* state, size_t size,
+                          size_t align, const void* deps, size_t dep_count, size_t stride, size_t offset, ember_loc loc) {
+    jobs_start(loc);
+    if (scope != NULL) {
+        (void)object_fetch_add_u32(scope, 1);
+    }
+    /* The heap block, when the state does not fit the slot: taken before the lock. */
+    void* heap = NULL;
+    if (size > JOB_INLINE || align > 16) {
+        heap = ember_alloc(size == 0 ? 1 : size, align);
+        memcpy(heap, state, size);
+    }
+    uint64_t* more = NULL;
+    if (dep_count > JOB_DEPS) {
+        more = (uint64_t*)ember_alloc((dep_count - JOB_DEPS) * sizeof(uint64_t), _Alignof(uint64_t));
+    }
+    for (;;) {
+        ember_mutex_lock(&g_jobs_lock);
+        if (g_job_free_head != 0) {
+            break;
+        }
+        ember_mutex_unlock(&g_jobs_lock);
+        /* Every slot is taken: run a waiting job here, or let one end. */
+        if (!job_help()) {
+            job_yield();
+        }
+    }
+    uint32_t index = g_job_free_head - 1;
+    job_slot* slot = &g_job_slots[index];
+    g_job_free_head = slot->next;
+    slot->run = run;
+    slot->drop = drop;
+    slot->scope = scope;
+    slot->heap = heap;
+    slot->heap_size = size == 0 ? 1 : size;
+    slot->heap_align = align;
+    if (heap == NULL && size > 0) {
+        memcpy(slot->inline_state, state, size);
+    }
+    slot->dep_count = (uint32_t)dep_count;
+    slot->more_deps = more;
+    for (size_t i = 0; i < dep_count; ++i) {
+        uint64_t dep;
+        memcpy(&dep, (const unsigned char*)deps + i * stride + offset, sizeof dep);
+        if (i < JOB_DEPS) {
+            slot->deps[i] = dep;
+        } else {
+            more[i - JOB_DEPS] = dep;
+        }
+    }
+    uint64_t id = job_id(index);
+    if (job_deps_done(slot)) {
+        job_make_ready(index);
+    } else {
+        slot->status = JOB_WAITING;
+        slot->next = g_job_waiting_head;
+        g_job_waiting_head = index + 1;
+    }
+    ember_mutex_unlock(&g_jobs_lock);
+    word_wake_one(&g_job_signal);
+    return id;
+}
+
+/* [PAR-4] A job of `scope`, its state inline, if a slot is free now; whether it was submitted. */
+static bool job_try_submit(uint32_t* scope, void (*run)(void*), const void* state, size_t size) {
+    ember_mutex_lock(&g_jobs_lock);
+    if (g_job_free_head == 0) {
+        ember_mutex_unlock(&g_jobs_lock);
+        return false;
+    }
+    uint32_t index = g_job_free_head - 1;
+    job_slot* slot = &g_job_slots[index];
+    g_job_free_head = slot->next;
+    (void)object_fetch_add_u32(scope, 1);
+    slot->run = run;
+    slot->drop = NULL;
+    slot->scope = scope;
+    slot->heap = NULL;
+    slot->dep_count = 0;
+    slot->more_deps = NULL;
+    memcpy(slot->inline_state, state, size);
+    job_make_ready(index);
+    ember_mutex_unlock(&g_jobs_lock);
+    word_wake_one(&g_job_signal);
+    return true;
+}
+
+void ember_job_wait(uint64_t id) {
+    uint32_t index = (uint32_t)(id & 0xffffffffu);
+    while (!job_done(id)) {
+        if (!job_help()) {
+            ember_atomic_wait32(&g_job_slots[index].generation, (uint32_t)(id >> 32));
+        }
+    }
+}
+
+void ember_job_scope_end(uint32_t* scope) {
+    for (;;) {
+        uint32_t pending = object_load_u32(scope);
+        if (pending == 0) {
+            return;
+        }
+        if (!job_help()) {
+            ember_atomic_wait32(scope, pending);
+        }
+    }
+}
+
+/* [PAR-1], [PAR-3], [PAR-4] The `@parallel` loop (the header says what it promises). */
+typedef struct par_loop {
+    void (*body)(void*, int64_t, int64_t, void*);
+    void (*combine)(void*, void*, const void*);
+    void* env;
+    void* acc;
+    unsigned char* window;
+    int64_t* stamps;
+    size_t size;
+    uint32_t width;
+    uint32_t helpers;
+    int64_t start;
+    int64_t end;
+    int64_t chunk;
+    int64_t chunks;
+    int64_t next;
+    int64_t finished;
+    int64_t combined;
+    void* lock;
+} par_loop;
+
+/* The next chunk to run, or -1 when there is none now (`*all_taken` says whether none is left). */
+static int64_t par_claim(par_loop* loop, bool* all_taken) {
+    ember_mutex_lock(&loop->lock);
+    int64_t k = -1;
+    *all_taken = loop->next >= loop->chunks;
+    if (!*all_taken && (loop->combine == NULL || loop->next < loop->combined + (int64_t)loop->width)) {
+        k = loop->next++;
+    }
+    ember_mutex_unlock(&loop->lock);
+    return k;
+}
+
+/* Runs chunk `k`; with reductions, folds into the result every chunk that is next in order. */
+static void par_run(par_loop* loop, int64_t k) {
+    int64_t lo = loop->start + k * loop->chunk;
+    int64_t hi = loop->end - lo > loop->chunk ? lo + loop->chunk : loop->end;
+    void* partial = loop->combine != NULL ? (void*)(loop->window + (size_t)(k % loop->width) * loop->size) : NULL;
+    loop->body(loop->env, lo, hi, partial);
+    ember_mutex_lock(&loop->lock);
+    if (loop->combine != NULL) {
+        loop->stamps[k % loop->width] = k + 1;
+        while (loop->combined < loop->chunks
+               && loop->stamps[loop->combined % loop->width] == loop->combined + 1) {
+            loop->combine(loop->env, loop->acc, loop->window + (size_t)(loop->combined % loop->width) * loop->size);
+            loop->combined += 1;
+        }
+    }
+    loop->finished += 1;
+    ember_mutex_unlock(&loop->lock);
+}
+
+/* What a helper job and the calling thread do: run chunks until none is left to take. */
+static void par_work(par_loop* loop, bool caller) {
+    for (;;) {
+        bool all_taken;
+        int64_t k = par_claim(loop, &all_taken);
+        if (k >= 0) {
+            par_run(loop, k);
+            continue;
+        }
+        if (all_taken) {
+            return;
+        }
+        /* The window is full: the chunk it waits on is running. */
+        if (!caller || !job_help()) {
+            job_yield();
+        }
+    }
+}
+
+static void par_helper(void* state) {
+    par_loop* loop;
+    memcpy(&loop, state, sizeof loop);
+    par_work(loop, false);
+}
+
+void ember_parallel_for(int64_t start, int64_t end, int64_t chunk, void (*body)(void*, int64_t, int64_t, void*),
+                        void (*combine)(void*, void*, const void*), void* env, void* acc, size_t size,
+                        unsigned char* window, int64_t* stamps, uint32_t width, ember_loc loc) {
+    if (end <= start) {
+        return;
+    }
+    uint64_t trip = (uint64_t)end - (uint64_t)start;
+    if (chunk <= 0) {
+        /* A function of the trip count only: about 64 chunks, none under 1024 turns. */
+        uint64_t even = (trip + 63) / 64;
+        chunk = (int64_t)(even > 1024 ? even : 1024);
+    }
+    par_loop loop;
+    memset(&loop, 0, sizeof loop);
+    loop.body = body;
+    loop.combine = combine;
+    loop.env = env;
+    loop.acc = acc;
+    loop.window = window;
+    loop.stamps = stamps;
+    loop.size = size;
+    loop.width = width == 0 ? 1 : width;
+    loop.start = start;
+    loop.end = end;
+    loop.chunk = chunk;
+    loop.chunks = (int64_t)((trip + (uint64_t)chunk - 1) / (uint64_t)chunk);
+    for (uint32_t i = 0; combine != NULL && i < loop.width; ++i) {
+        stamps[i] = 0;
+    }
+    if (loop.chunks > 1) {
+        jobs_start(loc);
+        uint32_t workers = object_load_u32(&g_job_workers);
+        int64_t helpers = loop.chunks - 1 < (int64_t)workers ? loop.chunks - 1 : (int64_t)workers;
+        par_loop* pointer = &loop;
+        for (int64_t i = 0; i < helpers; ++i) {
+            if (!job_try_submit(&loop.helpers, par_helper, &pointer, sizeof pointer)) {
+                break;
+            }
+        }
+    }
+    par_work(&loop, true);
+    /* Every chunk has run (and been folded in order); the helpers still hold the record. */
+    ember_job_scope_end(&loop.helpers);
+}
+
 #if !defined(_WIN32)
 /* [THR-3] An `RwLock` is one word too: the writer bit, a waiting bit, and the number of readers
  * below them. Readers share it while no writer holds it; a writer takes it from nothing. A thread

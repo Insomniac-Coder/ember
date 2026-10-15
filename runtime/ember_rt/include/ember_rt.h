@@ -1609,6 +1609,37 @@ void ember_scope_add(void* tasks, ember_thread* thread);
 void ember_scope_join(ember_thread* thread);
 void ember_scope_end(void* tasks);
 
+/* [JOB-1]..[JOB-3] — the job system: a pool of worker threads and a fixed array of job slots. A
+ * job is an entry, `run(state)`, and its captured state, held in its slot's 64 bytes when it fits
+ * there and in one allocation otherwise; `drop(state)`, when not NULL, ends the state after `run`.
+ * A job's id is its slot and that slot's generation, which moves on when the job ends: an id whose
+ * generation is gone names a finished job. A job of a scope counts in `*scope` until it ends;
+ * `ember_job_scope_end` waits for the count to reach zero. A job given `deps` (ids, read from
+ * `dep_count` records `stride` bytes apart, the id `offset` bytes in) starts only after each has
+ * ended. Waiting runs other jobs rather than only sleeping, so a job may wait for another. The
+ * workers start on the first submission: `ember_jobs_set_workers(n)` before then chooses how many
+ * (0, the default, is the logical cores less one, at least one). */
+void ember_jobs_set_workers(int64_t count);
+uint64_t ember_job_submit(uint32_t* scope, void (*run)(void*), void (*drop)(void*), const void* state, size_t size,
+                          size_t align, const void* deps, size_t dep_count, size_t stride, size_t offset, ember_loc loc);
+void ember_job_wait(uint64_t id);
+void ember_job_scope_end(uint32_t* scope);
+
+/* [PAR-1], [PAR-3], [PAR-4] — a `@parallel` loop over [start, end): its chunks, each `chunk`
+ * iterations ([start + k * chunk, ...)), are a function of the trip count and `chunk` alone (a
+ * `chunk` of 0 or less is chosen from the trip count alone), so where they fall never depends on
+ * the machine. `body(env, lo, hi, partial)` runs one chunk, writing its reductions to `partial`
+ * (`size` bytes; none when `combine` is NULL). The calling thread runs chunks, and as many of the
+ * pool's workers as are idle help, each taking the next chunk; a full job queue only means fewer
+ * helpers, never an allocation: the loop's record is in this call's frame, and each helper's job
+ * holds a pointer to it. With reductions, `combine(env, acc, partial)` folds each chunk's
+ * `partial` into `acc` in chunk order, so the result is the same however the chunks were shared out
+ * (`window`, `width` slots of `size` bytes, and `stamps`, `width` words, are the caller's). */
+void ember_parallel_for(int64_t start, int64_t end, int64_t chunk, void (*body)(void*, int64_t, int64_t, void*),
+                        void (*combine)(void*, void*, const void*), void* env, void* acc, size_t size,
+                        unsigned char* window, int64_t* stamps, uint32_t width, ember_loc loc);
+
+
 /* `[THR-3]` — a `Mutex` or `RwLock` is its value and one pointer-sized word, zero when free, so it
  * needs no constructor and may move while unlocked. On Windows the word is the system's own
  * SRWLOCK (the platform lock C programs use there; it spins and sleeps as well as anything can),
