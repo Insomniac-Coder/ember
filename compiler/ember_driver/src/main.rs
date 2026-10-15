@@ -2401,6 +2401,10 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if ember_analysis::check_effects_all(&bodies, &types, &mut sink) > 0 {
         return Ok(finish(&sink, &map, options));
     }
+    // `[THR-5]` — a `Scope` binding stays where its `with` put it.
+    if ember_analysis::check_scope_moves_all(&bodies, &types, &mut sink) > 0 {
+        return Ok(finish(&sink, &map, options));
+    }
     // A function called from one place is inlined there, so the analyses
     // below see what its caller knows. For clang and gcc, only a function
     // holding a check the caller's facts could remove: they inline the rest

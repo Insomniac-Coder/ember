@@ -10890,11 +10890,15 @@ pointer, an SRWLOCK on Windows (ADR-177's word lock was 3.4x it under contention
 futex-mutex spinning and glibc's one-thread fast path elsewhere. Channels are 1.35x C on Windows
 (D-597 open: condition variables and a shorter critical section are the next step), 0.65x on
 Linux. Probes: `bench/probes/mutex_contended`, `channel_throughput`; Linux timings by building the
-compiler in WSL (`bench/gcc/make_tree.sh`) and timing there. **Next:** `thread.scope` (`[THR-5]`,
-`[THR-11]`). The design problem: a spawned closure's borrows must stay live until the `with` block
-ends, so the closure cannot just move into a heap packet (its loans would end at the spawn and a
-conflicting write after it would pass). Teach the borrow checker that loans reaching a scoped
-spawn live until the `Scope` local's drop. Then `SoA`.
+compiler in WSL (`bench/gcc/make_tree.sh`) and timing there. Then `thread.scope` (ADR-183): a task's closure
+flows into its `Scope` in the region pass, so its loans last until the block ends and the borrow
+checker refuses two tasks writing one place (`E3022`) or the block writing what a task reads
+(`E3021`); handles cannot leave the block (`E3060`); `E3014` (unbound or moved scope) and `E7005`
+are new producers with pages. Scoped spawn+join x1.007 of C. D-598 fixed on the way (a lambda
+giving a capture to a `mut` parameter was `E3023`). Concurrency (Part XI.1-XI.3) is built but
+for `[THR-4]`'s lock-order report, `[THR-14]`'s 128-bit atomics and `[THR-10]`'s static-view
+captures; D-597 (channel x1.35 on Windows) is open. **Next:** `SoA` (`[CTL-3b]`, `[BRW-5]`,
+`[DSJ-4]` wait on it), then the compile-time evaluator, `some` return types, coroutines.
 
 **2026-10-15, `Mutex` and `RwLock` (ADR-177), the dependency map's step 4 begun.** `std.sync.Mutex`
 and `RwLock` with their guards: a lock word in the value, inline compare-exchange/swap in

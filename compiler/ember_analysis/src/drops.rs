@@ -1686,3 +1686,49 @@ impl Reporter<'_> {
 pub fn elaborate_all(bodies: &mut [Body], types: &TypeTable, sink: &mut Sink) -> usize {
     bodies.iter_mut().map(|body| elaborate(body, types, sink)).sum()
 }
+
+/// `[THR-5]` — a `Scope` binding may not be moved (`E3014`): its threads borrow the block's places,
+/// so it must end where the block does. Every other use of it is a borrow (`scope.spawn`).
+pub fn check_scope_moves_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) -> usize {
+    let is_scope = |ty| {
+        matches!(types.kind(ty), TyKind::Struct(id)
+            if types.struct_def(*id).origin.as_ref().is_some_and(|(origin, _)| origin.as_str() == "std.thread.Scope"))
+    };
+    let mut errors = 0;
+    for body in bodies {
+        let mut moved = |operand: &Operand, span: Span, sink: &mut Sink| {
+            if let Operand::Move(place) = operand
+                && place.projection.is_empty()
+                && is_scope(body.local(place.local).ty)
+            {
+                sink.emit(
+                    Diagnostic::error(codes::E3014, span, "a `Scope` may not be moved")
+                        .help("use it where the `with` binds it; `scope.spawn` borrows it")
+                        .note("a scope's threads borrow the block's places, so it ends where the block does [THR-5]"),
+                );
+                errors += 1;
+            }
+        };
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                if let StmtKind::Assign { rvalue, .. } = &stmt.kind {
+                    match rvalue {
+                        Rvalue::Use(operand) | Rvalue::Cast { operand, .. } => moved(operand, stmt.span, sink),
+                        Rvalue::Aggregate { operands, .. } => {
+                            for operand in operands {
+                                moved(operand, stmt.span, sink);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            if let Terminator::Call { args, .. } = &block.terminator {
+                for operand in args {
+                    moved(operand, block.terminator_span, sink);
+                }
+            }
+        }
+    }
+    errors
+}

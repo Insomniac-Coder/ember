@@ -5016,6 +5016,39 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-183 — `thread.scope`: a task's closure flows into its `Scope`, so its borrows last the block (`[THR-5]`, `[THR-11]`, `[THR-12]`)
+
+**Context.** `[THR-11]` lets a scoped task borrow anything that outlives its `with` block, with
+each borrow live until the block ends, so the ordinary borrow rules refuse two tasks writing one
+place or the block writing what a task reads. A closure moved into a heap packet would end its
+loans at the spawn.
+
+**Decision.** `std/src/thread.em` declares `Scope` (`@must_drop @view`: one reference field, the
+region its tasks' borrows go into, and the runtime's task list) and `ScopedJoinHandle[R]` (a view).
+`thread.scope()` is `Builtin::ThreadScope`, allowed only as a `with` item (`E3014` otherwise);
+moving the binding is `E3014` (`check_scope_moves_all`, on MIR); its drop (`ember_scope_end`) joins
+every task not joined and frees them all, so every exit from the block joins (`[THR-5]`).
+`scope.spawn(f)` is `Builtin::ScopeSpawn { closure }` with the borrow of the scope and the
+closure's environment itself (or, for a function, its callable value): the region pass flows the
+environment into the `Scope` (`call_flows`, as `mem.replace` stores into its target), so its
+loans are held by the `Scope` local until its drop; the backend makes the callable value from the
+environment with the closure's descriptor. The handle's region is the scope's (`builtin_contract`):
+returning one or keeping it past the block is `E3060`. Captures: shared borrow `Sync` (`E7005`,
+new), mutable borrow or value `Send` (`E7004`), result `Send`. A task lambda copies the `Copy`
+variables it only reads (`[CLO-13]`, as an owned callable value's does): a loop's variable lives one
+pass, so the spec's `for t in texts: scope.spawn(fn() => scan(stats, t))` copies `t`; those copies'
+views are bounded by the scope, not required `static` (`check_owned_closure_capture_regions` skips
+scoped tasks' environments). The environment is copied into a temporary of its own before it moves
+in (a handle in it retained), as `Shared(value)` does. A `Scope` and a scoped handle are neither
+`Send` nor `Sync` (a task cannot spawn into its own scope).
+
+**Speed.** A scope with one task, 20 thousand times (`bench/probes/thread_scope_spawn`), clang:
+991.2 ms against 984.2 ms for C's `CreateThread`/`WaitForSingleObject` (x1.007).
+
+**Not built.** Spawning from inside a task (a `Scope` that is `Sync`, with a locked task list).
+
+---
+
 ## ADR-182 — Channels in `std` on the locks; the lock word is pointer-sized, an SRWLOCK on Windows (`[THR-15]`, `[THR-3]`)
 
 **Context.** `[THR-15]` gives `channel[T](capacity=n)`/`channel_unbounded[T]()`, a many-producer,

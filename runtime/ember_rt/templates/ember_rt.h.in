@@ -1592,12 +1592,21 @@ struct ember_thread {
     uint32_t refs;
     uint32_t size;
     uint32_t align;
+    /* `[THR-11]` — a scoped thread joined early: its handle took the result. */
+    uint32_t joined;
 };
 void ember_thread_start(ember_thread* thread, void (*run)(ember_thread*), void (*drop_result)(ember_thread*),
                         uint32_t size, uint32_t align, ember_loc loc);
 void ember_thread_join(ember_thread* thread);
 void ember_thread_free(ember_thread* thread);
 void ember_thread_detach(ember_thread* thread);
+
+/* `[THR-5]` — the threads a `thread.scope()` started (`tasks`): its end joins each one not joined
+ * yet, drops a result nobody took, and frees them all. `scope_join` is a handle's early `join`. */
+void* ember_scope_new(void);
+void ember_scope_add(void* tasks, ember_thread* thread);
+void ember_scope_join(ember_thread* thread);
+void ember_scope_end(void* tasks);
 
 /* `[THR-3]` — a `Mutex` or `RwLock` is its value and one pointer-sized word, zero when free, so it
  * needs no constructor and may move while unlocked. On Windows the word is the system's own

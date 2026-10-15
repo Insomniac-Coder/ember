@@ -1470,6 +1470,9 @@ impl TypeTable {
                     } else if name.is("std.sync.MutexGuard") && args.len() == 1 {
                         // `[THR-3]` — a guard is not `Send`: it is unlocked where it was taken.
                         (false, both(args[0], visiting).1)
+                    } else if name.is("std.thread.Scope") || name.is("std.thread.ScopedJoinHandle") {
+                        // `[THR-5]` — they stay in the block that made them.
+                        (false, false)
                     } else if name.is("std.thread.JoinHandle") {
                         // `[THR-10]` — the result is `Send`, and only `join` takes it.
                         (true, true)
@@ -2115,6 +2118,9 @@ impl TypeTable {
             name.strip_prefix("std.core.").or_else(|| name.strip_prefix("root.")).unwrap_or(name).to_string()
         };
         match origin {
+            // A compiler-known type that is not generic (`std.thread.Scope`) is marked by an origin
+            // with no arguments, and is written without brackets.
+            Some((generic, args)) if args.is_empty() => source(*generic),
             Some((generic, args)) => {
                 let args: Vec<String> = args.iter().map(|&arg| self.render(arg, user)).collect();
                 format!("{}[{}]", source(*generic), args.join(", "))

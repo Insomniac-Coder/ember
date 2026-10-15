@@ -863,13 +863,21 @@ impl Emitter<'_> {
             });
         }
         for body in bodies {
-            for stmt in body.blocks.iter().flat_map(|block| &block.stmts) {
-                let StmtKind::Assign { rvalue: Rvalue::Aggregate { kind: AggregateKind::Callable, operands }, .. } =
-                    &stmt.kind
-                else {
-                    continue;
-                };
-                let [Operand::Const(Const::Fn(closure)), env] = &operands[..] else {
+            // `[THR-11]` — a scoped task's closure becomes a callable value in the backend.
+            let scoped = body.blocks.iter().filter_map(|block| match &block.terminator {
+                Terminator::Call { func: FuncRef::Builtin { which: Builtin::ScopeSpawn { closure: Some(_) }, .. }, args, .. } => {
+                    Some(&args[1..])
+                }
+                _ => None,
+            });
+            let made = body.blocks.iter().flat_map(|block| &block.stmts).filter_map(|stmt| match &stmt.kind {
+                StmtKind::Assign { rvalue: Rvalue::Aggregate { kind: AggregateKind::Callable, operands }, .. } => {
+                    Some(&operands[..])
+                }
+                _ => None,
+            });
+            for operands in made.chain(scoped) {
+                let [Operand::Const(Const::Fn(closure)), env] = operands else {
                     unreachable!("an owned callable value is made of a closure and its environment")
                 };
                 if self.closure_values.contains_key(closure) {
@@ -2194,12 +2202,14 @@ impl Emitter<'_> {
     /// (it calls the value, keeps the result and drops the value), a drop for a result nobody
     /// took, and the spawn and join the builtins call. Static in every unit that needs them.
     fn emit_thread_helpers(&mut self) {
-        let handles: Vec<(String, Ty)> = self
+        let handles: Vec<(String, Ty, bool)> = self
             .types
             .structs()
             .filter_map(|(_, def)| match &def.origin {
-                Some((origin, args)) if origin.as_str() == "std.thread.JoinHandle" && args.len() == 1 => {
-                    Some((self.c_named(&def.name.to_string()), args[0]))
+                Some((origin, args))
+                    if matches!(origin.as_str(), "std.thread.JoinHandle" | "std.thread.ScopedJoinHandle") && args.len() == 1 =>
+                {
+                    Some((self.c_named(&def.name.to_string()), args[0], origin.as_str() == "std.thread.ScopedJoinHandle"))
                 }
                 _ => None,
             })
@@ -2208,7 +2218,7 @@ impl Emitter<'_> {
             return;
         }
         self.line("/* [THR-10] threads */");
-        for (name, result) in handles {
+        for (name, result, scoped) in handles {
             let packet = format!("{name}_packet");
             let void = matches!(self.types.kind(result), TyKind::Void);
             let result_c = if void { "void".to_string() } else { self.c_type(result) };
@@ -2231,8 +2241,9 @@ impl Emitter<'_> {
                 self.line("}");
             }
             let drop = if drops { format!("{name}_drop") } else { "NULL".to_string() };
+            let scope_param = if scoped { "void* tasks, " } else { "" };
             self.line(&format!(
-                "static inline EMBER_MAYBE_UNUSED {RT}thread* {name}_spawn(struct {RT}fn_value f, {RT}loc loc) {{"
+                "static inline EMBER_MAYBE_UNUSED {RT}thread* {name}_spawn({scope_param}struct {RT}fn_value f, {RT}loc loc) {{"
             ));
             self.line(&format!(
                 "    struct {packet}* p = (struct {packet}*){RT}alloc(sizeof(struct {packet}), _Alignof(struct {packet}));"
@@ -2241,14 +2252,20 @@ impl Emitter<'_> {
             self.line(&format!(
                 "    {RT}thread_start(&p->head, {name}_run, {drop}, (uint32_t)sizeof(struct {packet}), (uint32_t)_Alignof(struct {packet}), loc);"
             ));
+            if scoped {
+                self.line(&format!("    {RT}scope_add(tasks, &p->head);"));
+            }
             self.line("    return &p->head;");
             self.line("}");
             self.line(&format!("static inline EMBER_MAYBE_UNUSED {result_c} {name}_join({RT}thread* raw) {{"));
-            self.line(&format!("    {RT}thread_join(raw);"));
+            // A scoped thread's packet is the scope's to free; joining marks it taken.
+            self.line(&format!("    {RT}{}(raw);", if scoped { "scope_join" } else { "thread_join" }));
             if !void {
                 self.line(&format!("    {result_c} result = ((struct {packet}*)raw)->result;"));
             }
-            self.line(&format!("    {RT}thread_free(raw);"));
+            if !scoped {
+                self.line(&format!("    {RT}thread_free(raw);"));
+            }
             if !void {
                 self.line("    return result;");
             }
@@ -4002,6 +4019,11 @@ impl Emitter<'_> {
                             let mutex_c = self.c_type(mutex);
                             out.push(format!("{RT}mutex_unlock(&(({mutex_c}*){access}.value)->word);"));
                         }
+                        return;
+                    }
+                    // `[THR-5]` — a scope's end joins its threads.
+                    Some("std.thread.Scope") => {
+                        out.push(format!("{RT}scope_end(({access}).tasks);"));
                         return;
                     }
                     // `[THR-10]` — a handle dropped unjoined detaches its thread.
@@ -6990,10 +7012,35 @@ impl Emitter<'_> {
                             self.location(span)
                         );
                     }
-                    Builtin::ThreadJoin => {
+                    Builtin::ThreadJoin | Builtin::ScopedJoin => {
                         let TyKind::Struct(id) = *self.types.kind(*arg_ty) else { unreachable!("join takes the handle") };
                         let name = self.c_named(&self.types.struct_def(id).name.to_string());
                         return format!("{name}_join(({RT}thread*)({}).thread)", rendered[0]);
+                    }
+                    // `[THR-5]` — a scope's task list; its end (the drop) joins them.
+                    Builtin::ThreadScope => {
+                        return format!("(({}){{NULL, (uint8_t*){RT}scope_new()}})", self.c_type(*arg_ty));
+                    }
+                    // `[THR-11]` — the task's callable value: made here from the closure's
+                    // environment, or given, for a function.
+                    Builtin::ScopeSpawn { closure } => {
+                        let TyKind::Struct(id) = *self.types.kind(*arg_ty) else { unreachable!("spawn gives the handle") };
+                        let name = self.c_named(&self.types.struct_def(id).name.to_string());
+                        let callable = match (closure, &args[..]) {
+                            (Some(_), [_, Operand::Const(Const::Fn(body_symbol)), env]) => {
+                                let (descriptor, env_ty) = self.closure_values.get(body_symbol).cloned().expect("the scan registered the task");
+                                let env_c = self.c_type(env_ty);
+                                let env_value = self.operand(env, body);
+                                format!("{RT}fn_value_make(&{descriptor}, &({env_value}), sizeof({env_c}), _Alignof({env_c}))")
+                            }
+                            _ => rendered[1].clone(),
+                        };
+                        return format!(
+                            "(({}){{NULL, (uint8_t*){name}_spawn((void*)({})->tasks, {callable}, {})}})",
+                            self.c_type(*arg_ty),
+                            rendered[0],
+                            self.location(span)
+                        );
                     }
                     Builtin::ForeignStaticWrite { symbol } => {
                         self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*arg_ty, false));

@@ -1448,6 +1448,15 @@ pub enum Builtin {
     /// `[THR-10]` — `h.join()`: the argument is the handle, moved; it gives what the thread's
     /// function returned.
     ThreadJoin,
+    /// `[THR-5]` — `thread.scope()`: gives the `Scope`, whose end joins its threads.
+    ThreadScope,
+    /// `[THR-11]` — `scope.spawn(f)`: the arguments are a borrow of the `Scope` and either the
+    /// closure itself (`closure`: its body; the closure's borrows flow into the `Scope`, so they
+    /// last until it ends) or, for a function, its owned callable value. Gives the
+    /// `ScopedJoinHandle[R]`.
+    ScopeSpawn { closure: Option<DefId> },
+    /// `[THR-11]` — `h.join()` on a `ScopedJoinHandle`: the handle, moved; gives the result.
+    ScopedJoin,
     /// `[ARN-1]`, `[ARN-4]` — `Arena.with_capacity(bytes)`. The Arena itself
     /// is a compiler-known move-only struct; the runtime state it owns is
     /// opaque to Ember source.
@@ -1687,6 +1696,9 @@ impl Builtin {
             Builtin::Atomic { op, .. } => op.name(),
             Builtin::ThreadSpawn => "spawn",
             Builtin::ThreadJoin => "join",
+            Builtin::ThreadScope => "scope",
+            Builtin::ScopeSpawn { .. } => "spawn",
+            Builtin::ScopedJoin => "join",
             Builtin::ArenaWithCapacity => "with_capacity",
             Builtin::ArenaAlloc { .. }
             | Builtin::FixedArenaAlloc { .. }

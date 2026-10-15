@@ -1133,6 +1133,7 @@ void ember_thread_start(ember_thread* thread, void (*run)(ember_thread*), void (
     thread->refs = 2;
     thread->size = size;
     thread->align = align;
+    thread->joined = 0;
     (void)object_fetch_add_u32(&g_threads_running, 1);
     threads_have_started();
 #if defined(_WIN32)
@@ -1180,6 +1181,60 @@ void ember_thread_detach(ember_thread* thread) {
     (void)pthread_detach(thread_os(thread));
 #endif
     thread_let_go(thread);
+}
+
+/* [THR-5] A scope's threads, in a list it grows as it spawns. A scoped thread's packet keeps the
+ * thread's reference (let go when it ends) and the scope's, so only the scope frees it. */
+typedef struct {
+    ember_thread** threads;
+    size_t count;
+    size_t capacity;
+} scope_tasks;
+
+void* ember_scope_new(void) {
+    scope_tasks* tasks = (scope_tasks*)ember_alloc(sizeof(scope_tasks), _Alignof(scope_tasks));
+    tasks->threads = NULL;
+    tasks->count = 0;
+    tasks->capacity = 0;
+    return tasks;
+}
+
+void ember_scope_add(void* raw, ember_thread* thread) {
+    scope_tasks* tasks = (scope_tasks*)raw;
+    if (tasks->count == tasks->capacity) {
+        size_t capacity = tasks->capacity == 0 ? 4 : tasks->capacity * 2;
+        ember_thread** grown = (ember_thread**)ember_alloc(capacity * sizeof(ember_thread*), _Alignof(ember_thread*));
+        if (tasks->count != 0) {
+            memcpy(grown, tasks->threads, tasks->count * sizeof(ember_thread*));
+            ember_free(tasks->threads, tasks->capacity * sizeof(ember_thread*), _Alignof(ember_thread*));
+        }
+        tasks->threads = grown;
+        tasks->capacity = capacity;
+    }
+    tasks->threads[tasks->count++] = thread;
+}
+
+void ember_scope_join(ember_thread* thread) {
+    ember_thread_join(thread);
+    thread->joined = 1;
+}
+
+void ember_scope_end(void* raw) {
+    scope_tasks* tasks = (scope_tasks*)raw;
+    for (size_t i = 0; i < tasks->count; ++i) {
+        ember_thread* thread = tasks->threads[i];
+        if (!thread->joined) {
+            ember_thread_join(thread);
+            if (thread->drop_result != NULL) {
+                thread->drop_result(thread);
+            }
+        }
+        ember_thread_free(thread);
+    }
+    if (tasks->capacity != 0) {
+        ember_free(tasks->threads, tasks->capacity * sizeof(ember_thread*), _Alignof(ember_thread*));
+    }
+    ember_free(tasks, sizeof(scope_tasks), _Alignof(scope_tasks));
 }
 
 void ember_atomic_wait32(uint32_t* word, uint32_t expected) {

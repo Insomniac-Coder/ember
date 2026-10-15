@@ -2769,6 +2769,31 @@ impl<'a> Builder<'a> {
             hir::ExprKind::Builtin { which: which @ hir::Builtin::Atomic { .. }, args } => {
                 self.lower_atomic(place, *which, args, expr.span);
             }
+            // `[THR-11]` — the scope's borrow, the closure's body, and its environment (moved: its
+            // borrows flow into the scope, `regions.rs`).
+            hir::ExprKind::Builtin { which: which @ hir::Builtin::ScopeSpawn { closure: Some(closure) }, args } => {
+                let scope = self.lower_operand(&args[0]);
+                // The task owns its environment: a place is copied (so a handle in it retained)
+                // into a temporary of its own, which moves in, as `Shared(value)` does (D-200).
+                let env = match self.lower_operand(&args[1]) {
+                    Operand::Copy(source) if self.types.needs_drop(args[1].ty) => {
+                        let temp = self.temp(args[1].ty, expr.span);
+                        self.push(StmtKind::Assign { place: Place::local(temp), rvalue: Rvalue::Use(Operand::Copy(source)) });
+                        Operand::Move(Place::local(temp))
+                    }
+                    operand => operand,
+                };
+                let body = Operand::Const(Const::Fn(self.program.function(*closure).symbol.clone()));
+                self.at(expr.span);
+                let next = self.new_block();
+                self.terminate(Terminator::Call {
+                    func: FuncRef::Builtin { which: *which, arg_ty: expr.ty },
+                    args: vec![scope, body, env],
+                    dest: place,
+                    next,
+                });
+                self.current = next;
+            }
             hir::ExprKind::Builtin { which: hir::Builtin::RefCellTryBorrowMut, args } => {
                 self.lower_refcell_try_borrow(place, &args[0], true, expr.ty, expr.span);
             }
@@ -3036,7 +3061,9 @@ impl<'a> Builder<'a> {
                     | hir::Builtin::ArenaAllocUninit { .. }
                     | hir::Builtin::ArenaAllocArrayZeroed { .. }
                     | hir::Builtin::MaybeUninitUninit { .. }
-                    | hir::Builtin::WeakEmpty { .. } => expr.ty,
+                    | hir::Builtin::WeakEmpty { .. }
+                    | hir::Builtin::ThreadScope
+                    | hir::Builtin::ScopeSpawn { .. } => expr.ty,
                     hir::Builtin::SizeOf => args.last().map(|a| a.ty).unwrap_or(expr.ty),
                     _ => args.first().map(|a| a.ty).unwrap_or(expr.ty),
                 };

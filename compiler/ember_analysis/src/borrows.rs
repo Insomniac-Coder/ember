@@ -158,10 +158,30 @@ pub fn check_all_with_installed_callable_regions(
         |func: &FuncRef| stores::with_stores(contract_for(func, &summaries, &signatures), func, &store_summaries);
     let names: HashMap<String, String> =
         bodies.iter().map(|body| (body.symbol.clone(), body.name.clone())).collect();
+    // `[THR-11]` — a scoped task copies the views it only reads; its scope bounds them (the
+    // flow into the `Scope`, `regions.rs`), so they need not be static as an `owned fn`'s.
+    let scoped_task_environments: HashSet<StructId> = bodies
+        .iter()
+        .flat_map(|body| {
+            body.blocks.iter().filter_map(move |block| match &block.terminator {
+                Terminator::Call { func: FuncRef::Builtin { which: Builtin::ScopeSpawn { closure: Some(_) }, .. }, args, .. } => {
+                    match args.last() {
+                        Some(Operand::Move(place) | Operand::Copy(place)) => match types.kind(place_ty(body, types, place)) {
+                            TyKind::Struct(id) => Some(*id),
+                            _ => None,
+                        },
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+        })
+        .collect();
     let owned_closure_environments: HashSet<StructId> = bodies
         .iter()
         .filter(|body| body.closure_captures_by_move)
         .filter_map(|body| body.closure_environment)
+        .filter(|environment| !scoped_task_environments.contains(environment))
         .collect();
     let invalid_result_bodies =
         infer_invalid_result_bodies(bodies, types, &call_contract, &capture_contracts);
@@ -2597,6 +2617,9 @@ fn builtin_contract(func: &FuncRef) -> Option<CallRegionContract> {
     };
     let paths = match which {
         Builtin::SpanSplitAt { .. } => vec![vec![Projection::Field(0)], vec![Projection::Field(1)]],
+        // `[THR-11]` — a scoped thread's handle borrows its scope (argument 0): it may not
+        // outlive the `with` block, whose end frees the thread.
+        Builtin::ScopeSpawn { .. } => vec![vec![Projection::Field(0)]],
         Builtin::StrSplitOnce { some, .. } => (0..2)
             .map(|index| vec![Projection::Downcast(*some), Projection::Field(0), Projection::Field(index)])
             .collect(),

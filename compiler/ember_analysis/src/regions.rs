@@ -1041,6 +1041,13 @@ impl Regions {
                     flows.push((self.fact_for_operand(state, value), target));
                 }
             }
+            // `[THR-11]` — a scoped task's closure (its last argument) is held by the scope until
+            // the `with` block ends: its borrows last as long as the `Scope`.
+            FuncRef::Builtin { which: Builtin::ScopeSpawn { .. }, .. } => {
+                if let (Some(task), Some(target)) = (args.last(), pointee(0)) {
+                    flows.push((self.fact_for_operand(state, task), target));
+                }
+            }
             FuncRef::Builtin { which: Builtin::MemSwap { .. }, .. } => {
                 if let (Some(a), Some(b), Some(into_a), Some(into_b)) = (args.first(), args.get(1), pointee(0), pointee(1)) {
                     flows.push((self.pointee_fact(body, types, state, b, &[]), into_a));

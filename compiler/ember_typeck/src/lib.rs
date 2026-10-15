@@ -1517,6 +1517,11 @@ struct Checker<'a> {
     shareds: HashMap<StructId, Ty>,
     /// `[HEAP-10]` — which of `shareds` are `SyncShared`.
     sync_shareds: HashSet<StructId>,
+    /// `[THR-5]` — the `with` item being checked, the one place `thread.scope()` may be.
+    with_scope_item: Option<Span>,
+    /// `[THR-11]` — a scoped task's lambda, which copies the `Copy` variables it only reads
+    /// (`[CLO-13]`), as one stored as a callable value does: a loop's variable lives one pass.
+    scoped_task_lambda: Option<Span>,
     /// `[WK-1]` — every compiler-known `Weak[C]` and the class handle it can
     /// upgrade. The wrapper has a private class-pointer field, but unlike the
     /// class handle it retains only the runtime control block.
@@ -1901,6 +1906,8 @@ impl<'a> Checker<'a> {
             boxes: HashMap::new(),
             shareds: HashMap::new(),
             sync_shareds: HashSet::new(),
+            with_scope_item: None,
+            scoped_task_lambda: None,
             weaks: HashMap::new(),
             refcells: HashMap::new(),
             maybe_uninit: HashMap::new(),
@@ -11510,6 +11517,9 @@ impl<'a> Checker<'a> {
         if self.resolve_name(name).is("std.thread.spawn") {
             return Some(self.synth_thread_spawn(args, explicit, span));
         }
+        if self.resolve_name(name).is("std.thread.scope") {
+            return Some(self.synth_thread_scope(args, span));
+        }
         // `[HASH-2]` — `std.collections`'s own `process_key(which)`, the
         // process's hash key, which the runtime draws.
         if self.resolve_name(name).is("std.collections.process_key") {
@@ -18475,7 +18485,9 @@ impl<'a> Checker<'a> {
                 self.scopes.push(HashMap::new());
                 let mut stmts = Vec::new();
                 for item in items {
+                    self.with_scope_item = Some(item.value.span);
                     let value = self.synth_committed(&item.value);
+                    self.with_scope_item = None;
                     let name = item.pattern.as_ref().and_then(binding_name);
                     let local = self.declare(name, value.ty, item.value.span);
                     stmts.push(Stmt::Let { local, init: Some(value) });
@@ -35272,6 +35284,21 @@ impl<'a> Checker<'a> {
             }
             return self.synth_cell_method(receiver, inner, name, args, span);
         }
+        // `[THR-11]` — `scope.spawn(f)`; `h.join()` on a scoped handle.
+        if self.is_scope(receiver.ty) {
+            if !name.name.is("spawn") {
+                self.error(codes::E1010, name.span, format!("`std.thread.Scope` has no method named `{}`", name.name));
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return self.synth_scope_spawn(receiver, args, &explicit, span);
+        }
+        if let Some(result) = self.lock_inner(receiver.ty, "std.thread.ScopedJoinHandle") {
+            if !name.name.is("join") || !explicit.is_empty() || !args.is_empty() {
+                self.error(codes::E1010, name.span, format!("a scoped thread's handle has `join()` only, not `{}`", name.name));
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return Expr { ty: result, kind: ExprKind::Builtin { which: Builtin::ScopedJoin, args: vec![receiver] }, span };
+        }
         // `[THR-10]` — `h.join()` waits for the thread and gives its result; it takes `h`.
         if let Some(result) = self.lock_inner(receiver.ty, "std.thread.JoinHandle") {
             if !name.name.is("join") {
@@ -36847,7 +36874,8 @@ impl<'a> Checker<'a> {
         }
         let by_copy = !lambda.is_owned
             && mutable_capture_fields.is_empty()
-            && expected.is_some_and(|ty| matches!(self.types.kind(ty), TyKind::Fn { abi: None, stateless: false, .. }))
+            && (expected.is_some_and(|ty| matches!(self.types.kind(ty), TyKind::Fn { abi: None, stateless: false, .. }))
+                || self.scoped_task_lambda == Some(span))
             && captured.iter().all(|(_, ty)| self.types.is_copy(*ty));
         if by_copy {
             let locals = captured.iter().filter_map(|(name, _)| self.lookup(*name)).collect();
@@ -37546,8 +37574,34 @@ impl<'a> Checker<'a> {
         }
 
         match &expr.kind {
-            ExprKind::Call { args, .. }
-            | ExprKind::Builtin { args, .. }
+            // D-598 — a capture given to a `mut` parameter is written through, though no `ref mut`
+            // appears: the parameter takes the place as it is.
+            ExprKind::Call { callee, args, .. } => {
+                let modes: Vec<Mode> = self.signatures.get(callee.0 as usize).map_or_else(Vec::new, |signature| {
+                    signature.params.iter().map(|(_, _, mode, _)| *mode).collect()
+                });
+                for (arg, mode) in args.iter().zip(modes.iter().copied().chain(std::iter::repeat(Mode::Borrow))) {
+                    if mode == Mode::Mut
+                        && let Some(field) = Self::closure_capture_field_index(arg, environment)
+                    {
+                        fields.insert(field);
+                    }
+                    self.collect_mutated_capture_fields_expr(arg, environment, fields);
+                }
+            }
+            ExprKind::CallIndirect { callee, args, .. } => {
+                self.collect_mutated_capture_fields_expr(callee, environment, fields);
+                for arg in args {
+                    self.collect_mutated_capture_fields_expr(arg, environment, fields);
+                }
+            }
+            ExprKind::InterfaceCall { receiver, args, .. } => {
+                self.collect_mutated_capture_fields_expr(receiver, environment, fields);
+                for arg in args {
+                    self.collect_mutated_capture_fields_expr(arg, environment, fields);
+                }
+            }
+            ExprKind::Builtin { args, .. }
             | ExprKind::TupleLit(args)
             | ExprKind::ArrayLit(args)
             | ExprKind::EnumLit { fields: args, .. } => {
@@ -37565,18 +37619,6 @@ impl<'a> Checker<'a> {
                     self.collect_mutated_capture_fields_stmt(stmt, environment, fields);
                 }
                 self.collect_mutated_capture_fields_expr(value, environment, fields);
-            }
-            ExprKind::CallIndirect { callee, args, .. } => {
-                self.collect_mutated_capture_fields_expr(callee, environment, fields);
-                for arg in args {
-                    self.collect_mutated_capture_fields_expr(arg, environment, fields);
-                }
-            }
-            ExprKind::InterfaceCall { receiver, args, .. } => {
-                self.collect_mutated_capture_fields_expr(receiver, environment, fields);
-                for arg in args {
-                    self.collect_mutated_capture_fields_expr(arg, environment, fields);
-                }
             }
             ExprKind::StructLit { fields: args, .. } => {
                 for arg in args {
@@ -38886,6 +38928,129 @@ impl<'a> Checker<'a> {
             self.types.struct_def_mut(id).has_drop = true;
         }
         guard
+    }
+
+    /// `[THR-5]` — `std.thread.Scope`, marked so every pass knows it (its end joins its threads).
+    fn scope_ty(&mut self, span: Span) -> Ty {
+        let Some(scope) = self.named_types.get(&Symbol::intern("std.thread.Scope")).copied() else {
+            self.error(codes::E1010, span, "cannot find `std.thread.Scope`");
+            return self.common.error;
+        };
+        if let TyKind::Struct(id) = *self.types.kind(scope) {
+            let def = self.types.struct_def_mut(id);
+            def.has_drop = true;
+            def.origin = Some((Symbol::intern("std.thread.Scope"), Vec::new()));
+        }
+        scope
+    }
+
+    fn is_scope(&self, ty: Ty) -> bool {
+        matches!(self.types.kind(ty), TyKind::Struct(id)
+            if self.types.struct_def(*id).origin.as_ref().is_some_and(|(origin, _)| origin.as_str() == "std.thread.Scope"))
+    }
+
+    /// `[THR-5]` — `thread.scope()`, which only a `with` item may be (`E3014`).
+    fn synth_thread_scope(&mut self, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if !args.is_empty() {
+            self.error(codes::E2020, span, "`thread.scope` takes no arguments");
+            return error;
+        }
+        if self.with_scope_item != Some(span) {
+            self.sink.emit(
+                Diagnostic::error(codes::E3014, span, "`thread.scope()` must be bound by `with`")
+                    .help("write `with scope = thread.scope():`; the block's end joins its threads")
+                    .note("a scope's threads may borrow the block's places, so the scope lives exactly as long as the block [THR-5]"),
+            );
+            return error;
+        }
+        let scope = self.scope_ty(span);
+        Expr { ty: scope, kind: ExprKind::Builtin { which: Builtin::ThreadScope, args: Vec::new() }, span }
+    }
+
+    /// `[THR-11]` — `scope.spawn(f)`. `f` may borrow: what it borrows shared must be `Sync`
+    /// (`E7005`), what it borrows mutably or captures `Send` (`E7004`), as what it returns. The
+    /// closure itself goes to the builtin, so the region pass moves its borrows into the `Scope`:
+    /// they last until the `with` block ends, and the borrow checker refuses what conflicts.
+    fn synth_scope_spawn(&mut self, receiver: Expr, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if args.len() != 1 || args[0].name.is_some() || !explicit.is_empty() {
+            self.error(codes::E2020, span, "`spawn` takes one function, the work the new thread does");
+            return error;
+        }
+        if !is_place(&receiver.kind) {
+            self.error(codes::E2140, span, "`spawn` needs the `with` block's scope");
+            return error;
+        }
+        let outer = self.scoped_task_lambda.replace(args[0].value.span);
+        let f = self.synth_committed(&args[0].value);
+        self.scoped_task_lambda = outer;
+        if f.ty == self.common.error {
+            return error;
+        }
+        let shown = self.types.display(f.ty);
+        let signature = self.callable_signature_of_value(f.ty);
+        let Some(TyKind::Fn { params, ret, .. }) = signature.map(|signature| self.types.kind(signature).clone()) else {
+            self.error(codes::E2020, args[0].span, format!("`spawn` takes a function of no arguments, found `{shown}`"));
+            return error;
+        };
+        if !params.is_empty() {
+            self.error(codes::E2020, args[0].span, format!("`spawn` takes a function of no arguments, found `{shown}`"));
+            return error;
+        }
+        let mut refused = false;
+        let closure = match *self.types.kind(f.ty) {
+            TyKind::Struct(id) => self.closure_calls.get(&id).map(|call| call.def),
+            _ => None,
+        };
+        if let (Some(_), &TyKind::Struct(id)) = (closure, self.types.kind(f.ty)) {
+            let captures: Vec<(Symbol, Ty)> = self.types.struct_def(id).fields.iter().map(|field| (field.name, field.ty)).collect();
+            for (capture, ty) in captures {
+                let (code, what, ok) = match *self.types.kind(ty) {
+                    TyKind::Ref { mutable: false, inner } => (codes::E7005, (inner, "borrows", "Sync"), self.types.is_sync(inner)),
+                    TyKind::Ref { mutable: true, inner } => (codes::E7004, (inner, "borrows mutably", "Send"), self.types.is_send(inner)),
+                    _ => (codes::E7004, (ty, "captures", "Send"), self.types.is_send(ty)),
+                };
+                if !ok {
+                    let (ty, verb, marker) = what;
+                    let ty_shown = self.types.display(ty);
+                    self.sink.emit(
+                        Diagnostic::error(code, args[0].span, format!("the task {verb} `{capture}`, a `{ty_shown}`, which is not {marker}"))
+                            .note("a scoped task runs on another thread while the block goes on [THR-11]"),
+                    );
+                    refused = true;
+                }
+            }
+        } else if !matches!(self.types.kind(f.ty), TyKind::Fn { stateless: true, .. }) {
+            self.sink.emit(
+                Diagnostic::error(codes::E7004, args[0].span, format!("a `{shown}` value may hold anything, so it is not Send"))
+                    .help("pass the lambda itself, `fn() => …`, so what it captures can be checked")
+                    .note("a scoped task runs on another thread while the block goes on [THR-11]"),
+            );
+            refused = true;
+        }
+        if !self.types.is_send(ret) {
+            let ret_shown = self.types.display(ret);
+            self.sink.emit(
+                Diagnostic::error(codes::E7004, args[0].span, format!("the task returns a `{ret_shown}`, which is not Send"))
+                    .note("`join` takes the result on another thread [THR-11]"),
+            );
+            refused = true;
+        }
+        if refused {
+            return error;
+        }
+        let handle = self.instantiate_named_generic("std.thread.ScopedJoinHandle", &[ret], span);
+        let shared = self.types.intern(TyKind::Ref { mutable: false, inner: receiver.ty });
+        let borrowed = Expr { ty: shared, kind: ExprKind::Ref { place: Box::new(receiver), mutable: false }, span };
+        let task = match closure {
+            Some(_) => f,
+            None => {
+                let callable_ty = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: false, params: Vec::new(), ret });
+                self.coerce(f, callable_ty)
+            }
+        };
+        Expr { ty: handle, kind: ExprKind::Builtin { which: Builtin::ScopeSpawn { closure }, args: vec![borrowed, task] }, span }
     }
 
     /// `[THR-10]` — `JoinHandle[R]`, whose end detaches the thread (the backend's drop).
