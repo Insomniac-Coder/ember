@@ -129,6 +129,7 @@ pub fn check(
     checker.ambiguous_globs = vec![HashMap::new(); modules.len()];
     checker.namespaces = vec![HashMap::new(); modules.len()];
     checker.module_overflow = vec![default_overflow; modules.len()];
+    checker.module_deterministic = vec![false; modules.len()];
 
     // `RangeError` before anything else. `[RNG-3]` writes the signature
     // `T.checked(v) -> Result[T, RangeError]`, so a program that declares a
@@ -590,6 +591,13 @@ enum FusedCount {
 
 
 /// `@fp(contract)`, the one form `[TYP-9b]` gives `@fp`.
+/// Whether the attribute's one argument is the bare name `word`.
+fn attribute_names(attr: &ast::Attribute, word: &str) -> bool {
+    matches!(attr.args.as_slice(), [ast::AttrArg::Expr(ast::Expr {
+        kind: ast::ExprKind::Path { segments }, ..
+    })] if segments.len() == 1 && segments[0].name.is(word))
+}
+
 fn fp_names_contract(attr: &ast::Attribute) -> bool {
     matches!(attr.args.as_slice(), [ast::AttrArg::Expr(ast::Expr {
         kind: ast::ExprKind::Path { segments }, ..
@@ -1717,6 +1725,8 @@ struct Checker<'a> {
     default_overflow: OverflowPolicy,
     /// Each source module's lexical default, selected before checking bodies.
     module_overflow: Vec<OverflowPolicy>,
+    /// `[DET-8]` — the modules written `#! module deterministic`: every function in one is.
+    module_deterministic: Vec<bool>,
     /// The lexical policy while checking a body or an inserted default.
     active_overflow: OverflowPolicy,
     /// `[TYP-9]` — the float mode of the function being checked, which a
@@ -1916,6 +1926,7 @@ impl<'a> Checker<'a> {
             ret_ty,
             default_overflow: OverflowPolicy::default(),
             module_overflow: Vec::new(),
+            module_deterministic: Vec::new(),
             active_overflow: OverflowPolicy::default(),
             active_fp: FpMode::Strict,
             lint_return_intersection: false,
@@ -13633,6 +13644,15 @@ impl<'a> Checker<'a> {
         self.resolve_name(name).is("std.mem.UnsafeCell")
     }
 
+    /// A function's contracts: its own attributes', and `[DET-8]`'s `#! module deterministic`.
+    fn contracts_of(&self, attrs: &[ast::Attribute]) -> hir::Contracts {
+        let mut contracts = contracts_of(attrs);
+        if self.module_deterministic.get(self.current_module).copied().unwrap_or(false) {
+            contracts.forbidden |= hir::Effects::NONDET;
+        }
+        contracts
+    }
+
     fn reject_unsafe_cell_in_static_safe(&mut self, span: Span) {
         if !self.in_static_safe || self.static_safe_unsafe_cell_reported {
             return;
@@ -14330,6 +14350,7 @@ impl<'a> Checker<'a> {
                 fp,
                 inline: inline_hint(&item.attrs),
                 static_safe: has_attribute(&item.attrs, "static_safe"),
+                contracts: self.contracts_of(&item.attrs),
                 borrows: self.declared_borrows(def),
                 sources: self.declared_sources(def),
                 is_lambda: false,
@@ -14554,6 +14575,7 @@ impl<'a> Checker<'a> {
                     fp: signature.fp,
                     inline: hir::InlineHint::default(),
                     static_safe: false,
+                    contracts: hir::Contracts::default(),
                     borrows: signature.borrows.clone().or_else(|| self.declared_borrows(job.def)),
                     sources: self.declared_sources(job.def),
                     is_lambda: false,
@@ -15484,6 +15506,7 @@ impl<'a> Checker<'a> {
             fp,
             inline: inline_hint(attrs),
             static_safe: has_attribute(attrs, "static_safe"),
+            contracts: self.contracts_of(attrs),
             borrows: self.declared_borrows(def),
             sources: self.declared_sources(def),
             is_lambda: false,
@@ -15828,6 +15851,7 @@ impl<'a> Checker<'a> {
                     fp: FpMode::Strict,
                     inline: hir::InlineHint::default(),
                     static_safe: false,
+                    contracts: hir::Contracts::default(),
                     borrows: None,
                     sources: self.sources_of(&[(Symbol::intern("self"), ty, Mode::Borrow, span)]),
                     is_lambda: false,
@@ -16368,6 +16392,7 @@ impl<'a> Checker<'a> {
             fp,
             inline: inline_hint(attrs),
             static_safe: has_attribute(attrs, "static_safe"),
+            contracts: self.contracts_of(attrs),
             borrows: self.declared_borrows(def),
             sources: self.declared_sources(def),
             is_lambda: false,
@@ -31673,6 +31698,9 @@ impl<'a> Checker<'a> {
                 let policy = self.parse_overflow_policy(attr, self.default_overflow);
                 self.module_overflow[self.current_module] = policy;
             }
+            if attr.path.len() == 1 && attr.path[0].name.is("deterministic") {
+                self.module_deterministic[self.current_module] = true;
+            }
         }
         for item in &module.items {
             self.check_item_attributes(item, false);
@@ -31991,8 +32019,17 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let name = attr.path[0].name.as_str();
-            // `@nopanic` alone is reserved; `@nopanic(explicit)` is the listed form.
-            if RESERVED_ATTRIBUTES.contains(&name) || (name == "nopanic" && attr.args.is_empty()) {
+            // `[EFF-17]` — `@nopanic` alone is reserved, so that no reader takes it to mean
+            // "cannot abort"; `@nopanic(explicit)` is the listed form.
+            if name == "nopanic" && attr.args.is_empty() {
+                self.sink.emit(
+                    Diagnostic::error(codes::E0104, attr.span, "`@nopanic` is reserved for a later version")
+                        .help("write `@nopanic(explicit)`: it forbids the panics the program writes, not every way to stop")
+                        .suggest("write `@nopanic(explicit)`", attr.span, "@nopanic(explicit)"),
+                );
+                continue;
+            }
+            if RESERVED_ATTRIBUTES.contains(&name) {
                 self.sink.emit(Diagnostic::error(
                     codes::E0104,
                     attr.span,
@@ -32031,6 +32068,17 @@ impl<'a> Checker<'a> {
             }
             if name == "fp" && !fp_names_contract(attr) {
                 self.error(codes::E0104, attr.span, "`@fp` needs `contract`: `@fp(contract)`");
+                continue;
+            }
+            // `[EFF-5]` — the contracts take no arguments, but `@nopanic(explicit)` its one.
+            if name == "nopanic" && !attribute_names(attr, "explicit") {
+                self.error(codes::E0104, attr.span, "`@nopanic` takes `explicit`: `@nopanic(explicit)`");
+                continue;
+            }
+            if matches!(name, "noalloc" | "nosync" | "noblock" | "noio" | "nolock" | "realtime" | "deterministic")
+                && !attr.args.is_empty()
+            {
+                self.error(codes::E0104, attr.span, format!("`@{name}` takes no arguments"));
                 continue;
             }
             if !built {
@@ -36629,6 +36677,7 @@ impl<'a> Checker<'a> {
             fp,
             inline: hir::InlineHint::default(),
             static_safe: false,
+            contracts: hir::Contracts::default(),
             borrows: None,
             sources: Vec::new(),
             is_lambda: false,
@@ -36722,6 +36771,7 @@ impl<'a> Checker<'a> {
             fp: self.active_fp,
             inline: hir::InlineHint::default(),
             static_safe: false,
+            contracts: hir::Contracts::default(),
             borrows: None,
             sources,
             is_lambda: true,
@@ -44079,6 +44129,30 @@ fn inline_hint(attrs: &[ast::Attribute]) -> hir::InlineHint {
 }
 
 /// `@view`, `@packed` and the rest: an attribute by bare name.
+/// `[EFF-5]`, `[EFF-19]` — the effects a function's contract attributes forbid. `@realtime` is
+/// the manifest's set, by default `@noalloc @nolock @noblock @nopanic(explicit)`.
+fn contracts_of(attrs: &[ast::Attribute]) -> hir::Contracts {
+    let mut contracts = hir::Contracts::default();
+    for (name, effect) in [
+        ("noalloc", hir::Effects::ALLOC),
+        ("nosync", hir::Effects::SYNC),
+        ("noblock", hir::Effects::BLOCK),
+        ("noio", hir::Effects::IO),
+        ("nolock", hir::Effects::LOCK),
+        ("nopanic", hir::Effects::PANIC),
+        ("deterministic", hir::Effects::NONDET),
+    ] {
+        if has_attribute(attrs, name) {
+            contracts.forbidden |= effect;
+        }
+    }
+    if has_attribute(attrs, "realtime") {
+        contracts.realtime = hir::Effects::REALTIME_DEFAULT;
+        contracts.forbidden |= hir::Effects::REALTIME_DEFAULT;
+    }
+    contracts
+}
+
 fn has_attribute(attrs: &[ast::Attribute], name: &str) -> bool {
     attrs.iter().any(|attr| attr.path.len() == 1 && attr.path[0].name.is(name))
 }
@@ -44116,8 +44190,9 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["repr"], &["struct", "enum"], true),
     (&["gpu_layout"], &["struct"], false),
     (&["static_safe"], &["fn"], true),
-    (&["noalloc", "nosync", "noblock", "noio", "nolock", "nopanic", "realtime"], &["fn"], false),
-    (&["deterministic"], &["fn", "module"], false),
+    // `[EFF-5]` — checked over the call graph (`ember_analysis::check_effects_all`).
+    (&["noalloc", "nosync", "noblock", "noio", "nolock", "nopanic", "realtime"], &["fn"], true),
+    (&["deterministic"], &["fn", "module"], true),
     (&["overflow"], &["fn", "module"], true),
     // `[TYP-9]`, `[CG-C-11]` — a relaxed function has a translation unit of
     // its own.

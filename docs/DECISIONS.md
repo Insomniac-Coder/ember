@@ -5016,6 +5016,49 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-174 — Effects are inferred on the final checks, before inlining (`[EFF-1]`–`[EFF-6]`, `[EFF-15]`)
+
+**Context.** Part X.1 gives every function an effect set computed from its body and its callees',
+and Part X.2's contracts (`@noalloc`, `@nosync`, `@noblock`, `@noio`, `@nolock`,
+`@nopanic(explicit)`, `@deterministic`, `@realtime`) forbid effects over the whole reachable call
+graph, naming the chain. None of it was built: every contract was `E0900`. It is the work the
+2026-10-15 dependency map put first (71 rules wait on it).
+
+**Decision.** `ember_hir::Effects` is the set (a bit per effect, one per `RuntimeCheck` kind) and
+`ember_hir::Contracts` what a function's attributes forbid; both travel on the HIR function and the
+MIR body. `ember_analysis::effects` computes each body's own sites from the MIR — the builtins by an
+exhaustive match, so a new builtin cannot be added without classifying it; class exclusivity
+checks; the asserts by kind; drops (each `drop` method a value reaches, a class's for every class
+below the handle's type); copies and releases of `@sync` handles; boxed callable state over three
+words (`[CLO-10]`); relaxed floating point and foreign functions as `Nondet` (`[DET-2]`) — then
+takes the fixed point over the call graph (direct calls; a virtual call's every body in the slot of
+a class related to the receiver's). The check runs in the driver after
+`specialize_callable_arguments_all` and before inlining: after the profile-independent proofs, so
+the verdict is the same in every profile (`[EFF-15]`), and after a known function passed to a
+callable parameter has its own copy that calls it directly, so the call contributes that
+function's effects (`[EFF-2]`). A violation is reported at the site in the function (at the
+function itself when the site is in a standard-library body it was given), with the chain found by
+a breadth-first search to the nearest offending operation. An allocation also carries
+`Panic(Explicit)` (its failure panics); under both contracts it is reported once, as the
+allocation. An override inherits its base method's contracts (`[EFF-8]`). `#! module deterministic`
+gives every function in the module `@deterministic` (`[DET-8]`); a relaxed function reached from a
+`@deterministic` one is `E4072` (`[DET-5]`). The check costs nothing when no function has a
+contract.
+
+**Where it is conservative (each a known gap, not a semantic choice).** A call through a function
+value or a `dyn` interface carries every effect, and so does dropping such a value: no function
+type declares effects yet (`@noalloc fn(A) -> R`, `[EFF-2]`). A copy of a `@sync` handle is `Sync`
+even where `[RC-2]` would remove its retain. A foreign function is `FFI` and `Nondet`: `@ffi(effects
+=…)` and `@ffi(deterministic)` are not built (`[EFF-3]`, `[DET-8]`). `@realtime` is the default set;
+the manifest's `[realtime] contracts` is not read (`[EFF-19]`). Not built: `@assume_noalloc`
+(`[EFF-7]`), interface-method contracts (`E4010`), effects in the interface hash (`[EFF-4]`), and
+`ember inspect` output of effect sets.
+
+**Consequences.** Every contract attribute is checked, never accepted unchecked (`[EFF-23]`).
+Effects have no run-time code, so there is no C twin to time (AUTOPILOT §4 covers run-time cost).
+
+---
+
 ## ADR-173 — Const generics ride on the type arguments (`[TYP-41]`, D-587)
 
 **Date:** 2026-10-12 (autopilot). **Rules:** `[TYP-41]`, `[TYP-16]`, `[TYP-18]`, `[CT-1]`.

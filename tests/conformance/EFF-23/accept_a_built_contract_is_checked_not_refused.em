@@ -1,8 +1,9 @@
 #$ test: run-pass
 #$ rules: EFF-23, EFF-12
 #$ stdout: 6
-# `[EFF-23]` — only a contract whose checking is not built is refused: `@static_safe`'s is built,
-# so it is accepted and checked, and its bounds checks are allowed (`[EFF-12]`).
+# `[EFF-23]` — only a contract whose checking is not built is refused, and every contract's is
+# built now: `@static_safe` here is accepted and checked, and its bounds checks are allowed
+# (`[EFF-12]`).
 
 @static_safe
 fn total(xs: Span[int]) -> int:

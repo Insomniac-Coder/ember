@@ -394,6 +394,7 @@ impl<'a> Builder<'a> {
             fp: self.function.fp,
             inline: self.function.inline,
             static_safe: self.function.static_safe,
+            contracts: self.function.contracts,
             export_thread_policy: self.function.export_thread_policy,
             locals: self.locals,
             blocks: self.blocks,

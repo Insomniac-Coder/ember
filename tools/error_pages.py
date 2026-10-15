@@ -103,7 +103,7 @@ def ember() -> Path:
     """
     candidates = [
         ROOT / "target" / profile / name
-        for profile in ("release", "debug")
+        for profile in ("release", "debug", "ci")
         for name in ("ember.exe", "ember")
     ]
     built = [exe for exe in candidates if exe.exists()]

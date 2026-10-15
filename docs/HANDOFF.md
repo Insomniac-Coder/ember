@@ -10854,6 +10854,21 @@ examples write through a *borrowed* `MutSpan` parameter (`[BCK-6]`'s `first_even
 ADR-027 (owner) takes mutable helpers' `MutSpan`s as `mut`, and the compiler requires `mut`: the
 examples should say `mut` (the BCK-6 test does).
 
+**2026-10-15, effects built (ADR-174), the dependency map's step 2.** Every contract attribute is
+checked now (`ember_analysis::effects`, after `specialize_callable_arguments_all`, before
+inlining): `E4001`/`E4002`/`E4003`/`E4040`/`E4041`/`E4042`/`E4070`/`E4072` with the chain
+(`cull -> collect_visible -> Array.push`), error pages for each. `#! module deterministic` (DET-8),
+override inheritance (EFF-8), `@nopanic` bare is `E0104` with a fix-it (EFF-17). Tests in `EFF-1`,
+`EFF-2`, `EFF-5`, `EFF-6`, `EFF-8`, `EFF-15`, `EFF-16`, `EFF-17`, `EFF-19`, `DET-1`, `DET-5`,
+`DET-8`, `ARN-4`, `TYP-38`, `TXT-9`, `STD-2`, `DRP-4`, `CLO-10`. Left of effects: `@assume_noalloc`
+(EFF-7, not parsed), effect-typed `fn` types and interface contracts (EFF-2's rest, `E4010`),
+`@ffi(effects=)` (EFF-3), the manifest's `[realtime]` (EFF-19), effects in the interface hash
+(EFF-4/BLD-2), `ember inspect` of effects (EFF-10, DET-9, PHIL-2/CLO-10's `--alloc`). Found on the
+way: `tools/error_pages.py` (and so the gates) ran `target/release` from the morning, never the
+`ci` build the suite makes — it now takes the newest of release/debug/ci; `c_warning_sweep.py` runs
+`target/release`, so the full check now builds release first (the earlier MSVC/clang sweeps today
+ran a stale compiler; the gcc one builds its own and was clean).
+
 **2026-10-11 (autopilot, the owner: "go on autopilot now"), EXC-10 and D-552 (ADR-158); D-554 found.**
 CI on `4a28ea6` failed on Linux only: the unix half of `main_args_replace_text_that_is_not_utf8`
 passes four words, so the count is 5 (fixed in `40292d0`, green; its failure text is now escaped,

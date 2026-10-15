@@ -2395,6 +2395,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // callee's own copy, calling it directly; first, so every copy is
     // optimised like any other body.
     ember_analysis::specialize_callable_arguments_all(&mut bodies);
+    // `[EFF-5]`, `[EFF-15]` — the contracts, checked once on the effects left after the
+    // profile-independent proofs and before inlining; a known function passed to a callable
+    // parameter is called directly by now, so it contributes its own effects (`[EFF-2]`).
+    if ember_analysis::check_effects_all(&bodies, &types, &mut sink) > 0 {
+        return Ok(finish(&sink, &map, options));
+    }
     // A function called from one place is inlined there, so the analyses
     // below see what its caller knows. For clang and gcc, only a function
     // holding a check the caller's facts could remove: they inline the rest

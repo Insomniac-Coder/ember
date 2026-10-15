@@ -10302,7 +10302,7 @@ mod string_descriptor_view_parts_tests {
             overflow: ember_types::OverflowPolicy::Panic,
             fp: FpMode::Strict,
             inline: ember_mir::InlineHint::default(),
-            static_safe: false,
+            static_safe: false, contracts: Default::default(),
             export_thread_policy: ember_mir::ExportThreadPolicy::Any,
             locals: vec![
                 LocalDecl {

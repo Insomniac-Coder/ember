@@ -290,6 +290,8 @@ codes! {
 
     // --- effects and contracts ----------------------------------------------
     E4001 = (Error, 4001, Effects, "[EFF-5]", "`@noalloc` function reaches an allocation");
+    E4002 = (Error, 4002, Effects, "[EFF-5]", "`@nosync` function reaches a synchronising operation");
+    E4003 = (Error, 4003, Effects, "[EFF-5]", "`@noblock` function reaches a blocking operation");
     E4030 = (Error, 4030, Effects, "[EFF-13]", "`@static_safe` function performs a dynamically checked access");
     E4040 = (Error, 4040, Effects, "[EFF-17]", "`@nopanic(explicit)` function reaches a panic");
     E4010 = (Error, 4010, Effects, "[EFF-2]", "implementation does not satisfy the interface's contract");

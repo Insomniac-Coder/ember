@@ -86,6 +86,8 @@ pub struct Body {
     pub inline: InlineHint,
     /// `[EFF-13]` — declared `@static_safe` (`ember_analysis::check_static_safe_all`).
     pub static_safe: bool,
+    /// `[EFF-5]` — its contract attributes (`ember_analysis::check_effects_all`).
+    pub contracts: ember_hir::Contracts,
     /// `[FFI-33]` — resolved calling-thread contract of a C export.
     pub export_thread_policy: ExportThreadPolicy,
     pub locals: Vec<LocalDecl>,

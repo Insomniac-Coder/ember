@@ -152,6 +152,95 @@ pub struct InlineHint {
     pub hot: bool,
 }
 
+/// `[EFF-1]` — an effect set: which kinds of effect occur, never where (Part X.1). The
+/// `RuntimeCheck(k)` effects are one bit per kind (`[EFF-9]`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Effects(pub u16);
+
+impl Effects {
+    pub const NONE: Effects = Effects(0);
+    pub const ALLOC: Effects = Effects(1 << 0);
+    pub const SYNC: Effects = Effects(1 << 1);
+    pub const LOCK: Effects = Effects(1 << 2);
+    pub const BLOCK: Effects = Effects(1 << 3);
+    pub const IO: Effects = Effects(1 << 4);
+    /// `Panic(Explicit)`: the panics the programmer writes, and allocation failure.
+    pub const PANIC: Effects = Effects(1 << 5);
+    pub const CHECK_ALIASING: Effects = Effects(1 << 6);
+    pub const CHECK_BOUNDS: Effects = Effects(1 << 7);
+    pub const CHECK_STALE: Effects = Effects(1 << 8);
+    pub const CHECK_ARITHMETIC: Effects = Effects(1 << 9);
+    pub const UNSAFE: Effects = Effects(1 << 10);
+    pub const FFI: Effects = Effects(1 << 11);
+    pub const NONDET: Effects = Effects(1 << 12);
+    /// What a call contributes when nothing declares its effects (`[EFF-2]`).
+    pub const ALL: Effects = Effects((1 << 13) - 1);
+    /// `[EFF-19]` — `@realtime`'s set when the manifest declares none.
+    pub const REALTIME_DEFAULT: Effects = Effects(Self::ALLOC.0 | Self::LOCK.0 | Self::BLOCK.0 | Self::PANIC.0);
+
+    /// Each effect, with the name Part X.1 gives it.
+    pub const NAMED: [(Effects, &'static str); 13] = [
+        (Self::ALLOC, "Alloc"),
+        (Self::SYNC, "Sync"),
+        (Self::LOCK, "Lock"),
+        (Self::BLOCK, "Block"),
+        (Self::IO, "Io"),
+        (Self::PANIC, "Panic(Explicit)"),
+        (Self::CHECK_ALIASING, "RuntimeCheck(Aliasing)"),
+        (Self::CHECK_BOUNDS, "RuntimeCheck(Bounds)"),
+        (Self::CHECK_STALE, "RuntimeCheck(Stale)"),
+        (Self::CHECK_ARITHMETIC, "RuntimeCheck(Arithmetic)"),
+        (Self::UNSAFE, "Unsafe"),
+        (Self::FFI, "FFI"),
+        (Self::NONDET, "Nondet"),
+    ];
+
+    pub fn contains(self, other: Effects) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    pub fn intersects(self, other: Effects) -> bool {
+        self.0 & other.0 != 0
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// The single effects in this set, in Part X.1's order.
+    pub fn each(self) -> impl Iterator<Item = (Effects, &'static str)> {
+        Self::NAMED.into_iter().filter(move |(effect, _)| self.contains(*effect))
+    }
+}
+
+impl std::ops::BitOr for Effects {
+    type Output = Effects;
+    fn bitor(self, other: Effects) -> Effects {
+        Effects(self.0 | other.0)
+    }
+}
+
+impl std::ops::BitOrAssign for Effects {
+    fn bitor_assign(&mut self, other: Effects) {
+        self.0 |= other.0;
+    }
+}
+
+impl std::ops::BitAnd for Effects {
+    type Output = Effects;
+    fn bitand(self, other: Effects) -> Effects {
+        Effects(self.0 & other.0)
+    }
+}
+
+/// `[EFF-5]` — a function's contracts (Part X.2): the effects it may not have, and whether
+/// `@realtime` named some of them (`[EFF-19]`, whose diagnostics name both).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Contracts {
+    pub forbidden: Effects,
+    pub realtime: Effects,
+}
+
 #[derive(Debug)]
 pub struct Function {
     pub def: DefId,
@@ -192,6 +281,8 @@ pub struct Function {
     /// `[EFF-12]`, `[EFF-13]` — declared `@static_safe`: no dynamic aliasing
     /// check may remain in its body.
     pub static_safe: bool,
+    /// `[EFF-5]` — the contract attributes written on it (`@noalloc`, …).
+    pub contracts: Contracts,
     /// `[LT-1a]` — the parameter *positions* `@borrows(…)` names, when the
     /// attribute is written. `None` means elision decides (`[LT-1]`).
     ///
