@@ -11,7 +11,7 @@ use ember_types::{EnumId, OverflowPolicy, StructId, Ty};
 pub mod lower;
 pub mod verify;
 
-pub use lower::lower;
+pub use lower::{lower, lower_one};
 /// Exact source-level parameter mode retained by MIR for callable contracts.
 /// Consumers of MIR should name this boundary fact rather than depending on
 /// HIR solely to construct or inspect a MIR body.

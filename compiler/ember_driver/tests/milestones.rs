@@ -1878,6 +1878,54 @@ fn views_proved_apart_get_restrict_functions_and_nothing_else_does() {
     }
 }
 
+/// `[CT-4]`, `[CT-2]` — a compile-time value is kept with its inputs: the
+/// next build of the same source reuses it, and a changed input (here an
+/// environment variable `comptime.env` read) computes it again.
+#[test]
+fn a_compile_time_value_is_cached_with_its_inputs() {
+    let directory = temporary_directory("comptime-cache");
+    let source = directory.join(format!("main.{SOURCE_EXT}"));
+    std::fs::write(&source, "fn main():
+    println(comptime(comptime.env(\"EMBER_CT_CACHE_PROBE\")))
+").expect("the source is written");
+    let out = directory.join("target");
+    let (source, out) = (source.to_string_lossy().to_string(), out.to_string_lossy().to_string());
+    let args = ["run", source.as_str(), "--out-dir", out.as_str()];
+    let first = ember_with_env(&args, &directory, "EMBER_CT_CACHE_PROBE", "one");
+    assert_eq!(first.exit, 0, "the first build failed:
+{}", first.stderr);
+    assert!(first.stdout.contains("Some('one')"), "{}", first.stdout);
+    let kept: Vec<PathBuf> = std::fs::read_dir(directory.join("target").join("debug").join("comptime"))
+        .expect("the evaluator's directory")
+        .flatten()
+        .flat_map(|program| std::fs::read_dir(program.path().join("cache")).into_iter().flatten().flatten())
+        .map(|entry| entry.path())
+        .collect();
+    assert!(!kept.is_empty(), "no value was kept");
+    let entry = std::fs::read_to_string(&kept[0]).expect("a kept value");
+    assert!(entry.contains("env ") && entry.contains("EMBER_CT_CACHE_PROBE"), "the input is not recorded with the value:
+{entry}");
+    let again = ember_with_env(&args, &directory, "EMBER_CT_CACHE_PROBE", "one");
+    assert!(again.stdout.contains("Some('one')"), "{}", again.stdout);
+    let changed = ember_with_env(&args, &directory, "EMBER_CT_CACHE_PROBE", "two");
+    assert!(changed.stdout.contains("Some('two')"), "a changed input was not read again: {}", changed.stdout);
+}
+
+/// `[RT-5]` — the runtime's names derive from one constant, the branding
+/// prefix: the generated header defines it and spells every name literally
+/// (`tools/test_runtime_generation.py` regenerates it under another prefix).
+#[test]
+fn the_runtime_header_spells_its_names_from_the_one_prefix() {
+    let root = workspace_root();
+    let prefix = ember_branding::SYMBOL_PREFIX;
+    let runtime = root.join("runtime").join(format!("{prefix}_rt"));
+    let header = std::fs::read_to_string(runtime.join("include").join(format!("{prefix}_rt.h"))).expect("the runtime header");
+    let source = std::fs::read_to_string(runtime.join("src").join(format!("{prefix}_rt.c"))).expect("the runtime source");
+    assert!(header.contains(&format!("#define {}_SYMBOL_PREFIX {prefix}", prefix.to_uppercase())), "the header defines the prefix");
+    assert!(header.contains(&format!("int {prefix}_rt_init_v2(")), "the header names the entry point literally");
+    assert!(source.contains(&format!("#include \"{prefix}_rt.h\"")), "the source includes the header by its prefixed name");
+}
+
 /// `[SIMD-3]` (c) — distinct `SoA` columns are apart: the loop over two
 /// columns of one `SoA` runs in a function of its own whose column pointers
 /// are `restrict`, for every C compiler.

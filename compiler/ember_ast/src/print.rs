@@ -514,6 +514,7 @@ impl Printer {
             }
             ExprKind::Paren(e) => self.expr(e),
             ExprKind::Owned(inner) => self.nest("Owned", |p| p.expr(inner)),
+            ExprKind::Comptime(inner) => self.nest("Comptime", |p| p.expr(inner)),
             ExprKind::Jump(jump) => match jump {
                 Jump::Return(value) => self.nest("Return", |p| {
                     if let Some(value) = value {

@@ -241,6 +241,24 @@ fn class_itable_symbol(class: &str) -> String {
     ember_branding::mangled(&format!("itables_{class}"))
 }
 
+/// `[CT-1]` — one function the compile-time evaluator runs, and the type of
+/// the value it prints.
+#[derive(Clone, Debug)]
+pub struct ComptimeRoot {
+    pub symbol: String,
+    pub ty: Ty,
+}
+
+/// `[CT-1]`–`[CT-3]` — the C of the compile-time evaluator's program: the
+/// functions as a program's, each counting its steps and recording the call
+/// chain, and an entry point that runs the request its first argument names
+/// and prints its value (`ComptimeRoot`), within the step and heap limits its
+/// second and third arguments give.
+pub fn emit_comptime(mir: VerifiedMir<'_>, map: &SourceMap, roots: Vec<ComptimeRoot>, for_msvc: bool) -> Output {
+    emit_with(mir, map, "comptime", "comptime", false, false, false, for_msvc, Some(roots))
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn emit(
     mir: VerifiedMir<'_>,
     map: &SourceMap,
@@ -250,6 +268,21 @@ pub fn emit(
     leak_check: bool,
     library_mode: bool,
     for_msvc: bool,
+) -> Output {
+    emit_with(mir, map, module_name, package_name, has_main, leak_check, library_mode, for_msvc, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_with(
+    mir: VerifiedMir<'_>,
+    map: &SourceMap,
+    module_name: &str,
+    package_name: &str,
+    has_main: bool,
+    leak_check: bool,
+    library_mode: bool,
+    for_msvc: bool,
+    comptime: Option<Vec<ComptimeRoot>>,
 ) -> Output {
     let bodies = mir.bodies();
     let types = mir.types();
@@ -334,6 +367,7 @@ pub fn emit(
             .collect(),
         native_fn_values: BTreeMap::new(),
         closure_values: BTreeMap::new(),
+        comptime: None,
         statement_span: std::cell::Cell::new(ember_span::Span::DUMMY),
         gives_values_to_c: false,
         foreign_statics: std::cell::RefCell::new(BTreeMap::new()),
@@ -391,6 +425,7 @@ pub fn emit(
         }
     };
     let mut emitter = make(None);
+    emitter.comptime = comptime.clone();
     write(&mut emitter);
     check_split_views(&emitter.split_views, &emitter.out);
     let header_source = header::render(&emitter, bodies, package_name);
@@ -504,6 +539,9 @@ fn json_string(value: &str) -> String {
 }
 
 struct Emitter<'a> {
+    /// `[CT-1]` — the requests, when this is the compile-time evaluator's
+    /// program (`emit_comptime`).
+    comptime: Option<Vec<ComptimeRoot>>,
     types: &'a TypeTable,
     map: &'a SourceMap,
     out: String,
@@ -942,6 +980,9 @@ impl Emitter<'_> {
         let header = ember_branding::runtime_header();
         self.line(&format!("#include \"{header}\""));
         self.line("");
+        if self.comptime.is_some() {
+            self.line(COMPTIME_PRELUDE);
+        }
 
         self.emit_type_declarations();
         self.line(FOREIGN_STATIC_DECLARATIONS);
@@ -972,6 +1013,10 @@ impl Emitter<'_> {
         self.emit_shared_type_infos();
         self.emit_thread_helpers();
         self.emit_soa_helpers();
+        self.emit_constant_statics();
+        if self.comptime.is_some() && self.unit.is_none() {
+            self.emit_comptime_env_helpers(bodies);
+        }
 
         for body in bodies {
             if body.is_abstract || body.is_extern_declaration {
@@ -992,6 +1037,11 @@ impl Emitter<'_> {
         if has_main && self.unit.is_none() {
             let entry = bodies.iter().any(|body| body.symbol == ember_branding::mangled("main_entry"));
             self.emit_entry_point(leak_check, entry);
+        }
+        if let Some(roots) = self.comptime.clone()
+            && self.unit.is_none()
+        {
+            self.emit_comptime_entry(&roots);
         }
         self.emit_fmt_fns();
         self.collect_clone_dependencies();
@@ -4994,6 +5044,9 @@ impl Emitter<'_> {
         let signature = self.signature(body);
         let linkage = self.linkage(body);
         self.line(&format!("{linkage}{signature} {{"));
+        if self.comptime.is_some() {
+            self.line(&format!("    EMBER_CT_ENTER({});", c_string_literal(&body.name)));
+        }
         if body.abi.as_deref() == Some("C") {
             // `[FFI-22]` — the host may call this export on a thread that has
             // never run Ember. Attach before the body touches runtime state.
@@ -5195,7 +5248,11 @@ impl Emitter<'_> {
             if referenced.contains(&index) {
                 // A label with no statement after it is a syntax error in C,
                 // so every label is followed by at least `;`.
-                self.line(&format!("bb{index}: ;"));
+                if self.comptime.is_some() {
+                    self.line(&format!("bb{index}: EMBER_CT_STEP();"));
+                } else {
+                    self.line(&format!("bb{index}: ;"));
+                }
             }
             if let Some(counted) = for_loops.get(&index) {
                 self.emit_for_loop(counted, body, scoped.get(&index).map_or(&[], Vec::as_slice), &address_taken);
@@ -5321,6 +5378,9 @@ impl Emitter<'_> {
     fn emit_for_body(&mut self, counted: &ForLoop, body: &Body, locals: &[usize]) {
         for &local in locals {
             self.line(&self.local_declaration(local, &body.locals[local]));
+        }
+        if self.comptime.is_some() {
+            self.line("    EMBER_CT_STEP();");
         }
         for (position, &block) in counted.chain.iter().enumerate() {
             let data = &body.blocks[block];
@@ -6233,6 +6293,9 @@ impl Emitter<'_> {
                 self.emit_next(next.0 as usize, index);
             }
             Terminator::Return => {
+                if self.comptime.is_some() {
+                    self.line("    EMBER_CT_LEAVE();");
+                }
                 if self.is_void(body.return_ty()) {
                     self.line("    return;");
                 } else {
@@ -7180,6 +7243,13 @@ impl Emitter<'_> {
                     }
                     // `[STA-3]` — the accessor `lazy_static_definitions` writes.
                     Builtin::LazyStatic { init, .. } => return format!("{init}_static()"),
+                    // `[CT-5]` — the constant data `emit_constant_statics` writes.
+                    Builtin::ConstStatic { name, ty } => {
+                        return format!("(({}*)&{})", self.c_type(*ty), constant_static_symbol(name.as_str()));
+                    }
+                    // `[CT-2]` — the evaluator's own (`COMPTIME_PRELUDE`).
+                    Builtin::ComptimeReadFile => return format!("{RT}ct_read_file({})", rendered[0]),
+                    Builtin::ComptimeEnv { option } => return format!("{RT}ct_env_{}({})", self.c_type(*option), rendered[0]),
                     // `[THR-3]` — on the lock word, whose address lowering passes.
                     Builtin::MutexLock => return format!("{RT}mutex_lock({})", rendered[0]),
                     Builtin::MutexTryLock => return format!("{RT}mutex_try_lock({})", rendered[0]),
@@ -9301,6 +9371,362 @@ impl Emitter<'_> {
         self.line("}");
     }
 
+    /// `[CT-5]`, `[STA-3]` — each static the evaluator computed, as constant
+    /// data: its heap parts (an `Array`'s elements, a `String`'s bytes) are
+    /// constant arrays of their own, which nothing grows or frees (a static
+    /// gives no `ref mut`, and is never dropped). Defined in the main unit,
+    /// declared in the others.
+    fn emit_constant_statics(&mut self) {
+        let statics: Vec<(Symbol, Ty, String)> = self.types.constant_statics().to_vec();
+        if statics.is_empty() {
+            return;
+        }
+        for (name, ty, value) in statics {
+            let symbol = constant_static_symbol(name.as_str());
+            let c_ty = self.c_type(ty);
+            if self.unit.is_some() {
+                self.line(&format!("extern const {c_ty} {symbol};"));
+                continue;
+            }
+            let mut parts = Vec::new();
+            let mut tokens = value.split_ascii_whitespace();
+            let Some(initializer) = self.constant_initializer(ty, &mut tokens, &symbol, &mut parts) else {
+                panic!("constant static `{name}` has no constant form: the checker admits only placeable ones");
+            };
+            for part in parts {
+                self.line(&part);
+            }
+            self.line(&format!("const {c_ty} {symbol} = {initializer};"));
+        }
+        self.line("");
+    }
+
+    /// `[CT-5]` — the C constant initialiser of a value of `ty`, read from
+    /// the evaluator's text; arrays of its heap parts go to `parts`.
+    fn constant_initializer<'t>(
+        &self,
+        ty: Ty,
+        tokens: &mut impl Iterator<Item = &'t str>,
+        symbol: &str,
+        parts: &mut Vec<String>,
+    ) -> Option<String> {
+        let open = |tokens: &mut dyn Iterator<Item = &'t str>| tokens.next() == Some("(");
+        let token = |tokens: &mut dyn Iterator<Item = &'t str>| tokens.next();
+        let bytes_of = |text: &str| -> Option<Vec<u8>> {
+            let (len, hex) = text.split_once(':')?;
+            let len: usize = len.parse().ok()?;
+            (0..len).map(|i| u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok()).collect()
+        };
+        Some(match self.types.kind(ty) {
+            TyKind::Bool => (token(tokens)? == "b1").to_string(),
+            TyKind::Char => format!("UINT32_C({})", token(tokens)?.strip_prefix('c')?),
+            TyKind::Int(_) => {
+                let value: i128 = token(tokens)?.strip_prefix('i')?.parse().ok()?;
+                let literal = if value == i128::from(i64::MIN) { "(-9223372036854775807LL - 1)".to_string() } else { format!("{value}LL") };
+                format!("(({}){literal})", self.c_type(ty))
+            }
+            TyKind::Uint(_) => format!("(({}){}ULL)", self.c_type(ty), token(tokens)?.strip_prefix('i')?),
+            TyKind::Float(float) => {
+                let bits = u64::from_str_radix(token(tokens)?.strip_prefix('f')?, 16).ok()?;
+                match float {
+                    FloatTy::F16 => format!("((uint16_t){bits}u)"),
+                    FloatTy::F32 => {
+                        let value = f32::from_bits(u32::try_from(bits).ok()?);
+                        if !value.is_finite() {
+                            return None;
+                        }
+                        format!("{value:e}f")
+                    }
+                    FloatTy::F64 => {
+                        let value = f64::from_bits(bits);
+                        if !value.is_finite() {
+                            return None;
+                        }
+                        format!("{value:e}")
+                    }
+                }
+            }
+            TyKind::Range(id) => self.constant_initializer(self.types.range_def(*id).repr, tokens, symbol, parts)?,
+            TyKind::Str => {
+                let bytes = bytes_of(token(tokens)?.strip_prefix('s')?)?;
+                format!("{{ (const unsigned char*){}, {}u }}", c_bytes_literal(&bytes), bytes.len())
+            }
+            TyKind::Vec { text: true, .. } => {
+                let bytes = bytes_of(token(tokens)?.strip_prefix('s')?)?;
+                if bytes.is_empty() {
+                    return Some("{ NULL, 0u, 0u }".to_string());
+                }
+                let part = format!("{symbol}_p{}", parts.len());
+                parts.push(format!("static const unsigned char {part}[] = {};", c_bytes_literal(&bytes)));
+                format!("{{ (void*){part}, {0}u, {0}u }}", bytes.len())
+            }
+            TyKind::Vec { elem, text: false } => {
+                let elem = *elem;
+                let len: usize = token(tokens)?.strip_prefix('v')?.parse().ok()?;
+                if !open(tokens) {
+                    return None;
+                }
+                let mut items = Vec::with_capacity(len);
+                for _ in 0..len {
+                    items.push(self.constant_initializer(elem, tokens, symbol, parts)?);
+                }
+                if token(tokens)? != ")" {
+                    return None;
+                }
+                if len == 0 {
+                    return Some("{ NULL, 0u, 0u }".to_string());
+                }
+                let part = format!("{symbol}_p{}", parts.len());
+                parts.push(format!("static const {} {part}[] = {{ {} }};", self.c_type(elem), items.join(", ")));
+                format!("{{ (void*){part}, {len}u, {len}u }}")
+            }
+            TyKind::Tuple(items) => {
+                let items = items.clone();
+                if !open(tokens) {
+                    return None;
+                }
+                let mut values = Vec::with_capacity(items.len());
+                for item in items {
+                    values.push(self.constant_initializer(item, tokens, symbol, parts)?);
+                }
+                if token(tokens)? != ")" {
+                    return None;
+                }
+                format!("{{ {} }}", values.join(", "))
+            }
+            TyKind::Array { elem, len } => {
+                let (elem, len) = (*elem, *len);
+                if !open(tokens) {
+                    return None;
+                }
+                let mut values = Vec::new();
+                for _ in 0..len {
+                    values.push(self.constant_initializer(elem, tokens, symbol, parts)?);
+                }
+                if token(tokens)? != ")" {
+                    return None;
+                }
+                if values.is_empty() {
+                    values.push("0".to_string());
+                }
+                format!("{{ {{ {} }} }}", values.join(", "))
+            }
+            TyKind::Struct(id) => {
+                let fields: Vec<Ty> = self.types.struct_def(*id).fields.iter().map(|field| field.ty).collect();
+                if !open(tokens) {
+                    return None;
+                }
+                let mut values = Vec::with_capacity(fields.len());
+                for field in fields {
+                    values.push(self.constant_initializer(field, tokens, symbol, parts)?);
+                }
+                if token(tokens)? != ")" {
+                    return None;
+                }
+                format!("{{ {} }}", values.join(", "))
+            }
+            TyKind::Enum(id) => {
+                let id = *id;
+                let def = self.types.enum_def(id);
+                let variant: usize = token(tokens)?.strip_prefix('e')?.parse().ok()?;
+                let (discriminant, name, fields) = {
+                    let v = def.variants.get(variant)?;
+                    (v.discriminant, v.name.to_string(), v.fields.iter().map(|field| field.ty).collect::<Vec<Ty>>())
+                };
+                let unit_only = def.is_unit_only();
+                if !open(tokens) {
+                    return None;
+                }
+                let mut values = Vec::with_capacity(fields.len());
+                for field in fields {
+                    if self.is_void(field) {
+                        if token(tokens)? != "_" {
+                            return None;
+                        }
+                        values.push("0".to_string());
+                    } else {
+                        values.push(self.constant_initializer(field, tokens, symbol, parts)?);
+                    }
+                }
+                if token(tokens)? != ")" {
+                    return None;
+                }
+                if unit_only {
+                    format!("(({}){discriminant})", self.c_type(def.repr))
+                } else if values.is_empty() {
+                    format!("{{ .tag = {discriminant} }}")
+                } else {
+                    format!("{{ .tag = {discriminant}, .payload = {{ .{name} = {{ {} }} }} }}", values.join(", "))
+                }
+            }
+            _ => return None,
+        })
+    }
+
+    /// `[CT-2]` — for each `Option[String]` type `comptime.env` gives, the
+    /// function that builds one from the build environment.
+    fn emit_comptime_env_helpers(&mut self, bodies: &[Body]) {
+        let options: BTreeSet<Ty> = bodies.iter()
+            .flat_map(|body| &body.blocks)
+            .filter_map(|block| match &block.terminator {
+                Terminator::Call { func: FuncRef::Builtin { which: Builtin::ComptimeEnv { option }, .. }, .. } => Some(*option),
+                _ => None,
+            })
+            .collect();
+        for option in options {
+            let TyKind::Enum(id) = *self.types.kind(option) else { continue };
+            let c_ty = self.c_type(option);
+            let def = self.types.enum_def(id);
+            let none = def.variants.iter().position(|v| v.fields.is_empty()).expect("an Option has a None");
+            let some = def.variants.iter().position(|v| v.fields.len() == 1).expect("an Option has a Some");
+            let (none_tag, some_tag) = (def.variants[none].discriminant, def.variants[some].discriminant);
+            let member = self.enum_member(id, "r", some, 0);
+            self.line(&format!("static {c_ty} {RT}ct_env_{c_ty}({RT}str name) {{"));
+            self.line(&format!("    {c_ty} r;"));
+            self.line("    memset(&r, 0, sizeof r);");
+            self.line(&format!("    {RT}vec value;"));
+            self.line(&format!("    if ({RT}ct_env_get(name, &value)) {{ r.tag = {some_tag}; {member} = value; }} else {{ r.tag = {none_tag}; }}"));
+            self.line("    return r;");
+            self.line("}");
+        }
+    }
+
+    /// `[CT-1]` — the evaluator's entry point: run request `argv[1]` and
+    /// print its value (`comptime_dump`); `argv[2]` and `argv[3]` are the
+    /// step and heap limits (`[CT-3]`).
+    fn emit_comptime_entry(&mut self, roots: &[ComptimeRoot]) {
+        for (index, root) in roots.iter().enumerate() {
+            if self.is_void(root.ty) {
+                continue;
+            }
+            let c_ty = self.c_type(root.ty);
+            self.line(&format!("static void {RT}ct_dump_{index}(const {c_ty}* v) {{"));
+            let mut lines = Vec::new();
+            let mut counter = 0;
+            self.comptime_dump(root.ty, "(*v)", &mut lines, &mut counter);
+            for line in lines {
+                self.line(&format!("    {line}"));
+            }
+            self.line("}");
+        }
+        self.line("int main(int argc, char** argv) {");
+        self.line(&format!("    {RT}ct_begin(argc, argv);"));
+        self.line(&format!("    {RT}rt_config cfg = {RT}rt_config_default();"));
+        self.line(&format!("    cfg.alloc = {RT}ct_alloc;"));
+        self.line(&format!("    cfg.free = {RT}ct_free;"));
+        self.line(&format!("    cfg.on_panic = {RT}ct_on_panic;"));
+        self.line(&format!("    {RT}rt_set_args(argc, argv);"));
+        self.line(&format!("    {RT}rt_init(&cfg);"));
+        self.line("    switch (atoi(argv[1])) {");
+        for (index, root) in roots.iter().enumerate() {
+            if self.is_void(root.ty) {
+                self.line(&format!("    case {index}: {}(); fputs(\" _\", stdout); break;", root.symbol));
+            } else {
+                let c_ty = self.c_type(root.ty);
+                self.line(&format!("    case {index}: {{ {c_ty} value = {}(); {RT}ct_dump_{index}(&value); break; }}", root.symbol));
+            }
+        }
+        self.line("    default: return 2;");
+        self.line("    }");
+        self.line("    fputc('\\n', stdout);");
+        self.line("    fflush(stdout);");
+        self.line("    return 0;");
+        self.line("}");
+    }
+
+    /// `[CT-1]` — C statements printing the value at `access`, of type `ty`,
+    /// as `ember_typeck`'s `const_eval::read_value` reads it.
+    fn comptime_dump(&self, ty: Ty, access: &str, out: &mut Vec<String>, counter: &mut usize) {
+        match self.types.kind(ty) {
+            TyKind::Bool => out.push(format!("printf(\" b%d\", (int)({access}));")),
+            TyKind::Char => out.push(format!("printf(\" c%lu\", (unsigned long)({access}));")),
+            TyKind::Int(IntTy::I128) => out.push(format!("{{ uint64_t w[2]; memcpy(w, &({access}), 16); {RT}ct_print_128(w[0], w[1], 1); }}")),
+            TyKind::Uint(UintTy::U128) => out.push(format!("{{ uint64_t w[2]; memcpy(w, &({access}), 16); {RT}ct_print_128(w[0], w[1], 0); }}")),
+            TyKind::Int(_) => out.push(format!("printf(\" i%lld\", (long long)({access}));")),
+            TyKind::Uint(_) => out.push(format!("printf(\" i%llu\", (unsigned long long)({access}));")),
+            TyKind::Float(FloatTy::F64) => out.push(format!("{{ uint64_t b; double d = ({access}); memcpy(&b, &d, 8); printf(\" f%llx\", (unsigned long long)b); }}")),
+            TyKind::Float(FloatTy::F32) => out.push(format!("{{ uint32_t b; float d = ({access}); memcpy(&b, &d, 4); printf(\" f%lx\", (unsigned long)b); }}")),
+            TyKind::Float(FloatTy::F16) => out.push(format!("printf(\" f%lx\", (unsigned long)({access}));")),
+            TyKind::Void | TyKind::Never => out.push("fputs(\" _\", stdout);".to_string()),
+            TyKind::Str => out.push(format!(
+                "{{ {RT}str s = ({access}); printf(\" s%lu:\", (unsigned long)s.len); for (size_t k = 0; k < s.len; ++k) {{ printf(\"%02x\", (unsigned)s.ptr[k]); }} }}"
+            )),
+            TyKind::Range(id) => self.comptime_dump(self.types.range_def(*id).repr, access, out, counter),
+            // `[CT-5]` — a `String`'s bytes; an `Array`'s length, then its elements.
+            TyKind::Vec { text: true, .. } => out.push(format!(
+                "{{ {RT}vec s = ({access}); printf(\" s%lu:\", (unsigned long)s.len); for (size_t k = 0; k < s.len; ++k) {{ printf(\"%02x\", (unsigned)((const unsigned char*)s.ptr)[k]); }} }}"
+            )),
+            TyKind::Vec { elem, text: false } => {
+                let elem = *elem;
+                *counter += 1;
+                let k = format!("k{counter}");
+                let c_elem = self.c_type(elem);
+                out.push(format!("printf(\" v%lu (\", (unsigned long)({access}).len);"));
+                out.push(format!("for (size_t {k} = 0; {k} < ({access}).len; ++{k}) {{"));
+                self.comptime_dump(elem, &format!("(({c_elem}*)({access}).ptr)[{k}]"), out, counter);
+                out.push("}".to_string());
+                out.push("fputs(\" )\", stdout);".to_string());
+            }
+            TyKind::Tuple(items) => {
+                out.push("fputs(\" (\", stdout);".to_string());
+                for (index, item) in items.clone().into_iter().enumerate() {
+                    if self.is_void(item) {
+                        out.push("fputs(\" _\", stdout);".to_string());
+                    } else {
+                        self.comptime_dump(item, &format!("({access})._{index}"), out, counter);
+                    }
+                }
+                out.push("fputs(\" )\", stdout);".to_string());
+            }
+            TyKind::Array { elem, len } => {
+                let (elem, len) = (*elem, *len);
+                *counter += 1;
+                let k = format!("k{counter}");
+                out.push("fputs(\" (\", stdout);".to_string());
+                out.push(format!("for (size_t {k} = 0; {k} < {len}u; ++{k}) {{"));
+                self.comptime_dump(elem, &format!("({access})._0[{k}]"), out, counter);
+                out.push("}".to_string());
+                out.push("fputs(\" )\", stdout);".to_string());
+            }
+            TyKind::Struct(id) => {
+                let fields: Vec<(String, Ty)> = self.types.struct_def(*id).fields.iter().map(|f| (f.name.to_string(), f.ty)).collect();
+                out.push("fputs(\" (\", stdout);".to_string());
+                for (name, field) in fields {
+                    if self.is_void(field) {
+                        out.push("fputs(\" _\", stdout);".to_string());
+                    } else {
+                        self.comptime_dump(field, &format!("({access}).{name}"), out, counter);
+                    }
+                }
+                out.push("fputs(\" )\", stdout);".to_string());
+            }
+            TyKind::Enum(id) => {
+                let id = *id;
+                let def = self.types.enum_def(id);
+                let tag = if def.is_unit_only() { format!("({access})") } else { self.enum_tag(id, access) };
+                let variants: Vec<(i128, Vec<Ty>)> = def.variants.iter()
+                    .map(|variant| (variant.discriminant, variant.fields.iter().map(|f| f.ty).collect()))
+                    .collect();
+                out.push(format!("switch ((long long)({tag})) {{"));
+                for (index, (discriminant, fields)) in variants.into_iter().enumerate() {
+                    out.push(format!("case {discriminant}LL: fputs(\" e{index} (\", stdout);"));
+                    for (field, field_ty) in fields.into_iter().enumerate() {
+                        if self.is_void(field_ty) {
+                            out.push("fputs(\" _\", stdout);".to_string());
+                        } else {
+                            let member = self.enum_member(id, access, index, field);
+                            self.comptime_dump(field_ty, &member, out, counter);
+                        }
+                    }
+                    out.push("fputs(\" )\", stdout); break;".to_string());
+                }
+                out.push("default: fputs(\" ?\", stdout); break;".to_string());
+                out.push("}".to_string());
+            }
+            _ => out.push("fputs(\" ?\", stdout);".to_string()),
+        }
+    }
+
     fn emit_debug_edge_registrations(&mut self) {
         for (_, def) in self.types.runtime_classes() {
             let info = ember_branding::type_info(&def.name.to_string());
@@ -10829,6 +11255,7 @@ mod string_descriptor_view_parts_tests {
         usize_ty: Ty,
     ) -> Emitter<'a> {
         Emitter {
+            comptime: None,
             types,
             map,
             usize_ty,
@@ -11021,4 +11448,200 @@ mod string_descriptor_view_parts_tests {
             "_1._2"
         );
     }
+}
+
+/// `[CT-1]`–`[CT-3]`, `[CT-7]` — the compile-time evaluator's own support,
+/// at the head of its program: the step count every function entry and loop
+/// turn takes, the call chain a panic prints, the heap the runtime's
+/// allocations are counted against, and the 128-bit integer printer. A stop
+/// says which limit it met on standard error, and exits with status 87
+/// (steps) or 88 (heap); a panic, after the runtime's own message, prints
+/// the chain and exits with status 86, so no dialog ever opens.
+const COMPTIME_PRELUDE: &str = r#"#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#if defined(_WIN32)
+__declspec(dllimport) unsigned int __stdcall SetErrorMode(unsigned int mode);
+#endif
+static uint64_t ember_ct_steps = 0;
+static uint64_t ember_ct_step_limit = 100000000u;
+static size_t ember_ct_heap = 0;
+static size_t ember_ct_heap_limit = 268435456u;
+static const char* ember_ct_frames[256];
+static size_t ember_ct_depth = 0;
+static void ember_ct_chain(void) {
+    size_t shown = ember_ct_depth < 256 ? ember_ct_depth : 256;
+    for (size_t i = 0; i < shown; ++i) {
+        fprintf(stderr, "ember-comptime-frame %s\n", ember_ct_frames[i]);
+    }
+}
+static void ember_ct_stop(int status, const char* what) {
+    fflush(stdout);
+    fprintf(stderr, "ember-comptime-limit %s\n", what);
+    ember_ct_chain();
+    fflush(stderr);
+    exit(status);
+}
+#define EMBER_CT_STEP() do { if (++ember_ct_steps > ember_ct_step_limit) { ember_ct_stop(87, "steps"); } } while (0)
+#define EMBER_CT_ENTER(name) do { if (ember_ct_depth < 256) { ember_ct_frames[ember_ct_depth] = (name); } ++ember_ct_depth; EMBER_CT_STEP(); } while (0)
+#define EMBER_CT_LEAVE() do { --ember_ct_depth; } while (0)
+static void ember_ct_on_panic(const char* msg, size_t len) {
+    (void)msg; (void)len;
+    fflush(stdout);
+    ember_ct_chain();
+    fflush(stderr);
+    exit(86);
+}
+static void* ember_ct_alloc(size_t size, size_t align) {
+    ember_ct_heap += size;
+    if (ember_ct_heap > ember_ct_heap_limit) {
+        ember_ct_stop(88, "heap");
+    }
+    if (align <= 16) {
+        return malloc(size == 0 ? 1 : size);
+    }
+#if defined(_WIN32)
+    return _aligned_malloc(size == 0 ? 1 : size, align);
+#else
+    return aligned_alloc(align, ((size == 0 ? 1 : size) + align - 1) & ~(align - 1));
+#endif
+}
+static void ember_ct_free(void* p, size_t size, size_t align) {
+    ember_ct_heap = ember_ct_heap >= size ? ember_ct_heap - size : 0;
+    if (align <= 16) {
+        free(p);
+        return;
+    }
+#if defined(_WIN32)
+    _aligned_free(p);
+#else
+    free(p);
+#endif
+}
+static char ember_ct_root[4096];
+static size_t ember_ct_root_len = 0;
+static void ember_ct_canonical(const char* path, char* out, size_t size) {
+#if defined(_WIN32)
+    if (_fullpath(out, path, size) == NULL) { out[0] = 0; }
+    for (char* c = out; *c; ++c) { if (*c == '\\') { *c = '/'; } }
+#else
+    if (realpath(path, out) == NULL) { snprintf(out, size, "%s", path); }
+#endif
+}
+static ember_vec ember_ct_read_file(ember_str path) {
+    char joined[8192];
+    char full[4096];
+    snprintf(joined, sizeof joined, "%s/%.*s", ember_ct_root, (int)path.len, (const char*)path.ptr);
+    ember_ct_canonical(joined, full, sizeof full);
+    if (strncmp(full, ember_ct_root, ember_ct_root_len) != 0 || (full[ember_ct_root_len] != '/' && full[ember_ct_root_len] != 0)) {
+        fflush(stdout);
+        fprintf(stderr, "ember-comptime-outside %.*s\n", (int)path.len, (const char*)path.ptr);
+        ember_ct_chain();
+        fflush(stderr);
+        exit(89);
+    }
+    fprintf(stderr, "ember-comptime-input file %s\n", full);
+    FILE* file = fopen(full, "rb");
+    if (file == NULL) {
+        char message[512];
+        int n = snprintf(message, sizeof message, "comptime.read_file: cannot read `%.*s`", (int)path.len, (const char*)path.ptr);
+        ember_loc loc = { "<comptime>", 0, 0 };
+        ember_panic(message, (size_t)(n < 0 ? 0 : n), loc);
+    }
+    ember_vec text = ember_vec_empty();
+    unsigned char chunk[4096];
+    size_t got;
+    while ((got = fread(chunk, 1, sizeof chunk, file)) > 0) {
+        size_t old = text.len;
+        unsigned char* bytes = (unsigned char*)ember_alloc(old + got, EMBER_VEC_ALIGN);
+        if (old > 0) {
+            memcpy(bytes, text.ptr, old);
+            ember_free(text.ptr, text.cap, EMBER_VEC_ALIGN);
+        }
+        memcpy(bytes + old, chunk, got);
+        text.ptr = bytes;
+        text.len = old + got;
+        text.cap = old + got;
+    }
+    fclose(file);
+    ember_span bytes = { text.ptr, text.len };
+    if (!ember_utf8_valid(bytes)) {
+        char message[512];
+        int n = snprintf(message, sizeof message, "comptime.read_file: `%.*s` is not UTF-8 text", (int)path.len, (const char*)path.ptr);
+        ember_loc loc = { "<comptime>", 0, 0 };
+        ember_panic(message, (size_t)(n < 0 ? 0 : n), loc);
+    }
+    return text;
+}
+static bool ember_ct_env_get(ember_str name, ember_vec* out) {
+    char key[1024];
+    snprintf(key, sizeof key, "%.*s", (int)name.len, (const char*)name.ptr);
+    fprintf(stderr, "ember-comptime-input env %s\n", key);
+    const char* value = getenv(key);
+    if (value == NULL) {
+        return false;
+    }
+    size_t len = strlen(value);
+    void* bytes = len == 0 ? NULL : ember_alloc(len, EMBER_VEC_ALIGN);
+    if (len > 0) {
+        memcpy(bytes, value, len);
+    }
+    out->ptr = bytes;
+    out->len = len;
+    out->cap = len;
+    return true;
+}
+static void ember_ct_begin(int argc, char** argv) {
+#if defined(_WIN32)
+    SetErrorMode(0x0001u | 0x0002u);
+#endif
+    if (argc < 2) {
+        exit(2);
+    }
+    if (argc >= 5) {
+        ember_ct_canonical(argv[4], ember_ct_root, sizeof ember_ct_root);
+        ember_ct_root_len = strlen(ember_ct_root);
+        while (ember_ct_root_len > 1 && ember_ct_root[ember_ct_root_len - 1] == '/') { ember_ct_root[--ember_ct_root_len] = 0; }
+    }
+    if (argc >= 3) {
+        ember_ct_step_limit = (uint64_t)strtoull(argv[2], NULL, 10);
+    }
+    if (argc >= 4) {
+        ember_ct_heap_limit = (size_t)strtoull(argv[3], NULL, 10);
+    }
+}
+static void ember_ct_print_128(uint64_t lo, uint64_t hi, int is_signed) {
+    char digits[48];
+    int n = 0;
+    int negative = is_signed && (hi >> 63);
+    if (negative) {
+        lo = ~lo + 1u;
+        hi = ~hi + (lo == 0 ? 1u : 0u);
+    }
+    if (lo == 0 && hi == 0) {
+        digits[n++] = '0';
+    }
+    while (lo != 0 || hi != 0) {
+        uint64_t parts[4] = { hi >> 32, hi & 0xffffffffu, lo >> 32, lo & 0xffffffffu };
+        uint64_t rem = 0;
+        for (int i = 0; i < 4; ++i) {
+            uint64_t cur = (rem << 32) | parts[i];
+            parts[i] = cur / 10u;
+            rem = cur % 10u;
+        }
+        hi = (parts[0] << 32) | parts[1];
+        lo = (parts[2] << 32) | parts[3];
+        digits[n++] = (char)('0' + (int)rem);
+    }
+    fputs(negative ? " i-" : " i", stdout);
+    while (n > 0) {
+        fputc(digits[--n], stdout);
+    }
+}
+"#;
+
+
+/// `[CT-5]` — the C name of a constant static's data.
+fn constant_static_symbol(name: &str) -> String {
+    format!("{}cs_{}", ember_branding::mangle_prefix(), name.replace(['.', ':'], "_"))
 }

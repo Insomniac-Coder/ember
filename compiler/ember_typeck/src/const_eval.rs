@@ -32,6 +32,10 @@ enum FoldedKind {
     Repeat(Box<Folded>, u64),
     Struct(StructId, Vec<Folded>),
     Enum(EnumId, usize, Vec<Folded>),
+    /// `[CT-5]` — an `Array` the evaluator made, element by element.
+    List(Vec<Folded>),
+    /// `[CT-5]` — a `String` the evaluator made.
+    Text(String),
 }
 
 impl Folded {
@@ -50,10 +54,70 @@ impl Folded {
         matches!(self.kind, FoldedKind::Scalar(_) | FoldedKind::Str(_))
     }
 
-    /// The value as literals, for one use at `span`.
-    pub(crate) fn to_expr(&self, span: Span) -> Expr {
+    /// `[CT-5]` — the value in the evaluator's text (`read_value`'s), for a
+    /// constant static the backend places in the image.
+    pub(crate) fn to_text(&self, types: &TypeTable) -> String {
+        let mut out = String::new();
+        self.write_text(types, &mut out);
+        out
+    }
+
+    fn write_text(&self, types: &TypeTable, out: &mut String) {
+        let items_text = |items: &[Folded], out: &mut String| {
+            out.push_str(" (");
+            for item in items {
+                item.write_text(types, out);
+            }
+            out.push_str(" )");
+        };
+        let bytes = |text: &str, out: &mut String| {
+            out.push_str(&format!(" s{}:", text.len()));
+            for byte in text.bytes() {
+                out.push_str(&format!("{byte:02x}"));
+            }
+        };
+        match &self.kind {
+            FoldedKind::Scalar(Num::Signed(v)) => out.push_str(&format!(" i{v}")),
+            FoldedKind::Scalar(Num::Unsigned(v)) if matches!(types.kind(self.ty), TyKind::Char) => out.push_str(&format!(" c{v}")),
+            FoldedKind::Scalar(Num::Unsigned(v)) => out.push_str(&format!(" i{v}")),
+            FoldedKind::Scalar(Num::Bool(b)) => out.push_str(if *b { " b1" } else { " b0" }),
+            FoldedKind::Scalar(Num::Float(v)) => {
+                let bits = match types.kind(self.ty) {
+                    TyKind::Float(FloatTy::F32) => u64::from((*v as f32).to_bits()),
+                    TyKind::Float(FloatTy::F16) => u64::from(f64_to_half(*v)),
+                    _ => v.to_bits(),
+                };
+                out.push_str(&format!(" f{bits:x}"));
+            }
+            FoldedKind::Str(text) | FoldedKind::Text(text) => bytes(text, out),
+            FoldedKind::Tuple(items) | FoldedKind::Array(items) | FoldedKind::Struct(_, items) => items_text(items, out),
+            FoldedKind::Repeat(item, count) => {
+                out.push_str(" (");
+                for _ in 0..*count {
+                    item.write_text(types, out);
+                }
+                out.push_str(" )");
+            }
+            FoldedKind::Enum(_, variant, items) => {
+                out.push_str(&format!(" e{variant}"));
+                items_text(items, out);
+            }
+            FoldedKind::List(items) => {
+                out.push_str(&format!(" v{}", items.len()));
+                items_text(items, out);
+            }
+        }
+    }
+
+    /// The value as literals, for one use at `span`. `[CT-5]` — a value
+    /// owning heap memory is made afresh at each use, so the program owns an
+    /// ordinary value it may grow.
+    pub(crate) fn to_expr(&self, types: &mut TypeTable, span: Span) -> Expr {
         let ty = self.ty;
-        let all = |items: &[Folded]| items.iter().map(|item| item.to_expr(span)).collect();
+        let all = |types: &mut TypeTable, items: &[Folded]| -> Vec<Expr> { items.iter().map(|item| item.to_expr(types, span)).collect() };
+        if matches!(types.kind(ty), TyKind::Void) {
+            return Expr { ty, kind: ExprKind::Error, span };
+        }
         let kind = match &self.kind {
             FoldedKind::Scalar(Num::Signed(v)) if *v < 0 => ExprKind::Unary {
                 op: UnOp::Neg,
@@ -64,12 +128,24 @@ impl Folded {
             FoldedKind::Scalar(Num::Float(v)) => ExprKind::Float(*v),
             FoldedKind::Scalar(Num::Bool(b)) => ExprKind::Bool(*b),
             FoldedKind::Str(s) => ExprKind::Str(s.clone()),
-            FoldedKind::Tuple(items) => ExprKind::TupleLit(all(items)),
-            FoldedKind::Array(items) => ExprKind::ArrayLit(all(items)),
-            FoldedKind::Repeat(value, count) => ExprKind::ArrayRepeat { value: Box::new(value.to_expr(span)), count: *count },
-            FoldedKind::Struct(struct_id, fields) => ExprKind::StructLit { struct_id: *struct_id, fields: all(fields) },
+            FoldedKind::Tuple(items) => ExprKind::TupleLit(all(types, items)),
+            FoldedKind::Array(items) => ExprKind::ArrayLit(all(types, items)),
+            FoldedKind::Repeat(value, count) => ExprKind::ArrayRepeat { value: Box::new(value.to_expr(types, span)), count: *count },
+            FoldedKind::Struct(struct_id, fields) => ExprKind::StructLit { struct_id: *struct_id, fields: all(types, fields) },
             FoldedKind::Enum(enum_id, variant, fields) => {
-                ExprKind::EnumLit { enum_id: *enum_id, variant: *variant, fields: all(fields) }
+                ExprKind::EnumLit { enum_id: *enum_id, variant: *variant, fields: all(types, fields) }
+            }
+            // `[TXT-9]` — a `String` holding the text: a one-part f-string.
+            FoldedKind::Text(text) => {
+                let buffer_ref = types.intern(TyKind::Ref { mutable: true, inner: ty });
+                ExprKind::FString { parts: vec![ember_hir::FStringPart::Text(text.clone())], buffer_ref }
+            }
+            FoldedKind::List(items) if items.is_empty() => ExprKind::Builtin { which: ember_hir::Builtin::ArrayNew, args: Vec::new() },
+            FoldedKind::List(items) => {
+                let TyKind::Vec { elem, .. } = *types.kind(ty) else { unreachable!("a list's type is an `Array`") };
+                let fixed = types.intern(TyKind::Array { elem, len: items.len() as u64 });
+                let literal = Expr { ty: fixed, kind: ExprKind::ArrayLit(all(types, items)), span };
+                ExprKind::Builtin { which: ember_hir::Builtin::ArrayFromLiteral, args: vec![literal] }
             }
         };
         Expr { ty, kind, span }
@@ -518,4 +594,138 @@ fn floor_div_rem_f32(a: f32, b: f32) -> (f32, f32) {
         0.0f32.copysign(a / b)
     };
     (div, rem)
+}
+
+/// `[CT-1]` — a value the compile-time evaluator printed (`ember_codegen_c`'s
+/// `comptime` dump), read as a value of `ty`. The text is a sequence of
+/// tokens: `i<n>` an integer, `f<hex>` a float's bits, `b<0|1>`, `c<n>` a
+/// `char`, `s<len>:<hex>` text, `e<n>` an enum's variant before its fields,
+/// `(` … `)` around the fields of a struct, tuple, variant or fixed array,
+/// and `_` for `void`. `None` when the text is not a value of `ty`.
+pub(crate) fn read_value(types: &TypeTable, ty: Ty, text: &str) -> Option<Folded> {
+    let mut tokens = text.split_ascii_whitespace();
+    let value = read_one(types, ty, &mut tokens)?;
+    tokens.next().is_none().then_some(value)
+}
+
+fn read_one<'t>(types: &TypeTable, ty: Ty, tokens: &mut impl Iterator<Item = &'t str>) -> Option<Folded> {
+    let token = tokens.next()?;
+    let at = |kind| Some(Folded { ty, kind });
+    let fields = |tys: Vec<Ty>, tokens: &mut dyn Iterator<Item = &'t str>| -> Option<Vec<Folded>> {
+        let mut tokens = tokens;
+        if tokens.next()? != "(" {
+            return None;
+        }
+        let mut out = Vec::with_capacity(tys.len());
+        for ty in tys {
+            out.push(read_one(types, ty, &mut tokens)?);
+        }
+        (tokens.next()? == ")").then_some(out)
+    };
+    match types.kind(ty) {
+        TyKind::Int(_) => at(FoldedKind::Scalar(Num::Signed(token.strip_prefix('i')?.parse().ok()?))),
+        TyKind::Uint(_) => at(FoldedKind::Scalar(Num::Unsigned(token.strip_prefix('i')?.parse().ok()?))),
+        TyKind::Char => at(FoldedKind::Scalar(Num::Unsigned(token.strip_prefix('c')?.parse().ok()?))),
+        TyKind::Bool => at(FoldedKind::Scalar(Num::Bool(token.strip_prefix('b')? == "1"))),
+        TyKind::Float(float) => {
+            let bits = u64::from_str_radix(token.strip_prefix('f')?, 16).ok()?;
+            let value = match float {
+                FloatTy::F64 => f64::from_bits(bits),
+                FloatTy::F32 => f32::from_bits(u32::try_from(bits).ok()?) as f64,
+                FloatTy::F16 => half_to_f64(u16::try_from(bits).ok()?),
+            };
+            at(FoldedKind::Scalar(Num::Float(value)))
+        }
+        TyKind::Str => {
+            let (len, hex) = token.strip_prefix('s')?.split_once(':')?;
+            let len: usize = len.parse().ok()?;
+            if hex.len() != len * 2 {
+                return None;
+            }
+            let bytes: Option<Vec<u8>> = (0..len).map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()).collect();
+            at(FoldedKind::Str(String::from_utf8(bytes?).ok()?))
+        }
+        TyKind::Range(id) => {
+            let repr = types.range_def(*id).repr;
+            let mut once = std::iter::once(token);
+            let value = read_one(types, repr, &mut once)?;
+            Some(Folded { ty, kind: value.kind })
+        }
+        TyKind::Tuple(items) => {
+            let items = items.clone();
+            let mut rest = std::iter::once(token).chain(tokens);
+            at(FoldedKind::Tuple(fields(items, &mut rest)?))
+        }
+        TyKind::Struct(id) => {
+            let id = *id;
+            let tys: Vec<Ty> = types.struct_def(id).fields.iter().map(|field| field.ty).collect();
+            let mut rest = std::iter::once(token).chain(tokens);
+            at(FoldedKind::Struct(id, fields(tys, &mut rest)?))
+        }
+        TyKind::Enum(id) => {
+            let id = *id;
+            let variant: usize = token.strip_prefix('e')?.parse().ok()?;
+            let tys: Vec<Ty> = types.enum_def(id).variants.get(variant)?.fields.iter().map(|field| field.ty).collect();
+            at(FoldedKind::Enum(id, variant, fields(tys, tokens)?))
+        }
+        TyKind::Array { elem, len } => {
+            let tys = vec![*elem; usize::try_from(*len).ok()?];
+            let mut rest = std::iter::once(token).chain(tokens);
+            at(FoldedKind::Array(fields(tys, &mut rest)?))
+        }
+        // `[CT-5]` — a `String`, and an `Array` with its length first.
+        TyKind::Vec { text: true, .. } => {
+            let (len, hex) = token.strip_prefix('s')?.split_once(':')?;
+            let len: usize = len.parse().ok()?;
+            if hex.len() != len * 2 {
+                return None;
+            }
+            let bytes: Option<Vec<u8>> = (0..len).map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()).collect();
+            at(FoldedKind::Text(String::from_utf8(bytes?).ok()?))
+        }
+        TyKind::Vec { elem, text: false } => {
+            let len: usize = token.strip_prefix('v')?.parse().ok()?;
+            at(FoldedKind::List(fields(vec![*elem; len], tokens)?))
+        }
+        TyKind::Void => (token == "_").then(|| Folded { ty, kind: FoldedKind::Tuple(Vec::new()) }),
+        _ => None,
+    }
+}
+
+/// The IEEE binary16 bits nearest `value` (it came from one, so exactly).
+fn f64_to_half(value: f64) -> u16 {
+    let sign: u16 = if value.is_sign_negative() { 0x8000 } else { 0 };
+    let magnitude = value.abs();
+    if magnitude.is_nan() {
+        return 0x7e00;
+    }
+    if magnitude.is_infinite() {
+        return sign | 0x7c00;
+    }
+    if magnitude == 0.0 {
+        return sign;
+    }
+    let mut exponent = magnitude.log2().floor() as i32;
+    if exponent < -14 {
+        return sign | (magnitude / 2f64.powi(-24)).round() as u16;
+    }
+    let mut mantissa = (magnitude / 2f64.powi(exponent) - 1.0) * 1024.0;
+    if mantissa.round() >= 1024.0 {
+        exponent += 1;
+        mantissa = 0.0;
+    }
+    sign | (((exponent + 15) as u16) << 10) | (mantissa.round() as u16)
+}
+
+/// An IEEE binary16 value, exactly, as an `f64`.
+fn half_to_f64(bits: u16) -> f64 {
+    let sign = if bits & 0x8000 != 0 { -1.0 } else { 1.0 };
+    let exponent = i32::from((bits >> 10) & 0x1f);
+    let mantissa = f64::from(bits & 0x3ff);
+    match exponent {
+        0 => sign * mantissa * 2f64.powi(-24),
+        31 if mantissa == 0.0 => sign * f64::INFINITY,
+        31 => f64::NAN,
+        _ => sign * (1.0 + mantissa / 1024.0) * 2f64.powi(exponent - 15),
+    }
 }

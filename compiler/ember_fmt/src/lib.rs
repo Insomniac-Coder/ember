@@ -776,6 +776,7 @@ impl Printer<'_> {
             // arm. It must have a rule of its own: the catch-all copies text
             // through with each line trimmed and would flatten a nested block.
             ast::ExprKind::Owned(inner) => format!("owned {}", self.expr_pure(inner)),
+            ast::ExprKind::Comptime(inner) => format!("comptime({})", self.expr_pure(inner)),
             ast::ExprKind::Jump(jump) => match jump {
                 ast::Jump::Return(Some(value)) => format!("return {}", self.expr_pure(value)),
                 ast::Jump::Return(None) => "return".to_string(),

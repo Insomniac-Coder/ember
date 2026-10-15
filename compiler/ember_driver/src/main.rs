@@ -4,6 +4,8 @@
 //! stage dumps. The rest of the CLI surface arrives with the phases that give
 //! each command something to do.
 
+mod comptime;
+
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -588,6 +590,7 @@ fn cycle_analysis(
         overflow_policy(Profile::Debug),
         lint_settings.return_intersection,
         true,
+        &ember_typeck::ComptimeAnswers::new(),
     );
     if sink.has_errors() {
         report(&sink, &map, &Options::default());
@@ -2259,19 +2262,65 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         return Ok(finish(&sink, &map, options));
     }
 
-    // Check.
-    let (mut types, common) = TypeTable::new();
-    // [TYP-8] -- every profile defaults to panic; lexical attributes may
-    // override that for arithmetic inside their declaration scope.
-    let checked = ember_typeck::check(
-        &modules,
-        &mut types,
-        &common,
-        &mut sink,
-        overflow_policy(options.profile),
-        lint_settings.return_intersection,
-        options.profile == Profile::Debug,
-    );
+    // Check. `[CT-1]` — and check again with what the compile-time evaluator
+    // answered, until nothing is left to evaluate; a pass that asks for
+    // values says nothing (its errors are the next pass's too).
+    let mut answers = ember_typeck::ComptimeAnswers::new();
+    let mut reports = Vec::new();
+    let mut blocked = Vec::new();
+    let mut passes = 0;
+    let (mut types, common, checked) = loop {
+        passes += 1;
+        let (mut types, common) = TypeTable::new();
+        let mark = sink.mark();
+        // [TYP-8] -- every profile defaults to panic; lexical attributes may
+        // override that for arithmetic inside their declaration scope.
+        let checked = ember_typeck::check(
+            &modules,
+            &mut types,
+            &common,
+            &mut sink,
+            overflow_policy(options.profile),
+            lint_settings.return_intersection,
+            options.profile == Profile::Debug,
+            &answers,
+        );
+        if checked.comptime.is_empty() {
+            break (types, common, checked);
+        }
+        sink.rollback(mark);
+        let before = answers.len();
+        let requests = checked.comptime.clone();
+        if passes < COMPTIME_PASSES {
+            let build = comptime_build(input, options)?;
+            comptime::evaluate(checked, &mut types, &common, &map, &build.build(), &mut answers, &mut reports)?;
+        }
+        // What no pass can answer waits on itself, or on a function with
+        // errors of its own: it fails, and the next pass is the last.
+        if answers.len() == before {
+            for request in &requests {
+                answers.insert(request.key.clone(), ember_typeck::ComptimeAnswer::Failed);
+                blocked.push(
+                    Diagnostic::error(
+                        codes::E6001,
+                        request.span,
+                        format!("{} cannot be evaluated: what it needs is itself computed from it while compiling", request.what),
+                    )
+                    .note("a compile-time value cannot depend on itself [CT-3]"),
+                );
+            }
+        }
+    };
+    let only_these = !sink.has_errors();
+    for report in reports {
+        sink.emit(report);
+    }
+    // A request that waited on a function with errors is explained by them.
+    if only_these {
+        for report in blocked {
+            sink.emit(report);
+        }
+    }
     let program = &checked.program;
     mark("check", "all modules");
     // `[WK-5]`–`[WK-7]` — class-field ownership cycles are a package-visible
@@ -2291,6 +2340,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // Lower. `ember check` runs the MIR analyses too — Part XIX §1 defines it
     // as "type-check + borrow-check without codegen", so it cannot stop here.
     let mut bodies = ember_mir::lower(program, &types, &common, &map);
+    let _ = &mut types;
     // `[COST-1]` — an implicit `clone` nothing calls is not emitted.
     ember_mir::prune_unused_implicit(&mut bodies, &types, &checked.std_instances);
     mark("lower", "all modules");
@@ -2811,6 +2861,99 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 
     eprintln!("built {}", exe.display());
     Ok(ExitCode::SUCCESS)
+}
+
+/// `[CT-1]` — how many times a program is checked at most: each pass answers
+/// what the one before asked.
+const COMPTIME_PASSES: usize = 8;
+
+/// `[CT-1]`, `[CT-3]` — what the compile-time evaluator's program is built
+/// with: the build's C compiler and profile, a directory of its own under the
+/// build's, and the manifest's `[comptime]` limits.
+struct ComptimeBuild {
+    toolchain: Toolchain,
+    profile: Profile,
+    for_msvc: bool,
+    runtime: PathBuf,
+    dir: PathBuf,
+    root: PathBuf,
+    limits: comptime::Limits,
+}
+
+impl ComptimeBuild {
+    fn build(&self) -> comptime::Build<'_> {
+        comptime::Build {
+            toolchain: &self.toolchain,
+            profile: self.profile,
+            for_msvc: self.for_msvc,
+            runtime: &self.runtime,
+            c_dir: self.dir.join("c"),
+            obj_dir: self.dir.join("obj"),
+            bin_dir: self.dir.join("bin"),
+            cache_dir: self.dir.join("cache"),
+            root: self.root.clone(),
+            limits: self.limits,
+        }
+    }
+}
+
+fn comptime_build(input: &Path, options: &Options) -> Result<ComptimeBuild, String> {
+    let requested = options
+        .cc
+        .clone()
+        .or_else(|| std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty()));
+    let toolchain = Toolchain::detect(requested.as_deref()).map_err(|e| e.to_string())?;
+    let target_dir = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target"));
+    let layout = Layout::new(&target_dir, options.profile).map_err(|e| e.to_string())?;
+    // One directory per source file, so builds of two programs side by side
+    // never share the evaluator's files.
+    let stem = input.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in input.to_string_lossy().bytes() {
+        hash = (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3);
+    }
+    let dir = layout.c.parent().unwrap_or(&layout.c).join("comptime").join(format!("{stem}-{hash:016x}"));
+    let mut limits = comptime::Limits::default();
+    if let Some(manifest) = nearest_manifest_text(input)? {
+        if let Some(steps) = manifest_number(&manifest, "comptime", "steps") {
+            limits.steps = steps;
+        }
+        if let Some(heap) = manifest_number(&manifest, "comptime", "heap") {
+            limits.heap = heap;
+        }
+    }
+    // `[CT-2]` — the package directory: the manifest's, else the file's own.
+    let root = nearest_manifest_path(input)
+        .and_then(|manifest| manifest.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| package_source_root(input));
+    let root = std::fs::canonicalize(&root).unwrap_or(root);
+    Ok(ComptimeBuild { toolchain, profile: options.profile, for_msvc: c_for_msvc(options), runtime: runtime_dir()?, dir, root, limits })
+}
+
+/// A whole number in the manifest, written bare or as a string, with an
+/// optional `KB`, `MB` or `GB` (`[comptime] heap = "512MB"`).
+fn manifest_number(manifest: &str, wanted_section: &str, wanted_key: &str) -> Option<u64> {
+    let mut section = "";
+    for line in manifest.lines() {
+        let line = line.split_once('#').map_or(line, |(before, _)| before).trim();
+        if let Some(name) = line.strip_prefix('[').and_then(|line| line.strip_suffix(']')) {
+            section = name.trim();
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else { continue };
+        if section != wanted_section || key.trim() != wanted_key {
+            continue;
+        }
+        let value = value.trim().trim_matches('"').replace('_', "");
+        let (digits, scale) = match value.strip_suffix("GB").or_else(|| value.strip_suffix("MB")).or_else(|| value.strip_suffix("KB")) {
+            Some(digits) if value.ends_with("GB") => (digits.to_string(), 1u64 << 30),
+            Some(digits) if value.ends_with("MB") => (digits.to_string(), 1u64 << 20),
+            Some(digits) => (digits.to_string(), 1u64 << 10),
+            None => (value.clone(), 1),
+        };
+        return digits.trim().parse::<u64>().ok()?.checked_mul(scale);
+    }
+    None
 }
 
 /// D-464 — what stopped a program whose status is not an exit code: a Windows

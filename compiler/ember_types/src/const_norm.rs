@@ -40,6 +40,11 @@ pub enum ConstOp {
     BitAnd,
     BitOr,
     BitXor,
+    /// A call of the function with this qualified name: equal to another
+    /// only when it calls the same function on arguments whose forms are
+    /// equal. The compile-time evaluator computes it once every argument is
+    /// a number (`[CT-1]`).
+    Call(Symbol),
 }
 
 /// Why a form could not be computed: `[TYP-41]` rule 1 makes it `E6004`
@@ -137,6 +142,69 @@ impl ConstNorm {
         ConstNorm::from_terms(terms)
     }
 
+    /// A call of function `def` on `args` (`[TYP-41]` rule 2): kept whole,
+    /// whatever its arguments are, until the evaluator computes it.
+    pub fn call(function: Symbol, args: Vec<ConstNorm>) -> ConstNorm {
+        ConstNorm { terms: vec![(vec![ConstAtom::Opaque(ConstOp::Call(function), args)], 1)] }
+    }
+
+    /// Whether the form holds a call, anywhere.
+    pub fn has_calls(&self) -> bool {
+        self.terms.iter().any(|(atoms, _)| {
+            atoms.iter().any(|atom| match atom {
+                ConstAtom::Param(..) => false,
+                ConstAtom::Opaque(ConstOp::Call(..), _) => true,
+                ConstAtom::Opaque(_, operands) => operands.iter().any(ConstNorm::has_calls),
+            })
+        })
+    }
+
+    /// The form with each call whose arguments are all numbers replaced by
+    /// what `value` says it gives, computed again. `None` when `value` has
+    /// no answer for one.
+    pub fn resolve_calls(&self, value: &mut dyn FnMut(Symbol, &[i128]) -> Option<i128>) -> Option<Result<ConstNorm, ConstError>> {
+        let mut sum = ConstNorm::default();
+        for (atoms, coefficient) in &self.terms {
+            let mut product = ConstNorm::constant(*coefficient);
+            for atom in atoms {
+                let factor = match atom {
+                    ConstAtom::Param(index, name) => ConstNorm::param(*index, *name),
+                    ConstAtom::Opaque(op, operands) => {
+                        let mut resolved = Vec::with_capacity(operands.len());
+                        for operand in operands {
+                            match operand.resolve_calls(value)? {
+                                Ok(operand) => resolved.push(operand),
+                                Err(error) => return Some(Err(error)),
+                            }
+                        }
+                        match op {
+                            ConstOp::Call(function) => {
+                                let numbers: Option<Vec<i128>> = resolved.iter().map(ConstNorm::as_constant).collect();
+                                match numbers {
+                                    Some(numbers) => ConstNorm::constant(value(*function, &numbers)?),
+                                    None => ConstNorm::call(*function, resolved),
+                                }
+                            }
+                            _ => match ConstNorm::opaque(*op, &resolved[0], &resolved[1]) {
+                                Ok(form) => form,
+                                Err(error) => return Some(Err(error)),
+                            },
+                        }
+                    }
+                };
+                product = match product.mul(&factor) {
+                    Ok(product) => product,
+                    Err(error) => return Some(Err(error)),
+                };
+            }
+            sum = match sum.add(&product) {
+                Ok(sum) => sum,
+                Err(error) => return Some(Err(error)),
+            };
+        }
+        Some(Ok(sum))
+    }
+
     /// An operation the form keeps whole, computed when both operands are
     /// numbers. `//` and `%` floor, as Ember's integer operators do.
     pub fn opaque(op: ConstOp, left: &ConstNorm, right: &ConstNorm) -> Result<ConstNorm, ConstError> {
@@ -159,6 +227,7 @@ impl ConstNorm {
             ConstOp::BitAnd => a & b,
             ConstOp::BitOr => a | b,
             ConstOp::BitXor => a ^ b,
+            ConstOp::Call(function) => return Ok(ConstNorm::call(function, vec![left.clone(), right.clone()])),
         };
         Ok(ConstNorm::constant(value))
     }
@@ -172,6 +241,10 @@ impl ConstNorm {
             for atom in atoms {
                 let factor = match atom {
                     ConstAtom::Param(index, name) => value(*index).unwrap_or_else(|| ConstNorm::param(*index, *name)),
+                    ConstAtom::Opaque(ConstOp::Call(function), operands) => {
+                        let args = operands.iter().map(|operand| operand.substitute(value)).collect::<Result<Vec<_>, _>>()?;
+                        ConstNorm::call(*function, args)
+                    }
                     ConstAtom::Opaque(op, operands) => {
                         let left = operands[0].substitute(value)?;
                         let right = operands[1].substitute(value)?;
@@ -216,6 +289,11 @@ impl fmt::Display for ConstNorm {
                 }
                 match atom {
                     ConstAtom::Param(_, name) => write!(f, "{name}")?,
+                    ConstAtom::Opaque(ConstOp::Call(function), operands) => {
+                        let args: Vec<String> = operands.iter().map(|operand| operand.to_string()).collect();
+                        let name = function.as_str().rsplit('.').next().unwrap_or("");
+                        write!(f, "{name}({})", args.join(", "))?
+                    }
                     ConstAtom::Opaque(op, operands) => {
                         let symbol = match op {
                             ConstOp::FloorDiv => "//",
@@ -225,6 +303,7 @@ impl fmt::Display for ConstNorm {
                             ConstOp::BitAnd => "&",
                             ConstOp::BitOr => "|",
                             ConstOp::BitXor => "^",
+                            ConstOp::Call(..) => unreachable!("a call is written by the arm above"),
                         };
                         write!(f, "({} {symbol} {})", operands[0], operands[1])?
                     }

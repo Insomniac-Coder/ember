@@ -5016,6 +5016,66 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-187 — The compile-time evaluator runs the program's own code in a process of its own (`[CT-1]`..`[CT-7]`, `[TYP-41]`)
+
+**What is evaluated.** The checker makes each compile-time expression a function of its own
+(`comptime<N>`, no parameters, returning the value; named after what it computes, for call chains):
+`comptime(e)`, a `comptime:` block (item or statement), a `const` initialiser that is not a constant
+expression, an array length or `const` generic argument that calls a function, and a `static`
+initialiser. It is checked in isolation (`check_comptime_isolated`): no run-time local is in scope,
+and naming one is `E6005` where it would otherwise be "not found".
+
+**How.** Not an interpreter. The driver builds those functions, with everything they call, through
+the ordinary backend into a program of the evaluator's own (`ember_codegen_c::emit_comptime`), runs
+it once per request (`comptime <index> <steps> <heap> <package root>`) and reads the value back as
+text (`const_eval::read_value`); then it checks the program again with the answers, until a pass asks
+for nothing (at most 8 passes). The evaluator's program is the target's own code from the target's C
+compiler, so every value is computed as the target does by construction (`[CT-4]`): overflow
+policies, `f16`/`f32` rounding, layout, pointer size. An interpreter would have re-implemented all of
+it. A pass that asks for values says nothing (its diagnostics are rolled back); the last pass is the
+one reported. Functions whose check reported an error or used a value not known yet are *incomplete*
+(`CheckOutput::incomplete`, measured by error count and `comptime_unresolved` around each body); they,
+and every function no request reaches, are stubs in the evaluator's program that stop with a marker,
+so a body the check left unfinished cannot stop the build; a request that reaches one waits for a
+later pass. A request no pass can answer is `E6001` (it depends on itself), shown only when nothing
+else explains it.
+
+**Limits and failures.** The evaluator's program counts a step at each function entry and loop turn
+and the live bytes of the runtime's allocations (the `rt_config` alloc/free hooks): past either limit
+(10^8 steps, 256 MB; `[comptime] steps`/`heap` in the manifest) it stops, and that is `E6001`
+(`[CT-3]`). A panic is `E6004` with the message, its place and the compile-time call chain the
+evaluator records (`[CT-7]`). Before it runs, a request whose function reaches `Io`, `FFI`, `Sync`,
+`Block`, `Unsafe` or `Nondet` is `E6010` with the effects analysis's call chain (`[CT-1]`, `[CT-2]`):
+so the platform's `sin` never runs, and `det.sin` does. The evaluator exits with a status, never
+`abort()`, and turns off the Windows error dialogs. A `static`'s request is quiet: an initialiser that
+cannot be evaluated runs on first access instead (`[STA-3]`).
+
+**Inputs and cache.** `comptime.read_file(path)` (text, relative to the package directory; a path that
+leaves it is `E6010`, status 89) and `comptime.env(name)` (`Option[String]`) exist only inside a
+compile-time context (`E6010` elsewhere), as built-ins of the evaluator's program. Each value is kept
+under the hash of the evaluator's C (so of the source and everything it calls), the limits and the
+root, with every file and variable it read and their hashes; it is reused only while each input is
+as it was (`[CT-4]`).
+
+**Where results live.** A value owning heap memory: `comptime(e)` builds it afresh at each evaluation
+(an `Array` from a constant array literal, a `String` from its text), so the program owns an ordinary
+value. A `static` whose type gives safe code no `ref mut` (no `Cell`, `RefCell`, lock, atomic, `Once`,
+shared handle) is constant data in the image: `TypeTable::constant_statics` holds its value as the
+evaluator's text, `Builtin::ConstStatic` is a reference to it, and the backend writes it as C constant
+data, an `Array`'s elements and a `String`'s bytes as constant arrays of their own (`cap` = `len`; a
+static gives no `ref mut` and is never dropped, so nothing grows or frees them). It carries no effect,
+so a `@noalloc @nosync` function may read it. A niche `Option` and a 128-bit integer have no C
+constant form; such a static is initialised on first access. Any other static holding interior
+mutability is initialised on first access (`[CT-5]`).
+
+**`[TYP-41]` rule 2.** In generic code a call that names a `const` parameter is an opaque term of the
+normal form, `ConstOp::Call(function)` (by qualified name: a struct's field may name one before
+signatures are collected), equal to another only when it calls the same function on equal argument
+forms. When an instance makes every argument a number, `substitute_ty` asks the evaluator for the
+call (`const_call_value`). `zeros[side()]()` is a const argument too (a call is never a type).
+
+**Defect.** D-601: an item-level `comptime:` block was accepted and never run.
+
 ## ADR-185 — Distinct `SoA` columns are an alias fact; a comparison chain binds its computed operands; a dropped `Result` warns (`[SIMD-3]`, `[GRM-25]`, `[ERR-5]`, `[TYP-6]`, `[STD-13]`, `[DIA-24]`)
 
 **`[SIMD-3]` (c).** A column view is the call `column(&ps.k, len)` (or `&(*ps).k` for an `SoA`

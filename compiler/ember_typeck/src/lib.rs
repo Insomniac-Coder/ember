@@ -15,6 +15,9 @@
 mod usefulness;
 mod name_suggestions;
 mod const_eval;
+mod comptime;
+
+pub use comptime::{ComptimeAnswer, ComptimeAnswers, ComptimeRequest};
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -102,6 +105,12 @@ pub struct CheckOutput {
     /// `[COST-1]` — the bodies instantiated from a declaration in `std`, kept
     /// only if something reaches them (`ember_mir::prune_unused_implicit`).
     pub std_instances: HashSet<String>,
+    /// `[CT-1]` — what this pass needs evaluated that no earlier pass
+    /// answered; the functions computing it are among `program`'s.
+    pub comptime: Vec<ComptimeRequest>,
+    /// The symbols of the functions whose check reported an error or used a
+    /// compile-time value not known yet: the evaluator builds none of them.
+    pub incomplete: HashSet<String>,
 }
 
 pub fn check(
@@ -112,6 +121,7 @@ pub fn check(
     default_overflow: OverflowPolicy,
     lint_return_intersection: bool,
     debug_assertions: bool,
+    comptime_answers: &ComptimeAnswers,
 ) -> CheckOutput {
     // A blanket implementation's parameters move onto its methods first, so
     // every later pass sees one shape (`desugar_blanket_extensions`).
@@ -124,6 +134,7 @@ pub fn check(
     checker.active_overflow = default_overflow;
     checker.debug_assertions = debug_assertions;
     checker.lint_return_intersection = lint_return_intersection;
+    checker.comptime_answers = comptime_answers.clone();
     checker.prefixes = modules.iter().map(|m| m.path.join(".")).collect();
     checker.visible = vec![HashMap::new(); modules.len()];
     checker.ambiguous_globs = vec![HashMap::new(); modules.len()];
@@ -307,10 +318,18 @@ pub fn check(
         }
     }
     let callable_declarations = checker.callable_declarations(modules);
+    // `[CT-1]` — the functions computing what is still to be evaluated go to
+    // the evaluator with the rest; a pass with nothing outstanding has none.
+    let comptime = std::mem::take(&mut checker.comptime_requests);
+    if !comptime.is_empty() {
+        functions.extend(std::mem::take(&mut checker.comptime_functions));
+    }
     CheckOutput {
         program: Program { functions, main },
         callable_declarations,
         std_instances: std::mem::take(&mut checker.std_instances),
+        comptime,
+        incomplete: std::mem::take(&mut checker.incomplete),
     }
 }
 
@@ -791,6 +810,23 @@ struct ExprConst {
     ok: bool,
     public: bool,
     folded: Option<const_eval::Folded>,
+    /// `[CT-1]` — refused only because its value is computed by the
+    /// evaluator, which has not answered (or could not): a use of it says
+    /// nothing, and the body it is used in is incomplete.
+    pending: bool,
+}
+
+/// `[CT-1]` — what a compile-time evaluation gave this pass.
+enum Comptime {
+    /// The value, read from the evaluator's answer.
+    Value(const_eval::Folded),
+    /// It ran, and it has no value (`void`, or a `comptime:` block).
+    Void,
+    /// The expression did not check; that was reported.
+    Error,
+    /// Not answered yet, or the evaluator could not (the driver reports
+    /// why): an error value stands in, saying nothing.
+    Unresolved,
 }
 
 /// V.7 — where a `const` that is not a bare literal stands: declared and not
@@ -1250,6 +1286,37 @@ struct Checker<'a> {
     /// no name in source, so they are collected here and appended to the
     /// program rather than found by walking the module again.
     lambdas: Vec<Function>,
+    /// `[CT-1]` — the evaluator's answers from the passes before this one.
+    comptime_answers: ComptimeAnswers,
+    /// `[CT-1]` — what this pass asks that no earlier pass answered, and the
+    /// functions that compute it (`comptime<N>`).
+    comptime_requests: Vec<ComptimeRequest>,
+    comptime_functions: Vec<Function>,
+    comptime_number: usize,
+    /// `[STA-3]` — the requests being made are a static's: quiet.
+    comptime_quiet: bool,
+    /// `[CT-5]`, `[STA-3]` — the statics placed in the image as constant
+    /// data, by name, with their types.
+    const_statics: HashMap<Symbol, Ty>,
+    /// `[CT-5]` — the statics whose compile-time value is not known yet in
+    /// this pass: initialised on first access here, so what reads one is
+    /// unresolved until a later pass places it.
+    unsettled_statics: HashSet<Symbol>,
+    /// `[TYP-41]` rule 2 — where each function called in a generic const
+    /// argument is first written: its evaluation's failure is reported there.
+    const_call_spans: HashMap<Symbol, Span>,
+    /// How many times a compile-time value not known yet (or not computable)
+    /// stood in for one: a body that saw it is incomplete.
+    comptime_unresolved: usize,
+    /// `[CT-6]` — the run-time names around a compile-time expression being
+    /// checked: naming one is `E6005`.
+    comptime_outer_names: Option<HashSet<Symbol>>,
+    /// The bodies being checked, innermost last (an instance's body may be
+    /// checked inside another's): the error count and `comptime_unresolved`
+    /// at each one's start, and the closures made inside it.
+    body_marks: Vec<(usize, usize, Vec<String>)>,
+    /// The symbols of incomplete bodies (`CheckOutput::incomplete`).
+    incomplete: HashSet<String>,
     /// D-257 — the number the next closure is named with (`closureN`, and its
     /// environment `closureN_env`). It never goes back, so a dropped or
     /// re-checked lambda never lets two closures share a name in the C.
@@ -1884,6 +1951,18 @@ impl<'a> Checker<'a> {
             routed_method: None,
             closure_calls: HashMap::new(),
             lambdas: Vec::new(),
+            comptime_answers: ComptimeAnswers::new(),
+            comptime_requests: Vec::new(),
+            comptime_functions: Vec::new(),
+            comptime_number: 0,
+            comptime_quiet: false,
+            const_statics: HashMap::new(),
+            unsettled_statics: HashSet::new(),
+            const_call_spans: HashMap::new(),
+            comptime_unresolved: 0,
+            comptime_outer_names: None,
+            body_marks: Vec::new(),
+            incomplete: HashSet::new(),
             closure_numbers: 0,
             local_fn_self: Vec::new(),
             lambda_depth: 0,
@@ -4706,7 +4785,11 @@ impl<'a> Checker<'a> {
                 let scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
                 let type_params = std::mem::take(&mut self.type_params);
                 let self_ty = self.self_ty.take();
+                // `[STA-3]` — evaluated while compiling where it can be; any
+                // other initialiser runs on first access, which is no error.
+                let outer_quiet = std::mem::replace(&mut self.comptime_quiet, true);
                 let entry = self.expr_const(&item.decl);
+                self.comptime_quiet = outer_quiet;
                 self.current_module = module;
                 self.scopes = scopes;
                 self.type_params = type_params;
@@ -4715,7 +4798,22 @@ impl<'a> Checker<'a> {
                 if entry.ok && scalar && self.sink.error_count() == errors {
                     self.expr_consts.insert(item.name, ConstState::Done(entry));
                     progress = true;
+                } else if entry.ok
+                    && self.sink.error_count() == errors
+                    && let Some(folded) = &entry.folded
+                    && !self.interior_mutable(item.ty)
+                    && self.constant_static_placeable(item.ty)
+                {
+                    // `[CT-5]` — evaluated while compiling, and no safe code can
+                    // reach it through `ref mut`: constant data in the image.
+                    let text = folded.to_text(self.types);
+                    self.types.add_constant_static(item.name, item.ty, text);
+                    self.const_statics.insert(item.name, item.ty);
+                    progress = true;
                 } else {
+                    if entry.pending {
+                        self.unsettled_statics.insert(item.name);
+                    }
                     self.sink.rollback(mark);
                     left.push(item);
                 }
@@ -4747,9 +4845,79 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[CT-5]` — a use of a static in the image: the value its constant
+    /// data holds, which is `static` (`[LT-3]`).
+    fn const_static_use(&mut self, name: Symbol, ty: Ty, span: Span) -> Expr {
+        let reference = self.types.intern(TyKind::Ref { mutable: false, inner: ty });
+        let access = Expr {
+            ty: reference,
+            kind: ExprKind::Builtin { which: Builtin::ConstStatic { name, ty }, args: Vec::new() },
+            span,
+        };
+        Expr { ty, kind: ExprKind::Deref(Box::new(access)), span }
+    }
+
+    /// `[CT-5]` — whether safe code could reach `ty`'s value through
+    /// `ref mut` from a `static`: a `Cell`, `RefCell`, lock, atomic, `Once`
+    /// or shared handle on the path to it.
+    fn interior_mutable(&self, ty: Ty) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Struct(id) => {
+                let def = self.types.struct_def(*id);
+                let base = def.origin.as_ref().map_or(def.name, |(name, _)| *name);
+                let last = base.as_str().rsplit('.').next().unwrap_or("");
+                let stem = last.split('_').next().unwrap_or(last);
+                if matches!(stem, "Cell" | "RefCell" | "Mutex" | "RwLock" | "Atomic" | "Once" | "OnceCell" | "SyncShared" | "Shared" | "Weak") {
+                    return true;
+                }
+                let fields: Vec<Ty> = def.fields.iter().map(|field| field.ty).collect();
+                fields.into_iter().any(|field| self.interior_mutable(field))
+            }
+            TyKind::Enum(id) => {
+                let fields: Vec<Ty> = self.types.enum_def(*id).variants.iter()
+                    .flat_map(|variant| variant.fields.iter().map(|field| field.ty)).collect();
+                fields.into_iter().any(|field| self.interior_mutable(field))
+            }
+            TyKind::Tuple(items) => items.clone().into_iter().any(|item| self.interior_mutable(item)),
+            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } => self.interior_mutable(*elem),
+            TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Ref { mutable: true, .. } => true,
+            _ => false,
+        }
+    }
+
+    /// `[CT-5]` — whether the backend writes a value of `ty` as C constant
+    /// data. A niche `Option` and a 128-bit integer have no constant form in
+    /// C; such a static is initialised on first access instead.
+    fn constant_static_placeable(&self, ty: Ty) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Bool | TyKind::Char | TyKind::Float(_) | TyKind::Str => true,
+            TyKind::Int(int) => !matches!(int, ember_types::IntTy::I128 | ember_types::IntTy::I256),
+            TyKind::Uint(uint) => !matches!(uint, UintTy::U128 | UintTy::U256),
+            TyKind::Range(id) => self.constant_static_placeable(self.types.range_def(*id).repr),
+            TyKind::Tuple(items) => !items.is_empty() && items.clone().into_iter().all(|item| item != self.common.void && self.constant_static_placeable(item)),
+            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } => self.constant_static_placeable(*elem),
+            TyKind::Struct(id) => {
+                let fields: Vec<Ty> = self.types.struct_def(*id).fields.iter().map(|field| field.ty).collect();
+                !fields.is_empty() && fields.into_iter().all(|field| field != self.common.void && self.constant_static_placeable(field))
+            }
+            TyKind::Enum(id) => {
+                if self.types.option_niche(*id).is_some() {
+                    return false;
+                }
+                let fields: Vec<Ty> = self.types.enum_def(*id).variants.iter()
+                    .flat_map(|variant| variant.fields.iter().map(|field| field.ty)).collect();
+                fields.into_iter().all(|field| field == self.common.void || self.constant_static_placeable(field))
+            }
+            _ => false,
+        }
+    }
+
     /// `[STA-3]` — a use of a static initialised on first access: the value
     /// its accessor refers to, which is `static` (`[LT-3]`).
     fn lazy_static_use(&mut self, name: Symbol, value: LazyStatic, span: Span) -> Expr {
+        if self.unsettled_statics.contains(&name) {
+            self.comptime_unresolved += 1;
+        }
         let reference = self.types.intern(TyKind::Ref { mutable: false, inner: value.ty });
         let access = Expr {
             ty: reference,
@@ -4772,7 +4940,7 @@ impl<'a> Checker<'a> {
     fn expr_const(&mut self, decl: &ast::ConstDecl) -> ExprConst {
         let module = self.current_module;
         let value = &decl.value;
-        let refused = || ExprConst { value: value.clone(), module, ok: false, public: true, folded: None };
+        let refused = || ExprConst { value: value.clone(), module, ok: false, public: true, folded: None, pending: false };
         let before = self.sink.error_count();
         let (ty, ty_span) = match &decl.ty {
             Some(declared) => (self.resolve_type(declared), declared.span),
@@ -4785,7 +4953,9 @@ impl<'a> Checker<'a> {
         if self.sink.error_count() != before || ty == self.common.error {
             return refused();
         }
-        if !self.types.is_copy(ty) || self.types.needs_drop(ty) {
+        // A static (`comptime_quiet`) is one value at one address, which may own
+        // heap memory (`[CT-5]`); a `const` is copied into each use.
+        if !self.comptime_quiet && (!self.types.is_copy(ty) || self.types.needs_drop(ty)) {
             let shown = self.types.display(ty);
             self.sink.emit(
                 Diagnostic::error(codes::E2130, ty_span, format!("a `const` cannot hold a `{shown}`"))
@@ -4794,16 +4964,18 @@ impl<'a> Checker<'a> {
             );
             return refused();
         }
+        // `[CT-1]` — any other initialiser is evaluated while compiling.
         if !self.is_const_expr(value) {
-            self.error(
-                codes::E1010,
-                value.span,
-                "a `const` is a literal, another constant, or a construction or arithmetic of them in this phase",
-            );
-            return refused();
+            let what = format!("`{}`", decl.name.name);
+            let expected = (!self.types.is_untyped_literal(ty)).then_some(ty);
+            return match self.comptime_value_in_module(value, expected, module, value.span, what) {
+                Comptime::Value(folded) => ExprConst { value: value.clone(), module, ok: true, public: true, folded: Some(folded), pending: false },
+                Comptime::Void | Comptime::Error => refused(),
+                Comptime::Unresolved => ExprConst { pending: true, ..refused() },
+            };
         }
         if self.types.is_untyped_literal(ty) {
-            return ExprConst { value: value.clone(), module, ok: true, public: true, folded: None };
+            return ExprConst { value: value.clone(), module, ok: true, public: true, folded: None, pending: false };
         }
         let checked = self.check_field_default(value, ty, module, DefaultOwner::Constant);
         if self.sink.error_count() != before {
@@ -4813,7 +4985,7 @@ impl<'a> Checker<'a> {
         // not a panic at every use.
         let policy = self.module_overflow.get(module).copied().unwrap_or(self.default_overflow);
         match const_eval::fold(self.types, &checked, policy) {
-            Ok(folded) => ExprConst { value: value.clone(), module, ok: true, public: true, folded: Some(folded) },
+            Ok(folded) => ExprConst { value: value.clone(), module, ok: true, public: true, folded: Some(folded), pending: false },
             Err(const_eval::Failure::Panic(span, message)) => {
                 self.sink.emit(
                     Diagnostic::error(codes::E6004, span, format!("evaluating `{}` panics: {message}", decl.name.name))
@@ -4837,11 +5009,14 @@ impl<'a> Checker<'a> {
     /// said all there is to say about it (a warning included), so this one
     /// says nothing.
     fn expr_const_use(&mut self, entry: ExprConst, span: Span) -> Expr {
+        if entry.pending {
+            self.comptime_unresolved += 1;
+        }
         if !entry.ok {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         let mut value = match &entry.folded {
-            Some(folded) => folded.to_expr(span),
+            Some(folded) => folded.to_expr(self.types, span),
             None => {
                 let mark = self.sink.mark();
                 let value = self.synth_in_module(&entry.value, entry.module);
@@ -4851,6 +5026,346 @@ impl<'a> Checker<'a> {
         };
         value.span = span;
         value
+    }
+
+    /// `[CT-1]` — `expr` evaluated while compiling, as `expected` if that is
+    /// given. Checked as compile time sees it (`check_comptime_isolated`),
+    /// then answered by an earlier pass's evaluator, or asked of this pass's.
+    fn comptime_value(&mut self, expr: &ast::Expr, expected: Option<Ty>, span: Span, what: String) -> Comptime {
+        // A generic body checked once with its parameters opaque has no value
+        // to compute: each instance computes its own.
+        if self.in_generic_template {
+            return Comptime::Unresolved;
+        }
+        let closures = self.lambdas.len();
+        let unresolved = self.comptime_unresolved;
+        let (checked, locals) = self.check_comptime_isolated(|this| match expected {
+            Some(ty) => this.check_expr(expr, ty),
+            None => {
+                let value = this.synth(expr);
+                this.commit(value)
+            }
+        });
+        self.comptime_answer(checked, locals, closures, unresolved, span, what, false)
+    }
+
+    /// `[CT-1]` — as `comptime_value`, for a declaration's initialiser: in the
+    /// declaring module, under its overflow policy.
+    fn comptime_value_in_module(&mut self, expr: &ast::Expr, expected: Option<Ty>, module: usize, span: Span, what: String) -> Comptime {
+        let caller = std::mem::replace(&mut self.current_module, module);
+        let policy = self.module_overflow.get(module).copied().unwrap_or(self.default_overflow);
+        let caller_policy = std::mem::replace(&mut self.active_overflow, policy);
+        let value = self.comptime_value(expr, expected, span, what);
+        self.active_overflow = caller_policy;
+        self.current_module = caller;
+        value
+    }
+
+    /// `[CT-2]` — `comptime.read_file(path)` and `comptime.env(name)`, the two
+    /// inputs compile time is given: only inside what compile time evaluates.
+    fn comptime_input(&mut self, name: ast::Ident, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let which = name.name.as_str();
+        if !matches!(which, "read_file" | "env") {
+            self.error(codes::E1010, name.span, format!("`comptime` has no `{which}`: its inputs are `read_file` and `env`"));
+            return error;
+        }
+        if self.comptime_outer_names.is_none() {
+            self.sink.emit(
+                Diagnostic::error(codes::E6010, span, format!("`comptime.{which}` reads a build input, which only compile time has"))
+                    .help("use it inside `comptime(…)`, a `comptime:` block, or a constant's or static's initialiser")
+                    .note("compile time is given two inputs, `read_file` and `env`, recorded as build inputs [CT-2]"),
+            );
+            return error;
+        }
+        if args.len() != 1 || args[0].name.is_some() {
+            self.error(codes::E2020, span, format!("`comptime.{which}` takes 1 argument(s), found {}", args.len()));
+            return error;
+        }
+        let text = self.check_expr(&args[0].value, self.common.str_);
+        let string = self.common.string;
+        if which == "read_file" {
+            Expr { ty: string, kind: ExprKind::Builtin { which: Builtin::ComptimeReadFile, args: vec![text] }, span }
+        } else {
+            let option = self.option_of(string);
+            Expr { ty: option, kind: ExprKind::Builtin { which: Builtin::ComptimeEnv { option }, args: vec![text] }, span }
+        }
+    }
+
+    /// `[CT-6]` — `comptime(e)`: `e`'s value, computed while compiling, as
+    /// literals in its place.
+    fn comptime_expr(&mut self, inner: &ast::Expr, expected: Option<Ty>, span: Span) -> Expr {
+        match self.comptime_value(inner, expected, span, "this `comptime(…)` expression".to_string()) {
+            Comptime::Value(folded) => {
+                let mut value = folded.to_expr(self.types, span);
+                value.span = span;
+                value
+            }
+            Comptime::Void => self.void_value(span),
+            Comptime::Error | Comptime::Unresolved => Expr { ty: self.common.error, kind: ExprKind::Error, span },
+        }
+    }
+
+    /// `[CT-7]` — a `comptime:` block, run once while compiling for its
+    /// checks; nothing of it is left in the program.
+    fn comptime_block(&mut self, block: &ast::Block, span: Span) {
+        if self.in_generic_template {
+            return;
+        }
+        let closures = self.lambdas.len();
+        let unresolved = self.comptime_unresolved;
+        let (checked, locals) = self.check_comptime_isolated(|this| this.check_block(block));
+        let value = Expr {
+            ty: self.common.void,
+            kind: ExprKind::Block { block: checked, value: Box::new(self.void_value(span)) },
+            span,
+        };
+        let _ = self.comptime_answer(value, locals, closures, unresolved, span, "this `comptime` block".to_string(), true);
+    }
+
+    /// The answer for a checked compile-time expression: the earlier pass's,
+    /// or a request for this pass's evaluator, with the function computing it.
+    #[allow(clippy::too_many_arguments)]
+    fn comptime_answer(&mut self, checked: Expr, locals: Vec<LocalDecl>, closures: usize, unresolved: usize, span: Span, what: String, block: bool) -> Comptime {
+        // What it uses is itself computed while compiling, and not known yet.
+        if self.comptime_unresolved != unresolved {
+            return Comptime::Unresolved;
+        }
+        if checked.ty == self.common.error {
+            return Comptime::Error;
+        }
+        let ty = checked.ty;
+        if !block && let Some(part) = self.comptime_unplaceable(ty) {
+            let shown = self.types.display(ty);
+            let part = self.types.display(part);
+            self.sink.emit(
+                Diagnostic::error(codes::E6010, span, format!("a compile-time value cannot be a `{shown}`"))
+                    .primary_label(format!("a `{part}` refers to the evaluator's memory, which the program does not have"))
+                    .note("a compile-time value is placed in the program as constant data [CT-5]"),
+            );
+            return Comptime::Error;
+        }
+        let key = self.comptime_key(span, &what);
+        match self.comptime_answers.get(&key).cloned() {
+            Some(ComptimeAnswer::Value(text)) => {
+                // What the check made for the evaluator is not part of the program.
+                self.lambdas.truncate(closures);
+                if block || ty == self.common.void {
+                    return Comptime::Void;
+                }
+                match const_eval::read_value(self.types, ty, &text) {
+                    Some(folded) => Comptime::Value(folded),
+                    None => {
+                        let shown = self.types.display(ty);
+                        self.error(codes::E6010, span, format!("the evaluator's value is not a `{shown}`"));
+                        Comptime::Error
+                    }
+                }
+            }
+            Some(ComptimeAnswer::Failed) => {
+                self.lambdas.truncate(closures);
+                self.comptime_unresolved += 1;
+                Comptime::Unresolved
+            }
+            None => {
+                self.request_comptime(key, checked, locals, span, what, block);
+                self.comptime_unresolved += 1;
+                Comptime::Unresolved
+            }
+        }
+    }
+
+    /// `[CT-5]` — the part of `ty` a value made by the evaluator could not
+    /// carry into the program: a view, a reference, a pointer, a handle or a
+    /// callable points into the evaluator's memory.
+    fn comptime_unplaceable(&self, ty: Ty) -> Option<Ty> {
+        match self.types.kind(ty) {
+            TyKind::Int(ember_types::IntTy::I256) | TyKind::Uint(UintTy::U256) => Some(ty),
+            TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Void
+            | TyKind::Str | TyKind::Range(_) | TyKind::Never => None,
+            TyKind::Tuple(items) => items.clone().into_iter().find_map(|item| self.comptime_unplaceable(item)),
+            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } => self.comptime_unplaceable(*elem),
+            TyKind::Struct(id) => {
+                if self.soa_inner(ty).is_some() {
+                    return Some(ty);
+                }
+                let fields: Vec<Ty> = self.types.struct_def(*id).fields.iter().map(|field| field.ty).collect();
+                fields.into_iter().find_map(|field| self.comptime_unplaceable(field))
+            }
+            TyKind::Enum(id) => {
+                let fields: Vec<Ty> = self.types.enum_def(*id).variants.iter()
+                    .flat_map(|variant| variant.fields.iter().map(|field| field.ty))
+                    .collect();
+                fields.into_iter().find_map(|field| self.comptime_unplaceable(field))
+            }
+            _ => Some(ty),
+        }
+    }
+
+    /// The request's identity in every pass: what it is for, where it is
+    /// written, and the instance it is checked in.
+    fn comptime_key(&self, span: Span, what: &str) -> String {
+        let mut context: Vec<String> = self.type_params.iter()
+            .map(|(name, &ty)| format!("{name}={}", self.types.display(ty)))
+            .collect();
+        context.sort();
+        format!("{what}@{}:{}-{}[{}]", span.file.0, span.start, span.end, context.join(","))
+    }
+
+    /// `[CT-1]` — the function the evaluator runs for a request: no
+    /// parameters, returning the expression's value.
+    fn request_comptime(&mut self, key: String, value: Expr, locals: Vec<LocalDecl>, span: Span, what: String, block: bool) {
+        if self.comptime_requests.iter().any(|request| request.key == key) {
+            return;
+        }
+        let number = self.comptime_number;
+        self.comptime_number += 1;
+        let symbol = format!("{}comptime{number}", ember_branding::mangle_prefix());
+        let def = DefId(self.signatures.len() as u32);
+        let ret = value.ty;
+        self.signatures.push(Signature {
+            params: Vec::new(),
+            ret,
+            abi: None,
+            is_unsafe: false,
+            overflow: self.active_overflow,
+            fp: self.active_fp,
+            borrows: None,
+            generics: Vec::new(),
+        });
+        let stmts = if ret == self.common.void {
+            vec![Stmt::Expr(value), Stmt::Return(None)]
+        } else {
+            vec![Stmt::Return(Some(value))]
+        };
+        self.comptime_functions.push(Function {
+            def,
+            // A call chain names it as what it computes (`E6004`, `E6010`).
+            name: Symbol::intern(&what),
+            class_init: false,
+            class_init_default_fields: Vec::new(),
+            symbol: symbol.clone(),
+            is_unsafe: false,
+            abi: None,
+            export_thread_policy: hir::ExportThreadPolicy::Any,
+            params: Vec::new(),
+            locals,
+            ret,
+            body: Block { stmts, span },
+            span,
+            overflow: self.active_overflow,
+            fp: self.active_fp,
+            inline: hir::InlineHint::default(),
+            static_safe: false,
+            contracts: hir::Contracts::default(),
+            borrows: None,
+            sources: Vec::new(),
+            is_lambda: false,
+            emit_if_used: false,
+            closure_environment: None,
+            closure_captures_by_move: false,
+            class_owner: None,
+            class_virtual_slot: None,
+            borrows_used_fields: false,
+            is_abstract: false,
+            is_extern_declaration: false,
+            ffi_counted: None,
+        });
+        self.comptime_requests.push(ComptimeRequest { key, span, symbol, what, block, quiet: self.comptime_quiet });
+    }
+
+    /// `[CT-6]` — a compile-time expression checked as compile time sees it:
+    /// no run-time local is in scope (naming one is `E6005`), it is not
+    /// inside the surrounding body's `unsafe`, closure or class `init`, and
+    /// the locals its check makes are its own function's.
+    fn check_comptime_isolated<T>(&mut self, check: impl FnOnce(&mut Self) -> T) -> (T, Vec<LocalDecl>) {
+        let mut outer_names: HashSet<Symbol> = self.scopes.iter().flat_map(|scope| scope.keys().copied()).collect();
+        if let Some(watch) = &self.captures {
+            outer_names.extend(watch.outer.keys().copied());
+        }
+        let outer_names = self.comptime_outer_names.replace(outer_names);
+        let outer_locals = std::mem::take(&mut self.locals);
+        let outer_scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
+        let outer_open = std::mem::take(&mut self.open);
+        let outer_borrowed_params = std::mem::take(&mut self.borrowed_params);
+        let outer_callable_once_locals = std::mem::take(&mut self.callable_once_locals);
+        let outer_callable_parameter_locals = std::mem::take(&mut self.callable_parameter_locals);
+        let outer_latebound_callable_parameter_locals = std::mem::take(&mut self.latebound_callable_parameter_locals);
+        let outer_callable_value_bindings = std::mem::take(&mut self.callable_value_bindings);
+        let outer_ret = std::mem::replace(&mut self.ret_ty, self.common.void);
+        let outer_captures = self.captures.take();
+        let outer_class_init = self.class_init.take();
+        let outer_unsafe = std::mem::replace(&mut self.in_unsafe, false);
+        let value = check(self);
+        let locals = std::mem::replace(&mut self.locals, outer_locals);
+        self.scopes = outer_scopes;
+        self.open = outer_open;
+        self.borrowed_params = outer_borrowed_params;
+        self.callable_once_locals = outer_callable_once_locals;
+        self.callable_parameter_locals = outer_callable_parameter_locals;
+        self.latebound_callable_parameter_locals = outer_latebound_callable_parameter_locals;
+        self.callable_value_bindings = outer_callable_value_bindings;
+        self.ret_ty = outer_ret;
+        self.captures = outer_captures;
+        self.class_init = outer_class_init;
+        self.in_unsafe = outer_unsafe;
+        self.comptime_outer_names = outer_names;
+        (value, locals)
+    }
+
+    /// `[CT-6]` — `E6005` for a run-time local named inside a compile-time
+    /// expression, where it would otherwise be "not found".
+    fn comptime_names_runtime_local(&mut self, name: Symbol, span: Span) -> bool {
+        if !self.comptime_outer_names.as_ref().is_some_and(|names| names.contains(&name)) {
+            return false;
+        }
+        self.sink.emit(
+            Diagnostic::error(codes::E6005, span, format!("`{name}` is a run-time local, which compile time cannot read"))
+                .help("compute it from constants, or pass the value in at run time")
+                .note("a compile-time expression may use constants, generic parameters and statics initialised at compile time [CT-6]"),
+        );
+        true
+    }
+
+    /// `[TYP-41]` rule 2 — whether a const argument names a `const`
+    /// parameter of the declaration it is in, whose value is not known here.
+    fn names_const_parameter(&self, expr: &ast::Expr) -> bool {
+        let named = |name: Symbol| self.type_params.get(&name).is_some_and(|&ty| match self.types.kind(ty) {
+            TyKind::Param { .. } => true,
+            TyKind::Const(form) => form.mentions_params(),
+            _ => false,
+        });
+        match &expr.kind {
+            ast::ExprKind::Path { segments } => segments.len() == 1 && named(segments[0].name),
+            ast::ExprKind::Paren(inner) | ast::ExprKind::Unary { operand: inner, .. } => self.names_const_parameter(inner),
+            ast::ExprKind::Binary { lhs, rhs, .. } => self.names_const_parameter(lhs) || self.names_const_parameter(rhs),
+            ast::ExprKind::Call { callee, args } => {
+                self.names_const_parameter(callee) || args.iter().any(|arg| self.names_const_parameter(&arg.value))
+            }
+            ast::ExprKind::MethodCall { recv, args, .. } => {
+                self.names_const_parameter(recv) || args.iter().any(|arg| self.names_const_parameter(&arg.value))
+            }
+            ast::ExprKind::Tuple(items) | ast::ExprKind::ArrayLit(items) => items.iter().any(|item| self.names_const_parameter(item)),
+            _ => false,
+        }
+    }
+
+    /// `[BODY]` — where a body's check starts: what an incomplete body is
+    /// measured against.
+    fn begin_body_marks(&mut self) {
+        self.body_marks.push((self.sink.error_count(), self.comptime_unresolved, Vec::new()));
+    }
+
+    /// Where a body's check ends: the body, and the closures made in it, are
+    /// incomplete when its check reported an error or used a compile-time
+    /// value not known yet.
+    fn end_body_marks(&mut self, symbol: &str) {
+        if let Some((errors, unresolved, closures)) = self.body_marks.pop()
+            && (self.sink.error_count() != errors || self.comptime_unresolved != unresolved)
+        {
+            self.incomplete.insert(symbol.to_string());
+            self.incomplete.extend(closures);
+        }
     }
 
     /// `e` synthesised as its declaration reads: in the declaring module,
@@ -10809,12 +11324,45 @@ impl<'a> Checker<'a> {
                 }
                 value
             }
-            ast::ExprKind::Call { .. } => {
-                self.sink.emit(
-                    Diagnostic::error(codes::E0900, expr.span, "a function computing a const argument is not supported yet")
-                        .note("calling a function at compile time needs the compile-time evaluator (`[CT-1]`)"),
-                );
-                None
+            // `[TYP-41]` rule 1 — a call over constants is evaluated (`[CT-1]`).
+            ast::ExprKind::Call { .. } | ast::ExprKind::MethodCall { .. } => {
+                // `[TYP-41]` rule 2 — a call that names a `const` parameter is an
+                // opaque term, computed in each instance.
+                if self.names_const_parameter(expr) {
+                    // By its name: a type's field can name one before the
+                    // functions' signatures are collected.
+                    let callee = match &expr.kind {
+                        ast::ExprKind::Call { callee, args } => match &callee.kind {
+                            ast::ExprKind::Path { segments } if segments.len() == 1 => Some((self.resolve_name(segments[0].name), args)),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    let Some((function, args)) = callee else {
+                        self.error(codes::E2131, expr.span, "a const argument naming a `const` parameter calls a function by its name");
+                        return None;
+                    };
+                    let mut forms = Vec::with_capacity(args.len());
+                    for arg in args {
+                        forms.push(self.const_arg(&arg.value)?);
+                    }
+                    self.const_call_spans.entry(function).or_insert(expr.span);
+                    return Some(ConstNorm::call(function, forms));
+                }
+                match self.comptime_value(expr, None, expr.span, "this const argument".to_string()) {
+                    Comptime::Value(folded) => match folded.as_integer() {
+                        Some(value) => Some(ConstNorm::constant(value)),
+                        None => {
+                            self.error(codes::E2131, expr.span, "a const argument is an integer");
+                            None
+                        }
+                    },
+                    Comptime::Void => {
+                        self.error(codes::E2131, expr.span, "a const argument is an integer");
+                        None
+                    }
+                    Comptime::Error | Comptime::Unresolved => None,
+                }
             }
             _ => {
                 self.error(
@@ -11817,6 +12365,67 @@ impl<'a> Checker<'a> {
         })
     }
 
+    /// `[TYP-41]` rule 1 — a form whose calls' arguments are all numbers,
+    /// with each call computed by the evaluator (`[CT-1]`). `None` while one
+    /// is not known yet, or when it failed (reported where it is written).
+    fn resolve_const_calls(&mut self, form: ConstNorm) -> Option<ConstNorm> {
+        if !form.has_calls() {
+            return Some(form);
+        }
+        match form.resolve_calls(&mut |function, numbers| self.const_call_value(function, numbers))? {
+            Ok(form) => Some(form),
+            Err(error) => {
+                let span = self.const_call_spans.values().next().copied().unwrap_or(Span::DUMMY);
+                let what = match error {
+                    ConstError::Overflow => "overflows",
+                    ConstError::DivisionByZero => "divides by zero",
+                    ConstError::NegativeShift => "shifts by a negative amount or by 128 or more",
+                };
+                self.error(codes::E6004, span, format!("evaluating this const argument {what}"));
+                None
+            }
+        }
+    }
+
+    /// `[TYP-41]` rule 1 — `name(numbers…)`, computed while compiling.
+    fn const_call_value(&mut self, function: Symbol, numbers: &[i128]) -> Option<i128> {
+        let span = self.const_call_spans.get(&function).copied().unwrap_or(Span::DUMMY);
+        let name = function.as_str().rsplit('.').next().unwrap_or("").to_string();
+        let Some(&def) = self.fn_ids.get(&function) else {
+            self.error(codes::E2131, span, format!("`{name}` is not a function, so it cannot compute a const argument"));
+            return None;
+        };
+        let signature = &self.signatures[def.0 as usize];
+        let (params, ret, generic) = (signature.params.clone(), signature.ret, !signature.generics.is_empty());
+        if generic || params.len() != numbers.len() {
+            self.error(codes::E2131, span, format!("a const argument calls `{name}`, which takes other arguments or is generic"));
+            return None;
+        }
+        let mut args = Vec::with_capacity(numbers.len());
+        for (&number, (_, ty, mode, _)) in numbers.iter().zip(&params) {
+            let magnitude = Expr { ty: *ty, kind: ExprKind::Int(number.unsigned_abs()), span };
+            let value = if number < 0 {
+                Expr { ty: *ty, kind: ExprKind::Unary { op: hir::UnOp::Neg, operand: Box::new(magnitude) }, span }
+            } else {
+                magnitude
+            };
+            args.push(self.pass_argument(value, *ty, *mode));
+        }
+        let call = Expr {
+            ty: ret,
+            kind: ExprKind::Call { callee: def, arg_eval_order: None, default_arg_locals: None, args, latebound: false },
+            span,
+        };
+        let shown: Vec<String> = numbers.iter().map(i128::to_string).collect();
+        let what = format!("`{name}({})`", shown.join(", "));
+        let unresolved = self.comptime_unresolved;
+        let closures = self.lambdas.len();
+        match self.comptime_answer(call, Vec::new(), closures, unresolved, span, what, false) {
+            Comptime::Value(folded) => folded.as_integer(),
+            _ => None,
+        }
+    }
+
     /// Substitution that also rebuilds an instantiated generic nominal type:
     /// `Buffer[T]` with `T = i32` is `Buffer[i32]`, a different nominal type
     /// with a different layout, not the same one with its fields rewritten.
@@ -11827,16 +12436,17 @@ impl<'a> Checker<'a> {
         match self.types.kind(ty).clone() {
             TyKind::ArrayN { elem, len } => {
                 let elem = self.substitute_ty(elem, args);
-                let len = self.types.substitute_const(&len, args);
-                return match len.ok().and_then(|len| self.types.array_of(elem, len)) {
+                let len = self.types.substitute_const(&len, args).ok().and_then(|len| self.resolve_const_calls(len));
+                return match len.and_then(|len| self.types.array_of(elem, len)) {
                     Some(ty) => ty,
                     None => self.common.error,
                 };
             }
             TyKind::Const(value) => {
-                return match self.types.substitute_const(&value, args) {
-                    Ok(value) => self.types.intern(TyKind::Const(value)),
-                    Err(_) => self.common.error,
+                let value = self.types.substitute_const(&value, args).ok().and_then(|value| self.resolve_const_calls(value));
+                return match value {
+                    Some(value) => self.types.intern(TyKind::Const(value)),
+                    None => self.common.error,
                 };
             }
             _ => {}
@@ -14308,6 +14918,11 @@ impl<'a> Checker<'a> {
         let mut main = None;
 
         for item in &module.items {
+            // `[CT-7]` — an item-level `comptime:` block runs once while compiling.
+            if let ast::ItemKind::Comptime(block) = &item.kind {
+                self.comptime_block(block, item.span);
+                continue;
+            }
             let ast::ItemKind::Fn(decl) = &item.kind else { continue };
             let Some(&def) = self.fn_ids.get(&self.qualified(decl.name.name)) else { continue };
             let outer_overflow = std::mem::replace(&mut self.active_overflow,
@@ -14410,6 +15025,7 @@ impl<'a> Checker<'a> {
             }
 
             self.locals = Vec::new();
+            self.begin_body_marks();
             self.scopes = vec![HashMap::new()];
             self.borrowed_params.clear();
             self.ret_ty = self.signatures[def.0 as usize].ret;
@@ -14525,6 +15141,8 @@ impl<'a> Checker<'a> {
                 is_extern_declaration: decl.is_foreign_decl && ffi_counted.is_none(),
                 ffi_counted,
             });
+            let symbol = functions.last().expect("just pushed").symbol.clone();
+            self.end_body_marks(&symbol);
             self.active_overflow = outer_overflow;
             self.active_fp = outer_fp;
         }
@@ -15583,6 +16201,7 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> Function {
         self.locals = Vec::new();
+        self.begin_body_marks();
         self.scopes = vec![HashMap::new()];
         self.borrowed_params.clear();
         self.callable_once_locals.clear();
@@ -15647,7 +16266,7 @@ impl<'a> Checker<'a> {
         // `[MONO-1]` — the symbol carries the instantiation, so two of them
         // never collide and identical ones dedupe at link time.
         let name = self.qualified(decl.name.name);
-        Function {
+        let function = Function {
             def,
             name,
             class_init: false,
@@ -15680,7 +16299,9 @@ impl<'a> Checker<'a> {
             is_abstract: false,
             is_extern_declaration: false,
             ffi_counted: None,
-        }
+        };
+        self.end_body_marks(&function.symbol);
+        function
     }
 
     /// Method bodies, in the same walk `collect_methods` used so the two
@@ -16361,6 +16982,7 @@ impl<'a> Checker<'a> {
                 format!("`@sync` class `{}` cannot declare a `mut self` method", self.types.display(owner)));
         }
         self.locals = Vec::new();
+        self.begin_body_marks();
         self.scopes = vec![HashMap::new()];
         self.borrowed_params.clear();
         self.callable_once_locals.clear();
@@ -16535,7 +17157,7 @@ impl<'a> Checker<'a> {
         self.in_static_safe = outer_static_safe;
         self.static_safe_unsafe_cell_reported = outer_static_safe_reported;
         let name = decl.name.name;
-        Some(Function {
+        let function = Function {
             def,
             name,
             class_init: is_class_init,
@@ -16569,7 +17191,9 @@ impl<'a> Checker<'a> {
             is_abstract: false,
             is_extern_declaration: false,
             ffi_counted: None,
-        })
+        };
+        self.end_body_marks(&function.symbol);
+        Some(function)
     }
 
     /// Validate the first source-reachable constructor slice. The runtime
@@ -16735,6 +17359,7 @@ impl<'a> Checker<'a> {
                 ast::Jump::Break { .. } | ast::Jump::Continue { .. } => false,
             },
             ast::ExprKind::Yield(value) => value.as_deref().is_some_and(Self::class_init_uses_whole_self),
+            ast::ExprKind::Comptime(_) => false,
         }
     }
 
@@ -18606,13 +19231,8 @@ impl<'a> Checker<'a> {
                 out.push(Stmt::Expr(matched));
             }
             ast::StmtKind::LocalFn(decl) => self.check_local_fn(decl, stmt.span, out),
-            _ => {
-                self.error(
-                    codes::E1010,
-                    stmt.span,
-                    "this statement is not supported yet in this phase of the compiler",
-                );
-            }
+            // `[CT-7]` — run once while compiling, for its checks.
+            ast::StmtKind::Comptime(block) => self.comptime_block(block, stmt.span),
         }
     }
 
@@ -28229,6 +28849,9 @@ impl<'a> Checker<'a> {
                 if self.foreign_statics.contains_key(&qualified) {
                     return self.foreign_static_use(qualified, span);
                 }
+                if let Some(&ty) = self.const_statics.get(&qualified) {
+                    return self.const_static_use(qualified, ty, span);
+                }
                 if let Some(&value) = self.lazy_statics.get(&qualified) {
                     return self.lazy_static_use(qualified, value, span);
                 }
@@ -28273,6 +28896,9 @@ impl<'a> Checker<'a> {
                     return captured;
                 }
                 if self.report_ambiguous_glob(name, span) {
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+                if self.comptime_names_runtime_local(name, span) {
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
                 let mut diagnostic = Diagnostic::error(
@@ -28366,6 +28992,9 @@ impl<'a> Checker<'a> {
                         }
                         if self.foreign_statics.contains_key(&qualified) {
                             return self.foreign_static_use(qualified, span);
+                        }
+                        if let Some(&ty) = self.const_statics.get(&qualified) {
+                            return self.const_static_use(qualified, ty, span);
                         }
                         if let Some(&value) = self.lazy_statics.get(&qualified) {
                             return self.lazy_static_use(qualified, value, span);
@@ -28911,6 +29540,10 @@ impl<'a> Checker<'a> {
             }
 
             // `[TYP-24]`, Part IV.11 — `recv.m(args)`.
+            ast::ExprKind::MethodCall { recv, name, args, .. } if is_single_path(recv, "comptime") => {
+                self.comptime_input(*name, args, span)
+            }
+
             ast::ExprKind::MethodCall { recv, name, generic_args, args } => {
                 // `[CLS-4]` — `super.init(...)` is constructor syntax, not
                 // ordinary inherited method dispatch. It is checked against
@@ -28955,6 +29588,9 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Binary { op, lhs, rhs } => self.synth_binary(*op, lhs, rhs, span),
 
             ast::ExprKind::CompareChain { first, rest } => self.synth_compare_chain(first, rest, span),
+
+
+            ast::ExprKind::Comptime(inner) => self.comptime_expr(inner, expected, span),
 
             ast::ExprKind::Logical { op, lhs, rhs } => {
                 let bool_ty = self.common.bool_;
@@ -30016,6 +30652,9 @@ impl<'a> Checker<'a> {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             if segments.len() == 1 && self.report_ambiguous_glob(name, name_span) {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            if segments.len() == 1 && self.comptime_names_runtime_local(name, name_span) {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             let mut diagnostic = Diagnostic::error(
@@ -37659,6 +38298,9 @@ impl<'a> Checker<'a> {
             None => self.signatures.push(signature),
         }
         let symbol = format!("{}closure{number}", ember_branding::mangle_prefix());
+        if let Some((_, _, closures)) = self.body_marks.last_mut() {
+            closures.push(symbol.clone());
+        }
         self.lambdas.push(Function {
             def,
             name: Symbol::intern(&symbol),
@@ -38302,11 +38944,15 @@ impl<'a> Checker<'a> {
     /// parsed as an expression is reinterpreted as a type or a const-generic
     /// argument by the ordinary rules.
     /// `[TYP-41]` — whether a bracketed argument is a const argument: a
-    /// number, arithmetic, or the name of a constant or `const` parameter.
+    /// number, arithmetic, a call, or the name of a constant or `const`
+    /// parameter.
     fn is_const_argument(&self, expr: &ast::Expr) -> bool {
         match &expr.kind {
+            // A call is never a type: a function computes the argument (`[CT-1]`).
             ast::ExprKind::Lit(ast::Literal::Int { .. })
             | ast::ExprKind::Binary { .. }
+            | ast::ExprKind::Call { .. }
+            | ast::ExprKind::MethodCall { .. }
             | ast::ExprKind::Unary { op: ast::UnOp::Neg, .. } => true,
             ast::ExprKind::Paren(inner) => self.is_const_argument(inner),
             ast::ExprKind::Path { segments } if segments.len() == 1 => {

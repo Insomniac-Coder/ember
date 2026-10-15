@@ -30,6 +30,17 @@ pub fn lower(
     program.functions.iter().map(|f| lower_function(f, program, types, common, map)).collect()
 }
 
+/// One function of `program`, lowered as `lower` lowers each.
+pub fn lower_one(
+    function: &hir::Function,
+    program: &hir::Program,
+    types: &TypeTable,
+    common: &CommonTypes,
+    map: &SourceMap,
+) -> Body {
+    lower_function(function, program, types, common, map)
+}
+
 fn lower_function(
     function: &hir::Function,
     program: &hir::Program,

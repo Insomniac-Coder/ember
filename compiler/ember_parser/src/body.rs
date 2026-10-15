@@ -1010,6 +1010,19 @@ impl Parser<'_> {
                 self.bump();
                 ExprKind::SelfExpr
             }
+            // `[CT-6]` — `comptime(e)`; `comptime.read_file(…)` and
+            // `comptime.env(…)` name the compile-time inputs (`[CT-2]`).
+            TokenKind::Keyword(Kw::Comptime) => {
+                let span = self.span();
+                self.bump();
+                if self.eat_punct(Punct::LParen) {
+                    let inner = self.parse_expr();
+                    self.expect_punct(Punct::RParen);
+                    ExprKind::Comptime(Box::new(inner))
+                } else {
+                    ExprKind::Path { segments: vec![Ident { name: "comptime".into(), span }] }
+                }
+            }
             TokenKind::Keyword(Kw::SelfType) => {
                 let span = self.span();
                 self.bump();

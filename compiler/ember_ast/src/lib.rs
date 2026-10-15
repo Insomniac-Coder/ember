@@ -680,6 +680,8 @@ pub enum ExprKind {
     /// declares one), so it may be the right-hand side of a binding. A bare
     /// `yield` is `yield ()`.
     Yield(Option<Box<Expr>>),
+    /// `[CT-6]` — `comptime(e)`: `e` evaluated while compiling.
+    Comptime(Box<Expr>),
     /// A node the parser could not build. Keeps later stages from cascading.
     Error,
 }

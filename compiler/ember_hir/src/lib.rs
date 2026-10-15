@@ -1104,6 +1104,16 @@ pub enum Builtin {
     /// arguments, the first time any thread asks. `name` is the static's, for
     /// the initialisation-cycle panic.
     LazyStatic { name: Symbol, init: Symbol, ty: Ty },
+    /// `[CT-5]`, `[STA-3]` — a reference to the one value of a `static` the
+    /// compile-time evaluator computed, placed in the image as constant data
+    /// (`TypeTable::constant_statics`): no initialisation runs.
+    ConstStatic { name: Symbol, ty: Ty },
+    /// `[CT-2]` — `comptime.read_file(path)`: the file's text, read while
+    /// compiling from inside the package directory (`[path]`).
+    ComptimeReadFile,
+    /// `[CT-2]` — `comptime.env(name)`: the build environment's variable, an
+    /// `option` (`Option[String]`), read while compiling (`[name]`).
+    ComptimeEnv { option: Ty },
     /// `[STA-1]` — write a `static mut` C global inside `unsafe`.
     ForeignStaticWrite { symbol: Symbol },
     /// `[STA-1]` — update one field of a C record global in place.
@@ -1606,6 +1616,9 @@ impl Builtin {
         match self {
             Builtin::ForeignStaticRead { .. } => "foreign_static_read",
             Builtin::LazyStatic { .. } => "lazy_static",
+            Builtin::ConstStatic { .. } => "constant_static",
+            Builtin::ComptimeReadFile => "read_file",
+            Builtin::ComptimeEnv { .. } => "env",
             Builtin::ForeignStaticWrite { .. } => "foreign_static_write",
             Builtin::ForeignStaticFieldWrite { .. } => "foreign_static_field_write",
             Builtin::Println => "println",

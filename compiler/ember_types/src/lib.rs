@@ -487,6 +487,10 @@ pub struct TypeTable {
     next_infer: u32,
     /// Pointer width of the target, in bytes. 8 for every v1 target.
     pointer_size: u64,
+    /// `[CT-5]`, `[STA-3]` — the statics whose values the compile-time
+    /// evaluator computed, placed in the image as constant data: each name,
+    /// type and value (in the evaluator's text).
+    constant_statics: Vec<(Symbol, Ty, String)>,
 }
 
 /// Well-known types, interned once at construction so that common lookups are
@@ -548,6 +552,15 @@ pub struct Niche {
 }
 
 impl TypeTable {
+    /// `[CT-5]` — a static placed in the image with this value.
+    pub fn add_constant_static(&mut self, name: Symbol, ty: Ty, value: String) {
+        self.constant_statics.push((name, ty, value));
+    }
+
+    pub fn constant_statics(&self) -> &[(Symbol, Ty, String)] {
+        &self.constant_statics
+    }
+
     pub fn new() -> (TypeTable, CommonTypes) {
         let mut table = TypeTable {
             kinds: Vec::new(),
@@ -561,6 +574,7 @@ impl TypeTable {
             zeroable_derived: HashSet::new(),
             must_drop_declared: HashSet::new(),
             next_infer: 0,
+            constant_statics: Vec::new(),
             pointer_size: 8,
         };
         let u8_ty = table.intern(TyKind::Uint(UintTy::U8));

@@ -354,6 +354,7 @@ codes! {
     E6001 = (Error, 6001, Comptime, "[CT-3]", "comptime evaluation exceeded its limits, or a constant's value depends on itself");
     E6002 = (Error, 6002, Comptime, "[CT-4]", "comptime evaluation is not deterministic");
     E6004 = (Error, 6004, Comptime, "[CT-7]", "panic during compile-time evaluation");
+    E6005 = (Error, 6005, Comptime, "[CT-6]", "a compile-time expression names a run-time local");
     E6010 = (Error, 6010, Comptime, "[XVIII.5]", "operation is not supported at compile time");
 
     // --- concurrency ----------------------------------------------------------

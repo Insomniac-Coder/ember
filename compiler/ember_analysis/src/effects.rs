@@ -44,6 +44,21 @@ pub fn effect_sets(bodies: &[Body], types: &TypeTable) -> Vec<Effects> {
     Graph::new(bodies, types).effects
 }
 
+/// `[CT-1]`, `[CT-2]` — what may not run at compile time: anything beyond `Alloc`, `Panic` and the
+/// run-time checks.
+pub const COMPTIME_FORBIDDEN: Effects =
+    Effects(Effects::SYNC.0 | Effects::LOCK.0 | Effects::BLOCK.0 | Effects::IO.0 | Effects::UNSAFE.0 | Effects::FFI.0 | Effects::NONDET.0);
+
+/// `[CT-2]` — for the body at `root`, the first effect compile time cannot run that it reaches, the
+/// operation that has it and the call chain from `root` to it (`E6010` names them).
+pub fn comptime_forbidden(bodies: &[Body], types: &TypeTable, root: usize) -> Option<(Effects, Vec<String>)> {
+    let graph = Graph::new(bodies, types);
+    let found = graph.effects[root] & COMPTIME_FORBIDDEN;
+    let (effect, _) = found.each().next()?;
+    let (_, _, chain) = graph.chain(root, effect, types)?;
+    Some((effect, chain))
+}
+
 /// `[EFF-5]`, `[EFF-6]` — check every function's contracts against its effects. Returns how many
 /// were broken.
 pub fn check_effects_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) -> usize {
@@ -636,6 +651,9 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         B::AssertDisjoint { .. } => (Effects::CHECK_ALIASING, "`assert_disjoint`"),
         B::WeakUpgrade { .. } => (Effects::CHECK_STALE, "`Weak.upgrade`"),
         B::LazyStatic { .. } => (Effects::SYNC | Effects::BLOCK, "a static's first access, which may wait for another thread's"),
+        B::ConstStatic { .. } => (Effects::NONE, "a static in the image"),
+        // `[CT-2]` — the two inputs compile time is given, recorded as build inputs.
+        B::ComptimeReadFile | B::ComptimeEnv { .. } => (Effects::NONE, "a build input"),
         B::PtrRead | B::PtrWrite | B::MemFree | B::SpanGetUnchecked | B::RangeNewUnchecked(_)
         | B::MaybeUninitAssumeInit { .. } | B::MaybeUninitSpanAssumeInit { .. } | B::MaybeUninitWriteAt { .. } => {
             (Effects::UNSAFE, "an `unsafe` operation")

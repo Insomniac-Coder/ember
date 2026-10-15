@@ -10911,8 +10911,14 @@ a computed middle operand to a hidden local (`[GRM-25]` done); `W2190` for a dro
 method names (`[STD-13]`); D-600 (suggestion distance and kind, `[DIA-24]`); `@sync` advice on
 `E7004`/`E7005` (`[THR-2]`); tests for `[THR-13]`, `[PHIL-8]`. `[THR-10]`'s static-view capture
 needs an owned callable value that may hold a `static` view (ADR-159 says it holds none);
-`[CLO-7]` waits for `jobs.submit`. **Next:** the compile-time evaluator (`[CT-*]`, `comptime(e)`,
-const generics computed by functions), `some` return types, coroutines.
+`[CLO-7]` waits for `jobs.submit`. Then the compile-time evaluator (ADR-187): every compile-time
+position (`comptime(e)`, `comptime:`, `const`, array lengths and `const` arguments, statics) is a
+function built by the ordinary backend into an evaluator program the driver runs, re-checking with
+the answers; limits, `E6001`/`E6004`/`E6010`/`E6005`, `read_file`/`env` inside the package, a value
+cache keyed by the evaluator's C and its inputs, heap results cloned per `comptime(e)` and constant
+statics in the image; `[TYP-41]` rule 2's calls on `const` parameters. `[CT-1]`..`[CT-7]` and
+`[TYP-41]` done; D-601 fixed. **Next:** the job system and `@parallel` (`[JOB-*]`, `[PAR-*]`,
+`[CLO-7]`), `some` return types, coroutines.
 
 **2026-10-15, `Mutex` and `RwLock` (ADR-177), the dependency map's step 4 begun.** `std.sync.Mutex`
 and `RwLock` with their guards: a lock word in the value, inline compare-exchange/swap in
