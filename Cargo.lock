@@ -58,6 +58,7 @@ version = "0.1.0"
 dependencies = [
  "ember_branding",
  "ember_diag",
+ "ember_hir",
  "ember_mir",
  "ember_span",
  "ember_types",
