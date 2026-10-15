@@ -10869,6 +10869,16 @@ way: `tools/error_pages.py` (and so the gates) ran `target/release` from the mor
 `target/release`, so the full check now builds release first (the earlier MSVC/clang sweeps today
 ran a stale compiler; the gcc one builds its own and was clean).
 
+**2026-10-15, the dependency map's step 3: iteration over any source (ADR-175).** Generator
+expressions as values, set and map comprehensions, comprehensions/`sum`/`any`/`all`/`enumerate`/
+`zip`/`reversed`/`sorted` over anything a `for` iterates, `range(a, b, step)` as a value,
+`sorted(key=, reverse=)`. STD-19, STD-26 and GRM-27 done; GRM-38 left with a second `for` as a
+value. Speed: D-592 and D-593 **open** (numbers in DEFECTS; probes `bench/probes/
+generator_pipeline` and `stepped_range_value` with C twins). Trap paid: `git add` named folders
+left out `Cargo.lock` when a crate gained a dependency, and every CI build (`--locked`) failed
+(fixed in 506579c): stage with `git add -A` after reading `git status`. Next in the order: `once
+fn` (FN-6, CLO-7, ERR-4), then `Atomic`/`Mutex`/threads, `SoA`.
+
 **2026-10-11 (autopilot, the owner: "go on autopilot now"), EXC-10 and D-552 (ADR-158); D-554 found.**
 CI on `4a28ea6` failed on Linux only: the unix half of `main_args_replace_text_that_is_not_utf8`
 passes four words, so the count is 5 (fixed in `40292d0`, green; its failure text is now escaped,

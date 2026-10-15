@@ -1122,7 +1122,6 @@ impl Parser<'_> {
             // `[GRM-26]` — `{` whose first element is followed by `:` is a map
             // literal, otherwise a set literal; `{}` is an empty map.
             TokenKind::Punct(Punct::LBrace) => {
-                let start = self.span();
                 self.bump();
                 if self.eat_punct(Punct::RBrace) {
                     ExprKind::MapLit(Vec::new())
@@ -1131,14 +1130,12 @@ impl Parser<'_> {
                     if self.eat_punct(Punct::Colon) {
                         let value = self.parse_expr();
                         if self.at_kw(Kw::For) {
-                            self.parse_comp_clauses();
+                            // `[GRM-27]` — the element is the pair `(k, v)`.
+                            let clauses = self.parse_comp_clauses();
                             self.expect_punct(Punct::RBrace);
-                            self.report(Diagnostic::error(
-                                codes::E0900,
-                                start.to(self.prev_span()),
-                                "a map comprehension is not implemented yet",
-                            ));
-                            ExprKind::Error
+                            let pair_span = first.span.to(value.span);
+                            let pair = Expr { id: self.next_id(), kind: ExprKind::Tuple(vec![first, value]), span: pair_span };
+                            ExprKind::Comprehension { kind: ComprehensionKind::Map, element: Box::new(pair), clauses }
                         } else {
                             let mut entries = vec![(first, value)];
                             while self.eat_punct(Punct::Comma) {
@@ -1153,14 +1150,9 @@ impl Parser<'_> {
                             ExprKind::MapLit(entries)
                         }
                     } else if self.at_kw(Kw::For) {
-                        self.parse_comp_clauses();
+                        let clauses = self.parse_comp_clauses();
                         self.expect_punct(Punct::RBrace);
-                        self.report(Diagnostic::error(
-                            codes::E0900,
-                            start.to(self.prev_span()),
-                            "a set comprehension is not implemented yet",
-                        ));
-                        ExprKind::Error
+                        ExprKind::Comprehension { kind: ComprehensionKind::Set, element: Box::new(first), clauses }
                     } else {
                         let mut items = vec![first];
                         while self.eat_punct(Punct::Comma) {

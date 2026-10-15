@@ -589,6 +589,10 @@ pub enum MatchArmBody {
 pub enum ComprehensionKind {
     Array,
     Generator,
+    /// `{e for x in it}`.
+    Set,
+    /// `{k: v for x in it}`, whose element is the pair `(k, v)`.
+    Map,
 }
 
 /// One clause of a comprehension, applied left to right as Python nests them.

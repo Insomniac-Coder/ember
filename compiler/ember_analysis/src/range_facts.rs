@@ -1020,8 +1020,9 @@ impl<'a> Analysis<'a> {
     }
 
     /// `RangeNth(start, step, index)`'s range and relations, when a count of
-    /// the same `start` and `step` towards `stop` bounds `index` and `step`
-    /// is positive: `start <= value <= stop - 1`.
+    /// the same `start` and `step` towards `stop` bounds `index`: with a
+    /// positive `step`, `start <= value <= stop - 1`; with a negative one,
+    /// `stop + 1 <= value <= start` (`range(n, 0, -1)`'s values are positive).
     fn range_nth_value(&self, state: &State, args: &[Operand]) -> Option<(Interval, Vec<(Var, i128, i128)>)> {
         let whole = |operand: &Operand| match operand {
             Operand::Copy(place) | Operand::Move(place) if place.projection.is_empty() => Some(place.local),
@@ -1030,15 +1031,25 @@ impl<'a> Analysis<'a> {
         let [start, step, index] = args else { return None };
         let (start, step, index) = (whole(start)?, whole(step)?, whole(index)?);
         let &(count, _, stop, _) = self.counts.iter().find(|&&(_, s, _, k)| s == start && k == step)?;
-        if self.range(state, Var::Local(step)).lo < 1
-            || self.decide(state, BinOp::Lt, Term::Var(Var::Local(index)), Term::Var(Var::Local(count))) != Some(true)
-        {
+        if self.decide(state, BinOp::Lt, Term::Var(Var::Local(index)), Term::Var(Var::Local(count))) != Some(true) {
             return None;
         }
-        let low = self.range(state, Var::Local(start)).lo;
-        let high = self.range(state, Var::Local(stop)).hi.checked_sub(1)?;
-        let range = Interval { lo: low, hi: high.max(low) };
-        Some((range, vec![(Var::Local(stop), -1, i128::MAX), (Var::Local(start), i128::MAX, 0)]))
+        let step_range = self.range(state, Var::Local(step));
+        let (starts, stops) = (self.range(state, Var::Local(start)), self.range(state, Var::Local(stop)));
+        if step_range.lo >= 1 {
+            let low = starts.lo;
+            let high = stops.hi.checked_sub(1)?;
+            let range = Interval { lo: low, hi: high.max(low) };
+            return Some((range, vec![(Var::Local(stop), -1, i128::MAX), (Var::Local(start), i128::MAX, 0)]));
+        }
+        if step_range.hi <= -1 {
+            let low = stops.lo.checked_add(1)?;
+            let high = starts.hi;
+            let range = Interval { lo: low.min(high), hi: high };
+            // value >= stop + 1, that is stop <= value - 1; value <= start.
+            return Some((range, vec![(Var::Local(stop), i128::MAX, -1), (Var::Local(start), 0, i128::MAX)]));
+        }
+        None
     }
 
     /// Whether `place` is a list or span reached from a local through struct
@@ -1681,8 +1692,8 @@ impl<'a> Analysis<'a> {
                             }
                         }
                         // `[CTL-3b]` — the value at `index` of a count of the
-                        // values from `start` towards `stop` by a positive
-                        // `step`: at most `stop - 1`, at least `start`.
+                        // values from `start` towards `stop` by `step`: between
+                        // them, `stop` left out.
                         FuncRef::Builtin { which: Builtin::RangeNth, .. } if self.tracked[local.0 as usize] => {
                             if let Some((range, rels)) = self.range_nth_value(&state, args) {
                                 self.set_local(&mut state, local, Some(range), rels);

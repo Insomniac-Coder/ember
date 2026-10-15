@@ -5016,6 +5016,39 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-175 — Generator expressions, comprehensions and Python's built-ins over any iterable (`[GRM-27]`, `[GRM-38]`, `[STD-26]`)
+
+**Context.** Comprehensions, `sum`/`any`/`all`, `enumerate`/`zip`/`reversed` and `sorted` took
+only lists, views and ranges; a generator expression was only an argument of `sum`/`any`/`all`;
+set and map comprehensions, a stepped `range` value and `sorted`'s `key`/`reverse` were `E0900`.
+
+**Decision.** One helper, `iterator_of`, says what a `for` loop over a value iterates (`[CTL-1]`):
+the value when it is an iterator, a text's `char`s, a fixed array through a view, a temporary
+collection consumed (`into_iter`), anything else through its `iter()`. On it: a generator
+expression as a value is `it.filter(fn(x) => c).map(fn(x) => e)` built from `Iterator`'s own
+adapters (lazy, allocating nothing; a destructuring pattern binds through a one-arm `match`);
+`enumerate`/`zip`/`reversed` as values are the adapters `enumerate`/`zip`/`rev`, and in a `for`
+header over anything but a collection they fall back to that value; `sum`/`any`/`all` over an
+iterator are its `sum`, `fold` from `start`, `any`, `all`; a comprehension's `for` over an
+iterator is a `next()`-driven loop, keeping the counted loops for ranges and collections; a set or
+map comprehension is the loops that build it (`add`, `insert`), made as the type the program names
+(`[TYP-38]`); `range(a, b, step)` as a value is `Range.stepped`'s `StepRange`, which never steps
+past the type's ends and which a `for` loop iterates as the same counted loop as the header form;
+`sorted(it, key=, reverse=)` sorts a copy in std (`sorted_by_key_if`, `sorted_reverse_if`), each
+key computed once and stable both ways. `synth_method_on` (split from `synth_method_call_on`)
+takes a checked receiver, so a desugaring never checks an expression twice. The range facts give
+a descending stepped loop's values their bounds (`stop < v <= start`), as they did an ascending
+one's.
+
+**Not built.** A generator with a second `for` as a value (its `flat_map` of generators borrowing
+the outer names has no single source relation, `E3065`; `E0900` until then).
+
+**Speed (AUTOPILOT §4), open.** D-592: lambdas in adapters are called through pointers (a
+generator value 2.1x the C loop under clang); D-593: a stepped range held as a value, 1.3x.
+The header-form stepped loop went from 1.3x to 0.92x the checked C twin with the new facts.
+
+---
+
 ## ADR-174 — Effects are inferred on the final checks, before inlining (`[EFF-1]`–`[EFF-6]`, `[EFF-15]`)
 
 **Context.** Part X.1 gives every function an effect set computed from its body and its callees',

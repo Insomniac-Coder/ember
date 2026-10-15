@@ -1523,6 +1523,17 @@ extend[T: Integer] Range[T]:
     pub fn iter(self) -> RangeIter[T]:
         return RangeIter(self.start, self.end)
 
+    ## `[STD-26]` — Python's stepped range, which `range(start, stop, step)` is as a value: from
+    ## `start` by `step` up to, not including, `end`; a negative `step` counts down. A zero step
+    ## is the caller's bug.
+    pub fn stepped(self, step: T) -> StepRange[T]:
+        zero = T.default()
+        if step == zero:
+            panic("range() step must not be zero")
+        if step > zero:
+            return StepRange(self.start, self.end, step, zero.distance_to(step))
+        return StepRange(self.start, self.end, step, step.distance_to(zero))
+
 extend[T: Integer] RangeInclusive[T]:
     pub fn iter(self) -> RangeInclusiveIter[T]:
         return RangeInclusiveIter(self.start, self.end, self.end < self.start)
@@ -1530,6 +1541,39 @@ extend[T: Integer] RangeInclusive[T]:
 extend[T: Integer] RangeFrom[T]:
     pub fn iter(self) -> RangeFromIter[T]:
         return RangeFromIter(self.start, false)
+
+## `[STD-26]` — the iterator `Range.stepped` gives: the next value `at`, the `stop` it never
+## reaches, and the `step` as written. Each step is measured against what is left before it is
+## taken, so it never steps past the type's ends; once done, `at` is `stop`. A `for` loop over one
+## is a counted loop from `at` (`[CTL-3b]`).
+pub struct StepRange[T: Integer]:
+    pub at: T
+    pub stop: T
+    pub step: T
+    stride: T.SpanCount
+
+extend[T: Integer] StepRange[T] implements Iterator:
+    type Item = T
+    type Count = T.SpanCount
+    type Position = T.Position
+
+    fn next(mut self) -> Option[T]:
+        here = self.at
+        if self.step > T.default():
+            if not (here < self.stop):
+                return None
+            if here.distance_to(self.stop) > self.stride:
+                self.at = here.forward_by(self.stride)
+            else:
+                self.at = self.stop
+        else:
+            if not (self.stop < here):
+                return None
+            if self.stop.distance_to(here) > self.stride:
+                self.at = here.back_by(self.stride)
+            else:
+                self.at = self.stop
+        return Some(here)
 
 ## `[CTL-1]` (D-444) — a range is iterable, and consumed as a value its
 ## items are its `iter()`'s: `flat_map(fn(x: int) => 0..x)`.
@@ -2045,6 +2089,34 @@ extend[T: Ord + Clone] Array[T]:
     fn sorted_ord(self) -> Array[T]:
         out = self.clone()
         out.sort_ord()
+        return out
+
+    ## `[STD-26]` — `sorted(it, reverse=r)`: a copy of these elements in order, the largest first
+    ## when `reverse`. Stable both ways: elements that compare equal keep their order (ODR-031).
+    fn sorted_reverse_if(self, reverse: bool) -> Array[T]:
+        out = self.clone()
+        if reverse:
+            order = stable_order(out, fn(a, b) => b.cmp(a))
+            out.apply_order(order)
+        else:
+            out.sort_ord()
+        return out
+
+extend[T: Clone] Array[T]:
+    ## `[STD-26]` — `sorted(it, key=f, reverse=r)`: a copy of these elements ordered by `key`, each
+    ## element's key computed once, as Python's `key=` does, the largest first when `reverse`.
+    ## Stable both ways: elements whose keys are equal keep their order (ODR-031).
+    fn sorted_by_key_if[K: Ord](self, key: fn(T) -> K, reverse: bool) -> Array[T]:
+        keys: Array[K] = []
+        for i in range(self.len()):
+            keys.push(key(self[i]))
+        out = self.clone()
+        if reverse:
+            order = stable_order(keys, fn(a, b) => b.cmp(a))
+            out.apply_order(order)
+        else:
+            order = stable_order(keys, fn(a, b) => a.cmp(b))
+            out.apply_order(order)
         return out
 
 ## `[STD-15]` — the order a stable sort puts `xs` in, as indices: a bottom-up

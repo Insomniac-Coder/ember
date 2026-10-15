@@ -598,6 +598,53 @@ fn attribute_names(attr: &ast::Attribute, word: &str) -> bool {
     })] if segments.len() == 1 && segments[0].name.is(word))
 }
 
+/// `[GRM-38]` — `fn(x) => body` for a comprehension clause binding `pattern`: a name binds the
+/// item directly; any other irrefutable pattern destructures it, `fn($item) => match $item: p => body`.
+fn clause_lambda(pattern: &ast::Pattern, body: ast::Expr, span: Span) -> ast::Expr {
+    let infer = || ast::TypeExpr { id: ast::NodeId::DUMMY, kind: ast::TypeKind::Infer, span };
+    let param = |name: Symbol| ast::Param {
+        id: ast::NodeId::DUMMY,
+        mode: ast::Mode::Borrow,
+        kind: ast::ParamKind::Named { name: ast::Ident { name, span }, ty: infer() },
+        default: None,
+        span,
+    };
+    let (name, body) = match &pattern.kind {
+        ast::PatternKind::Bind { name, by_ref: false, mutable: false, sub: None } => (name.name, body),
+        _ => {
+            let item = Symbol::intern("$item");
+            let scrutinee = ast::Expr {
+                id: ast::NodeId::DUMMY,
+                kind: ast::ExprKind::Path { segments: vec![ast::Ident { name: item, span }] },
+                span,
+            };
+            let arm = ast::MatchArm {
+                id: ast::NodeId::DUMMY,
+                pattern: pattern.clone(),
+                guard: None,
+                body: ast::MatchArmBody::Expr(body),
+                span,
+            };
+            let matched = ast::Expr {
+                id: ast::NodeId::DUMMY,
+                kind: ast::ExprKind::Match { scrutinee: Box::new(scrutinee), arms: vec![arm] },
+                span,
+            };
+            (item, matched)
+        }
+    };
+    ast::Expr {
+        id: ast::NodeId::DUMMY,
+        kind: ast::ExprKind::Lambda(ast::Lambda {
+            is_owned: false,
+            params: vec![param(name)],
+            ret: None,
+            body: ast::LambdaBody::Expr(Box::new(body)),
+        }),
+        span,
+    }
+}
+
 fn fp_names_contract(attr: &ast::Attribute) -> bool {
     matches!(attr.args.as_slice(), [ast::AttrArg::Expr(ast::Expr {
         kind: ast::ExprKind::Path { segments }, ..
@@ -21209,8 +21256,8 @@ impl<'a> Checker<'a> {
 
     /// `[STD-26]` — `range(stop)` is `0..stop` and `range(start, stop)` is
     /// `start..stop`, as values as well as in a `for` header. A stepped
-    /// `range` is a counted loop in a `for` header; as a value it needs a
-    /// stepped range type, which is not built.
+    /// `range` is a counted loop in a `for` header and, as a value,
+    /// `Range.stepped`'s iterator.
     fn synth_range_call(&mut self, args: &[ast::Arg], span: Span) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         if args.iter().any(|arg| arg.name.is_some()) || !(1..=3).contains(&args.len()) {
@@ -21223,21 +21270,23 @@ impl<'a> Checker<'a> {
                 let end = self.synth(&stop.value);
                 self.unify_range_ends(start, end)
             }
-            [start, stop] => self.range_ends(&start.value, &stop.value),
-            _ => {
-                self.sink.emit(
-                    Diagnostic::error(codes::E0900, span, "a `range` with a step as a value is not implemented yet")
-                        .note("it is built as the head of a `for` loop [STD-26]"),
-                );
-                return error;
-            }
+            [start, stop, ..] => self.range_ends(&start.value, &stop.value),
+            [] => return error,
         };
         if !self.types.is_integral(start.ty) && start.ty != self.common.error {
             let shown = self.types.display(start.ty);
             self.error(codes::E2020, span, format!("`range` counts over integers, not `{shown}`"));
             return error;
         }
-        self.range_struct("std.core.Range", vec![start, end], span)
+        let range = self.range_struct("std.core.Range", vec![start, end], span);
+        match args {
+            // `range(start, stop, step)` is `(start..stop).stepped(step)`.
+            [_, _, step] if range.ty != self.common.error => {
+                let name = ast::Ident { name: Symbol::intern("stepped"), span };
+                self.synth_method_on(range, span, name, &[], std::slice::from_ref(step), None, span)
+            }
+            _ => range,
+        }
     }
 
     /// `[CTL-3]` (ODR-027) — `for x in r` over a range value counts over a
@@ -21880,15 +21929,9 @@ impl<'a> Checker<'a> {
                         TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Span { elem, mutable: false } => {
                             sources.push((value, elem));
                         }
-                        _ => {
-                            let shown = self.types.display(value.ty);
-                            self.error(
-                                codes::E0900,
-                                arg.span,
-                                format!("`{name}` over a `{shown}` is not implemented yet"),
-                            );
-                            return None;
-                        }
+                        // Over anything else, the lazy iterator `enumerate`, `zip` or `reversed`
+                        // is as a value, iterated through `next` (`[STD-26]`, `[CTL-1]`).
+                        _ => return self.check_for_iterator(label, pattern, iter, body, else_block, span),
                     }
                 }
                 // `[CTL-3b]` — `enumerate(xs)` and `zip(xs, ys)` are
@@ -21965,7 +22008,23 @@ impl<'a> Checker<'a> {
         else_block: &Option<ast::Block>,
         span: Span,
     ) -> Option<Stmt> {
-        let mut values = [self.synth(start), self.synth(stop), self.synth(step)];
+        let values = [self.synth(start), self.synth(stop), self.synth(step)];
+        self.check_for_stepped_values(label, pattern, values, step_by, body, else_block, span)
+    }
+
+    /// `check_for_stepped_range` on its three values, checked already.
+    #[allow(clippy::too_many_arguments)]
+    fn check_for_stepped_values(
+        &mut self,
+        label: Option<ast::Ident>,
+        pattern: &ast::Pattern,
+        mut values: [Expr; 3],
+        step_by: bool,
+        body: &ast::Block,
+        else_block: &Option<ast::Block>,
+        span: Span,
+    ) -> Option<Stmt> {
+        let start_span = values[0].span;
         let typed = values.iter().find(|v| !self.types.is_untyped_literal(v.ty)).map(|v| v.ty);
         let ty = typed.unwrap_or(self.common.i64);
         for value in &mut values {
@@ -21974,7 +22033,7 @@ impl<'a> Checker<'a> {
         }
         if !self.types.is_integral(ty) && ty != self.common.error {
             let shown = self.types.display(ty);
-            self.error(codes::E2020, start.span, format!("cannot count over `{shown}`"));
+            self.error(codes::E2020, start_span, format!("cannot count over `{shown}`"));
             return None;
         }
         let usize_ty = self.common.usize;
@@ -23568,6 +23627,165 @@ impl<'a> Checker<'a> {
     /// element onto a new `Array`, or adds it (`sum`), or tests it and stops
     /// the whole nest (`any`, `all`). The result is a block expression, so the
     /// comprehension is one expression.
+    /// `[GRM-38]` — a generator expression as a value: `[GRM-27]`'s pipeline without the
+    /// `collect`, built from `Iterator`'s own adapters, so it is a lazy iterator that borrows what
+    /// it iterates and allocates nothing (the adapters take their functions as type parameters).
+    /// `(e for x in it if c)` is `it.filter(fn(x) => c).map(fn(x) => e)`. A source that is not an
+    /// iterator is iterated as a `for` loop would be (`[CTL-1]`): text by its `char`s, anything
+    /// else through its `iter()`.
+    fn synth_generator(&mut self, element: &ast::Expr, clauses: &[ast::CompClause], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let [ast::CompClause::For { pattern, iter }, rest @ ..] = clauses else {
+            self.error(codes::E0100, span, "a generator expression begins with a `for` clause");
+            return error;
+        };
+        let source = self.synth_committed(iter);
+        if source.ty == self.common.error {
+            return error;
+        }
+        let Some(mut pipeline) = self.iterator_of(source, iter.span) else { return error };
+        let conditions = rest.iter().take_while(|clause| matches!(clause, ast::CompClause::If(_))).count();
+        for clause in &rest[..conditions] {
+            let ast::CompClause::If(condition) = clause else { unreachable!("counted above") };
+            let lambda = clause_lambda(pattern, condition.clone(), span);
+            pipeline = self.call_adapter(pipeline, "filter", lambda, span);
+            if pipeline.ty == self.common.error {
+                return error;
+            }
+        }
+        if conditions < rest.len() {
+            // A second `for` is a `flat_map` over generators, whose inner iterators borrow both
+            // their source and the outer clause's names: the region analysis cannot yet give
+            // `FlatMap.next`'s result one source relation for that.
+            self.error(
+                codes::E0900,
+                span,
+                "a generator expression with more than one `for` is not implemented yet as a value",
+            );
+            return error;
+        }
+        let lambda = clause_lambda(pattern, element.clone(), span);
+        self.call_adapter(pipeline, "map", lambda, span)
+    }
+
+    /// `[GRM-27]` — `{e for x in it if c}` is a `Set` and `{k: v for x in it if c}` a `Map`, built as
+    /// the loops that say so would build them: a new collection, the clauses as `for` and `if`
+    /// statements nested left to right, and `add(e)` or `insert(k, v)` innermost (a later key
+    /// keeps the first one's position and takes its value, as a map literal's does, `[TYP-38]`).
+    fn synth_collection_comprehension(
+        &mut self,
+        kind: ast::ComprehensionKind,
+        element: &ast::Expr,
+        clauses: &[ast::CompClause],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> Expr {
+        let built = Symbol::intern("$built");
+        let ident = |name: Symbol| ast::Ident { name, span };
+        let expr = |kind: ast::ExprKind| ast::Expr { id: ast::NodeId::DUMMY, kind, span };
+        let stmt = |kind: ast::StmtKind| ast::Stmt { id: ast::NodeId::DUMMY, attrs: Vec::new(), kind, span };
+        let block = |stmts: Vec<ast::Stmt>| ast::Block { id: ast::NodeId::DUMMY, stmts, span };
+        let path = |name: Symbol| expr(ast::ExprKind::Path { segments: vec![ident(name)] });
+        let arg = |value: ast::Expr| ast::Arg { name: None, value, span };
+        let (constructor, method, args) = match (kind, &element.kind) {
+            (ast::ComprehensionKind::Map, ast::ExprKind::Tuple(pair)) if pair.len() == 2 => {
+                ("Map", "insert", vec![arg(pair[0].clone()), arg(pair[1].clone())])
+            }
+            _ => ("Set", "add", vec![arg(element.clone())]),
+        };
+        let mut inner = stmt(ast::StmtKind::Expr(expr(ast::ExprKind::MethodCall {
+            recv: Box::new(path(built)),
+            name: ident(Symbol::intern(method)),
+            generic_args: Vec::new(),
+            args,
+        })));
+        for clause in clauses.iter().rev() {
+            inner = match clause {
+                ast::CompClause::For { pattern, iter } => stmt(ast::StmtKind::For {
+                    label: None,
+                    pattern: pattern.clone(),
+                    iter: iter.clone(),
+                    body: block(vec![inner]),
+                    else_block: None,
+                }),
+                ast::CompClause::If(condition) => stmt(ast::StmtKind::If(ast::IfStmt {
+                    cond: ast::Condition::Expr(condition.clone()),
+                    then_block: block(vec![inner]),
+                    else_block: None,
+                })),
+            };
+        }
+        let create = stmt(ast::StmtKind::Assign {
+            targets: vec![path(built)],
+            op: None,
+            value: expr(ast::ExprKind::Call { callee: Box::new(path(Symbol::intern(constructor))), args: Vec::new() }),
+        });
+        self.scopes.push(HashMap::new());
+        let mut stmts = Vec::new();
+        // A collection the program names the type of is made as that type: `labels: Map[str,
+        // int] = {…}` holds `str`s (`[TYP-38]`).
+        match expected.filter(|ty| self.collection_named(*ty).is_some()) {
+            Some(ty) => {
+                let ast::StmtKind::Assign { value, .. } = &create.kind else { unreachable!("built above") };
+                let init = self.check_expr(value, ty);
+                let local = self.declare(Some(built), ty, span);
+                stmts.push(Stmt::Let { local, init: Some(init) });
+            }
+            None => self.check_stmt(&create, &mut stmts),
+        }
+        self.check_stmt(&inner, &mut stmts);
+        let value = self.synth(&path(built));
+        self.scopes.pop();
+        if value.ty == self.common.error {
+            return value;
+        }
+        Expr { ty: value.ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(value) }, span }
+    }
+
+    /// `[CTL-1]` — what a `for` loop over `source` iterates: the value itself when it has
+    /// `next()`, a text's `char`s, or what its `iter()` gives.
+    fn iterator_of(&mut self, source: Expr, span: Span) -> Option<Expr> {
+        let referent = match *self.types.kind(source.ty) {
+            TyKind::Ref { inner, .. } => inner,
+            _ => source.ty,
+        };
+        if self.lookup_method(referent, Symbol::intern("next")).is_some()
+            || self.span_iterator(referent).is_some()
+            || self.arena_array_iterator(referent).is_some()
+            || self.arena_map_iterator(referent).is_some()
+            || self.implements(referent, Symbol::intern("std.core.Iterator"))
+        {
+            return Some(source);
+        }
+        // A fixed array is iterated through a view of it.
+        let source = match *self.types.kind(referent) {
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } if is_place(&source.kind) => {
+                let source = self.read_through(source);
+                let view = self.types.intern(TyKind::Span { elem, mutable: false });
+                self.coerce(source, view)
+            }
+            _ => source,
+        };
+        // A temporary that owns its items has no place to lend them from: it is consumed.
+        let method = if self.is_text(referent) {
+            "chars"
+        } else if !is_place(&source.kind)
+            && matches!(self.types.kind(source.ty), TyKind::Vec { .. } | TyKind::Array { .. } | TyKind::ArrayN { .. })
+        {
+            "into_iter"
+        } else {
+            "iter"
+        };
+        let name = ast::Ident { name: Symbol::intern(method), span };
+        let iterator = self.synth_method_on(source, span, name, &[], &[], None, span);
+        (iterator.ty != self.common.error).then_some(iterator)
+    }
+
+    fn call_adapter(&mut self, receiver: Expr, adapter: &str, lambda: ast::Expr, span: Span) -> Expr {
+        let name = ast::Ident { name: Symbol::intern(adapter), span };
+        self.synth_method_on(receiver, span, name, &[], &[ast::Arg { name: None, value: lambda, span }], None, span)
+    }
+
     fn synth_gather(&mut self, element: &ast::Expr, clauses: &[ast::CompClause], gather: Gather<'_>, span: Span) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         let loops = clauses.iter().filter(|c| matches!(c, ast::CompClause::For { .. })).count();
@@ -23739,15 +23957,7 @@ impl<'a> Checker<'a> {
         }
         let elem = match *self.types.kind(value.ty) {
             TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Span { elem, mutable: false } => elem,
-            _ => {
-                let shown = self.types.display(value.ty);
-                self.error(
-                    codes::E0900,
-                    iter.span,
-                    format!("a comprehension over a `{shown}` is not implemented yet"),
-                );
-                return None;
-            }
+            _ => return self.gather_for_iterator(element, clauses, index, gather, acc, loops, element_ty, pattern, value, iter.span, stmts, span),
         };
         let value = self.keep_alive(value, stmts);
         let span_ty = self.types.intern(TyKind::Span { elem, mutable: false });
@@ -23799,6 +24009,86 @@ impl<'a> Checker<'a> {
         Some(())
     }
 
+    /// `[GRM-27]` — a comprehension's `for` over anything else a `for` loop iterates
+    /// (`[CTL-1]`): `while true: match it.next(): Some(p) => …; None => break`.
+    #[allow(clippy::too_many_arguments)]
+    fn gather_for_iterator(
+        &mut self,
+        element: &ast::Expr,
+        clauses: &[ast::CompClause],
+        index: usize,
+        gather: &Gather<'_>,
+        acc: LocalId,
+        loops: usize,
+        element_ty: &mut Option<Ty>,
+        pattern: &ast::Pattern,
+        value: Expr,
+        iter_span: Span,
+        stmts: &mut Vec<Stmt>,
+        span: Span,
+    ) -> Option<()> {
+        let iterator = self.iterator_of(value, iter_span)?;
+        let it_ty = iterator.ty;
+        let it_local = self.declare(None, it_ty, iter_span);
+        stmts.push(Stmt::Let { local: it_local, init: Some(iterator) });
+        let receiver = Expr { ty: it_ty, kind: ExprKind::Local(it_local), span: iter_span };
+        let next = ast::Ident { name: Symbol::intern("next"), span: iter_span };
+        let call = self.synth_method_on(receiver, iter_span, next, &[], &[], None, iter_span);
+        if call.ty == self.common.error {
+            return None;
+        }
+        let TyKind::Enum(option_id) = *self.types.kind(call.ty) else {
+            let shown = self.types.display(call.ty);
+            self.error(codes::E2020, iter_span, format!("`next` must return an `Option`, not `{shown}`"));
+            return None;
+        };
+        let item_ty = self.types.enum_def(option_id).variants[1].fields[0].ty;
+        let mut prologue = Vec::new();
+        let payload = if matches!(pattern.kind, ast::PatternKind::Bind { .. }) {
+            let bound = self.declare(binding_name(pattern), item_ty, pattern.span);
+            hir::Pattern { ty: item_ty, kind: hir::PatternKind::Bind { local: bound, sub: None, by_ref: None }, span: pattern.span }
+        } else if matches!(self.types.kind(item_ty), TyKind::Ref { .. }) {
+            let bound = self.declare(None, item_ty, pattern.span);
+            self.bind_borrowed_loop_pattern(pattern, bound, item_ty, &mut prologue);
+            hir::Pattern { ty: item_ty, kind: hir::PatternKind::Bind { local: bound, sub: None, by_ref: None }, span: pattern.span }
+        } else {
+            self.check_pattern(pattern, item_ty)
+        };
+        prologue.extend(self.gather_level(element, clauses, index + 1, gather, acc, loops, element_ty, span)?);
+        let some_arm = hir::MatchArm {
+            pattern: hir::Pattern {
+                ty: call.ty,
+                kind: hir::PatternKind::Variant { enum_id: option_id, variant: 1, fields: vec![payload] },
+                span: pattern.span,
+            },
+            guard: None,
+            body: hir::MatchArmBody::Block(Block { stmts: prologue, span }),
+            span,
+        };
+        let none_arm = hir::MatchArm {
+            pattern: hir::Pattern {
+                ty: call.ty,
+                kind: hir::PatternKind::Variant { enum_id: option_id, variant: 0, fields: Vec::new() },
+                span,
+            },
+            guard: None,
+            body: hir::MatchArmBody::Block(Block { stmts: vec![Stmt::Break { depth: 0 }], span }),
+            span,
+        };
+        let matched = Expr {
+            ty: self.common.void,
+            kind: ExprKind::Match { scrutinee: Box::new(call), arms: vec![some_arm, none_arm] },
+            span,
+        };
+        let bool_ty = self.common.bool_;
+        stmts.push(Stmt::While {
+            cond: Expr { ty: bool_ty, kind: ExprKind::Bool(true), span },
+            body: Block { stmts: vec![Stmt::Expr(matched)], span },
+            else_block: None,
+        });
+        Some(())
+    }
+
     /// A comprehension clause's iterable when it is a range: `a..b`, `a..=b`,
     /// `range(n)` or `range(a, b)`, typed as a `for` over it would be. The
     /// outer `None` is an error already reported; `Some(None)` is not a range.
@@ -23816,14 +24106,8 @@ impl<'a> Checker<'a> {
                     [start, stop] if start.name.is_none() && stop.name.is_none() => {
                         (Some(&start.value), &stop.value, false)
                     }
-                    _ => {
-                        self.error(
-                            codes::E0900,
-                            iter.span,
-                            "a `range` with a step in a comprehension is not implemented yet",
-                        );
-                        return None;
-                    }
+                    // A stepped `range` is `Range.stepped`'s iterator, iterated through `next`.
+                    _ => return Some(None),
                 }
             }
             _ => return Some(None),
@@ -24421,9 +24705,12 @@ impl<'a> Checker<'a> {
     /// collection's elements. `key=` and `reverse=` are not built yet.
     fn synth_sorted(&mut self, args: &[ast::Arg], span: Span) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        if let Some(named) = args.iter().find_map(|a| a.name) {
-            self.error(codes::E0900, named.span, format!("`sorted`'s `{}` is not implemented yet", named.name));
+        if let Some(named) = args.iter().filter_map(|a| a.name).find(|n| !n.name.is("key") && !n.name.is("reverse")) {
+            self.error(codes::E2020, named.span, format!("`sorted` has no argument named `{}`: it takes `key` and `reverse`", named.name));
             return error;
+        }
+        if args.iter().any(|a| a.name.is_some()) {
+            return self.synth_sorted_keyed(args, span);
         }
         if args.len() != 1 {
             self.error(codes::E2020, span, format!("`sorted` takes one iterable, found {} arguments", args.len()));
@@ -24449,10 +24736,11 @@ impl<'a> Checker<'a> {
                 let value_span = value.span;
                 return self.synth_registered_method(value, value_span, name, &[], Vec::new(), span);
             }
+            // Anything else a `for` loop iterates: its items, in an `Array`, sorted.
             _ => {
-                let shown = self.types.display(value.ty);
-                self.error(codes::E0900, args[0].value.span, format!("`sorted` of a `{shown}` is not implemented yet"));
-                return error;
+                let Some(items) = self.items_array(value, args[0].value.span) else { return error };
+                let name = ast::Ident { name: Symbol::intern("sorted"), span };
+                return self.synth_method_on(items, span, name, &[], &[], None, span);
             }
         };
         // D-256 — as `xs.sorted()` does: the compiler's own sort takes `Copy`
@@ -24477,7 +24765,10 @@ impl<'a> Checker<'a> {
             } else if matches!(self.types.kind(value.ty), TyKind::Vec { .. }) {
                 self.error(codes::E2040, span, format!("`{shown}` does not implement `Clone`, which `sorted` needs"));
             } else {
-                self.error(codes::E0900, span, format!("`sorted` of a view of `{shown}` values is not implemented yet"));
+                // A view of values with an `Ord` of their own: cloned into an `Array`, sorted.
+                let Some(items) = self.items_array(value, span) else { return error };
+                let name = ast::Ident { name: Symbol::intern("sorted"), span };
+                return self.synth_method_on(items, span, name, &[], &[], None, span);
             }
             return error;
         }
@@ -24491,6 +24782,75 @@ impl<'a> Checker<'a> {
         };
         let ty = self.types.intern(TyKind::Vec { elem, text: false });
         Expr { ty, kind: ExprKind::Builtin { which: Builtin::ArraySorted { elem }, args: vec![value] }, span }
+    }
+
+    /// `[STD-26]` — `sorted(it, key=None, reverse=false)`: a new `Array` of the items, ordered by
+    /// `key` when it is given, the largest first when `reverse` is; stable either way. The items
+    /// are copied out of a collection or view as `sorted(it)` copies them.
+    fn synth_sorted_keyed(&mut self, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let positional: Vec<&ast::Arg> = args.iter().filter(|a| a.name.is_none()).collect();
+        let named = |name: &str| args.iter().find(|a| a.name.is_some_and(|n| n.name.is(name)));
+        let (key, reverse) = (named("key"), named("reverse"));
+        if positional.len() != 1 || args.len() != 1 + usize::from(key.is_some()) + usize::from(reverse.is_some()) {
+            self.error(codes::E2020, span, "`sorted` takes one iterable, then `key` and `reverse` by name");
+            return error;
+        }
+        let value = self.synth_committed(&positional[0].value);
+        if value.ty == self.common.error {
+            return error;
+        }
+        let value = self.read_through(value);
+        let items = if matches!(self.types.kind(value.ty), TyKind::Vec { text: false, .. }) {
+            value
+        } else {
+            match self.items_array(value, positional[0].value.span) {
+                Some(items) => items,
+                None => return error,
+            }
+        };
+        let reverse_arg = match reverse {
+            Some(arg) => ast::Arg { name: None, value: arg.value.clone(), span: arg.span },
+            None => ast::Arg {
+                name: None,
+                value: ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Lit(ast::Literal::Bool(false)), span },
+                span,
+            },
+        };
+        let (method, call_args) = match key {
+            Some(key) => ("sorted_by_key_if", vec![ast::Arg { name: None, value: key.value.clone(), span: key.span }, reverse_arg]),
+            None => ("sorted_reverse_if", vec![reverse_arg]),
+        };
+        self.extend_instance_at_use(items.ty);
+        let name = ast::Ident { name: Symbol::intern(method), span };
+        let was = std::mem::replace(&mut self.routed_call, true);
+        let call = self.synth_method_on(items, span, name, &[], &call_args, None, span);
+        self.routed_call = was;
+        call
+    }
+
+    /// The items a `for` loop over `value` takes, in a new `Array`: a collection's or a view's
+    /// elements copied (or cloned) out of it, an iterator's as it gives them.
+    fn items_array(&mut self, value: Expr, span: Span) -> Option<Expr> {
+        // A collection's or a view's iterator lends its elements: they are copied out, or cloned.
+        let lent = match *self.types.kind(value.ty) {
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Span { elem, .. } | TyKind::Vec { elem, .. } => {
+                Some(if self.types.is_copy(elem) { "copied" } else { "cloned" })
+            }
+            _ if self.collection_named(value.ty).is_some() => Some("cloned"),
+            _ => None,
+        };
+        let iterator = self.iterator_of(value, span)?;
+        let method = |name: &str| ast::Ident { name: Symbol::intern(name), span };
+        let iterator = match lent {
+            Some(owned) => self.synth_method_on(iterator, span, method(owned), &[], &[], None, span),
+            None => iterator,
+        };
+        if iterator.ty == self.common.error {
+            return None;
+        }
+        let array = self.synth_method_on(iterator, span, method("to_array"), &[], &[], None, span);
+        (array.ty != self.common.error).then_some(array)
     }
 
     /// Whether `sort` can order values of `ty` (`[TYP-37]`): scalars and text.
@@ -25190,12 +25550,67 @@ impl<'a> Checker<'a> {
     /// `[STD-26]`, `[MOD-5]` (0.9.9) — the prelude's `len`, `min`, `max`,
     /// `abs`, `clamp`, `sum`, `any` and `all` as expressions. `None` for any
     /// other name.
+    /// `[STD-26]` — `enumerate(it, start=0)`, `zip(a, b)` and `reversed(x)` as values: lazy
+    /// iterators, as Python 3's are, over anything a `for` loop iterates (`[CTL-1]`):
+    /// `it.enumerate(start)`, `a.zip(b)` and `x.rev()` on what the loop would iterate. In a `for`
+    /// header they are counted loops instead (`check_for_builtin`).
+    fn synth_lazy_builtin(&mut self, name: &str, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let positional: Vec<&ast::Expr> = args.iter().filter(|a| a.name.is_none()).map(|a| &a.value).collect();
+        let named: Vec<ast::Arg> = args.iter().filter(|a| a.name.is_some()).cloned().collect();
+        let arity = if name == "zip" { 2 } else { 1 };
+        let named_ok = named.len() <= 1
+            && named.iter().all(|a| name == "enumerate" && a.name.is_some_and(|n| n.name.is("start")));
+        if positional.len() != arity || !named_ok {
+            let wanted = if name == "enumerate" { "one iterable and an optional `start`" } else if arity == 2 { "two iterables" } else { "one iterable" };
+            self.error(codes::E2020, span, format!("`{name}` takes {wanted}"));
+            return error;
+        }
+        let first = self.synth_committed(positional[0]);
+        if first.ty == self.common.error {
+            return error;
+        }
+        let Some(first) = self.iterator_of(first, positional[0].span) else { return error };
+        let method = |name: &str| ast::Ident { name: Symbol::intern(name), span };
+        match name {
+            "enumerate" => self.synth_method_on(first, span, method("enumerate"), &[], &named, None, span),
+            "reversed" => self.synth_method_on(first, span, method("rev"), &[], &[], None, span),
+            _ => {
+                let second = self.synth_committed(positional[1]);
+                if second.ty == self.common.error {
+                    return error;
+                }
+                let Some(second) = self.iterator_of(second, positional[1].span) else { return error };
+                // The second iterator, checked, is handed to `zip` through a hidden local.
+                let hidden = Symbol::intern("$zipped");
+                self.scopes.push(HashMap::new());
+                let local = self.declare(Some(hidden), second.ty, span);
+                let path = ast::Expr {
+                    id: ast::NodeId::DUMMY,
+                    kind: ast::ExprKind::Path { segments: vec![ast::Ident { name: hidden, span }] },
+                    span,
+                };
+                let call = self.synth_method_on(first, span, method("zip"), &[], &[ast::Arg { name: None, value: path, span }], None, span);
+                self.scopes.pop();
+                if call.ty == self.common.error {
+                    return error;
+                }
+                let block = Block { stmts: vec![Stmt::Let { local, init: Some(second) }], span };
+                Expr { ty: call.ty, kind: ExprKind::Block { block, value: Box::new(call) }, span }
+            }
+        }
+    }
+
     fn synth_python_builtin(&mut self, name: &str, args: &[ast::Arg], span: Span) -> Option<Expr> {
         if !matches!(
             name,
             "len" | "min" | "max" | "abs" | "clamp" | "sum" | "any" | "all" | "sorted" | "input" | "range"
+                | "enumerate" | "zip" | "reversed"
         ) {
             return None;
+        }
+        if matches!(name, "enumerate" | "zip" | "reversed") {
+            return Some(self.synth_lazy_builtin(name, args, span));
         }
         if name == "range" {
             return Some(self.synth_range_call(args, span));
@@ -25417,14 +25832,60 @@ impl<'a> Checker<'a> {
                 }
                 let elem = match *self.types.kind(iterable.ty) {
                     TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Span { elem, mutable: false } => elem,
+                    // `[STD-26]` — over anything else a `for` loop iterates, the iterator's own
+                    // `sum`, `any` and `all`; `sum(it, start)` adds from `start`, left to right.
                     _ => {
-                        let shown = self.types.display(iterable.ty);
-                        self.error(
-                            codes::E0900,
-                            positional[0].span,
-                            format!("`{name}` over a `{shown}` is not implemented yet"),
-                        );
-                        return Some(error);
+                        let Some(iterator) = self.iterator_of(iterable, positional[0].span) else { return Some(error) };
+                        let start = args.iter().find(|a| a.name.is_some()).map(|a| &a.value).or(positional.get(1).copied());
+                        let path = |name: &str| ast::Expr {
+                            id: ast::NodeId::DUMMY,
+                            kind: ast::ExprKind::Path { segments: vec![ast::Ident { name: Symbol::intern(name), span }] },
+                            span,
+                        };
+                        let lambda = |params: &[&str], body: ast::Expr| ast::Expr {
+                            id: ast::NodeId::DUMMY,
+                            kind: ast::ExprKind::Lambda(ast::Lambda {
+                                is_owned: false,
+                                params: params
+                                    .iter()
+                                    .map(|name| ast::Param {
+                                        id: ast::NodeId::DUMMY,
+                                        mode: ast::Mode::Borrow,
+                                        kind: ast::ParamKind::Named {
+                                            name: ast::Ident { name: Symbol::intern(name), span },
+                                            ty: ast::TypeExpr { id: ast::NodeId::DUMMY, kind: ast::TypeKind::Infer, span },
+                                        },
+                                        default: None,
+                                        span,
+                                    })
+                                    .collect(),
+                                ret: None,
+                                body: ast::LambdaBody::Expr(Box::new(body)),
+                            }),
+                            span,
+                        };
+                        let method = |name: &str| ast::Ident { name: Symbol::intern(name), span };
+                        let arg = |value: ast::Expr| ast::Arg { name: None, value, span };
+                        return Some(match (name, start) {
+                            ("sum", None) => self.synth_method_on(iterator, span, method("sum"), &[], &[], None, span),
+                            ("sum", Some(start)) => {
+                                let add = ast::Expr {
+                                    id: ast::NodeId::DUMMY,
+                                    kind: ast::ExprKind::Binary {
+                                        op: ast::BinOp::Add,
+                                        lhs: Box::new(path("$total")),
+                                        rhs: Box::new(path("$item")),
+                                    },
+                                    span,
+                                };
+                                let args = [arg(start.clone()), arg(lambda(&["$total", "$item"], add))];
+                                self.synth_method_on(iterator, span, method("fold"), &[], &args, None, span)
+                            }
+                            _ => {
+                                let args = [arg(lambda(&["$item"], path("$item")))];
+                                self.synth_method_on(iterator, span, method(name), &[], &args, None, span)
+                            }
+                        });
                     }
                 };
                 let summing = name == "sum";
@@ -25713,6 +26174,27 @@ impl<'a> Checker<'a> {
         }
         if let Some((shape, bound)) = self.range_parts(iterable.ty) {
             return self.check_for_range_value(label, pattern, (iterable, shape, bound), body, else_block, span);
+        }
+        // `[STD-26]`, `[CTL-3b]` — a stepped range value is a counted loop too, from where it
+        // has got to: its `at`, `stop` and `step`, read once from a copy of it.
+        if let TyKind::Struct(id) = *self.types.kind(iterable.ty)
+            && self.types.struct_def(id).origin.as_ref().is_some_and(|(origin, _)| origin.as_str() == "std.core.StepRange")
+        {
+            let def = self.types.struct_def(id);
+            let field = |name: &str| def.fields.iter().position(|f| f.name.as_str() == name).map(|i| (i, def.fields[i].ty));
+            if let (Some(at), Some(stop), Some(step)) = (field("at"), field("stop"), field("step")) {
+                let span = iterable.span;
+                let ty = iterable.ty;
+                let copy = self.declare(None, ty, span);
+                let read = |(index, field_ty): (usize, Ty)| Expr {
+                    ty: field_ty,
+                    kind: ExprKind::Field { base: Box::new(Expr { ty, kind: ExprKind::Local(copy), span }), index },
+                    span,
+                };
+                let values = [read(at), read(stop), read(step)];
+                let looped = self.check_for_stepped_values(label, pattern, values, false, body, else_block, span)?;
+                return Some(Stmt::Block(Block { stmts: vec![Stmt::Let { local: copy, init: Some(iterable) }, looped], span }));
+            }
         }
         let referent = match *self.types.kind(iterable.ty) {
             TyKind::Ref { inner, .. } => inner,
@@ -28519,13 +29001,11 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Comprehension { kind: ast::ComprehensionKind::Array, element, clauses } => {
                 self.synth_gather(element, clauses, Gather::Array, span)
             }
-            ast::ExprKind::Comprehension { kind: ast::ComprehensionKind::Generator, .. } => {
-                self.error(
-                    codes::E0900,
-                    span,
-                    "a generator expression is only implemented as the argument of `sum`, `any` or `all` so far",
-                );
-                Expr { ty: self.common.error, kind: ExprKind::Error, span }
+            ast::ExprKind::Comprehension { kind: ast::ComprehensionKind::Generator, element, clauses } => {
+                self.synth_generator(element, clauses, span)
+            }
+            ast::ExprKind::Comprehension { kind: kind @ (ast::ComprehensionKind::Set | ast::ComprehensionKind::Map), element, clauses } => {
+                self.synth_collection_comprehension(*kind, element, clauses, expected, span)
             }
 
             // `[GRM-16]` — a jump has type `!` and produces no value. Every
@@ -34129,6 +34609,22 @@ impl<'a> Checker<'a> {
             }
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
+        self.synth_method_on(receiver, recv.span, name, generic_args, args, expected, span)
+    }
+
+    /// The rest of a method call, once its receiver is checked: what `recv.name(args)` means for
+    /// a receiver of this type. A desugaring that has a receiver in hand comes here directly.
+    #[allow(clippy::too_many_arguments)]
+    fn synth_method_on(
+        &mut self,
+        receiver: Expr,
+        recv_span: Span,
+        name: ast::Ident,
+        generic_args: &[ast::GenericArg],
+        args: &[ast::Arg],
+        expected: Option<Ty>,
+        span: Span,
+    ) -> Expr {
         // `[CELL-7]` — a guard reads through to its contents, so a method on
         // `T` is found through `Ref[T]`/`RefMut[T]`. Unwrap first; the
         // unwrapped receiver derefs through the guard's field, keeping the
@@ -34209,7 +34705,7 @@ impl<'a> Checker<'a> {
             && self.interface_methods.contains_key(&(receiver.ty, interface, name.name))
         {
             self.named_interface_call = Some((interface, span));
-            return self.synth_registered_method(receiver, recv.span, name, args, explicit, span);
+            return self.synth_registered_method(receiver, recv_span, name, args, explicit, span);
         }
         // `[WK-3]` — a weak handle exposes only `upgrade`; it must not
         // auto-dereference to the object because that would make a dead
@@ -34307,14 +34803,14 @@ impl<'a> Checker<'a> {
             }
             if receiver_mode == Mode::Mut {
                 if dyn_box {
-                    let borrowed = self.pass_receiver_to(receiver, receiver_mode, def, recv.span);
+                    let borrowed = self.pass_receiver_to(receiver, receiver_mode, def, recv_span);
                     let TyKind::Ref { mutable: true, inner } = self.types.kind(borrowed.ty) else {
                         return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                     };
                     receiver = Expr {
                         ty: *inner,
                         kind: ExprKind::Deref(Box::new(borrowed)),
-                        span: recv.span,
+                        span: recv_span,
                     };
                 } else if matches!(self.types.kind(receiver.ty), TyKind::ClassInterface(_)) {
                     // `[OBJ-2]` keeps this carrier as an owning class handle,
@@ -34322,7 +34818,7 @@ impl<'a> Checker<'a> {
                     // validation.  Preserve that borrow in HIR so lowering
                     // can protect a containing class field; the one-word ABI
                     // is recovered at the dynamic-call boundary.
-                    receiver = self.pass_receiver_to(receiver, receiver_mode, def, recv.span);
+                    receiver = self.pass_receiver_to(receiver, receiver_mode, def, recv_span);
                 } else if !matches!(self.types.kind(receiver.ty), TyKind::Ref { mutable: true, .. }) {
                     self.error(
                         codes::E2140,
@@ -34486,7 +34982,7 @@ impl<'a> Checker<'a> {
             && self.hash_provided(receiver.ty)
             && self.lookup_method(receiver.ty, name.name).is_none()
         {
-            return self.synth_hash_of(receiver, recv.span, args, span);
+            return self.synth_hash_of(receiver, recv_span, args, span);
         }
         // `[STD-20]`, `[STD-27]` — a float's methods are the C library's
         // functions (a `Float` parameter reaches them through its bound).
@@ -34593,7 +35089,7 @@ impl<'a> Checker<'a> {
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
-            return self.synth_vec_method(receiver, recv.span, elem, name, args, span);
+            return self.synth_vec_method(receiver, recv_span, elem, name, args, span);
         }
         if let TyKind::Span { elem, mutable } = *self.types.kind(receiver.ty)
             && !extension_generic
@@ -34606,7 +35102,7 @@ impl<'a> Checker<'a> {
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
-            return self.synth_span_method(receiver, recv.span, elem, mutable, name, args, span);
+            return self.synth_span_method(receiver, recv_span, elem, mutable, name, args, span);
         }
         if receiver.ty == self.common.cstr && name.name.is("to_str")
             && explicit.is_empty() && !extension_generic
@@ -34620,7 +35116,7 @@ impl<'a> Checker<'a> {
                 },
                 span,
             };
-            return self.synth_span_method(bytes, recv.span, self.common.u8, false, name, args, span);
+            return self.synth_span_method(bytes, recv_span, self.common.u8, false, name, args, span);
         }
         if matches!(self.types.kind(receiver.ty), TyKind::Struct(id)
             if self.types.struct_def(*id).name.is("std.ffi.CString"))
@@ -34860,7 +35356,7 @@ impl<'a> Checker<'a> {
             );
             return Expr { ty: self.common.void, kind: ExprKind::Error, span };
         }
-        self.synth_registered_method(receiver, recv.span, name, args, explicit, span)
+        self.synth_registered_method(receiver, recv_span, name, args, explicit, span)
     }
 
     /// Part IV.11 — a call of a method `self.methods` holds (or a base
