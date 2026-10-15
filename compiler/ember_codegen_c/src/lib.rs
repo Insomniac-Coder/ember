@@ -2124,10 +2124,12 @@ impl Emitter<'_> {
             self.line("}");
             // An environment that fits the three words is held in them; a
             // larger one in one allocation, whose pointer is the first word.
+            // The words are only copied, so an environment aligned above a
+            // pointer (a `u128`) fits them too (D-620).
             if !self.closure_values.is_empty() {
                 self.line(&format!("static inline EMBER_MAYBE_UNUSED struct {RT}fn_value {RT}fn_value_make(const struct {RT}native_fn_descriptor* d, const void* env, size_t size, size_t align) {{"));
                 self.line(&format!("    struct {RT}fn_value v = {{d->native, d, {{0, 0, 0}}}};"));
-                self.line("    if (size <= sizeof v.w && align <= _Alignof(void*)) { memcpy(v.w, env, size); }");
+                self.line("    if (size <= sizeof v.w) { memcpy(v.w, env, size); }");
                 self.line(&format!("    else {{ v.w[0] = {RT}box_new_copy(size, align, env); }}"));
                 self.line("    return v;");
                 self.line("}");
@@ -4782,8 +4784,8 @@ impl Emitter<'_> {
 
     /// `[CLO-10]` — each owned closure value's entry, drop and descriptor.
     /// Whether the environment sits in the value's three words or in an
-    /// allocation is C's own constant test, so the thunks agree with
-    /// `fn_value_make` whatever layout the C compiler picks.
+    /// allocation is C's own constant test of its size, so the thunks agree
+    /// with `fn_value_make` whatever layout the C compiler picks.
     fn emit_closure_values(&mut self, bodies: &[Body]) {
         let values: Vec<(String, String, Ty)> = self.closure_values.iter()
             .map(|(closure, (descriptor, env))| (closure.clone(), descriptor.clone(), *env))
@@ -4795,7 +4797,7 @@ impl Emitter<'_> {
                 continue;
             };
             let env_c = self.c_type(env);
-            let boxed = format!("!(sizeof({env_c}) <= sizeof(void*[3]) && _Alignof({env_c}) <= _Alignof(void*))");
+            let boxed = format!("!(sizeof({env_c}) <= sizeof(void*[3]))");
             // The words are `void*` storage: the environment is copied out of
             // them and back, never read through a pointer of another type,
             // which C's aliasing rules make undefined (gcc -O3 broke it). An

@@ -2168,6 +2168,16 @@ static EMBER_NORETURN void object_panic_text(const char* text) {
     ember_panic(text, strlen(text), loc);
 }
 
+/* `[RT-7]` — a count never wraps: the retain past its maximum panics, naming
+ * the class. */
+static EMBER_NORETURN void object_panic_count_overflow(const ember_obj_header* object) {
+    char buffer[256];
+    const char* name = object->ti && object->ti->name ? object->ti->name : "<anonymous>";
+    int written = snprintf(buffer, sizeof buffer, "reference count overflow on %s", name);
+    ember_loc loc = { "<object-runtime>", 0, 0 };
+    ember_panic(buffer, written > 0 ? (size_t)written : 0, loc);
+}
+
 static EMBER_NORETURN void object_panic_resurrection(const ember_obj_header* object) {
     char buffer[256];
     const char* name = object->ti && object->ti->name ? object->ti->name : "<anonymous>";
@@ -2234,6 +2244,9 @@ void ember_obj_retain(ember_obj_header* object) {
         return;
     }
     if (!object_try_strong_retain(object)) {
+        if (object_load_strong(object) == UINT32_MAX) {
+            object_panic_count_overflow(object);
+        }
         object_panic_text("retain of deinitialising or invalid object");
     }
 }
@@ -2260,8 +2273,10 @@ void ember_obj_release(ember_obj_header* object) {
 }
 
 /* `[RT-10]` — the out-of-line ends of the inline Sync counts. */
-void ember_obj_retain_failed(ember_obj_header* object) {
-    (void)object;
+void ember_obj_retain_failed(ember_obj_header* object, uint32_t previous) {
+    if (previous == UINT32_MAX) {
+        object_panic_count_overflow(object);
+    }
     object_panic_text("retain of deinitialising or invalid object");
 }
 

@@ -96,6 +96,212 @@ pub fn comptime_forbidden(bodies: &[Body], types: &TypeTable, root: usize) -> Op
     Some((effect, chain))
 }
 
+/// `[PHIL-2]`, `[CLO-10]` — one place a function of the program allocates.
+pub struct AllocationSite {
+    /// The function, as the program names it.
+    pub function: String,
+    pub span: Span,
+    /// What allocates there, in the order the function runs it.
+    pub operations: Vec<String>,
+}
+
+/// `[PHIL-2]`, `[CLO-10]` — every place a function the program wrote allocates, for `ember inspect
+/// --alloc`: each operation of its own that carries `Alloc`, and each call into a standard-library
+/// function that allocates on its own (a collection's growth: `Map.insert`). `standard[i]` says
+/// whether body `i` is the standard library's, `standard_file` whether a file is its source.
+///
+/// A call through a function value or a `dyn` value, whose effects nothing declares, is no site:
+/// what it runs is listed where that is written. A site written in the standard library (a field
+/// default of a standard type, evaluated where the program constructs one) is placed at the next
+/// place of the program's own that the function reaches: the construction it is part of. A site
+/// inside another of the same function's is part of it (a list literal's elements pushed, an
+/// f-string's pieces), so each site is one expression as written, with everything it allocates.
+pub fn allocation_sites(
+    bodies: &[Body],
+    types: &TypeTable,
+    standard: &[bool],
+    standard_file: &dyn Fn(ember_span::FileId) -> bool,
+) -> Vec<AllocationSite> {
+    let index: HashMap<&str, usize> =
+        bodies.iter().enumerate().map(|(i, body)| (body.symbol.as_str(), i)).collect();
+    let mut builder = SiteBuilder { bodies, types, index: &index, ancestors: class_ancestors(types), drops: HashMap::new() };
+    // What each standard function allocates by itself: through its own operations and the
+    // standard functions it calls, never through the program's functions it is given.
+    let known: Vec<Vec<Site>> = bodies
+        .iter()
+        .map(|body| {
+            let mut sites = builder.sites(body);
+            sites.retain(|site| match site.origin {
+                Origin::Operation(_) => site.effects != Effects::ALL,
+                Origin::Call(callee) => standard[callee],
+            });
+            sites
+        })
+        .collect();
+    let allocates = fixed_point(&known);
+    let own_file = |span: Span| span != Span::DUMMY && !standard_file(span.file);
+    // A lambda is named after the function that makes it: the program's own one that names it,
+    // rather than a standard function given it to call.
+    let mut maker: HashMap<&str, usize> = HashMap::new();
+    for (index, body) in bodies.iter().enumerate() {
+        for block in &body.blocks {
+            let mut named: Vec<&str> = block
+                .stmts
+                .iter()
+                .flat_map(|stmt| match &stmt.kind {
+                    StmtKind::Assign { rvalue, .. } => rvalue_operands(rvalue),
+                    _ => Vec::new(),
+                })
+                .chain(match &block.terminator {
+                    Terminator::Call { args, .. } => args.iter().collect(),
+                    _ => Vec::new(),
+                })
+                .filter_map(|operand| match operand {
+                    Operand::Const(ember_mir::Const::Fn(symbol)) => Some(symbol.as_str()),
+                    _ => None,
+                })
+                .collect();
+            if let Terminator::Call { func: FuncRef::Direct { symbol, .. }, .. } = &block.terminator {
+                named.push(symbol.as_str());
+            }
+            for symbol in named {
+                let earlier = maker.entry(symbol).or_insert(index);
+                if standard[*earlier] && !standard[index] {
+                    *earlier = index;
+                }
+            }
+        }
+    }
+    let name = |mut index: usize| {
+        let mut name = String::new();
+        while bodies[index].is_lambda && name.len() < 200 {
+            name.push_str("lambda in ");
+            match maker.get(bodies[index].symbol.as_str()) {
+                Some(&outer) => index = outer,
+                None => return format!("{name}a function"),
+            }
+        }
+        name + &display_name(&bodies[index], types)
+    };
+    let mut out: Vec<AllocationSite> = Vec::new();
+    let mut at: HashMap<(String, Span), usize> = HashMap::new();
+    for (index, body) in bodies.iter().enumerate() {
+        if standard[index] {
+            continue;
+        }
+        let function = name(index);
+        for (block_index, block) in body.blocks.iter().enumerate() {
+            for position in 0..=block.stmts.len() {
+                let mut found = Vec::new();
+                match block.stmts.get(position) {
+                    Some(stmt) => builder.stmt_sites(body, stmt, &mut found),
+                    None => builder.terminator_sites(body, block, &mut found),
+                }
+                for site in found {
+                    let operation = match site.origin {
+                        Origin::Operation(operation)
+                            if site.effects.contains(Effects::ALLOC) && site.effects != Effects::ALL =>
+                        {
+                            operation.to_string()
+                        }
+                        Origin::Call(callee) if standard[callee] && allocates[callee].contains(Effects::ALLOC) => {
+                            format!("`{}`", method_name(&bodies[callee], types))
+                        }
+                        _ => continue,
+                    };
+                    let span = if own_file(site.span) {
+                        site.span
+                    } else {
+                        own_place_after(body, block_index, position, &own_file).unwrap_or(body.span)
+                    };
+                    let entry = *at.entry((function.clone(), span)).or_insert_with(|| {
+                        out.push(AllocationSite { function: function.clone(), span, operations: Vec::new() });
+                        out.len() - 1
+                    });
+                    if !out[entry].operations.contains(&operation) {
+                        out[entry].operations.push(operation);
+                    }
+                }
+            }
+        }
+    }
+    out.sort_by_key(|site| (site.span.file, site.span.start, std::cmp::Reverse(site.span.end)));
+    let mut merged: Vec<AllocationSite> = Vec::new();
+    for site in out {
+        let outer = merged.iter_mut().find(|outer| {
+            outer.function == site.function
+                && outer.span.file == site.span.file
+                && outer.span.start <= site.span.start
+                && site.span.end <= outer.span.end
+        });
+        match outer {
+            Some(outer) => {
+                for operation in site.operations {
+                    if !outer.operations.contains(&operation) {
+                        outer.operations.push(operation);
+                    }
+                }
+            }
+            None => merged.push(site),
+        }
+    }
+    merged
+}
+
+/// A method with the type it belongs to (`std.collections.Map.insert`), else the function's name.
+fn method_name(body: &Body, types: &TypeTable) -> String {
+    if body.class_owner.is_some() || body.name.contains('.') {
+        return display_name(body, types);
+    }
+    let owner = body.args().next().filter(|(_, decl)| decl.name.as_deref() == Some("self")).and_then(|(_, decl)| {
+        let ty = match types.kind(decl.ty) {
+            TyKind::Ref { inner, .. } => *inner,
+            _ => decl.ty,
+        };
+        match types.kind(ty) {
+            TyKind::Struct(id) => {
+                let def = types.struct_def(*id);
+                Some(def.origin.as_ref().map_or(def.name.to_string(), |(origin, _)| origin.to_string()))
+            }
+            _ => None,
+        }
+    });
+    match owner {
+        Some(owner) => format!("{owner}.{}", body.name),
+        None => body.name.clone(),
+    }
+}
+
+/// The first place of the program's own that `body` reaches after statement `position` of
+/// `block` (its terminator when `position` is past the statements).
+fn own_place_after(body: &Body, block: usize, position: usize, own_file: &dyn Fn(Span) -> bool) -> Option<Span> {
+    let spans = |block: &ember_mir::BasicBlock, from: usize| -> Vec<Span> {
+        let statements = block.stmts.iter().skip(from).filter(|stmt| {
+            !matches!(stmt.kind, StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop)
+        });
+        statements.map(|stmt| stmt.span).chain(std::iter::once(block.terminator_span)).collect()
+    };
+    let first = &body.blocks[block];
+    if position < first.stmts.len()
+        && let Some(span) = spans(first, position + 1).into_iter().find(|&span| own_file(span))
+    {
+        return Some(span);
+    }
+    let mut seen = HashSet::from([block]);
+    let mut queue: VecDeque<usize> = crate::long_access_lint::successors(&first.terminator).into();
+    while let Some(next) = queue.pop_front() {
+        if !seen.insert(next) {
+            continue;
+        }
+        let block = &body.blocks[next];
+        if let Some(span) = spans(block, 0).into_iter().find(|&span| own_file(span)) {
+            return Some(span);
+        }
+        queue.extend(crate::long_access_lint::successors(&block.terminator));
+    }
+    None
+}
+
 /// `[EFF-5]`, `[EFF-6]` — check every function's contracts against its effects. Returns how many
 /// were broken.
 pub fn check_effects_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) -> usize {
@@ -323,11 +529,6 @@ struct SiteBuilder<'a> {
 impl SiteBuilder<'_> {
     fn sites(&mut self, body: &Body) -> Vec<Site> {
         let mut sites = Vec::new();
-        let own = |effects: Effects, span: Span, operation: &'static str, sites: &mut Vec<Site>| {
-            if !effects.is_empty() {
-                sites.push(Site { effects, span, origin: Origin::Operation(operation) });
-            }
-        };
         if body.is_unsafe {
             own(Effects::UNSAFE, body.span, "an `unsafe fn`", &mut sites);
         }
@@ -342,77 +543,86 @@ impl SiteBuilder<'_> {
         }
         for block in &body.blocks {
             for stmt in &block.stmts {
-                match &stmt.kind {
-                    // `[EFF-9]` — a class exclusivity check left after the proofs.
-                    StmtKind::BeginAccess { .. } | StmtKind::BeginAccessTransfer { .. } => {
-                        own(Effects::CHECK_ALIASING, stmt.span, "a class exclusivity check", &mut sites);
-                    }
-                    StmtKind::Drop { place, .. } => {
-                        let ty = place_type(body, self.types, place);
-                        self.drop_sites(ty, stmt.span, &mut sites);
-                    }
-                    StmtKind::Assign { rvalue, .. } => {
-                        for operand in rvalue_operands(rvalue) {
-                            self.sync_copy(body, operand, stmt.span, &mut sites);
-                        }
-                        // `[CLO-10]` — captured state larger than three words goes to the heap.
-                        if let Rvalue::Aggregate { kind: AggregateKind::Callable, operands } = rvalue
-                            && let Some(Operand::Copy(env) | Operand::Move(env)) = operands.get(1)
-                            && self.types.layout(place_type(body, self.types, env)).size > 3 * 8
-                        {
-                            own(
-                                Effects::ALLOC | Effects::PANIC,
-                                stmt.span,
-                                "a callable value whose captured state is larger than three words",
-                                &mut sites,
-                            );
-                        }
-                    }
-                    _ => {}
-                }
+                self.stmt_sites(body, stmt, &mut sites);
             }
-            match &block.terminator {
-                Terminator::Call { func, args, .. } => {
-                    let span = call_span(block);
-                    for operand in args {
-                        self.sync_copy(body, operand, span, &mut sites);
-                    }
-                    self.call_sites(func, span, &mut sites);
-                    // `[PAR-4]` — a `@parallel` loop runs its chunk closure and its combiner here.
-                    if let FuncRef::Builtin { which: Builtin::ParallelFor { .. }, .. } = func {
-                        for operand in args {
-                            if let Operand::Const(ember_mir::Const::Fn(symbol)) = operand
-                                && let Some(&callee) = self.index.get(symbol.as_str())
-                            {
-                                sites.push(Site { effects: Effects::ALL, span, origin: Origin::Call(callee) });
-                            }
-                        }
-                    }
-                    // `[JOB-1]` — a job's state that may not fit its slot's 64 bytes is one allocation.
-                    if let FuncRef::Builtin { which: Builtin::JobSubmit { closure: Some(_) } | Builtin::JobScopeSubmit { closure: Some(_), .. }, .. } = func
-                        && let Some(Operand::Copy(place) | Operand::Move(place)) = args.last()
-                        && !job_state_fits(self.types, place_type(body, self.types, place))
-                    {
-                        sites.push(Site { effects: Effects::ALLOC, span, origin: Origin::Operation("a job's state, larger than its slot") });
-                    }
-                }
-                Terminator::Assert { msg, span, .. } => {
-                    let (effects, operation) = match msg {
-                        AssertKind::Overflow(_)
-                        | AssertKind::DivisionByZero
-                        | AssertKind::SignedDivisionOverflow
-                        | AssertKind::ShiftTooLarge => (Effects::CHECK_ARITHMETIC, "an arithmetic check"),
-                        AssertKind::Bounds { .. } => (Effects::CHECK_BOUNDS, "a bounds check"),
-                        AssertKind::RefCellBorrow { .. } => (Effects::CHECK_ALIASING, "a `RefCell` borrow check"),
-                        AssertKind::Downcast => (Effects::PANIC, "`as!`"),
-                        AssertKind::Panic { .. } => (Effects::PANIC, "a panic"),
-                    };
-                    own(effects, *span, operation, &mut sites);
-                }
-                _ => {}
-            }
+            self.terminator_sites(body, block, &mut sites);
         }
         sites
+    }
+
+    fn stmt_sites(&mut self, body: &Body, stmt: &ember_mir::Stmt, sites: &mut Vec<Site>) {
+        match &stmt.kind {
+            // `[EFF-9]` — a class exclusivity check left after the proofs.
+            StmtKind::BeginAccess { .. } | StmtKind::BeginAccessTransfer { .. } => {
+                own(Effects::CHECK_ALIASING, stmt.span, "a class exclusivity check", sites);
+            }
+            StmtKind::Drop { place, .. } => {
+                let ty = place_type(body, self.types, place);
+                self.drop_sites(ty, stmt.span, sites);
+            }
+            StmtKind::Assign { rvalue, .. } => {
+                for operand in rvalue_operands(rvalue) {
+                    self.sync_copy(body, operand, stmt.span, sites);
+                }
+                // `[CLO-10]` — captured state larger than three pointer-sized words goes to
+                // the heap (the backend's own test is the same: D-620).
+                if let Rvalue::Aggregate { kind: AggregateKind::Callable, operands } = rvalue
+                    && let Some(Operand::Copy(env) | Operand::Move(env)) = operands.get(1)
+                    && self.types.layout(place_type(body, self.types, env)).size > 3 * self.types.pointer_size()
+                {
+                    own(
+                        Effects::ALLOC | Effects::PANIC,
+                        stmt.span,
+                        "a callable value whose captured state is larger than three words",
+                        sites,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn terminator_sites(&mut self, body: &Body, block: &ember_mir::BasicBlock, sites: &mut Vec<Site>) {
+        match &block.terminator {
+            Terminator::Call { func, args, .. } => {
+                let span = call_span(block);
+                for operand in args {
+                    self.sync_copy(body, operand, span, sites);
+                }
+                self.call_sites(func, span, sites);
+                // `[PAR-4]` — a `@parallel` loop runs its chunk closure and its combiner here.
+                if let FuncRef::Builtin { which: Builtin::ParallelFor { .. }, .. } = func {
+                    for operand in args {
+                        if let Operand::Const(ember_mir::Const::Fn(symbol)) = operand
+                            && let Some(&callee) = self.index.get(symbol.as_str())
+                        {
+                            sites.push(Site { effects: Effects::ALL, span, origin: Origin::Call(callee) });
+                        }
+                    }
+                }
+                // `[JOB-1]` — a job's state that may not fit its slot's 64 bytes is one allocation.
+                if let FuncRef::Builtin { which: Builtin::JobSubmit { closure: Some(_) } | Builtin::JobScopeSubmit { closure: Some(_), .. }, .. } = func
+                    && let Some(Operand::Copy(place) | Operand::Move(place)) = args.last()
+                    && !job_state_fits(self.types, place_type(body, self.types, place))
+                {
+                    sites.push(Site { effects: Effects::ALLOC, span, origin: Origin::Operation("a job's state, larger than its slot") });
+                }
+            }
+            Terminator::Assert { msg, span, .. } => {
+                let (effects, operation) = match msg {
+                    AssertKind::Overflow(_)
+                    | AssertKind::DivisionByZero
+                    | AssertKind::SignedDivisionOverflow
+                    | AssertKind::ShiftTooLarge => (Effects::CHECK_ARITHMETIC, "an arithmetic check"),
+                    AssertKind::Bounds { .. } => (Effects::CHECK_BOUNDS, "a bounds check"),
+                    AssertKind::RefCellBorrow { .. } => (Effects::CHECK_ALIASING, "a `RefCell` borrow check"),
+                    AssertKind::Downcast => (Effects::PANIC, "`as!`"),
+                    AssertKind::Panic { .. } => (Effects::PANIC, "a panic"),
+                };
+                own(effects, *span, operation, sites);
+            }
+            _ => {}
+        }
     }
 
     /// `[EFF-1]`'s `Sync`: retaining a `Sync` handle is an atomic operation.
@@ -604,6 +814,13 @@ impl SiteBuilder<'_> {
         if let Some(&callee) = self.index.get(symbol.as_str()) {
             callees.push(callee);
         }
+    }
+}
+
+/// An operation of the body's own with these effects.
+fn own(effects: Effects, span: Span, operation: &'static str, sites: &mut Vec<Site>) {
+    if !effects.is_empty() {
+        sites.push(Site { effects, span, origin: Origin::Operation(operation) });
     }
 }
 

@@ -1,9 +1,9 @@
 #$ test: compile-fail
 #$ rules: CT-3
 #$ error[E6001]: evaluating `FOREVER` takes more than 100000000 steps
-#$ help: raise the limit with `steps = …` under `[comptime]` in the manifest
+#$ help: raise the limit with `max_steps = …` under `[comptime]` in the manifest
 #$ error[E6001]: evaluating `HUGE` takes more than 268435456 bytes of heap
-#$ help: raise the limit with `heap = …` under `[comptime]` in the manifest
+#$ help: raise the limit with `max_heap_mb = …` under `[comptime]` in the manifest
 # `[CT-3]` — passing the step limit or the heap limit is `E6001`; `[comptime]` in the manifest
 # raises either.
 

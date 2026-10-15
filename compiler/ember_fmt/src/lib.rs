@@ -921,11 +921,38 @@ impl Printer<'_> {
                 let kind = if *mutable { "ref mut " } else { "ref " };
                 format!("{kind}{}", self.expr_pure(place))
             }
+            ast::ExprKind::Lambda(lambda) if let Some(arrow) = self.arrow_lambda(expr, lambda) => arrow,
             // A literal, an f-string, a lambda or a `match` expression is
             // reproduced from the source: its spelling is already canonical,
             // and re-printing one risks changing what it means.
             _ => self.text(expr.span).trim().to_string(),
         }
+    }
+
+    /// `[FMT-2]` — a lambda whose body is one expression in the `=>` form: a
+    /// block that only returns a value, or the `:` form inside brackets. A
+    /// lambda with a comment in it, or whose expression spans lines, keeps
+    /// its spelling.
+    fn arrow_lambda(&self, expr: &ast::Expr, lambda: &ast::Lambda) -> Option<String> {
+        let body = match &lambda.body {
+            ast::LambdaBody::Block(block) => match block.stmts.as_slice() {
+                [ast::Stmt { kind: ast::StmtKind::Expr(statement), .. }] => match &statement.kind {
+                    ast::ExprKind::Jump(ast::Jump::Return(Some(value))) => (statement.span, &**value),
+                    _ => return None,
+                },
+                _ => return None,
+            },
+            ast::LambdaBody::Expr(body) => match &body.kind {
+                ast::ExprKind::Jump(ast::Jump::Return(Some(value))) => (body.span, &**value),
+                _ => (body.span, &**body),
+            },
+        };
+        let (start, value) = body;
+        let header = self.text(Span { end: start.start, ..expr.span }).trim_end();
+        let header = header.strip_suffix(':')?.trim_end();
+        let commented = self.comments.iter().any(|comment| comment.span.start >= expr.span.start && comment.span.end <= expr.span.end);
+        let value = self.expr_pure(value);
+        (!commented && !value.contains('\n')).then(|| format!("{header} => {value}"))
     }
 
     fn arg(&self, arg: &ast::Arg) -> String {

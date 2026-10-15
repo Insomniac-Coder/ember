@@ -67,17 +67,6 @@ followed.
 | **Can a program notice** | no: `ember inspect --safety` lists no aliasing checks for any program yet |
 | **Plan** | record the site in the side table with `establishes_static_fact`; skip the comparison when range facts prove the views apart |
 
-## N8 — the `Alloc` report of an owned callable value's boxed state
-
-| | |
-|---|---|
-| **Rule** | `[CLO-10]`: "larger captured state is placed in one heap allocation, which carries the `Alloc` effect and is reported by `ember inspect --alloc`" |
-| **The feature** | the effect on a closure made into an owned callable value whose environment does not fit three words, and its line in the allocation report |
-| **Requires** | `ember inspect --alloc` (Phase 4), which does not exist for any allocation yet |
-| **Meanwhile** | the state is allocated (`ember_box_new_copy`) and freed by the value's drop, as the rule says, and carries `Alloc` (`ember_analysis::effects`, 2026-10-15: a `@noalloc` function making one is `E4001`); nothing reports it |
-| **Can a program notice** | only by the missing report |
-| **Plan** | give `ember inspect --alloc` the allocation sites `ember_analysis::effects` already finds |
-
 ## N7 — a default doing float work that its mode's closure cannot hold
 
 | | |

@@ -116,6 +116,12 @@ static EMBER_INLINE uint64_t ember_sum_bytes(const void* raw, size_t len, bool s
 #define EMBER_COLD
 #endif
 
+/* `[CG-C-5]` — a panic function: it never returns and is cold, so a check is
+ * one compare and a branch predicted not taken, forward to the call. MSVC has
+ * no cold attribute; it lays a path that ends in a `noreturn` call out of line
+ * itself. */
+#define EMBER_PANIC_FN EMBER_NORETURN EMBER_COLD
+
 /* `[CG-C-1]` — an internal function or constant the program may never reach
  * (a body the MIR inliner copied into its one caller, a type's unused type
  * information) is not a warning: gcc and clang drop it without one. MSVC
@@ -1553,7 +1559,7 @@ EMBER_MSVC_CAS(64)
 /* `[THR-14]` — an order held in a variable: `MemoryOrder`'s tag (`Relaxed` .. `SeqCst`) as the C
  * compiler's, after the check `E7006` makes of a constant one: `refused` has bit `tag` set for each
  * order the operation does not support. */
-EMBER_NORETURN void ember_atomic_order_refused(uint8_t tag, const char* operation, ember_loc loc);
+EMBER_PANIC_FN void ember_atomic_order_refused(uint8_t tag, const char* operation, ember_loc loc);
 
 EMBER_INLINED int ember_atomic_order(uint8_t tag, unsigned refused, const char* operation, ember_loc loc) {
     if (tag > 4 || ((refused >> tag) & 1u) != 0) {
@@ -1735,15 +1741,19 @@ bool ember_rwlock_try_acquire(void* word, bool write);
 void ember_rwlock_release(void* word, bool write);
 #endif
 
-/* A Sync retain that found the count at zero or at its maximum: a panic. */
-EMBER_NORETURN void ember_obj_retain_failed(ember_obj_header* object);
+/* A Sync retain that found the count at zero or at its maximum: a panic.
+ * `previous` is the count it found (`[RT-7]`: the maximum is an overflow). */
+EMBER_PANIC_FN void ember_obj_retain_failed(ember_obj_header* object, uint32_t previous);
 /* A Sync release that found the count at one (the object deinitialises) or
  * at zero (a panic). */
 void ember_obj_release_ended(ember_obj_header* object, uint32_t previous);
 
 EMBER_INLINED void ember_retain_sync(ember_obj_header* object) {
-    if (object != NULL && EMBER_COUNT_UP(&object->strong) - 1u >= UINT32_MAX - 1u) {
-        ember_obj_retain_failed(object);
+    if (object != NULL) {
+        uint32_t previous = EMBER_COUNT_UP(&object->strong);
+        if (previous - 1u >= UINT32_MAX - 1u) {
+            ember_obj_retain_failed(object, previous);
+        }
     }
 }
 
@@ -1794,7 +1804,7 @@ void ember_object_end_read(ember_obj_header* object, ember_loc loc);
  * ember_object_check_failed when one is taken. */
 void ember_object_check_write(ember_obj_header* object, ember_loc loc);
 void ember_object_check_read(ember_obj_header* object, ember_loc loc);
-EMBER_NORETURN void ember_object_check_failed(ember_obj_header* object, bool writing, ember_loc loc);
+EMBER_PANIC_FN void ember_object_check_failed(ember_obj_header* object, bool writing, ember_loc loc);
 
 /* -- arenas ---------------------------------------------------------------
  *
@@ -1890,9 +1900,12 @@ void ember_vec_reserve_more(ember_vec* v, size_t elem_size, size_t additional);
 /* Best-effort room for a counted loop's pushes; never fails (see the C). */
 void ember_vec_reserve_hint(ember_vec* v, size_t elem_size, uint64_t turns, size_t per_turn);
 /* The alignment a growable buffer allocates at. The compiler passes an element
- * size but not an alignment, so the buffer uses the strictest fundamental one;
- * over-aligning is always sound and costs at most a few bytes per buffer. */
-#define EMBER_VEC_ALIGN (sizeof(void*) * 2)
+ * size but not an alignment, so the buffer uses the strictest alignment any
+ * Ember type has, 16 (`u128`, `i128`, `i256`, `u256`), on every target
+ * (`[HEAP-9]`); over-aligning is always sound and costs at most a few bytes per
+ * buffer. A type aligned beyond 16 (`@align`, SIMD vectors, not built) needs
+ * its alignment passed here. */
+#define EMBER_VEC_ALIGN ((size_t)16)
 
 /* [STD-15] — a sort specialised to its element type, with the comparison
  * inline and elements moved as values, not bytes. `LESS(a, b)` is a strict
@@ -2391,19 +2404,19 @@ void ember_fmt_repr_char(ember_vec* out, uint32_t value);
 
 /* [RT-4] A panic prints "panic at <file>:<line>:<col>: <message>", then a
  * backtrace in debug and release, then calls cfg.on_panic and abort(). */
-EMBER_NORETURN void ember_panic(const char* msg, size_t len, ember_loc loc);
-EMBER_NORETURN void ember_panic_bounds(size_t index, size_t len, ember_loc loc);
-EMBER_NORETURN void ember_panic_overflow(const char* op, ember_loc loc);
-EMBER_NORETURN void ember_panic_div_zero(ember_loc loc);
-EMBER_NORETURN void ember_panic_exclusivity(const char* what, ember_loc loc);
+EMBER_PANIC_FN void ember_panic(const char* msg, size_t len, ember_loc loc);
+EMBER_PANIC_FN void ember_panic_bounds(size_t index, size_t len, ember_loc loc);
+EMBER_PANIC_FN void ember_panic_overflow(const char* op, ember_loc loc);
+EMBER_PANIC_FN void ember_panic_div_zero(ember_loc loc);
+EMBER_PANIC_FN void ember_panic_exclusivity(const char* what, ember_loc loc);
 /* `[EXC-6]` — names the offending access and the kind of the active one. */
-EMBER_NORETURN void ember_panic_field_exclusivity(
+EMBER_PANIC_FN void ember_panic_field_exclusivity(
     bool writing, uint32_t active, const char* what, ember_loc loc);
 #ifdef EMBER_RT_DEBUG_ACCESS
 /* `[EXC-6]`: debug builds remember where each live field access began. */
 void ember_debug_field_begin(const uint32_t* word, bool writing, ember_loc loc);
 void ember_debug_field_end(const uint32_t* word, bool writing, ember_loc loc);
-EMBER_NORETURN void ember_panic_field_exclusivity_debug(
+EMBER_PANIC_FN void ember_panic_field_exclusivity_debug(
     bool writing, uint32_t active, const uint32_t* word, const char* what, ember_loc loc);
 #define EMBER_FIELD_CONFLICT(writing, word, what, loc) \
     ember_panic_field_exclusivity_debug((writing), *(word), (word), (what), (loc))
@@ -2478,11 +2491,11 @@ static inline uint64_t ember_load_u64(const void* p) {
     memcpy(&v, p, sizeof v);
     return v;
 }
-EMBER_NORETURN void ember_panic_unwrap(const char* what, ember_loc loc);
+EMBER_PANIC_FN void ember_panic_unwrap(const char* what, ember_loc loc);
 /* `[CELL-5]` — `RefCell` contention panics with the conflicting borrow's
  * location, recorded in debug and release (`[CELL-9]`). `file`/`line` are the
  * conflicting borrow's, `loc` the failing borrow's. */
-EMBER_NORETURN void ember_panic_refcell(const char* file, uint32_t line, ember_loc loc);
+EMBER_PANIC_FN void ember_panic_refcell(const char* file, uint32_t line, ember_loc loc);
 void ember_backtrace_print(void);
 
 /* -- printing -------------------------------------------------------------- */

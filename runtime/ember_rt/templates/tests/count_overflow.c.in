@@ -1,0 +1,45 @@
+/* [RT-7]: a reference count never wraps. A retain of an object whose strong count is at its
+ * maximum panics with `reference count overflow on <Class>`, for a plain object (the header's
+ * inline retain and its out-of-line end) and for a Sync one (one atomic add, then the panic);
+ * a retain of an object whose count is zero is still the invalid-object panic. The panic hook
+ * prints the message and ends the process before the runtime aborts. Run with one argument:
+ * `plain`, `sync` or `zero`. */
+#include "ember_rt.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static void report(const char* msg, size_t len) {
+    fwrite(msg, 1, len, stdout);
+    fputc('\n', stdout);
+    fflush(stdout);
+    exit(0);
+}
+
+static const ember_type_info plain_ti = {
+    sizeof(ember_obj_header), _Alignof(ember_obj_header), 0, "Node", NULL, NULL, NULL, NULL, NULL, 0, NULL, 0,
+};
+
+static const ember_type_info sync_ti = {
+    sizeof(ember_obj_header), _Alignof(ember_obj_header), EMBER_TI_SYNC, "Shared Node", NULL, NULL, NULL, NULL, NULL, 0, NULL, 0,
+};
+
+int main(int argc, char** argv) {
+    if (argc != 2) return 2;
+    ember_rt_config cfg = ember_rt_config_default();
+    cfg.on_panic = report;
+    if (ember_rt_init(&cfg) != 0) return 3;
+    bool sync = strcmp(argv[1], "sync") == 0;
+    ember_obj_header* object = ember_obj_new(sync ? &sync_ti : &plain_ti);
+    object->strong = strcmp(argv[1], "zero") == 0 ? 0 : UINT32_MAX - 1;
+    if (sync) {
+        ember_retain_sync(object);
+        if (object->strong != UINT32_MAX) return 4;
+        ember_retain_sync(object);
+    } else {
+        ember_retain_plain(object);
+        if (strcmp(argv[1], "zero") != 0 && object->strong != UINT32_MAX) return 4;
+        ember_retain_plain(object);
+    }
+    return 5;
+}

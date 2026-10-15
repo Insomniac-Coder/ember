@@ -442,11 +442,22 @@ impl Printer {
             ExprKind::OptChain { base, name, .. } => {
                 self.nest(&format!("OptChain ?.{}", name.name), |p| p.expr(base))
             }
+            // `[FMT-2]` — a body that only returns a value is the value: the
+            // `:` form and the `=>` form the formatter writes for it are one
+            // tree.
             ExprKind::Lambda(l) => self.nest(
                 if l.is_owned { "OwnedLambda" } else { "Lambda" },
                 |p| match &l.body {
-                    LambdaBody::Expr(e) => p.expr(e),
-                    LambdaBody::Block(b) => p.block(b),
+                    LambdaBody::Expr(e) => match &e.kind {
+                        ExprKind::Jump(Jump::Return(Some(value))) => p.expr(value),
+                        _ => p.expr(e),
+                    },
+                    LambdaBody::Block(b) => match b.stmts.as_slice() {
+                        [Stmt { kind: StmtKind::Expr(Expr { kind: ExprKind::Jump(Jump::Return(Some(value))), .. }), .. }] => {
+                            p.expr(value)
+                        }
+                        _ => p.block(b),
+                    },
                 },
             ),
             ExprKind::Match { scrutinee, arms } => self.nest("MatchExpr", |p| {

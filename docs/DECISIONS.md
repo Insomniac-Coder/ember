@@ -5089,6 +5089,86 @@ a scope's end are `Sync` and `Block`.
 **Not built.** `[JOB-5]`'s `jobs.local_arena()` needs a view whose region is the job's own; `@parallel`
 loops (`[PAR-*]`) are the next step on this pool.
 
+## ADR-188 — `ember inspect --alloc` reads the effects' allocation sites; manifest keys by section; `--json` everywhere (`[PHIL-2]`, `[CLO-10]`, `[RT-7]`, `[CG-C-5]`, `[MAN-1]`, `[CLI-1]`, `[CLI-2]`, `[FMT-2]`, `[HEAP-9]`)
+
+**`ember inspect --alloc [--json] [--function <name>] <file.em>`.** It checks the program as `ember
+check` does and lists the allocation sites where the effects are decided (`check_effects_all`, before
+inlining), so a site stays in the function that wrote it and the report is the same in every
+profile; it needs no build and no C compiler. A site is an operation of the program's own that
+carries `Alloc` (`ember_analysis::effects::allocation_sites`, the same `SiteBuilder` the contracts
+use) or a call into a standard-library function that allocates by itself (a fixed point over the
+standard library's own operations and calls: `std.collections.Map.insert`, `Set.add`,
+`Map.index_set`, named by their full path; not through a function of the program it was given). A call through a function value or a `dyn` value, whose
+effects nothing declares, is no site: what it runs is listed where that is written. An operation
+whose span is the standard library's (a `Map`'s field defaults, evaluated where `Map()` is written)
+is placed at the next place of the program's own the function reaches along its control flow: the
+construction it belongs to. A site inside another of the same function is part of it, so one line
+is one expression as written with everything it allocates (`"hello"` as a `String`: a new
+`String`, `Array.reserve`, `String.push`). A lambda is named after the function that makes it
+(`lambda in main`). Diagnostics stay text on standard error, as `--cycle`'s do; `--json` is the
+report's (`{"schema": 1, "sites": [{"function", "source", "allocates"}]}`).
+
+**`[CLO-10]`, D-620.** The backend kept an environment aligned above a pointer (a captured `u128`)
+in an allocation, which the effects analysis (size only, and an 8-byte word written in) did not
+count: `@noalloc` code allocated, where the rule holds three pointer-sized words inline. The words
+are only ever copied (`memcpy` in, out to an aligned local, back), so the backend now tests size
+alone, and the analysis compares with three of the target's pointer words. A captured state of
+`{i64, u128}` is 32 bytes by `[TYP-11]`'s layout and allocates on every compiler.
+
+**`[SEL-1]` is not built.** "Reports the mechanism each declaration uses" leaves open whether a
+declaration is a type's (whose mechanism is its keyword) or a variable's or field's (whose declared
+type picks a row of IX.0's table), and the table has no row for numbers, views, callable values,
+`dyn`, `SoA` or fixed arrays, which a per-declaration report must print something for. Left for a
+ruling; `--alloc` lists sites only.
+
+**`[RT-7]`.** A retain at the count's maximum panics `reference count overflow on <Class>` (the
+type information's name); a retain of a count at zero keeps the invalid-object panic. The Sync
+retain's out-of-line end now takes the count its atomic add found (`ember_obj_retain_failed(object,
+previous)`): the add has already wrapped by then, so the count cannot be read back.
+
+**`[CG-C-5]`.** `EMBER_PANIC_FN` is `EMBER_NORETURN EMBER_COLD` and marks every panic function the
+header declares (a plain `EMBER_NORETURN` would also mark a hot `noreturn` function, such as a
+worker loop, cold). MSVC has no cold attribute and lays a path ending in a `noreturn` call out of
+line itself. Measured: every one of the 50 `bench/programs`, built with clang -O2 against the header
+before and after, gives instruction-for-instruction the same code (LLVM already weights a path that
+ends in `unreachable` as never taken), so there is no speed to compare; gcc, in WSL, was not run
+here. Each check already branches forward to its call (`if (!ok) { panic(...); }`).
+
+**`[MAN-1]`, `[MAN-8]`, D-621.** Each section accepts the keys `[MAN-8]` names: `[package]`,
+`[build]`, `[comptime]` (`max_steps`, `max_heap_mb`), `[jobs]` (`workers`), `[realtime]`
+(`contracts`), `[profiles.<name>]` (`[PRF-3]`'s table), `[cpp.<project>]` (`[FFI-50]`), and three
+the spec names less exactly: `[c]` takes `compiler` and `flags` (what `[BLD-FFI-1]` says it names),
+`[link]` takes `libs` (the spec's example), `[ffi]` takes `evidence` (Annex C). `[dependencies]` and
+`[lints]` take names (`[MAN-3]` checks lints, `E9010`). An unknown key is `E9001` naming the key and
+the keys its section accepts; an unknown section is `E9001` naming the sections. The evaluator read
+`[comptime] steps`/`heap` (ADR-187), names the spec does not have: it reads `max_steps` and
+`max_heap_mb` (megabytes), and `E6001`'s help names them.
+
+**`[CLI-1]`, `[CLI-2]`.** `--json` on `fmt` (`{"file", "formatted", "text"}`; a parse error's
+diagnostics as JSON; `--check` exits 1 when the file is not in the canonical layout), `explain`
+(the code's record and page), `explain --cycle` (the selected edges and paths), `--version` and
+`--help`. `--emit obj` compiles the program's C, and each relaxed unit with its flags
+(`[CG-C-11]`), to objects under `<out-dir>/<profile>/obj` and links nothing.
+
+**`[FMT-2]`.** The formatter writes `fn(…) -> T => e` for a lambda whose block only returns a value,
+and for the `:` form inside brackets (whose body the parser already takes as an expression). A
+lambda with a comment in it, or whose expression the printer would spread over lines, keeps its
+spelling. `[FMT-1]`'s tree check compares `--emit ast` dumps, so the dump prints such a body as its
+value: the two spellings are one tree.
+
+**`[HEAP-9]`.** Every Ember type is aligned to at most 16 (`u128`, `i256`), and a growable buffer
+is now allocated at 16 on every target (`EMBER_VEC_ALIGN` was two pointers, 8 on a 32-bit one);
+boxes, objects and boxed closure state pass their own alignment already. A type aligned beyond 16
+(`@align`, SIMD vectors, neither built) must pass its alignment to the buffer functions.
+
+**Not done here.** `[TYP-9c]`: every toolchain the compiler drives honours both modes in their own
+units (`[CG-C-11]`); the only producer of `E9041` would be a compiler without `/fp:contract` or
+`-ffp-contract=fast`, which cannot be run here, and its error page's failing example could not
+fail. `[DIA-22]`: a signature has no declaration span to point at (fourteen places build one), and
+each call path checks arity and arguments on its own, in the checker two other changes are editing.
+`[RT-4]`: a backtrace naming Ember entities (`[DIA-23]`) needs a symbolizer per platform, or a table
+of functions the compiler emits, with its code-size cost measured; neither is built.
+
 ## ADR-187 — The compile-time evaluator runs the program's own code in a process of its own (`[CT-1]`..`[CT-7]`, `[TYP-41]`)
 
 **What is evaluated.** The checker makes each compile-time expression a function of its own

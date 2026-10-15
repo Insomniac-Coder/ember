@@ -29,10 +29,10 @@ usage:
                                       compile a bin or staticlib package
     ember run   <file.em> [options]   compile and run
     ember check <file.em>             type-check without generating code
-    ember fmt <file.em> [--check|--write]
+    ember fmt <file.em> [--check|--write] [--json]
                                       print the file in the canonical layout
-    ember explain <CODE>              describe a diagnostic code
-    ember explain --cycle <path> <Class[.field]>
+    ember explain <CODE> [--json]     describe a diagnostic code
+    ember explain --cycle <path> <Class[.field]> [--json]
                                       explain one ownership-cycle target
     ember inspect --safety [options] <path>
                                       report emitted/elided safety checks
@@ -40,10 +40,13 @@ usage:
                                       report the static ownership graph for a package or source root
     ember inspect --counts [--json] [--function <name>] <path>
                                       report the retains and releases left inside loops
+    ember inspect --alloc [--json] [--function <name>] <file.em>
+                                      report every place the program allocates
 
 options:
     --profile debug|release|shipping   default: debug
-    --emit tokens|ast|hir|mir|c|header emit a stage and stop; header writes a file
+    --emit tokens|ast|hir|mir|c|obj|header
+                                      emit a stage and stop; obj and header write files
     --emit-header                     write <package>.h alongside a build or C emit
     --emit-optimization-report        list the calls made direct on the whole program's word
     --timings[=json]                   each stage's time, module by module where it runs so
@@ -54,7 +57,7 @@ options:
     --leak-check                       `run` only: report leaked ownership cycles at exit
                                        (the default for `run` in the debug profile)
     --no-leak-check                    `run` only: no leak report in the debug profile
-    --json                             machine-readable diagnostics
+    --json                             machine-readable output and diagnostics (every command)
     -D warnings                        treat warnings as errors
 
 inspect options:
@@ -308,6 +311,15 @@ struct Options {
     /// XVII.1's `ember run [file.em] [args…]`: the program's own
     /// arguments, `main`'s `args` after its name (`[FN-8]`).
     program_args: Vec<String>,
+    /// `[PHIL-2]` — `ember inspect --alloc`: check the program, then list
+    /// its allocation sites instead of generating code.
+    alloc_report: Option<AllocReport>,
+}
+
+/// What `ember inspect --alloc` prints: JSON or text, one function or all.
+struct AllocReport {
+    json: bool,
+    function: Option<String>,
 }
 
 fn run(args: &[String]) -> Result<ExitCode, String> {
@@ -316,35 +328,47 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         return Ok(ExitCode::FAILURE);
     };
 
+    // `[CLI-1]` — every command accepts `--json`.
+    let json = args.iter().skip(1).any(|argument| argument == "--json");
     match command.as_str() {
         "--help" | "-h" | "help" => {
-            print!("{USAGE}");
+            if json {
+                println!("{}", serde_json::json!({ "schema": 1, "usage": USAGE }));
+            } else {
+                print!("{USAGE}");
+            }
             Ok(ExitCode::SUCCESS)
         }
         "--version" | "-V" => {
-            println!("ember {}", env!("CARGO_PKG_VERSION"));
+            if json {
+                println!("{}", serde_json::json!({ "schema": 1, "version": env!("CARGO_PKG_VERSION") }));
+            } else {
+                println!("ember {}", env!("CARGO_PKG_VERSION"));
+            }
             Ok(ExitCode::SUCCESS)
         }
         "explain" if args.get(1).is_some_and(|argument| argument == "--cycle") => {
-            let input = args
-                .get(2)
+            let rest: Vec<&String> = args[2..].iter().filter(|argument| *argument != "--json").collect();
+            let input = rest
+                .first()
                 .ok_or("`ember explain --cycle` needs an analysis root path")?;
-            let target = args
-                .get(3)
+            let target = rest
+                .get(1)
                 .ok_or("`ember explain --cycle` needs a class or Class.field target")?;
-            if args.len() > 4 {
-                return Err(format!(
-                    "unexpected cycle explanation argument `{}`",
-                    args[4]
-                ));
+            if let Some(extra) = rest.get(2) {
+                return Err(format!("unexpected cycle explanation argument `{extra}`"));
             }
-            explain_cycle(Path::new(input), target)
+            explain_cycle(Path::new(input.as_str()), target, json)
         }
         "explain" => {
-            let code = args
-                .get(1)
+            let rest: Vec<&String> = args[1..].iter().filter(|argument| *argument != "--json").collect();
+            let code = rest
+                .first()
                 .ok_or("`ember explain` needs a code, e.g. E3040")?;
-            explain(code)
+            if let Some(extra) = rest.get(1) {
+                return Err(format!("unexpected `ember explain` argument `{extra}`"));
+            }
+            explain(code, json)
         }
         "inspect" => inspect(&args[1..]),
         "build" | "run" | "check" => {
@@ -441,10 +465,19 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         // `[FMT-1]` — the canonical printer. `--check` reports whether the
         // file is already formatted instead of rewriting it.
         "fmt" => {
-            let input = args.get(1).ok_or("`ember fmt` needs a source file")?;
+            let mut input = None;
+            for argument in &args[1..] {
+                match argument.as_str() {
+                    "--check" | "--write" | "--json" => {}
+                    option if option.starts_with('-') => return Err(format!("unknown `ember fmt` option `{option}`")),
+                    file if input.is_none() => input = Some(file),
+                    extra => return Err(format!("unexpected `ember fmt` argument `{extra}`")),
+                }
+            }
+            let input = input.ok_or("`ember fmt` needs a source file")?;
             let check_only = args.iter().any(|a| a == "--check");
             let write = args.iter().any(|a| a == "--write");
-            format_file(Path::new(input), check_only, write)
+            format_file(Path::new(input), check_only, write, json)
         }
         other => Err(format!("unknown command `{other}`; try `ember --help`")),
     }
@@ -471,6 +504,7 @@ fn inspect(args: &[String]) -> Result<ExitCode, String> {
     let mut safety = false;
     let mut counts = false;
     let mut cycle = false;
+    let mut alloc = false;
     let mut elided_only = false;
     let mut json = false;
     let mut function = None;
@@ -482,6 +516,7 @@ fn inspect(args: &[String]) -> Result<ExitCode, String> {
             "--safety" => safety = true,
             "--counts" => counts = true,
             "--cycle" => cycle = true,
+            "--alloc" => alloc = true,
             "--elided-only" => elided_only = true,
             "--json" => json = true,
             "--function" => {
@@ -505,11 +540,21 @@ fn inspect(args: &[String]) -> Result<ExitCode, String> {
         index += 1;
     }
 
-    if [safety, counts, cycle].iter().filter(|&&kind| kind).count() > 1 {
+    if [safety, counts, cycle, alloc].iter().filter(|&&kind| kind).count() > 1 {
         return Err("`ember inspect` accepts only one report kind at a time".to_string());
     }
-    if !safety && !counts && !cycle {
-        return Err("`ember inspect` requires `--safety`, `--counts` or `--cycle`".to_string());
+    if !safety && !counts && !cycle && !alloc {
+        return Err("`ember inspect` requires `--safety`, `--counts`, `--cycle` or `--alloc`".to_string());
+    }
+    // `[PHIL-2]`, `[CLO-10]` — checked as `ember check` does; diagnostics as
+    // text on standard error, as `--cycle`'s are, so `--json` is the report's.
+    if alloc {
+        if elided_only {
+            return Err("`--elided-only` applies only to `--safety`".to_string());
+        }
+        let path = path.ok_or("`ember inspect --alloc` needs a source file")?;
+        let options = Options { alloc_report: Some(AllocReport { json, function }), ..Options::default() };
+        return compile(&path, "check", &options);
     }
     if counts {
         if elided_only {
@@ -730,7 +775,7 @@ fn manifest_string(manifest: &str, wanted_section: &str, wanted_key: &str) -> Op
 /// `[WK-9]` — select one already-resolved class or field from the ownership
 /// graph. This does not add a name system: source-qualified names are the
 /// type table's existing dotted canonical names, written at the CLI with `::`.
-fn explain_cycle(input: &Path, target: &str) -> Result<ExitCode, String> {
+fn explain_cycle(input: &Path, target: &str, json: bool) -> Result<ExitCode, String> {
     cycle_analysis(input, |entry, types, inspection| {
         let (class, field) = resolve_cycle_target(entry, types, target)?;
         let selected_edges: Vec<_> = inspection
@@ -758,6 +803,23 @@ fn explain_cycle(input: &Path, target: &str) -> Result<ExitCode, String> {
                 || class.clone(),
                 |field| format!("{}.{}", class, field),
             );
+        if json {
+            let edges: Vec<_> = selected_edges
+                .iter()
+                .map(|edge| {
+                    serde_json::json!({
+                        "source": edge.source,
+                        "field": edge.field,
+                        "type": edge.field_type,
+                        "target": edge.target,
+                        "kind": edge.kind.name(),
+                    })
+                })
+                .collect();
+            let paths: Vec<_> = paths.iter().map(|path| cycle_explanation_path(&path.edges)).collect();
+            println!("{}", serde_json::json!({ "schema": 1, "target": selected, "edges": edges, "static_paths": paths }));
+            return Ok(());
+        }
         println!("Cycle explanation: {selected}");
         println!("Analysis root: {}", entry.display());
         println!("Selected ownership declarations:");
@@ -1031,6 +1093,58 @@ fn inspect_safety(
     Ok(ExitCode::SUCCESS)
 }
 
+/// `[PHIL-2]`, `[CLO-10]` — print each place a function of the program
+/// allocates, and what allocates there.
+fn print_alloc_report(
+    input: &Path,
+    bodies: &[ember_mir::Body],
+    types: &TypeTable,
+    modules: &[ember_typeck::LoadedModule],
+    map: &SourceMap,
+    request: &AllocReport,
+) -> Result<(), String> {
+    let standard_files: std::collections::BTreeSet<ember_span::FileId> = modules
+        .iter()
+        .filter(|loaded| loaded.path.first().is_some_and(|package| package == ember_branding::STD_PACKAGE))
+        .map(|loaded| loaded.module.span.file)
+        .collect();
+    let std_prefix = ember_branding::mangled(&format!("{}.", ember_branding::STD_PACKAGE));
+    let standard: Vec<bool> = bodies
+        .iter()
+        .map(|body| body.symbol.starts_with(&std_prefix) || standard_files.contains(&body.span.file))
+        .collect();
+    let sites: Vec<ember_analysis::AllocationSite> =
+        ember_analysis::allocation_sites(bodies, types, &standard, &|file| standard_files.contains(&file))
+            .into_iter()
+            .filter(|site| request.function.as_deref().is_none_or(|name| site.function == name))
+            .collect();
+    if request.json {
+        let sites: Vec<serde_json::Value> = sites
+            .iter()
+            .map(|site| {
+                serde_json::json!({
+                    "function": site.function,
+                    "source": map.location(site.span),
+                    "allocates": site.operations,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::json!({ "schema": 1, "sites": sites }));
+        return Ok(());
+    }
+    println!("Allocation sites: {}", input.display());
+    if let Some(function) = &request.function {
+        println!("Function: {function}");
+    }
+    if sites.is_empty() {
+        println!("  none");
+    }
+    for site in &sites {
+        println!("  {} {}: {}", site.function, map.location(site.span), site.operations.join(", "));
+    }
+    Ok(())
+}
+
 /// `[RC-6]` — print the count operations a build left inside loops.
 fn inspect_counts(path: &Path, function: Option<&str>, json: bool) -> Result<ExitCode, String> {
     let resolved = resolve_side_table(path, "counts");
@@ -1251,27 +1365,42 @@ fn print_safety_report(
     }
 }
 
-fn format_file(input: &Path, check_only: bool, write: bool) -> Result<ExitCode, String> {
+fn format_file(input: &Path, check_only: bool, write: bool, json: bool) -> Result<ExitCode, String> {
+    let options = Options { json, ..Options::default() };
     let mut map = SourceMap::new();
+    let mut sink = Sink::new();
     let file = match map.load(input) {
         Ok(file) => file,
         Err(error @ LoadError::NotUtf8(_)) => {
-            eprintln!("{}", ember_diag::render(&load_diagnostic(&error, Span::DUMMY), &map));
+            sink.emit(load_diagnostic(&error, Span::DUMMY));
+            report(&sink, &map, &options);
             return Ok(ExitCode::FAILURE);
         }
         Err(error) => return Err(error.to_string()),
     };
     let source = map.file(file).text.clone();
 
-    let mut sink = Sink::new();
     let lexed = ember_lexer::lex(file, &source, &mut sink);
     let module = ember_parser::parse(file, &source, lexed.tokens, &mut sink);
     if sink.has_errors() {
-        report(&sink, &map, &Options::default());
+        report(&sink, &map, &options);
         return Ok(ExitCode::FAILURE);
     }
 
     let formatted = ember_fmt::format(&module, &source, &lexed.comments);
+    // `[CLI-1]` — whether the file was already in the canonical layout, and
+    // the layout itself when it is printed.
+    if json {
+        if write && formatted != source {
+            std::fs::write(input, &formatted).map_err(|e| e.to_string())?;
+        }
+        let printed = (!check_only && !write).then_some(formatted.as_str());
+        println!(
+            "{}",
+            serde_json::json!({ "schema": 1, "file": input.display().to_string(), "formatted": formatted == source, "text": printed })
+        );
+        return Ok(if check_only && formatted != source { ExitCode::FAILURE } else { ExitCode::SUCCESS });
+    }
     if check_only {
         if formatted == source {
             return Ok(ExitCode::SUCCESS);
@@ -1365,23 +1494,37 @@ fn write_unclassified_log(sink: &ember_diag::Sink, options: &Options) {
     );
 }
 
-fn explain(code: &str) -> Result<ExitCode, String> {
+fn explain(code: &str, json: bool) -> Result<ExitCode, String> {
     let Some(found) = ember_diag::codes::lookup(code) else {
         return Err(format!("`{code}` is not a diagnostic code"));
     };
+    let page = std::fs::read_to_string(Path::new("docs/errors").join(format!("{found}.md"))).ok();
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema": 1,
+                "code": found.to_string(),
+                "title": found.title,
+                "rule": found.rule,
+                "subsystem": format!("{:?}", found.subsystem),
+                "page": page,
+            })
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
     println!("{found}: {}", found.title);
     println!();
     println!("Specified by {} ({:?}).", found.rule, found.subsystem);
     // `[DIA-6]` — docs/errors/EXXXX.md exists for every code. The pages are
     // written as each code gains its first test; until then, say so plainly
     // rather than printing an empty page.
-    let page = Path::new("docs/errors").join(format!("{found}.md"));
-    match std::fs::read_to_string(&page) {
-        Ok(text) => {
+    match page {
+        Some(text) => {
             println!();
             print!("{text}");
         }
-        Err(_) => {
+        None => {
             println!();
             println!("No extended description has been written for this code yet.");
         }
@@ -2455,6 +2598,13 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if ember_analysis::check_scope_moves_all(&bodies, &types, &mut sink) > 0 {
         return Ok(finish(&sink, &map, options));
     }
+    // `[PHIL-2]`, `[CLO-10]` — the allocation sites, read where the effects
+    // were: before inlining moves one function's operations into another.
+    if let Some(request) = &options.alloc_report {
+        report(&sink, &map, options);
+        print_alloc_report(input, &bodies, &types, &modules, &map, request)?;
+        return Ok(ExitCode::SUCCESS);
+    }
     // A function called from one place is inlined there, so the analyses
     // below see what its caller knows. For clang and gcc, only a function
     // holding a check the caller's facts could remove: they inline the rest
@@ -2712,6 +2862,35 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         }
         return Ok(finish(&sink, &map, options));
     }
+    // `[CLI-2]` — the C compiled to object files, not linked: the program's
+    // unit and each relaxed one (`[CG-C-11]`), under `<out-dir>/<profile>/obj`.
+    if options.emit.as_deref() == Some("obj") {
+        let target_dir = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target"));
+        let layout = Layout::new(&target_dir, options.profile).map_err(|e| e.to_string())?;
+        let requested = options
+            .cc
+            .clone()
+            .or_else(|| std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty()));
+        let toolchain = Toolchain::detect(requested.as_deref()).map_err(|e| e.to_string())?;
+        let includes = vec![runtime_dir()?.join("include")];
+        let object_ext = if matches!(&toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
+        let mut units = vec![(format!("{module_name}.c"), emitted.c_source.clone(), None)];
+        for (mode, source) in &emitted.relaxed_units {
+            units.push((format!("{module_name}.{}.c", mode.name()), source.clone(), Some(*mode == ember_types::FpMode::Fast)));
+        }
+        for (name, source, relaxed) in units {
+            let c_path = layout.c.join(&name);
+            std::fs::write(&c_path, source).map_err(|e| e.to_string())?;
+            let object = layout.obj.join(format!("{}.{object_ext}", name.trim_end_matches(".c")));
+            match relaxed {
+                None => ember_build::compile_object(&toolchain, &c_path, &includes, &object, options.profile),
+                Some(fast) => ember_build::compile_relaxed_object(&toolchain, &c_path, &includes, &object, options.profile, fast),
+            }
+            .map_err(|e| e.to_string())?;
+            eprintln!("built {}", object.display());
+        }
+        return Ok(finish(&sink, &map, options));
+    }
     if let Some(other) = &options.emit {
         return Err(format!("unknown `--emit` stage `{other}`"));
     }
@@ -2919,10 +3098,11 @@ fn comptime_build(input: &Path, options: &Options) -> Result<ComptimeBuild, Stri
     let dir = layout.c.parent().unwrap_or(&layout.c).join("comptime").join(format!("{stem}-{hash:016x}"));
     let mut limits = comptime::Limits::default();
     if let Some(manifest) = nearest_manifest_text(input)? {
-        if let Some(steps) = manifest_number(&manifest, "comptime", "steps") {
+        // `[MAN-8]` — `max_steps`, and `max_heap_mb` in megabytes (D-621).
+        if let Some(steps) = manifest_number(&manifest, "comptime", "max_steps") {
             limits.steps = steps;
         }
-        if let Some(heap) = manifest_number(&manifest, "comptime", "heap") {
+        if let Some(heap) = manifest_number(&manifest, "comptime", "max_heap_mb").and_then(|mb| mb.checked_mul(1 << 20)) {
             limits.heap = heap;
         }
     }
@@ -3032,15 +3212,18 @@ fn manifest_lint_settings(
             let mut line_start = 0usize;
             for raw_line in text.lines() {
                 let line = raw_line.split('#').next().unwrap_or("").trim();
+                let location = Span::new(manifest_file, line_start as u32, (line_start + raw_line.len()) as u32);
                 if line.starts_with('[') && line.ends_with(']') {
                     section = line[1..line.len() - 1].trim();
+                    // `[MAN-1]`, `[MAN-8]` — a section the manifest does not have.
+                    if manifest_section_keys(section).is_none() {
+                        sink.emit(
+                            Diagnostic::error(codes::E9001, location, format!("unknown manifest section `[{section}]`"))
+                                .help(format!("the manifest's sections are {}", MANIFEST_SECTIONS.join(", "))),
+                        );
+                    }
                 } else if let Some((key, value)) = line.split_once('=') {
                     let key = key.trim().trim_matches('"');
-                    let location = Span::new(
-                        manifest_file,
-                        line_start as u32,
-                        (line_start + raw_line.len()) as u32,
-                    );
                     if matches!(key, "exclusivity" | "overflow" | "bounds_checks")
                         || key == "gpu.validate"
                         || (section == "gpu" && key == "validate")
@@ -3051,12 +3234,24 @@ fn manifest_lint_settings(
                             location,
                             format!("removed manifest setting `{removed}` cannot disable a safety check"),
                         ));
-                    } else if section.starts_with("profiles.") && !manifest_profile_key_is_known(key) {
-                        sink.emit(Diagnostic::error(
-                            codes::E9001,
-                            location,
-                            format!("unknown profile key `{key}`"),
-                        ));
+                    } else if let Some(Some(accepted)) = manifest_section_keys(section)
+                        && !accepted.contains(&key)
+                    {
+                        // `[MAN-1]` — the key, and the keys its section accepts.
+                        let section = if section.is_empty() {
+                            "the manifest's top level".to_string()
+                        } else {
+                            format!("`[{section}]`")
+                        };
+                        let accepted: Vec<String> = accepted.iter().map(|key| format!("`{key}`")).collect();
+                        let help = if accepted.is_empty() {
+                            format!("{section} has no keys: each key belongs to one of the sections {}", MANIFEST_SECTIONS.join(", "))
+                        } else {
+                            format!("{section} accepts {}", accepted.join(", "))
+                        };
+                        sink.emit(
+                            Diagnostic::error(codes::E9001, location, format!("unknown key `{key}` in {section}")).help(help),
+                        );
                     } else if section == "lints" {
                         if !manifest_lint_is_known(key) {
                             sink.emit(Diagnostic::error(
@@ -3091,12 +3286,41 @@ fn manifest_lint_is_known(key: &str) -> bool {
         || matches!(key, "unused" | "potential_cycle" | "large_copy")
 }
 
-fn manifest_profile_key_is_known(key: &str) -> bool {
-    matches!(
-        key,
-        "inherits" | "opt" | "debug_info" | "strip" | "backtrace" | "debug_assert"
-            | "leak_report" | "lock_order" | "sanitizers" | "lto"
-    )
+/// `[MAN-8]` — the manifest's sections, for `E9001`'s help.
+const MANIFEST_SECTIONS: &[&str] = &[
+    "`[package]`", "`[dependencies]`", "`[build]`", "`[profiles.<name>]`", "`[c]`", "`[link]`", "`[jobs]`",
+    "`[realtime]`", "`[comptime]`", "`[lints]`", "`[cpp.<project>]`", "`[ffi]`",
+];
+
+/// `[MAN-1]`, `[MAN-8]` — the keys a manifest section accepts: `None` for a
+/// section the manifest does not have, `Some(None)` for one whose keys are
+/// names (`[dependencies]`' packages, and `[lints]`' lints, which `[MAN-3]`
+/// checks). The top level (`""`) has none.
+fn manifest_section_keys(section: &str) -> Option<Option<&'static [&'static str]>> {
+    Some(Some(match section {
+        "" => &[],
+        "package" => &["name", "version", "language", "kind", "layers", "edition_lints"],
+        "build" => &["entry", "target", "backend", "c_compiler", "runtime", "max_instantiations", "reload"],
+        // `[BLD-FFI-1]`: the C compiler and its flags.
+        "c" => &["compiler", "flags"],
+        "link" => &["libs"],
+        "jobs" => &["workers"],
+        "realtime" => &["contracts"],
+        "comptime" => &["max_steps", "max_heap_mb"],
+        // Annex C's `[ffi] evidence`.
+        "ffi" => &["evidence"],
+        "dependencies" | "lints" => return Some(None),
+        // `[PRF-3]` — the profile table's keys.
+        _ if section.starts_with("profiles.") => &[
+            "inherits", "opt", "debug_info", "strip", "backtrace", "debug_assert", "leak_report", "lock_order",
+            "sanitizers", "lto",
+        ],
+        // `[FFI-50]`.
+        _ if section.starts_with("cpp.") => &["compiler", "standard", "defines", "include_paths", "flags", "cmake"],
+        // A dependency written as a table: `{ path }` or `{ git, rev }`.
+        _ if section.starts_with("dependencies.") => &["path", "git", "rev"],
+        _ => return None,
+    }))
 }
 
 /// Where `ember_rt`'s sources live. Found relative to the compiler executable

@@ -1443,6 +1443,156 @@ fn removed_safety_switches_and_unknown_profile_keys_are_rejected() {
     }
 }
 
+/// `[MAN-1]`, `[MAN-8]` — an unknown key in any manifest section is `E9001`,
+/// naming the key and the keys that section accepts; an unknown section is
+/// `E9001` naming the sections. D-621: `[comptime]`'s keys are `max_steps`
+/// and `max_heap_mb`.
+#[test]
+fn unknown_manifest_keys_name_the_keys_their_section_accepts() {
+    let root = workspace_root();
+    for (name, manifest, message, help) in [
+        ("package", "[package]\nname = \"p\"\nbogus = 1\n", "unknown key `bogus` in `[package]`",
+            "`[package]` accepts `name`, `version`, `language`, `kind`, `layers`, `edition_lints`"),
+        ("build", "[build]\nreloads = \"all\"\n", "unknown key `reloads` in `[build]`", "`reload`"),
+        ("comptime", "[comptime]\nsteps = 5\n", "unknown key `steps` in `[comptime]`",
+            "`[comptime]` accepts `max_steps`, `max_heap_mb`"),
+        ("jobs", "[jobs]\nworker = 2\n", "unknown key `worker` in `[jobs]`", "`[jobs]` accepts `workers`"),
+        ("profile", "[profiles.debug]\nbakcend = \"c\"\n", "unknown key `bakcend` in `[profiles.debug]`", "`inherits`"),
+        ("cpp", "[cpp.engine]\ncompilr = \"clang\"\n", "unknown key `compilr` in `[cpp.engine]`", "`compiler`"),
+        ("top-level", "name = \"p\"\n", "unknown key `name` in the manifest's top level", "`[package]`"),
+        ("section", "[packages]\nname = \"p\"\n", "unknown manifest section `[packages]`", "`[package]`, `[dependencies]`"),
+    ] {
+        let package = temporary_directory(&format!("manifest-{name}"));
+        let source = package.join(ember_branding::source_file("main"));
+        std::fs::write(package.join(MANIFEST), manifest).expect("manifest is writable");
+        std::fs::write(&source, "fn main():\n    pass\n").expect("source is writable");
+        let checked = ember(&["check", &source.to_string_lossy()], &root);
+        let _ = std::fs::remove_dir_all(&package);
+        assert_ne!(checked.exit, 0, "[MAN-1] {name} was accepted:\n{}", checked.stderr);
+        assert!(checked.stderr.contains("error[E9001]") && checked.stderr.contains(message), "[MAN-1] {name}:\n{}", checked.stderr);
+        assert!(checked.stderr.contains(help), "[MAN-1] {name} did not name the accepted keys {help:?}:\n{}", checked.stderr);
+        assert!(checked.stderr.contains(MANIFEST), "[MAN-1] {name} did not point to the manifest:\n{}", checked.stderr);
+    }
+    // Every key `[MAN-8]` names is accepted.
+    let package = temporary_directory("manifest-every-key");
+    let source = package.join(ember_branding::source_file("main"));
+    std::fs::write(
+        package.join(MANIFEST),
+        "[package]\nname = \"p\"\nversion = \"0.1.0\"\nlanguage = \"0.9.9\"\nkind = \"bin\"\nlayers = [\"core\"]\nedition_lints = \"strict\"\n\
+         [dependencies]\ngeometry = { path = \"../geometry\" }\n[dependencies.parser]\ngit = \"https://example.org/p.git\"\nrev = \"4f2a9c1\"\n\
+         [build]\ntarget = \"native\"\nbackend = \"c\"\nc_compiler = \"auto\"\nruntime = \"static\"\nmax_instantiations = 200\n\
+         [profiles.release]\nlto = \"thin\"\n[c]\ncompiler = \"auto\"\nflags = []\n[link]\nlibs = []\n[jobs]\nworkers = \"auto\"\n\
+         [realtime]\ncontracts = [\"noalloc\"]\n[comptime]\nmax_steps = 100000000\nmax_heap_mb = 256\n[lints]\nunused = \"warn\"\n\
+         [cpp.engine]\ncompiler = \"clang\"\nstandard = \"c++20\"\ndefines = []\ninclude_paths = []\nflags = []\n[ffi]\nevidence = \".ember/ffi-evidence\"\n",
+    )
+    .expect("manifest is writable");
+    std::fs::write(&source, "fn main():\n    pass\n").expect("source is writable");
+    let checked = ember(&["check", &source.to_string_lossy()], &root);
+    let _ = std::fs::remove_dir_all(&package);
+    assert_eq!(checked.exit, 0, "[MAN-8] the manifest's own keys were rejected:\n{}", checked.stderr);
+}
+
+/// D-621 — `[CT-3]`'s limits are `[comptime] max_steps` and `max_heap_mb`
+/// (`[MAN-8]`): a lower step limit stops an evaluation the default allows.
+#[test]
+fn comptime_limits_come_from_max_steps_and_max_heap_mb() {
+    let root = workspace_root();
+    let package = temporary_directory("manifest-comptime-limits");
+    let source = package.join(ember_branding::source_file("main"));
+    std::fs::write(package.join(MANIFEST), "[comptime]\nmax_steps = 1000\nmax_heap_mb = 64\n").expect("manifest is writable");
+    std::fs::write(
+        &source,
+        "fn count() -> int:\n    n = 0\n    for i in 0..100000:\n        n += i % 3\n    return n\n\nconst N: int = count()\n\nfn main():\n    println(N)\n",
+    )
+    .expect("source is writable");
+    let checked = ember(&["check", &source.to_string_lossy()], &root);
+    let _ = std::fs::remove_dir_all(&package);
+    assert_ne!(checked.exit, 0, "[CT-3] the step limit was not read:\n{}", checked.stderr);
+    assert!(
+        checked.stderr.contains("error[E6001]") && checked.stderr.contains("takes more than 1000 steps")
+            && checked.stderr.contains("`max_steps = …` under `[comptime]`"),
+        "[CT-3] {}",
+        checked.stderr
+    );
+}
+
+/// `[CLI-1]` — every command accepts `--json` and exits non-zero on error:
+/// `fmt` (whether the file is formatted, and the layout it prints),
+/// `explain` (a code's record and page), `explain --cycle`, `--version`.
+#[test]
+fn every_command_accepts_json() {
+    let root = workspace_root();
+    let parse = |run: &Run| -> serde_json::Value {
+        serde_json::from_str(run.stdout.trim()).unwrap_or_else(|error| panic!("[CLI-1] not JSON ({error}):\n{}{}", run.stdout, run.stderr))
+    };
+    let package = temporary_directory("cli-json");
+    let source = package.join(ember_branding::source_file("main"));
+    std::fs::write(&source, "fn main():\n    println(1)\n").expect("source is writable");
+    let file = source.to_string_lossy().into_owned();
+    let printed = ember(&["fmt", "--json", &file], &root);
+    assert_eq!(printed.exit, 0, "{}", printed.stderr);
+    let value = parse(&printed);
+    assert_eq!(value["formatted"], true, "{}", printed.stdout);
+    assert_eq!(value["text"], "fn main():\n    println(1)\n", "{}", printed.stdout);
+    std::fs::write(&source, "fn main():\n    println(1)    \n").expect("source is writable");
+    let check = ember(&["fmt", &file, "--check", "--json"], &root);
+    assert_eq!(check.exit, 1, "[CLI-1] an unformatted file passed `--check`:\n{}", check.stdout);
+    assert_eq!(parse(&check)["formatted"], false, "{}", check.stdout);
+    std::fs::write(&source, "fn main(:\n").expect("source is writable");
+    let broken = ember(&["fmt", &file, "--json"], &root);
+    assert_eq!(broken.exit, 1, "{}", broken.stdout);
+    assert!(broken.stdout.contains("\"code\":\"E0100\""), "[CLI-1] a parse error was not JSON:\n{}{}", broken.stdout, broken.stderr);
+    let _ = std::fs::remove_dir_all(&package);
+
+    let explained = ember(&["explain", "E9001", "--json"], &root);
+    assert_eq!(explained.exit, 0, "{}", explained.stderr);
+    let value = parse(&explained);
+    assert_eq!(value["code"], "E9001");
+    assert_eq!(value["rule"], "[MAN-1]");
+    let unknown = ember(&["explain", "--json", "E99999"], &root);
+    assert_ne!(unknown.exit, 0, "[CLI-1] an unknown code succeeded");
+
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join(format!("cycle_inspection.{SOURCE_EXT}"));
+    let fixture = fixture.to_string_lossy().into_owned();
+    let cycle = ember(&["explain", "--cycle", &fixture, "Root.child", "--json"], &root);
+    assert_eq!(cycle.exit, 0, "{}", cycle.stderr);
+    let value = parse(&cycle);
+    assert_eq!(value["target"], "Root.child");
+    assert_eq!(value["static_paths"][0], "Root.child -> Child.leaf -> Leaf.root -> Root", "{}", cycle.stdout);
+
+    let version = ember(&["--version", "--json"], &root);
+    assert_eq!(parse(&version)["version"], env!("CARGO_PKG_VERSION"));
+}
+
+/// `[CLI-2]` — `--emit obj` compiles the C to object files and links
+/// nothing: the program's unit, and a relaxed unit of its own for a
+/// `@fastmath` function (`[CG-C-11]`).
+#[test]
+fn emit_obj_writes_objects_without_linking() {
+    let root = workspace_root();
+    let package = temporary_directory("emit-obj");
+    let source = package.join(ember_branding::source_file("objects"));
+    std::fs::write(&source, "@fastmath\nfn scale(x: f64) -> f64:\n    return x * 2.0\n\nfn main():\n    println(scale(1.5))\n")
+        .expect("source is writable");
+    let out = package.join("out");
+    let built = ember(&["build", &source.to_string_lossy(), "--emit", "obj", "--out-dir", &out.to_string_lossy()], &root);
+    assert_eq!(built.exit, 0, "[CLI-2] {}", built.stderr);
+    let objects: Vec<String> = std::fs::read_dir(out.join("debug").join("obj"))
+        .expect("the object directory exists")
+        .map(|entry| entry.expect("an entry").file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".obj") || name.ends_with(".o"))
+        .collect();
+    assert!(objects.iter().any(|name| name.starts_with("objects.") && !name.contains("fast")), "[CLI-2] no program object: {objects:?}");
+    assert!(objects.iter().any(|name| name.starts_with("objects.fast")), "[CLI-2] no relaxed object: {objects:?}");
+    let linked = std::fs::read_dir(out.join("debug").join("bin")).map(|entries| entries.count()).unwrap_or(0);
+    assert_eq!(linked, 0, "[CLI-2] `--emit obj` linked an executable");
+    assert!(built.stderr.contains("built "), "{}", built.stderr);
+    let _ = std::fs::remove_dir_all(&package);
+}
+
 /// `[PRF-3]` — the specified profile settings remain accepted in a custom
 /// profile, including its required inheritance key.
 #[test]
@@ -2996,6 +3146,67 @@ fn inspect_counts_lists_count_operations_left_in_loops() {
     assert!(elided.exit != 0 && elided.stderr.contains("applies only to `--safety`"), "{}", elided.stderr);
 }
 
+/// `[PHIL-2]`, `[CLO-10]` — `ember inspect --alloc` lists every place a
+/// program allocates, by function and line, with what allocates there: each
+/// allocating form `[PHIL-2]` names, and an owned callable value whose
+/// captured state is larger than three words (`[CLO-10]`); a function that
+/// allocates nothing, and three words of state, are not listed.
+#[test]
+fn inspect_alloc_lists_every_allocating_form() {
+    let root = workspace_root();
+    let program = format!("tests/conformance/PHIL-2/accept_every_allocating_form_is_listed.{SOURCE_EXT}");
+    let json = ember(&["inspect", "--alloc", "--json", &program], &root);
+    assert_eq!(json.exit, 0, "inspect failed:
+{}", json.stderr);
+    let value: serde_json::Value = serde_json::from_str(json.stdout.trim()).expect("--json prints JSON");
+    let sites = value["sites"].as_array().expect("a sites array");
+    let listed = |function: &str, line: u32, what: &str| {
+        sites.iter().any(|site| {
+            site["function"] == function
+                && site["source"].as_str().is_some_and(|source| source.contains(&format!(":{line}:")))
+                && site["allocates"].as_array().is_some_and(|all| all.iter().any(|op| op.as_str().is_some_and(|op| op.contains(what))))
+        })
+    };
+    for (function, line, what) in [
+        ("four", 16, "captured state is larger than three words"),
+        ("main", 28, "a new class instance"),
+        ("main", 29, "a new `Array`"),
+        ("main", 30, "a new `String`"),
+        ("main", 31, "a new `Array`"),
+        ("main", 32, "`Array.push`"),
+        ("main", 33, "a new `String`"),
+        ("main", 34, "an f-string"),
+        ("main", 35, "a new `Array`"),
+        ("main", 36, "std.collections.Map.index_set`"),
+        ("main", 37, "std.collections.Set.add`"),
+        ("main", 38, "`Box(…)`"),
+        ("main", 39, "`Shared(…)`"),
+        ("main", 40, "`Array.push`"),
+        ("main", 41, "std.collections.Map.insert`"),
+        ("main", 42, "std.collections.Set.add`"),
+    ] {
+        assert!(listed(function, line, what), "[PHIL-2] {function} line {line} should list {what:?}:
+{}", json.stdout);
+    }
+    for quiet in ["three", "total"] {
+        assert!(!sites.iter().any(|site| site["function"] == quiet), "[CLO-10] `{quiet}` allocates nothing:
+{}", json.stdout);
+    }
+    let text = ember(&["inspect", "--alloc", "--function", "four", &program], &root);
+    assert_eq!(text.exit, 0, "{}", text.stderr);
+    assert!(text.stdout.contains("Function: four") && text.stdout.contains(":16:12: a callable value whose captured state is larger than three words"), "{}", text.stdout);
+    assert!(!text.stdout.contains("main "), "a function filter kept another's sites:
+{}", text.stdout);
+    let small = format!("tests/conformance/CLO-10/accept_small_captured_state_in_noalloc_code.{SOURCE_EXT}");
+    let none = ember(&["inspect", "--alloc", &small], &root);
+    assert!(none.exit == 0 && none.stdout.contains("  none"), "[CLO-10] three words allocate nothing:
+{}{}", none.stdout, none.stderr);
+    let elided = ember(&["inspect", "--alloc", "--elided-only", &program], &root);
+    assert!(elided.exit != 0 && elided.stderr.contains("applies only to `--safety`"), "{}", elided.stderr);
+    let both = ember(&["inspect", "--alloc", "--cycle", &program], &root);
+    assert!(both.exit != 0 && both.stderr.contains("only one report kind"), "{}", both.stderr);
+}
+
 /// `[WK-15]` — the debug leak report is on for `ember run` by default; the
 /// flag turns it off, and the other profiles have it only when asked.
 #[test]
@@ -3581,6 +3792,38 @@ fn formatting_is_idempotent_and_preserves_the_tree() {
         }
     }
     assert!(checked > 0, "no files were formatted");
+}
+
+/// `[FMT-2]` — the formatter writes a lambda whose body is one expression in
+/// the `=>` form: a block that only returns a value, and the `:` form inside
+/// brackets. A body of more than that, or one with a comment, keeps its form;
+/// the result formats to itself and parses to the same tree (`[FMT-1]`).
+#[test]
+fn formatter_writes_one_expression_lambdas_in_the_arrow_form() {
+    let root = workspace_root();
+    let directory = temporary_directory("fmt-arrow-lambdas");
+    let scratch = directory.join(ember_branding::source_file("main"));
+    std::fs::write(
+        &scratch,
+        "fn apply(f: fn(int) -> int, x: int) -> int:\n    return f(x)\n\n\nfn main():\n    add = fn(x: int) -> int:\n        return x + 1\n    keep = fn(x: int) -> int:\n        # a note\n        return x\n    two = fn(x: int) -> int:\n        y = x * 2\n        return y\n    println(apply(fn(x): x * 3, 2), apply(fn(x): return x - 1, 2), add(1), keep(2), two(3))\n    println(apply(fn(x) => x, 5))\n",
+    )
+    .expect("the fixture is writable");
+    let path = scratch.to_string_lossy().into_owned();
+    let before = ember(&["build", &path, "--emit", "ast"], &root);
+    let once = ember(&["fmt", &path], &root);
+    assert_eq!(once.exit, 0, "{}", once.stderr);
+    assert_eq!(
+        once.stdout,
+        "fn apply(f: fn(int) -> int, x: int) -> int:\n    return f(x)\n\n\nfn main():\n    add = fn(x: int) -> int => x + 1\n    keep = fn(x: int) -> int:\n        # a note\n        return x\n    two = fn(x: int) -> int:\n        y = x * 2\n        return y\n    println(apply(fn(x) => x * 3, 2), apply(fn(x) => x - 1, 2), add(1), keep(2), two(3))\n    println(apply(fn(x) => x, 5))\n",
+        "[FMT-2]"
+    );
+    std::fs::write(&scratch, &once.stdout).expect("the formatted fixture is writable");
+    let twice = ember(&["fmt", &path], &root);
+    assert_eq!(once.stdout, twice.stdout, "[FMT-1] fmt(fmt(x)) differs from fmt(x)");
+    let after = ember(&["build", &path, "--emit", "ast"], &root);
+    assert_eq!(before.stdout, after.stdout, "[FMT-1] parse(fmt(x)) differs from parse(x)");
+    let checked = ember(&["check", &path], &root);
+    assert_eq!(checked.exit, 0, "[FMT-2] the formatted program does not check:\n{}", checked.stderr);
 }
 
 #[test]

@@ -10927,6 +10927,18 @@ analysis on the body's syntax (`E7010`/`E7011`); `[PAR-1]`..`[PAR-4]`, `[PAR-2a]
 **Next:** `[PAR-2b]` (read through inlined calls), a speed comparison with a hand-split C loop,
 `[JOB-5]`'s `local_arena`, `some` return types, coroutines.
 
+**2026-10-15, `ember inspect --alloc` and the near-misses (ADR-188).** `inspect --alloc <file.em>`
+lists every allocation site by function and line, read from the effects analysis before inlining
+(`PHIL-2`, `CLO-10` done; NOT-IMPLEMENTED N8 removed); `SEL-1` left (what "declaration" means is
+open, ADR-188). Then `RT-7` (`reference count overflow on <Class>`), `CG-C-5` (panic functions cold
+on gcc/clang; the 50 benchmark programs' clang code is identical before and after), `MAN-1` (every
+section's keys, `E9001` naming the accepted ones), `CLI-1` (`--json` on `fmt`, `explain`,
+`--version`), `CLI-2` (`--emit obj`), `FMT-2` (`=>` lambdas), `HEAP-9` (buffers at 16 on every
+target). D-620 (a captured `u128` was boxed with no `Alloc`) and D-621 (`[comptime]` read `steps`/
+`heap`, not `max_steps`/`max_heap_mb`) fixed. Not done, with reasons in ADR-188: `TYP-9c`, `DIA-22`,
+`RT-4`. Trap: `check_branding.py` flags a path written with the compiler crate's name in a test;
+build it from `CARGO_MANIFEST_DIR`.
+
 **2026-10-15, `Mutex` and `RwLock` (ADR-177), the dependency map's step 4 begun.** `std.sync.Mutex`
 and `RwLock` with their guards: a lock word in the value, inline compare-exchange/swap in
 `ember_rt.h`, `WaitOnAddress`/`futex` waits in `ember_rt.c`, runtime C tests under four threads

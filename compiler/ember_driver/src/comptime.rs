@@ -391,9 +391,9 @@ fn panicked(request: &ComptimeRequest, stderr: &str) -> Diagnostic {
 /// `[CT-3]` — `E6001`: the limit passed, and where it was.
 fn exhausted(request: &ComptimeRequest, stderr: &str, limits: Limits) -> Diagnostic {
     let (what, key, limit) = if stderr.contains("ember-comptime-limit heap") {
-        ("bytes of heap", "heap", limits.heap)
+        ("bytes of heap", "max_heap_mb", limits.heap)
     } else {
-        ("steps", "steps", limits.steps)
+        ("steps", "max_steps", limits.steps)
     };
     let mut diagnostic = Diagnostic::error(
         codes::E6001,
