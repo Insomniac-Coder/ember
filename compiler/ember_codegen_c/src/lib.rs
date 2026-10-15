@@ -11460,8 +11460,20 @@ mod string_descriptor_view_parts_tests {
 const COMPTIME_PRELUDE: &str = r#"#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+/* The stubs of functions the requests do not run leave locals unread: not worth a word here. */
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wunused-but-set-variable"
+#pragma GCC diagnostic ignored "-Wunused-function"
+#elif defined(_MSC_VER)
+#pragma warning(disable: 4100 4101 4189)
+#endif
 #if defined(_WIN32)
 __declspec(dllimport) unsigned int __stdcall SetErrorMode(unsigned int mode);
+#else
+/* POSIX, which `-std=c11` keeps out of <stdlib.h>. */
+char* realpath(const char* path, char* resolved);
 #endif
 static uint64_t ember_ct_steps = 0;
 static uint64_t ember_ct_step_limit = 100000000u;
