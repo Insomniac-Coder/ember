@@ -1114,7 +1114,7 @@ pub enum CastKind {
     ViewsDisjoint,
 }
 
-pub use ember_hir::{BinOp, Builtin, FormatSpec, IntBits, IntOp, ParseKind, UnOp};
+pub use ember_hir::{AtomicOp, BinOp, Builtin, FormatSpec, IntBits, IntOp, MemoryOrder, ParseKind, UnOp};
 
 /// One statement, with the source location it came from.
 #[derive(Clone, Debug)]

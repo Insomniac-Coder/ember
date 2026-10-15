@@ -755,6 +755,81 @@ pub enum PatternKind {
     Error,
 }
 
+/// `[THR-14]` — the atomic operations the C compilers give, which `Atomic[T]`'s methods are built
+/// from. `FetchAdd` and `FetchSub` wrap.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum AtomicOp {
+    Load,
+    Store,
+    Swap,
+    CompareExchange,
+    FetchAdd,
+    FetchSub,
+    FetchAnd,
+    FetchOr,
+    FetchXor,
+}
+
+impl AtomicOp {
+    pub fn name(self) -> &'static str {
+        match self {
+            AtomicOp::Load => "load",
+            AtomicOp::Store => "store",
+            AtomicOp::Swap => "swap",
+            AtomicOp::CompareExchange => "compare_exchange",
+            AtomicOp::FetchAdd => "wrapping_fetch_add",
+            AtomicOp::FetchSub => "wrapping_fetch_sub",
+            AtomicOp::FetchAnd => "fetch_and",
+            AtomicOp::FetchOr => "fetch_or",
+            AtomicOp::FetchXor => "fetch_xor",
+        }
+    }
+
+    /// `[THR-14]` — the orders it does not support (`E7006`): a load has no release half, a store
+    /// no acquire half.
+    pub fn refuses(self, order: MemoryOrder) -> bool {
+        match self {
+            AtomicOp::Load => matches!(order, MemoryOrder::Release | MemoryOrder::AcqRel),
+            AtomicOp::Store => matches!(order, MemoryOrder::Acquire | MemoryOrder::AcqRel),
+            _ => false,
+        }
+    }
+}
+
+/// `[THR-14]` — `std.sync.MemoryOrder`'s variants, in their declared order.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum MemoryOrder {
+    Relaxed,
+    Acquire,
+    Release,
+    AcqRel,
+    SeqCst,
+}
+
+impl MemoryOrder {
+    pub const ALL: [MemoryOrder; 5] =
+        [MemoryOrder::Relaxed, MemoryOrder::Acquire, MemoryOrder::Release, MemoryOrder::AcqRel, MemoryOrder::SeqCst];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            MemoryOrder::Relaxed => "Relaxed",
+            MemoryOrder::Acquire => "Acquire",
+            MemoryOrder::Release => "Release",
+            MemoryOrder::AcqRel => "AcqRel",
+            MemoryOrder::SeqCst => "SeqCst",
+        }
+    }
+
+    /// A compare-exchange that fails only loads: its order without the release half.
+    pub fn on_failure(self) -> MemoryOrder {
+        match self {
+            MemoryOrder::AcqRel => MemoryOrder::Acquire,
+            MemoryOrder::Release => MemoryOrder::Relaxed,
+            order => order,
+        }
+    }
+}
+
 /// `[STD-20]` (ODR-039) — the integer operators the `checked_`,
 /// `wrapping_`, `saturating_` and `overflowing_` methods exist for, named as
 /// their operator interfaces' methods are (`floordiv` is `//`, `rem` is `%`).
@@ -1354,6 +1429,11 @@ pub enum Builtin {
     /// `[THR-3]` — `rw.try_read()` or `rw.try_write()`: never waits. In MIR,
     /// `ember_rwlock_try_acquire`, which gives whether it took the lock.
     RwLockTryAcquire { write: bool },
+    /// `[THR-14]` — one atomic operation on an `Atomic[T]`'s value. The first argument borrows the
+    /// `Atomic`, the operands follow, then — when `order` is `None` — the `MemoryOrder` value,
+    /// which was not a constant. A compare-exchange's operands are `ref mut` the expected value
+    /// (replaced by the value found when it fails) and the new one; it gives whether it stored.
+    Atomic { op: AtomicOp, order: Option<MemoryOrder> },
     /// `[ARN-1]`, `[ARN-4]` — `Arena.with_capacity(bytes)`. The Arena itself
     /// is a compiler-known move-only struct; the runtime state it owns is
     /// opaque to Ember source.
@@ -1590,6 +1670,7 @@ impl Builtin {
             Builtin::RwLockAcquire { write: true } => "write",
             Builtin::RwLockTryAcquire { write: false } => "try_read",
             Builtin::RwLockTryAcquire { write: true } => "try_write",
+            Builtin::Atomic { op, .. } => op.name(),
             Builtin::ArenaWithCapacity => "with_capacity",
             Builtin::ArenaAlloc { .. }
             | Builtin::FixedArenaAlloc { .. }

@@ -1466,6 +1466,9 @@ impl TypeTable {
                     } else if name.is("std.sync.MutexGuard") && args.len() == 1 {
                         // `[THR-3]` — a guard is not `Send`: it is unlocked where it was taken.
                         (false, both(args[0], visiting).1)
+                    } else if name.is("std.sync.Atomic") {
+                        // `[THR-9]` — every access is atomic; it holds plain values only.
+                        (true, true)
                     } else if name.is("std.sync.RwLock") && args.len() == 1 {
                         // `[THR-9]` — several threads hold a `ref T` at once.
                         let (send, sync) = both(args[0], visiting);

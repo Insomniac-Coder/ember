@@ -31639,7 +31639,7 @@ impl<'a> Checker<'a> {
         let level = |ty: Ty| -> usize {
             match self.types.kind(ty) {
                 TyKind::Uint(UintTy::U64 | UintTy::Usize) => 1,
-                TyKind::Int(IntTy::I128) | TyKind::Uint(UintTy::U128) => 2,
+                TyKind::Int(ember_types::IntTy::I128) | TyKind::Uint(ember_types::UintTy::U128) => 2,
                 TyKind::Int(IntTy::I256) | TyKind::Uint(UintTy::U256) => 3,
                 _ => 0,
             }
@@ -33213,12 +33213,15 @@ impl<'a> Checker<'a> {
         }
         // `[THR-3]` — `std.sync`'s compiler-known types are built from their value alone
         // (`Mutex([])`); what else they hold is the runtime's.
-        if let Some((origin, _)) = &def.origin
+        if let Some((origin, origin_args)) = &def.origin
             && SYNC_VALUE_TYPES.contains(&origin.as_str())
         {
+            let atomic = (origin.as_str() == "std.sync.Atomic").then(|| origin_args.first().copied()).flatten();
             if given != 1 {
                 let shown = origin.as_str().rsplit('.').next().unwrap_or("");
                 self.error(codes::E2020, span, format!("`{shown}(value)` takes one argument, the value it holds"));
+            } else if let Some(held) = atomic {
+                self.refuse_atomic_value(held, span);
             }
             return;
         }
@@ -35230,6 +35233,18 @@ impl<'a> Checker<'a> {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             return self.synth_cell_method(receiver, inner, name, args, span);
+        }
+        // `[THR-14]` — `std.sync.Atomic`'s operations are builtins on its value.
+        if let Some(inner) = self.lock_inner(receiver.ty, "std.sync.Atomic") {
+            if !explicit.is_empty() {
+                self.error(
+                    codes::E2020,
+                    span,
+                    format!("`{}` takes no type arguments, found {}", name.name, explicit.len()),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            return self.synth_atomic_method(receiver, inner, name, args, span);
         }
         // `[THR-3]` — `std.sync.RwLock`'s `read`, `write` and their `try_` forms likewise.
         if let Some(inner) = self.lock_inner(receiver.ty, "std.sync.RwLock") {
@@ -38814,6 +38829,233 @@ impl<'a> Checker<'a> {
             self.types.struct_def_mut(id).has_drop = true;
         }
         guard
+    }
+
+    /// `[THR-14]` — whether an `Atomic` may not hold `held` (an integer, a `bool` or a raw pointer
+    /// may be held); a refusal is reported.
+    fn refuse_atomic_value(&mut self, held: Ty, span: Span) -> bool {
+        let wide = matches!(self.types.kind(held), TyKind::Int(ember_types::IntTy::I128 | ember_types::IntTy::I256) | TyKind::Uint(ember_types::UintTy::U128 | ember_types::UintTy::U256));
+        if !wide && matches!(self.types.kind(held), TyKind::Int(_) | TyKind::Uint(_) | TyKind::Bool | TyKind::Ptr { .. } | TyKind::Error) {
+            return false;
+        }
+        let shown = self.types.display(held);
+        if matches!(self.types.kind(held), TyKind::Int(ember_types::IntTy::I128) | TyKind::Uint(ember_types::UintTy::U128)) {
+            self.error(codes::E0900, span, format!("an `Atomic[{shown}]` is not implemented yet"));
+        } else {
+            self.sink.emit(
+                Diagnostic::error(codes::E2020, span, format!("an `Atomic` holds an integer, a `bool` or a raw pointer, not `{shown}`"))
+                    .note("put any other value in a `Mutex` [THR-14]"),
+            );
+        }
+        true
+    }
+
+    /// `[THR-14]` — `a.load()`, `store`, `swap`, `compare_exchange` and, on an integer, the
+    /// `fetch_` family (`fetch_and`/`or`/`xor` on a `bool` too), each taking `order: MemoryOrder =
+    /// MemoryOrder.SeqCst` last. All borrow `a` shared: its value changes under the borrow, one
+    /// atomic operation at a time. A constant order the operation does not support is `E7006`; one
+    /// held in a variable is checked as the program runs. `fetch_add`/`fetch_sub` check the result
+    /// as `+` does (the wrapped value is stored by then); the `checked_` ones are a
+    /// compare-exchange loop that stores only a result in range; the `wrapping_` ones wrap.
+    fn synth_atomic_method(&mut self, receiver: Expr, inner: Ty, name: ast::Ident, args: &[ast::Arg], span: Span) -> Expr {
+        use hir::AtomicOp as Op;
+        enum Form {
+            Plain(Op),
+            Checking(Op),
+            Checked(Op),
+            CompareExchange,
+        }
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if self.refuse_atomic_value(inner, span) {
+            return error;
+        }
+        let method = name.name.as_str();
+        let integer = matches!(self.types.kind(inner), TyKind::Int(_) | TyKind::Uint(_));
+        let bitwise = integer || inner == self.common.bool_;
+        let (form, operands) = match method {
+            "load" => (Form::Plain(Op::Load), 0),
+            "store" => (Form::Plain(Op::Store), 1),
+            "swap" => (Form::Plain(Op::Swap), 1),
+            "compare_exchange" => (Form::CompareExchange, 2),
+            "fetch_add" if integer => (Form::Checking(Op::FetchAdd), 1),
+            "fetch_sub" if integer => (Form::Checking(Op::FetchSub), 1),
+            "wrapping_fetch_add" if integer => (Form::Plain(Op::FetchAdd), 1),
+            "wrapping_fetch_sub" if integer => (Form::Plain(Op::FetchSub), 1),
+            "checked_fetch_add" if integer => (Form::Checked(Op::FetchAdd), 1),
+            "checked_fetch_sub" if integer => (Form::Checked(Op::FetchSub), 1),
+            "fetch_and" if bitwise => (Form::Plain(Op::FetchAnd), 1),
+            "fetch_or" if bitwise => (Form::Plain(Op::FetchOr), 1),
+            "fetch_xor" if bitwise => (Form::Plain(Op::FetchXor), 1),
+            _ => {
+                let shown = self.types.display(receiver.ty);
+                self.error(codes::E1010, name.span, format!("`{shown}` has no method named `{method}`"));
+                return error;
+            }
+        };
+        // The operands by position, then `order` by position or by name.
+        let positional: Vec<&ast::Arg> = args.iter().filter(|a| a.name.is_none()).collect();
+        let named_order = args.iter().find(|a| a.name.is_some_and(|n| n.name.is("order")));
+        let unknown_name = args.iter().any(|a| a.name.is_some_and(|n| !n.name.is("order")));
+        let most = if named_order.is_some() { operands } else { operands + 1 };
+        if unknown_name || positional.len() < operands || positional.len() > most {
+            let plural = if operands == 1 { "" } else { "s" };
+            self.error(codes::E2020, span, format!("`{method}` takes {operands} argument{plural}, then `order`"));
+            return error;
+        }
+        if !is_place(&receiver.kind) {
+            self.error(codes::E2140, span, format!("`{method}` needs an atomic to act on, not a temporary"));
+            return error;
+        }
+        let Some(order_ty) = self.named_types.get(&Symbol::intern("std.sync.MemoryOrder")).copied() else {
+            self.error(codes::E1010, span, "cannot find `std.sync.MemoryOrder`");
+            return error;
+        };
+        let TyKind::Enum(order_id) = *self.types.kind(order_ty) else { return error };
+        let values: Vec<Expr> = positional[..operands].iter().map(|arg| self.check_expr(&arg.value, inner)).collect();
+        // A constant order rides on the builtin; one held in a variable is its last argument.
+        let (order, order_value) = match named_order.or(positional.get(operands).copied()) {
+            None => (Some(hir::MemoryOrder::SeqCst), None),
+            Some(arg) => {
+                let value = self.check_expr(&arg.value, order_ty);
+                match value.kind {
+                    ExprKind::EnumLit { enum_id, variant, .. } if enum_id == order_id => {
+                        let order = hir::MemoryOrder::ALL[variant];
+                        if let Form::Plain(op) = form
+                            && op.refuses(order)
+                        {
+                            self.sink.emit(
+                                Diagnostic::error(codes::E7006, arg.span, format!("`{method}` does not support `MemoryOrder.{}`", order.name()))
+                                    .note("a load has no release half and a store no acquire half [THR-14]"),
+                            );
+                            return error;
+                        }
+                        (Some(order), None)
+                    }
+                    _ => (None, Some(value)),
+                }
+            }
+        };
+        let shared = self.types.intern(TyKind::Ref { mutable: false, inner: receiver.ty });
+        // The value's address, which lowering passes to the runtime.
+        let value_ref = self.types.intern(TyKind::Ref { mutable: true, inner });
+        let (bool_ty, void) = (self.common.bool_, self.common.void);
+        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        let call = |op, receiver: Expr, operands: Vec<Expr>, order_value: Option<Expr>, ty| {
+            let mut args = vec![receiver];
+            args.extend(operands);
+            args.extend(order_value);
+            Expr { ty, kind: ExprKind::Builtin { which: Builtin::Atomic { op, order }, args }, span }
+        };
+        let borrowed = Expr { ty: shared, kind: ExprKind::Ref { place: Box::new(receiver.clone()), mutable: false }, span };
+        let block = |stmts, value: Expr| Expr { ty: value.ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(value) }, span };
+        match form {
+            Form::Plain(op) => {
+                let ty = if op == Op::Store { void } else { inner };
+                call(op, borrowed, values, order_value, ty)
+            }
+            Form::Checking(op) => {
+                // `old = a.wrapping_fetch_add(n)`, then `old + n` checked as `+` is.
+                let (n, old, sum) = (self.declare(None, inner, span), self.declare(None, inner, span), self.declare(None, inner, span));
+                let fetched = call(op, borrowed, vec![local(n, inner)], order_value, inner);
+                let bin = if op == Op::FetchAdd { BinOp::Add } else { BinOp::Sub };
+                let checked = Expr {
+                    ty: inner,
+                    kind: ExprKind::Binary { op: bin, lhs: Box::new(local(old, inner)), rhs: Box::new(local(n, inner)) },
+                    span,
+                };
+                let operand = values.into_iter().next().expect("one operand");
+                let stmts = vec![
+                    Stmt::Let { local: n, init: Some(operand) },
+                    Stmt::Let { local: old, init: Some(fetched) },
+                    Stmt::Let { local: sum, init: Some(checked) },
+                ];
+                block(stmts, local(old, inner))
+            }
+            Form::CompareExchange => {
+                // `cur = current`; the exchange leaves the value found in `cur` when it fails.
+                let result_ty = self.result_of(inner, inner);
+                let TyKind::Enum(result_id) = *self.types.kind(result_ty) else { return error };
+                let mut values = values.into_iter();
+                let (current, new) = (values.next().expect("current"), values.next().expect("new"));
+                let cur = self.declare(None, inner, span);
+                let expected = Expr { ty: value_ref, kind: ExprKind::Ref { place: Box::new(local(cur, inner)), mutable: true }, span };
+                let exchanged = call(Op::CompareExchange, borrowed, vec![expected, new], order_value, bool_ty);
+                let variant = |index| Expr { ty: result_ty, kind: ExprKind::EnumLit { enum_id: result_id, variant: index, fields: vec![local(cur, inner)] }, span };
+                let value = self.if_value(exchanged, variant(0), variant(1), result_ty, span);
+                block(vec![Stmt::Let { local: cur, init: Some(current) }], value)
+            }
+            Form::Checked(op) => {
+                // `cur = a.load(Relaxed)`; then until it stores or overflows: `step = cur OP n`
+                // with its wrap, and a compare-exchange of `cur` for the step, which refreshes
+                // `cur` when another thread got there first.
+                let option = self.option_of(inner);
+                let TyKind::Enum(option_id) = *self.types.kind(option) else { return error };
+                let pair = self.types.intern(TyKind::Tuple(vec![inner, bool_ty]));
+                let order_ty_local = order_value.as_ref().map(|value| value.ty);
+                let (atomic, n, cur, result, going, step) = (
+                    self.declare(None, shared, span),
+                    self.declare(None, inner, span),
+                    self.declare(None, inner, span),
+                    self.declare(None, option, span),
+                    self.declare(None, bool_ty, span),
+                    self.declare(None, pair, span),
+                );
+                let order_local = order_ty_local.map(|ty| (self.declare(None, ty, span), ty));
+                let target = || Expr {
+                    ty: shared,
+                    kind: ExprKind::Ref {
+                        place: Box::new(Expr { ty: receiver.ty, kind: ExprKind::Deref(Box::new(local(atomic, shared))), span }),
+                        mutable: false,
+                    },
+                    span,
+                };
+                let load = Expr {
+                    ty: inner,
+                    kind: ExprKind::Builtin { which: Builtin::Atomic { op: Op::Load, order: Some(hir::MemoryOrder::Relaxed) }, args: vec![target()] },
+                    span,
+                };
+                let int_op = if op == Op::FetchAdd { hir::IntOp::Add } else { hir::IntOp::Sub };
+                let stepped = Expr {
+                    ty: pair,
+                    kind: ExprKind::Builtin { which: Builtin::IntOverflowing(int_op), args: vec![local(cur, inner), local(n, inner)] },
+                    span,
+                };
+                let part = |index, ty| Expr { ty, kind: ExprKind::Field { base: Box::new(local(step, pair)), index }, span };
+                let expected = Expr { ty: value_ref, kind: ExprKind::Ref { place: Box::new(local(cur, inner)), mutable: true }, span };
+                let exchanged = call(Op::CompareExchange, target(), vec![expected, part(0, inner)], order_local.map(|(id, ty)| local(id, ty)), bool_ty);
+                let stop = || Stmt::Assign { place: local(going, bool_ty), value: Expr { ty: bool_ty, kind: ExprKind::Bool(false), span } };
+                let stored = vec![
+                    Stmt::Assign {
+                        place: local(result, option),
+                        value: Expr { ty: option, kind: ExprKind::EnumLit { enum_id: option_id, variant: 1, fields: vec![local(cur, inner)] }, span },
+                    },
+                    stop(),
+                ];
+                let body = vec![
+                    Stmt::Let { local: step, init: Some(stepped) },
+                    Stmt::If {
+                        cond: part(1, bool_ty),
+                        then_block: Block { stmts: vec![stop()], span },
+                        else_block: Some(Block {
+                            stmts: vec![Stmt::If { cond: exchanged, then_block: Block { stmts: stored, span }, else_block: None }],
+                            span,
+                        }),
+                    },
+                ];
+                let operand = values.into_iter().next().expect("one operand");
+                let mut stmts = vec![Stmt::Let { local: atomic, init: Some(borrowed) }, Stmt::Let { local: n, init: Some(operand) }];
+                if let (Some((id, _)), Some(value)) = (order_local, order_value) {
+                    stmts.push(Stmt::Let { local: id, init: Some(value) });
+                }
+                stmts.extend([
+                    Stmt::Let { local: cur, init: Some(load) },
+                    Stmt::Let { local: result, init: Some(Expr { ty: option, kind: ExprKind::EnumLit { enum_id: option_id, variant: 0, fields: vec![] }, span }) },
+                    Stmt::Let { local: going, init: Some(Expr { ty: bool_ty, kind: ExprKind::Bool(true), span }) },
+                    Stmt::While { cond: local(going, bool_ty), body: Block { stmts: body, span }, else_block: None },
+                ]);
+                block(stmts, local(result, option))
+            }
+        }
     }
 
     /// `[THR-3]` — `rw.read()`/`rw.write()` wait for the lock and give a guard; `try_read` and
@@ -44822,7 +45064,7 @@ enum Gather<'a> {
 
 /// `[THR-3]`, `[THR-14]` — the `std.sync` value types the compiler knows, built from their value
 /// alone.
-const SYNC_VALUE_TYPES: [&str; 2] = ["std.sync.Mutex", "std.sync.RwLock"];
+const SYNC_VALUE_TYPES: [&str; 3] = ["std.sync.Mutex", "std.sync.RwLock", "std.sync.Atomic"];
 
 /// `[DRV-1]` — the built-in derives, in the specification's order. `[DRV-2]`: there are no
 /// others in this version.

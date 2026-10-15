@@ -1479,6 +1479,98 @@ EMBER_INLINED void ember_release_plain(ember_obj_header* object) {
     atomic_exchange_explicit((volatile _Atomic(uint32_t)*)(word), (to), memory_order_release)
 #endif
 
+/* `[THR-14]` — `Atomic[T]`'s operations on its value, an integer `bits` wide (a `bool` is 8, a raw
+ * pointer 64): `o` is the order (`EMBER_ORDER_*`), `f` a compare-exchange's order when it fails, which
+ * leaves the value found in `*e`. GCC and clang take every width through their builtins; MSVC's
+ * intrinsics are named by width. Other C compilers are not supported. */
+#if defined(__GNUC__) || defined(__clang__)
+#define EMBER_ORDER_RELAXED __ATOMIC_RELAXED
+#define EMBER_ORDER_ACQUIRE __ATOMIC_ACQUIRE
+#define EMBER_ORDER_RELEASE __ATOMIC_RELEASE
+#define EMBER_ORDER_ACQ_REL __ATOMIC_ACQ_REL
+#define EMBER_ORDER_SEQ_CST __ATOMIC_SEQ_CST
+#define EMBER_ATOMIC_LOAD(bits, p, o) __atomic_load_n((p), (o))
+#define EMBER_ATOMIC_STORE(bits, p, v, o) __atomic_store_n((p), (v), (o))
+#define EMBER_ATOMIC_SWAP(bits, p, v, o) __atomic_exchange_n((p), (v), (o))
+#define EMBER_ATOMIC_CAS(bits, p, e, v, o, f) __atomic_compare_exchange_n((p), (e), (v), false, (o), (f))
+#define EMBER_ATOMIC_FETCH_ADD(bits, p, v, o) __atomic_fetch_add((p), (v), (o))
+#define EMBER_ATOMIC_FETCH_SUB(bits, p, v, o) __atomic_fetch_sub((p), (v), (o))
+#define EMBER_ATOMIC_FETCH_AND(bits, p, v, o) __atomic_fetch_and((p), (v), (o))
+#define EMBER_ATOMIC_FETCH_OR(bits, p, v, o) __atomic_fetch_or((p), (v), (o))
+#define EMBER_ATOMIC_FETCH_XOR(bits, p, v, o) __atomic_fetch_xor((p), (v), (o))
+#elif defined(_MSC_VER)
+/* ponytail: x86 and x64 only, where a plain load is an acquire and a plain store a release
+ * (`/volatile:ms`); an ARM64 build needs `__ldar`/`__stlr`. Every read-modify-write is a full
+ * barrier, and a `SeqCst` store an exchange. */
+#define EMBER_ORDER_RELAXED 0
+#define EMBER_ORDER_ACQUIRE 2
+#define EMBER_ORDER_RELEASE 3
+#define EMBER_ORDER_ACQ_REL 4
+#define EMBER_ORDER_SEQ_CST 5
+#define EMBER_MSVC_T8 char
+#define EMBER_MSVC_T16 short
+#define EMBER_MSVC_T32 long
+#define EMBER_MSVC_T64 __int64
+#define EMBER_MSVC_N8 8
+#define EMBER_MSVC_N16 16
+#define EMBER_MSVC_N32
+#define EMBER_MSVC_N64 64
+#define EMBER_PASTE(a, b) a##b
+#define EMBER_MSVC_NAME(name, n) EMBER_PASTE(name, n)
+#define EMBER_MSVC_RMW(name, bits, p, v) \
+    EMBER_MSVC_NAME(name, EMBER_MSVC_N##bits)((volatile EMBER_MSVC_T##bits*)(p), (EMBER_MSVC_T##bits)(v))
+#define EMBER_ATOMIC_LOAD(bits, p, o) (*(volatile EMBER_MSVC_T##bits*)(p))
+#define EMBER_ATOMIC_STORE(bits, p, v, o) \
+    ((o) == EMBER_ORDER_SEQ_CST ? (void)EMBER_MSVC_RMW(_InterlockedExchange, bits, p, v) \
+                                : (void)(*(volatile EMBER_MSVC_T##bits*)(p) = (EMBER_MSVC_T##bits)(v)))
+#define EMBER_ATOMIC_SWAP(bits, p, v, o) EMBER_MSVC_RMW(_InterlockedExchange, bits, p, v)
+#define EMBER_ATOMIC_CAS(bits, p, e, v, o, f) ember_msvc_cas##bits((p), (e), (EMBER_MSVC_T##bits)(v))
+#define EMBER_ATOMIC_FETCH_ADD(bits, p, v, o) EMBER_MSVC_RMW(_InterlockedExchangeAdd, bits, p, v)
+#define EMBER_ATOMIC_FETCH_SUB(bits, p, v, o) \
+    EMBER_MSVC_RMW(_InterlockedExchangeAdd, bits, p, 0u - (unsigned __int64)(v))
+#define EMBER_ATOMIC_FETCH_AND(bits, p, v, o) EMBER_MSVC_RMW(_InterlockedAnd, bits, p, v)
+#define EMBER_ATOMIC_FETCH_OR(bits, p, v, o) EMBER_MSVC_RMW(_InterlockedOr, bits, p, v)
+#define EMBER_ATOMIC_FETCH_XOR(bits, p, v, o) EMBER_MSVC_RMW(_InterlockedXor, bits, p, v)
+#define EMBER_MSVC_CAS(bits) \
+    EMBER_INLINED bool ember_msvc_cas##bits(volatile void* p, void* expected, EMBER_MSVC_T##bits v) { \
+        EMBER_MSVC_T##bits want = *(EMBER_MSVC_T##bits*)expected; \
+        EMBER_MSVC_T##bits seen = \
+            EMBER_MSVC_NAME(_InterlockedCompareExchange, EMBER_MSVC_N##bits)((volatile EMBER_MSVC_T##bits*)p, v, want); \
+        if (seen == want) { \
+            return true; \
+        } \
+        *(EMBER_MSVC_T##bits*)expected = seen; \
+        return false; \
+    }
+EMBER_MSVC_CAS(8)
+EMBER_MSVC_CAS(16)
+EMBER_MSVC_CAS(32)
+EMBER_MSVC_CAS(64)
+#endif
+
+/* `[THR-14]` — an order held in a variable: `MemoryOrder`'s tag (`Relaxed` .. `SeqCst`) as the C
+ * compiler's, after the check `E7006` makes of a constant one: `refused` has bit `tag` set for each
+ * order the operation does not support. */
+EMBER_NORETURN void ember_atomic_order_refused(uint8_t tag, const char* operation, ember_loc loc);
+
+EMBER_INLINED int ember_atomic_order(uint8_t tag, unsigned refused, const char* operation, ember_loc loc) {
+    if (tag > 4 || ((refused >> tag) & 1u) != 0) {
+        ember_atomic_order_refused(tag, operation, loc);
+    }
+    return tag == 0 ? EMBER_ORDER_RELAXED
+         : tag == 1 ? EMBER_ORDER_ACQUIRE
+         : tag == 2 ? EMBER_ORDER_RELEASE
+         : tag == 3 ? EMBER_ORDER_ACQ_REL
+                    : EMBER_ORDER_SEQ_CST;
+}
+
+/* A compare-exchange that fails only loads: its order without the release half. */
+EMBER_INLINED int ember_atomic_failure_order(int order) {
+    return order == EMBER_ORDER_ACQ_REL ? EMBER_ORDER_ACQUIRE
+         : order == EMBER_ORDER_RELEASE ? EMBER_ORDER_RELAXED
+                                        : order;
+}
+
 /* `[THR-3]` — a `Mutex` is one 32-bit word: 0 unlocked, 1 locked, 2 locked with a thread waiting.
  * A new one is a zero word, so it needs no constructor, and it may move while unlocked. Locking
  * takes the word from 0 to 1 here, inline; a lock another thread holds is waited for in the

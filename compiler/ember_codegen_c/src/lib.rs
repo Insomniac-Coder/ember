@@ -2174,6 +2174,63 @@ impl Emitter<'_> {
     /// destructor. Derived classes inherit the obligation even when they do
     /// not declare their own `drop`, because `[CLS-6]` still requires the base
     /// destructor to run.
+    /// `[THR-14]` — one atomic operation through the runtime header's macros, which take the value's
+    /// width (a `bool` is 8 bits, a raw pointer 64), its address, the operands and the order. An
+    /// order the type checker did not see as a constant is the last operand, checked here as the
+    /// program runs. `fetch_and`/`or`/`xor` on a `bool` work on its byte.
+    fn atomic_call(
+        &self,
+        op: ember_mir::AtomicOp,
+        order: Option<ember_mir::MemoryOrder>,
+        value_ref: Ty,
+        rendered: &[String],
+        span: ember_span::Span,
+    ) -> String {
+        use ember_mir::{AtomicOp as Op, MemoryOrder};
+        let TyKind::Ref { inner, .. } = *self.types.kind(value_ref) else { unreachable!("an atomic's value is passed by its address") };
+        let boolean = matches!(self.types.kind(inner), TyKind::Bool);
+        let bits = ember_types::bit_width(self.types, inner).unwrap_or(if boolean { 8 } else { 64 });
+        let c_ty = self.c_type(inner);
+        let constant = |order: MemoryOrder| match order {
+            MemoryOrder::Relaxed => "EMBER_ORDER_RELAXED",
+            MemoryOrder::Acquire => "EMBER_ORDER_ACQUIRE",
+            MemoryOrder::Release => "EMBER_ORDER_RELEASE",
+            MemoryOrder::AcqRel => "EMBER_ORDER_ACQ_REL",
+            MemoryOrder::SeqCst => "EMBER_ORDER_SEQ_CST",
+        };
+        let (o, f) = match order {
+            Some(order) => (constant(order).to_string(), constant(order.on_failure()).to_string()),
+            None => {
+                let refused = MemoryOrder::ALL.iter().enumerate().filter(|(_, o)| op.refuses(**o)).fold(0u32, |mask, (i, _)| mask | 1 << i);
+                let held = rendered.last().expect("the order operand");
+                let o = format!("{RT}atomic_order((uint8_t)({held}), {refused}u, \"{}\", {})", op.name(), self.location(span));
+                let f = format!("{RT}atomic_failure_order({o})");
+                (o, f)
+            }
+        };
+        let p = &rendered[0];
+        let name = match op {
+            Op::Load => "LOAD",
+            Op::Store => "STORE",
+            Op::Swap => "SWAP",
+            Op::CompareExchange => "CAS",
+            Op::FetchAdd => "FETCH_ADD",
+            Op::FetchSub => "FETCH_SUB",
+            Op::FetchAnd => "FETCH_AND",
+            Op::FetchOr => "FETCH_OR",
+            Op::FetchXor => "FETCH_XOR",
+        };
+        match op {
+            Op::FetchAnd | Op::FetchOr | Op::FetchXor if boolean => {
+                format!("(bool)EMBER_ATOMIC_{name}(8, (uint8_t*)({p}), (uint8_t)({}), {o})", rendered[1])
+            }
+            Op::Load => format!("({c_ty})EMBER_ATOMIC_LOAD({bits}, {p}, {o})"),
+            Op::Store => format!("EMBER_ATOMIC_STORE({bits}, {p}, {}, {o})", rendered[1]),
+            Op::CompareExchange => format!("EMBER_ATOMIC_CAS({bits}, {p}, {}, {}, {o}, {f})", rendered[1], rendered[2]),
+            _ => format!("({c_ty})EMBER_ATOMIC_{name}({bits}, {p}, {}, {o})", rendered[1]),
+        }
+    }
+
     /// `[THR-3]` — the lock (`std.sync.Mutex[T]` or `RwLock[T]`, by `lock`) a guard was taken from.
     fn lock_for_guard(&self, guard: Ty, lock: &str) -> Option<Ty> {
         let TyKind::Struct(id) = *self.types.kind(guard) else { return None };
@@ -6822,6 +6879,7 @@ impl Emitter<'_> {
                     Builtin::MutexTryLock => return format!("{RT}mutex_try_lock({})", rendered[0]),
                     Builtin::RwLockAcquire { write } => return format!("{RT}rwlock_acquire({}, {write})", rendered[0]),
                     Builtin::RwLockTryAcquire { write } => return format!("{RT}rwlock_try_acquire({}, {write})", rendered[0]),
+                    Builtin::Atomic { op, order } => return self.atomic_call(*op, *order, *arg_ty, &rendered, span),
                     Builtin::ForeignStaticWrite { symbol } => {
                         self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*arg_ty, false));
                         return format!("({symbol} = {})", rendered[0]);

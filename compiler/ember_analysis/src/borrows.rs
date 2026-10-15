@@ -4975,7 +4975,7 @@ fn is_refcell_ty(types: &TypeTable, ty: Ty) -> bool {
 fn is_guarded_cell_ty(types: &TypeTable, ty: Ty) -> bool {
     is_refcell_ty(types, ty)
         || matches!(types.kind(ty), TyKind::Struct(id)
-            if types.struct_def(*id).origin.as_ref().is_some_and(|(origin, _)| matches!(origin.as_str(), "std.sync.Mutex" | "std.sync.RwLock")))
+            if types.struct_def(*id).origin.as_ref().is_some_and(|(origin, _)| matches!(origin.as_str(), "std.sync.Mutex" | "std.sync.RwLock" | "std.sync.Atomic")))
 }
 
 /// Whether this loan is a guard's loan: a borrow of a `RefCell`'s `value`

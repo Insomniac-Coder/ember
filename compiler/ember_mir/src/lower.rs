@@ -1855,6 +1855,30 @@ impl<'a> Builder<'a> {
         self.current = join;
     }
 
+    /// `[THR-14]` — an atomic operation. The runtime gets the address of the `Atomic`'s value (its
+    /// only field: a loan the borrow checker treats as a cell's, `is_guarded_cell_ty`), then the
+    /// operands as they are.
+    fn lower_atomic(&mut self, place: Place, which: hir::Builtin, args: &'a [hir::Expr], span: ember_span::Span) {
+        let hir::ExprKind::Ref { place: atomic_hir, .. } = &args[0].kind else { return };
+        let TyKind::Struct(id) = *self.types.kind(atomic_hir.ty) else { return };
+        let value_ty = self.types.struct_def(id).fields[0].ty;
+        // Interned by the type checker (`synth_atomic_method`).
+        let Some(value_ref_ty) = self.types.find(&TyKind::Ref { mutable: true, inner: value_ty }) else { return };
+        let operands: Vec<Operand> = args[1..].iter().map(|arg| self.lower_operand(arg)).collect();
+        self.at(span);
+        let value_place = self.lower_place(atomic_hir).field(0);
+        let value_ref = self.temp(value_ref_ty, span);
+        self.push(StmtKind::Assign { place: Place::local(value_ref), rvalue: Rvalue::Ref { place: value_place, mutable: true } });
+        let next = self.new_block();
+        self.terminate(Terminator::Call {
+            func: FuncRef::Builtin { which, arg_ty: value_ref_ty },
+            args: std::iter::once(Operand::Copy(Place::local(value_ref))).chain(operands).collect(),
+            dest: place,
+            next,
+        });
+        self.current = next;
+    }
+
     fn lower_refcell_borrow(
         &mut self,
         place: Place,
@@ -2741,6 +2765,9 @@ impl<'a> Builder<'a> {
                 args,
             } => {
                 self.lower_lock(place, &args[0], which.clone(), expr.ty, expr.span);
+            }
+            hir::ExprKind::Builtin { which: which @ hir::Builtin::Atomic { .. }, args } => {
+                self.lower_atomic(place, *which, args, expr.span);
             }
             hir::ExprKind::Builtin { which: hir::Builtin::RefCellTryBorrowMut, args } => {
                 self.lower_refcell_try_borrow(place, &args[0], true, expr.ty, expr.span);

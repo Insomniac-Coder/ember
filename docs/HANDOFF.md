@@ -10869,6 +10869,12 @@ way: `tools/error_pages.py` (and so the gates) ran `target/release` from the mor
 `target/release`, so the full check now builds release first (the earlier MSVC/clang sweeps today
 ran a stale compiler; the gcc one builds its own and was clean).
 
+**2026-10-15, `Atomic[T]` (ADR-178).** `std.sync.Atomic` and `MemoryOrder`: `load`/`store`/`swap`/
+`compare_exchange` and the `fetch_` family (`checked_`/`wrapping_`), `E7006` for a constant order an
+operation refuses, a run-time check for one held in a variable. `STA-1` done; `THR-14` waits only
+on 128-bit atomics (`E0900`); `THR-9` on `Once`/`SyncShared`. Speed: `fetch_add` x1.002 of C
+(clang, `bench/probes/atomic_counter`). Next: `Once`, `SyncShared`, then threads.
+
 **2026-10-15, `Mutex` and `RwLock` (ADR-177), the dependency map's step 4 begun.** `std.sync.Mutex`
 and `RwLock` with their guards: a lock word in the value, inline compare-exchange/swap in
 `ember_rt.h`, `WaitOnAddress`/`futex` waits in `ember_rt.c`, runtime C tests under four threads

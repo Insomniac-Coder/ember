@@ -5016,6 +5016,40 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-178 — `Atomic[T]` is its value and the C compilers' atomics; a constant order is checked at compile time (`[THR-14]`)
+
+**Context.** `[THR-14]` gives `Atomic[T]` for the integer types, `bool` and raw pointers, an
+`order: MemoryOrder = MemoryOrder.SeqCst` on every operation, `E7006` for an order an operation
+does not support, and the overflow behaviour of `fetch_add`/`checked_fetch_add`/
+`wrapping_fetch_add`. It names no other operations.
+
+**Decision.** `Atomic[T]` is a struct of `std/src/sync.em` holding only its value, built by
+`Atomic(v)` (`E2020` for any other `T`, with a note to use a `Mutex`); `MemoryOrder` is an enum
+there. The operations are `load`, `store`, `swap`, `compare_exchange(current, new) ->
+Result[T, T]` (`Ok(previous)` when it stored, `Err(actual)` when not: Rust's shape, one order, the
+failure order derived by dropping the release half), and on integers `fetch_add`/`fetch_sub`,
+`checked_` and `wrapping_` forms of both, and `fetch_and`/`fetch_or`/`fetch_xor` (on `bool` too).
+Each borrows the `Atomic` shared (the borrow checker treats its value as a cell's, as it does a
+lock's) and is one builtin, `Builtin::Atomic { op, order }`, lowered to a call on the value's
+address; the C header maps it to `__atomic_*` (GCC, clang) or the `_Interlocked*` intrinsics by
+width (MSVC, x86/x64). `fetch_add` is the wrapping add followed by the checked `+` of the old value
+and the operand, so its panic is `+`'s; `checked_fetch_add` is a compare-exchange loop on
+`IntOverflowing`, written in HIR, that stores only a result in range.
+- **Orders.** A constant order (`MemoryOrder.Acquire`, the default) is part of the builtin and
+  checked by the type checker (`E7006`). An order held in a variable is the call's last operand;
+  the runtime's `ember_atomic_order` checks it as the operation runs (a refused one panics, as
+  Rust's do) and gives the C compiler's order.
+- **Send and Sync.** An `Atomic` is both (`[THR-9]`); effects: `Sync` (`[EFF-5]`'s `@nosync`).
+
+**Speed** (AUTOPILOT §4). `hits.fetch_add(i % 3, MemoryOrder.Relaxed)`, 100M times
+(`bench/probes/atomic_counter`), clang: 400.6 ms against 399.8 ms for C's `__atomic_fetch_add`
+with the same overflow check (x1.002).
+
+**Not built.** `Atomic[i128]`/`Atomic[u128]` are `E0900` (16-byte atomics need `cmpxchg16b` or
+libatomic, per compiler). `_Atomic T` in C imports (`[FFI-8]`, `E5016`). MSVC on ARM64.
+
+---
+
 ## ADR-177 — `Mutex` and `RwLock` are a lock word in the value, guards shaped like `RefCell`'s (`[THR-3]`, `[THR-9]`, `[CELL-8]`)
 
 **Context.** `std.sync` had no locks, so `[CELL-8]`'s "promote single-threaded code to shared code
