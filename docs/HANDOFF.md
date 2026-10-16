@@ -10949,7 +10949,9 @@ ODR-113 (`[STD-9]`'s example is a `RefCell`), ODR-114 (a use or borrow of a move
 labelled at the move; `E3050` only for a place never assigned on some path, labelled at the
 branch), ODR-115 (`unsafe fn(…) -> R` types; a call through one needs `unsafe`; EMIF schema 10).
 Then (ADR-199) D-550 fixed, the owner's two-way idea: gcc's text loops gain a mixed loop and a short
-loop (mixed text 1.1-1.2x C -> 1.0-1.09x, the README text programs unchanged); and (ADR-200,
+loop (mixed text 1.1-1.2x C -> 1.0-1.09x, the README text programs unchanged; over other writing
+systems, Russian, Greek, Arabic and emoji text gain, short Hindi/Japanese/Korean strings lose 7-10%,
+accepted, ADR-199's follow-up); and (ADR-200,
 0.9.10_Hardened_12) ODR-116, a `MutSpan` converts to a `Span` where one is expected. The review
 workflow over ADR-114/120/127, EXC-10, ADR-134/D-467 and the `T`/`T.Name` sweep waits for the
 owner's usage limit to reset (the owner, 2026-10-16).

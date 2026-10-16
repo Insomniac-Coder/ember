@@ -5081,6 +5081,30 @@ blocks; MSVC's and clang's are unchanged. **Tests:**
 and the 255/256-byte edge, expected values from Python's UTF-8 decoding; run with gcc in WSL as well),
 and the milestone counting the decoders gcc's C has.
 
+**Follow-up: other writing systems** (2026-10-16, `bench/probes/text_loop_scripts.em` and its C twin:
+Russian, Greek, Arabic, Hindi, Japanese, Korean and emoji in English, each as one long text, 10000
+strings of 0-3 words and 10000 of 4-30; gcc, whole programs, x C, before -> after):
+
+| Text | long | 0-3 words | 4-30 words |
+|---|---|---|---|
+| Russian | 1.16 -> 1.08 | 1.27 -> 1.07 | 1.17 -> 1.04 |
+| Greek | 1.20 -> 1.07 | 1.32 -> 1.06 | 1.22 -> 1.07 |
+| Arabic | 1.08 -> 1.03 | 1.31 -> 1.11 | 1.17 -> 1.02 |
+| emoji in English | 1.09 -> 1.01 | 1.13 -> 1.08 | 1.17 -> 1.11 |
+| Korean | 1.04 -> 1.01 | 1.14 -> 1.25 | 1.10 -> 1.05 |
+| Hindi | 1.05 -> 1.06 | 1.14 -> 1.24 | 1.08 -> 1.10 |
+| Japanese | 0.92 -> 1.00 | 1.15 -> 1.21 | 0.96 -> 1.03 |
+
+Short strings of three-byte characters lose 7-10%, and the short loop is what does it: with it off,
+Japanese and Korean short strings are back at 1.17x, but Russian, emoji and accented short strings lose
+their gain (1.04-1.08x -> 1.11-1.25x). gcc's code for a three-byte character in the short loop is the
+old loop's (the same instructions and three taken jumps), so the loss is where the code lands, not work
+it adds. The mixed loop's decoder in gcc's shape (each branch advancing on its own, as the general
+decoder) made long Japanese 1.07 -> 1.00 and emoji 1.03 -> 1.00 but long Russian, Greek and Hindi 4% and
+Arabic and Korean 2% slower, the same in three runs: a trade, so not applied. An earlier run that
+showed it winning everywhere had changed the short loop too, which moved the code. The owner left both
+as they are (2026-10-16).
+
 ## ADR-198 — The owner's three rulings: a class's printer, a moved value is `E3040`, `unsafe fn(…)` types (ODR-113 to ODR-115, 0.9.10_Hardened_11)
 
 2026-10-16. The three owner questions ADR-197 found, ruled by the owner and cut as
