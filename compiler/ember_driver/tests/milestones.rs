@@ -1392,6 +1392,37 @@ fn unknown_manifest_lint_is_rejected() {
     );
 }
 
+/// `[EFF-19]` — `@realtime` stands for the set the package's manifest declares in `[realtime]
+/// contracts`: with `["noalloc"]`, a `@realtime` function may panic but not allocate, and the error
+/// names both `@realtime` and the contract; a name that is no contract is `E9001`.
+#[test]
+fn realtime_stands_for_the_manifests_contracts() {
+    let root = workspace_root();
+    let package = temporary_directory("realtime-contracts");
+    let source = package.join(ember_branding::source_file("main"));
+    std::fs::write(package.join(MANIFEST), "[realtime]\ncontracts = [\"noalloc\"]\n").expect("manifest is writable");
+    std::fs::write(
+        &source,
+        "@realtime\nfn stop(x: int) -> int:\n    if x < 0:\n        panic(\"negative\")\n    return x\n\n\
+         @realtime\nfn grow(x: int) -> int:\n    xs = [x]\n    return xs.len()\n\n\
+         fn main():\n    println(stop(1), grow(2))\n",
+    )
+    .expect("source is writable");
+    let source_arg = source.to_string_lossy().into_owned();
+    let checked = ember(&["check", &source_arg], &root);
+    let rendered = without_source_echo(&checked.stderr);
+    assert_ne!(checked.exit, 0, "an allocation under `@realtime` = `@noalloc` compiled");
+    assert!(rendered.contains("error[E4001]") && rendered.contains("`@realtime` (`@noalloc`) function `grow`"), "{}", checked.stderr);
+    assert!(rendered.contains("`@realtime` stands for `@noalloc` here"), "{}", checked.stderr);
+    assert!(!rendered.contains("E4040"), "a panic is allowed when the set has no `nopanic(explicit)`:\n{}", checked.stderr);
+
+    std::fs::write(package.join(MANIFEST), "[realtime]\ncontracts = [\"noalloc\", \"fast\"]\n").expect("manifest is writable");
+    let checked = ember(&["check", &source_arg], &root);
+    let _ = std::fs::remove_dir_all(&package);
+    let rendered = without_source_echo(&checked.stderr);
+    assert!(rendered.contains("error[E9001]") && rendered.contains("`fast` is not a contract `@realtime` can stand for"), "{}", checked.stderr);
+}
+
 /// `[MAN-3]` — the registry spelling and the descriptive lint names used by
 /// the manifest examples all remain valid configuration keys.
 #[test]
@@ -1835,6 +1866,77 @@ fn dynamic_access_safety_side_table_is_written() {
     );
 }
 
+/// `[UNS-8]` — `ember tcb` lists every `unsafe:` block and `unsafe fn` with its safety note and
+/// category (or that it has none), and for a block the unsafe functions it calls with the
+/// obligation each states (`@safety`, `[UNS-7]`).
+#[test]
+fn tcb_lists_every_unsafe_with_its_note_and_obligations() {
+    let root = workspace_root();
+    let dir = temporary_directory("tcb-report");
+    let source = dir.join(format!("trusted.{SOURCE_EXT}"));
+    std::fs::write(
+        &source,
+        "@safety(\"`n` is below 100\")\n\
+         # SAFETY(performance): its callers bound `n`, so the product needs no check\n\
+         pub unsafe fn scale(n: i64) -> i64:\n    return n * 2\n\n\
+         fn main():\n    total = 0\n\
+         \x20   unsafe:  # SAFETY: 3 is below 100\n\
+         \x20       total += scale(3)\n\
+         \x20   unsafe:\n        total += scale(4)\n    println(total)\n",
+    )
+    .expect("write the program");
+    let source_arg = source.to_string_lossy().into_owned();
+    let report = ember(&["tcb", &source_arg], &root);
+    assert_eq!(report.exit, 0, "tcb failed:\n{}\n{}", report.stdout, report.stderr);
+    let out = &report.stdout;
+    assert!(out.contains("Unsafe (3):"), "{out}");
+    assert!(out.contains("unsafe fn `scale`  SAFETY(performance): its callers bound `n`, so the product needs no check"), "{out}");
+    assert!(out.contains("block in `main`  SAFETY: 3 is below 100"), "{out}");
+    assert!(out.contains("block in `main`  no safety note (W3012)"), "{out}");
+    assert_eq!(out.matches("calls `scale`: `n` is below 100").count(), 2, "{out}");
+    let json = ember(&["tcb", "--json", &source_arg], &root);
+    assert_eq!(json.exit, 0, "tcb --json failed:\n{}", json.stderr);
+    assert!(json.stdout.contains("\"category\":\"performance\""), "{}", json.stdout);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `[EFF-16]` — `ember inspect --safety` reports each function's `@nopanic(explicit)` beside the
+/// `RuntimeCheck` kinds it reaches: a `@nopanic(explicit)` function may index (a bounds check is a
+/// `RuntimeCheck`, allowed under it), and one free of checks too has no panic the model knows of.
+#[test]
+fn inspect_safety_reports_nopanic_explicit_beside_runtime_checks() {
+    let root = workspace_root();
+    let dir = temporary_directory("safety-nopanic");
+    let source = dir.join(format!("nopanic.{SOURCE_EXT}"));
+    std::fs::write(
+        &source,
+        "@nopanic(explicit)\nfn pick(xs: Span[int], i: int) -> int:\n    return xs[i]\n\n\
+         @nopanic(explicit)\nfn twice(x: bool) -> bool:\n    return not x\n\n\
+         fn main():\n    xs = [1, 2, 3]\n    println(pick(xs.as_span(), 1), twice(true))\n",
+    )
+    .expect("write the program");
+    let out_dir = dir.join("out");
+    let build = ember(&["build", &source.to_string_lossy(), "--out-dir", &out_dir.to_string_lossy()], &root);
+    assert_eq!(build.exit, 0, "build failed:\n{}", build.stderr);
+    let table = out_dir.join("debug").join("inspect").join("nopanic.safety.json");
+    let table = table.to_string_lossy().into_owned();
+    let report = ember(&["inspect", "--safety", &table], &root);
+    assert_eq!(report.exit, 0, "inspect failed:\n{}", report.stderr);
+    let line = |name: &str| {
+        report.stdout.lines().find(|line| line.trim_start().starts_with(&format!("{name} "))).unwrap_or_else(|| panic!("no line for `{name}`:\n{}", report.stdout)).to_string()
+    };
+    let pick = line("pick");
+    assert!(pick.contains("@nopanic(explicit)") && pick.contains("Bounds") && !pick.contains("knows of"), "{pick}");
+    let twice = line("twice");
+    assert!(twice.contains("@nopanic(explicit)  RuntimeCheck: none  (no panic the effect model knows of)"), "{twice}");
+    let main = line("main");
+    assert!(!main.contains("@nopanic"), "{main}");
+    let json = ember(&["inspect", "--safety", "--json", "--function", "twice", &table], &root);
+    assert_eq!(json.exit, 0, "JSON inspect failed:\n{}", json.stderr);
+    assert!(json.stdout.contains("\"functions\":[{\"function\":\"twice\",\"nopanic_explicit\":true,\"runtime_checks\":[]}]"), "{}", json.stdout);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `[EXC-8]`–`[EXC-14]` — a copied class handle prevents static unique-handle
 /// elision, but the receiver itself is stable across this counted loop. The
 /// compiler therefore emits one checked loop-level interval for the `mut
@@ -2116,12 +2218,20 @@ fn distinct_soa_columns_get_restrict_functions() {
 fn a_list_a_loop_only_pushes_onto_is_kept_in_a_local() {
     let root = workspace_root();
     let source = format!("tests/conformance/OPT-2/accept_a_list_a_loop_only_pushes_onto_keeps_every_push.{SOURCE_EXT}");
+    // A write of `items` from a local outside `Log`'s constructor (its definition, the last mention),
+    // whose own write (`[CLS-2]`: through a temporary, after the field's drop flag) is no write-back.
+    let written_back = |c: &str| {
+        let init = c.rfind("Log_init(struct").unwrap_or(c.len());
+        let (before, after) = c.split_at(init);
+        let after = after.find("\n}\n").map_or("", |end| &after[end..]);
+        before.contains("->items = _") || after.contains("->items = _")
+    };
     let gcc = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "gcc"], &root);
     assert_eq!(gcc.exit, 0, "C failed:\n{}", gcc.stderr);
-    assert!(gcc.stdout.contains("->items = _"), "no list is written back from a local:\n{}", gcc.stdout);
+    assert!(written_back(&gcc.stdout), "no list is written back from a local:\n{}", gcc.stdout);
     let msvc = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "C failed:\n{}", msvc.stderr);
-    assert!(!msvc.stdout.contains("->items = _"), "a list is kept in a local for MSVC:\n{}", msvc.stdout);
+    assert!(!written_back(&msvc.stdout), "a list is kept in a local for MSVC:\n{}", msvc.stdout);
 }
 
 /// ADR-099 — behind the tests of the classes a program knows, an interface

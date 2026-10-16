@@ -495,7 +495,8 @@ fn contract_diagnostic(
     }
     if realtime {
         diagnostic = diagnostic.note(format!(
-            "`@realtime` stands for `@noalloc @nolock @noblock @nopanic(explicit)`, and this is `{contract}` (EFF-19)"
+            "`@realtime` stands for `{}` here, the set its package's manifest declares (by default `@noalloc @nolock @noblock @nopanic(explicit)`), and this is `{contract}` (EFF-19)",
+            body.contracts.realtime.contract_names()
         ));
     }
     diagnostic

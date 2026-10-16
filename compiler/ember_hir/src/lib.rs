@@ -211,6 +211,25 @@ impl Effects {
         (Self::NONDET, "Nondet"),
     ];
 
+    /// `[EFF-5]`, `[EFF-19]` — each contract, by the attribute that writes it (and the name a
+    /// manifest's `[realtime] contracts` gives it), with the effect it forbids.
+    pub const CONTRACTS: [(Effects, &'static str); 7] = [
+        (Self::ALLOC, "noalloc"),
+        (Self::SYNC, "nosync"),
+        (Self::LOCK, "nolock"),
+        (Self::BLOCK, "noblock"),
+        (Self::IO, "noio"),
+        (Self::PANIC, "nopanic(explicit)"),
+        (Self::NONDET, "deterministic"),
+    ];
+
+    /// The contracts that forbid these effects, as attributes: `@noalloc @nolock`.
+    pub fn contract_names(self) -> String {
+        let names: Vec<String> =
+            Self::CONTRACTS.iter().filter(|(effect, _)| self.contains(*effect)).map(|(_, name)| format!("@{name}")).collect();
+        names.join(" ")
+    }
+
     pub fn contains(self, other: Effects) -> bool {
         self.0 & other.0 == other.0
     }

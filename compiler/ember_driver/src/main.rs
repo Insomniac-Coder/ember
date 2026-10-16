@@ -47,6 +47,9 @@ usage:
                                       report the retains and releases left inside loops
     ember inspect --alloc [--json] [--function <name>] <file.em>
                                       report every place the program allocates
+    ember tcb [--module <m>] [--json] <file.em>
+                                      list every unsafe block and unsafe fn with its safety note,
+                                      its category and the obligations of the unsafe functions it calls
 
 options:
     --profile debug|release|shipping   default: debug
@@ -371,6 +374,16 @@ struct Options {
     /// `[TST-3]` — `ember test [filter]`: run only the tests whose name
     /// contains it.
     test_filter: Option<String>,
+    /// `[UNS-8]` — `ember tcb`: check the program, then list its `unsafe` instead of generating
+    /// code.
+    tcb_report: Option<TcbReport>,
+}
+
+/// What `ember tcb` prints: JSON or text, one module or all.
+#[derive(Clone, Default)]
+struct TcbReport {
+    json: bool,
+    module: Option<String>,
 }
 
 /// What `ember inspect --alloc` prints: JSON or text, one function or all.
@@ -428,6 +441,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             explain(code, json)
         }
         "inspect" => inspect(&args[1..]),
+        "tcb" => tcb(&args[1..]),
         "test" => test_runner::command(&args[1..]),
         "build" | "run" | "check" => {
             // The source file may sit before or after the flags. Requiring it
@@ -694,6 +708,7 @@ fn cycle_analysis(
         lint_settings.return_intersection,
         true,
         &ember_typeck::ComptimeAnswers::new(),
+        lint_settings.realtime,
     );
     if sink.has_errors() {
         report(&sink, &map, &Options::default());
@@ -1139,16 +1154,324 @@ fn inspect_safety(
         .cloned()
         .collect();
 
+    // `[EFF-16]` — written since the functions were added to schema 1; an older table has none.
+    let functions: Vec<serde_json::Value> = value
+        .get("functions")
+        .and_then(serde_json::Value::as_array)
+        .map(|all| {
+            all.iter()
+                .filter(|entry| function.is_none_or(|name| entry.get("function").and_then(serde_json::Value::as_str) == Some(name)))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
     if json {
-        let report = serde_json::json!({ "schema": schema, "checks": selected });
+        let report = serde_json::json!({ "schema": schema, "checks": selected, "functions": functions });
         println!(
             "{}",
             serde_json::to_string(&report).map_err(|error| error.to_string())?
         );
     } else {
         print_safety_report(&resolved, &selected, elided_only, function);
+        print_safety_functions(&functions);
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// `[UNS-8]` — `ember tcb [--module <m>] [--json] <file.em>`.
+fn tcb(args: &[String]) -> Result<ExitCode, String> {
+    let mut request = TcbReport::default();
+    let mut path = None;
+    let mut rest = args.iter();
+    while let Some(argument) = rest.next() {
+        match argument.as_str() {
+            "--json" => request.json = true,
+            "--module" => request.module = Some(rest.next().ok_or("`--module` needs a module name")?.clone()),
+            flag if flag.starts_with('-') => return Err(format!("unknown `ember tcb` option `{flag}`")),
+            file if path.is_none() => path = Some(PathBuf::from(file)),
+            extra => return Err(format!("unexpected `ember tcb` argument `{extra}`")),
+        }
+    }
+    let path = path.ok_or("`ember tcb` needs a source file")?;
+    let options = Options { tcb_report: Some(request), ..Options::default() };
+    compile(&path, "check", &options)
+}
+
+/// `[UNS-8]` — one `unsafe:` block or `unsafe fn` of the program: where, which function, its
+/// safety note (`[LEX-23]`), and what its body may reach only through `unsafe`.
+struct UnsafeEntry {
+    site: Span,
+    extent: Span,
+    block: bool,
+    function: String,
+    module: String,
+    note: Option<(Option<&'static str>, String)>,
+    calls: Vec<(String, Option<String>)>,
+}
+
+/// The functions of a module's items, with the spans of their declarations.
+fn module_functions(module: &ember_ast::Module) -> Vec<(Span, &ember_ast::FnDecl)> {
+    let mut out = Vec::new();
+    for item in &module.items {
+        let members = match &item.kind {
+            ember_ast::ItemKind::Fn(decl) => {
+                out.push((item.span, decl));
+                continue;
+            }
+            ember_ast::ItemKind::Struct(decl) => &decl.members,
+            ember_ast::ItemKind::Class(decl) => &decl.members,
+            ember_ast::ItemKind::Enum(decl) => &decl.members,
+            ember_ast::ItemKind::Interface(decl) => &decl.members,
+            ember_ast::ItemKind::Extend(decl) => &decl.members,
+            _ => continue,
+        };
+        for member in members {
+            if let ember_ast::MemberKind::Fn(decl) = &member.kind {
+                out.push((member.span, decl));
+            }
+        }
+    }
+    out
+}
+
+/// Each `unsafe:` block in `block`, with its statement's span and its body's.
+fn unsafe_blocks(block: &ember_ast::Block, out: &mut Vec<(Span, Span)>) {
+    use ember_ast::StmtKind;
+    for stmt in &block.stmts {
+        match &stmt.kind {
+            StmtKind::Unsafe(body) => {
+                out.push((stmt.span, body.span));
+                unsafe_blocks(body, out);
+            }
+            StmtKind::If(branch) => unsafe_if_blocks(branch, out),
+            StmtKind::While { body, else_block, .. } | StmtKind::For { body, else_block, .. } => {
+                unsafe_blocks(body, out);
+                if let Some(block) = else_block {
+                    unsafe_blocks(block, out);
+                }
+            }
+            StmtKind::Match { arms, .. } => {
+                for arm in arms {
+                    if let ember_ast::MatchArmBody::Block(body) = &arm.body {
+                        unsafe_blocks(body, out);
+                    }
+                }
+            }
+            StmtKind::With { body, .. } | StmtKind::Defer(body) | StmtKind::Comptime(body) => unsafe_blocks(body, out),
+            StmtKind::LocalFn(decl) => {
+                if let Some(body) = &decl.body {
+                    unsafe_blocks(body, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn unsafe_if_blocks(branch: &ember_ast::IfStmt, out: &mut Vec<(Span, Span)>) {
+    unsafe_blocks(&branch.then_block, out);
+    match branch.else_block.as_deref() {
+        Some(ember_ast::ElseBranch::Block(block)) => unsafe_blocks(block, out),
+        Some(ember_ast::ElseBranch::If(next)) => unsafe_if_blocks(next, out),
+        None => {}
+    }
+}
+
+/// `@safety("…")`, the obligation `[UNS-7]` has an unsafe function state.
+fn safety_obligation(attrs: &[ember_ast::Attribute]) -> Option<String> {
+    attrs.iter().filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("safety")).find_map(|attr| match attr.args.first() {
+        Some(ember_ast::AttrArg::Expr(ember_ast::Expr { kind: ember_ast::ExprKind::Lit(ember_ast::Literal::Str(text)), .. })) => Some(text.clone()),
+        _ => None,
+    })
+}
+
+/// `[UNS-8]`, `[TCB-4]`'s unsafe section — every `unsafe:` block and `unsafe fn` of the program, by
+/// module, with its safety note and category, and for each the unsafe functions its body calls
+/// with the obligation each states (`@safety`, `[UNS-7]`).
+fn print_tcb_report(
+    input: &Path,
+    bodies: &[ember_mir::Body],
+    modules: &[ember_typeck::LoadedModule],
+    map: &SourceMap,
+    request: &TcbReport,
+) -> Result<(), String> {
+    let module_name = |loaded: &ember_typeck::LoadedModule| {
+        if loaded.path.is_empty() {
+            input.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default()
+        } else {
+            loaded.path.join(".")
+        }
+    };
+    let contains = |outer: Span, inner: Span| outer.file == inner.file && outer.start <= inner.start && inner.start < outer.end.max(outer.start + 1);
+    // Every function's declaration and its stated obligation, standard ones too: a program's
+    // `unsafe` calls them.
+    let mut obligations: Vec<(Span, Option<String>)> = Vec::new();
+    for loaded in modules {
+        for item in &loaded.module.items {
+            match &item.kind {
+                ember_ast::ItemKind::Fn(_) => obligations.push((item.span, safety_obligation(&item.attrs))),
+                ember_ast::ItemKind::Struct(ember_ast::StructDecl { members, .. })
+                | ember_ast::ItemKind::Class(ember_ast::ClassDecl { members, .. })
+                | ember_ast::ItemKind::Enum(ember_ast::EnumDecl { members, .. })
+                | ember_ast::ItemKind::Extend(ember_ast::ExtendDecl { members, .. }) => {
+                    for member in members {
+                        if matches!(member.kind, ember_ast::MemberKind::Fn(_)) {
+                            obligations.push((member.span, safety_obligation(&member.attrs)));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut entries: Vec<UnsafeEntry> = Vec::new();
+    for loaded in modules {
+        if loaded.path.first().is_some_and(|package| package == ember_branding::STD_PACKAGE) || loaded.module.unsafe_sites.is_empty() {
+            continue;
+        }
+        let name = module_name(loaded);
+        if request.module.as_ref().is_some_and(|wanted| *wanted != name) {
+            continue;
+        }
+        let file = loaded.module.span.file;
+        let text = &map.file(file).text;
+        let comments = ember_lexer::lex(file, text, &mut Sink::new()).comments;
+        let line = |span: Span| map.file(span.file).line_col(span.start).line;
+        let functions = module_functions(&loaded.module);
+        let mut blocks = Vec::new();
+        for (_, decl) in &functions {
+            if let Some(body) = &decl.body {
+                unsafe_blocks(body, &mut blocks);
+            }
+        }
+        for &site in &loaded.module.unsafe_sites {
+            let at = line(site);
+            let note = comments
+                .iter()
+                .filter(|comment| comment.safety.is_some())
+                .find(|comment| (line(comment.span) == at && !comment.own_line) || (at > 1 && line(comment.span) == at - 1 && comment.own_line))
+                .map(|comment| {
+                    let written = &text[comment.span.start as usize..comment.span.end as usize];
+                    let reason = written.split_once(':').map_or(written, |(_, reason)| reason).trim().to_string();
+                    (comment.safety.as_ref().and_then(|safety| safety.category), reason)
+                });
+            let owner = functions.iter().filter(|(span, _)| contains(*span, site)).min_by_key(|(span, _)| span.end - span.start);
+            let function = owner.map_or_else(String::new, |(_, decl)| decl.name.name.to_string());
+            let entry = match blocks.iter().find(|(stmt, _)| stmt.start == site.start && stmt.file == site.file) {
+                Some(&(_, body)) => UnsafeEntry { site, extent: body, block: true, function, module: name.clone(), note, calls: Vec::new() },
+                None => {
+                    let extent = owner.and_then(|(_, decl)| decl.body.as_ref()).map_or(site, |body| body.span);
+                    UnsafeEntry { site, extent, block: false, function, module: name.clone(), note, calls: Vec::new() }
+                }
+            };
+            entries.push(entry);
+        }
+    }
+    // The calls into unsafe functions, each placed in the innermost `unsafe` it is written in.
+    let by_symbol: std::collections::HashMap<&str, &ember_mir::Body> = bodies.iter().map(|body| (body.symbol.as_str(), body)).collect();
+    for body in bodies {
+        for block in &body.blocks {
+            let ember_mir::Terminator::Call { func: ember_mir::FuncRef::Direct { symbol, .. }, .. } = &block.terminator else { continue };
+            let Some(callee) = by_symbol.get(symbol.as_str()) else { continue };
+            if !callee.is_unsafe {
+                continue;
+            }
+            let at = block.terminator_span;
+            let Some(entry) = entries.iter_mut().filter(|entry| contains(entry.extent, at)).min_by_key(|entry| entry.extent.end - entry.extent.start) else {
+                continue;
+            };
+            let obligation = obligations
+                .iter()
+                .filter(|(span, _)| contains(*span, callee.span))
+                .min_by_key(|(span, _)| span.end - span.start)
+                .and_then(|(_, obligation)| obligation.clone());
+            let call = (callee.name.clone(), obligation);
+            if !entry.calls.contains(&call) {
+                entry.calls.push(call);
+            }
+        }
+    }
+    entries.sort_by_key(|entry| (entry.module.clone(), entry.site.file, entry.site.start));
+    if request.json {
+        let unsafe_json: Vec<serde_json::Value> = entries
+            .iter()
+            .map(|entry| {
+                serde_json::json!({
+                    "module": entry.module,
+                    "source": map.location(entry.site),
+                    "kind": if entry.block { "block" } else { "fn" },
+                    "function": entry.function,
+                    "note": entry.note.as_ref().map(|(_, reason)| reason.clone()),
+                    "category": entry.note.as_ref().and_then(|(category, _)| *category),
+                    "calls": entry.calls.iter().map(|(name, obligation)| serde_json::json!({ "function": name, "obligation": obligation })).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::json!({ "schema": 1, "unsafe": unsafe_json }));
+        return Ok(());
+    }
+    println!("Trusted base: {}", input.display());
+    println!("Unsafe ({}):", entries.len());
+    let mut module = None;
+    for entry in &entries {
+        if module != Some(&entry.module) {
+            println!("  module {}", entry.module);
+            module = Some(&entry.module);
+        }
+        let what = if entry.block { format!("block in `{}`", entry.function) } else { format!("unsafe fn `{}`", entry.function) };
+        let note = match &entry.note {
+            Some((Some(category), reason)) => format!("SAFETY({category}): {reason}"),
+            Some((None, reason)) => format!("SAFETY: {reason}"),
+            None => "no safety note (W3012)".to_string(),
+        };
+        println!("    {}  {what}  {note}", map.location(entry.site));
+        for (name, obligation) in &entry.calls {
+            match obligation {
+                Some(obligation) => println!("      calls `{name}`: {obligation}"),
+                None => println!("      calls `{name}`: states no obligation"),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `[EFF-16]` — each function of the program with the two facts that together say it has no panic
+/// the effect model knows of: whether it is `@nopanic(explicit)`
+/// (written, or through `@realtime`), and the `RuntimeCheck` kinds it reaches, its callees' included.
+fn safety_functions_json(
+    bodies: &[ember_mir::Body],
+    types: &TypeTable,
+    modules: &[ember_typeck::LoadedModule],
+) -> String {
+    use ember_hir::Effects;
+    let standard_files: std::collections::BTreeSet<ember_span::FileId> = modules
+        .iter()
+        .filter(|loaded| loaded.path.first().is_some_and(|package| package == ember_branding::STD_PACKAGE))
+        .map(|loaded| loaded.module.span.file)
+        .collect();
+    let std_prefix = ember_branding::mangled(&format!("{}.", ember_branding::STD_PACKAGE));
+    let effects = ember_analysis::effect_sets(bodies, types);
+    let checks = [
+        (Effects::CHECK_ARITHMETIC, "Arithmetic"),
+        (Effects::CHECK_BOUNDS, "Bounds"),
+        (Effects::CHECK_ALIASING, "Aliasing"),
+        (Effects::CHECK_STALE, "Stale"),
+    ];
+    let functions: Vec<serde_json::Value> = bodies
+        .iter()
+        .zip(&effects)
+        .filter(|(body, _)| !body.symbol.starts_with(&std_prefix) && !standard_files.contains(&body.span.file))
+        .map(|(body, effects)| {
+            let contracts = body.contracts.forbidden | body.contracts.realtime;
+            let kinds: Vec<&str> = checks.iter().filter(|(effect, _)| effects.contains(*effect)).map(|(_, name)| *name).collect();
+            serde_json::json!({
+                "function": body.name,
+                "nopanic_explicit": contracts.contains(Effects::PANIC),
+                "runtime_checks": kinds,
+            })
+        })
+        .collect();
+    serde_json::to_string(&functions).unwrap_or_else(|_| "[]".to_string())
 }
 
 /// `[PHIL-2]`, `[CLO-10]` — print each place a function of the program
@@ -1455,6 +1778,29 @@ fn print_safety_report(
             print!("  interval: {interval}");
         }
         println!();
+    }
+}
+
+/// `[EFF-16]` — each function's `@nopanic(explicit)` beside its `RuntimeCheck` kinds; both together
+/// mean no panic the effect model knows of, though it can still stop on what the model does not
+/// cover (`[PHIL-11]`).
+fn print_safety_functions(functions: &[serde_json::Value]) {
+    if functions.is_empty() {
+        return;
+    }
+    println!("Functions:");
+    for entry in functions {
+        let name = entry.get("function").and_then(serde_json::Value::as_str).unwrap_or("<unknown>");
+        let nopanic = entry.get("nopanic_explicit").and_then(serde_json::Value::as_bool).unwrap_or(false);
+        let kinds: Vec<&str> = entry
+            .get("runtime_checks")
+            .and_then(serde_json::Value::as_array)
+            .map(|kinds| kinds.iter().filter_map(serde_json::Value::as_str).collect())
+            .unwrap_or_default();
+        let checks = if kinds.is_empty() { "none".to_string() } else { kinds.join(", ") };
+        let contract = if nopanic { "  @nopanic(explicit)" } else { "" };
+        let verdict = if nopanic && kinds.is_empty() { "  (no panic the effect model knows of)" } else { "" };
+        println!("  {name}{contract}  RuntimeCheck: {checks}{verdict}");
     }
 }
 
@@ -2520,6 +2866,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             lint_settings.return_intersection,
             options.profile == Profile::Debug,
             &answers,
+            lint_settings.realtime,
         );
         if checked.comptime.is_empty() {
             break (types, common, checked);
@@ -2698,6 +3045,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if ember_analysis::check_effects_all(&bodies, &types, &mut sink) > 0 {
         return Ok(finish(&sink, &map, options));
     }
+    // `[EFF-16]` — what the safety side table says of each function, read where the contracts
+    // were checked: inlining below folds a small function into its callers.
+    let safety_functions = safety_functions_json(&bodies, &types, &modules);
     // `[THR-5]` — a `Scope` binding stays where its `with` put it.
     if ember_analysis::check_scope_moves_all(&bodies, &types, &mut sink) > 0 {
         return Ok(finish(&sink, &map, options));
@@ -2707,6 +3057,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if let Some(request) = &options.alloc_report {
         report(&sink, &map, options);
         print_alloc_report(input, &bodies, &types, &modules, &map, request)?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    // `[UNS-8]` — the calls each `unsafe` makes, read before inlining moves them.
+    if let Some(request) = &options.tcb_report {
+        report(&sink, &map, options);
+        print_tcb_report(input, &bodies, &modules, &map, request)?;
         return Ok(ExitCode::SUCCESS);
     }
     // A function called from one place is inlined there, so the analyses
@@ -3020,7 +3376,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let c_path = layout.c.join(format!("{module_name}.c"));
     std::fs::write(&c_path, &emitted.c_source).map_err(|e| e.to_string())?;
     let safety_path = layout.inspect.join(format!("{module_name}.safety.json"));
-    std::fs::write(&safety_path, &emitted.safety_json).map_err(|e| e.to_string())?;
+    let safety_json = {
+        let table = emitted.safety_json.trim_end();
+        let table = table.strip_suffix('}').unwrap_or(table);
+        format!("{table},\"functions\":{safety_functions}}}\n")
+    };
+    std::fs::write(&safety_path, safety_json).map_err(|e| e.to_string())?;
     // `[RC-6]` — the count operations left inside loops, read from the same
     // final MIR the backend was given.
     let counts_path = layout.inspect.join(format!("{module_name}.counts.json"));
@@ -3311,6 +3672,8 @@ fn abnormal_end(status: &std::process::ExitStatus) -> Option<String> {
 struct ManifestLintSettings {
     return_intersection: bool,
     long_term_access_across_dynamic_call: bool,
+    /// `[EFF-19]` — `[realtime] contracts`, when the manifest declares them.
+    realtime: Option<ember_hir::Effects>,
 }
 
 fn manifest_lint_settings(
@@ -3371,6 +3734,8 @@ fn manifest_lint_settings(
                         sink.emit(
                             Diagnostic::error(codes::E9001, location, format!("unknown key `{key}` in {section}")).help(help),
                         );
+                    } else if section == "realtime" && key == "contracts" {
+                        settings.realtime = Some(realtime_contracts(value, location, sink));
                     } else if section == "lints" {
                         if !manifest_lint_is_known(key) {
                             sink.emit(Diagnostic::error(
@@ -3394,6 +3759,33 @@ fn manifest_lint_settings(
         directory = candidate.parent();
     }
     ManifestLintSettings::default()
+}
+
+/// `[EFF-19]` — `[realtime] contracts = ["noalloc", "nopanic(explicit)", …]`: the contracts
+/// `@realtime` stands for in this package. A name that is no contract is `E9001`.
+fn realtime_contracts(value: &str, location: Span, sink: &mut Sink) -> ember_hir::Effects {
+    let mut set = ember_hir::Effects::NONE;
+    let value = value.trim();
+    let Some(items) = value.strip_prefix('[').and_then(|rest| rest.strip_suffix(']')) else {
+        sink.emit(
+            Diagnostic::error(codes::E9001, location, "`[realtime] contracts` is a list of contract names")
+                .help("write `contracts = [\"noalloc\", \"nolock\", \"noblock\", \"nopanic(explicit)\"]`"),
+        );
+        return ember_hir::Effects::REALTIME_DEFAULT;
+    };
+    for item in items.split(',').map(|item| item.trim().trim_matches('"')).filter(|item| !item.is_empty()) {
+        match ember_hir::Effects::CONTRACTS.iter().find(|(_, name)| *name == item) {
+            Some((effect, _)) => set |= *effect,
+            None => {
+                let names: Vec<String> = ember_hir::Effects::CONTRACTS.iter().map(|(_, name)| format!("`{name}`")).collect();
+                sink.emit(
+                    Diagnostic::error(codes::E9001, location, format!("`{item}` is not a contract `@realtime` can stand for"))
+                        .help(format!("the contracts are {}", names.join(", "))),
+                );
+            }
+        }
+    }
+    set
 }
 
 /// `[MAN-3]` accepts every registered `L` code by its rendered spelling, plus

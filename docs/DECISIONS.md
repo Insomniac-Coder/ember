@@ -5016,6 +5016,51 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-195 — Printing, `@realtime`'s set, constructors writing twice, generic aliases, `ember tcb`, static views to threads (`[STD-9]`, `[EFF-16]`, `[EFF-19]`, `[CLS-2]`, `[TYP-16]`, `[UNS-8]`, `[THR-10]`)
+
+The 75% push, continued (2026-10-16).
+
+**`[STD-9]`.** A value with neither `Display` nor `Debug` is `E2040`, whose help is to implement
+`Display` (it was `E0900`); a part without `Debug` inside another value is `E2040` naming the part.
+`sep` is any text: when it is not a literal, every argument (`sep` and `end` included) is evaluated
+once, where it is written (`[EXP-1]`), into a local, and `sep` is read between the values. Found:
+`[STD-9]`'s parenthesis names "a class without them" as a type with neither, but `[TYP-36]` gives
+every class handle a `Debug` (its class and address), which the compiler follows; the owner should
+settle the wording (a `RefCell` is the case the test uses).
+
+**`[EFF-16]`.** The safety side table records each function of the program with whether it is
+`@nopanic(explicit)` (written, or through `@realtime`) and the `RuntimeCheck` kinds it reaches, its
+callees' included, read where the contracts are checked (inlining later folds a small function into
+its callers). `ember inspect --safety` prints them under `Functions:`, and says "no panic the effect
+model knows of" when both hold; `--json` gives `functions`, `--function` filters them.
+
+**`[EFF-19]`.** `[realtime] contracts = ["noalloc", …]` sets what `@realtime` stands for in the
+package (`Effects::CONTRACTS` names the seven contracts; another name is `E9001`); the standard
+library's functions keep the default set. The diagnostic's note names the set.
+
+**`[CLS-2]`.** A constructor may write a field twice, or after a write on only some paths: MIR keeps a
+flag per field of `init` that needs dropping (false at entry, set by each write), and a write drops
+the old value under it, in `[OWN-5]`'s order (evaluate, drop, store). Fields that need no drop write
+as before; fields with a default overwrite as before. The two `E1010` refusals are gone.
+
+**`[TYP-16]`.** A generic type alias (`type Pair[T] = (T, T)`) is expanded at each use: its value is
+resolved in the alias's module with each parameter bound to the use's argument (resolved where the
+use is written), each argument meeting its parameter's bounds (`E2040`) and the count matching
+(`E2020`). Generic aliases are registered before plain ones, so a plain alias may name one declared
+after it. A const parameter on an alias is still `E0900`.
+
+**`[UNS-8]`.** `ember tcb [--module m] [--json] <file.em>` lists every `unsafe:` block and `unsafe fn`
+of the program by module: where, which function, its safety note and category (or "no safety note
+(W3012)"), and for each the unsafe functions its body calls with the obligation each states
+(`@safety`, `[UNS-7]`), read from the MIR before inlining. The rest of Annex C's report (`[TCB-1]`
+grades, the categories of `[TCB-4]`) is not built.
+
+**`[THR-10]` (ODR-103).** A lambda that borrows, sent to a thread or a job, is `E3026` ("borrows
+`x`, which it may outlive"); an `owned fn`'s captured views are the region analysis's
+(`check_owned_closure_capture_regions`): one with the static region (a string literal's) may go, a
+view of a local is `E3063` where the closure is made. The coercion of an `owned fn` to a callable
+value no longer refuses a view capture itself, which refused static views too.
+
 ## ADR-194 — `@parallel` reads through calls; `Ord`, `Default`, `Display` and `Zeroable` enums derived (`[PAR-2b]`, `[PAR-5]`, `[DRV-1]`, `[ARN-11]`)
 
 The 75% push (the owner, 2026-10-16: "push for 75% completion").

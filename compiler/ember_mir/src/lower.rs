@@ -231,6 +231,9 @@ struct Builder<'a> {
     /// method.  Keeping this as a MIR place lets all exits close the same
     /// interval and keeps runtime instrumentation out of type checking.
     class_access: Option<Place>,
+    /// `[CLS-2]` — per field of a class `init` that needs dropping, the flag that says a value is
+    /// there: a field written twice, or after a write on only some paths, drops what it holds.
+    class_init_flags: std::collections::HashMap<usize, LocalId>,
 }
 
 impl<'a> Builder<'a> {
@@ -369,6 +372,7 @@ impl<'a> Builder<'a> {
             class_init,
             class_init_default_fields: function.class_init_default_fields.clone(),
             class_access,
+            class_init_flags: std::collections::HashMap::new(),
         }
     }
 
@@ -1124,7 +1128,23 @@ impl<'a> Builder<'a> {
             // constructor's first direct write is initialization, not
             // `[OWN-5]` overwrite; dropping the bytes before storing would
             // interpret uninitialized storage as an owned value.
-            self.lower_into(place, expr);
+            if !self.types.needs_drop(expr.ty) {
+                self.lower_into(place, expr);
+                return;
+            }
+            // `[CLS-2]` — a later write (the field written twice, or after a write on only some
+            // paths) replaces a value: the field's flag says one is there, so it is dropped
+            // first, in `[OWN-5]`'s order: evaluate, drop, store.
+            let Some(&Projection::Field(index)) = place.projection.last() else {
+                unreachable!("a class init field is `(*self).field`")
+            };
+            let flag = self.class_init_flag(index, expr.span);
+            let temp = self.temp(expr.ty, expr.span);
+            self.lower_into(Place::local(temp), expr);
+            self.at(expr.span);
+            self.push(StmtKind::Drop { place: place.clone(), flag: Some(flag), scope_end: false });
+            self.push(StmtKind::Assign { place, rvalue: Rvalue::Use(Operand::Move(Place::local(temp))) });
+            self.push(StmtKind::Assign { place: Place::local(flag), rvalue: Rvalue::Use(Operand::Const(Const::Bool(true))) });
             return;
         }
         if !self.types.needs_drop(expr.ty) {
@@ -1139,6 +1159,18 @@ impl<'a> Builder<'a> {
         // into the place. A copy retained a class handle (a `Copy` type with
         // a count) and the temporary's end released it again.
         self.push(StmtKind::Assign { place, rvalue: Rvalue::Use(Operand::Move(Place::local(temp))) });
+    }
+
+    /// `[CLS-2]` — the flag of a class `init`'s field, false from the body's entry until a write.
+    fn class_init_flag(&mut self, field: usize, span: ember_span::Span) -> LocalId {
+        if let Some(&flag) = self.class_init_flags.get(&field) {
+            return flag;
+        }
+        let flag = self.temp_unowned(self.bool_ty, span);
+        let clear = StmtKind::Assign { place: Place::local(flag), rvalue: Rvalue::Use(Operand::Const(Const::Bool(false))) };
+        self.blocks[0].stmts.insert(0, Stmt::new(clear, span));
+        self.class_init_flags.insert(field, flag);
+        flag
     }
 
     /// A local that no scope and no statement will drop.

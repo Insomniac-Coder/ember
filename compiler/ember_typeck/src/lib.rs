@@ -124,6 +124,7 @@ pub fn check(
     lint_return_intersection: bool,
     debug_assertions: bool,
     comptime_answers: &ComptimeAnswers,
+    realtime: Option<hir::Effects>,
 ) -> CheckOutput {
     // `[ERR-3]` — `@derive(Error)` is the `extend` blocks it stands for.
     let derived = errors::desugar_error_derives(modules, sink);
@@ -147,6 +148,7 @@ pub fn check(
     checker.lint_return_intersection = lint_return_intersection;
     checker.comptime_answers = comptime_answers.clone();
     checker.derive_requests = derive_requests;
+    checker.realtime_contracts = realtime.unwrap_or(hir::Effects::REALTIME_DEFAULT);
     checker.prefixes = modules.iter().map(|m| m.path.join(".")).collect();
     checker.visible = vec![HashMap::new(); modules.len()];
     checker.ambiguous_globs = vec![HashMap::new(); modules.len()];
@@ -353,6 +355,15 @@ pub fn check(
         comptime,
         incomplete: std::mem::take(&mut checker.incomplete),
     }
+}
+
+/// `[TYP-16]` — a generic type alias: its parameters, its value, and the module its value's names
+/// resolve in.
+#[derive(Clone)]
+struct GenericAlias {
+    params: Vec<ast::GenericParam>,
+    value: ast::TypeExpr,
+    module: usize,
 }
 
 /// One access to a place a `@parallel` loop's body may write: the offset from the loop's index,
@@ -2030,6 +2041,8 @@ struct Checker<'a> {
     /// `[TYP-16]` — the type parameters in scope right now: opaque while a
     /// generic body is checked, concrete while one is instantiated.
     type_params: HashMap<Symbol, Ty>,
+    /// `[TYP-16]` — each generic type alias, by qualified name: what a use expands.
+    generic_aliases: HashMap<Symbol, GenericAlias>,
     /// The generic parameters of the function being checked, so a method call
     /// on one can find its bounds (`[TYP-17]`).
     current_generics: Vec<GenericParam>,
@@ -2436,6 +2449,9 @@ struct Checker<'a> {
     /// `[TYP-36]` — the structs and enums declared `@derive(Hash)`, by
     /// declaration name (a generic one's instances by their origin).
     hash_derived: HashSet<Symbol>,
+    /// `[EFF-19]` — what `@realtime` stands for in the program's package: its manifest's
+    /// `[realtime] contracts`, by default `@noalloc @nolock @noblock @nopanic(explicit)`.
+    realtime_contracts: hir::Effects,
     /// `[DRV-1]` — the derives whose requirements on the fields are checked once implementations
     /// are known (`derives.rs`).
     derive_requests: Vec<derives::DeriveRequest>,
@@ -2557,6 +2573,7 @@ impl<'a> Checker<'a> {
             namespaces: vec![HashMap::new()],
             current_module: 0,
             type_params: HashMap::new(),
+            generic_aliases: HashMap::new(),
             current_generics: Vec::new(),
             local_ranges: HashMap::new(),
             literal_locals: HashMap::new(),
@@ -2704,6 +2721,7 @@ impl<'a> Checker<'a> {
             unmet_instances: HashSet::new(),
             hash_derived: HashSet::new(),
             derive_requests: Vec::new(),
+            realtime_contracts: hir::Effects::REALTIME_DEFAULT,
             refused_derives: HashSet::new(),
             open_interfaces: HashMap::new(),
             open_interface_origin: HashMap::new(),
@@ -3057,6 +3075,8 @@ impl<'a> Checker<'a> {
                 _ => None,
             })
             .collect();
+        // `[TYP-16]` — the generic ones first: a plain alias may name one declared after it.
+        pending.sort_by_key(|decl| decl.generics.is_empty());
 
         loop {
             let before = pending.len();
@@ -3071,14 +3091,17 @@ impl<'a> Checker<'a> {
                     );
                     continue;
                 }
-                // A generic alias needs the parameters in scope at every use,
-                // which is substitution work `[TYP-16]` puts in Phase 2.
+                // `[TYP-16]` — a generic alias is expanded at each use, its parameters bound to the
+                // use's arguments (`expand_generic_alias`).
                 if !decl.generics.is_empty() {
-                    self.error(
-                        codes::E1010,
-                        decl.name.span,
-                        "a generic type alias is not supported yet",
-                    );
+                    match (&decl.value, decl.generics.iter().find(|param| param.const_ty.is_some())) {
+                        (Some(value), None) => {
+                            let alias = GenericAlias { params: decl.generics.clone(), value: value.clone(), module: self.current_module };
+                            self.generic_aliases.insert(name, alias);
+                        }
+                        (None, _) => self.error(codes::E1010, decl.name.span, "a type alias needs a value: write `type Name[T] = …`"),
+                        (_, Some(param)) => self.error(codes::E0900, param.span, "a const parameter of a type alias is not supported yet"),
+                    }
                     continue;
                 }
                 let Some(value) = &decl.value else {
@@ -3118,6 +3141,48 @@ impl<'a> Checker<'a> {
             let name = self.qualified(decl.name.name);
             self.named_types.insert(name, ty);
         }
+    }
+
+    /// `[TYP-16]` — `Alias[A, B]`: the alias's value, resolved where the alias is written with each
+    /// parameter standing for the argument the use gives it (resolved where the use is written), each
+    /// argument meeting the parameter's bounds.
+    fn expand_generic_alias(&mut self, name: ast::Ident, alias: &GenericAlias, args: &[ast::GenericArg], span: Span) -> Ty {
+        if args.len() != alias.params.len() {
+            let count = alias.params.len();
+            let noun = if count == 1 { "type argument" } else { "type arguments" };
+            self.error(codes::E2020, span, format!("`{}` takes {count} {noun}, found {}", name.name, args.len()));
+            return self.common.error;
+        }
+        let mut bound = Vec::with_capacity(args.len());
+        for (param, arg) in alias.params.iter().zip(args) {
+            let ast::GenericArg::Type(arg) = arg else {
+                self.error(codes::E1010, span, "expected a type argument");
+                return self.common.error;
+            };
+            let ty = self.generic_type_argument(arg);
+            for interface in &param.bounds {
+                let ast::TypeKind::Path { segments, args } = &interface.kind else { continue };
+                if !args.is_empty() || segments.len() != 1 || ty == self.common.error {
+                    continue;
+                }
+                let interface_name = self.resolve_name(segments[0].name);
+                if !self.implements(ty, interface_name) {
+                    let shown = self.types.display(ty);
+                    self.sink.emit(
+                        Diagnostic::error(codes::E2040, arg.span, format!("`{shown}` does not implement `{}`, which `{}` requires of `{}`", segments[0].name, name.name, param.name.name))
+                            .note("an alias's arguments meet its parameters' bounds [TYP-16]"),
+                    );
+                    return self.common.error;
+                }
+            }
+            bound.push((param.name.name, ty));
+        }
+        let saved_params = std::mem::replace(&mut self.type_params, bound.into_iter().collect());
+        let saved_module = std::mem::replace(&mut self.current_module, alias.module);
+        let ty = self.resolve_type(&alias.value);
+        self.current_module = saved_module;
+        self.type_params = saved_params;
+        ty
     }
 
     fn collect_foreign_opaque_types(&mut self, module: &ast::Module) {
@@ -11546,6 +11611,15 @@ impl<'a> Checker<'a> {
             ast::TypeKind::Path { segments, args } if segments.len() > 1 => {
                 self.resolve_qualified_type(segments, args, ty.span)
             }
+            // `[TYP-16]` — a generic alias, by its value with the arguments in place.
+            ast::TypeKind::Path { segments, args }
+                if segments.len() == 1
+                    && !self.type_params.contains_key(&segments[0].name)
+                    && self.generic_aliases.contains_key(&self.resolve_name(segments[0].name)) =>
+            {
+                let alias = self.generic_aliases[&self.resolve_name(segments[0].name)].clone();
+                self.expand_generic_alias(segments[0], &alias, args, ty.span)
+            }
             // `[ERR-1]` — `Option[T]` and `Result[T, E]` are ordinary payload
             // enums, synthesised on demand. Part XX.1 makes them compiler-known
             // until Phase 2 gives the standard library generics of its own.
@@ -12270,8 +12344,19 @@ impl<'a> Checker<'a> {
                 Diagnostic::error(codes::E2040, span, format!("{operation} `{shown}` requires {bound} on `{named}`"))
                     .help(format!("add {bound} to `{named}`'s bounds [TYP-17]")),
             );
+        } else if component == ty {
+            // `[STD-9]` — Python's `str` -> `repr` fallback, with neither.
+            self.sink.emit(
+                Diagnostic::error(codes::E2040, span, format!("`{shown}` implements neither `Display` nor `Debug`, which {operation} it needs"))
+                    .help(format!("implement `Display` for it: `extend {named} implements Display:`"))
+                    .note("a value's text is its `Display`, else its `Debug` [STD-9]"),
+            );
         } else {
-            self.error(codes::E0900, span, format!("{operation} a `{shown}` is not implemented yet"));
+            self.sink.emit(
+                Diagnostic::error(codes::E2040, span, format!("`{named}` does not implement `Debug`, which {operation} a `{shown}` needs"))
+                    .help(format!("implement `Debug` for `{named}`"))
+                    .note("a value inside a collection, an `Option` or a struct is written by its `Debug` [TYP-39]"),
+            );
         }
         false
     }
@@ -15432,7 +15517,13 @@ impl<'a> Checker<'a> {
 
     /// A function's contracts: its own attributes', and `[DET-8]`'s `#! module deterministic`.
     fn contracts_of(&self, attrs: &[ast::Attribute]) -> hir::Contracts {
-        let mut contracts = contracts_of(attrs);
+        // `[EFF-19]` — the set of the package that declares the function: the standard library's
+        // is the default.
+        let realtime = match self.is_std_module(self.current_module) {
+            true => hir::Effects::REALTIME_DEFAULT,
+            false => self.realtime_contracts,
+        };
+        let mut contracts = contracts_of(attrs, realtime);
         if self.module_deterministic.get(self.current_module).copied().unwrap_or(false) {
             contracts.forbidden |= hir::Effects::NONDET;
         }
@@ -18592,57 +18683,13 @@ impl<'a> Checker<'a> {
             .class_init
             .as_ref()
             .and_then(|state| state.initialized.get(index).copied());
-        match status {
-            Some(ClassFieldInit::Init) => {
-                let field = self
-                    .class_init
-                    .as_ref()
-                    .and_then(|state| self.types.class_field_at(state.owner, index))
-                    .map(|field| field.name);
-                if let Some(field) = field {
-                    self.error(
-                        codes::E1010,
-                        place.span,
-                        format!("class `init` assigns field `{field}` more than once in this phase"),
-                    );
-                }
-            }
-            Some(ClassFieldInit::Default) => {
-                if let Some(state) = self.class_init.as_mut() {
-                    if let Some(initialized) = state.initialized.get_mut(index) {
-                        *initialized = ClassFieldInit::Init;
-                    }
-                }
-            }
-            Some(ClassFieldInit::Maybe) => {
-                let field = self
-                    .class_init
-                    .as_ref()
-                    .and_then(|state| self.types.class_field_at(state.owner, index))
-                    .map(|field| field.name);
-                if let Some(field) = field {
-                    self.error(
-                        codes::E1010,
-                        place.span,
-                        format!("class `init` cannot overwrite conditionally initialized field `{field}` in this phase"),
-                    );
-                }
-                // The write happens on every path from here, so the field is
-                // not also reported as uninitialised ([DIA-14]).
-                if let Some(state) = self.class_init.as_mut()
-                    && let Some(initialized) = state.initialized.get_mut(index)
-                {
-                    *initialized = ClassFieldInit::Init;
-                }
-            }
-            Some(ClassFieldInit::Uninit) => {
-                if let Some(state) = self.class_init.as_mut() {
-                    if let Some(initialized) = state.initialized.get_mut(index) {
-                        *initialized = ClassFieldInit::Init;
-                    }
-                }
-            }
-            None => {}
+        // `[CLS-2]` — a field written again (twice, or after a write on only some paths) drops what
+        // it held first: MIR keeps a flag per field of the constructor (`class_init_flag`).
+        if status.is_some()
+            && let Some(state) = self.class_init.as_mut()
+            && let Some(initialized) = state.initialized.get_mut(index)
+        {
+            *initialized = ClassFieldInit::Init;
         }
     }
 
@@ -29049,7 +29096,9 @@ impl<'a> Checker<'a> {
             let (def, once, owned) = closure;
             let span = expr.span;
             let wanted_shown = self.types.display(expected);
-            if !owned || self.types.is_view(expr.ty) {
+            // `[LT-42]` — an `owned fn`'s captured views are the region analysis's: static ones may
+            // go anywhere, any other is `E3063` where the closure is made.
+            if !owned {
                 self.sink.emit_classified(
                     Diagnostic::error(
                         codes::E3026,
@@ -41999,21 +42048,24 @@ impl<'a> Checker<'a> {
     }
 
     /// `[THR-10]`, `[JOB-2]` — what a function that runs on another thread, and may outlive every
-    /// local here, captures: each capture `Send` (`E7004`) and no view (`E3063`); a callable value
-    /// of unknown captures is refused (`E7004`). Whether it refused.
+    /// local here, captures: each capture `Send` (`E7004`), and only the static region. A lambda that
+    /// borrows is `E3026` (ODR-103); an `owned fn`'s views are the region analysis's to check, where
+    /// a literal's static view may go and a view of a local is `E3063`
+    /// (`check_owned_closure_capture_regions`). A callable value of unknown captures is refused
+    /// (`E7004`). Whether it refused.
     fn owned_task_refused(&mut self, f: &Expr, arg_span: Span, words: &TaskWords) -> bool {
         let mut refused = false;
         if let TyKind::Struct(id) = *self.types.kind(f.ty)
-            && self.closure_calls.contains_key(&id)
+            && let Some(closure) = self.closure_calls.get(&id).copied()
         {
             let captures: Vec<(Symbol, Ty)> = self.types.struct_def(id).fields.iter().map(|field| (field.name, field.ty)).collect();
             for (capture, ty) in captures {
                 let ty_shown = self.types.display(ty);
-                if self.types.is_view(ty) {
-                    self.sink.emit(
-                        Diagnostic::error(codes::E3063, arg_span, format!("{} captures `{capture}`, a view (`{ty_shown}`)", words.who))
+                if self.types.is_view(ty) && !closure.owned {
+                    self.sink.emit_classified(
+                        Diagnostic::error(codes::E3026, arg_span, format!("{} borrows `{capture}`, which it may outlive", words.who))
                             .primary_label(words.outlives)
-                            .help(words.scope_help)
+                            .help(format!("write it `owned fn`, which moves or copies each capture into it; or {}", words.scope_help))
                             .note(words.outlive_note),
                     );
                     refused = true;
@@ -47141,19 +47193,18 @@ impl<'a> Checker<'a> {
         let mut sep = text(" ");
         let mut end = text(if matches!(builtin, Builtin::Println | Builtin::EPrintln) { "\n" } else { "" });
         let mut values = Vec::new();
+        // How many values precede `sep` and `end` where they are written (`[EXP-1]`).
+        let (mut sep_at, mut end_at) = (0, usize::MAX);
         for arg in args {
             match arg.name {
                 Some(name) if name.name.is("sep") => {
                     sep = self.check_expr(&arg.value, str_ty);
-                    if !matches!(sep.kind, ExprKind::Str(_) | ExprKind::Error) {
-                        self.error(
-                            codes::E0900,
-                            arg.value.span,
-                            "a `sep` that is not a string literal is not implemented yet",
-                        );
-                    }
+                    sep_at = values.len();
                 }
-                Some(name) if name.name.is("end") => end = self.check_expr(&arg.value, str_ty),
+                Some(name) if name.name.is("end") => {
+                    end = self.check_expr(&arg.value, str_ty);
+                    end_at = values.len();
+                }
                 Some(name) => {
                     self.error(
                         codes::E2020,
@@ -47196,30 +47247,59 @@ impl<'a> Checker<'a> {
                 }
             }
         }
-        let mut pieces = Vec::new();
-        for (index, value) in values.into_iter().enumerate() {
-            if index > 0 {
-                let kind = match &sep.kind {
-                    ExprKind::Str(text) => ExprKind::Str(text.clone()),
-                    _ => ExprKind::Error,
-                };
-                pieces.push(Expr { ty: sep.ty, kind, span: sep.span });
+        let which = if matches!(builtin, Builtin::EPrint | Builtin::EPrintln) { Builtin::EPrint } else { Builtin::Print };
+        let literal = |expr: &Expr| matches!(expr.kind, ExprKind::Str(_) | ExprKind::Error);
+        if literal(&sep) {
+            let mut pieces = Vec::new();
+            for (index, value) in values.into_iter().enumerate() {
+                if index > 0 {
+                    pieces.push(sep.clone());
+                }
+                pieces.push(value);
             }
-            pieces.push(value);
+            pieces.push(end);
+            return Expr { ty: self.common.void, kind: ExprKind::Builtin { which, args: pieces }, span };
         }
-        pieces.push(end);
-        Expr {
-            ty: self.common.void,
-            kind: ExprKind::Builtin {
-                which: if matches!(builtin, Builtin::EPrint | Builtin::EPrintln) {
-                    Builtin::EPrint
-                } else {
-                    Builtin::Print
-                },
-                args: pieces,
-            },
-            span,
+        // `[STD-9]`, `[EXP-1]` — a `sep` that is not a literal is evaluated once, where it is written,
+        // as every argument is, and read between the values.
+        let mut stmts = Vec::new();
+        let mut bind = |this: &mut Self, value: Expr| {
+            let local = this.declare(None, value.ty, value.span);
+            let read = Expr { ty: value.ty, kind: ExprKind::Local(local), span: value.span };
+            stmts.push(Stmt::Let { local, init: Some(value) });
+            read
+        };
+        let mut reads = Vec::new();
+        let mut sep_read = None;
+        let mut end_read = None;
+        let (mut sep, mut end) = (Some(sep), Some(end));
+        for (index, value) in values.into_iter().enumerate() {
+            if index == sep_at {
+                sep_read = sep.take().map(|sep| bind(self, sep));
+            }
+            if index == end_at && !literal(end.as_ref().expect("`end` is bound once")) {
+                end_read = end.take().map(|end| bind(self, end));
+            }
+            reads.push(bind(self, value));
         }
+        if let Some(sep) = sep.take() {
+            sep_read = Some(bind(self, sep));
+        }
+        let sep_read = sep_read.expect("`sep` is bound");
+        let mut pieces = Vec::new();
+        for (index, read) in reads.into_iter().enumerate() {
+            if index > 0 {
+                pieces.push(sep_read.clone());
+            }
+            pieces.push(read);
+        }
+        pieces.push(match (end_read, end) {
+            (Some(read), _) => read,
+            (None, Some(end)) => end,
+            (None, None) => unreachable!("`end` is bound or kept"),
+        });
+        let print = Expr { ty: self.common.void, kind: ExprKind::Builtin { which, args: pieces }, span };
+        Expr { ty: self.common.void, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(print) }, span }
     }
 
     /// Whether evaluating `expr` twice is indistinguishable from evaluating
@@ -48743,7 +48823,7 @@ fn inline_hint(attrs: &[ast::Attribute]) -> hir::InlineHint {
 /// `@view`, `@packed` and the rest: an attribute by bare name.
 /// `[EFF-5]`, `[EFF-19]` — the effects a function's contract attributes forbid. `@realtime` is
 /// the manifest's set, by default `@noalloc @nolock @noblock @nopanic(explicit)`.
-fn contracts_of(attrs: &[ast::Attribute]) -> hir::Contracts {
+fn contracts_of(attrs: &[ast::Attribute], realtime: hir::Effects) -> hir::Contracts {
     let mut contracts = hir::Contracts::default();
     for (name, effect) in [
         ("noalloc", hir::Effects::ALLOC),
@@ -48759,8 +48839,8 @@ fn contracts_of(attrs: &[ast::Attribute]) -> hir::Contracts {
         }
     }
     if has_attribute(attrs, "realtime") {
-        contracts.realtime = hir::Effects::REALTIME_DEFAULT;
-        contracts.forbidden |= hir::Effects::REALTIME_DEFAULT;
+        contracts.realtime = realtime;
+        contracts.forbidden |= realtime;
     }
     contracts
 }

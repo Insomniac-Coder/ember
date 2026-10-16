@@ -22,8 +22,8 @@ pages, and the records that keep them consistent.
 
 | | |
 |---|---|
-| Language version being implemented | **0.9.10**, specification `Ember_v0.9.10_Hardened_9` ([what changed from 0.9.9](docs/MIGRATION-0.9.10.md)) |
-| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.10_Hardened_9.md`](docs/spec-source/Ember_v0.9.10_Hardened_9.md) |
+| Language version being implemented | **0.9.10**, specification `Ember_v0.9.10_Hardened_10` ([what changed from 0.9.9](docs/MIGRATION-0.9.10.md)) |
+| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.10_Hardened_10.md`](docs/spec-source/Ember_v0.9.10_Hardened_10.md) |
 | Specification sources | [`tasks/spec-0.9.9/parts/`](tasks/spec-0.9.9/parts/), one file per Part; each `Hardened_N` is their concatenation and is never edited afterwards |
 | Last adopted normative specification | [`docs/spec-source/ember-spec.md`](docs/spec-source/ember-spec.md), 0.8.5_Hardened_1 (0.9.10 is adopted when its gates pass and the owner installs it) |
 | Tests | Rust unit and integration suites; Ember run and conformance suites in [`tests/`](tests/) |
@@ -40,15 +40,15 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 | Phase | Scope | Done |
 |---|---|---:|
 | 1 | Core language (Parts II–VI) | 89% |
-| 2 | Ownership, borrowing, regions | 91% |
-| 3 | Classes, reference counting, exclusivity | 94% |
-| 4 | Effects, compile time, reflection, derives | 58% |
+| 2 | Ownership, borrowing, regions | 92% |
+| 3 | Classes, reference counting, exclusivity | 98% |
+| 4 | Effects, compile time, reflection, derives | 65% |
 | 5 | C interoperability | 18% |
-| 6 | Concurrency and data-oriented design | 63% |
+| 6 | Concurrency and data-oriented design | 66% |
 | 7 | C++ interoperability and the interpreter | 0% |
 | 7a | Iteration, determinism, cost control | 7% |
 | 8 | Hardening and 1.0 | 27% |
-| | Overall (1.0) | 72% |
+| | Overall (1.0) | 73% |
 | | After 1.0: the LLVM backend (v2), the GPU host model (v0.6) | 0% |
 
 The latest language work is the owner's design G8-4, which made the language 0.9.10
