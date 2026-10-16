@@ -257,7 +257,21 @@ pub struct ComptimeRoot {
 /// and prints its value (`ComptimeRoot`), within the step and heap limits its
 /// second and third arguments give.
 pub fn emit_comptime(mir: VerifiedMir<'_>, map: &SourceMap, roots: Vec<ComptimeRoot>, for_msvc: bool) -> Output {
-    emit_with(mir, map, "comptime", "comptime", false, false, false, for_msvc, Some(roots))
+    emit_with(mir, map, "comptime", "comptime", false, false, false, for_msvc, Some(roots), None)
+}
+
+/// `[TST-3]` — the line a test binary writes to standard error when its test
+/// panics, before the panic's `abort()` (`[PAN-1]`): the runner tells a panic
+/// from any other way a test can fail by it, which `@should_panic` needs.
+pub fn test_panic_marker() -> String {
+    format!("{}-test: panicked", ember_branding::SYMBOL_PREFIX)
+}
+
+/// `[WK-15]` — the line a test binary writes to standard error when its test
+/// has returned, before the runtime shuts down: what follows it is the leak
+/// report, which the runner shows for a test that passed.
+pub fn test_end_marker() -> String {
+    format!("{}-test: returned", ember_branding::SYMBOL_PREFIX)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -270,8 +284,9 @@ pub fn emit(
     leak_check: bool,
     library_mode: bool,
     for_msvc: bool,
+    tests: Option<Vec<String>>,
 ) -> Output {
-    emit_with(mir, map, module_name, package_name, has_main, leak_check, library_mode, for_msvc, None)
+    emit_with(mir, map, module_name, package_name, has_main, leak_check, library_mode, for_msvc, None, tests)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -285,6 +300,7 @@ fn emit_with(
     library_mode: bool,
     for_msvc: bool,
     comptime: Option<Vec<ComptimeRoot>>,
+    tests: Option<Vec<String>>,
 ) -> Output {
     let bodies = mir.bodies();
     let types = mir.types();
@@ -371,6 +387,7 @@ fn emit_with(
         closure_values: BTreeMap::new(),
         job_closures: BTreeSet::new(),
         comptime: None,
+        tests: None,
         statement_span: std::cell::Cell::new(ember_span::Span::DUMMY),
         gives_values_to_c: false,
         foreign_statics: std::cell::RefCell::new(BTreeMap::new()),
@@ -429,6 +446,7 @@ fn emit_with(
     };
     let mut emitter = make(None);
     emitter.comptime = comptime.clone();
+    emitter.tests = tests;
     write(&mut emitter);
     check_split_views(&emitter.split_views, &emitter.out);
     let header_source = header::render(&emitter, bodies, package_name);
@@ -548,6 +566,9 @@ struct Emitter<'a> {
     /// `[CT-1]` — the requests, when this is the compile-time evaluator's
     /// program (`emit_comptime`).
     comptime: Option<Vec<ComptimeRoot>>,
+    /// `[TST-3]` — the symbols of the `@test` functions, in the runner's
+    /// order, when this is a test binary.
+    tests: Option<Vec<String>>,
     types: &'a TypeTable,
     map: &'a SourceMap,
     out: String,
@@ -1060,13 +1081,20 @@ impl Emitter<'_> {
 
         if has_main && self.unit.is_none() {
             let entry = bodies.iter().any(|body| body.symbol == ember_branding::mangled("main_entry"));
-            let named = self.emit_frame_names(bodies);
+            let named = self.emit_frame_names(bodies, true);
             self.emit_entry_point(leak_check, entry, named);
         }
         if let Some(roots) = self.comptime.clone()
             && self.unit.is_none()
         {
             self.emit_comptime_entry(&roots);
+        }
+        if let Some(tests) = self.tests.clone()
+            && self.unit.is_none()
+        {
+            // The C entry point runs a test, not `main`.
+            let named = self.emit_frame_names(bodies, false);
+            self.emit_test_entry(leak_check, named, &tests);
         }
         self.emit_fmt_fns();
         self.collect_clone_dependencies();
@@ -9507,7 +9535,7 @@ impl Emitter<'_> {
     /// is and where it is declared, sorted by symbol: a panic's backtrace names the program's
     /// functions by it, never by a C symbol. Strings only: no function is kept alive by it. How
     /// many there are (none: no table).
-    fn emit_frame_names(&mut self, bodies: &[Body]) -> usize {
+    fn emit_frame_names(&mut self, bodies: &[Body], entry_runs_main: bool) -> usize {
         let mut entries: Vec<(String, String, String, u32)> = Vec::new();
         for body in bodies {
             if body.is_abstract || body.is_extern_declaration || body.blocks.is_empty() || body.span.is_dummy() {
@@ -9518,7 +9546,7 @@ impl Emitter<'_> {
             let path = file.path.display().to_string().replace('\\', "/");
             let name = if body.is_lambda { "a lambda".to_string() } else { body.name.clone() };
             // The C entry point is `main`'s frame when the C compiler inlines `main` into it.
-            if body.symbol == ember_branding::mangled("main") {
+            if entry_runs_main && body.symbol == ember_branding::mangled("main") {
                 entries.push(("main".to_string(), name.clone(), path.clone(), line));
             }
             entries.push((body.symbol.clone(), name, path, line));
@@ -9574,6 +9602,69 @@ impl Emitter<'_> {
             self.line(&format!("    {RT}rt_shutdown();"));
             self.line("    return 0;");
         }
+        self.line("}");
+    }
+
+    /// `[TST-3]` — a test binary's entry point: run the test `argv[1]`
+    /// numbers, alone in this process, as `main` would run (the runtime set
+    /// up and shut down the same way, `[WK-15]`'s leak report included).
+    /// A panic says so on standard error before it aborts (`test_panic_marker`),
+    /// and a test that returns says so before the shutdown's leak report
+    /// (`test_end_marker`). An unknown number exits with status 2.
+    fn emit_test_entry(&mut self, leak_check: bool, named: usize, tests: &[String]) {
+        let panicked = test_panic_marker();
+        let returned = test_end_marker();
+        self.line(&format!("static void {RT}test_on_panic(const char* msg, size_t len) {{"));
+        self.line("    (void)msg;");
+        self.line("    (void)len;");
+        self.line(&format!("    fputs(\"{panicked}\\n\", stderr);"));
+        self.line("}");
+        // A test that crashes ends with its status rather than opening the
+        // Windows Error Reporting window and waiting (D-252), as the
+        // compile-time evaluator's program does.
+        self.line("#if defined(_WIN32)");
+        self.line("__declspec(dllimport) unsigned int __stdcall SetErrorMode(unsigned int mode);");
+        self.line("#endif");
+        self.line("int main(int argc, char** argv) {");
+        self.line("#if defined(_WIN32)");
+        self.line("    SetErrorMode(0x0001u | 0x0002u);");
+        self.line("#endif");
+        self.line("    long which = 0;");
+        self.line("    const char* digit = argc > 1 ? argv[1] : \"\";");
+        self.line("    if (*digit == '\\0') {");
+        self.line("        return 2;");
+        self.line("    }");
+        self.line("    for (; *digit >= '0' && *digit <= '9' && which < 1000000000L; ++digit) {");
+        self.line("        which = which * 10 + (*digit - '0');");
+        self.line("    }");
+        self.line(&format!("    if (*digit != '\\0' || which >= {}L) {{", tests.len()));
+        self.line("        return 2;");
+        self.line("    }");
+        self.line(&format!("    {RT}rt_config cfg = {RT}rt_config_default();"));
+        if leak_check {
+            self.line("    cfg.flags |= EMBER_RT_DEBUG_OBJECTS;");
+        }
+        self.line(&format!("    cfg.on_panic = {RT}test_on_panic;"));
+        self.line(&format!("    {RT}rt_set_args(1, argv);"));
+        self.line(&format!("    {RT}rt_init(&cfg);"));
+        if named > 0 {
+            self.line("#if !defined(EMBER_SHIPPING)");
+            self.line(&format!("    {RT}backtrace_names({}frame_names, {named}u);", ember_branding::mangle_prefix()));
+            self.line("#endif");
+        }
+        if leak_check {
+            self.emit_debug_edge_registrations();
+        }
+        self.line("    switch (which) {");
+        for (index, symbol) in tests.iter().enumerate() {
+            self.line(&format!("    case {index}: {symbol}(); break;"));
+        }
+        self.line("    default: break;");
+        self.line("    }");
+        self.line("    fflush(stdout);");
+        self.line(&format!("    fputs(\"{returned}\\n\", stderr);"));
+        self.line(&format!("    {RT}rt_shutdown();"));
+        self.line("    return 0;");
         self.line("}");
     }
 
@@ -11535,6 +11626,7 @@ mod string_descriptor_view_parts_tests {
         Emitter {
             job_closures: BTreeSet::new(),
             comptime: None,
+            tests: None,
             types,
             map,
             usize_ty,

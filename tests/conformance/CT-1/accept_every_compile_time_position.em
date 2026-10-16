@@ -1,5 +1,5 @@
 #$ test: run-pass
-#$ rules: CT-1, CT-6, CT-7, TYP-41, STA-3
+#$ rules: CT-1, CT-6, CT-7, TYP-41, STA-3, GRM-32
 #$ stdout: 55 120 [0, 0, 0] 3628800 6 ok
 # `[CT-1]` — what is evaluated while compiling: `comptime(e)`, a `comptime:` block, a `const`
 # initialiser, an array length and a `const` generic argument, and a `static` initialiser. Each

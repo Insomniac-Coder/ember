@@ -1957,8 +1957,8 @@ impl TypeTable {
         out
     }
 
-    /// `[ARN-11]` — record a struct's `@derive(Zeroable)`; each instance is
-    /// `Zeroable` when every field of it is (`is_builtin_zeroable`).
+    /// `[ARN-11]` — record a struct's or an enum's `@derive(Zeroable)`; each instance is `Zeroable`
+    /// when every field of it is (of an enum, of its variant whose discriminant is zero).
     pub fn derive_zeroable(&mut self, name: Symbol) {
         self.zeroable_derived.insert(name);
     }
@@ -1998,6 +1998,19 @@ impl TypeTable {
                     && !def.has_drop
                     && def.fields.iter().all(|field| self.is_builtin_zeroable(field.ty))
             }
+            // `[ARN-11]` — an enum only by `@derive(Zeroable)`: zero bytes are the variant whose
+            // discriminant is zero, with every field of it zero.
+            TyKind::Enum(id) => {
+                let def = self.enum_def(*id);
+                let declared = def.origin.as_ref().map_or(def.name, |(origin, _)| *origin);
+                self.zeroable_derived.contains(&declared)
+                    && !def.has_drop
+                    && def
+                        .variants
+                        .iter()
+                        .find(|variant| variant.discriminant == 0)
+                        .is_some_and(|variant| variant.fields.iter().all(|field| self.is_builtin_zeroable(field.ty)))
+            }
             // A class handle is non-null; zero bytes cannot manufacture a
             // valid live object handle.
             TyKind::Class(_) | TyKind::ClassInterface(_) => false,
@@ -2021,7 +2034,6 @@ impl TypeTable {
             | TyKind::Span { .. }
             | TyKind::Ref { .. }
             | TyKind::Fn { .. }
-            | TyKind::Enum(_)
             | TyKind::Param { .. }
             | TyKind::Assoc { .. }
             | TyKind::Dyn { .. }

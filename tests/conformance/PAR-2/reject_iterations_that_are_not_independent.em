@@ -43,6 +43,7 @@ fn scatters(mut xs: MutSpan[int], at: Span[int]):
     for i in 0..xs.len():
         xs[at[i]] = 2
 
+@noinline
 fn fill(mut xs: MutSpan[int]):
     xs[0] = 1
 

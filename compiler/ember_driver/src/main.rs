@@ -5,6 +5,7 @@
 //! each command something to do.
 
 mod comptime;
+mod test_runner;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -29,6 +30,10 @@ usage:
                                       compile a bin or staticlib package
     ember run   <file.em> [options]   compile and run
     ember check <file.em>             type-check without generating code
+    ember test [filter] [--doc] [--no-leak-check] [options]
+                                      run the package's @test functions, each in a process of
+                                      its own (the package of this directory or an ancestor);
+                                      --doc runs the documentation examples under docs/ instead
     ember fmt <file.em> [--check|--write] [--json]
                                       print the file in the canonical layout
     ember explain <CODE> [--json]     describe a diagnostic code
@@ -54,9 +59,9 @@ options:
     --backend c                        the only backend in v1
     --cc msvc|clang|gcc                override C compiler detection
     --out-dir <dir>                    default: target/; staticlib archives and headers in <profile>/lib/
-    --leak-check                       `run` only: report leaked ownership cycles at exit
-                                       (the default for `run` in the debug profile)
-    --no-leak-check                    `run` only: no leak report in the debug profile
+    --leak-check                       `run` and `test`: report leaked ownership cycles at exit
+                                       (the default for both in the debug profile)
+    --no-leak-check                    `run` and `test`: no leak report in the debug profile
     --json                             machine-readable output and diagnostics (every command)
     -D warnings                        treat warnings as errors
 
@@ -363,6 +368,9 @@ struct Options {
     /// `[PHIL-2]` — `ember inspect --alloc`: check the program, then list
     /// its allocation sites instead of generating code.
     alloc_report: Option<AllocReport>,
+    /// `[TST-3]` — `ember test [filter]`: run only the tests whose name
+    /// contains it.
+    test_filter: Option<String>,
 }
 
 /// What `ember inspect --alloc` prints: JSON or text, one function or all.
@@ -420,6 +428,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             explain(code, json)
         }
         "inspect" => inspect(&args[1..]),
+        "test" => test_runner::command(&args[1..]),
         "build" | "run" | "check" => {
             // The source file may sit before or after the flags. Requiring it
             // first made `ember check --syntax-only f.em` fail with "needs a
@@ -475,10 +484,10 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             let mut options = parse_options(&rest)?;
             options.program_args = program_args;
             if options.leak_check && command != "run" {
-                return Err("`--leak-check` is only valid with `ember run`".to_string());
+                return Err("`--leak-check` is only valid with `ember run` and `ember test`".to_string());
             }
             if options.no_leak_check && command != "run" {
-                return Err("`--no-leak-check` is only valid with `ember run`".to_string());
+                return Err("`--no-leak-check` is only valid with `ember run` and `ember test`".to_string());
             }
             if options.leak_check && options.no_leak_check {
                 return Err("`--leak-check` and `--no-leak-check` contradict each other".to_string());
@@ -2568,6 +2577,17 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // as "type-check + borrow-check without codegen", so it cannot stop here.
     let mut bodies = ember_mir::lower(program, &types, &common, &map);
     let _ = &mut types;
+    // `[TST-3]` — the package's tests (not the standard library's), in the
+    // order the test binary numbers them. The binary's entry calls each, so
+    // none is inlined into another caller and removed.
+    let tests: Vec<&ember_hir::TestFn> = program.tests.iter()
+        .filter(|test| !test.name.as_str().starts_with(&format!("{}.", ember_branding::STD_PACKAGE)))
+        .collect();
+    if command == "test" {
+        for body in bodies.iter_mut().filter(|body| tests.iter().any(|test| test.symbol == body.symbol)) {
+            body.inline.never = true;
+        }
+    }
     // `[COST-1]` — an implicit `clone` nothing calls is not emitted.
     ember_mir::prune_unused_implicit(&mut bodies, &types, &checked.std_instances);
     mark("lower", "all modules");
@@ -2810,7 +2830,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // Emit C. Source-backed prelude modules are always available to name
     // resolution, but their unused implementation bodies are not part of an
     // executable's observable generated program.
-    if program.main.is_some() {
+    if program.main.is_some() || command == "test" {
         let standard_files = modules
             .iter()
             .filter(|loaded| loaded.path.first().is_some_and(|package| package == ember_branding::STD_PACKAGE))
@@ -2822,6 +2842,8 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
+    // `[TST-3]` — the test binary is a program of its own beside the package's.
+    let module_name = if command == "test" { format!("{module_name}_test") } else { module_name };
     let manifest = nearest_manifest_text(input)?;
     let package_kind = manifest.as_deref().and_then(|text| manifest_string(text, "package", "kind"))
         .unwrap_or_else(|| "bin".to_string());
@@ -2831,7 +2853,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // At the end of a program's `main` the process ends: a drop there that
     // only frees memory changes nothing observable (`[PHIL-5]`). Debug
     // builds keep every drop, which their leak check counts.
-    if program.main.is_some() && !staticlib && options.profile != Profile::Debug && !options.leak_check {
+    if program.main.is_some() && !staticlib && command != "test" && options.profile != Profile::Debug && !options.leak_check {
         ember_analysis::skip_exit_drops_all(&mut bodies, &types, &ember_branding::mangled("main"));
     }
     // Run after all body pruning and mutation. Retain the complete immutable
@@ -2886,7 +2908,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         if command == "build" && !matches!(package_kind.as_str(), "bin" | "staticlib") {
             return Err(format!("package kind `{package_kind}` is not implemented for `ember build`"));
         }
-        if matches!(command, "build" | "run") && runtime_mode != "static" {
+        if matches!(command, "build" | "run" | "test") && runtime_mode != "static" {
             return Err(format!("runtime mode `{runtime_mode}` is not implemented for this build artifact"));
         }
     }
@@ -2899,10 +2921,11 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         &map,
         &module_name,
         &package_name,
-        program.main.is_some() && !staticlib,
+        program.main.is_some() && !staticlib && command != "test",
         options.leak_check,
         staticlib,
         c_for_msvc(&options),
+        (command == "test").then(|| tests.iter().map(|test| test.symbol.clone()).collect()),
     );
     mark("C generation", "all modules");
     // `[DSP-5]` — on standard error, so it never mixes with `--emit c`.
@@ -2984,7 +3007,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         return Err(format!("unknown `--emit` stage `{other}`"));
     }
 
-    if program.main.is_none() && !staticlib {
+    if program.main.is_none() && !staticlib && command != "test" {
         return Err("this file declares no `main`, so there is nothing to run".to_string());
     }
 
@@ -3116,6 +3139,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 
     report(&sink, &map, options);
 
+    if command == "test" {
+        return test_runner::run_tests(&exe, &tests, options);
+    }
     if command == "run" {
         let status = std::process::Command::new(&exe)
             .args(&options.program_args)

@@ -16,6 +16,7 @@ mod usefulness;
 mod name_suggestions;
 mod const_eval;
 mod errors;
+mod derives;
 mod comptime;
 
 pub use comptime::{ComptimeAnswer, ComptimeAnswers, ComptimeRequest};
@@ -127,6 +128,9 @@ pub fn check(
     // `[ERR-3]` — `@derive(Error)` is the `extend` blocks it stands for.
     let derived = errors::desugar_error_derives(modules, sink);
     let modules: &[LoadedModule] = derived.as_deref().unwrap_or(modules);
+    // `[DRV-1]` — `@derive(Ord)`, `Default` and `Display` too.
+    let (written, derive_requests) = derives::desugar_derives(modules, sink);
+    let modules: &[LoadedModule] = written.as_deref().unwrap_or(modules);
     // D-644 — `where P: B` on a declaration's own parameter is `P: B` in its brackets.
     let folded = desugar_where_clauses(modules);
     let modules: &[LoadedModule] = folded.as_deref().unwrap_or(modules);
@@ -142,6 +146,7 @@ pub fn check(
     checker.debug_assertions = debug_assertions;
     checker.lint_return_intersection = lint_return_intersection;
     checker.comptime_answers = comptime_answers.clone();
+    checker.derive_requests = derive_requests;
     checker.prefixes = modules.iter().map(|m| m.path.join(".")).collect();
     checker.visible = vec![HashMap::new(); modules.len()];
     checker.ambiguous_globs = vec![HashMap::new(); modules.len()];
@@ -270,6 +275,7 @@ pub fn check(
     // and can run before a later module's extension has been collected.
     checker.check_implementations();
     checker.check_derived_hashes();
+    checker.check_derived_requirements();
     // V.7 — every constant expression, now that every type it can name is
     // known.
     checker.settle_consts();
@@ -280,11 +286,13 @@ pub fn check(
     checker.check_generic_type_methods(modules);
     let mut functions = Vec::new();
     let mut main = None;
+    let mut tests = Vec::new();
     for (index, loaded) in modules.iter().enumerate() {
         checker.current_module = index;
         let program = checker.check_bodies(&loaded.module);
         main = main.or(program.main);
         functions.extend(program.functions);
+        tests.extend(program.tests);
     }
     // `[FN-8]` — before the instantiations drain: printing `main`'s error
     // may need one.
@@ -339,7 +347,7 @@ pub fn check(
         functions.extend(std::mem::take(&mut checker.comptime_functions));
     }
     CheckOutput {
-        program: Program { functions, main },
+        program: Program { functions, main, tests },
         callable_declarations,
         std_instances: std::mem::take(&mut checker.std_instances),
         comptime,
@@ -363,15 +371,59 @@ struct ParallelWalk {
     reduced: HashSet<Symbol>,
     /// Names the body declares: its own, one per iteration.
     declared: HashSet<Symbol>,
-    /// Loops of the body itself the walk is inside.
+    /// Loops of the body itself (or of the callee read through) the walk is inside.
     loops: usize,
     accesses: BTreeMap<String, Vec<ParallelAccess>>,
     problems: Vec<(Span, String)>,
     /// Places given whole to a call (`[PAR-2b]`), with their types and where.
     passed: Vec<(String, Ty, Span)>,
+    /// `[PAR-2b]` — the callees the walk reads through, innermost last.
+    frames: Vec<CalleeFrame>,
+}
+
+/// `[PAR-2b]` — a callee the walk reads through as if inlined: each parameter the caller's argument
+/// (and whether the parameter is `mut`, so that writing it writes the caller's place), and the names
+/// it declares itself.
+struct CalleeFrame {
+    def: DefId,
+    module: usize,
+    name: Symbol,
+    args: HashMap<Symbol, (ast::Expr, bool)>,
+    declared: HashSet<Symbol>,
+    /// It makes a foreign call, which nothing reads through.
+    foreign: bool,
+}
+
+/// What a name in the walk is, at a depth of callees read through.
+enum Resolved<'e> {
+    /// The loop's index.
+    Index,
+    /// A local of the code around the loop.
+    Outer,
+    /// A parameter of the callee at this depth: the caller's argument, read a depth below, and
+    /// whether the parameter is `mut`.
+    Arg(&'e ast::Expr, usize, bool),
+    /// The body's own, or a callee's own.
+    Own,
 }
 
 impl ParallelWalk {
+    fn resolve<'e>(&'e self, checker: &Checker<'_>, name: Symbol, depth: usize) -> Resolved<'e> {
+        if depth > 0 {
+            return match self.frames[depth - 1].args.get(&name) {
+                Some((arg, mutable)) => Resolved::Arg(arg, depth - 1, *mutable),
+                None => Resolved::Own,
+            };
+        }
+        if name == self.index {
+            Resolved::Index
+        } else if self.declared.contains(&name) || checker.lookup(name).is_none() {
+            Resolved::Own
+        } else {
+            Resolved::Outer
+        }
+    }
+
     fn block(&mut self, checker: &Checker<'_>, block: &ast::Block) {
         for stmt in &block.stmts {
             self.stmt(checker, stmt);
@@ -415,7 +467,13 @@ impl ParallelWalk {
             ast::StmtKind::If(branch) => self.if_stmt(checker, branch),
             ast::StmtKind::Match { scrutinee, arms } => self.arms(checker, scrutinee, arms),
             ast::StmtKind::Pass => {}
-            _ => self.problems.push((stmt.span, "this statement is not one a `@parallel` loop's body may hold".to_string())),
+            _ => match self.frames.last() {
+                Some(frame) => {
+                    let message = format!("`{}` holds a statement the parallel loop cannot read through", frame.name);
+                    self.problems.push((stmt.span, message));
+                }
+                None => self.problems.push((stmt.span, "this statement is not one a `@parallel` loop's body may hold".to_string())),
+            },
         }
     }
 
@@ -455,55 +513,101 @@ impl ParallelWalk {
 
     fn bind(&mut self, pattern: &ast::Pattern) {
         if let ast::PatternKind::Bind { name, sub, .. } = &pattern.kind {
-            self.declared.insert(name.name);
+            self.declare(name.name);
             if let Some(sub) = sub {
                 self.bind(sub);
             }
         }
     }
 
-    /// A name of the enclosing code (not the body's own, nor the index).
-    fn outer(&self, checker: &Checker<'_>, name: Symbol) -> bool {
-        name != self.index && !self.declared.contains(&name) && checker.lookup(name).is_some()
+    /// A name the body (or the callee read through) declares.
+    fn declare(&mut self, name: Symbol) {
+        match self.frames.last_mut() {
+            Some(frame) => {
+                frame.args.remove(&name);
+                frame.declared.insert(name);
+            }
+            None => {
+                self.declared.insert(name);
+            }
+        }
     }
 
-    /// The place `expr` names, when it is a `MutSpan` or `SoA` column of the enclosing code.
+    /// The place `expr` names, when it is a local or an `SoA` column of the code around the loop,
+    /// through the callees' parameters (`[PAR-2b]`); a column's type is its `SoA`'s.
     fn place_of(&self, checker: &Checker<'_>, expr: &ast::Expr) -> Option<(String, Ty)> {
+        self.place_at(checker, expr, self.frames.len())
+    }
+
+    fn place_at(&self, checker: &Checker<'_>, expr: &ast::Expr, depth: usize) -> Option<(String, Ty)> {
         match &expr.kind {
-            ast::ExprKind::Paren(inner) => self.place_of(checker, inner),
-            ast::ExprKind::Path { segments } if segments.len() == 1 && self.outer(checker, segments[0].name) => {
-                let local = checker.lookup(segments[0].name)?;
-                Some((segments[0].name.to_string(), checker.locals[local.0 as usize].ty))
-            }
+            ast::ExprKind::Paren(inner) => self.place_at(checker, inner, depth),
+            ast::ExprKind::Path { segments } if segments.len() == 1 => match self.resolve(checker, segments[0].name, depth) {
+                Resolved::Outer => {
+                    let local = checker.lookup(segments[0].name)?;
+                    Some((segments[0].name.to_string(), checker.locals[local.0 as usize].ty))
+                }
+                Resolved::Arg(arg, below, _) => self.place_at(checker, arg, below),
+                _ => None,
+            },
             ast::ExprKind::Field { base, name } => {
-                let ast::ExprKind::Path { segments } = &base.kind else { return None };
-                if segments.len() != 1 || !self.outer(checker, segments[0].name) {
+                let (root, mut ty) = self.place_at(checker, base, depth)?;
+                if root.contains('.') {
                     return None;
                 }
-                let local = checker.lookup(segments[0].name)?;
-                let mut ty = checker.locals[local.0 as usize].ty;
                 if let TyKind::Ref { inner, .. } = checker.types.kind(ty) {
                     ty = *inner;
                 }
                 checker.soa_inner(ty)?;
-                Some((format!("{}.{}", segments[0].name, name.name), ty))
+                Some((format!("{root}.{}", name.name), ty))
             }
             _ => None,
         }
     }
 
-    fn offset(&self, expr: &ast::Expr) -> Option<i128> {
-        let is_index = |e: &ast::Expr| matches!(&e.kind, ast::ExprKind::Path { segments } if segments.len() == 1 && segments[0].name == self.index);
-        let literal = |e: &ast::Expr| match &e.kind {
-            ast::ExprKind::Lit(ast::Literal::Int { value, .. }) => i128::try_from(*value).ok(),
-            _ => None,
+    /// Whether a place's type is one a parallel loop may write: a `MutSpan` or an `SoA` (column).
+    fn writable(checker: &Checker<'_>, ty: Ty) -> bool {
+        let ty = match checker.types.kind(ty) {
+            TyKind::Ref { inner, .. } => *inner,
+            _ => ty,
         };
+        matches!(checker.types.kind(ty), TyKind::Span { mutable: true, .. }) || checker.soa_inner(ty).is_some()
+    }
+
+    /// `k` when `expr` is the loop's index plus the constant `k`, through the callees' parameters (a
+    /// callee's `j + 1` given the caller's `i + 1` is the index plus two).
+    fn offset(&self, checker: &Checker<'_>, expr: &ast::Expr) -> Option<i128> {
+        self.offset_at(checker, expr, self.frames.len())
+    }
+
+    fn offset_at(&self, checker: &Checker<'_>, expr: &ast::Expr, depth: usize) -> Option<i128> {
         match &expr.kind {
-            ast::ExprKind::Paren(inner) => self.offset(inner),
-            _ if is_index(expr) => Some(0),
-            ast::ExprKind::Binary { op: ast::BinOp::Add, lhs, rhs } if is_index(lhs) => literal(rhs),
-            ast::ExprKind::Binary { op: ast::BinOp::Add, lhs, rhs } if is_index(rhs) => literal(lhs),
-            ast::ExprKind::Binary { op: ast::BinOp::Sub, lhs, rhs } if is_index(lhs) => literal(rhs).map(|k| -k),
+            ast::ExprKind::Paren(inner) => self.offset_at(checker, inner, depth),
+            ast::ExprKind::Path { segments } if segments.len() == 1 => match self.resolve(checker, segments[0].name, depth) {
+                Resolved::Index => Some(0),
+                Resolved::Arg(arg, below, _) => self.offset_at(checker, arg, below),
+                _ => None,
+            },
+            ast::ExprKind::Binary { op: ast::BinOp::Add, lhs, rhs } => match self.offset_at(checker, lhs, depth) {
+                Some(k) => k.checked_add(self.constant_at(checker, rhs, depth)?),
+                None => self.offset_at(checker, rhs, depth)?.checked_add(self.constant_at(checker, lhs, depth)?),
+            },
+            ast::ExprKind::Binary { op: ast::BinOp::Sub, lhs, rhs } => {
+                self.offset_at(checker, lhs, depth)?.checked_sub(self.constant_at(checker, rhs, depth)?)
+            }
+            _ => None,
+        }
+    }
+
+    /// An integer literal `expr` is, through the callees' parameters.
+    fn constant_at(&self, checker: &Checker<'_>, expr: &ast::Expr, depth: usize) -> Option<i128> {
+        match &expr.kind {
+            ast::ExprKind::Paren(inner) => self.constant_at(checker, inner, depth),
+            ast::ExprKind::Lit(ast::Literal::Int { value, .. }) => i128::try_from(*value).ok(),
+            ast::ExprKind::Path { segments } if segments.len() == 1 => match self.resolve(checker, segments[0].name, depth) {
+                Resolved::Arg(arg, below, _) => self.constant_at(checker, arg, below),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -512,13 +616,27 @@ impl ParallelWalk {
         match &target.kind {
             ast::ExprKind::Path { segments } if segments.len() == 1 => {
                 let name = segments[0].name;
-                if self.outer(checker, name) {
-                    if !self.reduced.contains(&name) {
-                        self.problems.push((target.span, format!("the parallel loop writes `{name}`, which its chunks share")));
+                match self.resolve(checker, name, self.frames.len()) {
+                    Resolved::Outer => {
+                        if !self.reduced.contains(&name) {
+                            self.problems.push((target.span, format!("the parallel loop writes `{name}`, which its chunks share")));
+                        }
                     }
-                } else {
+                    // `[PAR-2b]` — a callee's `mut` parameter is the caller's place; and from here
+                    // the parameter holds what the callee wrote, not the caller's argument.
+                    Resolved::Arg(arg, below, mutable) => {
+                        let shared = if mutable { self.place_at(checker, arg, below).map(|(place, _)| place) } else { None };
+                        if let Some(place) = shared
+                            && !self.reduced.contains(&Symbol::intern(&place))
+                        {
+                            let callee = self.frames.last().map_or(name, |frame| frame.name);
+                            self.problems.push((target.span, format!("the parallel loop writes `{place}`, which its chunks share, in `{callee}`")));
+                        }
+                        self.declare(name);
+                    }
+                    Resolved::Index => {}
                     // `[GRM-4]` — a name not in scope is declared here: the body's own.
-                    self.declared.insert(name);
+                    Resolved::Own => self.declare(name),
                 }
             }
             ast::ExprKind::IndexOrInstantiate { base, args } => {
@@ -529,18 +647,17 @@ impl ParallelWalk {
                 }
                 match self.place_of(checker, base) {
                     Some((place, ty)) => {
-                        let ty = match checker.types.kind(ty) {
-                            TyKind::Ref { inner, .. } => *inner,
-                            _ => ty,
-                        };
-                        let span_like = matches!(checker.types.kind(ty), TyKind::Span { mutable: true, .. }) || checker.soa_inner(ty).is_some();
-                        if !span_like {
+                        if !Self::writable(checker, ty) {
+                            let ty = match checker.types.kind(ty) {
+                                TyKind::Ref { inner, .. } => *inner,
+                                _ => ty,
+                            };
                             let shown = checker.types.display(ty);
                             self.problems.push((target.span, format!("the parallel loop writes `{place}`, a `{shown}`; it may write a `MutSpan` or an `SoA` column")));
                             return;
                         }
                         let offset = match args.as_slice() {
-                            [ast::TypeOrExpr::Expr(e)] => self.offset(e),
+                            [ast::TypeOrExpr::Expr(e)] => self.offset(checker, e),
                             _ => None,
                         };
                         self.accesses.entry(place).or_default().push(ParallelAccess { offset, write: true, span: target.span });
@@ -570,7 +687,7 @@ impl ParallelWalk {
         }
         if let ast::ExprKind::Path { segments } = &root.kind
             && segments.len() == 1
-            && !self.outer(checker, segments[0].name)
+            && self.place_of(checker, root).is_none()
         {
             self.expr(checker, base);
             return;
@@ -580,11 +697,17 @@ impl ParallelWalk {
 
     fn expr(&mut self, checker: &Checker<'_>, expr: &ast::Expr) {
         match &expr.kind {
+            // `[PAR-2b]` — a callee read through returns from itself.
+            ast::ExprKind::Jump(ast::Jump::Return(value)) if !self.frames.is_empty() => {
+                if let Some(value) = value {
+                    self.expr(checker, value);
+                }
+            }
             ast::ExprKind::Jump(ast::Jump::Return(_)) => self.problems.push((expr.span, "a `@parallel` loop's body may not `return`".to_string())),
             ast::ExprKind::Jump(ast::Jump::Break { .. }) if self.loops == 0 => {
                 self.problems.push((expr.span, "a `@parallel` loop's body may not `break` out of it".to_string()));
             }
-            ast::ExprKind::Jump(ast::Jump::Continue { label: Some(label) }) if Some(label.name) != self.label => {
+            ast::ExprKind::Jump(ast::Jump::Continue { label: Some(label) }) if self.frames.is_empty() && Some(label.name) != self.label => {
                 self.problems.push((expr.span, "a `@parallel` loop's body may not `continue` an outer loop".to_string()));
             }
             ast::ExprKind::Yield(_) => self.problems.push((expr.span, "a `@parallel` loop's body may not `yield`".to_string())),
@@ -597,7 +720,7 @@ impl ParallelWalk {
                 match self.place_of(checker, base) {
                     Some((place, _)) => {
                         let offset = match args.as_slice() {
-                            [ast::TypeOrExpr::Expr(e)] => self.offset(e),
+                            [ast::TypeOrExpr::Expr(e)] => self.offset(checker, e),
                             _ => None,
                         };
                         self.accesses.entry(place).or_default().push(ParallelAccess { offset, write: false, span: expr.span });
@@ -606,9 +729,24 @@ impl ParallelWalk {
                 }
             }
             ast::ExprKind::Call { callee, args } => {
+                if let Some(def) = self.callee_def(checker, callee)
+                    && checker.foreign_declarations.contains_key(&def)
+                    && let Some(frame) = self.frames.last_mut()
+                {
+                    frame.foreign = true;
+                }
+                if self.read_through(checker, callee, args, expr.span) {
+                    return;
+                }
                 self.expr(checker, callee);
                 for arg in args {
                     self.argument(checker, &arg.value);
+                }
+            }
+            // A view's length reads no element.
+            ast::ExprKind::MethodCall { recv, name, args, .. } if args.is_empty() && matches!(name.name.as_str(), "len" | "is_empty") => {
+                if self.place_of(checker, recv).is_none() {
+                    self.expr(checker, recv);
                 }
             }
             ast::ExprKind::MethodCall { recv, args, .. } => {
@@ -673,6 +811,65 @@ impl ParallelWalk {
             ast::ExprKind::Lambda(_) | ast::ExprKind::Comprehension { .. } => {}
             _ => {}
         }
+    }
+
+    /// `[PAR-2b]` — a call given a `MutSpan` or `SoA` column of the code around the loop, to a
+    /// function `[CG-C-3]` puts in the inline header: its body is walked as if inlined, each
+    /// parameter standing for the call's argument. A call that comes back to a function being read
+    /// through cannot be, nor can a callee that makes a foreign call; either defeats the proof
+    /// (`E7010`). Whether the call was handled here.
+    fn read_through(&mut self, checker: &Checker<'_>, callee: &ast::Expr, args: &[ast::Arg], span: Span) -> bool {
+        if !args.iter().any(|arg| self.place_of(checker, &arg.value).is_some_and(|(_, ty)| Self::writable(checker, ty))) {
+            return false;
+        }
+        let Some(def) = self.callee_def(checker, callee) else { return false };
+        let Some((module, decl)) = checker.inline_fns.get(&def) else { return false };
+        let Some(body) = &decl.body else { return false };
+        let name = decl.name.name;
+        if self.frames.iter().any(|frame| frame.def == def) {
+            self.problems.push((span, format!("the parallel loop gives a place it writes to `{name}`, which comes back to itself, so the call cannot be read through")));
+            return true;
+        }
+        // Each parameter is the call's argument; one left to its default is the callee's own.
+        let mut mapped = HashMap::new();
+        let mut positional = args.iter().filter(|arg| arg.name.is_none());
+        for param in &decl.params {
+            let ast::ParamKind::Named { name: param_name, .. } = &param.kind else { return false };
+            let given = args.iter().find(|arg| arg.name.is_some_and(|n| n.name == param_name.name)).or_else(|| positional.next());
+            if let Some(arg) = given {
+                mapped.insert(param_name.name, (arg.value.clone(), param.mode == ast::Mode::Mut));
+            }
+        }
+        // The arguments are evaluated here, before the call: their own reads count.
+        for arg in args {
+            if self.place_of(checker, &arg.value).is_none() {
+                self.expr(checker, &arg.value);
+            }
+        }
+        let saved_loops = std::mem::replace(&mut self.loops, 0);
+        self.frames.push(CalleeFrame { def, module: *module, name, args: mapped, declared: HashSet::new(), foreign: false });
+        self.block(checker, body);
+        let frame = self.frames.pop().expect("the callee's frame");
+        self.loops = saved_loops;
+        if frame.foreign {
+            self.problems.push((span, format!("the parallel loop gives a place it writes to `{name}`, which makes a foreign call, so the call cannot be read through")));
+        }
+        true
+    }
+
+    /// The function a call's callee names, resolved where the code is written (in a callee read
+    /// through, its own module); a local or a parameter is a callable value, not a function.
+    fn callee_def(&self, checker: &Checker<'_>, callee: &ast::Expr) -> Option<DefId> {
+        let ast::ExprKind::Path { segments } = &callee.kind else { return None };
+        let [name] = segments.as_slice() else { return None };
+        if !matches!(self.resolve(checker, name.name, self.frames.len()), Resolved::Own) {
+            return None;
+        }
+        if self.frames.last().is_some_and(|frame| frame.declared.contains(&name.name)) {
+            return None;
+        }
+        let module = self.frames.last().map_or(checker.current_module, |frame| frame.module);
+        checker.fn_ids.get(&checker.resolve_name_in(module, name.name)).copied()
     }
 
     /// An argument (or a receiver): a place given whole to a call is noted (`[PAR-2b]`).
@@ -1949,6 +2146,9 @@ struct Checker<'a> {
     /// `[DIA-22]` — the argument being checked against a declared parameter: its span, and the
     /// parameter's name and declaration, the secondary span of a mismatch on the argument.
     argument_of: Option<(Span, Symbol, Span)>,
+    /// `[PAR-2b]`, `[CG-C-3]` — each function the inline header would hold (`@inline`, or a short
+    /// one), with the module it is written in, for the parallel analysis to read through.
+    inline_fns: HashMap<DefId, (usize, ast::FnDecl)>,
     /// `[GRM-34]` (ADR-191) — each method a universal extension gave a type, with the extension's
     /// index: a blanket parameter only its result names is the one the type's implementation fixes.
     universal_method_defs: HashMap<DefId, usize>,
@@ -2236,6 +2436,11 @@ struct Checker<'a> {
     /// `[TYP-36]` — the structs and enums declared `@derive(Hash)`, by
     /// declaration name (a generic one's instances by their origin).
     hash_derived: HashSet<Symbol>,
+    /// `[DRV-1]` — the derives whose requirements on the fields are checked once implementations
+    /// are known (`derives.rs`).
+    derive_requests: Vec<derives::DeriveRequest>,
+    /// `[DRV-1]` — the blocks written for derives a field fell short of, by span: not checked.
+    refused_derives: HashSet<Span>,
     /// D-261 — an interface instance whose arguments name type parameters
     /// (`AsKey[K]` in a bound), by generic interface and arguments, and back:
     /// a use substitutes the arguments and instantiates again.
@@ -2409,6 +2614,7 @@ impl<'a> Checker<'a> {
             debug_writer_defs: Vec::new(),
             dyn_debug_holders: Vec::new(),
             argument_of: None,
+            inline_fns: HashMap::new(),
             universal_method_defs: HashMap::new(),
             universal_interfaces: Vec::new(),
             applied_universal: HashSet::new(),
@@ -2497,6 +2703,8 @@ impl<'a> Checker<'a> {
             pending_struct_bounds: Vec::new(),
             unmet_instances: HashSet::new(),
             hash_derived: HashSet::new(),
+            derive_requests: Vec::new(),
+            refused_derives: HashSet::new(),
             open_interfaces: HashMap::new(),
             open_interface_origin: HashMap::new(),
             pending_bound_interfaces: Vec::new(),
@@ -3677,7 +3885,12 @@ impl<'a> Checker<'a> {
     /// imported. An unknown name resolves to its own-module form so that the
     /// diagnostic names what the programmer wrote.
     fn resolve_name(&self, name: Symbol) -> Symbol {
-        if let Some(&found) = self.visible[self.current_module].get(&name) {
+        self.resolve_name_in(self.current_module, name)
+    }
+
+    /// What a name written in `module` means there.
+    fn resolve_name_in(&self, module: usize, name: Symbol) -> Symbol {
+        if let Some(&found) = self.visible[module].get(&name) {
             return found;
         }
         // A name that already carries a module prefix — one `resolve_qualified`
@@ -3685,7 +3898,7 @@ impl<'a> Checker<'a> {
         if name.as_str().contains('.') {
             return name;
         }
-        let prefix = &self.prefixes[self.current_module];
+        let prefix = &self.prefixes[module];
         if prefix.is_empty() { root_qualified(name) } else { Symbol::intern(&format!("{prefix}.{name}")) }
     }
 
@@ -4050,6 +4263,9 @@ impl<'a> Checker<'a> {
                     let (repr, repr_is_explicit) = self.enum_repr(&item.attrs, decl);
                     if has_derive(&item.attrs, "Hash") {
                         self.hash_derived.insert(name);
+                    }
+                    if has_derive(&item.attrs, "Zeroable") {
+                        self.types.derive_zeroable(name);
                     }
                     let id = self.types.add_enum(EnumDef {
                         name,
@@ -4810,6 +5026,9 @@ impl<'a> Checker<'a> {
             let (repr, repr_is_explicit) = self.enum_repr(&item.attrs, decl);
             if has_derive(&item.attrs, "Hash") {
                 self.hash_derived.insert(name);
+            }
+            if has_derive(&item.attrs, "Zeroable") {
+                self.types.derive_zeroable(name);
             }
             self.generic_enums.insert(
                 name,
@@ -6164,6 +6383,9 @@ impl<'a> Checker<'a> {
             .collect();
         extensions.sort_by_key(|(target, extension)| (target.as_str().to_string(), extension.span.start));
         for (target, extension) in extensions {
+            if self.refused_derives.contains(&extension.span) {
+                continue;
+            }
             let args = self.opaque_arguments(&extension.params);
             let target_args: Vec<Ty> =
                 extension.target_args.iter().map(|&pattern| self.substitute_ty(pattern, &args)).collect();
@@ -7607,6 +7829,16 @@ impl<'a> Checker<'a> {
                     if decl.is_foreign_decl {
                         self.foreign_declarations.insert(def, decl.is_safe);
                     }
+                    // `[PAR-2b]`, `[CG-C-3]` — kept for the parallel analysis to read through.
+                    if !decl.is_foreign_decl
+                        && !decl.is_gen
+                        && decl.generics.is_empty()
+                        && let Some(body) = &decl.body
+                        && !has_attribute(&item.attrs, "noinline")
+                        && (has_attribute(&item.attrs, "inline") || statement_count(body) <= INLINE_STATEMENTS)
+                    {
+                        self.inline_fns.insert(def, (self.current_module, decl.clone()));
+                    }
                     let abi = if count_witnesses.is_empty() {
                         decl.abi.as_deref().or_else(|| has_attribute(&item.attrs, "export").then_some("C"))
                             .map(Symbol::intern)
@@ -7744,6 +7976,9 @@ impl<'a> Checker<'a> {
     /// there is nothing to check.
     fn check_enum_copy(&mut self, id: EnumId, attrs: &[ast::Attribute]) {
         self.check_enum_copy_requested(id, has_derive(attrs, "Copy"));
+        if has_derive(attrs, "Zeroable") {
+            self.check_enum_zeroable(id);
+        }
         if has_attribute(attrs, "view") {
             let name = self.types.enum_def(id).name;
             let ty = self.types.intern(TyKind::Enum(id));
@@ -7768,6 +8003,36 @@ impl<'a> Checker<'a> {
                 .help("remove `@view`; a type is a view when it holds a reference, a `Span`, a `MutSpan`, a `str` or another view")
                 .note("`@view` documents what the compiler infers [TYP-34]"),
         );
+    }
+
+    /// `[ARN-11]` — `@derive(Zeroable)` on an enum, proved: all-zero bytes are the variant whose
+    /// discriminant is zero, with every field of it zero, so that variant exists and each of its
+    /// fields is `Zeroable` (`E2080`); and a `drop` of its own rules it out.
+    fn check_enum_zeroable(&mut self, id: EnumId) {
+        let def = self.types.enum_def(id);
+        let name = def.name;
+        let span = def.span;
+        if def.has_drop {
+            self.error(codes::E2080, span, format!("`{name}` has a `drop`, so it cannot derive `Zeroable`"));
+            return;
+        }
+        let Some(zero) = def.variants.iter().find(|variant| variant.discriminant == 0) else {
+            self.sink.emit(
+                Diagnostic::error(codes::E2080, span, format!("`{name}` has no variant whose discriminant is zero, so zero bytes are no `{name}`"))
+                    .note("an enum whose zero discriminant is invalid is never Zeroable [ARN-11]"),
+            );
+            return;
+        };
+        let offenders: Vec<(Symbol, Ty, Span)> = zero
+            .fields
+            .iter()
+            .filter(|field| !self.types.is_generic(field.ty) && !self.types.is_builtin_zeroable(field.ty))
+            .map(|field| (field.name, field.ty, field.span))
+            .collect();
+        for (field, ty, span) in offenders {
+            let shown = self.types.display(ty);
+            self.error(codes::E2080, span, format!("payload `{field}` has type `{shown}`, which is not Zeroable"));
+        }
     }
 
     fn check_enum_copy_requested(&mut self, id: EnumId, requested: bool) {
@@ -15666,6 +15931,7 @@ impl<'a> Checker<'a> {
     fn check_bodies(&mut self, module: &ast::Module) -> Program {
         let mut functions = Vec::new();
         let mut main = None;
+        let mut tests = Vec::new();
 
         for item in &module.items {
             // `[CT-7]` — an item-level `comptime:` block runs once while compiling.
@@ -15685,6 +15951,7 @@ impl<'a> Checker<'a> {
                 self.error(codes::E0100, decl.name.span, "a bodyless foreign declaration belongs in an `unsafe extern` block");
             }
             self.check_foreign_signature(decl, def, &item.attrs);
+            let test = self.test_form(def, decl, &item.attrs);
             // `[FN-8]` (ODR-101) — a generic `main` is checked as a template
             // below, never as the entry point: its form is checked here.
             if !self.signatures[def.0 as usize].generics.is_empty()
@@ -15892,13 +16159,16 @@ impl<'a> Checker<'a> {
                 ffi_counted,
             });
             let symbol = functions.last().expect("just pushed").symbol.clone();
+            if let Some(should_panic) = test {
+                tests.push(hir::TestFn { def, name, symbol: symbol.clone(), should_panic });
+            }
             self.end_body_marks(&symbol);
             self.active_overflow = outer_overflow;
             self.active_fp = outer_fp;
         }
 
         functions.extend(self.check_method_bodies(module));
-        Program { functions, main }
+        Program { functions, main, tests }
     }
 
     /// `[TYP-16]` — one real body per instantiation. Each is the generic body
@@ -17060,7 +17330,7 @@ impl<'a> Checker<'a> {
         let mut out = Vec::new();
         for item in &module.items {
             if let ast::ItemKind::Extend(decl) = &item.kind
-                && self.is_generic_extension(decl)
+                && (self.is_generic_extension(decl) || self.refused_derives.contains(&item.span))
             {
                 continue;
             }
@@ -34203,6 +34473,14 @@ impl<'a> Checker<'a> {
                 ast::MemberKind::Const(_) => "const",
                 ast::MemberKind::TypeAlias(_) => "type",
             };
+            // `[TST-3]` — the runner calls a free function; a method needs a receiver.
+            if site == "fn" {
+                for attr in member.attrs.iter().filter(|attr| attr.path.len() == 1
+                    && (attr.path[0].name.is("test") || attr.path[0].name.is("should_panic"))) {
+                    self.error(codes::E0104, attr.span,
+                        format!("`@{}` applies to a free function, not a method", attr.path[0].name));
+                }
+            }
             self.check_attribute_list(&member.attrs, site);
         }
     }
@@ -34312,7 +34590,8 @@ impl<'a> Checker<'a> {
                 self.error(codes::E0104, attr.span, "`@nopanic` takes `explicit`: `@nopanic(explicit)`");
                 continue;
             }
-            if matches!(name, "noalloc" | "nosync" | "noblock" | "noio" | "nolock" | "realtime" | "deterministic")
+            if matches!(name, "noalloc" | "nosync" | "noblock" | "noio" | "nolock" | "realtime" | "deterministic"
+                | "test" | "should_panic")
                 && !attr.args.is_empty()
             {
                 self.error(codes::E0104, attr.span, format!("`@{name}` takes no arguments"));
@@ -34360,14 +34639,23 @@ impl<'a> Checker<'a> {
                         );
                         continue;
                     }
-                    if !matches!(derived, "Copy" | "Clone" | "Eq" | "Hash") && !(derived == "Zeroable" && site == "struct") {
+                    // `Ord`, `Default`, `Display` and `Error` on a struct or enum were written out
+                    // before this (`derives.rs`, `errors.rs`).
+                    let built = matches!(derived, "Copy" | "Clone" | "Eq" | "Hash")
+                        || matches!(derived, "Debug" | "Zeroable") && matches!(site, "struct" | "enum");
+                    if !built {
+                        let note = match derived {
+                            "Serialize" | "Deserialize" => "serialisation is `[SER-1]`'s, not built yet",
+                            "Component" => "components are `[ECS-7]`'s, not built yet",
+                            _ => "a struct or an enum derives every built-in derive but `Serialize`, `Deserialize` and `Component`; a class `Copy`, `Clone`, `Eq` and `Hash` [DRV-1]",
+                        };
                         self.sink.emit(
                             Diagnostic::error(
                                 codes::E0900,
                                 span,
                                 format!("deriving `{derived}` is not implemented yet"),
                             )
-                            .note("`Copy`, `Clone`, `Hash` and `Error` can be derived, and `Zeroable` on a struct; `Eq` is implicit [STR-5]"),
+                            .note(note),
                         );
                     }
                 }
@@ -38870,6 +39158,53 @@ impl<'a> Checker<'a> {
     /// one `Array[String]` (any name, any mode) and returns `void` or
     /// `Result[void, E]`, with no type parameters; any other form is `E2183`
     /// at its name. Its `E` must have text to be printed (`E2040`).
+    /// `[TST-3]` — what `@test` and `@should_panic` say of a free function:
+    /// `Some(should_panic)` for a test the runner can call, `None` otherwise.
+    /// The runner calls a test with nothing and expects nothing back, so a
+    /// test takes no parameters, has no type parameters and returns nothing;
+    /// it is Ember code the runner calls, so neither `unsafe`, foreign,
+    /// exported nor a `gen fn`. `@should_panic` qualifies a test (`E0104`).
+    fn test_form(&mut self, def: DefId, decl: &ast::FnDecl, attrs: &[ast::Attribute]) -> Option<bool> {
+        let find = |name: &str| attrs.iter().find(|attr| attr.path.len() == 1 && attr.path[0].name.is(name));
+        let should_panic = find("should_panic");
+        let Some(test) = find("test") else {
+            if let Some(attr) = should_panic {
+                self.sink.emit(
+                    Diagnostic::error(codes::E0104, attr.span, "`@should_panic` applies to a `@test` function")
+                        .help("write `@test` on the line above it")
+                        .note("`@should_panic` says a test passes only by panicking [TST-3]"),
+                );
+            }
+            return None;
+        };
+        let signature = &self.signatures[def.0 as usize];
+        let (params, ret, generic) = (signature.params.len(), signature.ret, !signature.generics.is_empty());
+        let wrong = if generic {
+            Some("it has type parameters".to_string())
+        } else if params > 0 {
+            Some(format!("it takes {params} parameter{}", if params == 1 { "" } else { "s" }))
+        } else if ret != self.common.void && ret != self.common.error {
+            Some(format!("it returns `{}`", self.types.display(ret)))
+        } else if decl.is_unsafe {
+            Some("it is `unsafe`".to_string())
+        } else if decl.is_gen {
+            Some("it is a `gen fn`".to_string())
+        } else if decl.abi.is_some() || decl.is_foreign_decl || has_attribute(attrs, "export") {
+            Some("it has a foreign ABI".to_string())
+        } else {
+            None
+        };
+        if let Some(wrong) = wrong {
+            self.sink.emit(
+                Diagnostic::error(codes::E0104, test.span, format!("`@test` does not apply to this function: {wrong}"))
+                    .help("a test is `fn name():` with no parameters, calling what it tests itself")
+                    .note("the test runner calls each test with nothing and expects nothing back [TST-3]"),
+            );
+            return None;
+        }
+        Some(should_panic.is_some())
+    }
+
     fn check_main_form(&mut self, main: DefId, name: Span) {
         let signature = &self.signatures[main.0 as usize];
         let (params, ret, generic) = (signature.params.clone(), signature.ret, !signature.generics.is_empty());
@@ -41599,7 +41934,7 @@ impl<'a> Checker<'a> {
     /// access to which, reads included, is at `i + k` for one constant `k`. A call the analysis
     /// cannot see into that is given such a place defeats it (`[PAR-2b]`). Reports what fails.
     fn parallel_independent(&mut self, index: Symbol, label: Option<ast::Ident>, body: &ast::Block, reduced: &HashSet<Symbol>) -> bool {
-        let mut walk = ParallelWalk { index, label: label.map(|l| l.name), reduced: reduced.clone(), declared: HashSet::new(), loops: 0, accesses: BTreeMap::new(), problems: Vec::new(), passed: Vec::new() };
+        let mut walk = ParallelWalk { index, label: label.map(|l| l.name), reduced: reduced.clone(), declared: HashSet::new(), loops: 0, accesses: BTreeMap::new(), problems: Vec::new(), passed: Vec::new(), frames: Vec::new() };
         walk.block(self, body);
         let mut ok = walk.problems.is_empty();
         for (span, message) in std::mem::take(&mut walk.problems) {
@@ -42505,6 +42840,45 @@ impl<'a> Checker<'a> {
             }
             let shown = self.types.display(ty);
             self.error(codes::E2080, span, format!("{what} `{name}` has type `{shown}`, which is not Hash"));
+        }
+    }
+
+    /// `[DRV-1]` — each field of a struct or enum declaring `@derive(Ord)`, `Default`, `Display`,
+    /// `Eq` or `Debug` implements what that derive needs (`E2080`, naming the field); a field whose
+    /// type names the declaration's own parameters is bounded by the block written for it. The
+    /// block written for a derive a field falls short of is not checked.
+    fn check_derived_requirements(&mut self) {
+        for request in std::mem::take(&mut self.derive_requests) {
+            let name = self.qualified_in_module(request.module, request.name);
+            let mut fields: Vec<(Ty, Span, Symbol, &'static str)> = Vec::new();
+            if let Some(&ty) = self.named_types.get(&name) {
+                match *self.types.kind(ty) {
+                    TyKind::Struct(id) => fields.extend(self.types.struct_def(id).fields.iter().map(|f| (f.ty, f.span, f.name, "field"))),
+                    TyKind::Enum(id) => {
+                        let payload = self.types.enum_def(id).variants.iter().flat_map(|v| v.fields.iter());
+                        fields.extend(payload.map(|f| (f.ty, f.span, f.name, "payload")));
+                    }
+                    _ => {}
+                }
+            } else if let Some(decl) = self.generic_structs.get(&name) {
+                fields.extend(decl.fields.iter().map(|f| (f.ty, f.span, f.name, "field")));
+            } else if let Some(decl) = self.generic_enums.get(&name) {
+                let payload = decl.variants.iter().flat_map(|v| v.fields.iter());
+                fields.extend(payload.map(|f| (f.ty, f.span, f.name, "payload")));
+            }
+            let interface = Symbol::intern(request.requires);
+            let shown_interface = request.requires.rsplit('.').next().unwrap_or(request.requires);
+            for (ty, span, field, what) in fields {
+                if request.exempt.contains(&field) || self.types.is_generic(ty) || self.implements(ty, interface) {
+                    continue;
+                }
+                let shown = self.types.display(ty);
+                self.sink.emit(
+                    Diagnostic::error(codes::E2080, span, format!("{what} `{field}` has type `{shown}`, which is not {shown_interface}"))
+                        .note(format!("`@derive({})` needs every field to be {shown_interface} [DRV-1]", request.derive)),
+                );
+                self.refused_derives.insert(request.span);
+            }
         }
     }
 
@@ -47497,6 +47871,27 @@ impl<'a> Checker<'a> {
                         span,
                     };
                 }
+                // `[TYP-21]`, `[DRV-1]` — an order a type implements (written or derived) is
+                // its `cmp`: `a < b` is `a.cmp(b) < Ordering.Equal`, the variants in order.
+                if !equality && self.implements(operand_ty, Symbol::intern("std.core.Ord")) {
+                    let cmp = ast::Expr {
+                        id: ast::NodeId::DUMMY,
+                        kind: ast::ExprKind::MethodCall {
+                            recv: Box::new(lhs_ast.clone()),
+                            name: ast::Ident { name: Symbol::intern("cmp"), span },
+                            generic_args: Vec::new(),
+                            args: vec![ast::Arg { name: None, value: rhs_ast.clone(), span: rhs_ast.span }],
+                        },
+                        span,
+                    };
+                    let ordering = ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Path { segments: vec![ast::Ident { name: Symbol::intern("std.core.Ordering"), span }] }, span };
+                    let equal = ast::Expr {
+                        id: ast::NodeId::DUMMY,
+                        kind: ast::ExprKind::Field { base: Box::new(ordering), name: ast::Ident { name: Symbol::intern("Equal"), span } },
+                        span,
+                    };
+                    return self.synth_binary(op, &cmp, &equal, span);
+                }
                 let shown = self.types.display(operand_ty);
                 let interface = if equality { "Eq" } else { "Ord" };
                 self.sink.emit(
@@ -48370,6 +48765,45 @@ fn contracts_of(attrs: &[ast::Attribute]) -> hir::Contracts {
     contracts
 }
 
+/// `[CG-C-3]` — the most statements a function may have for the inline header to hold it.
+const INLINE_STATEMENTS: usize = 40;
+
+/// The statements of a block, those of the blocks inside it too.
+fn statement_count(block: &ast::Block) -> usize {
+    block
+        .stmts
+        .iter()
+        .map(|stmt| {
+            1 + match &stmt.kind {
+                ast::StmtKind::If(branch) => if_statement_count(branch),
+                ast::StmtKind::While { body, else_block, .. } | ast::StmtKind::For { body, else_block, .. } => {
+                    statement_count(body) + else_block.as_ref().map_or(0, statement_count)
+                }
+                ast::StmtKind::Match { arms, .. } => arms
+                    .iter()
+                    .map(|arm| match &arm.body {
+                        ast::MatchArmBody::Block(block) => statement_count(block),
+                        ast::MatchArmBody::Expr(_) => 1,
+                    })
+                    .sum(),
+                ast::StmtKind::With { body, .. } | ast::StmtKind::Defer(body) | ast::StmtKind::Unsafe(body) | ast::StmtKind::Comptime(body) => {
+                    statement_count(body)
+                }
+                _ => 0,
+            }
+        })
+        .sum()
+}
+
+fn if_statement_count(branch: &ast::IfStmt) -> usize {
+    statement_count(&branch.then_block)
+        + match branch.else_block.as_deref() {
+            Some(ast::ElseBranch::Block(block)) => statement_count(block),
+            Some(ast::ElseBranch::If(next)) => if_statement_count(next),
+            None => 0,
+        }
+}
+
 fn has_attribute(attrs: &[ast::Attribute], name: &str) -> bool {
     attrs.iter().any(|attr| attr.path.len() == 1 && attr.path[0].name.is(name))
 }
@@ -48426,7 +48860,9 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["export"], &["fn", "static"], false),
     (&["export_table"], &["struct"], false),
     (&["ffi"], &["extern item"], false),
-    (&["test", "bench", "should_panic"], &["fn"], false),
+    // `[TST-3]` — `ember test` runs them (`test_form`); `ember bench` is not built.
+    (&["test", "should_panic"], &["fn"], true),
+    (&["bench"], &["fn"], false),
     // `[TYP-34]` — documentation only: a view type is inferred.
     (&["view"], &["struct", "enum"], true),
     (&["sync"], &["class"], true),

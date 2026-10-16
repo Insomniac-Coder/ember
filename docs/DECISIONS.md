@@ -5016,6 +5016,133 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-194 — `@parallel` reads through calls; `Ord`, `Default`, `Display` and `Zeroable` enums derived (`[PAR-2b]`, `[PAR-5]`, `[DRV-1]`, `[ARN-11]`)
+
+The 75% push (the owner, 2026-10-16: "push for 75% completion").
+
+**`[PAR-2b]`.** The independence walk reads through a call given a `MutSpan` or `SoA` column of the
+code around the loop, to a function `[CG-C-3]` puts in the inline header: `@inline`, or at most 40
+statements (counted over the tree, nested blocks included), not generic, not `gen`, not foreign,
+not `@noinline`. Its body is walked as if inlined: a frame maps each parameter to the caller's
+argument, so `xs[at + 1]` in `fn put(mut xs: MutSpan[int], at: int)` called as `put(xs, i)` is
+`xs` at offset one, and offsets compose through any depth (`at + 1` given `i + 1` is two). A
+parameter written in the callee stops standing for its argument; writing a `mut` parameter whose
+argument is an outer place writes that place. A call that comes back to a function being read
+through, and a callee making a foreign call, cannot be read through and defeat the proof
+(`E7010`), as a call to a function the inline header does not hold does already ("gives `xs` to a
+call"). The callee's names resolve in its own module. `xs.len()` and `xs.is_empty()` read no
+element, so they no longer count as giving `xs` to a call. The reading is the analysis's, never the
+C compiler's inlining (ODR-062).
+
+**`[PAR-5]`.** Tested: a `@deterministic` function holds a `@parallel` float reduction, and two
+runs agree to the bit (chunks are a function of the trip count and `chunk` only).
+
+**`[DRV-1]`.** `@derive(Ord)`, `@derive(Default)` and `@derive(Display)` on a struct or an enum are
+written out before checking as the `extend` blocks they stand for (`derives.rs`, as `@derive(Error)`
+is): `Ord` compares fields in declaration order, the next only on `Equal`, and an enum's variants
+by order before their fields; `Default` is each field's declared default, else
+`std.core.default_of[T]()` (new: `T.default()`), and an enum's one unit variant marked `@default`
+(none, two, or one with fields: `E2080`); `Display` is a unit-only enum's variant name, otherwise
+the `Debug` text written straight into the `Formatter` (`std.fmt.implicit_fmt_debug`, now `pub`).
+A generic declaration's block bounds each type parameter by the interface. What each derive needs
+of the fields, `@derive(Eq)` and `@derive(Debug)` included (both implicit, now accepted when
+written), is checked once implementations are known (`check_derived_requirements`): a field that
+falls short is `E2080` naming it, and the block written for that derive is then not checked, so
+the one mistake is one error. `Serialize`, `Deserialize` and `Component` stay `E0900`, their notes
+naming `[SER-1]` and `[ECS-7]`.
+
+**Ordering operators (D-670).** `a < b` on a struct or enum that implements `Ord`, written or
+derived, was `E2040` ("does not implement `Ord`, which `<` needs"): only the compiler's own orders
+(numbers, text) reached the operators. It is now `a.cmp(b) < Ordering.Equal`, comparing the unit
+enum's variants in their order, so `sort()` and `<` agree with `cmp`.
+
+**`[ARN-11]` on an enum.** `@derive(Zeroable)` on an enum is proved: zero bytes are the variant whose
+discriminant is zero with every field of it zero, so that variant must exist and its fields be
+`Zeroable` (`E2080` naming the payload, or the enum when no discriminant is zero); a `drop` rules it
+out. `is_builtin_zeroable` answers an enum instance the same way, per its arguments.
+
+## ADR-192 — `ember test`: `@test` in a process each, quarantine by rerun, leaks per test, `--doc` (`[TST-3]`, `[TST-30]`, `[WK-15]`, `[DIA-6]`, `[DOC-2]`)
+
+2026-10-16. XVII.1's `ember test [filter] [--doc] [--no-leak-check]` is built
+(`compiler/ember_driver/src/test_runner.rs`); `@test` and `@should_panic` are no longer `E0900`.
+
+**The tests (`[TST-3]`).** The checker records each `@test` free function in `hir::Program::tests`
+(declaration order, module by module). The runner calls a test with nothing and expects nothing back,
+so a test has no parameters, no type parameters and returns nothing, and is not `unsafe`, a `gen fn`,
+foreign or exported; anything else, `@should_panic` without `@test`, either on a method, or either
+with arguments is `E0104` (`[ATT-1]`: an attribute on a declaration it does not apply to). `@bench`
+stays `E0900`. `ember test` builds the package's entry with the command `test`: the same pipeline as
+`ember build`, except that the C entry point (`emit_test_entry`) runs the test whose number is its
+argument instead of `main`, and the test bodies are marked never-inline so no pass folds one into a
+caller and drops it. The binary is `<entry>_test`. The package's tests are those of every loaded
+module outside `std`. Each test runs in a process of its own, which is what "each isolated" buys: a
+panic, a crash, a leak or a static in one test says nothing about another.
+
+**Panics.** `[PAN-1]` keeps its `abort()`. The test entry sets the runtime's `on_panic` hook, which
+writes one marker line to standard error before the abort; `@should_panic` passes exactly when that
+line is there, so a crash or an `exit` is not mistaken for a panic. The entry also sets
+`SetErrorMode` on Windows, as the compile-time evaluator's program does, so a crashing test ends
+instead of opening an error-reporting window. The frame-name table of a test binary does not name
+the C `main` as Ember's `main` (a backtrace would have ended in a `main` that never ran).
+
+**`[TST-30]`, ruled.** "Reports every failure of a run": every selected test runs whatever failed
+before it, each failure's reason and output are printed, and the summary lists every failing test.
+"A test that fails intermittently is quarantined by name and listed in the run summary": the spec
+gives no mechanism, and `[MAN-8]` admits no manifest section for a list (an unlisted section is
+`E9001`), so the runner decides it from the run's own evidence: a test that fails is run again, up to
+two more times; one that then passes failed intermittently and is quarantined: its line says so, the
+summary lists it by name with how many of its runs failed, and it does not fail the run. A test that
+fails every run is a failure. No list is kept between runs: a remembered quarantine would excuse a
+test that later fails every time. Options priced: a manifest key (needs a spec change), a file under
+`target/` (hides regressions, above), a fixed rerun count (built).
+
+**`[WK-15]`.** In the debug profile the test binary turns on the leak report, as `ember run`'s entry
+does; the entry writes a second marker when the test returns, and what the runtime prints after it at
+shutdown is the leak report, shown on standard error under the test's name. A leak is reported, not
+a failure (the rule says report). `--no-leak-check` turns it off; `--leak-check` asks for it in
+another profile, as for `ember run`.
+
+**`--doc`, ruled.** The flag runs the documentation examples instead of the `@test` functions (as
+`cargo test --doc` does), so it works in a directory with documentation and no package: the root is
+the package's (nearest manifest) or else the current directory, and the examples are those of
+`<root>/docs`. Each is compiled by the same compiler, in a directory of its own under the output
+directory, removed afterwards.
+- `docs/errors/EXXXX.md` (`[DIA-6]`): the `ember,fails` program of an error must be rejected with
+  the page's code; a warning's or lint's must compile and report it when checked, or else when run
+  (a code the debug runtime reports, `L3017`), and then the fixed program must also run without it;
+  every `ember,fixed` program must compile. Each example is compiled with the manifest in the last
+  ```` ```toml ```` block above it on the page. `ember,fails,toolchain` marks an error only a C
+  compiler decides (`E9041`): its program must check clean, and its build is rejected with the code
+  by a C compiler that cannot do what it asks; with one that can, it passes noting that the code is
+  not reproduced here. A page with neither example documents a reserved code; a page with one
+  and not the other fails. These two conventions replace `tools/error_pages.py`'s hard-coded
+  `PAGE_MANIFESTS` and `TOOLCHAIN_CODES`: `L3013` and `L3014` gained their manifest blocks and
+  `E9041` its marker, and the Python gate reads the pages the same way.
+- `docs/book/**/*.md` (`[DOC-2]`): each ```` ```ember ```` sample is built and run and must exit 0;
+  ```` ```ember,fragment ```` must parse; ```` ```ember,ignore ```` and other blocks are not run.
+Run over this repository's own pages: 205 examples, all pass (`E9041` not reproduced with MSVC).
+`[DOC-2]` stays unfinished in `docs/phase-status.json`: the runner exists, the user guide does not.
+`[DOC-3]` (`ember doc` presenting views' contracts) is a different command and is not built.
+
+**Output.** One line per case as it ends, then the failures' output, the failure list, the
+quarantine list and `test result: ok|FAILED. N passed; N failed; N quarantined; N filtered out`;
+`--json` prints one object instead (`cases` with `result`, `runs`, `failed_runs`, `failure`,
+`leak_report`). The filter selects tests (or examples) whose name contains it. The exit status is a
+failure exactly when a case failed every run.
+
+**Ceilings.** Tests run one after another (one process each), and a test that never returns hangs
+the run: no timeout is in the rule. Spawning them on several workers, and a timeout, are the
+upgrades when suites grow.
+
+**Noticed, not changed.** XVII.5's example annotates `a.push(4)` after `b = a` as `E3040`, but
+`[BRW-7]` makes borrowing a moved place `E3050`, which the compiler emits; the fixture page in the
+milestone uses `E3050`. An owner question for the next hardening.
+
+Evidence: `ember_test_runs_each_test_alone_and_reports_every_failure`,
+`ember_test_quarantines_a_test_that_fails_intermittently` (a test that fails while a marker file
+exists and removes it), `ember_test_reports_leaks_unless_turned_off`,
+`ember_test_doc_runs_the_documentation_examples` (milestones), `tests/conformance/TST-3/`.
+
 ## ADR-191 — The agents' open items closed, and the owner's `is` (ODR-106 to ODR-112, 0.9.10_Hardened_10)
 
 The owner, 2026-10-16: "make it an error", "allow ?.is()", "fix the r# error", and "address the ADRs

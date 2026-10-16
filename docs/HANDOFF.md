@@ -10930,8 +10930,25 @@ a copy; `[MAN-8]`'s keys; marker interfaces and `unsafe extend`, `[TYP-43]`; bla
 every type), `[DIA-22]`, `[RT-4]`'s backtrace (names table; `dbghelp`/ELF; release PDBs kept by the
 program cache), `[TYP-9c]`'s `E9041`, `dyn` values printed inside others, `[CG-C-5]` measured on gcc,
 D-641 to D-646. `@parallel` now matches hand-split C (x0.99/x1.00) since a chunk function knows its
-loop's range. **Next:** `[PAR-2b]` (read through inlined calls), `[JOB-5]`'s `local_arena`, `some`
-return types, coroutines; the `Cell`-of-a-handle formatting gap (`TYP-36`'s entry).
+loop's range. Then (ADR-194) `[PAR-2b]`: the parallel walk reads through calls to the inline
+header's functions; `@derive(Ord, Default, Display)` written out as `extend` blocks (`derives.rs`)
+with each derive's field requirement checked (`E2080`); `Zeroable` enums; `<` through a written
+`Ord` (D-670). **Next:** `[JOB-5]`'s `local_arena`, `some` return types; the `Cell`-of-a-handle
+formatting gap (`TYP-36`'s entry).
+
+**2026-10-16, `ember test` (ADR-192).** `@test`/`@should_panic` built (forms checked, `E0104`;
+`@bench` still `E0900`); `ember test [filter] [--doc] [--no-leak-check]` in
+`ember_driver/src/test_runner.rs`: the package's entry built as `<entry>_test` whose C entry runs
+test number `argv[1]`, one process per test, `@should_panic` decided by a marker the panic hook
+writes; every failure reported; a failed test rerun up to twice and quarantined by name if a rerun
+passes (`[TST-30]`, ruled in the ADR); debug leak report per test (`[WK-15]` done, its `unfinished`
+entry removed). `--doc` runs `docs/errors` pages (`[DIA-6]`; a ```` ```toml ```` block above an
+example is its manifest, `ember,fails,toolchain` marks `E9041`; `error_pages.py` now reads the same)
+and `docs/book` samples (`[DOC-2]`: runner built, the guide itself missing, so `unfinished`).
+`[TST-3]`, `[TST-30]` done. Not built: `[DOC-3]` (`ember doc`), `[FFI-37]`
+(`--instrument-ffi`), `ember bench`. Traps: `ember test` takes no path, only the package of the
+current directory (the spec's listing; `[CLI-4]` gives single files to `run`/`build` only); never run
+it from a shell on this machine, only from a milestone test.
 
 **2026-10-15, `ember inspect --alloc` and the near-misses (ADR-188).** `inspect --alloc <file.em>`
 lists every allocation site by function and line, read from the effects analysis before inlining

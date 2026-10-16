@@ -873,7 +873,7 @@ fn error_attribute(attr: &ast::Attribute) -> Option<&'static str> {
 }
 
 /// Remove `name` from each `@attribute(…)`, and the attribute once empty.
-fn remove_attribute_argument(attrs: &mut Vec<ast::Attribute>, attribute: &str, name: &str) {
+pub(crate) fn remove_attribute_argument(attrs: &mut Vec<ast::Attribute>, attribute: &str, name: &str) {
     for attr in attrs.iter_mut().filter(|attr| attr.path.len() == 1 && attr.path[0].name.is(attribute)) {
         attr.args.retain(|arg| {
             !matches!(arg, ast::AttrArg::Expr(ast::Expr { kind: ast::ExprKind::Path { segments }, .. })
@@ -1118,28 +1118,28 @@ fn derive_struct_error(decl: &ast::StructDecl, texts: Vec<ast::Attribute>, span:
     vec![extend_item(&decl.generics, target, vec![named_type("std.core.Display", span), named_type("std.core.Error", span)], members, span)]
 }
 
-fn expr(kind: ast::ExprKind, span: Span) -> ast::Expr {
+pub(crate) fn expr(kind: ast::ExprKind, span: Span) -> ast::Expr {
     ast::Expr { id: ast::NodeId::DUMMY, kind, span }
 }
 
-fn self_expr(span: Span) -> ast::Expr {
+pub(crate) fn self_expr(span: Span) -> ast::Expr {
     expr(ast::ExprKind::SelfExpr, span)
 }
 
-fn path(segments: &[Symbol], span: Span) -> ast::Expr {
+pub(crate) fn path(segments: &[Symbol], span: Span) -> ast::Expr {
     expr(ast::ExprKind::Path { segments: segments.iter().map(|&name| ast::Ident { name, span }).collect() }, span)
 }
 
-fn arg(value: ast::Expr) -> ast::Arg {
+pub(crate) fn arg(value: ast::Expr) -> ast::Arg {
     let span = value.span;
     ast::Arg { name: None, value, span }
 }
 
-fn call(callee: ast::Expr, args: Vec<ast::Expr>, span: Span) -> ast::Expr {
+pub(crate) fn call(callee: ast::Expr, args: Vec<ast::Expr>, span: Span) -> ast::Expr {
     expr(ast::ExprKind::Call { callee: Box::new(callee), args: args.into_iter().map(arg).collect() }, span)
 }
 
-fn method_call(recv: ast::Expr, name: ast::Ident, args: Vec<ast::Expr>, span: Span) -> ast::Expr {
+pub(crate) fn method_call(recv: ast::Expr, name: ast::Ident, args: Vec<ast::Expr>, span: Span) -> ast::Expr {
     let name = ast::Ident { name: name.name, span };
     expr(
         ast::ExprKind::MethodCall { recv: Box::new(recv), name, generic_args: Vec::new(), args: args.into_iter().map(arg).collect() },
@@ -1147,29 +1147,29 @@ fn method_call(recv: ast::Expr, name: ast::Ident, args: Vec<ast::Expr>, span: Sp
     )
 }
 
-fn stmt(kind: ast::StmtKind, span: Span) -> ast::Stmt {
+pub(crate) fn stmt(kind: ast::StmtKind, span: Span) -> ast::Stmt {
     ast::Stmt { id: ast::NodeId::DUMMY, attrs: Vec::new(), kind, span }
 }
 
-fn ret(value: Option<ast::Expr>, span: Span) -> ast::Stmt {
+pub(crate) fn ret(value: Option<ast::Expr>, span: Span) -> ast::Stmt {
     stmt(ast::StmtKind::Expr(expr(ast::ExprKind::Jump(ast::Jump::Return(value.map(Box::new))), span)), span)
 }
 
 /// `return f.write_str(text)`.
-fn write_str(text: ast::Expr, span: Span) -> ast::Stmt {
+pub(crate) fn write_str(text: ast::Expr, span: Span) -> ast::Stmt {
     let f = path(&[Symbol::intern("f")], span);
     ret(Some(method_call(f, ast::Ident { name: Symbol::intern("write_str"), span }, vec![text], span)), span)
 }
 
-fn block(stmts: Vec<ast::Stmt>, span: Span) -> ast::Block {
+pub(crate) fn block(stmts: Vec<ast::Stmt>, span: Span) -> ast::Block {
     ast::Block { id: ast::NodeId::DUMMY, stmts, span }
 }
 
-fn pattern_of(kind: ast::PatternKind, span: Span) -> ast::Pattern {
+pub(crate) fn pattern_of(kind: ast::PatternKind, span: Span) -> ast::Pattern {
     ast::Pattern { id: ast::NodeId::DUMMY, kind, span }
 }
 
-fn arm(pattern: ast::Pattern, body: ast::Stmt, span: Span) -> ast::MatchArm {
+pub(crate) fn arm(pattern: ast::Pattern, body: ast::Stmt, span: Span) -> ast::MatchArm {
     ast::MatchArm { id: ast::NodeId::DUMMY, pattern, guard: None, body: ast::MatchArmBody::Block(block(vec![body], span)), span }
 }
 
@@ -1201,7 +1201,7 @@ fn variant_pattern(enum_name: ast::Ident, variant: &ast::Variant, bindings: &[Sy
 }
 
 /// A type named by its qualified name, which resolves wherever it is written.
-fn named_type(name: &str, span: Span) -> ast::TypeExpr {
+pub(crate) fn named_type(name: &str, span: Span) -> ast::TypeExpr {
     ast::TypeExpr {
         id: ast::NodeId::DUMMY,
         kind: ast::TypeKind::Path { segments: vec![ast::Ident { name: Symbol::intern(name), span }], args: Vec::new() },
@@ -1210,7 +1210,7 @@ fn named_type(name: &str, span: Span) -> ast::TypeExpr {
 }
 
 /// `E` or `E[T, U]`, over the declaration's own parameters.
-fn owner_type(name: ast::Ident, generics: &[ast::GenericParam]) -> ast::TypeExpr {
+pub(crate) fn owner_type(name: ast::Ident, generics: &[ast::GenericParam]) -> ast::TypeExpr {
     let args = generics
         .iter()
         .map(|param| ast::GenericArg::Type(named_type(param.name.name.as_str(), param.span)))
@@ -1218,7 +1218,7 @@ fn owner_type(name: ast::Ident, generics: &[ast::GenericParam]) -> ast::TypeExpr
     ast::TypeExpr { id: ast::NodeId::DUMMY, kind: ast::TypeKind::Path { segments: vec![name], args }, span: name.span }
 }
 
-fn fn_decl(span: Span) -> ast::FnDecl {
+pub(crate) fn fn_decl(span: Span) -> ast::FnDecl {
     ast::FnDecl {
         name: ast::Ident { name: Symbol::intern("_"), span },
         is_unsafe: false,
@@ -1235,15 +1235,15 @@ fn fn_decl(span: Span) -> ast::FnDecl {
     }
 }
 
-fn receiver(span: Span) -> ast::Param {
+pub(crate) fn receiver(span: Span) -> ast::Param {
     ast::Param { id: ast::NodeId::DUMMY, mode: ast::Mode::Borrow, kind: ast::ParamKind::Receiver { ty: None }, default: None, span }
 }
 
-fn named_param(name: Symbol, mode: ast::Mode, ty: ast::TypeExpr, span: Span) -> ast::Param {
+pub(crate) fn named_param(name: Symbol, mode: ast::Mode, ty: ast::TypeExpr, span: Span) -> ast::Param {
     ast::Param { id: ast::NodeId::DUMMY, mode, kind: ast::ParamKind::Named { name: ast::Ident { name, span }, ty }, default: None, span }
 }
 
-fn member(mut decl: ast::FnDecl, body: ast::Block, span: Span) -> ast::Member {
+pub(crate) fn member(mut decl: ast::FnDecl, body: ast::Block, span: Span) -> ast::Member {
     decl.body = Some(body);
     ast::Member {
         id: ast::NodeId::DUMMY,
@@ -1257,7 +1257,7 @@ fn member(mut decl: ast::FnDecl, body: ast::Block, span: Span) -> ast::Member {
 }
 
 /// `fn fmt(self, mut f: Formatter) -> Result[void, FmtError]: <body>`.
-fn fmt_member(body: ast::Stmt, span: Span) -> ast::Member {
+pub(crate) fn fmt_member(body: ast::Stmt, span: Span) -> ast::Member {
     let result = ast::TypeExpr {
         id: ast::NodeId::DUMMY,
         kind: ast::TypeKind::Path {
@@ -1299,7 +1299,7 @@ fn source_member(body: ast::Stmt, span: Span) -> ast::Member {
     member(decl, block(vec![body], span), span)
 }
 
-fn extend_item(generics: &[ast::GenericParam], target: ast::TypeExpr, implements: Vec<ast::TypeExpr>, members: Vec<ast::Member>, span: Span) -> ast::Item {
+pub(crate) fn extend_item(generics: &[ast::GenericParam], target: ast::TypeExpr, implements: Vec<ast::TypeExpr>, members: Vec<ast::Member>, span: Span) -> ast::Item {
     ast::Item {
         id: ast::NodeId::DUMMY,
         attrs: Vec::new(),

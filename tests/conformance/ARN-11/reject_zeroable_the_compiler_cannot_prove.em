@@ -3,8 +3,7 @@
 # `[ARN-11]` (ODR-064) — `@derive(Zeroable)` is proved field by field: a
 # `ref` field is `E2080`, and an instance over a `ref` is not `Zeroable`. A
 # struct that does not derive it is not, whatever its fields: `NonZero`'s
-# field is an integer, and zero bytes break its invariant. Deriving it on an
-# enum is not built yet.
+# field is an integer, and zero bytes break its invariant.
 
 from std.core import NonZero
 
@@ -16,7 +15,7 @@ struct Bad:
 struct Wrap[T]:
     item: T
 
-@derive(Zeroable) #$ error[E0900]: deriving `Zeroable` is not implemented yet
+@derive(Zeroable)
 enum Mode:
     Idle
 

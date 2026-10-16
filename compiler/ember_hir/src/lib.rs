@@ -31,6 +31,22 @@ pub struct Program {
     pub functions: Vec<Function>,
     /// The entry point, if this compilation unit declares one (`[FN-8]`).
     pub main: Option<DefId>,
+    /// `[TST-3]` — the `@test` functions, in declaration order, module by
+    /// module: what `ember test` runs, each in a process of its own.
+    pub tests: Vec<TestFn>,
+}
+
+/// `[TST-3]` — one `@test` function: a free function with no parameters
+/// that returns nothing.
+#[derive(Clone, Debug)]
+pub struct TestFn {
+    pub def: DefId,
+    /// The module-qualified name the runner reports and filters by.
+    pub name: Symbol,
+    /// The C symbol the test binary's entry calls.
+    pub symbol: String,
+    /// `@should_panic`: the test passes only if it panics.
+    pub should_panic: bool,
 }
 
 impl Program {

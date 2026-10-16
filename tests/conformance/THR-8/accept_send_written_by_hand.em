@@ -1,5 +1,5 @@
 #$ test: run-pass
-#$ rules: THR-8, TYP-17
+#$ rules: TYP-43, THR-8, TYP-17
 #$ profiles: debug, release
 #$ stdout: 7
 #$ 1 3 4

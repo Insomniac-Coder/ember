@@ -48,7 +48,8 @@ fn append_debug[T: Debug](value: T, out: ref mut String):
 
 ## `[STR-5]` — a type's own field-wise `Debug` as its `fmt_debug`, for the
 ## table of a `dyn` interface needing `Debug` (`dyn Error`) when the type
-## writes none. It writes into the `Formatter`'s text directly (ADR-191).
-fn implicit_fmt_debug[T: Debug](value: T, mut f: Formatter) -> Result[void, FmtError]:
+## writes none, and for `@derive(Display)` on a struct (`[DRV-1]`). It writes
+## into the `Formatter`'s text directly (ADR-191).
+pub fn implicit_fmt_debug[T: Debug](value: T, mut f: Formatter) -> Result[void, FmtError]:
     append_debug(value, f.out)
     return Ok(())

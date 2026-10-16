@@ -5403,3 +5403,299 @@ fn the_three_versions_are_separate() {
         .expect("the runtime header defines its ABI version");
     assert!(abi.trim().parse::<u32>().is_ok(), "the runtime ABI version is a number: {abi}");
 }
+
+/// A package for `ember test` in a directory of its own: its manifest and
+/// `src/main` (or `src/lib`) with `source`.
+fn test_package(name: &str, kind: &str, source: &str) -> TemporaryDirectory {
+    let package = temporary_directory(name);
+    std::fs::write(package.join(MANIFEST), format!("[package]\nname = \"{name}\"\nkind = \"{kind}\"\n"))
+        .expect("the manifest is writable");
+    std::fs::create_dir_all(package.join("src")).expect("src is writable");
+    let entry = if kind == "bin" { "main" } else { "lib" };
+    std::fs::write(package.join("src").join(ember_branding::source_file(entry)), source).expect("the source is writable");
+    package
+}
+
+/// `[TST-3]`, `[TST-30]` — `ember test` runs each `@test` function of the
+/// package in a process of its own, `@should_panic` passes only by
+/// panicking, every failure of the run is reported and not only the first,
+/// and the filter selects tests by name. The package's `main` is not run.
+#[test]
+fn ember_test_runs_each_test_alone_and_reports_every_failure() {
+    let package = test_package("tested", "bin", "\
+fn add(a: int, b: int) -> int:
+    return a + b
+
+@test
+fn adds():
+    assert(add(2, 3) == 5)
+
+@test
+fn first_failure():
+    assert(add(2, 2) == 5)
+
+@test
+@should_panic
+fn panics_as_it_should():
+    panic(\"boom\")
+
+@test
+@should_panic
+fn does_not_panic():
+    println(\"returned normally\")
+
+@test
+fn second_failure():
+    println(\"printed by the second failure\")
+    panic(\"second\")
+
+fn main():
+    println(\"main is not a test\")
+");
+    let all = ember(&["test"], &package);
+    assert_ne!(all.exit, 0, "a failing test passed the run:\n{}{}", all.stdout, all.stderr);
+    for line in [
+        "running 5 tests",
+        "test adds ... ok",
+        "test first_failure ... FAILED",
+        "test panics_as_it_should ... ok",
+        "test does_not_panic ... FAILED",
+        "test second_failure ... FAILED",
+        "it was to panic, and returned",
+        "printed by the second failure",
+        "test result: FAILED. 2 passed; 3 failed; 0 quarantined; 0 filtered out",
+    ] {
+        assert!(all.stdout.contains(line), "missing `{line}`:\n{}{}", all.stdout, all.stderr);
+    }
+    // `[TST-30]` — the summary names every failure.
+    let summary = all.stdout.rsplit("failures:\n").next().expect("a failure list");
+    for name in ["first_failure", "does_not_panic", "second_failure"] {
+        assert!(summary.contains(&format!("    {name}\n")), "`{name}` is not in the summary:\n{}", all.stdout);
+    }
+    assert!(!all.stdout.contains("main is not a test"), "the test binary ran `main`:\n{}", all.stdout);
+    // The binary's C entry runs a test: a backtrace does not end in `main`.
+    assert!(!all.stdout.contains(": main at"), "a test's backtrace names `main`:\n{}", all.stdout);
+
+    let one = ember(&["test", "adds"], &package);
+    assert_eq!(one.exit, 0, "{}{}", one.stdout, one.stderr);
+    assert!(one.stdout.contains("test result: ok. 1 passed; 0 failed; 0 quarantined; 4 filtered out"), "{}", one.stdout);
+
+    let json = ember(&["test", "panic", "--json"], &package);
+    let report: serde_json::Value = serde_json::from_str(json.stdout.trim()).expect("`--json` prints one JSON value");
+    assert_eq!(report["passed"], 1, "{report}");
+    assert_eq!(report["failed"], 1, "{report}");
+    assert_eq!(report["filtered_out"], 3, "{report}");
+
+    let extra = ember(&["test", "adds", "first_failure"], &package);
+    assert!(extra.exit != 0 && extra.stderr.contains("its one word is a filter"), "{}", extra.stderr);
+    let lonely = temporary_directory("test-without-package");
+    let none = ember(&["test"], &lonely);
+    assert!(none.exit != 0 && none.stderr.contains("none has an"), "{}", none.stderr);
+}
+
+/// `[TST-30]` — a test that fails and then passes when run again fails
+/// intermittently: it is quarantined by name, listed in the summary, and
+/// does not fail the run. This one fails while a marker file exists, and
+/// removes it as it fails.
+#[test]
+fn ember_test_quarantines_a_test_that_fails_intermittently() {
+    let package = test_package("flaky", "lib", "\
+unsafe extern \"C\":
+    @ffi(param(path, borrowed, nul_terminated))
+    safe fn remove(path: cstr) -> i32
+
+@test
+fn steady():
+    assert(1 + 1 == 2)
+
+@test
+fn flaky():
+    if remove(c\"marker\") == 0:
+        panic(\"the marker was there\")
+");
+    std::fs::write(package.join("marker"), "fail once").expect("the marker is writable");
+    let run = ember(&["test"], &package);
+    assert_eq!(run.exit, 0, "a quarantined test failed the run:\n{}{}", run.stdout, run.stderr);
+    for line in [
+        "test steady ... ok",
+        "test flaky ... FAILED intermittently: quarantined (failed 1 of 2 runs)",
+        "quarantined: failed intermittently, not counted as failures [TST-30]:\n    flaky (failed 1 of 2 runs)",
+        "the marker was there",
+        "test result: ok. 1 passed; 0 failed; 1 quarantined; 0 filtered out",
+    ] {
+        assert!(run.stdout.contains(line), "missing `{line}`:\n{}{}", run.stdout, run.stderr);
+    }
+    // Without the marker it is an ordinary passing test.
+    let again = ember(&["test"], &package);
+    assert!(again.stdout.contains("test result: ok. 2 passed; 0 failed; 0 quarantined"), "{}", again.stdout);
+}
+
+/// `[WK-15]` — `ember test` in the debug profile reports the objects a test
+/// leaked, and their cycles, when it ends; `--no-leak-check` turns that off,
+/// and the release profile has it only when asked.
+#[test]
+fn ember_test_reports_leaks_unless_turned_off() {
+    let package = test_package("leaky", "lib", "\
+class Node:
+    name: String
+    next: Option[Node]
+
+@test
+fn builds_a_cycle():
+    a = Node(\"a\", None)
+    b = Node(\"b\", Some(a))
+    a.next = Some(b)
+");
+    let default = ember(&["test"], &package);
+    assert_eq!(default.exit, 0, "{}{}", default.stdout, default.stderr);
+    assert!(
+        default.stderr.contains("leak report of test builds_a_cycle [WK-15]:")
+            && default.stderr.contains("runtime ownership cycle:"),
+        "no leak report:\n{}{}", default.stdout, default.stderr
+    );
+    let off = ember(&["test", "--no-leak-check"], &package);
+    assert!(off.exit == 0 && !off.stderr.contains("runtime ownership cycle"), "--no-leak-check reported:\n{}", off.stderr);
+    let release = ember(&["test", "--profile", "release"], &package);
+    assert!(release.exit == 0 && !release.stderr.contains("runtime ownership cycle"), "release reported unasked:\n{}", release.stderr);
+    let asked = ember(&["test", "--profile", "release", "--leak-check"], &package);
+    assert!(asked.exit == 0 && asked.stderr.contains("runtime ownership cycle"), "release --leak-check silent:\n{}", asked.stderr);
+    let both = ember(&["test", "--leak-check", "--no-leak-check"], &package);
+    assert!(both.exit != 0 && both.stderr.contains("contradict"), "{}", both.stderr);
+}
+
+/// `[DIA-6]`, `[DOC-2]` — `ember test --doc` builds each error page's
+/// examples (the failing one must fail with the page's code, the fixed one
+/// must compile, each in the manifest of the `toml` block above it) and runs
+/// each user-guide sample. Every failure is reported.
+#[test]
+fn ember_test_doc_runs_the_documentation_examples() {
+    let package = test_package("documented", "lib", "pub fn unused():\n    pass\n");
+    let docs = package.join("docs");
+    std::fs::create_dir_all(docs.join("errors")).expect("docs/errors is writable");
+    std::fs::create_dir_all(docs.join("book").join("basics")).expect("docs/book is writable");
+    std::fs::write(docs.join("errors").join("E3050.md"), "\
+# E3050
+
+```ember,fails
+fn main():
+    a = [1, 2, 3]
+    b = a
+    a.push(4)
+```
+
+## Why
+
+Prose.
+
+```ember,fixed
+fn main():
+    a = [1, 2, 3]
+    b = a.clone()
+    a.push(4)
+    println(b.len())
+```
+").expect("a page is writable");
+    // A page whose fix does not compile.
+    std::fs::write(docs.join("errors").join("E2020.md"), "\
+# E2020
+
+```ember,fails
+fn main():
+    x: int = \"text\"
+```
+
+```ember,fixed
+fn main():
+    x: int = \"still text\"
+```
+").expect("a page is writable");
+    // A manifest diagnostic: each example in the manifest above it.
+    std::fs::write(docs.join("errors").join("E9010.md"), "\
+# E9010
+
+```toml
+[lints]
+not_a_lint = \"warn\"
+```
+
+```ember,fails
+fn main():
+    println(42)
+```
+
+```toml
+[lints]
+unused = \"warn\"
+```
+
+```ember,fixed
+fn main():
+    println(42)
+```
+").expect("a page is writable");
+    // An error only a C compiler decides: valid Ember, which this C compiler
+    // may build (then it is not reproduced here) or reject with the code.
+    std::fs::write(docs.join("errors").join("E9041.md"), "\
+# E9041
+
+```ember,fails,toolchain
+@fp(contract)
+fn dot(a: f64, b: f64, c: f64, d: f64) -> f64:
+    return a * b + c * d
+
+fn main():
+    println(dot(1.0, 2.0, 3.0, 4.0))
+```
+
+```ember,fixed
+fn main():
+    println(1.0)
+```
+").expect("a page is writable");
+    std::fs::write(docs.join("book").join("basics").join("hello.md"), "\
+# Hello
+
+```ember
+fn main():
+    println(\"hello\")
+```
+
+```ember,fragment
+fn uses(p: Point) -> int:
+    return p.x
+```
+
+```ember,ignore
+this is not Ember
+```
+
+```ember
+fn main():
+    panic(\"a sample that fails\")
+```
+").expect("a guide page is writable");
+    let run = ember(&["test", "--doc"], &package);
+    assert_ne!(run.exit, 0, "a failing example passed:\n{}{}", run.stdout, run.stderr);
+    for line in [
+        "running 11 examples",
+        "example docs/errors/E2020.md:3 (fails) ... ok",
+        "example docs/errors/E2020.md:8 (fixed) ... FAILED",
+        "example docs/errors/E3050.md:3 (fails) ... ok",
+        "example docs/errors/E3050.md:14 (fixed) ... ok",
+        "example docs/errors/E9010.md:8 (fails) ... ok",
+        "example docs/errors/E9010.md:18 (fixed) ... ok",
+        "example docs/errors/E9041.md:3 (fails) ... ok",
+        "example docs/errors/E9041.md:12 (fixed) ... ok",
+        "example docs/book/basics/hello.md:3 ... ok",
+        "example docs/book/basics/hello.md:8 ... ok",
+        "example docs/book/basics/hello.md:17 ... FAILED",
+        "the fixed program does not compile",
+        "a sample that fails",
+        "example result: FAILED. 9 passed; 2 failed; 0 quarantined; 0 filtered out",
+    ] {
+        assert!(run.stdout.contains(line), "missing `{line}`:\n{}{}", run.stdout, run.stderr);
+    }
+    let filtered = ember(&["test", "--doc", "E3050"], &package);
+    assert_eq!(filtered.exit, 0, "{}{}", filtered.stdout, filtered.stderr);
+    assert!(filtered.stdout.contains("2 passed; 0 failed; 0 quarantined; 9 filtered out"), "{}", filtered.stdout);
+}

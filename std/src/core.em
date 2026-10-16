@@ -31,6 +31,10 @@ pub interface Ord: Eq:
 pub interface Default:
     fn default() -> Self
 
+## `[DRV-1]` — `T`'s `Default`, as `@derive(Default)` gives a field declared without one.
+pub fn default_of[T: Default]() -> T:
+    return T.default()
+
 pub interface Clone:
     fn clone(self) -> Self
 

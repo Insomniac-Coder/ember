@@ -16,6 +16,11 @@ A page marks its two programs with the fence's info string:
     ```ember,fails      the program that must be rejected with this code
     ```ember,fixed      the program that must compile
 
+`ember,fails,toolchain` marks an error only a C compiler decides (`E9041`): its
+program must check clean. Each example is compiled with the manifest of the last
+```toml block above it on the page, if any. `ember test --doc` builds the same
+examples by the same rules (ADR-192).
+
 Any other `ember` block on the page is prose and is not run.
 
     python tools/error_pages.py                  # check
@@ -39,30 +44,13 @@ PAGES = ROOT / "docs" / "errors"
 REGISTRY_RS = ROOT / "compiler" / "ember_diag" / "src" / "codes.rs"
 BASELINE = ROOT / "tools" / "error_pages_baseline.json"
 
-# Some diagnostic pages require a package manifest. A lint uses the same
-# manifest for its triggering and fixed examples; a manifest diagnostic needs
-# a corrected manifest for the latter. Error pages are otherwise compiled in
-# an empty temporary package.
-PAGE_MANIFESTS = {
-    "L3013": {
-        "fails": '[lints]\nl3013 = "warn"\n',
-        "fixed": '[lints]\nl3013 = "warn"\n',
-    },
-    "L3014": {
-        "fails": '[lints]\nl3014 = "warn"\n',
-        "fixed": '[lints]\nl3014 = "warn"\n',
-    },
-    "E9010": {
-        "fails": '[lints]\nnot_a_lint = "warn"\n',
-        "fixed": '[lints]\nunused = "warn"\n',
-    },
-}
-
 # `<0xFF>` in an example: that one byte, for a page about bytes that are not
 # UTF-8.
 BYTE = re.compile(r"<0x([0-9A-F]{2})>")
 # A fenced block and its info string.
-FENCE = re.compile(r"^```ember,(fails|fixed)\s*$(.*?)^```\s*$", re.M | re.S)
+FENCE = re.compile(r"^```ember,(fails|fixed)(,toolchain)?\s*$(.*?)^```\s*$", re.M | re.S)
+# A package manifest an example below it is compiled with.
+TOML = re.compile(r"^```toml\s*$(.*?)^```\s*$", re.M | re.S)
 # Codes the compiler can actually emit. A page is required for those; a code
 # that is registered and never emitted (`E4071`, `E9032` — both reserved so the
 # number is not reused) cannot have a failing example, and `[DOC-1]` asks for
@@ -115,11 +103,6 @@ def ember() -> Path:
 # A code the debug runtime reports rather than the compiler (`[WK-15]`): its
 # page's programs are run, and the fixed one must run without reporting it.
 RUNTIME_CODES = {"L3017"}
-# A code the C toolchain decides (`[TYP-9c]`'s `E9041`: a C compiler that ignores or refuses the
-# flag an attribute needs): its `fails` program is valid Ember, rejected only by such a compiler,
-# which no machine this runs on has; it must check clean, and the detection is tested in
-# `ember_build` against each compiler's own message.
-TOOLCHAIN_CODES = {"E9041"}
 
 
 def run(source: str, work: Path, manifest: str | None = None, command: str = "check") -> tuple[int, str]:
@@ -148,11 +131,22 @@ def run(source: str, work: Path, manifest: str | None = None, command: str = "ch
     return result.returncode, (result.stdout + result.stderr).replace("\r\n", "\n")
 
 
+def page_examples(text: str) -> dict[str, tuple[str, str | None, bool]]:
+    """Each example by kind: its program, the last ```toml block above it (the manifest it is
+    compiled with), and whether it is marked `,toolchain` (an error only a C compiler decides,
+    such as `[TYP-9c]`'s `E9041`: its program is valid Ember and must check clean)."""
+    out = {}
+    for match in FENCE.finditer(text):
+        kind, toolchain, body = match.groups()
+        above = TOML.findall(text, 0, match.start())
+        out[kind] = (body, above[-1] if above else None, bool(toolchain))
+    return out
+
+
 def check_page(path: Path, work: Path) -> list[str]:
     code = path.stem
     text = path.read_text(encoding="utf-8")
-    blocks = {kind: body for kind, body in FENCE.findall(text)}
-    manifests = PAGE_MANIFESTS.get(code, {})
+    blocks = page_examples(text)
     problems = []
 
     # A warning or lint is not an error: the program that trips it **compiles**,
@@ -167,7 +161,7 @@ def check_page(path: Path, work: Path) -> list[str]:
     if "fails" not in blocks:
         problems.append(f"{code}: no ```ember,fails block — [DOC-1] wants the program that triggers it")
     else:
-        status, output = run(blocks["fails"], work, manifests.get("fails"), command)
+        status, output = run(blocks["fails"][0], work, blocks["fails"][1], command)
         if is_non_error:
             # It must compile — a lint does not reject — and it must actually
             # emit the lint. The second half is the one that matters: without
@@ -181,7 +175,7 @@ def check_page(path: Path, work: Path) -> list[str]:
                 problems.append(
                     f"{code}: the ```ember,fails program compiled without emitting {code}"
                 )
-        elif code in TOOLCHAIN_CODES:
+        elif blocks["fails"][2]:
             if status != 0:
                 problems.append(
                     f"{code}: the ```ember,fails program is rejected without the toolchain:\n"
@@ -198,7 +192,7 @@ def check_page(path: Path, work: Path) -> list[str]:
     if "fixed" not in blocks:
         problems.append(f"{code}: no ```ember,fixed block — [DOC-1] wants the fix as compilable code")
     else:
-        status, output = run(blocks["fixed"], work, manifests.get("fixed"), command)
+        status, output = run(blocks["fixed"][0], work, blocks["fixed"][1], command)
         if status != 0:
             problems.append(
                 f"{code}: the ```ember,fixed program does not compile — [PHIL-8a]:\n"

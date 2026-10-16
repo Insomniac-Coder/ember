@@ -1,5 +1,5 @@
 #$ test: compile-fail
-#$ rules: THR-8, THR-1
+#$ rules: TYP-43, THR-8, THR-1
 # ODR-111 — `Send` and `Sync` are written by hand only with `unsafe extend`, for a struct or enum of
 # this package, with nothing else in the block; a class is either only as `@sync`; `Copy` comes from
 # `@derive(Copy)`, and `Sized` is never written.
