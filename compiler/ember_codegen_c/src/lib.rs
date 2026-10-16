@@ -2635,6 +2635,25 @@ impl Emitter<'_> {
             Op::WakeAll => return format!("{RT}atomic_wake_all((uint32_t*)({p}))"),
             _ => {}
         }
+        // `[THR-14]` — a 128-bit value: the runtime's loops over the 16-byte compare-exchange, on
+        // the unsigned form.
+        if bits == 128 {
+            let signed = matches!(self.types.kind(inner), TyKind::Int(_));
+            let to_u = |v: &str| if signed { format!("{RT}i128_to_u128({v})") } else { v.to_string() };
+            let from_u = |v: String| if signed { format!("{RT}u128_to_i128({v})") } else { v };
+            return match op {
+                Op::Load => from_u(format!("{RT}atomic128_load({p})")),
+                Op::Store => format!("{RT}atomic128_store({p}, {})", to_u(&rendered[1])),
+                Op::Swap => from_u(format!("{RT}atomic128_swap({p}, {})", to_u(&rendered[1]))),
+                Op::CompareExchange => format!("{RT}atomic128_cas({p}, {}, {})", rendered[1], to_u(&rendered[2])),
+                Op::FetchAdd => from_u(format!("{RT}atomic128_fetch_add({p}, {})", to_u(&rendered[1]))),
+                Op::FetchSub => from_u(format!("{RT}atomic128_fetch_sub({p}, {})", to_u(&rendered[1]))),
+                Op::FetchAnd => from_u(format!("{RT}atomic128_fetch_and({p}, {})", to_u(&rendered[1]))),
+                Op::FetchOr => from_u(format!("{RT}atomic128_fetch_or({p}, {})", to_u(&rendered[1]))),
+                Op::FetchXor => from_u(format!("{RT}atomic128_fetch_xor({p}, {})", to_u(&rendered[1]))),
+                Op::Wait | Op::WakeOne | Op::WakeAll => unreachable!("written above"),
+            };
+        }
         let name = match op {
             Op::Load => "LOAD",
             Op::Store => "STORE",
@@ -4338,6 +4357,7 @@ impl Emitter<'_> {
                     Some("std.sync.MutexGuard") => {
                         if let Some(mutex) = self.lock_for_guard(ty, "std.sync.Mutex") {
                             let mutex_c = self.c_type(mutex);
+                            out.push(format!("{RT}lock_order_freed(&(({mutex_c}*){access}.value)->word);"));
                             out.push(format!("{RT}mutex_unlock(&(({mutex_c}*){access}.value)->word);"));
                         }
                         return;
@@ -4367,6 +4387,7 @@ impl Emitter<'_> {
                         let write = guard == "std.sync.RwLockWriteGuard";
                         if let Some(lock) = self.lock_for_guard(ty, "std.sync.RwLock") {
                             let lock_c = self.c_type(lock);
+                            out.push(format!("{RT}lock_order_freed(&(({lock_c}*){access}.value)->word);"));
                             out.push(format!("{RT}rwlock_release(&(({lock_c}*){access}.value)->word, {write});"));
                         }
                         return;
@@ -7367,11 +7388,24 @@ impl Emitter<'_> {
                     // `[CT-2]` — the evaluator's own (`COMPTIME_PRELUDE`).
                     Builtin::ComptimeReadFile => return format!("{RT}ct_read_file({})", rendered[0]),
                     Builtin::ComptimeEnv { option } => return format!("{RT}ct_env_{}({})", self.c_type(*option), rendered[0]),
-                    // `[THR-3]` — on the lock word, whose address lowering passes.
-                    Builtin::MutexLock => return format!("{RT}mutex_lock({})", rendered[0]),
-                    Builtin::MutexTryLock => return format!("{RT}mutex_try_lock({})", rendered[0]),
-                    Builtin::RwLockAcquire { write } => return format!("{RT}rwlock_acquire({}, {write})", rendered[0]),
-                    Builtin::RwLockTryAcquire { write } => return format!("{RT}rwlock_try_acquire({}, {write})", rendered[0]),
+                    // `[THR-3]` — on the lock word, whose address lowering passes; `[THR-4]` — the lock
+                    // taken is reported, with where, for the debug profile's lock order record.
+                    Builtin::MutexLock => {
+                        let (word, at) = (&rendered[0], self.location(span));
+                        return format!("({RT}mutex_lock({word}), {RT}lock_order_taken({word}, {at}))");
+                    }
+                    Builtin::MutexTryLock => {
+                        let (word, at) = (&rendered[0], self.location(span));
+                        return format!("({RT}mutex_try_lock({word}) ? ({RT}lock_order_taken({word}, {at}), true) : false)");
+                    }
+                    Builtin::RwLockAcquire { write } => {
+                        let (word, at) = (&rendered[0], self.location(span));
+                        return format!("({RT}rwlock_acquire({word}, {write}), {RT}lock_order_taken({word}, {at}))");
+                    }
+                    Builtin::RwLockTryAcquire { write } => {
+                        let (word, at) = (&rendered[0], self.location(span));
+                        return format!("({RT}rwlock_try_acquire({word}, {write}) ? ({RT}lock_order_taken({word}, {at}), true) : false)");
+                    }
                     Builtin::Atomic { op, order } => return self.atomic_call(*op, *order, *arg_ty, &rendered, span),
                     // `[THR-10]` — through the helpers `emit_thread_helpers` writes for each `JoinHandle[R]`.
                     Builtin::ThreadSpawn => {

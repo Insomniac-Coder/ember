@@ -1680,9 +1680,16 @@ struct DestructureLeaf<'a> {
 /// rule: it keeps the current lowering from publishing a partially
 /// initialized object until the remaining constructor control-flow forms are
 /// connected.
+/// `[CLS-2]`, `[STR-6]` — whose constructor is being checked.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InitOwner {
+    Class(ClassId),
+    Struct(StructId),
+}
+
 #[derive(Clone)]
 struct ClassInitState {
-    owner: ClassId,
+    owner: InitOwner,
     receiver: LocalId,
     initialized: Vec<ClassFieldInit>,
     whole_used: bool,
@@ -14222,16 +14229,21 @@ impl<'a> Checker<'a> {
         let init = Symbol::intern("init");
         self.lookup_method(ty, init)?;
         let name = self.types.struct_def(id).name;
-        if let Some(field) = self.types.struct_def(id).fields.iter().find(|field| !field.has_default) {
-            let field = field.name;
-            self.error(
-                codes::E0900,
-                span,
-                format!("`init` on `{name}`, whose field `{field}` has no default, is not implemented yet"),
-            );
-            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
-        }
-        let slots = (0..self.types.struct_def(id).fields.len()).map(|_| None).collect();
+        // `[STR-6]` — a field without a default holds zero bytes until `init` writes it: the
+        // write is the field's first (its drop flag says so, `[CLS-2]`), and `E2100` makes every
+        // path write it before `self` is used whole or `init` ends.
+        let unset: Vec<Option<Ty>> =
+            self.types.struct_def(id).fields.iter().map(|field| (!field.has_default).then_some(field.ty)).collect();
+        let slots = unset
+            .into_iter()
+            .map(|unset| {
+                unset.map(|ty| {
+                    let wrapper = self.maybe_uninit_of(ty);
+                    let empty = Expr { ty: wrapper, kind: ExprKind::Builtin { which: Builtin::MaybeUninitUninit { inner: ty }, args: Vec::new() }, span };
+                    Expr { ty, kind: ExprKind::Builtin { which: Builtin::MaybeUninitAssumeInit { inner: ty }, args: vec![empty] }, span }
+                })
+            })
+            .collect();
         let value = self.finish_struct_literal(id, name, slots, span);
         let local = self.declare(None, ty, span);
         let receiver = Expr { ty, kind: ExprKind::Local(local), span };
@@ -18224,13 +18236,35 @@ impl<'a> Checker<'a> {
                         }
                     }
                     Some(ClassInitState {
-                        owner: *id,
+                        owner: InitOwner::Class(*id),
                         receiver,
                         initialized,
                         base_initialized: def.base.is_none(),
                         whole_used: false,
                     })
                 }
+            }
+            // `[STR-6]` — a struct's `init`: each field without a default is assigned on every path
+            // before `self` is used as a whole (`E2100`); MIR writes each one as a constructor does.
+            TyKind::Struct(id)
+                if decl.name.name.is("init")
+                    && signature_params.first().is_some_and(|(_, _, mode, _)| *mode == Mode::Mut)
+                    && decl.params.first().is_some_and(|param| matches!(param.kind, ast::ParamKind::Receiver { .. })) =>
+            {
+                let initialized = self
+                    .types
+                    .struct_def(*id)
+                    .fields
+                    .iter()
+                    .map(|field| if field.has_default { ClassFieldInit::Default } else { ClassFieldInit::Uninit })
+                    .collect();
+                params.first().map(|param| ClassInitState {
+                    owner: InitOwner::Struct(*id),
+                    receiver: param.local,
+                    initialized,
+                    base_initialized: true,
+                    whole_used: false,
+                })
             }
             _ => None,
         };
@@ -18498,12 +18532,36 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// The base class of a constructor's owner; a struct has none.
+    fn init_base(&self, owner: InitOwner) -> Option<ClassId> {
+        match owner {
+            InitOwner::Class(id) => self.types.class_def(id).base,
+            InitOwner::Struct(_) => None,
+        }
+    }
+
+    /// The name of field `index` of a constructor's owner (a class's in object layout, bases first).
+    fn init_field_name(&self, owner: InitOwner, index: usize) -> Option<Symbol> {
+        match owner {
+            InitOwner::Class(id) => self.types.class_field_at(id, index).map(|field| field.name),
+            InitOwner::Struct(id) => self.types.struct_def(id).fields.get(index).map(|field| field.name),
+        }
+    }
+
+    fn init_owner_word(owner: InitOwner) -> &'static str {
+        match owner {
+            InitOwner::Class(_) => "class",
+            InitOwner::Struct(_) => "struct",
+        }
+    }
+
     fn class_init_whole_self_used(&mut self, span: Span) {
         let complete = self.class_init_is_complete();
         let before_base = self
             .class_init
             .as_ref()
-            .is_some_and(|state| self.types.class_def(state.owner).base.is_some() && !state.base_initialized);
+            .is_some_and(|state| self.init_base(state.owner).is_some() && !state.base_initialized);
+        let word = self.class_init.as_ref().map_or("class", |state| Self::init_owner_word(state.owner));
         if let Some(state) = self.class_init.as_mut() { state.whole_used = true; }
         if complete { return; }
         // `[CLS-11]` — a derived object is not whole until its base is.
@@ -18511,23 +18569,19 @@ impl<'a> Checker<'a> {
             self.error(codes::E2102, span, "`self` is used before `super.init(...)`");
             return;
         }
-        self.error(codes::E2100, span, "`self` is used before all class fields are initialized");
+        self.error(codes::E2100, span, format!("`self` is used before all {word} fields are initialized"));
     }
 
     fn report_missing_class_init_fields(&mut self, span: Span) {
         let Some(state) = self.class_init.as_ref().cloned() else { return };
-        if self.types.class_def(state.owner).base.is_some() && !state.base_initialized {
+        if self.init_base(state.owner).is_some() && !state.base_initialized {
             self.error(
                 codes::E2100,
                 span,
                 "derived class `init` must call `super.init(...)` exactly once before returning",
             );
         }
-        let base_count = self
-            .types
-            .class_def(state.owner)
-            .base
-            .map_or(0, |base| self.types.class_field_count(base));
+        let base_count = self.init_base(state.owner).map_or(0, |base| self.types.class_field_count(base));
         let missing: Vec<Symbol> = state
             .initialized
             .iter()
@@ -18535,15 +18589,16 @@ impl<'a> Checker<'a> {
             .filter_map(|(index, status)| {
                 (index >= base_count
                     && !matches!(status, ClassFieldInit::Default | ClassFieldInit::Init))
-                    .then(|| self.types.class_field_at(state.owner, index).map(|f| f.name))
+                    .then(|| self.init_field_name(state.owner, index))
                     .flatten()
             })
             .collect();
+        let word = Self::init_owner_word(state.owner);
         for field in missing {
             self.error(
                 codes::E2100,
                 span,
-                format!("field `{field}` is not definitely initialized by class `init`"),
+                format!("field `{field}` is not definitely initialized by {word} `init`"),
             );
         }
     }
@@ -18607,8 +18662,12 @@ impl<'a> Checker<'a> {
         if *local != state.receiver {
             return None;
         }
-        matches!(self.types.kind(base.ty), TyKind::Class(id) if *id == state.owner)
-            .then_some(*index)
+        let owned = match (self.types.kind(base.ty), state.owner) {
+            (TyKind::Class(id), InitOwner::Class(owner)) => *id == owner,
+            (TyKind::Struct(id), InitOwner::Struct(owner)) => *id == owner,
+            _ => false,
+        };
+        owned.then_some(*index)
     }
 
     /// Return the field index when `expr` is rooted in the current class
@@ -18632,11 +18691,7 @@ impl<'a> Checker<'a> {
 
     fn check_class_init_field_read(&mut self, index: usize, span: Span) {
         let Some(state) = self.class_init.as_ref() else { return };
-        let base_count = self
-            .types
-            .class_def(state.owner)
-            .base
-            .map_or(0, |base| self.types.class_field_count(base));
+        let base_count = self.init_base(state.owner).map_or(0, |base| self.types.class_field_count(base));
         if index < base_count && !state.base_initialized {
             self.error(
                 codes::E2102,
@@ -18651,11 +18706,11 @@ impl<'a> Checker<'a> {
         ) {
             return;
         }
-        let Some(field) = self.types.class_field_at(state.owner, index) else { return };
+        let Some(field) = self.init_field_name(state.owner, index) else { return };
         self.error(
             codes::E2100,
             span,
-            format!("field `{}` is read before it is initialized", field.name),
+            format!("field `{field}` is read before it is initialized"),
         );
     }
 
@@ -18666,11 +18721,7 @@ impl<'a> Checker<'a> {
             .as_ref()
             .map(|state| (state.owner, state.base_initialized))
             .expect("class-init field index implies constructor state");
-        let base_count = self
-            .types
-            .class_def(owner)
-            .base
-            .map_or(0, |base| self.types.class_field_count(base));
+        let base_count = self.init_base(owner).map_or(0, |base| self.types.class_field_count(base));
         if index < base_count && !base_initialized {
             self.error(
                 codes::E2102,
@@ -18703,11 +18754,7 @@ impl<'a> Checker<'a> {
             return;
         }
         let owner = state.owner;
-        let base_count = self
-            .types
-            .class_def(owner)
-            .base
-            .map_or(0, |base| self.types.class_field_count(base));
+        let base_count = self.init_base(owner).map_or(0, |base| self.types.class_field_count(base));
         // `[CLS-11]` — the base constructor may call a `virtual` method this
         // class overrides, so every own field holds a value before it runs.
         let unassigned: Vec<(usize, Symbol)> = state
@@ -18716,7 +18763,7 @@ impl<'a> Checker<'a> {
             .enumerate()
             .skip(base_count)
             .filter(|(_, status)| !matches!(status, ClassFieldInit::Default | ClassFieldInit::Init))
-            .filter_map(|(index, _)| self.types.class_field_at(owner, index).map(|field| (index, field.name)))
+            .filter_map(|(index, _)| self.init_field_name(owner, index).map(|field| (index, field)))
             .collect();
         for (_, field) in &unassigned {
             self.error(
@@ -36054,7 +36101,7 @@ impl<'a> Checker<'a> {
             );
             return error();
         };
-        let Some(base_id) = self.types.class_def(state.owner).base else {
+        let Some(base_id) = self.init_base(state.owner) else {
             self.error(codes::E1010, span, "`super.init(...)` requires a base class");
             return error();
         };
@@ -42387,14 +42434,13 @@ impl<'a> Checker<'a> {
     /// `[THR-14]` — whether an `Atomic` may not hold `held` (an integer, a `bool` or a raw pointer
     /// may be held); a refusal is reported.
     fn refuse_atomic_value(&mut self, held: Ty, span: Span) -> bool {
-        let wide = matches!(self.types.kind(held), TyKind::Int(ember_types::IntTy::I128 | ember_types::IntTy::I256) | TyKind::Uint(ember_types::UintTy::U128 | ember_types::UintTy::U256));
-        if !wide && matches!(self.types.kind(held), TyKind::Int(_) | TyKind::Uint(_) | TyKind::Bool | TyKind::Ptr { .. } | TyKind::Error) {
+        // `[TYP-42]` — the 256-bit counts are no general integers.
+        let count = matches!(self.types.kind(held), TyKind::Int(ember_types::IntTy::I256) | TyKind::Uint(ember_types::UintTy::U256));
+        if !count && matches!(self.types.kind(held), TyKind::Int(_) | TyKind::Uint(_) | TyKind::Bool | TyKind::Ptr { .. } | TyKind::Error) {
             return false;
         }
         let shown = self.types.display(held);
-        if matches!(self.types.kind(held), TyKind::Int(ember_types::IntTy::I128) | TyKind::Uint(ember_types::UintTy::U128)) {
-            self.error(codes::E0900, span, format!("an `Atomic[{shown}]` is not implemented yet"));
-        } else {
+        {
             self.sink.emit(
                 Diagnostic::error(codes::E2020, span, format!("an `Atomic` holds an integer, a `bool` or a raw pointer, not `{shown}`"))
                     .note("put any other value in a `Mutex` [THR-14]"),

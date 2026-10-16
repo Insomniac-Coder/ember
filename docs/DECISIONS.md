@@ -5016,6 +5016,33 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-196 — 128-bit atomics, a struct's constructor, lock order in debug (`[THR-14]`, `[STR-6]`, `[THR-4]`)
+
+The 75% push, continued (2026-10-16).
+
+**`[THR-14]`, 128 bits.** `Atomic[i128]` and `Atomic[u128]` were `E0900`. Every operation is one
+16-byte compare-exchange or a loop over it (`ember_atomic128_*`): x64's `cmpxchg16b`, which
+`-mcx16` (now in gcc's and clang's flags on x64) lets them emit inline, where GCC's `__atomic` on
+16 bytes would call libatomic, which a program does not link; MSVC's and clang-cl's
+`_InterlockedCompareExchange128`; ARM64's pair. A load is a compare-exchange of zero for zero. Each
+is a full barrier, so it meets any order. The values are the unsigned form, an `i128` converted bit
+for bit. Tested under MSVC (the conformance test, both profiles) and clang
+(`atomics_of_128_bits_run_under_clang`); Linux gcc runs it in CI. The 256-bit counts stay refused:
+`[TYP-42]` makes them counts, not general integers.
+
+**`[STR-6]`.** A struct's `init` may assign a field without a default (it was `E0900`). The
+constructor's state is the class one, generalised (`InitOwner`): each such field is assigned on
+every path before `self` is used whole or `init` ends (`E2100`, "by struct `init`"), and MIR writes
+it as a class constructor does, under its drop flag (`[CLS-2]`), so a second write drops the first.
+Until `init` writes it the field holds zero bytes (`MaybeUninit`'s zeroed wrapper, assumed), which
+nothing reads or drops.
+
+**`[THR-4]`.** In the debug profile the generated code reports each lock taken (with where) and each
+freed (`ember_lock_order_taken`/`_freed`, nothing outside debug); the runtime keeps each thread's
+held locks and every pair "taken while holding" with its sites and thread, and prints `warning:
+lock order inversion` with both sites, once per pair, when a thread takes two locks in the order
+another thread took them the other way round. The program runs on unchanged.
+
 ## ADR-195 — Printing, `@realtime`'s set, constructors writing twice, generic aliases, `ember tcb`, static views to threads (`[STD-9]`, `[EFF-16]`, `[EFF-19]`, `[CLS-2]`, `[TYP-16]`, `[UNS-8]`, `[THR-10]`)
 
 The 75% push, continued (2026-10-16).

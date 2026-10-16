@@ -1556,6 +1556,64 @@ EMBER_MSVC_CAS(32)
 EMBER_MSVC_CAS(64)
 #endif
 
+/* `[THR-14]` — `Atomic[i128]` and `Atomic[u128]`: one 16-byte compare-exchange (x64's `cmpxchg16b`,
+ * which `-mcx16` lets GCC and clang emit inline, as MSVC's `_InterlockedCompareExchange128` does;
+ * ARM64's exclusive pair), and every other operation a loop over it. Each is a full barrier, so it
+ * meets any order. The value is the unsigned form (an `i128` converts both ways bit for bit) and is
+ * aligned to 16, as `align_of[i128]()` says. */
+#if !defined(EMBER_NATIVE_INT128) && defined(_MSC_VER)
+#include <intrin.h>
+#endif
+EMBER_INLINED bool ember_atomic128_cas(volatile void* p, void* expected, ember_u128 desired) {
+#if defined(EMBER_NATIVE_INT128)
+    ember_u128 want = *(ember_u128*)expected;
+    ember_u128 seen = __sync_val_compare_and_swap((volatile ember_u128*)p, want, desired);
+    if (seen == want) {
+        return true;
+    }
+    *(ember_u128*)expected = seen;
+    return false;
+#elif defined(_MSC_VER)
+    return _InterlockedCompareExchange128((volatile __int64*)p, (__int64)desired.hi, (__int64)desired.lo, (__int64*)expected) != 0;
+#else
+    /* The halves, on a compiler that has `__int128` (`EMBER_SOFT_INT128`'s test builds). */
+    ember_u128 held = *(ember_u128*)expected;
+    unsigned __int128 want = ((unsigned __int128)held.hi << 64) | held.lo;
+    unsigned __int128 next = ((unsigned __int128)desired.hi << 64) | desired.lo;
+    unsigned __int128 seen = __sync_val_compare_and_swap((volatile unsigned __int128*)p, want, next);
+    if (seen == want) {
+        return true;
+    }
+    *(ember_u128*)expected = ember_u128_make((uint64_t)(seen >> 64), (uint64_t)seen);
+    return false;
+#endif
+}
+/* A load is a compare-exchange of zero for zero: it stores only the zero it found. */
+EMBER_INLINED ember_u128 ember_atomic128_load(volatile void* p) {
+    ember_u128 seen = ember_u128_make(0, 0);
+    (void)ember_atomic128_cas(p, &seen, seen);
+    return seen;
+}
+EMBER_INLINED ember_u128 ember_atomic128_swap(volatile void* p, ember_u128 v) {
+    ember_u128 old = ember_atomic128_load(p);
+    while (!ember_atomic128_cas(p, &old, v)) {
+    }
+    return old;
+}
+EMBER_INLINED void ember_atomic128_store(volatile void* p, ember_u128 v) { (void)ember_atomic128_swap(p, v); }
+#define EMBER_ATOMIC128_RMW(name, op) \
+    EMBER_INLINED ember_u128 ember_atomic128_fetch_##name(volatile void* p, ember_u128 v) { \
+        ember_u128 old = ember_atomic128_load(p); \
+        while (!ember_atomic128_cas(p, &old, op(old, v))) { \
+        } \
+        return old; \
+    }
+EMBER_ATOMIC128_RMW(add, ember_u128_add)
+EMBER_ATOMIC128_RMW(sub, ember_u128_sub)
+EMBER_ATOMIC128_RMW(and, ember_u128_and)
+EMBER_ATOMIC128_RMW(or, ember_u128_or)
+EMBER_ATOMIC128_RMW(xor, ember_u128_xor)
+
 /* `[THR-14]` — an order held in a variable: `MemoryOrder`'s tag (`Relaxed` .. `SeqCst`) as the C
  * compiler's, after the check `E7006` makes of a constant one: `refused` has bit `tag` set for each
  * order the operation does not support. */
@@ -1739,6 +1797,19 @@ EMBER_INLINED void ember_mutex_unlock(void* word) {
 void ember_rwlock_acquire(void* word, bool write);
 bool ember_rwlock_try_acquire(void* word, bool write);
 void ember_rwlock_release(void* word, bool write);
+#endif
+
+/* `[THR-4]` — in the debug profile, the order each thread takes locks in: the generated code
+ * reports each lock it has taken (with where) and each it frees. Elsewhere these are nothing. */
+#ifdef EMBER_RT_DEBUG_ACCESS
+void ember_lock_order_taken(const void* word, ember_loc at);
+void ember_lock_order_freed(const void* word);
+#else
+EMBER_INLINED void ember_lock_order_taken(const void* word, ember_loc at) {
+    (void)word;
+    (void)at;
+}
+EMBER_INLINED void ember_lock_order_freed(const void* word) { (void)word; }
 #endif
 
 /* A Sync retain that found the count at zero or at its maximum: a panic.

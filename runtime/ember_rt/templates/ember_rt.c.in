@@ -6924,6 +6924,96 @@ void ember_panic_field_exclusivity(bool writing, uint32_t active, const char* wh
 }
 
 #ifdef EMBER_RT_DEBUG_ACCESS
+/* `[THR-4]` — each thread's held locks, in the order taken, and every pair "the second taken while
+ * the first was held" any thread has made, with both sites. A thread taking a lock while holding
+ * one that another thread took the other way round is a lock order inversion: two threads doing
+ * both at once could deadlock. It is printed once per pair, and the program goes on unchanged. */
+#if defined(_MSC_VER)
+#define EMBER_LOCK_ORDER_THREAD_LOCAL __declspec(thread)
+#else
+#define EMBER_LOCK_ORDER_THREAD_LOCAL _Thread_local
+#endif
+typedef struct ember_held_lock {
+    const void* word;
+    ember_loc at;
+} ember_held_lock;
+typedef struct ember_lock_pair {
+    const void* first;
+    const void* second;
+    ember_loc first_at;
+    ember_loc second_at;
+    const void* thread;
+    bool warned;
+} ember_lock_pair;
+#define EMBER_HELD_LOCKS 16
+#define EMBER_LOCK_PAIRS 256
+static EMBER_LOCK_ORDER_THREAD_LOCAL ember_held_lock ember_held_locks[EMBER_HELD_LOCKS];
+static EMBER_LOCK_ORDER_THREAD_LOCAL uint32_t ember_held_count;
+static ember_lock_pair ember_lock_pairs[EMBER_LOCK_PAIRS];
+static uint32_t ember_lock_pair_count;
+/* The record's own lock: a runtime word, which reports nothing. */
+static uintptr_t ember_lock_pairs_word;
+
+void ember_lock_order_taken(const void* word, ember_loc at) {
+    const void* thread = (const void*)&ember_held_count;
+    ember_mutex_lock(&ember_lock_pairs_word);
+    for (uint32_t held = 0; held < ember_held_count && held < EMBER_HELD_LOCKS; held++) {
+        const ember_held_lock* first = &ember_held_locks[held];
+        if (first->word == word) {
+            continue;
+        }
+        bool known = false;
+        for (uint32_t i = 0; i < ember_lock_pair_count; i++) {
+            ember_lock_pair* pair = &ember_lock_pairs[i];
+            if (pair->first == first->word && pair->second == word) {
+                known = true;
+            }
+            if (pair->first == word && pair->second == first->word && pair->thread != thread && !pair->warned) {
+                pair->warned = true;
+                fprintf(stderr,
+                    "warning: lock order inversion\n"
+                    "  here a thread takes a lock at %s:%u:%u while holding the one it took at %s:%u:%u;\n"
+                    "  another thread took them the other way round: at %s:%u:%u, then at %s:%u:%u\n",
+                    at.file ? at.file : "<unknown>", at.line, at.column,
+                    first->at.file ? first->at.file : "<unknown>", first->at.line, first->at.column,
+                    pair->first_at.file ? pair->first_at.file : "<unknown>", pair->first_at.line, pair->first_at.column,
+                    pair->second_at.file ? pair->second_at.file : "<unknown>", pair->second_at.line, pair->second_at.column);
+                fflush(stderr);
+            }
+        }
+        if (!known && ember_lock_pair_count < EMBER_LOCK_PAIRS) {
+            ember_lock_pair* pair = &ember_lock_pairs[ember_lock_pair_count++];
+            pair->first = first->word;
+            pair->second = word;
+            pair->first_at = first->at;
+            pair->second_at = at;
+            pair->thread = thread;
+            pair->warned = false;
+        }
+    }
+    ember_mutex_unlock(&ember_lock_pairs_word);
+    if (ember_held_count < EMBER_HELD_LOCKS) {
+        ember_held_locks[ember_held_count].word = word;
+        ember_held_locks[ember_held_count].at = at;
+    }
+    ember_held_count++;
+}
+
+void ember_lock_order_freed(const void* word) {
+    uint32_t count = ember_held_count < EMBER_HELD_LOCKS ? ember_held_count : EMBER_HELD_LOCKS;
+    for (uint32_t i = count; i > 0; i--) {
+        if (ember_held_locks[i - 1].word == word) {
+            for (uint32_t j = i; j < count; j++) {
+                ember_held_locks[j - 1] = ember_held_locks[j];
+            }
+            break;
+        }
+    }
+    if (ember_held_count > 0) {
+        ember_held_count--;
+    }
+}
+
 typedef struct ember_debug_access_record {
     const uint32_t* word;
     bool writing;

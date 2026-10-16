@@ -10940,7 +10940,9 @@ with each derive's field requirement checked (`E2080`); `Zeroable` enums; `<` th
 `Ord` (D-670). Then (ADR-195) `[STD-9]` (`E2040`, any `sep`), `[EFF-16]` (the safety table's
 functions), `[EFF-19]` (`[realtime] contracts`), `[CLS-2]` (drop flags per constructor field),
 `[TYP-16]` generic aliases, `ember tcb` (`[UNS-8]`), `[THR-10]` static views to threads.
-**Next:** `[JOB-5]`'s `local_arena`, `some` return types, 128-bit atomics; the `Cell`-of-a-handle
+Then (ADR-196) 128-bit atomics (`-mcx16`), a struct's `init` with fields without defaults
+(`[STR-6]`), the debug lock order warning (`[THR-4]`).
+**Next:** `[JOB-5]`'s `local_arena`, `some` return types; the `Cell`-of-a-handle
 formatting gap (`TYP-36`'s entry). Owner questions found: `[STD-9]` vs `[TYP-36]` on a class's
 text; XVII.5's `E3040` that `[BRW-7]` makes `E3050`; `[FN-6]` has no `unsafe fn(…)` type.
 

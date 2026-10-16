@@ -1866,6 +1866,24 @@ fn dynamic_access_safety_side_table_is_written() {
     );
 }
 
+/// `[THR-14]` — `Atomic[i128]` and `Atomic[u128]` under clang as under MSVC (the conformance test's
+/// own compiler): the 16-byte compare-exchange inline (`-mcx16`), nothing left to a library the
+/// program does not link, and the same results in both profiles. A machine without clang skips it.
+#[test]
+fn atomics_of_128_bits_run_under_clang() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/THR-14/accept_128_bit_atomics.{SOURCE_EXT}");
+    for profile in ["debug", "release"] {
+        let run = ember(&["run", &source, "--profile", profile, "--cc", "clang"], &root);
+        if run.exit != 0 && run.stderr.contains("clang") && run.stderr.contains("not found") {
+            return;
+        }
+        assert_eq!(run.exit, 0, "{profile}:\n{}\n{}", run.stdout, run.stderr);
+        assert!(run.stdout.contains("18446744073709551615 18446744073709551616\n"), "{profile}: {}", run.stdout);
+        assert!(run.stdout.ends_with("4000\n"), "{profile}: {}", run.stdout);
+    }
+}
+
 /// `[UNS-8]` — `ember tcb` lists every `unsafe:` block and `unsafe fn` with its safety note and
 /// category (or that it has none), and for a block the unsafe functions it calls with the
 /// obligation each states (`@safety`, `[UNS-7]`).

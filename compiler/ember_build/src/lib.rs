@@ -1191,7 +1191,10 @@ fn gnu_flags(profile: Profile) -> Vec<&'static str> {
         Profile::Release => &["-O2"],
         Profile::Shipping => &["-O3", "-DEMBER_SHIPPING"],
     };
-    ["-std=c11", "-Wall", "-Wextra", "-ffp-contract=off", "-fno-fast-math"].iter().chain(optimisation).copied().collect()
+    // `[THR-14]` — x64's 16-byte compare-exchange inline, for `Atomic[i128]`: without it GCC calls
+    // libatomic, which a program does not link.
+    let cx16: &[&str] = if cfg!(target_arch = "x86_64") { &["-mcx16"] } else { &[] };
+    ["-std=c11", "-Wall", "-Wextra", "-ffp-contract=off", "-fno-fast-math"].iter().chain(optimisation).chain(cx16).copied().collect()
 }
 
 /// ADR-098 — gcc's own flags for a profile, after `gnu_flags`. At `-O2` gcc's
