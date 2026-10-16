@@ -200,9 +200,11 @@ impl Parser<'_> {
                 StmtKind::Comptime(self.parse_block())
             }
             // `[GRM-28]` — `fn name(` declares a local function; `fn(` is a
-            // lambda, an expression.
+            // lambda, an expression. A raw name is a name, and `fn not`/`fn is`
+            // a declaration whose name `parse_fn` refuses (`E0005`).
             TokenKind::Keyword(Kw::Fn | Kw::Unsafe)
-                if self.at_kw(Kw::Fn) && matches!(self.peek_at(1), TokenKind::Ident(_))
+                if self.at_kw(Kw::Fn)
+                    && matches!(self.peek_at(1), TokenKind::Ident(_) | TokenKind::RawIdent(_) | TokenKind::Keyword(Kw::Not | Kw::Is))
                     || self.at_kw(Kw::Unsafe) && self.at_kw_at(1, Kw::Fn) =>
             {
                 let decl = self.parse_fn();
@@ -1271,19 +1273,19 @@ impl Parser<'_> {
                             generic_args: Vec::new(),
                             args,
                         },
+                        // `a?.m(…)`: the call is the chained member's.
+                        ExprKind::OptChain { base, name, generic_args, args: None } => {
+                            ExprKind::OptChain { base, name, generic_args, args: Some(args) }
+                        }
                         ExprKind::IndexOrInstantiate { base, args: type_args } => {
                             match base.kind {
+                                // `a?.m[T](…)`: the bracket instantiates the chained method.
+                                ExprKind::OptChain { base: recv, name, generic_args, args: None } if generic_args.is_empty() => {
+                                    let generic_args = type_args.into_iter().map(generic_arg).collect();
+                                    ExprKind::OptChain { base: recv, name, generic_args, args: Some(args) }
+                                }
                                 ExprKind::Field { base: recv, name } => {
-                                    let generic_args = type_args
-                                        .into_iter()
-                                        .map(|arg| match arg {
-                                            TypeOrExpr::Type(ty) => GenericArg::Type(ty),
-                                            TypeOrExpr::Expr(expr) => GenericArg::Const(expr),
-                                            TypeOrExpr::Binding { name, ty } => {
-                                                GenericArg::Assoc { name, ty }
-                                            }
-                                        })
-                                        .collect();
+                                    let generic_args = type_args.into_iter().map(generic_arg).collect();
                                     ExprKind::MethodCall { recv, name, generic_args, args }
                                 }
                                 _ => ExprKind::Call {
@@ -1365,14 +1367,12 @@ impl Parser<'_> {
                         ExprKind::Field { base: Box::new(expr), name }
                     }
                 }
+                // `[EXP-*]` — `a?.f`; a following `[T]` and `(…)` are the
+                // method's, joined below as `.`'s are (`"?." IDENT` then postfixes).
                 TokenKind::Punct(Punct::QuestionDot) => {
                     self.bump();
-                    let name = self.expect_ident();
-                    let args = self.at_punct(Punct::LParen).then(|| {
-                        self.bump();
-                        self.parse_args()
-                    });
-                    ExprKind::OptChain { base: Box::new(expr), name, args }
+                    let name = self.expect_member_name();
+                    ExprKind::OptChain { base: Box::new(expr), name, generic_args: Vec::new(), args: None }
                 }
                 TokenKind::Punct(Punct::Question) if min_bp <= BP_POSTFIX => {
                     self.bump();
@@ -1917,5 +1917,14 @@ fn convert_literal(lit: Lit) -> Literal {
         // An f-string never reaches here: `parse_atom` handles it, and a
         // pattern cannot be an f-string.
         Lit::FStr(_) => Literal::Str(String::new()),
+    }
+}
+
+/// A bracketed argument that instantiates a method: a type, a const argument or a binding.
+fn generic_arg(arg: TypeOrExpr) -> GenericArg {
+    match arg {
+        TypeOrExpr::Type(ty) => GenericArg::Type(ty),
+        TypeOrExpr::Expr(expr) => GenericArg::Const(expr),
+        TypeOrExpr::Binding { name, ty } => GenericArg::Assoc { name, ty },
     }
 }

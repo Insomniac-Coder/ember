@@ -230,7 +230,9 @@ fn check_split_views(split: &BTreeMap<String, Vec<bool>>, c: &str) {
             let after = c[from..].chars().next();
             let whole = !before.is_some_and(|b| b.is_ascii_alphanumeric() || b == '_')
                 && !after.is_some_and(|a| a.is_ascii_alphanumeric() || a == '_');
-            if whole && after != Some('(') {
+            // `[RT-4]` — the backtrace's table writes symbols as strings: no use of the function.
+            let quoted = before == Some('"') && after == Some('"');
+            if whole && after != Some('(') && !quoted {
                 panic!("internal error: `{symbol}`, whose views go as two words (D-569), is named other than in a call");
             }
         }
@@ -1058,7 +1060,8 @@ impl Emitter<'_> {
 
         if has_main && self.unit.is_none() {
             let entry = bodies.iter().any(|body| body.symbol == ember_branding::mangled("main_entry"));
-            self.emit_entry_point(leak_check, entry);
+            let named = self.emit_frame_names(bodies);
+            self.emit_entry_point(leak_check, entry, named);
         }
         if let Some(roots) = self.comptime.clone()
             && self.unit.is_none()
@@ -1617,7 +1620,21 @@ impl Emitter<'_> {
     }
 
     fn debug_stmt(&self, out: &str, v: &str, ty: Ty) -> String {
+        // `[TYP-39]` (ADR-191) — a `dyn` value (`Box[dyn I]`, `ref dyn I`) is written by its writer,
+        // which calls its `Debug` through its table: before a `Box` or a reference is read through.
+        if self.types.debug_writer(ty).is_some() && !self.is_display_aggregate(ty) {
+            return format!("{}({out}, &({v}));", self.fmt_fn(ty));
+        }
         if let Some((payload, inner)) = self.printed_payload(v, ty) {
+            // ODR-109 — a `Cell`'s value is shown by a copy when its `Debug` is written (the
+            // program's `fmt_debug` may `set` the cell): plain bytes, the checker made sure.
+            if self.types.debug_writer(inner).is_some()
+                && let TyKind::Struct(id) = *self.types.kind(ty)
+                && self.types.compiler_box_inner(id).is_none()
+            {
+                let inner_c = self.c_type(inner);
+                return format!("{{ {inner_c} _held = {payload}; {} }}", self.debug_stmt(out, "_held", inner));
+            }
             return self.debug_stmt(out, &payload, inner);
         }
         // D-227 — a reference inside an aggregate prints what it points to.
@@ -9486,13 +9503,53 @@ impl Emitter<'_> {
         }
     }
 
+    /// `[RT-4]`, `[DIA-23]` — outside `shipping`, each function's C symbol with the Ember entity it
+    /// is and where it is declared, sorted by symbol: a panic's backtrace names the program's
+    /// functions by it, never by a C symbol. Strings only: no function is kept alive by it. How
+    /// many there are (none: no table).
+    fn emit_frame_names(&mut self, bodies: &[Body]) -> usize {
+        let mut entries: Vec<(String, String, String, u32)> = Vec::new();
+        for body in bodies {
+            if body.is_abstract || body.is_extern_declaration || body.blocks.is_empty() || body.span.is_dummy() {
+                continue;
+            }
+            let Some(file) = self.map.get(body.span.file) else { continue };
+            let line = file.line_col(body.span.start).line;
+            let path = file.path.display().to_string().replace('\\', "/");
+            let name = if body.is_lambda { "a lambda".to_string() } else { body.name.clone() };
+            // The C entry point is `main`'s frame when the C compiler inlines `main` into it.
+            if body.symbol == ember_branding::mangled("main") {
+                entries.push(("main".to_string(), name.clone(), path.clone(), line));
+            }
+            entries.push((body.symbol.clone(), name, path, line));
+        }
+        entries.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+        entries.dedup_by(|a, b| a.0 == b.0);
+        if entries.is_empty() {
+            return 0;
+        }
+        self.line("#if !defined(EMBER_SHIPPING)");
+        self.line(&format!("static const {RT}frame_name {}frame_names[] = {{", ember_branding::mangle_prefix()));
+        for (symbol, name, path, line) in &entries {
+            self.line(&format!(
+                "    {{{}, {}, {}, {line}u}},",
+                c_string_literal(symbol),
+                c_string_literal(name),
+                c_string_literal(path)
+            ));
+        }
+        self.line("};");
+        self.line("#endif");
+        entries.len()
+    }
+
     /// `[FN-8]` — the C entry point initialises the runtime, calls Ember's
     /// `main`, and shuts down. `[RT-2]`: there are no global constructors, so
     /// this is the only place initialisation can happen.
     ///
     /// A `main` that takes `args` or returns a `Result` is called through the
     /// entry the checker writes (`main_entry`), which returns the status.
-    fn emit_entry_point(&mut self, leak_check: bool, entry: bool) {
+    fn emit_entry_point(&mut self, leak_check: bool, entry: bool, named: usize) {
         self.line("int main(int argc, char** argv) {");
         self.line(&format!("    {RT}rt_config cfg = {RT}rt_config_default();"));
         if leak_check {
@@ -9500,6 +9557,11 @@ impl Emitter<'_> {
         }
         self.line(&format!("    {RT}rt_set_args(argc, argv);"));
         self.line(&format!("    {RT}rt_init(&cfg);"));
+        if named > 0 {
+            self.line("#if !defined(EMBER_SHIPPING)");
+            self.line(&format!("    {RT}backtrace_names({}frame_names, {named}u);", ember_branding::mangle_prefix()));
+            self.line("#endif");
+        }
         if leak_check {
             self.emit_debug_edge_registrations();
         }

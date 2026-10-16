@@ -503,6 +503,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[EXP-5]` | VI | Mutation, a mutable borrow and a move require a place; `f(x).y = 1` … |
 | `[EXP-6]` | VI | A place of a non-`Copy` type used as a value (assigned, passed to … |
 | `[EXP-9]` | VI | `a is b` compares two class handles (or two references) for identity. … |
+| `[EXP-10]` | VI | *(new in 0.9.10)* Optional chaining. `a?.f` and `a?.m[T](…)` take an … |
 
 ## FFI
 
@@ -675,7 +676,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[GRM-31]` | III | A `some` type (`[TYP-32]`) is legal only as a function's return type, … |
 | `[GRM-32]` | III | `comptime(e)` evaluates the expression `e` at compile time (`[CT-6]`). |
 | `[GRM-33]` | III | A bodiless `fn_decl` is legal only in an `interface`, an … |
-| `[GRM-34]` | III | `extend [T: B] Array[T] implements I:` declares a generic extension; … |
+| `[GRM-34]` | III | *(changed in 0.9.10)* `extend [T: B] Array[T] implements I:` declares … |
 | `[GRM-35]` | XVI | Overlay grammar. An overlay is a file whose items are: |
 | `[GRM-36]` | III | `ref e` and `ref mut e` borrow the place `e` (`[BRW-1]`). The operand … |
 | `[GRM-37]` | III | A directive is a line beginning `#!` before the imports. `#! language … |
@@ -834,7 +835,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[LEX-12]` | II | Identifiers are NFC-normalised; two identifiers are the same iff … |
 | `[LEX-13]` | II | A lone `_` is the discard pattern and never names a variable. |
 | `[LEX-14]` | II | A raw identifier `r#name` uses a keyword as a name (for imported C … |
-| `[LEX-15]` | II | The table above is the complete reserved set. Contextual keywords are … |
+| `[LEX-15]` | II | *(changed in 0.9.10)* The table above is the complete reserved set. … |
 | `[LEX-16]` | II | An integer literal without a suffix is an untyped integer: it takes … |
 | `[LEX-17]` | II | A float literal without a suffix is an untyped float: it takes the … |
 | `[LEX-17a]` | II | A float literal that receives `f32` or `f16` and has more significant … |
@@ -900,7 +901,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[MAN-2]` | XVII | `ember.lock` records the resolved dependencies with content hashes; … |
 | `[MAN-3]` | XVII | Every key in `[lints]` names a lint the compiler defines (`E9010` … |
 | `[MAN-7]` | XVII | `[build] reload` is `"opt-in"`, `"all"`, `"bodies"` or `"none"`; it … |
-| `[MAN-8]` | XVII | The sections are: `[package]` (`name`, `version`, `language`, `kind`, … |
+| `[MAN-8]` | XVII | *(changed in 0.9.10)* The sections are: `[package]` (`name`, … |
 
 ## MNG
 
@@ -1081,7 +1082,7 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[SEL-1]` | IX | The order above is the order to try. `ember inspect --alloc` reports … |
+| `[SEL-1]` | IX | *(changed in 0.9.10)* The order above is the order to try. `ember … |
 | `[SEL-2]` | IX | `Shared`/`Weak` and C++'s `std::shared_ptr`/`std::weak_ptr` … |
 
 ## SER
@@ -1313,10 +1314,11 @@ Every rule of this document, by family, with the Part that defines it.
 | `[TYP-36]` | IV | Which types implement which interfaces. The table is normative; a `—` … |
 | `[TYP-37]` | IV | Floats implement `Eq` with IEEE `==` (so `NaN != NaN`) and `Ord` with … |
 | `[TYP-38]` | VI | Collection literals. * A list literal `[a, b, c]` has the type its … |
-| `[TYP-39]` | IV | Collections, tuples and `Option`/`Result` implement `Display` the way … |
+| `[TYP-39]` | IV | *(changed in 0.9.10)* Collections, tuples and `Option`/`Result` … |
 | `[TYP-40]` | IV | Interfaces are nominal. A type implements an interface only through … |
 | `[TYP-41]` | IV | Const arguments. A `const` generic argument, like an array length, is … |
 | `[TYP-42]` | IV | *(new in 0.9.10)* The 256-bit counts. `u256` and `i256` are what the … |
+| `[TYP-43]` | IV | *(new in 0.9.10)* The marker interfaces are interfaces of `std.core`, … |
 
 ## UNS
 

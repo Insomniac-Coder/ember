@@ -148,12 +148,14 @@ large_copy = { level = "warn", threshold = 256 }
 * `[MAN-3]` *(changed in 0.9.9)* Every key in `[lints]` names a lint the compiler defines (`E9010`
   otherwise); its value is a level (`allow`, `warn`, `error`) or a table with `level` and the lint's
   parameters.
-* `[MAN-8]` *(new in 0.9.9)* The sections are: `[package]` (`name`, `version`, `language`, `kind`,
+* `[MAN-8]` *(new in 0.9.9)* *(changed in 0.9.10)* The sections are: `[package]` (`name`, `version`, `language`, `kind`,
   `layers`, `edition_lints`); `[dependencies]` (a version requirement, `{ path }`, or `{ git, rev }`);
   `[build]` (`entry`, `target`, `backend`, `c_compiler`, `runtime`, `max_instantiations` `[MONO-3]`,
-  `reload` `[MAN-7]`); `[profiles.<name>]` (`[PRF-3]`); `[c]` (`[BLD-FFI-1]`); `[link]`; `[jobs]`
-  (`[JOB-1]`); `[realtime]` (`[EFF-19]`); `[comptime]` (`max_steps`, `max_heap_mb`, `[CT-3]`);
-  `[lints]` (`[MAN-3]`); and `[cpp.<project>]` and `[ffi]` (Annex C). **No manifest key turns off a
+  `reload` `[MAN-7]`); `[profiles.<name>]` (`[PRF-3]`); `[c]` (`compiler`, `flags`, `[BLD-FFI-1]`);
+  `[link]` (`libs`); `[jobs]` (`workers`, `[JOB-1]`); `[realtime]` (`contracts`, `[EFF-19]`);
+  `[comptime]` (`max_steps`, `max_heap_mb`, `[CT-3]`); `[lints]` (`[MAN-3]`); and `[cpp.<project>]`
+  and `[ffi]` (`evidence`, Annex C). A key a section does not take, or a section not listed, is
+  `E9001`, naming what is accepted (ODR-110). **No manifest key turns off a
   safety check or changes what a program means** (`[PRF-1]`).
 * `[MAN-7]` `[build] reload` is `"opt-in"`, `"all"`, `"bodies"` or `"none"`; it is forbidden in
   `shipping` (Annex B).

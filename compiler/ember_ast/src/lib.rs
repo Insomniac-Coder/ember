@@ -345,6 +345,8 @@ pub struct InterfaceDecl {
 
 #[derive(Clone, Debug)]
 pub struct ExtendDecl {
+    /// ODR-111 — `unsafe extend T implements Send:` writes a marker interface by hand.
+    pub is_unsafe: bool,
     pub generics: Vec<GenericParam>,
     pub target: TypeExpr,
     pub implements: Vec<TypeExpr>,
@@ -647,7 +649,7 @@ pub enum ExprKind {
     /// `e?` — early return on `None`/`Err` (`[ERR-2]`).
     Try(Box<Expr>),
     /// `a?.f` / `a?.m()`.
-    OptChain { base: Box<Expr>, name: Ident, args: Option<Vec<Arg>> },
+    OptChain { base: Box<Expr>, name: Ident, generic_args: Vec<GenericArg>, args: Option<Vec<Arg>> },
     Lambda(Lambda),
     Match { scrutinee: Box<Expr>, arms: Vec<MatchArm> },
     Tuple(Vec<Expr>),

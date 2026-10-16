@@ -50,7 +50,7 @@ a value.
 | `x is None`, `x is not None` | option test | `Option` (`[EXP-9]`) |
 | `a[i]` | `Index` / `IndexMut` / `IndexSet` | read; written in place; `a[i] = v` per `[STD-17]` |
 | `a[i..j]`, `a[..j]`, `a[i..]` | slice | `Span`/`MutSpan`/`str`, bounds-checked |
-| `a?.f`, `a?.m()` | optional chaining | on `Option`: `None` propagates |
+| `a?.f`, `a?.m()` | optional chaining | on `Option`: `None` propagates (`[EXP-10]`) |
 | `e?` | early return | on `Option` or `Result` (`[ERR-2]`) |
 | `x as T`, `h as? D`, `h as! D` | conversion | `[TYP-6]` |
 | `f"…{e}…"` | formatting | allocates a `String`; `E4001` in `@noalloc` (use `format_to`) |
@@ -59,6 +59,14 @@ a value.
 * `[EXP-9]` *(new in 0.9.9)* *(changed in 0.9.9)* `a is b` compares two class handles (or two references) for identity.
   `x is None` and `x is not None` test an `Option` for absence and presence, and are the only uses of
   `is` on a non-handle type. Any other operand of `is` is `E2150`, whose help names `==`.
+* `[EXP-10]` *(new in 0.9.10)* **Optional chaining.** `a?.f` and `a?.m[T](…)` take an `Option`
+  (or a reference to one; anything else is `E2020`): `None` when `a` is `None`, and otherwise the
+  field or the method's result of the value inside, wrapped in `Some`, unless it is an `Option`
+  itself, which is then the result (a chain is one `Option`, never an `Option` of an `Option`), or
+  nothing, which is then what the chain is. `a` is read as `[GRM-13]` reads a place it does not
+  consume: a `Copy` value inside is copied and any other lent, so a field that is not `Copy` comes as
+  a reference (`p?.name` is an `Option[ref String]`) and `a` keeps its value; from a temporary it
+  moves (ODR-107).
 * `[TYP-38]` *(new in 0.9.9)* **Collection literals.**
   * A list literal `[a, b, c]` has the type its context expects: `Array[T]` (allocates), `[T; N]` (no
     allocation) or `Span[T]` (a view of a temporary fixed array). With no context it is `Array[T]`.

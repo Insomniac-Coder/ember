@@ -6656,11 +6656,215 @@ int ember_str_cmp(ember_str a, ember_str b) {
 
 /* -- panics ------------------------------------------------------------------ */
 
-void ember_backtrace_print(void) {
-    /* A real backtrace needs the platform unwinder; Phase 0 states the
-     * limitation rather than printing something misleading. */
-    fputs("note: backtraces are not available in this build\n", stderr);
+static const ember_frame_name* g_frame_names;
+static size_t g_frame_name_count;
+
+void ember_backtrace_names(const ember_frame_name* names, size_t count) {
+    g_frame_names = names;
+    g_frame_name_count = count;
 }
+
+/* The program's function the C symbol `symbol` is, if it is one of them. */
+static const ember_frame_name* frame_name(const char* symbol) {
+    size_t lo = 0;
+    size_t hi = g_frame_name_count;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        int order = strcmp(g_frame_names[mid].symbol, symbol);
+        if (order == 0) {
+            return &g_frame_names[mid];
+        }
+        if (order < 0) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return NULL;
+}
+
+/* Print the frame of `symbol` when it is the program's own; whether it was `main`'s, the last. */
+static bool backtrace_frame(const char* symbol, unsigned* printed) {
+    const ember_frame_name* entry = frame_name(symbol);
+    if (entry == NULL) {
+        return false;
+    }
+    if (*printed == 0) {
+        fputs("backtrace:\n", stderr);
+    }
+    fprintf(stderr, "  %u: %s at %s:%u\n", *printed, entry->name, entry->file, entry->line);
+    *printed += 1;
+    return strcmp(entry->name, "main") == 0;
+}
+
+#if defined(_WIN32)
+#include <dbghelp.h>
+typedef DWORD (WINAPI* sym_set_options_fn)(DWORD);
+typedef BOOL (WINAPI* sym_initialize_fn)(HANDLE, PCSTR, BOOL);
+typedef BOOL (WINAPI* sym_from_addr_fn)(HANDLE, DWORD64, PDWORD64, PSYMBOL_INFO);
+
+void ember_backtrace_print(void) {
+    if (g_frame_name_count == 0) {
+        return;
+    }
+    void* frames[64];
+    USHORT count = CaptureStackBackTrace(1, 64, frames, NULL);
+    /* Loaded here, only when a panic asks: a program that never panics never maps it. */
+    HMODULE dbghelp = LoadLibraryA("dbghelp.dll");
+    FARPROC set_options_proc = dbghelp ? GetProcAddress(dbghelp, "SymSetOptions") : NULL;
+    FARPROC initialize_proc = dbghelp ? GetProcAddress(dbghelp, "SymInitialize") : NULL;
+    FARPROC from_addr_proc = dbghelp ? GetProcAddress(dbghelp, "SymFromAddr") : NULL;
+    if (set_options_proc == NULL || initialize_proc == NULL || from_addr_proc == NULL) {
+        fputs("note: no backtrace: dbghelp.dll is not available\n", stderr);
+        return;
+    }
+    sym_set_options_fn set_options;
+    sym_initialize_fn initialize;
+    sym_from_addr_fn from_addr;
+    memcpy(&set_options, &set_options_proc, sizeof set_options);
+    memcpy(&initialize, &initialize_proc, sizeof initialize);
+    memcpy(&from_addr, &from_addr_proc, sizeof from_addr);
+    HANDLE process = GetCurrentProcess();
+    set_options(0x00000002u /* SYMOPT_UNDNAME */ | 0x00000004u /* SYMOPT_DEFERRED_LOADS */);
+    /* The PDB is looked for where it was linked, then here: the program's own folder, where a
+     * program copied or served from the build cache has it beside it. */
+    char folder[MAX_PATH];
+    DWORD length = GetModuleFileNameA(NULL, folder, MAX_PATH);
+    while (length > 0 && folder[length - 1] != '\\' && folder[length - 1] != '/') {
+        length -= 1;
+    }
+    folder[length < MAX_PATH ? length : MAX_PATH - 1] = '\0';
+    if (!initialize(process, length > 0 ? folder : NULL, TRUE)) {
+        fputs("note: no backtrace: the program's symbols could not be read\n", stderr);
+        return;
+    }
+    union {
+        SYMBOL_INFO info;
+        char bytes[sizeof(SYMBOL_INFO) + 256];
+    } symbol;
+    unsigned printed = 0;
+    for (USHORT i = 0; i < count; ++i) {
+        memset(&symbol, 0, sizeof symbol);
+        symbol.info.SizeOfStruct = sizeof(SYMBOL_INFO);
+        symbol.info.MaxNameLen = 255;
+        DWORD64 displacement = 0;
+        /* A return address may be the first byte after its call: look one byte back. */
+        if (from_addr(process, (DWORD64)(uintptr_t)frames[i] - 1, &displacement, &symbol.info)
+            && backtrace_frame(symbol.info.Name, &printed)) {
+            break;
+        }
+    }
+    if (printed == 0) {
+        fputs("note: no backtrace: the program was built without its symbols\n", stderr);
+    }
+}
+#elif defined(__linux__) && defined(__LP64__) && (defined(__GNUC__) || defined(__clang__))
+#include <elf.h>
+#include <unwind.h>
+
+typedef struct unwind_frames {
+    uintptr_t ips[64];
+    unsigned count;
+} unwind_frames;
+
+static _Unwind_Reason_Code unwind_frame(struct _Unwind_Context* context, void* data) {
+    unwind_frames* frames = (unwind_frames*)data;
+    if (frames->count >= 64) {
+        return _URC_END_OF_STACK;
+    }
+    frames->ips[frames->count++] = (uintptr_t)_Unwind_GetIP(context);
+    return _URC_NO_REASON;
+}
+
+/* The program file's bytes, read whole: its symbol table names every function, static ones
+ * included, with its address and size. */
+static unsigned char* read_own_program(size_t* size) {
+    FILE* file = fopen("/proc/self/exe", "rb");
+    if (file == NULL) {
+        return NULL;
+    }
+    unsigned char* bytes = NULL;
+    if (fseek(file, 0, SEEK_END) == 0) {
+        long length = ftell(file);
+        if (length > 0 && fseek(file, 0, SEEK_SET) == 0) {
+            bytes = (unsigned char*)malloc((size_t)length);
+            if (bytes != NULL && fread(bytes, 1, (size_t)length, file) != (size_t)length) {
+                free(bytes);
+                bytes = NULL;
+            }
+            *size = (size_t)length;
+        }
+    }
+    fclose(file);
+    return bytes;
+}
+
+void ember_backtrace_print(void) {
+    if (g_frame_name_count == 0) {
+        return;
+    }
+    unwind_frames frames;
+    frames.count = 0;
+    _Unwind_Backtrace(unwind_frame, &frames);
+    size_t size = 0;
+    unsigned char* bytes = read_own_program(&size);
+    const Elf64_Ehdr* header = (const Elf64_Ehdr*)bytes;
+    if (bytes == NULL || size < sizeof(Elf64_Ehdr) || memcmp(header->e_ident, ELFMAG, SELFMAG) != 0
+        || header->e_ident[EI_CLASS] != ELFCLASS64 || header->e_shoff + (size_t)header->e_shnum * sizeof(Elf64_Shdr) > size) {
+        free(bytes);
+        fputs("note: no backtrace: the program file could not be read\n", stderr);
+        return;
+    }
+    const Elf64_Shdr* sections = (const Elf64_Shdr*)(bytes + header->e_shoff);
+    const Elf64_Sym* symbols = NULL;
+    size_t symbol_count = 0;
+    const char* names = NULL;
+    for (size_t i = 0; i < header->e_shnum; ++i) {
+        if (sections[i].sh_type == SHT_SYMTAB && sections[i].sh_link < header->e_shnum
+            && sections[i].sh_offset + sections[i].sh_size <= size) {
+            symbols = (const Elf64_Sym*)(bytes + sections[i].sh_offset);
+            symbol_count = sections[i].sh_size / sizeof(Elf64_Sym);
+            names = (const char*)(bytes + sections[sections[i].sh_link].sh_offset);
+        }
+    }
+    /* Where the program was loaded: this very function's address, less what the table says. */
+    uintptr_t bias = 0;
+    bool found = false;
+    for (size_t i = 0; i < symbol_count && !found; ++i) {
+        if (ELF64_ST_TYPE(symbols[i].st_info) == STT_FUNC
+            && strcmp(names + symbols[i].st_name, "ember_backtrace_print") == 0) {
+            bias = (uintptr_t)&ember_backtrace_print - (uintptr_t)symbols[i].st_value;
+            found = true;
+        }
+    }
+    unsigned printed = 0;
+    for (unsigned f = 0; found && f < frames.count; ++f) {
+        uintptr_t ip = frames.ips[f] - 1;
+        const char* symbol = NULL;
+        for (size_t i = 0; i < symbol_count; ++i) {
+            uintptr_t start = (uintptr_t)symbols[i].st_value + bias;
+            if (ELF64_ST_TYPE(symbols[i].st_info) == STT_FUNC && symbols[i].st_size > 0 && start <= ip
+                && ip < start + symbols[i].st_size) {
+                symbol = names + symbols[i].st_name;
+                break;
+            }
+        }
+        if (symbol != NULL && backtrace_frame(symbol, &printed)) {
+            break;
+        }
+    }
+    free(bytes);
+    if (printed == 0) {
+        fputs("note: no backtrace: the program was built without its symbols\n", stderr);
+    }
+}
+#else
+void ember_backtrace_print(void) {
+    if (g_frame_name_count != 0) {
+        fputs("note: backtraces are not available on this platform\n", stderr);
+    }
+}
+#endif
 
 static EMBER_NORETURN void panic_with(const char* msg, size_t len, ember_loc loc) {
     fflush(stdout);

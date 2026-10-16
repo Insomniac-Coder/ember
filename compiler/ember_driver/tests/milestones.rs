@@ -2018,7 +2018,18 @@ fn views_proved_apart_get_restrict_functions_and_nothing_else_does() {
     for cc in ["msvc", "clang", "gcc"] {
         let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc} C failed:\n{}", c.stderr);
-        let kernels = |name: &str| c.stdout.matches(&format!("{}_loop", ember_branding::mangled(name))).count();
+        // A kernel's name as code uses it, followed by its call or parameter list: the backtrace's
+        // table of names (`[RT-4]`) writes it as a string too, which is no use.
+        let kernels = |name: &str| {
+            let stem = format!("{}_loop", ember_branding::mangled(name));
+            c.stdout
+                .match_indices(&stem)
+                .filter(|(at, _)| {
+                    let rest = &c.stdout[at + stem.len()..];
+                    rest.trim_start_matches(|ch: char| ch.is_ascii_digit()).starts_with('(')
+                })
+                .count()
+        };
         // Each kernel is named twice: its prototype and its definition, and
         // once more where it is called.
         assert_eq!(kernels("scale"), 6, "{cc}: the Ok arm's loop and its versioned copy, and nothing of the Err arm:\n{}", c.stdout);
@@ -3146,6 +3157,42 @@ fn inspect_counts_lists_count_operations_left_in_loops() {
     assert!(elided.exit != 0 && elided.stderr.contains("applies only to `--safety`"), "{}", elided.stderr);
 }
 
+/// `[SEL-1]` (ODR-108) — `ember inspect --alloc` also reports the storage mechanism each
+/// declaration uses: the row of IX.0's table its declared type picks, or `value`, `view`,
+/// `callable` or `raw pointer` for the types the table has no row for. A lambda's environment is
+/// the compiler's and is not listed.
+#[test]
+fn inspect_alloc_reports_the_mechanism_each_declaration_uses() {
+    let root = workspace_root();
+    let program = format!("tests/conformance/PHIL-2/accept_every_allocating_form_is_listed.{SOURCE_EXT}");
+    let json = ember(&["inspect", "--alloc", "--json", &program], &root);
+    assert_eq!(json.exit, 0, "inspect failed:\n{}", json.stderr);
+    let value: serde_json::Value = serde_json::from_str(json.stdout.trim()).expect("--json prints JSON");
+    let declarations = value["declarations"].as_array().expect("a declarations array");
+    let uses = |kind: &str, owner: &str, name: &str, mechanism: &str| {
+        declarations.iter().any(|d| d["kind"] == kind && d["owner"] == owner && d["name"] == name && d["mechanism"] == mechanism)
+    };
+    for (kind, owner, name, mechanism) in [
+        ("type", "", "Node", "class"),
+        ("field", "Node", "value", "value"),
+        ("parameter", "total", "xs", "view"),
+        ("local", "total", "sum", "value"),
+        ("local", "main", "node", "class"),
+        ("local", "main", "xs", "Array, Map, Set, String"),
+        ("local", "main", "ages", "Array, Map, Set, String"),
+        ("local", "main", "boxed", "Box[T]"),
+        ("local", "main", "shared", "Shared[T]"),
+        ("local", "main", "many", "callable"),
+    ] {
+        assert!(uses(kind, owner, name, mechanism), "[SEL-1] {kind} {owner}.{name} should use {mechanism:?}:\n{}", json.stdout);
+    }
+    assert!(!declarations.iter().any(|d| d["owner"].as_str().is_some_and(|o| o.starts_with("lambda in"))), "[SEL-1] a lambda's environment is listed:\n{}", json.stdout);
+    let text = ember(&["inspect", "--alloc", "--function", "total", &program], &root);
+    assert_eq!(text.exit, 0, "{}", text.stderr);
+    assert!(text.stdout.contains("Storage mechanisms:") && text.stdout.contains("total parameter `xs`: Span[i64] -> view"), "{}", text.stdout);
+    assert!(!text.stdout.contains("main local"), "a function filter kept another's declarations:\n{}", text.stdout);
+}
+
 /// `[PHIL-2]`, `[CLO-10]` — `ember inspect --alloc` lists every place a
 /// program allocates, by function and line, with what allocates there: each
 /// allocating form `[PHIL-2]` names, and an owned callable value whose
@@ -3824,6 +3871,74 @@ fn formatter_writes_one_expression_lambdas_in_the_arrow_form() {
     assert_eq!(before.stdout, after.stdout, "[FMT-1] parse(fmt(x)) differs from parse(x)");
     let checked = ember(&["check", &path], &root);
     assert_eq!(checked.exit, 0, "[FMT-2] the formatted program does not check:\n{}", checked.stderr);
+}
+
+#[test]
+fn formatter_keeps_a_raw_reserved_name_raw() {
+    // `[LEX-14]`, `[FMT-1]` — the tree keeps a name, not its spelling: a reserved word written raw
+    // stays raw (it was a keyword bare), a raw name that is no keyword is written bare, and after `.`
+    // `is` and `not` are method names bare (`[LEX-15]`).
+    let root = workspace_root();
+    let directory = temporary_directory("fmt-raw-names");
+    let scratch = directory.join(ember_branding::source_file("main"));
+    std::fs::write(&scratch, "struct Rec:\n    r#type: int\n    r#is: bool\n    r#plain: int\n    fn is(self) -> bool:\n        return self.r#is\n\nfn r#is() -> int:\n    return 1\n\nfn r#match(r#type: int) -> int:\n    r#let = r#type + 1\n    return r#let\n\nfn main():\n    rec = Rec(r#type=2, r#is=true, r#plain=3)\n    o: Option[Rec] = Some(Rec(r#type=5, r#is=false, r#plain=6))\n    println(rec.r#type, rec.is(), o?.is(), o?.r#type, r#is(), r#match(4))\n").expect("the fixture is writable");
+    let path = scratch.to_string_lossy().into_owned();
+    let before = ember(&["build", &path, "--emit", "ast"], &root);
+    let once = ember(&["fmt", &path], &root);
+    assert_eq!(once.exit, 0, "{}", once.stderr);
+    assert_eq!(once.stdout, "struct Rec:\n    r#type: int\n    r#is: bool\n    plain: int\n\n    fn is(self) -> bool:\n        return self.is\n\n\nfn r#is() -> int:\n    return 1\n\n\nfn r#match(r#type: int) -> int:\n    r#let = r#type + 1\n    return r#let\n\n\nfn main():\n    rec = Rec(r#type=2, r#is=true, plain=3)\n    o: Option[Rec] = Some(Rec(r#type=5, r#is=false, plain=6))\n    println(rec.r#type, rec.is(), o?.is(), o?.r#type, r#is(), r#match(4))\n", "[LEX-14]");
+    std::fs::write(&scratch, &once.stdout).expect("the formatted fixture is writable");
+    let twice = ember(&["fmt", &path], &root);
+    assert_eq!(once.stdout, twice.stdout, "[FMT-1] fmt(fmt(x)) differs from fmt(x)");
+    let after = ember(&["build", &path, "--emit", "ast"], &root);
+    assert_eq!(before.stdout, after.stdout, "[FMT-1] parse(fmt(x)) differs from parse(x)");
+    let checked = ember(&["check", &path], &root);
+    assert_eq!(checked.exit, 0, "[LEX-14] the formatted program does not check:\n{}", checked.stderr);
+}
+
+/// `[DIA-22]` — a diagnostic a callee's signature causes is at the call, with the callee's
+/// declaration as a secondary span: the function for the count of arguments and an unknown name,
+/// the parameter for an argument of the wrong type.
+#[test]
+fn a_call_diagnostic_points_at_the_callee_declaration() {
+    let root = workspace_root();
+    let program = format!("tests/conformance/DIA-22/reject_calls_against_their_signatures.{SOURCE_EXT}");
+    let out = ember(&["check", &program], &root);
+    assert_ne!(out.exit, 0, "the program should not check");
+    for label in [
+        "`area` is declared here",
+        "parameter `h` is declared `i64` here",
+        "`scale` is declared here",
+        "parameter `k` is declared `i64` here",
+        "its parameters are `w`, `h`",
+    ] {
+        assert!(out.stderr.contains(label), "[DIA-22] no secondary span {label:?}:
+{}", out.stderr);
+    }
+    assert!(!out.stderr.contains("needs a value for"), "[DIA-22] one diagnostic per wrong call:
+{}", out.stderr);
+}
+
+#[test]
+fn formatter_keeps_where_clauses() {
+    // D-643, `[FMT-1]` — a `where` clause is part of a declaration: the formatter wrote a function's,
+    // a type's, an interface's and an extension's header without it, which changed what the
+    // program means (`parse(fmt(x))` differed from `parse(x)` only in what the tree did not show).
+    let root = workspace_root();
+    let directory = temporary_directory("fmt-where");
+    let scratch = directory.join(ember_branding::source_file("main"));
+    std::fs::write(&scratch, "interface Show:\n    fn show(self) -> int\n\nfn f[T](x: T) -> int where T: Show:\n    return x.show()\n\nstruct W[T]:\n    v: T\n\nextend[T] W[T] implements Show where T: Show:\n    fn show(self) -> int:\n        return self.v.show()\n\nfn main():\n    pass\n").expect("the fixture is writable");
+    let path = scratch.to_string_lossy().into_owned();
+    let once = ember(&["fmt", &path], &root);
+    assert_eq!(once.exit, 0, "{}", once.stderr);
+    for header in ["fn f[T](x: T) -> int where T: Show:", "extend[T] W[T] implements Show where T: Show:"] {
+        assert!(once.stdout.contains(header), "[FMT-1] the formatter dropped a where clause, wanted {header:?}:\n{}", once.stdout);
+    }
+    std::fs::write(&scratch, &once.stdout).expect("the formatted fixture is writable");
+    let twice = ember(&["fmt", &path], &root);
+    assert_eq!(once.stdout, twice.stdout, "[FMT-1] fmt(fmt(x)) differs from fmt(x)");
+    let checked = ember(&["check", &path], &root);
+    assert_eq!(checked.exit, 0, "D-644 the formatted program does not check:\n{}", checked.stderr);
 }
 
 #[test]

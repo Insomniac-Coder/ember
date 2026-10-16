@@ -262,6 +262,159 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-112 — blanket parameters on an extension of every type — **CLOSED**
+
+    ID:        ODR-112
+    Status:    CLOSED — ruled under the delegation, 2026-10-16 (the owner: "fix all the
+               stuff yourself"); incorporated in 0.9.10_Hardened_10
+    Category:  GENERICS / EXTENSIONS
+    Location:  Ember_v0.9.10_Hardened_9.md [GRM-34]
+
+**The question.** `[GRM-34]` makes a parameter that the target does not name and an interface
+does a blanket implementation's, and `std.core` extends a parameter standing alone (`extend[T] T
+implements From[T]`). It said nothing of both at once (`extend[T, U] T implements Wrap[U]`),
+which was `E0900`; and a method generic over `U` that only its result names cannot be called on
+a concrete type unless the call says `U`, even inside an instance of `fn shown[T: Wrap[L]]`,
+whose bound already said it.
+
+**Ruling.** Both at once are allowed, as a blanket implementation every type meeting the bounds
+has. A call that leaves a blanket parameter open (its arguments and the wanted result do not fix
+it) takes it from the one instance of the interface the receiver's type implements through the
+block; with two it stays open (`E2060`). A parameter neither the target nor an interface names
+is `E2020`. **Tests:** `tests/conformance/GRM-34/accept_a_blanket_extension_over_every_type.em`,
+`reject_an_extension_parameter_named_nowhere.em`. ADR-191.
+
+---
+
+## ODR-111 — the marker interfaces, by hand — **CLOSED**
+
+    ID:        ODR-111
+    Status:    CLOSED — ruled under the delegation, 2026-10-16 (the owner: "fix all the
+               stuff yourself"); incorporated in 0.9.10_Hardened_10
+    Category:  TYPES / MARKERS
+    Location:  Ember_v0.9.10_Hardened_9.md Part IV §8, grammar `extend_decl`
+
+**The question.** Part IV §8's table says the markers (`Copy`, `Send`, `Sync`, `Sized`) are
+"implementable by hand only with `unsafe extend`", but the grammar's `extend_decl` has no
+`unsafe`, no rule says what one means, and the markers were no interfaces a program could name
+(`T: Send` was "cannot find interface"), though `[THR-9]` writes `T: Send + Sync`.
+
+**Options.** (a) every marker by hand, as the table reads; (b) `Send` and `Sync` only;
+(c) none. Copying a value that owns something frees it twice whatever is promised, and a copy of
+one that owns nothing is `@derive(Copy)`; `Sized` is what a type is.
+
+**Ruling (b).** The markers are interfaces of `std.core`, exported by the prelude and answered
+by the table, so a bound names them. `unsafe extend T implements Send:` (or `Sync`), with no
+members, writes one by hand for a struct or enum of the package; a generic one holds for each
+instance whose arguments meet its parameters' marker bounds. Without `unsafe` it is `E3100`; a
+class (its counts are atomic only as `@sync`), `Copy`, `Sized`, and an `unsafe extend` of any
+other interface are `E2040`. New rule `[TYP-43]`; `extend_decl` takes `["unsafe"]`.
+**Tests:** `tests/conformance/THR-8/accept_send_written_by_hand.em`,
+`reject_markers_written_wrongly.em`. ADR-191.
+
+---
+
+## ODR-110 — the keys of `[c]`, `[link]` and `[ffi]` — **CLOSED**
+
+    ID:        ODR-110
+    Status:    CLOSED — ruled under the delegation, 2026-10-16 (the owner: "fix all the
+               stuff yourself"); incorporated in 0.9.10_Hardened_10
+    Category:  TOOLCHAIN / MANIFEST
+    Location:  Ember_v0.9.10_Hardened_9.md [MAN-8]
+
+**The question.** `[MAN-8]` lists every section and the keys of most, but for `[c]`, `[link]`,
+`[jobs]`, `[realtime]` and `[ffi]` only names the rule that uses them, so which keys are
+accepted (and which are `E9001`) was the compiler's reading (ADR-188).
+
+**Ruling.** `[c]`: `compiler`, `flags` (what `[BLD-FFI-1]` says it names); `[link]`: `libs` (the
+spec's example); `[jobs]`: `workers`; `[realtime]`: `contracts`; `[ffi]`: `evidence` (Annex C).
+Any other key, or a section not listed, is `E9001` naming what is accepted.
+**Tests:** `unknown_manifest_keys_name_the_keys_their_section_accepts` (milestones). ADR-188.
+
+---
+
+## ODR-109 — a `Cell` shown by a value's own `Display` — **CLOSED**
+
+    ID:        ODR-109
+    Status:    CLOSED — ruled under the delegation, 2026-10-16 (the owner: "fix all the
+               stuff yourself"); incorporated in 0.9.10_Hardened_10
+    Category:  TYPES / FORMATTING
+    Location:  Ember_v0.9.10_Hardened_9.md [TYP-39], [CELL-2]
+
+**The question.** `[TYP-39]` shows a `Cell[T]` as the `T` it holds; `[CELL-2]` says a `Cell`
+never hands out a reference to its contents. A `T` that writes its own `Display` or `Debug` is
+the program's code, given a reference, and may `set` the cell while it runs.
+
+**Ruling.** A `Cell` shows a copy of its value, as `get` reads it. A `T` that is not `Copy` and
+writes its own `Display` or `Debug` is not shown from a `Cell` (`E2040`, whose help names
+`RefCell`); the text the compiler writes for any `T` lends nothing and is always allowed.
+**Tests:** `tests/conformance/CELL-2/accept_a_cell_shows_a_copy_of_its_value.em`,
+`reject_a_cell_lending_its_value_to_a_written_fmt.em`. ADR-191.
+
+---
+
+## ODR-108 — what `[SEL-1]` reports — **CLOSED**
+
+    ID:        ODR-108
+    Status:    CLOSED — ruled under the delegation, 2026-10-16 (the owner: "fix all the
+               stuff yourself"); incorporated in 0.9.10_Hardened_10
+    Category:  TOOLCHAIN / INSPECT
+    Location:  Ember_v0.9.10_Hardened_9.md [SEL-1]
+
+**The question.** "`ember inspect --alloc` reports the mechanism each declaration uses" left
+open whether a declaration is a type's or a variable's, and IX.0's table has no row for numbers,
+views, callable values, `dyn`, `SoA` or fixed arrays (ADR-188).
+
+**Ruling.** Every local, parameter and field the program writes, by the row its declared type
+picks, and every struct, enum and class it declares, by its kind. A type with no row is a
+`value` (numbers, `bool`, `char`, `void`, range types), a `view` (references, spans, `str`,
+guards), a `callable` or a `raw pointer`; tuples and fixed arrays are the first row's, `SoA` a
+collection's. **Tests:** `inspect_alloc_reports_the_mechanism_each_declaration_uses`. ADR-191.
+
+---
+
+## ODR-107 — optional chaining — **CLOSED**
+
+    ID:        ODR-107
+    Status:    CLOSED — ruled under the delegation, 2026-10-16 (the owner: "fix all the
+               stuff yourself"); incorporated in 0.9.10_Hardened_10
+    Category:  EXPRESSIONS
+    Location:  Ember_v0.9.10_Hardened_9.md the expression table (`a?.f`)
+
+**The question.** The table row "`a?.f`, `a?.m()` — on `Option`: `None` propagates" had no rule
+and no compiler (`E1010`): what the result is when the member is itself an `Option` or gives
+nothing, and whether `a` is consumed.
+
+**Ruling (`[EXP-10]`).** `None` when `a` is `None`; otherwise the member of the value inside,
+wrapped in `Some`, unless it is an `Option` (then it is the result: a chain is one `Option`) or
+nothing (then so is the chain). `a` is read as `[GRM-13]` reads an unconsumed place: a `Copy`
+value copied, any other lent, so `p?.name` is an `Option[ref String]` and `p` keeps its value;
+from a temporary it moves. Anything but an `Option` is `E2020`.
+**Tests:** `tests/conformance/EXP-10/`. ADR-191.
+
+---
+
+## ODR-106 — `is` as a method name — **CLOSED**
+
+    ID:        ODR-106
+    Status:    CLOSED — ruled under the delegation, 2026-10-16 (the owner: "fix all the
+               stuff yourself"); incorporated in 0.9.10_Hardened_10
+    Category:  LEXICAL / KEYWORDS
+    Location:  Ember_v0.9.10_Hardened_9.md [LEX-15], [ERR-8]
+
+**The question.** `[ERR-8]` gives `AnyError` the method `is[E]()`, and `[LEX-15]` reserves `is`
+(the identity operator and the `Option` test, `[EXP-9]`) with only `not` excepted as a method
+name.
+
+**Ruling (the owner: "make it an error", "allow ?.is()").** As `not` (ODR-040): `is` is a method
+name after `fn` in a type's body, an `extend` block or an interface, and after `.` and `?.`; the
+operator only ever stands between two operands. A function standing alone (an item or a local
+function) may take neither `not` nor `is` (`E0005`; `r#is` is its raw spelling).
+**Tests:** `tests/conformance/LEX-15/accept_is_is_a_method_name.em`,
+`reject_not_and_is_naming_a_function.em`. ADR-191.
+
+---
+
 ## ODR-105 — the code of a `let` field assigned outside `init` — **CLOSED**
 
     ID:        ODR-105

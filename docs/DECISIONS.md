@@ -5016,6 +5016,102 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-191 — The agents' open items closed, and the owner's `is` (ODR-106 to ODR-112, 0.9.10_Hardened_10)
+
+The owner, 2026-10-16: "make it an error", "allow ?.is()", "fix the r# error", and "address the ADRs
+the agents told you about, use the best solution possible ... fix all the stuff yourself". Every item
+ADR-186 and ADR-188 left open is settled here; the rulings are ODR-106 to ODR-112, cut as
+0.9.10_Hardened_10.
+
+**`is` (ODR-106, `[LEX-15]`).** `is` is a method name after `fn` in a type's body, `.` and `?.`,
+as `not` is; a function standing alone (item or local) naming either is `E0005` (`r#is` is its raw
+spelling). `parse_fn` became `parse_fn`/`parse_method`; a local `fn r#name` is a declaration too.
+
+**Optional chaining (ODR-107, `[EXP-10]`).** `a?.f` and `a?.m[T](…)` were never built (`E1010`).
+The parser joins `[T]` and `(…)` after `?.` as it does after `.`; the checker builds a two-arm
+`match` that reads `a` as an unconsumed place (`[GRM-13]`): `None` propagates, an `Option` member
+is the result, nothing stays nothing, and a non-`Copy` field is lent (`Option[ref String]`).
+
+**`ember fmt` (D-641, D-643).** The tree keeps a name, not its spelling: a reserved word written raw
+is written raw again (the source span says it was), a raw name that is no keyword bare, and after
+`.` `is`/`not` bare. The formatter also dropped every `where` clause; it writes them now.
+
+**`where` (D-644).** The checker ignored `where T: B` on a function and an extension: it is folded
+into the parameter's brackets before checking (`desugar_where_clauses`); other subjects (`Self:
+Sized`) stay for the passes that read them.
+
+**Reserved words (D-642).** The lexer still reserved `actor`, `move`, `trait`, `loop` and `unless`,
+which 0.9.9's `[LEX-15]` no longer does: only `async`, `await`, `macro`.
+
+**`[SEL-1]` (ODR-108).** `ember inspect --alloc` also lists each declaration's mechanism
+(`effects::declarations`, `storage_mechanism`): locals, parameters and fields by the row their type
+picks, types by kind; `value`, `view`, `callable` and `raw pointer` for the types IX.0 has no row
+for. `--json` gives `declarations`; `--function` keeps that function's.
+
+**Formatting (`[TYP-39]`, ODR-109).** A `dyn` value inside a collection, an `Option` or a struct
+is written by its `Debug` through its table (a `write_debug` instance per such part, called by the
+backend's format function before it reads through the `Box`); one whose interfaces lack `Debug`
+is `E2040`, not `E0900`. `implicit_fmt_debug` appends straight into the `Formatter`'s text
+(`std.fmt.append_debug`, compiler-known) instead of building a `String`. A `Cell` shows a copy of
+its value: a non-`Copy` value with its own `Display`/`Debug` is `E2040` (`[CELL-2]`); a `Copy` one
+is copied out first, inside another value too. Left: a `Copy` value holding a class handle, with a
+written `Debug`, inside another value (`E0900`: the C copy would not retain it).
+
+**`[DIA-22]`.** `Signature` keeps its declaration's name span; a wrong count of arguments, an
+unknown named argument and a missing one are reported at the call with the callee's declaration
+(the function, or the parameter) as a secondary span, and an argument of the wrong type points at
+its parameter (`argument_of`, read by the one mismatch reporter). A count error no longer adds a
+"needs a value" error beside it (D-646), and says "1 argument".
+
+**`[RT-4]`.** A panic outside `shipping` prints `backtrace:` and the program's frames from the
+panic to `main`, each as its Ember name and declaration (`[DIA-23]`). The compiler emits a table of
+names only (C symbol, Ember name, file, line; `EMBER_SHIPPING` leaves it out), so no function is
+kept alive: a table of addresses measured +18% of the program's code. The runtime asks the
+platform which function each return address is in: `dbghelp` (loaded at the panic) with the
+program's PDB on Windows, the program's own ELF symbol table on Linux (`_Unwind_Backtrace`), and
+says so elsewhere. Release builds on Windows keep a PDB beside the program (`/Zi`, `-g`) with the
+release link unchanged (`/OPT:REF /OPT:ICF /INCREMENTAL:NO`); the program cache keeps and serves it
+under its linked name (key `program v2`), and `dbghelp` searches the program's folder. A function
+the C compiler inlined is its caller's frame. Checked: MSVC and clang, debug and release, served
+from the cache too, and Linux gcc in WSL.
+
+**`[TYP-9c]`.** A relaxed unit compiled by a C compiler that ignored (`cl`'s `D9002`) or refused
+(clang's "unknown argument", gcc's "unrecognized command-line option") a flag that relaxes it is
+`E9041`, naming the compiler, the flag and the attribute, at the first function written with it.
+No compiler here or in CI ignores one, so the detection is tested on each compiler's own words
+(`a_refused_float_flag_is_found_in_the_compilers_output`); the error page is a toolchain code
+(`error_pages.py`), and `E9041` joined the rule index's codes without a conformance test with this
+revision (`[TST-4c]`'s growth for a new specification revision).
+
+**`[CG-C-5]` on gcc.** Over the 46 benchmark programs gcc compiles, `-O2`: `noreturn` alone
+45384 bytes of hot `.text`, with `cold` 40485 (-10.8%), the same total; gcc moves the panics out.
+
+**Markers (ODR-111, `[TYP-43]`).** `Copy`, `Send`, `Sync` and `Sized` are `std.core` interfaces
+(bounds name them; `T: Send` was "cannot find interface"), answered by the compiler's analysis.
+`unsafe extend T implements Send:` (or `Sync`) writes one by hand for a struct or enum of the
+package, recorded in the type table (`ManualMarker`), a generic one per its parameters' marker
+bounds; without `unsafe` `E3100`, a class, `Copy` and `Sized` `E2040`. The rest of AUTOPILOT's B5,
+declaring each built-in type's `Display` in `std`, is not done: the table is normative, coherence
+already refuses a program's `extend i64 implements Display` (`E2121`), and an indirection through
+`std` would change nothing a program sees and slow the text every program writes.
+
+**Extensions over every type (ODR-112, `[GRM-34]`).** `extend[T, U] T implements Wrap[U]` is a
+blanket implementation every type meeting the bounds has (it was `E0900`): its methods are given to
+a type when a call names one or the interface is asked, and a call leaving `U` open takes it from
+the one instance of `Wrap` the type implements through the block (`solve_from_implementation`).
+
+**`@parallel` speed.** The chunk function kept its loop's overflow checks: in `for i in lo..hi`
+nothing bounded `lo` and `hi`. The range analysis now seeds a chunk function's `lo` and `hi` with
+the span of the loop's bounds as the code around the loop knows them (`parallel_chunk_ranges`),
+and the checks go as in the serial loop. `bench/probes/parallel_sum` (400 million turns): x1.32 of
+the hand-split C on MSVC and x1.44 on clang before, x0.99 and x1.00 after. A body that captures
+nothing crashed the backend (D-645). `display_format` (ADR-186's written `Display`): x0.62 of C
+(MSVC), x0.59 (clang).
+
+**Reviewed and kept.** `AnyError`'s type identity, a 128-bit hash of the canonical name, as Rust's
+`TypeId`: a string would make `AnyError` a view type, and a table pointer differs between units.
+`[HEAP-9]`'s alignment beyond 16 waits for `@align` and SIMD vectors, neither built.
+
 ## ADR-190 — `@parallel` loops: a closure over chunks, deterministic chunking, reductions folded in chunk order (`[PAR-1]`..`[PAR-4]`, `[PAR-2a]`)
 
 **Shape.** The checker turns `@parallel(chunk=c, reduce=[v: op, …]) for i in a..b: body` into a

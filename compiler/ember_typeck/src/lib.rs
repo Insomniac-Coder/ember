@@ -127,6 +127,9 @@ pub fn check(
     // `[ERR-3]` — `@derive(Error)` is the `extend` blocks it stands for.
     let derived = errors::desugar_error_derives(modules, sink);
     let modules: &[LoadedModule] = derived.as_deref().unwrap_or(modules);
+    // D-644 — `where P: B` on a declaration's own parameter is `P: B` in its brackets.
+    let folded = desugar_where_clauses(modules);
+    let modules: &[LoadedModule] = folded.as_deref().unwrap_or(modules);
     // A blanket implementation's parameters move onto its methods first, so
     // every later pass sees one shape (`desugar_blanket_extensions`).
     let desugared = desugar_blanket_extensions(modules);
@@ -745,6 +748,9 @@ struct Signature {
     /// `[TYP-16]` — the generic parameters this function declares, with the
     /// interfaces bounding each (`[TYP-17]`). Empty for an ordinary function.
     generics: Vec<GenericParam>,
+    /// `[DIA-22]` — the function's name where it is declared, the secondary span of a diagnostic
+    /// its signature causes at a call; `Span::DUMMY` for one the compiler made.
+    decl: Span,
 }
 
 /// The names the compiler knows as types before any module declares them
@@ -1936,6 +1942,16 @@ struct Checker<'a> {
     /// ADR-186 — each concrete type with a written `Debug`, and the
     /// `std.fmt.write_debug` instance the backend calls to format it.
     debug_writer_defs: Vec<(Ty, DefId)>,
+    /// `[TYP-39]` (ADR-191) — each `dyn` value (`Box[dyn I]`, `ref dyn I`) formatted inside another
+    /// value, whose interfaces reach `Debug`: the backend writes it through its table, by its
+    /// `std.fmt.write_debug` instance.
+    dyn_debug_holders: Vec<Ty>,
+    /// `[DIA-22]` — the argument being checked against a declared parameter: its span, and the
+    /// parameter's name and declaration, the secondary span of a mismatch on the argument.
+    argument_of: Option<(Span, Symbol, Span)>,
+    /// `[GRM-34]` (ADR-191) — each method a universal extension gave a type, with the extension's
+    /// index: a blanket parameter only its result names is the one the type's implementation fixes.
+    universal_method_defs: HashMap<DefId, usize>,
     /// Each universal implementation's interfaces, as origins over its
     /// parameter: `[(std.core.From, [T])]`.
     universal_interfaces: Vec<Vec<(Symbol, Vec<Ty>)>>,
@@ -2391,6 +2407,9 @@ impl<'a> Checker<'a> {
             blankets: Vec::new(),
             universal_extensions: Vec::new(),
             debug_writer_defs: Vec::new(),
+            dyn_debug_holders: Vec::new(),
+            argument_of: None,
+            universal_method_defs: HashMap::new(),
             universal_interfaces: Vec::new(),
             applied_universal: HashSet::new(),
             expr_consts: HashMap::new(),
@@ -3754,7 +3773,7 @@ impl<'a> Checker<'a> {
             (
                 "std.core",
                 &[
-                    "Eq", "Ord", "Ordering", "Default", "Clone", "Display", "Debug", "From", "Error", "AnyError", "Iterator", "IntoIterator", "Range", "RangeInclusive", "RangeFrom",
+                    "Eq", "Ord", "Ordering", "Default", "Clone", "Copy", "Send", "Sync", "Sized", "Display", "Debug", "From", "Error", "AnyError", "Iterator", "IntoIterator", "Range", "RangeInclusive", "RangeFrom",
                     "RangeTo", "Add", "Sub", "Mul", "Div", "FloorDiv", "Rem", "Pow", "Neg", "Not", "BitAnd", "BitOr",
                     "BitXor", "Shl", "Shr", "AddAssign", "SubAssign", "MulAssign", "DivAssign", "FloorDivAssign",
                     "RemAssign", "PowAssign", "BitAndAssign", "BitOrAssign", "BitXorAssign", "ShlAssign", "ShrAssign",
@@ -5624,7 +5643,7 @@ impl<'a> Checker<'a> {
         let symbol = format!("{}comptime{number}", ember_branding::mangle_prefix());
         let def = DefId(self.signatures.len() as u32);
         let ret = value.ty;
-        self.signatures.push(Signature {
+        self.signatures.push(Signature { decl: Span::DUMMY,
             params: Vec::new(),
             ret,
             abi: None,
@@ -5873,6 +5892,13 @@ impl<'a> Checker<'a> {
     /// implementation is, with its associated types.
     fn apply_blanket(&mut self, ty: Ty, interface: Symbol) -> bool {
         let Some((blanket, full)) = self.matching_blanket(ty, interface) else { return false };
+        // `[GRM-34]` (ADR-191) — a blanket over a parameter standing alone is a universal
+        // extension's: its methods are the type's before the instance is checked against them.
+        if matches!(self.types.kind(blanket.target), TyKind::Param { .. }) {
+            let offering: Vec<usize> =
+                (0..self.universal_extensions.len()).filter(|&index| self.universal_extensions[index].span == blanket.span).collect();
+            self.apply_universal(ty, offering);
+        }
         self.implemented.push((ty, interface, blanket.span));
         for &(name, value) in &blanket.assoc {
             if self.interface_has_assoc(interface, name) {
@@ -6667,7 +6693,7 @@ impl<'a> Checker<'a> {
             }
             param
         }));
-        let signature = Signature {
+        let signature = Signature { decl: method.span,
             params,
             ret: self.substitute_self(ret, ty),
             abi: None,
@@ -7587,7 +7613,7 @@ impl<'a> Checker<'a> {
                     } else { None };
                     let overflow = self.overflow_policy(&item.attrs, item.span);
                     let fp = self.fp_mode(&item.attrs);
-                    self.signatures.push(Signature { params, ret, abi, is_unsafe: decl.is_unsafe, overflow, fp, generics, borrows });
+                    self.signatures.push(Signature { decl: decl.name.span, params, ret, abi, is_unsafe: decl.is_unsafe, overflow, fp, generics, borrows });
                     self.record_defaults(def, decl);
                 }
                 _ => {}
@@ -7912,6 +7938,7 @@ impl<'a> Checker<'a> {
                     self.collect_derived_clone(ty, &item.attrs, item.span);
                 }
                 ast::ItemKind::Extend(decl) => {
+                    self.collect_markers(decl);
                     if self.is_generic_extension(decl) {
                         continue;
                     }
@@ -9672,7 +9699,7 @@ impl<'a> Checker<'a> {
                 param
             }));
             let instance_declaration = DefId(self.signatures.len() as u32);
-            self.signatures.push(Signature { params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, overflow: signature.overflow, fp: signature.fp, generics, borrows: signature.borrows });
+            self.signatures.push(Signature { decl: signature.decl, params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, overflow: signature.overflow, fp: signature.fp, generics, borrows: signature.borrows });
             if own_base > 0 {
                 self.generic_prefix.insert(instance_declaration, prefix.clone());
             }
@@ -10119,7 +10146,7 @@ impl<'a> Checker<'a> {
         self.type_params = saved_type_params;
         let overflow = self.overflow_policy(attrs, span);
         let fp = self.fp_mode(attrs);
-        Some((receiver, Signature { params, ret, abi: decl.abi.as_deref().map(Symbol::intern), is_unsafe: decl.is_unsafe, overflow, fp, generics, borrows }))
+        Some((receiver, Signature { decl: decl.name.span, params, ret, abi: decl.abi.as_deref().map(Symbol::intern), is_unsafe: decl.is_unsafe, overflow, fp, generics, borrows }))
     }
 
     /// Register every method in a type body or `extend` block.
@@ -10431,7 +10458,7 @@ impl<'a> Checker<'a> {
             }
         }) {
             let (ty, span, explicit) = pending.swap_remove(index);
-            let signature = Signature {
+            let signature = Signature { decl: span,
                 params: vec![(Symbol::intern("self"), ty, Mode::Borrow, span)],
                 ret: ty,
                 abi: None,
@@ -10480,6 +10507,88 @@ impl<'a> Checker<'a> {
                 format!("{kind} `{name}` has type `{shown}`, which does not implement `Clone`"),
             );
         }
+    }
+
+    /// Part IV §8, ODR-111 — the marker interfaces an `extend` names. `Send` and `Sync` are written
+    /// by hand only with `unsafe extend` (`E3100` without it: the compiler cannot check them), only
+    /// for a struct or enum of this package (a class is either only as `@sync`, its counts atomic),
+    /// with no members; a generic one holds for the instances whose arguments meet the parameters'
+    /// marker bounds. `Copy` comes from `@derive(Copy)` and `Sized` from what a type is (`E2040`).
+    /// `unsafe extend` writes markers only.
+    fn collect_markers(&mut self, decl: &ast::ExtendDecl) {
+        let markers: Vec<(&'static str, Span)> = decl
+            .implements
+            .iter()
+            .filter_map(|entry| {
+                let resolved = self.resolve_name(interface_name(entry)?);
+                let word = match resolved.as_str() {
+                    "std.core.Copy" => "Copy",
+                    "std.core.Send" => "Send",
+                    "std.core.Sync" => "Sync",
+                    "std.core.Sized" => "Sized",
+                    _ => return None,
+                };
+                Some((word, entry.span))
+            })
+            .collect();
+        if decl.is_unsafe && markers.len() != decl.implements.len() {
+            let at = decl.implements.first().map_or(decl.target.span, |entry| entry.span);
+            self.sink.emit(
+                Diagnostic::error(codes::E2040, at, "`unsafe extend` writes `Send` or `Sync` by hand, and no other interface")
+                    .help("implement the other interfaces in an `extend` block of their own")
+                    .note("an interface with methods is checked as written; only a marker needs a promise [ODR-111]"),
+            );
+        }
+        if markers.is_empty() {
+            return;
+        }
+        let generics = self.declare_generics(&decl.generics);
+        let target = self.resolve_type(&decl.target);
+        for (word, at) in markers {
+            match word {
+                "Copy" => self.sink.emit(
+                    Diagnostic::error(codes::E2040, at, "`Copy` is not written in an `extend`: declare the type `@derive(Copy)`")
+                        .note("a copy of a value that owns something would free it twice, whatever is promised; one that owns nothing is `@derive(Copy)` [STR-5], ODR-111"),
+                ),
+                "Sized" => self.sink.emit(
+                    Diagnostic::error(codes::E2040, at, "`Sized` is never written: every type but `dyn I` and an unsized foreign type is `Sized`")
+                        .note("a marker interface is derived from what a type is (Part IV §8)"),
+                ),
+                _ if !decl.is_unsafe => self.sink.emit(
+                    Diagnostic::error(codes::E3100, at, format!("implementing `{word}` by hand requires `unsafe extend`: the compiler cannot check it"))
+                        .help(format!("write `unsafe extend … implements {word}:`, with a SAFETY note saying why every thread may hold it"))
+                        .note("a type is `Send` and `Sync` by what it holds; a program says more only where it takes the responsibility [THR-8], ODR-111"),
+                ),
+                _ if target == self.common.error => {}
+                _ if matches!(self.types.kind(target), TyKind::Class(_) | TyKind::ClassInterface(_)) => self.sink.emit(
+                    Diagnostic::error(codes::E2040, at, format!("a class is `{word}` only as `@sync`: its reference counts must be atomic"))
+                        .help("declare the class `@sync`, whose fields are then checked [THR-1]"),
+                ),
+                _ if !decl.members.is_empty() => self.sink.emit(
+                    Diagnostic::error(codes::E2040, at, format!("`{word}` has no methods: an `unsafe extend` of it holds nothing else"))
+                        .help("write the methods in an `extend` block of their own"),
+                ),
+                // `[TYP-20]` — another package's type is reported where its implementations are.
+                _ if !self.declared_in_this_package(target) => {}
+                _ => {
+                    let Some((name, args)) = self.types.marker_key(target) else { continue };
+                    let send_bound = Symbol::intern("std.core.Send");
+                    let sync_bound = Symbol::intern("std.core.Sync");
+                    let args = args
+                        .iter()
+                        .map(|&arg| match *self.types.kind(arg) {
+                            TyKind::Param { index, .. } => {
+                                let bounds = generics.get(index as usize).map(|param| param.bounds.clone()).unwrap_or_default();
+                                ember_types::MarkerArg::Any { send: bounds.contains(&send_bound), sync: bounds.contains(&sync_bound) }
+                            }
+                            _ => ember_types::MarkerArg::Exact(arg),
+                        })
+                        .collect();
+                    self.types.add_manual_marker(ember_types::ManualMarker { name, send: word == "Send", sync: word == "Sync", args });
+                }
+            }
+        }
+        self.type_params.clear();
     }
 
     /// Record which interfaces a type implements, and check that every
@@ -11835,9 +11944,41 @@ impl<'a> Checker<'a> {
     /// Report the first component preventing formatting. A missing generic
     /// bound is a contract error, not an unimplemented concrete formatter.
     fn check_formattable(&mut self, ty: Ty, span: Span, operation: &str) -> bool {
-        let Some(component) = self.unformattable_part(ty, &mut HashSet::new()) else { return true };
+        let Some(component) = self.unformattable_part(ty, &mut HashSet::new()) else {
+            let mut holders = Vec::new();
+            self.dyn_parts(ty, &mut HashSet::new(), &mut holders);
+            for holder in holders {
+                if !self.dyn_debug_holders.contains(&holder) {
+                    self.dyn_debug_holders.push(holder);
+                }
+            }
+            return true;
+        };
         let shown = self.types.display(ty);
         let named = self.types.display(component);
+        // ODR-109 — a `Cell` lends its value to nothing.
+        if let Some(inner) = self.cell_inner(component)
+            && !self.types.is_copy(inner)
+        {
+            self.cell_lends_its_value(component, "Debug", span);
+            return false;
+        }
+        // `[TYP-39]` — a `dyn` value inside another is written by its `Debug`, through its table.
+        let dyn_value = |this: &Self, ty: Ty| {
+            let inner = match this.types.kind(ty) {
+                TyKind::Ref { inner, .. } => *inner,
+                _ => this.box_inner(ty).unwrap_or(ty),
+            };
+            matches!(this.types.kind(inner), TyKind::Dyn { .. })
+        };
+        if dyn_value(self, component) {
+            self.sink.emit(
+                Diagnostic::error(codes::E2040, span, format!("`{named}` does not implement `Debug`, which {operation} a `{shown}` needs"))
+                    .help("give the interface `Debug` as a parent, or write each value by itself with its `Display`")
+                    .note("a value inside a collection, an `Option` or a struct is written by its `Debug` [TYP-39]"),
+            );
+            return false;
+        }
         if self.no_implicit_debug.contains(&component) {
             let message = if component == ty {
                 format!("`{shown}` does not implement `Debug`, which {operation} it needs")
@@ -11903,7 +12044,19 @@ impl<'a> Checker<'a> {
     /// recursive user type be formatted when all its other fields can be.
     /// The capability predicate and its diagnostic share this traversal.
     fn unformattable_part(&self, ty: Ty, seen: &mut HashSet<Ty>) -> Option<Ty> {
-        // ODR-094 — Box and Cell format as the value they hold.
+        // `[TYP-39]` (ADR-191) — a `dyn` value whose interfaces reach `Debug` writes through its table.
+        if self.dyn_reaches(ty, "std.core.Debug") {
+            return None;
+        }
+        // ODR-094 — Box and Cell format as the value they hold. ODR-109 — a `Cell`'s by a copy when
+        // the value writes its own `Debug`: a value that is not `Copy` cannot be shown so, and one
+        // holding something counted is copied inside another value only by MIR (not built here).
+        if let Some(inner) = self.cell_inner(ty)
+            && self.written_debug(inner)
+            && (!self.types.is_copy(inner) || self.types.needs_drop(inner))
+        {
+            return Some(ty);
+        }
         if let Some(inner) = self.types.printed_as(ty) {
             return self.unformattable_part(inner, seen);
         }
@@ -11943,6 +12096,48 @@ impl<'a> Checker<'a> {
             }
             TyKind::Param { .. } => (!self.param_bound_named(ty, &["Display", "Debug"])).then_some(ty),
             _ => Some(ty),
+        }
+    }
+
+    /// `[TYP-39]` (ADR-191) — the `dyn` values (`Box[dyn I]`, `ref dyn I`) inside a formattable
+    /// `ty`, each reaching `Debug`: the backend writes each through its `write_debug` instance.
+    fn dyn_parts(&self, ty: Ty, seen: &mut HashSet<Ty>, out: &mut Vec<Ty>) {
+        if !seen.insert(ty) {
+            return;
+        }
+        if self.dyn_reaches(ty, "std.core.Debug") {
+            if !matches!(self.types.kind(ty), TyKind::Dyn { .. }) {
+                out.push(ty);
+            }
+            return;
+        }
+        if let Some(inner) = self.types.printed_as(ty) {
+            return self.dyn_parts(inner, seen, out);
+        }
+        if self.written_debug(ty) {
+            return;
+        }
+        match self.types.kind(ty).clone() {
+            TyKind::Range(id) => self.dyn_parts(self.types.range_def(id).repr, seen, out),
+            TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => self.dyn_parts(elem, seen, out),
+            TyKind::Tuple(items) => {
+                for item in items {
+                    self.dyn_parts(item, seen, out);
+                }
+            }
+            TyKind::Ref { inner, .. } => self.dyn_parts(inner, seen, out),
+            TyKind::Struct(id) => {
+                for field in self.types.struct_def(id).fields.clone() {
+                    self.dyn_parts(field.ty, seen, out);
+                }
+            }
+            TyKind::Enum(id) => {
+                let fields: Vec<Ty> = self.types.enum_def(id).variants.iter().flat_map(|v| v.fields.iter().map(|f| f.ty)).collect();
+                for field in fields {
+                    self.dyn_parts(field, seen, out);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -12318,6 +12513,97 @@ impl<'a> Checker<'a> {
             },
             span,
         }
+    }
+
+    /// `[EXP-10]` (ODR-107) — `a?.f` and `a?.m[T](…)` on an `Option`: `None` when `a` is `None`,
+    /// and otherwise the member of the value inside, wrapped in `Some` unless it is an `Option`
+    /// itself (then it is the result, so a chain is one `Option`) or nothing (then so is the chain).
+    /// A two-arm `match` that reads `a` as `[GRM-13]` reads a place it does not consume: a `Copy`
+    /// value inside is copied and any other borrowed, so `a` stays usable, as it does after `a.f`.
+    fn synth_opt_chain(&mut self, base: &ast::Expr, name: ast::Ident, generic_args: &[ast::GenericArg], args: Option<&[ast::Arg]>, span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let mut scrutinee = self.synth_committed(base);
+        if matches!(self.types.kind(scrutinee.ty), TyKind::Ref { .. }) {
+            scrutinee = self.read_through(scrutinee);
+        }
+        if !self.is_option(scrutinee.ty) {
+            if scrutinee.ty != self.common.error {
+                let shown = self.types.display(scrutinee.ty);
+                self.sink.emit(
+                    Diagnostic::error(codes::E2020, span, format!("`?.` needs an `Option`, not `{shown}`"))
+                        .help("use `.` on a value that is always there")
+                        .note("`a?.f` is `None` when `a` is, and the member of what it holds otherwise [EXP-10]"),
+                );
+            }
+            return error;
+        }
+        let TyKind::Enum(option_id) = *self.types.kind(scrutinee.ty) else { unreachable!("an `Option` is an enum") };
+        let payload_ty = self.types.enum_def(option_id).variants[1].fields[0].ty;
+        // The value inside, bound as a `match` binds a part of a place it does not consume.
+        let by_ref = (is_place(&scrutinee.kind) && !self.types.is_copy(payload_ty)).then_some(false);
+        let bound_ty = match by_ref {
+            Some(mutable) => self.types.intern(TyKind::Ref { mutable, inner: payload_ty }),
+            None => payload_ty,
+        };
+        self.scopes.push(HashMap::new());
+        let inner_name = Symbol::intern("$chained");
+        let bound = self.declare(Some(inner_name), bound_ty, base.span);
+        let inner = ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Path { segments: vec![ast::Ident { name: inner_name, span: base.span }] }, span: base.span };
+        let member = match args {
+            Some(args) => ast::Expr {
+                id: ast::NodeId::DUMMY,
+                kind: ast::ExprKind::MethodCall { recv: Box::new(inner), name, generic_args: generic_args.to_vec(), args: args.to_vec() },
+                span,
+            },
+            None => ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Field { base: Box::new(inner), name }, span },
+        };
+        let mut member = self.synth(&member);
+        self.scopes.pop();
+        if member.ty == self.common.error {
+            return error;
+        }
+        // A part of a place `a` that is not `Copy` is lent, as `[GRM-13]` binds it: `a?.name`
+        // is an `Option[ref String]`, and `a` keeps its value. From a temporary it moves.
+        if by_ref.is_some() && args.is_none() && is_place(&member.kind) && !self.types.is_copy(member.ty) {
+            let ty = self.types.intern(TyKind::Ref { mutable: false, inner: member.ty });
+            member = Expr { ty, kind: ExprKind::Ref { place: Box::new(member), mutable: false }, span };
+        }
+        let void = self.common.void;
+        let (result_ty, some_body, none_body) = if member.ty == void {
+            (void, hir::MatchArmBody::Expr(member), hir::MatchArmBody::Block(Block { stmts: Vec::new(), span }))
+        } else {
+            let (result_ty, some_value) = if self.is_option(member.ty) {
+                (member.ty, member)
+            } else {
+                let result_ty = self.option_of(member.ty);
+                let TyKind::Enum(result_id) = *self.types.kind(result_ty) else { unreachable!("an `Option` is an enum") };
+                (result_ty, Expr { ty: result_ty, kind: ExprKind::EnumLit { enum_id: result_id, variant: 1, fields: vec![member] }, span })
+            };
+            let TyKind::Enum(result_id) = *self.types.kind(result_ty) else { unreachable!("an `Option` is an enum") };
+            let none = Expr { ty: result_ty, kind: ExprKind::EnumLit { enum_id: result_id, variant: 0, fields: Vec::new() }, span };
+            (result_ty, hir::MatchArmBody::Expr(some_value), hir::MatchArmBody::Expr(none))
+        };
+        let some_arm = hir::MatchArm {
+            pattern: hir::Pattern {
+                ty: scrutinee.ty,
+                kind: hir::PatternKind::Variant {
+                    enum_id: option_id,
+                    variant: 1,
+                    fields: vec![hir::Pattern { ty: payload_ty, kind: hir::PatternKind::Bind { local: bound, sub: None, by_ref }, span: base.span }],
+                },
+                span,
+            },
+            guard: None,
+            body: some_body,
+            span,
+        };
+        let none_arm = hir::MatchArm {
+            pattern: hir::Pattern { ty: scrutinee.ty, kind: hir::PatternKind::Variant { enum_id: option_id, variant: 0, fields: Vec::new() }, span },
+            guard: None,
+            body: none_body,
+            span,
+        };
+        Expr { ty: result_ty, kind: ExprKind::Match { scrutinee: Box::new(scrutinee), arms: vec![some_arm, none_arm] }, span }
     }
 
     /// `[DSJ-1]`, `[DSJ-4]`, `[DSJ-5]`, `[DSJ-7]` — two views, consumed and given
@@ -17187,7 +17473,7 @@ impl<'a> Checker<'a> {
                 .collect();
             let ret = self.substitute_self(signature.ret, opaque_self);
             let opaque = DefId(self.signatures.len() as u32);
-            self.signatures.push(Signature { params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, overflow: signature.overflow, fp: signature.fp, generics: signature.generics.clone(), borrows: signature.borrows.clone() });
+            self.signatures.push(Signature { decl: signature.decl, params, ret, abi: signature.abi, is_unsafe: signature.is_unsafe, overflow: signature.overflow, fp: signature.fp, generics: signature.generics.clone(), borrows: signature.borrows.clone() });
             self.resolve_signature_assoc(opaque, opaque_self);
             // The body reads its callable parameters' bounds from here.
             let resolved_own = self.signatures[opaque.0 as usize].generics.clone();
@@ -28780,7 +29066,14 @@ impl<'a> Checker<'a> {
                 diagnostic.help("bind the value to a local first; only a place is borrowed for a `ref` (TYP-5 rule 7)")
             };
         }
-        let diagnostic = self.literal_local_help(diagnostic, &expr, expected);
+        let mut diagnostic = self.literal_local_help(diagnostic, &expr, expected);
+        // `[DIA-22]` — a mismatch an argument causes points at the parameter it is given to.
+        if let Some((argument, param, declared)) = self.argument_of
+            && argument == span
+            && declared != Span::DUMMY
+        {
+            diagnostic = diagnostic.secondary(declared, format!("parameter `{param}` is declared `{wanted}` here"));
+        }
         self.sink.emit(diagnostic);
         Expr { ty: expected, kind: ExprKind::Error, span }
     }
@@ -29744,6 +30037,10 @@ impl<'a> Checker<'a> {
             // `[ERR-2]` — `e?` is the payload, or an early return of the
             // failure.
             ast::ExprKind::Try(inner) => self.synth_try(inner, span),
+            // `[EXP-10]` — `a?.f`, `a?.m(…)`: `None` propagates.
+            ast::ExprKind::OptChain { base, name, generic_args, args } => {
+                self.synth_opt_chain(base, *name, generic_args, args.as_deref(), span)
+            }
 
             // `[LEX-19]` — an f-string builds a `String`.
             ast::ExprKind::FString(parts) => {
@@ -31218,11 +31515,7 @@ impl<'a> Checker<'a> {
             self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
         let ret = self.signatures[def.0 as usize].ret;
         if !self.arity_fits(def, args.len(), signature.len()) {
-            self.error(
-                codes::E2020,
-                span,
-                format!("`{name}` takes {} arguments, found {}", signature.len(), args.len()),
-            );
+            self.report_arity(def, format!("`{name}`"), signature.len(), args.len(), span);
         }
         let params = self.signatures[def.0 as usize].params.clone();
         let slots = self.call_argument_slots(name, args, &params);
@@ -31488,11 +31781,7 @@ impl<'a> Checker<'a> {
         }
 
         if !self.arity_fits(def, args.len(), declared.len()) {
-            self.error(
-                codes::E2020,
-                span,
-                format!("`{name}` takes {} arguments, found {}", declared.len(), args.len()),
-            );
+            self.report_arity(def, format!("`{name}`"), declared.len(), args.len(), span);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         let slots = self.call_argument_slots(name, args, &declared);
@@ -31533,7 +31822,7 @@ impl<'a> Checker<'a> {
             // check below reports; a failure here ends the call instead.
             if !self.types.is_generic(param_ty) {
                 let quiet = self.sink.mark();
-                let value = self.check_argument(&arg.value, param_ty, declared[index].2);
+                let value = self.check_argument_of(&arg.value, param_ty, declared[index].2, declared[index].0, declared[index].3);
                 if value.ty != self.common.error {
                     self.sink.rollback(quiet);
                 }
@@ -31851,6 +32140,40 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[GRM-34]` (ADR-191) — a method a universal blanket extension gave `receiver`
+    /// (`extend[T, U] T implements Wrap[U]`): each of its parameters still open that the
+    /// interface's arguments name is what the one instance of that interface `receiver`
+    /// implements through the extension says (`Wrap[Labelled]`: `U` is `Labelled`). Two instances
+    /// leave it open, for the call to name.
+    fn solve_from_implementation(&self, def: DefId, receiver: Ty, generics: &[GenericParam], solved: &mut [Option<Ty>]) {
+        let Some(&index) = self.universal_method_defs.get(&def) else { return };
+        let span = self.universal_extensions[index].span;
+        let Some(blanket) = self.blankets.iter().find(|blanket| blanket.span == span) else { return };
+        for (origin, patterns) in &blanket.interfaces {
+            let mut instances: Vec<Vec<Ty>> = self
+                .implemented
+                .iter()
+                .filter(|&&(ty, _, at)| ty == receiver && at == span)
+                .filter_map(|(_, instance, _)| match self.open_interface_origin.get(instance) {
+                    Some((named, args)) if named == origin => Some(args.clone()),
+                    _ => None,
+                })
+                .collect();
+            instances.sort();
+            instances.dedup();
+            let [args] = instances.as_slice() else { continue };
+            for (position, &pattern) in patterns.iter().enumerate() {
+                let TyKind::Param { name, .. } = *self.types.kind(pattern) else { continue };
+                if let Some(slot) = generics.iter().position(|param| param.name == name)
+                    && solved[slot].is_none()
+                    && let Some(&arg) = args.get(position)
+                {
+                    solved[slot] = Some(arg);
+                }
+            }
+        }
+    }
+
     /// `[TYP-18]` for a source-defined method. Inference, bound checks and
     /// argument re-checking intentionally mirror `synth_generic_call`; only
     /// the receiver prefix and method-specific instantiation queue differ.
@@ -31867,6 +32190,10 @@ impl<'a> Checker<'a> {
     ) -> Expr {
         self.check_direct_call_safety(def, span);
         let expected_result = self.method_call_expected.take();
+        let receiver_ty = receiver.as_ref().map(|(value, _, _)| match *self.types.kind(value.ty) {
+            TyKind::Ref { inner, .. } => inner,
+            _ => value.ty,
+        });
         let generics = self.signatures[def.0 as usize].generics.clone();
         let declared: Vec<(Symbol, Ty, Mode, Span)> = self.signatures[def.0 as usize]
             .params
@@ -31894,11 +32221,7 @@ impl<'a> Checker<'a> {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         if !self.arity_fits(def, args.len(), declared.len()) {
-            self.error(
-                codes::E2020,
-                span,
-                format!("`{name}` takes {} arguments, found {}", declared.len(), args.len()),
-            );
+            self.report_arity(def, format!("`{name}`"), declared.len(), args.len(), span);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         let slots = self.call_argument_slots(name, args, &declared);
@@ -31930,7 +32253,7 @@ impl<'a> Checker<'a> {
             // check below reports; a failure here ends the call instead.
             if !self.types.is_generic(param_ty) {
                 let quiet = self.sink.mark();
-                let value = self.check_argument(&arg.value, param_ty, declared[index].2);
+                let value = self.check_argument_of(&arg.value, param_ty, declared[index].2, declared[index].0, declared[index].3);
                 if value.ty != self.common.error {
                     self.sink.rollback(quiet);
                 }
@@ -32057,6 +32380,13 @@ impl<'a> Checker<'a> {
         }
         // D-438 — and a parameter only a solved one's binding names.
         self.solve_from_bindings(&generics, &mut solved, fixed);
+        // `[GRM-34]` (ADR-191) — and a universal blanket's parameter, from the one instance of its
+        // interface the receiver's type implements (an instance's bound recorded it).
+        if let Some(receiver) = receiver_ty
+            && solved.iter().any(Option::is_none)
+        {
+            self.solve_from_implementation(def, receiver, &generics, &mut solved);
+        }
         // D-407 — `U.Elem` is what `U`'s type says its `Elem` is, as at a
         // function's call (`[IFC-4]`): a method's own projections.
         for index in 0..generics.len() {
@@ -32252,11 +32582,7 @@ impl<'a> Checker<'a> {
             self.signatures[own.def.0 as usize].params.iter().map(|(_, ty, mode, _)| (*ty, *mode)).collect();
         let ret = self.signatures[own.def.0 as usize].ret;
         if args.len() != signature.len() {
-            self.error(
-                codes::E2020,
-                span,
-                format!("`{}` takes {} arguments, found {}", own.name, signature.len(), args.len()),
-            );
+            self.report_arity(own.def, format!("`{}`", own.name), signature.len(), args.len(), span);
             return Expr { ty: ret, kind: ExprKind::Error, span };
         }
         let env = self.read_local_expecting(LocalId(0), span, None);
@@ -32316,7 +32642,7 @@ impl<'a> Checker<'a> {
         }
         let ret = decl.ret.as_ref().map_or(self.common.void, |ty| self.resolve_type(ty));
         let def = DefId(self.signatures.len() as u32);
-        self.signatures.push(Signature {
+        self.signatures.push(Signature { decl: decl.name.span,
             params: decl
                 .params
                 .iter()
@@ -33221,6 +33547,15 @@ impl<'a> Checker<'a> {
                 );
             return implied || self.generic_bounds(index, name).contains(&interface);
         }
+        // Part IV §8, ODR-111 — a marker is what the type holds says, and what the program wrote by
+        // hand (`unsafe extend`), never a recorded implementation alone.
+        match interface.as_str() {
+            "std.core.Copy" => return self.types.is_copy(ty),
+            "std.core.Send" => return self.types.is_send(ty),
+            "std.core.Sync" => return self.types.is_sync(ty),
+            "std.core.Sized" => return !matches!(self.types.kind(ty), TyKind::Dyn { .. } | TyKind::Opaque(_)),
+            _ => {}
+        }
         // `[ENM-3]`, `[HASH-4]` — scalar/range/unit-enum equality and
         // hashing are compiler-known standard capabilities. They must satisfy
         // ordinary generic bounds too; accepting `ArenaMap[i32, V]` directly
@@ -33380,7 +33715,7 @@ impl<'a> Checker<'a> {
 
         let instance = DefId(self.signatures.len() as u32);
         let borrows = self.signatures[def.0 as usize].borrows.clone();
-        self.signatures.push(Signature {
+        self.signatures.push(Signature { decl: self.signatures[def.0 as usize].decl,
             params: concrete_params,
             ret: concrete_ret,
             abi: self.signatures[def.0 as usize].abi,
@@ -33439,7 +33774,7 @@ impl<'a> Checker<'a> {
             .collect();
         let concrete_ret = self.substitute_ty(ret, args);
         let instance = DefId(self.signatures.len() as u32);
-        self.signatures.push(Signature {
+        self.signatures.push(Signature { decl: self.signatures[def.0 as usize].decl,
             params: concrete_params,
             ret: concrete_ret,
             abi: self.signatures[def.0 as usize].abi,
@@ -34135,11 +34470,7 @@ impl<'a> Checker<'a> {
             self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
         let ret = self.signatures[def.0 as usize].ret;
         if !self.arity_fits(def, args.len(), signature.len()) {
-            self.error(
-                codes::E2020,
-                span,
-                format!("`{qualified}` takes {} arguments, found {}", signature.len(), args.len()),
-            );
+            self.report_arity(def, format!("`{qualified}`"), signature.len(), args.len(), span);
         }
         let params = self.signatures[def.0 as usize].params.clone();
         let slots = self.call_argument_slots(qualified, args, &params);
@@ -34366,17 +34697,7 @@ impl<'a> Checker<'a> {
             .collect::<Vec<_>>();
         let ret = self.signatures[def.0 as usize].ret;
         if !self.arity_fits(def, args.len(), signature.len()) {
-            self.error(
-                codes::E2020,
-                span,
-                format!(
-                    "`{}.{}` takes {} arguments, found {}",
-                    self.types.display(owner),
-                    name.name,
-                    signature.len(),
-                    args.len()
-                ),
-            );
+            self.report_arity(def, format!("`{}.{}`", self.types.display(owner), name.name), signature.len(), args.len(), span);
         }
         let params = self.signatures[def.0 as usize].params.clone();
         let params = params
@@ -34493,11 +34814,7 @@ impl<'a> Checker<'a> {
         let ret = self.substitute_self(self.signatures[def.0 as usize].ret, owner);
         let ret = self.resolve_assoc(ret, owner);
         if !self.arity_fits(def, args.len(), signature.len()) {
-            self.error(
-                codes::E2020,
-                span,
-                format!("`{}.{}` takes {} arguments, found {}", param, name.name, signature.len(), args.len()),
-            );
+            self.report_arity(def, format!("`{}.{}`", param, name.name), signature.len(), args.len(), span);
         }
         let params = self.signatures[def.0 as usize].params.clone();
         let params = params
@@ -35431,17 +35748,13 @@ impl<'a> Checker<'a> {
         }
         let params = &signature[1..];
         if args.len() != params.len() {
-            self.error(
-                codes::E2020,
-                span,
-                format!("`super.init(...)` takes {} arguments, found {}", params.len(), args.len()),
-            );
+            self.report_arity(entry.def, "`super.init(...)`".to_string(), params.len(), args.len(), span);
             return error();
         }
         let values = args
             .iter()
             .zip(params.iter())
-            .map(|(arg, (_, param_ty, mode, _))| self.check_argument(&arg.value, *param_ty, *mode))
+            .map(|(arg, (param, param_ty, mode, declared))| self.check_argument_of(&arg.value, *param_ty, *mode, *param, *declared))
             .collect();
         self.mark_class_init_base(span);
         Expr {
@@ -36097,6 +36410,9 @@ impl<'a> Checker<'a> {
             receiver = self.read_through(receiver);
         }
         self.extend_instance_at_use(receiver.ty);
+        // `[GRM-34]` (ADR-191) — every type's methods, from an extension over a parameter standing
+        // alone, are a type's when a call names one, as an associated function's are.
+        self.apply_universal_member(receiver.ty, name.name);
         // D-379 — a default method kept until a call names it exists from
         // here, for every path below that falls back to registered methods.
         self.materialize_deferred_default(receiver.ty, name.name);
@@ -36278,16 +36594,7 @@ impl<'a> Checker<'a> {
             }
             let signature = self.signatures[def.0 as usize].clone();
             if args.len() != signature.params.len() {
-                self.error(
-                    codes::E2020,
-                    span,
-                    format!(
-                        "`{}` takes {} arguments, found {}",
-                        name.name,
-                        signature.params.len(),
-                        args.len()
-                    ),
-                );
+                self.report_arity(def, format!("`{}`", name.name), signature.params.len(), args.len(), span);
             }
             let slots = self.call_argument_slots(name.name, args, &signature.params);
             let checked = self.check_bound_call_arguments(args, &signature.params, &slots, None);
@@ -37436,11 +37743,7 @@ impl<'a> Checker<'a> {
         // rest.
         let expected = signature.len().saturating_sub(1);
         if !self.arity_fits(def, args.len(), expected) {
-            self.error(
-                codes::E2020,
-                span,
-                format!("`{}` takes {expected} arguments, found {}", name.name, args.len()),
-            );
+            self.report_arity(def, format!("`{}`", name.name), expected, args.len(), span);
         }
         // `[IFC-4]` — the receiver is concrete here, so an associated type in
         // the signature resolves to what this type declared it to be.
@@ -37647,11 +37950,7 @@ impl<'a> Checker<'a> {
         // An interface declaration has no receiver in its parameter list, so
         // every declared parameter is a written argument.
         if args.len() != signature.len() {
-            self.error(
-                codes::E2020,
-                span,
-                format!("`{}` takes {} arguments, found {}", name.name, signature.len(), args.len()),
-            );
+            self.report_arity(def, format!("`{}`", name.name), signature.len(), args.len(), span);
         }
         let mut checked = vec![self.pass_receiver_to(receiver, receiver_mode, def, span)];
         let params = self.signatures[def.0 as usize].params.clone();
@@ -38016,7 +38315,7 @@ impl<'a> Checker<'a> {
             self.error(
                 codes::E2020,
                 span,
-                format!("this function takes {} arguments, found {}", signature.len(), args.len()),
+                format!("this function takes {} argument{}, found {}", signature.len(), if signature.len() == 1 { "" } else { "s" }, args.len()),
             );
             return Expr { ty: ret, kind: ExprKind::Error, span };
         }
@@ -38740,7 +39039,7 @@ impl<'a> Checker<'a> {
             }
         }
         let def = DefId(self.signatures.len() as u32);
-        self.signatures.push(Signature {
+        self.signatures.push(Signature { decl: Span::DUMMY,
             params: Vec::new(),
             ret: status_ty,
             abi: None,
@@ -38830,7 +39129,7 @@ impl<'a> Checker<'a> {
         {
             self.opaque_lambdas.insert(def);
         }
-        let signature = Signature {
+        let signature = Signature { decl: span,
             params: signature_params,
             ret,
             abi: None,
@@ -44898,6 +45197,18 @@ impl<'a> Checker<'a> {
         );
     }
 
+    /// `[DIA-22]` — a call with the wrong number of arguments, reported at the call with the
+    /// callee's declaration as a secondary span.
+    fn report_arity(&mut self, def: DefId, shown: String, declared: usize, given: usize, span: Span) {
+        let noun = if declared == 1 { "argument" } else { "arguments" };
+        let mut diagnostic = Diagnostic::error(codes::E2020, span, format!("{shown} takes {declared} {noun}, found {given}"));
+        let decl = self.signatures[def.0 as usize].decl;
+        if decl != Span::DUMMY {
+            diagnostic = diagnostic.secondary(decl, format!("{shown} is declared here"));
+        }
+        self.sink.emit(diagnostic);
+    }
+
     /// `[TYP-25]` — bind source call arguments to declared parameters.
     ///
     /// The AST preserves arguments in source order because `[EXP-1]` requires
@@ -44915,6 +45226,8 @@ impl<'a> Checker<'a> {
         args: &[ast::Arg],
         params: &[(Symbol, Ty, Mode, Span)],
     ) -> Vec<Option<usize>> {
+        // `[DIA-22]` — where the parameters are declared, for an unknown name.
+        let declared = params.first().map_or(Span::DUMMY, |param| param.3);
         let mut slots = vec![None; args.len()];
         let mut assigned = vec![false; params.len()];
         let mut next_positional = 0usize;
@@ -44926,11 +45239,12 @@ impl<'a> Checker<'a> {
                 match params.iter().position(|(param, _, _, _)| *param == name.name) {
                     Some(slot) => Some(slot),
                     None => {
-                        self.error(
-                            codes::E2020,
-                            name.span,
-                            format!("`{callee}` has no parameter `{}`", name.name),
-                        );
+                        let mut diagnostic = Diagnostic::error(codes::E2020, name.span, format!("`{callee}` has no parameter `{}`", name.name));
+                        if declared != Span::DUMMY {
+                            let names: Vec<String> = params.iter().map(|(param, ..)| format!("`{param}`")).collect();
+                            diagnostic = diagnostic.secondary(declared, format!("its parameters are {}", names.join(", ")));
+                        }
+                        self.sink.emit(diagnostic);
                         None
                     }
                 }
@@ -45095,8 +45409,13 @@ impl<'a> Checker<'a> {
             let Some((module, default)) = default else {
                 // An argument that did not bind (an unknown or repeated name)
                 // was reported already, and may be the one meant here.
-                if slots.iter().all(Option::is_some) {
-                    self.error(codes::E2020, span, format!("`{callee}` needs a value for `{name}`"));
+                if slots.iter().all(Option::is_some) && self.arity_fits(def, slots.len(), params.len()) {
+                    let declared = params[index].3;
+                    let mut diagnostic = Diagnostic::error(codes::E2020, span, format!("`{callee}` needs a value for `{name}`"));
+                    if declared != Span::DUMMY {
+                        diagnostic = diagnostic.secondary(declared, format!("`{name}` is declared here, with no default"));
+                    }
+                    self.sink.emit(diagnostic);
                 }
                 checked.push(Expr { ty, kind: ExprKind::Error, span });
                 continue;
@@ -45194,15 +45513,27 @@ impl<'a> Checker<'a> {
         let mut checked: Vec<Option<Expr>> = (0..params.len()).map(|_| None).collect();
         for (arg, slot) in args.iter().zip(slots.iter().copied()) {
             let Some(slot) = slot else { continue };
-            let (name, param_ty, mode, _) = params[slot];
+            let (name, param_ty, mode, declared) = params[slot];
             // D-284 — as the callee's declaration passes it.
             let by_address = match callee {
                 Some(callee) => self.param_by_address(callee, name, param_ty),
                 None => self.types.passed_by_address(param_ty),
             };
+            // `[DIA-22]` — a mismatch points at the parameter too.
+            let outer = self.argument_of.replace((arg.value.span, name, declared));
             checked[slot] = Some(self.check_argument_by(&arg.value, param_ty, mode, by_address));
+            self.argument_of = outer;
         }
         checked.into_iter().flatten().collect()
+    }
+
+    /// `[DIA-22]` — `check_argument` for an argument of a declared parameter: a mismatch on it is
+    /// reported where it is written, with the parameter's declaration as a secondary span.
+    fn check_argument_of(&mut self, arg: &ast::Expr, param_ty: Ty, mode: Mode, param: Symbol, declared: Span) -> Expr {
+        let outer = self.argument_of.replace((arg.span, param, declared));
+        let value = self.check_argument(arg, param_ty, mode);
+        self.argument_of = outer;
+        value
     }
 
     /// One argument, in its parameter's mode. A `mut` parameter takes the
@@ -45492,11 +45823,7 @@ impl<'a> Checker<'a> {
             let (init, values, arg_eval_order) = if self.signatures[init.0 as usize].generics.is_empty() {
                 let params = &signature_params[1..];
                 if args.len() != params.len() {
-                    self.error(
-                        codes::E2020,
-                        span,
-                        format!("`{name}()` takes {} arguments, found {}", params.len(), args.len()),
-                    );
+                    self.report_arity(init, format!("`{name}()`"), params.len(), args.len(), span);
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
                 let slots = self.call_argument_slots(name, args, params);
@@ -47327,6 +47654,71 @@ fn expand_extern_blocks(modules: &[LoadedModule], sink: &mut Sink) -> Option<Vec
         loaded.module.items = items;
     }
     Some(expanded)
+}
+
+/// D-644 — a `where` clause bounding a parameter the declaration itself declares (`fn f[T](x: T)
+/// where T: Show`, `extend[T] W[T] where T: Show`) bounds it as `[T: Show]` does: moved into the
+/// brackets, so every later pass reads one shape. A clause on anything else (`Self: Sized`, a method's
+/// clause on its owner's parameter) stays where it is, for the passes that read it there.
+fn desugar_where_clauses(modules: &[LoadedModule]) -> Option<Vec<LoadedModule>> {
+    fn fold(generics: &mut [ast::GenericParam], clauses: &mut Vec<ast::Bound>) {
+        clauses.retain(|clause| {
+            let ast::TypeKind::Path { segments, args } = &clause.subject.kind else { return true };
+            let ([subject], true) = (segments.as_slice(), args.is_empty()) else { return true };
+            let Some(param) = generics.iter_mut().find(|param| param.name.name == subject.name) else { return true };
+            param.bounds.extend(clause.bounds.iter().cloned());
+            false
+        });
+    }
+    fn methods(members: &mut [ast::Member]) {
+        for member in members {
+            if let ast::MemberKind::Fn(function) = &mut member.kind {
+                fold(&mut function.generics, &mut function.where_clause);
+            }
+        }
+    }
+    let written = |members: &[ast::Member]| {
+        members.iter().any(|member| matches!(&member.kind, ast::MemberKind::Fn(function) if !function.where_clause.is_empty()))
+    };
+    let has_one = modules.iter().any(|loaded| {
+        loaded.module.items.iter().any(|item| match &item.kind {
+            ast::ItemKind::Fn(decl) => !decl.where_clause.is_empty(),
+            ast::ItemKind::Struct(decl) => !decl.where_clause.is_empty() || written(&decl.members),
+            ast::ItemKind::Class(decl) => !decl.where_clause.is_empty() || written(&decl.members),
+            ast::ItemKind::Interface(decl) => !decl.where_clause.is_empty() || written(&decl.members),
+            ast::ItemKind::Extend(decl) => !decl.where_clause.is_empty() || written(&decl.members),
+            _ => false,
+        })
+    });
+    if !has_one {
+        return None;
+    }
+    let mut out = modules.to_vec();
+    for loaded in &mut out {
+        for item in &mut loaded.module.items {
+            match &mut item.kind {
+                ast::ItemKind::Fn(decl) => fold(&mut decl.generics, &mut decl.where_clause),
+                ast::ItemKind::Struct(decl) => {
+                    fold(&mut decl.generics, &mut decl.where_clause);
+                    methods(&mut decl.members);
+                }
+                ast::ItemKind::Class(decl) => {
+                    fold(&mut decl.generics, &mut decl.where_clause);
+                    methods(&mut decl.members);
+                }
+                ast::ItemKind::Interface(decl) => {
+                    fold(&mut decl.generics, &mut decl.where_clause);
+                    methods(&mut decl.members);
+                }
+                ast::ItemKind::Extend(decl) => {
+                    fold(&mut decl.generics, &mut decl.where_clause);
+                    methods(&mut decl.members);
+                }
+                _ => {}
+            }
+        }
+    }
+    Some(out)
 }
 
 fn desugar_blanket_extensions(modules: &[LoadedModule]) -> Option<Vec<LoadedModule>> {

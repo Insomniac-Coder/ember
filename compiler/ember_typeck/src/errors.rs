@@ -42,7 +42,18 @@ impl<'a> Checker<'a> {
             let writer = self.instantiate(def, &[ty], Vec::new(), Symbol::intern("write_debug"), span);
             self.debug_writer_defs.push((ty, writer));
         }
-        !wanted.is_empty()
+        // `[TYP-39]` (ADR-191) — and each `dyn` value formatted inside another, through its table.
+        let holders: Vec<Ty> = self
+            .dyn_debug_holders
+            .iter()
+            .copied()
+            .filter(|ty| !self.debug_writer_defs.iter().any(|(known, _)| known == ty))
+            .collect();
+        for &ty in &holders {
+            let writer = self.instantiate(def, &[ty], Vec::new(), Symbol::intern("write_debug"), Span::DUMMY);
+            self.debug_writer_defs.push((ty, writer));
+        }
+        !wanted.is_empty() || !holders.is_empty()
     }
 
     /// ADR-186 — tell the backend each written `Debug`'s function, by the
@@ -96,8 +107,7 @@ impl<'a> Checker<'a> {
             let Some(inner) = self.cell_inner(value.ty) else { break };
             let span = value.span;
             if !self.types.is_copy(inner) {
-                let shown = self.types.display(value.ty);
-                self.error(codes::E0900, span, format!("writing a `{shown}` whose value is not `Copy` by its written `Display` is not implemented yet"));
+                self.cell_lends_its_value(value.ty, "Display", span);
                 return hir::FStringPart::Value(Expr { ty: self.common.error, kind: ExprKind::Error, span }, None);
             }
             let field = Expr { ty: inner, kind: ExprKind::Field { base: Box::new(value), index: 0 }, span };
@@ -112,6 +122,20 @@ impl<'a> Checker<'a> {
             };
         }
         self.writer_piece("std.fmt.write_display", value, reached)
+    }
+
+    /// `[TYP-39]`, `[CELL-2]` (ODR-109) — a `Cell[T]` shows the `T` it holds by `T`'s written
+    /// `Display` or `Debug` only through a copy, as `get` reads it: that `fmt` is the program's code
+    /// and may `set` the cell, and a `Cell` never lends its value. A `T` that is not `Copy` cannot be
+    /// shown so (`E2040`); the text the compiler writes for it lends nothing and is always allowed.
+    pub(crate) fn cell_lends_its_value(&mut self, cell: Ty, interface: &str, span: Span) {
+        let shown = self.types.display(cell);
+        let inner = self.cell_inner(cell).map(|inner| self.types.display(inner)).unwrap_or_default();
+        self.sink.emit(
+            Diagnostic::error(codes::E2040, span, format!("`{shown}` cannot show its value by `{inner}`'s written `{interface}`, which would be lent the cell's value"))
+                .help(format!("hold the value in a `RefCell` and show `c.borrow()`, or make `{inner}` `Copy`"))
+                .note("a `Cell` never lends its value [CELL-2]; it shows a copy of it, which needs `Copy` (ODR-109)"),
+        );
     }
 
     /// ADR-186 — `{x!r}` of a `dyn` value whose interfaces include `Debug`:
@@ -200,6 +224,9 @@ impl<'a> Checker<'a> {
     /// `ref E` it was made from (`unsafe`: its value must be an `E`).
     pub(crate) fn synth_error_builtin(&mut self, name: Symbol, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Option<Expr> {
         let resolved = self.resolve_name(name);
+        if resolved.as_str() == "std.fmt.append_debug" {
+            return Some(self.synth_append_debug(args, span));
+        }
         let helper = match resolved.as_str() {
             "std.core.type_identity" => "type_identity",
             "std.core.dyn_payload" => "dyn_payload",
@@ -233,6 +260,36 @@ impl<'a> Checker<'a> {
         let boxed = Expr { ty: borrowed, kind: ExprKind::Ref { place: Box::new(boxed), mutable: false }, span };
         let to = self.types.intern(TyKind::Ref { mutable: false, inner: *ty });
         Some(Expr { ty: to, kind: ExprKind::Cast { expr: Box::new(boxed), to }, span })
+    }
+
+    /// `[STR-5]` (ADR-191) — `std.fmt.append_debug(value, out)`, compiler-known: `value`'s `Debug`
+    /// text appended to `out` (a `ref mut String`), as `{value!r}` appends it to the text an f-string
+    /// builds, so a `dyn` table's field-wise `fmt_debug` writes into the `Formatter`'s text with no
+    /// text of its own. `value` is read, not consumed.
+    fn synth_append_debug(&mut self, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let [value, out] = args else {
+            self.error(codes::E2020, span, format!("`append_debug` takes 2 arguments, found {}", args.len()));
+            return error;
+        };
+        let value = self.synth(&value.value);
+        let out = self.synth(&out.value);
+        let string_ty = self.common.string;
+        let wanted = self.types.intern(TyKind::Ref { mutable: true, inner: string_ty });
+        if out.ty != wanted {
+            let shown = self.types.display(out.ty);
+            self.error(codes::E2020, out.span, format!("`append_debug` appends to a `ref mut String`, not `{shown}`"));
+            return error;
+        }
+        if value.ty == self.common.error || !self.check_formattable(value.ty, value.span, "formatting") {
+            return error;
+        }
+        // Lent again for the append, so the `ref mut` stays where it is (`f.out`).
+        let out_span = out.span;
+        let target = Expr { ty: string_ty, kind: ExprKind::Deref(Box::new(out)), span: out_span };
+        let out = Expr { ty: wanted, kind: ExprKind::Ref { place: Box::new(target), mutable: true }, span: out_span };
+        let spec = hir::FormatSpec { kind: Some('?'), ..hir::FormatSpec::PLAIN };
+        Expr { ty: self.common.void, kind: ExprKind::Builtin { which: Builtin::FormatWith(spec), args: vec![out, value] }, span }
     }
 
     /// `[ERR-10]` — `r.context(msg)` and `r.with_context(f)` on a
@@ -475,6 +532,11 @@ impl<'a> Checker<'a> {
     }
 }
 
+/// Whether `name` is the parameter a universal extension's target is.
+fn universal_target_is(decl: &ast::ExtendDecl, name: Symbol) -> bool {
+    matches!(&decl.target.kind, ast::TypeKind::Path { segments, .. } if segments.len() == 1 && segments[0].name == name)
+}
+
 /// `[TYP-19]` (ADR-186) — whether `decl` is `extend[T] T implements I[…]`:
 /// its target is one of its own parameters, standing alone.
 pub(crate) fn universal_target(decl: &ast::ExtendDecl) -> bool {
@@ -494,16 +556,43 @@ impl<'a> Checker<'a> {
     /// extension's (`apply_generic_extensions`).
     pub(crate) fn collect_universal_extension(&mut self, decl: &ast::ExtendDecl, item: &ast::Item, item_index: usize) {
         let params = self.declare_generics(&decl.generics);
-        if params.len() != 1 || !decl.blanket.is_empty() {
+        // A parameter besides the target is a blanket's when an implemented interface names it
+        // (`[GRM-34]`, moved to `decl.blanket` and its methods); one nothing names means nothing.
+        if let Some(unnamed) = decl.generics.iter().find(|param| !universal_target_is(decl, param.name.name)) {
             self.error(
-                codes::E0900,
-                item.span,
-                "an extension over a type parameter standing alone, with other parameters besides, is not implemented yet",
+                codes::E2020,
+                unnamed.name.span,
+                format!("`{}` is named by neither the type extended nor an interface it implements", unnamed.name.name),
             );
             self.type_params.clear();
             return;
         }
         let target = self.resolve_type(&decl.target);
+        // `[GRM-34]` (ADR-191) — `extend[T, U] T implements I[U]`: every type has its methods, each
+        // generic over `U`, and `I[X]` for each `X` the bounds admit, given as a blanket
+        // implementation's are when it is asked (`apply_blanket`).
+        if !decl.blanket.is_empty() {
+            let methods = self.universal_methods(decl, item_index, params.len());
+            let recorded = self.record_blanket(decl, params.clone(), item.span);
+            self.type_params.clear();
+            self.projection_params.clear();
+            self.count_op_params.clear();
+            if recorded {
+                self.universal_interfaces.push(Vec::new());
+                self.universal_extensions.push(GenericExtension {
+                    params,
+                    target_args: vec![target],
+                    methods,
+                    interface: None,
+                    interfaces: Vec::new(),
+                    implements: Vec::new(),
+                    assoc: Vec::new(),
+                    span: item.span,
+                    declaring_module: self.current_module,
+                });
+            }
+            return;
+        }
         // ODR-097 — a parameter standing alone is no package's type, so only
         // the interface's own package may write one.
         let mut patterns = Vec::new();
@@ -519,31 +608,7 @@ impl<'a> Checker<'a> {
                 return;
             }
         }
-        let mut methods = Vec::new();
-        for (member_index, member) in decl.members.iter().enumerate() {
-            let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
-            let Some((receiver, signature)) =
-                self.generic_method_signature(fn_decl, &member.attrs, member.span, params.len())
-            else {
-                continue;
-            };
-            methods.push(GenericMethod {
-                name: fn_decl.name.name,
-                dispatch: fn_decl.dispatch,
-                has_body: fn_decl.body.is_some(),
-                receiver,
-                params: signature.params,
-                defaults: Self::declared_defaults(fn_decl),
-                ret: signature.ret,
-                generics: signature.generics,
-                borrows: signature.borrows,
-                overflow: signature.overflow,
-                fp: signature.fp,
-                source: (self.current_module, item_index, member_index),
-                vis: member.vis.kind,
-                span: member.span,
-            });
-        }
+        let methods = self.universal_methods(decl, item_index, params.len());
         let mut assoc = Vec::new();
         for member in &decl.members {
             if let ast::MemberKind::TypeAlias(alias) = &member.kind
@@ -571,6 +636,34 @@ impl<'a> Checker<'a> {
         self.count_op_params.clear();
     }
 
+    /// The methods of a universal extension, generic over its parameters (`base` of them).
+    fn universal_methods(&mut self, decl: &ast::ExtendDecl, item_index: usize, base: usize) -> Vec<GenericMethod> {
+        let mut methods = Vec::new();
+        for (member_index, member) in decl.members.iter().enumerate() {
+            let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
+            let Some((receiver, signature)) = self.generic_method_signature(fn_decl, &member.attrs, member.span, base) else {
+                continue;
+            };
+            methods.push(GenericMethod {
+                name: fn_decl.name.name,
+                dispatch: fn_decl.dispatch,
+                has_body: fn_decl.body.is_some(),
+                receiver,
+                params: signature.params,
+                defaults: Self::declared_defaults(fn_decl),
+                ret: signature.ret,
+                generics: signature.generics,
+                borrows: signature.borrows,
+                overflow: signature.overflow,
+                fp: signature.fp,
+                source: (self.current_module, item_index, member_index),
+                vis: member.vis.kind,
+                span: member.span,
+            });
+        }
+        methods
+    }
+
     /// ADR-186 — give `ty` each universal implementation offering the method
     /// or associated function `name`.
     pub(crate) fn apply_universal_member(&mut self, ty: Ty, name: Symbol) {
@@ -595,7 +688,7 @@ impl<'a> Checker<'a> {
     /// bounds `ty` meets, once each. One the type already has from its own
     /// `extend` is not given beside it: that one is `E2041` where it is
     /// written (`report_universal_overlaps`).
-    fn apply_universal(&mut self, ty: Ty, offering: Vec<usize>) {
+    pub(crate) fn apply_universal(&mut self, ty: Ty, offering: Vec<usize>) {
         if offering.is_empty() {
             return;
         }
@@ -631,6 +724,7 @@ impl<'a> Checker<'a> {
             for (method, interface) in extension.methods.iter().zip(interfaces) {
                 if let Some(def) = self.register_recipe_method(ty, report_owner, method, &bindings, interface, false) {
                     self.emit_if_used_methods.insert(def);
+                    self.universal_method_defs.insert(def, index);
                 }
             }
             let owner_params = std::mem::replace(&mut self.type_params, bindings.iter().copied().collect());
@@ -1212,6 +1306,7 @@ fn extend_item(generics: &[ast::GenericParam], target: ast::TypeExpr, implements
         vis: ast::Visibility::private(),
         doc: None,
         kind: ast::ItemKind::Extend(ast::ExtendDecl {
+            is_unsafe: false,
             generics: generics.to_vec(),
             target,
             implements,

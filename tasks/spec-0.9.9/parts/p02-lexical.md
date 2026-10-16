@@ -79,16 +79,18 @@ Self       static     struct     super      true       type       unsafe
 virtual    void       where      while      with       yield
 ```
 
-* `[LEX-15]` *(changed in 0.9.9)* The table above is the complete reserved set. **Contextual
+* `[LEX-15]` *(changed in 0.9.9)* *(changed in 0.9.10)* The table above is the complete reserved set. **Contextual
   keywords** are keywords only in the stated position and identifiers everywhere else: `abstract`
   before `class`; `from` at the start of an import; `extend` at the start of an item when the type
   it extends follows, directly or after generic parameters (`[GRM-34]`); `gen` and `once` immediately before `fn`; `safe` before `fn` in an extern block; `some`
   at the start of a type; `c` and `cpp` between `import` or `overlay` and a string; `language` and
   `threads` after `#!`; `overlay` at the start of an item, and `rename` and `hide` inside an overlay
   (`[GRM-35]`); `union` at the start of an item followed by a name, where it is reserved for a future
-  version (`E0005`), so `Set` can have its `union` method (`[STD-16]`). The reserved word `not` is
-  also a method name immediately after `fn` and after `.`, so `Not` can have its method `not`
-  (`a.not()` is `~a`, ODR-040). **Reserved for a future version** (lexed as keywords; using one as a
+  version (`E0005`), so `Set` can have its `union` method (`[STD-16]`). The reserved words `not` and
+  `is` are also method names immediately after `fn` in a type's body, an `extend` block or an
+  interface, and after `.` and `?.`, so `Not` can have its method `not` (`a.not()` is `~a`, ODR-040)
+  and `AnyError` its method `is[E]()` (`[ERR-8]`, ODR-106); a function standing alone, an item or a
+  local function, may take neither (`E0005`; `r#is` is its raw spelling). **Reserved for a future version** (lexed as keywords; using one as a
   name is `E0005`, whose message names the reservation): `async`, `await`, `macro`.
 * `[LEX-22]` *(changed in 0.9.9)* Ember has no lifetime syntax and never will. A `'` begins a
   character literal and nothing else; an unterminated one is `E0008`.

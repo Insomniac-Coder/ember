@@ -140,56 +140,14 @@ pub fn allocation_sites(
         .collect();
     let allocates = fixed_point(&known);
     let own_file = |span: Span| span != Span::DUMMY && !standard_file(span.file);
-    // A lambda is named after the function that makes it: the program's own one that names it,
-    // rather than a standard function given it to call.
-    let mut maker: HashMap<&str, usize> = HashMap::new();
-    for (index, body) in bodies.iter().enumerate() {
-        for block in &body.blocks {
-            let mut named: Vec<&str> = block
-                .stmts
-                .iter()
-                .flat_map(|stmt| match &stmt.kind {
-                    StmtKind::Assign { rvalue, .. } => rvalue_operands(rvalue),
-                    _ => Vec::new(),
-                })
-                .chain(match &block.terminator {
-                    Terminator::Call { args, .. } => args.iter().collect(),
-                    _ => Vec::new(),
-                })
-                .filter_map(|operand| match operand {
-                    Operand::Const(ember_mir::Const::Fn(symbol)) => Some(symbol.as_str()),
-                    _ => None,
-                })
-                .collect();
-            if let Terminator::Call { func: FuncRef::Direct { symbol, .. }, .. } = &block.terminator {
-                named.push(symbol.as_str());
-            }
-            for symbol in named {
-                let earlier = maker.entry(symbol).or_insert(index);
-                if standard[*earlier] && !standard[index] {
-                    *earlier = index;
-                }
-            }
-        }
-    }
-    let name = |mut index: usize| {
-        let mut name = String::new();
-        while bodies[index].is_lambda && name.len() < 200 {
-            name.push_str("lambda in ");
-            match maker.get(bodies[index].symbol.as_str()) {
-                Some(&outer) => index = outer,
-                None => return format!("{name}a function"),
-            }
-        }
-        name + &display_name(&bodies[index], types)
-    };
+    let names = function_names(bodies, types, standard);
     let mut out: Vec<AllocationSite> = Vec::new();
     let mut at: HashMap<(String, Span), usize> = HashMap::new();
     for (index, body) in bodies.iter().enumerate() {
         if standard[index] {
             continue;
         }
-        let function = name(index);
+        let function = names[index].clone();
         for (block_index, block) in body.blocks.iter().enumerate() {
             for position in 0..=block.stmts.len() {
                 let mut found = Vec::new();
@@ -246,6 +204,174 @@ pub fn allocation_sites(
         }
     }
     merged
+}
+
+/// Each function's name as the program shows it: a lambda is named after the function that makes
+/// it, the program's own one that names it rather than a standard function given it to call
+/// ("lambda in f").
+fn function_names(bodies: &[Body], types: &TypeTable, standard: &[bool]) -> Vec<String> {
+    // A lambda is named after the function that makes it: the program's own one that names it,
+    // rather than a standard function given it to call.
+    let mut maker: HashMap<&str, usize> = HashMap::new();
+    for (index, body) in bodies.iter().enumerate() {
+        for block in &body.blocks {
+            let mut named: Vec<&str> = block
+                .stmts
+                .iter()
+                .flat_map(|stmt| match &stmt.kind {
+                    StmtKind::Assign { rvalue, .. } => rvalue_operands(rvalue),
+                    _ => Vec::new(),
+                })
+                .chain(match &block.terminator {
+                    Terminator::Call { args, .. } => args.iter().collect(),
+                    _ => Vec::new(),
+                })
+                .filter_map(|operand| match operand {
+                    Operand::Const(ember_mir::Const::Fn(symbol)) => Some(symbol.as_str()),
+                    _ => None,
+                })
+                .collect();
+            if let Terminator::Call { func: FuncRef::Direct { symbol, .. }, .. } = &block.terminator {
+                named.push(symbol.as_str());
+            }
+            for symbol in named {
+                let earlier = maker.entry(symbol).or_insert(index);
+                if standard[*earlier] && !standard[index] {
+                    *earlier = index;
+                }
+            }
+        }
+    }
+    let name = |mut index: usize| {
+        let mut name = String::new();
+        while bodies[index].is_lambda && name.len() < 200 {
+            name.push_str("lambda in ");
+            match maker.get(bodies[index].symbol.as_str()) {
+                Some(&outer) => index = outer,
+                None => return format!("{name}a function"),
+            }
+        }
+        name + &display_name(&bodies[index], types)
+    };
+    (0..bodies.len()).map(name).collect()
+}
+
+/// `[SEL-1]` (ODR-108) — one declaration of the program's own and the storage mechanism its declared
+/// type uses: a row of IX.0's table, or `value`, `view`, `callable` or `raw pointer` for the types
+/// the table has no row for.
+#[derive(Clone, Debug)]
+pub struct Declaration {
+    /// `local`, `parameter`, `field` or `type`.
+    pub kind: &'static str,
+    /// The function a local or parameter belongs to; the type a field belongs to.
+    pub owner: String,
+    pub name: String,
+    pub ty: String,
+    pub mechanism: &'static str,
+    pub span: Span,
+}
+
+/// `[SEL-1]` (ODR-108) — the storage mechanism `ty` uses: the row of IX.0's table its declared type
+/// picks. A number, `bool`, `char`, `void` or range value is a `value` (its bytes, where it is); a
+/// reference, span, `str` or guard is a `view` of another's storage; a callable value holds its
+/// captured state (`callable`); a fixed array and a tuple are values like a struct.
+pub fn storage_mechanism(types: &TypeTable, ty: Ty) -> &'static str {
+    const AGGREGATE: &str = "struct, enum, tuple";
+    match types.kind(ty) {
+        TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Void | TyKind::Never | TyKind::Range(_) | TyKind::Const(_) => "value",
+        TyKind::Str | TyKind::CStr | TyKind::Span { .. } | TyKind::Ref { .. } => "view",
+        TyKind::Ptr { .. } | TyKind::Opaque(_) => "raw pointer",
+        TyKind::Fn { .. } => "callable",
+        TyKind::Vec { .. } => "Array, Map, Set, String",
+        TyKind::Class(_) | TyKind::ClassInterface(_) => "class",
+        TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::ArrayN { .. } | TyKind::Enum(_) => AGGREGATE,
+        TyKind::Dyn { .. } => "Box[T]",
+        TyKind::Struct(_) => {
+            let shown = types.display(ty);
+            let head = shown.split('[').next().unwrap_or("");
+            match head.rsplit('.').next().unwrap_or(head) {
+                "Box" => "Box[T]",
+                "Shared" => "Shared[T]",
+                "SyncShared" => "SyncShared[T]",
+                "Weak" => "Weak[O]",
+                "Arena" | "FixedArena" | "ScopedArena" | "ArenaArray" | "ArenaMap" => "Arena, FixedArena",
+                "Pool" | "Handle" => "Pool[T] + Handle[T]",
+                "Cell" | "RefCell" | "OnceCell" => "Cell[T], RefCell[T]",
+                "Mutex" | "RwLock" | "Atomic" | "Once" => "Mutex[T], RwLock[T], Atomic[T]",
+                "Map" | "Set" | "SoA" | "String" | "Array" => "Array, Map, Set, String",
+                "Ref" | "RefMut" | "MutexGuard" | "RwLockReadGuard" | "RwLockWriteGuard" | "SoARef" | "SoAMut" | "Span" | "MutSpan" => "view",
+                _ => AGGREGATE,
+            }
+        }
+        _ => AGGREGATE,
+    }
+}
+
+/// `[SEL-1]` (ODR-108) — every declaration the program writes, with the mechanism it uses: each named
+/// local and parameter of its functions, and each struct, enum and class it declares with their
+/// fields. `standard` and `standard_file` say what is the standard library's, as for
+/// `allocation_sites`.
+pub fn declarations(
+    bodies: &[Body],
+    types: &TypeTable,
+    standard: &[bool],
+    standard_file: &dyn Fn(ember_span::FileId) -> bool,
+) -> Vec<Declaration> {
+    let own = |span: Span| span != Span::DUMMY && !standard_file(span.file);
+    let names = function_names(bodies, types, standard);
+    let mut out = Vec::new();
+    for (_, def) in types.structs() {
+        if !own(def.span) || def.origin.is_some() || def.name.as_str().contains('$') || def.name.as_str().starts_with("closure") {
+            continue;
+        }
+        out.push(Declaration { kind: "type", owner: String::new(), name: def.name.to_string(), ty: "struct".into(), mechanism: "struct, enum, tuple", span: def.span });
+        for field in &def.fields {
+            out.push(Declaration { kind: "field", owner: def.name.to_string(), name: field.name.to_string(), ty: types.display(field.ty), mechanism: storage_mechanism(types, field.ty), span: field.span });
+        }
+    }
+    for (_, def) in types.classes() {
+        if !own(def.span) {
+            continue;
+        }
+        out.push(Declaration { kind: "type", owner: String::new(), name: def.name.to_string(), ty: "class".into(), mechanism: "class", span: def.span });
+        for field in &def.fields {
+            out.push(Declaration { kind: "field", owner: def.name.to_string(), name: field.name.to_string(), ty: types.display(field.ty), mechanism: storage_mechanism(types, field.ty), span: field.span });
+        }
+    }
+    for (_, def) in types.enums() {
+        if !own(def.span) || def.origin.is_some() || def.name.as_str().starts_with("Option_") || def.name.as_str().starts_with("Result_") {
+            continue;
+        }
+        out.push(Declaration { kind: "type", owner: String::new(), name: def.name.to_string(), ty: "enum".into(), mechanism: "struct, enum, tuple", span: def.span });
+    }
+    for (index, body) in bodies.iter().enumerate() {
+        if standard[index] || !own(body.span) {
+            continue;
+        }
+        for decl in &body.locals {
+            let kind = match decl.kind {
+                ember_mir::LocalKind::Arg => "parameter",
+                ember_mir::LocalKind::User => "local",
+                _ => continue,
+            };
+            let Some(name) = decl.name.as_deref() else { continue };
+            // A lambda's environment is the compiler's, not a declaration of the program.
+            let peeled = match types.kind(decl.ty) {
+                TyKind::Ref { inner, .. } => *inner,
+                _ => decl.ty,
+            };
+            if body.is_lambda && matches!(types.kind(peeled), TyKind::Struct(id) if types.struct_def(*id).name.as_str().starts_with("closure")) {
+                continue;
+            }
+            if name.starts_with('$') || name.starts_with('_') && name.len() > 1 && name[1..].starts_with('_') || !own(decl.span) {
+                continue;
+            }
+            out.push(Declaration { kind, owner: names[index].clone(), name: name.to_string(), ty: types.display(decl.ty), mechanism: storage_mechanism(types, decl.ty), span: decl.span });
+        }
+    }
+    out.sort_by_key(|d| (d.span.file, d.span.start));
+    out.dedup_by(|a, b| a.kind == b.kind && a.owner == b.owner && a.name == b.name && a.span == b.span);
+    out
 }
 
 /// A method with the type it belongs to (`std.collections.Map.insert`), else the function's name.

@@ -314,12 +314,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// A method's name, after `fn` or `.`: an identifier, or `not`, which
-    /// is a keyword only where an operand is expected. Part IV §8's `Not`
-    /// interface has the method `not` (`~x`), and a reserved word that blocks
-    /// a standard-library method name is contextual (ODR-040, as ODR-030 made
-    /// `extend`). ADR-186 — so is `is`, which is an operator only between two
-    /// operands: `[ERR-8]`'s `AnyError` has the method `is[E]()`.
+    /// A method's name, after `fn` in a type's body, `.` or `?.`: an identifier, or `not` or `is`,
+    /// which are keywords only where an operand or an operator is expected (`[LEX-15]`). Part IV
+    /// §8's `Not` interface has the method `not` (`~x`, ODR-040) and `[ERR-8]`'s `AnyError` the
+    /// method `is[E]()` (ODR-106): a reserved word that blocks a standard-library method name is
+    /// contextual there, as ODR-030 made `extend`.
     fn expect_member_name(&mut self) -> Ident {
         let name = match self.peek() {
             TokenKind::Keyword(Kw::Not) => Some("not"),
@@ -332,6 +331,26 @@ impl<'a> Parser<'a> {
             return Ident { name: Symbol::intern(name), span };
         }
         self.expect_ident()
+    }
+
+    /// A function's name where it stands alone (an item or a local function): an identifier.
+    /// `not` and `is` name methods only (`[LEX-15]`, ODR-106); one here is `E0005`, and the parse
+    /// goes on with the name so the rest of the declaration is checked.
+    fn expect_fn_name(&mut self) -> Ident {
+        let word = match self.peek() {
+            TokenKind::Keyword(Kw::Not) => "not",
+            TokenKind::Keyword(Kw::Is) => "is",
+            _ => return self.expect_ident(),
+        };
+        let span = self.span();
+        self.bump();
+        self.report(
+            Diagnostic::error(codes::E0005, span, format!("`{word}` is a reserved word; only a method may be named `{word}`"))
+                .primary_label("a function standing alone")
+                .help(format!("write `r#{word}` to use it as this function's name, or declare it in a type's body"))
+                .note("`not` and `is` are method names only after `fn` in a type's body, `.` and `?.` [LEX-15]"),
+        );
+        Ident { name: Symbol::intern(word), span }
     }
 
     /// Emit a diagnostic, respecting `[AST-2]`'s cascade limit.

@@ -38,7 +38,7 @@
     "FN-6": "an `unsafe fn` cannot become a callable value yet (E0900), and only the C function-pointer ABI is built: tests/conformance/UNS-1/reject_unsafe_function_value_without_unsafe_callable_type.em",
     "FN-5": "a parameter default doing float work that the caller's mode cannot keep is refused: docs/NOT-IMPLEMENTED.md N7",
     "TYP-16": "a generic type alias is refused (E0900): ember_typeck",
-    "TYP-36": "formatting some types the table says implement `Display`/`Debug` is refused (E0900 `... is not implemented yet`): ember_typeck",
+    "TYP-36": "a `Cell` of a `Copy` value holding something counted (a class handle), whose type writes its own `Debug`, inside another value is refused (E0900): the C formatter would copy it without the retain MIR gives a copy (ADR-191): ember_typeck",
     "CLS-2": "a class `init` assigning a field twice, or overwriting a conditionally initialised one, is refused (`in this phase`): ember_typeck",
     "GRM-38": "a generator expression with a second `for` is refused as a value (E0900): its `flat_map` over inner generators that borrow both their source and the outer clause's names gets no single source relation from the region analysis (`FlatMap.next`, E3065)",
     "SIMD-5": "a loop calling a function, or with a float running total, is not put in vectorisable form: docs/NOT-IMPLEMENTED.md N4, N5",

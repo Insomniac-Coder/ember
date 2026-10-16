@@ -115,6 +115,11 @@ def ember() -> Path:
 # A code the debug runtime reports rather than the compiler (`[WK-15]`): its
 # page's programs are run, and the fixed one must run without reporting it.
 RUNTIME_CODES = {"L3017"}
+# A code the C toolchain decides (`[TYP-9c]`'s `E9041`: a C compiler that ignores or refuses the
+# flag an attribute needs): its `fails` program is valid Ember, rejected only by such a compiler,
+# which no machine this runs on has; it must check clean, and the detection is tested in
+# `ember_build` against each compiler's own message.
+TOOLCHAIN_CODES = {"E9041"}
 
 
 def run(source: str, work: Path, manifest: str | None = None, command: str = "check") -> tuple[int, str]:
@@ -175,6 +180,12 @@ def check_page(path: Path, work: Path) -> list[str]:
             elif code not in output:
                 problems.append(
                     f"{code}: the ```ember,fails program compiled without emitting {code}"
+                )
+        elif code in TOOLCHAIN_CODES:
+            if status != 0:
+                problems.append(
+                    f"{code}: the ```ember,fails program is rejected without the toolchain:\n"
+                    + "\n".join("      " + line for line in output.splitlines()[:6])
                 )
         elif status == 0:
             problems.append(f"{code}: the ```ember,fails program compiled")

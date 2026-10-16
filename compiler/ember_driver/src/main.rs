@@ -178,6 +178,22 @@ fn retain_referenced_standard_bodies(
     bodies.retain(|body| !standard(body) || keep.contains(&body.symbol));
 }
 
+/// `[TYP-9c]` — a C compiler that ignored or refused the flag relaxing a unit's floating point
+/// cannot honour `@fastmath` or `@fp(contract)`: `E9041`, naming it and the attribute, at the first
+/// function written with it. An attribute is never ignored (`[PHIL-12]`). Whether `error` was that.
+fn report_float_mode_refused(sink: &mut Sink, bodies: &[ember_mir::Body], error: &ember_build::BuildError) -> bool {
+    let ember_build::BuildError::FloatModeRefused { toolchain, flag, fast } = error else { return false };
+    let (attribute, mode) =
+        if *fast { ("@fastmath", ember_types::FpMode::Fast) } else { ("@fp(contract)", ember_types::FpMode::Contract) };
+    let span = bodies.iter().find(|body| body.fp == mode && !body.span.is_dummy()).map_or(Span::DUMMY, |body| body.span);
+    sink.emit(
+        Diagnostic::error(codes::E9041, span, format!("`{toolchain}` cannot compile a function with `{attribute}` as written: it does not take `{flag}`"))
+            .help("build with a C compiler that takes it (MSVC from Visual Studio 2022 17.0, clang or gcc), or remove the attribute")
+            .note("an attribute is never ignored, and its floating point is built per function [TYP-9c]"),
+    );
+    true
+}
+
 fn verify_callable_regions_or_panic(bodies: &[ember_mir::Body], types: &TypeTable) {
     let violations = ember_analysis::verify_callable_regions_all(bodies, types);
     if !violations.is_empty() {
@@ -1151,6 +1167,15 @@ fn print_alloc_report(
             .into_iter()
             .filter(|site| request.function.as_deref().is_none_or(|name| site.function == name))
             .collect();
+    // `[SEL-1]` (ODR-108) — and the mechanism each declaration uses; with `--function`, its
+    // parameters and locals.
+    let declarations: Vec<ember_analysis::Declaration> =
+        ember_analysis::declarations(bodies, types, &standard, &|file| standard_files.contains(&file))
+            .into_iter()
+            .filter(|declaration| {
+                request.function.as_deref().is_none_or(|name| declaration.owner == name && declaration.kind != "field")
+            })
+            .collect();
     if request.json {
         let sites: Vec<serde_json::Value> = sites
             .iter()
@@ -1162,7 +1187,20 @@ fn print_alloc_report(
                 })
             })
             .collect();
-        println!("{}", serde_json::json!({ "schema": 1, "sites": sites }));
+        let declarations: Vec<serde_json::Value> = declarations
+            .iter()
+            .map(|declaration| {
+                serde_json::json!({
+                    "kind": declaration.kind,
+                    "owner": declaration.owner,
+                    "name": declaration.name,
+                    "type": declaration.ty,
+                    "mechanism": declaration.mechanism,
+                    "source": map.location(declaration.span),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::json!({ "schema": 1, "sites": sites, "declarations": declarations }));
         return Ok(());
     }
     println!("Allocation sites: {}", input.display());
@@ -1174,6 +1212,19 @@ fn print_alloc_report(
     }
     for site in &sites {
         println!("  {} {}: {}", site.function, map.location(site.span), site.operations.join(", "));
+    }
+    println!("Storage mechanisms:");
+    if declarations.is_empty() {
+        println!("  none");
+    }
+    for declaration in &declarations {
+        let name = match declaration.kind {
+            "field" => format!("{}.{}", declaration.owner, declaration.name),
+            "type" => format!("{} {}", declaration.ty, declaration.name),
+            _ => format!("{} {} `{}`", declaration.owner, declaration.kind, declaration.name),
+        };
+        let ty = if declaration.kind == "type" { String::new() } else { format!(": {}", declaration.ty) };
+        println!("  {}: {name}{ty} -> {}", map.location(declaration.span), declaration.mechanism);
     }
     Ok(())
 }
@@ -2915,11 +2966,16 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             let c_path = layout.c.join(&name);
             std::fs::write(&c_path, source).map_err(|e| e.to_string())?;
             let object = layout.obj.join(format!("{}.{object_ext}", name.trim_end_matches(".c")));
-            match relaxed {
+            let compiled = match relaxed {
                 None => ember_build::compile_object(&toolchain, &c_path, &includes, &object, options.profile),
                 Some(fast) => ember_build::compile_relaxed_object(&toolchain, &c_path, &includes, &object, options.profile, fast),
+            };
+            if let Err(error) = compiled {
+                if report_float_mode_refused(&mut sink, &bodies, &error) {
+                    return Ok(finish(&sink, &map, options));
+                }
+                return Err(error.to_string());
             }
-            .map_err(|e| e.to_string())?;
             eprintln!("built {}", object.display());
         }
         return Ok(finish(&sink, &map, options));
@@ -3020,15 +3076,19 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         let unit = layout.c.join(format!("{module_name}.{}.c", mode.name()));
         std::fs::write(&unit, source).map_err(|e| e.to_string())?;
         let object = layout.obj.join(format!("{module_name}.{}.{object_ext}", mode.name()));
-        ember_build::compile_relaxed_object_for_executable(
+        if let Err(error) = ember_build::compile_relaxed_object_for_executable(
             &toolchain,
             &unit,
             &includes,
             &object,
             options.profile,
             *mode == ember_types::FpMode::Fast,
-        )
-        .map_err(|e| e.to_string())?;
+        ) {
+            if report_float_mode_refused(&mut sink, &bodies, &error) {
+                return Ok(finish(&sink, &map, options));
+            }
+            return Err(error.to_string());
+        }
         sources.push(object);
     }
     // The C header and executable expose the same definitions. Root selected

@@ -2843,8 +2843,13 @@ impl<'a> Builder<'a> {
                         operands.push(Operand::Const(Const::Fn(self.program.function(*closure).symbol.clone())));
                         operands.push(self.lower_operand(&args[3]));
                     }
+                    // A body that captures nothing is the function itself, named directly.
                     None => {
-                        operands.push(self.lower_operand(&args[3]));
+                        let body = match &args[3].kind {
+                            hir::ExprKind::FnValue(def) => Operand::Const(Const::Fn(self.program.function(*def).symbol.clone())),
+                            _ => self.lower_operand(&args[3]),
+                        };
+                        operands.push(body);
                         operands.push(Operand::Const(Const::Void));
                     }
                 }
@@ -3115,6 +3120,22 @@ impl<'a> Builder<'a> {
                 self.push(StmtKind::Assign { place: Place::local(slot), rvalue: Rvalue::Use(at) });
                 let mutable = matches!(self.types.kind(expr.ty), TyKind::Ref { mutable: true, .. });
                 self.push(StmtKind::Assign { place, rvalue: Rvalue::Ref { place: view.index(slot), mutable } });
+            }
+            // `[STR-5]` (ADR-191) — `std.fmt.append_debug`: the value's text appended to a
+            // `String` through a `ref mut`, as an f-string piece appends it: the value borrowed,
+            // and its type the one the backend formats.
+            hir::ExprKind::Builtin { which: which @ (hir::Builtin::Format | hir::Builtin::FormatWith(_)), args } if args.len() == 2 => {
+                let target = self.lower_operand(&args[0]);
+                let value = self.lower_operand_borrowed(&args[1]);
+                self.at(expr.span);
+                let next = self.new_block();
+                self.terminate(Terminator::Call {
+                    func: FuncRef::Builtin { which: *which, arg_ty: args[1].ty },
+                    args: vec![target, value],
+                    dest: place,
+                    next,
+                });
+                self.current = next;
             }
             hir::ExprKind::Builtin { which, args } => {
                 // `arg_ty` is what the backend picks its implementation from.

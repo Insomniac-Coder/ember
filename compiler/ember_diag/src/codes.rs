@@ -393,6 +393,7 @@ codes! {
     E9035 = (Error, 9035, Build, "[HR-12a]", "packages in one process disagree about the object-header layout");
     E9036 = (Error, 9036, Build, "[HR-29]", "a reloadable package may not link the runtime statically");
     E9037 = (Error, 9037, Build, "[ABI-2]", "reload ABI mismatch on image load");
+    E9041 = (Error, 9041, Build, "[TYP-9c]", "the C compiler cannot honour a floating-point attribute");
 
     // --- warnings --------------------------------------------------------------
     W0001 = (Warning, 1, Lex, "[LEX-11]", "dangling doc comment");

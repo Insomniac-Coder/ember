@@ -288,7 +288,9 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 0.9.10_Hardened_6 adds ODR-102, owned callable values (§H.11);
 0.9.10_Hardened_7 adds ODR-103, a lambda outliving its captures is `E3026` (§H.12);
 0.9.10_Hardened_8 adds ODR-104, a constructor's `return` and its receiver (§H.13);
-0.9.10_Hardened_9 adds ODR-105, `E2104` for a `let` field assigned outside `init` (§H.14).
+0.9.10_Hardened_9 adds ODR-105, `E2104` for a `let` field assigned outside `init` (§H.14);
+0.9.10_Hardened_10 adds ODR-106 to ODR-112, the owner's `is` and `?.` and the agents' open
+questions (§H.15).
 
 | ODR | Ruling | Rules |
 |---|---|---|
@@ -377,6 +379,13 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 | ODR-103 | ruled under the delegation (2026-10-12, autopilot): a lambda that borrows, stored or sent where no view may go, is shape B9's `E3026` (a closure outlives what it captures), help `owned fn` or `thread.scope()`; `E3063` stays for other views | `[CLO-3]`, `[CLO-4]`, `[THR-10]` |
 | ODR-104 | ruled under the delegation (2026-10-12, autopilot): a `return` from a class `init`, like the end of its body, hands the object to its caller, so every field without a default is assigned on that path (`E2100`); `mut self` in a class `init` is accepted and means the same as `self` | `[CLS-2]`, `[STR-6]` |
 | ODR-105 | ruled under the delegation (2026-10-12, autopilot): a `let` field assigned outside its `init` is `E2104`, a code of its own beside `E2103` | `[CLS-9]` |
+| ODR-106 | ruled under the delegation (2026-10-16, the owner: "allow ?.is()", "make it an error"): `is` is a method name after `fn` in a type's body, `.` and `?.`, as `not` is (ODR-040), so `AnyError` has `is[E]()`; a function standing alone may take neither `not` nor `is` (`E0005`) | `[LEX-15]`, `[ERR-8]` |
+| ODR-107 | ruled under the delegation (2026-10-16): optional chaining `a?.f`, `a?.m[T](…)` on an `Option`: `None` when `a` is, else the member wrapped in `Some` unless it is an `Option` (then it is the result) or nothing; `a` read as an unconsumed place, a non-`Copy` field lent | `[EXP-10]` |
+| ODR-108 | ruled under the delegation (2026-10-16, the owner: "fix all the stuff yourself"): `[SEL-1]` reports every local, parameter and field by the row its type picks and every type by its kind; a type with no row is a `value`, a `view`, a `callable` or a `raw pointer` | `[SEL-1]` |
+| ODR-109 | ruled under the delegation (2026-10-16): a `Cell` shows a copy of its value, as `get` reads it; a non-`Copy` value that writes its own `Display` or `Debug` is not shown from a `Cell` (`E2040`), since a `Cell` lends its value to nothing | `[TYP-39]`, `[CELL-2]` |
+| ODR-110 | ruled under the delegation (2026-10-16): `[MAN-8]` names the keys of `[c]` (`compiler`, `flags`), `[link]` (`libs`), `[jobs]` (`workers`), `[realtime]` (`contracts`) and `[ffi]` (`evidence`); any other key or section is `E9001` | `[MAN-8]` |
+| ODR-111 | ruled under the delegation (2026-10-16): the marker interfaces are `std.core`'s, usable as bounds; `unsafe extend T implements Send|Sync:` writes one by hand for a struct or enum of the package (generic ones per their parameters' marker bounds), `E3100` without `unsafe`; a class only as `@sync`, `Copy` only by `@derive(Copy)`, `Sized` never (`E2040`) | `[TYP-43]`, Part IV §8, grammar `extend_decl` |
+| ODR-112 | ruled under the delegation (2026-10-16): an extension may target a parameter standing alone with blanket parameters besides (`extend[T, U] T implements Wrap[U]`); a call leaving a blanket parameter open takes it from the one instance of the interface the receiver's type implements through the block | `[GRM-34]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -712,3 +721,34 @@ Generated: every rule whose text differs from 0.9.10_Hardened_8.
 | Rule | 0.9.10_Hardened_8 → 0.9.10_Hardened_9 |
 |---|---|
 | `[CLS-9]` | changed |
+
+## H.15 Changes in 0.9.10_Hardened_10 (from 0.9.10_Hardened_9)
+
+**0.9.10_Hardened_10** records ODR-106 to ODR-112, ruled under the owner's delegation on 2026-10-16
+(`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-191):
+
+* `is` is a method name after `fn` in a type's body, `.` and `?.`, as `not` is; a function standing
+  alone may take neither (`[LEX-15]`, ODR-106).
+* Optional chaining is `[EXP-10]`: `None` propagates, an `Option` member is the result, a field that
+  is not `Copy` is lent (ODR-107).
+* What a declaration is, and what a type with no row of IX.0's table is reported as, in
+  `[SEL-1]` (ODR-108).
+* A `Cell` shows a copy of its value; a non-`Copy` value with its own `Display` or `Debug` is not
+  shown from one (`[TYP-39]`, ODR-109).
+* The keys of `[c]`, `[link]`, `[jobs]`, `[realtime]` and `[ffi]`, in `[MAN-8]` (ODR-110).
+* The marker interfaces are `std.core`'s and usable as bounds; `Send` and `Sync` are written by
+  hand with `unsafe extend` (`[TYP-43]`, the grammar's `extend_decl`, ODR-111).
+* An extension over a parameter standing alone may have blanket parameters, taken at a call from
+  the receiver's one instance of the interface (`[GRM-34]`, ODR-112).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_9.
+
+| Rule | 0.9.10_Hardened_9 → 0.9.10_Hardened_10 |
+|---|---|
+| `[EXP-10]` | added |
+| `[GRM-34]` | changed |
+| `[LEX-15]` | changed |
+| `[MAN-8]` | changed |
+| `[SEL-1]` | changed |
+| `[TYP-39]` | changed |
+| `[TYP-43]` | added |

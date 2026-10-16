@@ -34,6 +34,21 @@ pub interface Default:
 pub interface Clone:
     fn clone(self) -> Self
 
+## Part IV §8's marker interfaces: no methods. The compiler says which types have them, from what
+## they hold (derived automatically: `[THR-8]`, `@derive(Copy)`); a program writes `Send` or `Sync`
+## by hand only with `unsafe extend` (ODR-111), and `Copy` and `Sized` never.
+pub interface Copy:
+    pass
+
+pub interface Send:
+    pass
+
+pub interface Sync:
+    pass
+
+pub interface Sized:
+    pass
+
 ## Part IV §8 — a value's text, as `f"{x}"`, `print(x)` and `main`'s error
 ## write it. The numbers, `bool`, `char`, text, the collections, tuples,
 ## `Option`, `Result`, `Box` and `Cell` have it from the table of

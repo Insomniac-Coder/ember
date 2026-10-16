@@ -323,6 +323,14 @@ pub enum BuildError {
         command: String,
         output: String,
     },
+    /// `[TYP-9c]` — the C compiler ignored or refused a flag that relaxes floating point for one
+    /// unit (`/fp:contract` on an MSVC that predates it): `@fastmath` (`fast`) or `@fp(contract)`
+    /// cannot be honoured as written, and an attribute is never ignored (`E9041`).
+    FloatModeRefused {
+        toolchain: String,
+        flag: String,
+        fast: bool,
+    },
 }
 
 impl std::fmt::Display for BuildError {
@@ -338,6 +346,10 @@ impl std::fmt::Display for BuildError {
             }
             BuildError::ArchiverFailed { command, output } => {
                 write!(f, "the archive tool failed\n  command: {command}\n{output}")
+            }
+            BuildError::FloatModeRefused { toolchain, flag, fast } => {
+                let attribute = if *fast { "@fastmath" } else { "@fp(contract)" };
+                write!(f, "`{toolchain}` does not take `{flag}`, which `{attribute}` needs")
             }
         }
     }
@@ -583,12 +595,21 @@ fn compile_and_link_impl(
             // Object files land in obj/, keeping the C directory readable.
             command.arg(format!("/Fo{}\\", request.obj_dir.display()));
             command.arg(format!("/Fe{}", request.output.display()));
-            if request.profile == Profile::Debug {
+            if request.profile != Profile::Shipping {
                 command.arg(format!("/Fd{}\\", request.obj_dir.display()));
+            }
+            // `[RT-4]` — symbols for a release's backtrace, and the release link as it was: `/Zi`
+            // makes `cl` link with `/DEBUG`, which would turn these off.
+            if request.profile == Profile::Release {
+                command.args(["/link", "/OPT:REF", "/OPT:ICF", "/INCREMENTAL:NO"]);
             }
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.arg("-o").arg(&request.output);
+            // `[RT-4]` — as for MSVC: `-g` links with `/DEBUG`, which turns these off.
+            if cfg!(windows) && request.profile == Profile::Release {
+                command.args(["-Wl,/OPT:REF", "-Wl,/OPT:ICF", "-Wl,/INCREMENTAL:NO"]);
+            }
         }
     }
     let started = std::time::SystemTime::now();
@@ -636,7 +657,8 @@ impl CachedProgram {
     /// `None` when a source cannot be read: the compiler reports it.
     fn find(dir: &Path, toolchain: &Toolchain, command: &Command, request: &LinkRequest) -> Option<CachedProgram> {
         let mut key = Key::new();
-        key.part(b"program v1");
+        // v2: a program is kept with its PDB (`[RT-4]`); one kept before has none.
+        key.part(b"program v2");
         key.part(command.get_program().as_encoded_bytes());
         for arg in command.get_args() {
             match request.sources.iter().find(|source| source.as_os_str() == arg) {
@@ -682,8 +704,16 @@ impl CachedProgram {
         if std::fs::copy(&program, output).is_err() {
             return false;
         }
+        // `[RT-4]` — its symbols, under the name the program looks for them by (`dbghelp` looks
+        // beside the program for the PDB file it was linked with).
+        let symbols = program.with_extension("pdb");
+        if let (true, Ok(name), Some(dir)) =
+            (symbols.is_file(), std::fs::read_to_string(program.with_extension("pdbname")), output.parent())
+        {
+            let _ = std::fs::copy(&symbols, dir.join(name.trim()));
+        }
         // Used now: the trim removes the least recently used first.
-        for file in [program, self.manifest()] {
+        for file in [program.with_extension("pdb"), program.with_extension("pdbname"), program, self.manifest()] {
             if let Ok(open) = std::fs::File::options().write(true).open(file) {
                 let _ = open.set_modified(std::time::SystemTime::now());
             }
@@ -729,6 +759,16 @@ impl CachedProgram {
         let program = self.dir.join(&name);
         if std::fs::create_dir_all(&self.dir).is_err() {
             return;
+        }
+        // `[RT-4]` — a program's PDB, kept beside it with the file name it was linked with, before
+        // the program itself: `serve` gives it back under that name.
+        let symbols = request.output.with_extension("pdb");
+        if !program.is_file()
+            && symbols.is_file()
+            && let Some(file_name) = symbols.file_name()
+            && std::fs::copy(&symbols, program.with_extension("pdb")).is_ok()
+        {
+            write_atomically(&program.with_extension("pdbname"), &file_name.to_string_lossy());
         }
         if !program.is_file() {
             // Copied in under a temporary name: another build sees the whole
@@ -882,6 +922,13 @@ fn compile_relaxed_object_impl(
 ) -> Result<(), BuildError> {
     if let Some(parent) = output.parent() { std::fs::create_dir_all(parent)?; }
     let mut command = compiler_command(toolchain);
+    // `[TYP-9c]` — the flags that relax this unit, beyond the profile's own.
+    let (relaxed, strict): (Vec<&str>, Vec<&str>) = match toolchain {
+        Toolchain::Msvc { cl, .. } if is_clang_cl(cl) => (relaxed_clang_cl_flags(profile, fast), msvc_flags(profile)),
+        Toolchain::Msvc { .. } => (relaxed_msvc_flags(profile, fast), msvc_flags(profile)),
+        Toolchain::Clang(_) | Toolchain::Gcc(_) => (relaxed_gnu_flags(profile, fast), gnu_flags(profile)),
+    };
+    let relaxing: Vec<&str> = relaxed.iter().copied().filter(|flag| !strict.contains(flag)).collect();
     match toolchain {
         Toolchain::Msvc { cl, .. } => {
             if is_clang_cl(cl) {
@@ -900,7 +947,45 @@ fn compile_relaxed_object_impl(
             command.arg(source).arg("-o").arg(output);
         }
     }
-    run(command)
+    let refused = |text: &str| {
+        refused_relaxation(text, &relaxing).map(|flag| BuildError::FloatModeRefused {
+            toolchain: toolchain_name(toolchain),
+            flag: flag.to_string(),
+            fast,
+        })
+    };
+    match run_output(command) {
+        Ok(done) => {
+            let text = format!("{}{}", String::from_utf8_lossy(&done.stdout), String::from_utf8_lossy(&done.stderr));
+            refused(&text).map_or(Ok(()), Err)
+        }
+        Err(BuildError::CompilerFailed { command, output }) => {
+            Err(refused(&output).unwrap_or(BuildError::CompilerFailed { command, output }))
+        }
+        Err(other) => Err(other),
+    }
+}
+
+/// `[TYP-9c]` — which of the flags relaxing a unit's floating point the C compiler's output says
+/// it ignored (MSVC's `D9002`, "ignoring unknown option") or refused (clang's "unknown argument",
+/// gcc's "unrecognized command-line option"), if any.
+fn refused_relaxation<'a>(output: &str, relaxing: &[&'a str]) -> Option<&'a str> {
+    const REFUSALS: [&str; 5] = ["D9002", "unknown argument", "unrecognized command-line option", "unknown option", "unsupported option"];
+    output.lines().find_map(|line| {
+        if !REFUSALS.iter().any(|refusal| line.contains(refusal)) {
+            return None;
+        }
+        relaxing.iter().copied().find(|flag| line.contains(flag))
+    })
+}
+
+/// The C compiler as a diagnostic names it.
+fn toolchain_name(toolchain: &Toolchain) -> String {
+    let path = match toolchain {
+        Toolchain::Msvc { cl, .. } => cl,
+        Toolchain::Clang(path) | Toolchain::Gcc(path) => path,
+    };
+    path.file_stem().map_or_else(|| path.display().to_string(), |stem| stem.to_string_lossy().into_owned())
 }
 
 /// `[CG-C-11]` — the profile's MSVC flags with `/fp:precise` relaxed:
@@ -1085,8 +1170,10 @@ fn compiler_command(toolchain: &Toolchain) -> Command {
 fn msvc_flags(profile: Profile) -> Vec<&'static str> {
     let optimisation: &[&str] = match profile {
         Profile::Debug => &["/Od", "/Zi", "/MD", "/DEMBER_RT_DEBUG_ACCESS"],
-        Profile::Release => &["/O2", "/MD"],
-        Profile::Shipping => &["/O2", "/GL", "/MD"],
+        // `[RT-4]` — release keeps its symbols in a PDB beside the program, for a panic's
+        // backtrace; the code is the same (the link keeps `/OPT:REF,ICF`).
+        Profile::Release => &["/O2", "/Zi", "/MD"],
+        Profile::Shipping => &["/O2", "/GL", "/MD", "/DEMBER_SHIPPING"],
     };
     ["/nologo", "/std:c11", "/W3", "/fp:precise"].iter().chain(optimisation).copied().collect()
 }
@@ -1098,8 +1185,11 @@ fn msvc_flags(profile: Profile) -> Vec<&'static str> {
 fn gnu_flags(profile: Profile) -> Vec<&'static str> {
     let optimisation: &[&str] = match profile {
         Profile::Debug => &["-O0", "-g", "-DEMBER_RT_DEBUG_ACCESS"],
+        // `[RT-4]` — on Windows a release keeps its symbols in a PDB, for a panic's backtrace;
+        // elsewhere the program's own symbol table names its functions.
+        Profile::Release if cfg!(windows) => &["-O2", "-g"],
         Profile::Release => &["-O2"],
-        Profile::Shipping => &["-O3"],
+        Profile::Shipping => &["-O3", "-DEMBER_SHIPPING"],
     };
     ["-std=c11", "-Wall", "-Wextra", "-ffp-contract=off", "-fno-fast-math"].iter().chain(optimisation).copied().collect()
 }
@@ -1322,6 +1412,23 @@ fn program_file(program: &Path, search: Option<std::ffi::OsString>) -> Option<Pa
 
 #[cfg(test)]
 mod tests {
+    /// `[TYP-9c]` — the C compiler's own words for a relaxing flag it ignored or refused are
+    /// `E9041`'s evidence: MSVC's `D9002`, clang's "unknown argument", gcc's "unrecognized
+    /// command-line option"; any other output, or another flag, is not.
+    #[test]
+    fn a_refused_float_flag_is_found_in_the_compilers_output() {
+        let relaxing = ["/fp:contract", "-ffp-contract=fast"];
+        let cl = "unit.c\ncl : Command line warning D9002 : ignoring unknown option '/fp:contract'\n";
+        assert_eq!(super::refused_relaxation(cl, &relaxing), Some("/fp:contract"));
+        let clang = "clang: error: unknown argument: '-ffp-contract=fast'\n";
+        assert_eq!(super::refused_relaxation(clang, &relaxing), Some("-ffp-contract=fast"));
+        let gcc = "gcc: error: unrecognized command-line option '-ffp-contract=fast'\n";
+        assert_eq!(super::refused_relaxation(gcc, &relaxing), Some("-ffp-contract=fast"));
+        assert_eq!(super::refused_relaxation("unit.c\n", &relaxing), None);
+        let other = "cl : Command line warning D9002 : ignoring unknown option '/arch:AVX9'\n";
+        assert_eq!(super::refused_relaxation(other, &relaxing), None);
+    }
+
     use super::*;
 
     /// Runs a program a test has just written. On Linux another test thread

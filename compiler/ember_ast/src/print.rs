@@ -140,7 +140,7 @@ impl Printer {
                     p.member(m);
                 }
             }),
-            ItemKind::Extend(e) => self.nest(&format!("Extend {}", type_str(&e.target)), |p| {
+            ItemKind::Extend(e) => self.nest(&format!("Extend {}{}", if e.is_unsafe { "unsafe " } else { "" }, type_str(&e.target)), |p| {
                 for m in &e.members {
                     p.member(m);
                 }
@@ -370,22 +370,7 @@ impl Printer {
                 }
             }),
             ExprKind::MethodCall { recv, name, generic_args, args } => {
-                let suffix = if generic_args.is_empty() {
-                    String::new()
-                } else {
-                    let rendered = generic_args
-                        .iter()
-                        .map(|arg| match arg {
-                            GenericArg::Type(ty) => type_str(ty),
-                            GenericArg::Const(expr) => expr_summary(expr),
-                            GenericArg::Assoc { name, ty } => {
-                                format!("{} = {}", name.name, type_str(ty))
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    format!("[{rendered}]")
-                };
+                let suffix = generic_suffix(generic_args);
                 self.nest(&format!("MethodCall .{}{suffix}", name.name), |p| {
                     p.expr(recv);
                     for a in args {
@@ -439,8 +424,15 @@ impl Printer {
                 self.nest(&format!("Downcast {op} {}", type_str(ty)), |p| p.expr(expr))
             }
             ExprKind::Try(e) => self.nest("Try", |p| p.expr(e)),
-            ExprKind::OptChain { base, name, .. } => {
-                self.nest(&format!("OptChain ?.{}", name.name), |p| p.expr(base))
+            ExprKind::OptChain { base, name, generic_args, args } => {
+                let suffix = generic_suffix(generic_args);
+                let call = if args.is_some() { "()" } else { "" };
+                self.nest(&format!("OptChain ?.{}{suffix}{call}", name.name), |p| {
+                    p.expr(base);
+                    for a in args.iter().flatten() {
+                        p.arg(a);
+                    }
+                })
             }
             // `[FMT-2]` — a body that only returns a value is the value: the
             // `:` form and the `=>` form the formatter writes for it are one
@@ -714,4 +706,21 @@ fn expr_summary(expr: &Expr) -> String {
         ExprKind::SelfExpr => "self".to_string(),
         _ => "<expr>".to_string(),
     }
+}
+
+/// A method's bracketed arguments as written, `[T, N]`, or nothing.
+fn generic_suffix(generic_args: &[GenericArg]) -> String {
+    if generic_args.is_empty() {
+        return String::new();
+    }
+    let rendered = generic_args
+        .iter()
+        .map(|arg| match arg {
+            GenericArg::Type(ty) => type_str(ty),
+            GenericArg::Const(expr) => expr_summary(expr),
+            GenericArg::Assoc { name, ty } => format!("{} = {}", name.name, type_str(ty)),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{rendered}]")
 }

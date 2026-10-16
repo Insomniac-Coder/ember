@@ -463,6 +463,23 @@ impl RangeDef {
     }
 }
 
+/// ODR-111 — a `Send` or `Sync` a program wrote by hand (`unsafe extend W[T] implements Send`): the
+/// type, by its generic's name or its own, with what each of its arguments must be for it to hold.
+#[derive(Clone, Debug)]
+pub struct ManualMarker {
+    pub name: Symbol,
+    pub send: bool,
+    pub sync: bool,
+    pub args: Vec<MarkerArg>,
+}
+
+/// What a by-hand marker asks of one argument: this exact type, or any type with these markers.
+#[derive(Clone, Copy, Debug)]
+pub enum MarkerArg {
+    Exact(Ty),
+    Any { send: bool, sync: bool },
+}
+
 /// The interner and type table for one compilation.
 pub struct TypeTable {
     kinds: Vec<TyKind>,
@@ -489,6 +506,8 @@ pub struct TypeTable {
     /// String)`), by symbol: formatting the type, alone or inside another
     /// value, calls it in place of the field-wise text.
     debug_writers: HashMap<Ty, String>,
+    /// ODR-111 — each `Send` or `Sync` a program wrote by hand (`unsafe extend`).
+    manual_markers: Vec<ManualMarker>,
     next_infer: u32,
     /// Pointer width of the target, in bytes. 8 for every v1 target.
     pointer_size: u64,
@@ -579,6 +598,7 @@ impl TypeTable {
             zeroable_derived: HashSet::new(),
             must_drop_declared: HashSet::new(),
             debug_writers: HashMap::new(),
+            manual_markers: Vec::new(),
             next_infer: 0,
             constant_statics: Vec::new(),
             pointer_size: 8,
@@ -1431,6 +1451,27 @@ impl TypeTable {
 
     /// `[THR-8]`/`[THR-9]` — structural thread properties. Compiler-owned
     /// wrappers use their logical payload, not their private pointer field.
+    /// ODR-111 — record a `Send` or `Sync` written by hand.
+    pub fn add_manual_marker(&mut self, marker: ManualMarker) {
+        self.manual_markers.push(marker);
+    }
+
+    /// ODR-111 — the name a by-hand marker is recorded under, and the type's arguments: a generic
+    /// struct's or enum's instance by its generic's name, any other by its own.
+    pub fn marker_key(&self, ty: Ty) -> Option<(Symbol, Vec<Ty>)> {
+        match self.kind(ty) {
+            TyKind::Struct(id) => {
+                let def = self.struct_def(*id);
+                Some(def.origin.clone().unwrap_or((def.name, Vec::new())))
+            }
+            TyKind::Enum(id) => {
+                let def = self.enum_def(*id);
+                Some(def.origin.clone().unwrap_or((def.name, Vec::new())))
+            }
+            _ => None,
+        }
+    }
+
     pub fn is_send(&self, ty: Ty) -> bool {
         self.thread_properties(ty, &mut HashSet::new()).0
     }
@@ -1540,12 +1581,27 @@ impl TypeTable {
             TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } => both(*elem, visiting),
         };
         // `[TYP-35]` — a phantom parameter counts as a field of its type.
-        let result = match self.kind(ty) {
+        let mut result = match self.kind(ty) {
             TyKind::Struct(_) | TyKind::Enum(_) => self.phantoms(ty).iter()
                 .map(|&arg| both(arg, visiting))
                 .fold(result, |a, b| (a.0 && b.0, a.1 && b.1)),
             _ => result,
         };
+        // ODR-111 — and what the program wrote by hand, where each argument is what it asks.
+        if let Some((name, args)) = self.marker_key(ty) {
+            for marker in self.manual_markers.iter().filter(|marker| marker.name == name && marker.args.len() == args.len()) {
+                let holds = marker.args.iter().zip(&args).all(|(wanted, &arg)| match *wanted {
+                    MarkerArg::Exact(exact) => exact == arg,
+                    MarkerArg::Any { send, sync } => {
+                        let (is_send, is_sync) = both(arg, visiting);
+                        (!send || is_send) && (!sync || is_sync)
+                    }
+                });
+                if holds {
+                    result = (result.0 || marker.send, result.1 || marker.sync);
+                }
+            }
+        }
         visiting.remove(&ty);
         result
     }

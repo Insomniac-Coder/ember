@@ -54,10 +54,56 @@ use crate::regions::place_type;
 pub fn remove_proven_checks_all(bodies: &mut [Body], types: &TypeTable, common: &CommonTypes) -> (usize, usize) {
     let returns = returned_arguments(bodies);
     let fields = field_element_ranges(bodies, types, common, &returns);
+    let chunks = parallel_chunk_ranges(bodies, types, common, &returns, &fields);
     bodies.iter_mut().fold((0, 0), |(checks, folds), body| {
-        let (more_checks, more_folds) = remove_proven_checks(body, types, common, &returns, &fields);
+        let entry = chunks.get(&body.symbol).map_or_else(Vec::new, |&range| chunk_parameters(body, range));
+        let (more_checks, more_folds) = remove_proven_checks(body, types, common, &returns, &fields, &entry);
         (checks + more_checks, folds + more_folds)
     })
+}
+
+/// ADR-190 — the range of the indices each `@parallel` loop's chunk function is given: it is called
+/// only by the runtime, with `start <= lo <= hi <= end` of the loop that names it, so its `lo` and
+/// `hi` are in the span of the loop's bounds as the code around the loop knows them. Several loops
+/// sharing one function give the span of all; a loop whose bounds are unknown gives none.
+fn parallel_chunk_ranges(
+    bodies: &[Body],
+    types: &TypeTable,
+    common: &CommonTypes,
+    returns: &HashMap<String, Vec<usize>>,
+    fields: &BTreeMap<FieldKey, Interval>,
+) -> HashMap<String, Interval> {
+    let mut found: HashMap<String, Option<Interval>> = HashMap::new();
+    for body in bodies {
+        let loops: Vec<usize> = (0..body.blocks.len())
+            .filter(|&block| matches!(&body.blocks[block].terminator, Terminator::Call { func: FuncRef::Builtin { which: Builtin::ParallelFor { .. }, .. }, .. }))
+            .collect();
+        if loops.is_empty() {
+            continue;
+        }
+        let analysis = Analysis::run_with_fields(body, types, common, returns, fields);
+        for block in loops {
+            let Terminator::Call { args, .. } = &body.blocks[block].terminator else { continue };
+            let Operand::Const(Const::Fn(chunk)) = &args[3] else { continue };
+            let span = analysis.as_ref().and_then(|analysis| {
+                let state = analysis.state_before(block, body.blocks[block].stmts.len())?;
+                let start = analysis.operand_range(&state, &args[0])?;
+                let end = analysis.operand_range(&state, &args[1])?;
+                Some(Interval { lo: start.lo, hi: end.hi.max(start.lo) })
+            });
+            found
+                .entry(chunk.clone())
+                .and_modify(|seen| *seen = seen.zip(span).map(|(a, b)| a.hull(b)))
+                .or_insert(span);
+        }
+    }
+    found.into_iter().filter_map(|(symbol, span)| Some((symbol, span?))).collect()
+}
+
+/// A chunk function's `lo` and `hi`, its last two parameters, each in `range`.
+fn chunk_parameters(body: &Body, range: Interval) -> Vec<(LocalId, Interval)> {
+    let params: Vec<LocalId> = body.args().map(|(local, _)| local).collect();
+    params.iter().rev().take(2).map(|&local| (local, range)).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -431,6 +477,8 @@ pub(crate) struct Analysis<'a> {
     /// ADR-142 — per field holding integer lists, the range of the elements
     /// the whole program stores in them.
     fields: &'a BTreeMap<FieldKey, Interval>,
+    /// ADR-190 — what is known of the parameters on entry (a `@parallel` chunk's `lo` and `hi`).
+    entry_ranges: Vec<(LocalId, Interval)>,
 }
 
 /// Per function symbol, the parameters (by position) every value it returns
@@ -519,6 +567,18 @@ impl<'a> Analysis<'a> {
         returns: &'a HashMap<String, Vec<usize>>,
         fields: &'a BTreeMap<FieldKey, Interval>,
     ) -> Option<Analysis<'a>> {
+        Self::run_seeded(body, types, common, returns, fields, Vec::new())
+    }
+
+    /// `run_with_fields`, knowing the ranges of some parameters on entry (ADR-190).
+    pub(crate) fn run_seeded(
+        body: &'a Body,
+        types: &'a TypeTable,
+        common: &CommonTypes,
+        returns: &'a HashMap<String, Vec<usize>>,
+        fields: &'a BTreeMap<FieldKey, Interval>,
+        entry_ranges: Vec<(LocalId, Interval)>,
+    ) -> Option<Analysis<'a>> {
         let isize_max = type_range(types, common.isize)?.hi;
         let mut analysis = Analysis {
             body,
@@ -533,6 +593,7 @@ impl<'a> Analysis<'a> {
             seeds: Vec::new(),
             returns,
             fields,
+            entry_ranges,
         };
         analysis.tracked = analysis.tracked_locals();
         analysis.views = analysis.collect_views();
@@ -1096,6 +1157,19 @@ impl<'a> Analysis<'a> {
     fn len_of(&self, place: &Place) -> Option<usize> {
         let (Projection::Field(1), view) = place.projection.split_last()? else { return None };
         self.view_of(&Place { local: place.local, projection: view.to_vec() })
+    }
+
+    /// The state on entry to the body: what is known of its parameters (ADR-190).
+    fn entry_state(&self) -> State {
+        let mut state = State::default();
+        for &(local, range) in &self.entry_ranges {
+            if self.tracked.get(local.0 as usize).copied().unwrap_or(false)
+                && let Some(narrowed) = self.var_range(Var::Local(local)).meet(range)
+            {
+                state.ranges.insert(Var::Local(local), narrowed);
+            }
+        }
+        state
     }
 
     fn var_range(&self, var: Var) -> Interval {
@@ -1800,7 +1874,7 @@ impl<'a> Analysis<'a> {
         let unchanged = HashSet::new();
         let none: Vec<i128> = Vec::new();
         let mut entry: Vec<Option<State>> = vec![None; n];
-        entry[0] = Some(State::default());
+        entry[0] = Some(self.entry_state());
         let mut visits = vec![0usize; n];
         let mut rounds = 0;
         loop {
@@ -1847,7 +1921,7 @@ impl<'a> Analysis<'a> {
         // Narrowing: recompute every entry from the settled ones, twice.
         for _ in 0..2 {
             let mut next: Vec<Option<State>> = vec![None; n];
-            next[0] = Some(State::default());
+            next[0] = Some(self.entry_state());
             for &block in &order {
                 if self.branch_only(block, &headers) {
                     continue;
@@ -2757,6 +2831,7 @@ fn remove_proven_checks(
     common: &CommonTypes,
     returns: &HashMap<String, Vec<usize>>,
     fields: &BTreeMap<FieldKey, Interval>,
+    entry: &[(LocalId, Interval)],
 ) -> (usize, usize) {
     // What to change, found on the unchanged body.
     struct Removal {
@@ -2766,7 +2841,7 @@ fn remove_proven_checks(
         checked: Option<(Interval, Interval)>,
     }
     let removals: Vec<Removal> = {
-        let Some(analysis) = Analysis::run_with_fields(body, types, common, returns, fields) else { return (0, 0) };
+        let Some(analysis) = Analysis::run_seeded(body, types, common, returns, fields, entry.to_vec()) else { return (0, 0) };
         let mut removals = Vec::new();
         let reached: HashSet<usize> = reverse_postorder(body).into_iter().collect();
         for block in 0..body.blocks.len() {

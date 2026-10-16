@@ -41,8 +41,14 @@ fn write_debug[T: Debug](value: T, mut out: String):
     f = Formatter(ref mut out)
     _ = value.fmt_debug(f)
 
+## `[STR-5]` — `value`'s `Debug` text appended to `out`, as `f"{value!r}"`
+## writes it. Compiler-known.
+fn append_debug[T: Debug](value: T, out: ref mut String):
+    pass
+
 ## `[STR-5]` — a type's own field-wise `Debug` as its `fmt_debug`, for the
 ## table of a `dyn` interface needing `Debug` (`dyn Error`) when the type
-## writes none. The text is built, then written.
+## writes none. It writes into the `Formatter`'s text directly (ADR-191).
 fn implicit_fmt_debug[T: Debug](value: T, mut f: Formatter) -> Result[void, FmtError]:
-    return f.write_str(f"{value!r}")
+    append_debug(value, f.out)
+    return Ok(())

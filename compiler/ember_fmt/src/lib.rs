@@ -18,7 +18,7 @@
 //! them.
 
 use ember_ast as ast;
-use ember_lexer::Comment;
+use ember_lexer::{Comment, Kw, Reserved};
 use ember_span::Span;
 
 /// `[FMT-1]`'s only configuration.
@@ -70,6 +70,39 @@ impl Printer<'_> {
 
     fn text(&self, span: Span) -> &str {
         self.source.get(span.start as usize..span.end as usize).unwrap_or("")
+    }
+
+    /// `[LEX-14]` — the tree keeps a name, not how it was written, and a reserved word is a name
+    /// only raw (`r#type`): one written raw is written raw again, where it would otherwise read as
+    /// the keyword. A raw name that is no keyword is written bare.
+    fn name(&self, ident: ast::Ident) -> String {
+        let text = ident.name.as_str();
+        let reserved = Kw::from_str(text).is_some() || Reserved::from_str(text).is_some();
+        if reserved && self.text(ident.span).starts_with("r#") { format!("r#{text}") } else { text.to_string() }
+    }
+
+    /// A name after `.`: `not` and `is` are method names there bare (`[LEX-15]`).
+    fn member_name(&self, ident: ast::Ident) -> String {
+        if matches!(ident.name.as_str(), "not" | "is") { ident.name.to_string() } else { self.name(ident) }
+    }
+
+    /// D-643 — ` where T: Show + Eq, U: Hash`, or nothing.
+    fn where_clause(&self, clauses: &[ast::Bound]) -> String {
+        if clauses.is_empty() {
+            return String::new();
+        }
+        let parts: Vec<String> = clauses
+            .iter()
+            .map(|clause| {
+                let bounds: Vec<String> = clause.bounds.iter().map(|bound| self.type_expr(bound)).collect();
+                format!("{}: {}", self.type_expr(&clause.subject), bounds.join(" + "))
+            })
+            .collect();
+        format!(" where {}", parts.join(", "))
+    }
+
+    fn dotted(&self, segments: &[ast::Ident]) -> String {
+        segments.iter().map(|s| self.name(*s)).collect::<Vec<_>>().join(".")
     }
 
     fn line(&mut self, text: &str) {
@@ -214,16 +247,16 @@ impl Printer<'_> {
             self.skip_comments_in(import.span);
             let (rank, text) = match &import.kind {
                 ast::ImportKind::Module { path, alias } => {
-                    let path = dotted(path);
+                    let path = self.dotted(path);
                     let rank = import_rank(&path);
                     let text = match alias {
-                        Some(alias) => format!("import {path} as {}", alias.name),
+                        Some(alias) => format!("import {path} as {}", self.name(*alias)),
                         None => format!("import {path}"),
                     };
                     (rank, text)
                 }
                 ast::ImportKind::Items { path, items, glob } => {
-                    let path = dotted(path);
+                    let path = self.dotted(path);
                     let rank = import_rank(&path);
                     let text = if *glob {
                         format!("from {path} import *")
@@ -231,8 +264,8 @@ impl Printer<'_> {
                         let names: Vec<String> = items
                             .iter()
                             .map(|i| match i.alias {
-                                Some(alias) => format!("{} as {}", i.name.name, alias.name),
-                                None => i.name.name.to_string(),
+                                Some(alias) => format!("{} as {}", self.name(i.name), self.name(alias)),
+                                None => self.name(i.name),
                             })
                             .collect();
                         format!("from {path} import {}", names.join(", "))
@@ -286,23 +319,24 @@ impl Printer<'_> {
         match &item.kind {
             ast::ItemKind::Fn(decl) => self.function(&vis, decl),
             ast::ItemKind::Struct(decl) => {
-                let header = self.type_header(&vis, "struct", decl.name, &decl.generics, &decl.implements);
+                let header = self.type_header(&vis, "struct", decl.name, &decl.generics, &decl.implements, &decl.where_clause);
                 self.line(&header);
                 self.members(&decl.members, item.span);
             }
             ast::ItemKind::Enum(decl) => {
-                let header = self.type_header(&vis, "enum", decl.name, &decl.generics, &decl.implements);
+                let header = self.type_header(&vis, "enum", decl.name, &decl.generics, &decl.implements, &[]);
                 self.line(&header);
                 self.variants(&decl.variants, &decl.members, item.span);
             }
             ast::ItemKind::Interface(decl) => {
                 let params = self.generics(&decl.generics);
-                let mut header = format!("{vis}interface {}{params}", decl.name.name);
+                let mut header = format!("{vis}interface {}{params}", self.name(decl.name));
                 if !decl.supertraits.is_empty() {
                     let names: Vec<String> =
                         decl.supertraits.iter().map(|t| self.type_expr(t)).collect();
                     header.push_str(&format!(": {}", names.join(" + ")));
                 }
+                header.push_str(&self.where_clause(&decl.where_clause));
                 header.push(':');
                 self.line(&header);
                 self.members(&decl.members, item.span);
@@ -310,12 +344,14 @@ impl Printer<'_> {
             ast::ItemKind::Extend(decl) => {
                 let params = self.generics(&decl.generics);
                 let target = self.type_expr(&decl.target);
-                let mut header = format!("extend{params} {target}");
+                let unsafe_ = if decl.is_unsafe { "unsafe " } else { "" };
+                let mut header = format!("{unsafe_}extend{params} {target}");
                 if !decl.implements.is_empty() {
                     let names: Vec<String> =
                         decl.implements.iter().map(|t| self.type_expr(t)).collect();
                     header.push_str(&format!(" implements {}", names.join(", ")));
                 }
+                header.push_str(&self.where_clause(&decl.where_clause));
                 header.push(':');
                 self.line(&header);
                 self.members(&decl.members, item.span);
@@ -327,13 +363,13 @@ impl Printer<'_> {
                     .map(|t| format!(": {}", self.type_expr(t)))
                     .unwrap_or_default();
                 let value = self.expr(&decl.value);
-                self.line(&format!("{vis}const {}{ty} = {value}", decl.name.name));
+                self.line(&format!("{vis}const {}{ty} = {value}", self.name(decl.name)));
             }
             ast::ItemKind::Static(decl) => {
                 let mutable = if decl.is_mut { "mut " } else { "" };
                 let ty = self.type_expr(&decl.ty);
                 let value = decl.value.as_ref().map(|expr| format!(" = {}", self.expr(expr))).unwrap_or_default();
-                self.line(&format!("{vis}static {mutable}{}: {ty}{value}", decl.name.name));
+                self.line(&format!("{vis}static {mutable}{}: {ty}{value}", self.name(decl.name)));
             }
             ast::ItemKind::TypeAlias(decl) => {
                 let params = self.generics(&decl.generics);
@@ -346,7 +382,7 @@ impl Printer<'_> {
                     .as_ref()
                     .map(|e| format!(" in {}", self.text(e.span).trim()))
                     .unwrap_or_default();
-                self.line(&format!("{vis}type {}{params}{target}{range}", decl.name.name));
+                self.line(&format!("{vis}type {}{params}{target}{range}", self.name(decl.name)));
             }
             // A construct the formatter does not reshape is copied through as
             // it was written, which keeps `parse(fmt(x)) ≡ parse(x)` true even
@@ -372,9 +408,9 @@ impl Printer<'_> {
             .iter()
             .map(|param| {
                 if let Some(ty) = &param.const_ty {
-                    return format!("const {}: {}", param.name.name, self.type_expr(ty));
+                    return format!("const {}: {}", self.name(param.name), self.type_expr(ty));
                 }
-                let mut text = param.name.name.to_string();
+                let mut text = self.name(param.name);
                 if !param.bounds.is_empty() {
                     let bounds: Vec<String> =
                         param.bounds.iter().map(|b| self.type_expr(b)).collect();
@@ -396,13 +432,15 @@ impl Printer<'_> {
         name: ast::Ident,
         generics: &[ast::GenericParam],
         implements: &[ast::TypeExpr],
+        where_clause: &[ast::Bound],
     ) -> String {
         let params = self.generics(generics);
-        let mut header = format!("{vis}{keyword} {}{params}", name.name);
+        let mut header = format!("{vis}{keyword} {}{params}", self.name(name));
         if !implements.is_empty() {
             let names: Vec<String> = implements.iter().map(|t| self.type_expr(t)).collect();
             header.push_str(&format!(" implements {}", names.join(", ")));
         }
+        header.push_str(&self.where_clause(where_clause));
         header.push(':');
         header
     }
@@ -421,9 +459,10 @@ impl Printer<'_> {
             ast::Dispatch::Override => "override ",
         };
         let generics = self.generics(&decl.generics);
+        let ret = format!("{ret}{}", self.where_clause(&decl.where_clause));
         let header = format!(
             "{vis}{unsafe_}{dispatch}fn {}{generics}({}){ret}:",
-            decl.name.name,
+            self.name(decl.name),
             params.join(", ")
         );
 
@@ -434,7 +473,7 @@ impl Printer<'_> {
                 if header.len() + self.depth * INDENT.len() > LINE_WIDTH && !params.is_empty() {
                     self.line(&format!(
                         "{vis}{unsafe_}{dispatch}fn {}{generics}(",
-                        decl.name.name
+                        self.name(decl.name)
                     ));
                     self.depth += 1;
                     for param in &params {
@@ -469,7 +508,7 @@ impl Printer<'_> {
         match &param.kind {
             ast::ParamKind::Receiver { .. } => format!("{mode}self"),
             ast::ParamKind::Named { name, ty } => {
-                format!("{mode}{}: {}", name.name, self.type_expr(ty))
+                format!("{mode}{}: {}", self.name(*name), self.type_expr(ty))
             }
         }
     }
@@ -520,7 +559,7 @@ impl Printer<'_> {
                 // `[CLS-9]` — `let` is part of the declaration, not decoration.
                 // Dropping it changed the field's meaning and broke `[FMT-1]`.
                 let let_kw = if field.is_let { "let " } else { "" };
-                self.line(&format!("{vis}{let_kw}{}: {ty}{default}", field.name.name));
+                self.line(&format!("{vis}{let_kw}{}: {ty}{default}", self.name(field.name)));
             }
             ast::MemberKind::Fn(decl) => self.function(&vis, decl),
             ast::MemberKind::Const(decl) => {
@@ -530,7 +569,7 @@ impl Printer<'_> {
                     .map(|t| format!(": {}", self.type_expr(t)))
                     .unwrap_or_default();
                 let value = self.expr(&decl.value);
-                self.line(&format!("{vis}const {}{ty} = {value}", decl.name.name));
+                self.line(&format!("{vis}const {}{ty} = {value}", self.name(decl.name)));
             }
             ast::MemberKind::TypeAlias(decl) => {
                 let params = self.generics(&decl.generics);
@@ -543,7 +582,7 @@ impl Printer<'_> {
                     .as_ref()
                     .map(|e| format!(" in {}", self.text(e.span).trim()))
                     .unwrap_or_default();
-                self.line(&format!("{vis}type {}{params}{target}{range}", decl.name.name));
+                self.line(&format!("{vis}type {}{params}{target}{range}", self.name(decl.name)));
             }
         }
     }
@@ -562,13 +601,13 @@ impl Printer<'_> {
             for attr in &variant.attrs {
                 self.line(&self.attribute(attr));
             }
-            let mut text = variant.name.name.to_string();
+            let mut text = self.name(variant.name);
             if !variant.fields.is_empty() {
                 let fields: Vec<String> = variant
                     .fields
                     .iter()
                     .map(|f| match f.name {
-                        Some(name) => format!("{}: {}", name.name, self.type_expr(&f.ty)),
+                        Some(name) => format!("{}: {}", self.name(name), self.type_expr(&f.ty)),
                         None => self.type_expr(&f.ty),
                     })
                     .collect();
@@ -596,7 +635,7 @@ impl Printer<'_> {
             .map(|arg| match arg {
                 ast::AttrArg::Expr(e) => self.expr_pure(e),
                 ast::AttrArg::Named { name, value } => {
-                    format!("{}={}", name.name, self.expr_pure(value))
+                    format!("{}={}", self.name(*name), self.expr_pure(value))
                 }
             })
             .collect();
@@ -647,7 +686,7 @@ impl Printer<'_> {
             }
             ast::StmtKind::If(if_stmt) => self.if_stmt(if_stmt, "if"),
             ast::StmtKind::While { label, cond, body, else_block } => {
-                let label = label.map(|l| format!("{}: ", l.name)).unwrap_or_default();
+                let label = label.map(|l| format!("{}: ", self.name(l))).unwrap_or_default();
                 let cond = self.condition(cond);
                 self.line(&format!("{label}while {cond}:"));
                 self.block(body);
@@ -657,7 +696,7 @@ impl Printer<'_> {
                 }
             }
             ast::StmtKind::For { label, pattern, iter, body, else_block } => {
-                let label = label.map(|l| format!("{}: ", l.name)).unwrap_or_default();
+                let label = label.map(|l| format!("{}: ", self.name(l))).unwrap_or_default();
                 let pattern = self.pattern(pattern);
                 let iter = self.expr(iter);
                 self.line(&format!("{label}for {pattern} in {iter}:"));
@@ -781,18 +820,18 @@ impl Printer<'_> {
                 ast::Jump::Return(Some(value)) => format!("return {}", self.expr_pure(value)),
                 ast::Jump::Return(None) => "return".to_string(),
                 ast::Jump::Break { label } => match label {
-                    Some(l) => format!("break {}", l.name),
+                    Some(l) => format!("break {}", self.name(*l)),
                     None => "break".to_string(),
                 },
                 ast::Jump::Continue { label } => match label {
-                    Some(l) => format!("continue {}", l.name),
+                    Some(l) => format!("continue {}", self.name(*l)),
                     None => "continue".to_string(),
                 },
             },
-            ast::ExprKind::Path { segments } => dotted(segments),
+            ast::ExprKind::Path { segments } => self.dotted(segments),
             ast::ExprKind::SelfExpr => "self".to_string(),
             ast::ExprKind::Field { base, name } => {
-                format!("{}.{}", self.expr_pure(base), name.name)
+                format!("{}.{}", self.expr_pure(base), self.member_name(*name))
             }
             ast::ExprKind::TupleField { base, index } => {
                 format!("{}.{index}", self.expr_pure(base))
@@ -812,7 +851,7 @@ impl Printer<'_> {
                             ast::GenericArg::Type(ty) => self.type_expr(ty),
                             ast::GenericArg::Const(expr) => self.expr_pure(expr),
                             ast::GenericArg::Assoc { name, ty } => {
-                                format!("{} = {}", name.name, self.type_expr(ty))
+                                format!("{} = {}", self.name(*name), self.type_expr(ty))
                             }
                         })
                         .collect();
@@ -821,7 +860,7 @@ impl Printer<'_> {
                 format!(
                     "{}.{}{}({})",
                     self.expr_pure(recv),
-                    name.name,
+                    self.member_name(*name),
                     generic_args,
                     args.join(", ")
                 )
@@ -833,7 +872,7 @@ impl Printer<'_> {
                         ast::TypeOrExpr::Type(ty) => self.type_expr(ty),
                         ast::TypeOrExpr::Expr(e) => self.expr_pure(e),
                         ast::TypeOrExpr::Binding { name, ty } => {
-                            format!("{} = {}", name.name, self.type_expr(ty))
+                            format!("{} = {}", self.name(*name), self.type_expr(ty))
                         }
                     })
                     .collect();
@@ -957,7 +996,7 @@ impl Printer<'_> {
 
     fn arg(&self, arg: &ast::Arg) -> String {
         match arg.name {
-            Some(name) => format!("{}={}", name.name, self.expr_pure(&arg.value)),
+            Some(name) => format!("{}={}", self.name(name), self.expr_pure(&arg.value)),
             None => self.expr_pure(&arg.value),
         }
     }
@@ -982,7 +1021,7 @@ impl Printer<'_> {
                 format!("[{}; {}]", self.type_expr(elem), self.expr_pure(len))
             }
             ast::TypeKind::Path { segments, args } => {
-                let path = dotted(segments);
+                let path = self.dotted(segments);
                 if args.is_empty() {
                     return path;
                 }
@@ -992,7 +1031,7 @@ impl Printer<'_> {
                         ast::GenericArg::Type(t) => self.type_expr(t),
                         ast::GenericArg::Const(e) => self.expr_pure(e),
                         ast::GenericArg::Assoc { name, ty } => {
-                            format!("{} = {}", name.name, self.type_expr(ty))
+                            format!("{} = {}", self.name(*name), self.type_expr(ty))
                         }
                     })
                     .collect();
@@ -1009,23 +1048,23 @@ impl Printer<'_> {
                 let by_ref = if *by_ref { "ref " } else { "" };
                 let mutable = if *mutable { "mut " } else { "" };
                 match sub {
-                    Some(sub) => format!("{by_ref}{mutable}{} @ {}", name.name, self.pattern(sub)),
-                    None => format!("{by_ref}{mutable}{}", name.name),
+                    Some(sub) => format!("{by_ref}{mutable}{} @ {}", self.name(*name), self.pattern(sub)),
+                    None => format!("{by_ref}{mutable}{}", self.name(*name)),
                 }
             }
-            ast::PatternKind::Path { segments } => dotted(segments),
+            ast::PatternKind::Path { segments } => self.dotted(segments),
             ast::PatternKind::Constructor { path, fields, has_rest } => {
                 let mut items: Vec<String> = fields
                     .iter()
                     .map(|f| match f.name {
-                        Some(name) => format!("{}={}", name.name, self.pattern(&f.pattern)),
+                        Some(name) => format!("{}={}", self.name(name), self.pattern(&f.pattern)),
                         None => self.pattern(&f.pattern),
                     })
                     .collect();
                 if *has_rest {
                     items.push("..".to_string());
                 }
-                format!("{}({})", dotted(path), items.join(", "))
+                format!("{}({})", self.dotted(path), items.join(", "))
             }
             ast::PatternKind::Tuple(items) => {
                 let items: Vec<String> = items.iter().map(|p| self.pattern(p)).collect();
@@ -1048,9 +1087,6 @@ fn visibility(vis: &ast::Visibility) -> String {
     }
 }
 
-fn dotted(segments: &[ast::Ident]) -> String {
-    segments.iter().map(|s| s.name.to_string()).collect::<Vec<_>>().join(".")
-}
 
 /// `[FMT-1]` — `**` binds tightly enough to lose its spaces when both sides
 /// are atoms: `x**2`, but `(a + b) ** c`.

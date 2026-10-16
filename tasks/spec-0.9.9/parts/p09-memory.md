@@ -22,8 +22,13 @@ pays a heap allocation, a header, reference counting and exclusivity checks for 
 | `Cell[T]`, `RefCell[T]` | the owner's | interior | with the owner | mutating a value you hold only a shared borrow of |
 | `Mutex[T]`, `RwLock[T]`, `Atomic[T]` | the owner's | synchronised | with the owner | mutation shared across threads |
 
-* `[SEL-1]` The order above is the order to try. `ember inspect --alloc` reports the mechanism each
-  declaration uses.
+* `[SEL-1]` *(changed in 0.9.10)* The order above is the order to try. `ember inspect --alloc`
+  reports the mechanism each declaration uses: every local, parameter and field the program writes,
+  by the row its declared type picks, and every struct, enum and class it declares, by its kind. A
+  type the table has no row for is reported as what it is: a number, `bool`, `char`, `void` or a
+  range type as a `value`; a reference, a span, `str` or a guard as a `view` of another's storage; a
+  callable value as a `callable`; a raw pointer as a `raw pointer`. Tuples and fixed arrays are the
+  first row's (ODR-108).
 * `[SEL-2]` `Shared`/`Weak` and C++'s `std::shared_ptr`/`std::weak_ptr` (`CppShared`, `CppWeak`)
   never convert into each other: they use different counts, and conflating them frees twice (`E5065`).
 

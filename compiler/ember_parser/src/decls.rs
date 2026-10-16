@@ -256,7 +256,9 @@ impl Parser<'_> {
                 | Kw::Type,
             ) => true,
             TokenKind::Keyword(Kw::Unsafe) => {
-                self.at_kw_at(1, Kw::Fn) || self.at_kw_at(1, Kw::Extern)
+                self.at_kw_at(1, Kw::Fn)
+                    || self.at_kw_at(1, Kw::Extern)
+                    || matches!(self.peek_at(1), TokenKind::Ident(s) if s.is("extend"))
             }
             TokenKind::Ident(s) if s.is("abstract") => self.at_kw_at(1, Kw::Class),
             TokenKind::Ident(s) if s.is("safe") => self.at_kw_at(1, Kw::Fn),
@@ -347,6 +349,15 @@ impl Parser<'_> {
         // writes both.
         if self.at_kw(Kw::Extern) && self.at_kw_at(1, Kw::Class) {
             return Some(ItemKind::ExternClass(self.parse_extern_class()));
+        }
+        // ODR-111 — `unsafe extend T implements Send:`, a marker interface written by hand.
+        if self.at_kw(Kw::Unsafe) && matches!(self.peek_at(1), TokenKind::Ident(s) if s.is("extend")) {
+            self.bump();
+            if self.at_extend_decl() {
+                let mut decl = self.parse_extend();
+                decl.is_unsafe = true;
+                return Some(ItemKind::Extend(decl));
+            }
         }
         // `unsafe extern "C":` and `unsafe extern "C" fn`.
         if self.at_kw(Kw::Unsafe) && self.at_kw_at(1, Kw::Extern) {
@@ -638,7 +649,18 @@ impl Parser<'_> {
         matches!(self.peek_at(n), TokenKind::Ident(_) | TokenKind::RawIdent(_))
     }
 
+    /// A function standing alone (an item or a local function): its name is an identifier.
     pub(crate) fn parse_fn(&mut self) -> FnDecl {
+        self.parse_fn_decl(false)
+    }
+
+    /// A method (a member of a type, an `extend` block or an interface): its name may also be
+    /// `not` or `is` ([LEX-15]).
+    fn parse_method(&mut self) -> FnDecl {
+        self.parse_fn_decl(true)
+    }
+
+    fn parse_fn_decl(&mut self, method: bool) -> FnDecl {
         // `[GRM-21]` — `gen_fn := "gen" fn_decl`. `gen` precedes everything,
         // including `unsafe`: `[CORO-*]` gives no `unsafe gen fn` example, and
         // accepting both orders would make two spellings of one declaration.
@@ -669,7 +691,7 @@ impl Parser<'_> {
         };
         self.expect_kw(Kw::Fn);
         let signature_start = self.pos;
-        let name = self.expect_member_name();
+        let name = if method { self.expect_member_name() } else { self.expect_fn_name() };
         let generics = self.parse_generic_params();
 
         self.expect_punct(Punct::LParen);
@@ -892,7 +914,7 @@ impl Parser<'_> {
         let where_clause = self.parse_where_clause();
         self.expect_punct(Punct::Colon);
         let members = self.parse_type_body();
-        ExtendDecl { generics, target, implements, where_clause, members, blanket: Vec::new() }
+        ExtendDecl { is_unsafe: false, generics, target, implements, where_clause, members, blanket: Vec::new() }
     }
 
     fn parse_const(&mut self) -> ConstDecl {
@@ -1072,9 +1094,9 @@ impl Parser<'_> {
 
         let kind = match self.peek() {
             TokenKind::Keyword(Kw::Fn | Kw::Unsafe | Kw::Virtual | Kw::Override) => {
-                MemberKind::Fn(self.parse_fn())
+                MemberKind::Fn(self.parse_method())
             }
-            TokenKind::Ident(_) if self.at_gen_fn() => MemberKind::Fn(self.parse_fn()),
+            TokenKind::Ident(_) if self.at_gen_fn() => MemberKind::Fn(self.parse_method()),
             TokenKind::Keyword(Kw::Const) => MemberKind::Const(self.parse_const()),
             TokenKind::Keyword(Kw::Type) => MemberKind::TypeAlias(self.parse_type_alias(false)),
             _ => {

@@ -2496,6 +2496,20 @@ EMBER_PANIC_FN void ember_panic_unwrap(const char* what, ember_loc loc);
  * location, recorded in debug and release (`[CELL-9]`). `file`/`line` are the
  * conflicting borrow's, `loc` the failing borrow's. */
 EMBER_PANIC_FN void ember_panic_refcell(const char* file, uint32_t line, ember_loc loc);
+/* [RT-4], [DIA-23] — one function of the program, as a backtrace names it: its C symbol and the
+ * Ember entity it is, with where it is declared. The compiler emits the table, sorted by `symbol`,
+ * outside `shipping`, and gives it to the runtime before `main` runs. */
+typedef struct ember_frame_name {
+    const char* symbol;
+    const char* name;
+    const char* file;
+    uint32_t line;
+} ember_frame_name;
+void ember_backtrace_names(const ember_frame_name* names, size_t count);
+/* [RT-4] — the frames of the program's own functions between the panic and `main`, innermost
+ * first, each by its Ember name and declaration; nothing in `shipping` (no table was given). The
+ * C symbol of each return address comes from the platform: `dbghelp` and the program's PDB on
+ * Windows, the program's own ELF symbol table on Linux. */
 void ember_backtrace_print(void);
 
 /* -- printing -------------------------------------------------------------- */

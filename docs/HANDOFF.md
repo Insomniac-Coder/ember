@@ -10924,8 +10924,14 @@ thread checks shared; `[JOB-1]`..`[JOB-3]`, `[CLO-7]` done. Then `@parallel` loo
 body a closure over chunks fixed by the trip count, helpers from the pool only when a slot is free,
 reductions folded in chunk order through a 32-slot window in the caller's frame, the independence
 analysis on the body's syntax (`E7010`/`E7011`); `[PAR-1]`..`[PAR-4]`, `[PAR-2a]` done; D-640 fixed.
-**Next:** `[PAR-2b]` (read through inlined calls), a speed comparison with a hand-split C loop,
-`[JOB-5]`'s `local_arena`, `some` return types, coroutines.
+Then (2026-10-16, ADR-191, 0.9.10_Hardened_10) the agents' open items and the owner's `is`:
+ODR-106 to ODR-112 (`is` a method name; `?.` built, `[EXP-10]`; `[SEL-1]`'s report; a `Cell` shows
+a copy; `[MAN-8]`'s keys; marker interfaces and `unsafe extend`, `[TYP-43]`; blanket extensions of
+every type), `[DIA-22]`, `[RT-4]`'s backtrace (names table; `dbghelp`/ELF; release PDBs kept by the
+program cache), `[TYP-9c]`'s `E9041`, `dyn` values printed inside others, `[CG-C-5]` measured on gcc,
+D-641 to D-646. `@parallel` now matches hand-split C (x0.99/x1.00) since a chunk function knows its
+loop's range. **Next:** `[PAR-2b]` (read through inlined calls), `[JOB-5]`'s `local_arena`, `some`
+return types, coroutines; the `Cell`-of-a-handle formatting gap (`TYP-36`'s entry).
 
 **2026-10-15, `ember inspect --alloc` and the near-misses (ADR-188).** `inspect --alloc <file.em>`
 lists every allocation site by function and line, read from the effects analysis before inlining

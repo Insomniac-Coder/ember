@@ -236,13 +236,12 @@ keywords! { Kw,
     While => "while", With => "with", Yield => "yield",
 }
 
-// Reserved for future use: lexed as keywords, `E0005` if used (Part II §4).
-// Eight: `yield` moved into `Kw` under `[LEX-15b]` (errata ERR-025), and
-// `union` became contextual under ODR-035.
+// Reserved for future use: lexed as keywords, `E0005` if used. `[LEX-15]` (changed in 0.9.9)
+// names three: `async`, `await` and `macro`. `actor`, `move`, `trait`, `loop` and `unless`, which
+// earlier versions reserved, are ordinary names (D-642); `yield` moved into `Kw` under `[LEX-15b]`
+// (errata ERR-025), and `union` became contextual under ODR-035.
 keywords! { Reserved,
-    Actor => "actor", Async => "async", Await => "await", Macro => "macro",
-    Move => "move", Trait => "trait",
-    Loop => "loop", Unless => "unless",
+    Async => "async", Await => "await", Macro => "macro",
 }
 
 impl Reserved {
@@ -250,16 +249,9 @@ impl Reserved {
     /// introduce the word, so a reservation is never mistaken for a typo.
     pub fn planned_version(self) -> &'static str {
         match self {
-            // Part XI §7 reserves the async family for v2.
-            Reserved::Async | Reserved::Await | Reserved::Actor => "v2",
-            // Part XIV §3 defers user-defined derives, and macros with them.
-            Reserved::Macro => "v2",
-            // `trait` is the alternative spelling of `interface`; `union`,
-            // `loop` and `unless` have no dated plan beyond v2.
-            Reserved::Trait
-            | Reserved::Loop
-            | Reserved::Unless
-            | Reserved::Move => "a later version",
+            // Part XI §7 reserves the async family for v2, and Part XIV §3 defers user-defined
+            // derives, and macros with them.
+            Reserved::Async | Reserved::Await | Reserved::Macro => "v2",
         }
     }
 }
@@ -359,7 +351,8 @@ mod tests {
         assert_eq!(Kw::ALL.len(), 48);
         assert_eq!(Kw::from_str("yield"), Some(Kw::Yield), "[LEX-15b]");
         assert_eq!(Reserved::from_str("yield"), None, "[LEX-15b], errata ERR-025");
-        assert_eq!(Reserved::ALL.len(), 8);
+        // `[LEX-15]` (0.9.9): `async`, `await` and `macro` only (D-642).
+        assert_eq!(Reserved::ALL.len(), 3);
         // `gen` is contextual: in neither table, a keyword only before `fn`.
         assert_eq!(Kw::from_str("gen"), None, "[LEX-15b]");
         assert_eq!(Reserved::from_str("gen"), None, "[LEX-15b]");

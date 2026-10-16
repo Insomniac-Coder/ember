@@ -87,7 +87,7 @@ interface_decl:= "interface" IDENT [generic_params] [":" bound_list] [where_clau
 interface_member := {attribute} (fn_decl | assoc_type | const_decl)
 assoc_type    := "type" IDENT [":" bound_list] ["=" type] NEWLINE
 
-extend_decl   := "extend" [generic_params] type [implements] [where_clause] ":" type_body
+extend_decl   := ["unsafe"] "extend" [generic_params] type [implements] [where_clause] ":" type_body
 const_decl    := "const" IDENT [":" type] "=" expression NEWLINE
 static_decl   := "static" ["mut"] IDENT ":" type "=" expression NEWLINE
 type_alias    := "type" IDENT [generic_params] "=" type ["in" expression] NEWLINE
@@ -101,12 +101,17 @@ comptime_block:= "comptime" ":" block
 * `[GRM-1]` A class has at most one base class, written in parentheses: `class Door(Script):`.
 * `[GRM-33]` *(new in 0.9.9)* A bodiless `fn_decl` is legal only in an `interface`, an `extern_block`, or as a
   `virtual` method of an `abstract class`. Elsewhere it is `E0110` with the help `add ':' and a body`.
-* `[GRM-34]` *(new in 0.9.9)* `extend [T: B] Array[T] implements I:` declares a generic extension; the generic
+* `[GRM-34]` *(new in 0.9.9)* *(changed in 0.9.10)* `extend [T: B] Array[T] implements I:` declares a generic extension; the generic
   parameters after `extend` scope over the whole block. A parameter the target does not name and an
   implemented interface does makes a **blanket implementation**: `extend[K: Eq + Hash, V, Q:
   AsKey[K]] Map[K, V] implements Index[Q]` makes every `Map[K, V]` implement `Index[Q]` for each `Q`
   its bounds admit, each method of the block is generic over `Q`, and each use is checked as a
-  written implementation is (ODR-042).
+  written implementation is (ODR-042). The target may be a parameter standing alone (`extend[T, U]
+  T implements Wrap[U]`, every type's); a parameter of the block that neither the target nor an
+  implemented interface names is `E2020`. A call of a blanket method whose arguments and wanted
+  result leave such a parameter open takes it from the one instance of the interface the
+  receiver's type implements through the block (an instance of a generic function has it from its
+  bound); with two it stays open (`E2060`, ODR-112).
 * `[GRM-8d]` A `type_alias` with an `in` clause declares a range type (`[RNG-1]`). The clause is
   legal only on an item-level alias with no generic parameters (`E2213` otherwise).
 

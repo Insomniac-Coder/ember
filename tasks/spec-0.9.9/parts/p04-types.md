@@ -407,7 +407,7 @@ implements Display:` block.
   arguments that fit two equally are `E2070`, disambiguated as `I[A].m(recv, …)`. An operator chooses
   among instances as its method's call does (`[TYP-21]`, ODR-096).
 
-**Marker interfaces**, derived automatically (implementable by hand only with `unsafe extend`):
+**Marker interfaces**, derived automatically (`Send` and `Sync` written by hand only with `unsafe extend`, `[TYP-43]`):
 
 | Marker | Holds when |
 |---|---|
@@ -415,6 +415,16 @@ implements Display:` block.
 | `Send` | every field is `Send`; raw pointers are not; `ref T` and `Span[T]` are when `T` is `Sync`, `ref mut T` and `MutSpan[T]` when `T` is `Send` (`[THR-8]`); a class handle is `Send` iff the class is `Sync` |
 | `Sync` | every field is `Sync`; `ref mut`, `Cell`, `RefCell` and `UnsafeCell` are not; see `[THR-1]` for classes |
 | `Sized` | everything except `dyn I` and unsized foreign types |
+
+* `[TYP-43]` *(new in 0.9.10)* The marker interfaces are interfaces of `std.core`, exported by the
+  prelude, so a bound names them as it names any (`T: Send + Sync`, `where Self: Sized`), and the
+  table answers them. A program writes `Send` or `Sync` by hand, for a struct or enum of its own
+  package, only as `unsafe extend T implements Send:` with no members, taking the responsibility the
+  compiler cannot check (written without `unsafe` it is `E3100`); a generic one (`unsafe extend[T:
+  Send] W[T] implements Send:`) holds for each instance whose arguments meet the markers its
+  parameters are bounded by. A class is `Send` or `Sync` only as `@sync` (`[THR-1]`: its counts must
+  be atomic), `Copy` comes from `@derive(Copy)`, and `Sized` is never written: each of these is
+  `E2040`, as is an `unsafe extend` of any interface but a marker (ODR-111).
 
 **Standard interfaces.** These are the definitions; `std.core` declares them and the prelude exports
 them (`[MOD-5]`).
@@ -515,7 +525,7 @@ interface From[T]:
 | range types | as the representation | as the representation | as the representation | as the representation | as the representation | — | as the representation | as the representation |
 | structs, enums | derived per `[STR-5]` | `@derive(Copy)` | derived per `[STR-5]` | `@derive(Ord)` | `@derive(Hash)` | `@derive(Default)` | explicit | derived per `[STR-5]` |
 
-* `[TYP-39]` *(new in 0.9.9)* Collections, tuples and `Option`/`Result` implement `Display` the way Python's `str()`
+* `[TYP-39]` *(new in 0.9.9)* *(changed in 0.9.10)* Collections, tuples and `Option`/`Result` implement `Display` the way Python's `str()`
   shows them: `[1, 2, 3]`, `{'a': 1}`, `{1, 2}`, `(1, 'x')`, `Some(3)`, `None`, with each element
   formatted by its `Debug` implementation (strings quoted). So `println(xs)` prints a list as Python
   would. A `Map` prints its entries in insertion order and an empty one prints `{}`; an empty `Set`
@@ -523,7 +533,10 @@ interface From[T]:
   Python's `repr`: single quotes, or double quotes when the text holds a `'` and no `"`; `\`, the
   chosen quote, `\n`, `\r` and `\t` are escaped, and any other control character is `\xNN`. A
   `Box[T]` and a `Cell[T]` show as the `T` they hold, in `Display` and `Debug` alike (`Box(5)` prints
-  `5`; ODR-094).
+  `5`; ODR-094). A `Cell` shows a copy of its value, as `get` reads it: a value's own `Display` or
+  `Debug` is the program's code and may `set` the cell, and a `Cell` lends its value to nothing
+  (`[CELL-2]`), so one that is not `Copy` and writes its own is not shown from a `Cell` (`E2040`,
+  whose help names `RefCell`; ODR-109).
 * `[TYP-37]` *(new in 0.9.9)* Floats implement `Eq` with IEEE `==` (so `NaN != NaN`) and `Ord` with the IEEE-754
   totalOrder predicate (`-NaN < -inf < … < -0.0 < +0.0 < … < +inf < +NaN`). The comparison
   *operators* on float values keep IEEE meaning (`[TYP-9]`) in concrete and generic code alike: `a < b`

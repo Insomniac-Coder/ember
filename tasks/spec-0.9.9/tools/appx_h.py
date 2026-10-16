@@ -417,6 +417,20 @@ ODRS = [
      '`[CLS-2]`, `[STR-6]`'),
     ('ODR-105', 'ruled under the delegation (2026-10-12, autopilot): a `let` field assigned outside its `init` is `E2104`, a code of its own beside `E2103`',
      '`[CLS-9]`'),
+    ('ODR-106', 'ruled under the delegation (2026-10-16, the owner: "allow ?.is()", "make it an error"): `is` is a method name after `fn` in a type\'s body, `.` and `?.`, as `not` is (ODR-040), so `AnyError` has `is[E]()`; a function standing alone may take neither `not` nor `is` (`E0005`)',
+     '`[LEX-15]`, `[ERR-8]`'),
+    ('ODR-107', 'ruled under the delegation (2026-10-16): optional chaining `a?.f`, `a?.m[T](…)` on an `Option`: `None` when `a` is, else the member wrapped in `Some` unless it is an `Option` (then it is the result) or nothing; `a` read as an unconsumed place, a non-`Copy` field lent',
+     '`[EXP-10]`'),
+    ('ODR-108', 'ruled under the delegation (2026-10-16, the owner: "fix all the stuff yourself"): `[SEL-1]` reports every local, parameter and field by the row its type picks and every type by its kind; a type with no row is a `value`, a `view`, a `callable` or a `raw pointer`',
+     '`[SEL-1]`'),
+    ('ODR-109', 'ruled under the delegation (2026-10-16): a `Cell` shows a copy of its value, as `get` reads it; a non-`Copy` value that writes its own `Display` or `Debug` is not shown from a `Cell` (`E2040`), since a `Cell` lends its value to nothing',
+     '`[TYP-39]`, `[CELL-2]`'),
+    ('ODR-110', 'ruled under the delegation (2026-10-16): `[MAN-8]` names the keys of `[c]` (`compiler`, `flags`), `[link]` (`libs`), `[jobs]` (`workers`), `[realtime]` (`contracts`) and `[ffi]` (`evidence`); any other key or section is `E9001`',
+     '`[MAN-8]`'),
+    ('ODR-111', 'ruled under the delegation (2026-10-16): the marker interfaces are `std.core`\'s, usable as bounds; `unsafe extend T implements Send|Sync:` writes one by hand for a struct or enum of the package (generic ones per their parameters\' marker bounds), `E3100` without `unsafe`; a class only as `@sync`, `Copy` only by `@derive(Copy)`, `Sized` never (`E2040`)',
+     '`[TYP-43]`, Part IV §8, grammar `extend_decl`'),
+    ('ODR-112', 'ruled under the delegation (2026-10-16): an extension may target a parameter standing alone with blanket parameters besides (`extend[T, U] T implements Wrap[U]`); a call leaving a blanket parameter open takes it from the one instance of the interface the receiver\'s type implements through the block',
+     '`[GRM-34]`'),
 ]
 
 H5_HEAD = """
@@ -462,7 +476,9 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 0.9.10_Hardened_6 adds ODR-102, owned callable values (§H.11);
 0.9.10_Hardened_7 adds ODR-103, a lambda outliving its captures is `E3026` (§H.12);
 0.9.10_Hardened_8 adds ODR-104, a constructor's `return` and its receiver (§H.13);
-0.9.10_Hardened_9 adds ODR-105, `E2104` for a `let` field assigned outside `init` (§H.14).
+0.9.10_Hardened_9 adds ODR-105, `E2104` for a `let` field assigned outside `init` (§H.14);
+0.9.10_Hardened_10 adds ODR-106 to ODR-112, the owner's `is` and `?.` and the agents' open
+questions (§H.15).
 
 | ODR | Ruling | Rules |
 |---|---|---|
@@ -478,7 +494,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.10', 9)
+CURRENT = ('0.9.10', 10)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -488,6 +504,7 @@ V010_H5_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h5')
 V010_H6_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h6')
 V010_H7_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h7')
 V010_H8_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h8')
+V010_H9_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h9')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -731,8 +748,39 @@ Generated: every rule whose text differs from 0.9.10_Hardened_8.
 """
 
 
-def v010_h8_to_now():
-    return H14_HEAD + rule_diff(V010_H8_PARTS, os.path.join(HERE, '..', 'parts'))
+def v010_h8_to_h9():
+    return H14_HEAD + rule_diff(V010_H8_PARTS, V010_H9_PARTS)
+
+
+H15_HEAD = """
+## H.15 Changes in 0.9.10_Hardened_10 (from 0.9.10_Hardened_9)
+
+**0.9.10_Hardened_10** records ODR-106 to ODR-112, ruled under the owner's delegation on 2026-10-16
+(`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-191):
+
+* `is` is a method name after `fn` in a type's body, `.` and `?.`, as `not` is; a function standing
+  alone may take neither (`[LEX-15]`, ODR-106).
+* Optional chaining is `[EXP-10]`: `None` propagates, an `Option` member is the result, a field that
+  is not `Copy` is lent (ODR-107).
+* What a declaration is, and what a type with no row of IX.0's table is reported as, in
+  `[SEL-1]` (ODR-108).
+* A `Cell` shows a copy of its value; a non-`Copy` value with its own `Display` or `Debug` is not
+  shown from one (`[TYP-39]`, ODR-109).
+* The keys of `[c]`, `[link]`, `[jobs]`, `[realtime]` and `[ffi]`, in `[MAN-8]` (ODR-110).
+* The marker interfaces are `std.core`'s and usable as bounds; `Send` and `Sync` are written by
+  hand with `unsafe extend` (`[TYP-43]`, the grammar's `extend_decl`, ODR-111).
+* An extension over a parameter standing alone may have blanket parameters, taken at a call from
+  the receiver's one instance of the interface (`[GRM-34]`, ODR-112).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_9.
+
+| Rule | 0.9.10_Hardened_9 → 0.9.10_Hardened_10 |
+|---|---|
+"""
+
+
+def v010_h9_to_now():
+    return H15_HEAD + rule_diff(V010_H9_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -803,7 +851,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_now() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_now() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))
