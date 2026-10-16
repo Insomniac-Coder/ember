@@ -106,7 +106,7 @@ ECS facilities, C++ interop, the interpreter, and hot reload. The open defects a
 Each program below was written twice, in Ember and by hand in C (C++ for the programs that use
 objects, strings, maps or sorting; both are in [`bench/`](bench/), with the scripts that time them),
 built by the same C compiler with the same optimisation flags,
-and timed on 2026-10-12 on one laptop, plugged in: an ASUS ROG Strix G16 (G615LR) with an Intel Core
+and timed on 2026-10-16 on one laptop, plugged in: an ASUS ROG Strix G16 (G615LR) with an Intel Core
 Ultra 9 275HX (8 performance cores and 16 slower efficiency cores), 64 GB of DDR5-5600 memory and
 Windows 11 Home (build 26200). The compilers are MSVC 19.44 and clang 22.1 on Windows, and gcc 15.2
 under WSL (Ubuntu 26.04) on the same laptop. The Windows runs are held to the performance cores; WSL
@@ -138,7 +138,7 @@ notes under the tables say how. With gcc, both programs are built with
 
 > Development is in progress, and attempts will be made to speed the language up in these areas.
 
-More than 10% slower than C: 1 of the 50 programs with MSVC, 1 with clang, 1 with gcc; none with all
+More than 10% slower than C: 1 of the 50 programs with MSVC, 1 with clang, 2 with gcc; none with all
 three.
 
 ![Programs more than 10% slower than C with one compiler: C time, Ember time, Ember divided by C](docs/benchmarks/slower-than-c.svg)
