@@ -5297,17 +5297,27 @@ fn progress_reduction_emits_a_fast_loop_and_preserves_checked_fallback() {
             );
             // D-498 (ADR-155) — the fast loop's ASCII step; on MSVC its other
             // bytes reach the decoder entry that takes the tested lead byte.
-            let wide = usize::from(cc == "msvc");
+            // D-550 (ADR-199) — gcc's mixed and short loops decode through it too,
+            // its English loop through the plain decoder.
+            let (plain, wide) = match cc {
+                "msvc" => (1, 1),
+                "gcc" => (2, 2),
+                _ => (2, 0),
+            };
             assert_eq!(
                 body.matches("str_char_next_usize(").count(),
-                2 - wide,
+                plain,
                 "{cc}: guarded loop and checked fallback missing from {name}:\n{body}"
             );
             assert_eq!(
                 body.matches("str_char_next_wide_usize(").count(),
                 wide,
-                "{cc}: the wide decoder entry is MSVC's only:\n{body}"
+                "{cc}: the wide decoder entry is MSVC's and gcc's mixed loops' only:\n{body}"
             );
+            if cc == "gcc" {
+                assert!(body.contains("< 256ULL") && body.contains(">= 32ULL") && body.contains("< 4ULL"),
+                    "{cc}: the mixed and short loops' tests are missing from {name}:\n{body}");
+            }
             assert!(body.contains("< 128U"), "{cc}: the ASCII step is missing from {name}:\n{body}");
             assert_eq!(
                 body.matches("ck_add_i64(").count(),
@@ -5342,17 +5352,19 @@ fn progress_reduction_emits_a_fast_loop_and_preserves_checked_fallback() {
             c.stderr
         );
         let body = c_definition(&c.stdout, &ember_branding::mangled("effectful"));
-        // One decoder call (MSVC's takes the tested lead byte, ADR-155).
+        // One decoder call (MSVC's takes the tested lead byte, ADR-155), and one
+        // each in gcc's mixed and short loops (ADR-199).
         assert_eq!(
             body.matches("str_char_next_usize(").count() + body.matches("str_char_next_wide_usize(").count(),
-            1,
+            if cc == "gcc" { 3 } else { 1 },
             "{cc}: unsupported effects were included in a fast loop:\n{body}"
         );
         // D-498 — the loop and each ASCII copy (ADR-155: one per byte test,
         // gcc's written-out steps included) keep the check; no add wraps.
+        // gcc's short loop gives its wide characters a copy of their own (ADR-199).
         assert_eq!(
             body.matches("ck_add_i64(").count(),
-            1 + body.matches("< 128U").count(),
+            1 + body.matches("< 128U").count() + usize::from(cc == "gcc"),
             "{cc}: unsupported effectful accumulation lost its check:\n{body}"
         );
         assert!(

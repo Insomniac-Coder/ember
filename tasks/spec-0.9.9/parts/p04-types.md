@@ -73,7 +73,8 @@
   3. range erasure: a range type to its representation (`[RNG-2]`);
   4. string literal to `String` (`[TXT-9]`), and `String` to `str` (a borrow, `[SPN-1]`);
   5. collection literal to the collection type the site expects (`[TYP-38]`);
-  6. `Array[T]`, `[T; N]` to `Span[T]` (shared borrow) or `MutSpan[T]` at a `mut` site (`[SPN-1]`);
+  6. `Array[T]`, `[T; N]` to `Span[T]` (shared borrow) or `MutSpan[T]` at a `mut` site (`[SPN-1]`), and
+     `MutSpan[T]` to `Span[T]`, a shared reborrow of the same elements (`[SPN-3]`, ODR-116);
   7. `ref T` from a place (auto-borrow), and reading through a `ref` where a `T` is expected (`[TYP-14]`);
   8. a class handle to a base class or to an interface it implements (upcast);
   9. `Never` to any type;

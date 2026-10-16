@@ -29114,6 +29114,22 @@ impl<'a> Checker<'a> {
                 span: expr.span,
             };
         }
+        // `[SPN-3]`, `[TYP-5]` rule 6 (ODR-116) — a `MutSpan[T]` where a `Span[T]` is wanted: a
+        // shared reborrow of a place, which the borrow checker keeps borrowed while the `Span`
+        // lives; a view made in the expression (`a.as_mut_span()`) is the reborrow's source as it is.
+        if let (TyKind::Span { elem: found, mutable: true }, TyKind::Span { elem: wanted, mutable: false }) =
+            (self.types.kind(expr.ty).clone(), self.types.kind(expected).clone())
+            && found == wanted
+        {
+            let span = expr.span;
+            let source = if is_place(&expr.kind) {
+                let ty = self.types.intern(TyKind::Ref { mutable: false, inner: expr.ty });
+                Expr { ty, kind: ExprKind::Ref { place: Box::new(expr), mutable: false }, span }
+            } else {
+                expr
+            };
+            return Expr { ty: expected, kind: ExprKind::Builtin { which: Builtin::SpanSharedReborrow, args: vec![source] }, span };
+        }
         if self.emit_callable_mode_mismatch(expr.span, expected, expr.ty) {
             return Expr { ty: expected, kind: ExprKind::Error, span: expr.span };
         }

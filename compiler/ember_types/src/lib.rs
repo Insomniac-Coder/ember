@@ -1008,10 +1008,12 @@ impl TypeTable {
             (TyKind::Vec { elem: a, text: a_text }, TyKind::Vec { elem: b, text: b_text }) if a_text == b_text => {
                 self.unify_with_fixed(a, b, args, fixed)
             }
+            // ODR-116 — a `MutSpan[T]` given for a `Span[T]` converts (`[SPN-3]`), so its
+            // elements still solve the declared view's.
             (
                 TyKind::Span { elem: a, mutable: a_mut },
                 TyKind::Span { elem: b, mutable: b_mut },
-            ) if a_mut == b_mut => self.unify_with_fixed(a, b, args, fixed),
+            ) if a_mut == b_mut || !a_mut => self.unify_with_fixed(a, b, args, fixed),
             // Two instantiations of the same generic struct unify argument
             // by argument.
             (TyKind::Struct(a), TyKind::Struct(b)) => {

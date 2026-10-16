@@ -29,6 +29,8 @@ const MAX_PREFIX_REGION: usize = 8;
 
 struct Site {
     decode: usize,
+    /// The loop's header, where an iteration starts.
+    header: usize,
     /// The loop's blocks other than `decode`, in order: each gets a copy.
     region: Vec<usize>,
     view: LocalId,
@@ -74,8 +76,9 @@ pub fn step_ascii_runs_all(
             if cold.contains(&(index, header)) {
                 continue;
             }
-            if let Some(site) = plan(body, common, decode, region) {
-                if body.blocks.len() + (prefix_steps(&site, target) + 1) * stage_size(&site) <= MAX_BODY_BLOCKS {
+            if let Some(site) = plan(body, common, decode, header, region) {
+                let mixed = if mixed_ways_apply(body, &site, target) { mixed_ways_size(&site) } else { 0 };
+                if body.blocks.len() + (prefix_steps(&site, target) + 1) * stage_size(&site) + mixed <= MAX_BODY_BLOCKS {
                     apply(body, common, bytes_ty, &site, target);
                     count += 1;
                 }
@@ -104,7 +107,7 @@ fn plain(place: &Place) -> Option<LocalId> {
     place.projection.is_empty().then_some(place.local)
 }
 
-fn plan(body: &Body, common: &CommonTypes, decode: usize, loop_blocks: Vec<usize>) -> Option<Site> {
+fn plan(body: &Body, common: &CommonTypes, decode: usize, header: usize, loop_blocks: Vec<usize>) -> Option<Site> {
     if loop_blocks.len() > MAX_LOOP_BLOCKS {
         return None;
     }
@@ -164,6 +167,7 @@ fn plan(body: &Body, common: &CommonTypes, decode: usize, loop_blocks: Vec<usize
     });
     Some(Site {
         decode,
+        header,
         unread_reference: unread.then_some(reference),
         reference,
         region: loop_blocks.into_iter().filter(|&b| b != decode).collect(),
@@ -211,6 +215,9 @@ fn apply(body: &mut Body, common: &CommonTypes, bytes_ty: Ty, site: &Site, targe
         retarget(&mut body.blocks[b].terminator, |t| if t.0 as usize == site.decode { BasicBlockId(entry as u32) } else { t });
     }
     body.blocks.extend(stages);
+    if mixed_ways_apply(body, site, target) {
+        mixed_ways(body, common, site, &temps, span, entry);
+    }
     // The decoder's block, once only the tests reach it, decodes a lead byte
     // a test read and found 0x80 or above (its statements write neither).
     let is_test = |b: usize| b > first && (b - first) % size == 1;
@@ -234,6 +241,182 @@ fn prefix_steps(site: &Site, target: Option<KernelTarget>) -> usize {
 
 fn stage_size(site: &Site) -> usize {
     3 + site.region.len()
+}
+
+/// D-550 — a wide character starting within this many bytes of the last one's end turns the loop
+/// into the mixed loop; this many ASCII characters in a row there turn it back; a text shorter
+/// than `SHORT` bytes runs the short loop throughout.
+const NEAR: u128 = 4;
+const RUN: u128 = 32;
+const SHORT: u128 = 256;
+/// The mixed loop's decoder, its bookkeeping block and its check; the short loop's decoder; the
+/// block deciding after the English loop's decoder; the entry's length and its test. The short loop's
+/// wide characters also get a copy of the loop's blocks (`mixed_ways`).
+const MIXED_EXTRA_BLOCKS: usize = 7;
+
+/// The blocks `mixed_ways` adds.
+fn mixed_ways_size(site: &Site) -> usize {
+    2 * stage_size(site) + site.region.len() + MIXED_EXTRA_BLOCKS
+}
+
+/// The loop's entries from outside it: the edges `mixed_ways` sends through its length test.
+fn outside_entries(body: &Body, site: &Site) -> Vec<usize> {
+    crate::loop_version::predecessors(body)[site.header].iter().copied().filter(|b| !site.region.contains(b)).collect()
+}
+
+/// gcc's loop with written-out steps, entered from somewhere `mixed_ways` can send through its test.
+fn mixed_ways_apply(body: &Body, site: &Site, target: Option<KernelTarget>) -> bool {
+    prefix_steps(site, target) > 0 && site.header != 0 && !outside_entries(body, site).is_empty()
+}
+
+/// D-550 (ADR-199) — gcc only: two more copies of the loop, for text that mixes ASCII with wide
+/// characters. After each wide character the English loop goes back through its written-out steps
+/// into the unrolled inner loop, whose branches mispredict when wide characters come close
+/// together (measured: medium mixed strings 1.22x the C twin, short ones 1.2x). So a wide
+/// character starting within `NEAR` bytes of the last one's end goes on in the mixed loop, one test
+/// per character with a decoder that takes the tested byte, which goes back to the English loop
+/// after `RUN` ASCII characters in a row; and a text shorter than `SHORT` bytes, too short for a long
+/// run to pay, runs the short loop, the same without the count, throughout. A way changes only at
+/// an iteration's start or right after a decoded character, so every way runs the loop's own
+/// statements for each character. Each copy is a loop of its own: a jump into the English inner
+/// loop from outside its steps gives it a second entry, and gcc then unrolls it no longer (the
+/// text programs' lead over C halves).
+/// `english` is the English loop's first test, where the loop's own blocks now go to decode.
+fn mixed_ways(body: &mut Body, common: &CommonTypes, site: &Site, t: &Temps, span: ember_span::Span, english: usize) {
+    let id = |b: usize| BasicBlockId(b as u32);
+    let copy = |l: LocalId| Operand::Copy(Place::local(l));
+    let int = |value: u128, ty: Ty| Operand::Const(Const::Int { value, ty });
+    let assign = |place: LocalId, rvalue: Rvalue| Stmt::new(StmtKind::Assign { place: Place::local(place), rvalue }, span);
+    let binary = |op: BinOp, lhs: Operand, rhs: Operand| Rvalue::BinaryOp { op, lhs, rhs };
+    let entries = outside_entries(body, site);
+    let [prev_end, run, start, gap, length] = [(); 5].map(|_| temp(body, common.usize, span));
+    let flag = temp(body, common.bool_, span);
+
+    let size = stage_size(site);
+    let mixed = body.blocks.len();
+    let mixed_decode = mixed + size;
+    let mixed_after = mixed_decode + 1;
+    let mixed_check = mixed_after + 1;
+    let short = mixed_check + 1;
+    let short_decode = short + size;
+    let short_wide = short_decode + 1;
+    let decide = short_wide + site.region.len();
+    let entry = decide + 1;
+    let entry_test = entry + 1;
+    // A block of the loop as copied into the stage at `at` (`stage_blocks`' layout).
+    let copy_of = |at: usize, b: usize| site.region.iter().position(|&r| r == b).map_or(b, |i| at + 3 + i);
+    let decoder = |next: usize| {
+        let mut block = body.blocks[site.decode].clone();
+        let Terminator::Call { func: FuncRef::Builtin { which, .. }, args, next: to, .. } = &mut block.terminator else {
+            unreachable!("planned on a decoder call")
+        };
+        *which = Builtin::StrCharNextWide;
+        *args = vec![copy(site.view), copy(site.reference), copy(t.byte)];
+        *to = id(next);
+        block
+    };
+    let switch = |discr: LocalId, zero: usize, otherwise: usize| Terminator::SwitchInt {
+        discr: copy(discr),
+        targets: vec![(0, id(zero))],
+        otherwise: id(otherwise),
+    };
+    // A copy's way to the next character: its own test, not the English loop's (the loop's blocks were
+    // pointed there before they were copied), and its other bytes to its own decoder.
+    let own_ways = |stage: &mut [BasicBlock], at: usize, decoder: usize| {
+        for block in stage.iter_mut() {
+            retarget(&mut block.terminator, |b| if b.0 as usize == english { id(at) } else { b });
+        }
+        let Terminator::SwitchInt { targets, .. } = &mut stage[1].terminator else { unreachable!("a stage's test") };
+        targets[0].1 = id(decoder);
+    };
+
+    // The mixed loop: its ASCII step counts, and each way back to its header passes the check.
+    let mut mixed_blocks = stage_blocks(body, common, site, t, span, mixed, mixed);
+    own_ways(&mut mixed_blocks, mixed, mixed_decode);
+    mixed_blocks[2].stmts.push(assign(run, binary(BinOp::Add, copy(run), int(1, common.usize))));
+    let mixed_header = copy_of(mixed, site.header);
+    for block in &mut mixed_blocks {
+        retarget(&mut block.terminator, |b| if b.0 as usize == mixed_header { id(mixed_check) } else { b });
+    }
+    mixed_blocks.push(decoder(mixed_after));
+    mixed_blocks.push(BasicBlock {
+        stmts: vec![assign(prev_end, Rvalue::Use(copy(site.cursor))), assign(run, Rvalue::Use(int(0, common.usize)))],
+        terminator: Terminator::Goto(id(copy_of(mixed, site.next))),
+        terminator_span: span,
+    });
+    mixed_blocks.push(BasicBlock {
+        stmts: vec![assign(flag, binary(BinOp::Ge, copy(run), int(RUN, common.usize)))],
+        terminator: switch(flag, mixed_header, site.header),
+        terminator_span: span,
+    });
+
+    // The short loop: the same, never going back. Its decoder goes on in a copy of the loop's blocks
+    // of its own, back to the short loop's header: sharing the ASCII step's copy, the character there
+    // is either, and gcc's ASCII path slowed (measured: medium ASCII strings 0.86x the C twin, 1.21x
+    // shared).
+    let mut short_blocks = stage_blocks(body, common, site, t, span, short, short);
+    own_ways(&mut short_blocks, short, short_decode);
+    let short_header = copy_of(short, site.header);
+    let wide_copy_of = |b: usize| site.region.iter().position(|&r| r == b).map_or(b, |i| short_wide + i);
+    short_blocks.push(decoder(wide_copy_of(site.next)));
+    for &b in &site.region {
+        let mut block = body.blocks[b].clone();
+        retarget(&mut block.terminator, |to| {
+            let to = to.0 as usize;
+            id(if to == site.header {
+                short_header
+            } else if to == english || to == site.decode {
+                short
+            } else {
+                wide_copy_of(to)
+            })
+        });
+        short_blocks.push(block);
+    }
+
+    // After the English loop's decoder: a wide character close to the last one -> the mixed loop.
+    let decide_block = BasicBlock {
+        stmts: vec![
+            assign(gap, binary(BinOp::Sub, copy(start), copy(prev_end))),
+            assign(flag, binary(BinOp::Lt, copy(gap), int(NEAR, common.usize))),
+            assign(prev_end, Rvalue::Use(copy(site.cursor))),
+            assign(run, Rvalue::Use(int(0, common.usize))),
+        ],
+        terminator: switch(flag, site.next, copy_of(mixed, site.next)),
+        terminator_span: span,
+    };
+    // The loop's entry: a short text runs the short loop.
+    let entry_block = BasicBlock {
+        stmts: Vec::new(),
+        terminator: Terminator::Call {
+            func: FuncRef::Builtin { which: Builtin::StringLen, arg_ty: common.str_ },
+            args: vec![copy(site.view)],
+            dest: Place::local(length),
+            next: id(entry_test),
+        },
+        terminator_span: span,
+    };
+    let entry_test_block = BasicBlock {
+        stmts: vec![
+            assign(prev_end, Rvalue::Use(copy(site.cursor))),
+            assign(flag, binary(BinOp::Lt, copy(length), int(SHORT, common.usize))),
+        ],
+        terminator: switch(flag, site.header, copy_of(short, site.header)),
+        terminator_span: span,
+    };
+
+    // The English loop's decoder notes where the character starts and then decides.
+    let decode = &mut body.blocks[site.decode];
+    decode.stmts.insert(0, assign(start, Rvalue::Use(copy(site.cursor))));
+    let Terminator::Call { next, .. } = &mut decode.terminator else { unreachable!("planned on a decoder call") };
+    *next = id(decide);
+    for b in entries {
+        retarget(&mut body.blocks[b].terminator, |to| if to.0 as usize == site.header { id(entry) } else { to });
+    }
+    body.blocks.extend(mixed_blocks);
+    body.blocks.extend(short_blocks);
+    body.blocks.extend([decide_block, entry_block, entry_test_block]);
+    debug_assert_eq!(body.blocks.len(), entry_test + 1);
 }
 
 struct Temps {

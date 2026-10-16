@@ -291,7 +291,8 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 0.9.10_Hardened_9 adds ODR-105, `E2104` for a `let` field assigned outside `init` (§H.14);
 0.9.10_Hardened_10 adds ODR-106 to ODR-112, the owner's `is` and `?.` and the agents' open
 questions (§H.15); 0.9.10_Hardened_11 adds ODR-113 to ODR-115, the owner's rulings on what printing,
-a use after a move and an `unsafe fn` value are (§H.16).
+a use after a move and an `unsafe fn` value are (§H.16); 0.9.10_Hardened_12 adds ODR-116, a
+`MutSpan` where a `Span` is expected (§H.17).
 
 | ODR | Ruling | Rules |
 |---|---|---|
@@ -390,6 +391,7 @@ a use after a move and an `unsafe fn` value are (§H.16).
 | ODR-113 | ruled by the owner (2026-10-16): `[STD-9]`'s example of a type with neither `Display` nor `Debug` is a `RefCell`, not a class: a class handle always has `Debug`, its class and address (`[TYP-36]`) | `[STD-9]` |
 | ODR-114 | ruled by the owner (2026-10-16): a moved-from place, read, moved again or borrowed, is `E3040` with `[OWN-3]`'s help; `E3050` is a place uninitialised on some path, one never assigned there | `[OWN-3]`, `[BRW-7]` |
 | ODR-115 | ruled by the owner (2026-10-16): `unsafe fn(…) -> R` is a callable type whose call is an `unsafe` operation; an `unsafe fn` coerces only to one, any function to one; as a bound it is met by any function | `[FN-6]`, `[UNS-1]`, grammar `fn_type` |
+| ODR-116 | ruled by the owner (2026-10-16): a `MutSpan[T]` converts to `Span[T]` where one is expected, a shared reborrow; `[TYP-5]`'s complete list lacked it, and Part XII.1's `integrate(ps.pos, ps.vel, …)` passes a mutable column to a `Span` parameter | `[TYP-5]` rule 6, `[SPN-3]`, `[SOA-2]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -778,3 +780,20 @@ Generated: every rule whose text differs from 0.9.10_Hardened_10.
 | `[OWN-3]` | changed |
 | `[STD-9]` | changed |
 | `[UNS-1]` | changed |
+
+## H.17 Changes in 0.9.10_Hardened_12 (from 0.9.10_Hardened_11)
+
+**0.9.10_Hardened_12** records ODR-116, ruled by the owner on 2026-10-16 (`docs/OWNER-QUEUE.md`,
+`docs/DECISIONS.md` ADR-200):
+
+* A `MutSpan[T]` converts to `Span[T]` where one is expected, a shared reborrow of the same elements.
+  `[TYP-5]` gives its list as complete and lacked it, while Part XII.1's `integrate(ps.pos, ps.vel, …)`
+  passes a mutable column to a `Span` parameter (`[TYP-5]` rule 6, `[SPN-3]`, `[SOA-2]`, ODR-116).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_11.
+
+| Rule | 0.9.10_Hardened_11 → 0.9.10_Hardened_12 |
+|---|---|
+| `[SOA-2]` | changed |
+| `[SPN-3]` | changed |
+| `[TYP-5]` | changed |

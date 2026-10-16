@@ -11,7 +11,7 @@ Hardened_3 (2026-10-11, ODR-099, §H.8) refuses a pointer into a parameter C pas
 (`[FFI-21a]`, below); Hardened_4 (ODR-100, §H.9) lets a lambda written at an iterator adapter keep its borrows
 (below); Hardened_5 (ODR-101, §H.10) refuses a `main` of a form `[FN-8]` does not list (`E2183`, below).
 Appendix H lists each later cut; Hardened_11 (ODR-113 to ODR-115, §H.16)
-is below. The specification is now `Ember_v0.9.10_Hardened_11.md`. This file says what
+and Hardened_12 (ODR-116, §H.17) are below. The specification is now `Ember_v0.9.10_Hardened_12.md`. This file says what
 changes for a program and how to update one, then records the implementation.
 
 ## 1. What changes for a program
@@ -172,6 +172,13 @@ well as anything a `fn(A) -> R` parameter takes, and calls `f` inside `unsafe:`.
 
 `[STD-9]`'s example changed (a `RefCell` has no printer; a class prints its class and address); the
 compiler's behaviour did not.
+
+### A `MutSpan` where a `Span` is expected (Hardened_12)
+
+A `MutSpan[T]` now converts to `Span[T]` wherever one is expected, as Part XII.1's
+`integrate(ps.pos, ps.vel, …)` always assumed: `total(m)` for `fn total(xs: Span[i32])` and a
+`MutSpan[i32]` `m` was `E2020` and now compiles. The `Span` is a shared reborrow, so `m` is not
+written while it lives (`E3021`).
 
 ## 2. Updating a program
 

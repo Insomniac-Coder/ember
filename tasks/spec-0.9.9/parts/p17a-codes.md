@@ -122,7 +122,7 @@ reused; retired codes are listed with the reason.
 | `E3040` | use of moved value | `[OWN-3]` |
 | `E3041` | value moved in a previous loop iteration | `[OWN-4]` |
 | `E3042` | partial move then use of the whole value | `[EXP-6]` |
-| `E3050` | use of an uninitialised or moved place | `[BRW-7]` |
+| `E3050` | use of an uninitialised place | `[BRW-7]` |
 | `E3060` | borrowed value does not live long enough | `[LT-3]`, `[BRW-8]` |
 | `E3061` | arena allocation cannot outlive its arena | `[LT-4]` |
 | `E3062` | returned view does not derive from a parameter (shape B6) | `[LT-1]` |

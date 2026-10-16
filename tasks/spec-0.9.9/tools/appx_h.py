@@ -437,6 +437,8 @@ ODRS = [
      '`[OWN-3]`, `[BRW-7]`'),
     ('ODR-115', 'ruled by the owner (2026-10-16): `unsafe fn(…) -> R` is a callable type whose call is an `unsafe` operation; an `unsafe fn` coerces only to one, any function to one; as a bound it is met by any function',
      '`[FN-6]`, `[UNS-1]`, grammar `fn_type`'),
+    ('ODR-116', 'ruled by the owner (2026-10-16): a `MutSpan[T]` converts to `Span[T]` where one is expected, a shared reborrow; `[TYP-5]`\'s complete list lacked it, and Part XII.1\'s `integrate(ps.pos, ps.vel, …)` passes a mutable column to a `Span` parameter',
+     '`[TYP-5]` rule 6, `[SPN-3]`, `[SOA-2]`'),
 ]
 
 H5_HEAD = """
@@ -485,7 +487,8 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 0.9.10_Hardened_9 adds ODR-105, `E2104` for a `let` field assigned outside `init` (§H.14);
 0.9.10_Hardened_10 adds ODR-106 to ODR-112, the owner's `is` and `?.` and the agents' open
 questions (§H.15); 0.9.10_Hardened_11 adds ODR-113 to ODR-115, the owner's rulings on what printing,
-a use after a move and an `unsafe fn` value are (§H.16).
+a use after a move and an `unsafe fn` value are (§H.16); 0.9.10_Hardened_12 adds ODR-116, a
+`MutSpan` where a `Span` is expected (§H.17).
 
 | ODR | Ruling | Rules |
 |---|---|---|
@@ -501,7 +504,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.10', 11)
+CURRENT = ('0.9.10', 12)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -513,6 +516,7 @@ V010_H7_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h7')
 V010_H8_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h8')
 V010_H9_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h9')
 V010_H10_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h10')
+V010_H11_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h11')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -811,8 +815,29 @@ Generated: every rule whose text differs from 0.9.10_Hardened_10.
 """
 
 
-def v010_h10_to_now():
-    return H16_HEAD + rule_diff(V010_H10_PARTS, os.path.join(HERE, '..', 'parts'))
+def v010_h10_to_h11():
+    return H16_HEAD + rule_diff(V010_H10_PARTS, V010_H11_PARTS)
+
+
+H17_HEAD = """
+## H.17 Changes in 0.9.10_Hardened_12 (from 0.9.10_Hardened_11)
+
+**0.9.10_Hardened_12** records ODR-116, ruled by the owner on 2026-10-16 (`docs/OWNER-QUEUE.md`,
+`docs/DECISIONS.md` ADR-200):
+
+* A `MutSpan[T]` converts to `Span[T]` where one is expected, a shared reborrow of the same elements.
+  `[TYP-5]` gives its list as complete and lacked it, while Part XII.1's `integrate(ps.pos, ps.vel, …)`
+  passes a mutable column to a `Span` parameter (`[TYP-5]` rule 6, `[SPN-3]`, `[SOA-2]`, ODR-116).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_11.
+
+| Rule | 0.9.10_Hardened_11 → 0.9.10_Hardened_12 |
+|---|---|
+"""
+
+
+def v010_h11_to_now():
+    return H17_HEAD + rule_diff(V010_H11_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -883,7 +908,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_now() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_now() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

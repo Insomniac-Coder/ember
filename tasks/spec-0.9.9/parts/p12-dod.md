@@ -34,7 +34,8 @@ fn main():
   `T` MUST be a struct (`E2071` otherwise). A field marked `@soa(flatten)` whose type is a struct is
   split into one column per field of its own (`ps.pos.x`); otherwise a struct field is one column.
 * `[SOA-2]` `ps.f` names the column of field `f`. It is a place of type `MutSpan[F]` where `ps` is
-  mutable and `Span[F]` otherwise, and it supports everything those views support. Columns are
+  mutable and `Span[F]` otherwise, and it supports everything those views support, a mutable column
+  converting to `Span[F]` where one is expected as any `MutSpan` does (`[SPN-3]`). Columns are
   **disjoint places** under `[BRW-4]`, so any number of different columns may be borrowed at once,
   mutably or not. A length-changing operation (`push`, `swap_remove`, `clear`) borrows all of `ps`.
 * `[SOA-6]` *(new in 0.9.9)* `ps[i]` is an **element proxy**: `SoARef[T]` where `ps` is read-only here

@@ -291,7 +291,8 @@ fn main():
 * `[SPN-2]` Indexing a view is bounds-checked; `get(i) -> Option[ref T]` does not panic;
   `unsafe: s.get_unchecked(i)` does not check.
 * `[SPN-3]` `Span[T]` is `Copy`; `MutSpan[T]` is move-only and reborrowable (`s.reborrow()`, or
-  implicitly at a `mut` site).
+  implicitly at a `mut` site). Where a `Span[T]` is expected, a `MutSpan[T]` converts to one: a shared
+  reborrow, so the `MutSpan` is not written while the `Span` lives (`[TYP-5]` rule 6, ODR-116).
 * `[SPN-4]` `iter()` on a `Span` or `MutSpan` yields `ref T`; `iter_mut()` on a `MutSpan` yields
   `ref mut T` and reborrows it until the iterator's last use. `chunks(n)` and `chunks_mut(n)` yield
   consecutive non-overlapping views of `n` elements (the last may be shorter); `n == 0` panics in every

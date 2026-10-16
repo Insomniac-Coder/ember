@@ -262,6 +262,25 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-116 — a `MutSpan` where a `Span` is expected — **CLOSED**
+
+    ID:        ODR-116
+    Status:    CLOSED — ruled by the owner, 2026-10-16; incorporated in 0.9.10_Hardened_12
+    Category:  TYPES / VIEWS
+    Location:  Ember_v0.9.10_Hardened_11.md [TYP-5], [SPN-3], [SOA-2], Part XII.1
+
+**The question.** Part XII.1 passes `ps.vel`, a mutable column (`MutSpan[Vec3]`), to
+`integrate`'s `vel: Span[Vec3]`. `[TYP-5]` gives its conversions as the complete list and has none
+from `MutSpan` to `Span`; the compiler converted a column only, and any other `MutSpan` was `E2020`.
+Raised by ADR-184 and never queued until 2026-10-16.
+
+**Ruling.** A `MutSpan[T]` converts to `Span[T]` wherever one is expected: a shared reborrow, so the
+`MutSpan` is not written while the `Span` lives. **Tests:**
+`tests/conformance/SPN-3/accept_a_mutspan_converts_where_a_span_is_expected.em`,
+`reject_writing_a_mutspan_while_its_span_lives.em`. ADR-200.
+
+---
+
 ## ODR-115 — a callable type for an `unsafe fn` — **CLOSED**
 
     ID:        ODR-115

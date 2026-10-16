@@ -5017,6 +5017,70 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-200 — A `MutSpan` where a `Span` is expected (ODR-116, 0.9.10_Hardened_12)
+
+2026-10-16. ADR-184 (`SoA` stage A) noted an owner question that was never queued: Part XII.1's
+example passes a mutable column, a `MutSpan[Vec3]`, to `integrate`'s `vel: Span[Vec3]`, while
+`[TYP-5]` calls its list of conversions complete and lists none from `MutSpan` to `Span`. The compiler
+converted a column only (`[SOA-2]`'s own path in `coerce`); any other `MutSpan` given for a `Span` was
+`E2020`. The owner ruled (ODR-116): a `MutSpan[T]` converts to `Span[T]` wherever one is expected,
+a shared reborrow of the same elements (`[TYP-5]` rule 6, `[SPN-3]`, `[SOA-2]`; cut as
+`Ember_v0.9.10_Hardened_12.md`, §H.17).
+
+`coerce` builds `Builtin::SpanSharedReborrow`, the reborrow shared iteration already used: over a
+shared `ref` of a place, so the borrow checker keeps the place borrowed while the `Span` lives
+(`E3021` on a write through the `MutSpan` meanwhile), or over a view made in the expression
+(`a.as_mut_span()`) as it is. `unify_with_fixed` lets a `MutSpan[U]` solve a declared `Span[T]`'s
+`T`, so a generic `fn first[T](xs: Span[T])` takes one. Columns keep their own path, which runs
+first. **Tests:** `tests/conformance/SPN-3/accept_a_mutspan_converts_where_a_span_is_expected.em`,
+`reject_writing_a_mutspan_while_its_span_lives.em`.
+
+## ADR-199 — gcc's text loop gets a mixed loop and a short loop (D-550)
+
+2026-10-16, the owner's idea ("find a way to treat English text and mixed text differently") and
+choice. D-550: with gcc, a loop over a text's characters ran short strings that mix ASCII with wider
+characters at 1.12-1.20x the C twin and medium ones at 1.24x, while English-like text ran at half
+C's time (ADR-155's written-out steps and gcc's unrolled inner loop).
+
+**What was measured first** (hand-edited copies of the emitted C, all in one program and timed
+interleaved; gcc in WSL, mains power):
+
+* Any second way into the English inner loop from outside its steps (a jump to its latch, as
+  D-550's withdrawn layout did, or a test choosing it after a decoded character) makes gcc stop
+  unrolling it, and the text programs' lead goes (0.55x -> 0.9-1.0x C). The withdrawn layout's win
+  on mixed text was exactly that: a loop gcc left rolled. So the mixed text gets loops of its own.
+* Starting every string in the English loop and switching at its first wide character did not help
+  short strings; starting a text under 256 bytes in a simple loop did.
+* In that short loop, the ASCII step's copy of the loop's blocks shared with the decoder slowed
+  gcc's ASCII path (medium ASCII strings 1.21x C); a copy of their own for wide characters, 0.86x.
+* Resetting the count only on the way in, checking it only on ASCII steps, or entering the mixed
+  loop only with ASCII between wide characters: no gain (long Chinese text stays about 1.05-1.10x).
+
+**Decision** (`ascii_runs.rs`, `mixed_ways`; gcc's loops with written-out steps only):
+
+1. The English loop's decoder notes where its character started; after it, a character starting
+   within `NEAR` (4) bytes of the last one's end goes on in the **mixed loop**: one test per
+   character, its decoder taking the tested byte (`StrCharNextWide`), its ASCII steps counted, and
+   after `RUN` (32) ASCII characters in a row, back to the English loop's header.
+2. The loop's entries from outside go through a test of the text's length: under `SHORT` (256)
+   bytes, the **short loop**, the same without the count, which never goes back; its wide characters
+   go on in a copy of the loop's blocks of their own.
+3. A way changes only at an iteration's start or right after a decoded character, so each runs the
+   loop's own statements for each character; the copies keep every check the loop had.
+
+**Consequences.** gcc, whole programs, the committed compiler against this one (x the C twin, 11
+interleaved runs on one CPU): short mixed strings 1.12 -> 1.01, without empty ones 1.20 -> 1.04,
+medium mixed 1.24 -> 1.09, medium ASCII 0.96 -> 0.87, short ASCII 1.06 -> 1.07, long Chinese
+0.99 -> 1.06, long English with accents 0.81 -> 0.85. The README's text programs are unchanged:
+`t1_chars`, `t1b_str_loop`, `t6_char_indices` 0.53, `t3_lines` 0.96 -> 0.98, `t4_split` 1.00 -> 0.99,
+`t5_words` 0.90, `a16_map_text` 0.46 -> 0.45, `a03_strings` 0.65. The measurements build
+`bench/probes/text_loop_varied_text.em` (modes 0-6) and the README programs with each compiler,
+`--profile release --cc gcc`, against their twins. A gcc text loop grows by two copies and a few
+blocks; MSVC's and clang's are unchanged. **Tests:**
+`tests/conformance/TXT-10/accept_text_loops_change_way_between_english_mixed_and_short.em` (every way
+and the 255/256-byte edge, expected values from Python's UTF-8 decoding; run with gcc in WSL as well),
+and the milestone counting the decoders gcc's C has.
+
 ## ADR-198 — The owner's three rulings: a class's printer, a moved value is `E3040`, `unsafe fn(…)` types (ODR-113 to ODR-115, 0.9.10_Hardened_11)
 
 2026-10-16. The three owner questions ADR-197 found, ruled by the owner and cut as
