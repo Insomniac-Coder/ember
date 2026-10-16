@@ -32,7 +32,10 @@ const MAGIC: &[u8; 4] = b"EMIF";
 // function that has one, so a schema 7 record describes a different call.
 // Schema 9 records a callable's effective lexical overflow policy. Schema 8
 // cannot safely validate an importing module after that policy changes.
-const SCHEMA_VERSION: u32 = 9;
+// Schema 10 records whether an implicit Callable bound is `unsafe fn(…)`
+// (ODR-115): a schema 9 record would let an importer pass an `unsafe fn` to a
+// bound that calls it outside `unsafe`, or refuse one a bound accepts.
+const SCHEMA_VERSION: u32 = 10;
 const EXTENSION: &str = "emif";
 
 /// A BLAKE3 identity. It is kept opaque so callers cannot accidentally use a
@@ -89,6 +92,7 @@ pub struct CallableGenericCallableBound {
     pub result: String,
     pub once: bool,
     pub latebound: bool,
+    pub is_unsafe: bool,
 }
 
 /// The resolved, monomorphic callable facts currently available at the EMIF
@@ -764,6 +768,7 @@ fn push_callable_signature(out: &mut Vec<u8>, signature: &CallableSignature) {
                 push_string(out, &callable.result);
                 out.push(u8::from(callable.once));
                 out.push(u8::from(callable.latebound));
+                out.push(u8::from(callable.is_unsafe));
             }
             None => out.push(0),
         }
@@ -855,11 +860,17 @@ fn read_callable_signature(
                     1 => true,
                     _ => return Err(InterfaceArtifactError::NonCanonical),
                 };
+                let is_unsafe = match reader.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(InterfaceArtifactError::NonCanonical),
+                };
                 Some(CallableGenericCallableBound {
                     parameters,
                     result,
                     once,
                     latebound,
+                    is_unsafe,
                 })
             }
             _ => return Err(InterfaceArtifactError::NonCanonical),
@@ -1141,6 +1152,7 @@ mod tests {
                     result: "i32".to_string(),
                     once: false,
                     latebound: true,
+                    is_unsafe: false,
                 }),
             }],
             borrows: Some(vec![0]),

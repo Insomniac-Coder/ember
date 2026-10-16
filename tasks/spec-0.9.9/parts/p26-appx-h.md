@@ -290,7 +290,8 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 0.9.10_Hardened_8 adds ODR-104, a constructor's `return` and its receiver (§H.13);
 0.9.10_Hardened_9 adds ODR-105, `E2104` for a `let` field assigned outside `init` (§H.14);
 0.9.10_Hardened_10 adds ODR-106 to ODR-112, the owner's `is` and `?.` and the agents' open
-questions (§H.15).
+questions (§H.15); 0.9.10_Hardened_11 adds ODR-113 to ODR-115, the owner's rulings on what printing,
+a use after a move and an `unsafe fn` value are (§H.16).
 
 | ODR | Ruling | Rules |
 |---|---|---|
@@ -386,6 +387,9 @@ questions (§H.15).
 | ODR-110 | ruled under the delegation (2026-10-16): `[MAN-8]` names the keys of `[c]` (`compiler`, `flags`), `[link]` (`libs`), `[jobs]` (`workers`), `[realtime]` (`contracts`) and `[ffi]` (`evidence`); any other key or section is `E9001` | `[MAN-8]` |
 | ODR-111 | ruled under the delegation (2026-10-16): the marker interfaces are `std.core`'s, usable as bounds; `unsafe extend T implements Send|Sync:` writes one by hand for a struct or enum of the package (generic ones per their parameters' marker bounds), `E3100` without `unsafe`; a class only as `@sync`, `Copy` only by `@derive(Copy)`, `Sized` never (`E2040`) | `[TYP-43]`, Part IV §8, grammar `extend_decl` |
 | ODR-112 | ruled under the delegation (2026-10-16): an extension may target a parameter standing alone with blanket parameters besides (`extend[T, U] T implements Wrap[U]`); a call leaving a blanket parameter open takes it from the one instance of the interface the receiver's type implements through the block | `[GRM-34]` |
+| ODR-113 | ruled by the owner (2026-10-16): `[STD-9]`'s example of a type with neither `Display` nor `Debug` is a `RefCell`, not a class: a class handle always has `Debug`, its class and address (`[TYP-36]`) | `[STD-9]` |
+| ODR-114 | ruled by the owner (2026-10-16): a moved-from place, read, moved again or borrowed, is `E3040` with `[OWN-3]`'s help; `E3050` is a place uninitialised on some path, one never assigned there | `[OWN-3]`, `[BRW-7]` |
+| ODR-115 | ruled by the owner (2026-10-16): `unsafe fn(…) -> R` is a callable type whose call is an `unsafe` operation; an `unsafe fn` coerces only to one, any function to one; as a bound it is met by any function | `[FN-6]`, `[UNS-1]`, grammar `fn_type` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -752,3 +756,25 @@ Generated: every rule whose text differs from 0.9.10_Hardened_9.
 | `[SEL-1]` | changed |
 | `[TYP-39]` | changed |
 | `[TYP-43]` | added |
+
+## H.16 Changes in 0.9.10_Hardened_11 (from 0.9.10_Hardened_10)
+
+**0.9.10_Hardened_11** records ODR-113 to ODR-115, ruled by the owner on 2026-10-16
+(`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-198):
+
+* The example of a type with neither printer is a `RefCell`: a class handle always has `Debug`
+  (`[STD-9]`, `[TYP-36]`, ODR-113).
+* A moved-from place, read, moved again or borrowed, is `E3040`; `E3050` is a place never assigned on
+  some path (`[OWN-3]`, `[BRW-7]`, ODR-114).
+* `unsafe fn(…) -> R` is a callable type whose call needs `unsafe`; an `unsafe fn` coerces only to one
+  (`[FN-6]`, `[UNS-1]`, the grammar's `fn_type`, ODR-115).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_10.
+
+| Rule | 0.9.10_Hardened_10 → 0.9.10_Hardened_11 |
+|---|---|
+| `[BRW-7]` | changed |
+| `[FN-6]` | changed |
+| `[OWN-3]` | changed |
+| `[STD-9]` | changed |
+| `[UNS-1]` | changed |

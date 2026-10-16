@@ -126,7 +126,7 @@ path_segment  := IDENT [generic_args]
 generic_args  := "[" generic_arg {"," generic_arg} [","] "]"
 generic_arg   := type | expression | IDENT "=" type          -- const argument; associated-type binding
 tuple_type    := "(" ")" | "(" type "," [type {"," type} [","]] ")"
-fn_type       := ["once"] ["extern" STRING] "fn" "(" [fn_type_param {"," fn_type_param} [","]] ")"
+fn_type       := ["once"] ["unsafe"] ["extern" STRING] "fn" "(" [fn_type_param {"," fn_type_param} [","]] ")"
                  ["->" type]
 fn_type_param := ["mut" | "owned"] type
 ```

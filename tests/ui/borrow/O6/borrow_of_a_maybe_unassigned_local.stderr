@@ -1,0 +1,15 @@
+error[E3050]: `values` may not have a value here
+ --> tests/ui/borrow/O6/borrow_of_a_maybe_unassigned_local.em:8:17
+  |
+5 |     values: Array[i32]
+  |     ------------------ declared without a value here
+6 |     if ready:
+  |        ----- on a path from here, `values` is given no value
+7 |         values = Array[i32]()
+8 |     return size(ref values)
+  |                 ^^^^^^^^^^ used here
+  |
+  = help: give it a value on every path, or assign one at the declaration
+  = note: some paths reaching this point assign it and others do not
+
+error: could not compile due to 1 error(s)

@@ -93,7 +93,7 @@ pub fn check_definite_init_with_facts(
 ) -> usize {
     debug_assert_eq!(facts.body_symbol(), body.symbol);
     let mut reporter =
-        Reporter { body, sink, errors: 0, reported: vec![false; body.locals.len()] };
+        Reporter { body, facts, sink, errors: 0, reported: vec![false; body.locals.len()] };
     for index in 0..body.blocks.len() {
         if let Some(state) = facts.block_entry(index) {
             transfer(body, index, state.to_vec(), Some(&mut reporter));
@@ -187,6 +187,8 @@ pub fn verify_initialization_facts(
 
 struct Reporter<'a> {
     body: &'a Body,
+    /// `[BRW-7]`'s shape O6 names the path a local has no value on: where one leaves it unassigned.
+    facts: &'a InitializationFacts,
     sink: &'a mut Sink,
     errors: usize,
     /// One diagnostic per local: a variable read before assignment in a loop
@@ -215,13 +217,53 @@ impl Reporter<'_> {
             diagnostic = diagnostic.secondary(decl.span, "declared without a value here");
         }
         if state == State::Maybe {
+            // Shape O6 — the path: a block left with no value for it that flows straight into one
+            // where some paths have given it one (`if c:` with no `else`, an arm that skips it).
+            if let Some(branch) = self.unassigned_branch(local, span) {
+                diagnostic = diagnostic.secondary(branch, format!("on a path from here, `{name}` is given no value"));
+            }
             diagnostic = diagnostic
                 .note("some paths reaching this point assign it and others do not")
-                .help("give it a value in every branch, or assign one at the declaration");
+                .help("give it a value on every path, or assign one at the declaration");
         } else {
             diagnostic = diagnostic.help("assign a value before reading it");
         }
         self.sink.emit(diagnostic);
+    }
+}
+
+impl Reporter<'_> {
+    /// Where a path leaves `local` with no value: a block whose exit has it `Uninit` and that flows
+    /// into one whose entry has it `Maybe`, followed back through the empty blocks of its own path
+    /// to the branch that chose it (`if c:` with no `else`: the condition).
+    fn unassigned_branch(&self, local: LocalId, read: Span) -> Option<Span> {
+        let index = local.0 as usize;
+        let uninit_at_exit = |block: usize| self.facts.block_exit(block).is_some_and(|exit| exit[index] == State::Uninit);
+        let found = (0..self.body.blocks.len())
+            .filter(|&block| uninit_at_exit(block))
+            // A call whose result is the local gives it its value on the way out.
+            .filter(|&block| {
+                !matches!(&self.body.blocks[block].terminator, Terminator::Call { dest, .. } if dest.local == local)
+            })
+            .find(|&block| {
+                successors(self.body, block)
+                    .into_iter()
+                    .any(|next| self.facts.block_entry(next).is_some_and(|entry| entry[index] == State::Maybe))
+            })?;
+        let mut block = found;
+        for _ in 0..self.body.blocks.len() {
+            if matches!(self.body.blocks[block].terminator, Terminator::SwitchInt { .. }) {
+                break;
+            }
+            let predecessors: Vec<usize> =
+                (0..self.body.blocks.len()).filter(|&from| successors(self.body, from).contains(&block)).collect();
+            match predecessors.as_slice() {
+                [only] if uninit_at_exit(*only) => block = *only,
+                _ => break,
+            }
+        }
+        let span = self.body.blocks[block].terminator_span;
+        (!span.is_dummy() && span != read).then_some(span)
     }
 }
 

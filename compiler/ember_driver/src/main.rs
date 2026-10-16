@@ -1291,6 +1291,7 @@ fn safety_obligation(attrs: &[ember_ast::Attribute]) -> Option<String> {
 fn print_tcb_report(
     input: &Path,
     bodies: &[ember_mir::Body],
+    types: &TypeTable,
     modules: &[ember_typeck::LoadedModule],
     map: &SourceMap,
     request: &TcbReport,
@@ -1371,21 +1372,32 @@ fn print_tcb_report(
     let by_symbol: std::collections::HashMap<&str, &ember_mir::Body> = bodies.iter().map(|body| (body.symbol.as_str(), body)).collect();
     for body in bodies {
         for block in &body.blocks {
-            let ember_mir::Terminator::Call { func: ember_mir::FuncRef::Direct { symbol, .. }, .. } = &block.terminator else { continue };
-            let Some(callee) = by_symbol.get(symbol.as_str()) else { continue };
-            if !callee.is_unsafe {
-                continue;
-            }
+            let call = match &block.terminator {
+                ember_mir::Terminator::Call { func: ember_mir::FuncRef::Direct { symbol, .. }, .. } => {
+                    let Some(callee) = by_symbol.get(symbol.as_str()) else { continue };
+                    if !callee.is_unsafe {
+                        continue;
+                    }
+                    let obligation = obligations
+                        .iter()
+                        .filter(|(span, _)| contains(*span, callee.span))
+                        .min_by_key(|(span, _)| span.end - span.start)
+                        .and_then(|(_, obligation)| obligation.clone());
+                    (callee.name.clone(), obligation)
+                }
+                // ODR-115 — through an `unsafe fn(…)` value: which function, and so its
+                // obligation, is not known at the call.
+                ember_mir::Terminator::Call { func: ember_mir::FuncRef::Indirect { ty, .. }, .. }
+                    if matches!(types.kind(*ty), ember_types::TyKind::Fn { is_unsafe: true, .. }) =>
+                {
+                    (format!("a value of type {}", types.display(*ty)), Some("unknown at the call: the value may be any `unsafe fn` of its type".to_string()))
+                }
+                _ => continue,
+            };
             let at = block.terminator_span;
             let Some(entry) = entries.iter_mut().filter(|entry| contains(entry.extent, at)).min_by_key(|entry| entry.extent.end - entry.extent.start) else {
                 continue;
             };
-            let obligation = obligations
-                .iter()
-                .filter(|(span, _)| contains(*span, callee.span))
-                .min_by_key(|(span, _)| span.end - span.start)
-                .and_then(|(_, obligation)| obligation.clone());
-            let call = (callee.name.clone(), obligation);
             if !entry.calls.contains(&call) {
                 entry.calls.push(call);
             }
@@ -2582,6 +2594,7 @@ fn declaration_signature(
                         result,
                         once: bound.once,
                         latebound: bound.latebound,
+                        is_unsafe: bound.is_unsafe,
                     })
                 })
                 .transpose()?;
@@ -3071,7 +3084,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[UNS-8]` — the calls each `unsafe` makes, read before inlining moves them.
     if let Some(request) = &options.tcb_report {
         report(&sink, &map, options);
-        print_tcb_report(input, &bodies, &modules, &map, request)?;
+        print_tcb_report(input, &bodies, &types, &modules, &map, request)?;
         return Ok(ExitCode::SUCCESS);
     }
     // A function called from one place is inlined there, so the analyses

@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: BRW-7, OWN-3, FN-1
-#$ error[E3050]: `xs` is borrowed after it has been moved out of
+#$ error[E3040]: `xs` is borrowed after it has been moved out of
 #$ error[E3040]: `ys` has been moved out of
 
 ## `[BRW-7]` — no borrow of a moved place. Taking an address does not consume,

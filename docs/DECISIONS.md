@@ -5017,6 +5017,39 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-198 — The owner's three rulings: a class's printer, a moved value is `E3040`, `unsafe fn(…)` types (ODR-113 to ODR-115, 0.9.10_Hardened_11)
+
+2026-10-16. The three owner questions ADR-197 found, ruled by the owner and cut as
+`Ember_v0.9.10_Hardened_11.md` (§H.16).
+
+**ODR-113 (`[STD-9]`).** Wording only: the example of a type with neither printer is a `RefCell`; a
+class prints by `[TYP-36]`'s `Debug`. The compiler already did this.
+
+**ODR-114 (`[OWN-3]`, `[BRW-7]`).** `drops.rs`'s `report_borrow` gives `E3040` ("`a` is borrowed after
+it has been moved out of"), and both it and the read path go through `moved_from`, which labels the
+move ("moved here", from `moves_reaching`) and adds the Python note for a list, a map or a set
+(`is_collection`: a `Vec`, or a struct whose origin is `std.collections.Map`/`Set`).
+`definite_init.rs`'s `E3050` for a place some paths leave empty now labels the branch: a block that
+leaves it `Uninit` and flows into one whose entry has it `Maybe` (one whose call assigns the local is
+not it), walked back to the `SwitchInt` that chose the path (`unassigned_branch`). Shape O6's help is
+"give it a value on every path, or assign one at the declaration". Twelve tests changed `E3050` to
+`E3040`; the registry's `E3050` is "use of an uninitialised place".
+
+**ODR-115 (`[FN-6]`, `[UNS-1]`).** `TypeKind::Fn` and `TyKind::Fn` carry `is_unsafe`, parsed before
+`fn`/`extern` (and after `once`), printed and mangled as `unsafe`. `fn_value_of` gives an `unsafe fn`
+its `unsafe` type instead of `E0900`. `coerce` takes a function or lambda to an `unsafe` callable type
+through the safe form of that type, then relabels it; the reverse falls to `E2020`, whose note and
+help name the `unsafe` type. ODR-102's stateless-to-owned rule and `[FN-6b]`'s late-bound one keep
+`unsafe` unchanged. `synth_indirect_call` gives `E3100` outside `unsafe`. `CallableBound.is_unsafe`
+travels with the hidden generic of a `f: unsafe fn(…)` parameter; a bound that is not `unsafe` refuses
+an `unsafe fn` value, or a parameter bounded `unsafe fn(…)`, as its argument. EMIF schema 10 records
+the bound's `is_unsafe`. `ember tcb` lists a call through an `unsafe fn(…)` value with the obligation
+"unknown at the call". C: every Ember callable value is the one `fn_value` struct, and `extern "C"`
+pointers of one signature are compatible types, so no conversion is emitted. `[FN-6]` is done: its
+`unfinished` entry is removed, since what it still named is tracked elsewhere: other ABIs under
+`[FFI-5]` and `[FFI-9]`, and `once fn` values under `[CLO-6a]`. README Overall stays 75% (the cut
+added words to `[FN-6]`, which counted against it while unfinished).
+
 ## ADR-197 — A `Cell`'s counted copy, `assert_disjoint` recorded, `some` placed, `@static_safe` parameters (`[TYP-36]`, `[DSJ-5]`, `[GRM-31]`, `[EFF-6a]`); 75%
 
 The 75% push, closed (2026-10-16). With coroutines merged (ADR-193), README Overall is 75%.

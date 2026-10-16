@@ -262,6 +262,69 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-115 — a callable type for an `unsafe fn` — **CLOSED**
+
+    ID:        ODR-115
+    Status:    CLOSED — ruled by the owner, 2026-10-16; incorporated in 0.9.10_Hardened_11
+    Category:  LANGUAGE / CALLABLE TYPES
+    Location:  Ember_v0.9.10_Hardened_10.md [FN-6], [UNS-1], grammar `fn_type`
+
+**The question.** `[FN-6]` makes every function a value of a callable type, but no callable type
+could hold an `unsafe fn`: one would make a call through it safe, so the compiler refused an
+`unsafe fn` used as a value (`E0900`).
+
+**Ruling.** Add `unsafe fn(…) -> R` types. An `unsafe fn` coerces only to one (`E2020` to a safe
+type); any function or lambda coerces to one too. A call through a value of one is an `unsafe`
+operation (`[UNS-1]`, `E3100` outside `unsafe`). As a parameter's bound it is met by whatever meets
+`fn(…)` and by an `unsafe fn`. The word comes before `extern "C"`: `once unsafe extern "C" fn(…)`.
+`ember tcb` lists a call through one, its obligation unknown at the call. The C is unchanged.
+**Tests:** `tests/conformance/FN-6/accept_unsafe_callable_types.em`,
+`reject_unsafe_fn_for_a_safe_callable_bound.em`; `tests/conformance/UNS-1/`
+`reject_call_through_unsafe_callable_value_outside_unsafe.em`,
+`reject_call_through_unsafe_callable_parameter_outside_unsafe.em`,
+`reject_unsafe_function_value_without_unsafe_callable_type.em` (now `E2020`). ADR-198.
+
+---
+
+## ODR-114 — a moved value used again is always `E3040` — **CLOSED**
+
+    ID:        ODR-114
+    Status:    CLOSED — ruled by the owner, 2026-10-16; incorporated in 0.9.10_Hardened_11
+    Category:  OWNERSHIP / DIAGNOSTICS
+    Location:  Ember_v0.9.10_Hardened_10.md [OWN-3], [BRW-7], XVII.5
+
+**The question.** XVII.5 shows `b = a` then `a.push(4)` as `E3040`, a use after a move. `[BRW-7]`
+said a borrow of a moved or uninitialised place is `E3050`, and `a.push(4)` borrows `a`, so the
+compiler gave `E3050`: two codes for one mistake depending on whether the use reads or borrows.
+
+**Ruling.** A use of a moved-from place, read, moved again or borrowed (a method call, `print`), is
+`E3040`, with the clone help and, for a list, a map or a set, the note that Python would have
+aliased it. `E3050` is only for a place never given a value on some path, and now labels the
+branch that leaves it without one. **Tests:** `tests/conformance/OWN-3/`
+`reject_a_list_used_after_assignment_moved_it.em` (XVII.5's example); the tests that expected
+`E3050` for a moved value now expect `E3040`; `tests/ui/borrow/O1/borrow_after_move`,
+`tests/ui/borrow/O6/borrow_of_a_maybe_unassigned_local`. ADR-198.
+
+---
+
+## ODR-113 — the printer `[STD-9]` names for a class — **CLOSED**
+
+    ID:        ODR-113
+    Status:    CLOSED — ruled by the owner, 2026-10-16; incorporated in 0.9.10_Hardened_11
+    Category:  STANDARD LIBRARY / PRINTING
+    Location:  Ember_v0.9.10_Hardened_10.md [STD-9], [TYP-36]
+
+**The question.** `[STD-9]` gave a class as its example of a type with neither `Display` nor
+`Debug` (`E2040`); `[TYP-36]` gives every class handle a `Debug`, its class and address, which the
+compiler prints.
+
+**Ruling.** `[TYP-36]` stands and `[STD-9]`'s wording changes: its example of a type with neither is
+a `RefCell`, whose value is reached only through a checked borrow, and a class without a written
+`Display` prints by its `Debug`. No behaviour changes. **Tests:** the existing
+`tests/conformance/STD-9/` reject test already uses a `RefCell`. ADR-198.
+
+---
+
 ## ODR-112 — blanket parameters on an extension of every type — **CLOSED**
 
     ID:        ODR-112

@@ -1,0 +1,14 @@
+error[E3040]: `values` is borrowed after it has been moved out of
+ --> tests/ui/borrow/O1/borrow_after_move.em:6:28
+  |
+4 |     moved = values
+  |             ------ moved here
+5 |     println(moved.len())
+6 |     view: ref Array[i32] = ref values
+  |                            ^^^^^^^^^^ borrowed here after the move
+  |
+  = help: borrow before the move, or clone the value so the move takes the copy
+  = note: the borrow would point at memory whose owner gave it away
+  = note: assigning a list, a map or a set moves it; in Python both names would point at one list (Appendix E)
+
+error: could not compile due to 1 error(s)

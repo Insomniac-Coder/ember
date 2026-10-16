@@ -7,4 +7,4 @@ fn main():
     m: Map[String, i64] = {"a": 1}
     for k in owned m:
         println(k)
-    println(m) #$ error[E3050]: `m` is borrowed after it has been moved out of
+    println(m) #$ error[E3040]: `m` is borrowed after it has been moved out of

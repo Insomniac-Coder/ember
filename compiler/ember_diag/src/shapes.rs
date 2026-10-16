@@ -92,7 +92,7 @@ impl Shape {
     /// for `ember explain`.
     pub fn trigger(self) -> &'static str {
         match self {
-            Shape::O1 => "a place is read after being moved",
+            Shape::O1 => "a place is read or borrowed after being moved",
             Shape::O2 => "a move out of an index, a span element, or a field of a `Drop` type",
             Shape::O3 => "a value declared outside a loop is moved inside it",
             Shape::O4 => "a struct is used as a whole after one field moved out",

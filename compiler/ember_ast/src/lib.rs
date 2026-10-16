@@ -470,6 +470,8 @@ pub enum TypeKind {
         latebound: bool,
         /// `[FN-6]`, `[CLO-6]` — `once fn(…) -> R`: called at most once.
         once: bool,
+        /// `[FN-6]` (ODR-115) — `unsafe fn(…) -> R`: a call through it needs `unsafe`.
+        is_unsafe: bool,
         params: Vec<CallableTypeParam>,
         ret: Option<Box<TypeExpr>>,
     },

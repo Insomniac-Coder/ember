@@ -5736,8 +5736,8 @@ fn ember_test_doc_runs_the_documentation_examples() {
     let docs = package.join("docs");
     std::fs::create_dir_all(docs.join("errors")).expect("docs/errors is writable");
     std::fs::create_dir_all(docs.join("book").join("basics")).expect("docs/book is writable");
-    std::fs::write(docs.join("errors").join("E3050.md"), "\
-# E3050
+    std::fs::write(docs.join("errors").join("E3040.md"), "\
+# E3040
 
 ```ember,fails
 fn main():
@@ -5843,8 +5843,8 @@ fn main():
         "running 11 examples",
         "example docs/errors/E2020.md:3 (fails) ... ok",
         "example docs/errors/E2020.md:8 (fixed) ... FAILED",
-        "example docs/errors/E3050.md:3 (fails) ... ok",
-        "example docs/errors/E3050.md:14 (fixed) ... ok",
+        "example docs/errors/E3040.md:3 (fails) ... ok",
+        "example docs/errors/E3040.md:14 (fixed) ... ok",
         "example docs/errors/E9010.md:8 (fails) ... ok",
         "example docs/errors/E9010.md:18 (fixed) ... ok",
         "example docs/errors/E9041.md:3 (fails) ... ok",
@@ -5858,7 +5858,7 @@ fn main():
     ] {
         assert!(run.stdout.contains(line), "missing `{line}`:\n{}{}", run.stdout, run.stderr);
     }
-    let filtered = ember(&["test", "--doc", "E3050"], &package);
+    let filtered = ember(&["test", "--doc", "E3040"], &package);
     assert_eq!(filtered.exit, 0, "{}{}", filtered.stdout, filtered.stderr);
     assert!(filtered.stdout.contains("2 passed; 0 failed; 0 quarantined; 9 filtered out"), "{}", filtered.stdout);
 }

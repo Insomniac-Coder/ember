@@ -93,9 +93,13 @@ pub fn blend(dst: Array[f32], mut out: Array[f32], owned scratch: Array[f32], we
   (`[TYP-8]`).
 * `[FN-6]` *(changed in 0.9.9)* **Callable types.** A function is a value. A callable type is written
   `fn(A, mut B, owned C) -> R`, with the same parameter modes as a declaration; `once fn(…) -> R` is a
-  callable that may be called at most once (`[CLO-6]`). Callable types are compared by their parameter
-  types, modes and result. A function coerces to any callable type it satisfies; a capture-free one
-  also coerces to `extern "C" fn(…)` when every type is FFI-safe. The source parameters (`[LT-1]`) of a
+  callable that may be called at most once (`[CLO-6]`), and `unsafe fn(…) -> R` one whose call is an
+  `unsafe` operation (`[UNS-1]`, ODR-115); the two combine with `extern "C"` as the grammar orders them,
+  `once unsafe extern "C" fn(…)`. Callable types are compared by their parameter types, modes and
+  result, and by `unsafe`. A function coerces to any callable type it satisfies, and to its `unsafe`
+  form; an `unsafe fn` coerces only to an `unsafe` callable type (`E2020` otherwise). As a parameter's
+  bound (`[CLO-3]`), `unsafe fn(…)` is met by any function or lambda that meets `fn(…)` and by an
+  `unsafe fn`. A capture-free function also coerces to `extern "C" fn(…)` when every type is FFI-safe. The source parameters (`[LT-1]`) of a
   callable type get fresh regions at each call, and the result's regions follow `[LT-1]` applied to
   the callable type's own parameters (`[LT-7]`). What a callable type means in each position is
   `[CLO-3]`.

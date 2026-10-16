@@ -10944,9 +10944,12 @@ Then (ADR-196) 128-bit atomics (`-mcx16`), a struct's `init` with fields without
 (`[STR-6]`), the debug lock order warning (`[THR-4]`). Then (ADR-197) a `Cell`'s counted copy
 retained (`[TYP-36]`), `assert_disjoint` recorded or left out (`[DSJ-5]`), `some` placed
 (`[GRM-31]`, `E2260`), `@static_safe` parameters (`[EFF-6a]`), and the clang-cl `-mcx16` fix (D-671):
-README Overall 75%. **Next:** `[TYP-32]`'s `some` return types, `[JOB-5]`'s `local_arena`, N7, the
-`[STD-1]` audit (ADR-197 lists what was tried). Owner questions found: `[STD-9]` vs `[TYP-36]` on a class's
-text; XVII.5's `E3040` that `[BRW-7]` makes `E3050`; `[FN-6]` has no `unsafe fn(…)` type.
+README Overall 75%. Then (ADR-198, 0.9.10_Hardened_11) the owner ruled those three questions:
+ODR-113 (`[STD-9]`'s example is a `RefCell`), ODR-114 (a use or borrow of a moved value is `E3040`,
+labelled at the move; `E3050` only for a place never assigned on some path, labelled at the
+branch), ODR-115 (`unsafe fn(…) -> R` types; a call through one needs `unsafe`; EMIF schema 10).
+**Next:** `[TYP-32]`'s `some` return types, `[JOB-5]`'s `local_arena`, N7, the
+`[STD-1]` audit (ADR-197 lists what was tried).
 
 **2026-10-16, `ember test` (ADR-192).** `@test`/`@should_panic` built (forms checked, `E0104`;
 `@bench` still `E0900`); `ember test [filter] [--doc] [--no-leak-check]` in

@@ -31,7 +31,6 @@
     "GRM-28": "generic, `unsafe` and `gen` local functions, and a call to a local function from a closure inside it, are refused (E0900): tests/conformance/GRM-28/reject_the_local_function_forms_not_built.em",
     "TYP-9": "a default doing float work in another mode (N7), and `@fastmath`/`@fp(contract)` in a static library (N6), are refused: docs/NOT-IMPLEMENTED.md, tests/conformance/TYP-9/reject_a_mut_default_doing_float_work_from_another_mode.em",
     "CG-C-11": "`@fastmath`/`@fp(contract)` in a static library is refused: docs/NOT-IMPLEMENTED.md N6",
-    "FN-6": "an `unsafe fn` cannot become a callable value yet (E0900), and only the C function-pointer ABI is built: tests/conformance/UNS-1/reject_unsafe_function_value_without_unsafe_callable_type.em",
     "FN-5": "a parameter default doing float work that the caller's mode cannot keep is refused: docs/NOT-IMPLEMENTED.md N7",
     "GRM-38": "a generator expression with a second `for` is refused as a value (E0900): its `flat_map` over inner generators that borrow both their source and the outer clause's names gets no single source relation from the region analysis (`FlatMap.next`, E3065)",
     "SIMD-5": "a loop calling a function, or with a float running total, is not put in vectorisable form: docs/NOT-IMPLEMENTED.md N4, N5",

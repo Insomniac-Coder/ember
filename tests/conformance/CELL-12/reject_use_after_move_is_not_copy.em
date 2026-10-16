@@ -7,5 +7,5 @@
 fn main():
     c: RefCell[i32] = RefCell(1)
     _d = c
-    with _x = c.borrow():   #$ error[E3050]: borrowed after it has been moved
+    with _x = c.borrow():   #$ error[E3040]: borrowed after it has been moved
         println(1)

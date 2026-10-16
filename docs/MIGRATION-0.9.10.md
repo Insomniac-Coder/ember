@@ -10,7 +10,8 @@ reads the 256-bit counts, the known-numbers rule, and `enumerate` numbers that n
 Hardened_3 (2026-10-11, ODR-099, §H.8) refuses a pointer into a parameter C passes as a copy
 (`[FFI-21a]`, below); Hardened_4 (ODR-100, §H.9) lets a lambda written at an iterator adapter keep its borrows
 (below); Hardened_5 (ODR-101, §H.10) refuses a `main` of a form `[FN-8]` does not list (`E2183`, below).
-The specification is now `Ember_v0.9.10_Hardened_5.md`. This file says what
+Appendix H lists each later cut; Hardened_11 (ODR-113 to ODR-115, §H.16)
+is below. The specification is now `Ember_v0.9.10_Hardened_11.md`. This file says what
 changes for a program and how to update one, then records the implementation.
 
 ## 1. What changes for a program
@@ -156,6 +157,21 @@ used to be accepted and then failed in the C compiler (`fn main(x: int)`) or ign
 (`fn main() -> int` exited 0). An `E` that is not `Display` is `E2040`. Take the arguments as
 `args: Array[String]`; report a failure by returning `Err`, which prints `error: <message>` and exits
 with status 1.
+
+### Moved values, printing a class, `unsafe fn` values (Hardened_11)
+
+Using a value after a move is `E3040` whether the use reads it or borrows it: `b = a` then
+`a.push(4)` was `E3050`, and now gives `E3040`, labelled at the move, with a note for a list, a map
+or a set. `E3050` now means only a place some path leaves without a value. A build script matching
+on `E3050` for a moved value should match `E3040`.
+
+An `unsafe fn` can be a value: give it the type `unsafe fn(A) -> R` and call it inside `unsafe:`.
+Any function or lambda fits that type too. A parameter `f: unsafe fn(A) -> R` takes an `unsafe fn` as
+well as anything a `fn(A) -> R` parameter takes, and calls `f` inside `unsafe:`. It used to be
+`E0900`; giving an `unsafe fn` to a safe callable type is `E2020`.
+
+`[STD-9]`'s example changed (a `RefCell` has no printer; a class prints its class and address); the
+compiler's behaviour did not.
 
 ## 2. Updating a program
 

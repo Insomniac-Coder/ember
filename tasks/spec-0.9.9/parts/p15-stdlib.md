@@ -71,7 +71,10 @@ anything this Part leaves open.
   `eprint`/`eprintln` write to standard error. They are compiler-known and are the only calls with a
   variable number of positional arguments (`[TYP-26]`). An argument's text is its `Display` text when
   its type has `Display`, and its `Debug` text otherwise, which is Python's `str` → `repr` fallback; a
-  type with neither (a class without them) is `E2040`, whose help is to implement `Display`. `println()` prints an empty line.
+  type with neither (a `RefCell`, whose value is reached only through a checked borrow) is `E2040`,
+  whose help is to implement `Display`. A class handle always has `Debug`, its class and address
+  (`[TYP-36]`), so a class without a written `Display` prints by it (ODR-113). `println()` prints an
+  empty line.
 * `[STD-2]` Printing allocates only to build an f-string argument; `println("literal")`,
   `println(some_str)` and `println(n)` for a number are `@noalloc`.
 * `[STD-10]` *(new in 0.9.9)* `input(prompt="") -> String` prints the prompt, flushes, reads one line

@@ -72,7 +72,7 @@ fn required_primary_fragments(shape: Shape) -> &'static [&'static str] {
         Shape::O3 => &["loop"],
         Shape::O4 => &["reassign", "destructure"],
         Shape::O5 => &["owned", "mem.take"],
-        Shape::O6 => &["borrow"],
+        Shape::O6 => &["every path", "declaration"],
         Shape::O7 => &["mem.drop"],
         Shape::O8 => &["scope"],
         Shape::O9 => &["mem.take"],

@@ -282,7 +282,7 @@ codes! {
     E3065 = (Error, 3065, Ownership, "[LT-35]", "multi-region result provenance");
     E3095 = (Error, 3095, Ownership, "[DSJ-4]", "disjointness is not establishable for these operands");
     E3096 = (Error, 3096, Ownership, "[ARN-6]", "arena is scoped here");
-    E3050 = (Error, 3050, Ownership, "[BRW-7]", "use of an uninitialised or moved place");
+    E3050 = (Error, 3050, Ownership, "[BRW-7]", "use of an uninitialised place");
     E3060 = (Error, 3060, Ownership, "[LT-3]", "borrowed value does not live long enough");
     E3061 = (Error, 3061, Ownership, "[LT-4]", "arena allocation cannot outlive its arena");
     E3062 = (Error, 3062, Ownership, "[XVIII.4.7]", "returned reference does not derive from a parameter");

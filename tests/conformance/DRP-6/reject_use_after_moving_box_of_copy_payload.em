@@ -6,4 +6,4 @@ fn main():
     first: Box[i32] = Box(1)
     second = first
     println(second.get())
-    println(first.get()) #$ error[E3050]: `first` is borrowed after it has been moved out of
+    println(first.get()) #$ error[E3040]: `first` is borrowed after it has been moved out of

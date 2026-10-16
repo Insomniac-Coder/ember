@@ -13,9 +13,11 @@ Part VIII; here a class handle is simply a `Copy` value whose copy retains.
   order), when its owner is overwritten, or at the end of the statement that created it as a
   temporary. Dropping runs the value's `drop` method, if any, then drops its fields in reverse
   declaration order.
-* `[OWN-3]` A move transfers ownership and leaves the source uninitialised. Using a moved-from place is
-  `E3040`, labelled at the move and at the use, with the help `.clone()` when the type is `Clone`. A
-  value moved on only some paths is tracked with a hidden drop flag; conditional moves are legal.
+* `[OWN-3]` A move transfers ownership and leaves the source uninitialised. Using a moved-from place,
+  whether it is read, moved again or borrowed (a method call, `print`), is `E3040`, labelled at the
+  move and at the use, with the help `.clone()` when the type is `Clone` (ODR-114). A value moved on
+  only some paths is tracked with a hidden drop flag; conditional moves are legal, and a use a move
+  may have reached is `E3040` too.
 * `[OWN-4]` A loop body that moves a value declared outside the loop is `E3041`, unless every path
   assigns it again before the next iteration.
 * `[OWN-5]` Assigning to a place that holds a live value evaluates the new value, then drops the old
@@ -82,7 +84,8 @@ to initialise a `ref`-typed local or field).
   distinct addresses, and nothing about addresses follows from the indices (ODR-068).
 * `[BRW-6]` **Reborrows.** From `r: ref mut T`, `ref r.f` freezes `r` while it lives and `ref mut r.f`
   suspends `r`. Passing a `ref mut` local to a `mut` parameter reborrows it; it does not move it.
-* `[BRW-7]` Borrowing a moved or uninitialised place is `E3050`.
+* `[BRW-7]` Borrowing a place that is uninitialised on some path, one never assigned there, is `E3050`;
+  borrowing one a move may have reached is `[OWN-3]`'s `E3040` (ODR-114).
 * `[BRW-8]` *(changed in 0.9.9)* A borrowed parameter is passed by address: the callee reads the
   caller's place (`[FN-1]`, ODR-024). Two kinds are passed as a copy instead:
   * a reference or view (a `ref`, `Span`, `MutSpan`, `str` or `@view` struct), which is passed as

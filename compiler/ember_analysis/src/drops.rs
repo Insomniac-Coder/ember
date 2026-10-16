@@ -245,6 +245,7 @@ pub fn elaborate(body: &mut Body, types: &TypeTable, sink: &mut Sink) -> usize {
     let cyclic = blocks_in_a_cycle(body);
     let mut reporter = Reporter {
         sink,
+        types,
         errors: 0,
         reported: vec![false; body.locals.len()],
         in_loop: false,
@@ -1532,6 +1533,9 @@ fn successors(body: &Body, index: usize) -> Vec<usize> {
 
 struct Reporter<'a> {
     sink: &'a mut Sink,
+    /// `[OWN-3]` — whether a moved value is a collection, whose use after the move gets the note
+    /// about Python's aliasing (shape O1).
+    types: &'a TypeTable,
     errors: usize,
     /// One diagnostic per local, so a moved value read in a loop is reported
     /// once rather than every iteration.
@@ -1642,17 +1646,31 @@ impl Reporter<'_> {
             } else {
                 format!("`{name}` may have been moved out of")
             };
-            Diagnostic::error(codes::E3040, span, message)
+            let diagnostic = Diagnostic::error(codes::E3040, span, message)
                 .primary_label("used here after the move")
                 .note("a move gives the value away; the old owner cannot use it again")
-                .help("clone the value, or borrow it instead of moving it")
+                .help("clone the value, or borrow it instead of moving it");
+            self.moved_from(diagnostic, body, local, span)
         };
         self.sink.emit_classified(diagnostic);
     }
 
-    /// `[BRW-7]` — "no borrow of a moved or uninitialised place. `E3050`."
-    /// Shape O6, whose required help is to name the path the place is not
-    /// initialised on and to move the borrow after the initialisation.
+    /// `[OWN-3]` — a use after a move is labelled at the move as well; and a collection's, with the
+    /// note that assignment moves it where Python's would alias it (shape O1).
+    fn moved_from(&self, mut diagnostic: Diagnostic, body: &Body, local: LocalId, span: Span) -> Diagnostic {
+        if let Some(moved) = moves_reaching(body, local, self.point).into_iter().find(|moved| *moved != span) {
+            diagnostic = diagnostic.secondary(moved, "moved here");
+        }
+        if is_collection(self.types, body.local(local).ty) {
+            diagnostic = diagnostic.note(
+                "assigning a list, a map or a set moves it; in Python both names would point at one list (Appendix E)",
+            );
+        }
+        diagnostic
+    }
+
+    /// `[OWN-3]`, `[BRW-7]` (ODR-114) — a borrow a move may have reached is a use after the move,
+    /// `E3040`, shape O1; a place never assigned on some path is definite initialisation's `E3050`.
     fn report_borrow(&mut self, place: &Place, state: Owned, span: Span, body: &Body) {
         let local = place.local;
         let index = local.0 as usize;
@@ -1682,15 +1700,27 @@ impl Reporter<'_> {
                 "on at least one path reaching this line the value is gone",
             )
         };
-        self.sink.emit_classified(
-            Diagnostic::error(codes::E3050, span, message)
-                .primary_label("borrowed here")
-                .secondary(decl.span, format!("`{name}` is declared here"))
-                .note(note)
-                .help(
-                    "borrow before the move, or clone the value so the move takes the copy",
-                ),
-        );
+        let diagnostic = Diagnostic::error(codes::E3040, span, message)
+            .primary_label("borrowed here after the move")
+            .note(note)
+            .help("borrow before the move, or clone the value so the move takes the copy");
+        let diagnostic = self.moved_from(diagnostic, body, local, span);
+        self.sink.emit_classified(diagnostic);
+    }
+}
+
+/// A list, a map or a set (text included): what Python users expect assignment to alias.
+fn is_collection(types: &TypeTable, ty: Ty) -> bool {
+    let ty = match types.kind(ty) {
+        TyKind::Ref { inner, .. } => *inner,
+        _ => ty,
+    };
+    match types.kind(ty) {
+        TyKind::Vec { .. } => true,
+        TyKind::Struct(id) => types.struct_def(*id).origin.as_ref().is_some_and(|(origin, _)| {
+            matches!(origin.as_str(), "std.collections.Map" | "std.collections.Set")
+        }),
+        _ => false,
     }
 }
 

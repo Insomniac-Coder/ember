@@ -159,9 +159,10 @@ fn parse(data: Span[u8]) -> Option[u32]:
 ```
 
 * `[UNS-1]` An `unsafe` context is required to: dereference, read or write through `*T`/`*mut T`;
-  offset a pointer; cast between pointers or pointers and integers; call an `unsafe fn`; call an
-  `extern` function without a verified contract (Part XVI); access a `static mut`; `transmute`; call
-  `get_unchecked` or `assume_init`; implement an `unsafe` interface.
+  offset a pointer; cast between pointers or pointers and integers; call an `unsafe fn`, or through a
+  value of an `unsafe` callable type (`[FN-6]`); call an `extern` function without a verified contract
+  (Part XVI); access a `static mut`; `transmute`; call `get_unchecked` or `assume_init`; implement an
+  `unsafe` interface.
 * `[UNS-2]` `unsafe` permits exactly those operations. It does not turn off borrow checking, bounds
   checks on safe types, overflow checks or type checking.
 * `[UNS-3]` `L3010` reports an `unsafe` block containing statements that need no `unsafe`.

@@ -431,6 +431,12 @@ ODRS = [
      '`[TYP-43]`, Part IV §8, grammar `extend_decl`'),
     ('ODR-112', 'ruled under the delegation (2026-10-16): an extension may target a parameter standing alone with blanket parameters besides (`extend[T, U] T implements Wrap[U]`); a call leaving a blanket parameter open takes it from the one instance of the interface the receiver\'s type implements through the block',
      '`[GRM-34]`'),
+    ('ODR-113', 'ruled by the owner (2026-10-16): `[STD-9]`\'s example of a type with neither `Display` nor `Debug` is a `RefCell`, not a class: a class handle always has `Debug`, its class and address (`[TYP-36]`)',
+     '`[STD-9]`'),
+    ('ODR-114', 'ruled by the owner (2026-10-16): a moved-from place, read, moved again or borrowed, is `E3040` with `[OWN-3]`\'s help; `E3050` is a place uninitialised on some path, one never assigned there',
+     '`[OWN-3]`, `[BRW-7]`'),
+    ('ODR-115', 'ruled by the owner (2026-10-16): `unsafe fn(…) -> R` is a callable type whose call is an `unsafe` operation; an `unsafe fn` coerces only to one, any function to one; as a bound it is met by any function',
+     '`[FN-6]`, `[UNS-1]`, grammar `fn_type`'),
 ]
 
 H5_HEAD = """
@@ -478,7 +484,8 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 0.9.10_Hardened_8 adds ODR-104, a constructor's `return` and its receiver (§H.13);
 0.9.10_Hardened_9 adds ODR-105, `E2104` for a `let` field assigned outside `init` (§H.14);
 0.9.10_Hardened_10 adds ODR-106 to ODR-112, the owner's `is` and `?.` and the agents' open
-questions (§H.15).
+questions (§H.15); 0.9.10_Hardened_11 adds ODR-113 to ODR-115, the owner's rulings on what printing,
+a use after a move and an `unsafe fn` value are (§H.16).
 
 | ODR | Ruling | Rules |
 |---|---|---|
@@ -494,7 +501,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.10', 10)
+CURRENT = ('0.9.10', 11)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -505,6 +512,7 @@ V010_H6_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h6')
 V010_H7_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h7')
 V010_H8_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h8')
 V010_H9_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h9')
+V010_H10_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h10')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -779,8 +787,32 @@ Generated: every rule whose text differs from 0.9.10_Hardened_9.
 """
 
 
-def v010_h9_to_now():
-    return H15_HEAD + rule_diff(V010_H9_PARTS, os.path.join(HERE, '..', 'parts'))
+def v010_h9_to_h10():
+    return H15_HEAD + rule_diff(V010_H9_PARTS, V010_H10_PARTS)
+
+
+H16_HEAD = """
+## H.16 Changes in 0.9.10_Hardened_11 (from 0.9.10_Hardened_10)
+
+**0.9.10_Hardened_11** records ODR-113 to ODR-115, ruled by the owner on 2026-10-16
+(`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-198):
+
+* The example of a type with neither printer is a `RefCell`: a class handle always has `Debug`
+  (`[STD-9]`, `[TYP-36]`, ODR-113).
+* A moved-from place, read, moved again or borrowed, is `E3040`; `E3050` is a place never assigned on
+  some path (`[OWN-3]`, `[BRW-7]`, ODR-114).
+* `unsafe fn(…) -> R` is a callable type whose call needs `unsafe`; an `unsafe fn` coerces only to one
+  (`[FN-6]`, `[UNS-1]`, the grammar's `fn_type`, ODR-115).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_10.
+
+| Rule | 0.9.10_Hardened_10 → 0.9.10_Hardened_11 |
+|---|---|
+"""
+
+
+def v010_h10_to_now():
+    return H16_HEAD + rule_diff(V010_H10_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -851,7 +883,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_now() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_now() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

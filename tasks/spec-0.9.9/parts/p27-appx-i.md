@@ -114,7 +114,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[BRW-4]` | VII | Disjoint fields. `ref mut a.x` and `ref mut a.y` may be live together … |
 | `[BRW-5]` | VII | Indices are not disjoint. `ref mut a[i]` and `ref mut a[j]` conflict … |
 | `[BRW-6]` | VII | Reborrows. From `r: ref mut T`, `ref r.f` freezes `r` while it lives … |
-| `[BRW-7]` | VII | Borrowing a moved or uninitialised place is `E3050`. |
+| `[BRW-7]` | VII | Borrowing a place that is uninitialised on some path, one never … |
 | `[BRW-8]` | VII | A borrowed parameter is passed by address: the callee reads the … |
 | `[BRW-9]` | VII | A reference in Safe code is never null, dangling or unaligned. |
 | `[BRW-10]` | VII | Methods borrow the fields they use. A call to a method of a struct or … |

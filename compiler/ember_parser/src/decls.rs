@@ -1242,11 +1242,26 @@ impl Parser<'_> {
             // `[FN-6]` — `once fn(…) -> R`, a callable called at most once (`[CLO-6]`); `once`
             // is a word only here.
             TokenKind::Ident(word)
-                if word.is("once") && matches!(self.peek_at(1), TokenKind::Keyword(Kw::Fn)) =>
+                if word.is("once") && matches!(self.peek_at(1), TokenKind::Keyword(Kw::Fn | Kw::Unsafe)) =>
             {
                 self.bump();
                 match self.parse_type().kind {
-                    TypeKind::Fn { abi, latebound, params, ret, .. } => TypeKind::Fn { abi, latebound, once: true, params, ret },
+                    TypeKind::Fn { abi, latebound, is_unsafe, params, ret, .. } => {
+                        TypeKind::Fn { abi, latebound, once: true, is_unsafe, params, ret }
+                    }
+                    other => other,
+                }
+            }
+            // `[FN-6]` (ODR-115) — `unsafe fn(…) -> R`, a callable whose call is an `unsafe`
+            // operation; it comes before `extern "C"`, as `[GRM-1]`'s `fn_type` orders them.
+            TokenKind::Keyword(Kw::Unsafe)
+                if matches!(self.peek_at(1), TokenKind::Keyword(Kw::Fn | Kw::Extern)) =>
+            {
+                self.bump();
+                match self.parse_type().kind {
+                    TypeKind::Fn { abi, latebound, once, params, ret, .. } => {
+                        TypeKind::Fn { abi, latebound, once, is_unsafe: true, params, ret }
+                    }
                     other => other,
                 }
             }
@@ -1286,7 +1301,7 @@ impl Parser<'_> {
                 }
                 self.expect_punct(Punct::RParen);
                 let ret = self.eat_punct(Punct::Arrow).then(|| Box::new(self.parse_type()));
-                TypeKind::Fn { abi, latebound, once: false, params, ret }
+                TypeKind::Fn { abi, latebound, once: false, is_unsafe: false, params, ret }
             }
             _ => {
                 let segments = self.parse_dotted_path();

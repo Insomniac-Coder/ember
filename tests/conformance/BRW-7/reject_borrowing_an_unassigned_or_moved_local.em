@@ -1,7 +1,7 @@
 #$ test: compile-fail
-#$ rules: BRW-7, DIA-14, TYP-5
-# `[BRW-7]` — no borrow of a moved or uninitialised place, one error each: a
-# local never given a value is reported as that, not also as "moved out of".
+#$ rules: BRW-7, OWN-3, DIA-14, TYP-5
+# `[BRW-7]` — borrowing a local never given a value is `E3050`; borrowing one a move reached is
+# `[OWN-3]`'s `E3040` (ODR-114); one error each, never both for one local.
 
 fn peek(r: ref int) -> int:
     return r
@@ -14,5 +14,5 @@ fn main():
     println(peek(x))    #$ error[E3050]: `x` is used before it is given a value
     s: String = "moved"
     t = s
-    println(size(s))    #$ error[E3050]: `s` is borrowed after it has been moved out of
+    println(size(s))    #$ error[E3040]: `s` is borrowed after it has been moved out of
     println(t)
