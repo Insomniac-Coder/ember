@@ -226,6 +226,7 @@ codes! {
     // rejected with the `//` and float fix-its.
     E2240 = (Error, 2240, Types, "[TYP-28]", "`/` on two integers");
     E2250 = (Error, 2250, Types, "[LEX-19]", "format spec does not apply to the value's type");
+    E2260 = (Error, 2260, Types, "[GRM-31]", "a `some` type outside a function's return type");
 
     // --- range and domain types (`[RNG-*]`, 0.6) ------------------------------
     E2210 = (Error, 2210, Types, "[RNG-2]", "a value of one range type where another was expected");
@@ -248,6 +249,8 @@ codes! {
     E2225 = (Error, 2225, Types, "[HR-35]", "`migrate_from` may not panic");
     E2226 = (Error, 2226, Types, "[STD-8]", "`in` on a type that does not implement `Contains`");
     E2227 = (Error, 2227, Types, "[HR-39]", "a `noexcept` foreign call in `migrate_from` may terminate the process");
+    E2229 = (Error, 2229, Types, "[CORO-12]", "class generator method takes `mut self` or holds an access across `yield`");
+    E2231 = (Error, 2231, Types, "[CORO-13]", "`yield` while a `@must_drop` value is live");
 
     // --- ownership, borrows, regions, exclusivity, drops --------------------
     E3010 = (Error, 3010, Ownership, "[EXP-6]", "cannot move out of a field of a type with `drop`");

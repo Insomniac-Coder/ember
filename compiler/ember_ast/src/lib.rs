@@ -474,6 +474,9 @@ pub enum TypeKind {
         ret: Option<Box<TypeExpr>>,
     },
     Dyn(Vec<TypeExpr>),
+    /// `[GRM-31]`, `[TYP-32]` — `some I`: one concrete type the function body chooses, which
+    /// implements `I`. Legal only in a function's return type.
+    SomeType(Box<TypeExpr>),
     /// `[T; N]`.
     Array { elem: Box<TypeExpr>, len: Box<Expr> },
     SelfType,

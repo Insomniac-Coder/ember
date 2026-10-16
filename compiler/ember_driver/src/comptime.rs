@@ -101,6 +101,7 @@ pub fn evaluate(
     // What these passes would report, the final pass reports for the program.
     let mut scratch = Sink::new();
     ember_analysis::elaborate_drops_all(&mut bodies, types, &mut scratch);
+    ember_analysis::coroutines::transform(&mut bodies, types);
     ember_analysis::install_callable_regions_all(&mut bodies, types);
     ember_analysis::insert_shared_accesses_all(&mut bodies, types);
 
@@ -231,7 +232,14 @@ fn reachable(bodies: &[ember_mir::Body], roots: &[String]) -> std::collections::
         bodies.iter().enumerate().map(|(index, body)| (body.symbol.as_str(), index)).collect();
     let mut seen: std::collections::BTreeSet<String> = roots.iter().cloned().collect();
     for body in bodies {
-        if body.class_owner.is_some() || body.name == "drop" || body.name.ends_with(".drop") {
+        // `[CORO-4]` — a generator's body is what its frame's `next` and
+        // `drop` become, after this (`ember_analysis::coroutines`): kept
+        // whole, as a `drop` is.
+        let generator = body.blocks.iter().any(|block| {
+            matches!(&block.terminator, ember_mir::Terminator::Call { func: ember_mir::FuncRef::Direct { symbol, .. }, .. }
+                if ember_mir::lower::coroutines::is_start(symbol))
+        });
+        if body.class_owner.is_some() || body.name == "drop" || body.name.ends_with(".drop") || generator {
             seen.insert(body.symbol.clone());
         }
     }

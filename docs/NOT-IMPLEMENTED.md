@@ -56,17 +56,6 @@ followed.
 | **Can a program notice** | yes: the library does not build |
 | **Plan** | name a library's functions with its package prefix (as its public types are, `package_type_namespace`) and give the ones a relaxed unit shares external linkage; then build the relaxed objects into the archive |
 
-## N9 — `assert_disjoint`'s `RuntimeCheck(Aliasing)` record
-
-| | |
-|---|---|
-| **Rule** | `[DSJ-5]`: "Both forms record a `RuntimeCheck(Aliasing)` site whose reason is `establishes_static_fact` (`[EFF-11]`), unless the compiler already knows the ranges are disjoint, in which case no comparison is emitted" |
-| **The feature** | the safety side table's entry for each comparison, and leaving the comparison out where the ranges are known apart |
-| **Requires** | `RuntimeCheck(k)` effects and reason codes (`[EFF-9..11a]`, Phase 4) |
-| **Meanwhile** | every call compares (two comparisons per pair); nothing is recorded |
-| **Can a program notice** | no: `ember inspect --safety` lists no aliasing checks for any program yet |
-| **Plan** | record the site in the side table with `establishes_static_fact`; skip the comparison when range facts prove the views apart |
-
 ## N7 — a default doing float work that its mode's closure cannot hold
 
 | | |

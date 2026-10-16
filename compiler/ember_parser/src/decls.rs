@@ -256,12 +256,12 @@ impl Parser<'_> {
                 | Kw::Type,
             ) => true,
             TokenKind::Keyword(Kw::Unsafe) => {
-                self.at_kw_at(1, Kw::Fn)
+                self.at_fn_at(1)
                     || self.at_kw_at(1, Kw::Extern)
                     || matches!(self.peek_at(1), TokenKind::Ident(s) if s.is("extend"))
             }
             TokenKind::Ident(s) if s.is("abstract") => self.at_kw_at(1, Kw::Class),
-            TokenKind::Ident(s) if s.is("safe") => self.at_kw_at(1, Kw::Fn),
+            TokenKind::Ident(s) if s.is("safe") => self.at_fn_at(1),
             TokenKind::Ident(_) => self.at_gen_fn() || self.at_extend_decl() || self.at_union_decl(),
             _ => false,
         }
@@ -361,14 +361,14 @@ impl Parser<'_> {
         }
         // `unsafe extern "C":` and `unsafe extern "C" fn`.
         if self.at_kw(Kw::Unsafe) && self.at_kw_at(1, Kw::Extern) {
-            if self.at_kw_at(3, Kw::Fn) {
+            if self.at_fn_at(3) {
                 return Some(ItemKind::Fn(self.parse_fn()));
             }
             self.bump();
             return Some(ItemKind::ExternBlock(self.parse_extern_block(true)));
         }
         if self.at_kw(Kw::Extern) {
-            if self.at_kw_at(2, Kw::Fn) {
+            if self.at_fn_at(2) {
                 return Some(ItemKind::Fn(self.parse_fn()));
             }
             return Some(ItemKind::ExternBlock(self.parse_extern_block(false)));
@@ -380,7 +380,7 @@ impl Parser<'_> {
             }
             // `[GRM-21]` — a `gen fn` is admitted wherever `fn_decl` is.
             TokenKind::Ident(_) if self.at_gen_fn() => Some(ItemKind::Fn(self.parse_fn())),
-            TokenKind::Ident(s) if s.is("safe") && self.at_kw_at(1, Kw::Fn) => {
+            TokenKind::Ident(s) if s.is("safe") && self.at_fn_at(1) => {
                 Some(ItemKind::Fn(self.parse_fn()))
             }
             TokenKind::Keyword(Kw::Struct) => Some(ItemKind::Struct(self.parse_struct())),
@@ -615,8 +615,17 @@ impl Parser<'_> {
     /// keyword only immediately before `fn` — so the lookahead is exactly one
     /// token and a variable or field named `gen` is unaffected.
     pub(crate) fn at_gen_fn(&self) -> bool {
-        matches!(self.peek(), TokenKind::Ident(s) if s.is("gen"))
-            && matches!(self.peek_at(1), TokenKind::Keyword(Kw::Fn))
+        self.at_gen_fn_at(0)
+    }
+
+    fn at_gen_fn_at(&self, n: usize) -> bool {
+        matches!(self.peek_at(n), TokenKind::Ident(s) if s.is("gen"))
+            && matches!(self.peek_at(n + 1), TokenKind::Keyword(Kw::Fn))
+    }
+
+    /// `fn`, or `gen fn`, `n` tokens ahead: `fn_header`'s last two words.
+    fn at_fn_at(&self, n: usize) -> bool {
+        self.at_kw_at(n, Kw::Fn) || self.at_gen_fn_at(n)
     }
 
     /// True where an `extend` block begins. `extend` is contextual (ODR-030):
@@ -661,13 +670,6 @@ impl Parser<'_> {
     }
 
     fn parse_fn_decl(&mut self, method: bool) -> FnDecl {
-        // `[GRM-21]` — `gen_fn := "gen" fn_decl`. `gen` precedes everything,
-        // including `unsafe`: `[CORO-*]` gives no `unsafe gen fn` example, and
-        // accepting both orders would make two spellings of one declaration.
-        let is_gen = self.at_gen_fn();
-        if is_gen {
-            self.bump();
-        }
         let is_safe = matches!(self.peek(), TokenKind::Ident(s) if s.is("safe"));
         if is_safe {
             self.bump();
@@ -689,6 +691,13 @@ impl Parser<'_> {
         } else {
             Dispatch::Static
         };
+        // `[GRM-21]` — `fn_header := ["extern" STRING] ["unsafe"] ["virtual" |
+        // "override"] ["gen"] "fn" …`: `gen` comes last, right before `fn`
+        // (D-660: it was taken first, so `extern "C" gen fn` did not parse).
+        let is_gen = self.at_gen_fn();
+        if is_gen {
+            self.bump();
+        }
         self.expect_kw(Kw::Fn);
         let signature_start = self.pos;
         let name = if method { self.expect_member_name() } else { self.expect_fn_name() };
@@ -830,8 +839,10 @@ impl Parser<'_> {
                     }
                     let doc = self.take_doc();
                     let attrs = self.parse_attributes();
-                    // A variant is a bare name; anything else is a member.
+                    // A variant is a bare name; anything else is a member,
+                    // a `gen fn` among them (`[GRM-21]`, D-660).
                     let is_variant = self.at_ident()
+                        && !self.at_gen_fn()
                         && !self.at_punct_at(1, Punct::Colon)
                         && !matches!(self.peek_at(1), TokenKind::Punct(Punct::Dot));
                     if is_variant {
@@ -1193,6 +1204,11 @@ impl Parser<'_> {
             TokenKind::Keyword(Kw::SelfType) => {
                 self.bump();
                 TypeKind::SelfType
+            }
+            // `[GRM-31]` — `some I`: `some` before a type names one the body chooses.
+            TokenKind::Ident(name) if name.is("some") && matches!(self.peek_at(1), TokenKind::Ident(_)) => {
+                self.bump();
+                TypeKind::SomeType(Box::new(self.parse_type()))
             }
             TokenKind::Keyword(Kw::Dyn) => {
                 self.bump();

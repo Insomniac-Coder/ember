@@ -10941,9 +10941,11 @@ with each derive's field requirement checked (`E2080`); `Zeroable` enums; `<` th
 functions), `[EFF-19]` (`[realtime] contracts`), `[CLS-2]` (drop flags per constructor field),
 `[TYP-16]` generic aliases, `ember tcb` (`[UNS-8]`), `[THR-10]` static views to threads.
 Then (ADR-196) 128-bit atomics (`-mcx16`), a struct's `init` with fields without defaults
-(`[STR-6]`), the debug lock order warning (`[THR-4]`).
-**Next:** `[JOB-5]`'s `local_arena`, `some` return types; the `Cell`-of-a-handle
-formatting gap (`TYP-36`'s entry). Owner questions found: `[STD-9]` vs `[TYP-36]` on a class's
+(`[STR-6]`), the debug lock order warning (`[THR-4]`). Then (ADR-197) a `Cell`'s counted copy
+retained (`[TYP-36]`), `assert_disjoint` recorded or left out (`[DSJ-5]`), `some` placed
+(`[GRM-31]`, `E2260`), `@static_safe` parameters (`[EFF-6a]`), and the clang-cl `-mcx16` fix (D-671):
+README Overall 75%. **Next:** `[TYP-32]`'s `some` return types, `[JOB-5]`'s `local_arena`, N7, the
+`[STD-1]` audit (ADR-197 lists what was tried). Owner questions found: `[STD-9]` vs `[TYP-36]` on a class's
 text; XVII.5's `E3040` that `[BRW-7]` makes `E3050`; `[FN-6]` has no `unsafe fn(…)` type.
 
 **2026-10-16, `ember test` (ADR-192).** `@test`/`@should_panic` built (forms checked, `E0104`;
@@ -10959,6 +10961,25 @@ and `docs/book` samples (`[DOC-2]`: runner built, the guide itself missing, so `
 (`--instrument-ffi`), `ember bench`. Traps: `ember test` takes no path, only the package of the
 current directory (the spec's listing; `[CLI-4]` gives single files to `run`/`build` only); never run
 it from a shell on this machine, only from a milestone test.
+
+**2026-10-16, coroutines (ADR-193), built in a worktree.** `gen fn`, `yield`, `Generator[Y, R]`:
+the checker writes a `gen fn` out (`ember_typeck/src/coroutines.rs`) as a frame struct `f.Generator`
+(opaque: no written path reaches it), its `Iterator` implementation, stub `next`/`drop`/`result`,
+the body as the frame's private method `body` (each `yield e` a call taking `e` as a `Y`) and the
+function returning the frame; lowering gives each suspension a dropped path that ends as a `return`
+does, without `defer`s (`ember_mir/src/lower/coroutines.rs`); after the borrow check
+`ember_analysis/src/coroutines.rs` reports `E2221`/`E2229`/`E2231`/`E2200` from a points-to over
+the body and rewrites it into the frame's `next` (a `switch` on `state` to each resume point) and
+`drop` (to each dropped path), the live-across locals the frame's fields, the constructor's literal
+the first state. Nothing allocates; the C is a hand-written state machine. `std.coroutine`
+(`Wait`, `wait*`, `Scheduler` over `Box[dyn Sequence]`). `[CORO-1]`..`[CORO-13]`, `[GRM-21]` done
+(tests under `tests/conformance/CORO-*`, `GRM-21`); D-660 (parser: `gen` right before `fn`, and in
+an enum), D-661 (`extend`'s `drop` never ran), D-662 (`ember fmt` dropped `gen`) fixed. `yield` as an
+operand or a bound value is `E0107` now (was the parser's `E0100`). Left: `[GRM-38]`'s second `for`
+as a value (needs a generator closure: a local `gen fn`, `E0900`), `Box[dyn Iterator[Item = Y]]`
+(`dyn` with an associated-type binding), `virtual`/interface generator methods (`E0900`). Trap: a
+frame struct's fields are the parameters at check time; the transform appends the rest, so nothing
+before it may read a frame's layout.
 
 **2026-10-15, `ember inspect --alloc` and the near-misses (ADR-188).** `inspect --alloc <file.em>`
 lists every allocation site by function and line, read from the effects analysis before inlining

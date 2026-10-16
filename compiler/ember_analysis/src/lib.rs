@@ -16,6 +16,7 @@ pub mod kernels;
 pub mod list_locals;
 pub mod reserve_pushes;
 pub mod cycles;
+pub mod coroutines;
 pub mod access;
 pub mod ascii_runs;
 pub mod definite_init;
@@ -43,6 +44,7 @@ pub use borrows::{
     insert_shared_accesses_all, install_callable_regions_all, verify_callable_regions_all,
 };
 pub use access::{elide_static_accesses_all, remove_never_firing_checks_all};
+pub use kernels::elide_known_disjoint_comparisons_all;
 pub use c_entries::{callable_types_given_to_c, check_c_entry_returns_all};
 pub use loop_access::hoist_loop_accesses_all;
 pub use static_safe::check_static_safe_all;

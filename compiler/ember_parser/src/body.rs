@@ -597,11 +597,10 @@ impl Parser<'_> {
             || self.at_punct(Punct::Colon)
     }
 
-    /// `[GRM-22]` — `yield` occupies `return`'s grammatical position and
-    /// precedence. It is **not** a jump: its type is the coroutine's resume
-    /// type, so `x = yield e` is legal where `x = return e` is not, and it is
-    /// therefore admitted wherever a whole expression is admitted rather than
-    /// being restricted to being one.
+    /// `[GRM-16]` — `yield` occupies `return`'s grammatical position and
+    /// precedence: a jump expression, of type `void` (`[CORO-3]`). Where it
+    /// may stand (a whole statement, a `=>` arm, a conditional's branch) is
+    /// the checker's to tell, as for `return` (`ember_typeck::coroutines`).
     fn at_yield(&self) -> bool {
         matches!(self.peek(), TokenKind::Keyword(Kw::Yield))
     }
@@ -610,7 +609,7 @@ impl Parser<'_> {
         let start = self.span();
         let id = self.next_id();
         self.expect_kw(Kw::Yield);
-        // "A bare `yield` is `yield ()`" — `[GRM-22]`.
+        // A bare `yield` yields `()` (`[CORO-2]`, a `Generator[void]`).
         let value = (!self.at_expr_end())
             .then(|| Box::new(self.parse_expr_bp(0, allow_block_lambda)));
         Expr { id, kind: ExprKind::Yield(value), span: start.to(self.prev_span()) }
@@ -704,25 +703,15 @@ impl Parser<'_> {
 
         if self.at_yield() {
             if min_bp > 0 {
-                // `[GRM-22]` gives `yield` `return`'s precedence, which is the
-                // lowest, so it cannot be an operand of anything. The document
-                // names no code for this — `E0107` is `[GRM-16]`'s and says
-                // "jump", which `yield` is not — so it is the parser's ordinary
-                // `E0100`. Recorded in `docs/DECISIONS.md` as ADR-015.
+                // `[GRM-16]` — `yield e` is a jump expression (III.5's level 1,
+                // with `return`): never an operand, so `a + yield b` is `E0107`
+                // as `a + return b` is (ADR-193; ADR-015 had `E0100` when
+                // `yield` had a resume type and was no jump).
                 let span = self.span();
                 self.report(
-                    Diagnostic::error(
-                        codes::E0100,
-                        span,
-                        "`yield` may not be an operand",
-                    )
-                    .primary_label(
-                        "`yield` binds at `return`'s precedence, the lowest there is"
-                            .to_string(),
-                    )
-                    .help(
-                        "bind it first: `v = yield e`, then use `v`".to_string(),
-                    ),
+                    Diagnostic::error(codes::E0107, span, "`yield` may not be an operand")
+                        .primary_label("`yield` is a jump expression, of type `void`".to_string())
+                        .help("write `yield e` as a statement of its own".to_string()),
                 );
             }
             return self.parse_yield(allow_block_lambda);

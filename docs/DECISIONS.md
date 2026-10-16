@@ -356,7 +356,8 @@ have to grow a second meaning.
 ## ADR-015 — `yield` in operand position is `E0100`, not `E0107`
 
 **Spec rule:** `[GRM-22]`, `[GRM-16]`, `[LEX-15b]`.
-**Status:** taken 2026-09-09.
+**Status:** taken 2026-09-09; **superseded** 2026-10-16 by ADR-193 (0.9.9 made `yield` a jump
+expression of type `void`, so it is `E0107`).
 
 **Context.** `[GRM-22]` gives `yield` "the grammatical position and precedence
 of `return`", which is the lowest there is, so `1 + yield 2` has no parse. But
@@ -5016,6 +5017,50 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-197 — A `Cell`'s counted copy, `assert_disjoint` recorded, `some` placed, `@static_safe` parameters (`[TYP-36]`, `[DSJ-5]`, `[GRM-31]`, `[EFF-6a]`); 75%
+
+The 75% push, closed (2026-10-16). With coroutines merged (ADR-193), README Overall is 75%.
+
+**`[TYP-36]` (ADR-191's gap).** A `Cell` of a `Copy` value holding a class handle, whose type writes
+its own `Debug`, inside another value was `E0900`: the C formatter copied it without the retain
+MIR gives a copy, so the program's `fmt_debug` setting the cell would free the handle in use. The
+formatter now retains its copy (`retain_lines_for_value`) and lets it go after (`drop_lines`).
+
+**`[DSJ-5]` (NOT-IMPLEMENTED N9 closed).** Each `assert_disjoint` comparison left in the program is a
+safety side table entry, `RuntimeCheck(Aliasing)` with reason `establishes_static_fact`. A
+comparison of two views the compiler already knows apart, by `[SIMD-3]`'s facts (views of two
+different lists, two parts of a proved pair, two columns of one `SoA`), is left out
+(`elide_known_disjoint_comparisons_all`, its answer "apart"), recorded as elided with reason
+`known_disjoint` (`CheckKind::Aliasing`, `CheckProof::KnownDisjoint`).
+
+**`[GRM-31]`.** `some I` parses (contextual: `some` before a type; it stays a name everywhere else)
+as `TypeKind::SomeType`. In a function's return type, or nested inside one, it is `[TYP-32]`'s
+type, not built (`E0900`, by name); anywhere else it is `E2260` (now registered, with its page).
+
+**`[EFF-6a]`.** A `@static_safe` function taking a `RefCell` or a `Ref`/`RefMut` guard is `E4030`,
+at the parameter: either forces a dynamic check of who holds the data at the call. EFF-13's test
+reaches its `RefCell` through a struct now.
+
+**CI (D-671).** 56470c4's 128-bit atomics failed the clang-cl shard: clang-cl takes cl's flags,
+without `-mcx16`, so `_InterlockedCompareExchange128` became a call to compiler-rt's
+`__atomic_compare_exchange_16`, which an MSVC link does not have. `compiler_command` gives clang-cl
+`-mcx16` on x64 (cl has the instruction always). The conformance suite passes under clang-cl.
+
+**gcc's `-Wmaybe-uninitialized` (found by the sweep on the merged coroutines).** A local set to a
+payload-free variant of a payload enum sets only its tag; copied whole into another value (a
+generator yielding `Some(Wait.NextFrame)`), gcc read the copy as one of an uninitialised payload.
+`emit_payload_zeros`, MSVC's for every such local, now also gives gcc and clang the zero payload for
+a local copied whole into an aggregate, and only for that.
+
+**Tried and left (recorded so they are not retried blind).** N7's `mut` place default from another
+float mode: hoisting the place's float-doing index into a strict closure works, but the only valid
+such default reaches the place through a class handle, and passing that handle to the closure holds
+an access to the end of the statement, overlapping the field's borrow (`E3080`); it needs the
+closure's temporaries ended before the place is formed. `[STD-1]` enforced as an implicit
+`@noalloc`: some 25 `std.core` functions reach an allocation without saying so (several through a
+panic message's formatting), so the rule needs that audit first. `[MAN-7]`: the reload values are
+easy, but `E9033` (shipping) cannot have an error page the doc runner verifies, as it runs `check`.
+
 ## ADR-196 — 128-bit atomics, a struct's constructor, lock order in debug (`[THR-14]`, `[STR-6]`, `[THR-4]`)
 
 The 75% push, continued (2026-10-16).
@@ -5132,6 +5177,98 @@ enum's variants in their order, so `sort()` and `<` agree with `cmp`.
 discriminant is zero with every field of it zero, so that variant must exist and its fields be
 `Zeroable` (`E2080` naming the payload, or the enum when no discriminant is zero); a `drop` rules it
 out. `is_builtin_zeroable` answers an enum instance the same way, per its arguments.
+
+## ADR-193 — Coroutines: `gen fn` as a frame struct, its body a state machine over it (`[CORO-1]`–`[CORO-13]`)
+
+2026-10-16. Built in a worktree beside the main session (the task: `gen fn`, `yield` and
+`Generator[Y, R]` in general form, nothing allocating). Before this a `gen fn` and `yield` only
+parsed, and `Generator` was an unknown type.
+
+**Where it lives.** Three pieces, each in a file of its own, with small hooks in the big files.
+
+1. *The checker* (`ember_typeck/src/coroutines.rs`, run first in `check` after `@derive(Error)`):
+   a `gen fn` is written out as the ordinary declarations it stands for — a frame struct named
+   `f.Generator` (`Type.method.Generator` for a method; the `.` makes it no written name, and a
+   dotted type path does not reach it, so it stays opaque), `@no_derive(Clone, Eq, Debug)`, one field
+   per parameter; `extend … implements Iterator` with `type Item = Y` and a stub `next`; stubs
+   `drop` and `result` (the latter only for `Generator[Y, R]`); the body as a private method
+   `body(mut self, <the parameters>) -> R` of the frame, so a generic generator's body is made with
+   each frame instance (methods of an instance are made eagerly; a generic function only when
+   called); and the function itself rewritten to `return f.Generator(<parameters>)`. In the body,
+   `yield e` becomes `std.core.__coroutine_yield[Y](e)` (so `e` is checked as an argument of type
+   `Y`, with its conversions), a `start()` call goes first, and in a method `self` is `__self` and
+   `Self` the owner. A `yield` the walk leaves (in a lambda, a local function, `comptime`, or any
+   function not a generator) reaches the checker, whose one new arm reports `E2220`. Hooks in
+   `lib.rs`: the call, the `E2220` arm, `TypeTable::settle_coroutine_frame` after a struct's fields
+   are set (two places), and `E2222` where a function would become a C callback.
+2. *Lowering* (`ember_mir/src/lower/coroutines.rs`, a child of `lower.rs`; one hook after a call):
+   each suspension call answers whether the generator was resumed, and lowering branches on the
+   answer. Dropped while suspended there, the body ends as a `return` does — the drops of every open
+   scope and statement, last made first — without running its `defer`s. Every analysis then sees a
+   suspended frame's drop as ordinary code, and drop elaboration makes it exact (flags, moved
+   fields).
+3. *The transform* (`ember_analysis/src/coroutines.rs`), after the borrow check (`main.rs`; in
+   `comptime.rs` after drop elaboration, the generator bodies kept as `drop`s are): `check_all`
+   reports what may not be held across a `yield`, then `transform` rewrites each body into the
+   frame's `next` and `drop` (and `result`), and the constructor's literal into field stores plus
+   `state = 0`; the summaries are installed again (`[MIR-REG-1]`).
+
+**The transform.** A local is kept in the frame when it is live after some suspension point,
+resumed or dropped (backward liveness over the elaborated body, a `Drop` and a drop flag reading
+it); the rest stay locals of the function using them. The frame's fields are the parameters (as
+passed, below), the kept locals widest first, the result, and `state`: the smallest unsigned type
+holding `0` (not started), one state per `yield`, done, and result taken. `next` switches on
+`state` straight to where each state resumes (jumps threaded); each `yield` stores its state and
+returns `Some(value)`; the end stores the result, releases what the frame holds of a borrowed class
+handle, sets done and returns `None`, as every later call does. `drop` switches on the same state
+to that suspension's dropped path. The C is what a hand-written state machine is: one `switch`,
+`goto`s, the frame's fields through the pointer, no allocation (`[CORO-5]`: a `@noalloc` function
+makes, runs and drops one). Locals no half of the body uses are not declared.
+
+**Parameters.** A frame holds each parameter as it was passed: an `owned` one by value (the body
+owns it), a `mut` one as its `ref mut` (a `MutSpan` as itself), a borrowed one as the `ref T` the
+caller passes when the type is passed by address (`passed_by_address`, ODR-024), otherwise as the
+copy the caller passes. The checker writes a borrowed parameter's field `ref T` and `mut`'s `ref mut
+T`, and `settle_coroutine_frame` settles each once `T` is known (per instance), so the frame is a
+view type exactly when it holds one, bound by the caller's regions as a returned view is
+(`[CORO-6]`, `[LT-1]`). A class handle copied this way is retained (`[CORO-12]`: the frame retains
+the handle) and released when the generator ends or its frame is dropped.
+
+**What may not be held across a `yield`** (`check_all`): a flow-insensitive points-to over the body
+(each local's targets; a value read through a pointer has what its pointee holds; a call's result
+points where the callee's `[MIR-REG-1]` result summary says, else where its `[LT-1]` sources do;
+a callee may store its other arguments into what a `ref mut` argument points to). At each `yield`,
+a live local or the yielded value pointing into a local of the body (a by-value parameter
+included) is `E2221`; one pointing into a class object's field `E2229`; a live `@must_drop` value
+`E2231`; a `mut self` receiver of a class `E2229`. A raw pointer into the frame is allowed in an
+`unsafe gen fn` only (`[CORO-9]`: its safety note states it), and what it points to is then kept in
+the frame. A frame holding its own type, directly or through another generator's, is `E2200`.
+
+**Rulings where the specification is silent.**
+- *Dropping a suspended generator runs no `defer`*: `[CORO-7]` and `[EFF-1]` name drops only.
+- *`result()` takes the value*: `result(mut self) -> Option[R]` gives `Some(r)` once after the end
+  and `None` before and after (`R` need not be `Copy`); an untaken result is dropped with the frame.
+- *`yield` is a jump* (III.5 lists it with `return`): `v = yield 1` and `1 + yield 2` are `E0107`
+  (`[GRM-16]`), in the checker and the parser (ADR-015's `E0100` dates from `yield` having a resume
+  type). A `yield` as a `=>` arm or a conditional's branch is a `void` expression.
+- *A gen fn's return type* must be written `Generator[Y]` or `Generator[Y, R]` (`E2020`).
+- *Not built* (`E0900`): a `virtual`/`override` generator method (an override would return another
+  frame type), one in an interface, one with a typed receiver, and a local `gen fn` (a generator
+  closure). A `yield` in a `defer` is `E2160`, in a `@parallel` body `E7010`.
+
+**`std.coroutine`** (`[CORO-11]`, no compiler support): `Wait` (`NextFrame`, `Seconds`, `Frames`,
+`Until`), `wait`, `wait_frames`, `wait_until`, and a `Scheduler` keeping `Box[dyn Sequence]`s,
+`Sequence` being implemented by every `Iterator[Item = Wait]` — `Box[dyn Iterator[Item = Wait]]`,
+which `[CORO-3]` names, cannot be written yet (`dyn` with an associated-type binding is `E2020`).
+
+**Defects fixed on the way.** D-660 (the parser took `gen` first; the grammar has it right before
+`fn`, and an enum's `gen fn` was a variant), D-661 (a `drop` in an `extend` block never ran), D-662
+(`ember fmt` dropped `gen`; the AST dump now shows it, so the formatter's round trip sees it).
+
+**Left.** `[GRM-38]`'s generator expression with a second `for` as a value is still `E0900`: it
+needs a generator closure over the enclosing locals (a local `gen fn`), not built. A frame's
+fields are private to its module but readable there (`countdown(3).n`). `Box[dyn Iterator[Item =
+Y]]` waits on `dyn` with associated-type bindings.
 
 ## ADR-192 — `ember test`: `@test` in a process each, quarantine by rerun, leaks per test, `--doc` (`[TST-3]`, `[TST-30]`, `[WK-15]`, `[DIA-6]`, `[DOC-2]`)
 

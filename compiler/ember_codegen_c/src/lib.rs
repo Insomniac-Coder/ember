@@ -507,6 +507,16 @@ fn safety_json(bodies: &[Body], map: &SourceMap) -> String {
                 ));
             }
         }
+        // `[DSJ-5]` — each `assert_disjoint` comparison left in establishes a static fact.
+        for block in &body.blocks {
+            if let Terminator::Call { func: FuncRef::Builtin { which: Builtin::ViewsOverlap { .. }, .. }, .. } = &block.terminator {
+                entries.push(format!(
+                    "{{\"kind\":\"Aliasing\",\"source\":{},\"function\":{},\"mechanism\":\"assert_disjoint\",\"classification\":\"DYNAMIC_PER_ACCESS\",\"reason\":\"establishes_static_fact\",\"status\":\"emitted\"}}",
+                    json_string(&map.location(block.terminator_span)),
+                    json_string(&body.name),
+                ));
+            }
+        }
         for hoisted in &body.hoisted_accesses {
             entries.push(format!(
                 "{{\"kind\":\"Aliasing\",\"source\":{},\"function\":{},\"mechanism\":\"dynamic exclusivity\",\"classification\":\"DYNAMIC_HOISTED_LOOP\",\"reason\":\"inherent_to_mechanism\",\"proof\":{},\"loop\":{},\"check_site\":\"preheader\",\"protected_interval\":\"loop\",\"status\":\"emitted\"}}",
@@ -531,6 +541,9 @@ fn safety_json(bodies: &[Body], map: &SourceMap) -> String {
             entries.push(match &removed.proof {
                 ember_mir::CheckProof::RangeFacts => format!(
                     "{{\"kind\":{kind},\"source\":{source},\"function\":{function},\"mechanism\":\"range facts\",\"classification\":\"STATIC_ELIDED\",\"reason\":\"range_facts\",\"status\":\"elided\"}}"
+                ),
+                ember_mir::CheckProof::KnownDisjoint => format!(
+                    "{{\"kind\":{kind},\"source\":{source},\"function\":{function},\"mechanism\":\"assert_disjoint\",\"classification\":\"STATIC_ELIDED\",\"reason\":\"known_disjoint\",\"status\":\"elided\"}}"
                 ),
                 ember_mir::CheckProof::LoopEntryTest { loop_span } => format!(
                     "{{\"kind\":{kind},\"source\":{source},\"function\":{function},\"mechanism\":\"loop versioning\",\"classification\":\"DYNAMIC_HOISTED_LOOP\",\"reason\":\"inherent_to_mechanism\",\"proof\":\"loop_entry_test\",\"loop\":{},\"check_site\":\"preheader\",\"protected_interval\":\"loop\",\"status\":\"emitted\"}}",
@@ -1655,13 +1668,22 @@ impl Emitter<'_> {
         }
         if let Some((payload, inner)) = self.printed_payload(v, ty) {
             // ODR-109 — a `Cell`'s value is shown by a copy when its `Debug` is written (the
-            // program's `fmt_debug` may `set` the cell): plain bytes, the checker made sure.
+            // program's `fmt_debug` may `set` the cell). `[TYP-36]` — a copy of a `Copy` value
+            // holding a class handle retains it, as MIR's copies do, and lets it go after.
             if self.types.debug_writer(inner).is_some()
                 && let TyKind::Struct(id) = *self.types.kind(ty)
                 && self.types.compiler_box_inner(id).is_none()
             {
                 let inner_c = self.c_type(inner);
-                return format!("{{ {inner_c} _held = {payload}; {} }}", self.debug_stmt(out, "_held", inner));
+                let (mut retain, mut release) = (Vec::new(), Vec::new());
+                self.retain_lines_for_value("_held", inner, &mut retain);
+                self.drop_lines("_held", inner, &mut release);
+                return format!(
+                    "{{ {inner_c} _held = {payload}; {} {} {} }}",
+                    retain.join(" "),
+                    self.debug_stmt(out, "_held", inner),
+                    release.join(" ")
+                );
             }
             return self.debug_stmt(out, &payload, inner);
         }
@@ -4700,18 +4722,32 @@ impl Emitter<'_> {
     /// initializer (a compound one made MSVC expand a deep `Option`
     /// recursively, D-360) whose address is never taken (zeroing the value
     /// kept it in memory, ADR-106). The C compiler drops the copy where
-    /// nothing reads the payload.
+    /// nothing reads the payload. For gcc and clang, only a local later copied
+    /// whole into another value (a generator's yielded `Some(Wait.NextFrame)`):
+    /// gcc's `-Wmaybe-uninitialized` reads that copy as one of the payload.
     fn emit_payload_zeros(&mut self, bodies: &[Body]) {
-        if !self.for_msvc {
-            return;
-        }
         for body in bodies {
+            let copied_whole: BTreeSet<LocalId> = body
+                .blocks
+                .iter()
+                .flat_map(|block| &block.stmts)
+                .filter_map(|stmt| match &stmt.kind {
+                    StmtKind::Assign { rvalue: Rvalue::Aggregate { operands, .. }, .. } => Some(operands),
+                    _ => None,
+                })
+                .flatten()
+                .filter_map(|operand| match operand {
+                    Operand::Copy(place) | Operand::Move(place) if place.projection.is_empty() => Some(place.local),
+                    _ => None,
+                })
+                .collect();
             for stmt in body.blocks.iter().flat_map(|block| &block.stmts) {
                 if let StmtKind::Assign { place, rvalue: Rvalue::Aggregate { kind: AggregateKind::Enum(id, _), operands } } =
                     &stmt.kind
                     && place.projection.is_empty()
                     && operands.is_empty()
                     && self.tag_only_variant(*id)
+                    && (self.for_msvc || copied_whole.contains(&place.local))
                 {
                     self.payload_zeros.insert(*id, body.local(place.local).ty);
                 }

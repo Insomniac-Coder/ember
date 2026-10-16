@@ -204,6 +204,21 @@ fn option_with_context[T, M: Display](owned o: Option[T], f: once fn() -> M) -> 
 struct Missing:
     text: String
 
+## `[CORO-4]` — a generator's suspension points, compiler-known. A `gen fn`'s
+## body is checked as a function that calls `__coroutine_start()` first and
+## `__coroutine_yield[Y](e)` for each `yield e`; the coroutine transform turns
+## each call into a suspension of the state machine (ADR-193), and none runs.
+## The answer is whether the generator was resumed rather than dropped.
+pub fn __coroutine_start() -> bool:
+    return true
+
+pub fn __coroutine_yield[T](owned _value: T) -> bool:
+    return true
+
+## A `yield` that is a `=>` arm's or a conditional's branch, as the `void` it is.
+pub fn __coroutine_resumed(_resumed: bool):
+    pass
+
 ## `[ERR-8]` — a type's identity: a 128-bit hash of its canonical name, the
 ## same for one type in every module and every build. Compiler-known.
 fn type_identity[T]() -> u128:

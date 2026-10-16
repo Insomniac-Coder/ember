@@ -19,9 +19,12 @@ fn fill(mut b: Bag, mut other: Bag):
         b.add(i)    #$ error[E4030]: `@static_safe` function `fill` keeps an exclusivity check on a class object here
         other.add(i)    #$ error[E4030]: `@static_safe` function `fill` keeps an exclusivity check on a class object here
 
+struct Holder:
+    cell: RefCell[int]
+
 @static_safe
-fn peek(cell: RefCell[int]) -> int:
-    with _g = cell.borrow():    #$ error[E4030]: `@static_safe` function `peek` keeps a `RefCell` borrow check here
+fn peek(h: Holder) -> int:
+    with _g = h.cell.borrow():    #$ error[E4030]: `@static_safe` function `peek` keeps a `RefCell` borrow check here
         return 1
 
 fn main():

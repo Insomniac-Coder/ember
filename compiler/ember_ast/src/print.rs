@@ -205,8 +205,13 @@ impl Printer {
             Dispatch::Virtual => "virtual ",
             Dispatch::Override => "override ",
         };
-        let header =
-            format!("{dispatch}Fn {}({}){ret}{}", f.name.name, params.join(", "), vis_suffix(vis));
+        let generator = if f.is_gen { "gen " } else { "" };
+        let header = format!(
+            "{dispatch}{generator}Fn {}({}){ret}{}",
+            f.name.name,
+            params.join(", "),
+            vis_suffix(vis)
+        );
         match &f.body {
             Some(body) => self.nest(&header, |p| p.block(body)),
             None => self.line(&format!("{header} (no body)")),
@@ -629,6 +634,7 @@ pub fn type_str(ty: &TypeExpr) -> String {
             format!("dyn {}", bounds.iter().map(type_str).collect::<Vec<_>>().join(" + "))
         }
         TypeKind::Array { elem, .. } => format!("[{}; N]", type_str(elem)),
+        TypeKind::SomeType(inner) => format!("some {}", type_str(inner)),
         TypeKind::SelfType => "Self".to_string(),
         TypeKind::Void => "void".to_string(),
         TypeKind::Never => "!".to_string(),

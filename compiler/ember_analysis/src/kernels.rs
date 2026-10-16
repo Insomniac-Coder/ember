@@ -739,6 +739,39 @@ fn adds_the_same_each_round(
     }
 }
 
+/// `[DSJ-5]` — an `assert_disjoint` comparison of two views the compiler already knows apart
+/// (`[SIMD-3]`'s facts: views of two different lists, two parts of a proved pair, two columns of
+/// one `SoA`) is left out: its answer is "apart", and the side table records why. The others stay,
+/// each a `RuntimeCheck(Aliasing)` whose reason is `establishes_static_fact`.
+pub fn elide_known_disjoint_comparisons_all(bodies: &mut [Body], types: &TypeTable) -> usize {
+    let mut elided = 0;
+    for body in bodies.iter_mut() {
+        let mut found = Vec::new();
+        for (index, block) in body.blocks.iter().enumerate() {
+            let Terminator::Call { func: FuncRef::Builtin { which: Builtin::ViewsOverlap { .. }, .. }, args, dest, next } = &block.terminator else {
+                continue;
+            };
+            let local = |operand: &Operand| match operand {
+                Operand::Copy(place) | Operand::Move(place) if place.projection.is_empty() => Some(place.local),
+                _ => None,
+            };
+            let [a, b] = args.as_slice() else { continue };
+            let (Some(a), Some(b)) = (local(a), local(b)) else { continue };
+            if apart(origin(body, types, a), origin(body, types, b)) {
+                found.push((index, dest.clone(), *next, block.terminator_span));
+            }
+        }
+        for (index, dest, next, span) in found {
+            let block = &mut body.blocks[index];
+            block.stmts.push(ember_mir::Stmt::new(StmtKind::Assign { place: dest, rvalue: Rvalue::Use(Operand::Const(Const::Bool(false))) }, span));
+            block.terminator = Terminator::Goto(next);
+            body.removed_checks.push(ember_mir::RemovedCheck { span, kind: ember_mir::CheckKind::Aliasing, proof: ember_mir::CheckProof::KnownDisjoint });
+            elided += 1;
+        }
+    }
+    elided
+}
+
 /// Where a list of the loop comes from, as far as `[SIMD-3]` can tell.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Origin {

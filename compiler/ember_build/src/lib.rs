@@ -1155,6 +1155,12 @@ fn compiler_command(toolchain: &Toolchain) -> Command {
         Toolchain::Msvc { cl, env } => {
             let mut command = Command::new(cl);
             command.envs(env);
+            // `[THR-14]` — clang-cl turns `_InterlockedCompareExchange128` into a call to
+            // compiler-rt's `__atomic_compare_exchange_16`, which an MSVC link does not have, unless
+            // x64's 16-byte compare-exchange is enabled; cl itself has it always.
+            if cfg!(target_arch = "x86_64") && is_clang_cl(cl) {
+                command.arg("-mcx16");
+            }
             command
         }
         Toolchain::Clang(path) | Toolchain::Gcc(path) => Command::new(path),

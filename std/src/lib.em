@@ -12,6 +12,8 @@
 ##   `std.sync`  locks, atomics, `Once` and `SyncShared` (Part XI.2)
 ##   `std.thread`  `spawn` and `JoinHandle` (`[THR-10]`)
 ##   `std.jobs`  the job system: `submit`, `wait`, `scope` (Part XI.5)
+##   `std.coroutine`  gameplay sequencing on generators: `Wait`, `Scheduler`
+##                    (`[CORO-11]`)
 ##
 ## `Option`, `Result`, `Array` and `String` are still compiler-known: Part XX.1
 ## makes them so "until Phase 2's generics let the standard library write

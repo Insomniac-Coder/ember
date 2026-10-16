@@ -508,6 +508,10 @@ pub struct TypeTable {
     debug_writers: HashMap<Ty, String>,
     /// ODR-111 — each `Send` or `Sync` a program wrote by hand (`unsafe extend`).
     manual_markers: Vec<ManualMarker>,
+    /// `[CORO-3]` — each `gen fn`'s frame struct, by declared name (a generic
+    /// one's instances share it as their origin): how each parameter field's
+    /// parameter was passed (`settle_coroutine_frame`).
+    coroutine_frames: HashMap<Symbol, Vec<FrameParam>>,
     next_infer: u32,
     /// Pointer width of the target, in bytes. 8 for every v1 target.
     pointer_size: u64,
@@ -515,6 +519,17 @@ pub struct TypeTable {
     /// evaluator computed, placed in the image as constant data: each name,
     /// type and value (in the evaluator's text).
     constant_statics: Vec<(Symbol, Ty, String)>,
+}
+
+/// `[CORO-1]`, `[CORO-6]` — how a `gen fn`'s parameter was passed, which says
+/// how its frame holds it: an `owned` one by value; a borrowed one by value
+/// when the caller passes it as a copy, else as the `ref` the caller passes;
+/// a `mut` one as its `ref mut` (a `MutSpan` as itself).
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum FrameParam {
+    Owned,
+    Borrowed,
+    Mut,
 }
 
 /// Well-known types, interned once at construction so that common lookups are
@@ -599,6 +614,7 @@ impl TypeTable {
             must_drop_declared: HashSet::new(),
             debug_writers: HashMap::new(),
             manual_markers: Vec::new(),
+            coroutine_frames: HashMap::new(),
             next_infer: 0,
             constant_statics: Vec::new(),
             pointer_size: 8,
@@ -1828,6 +1844,55 @@ impl TypeTable {
             TyKind::Infer(_) => false,
             TyKind::Dyn { .. } | TyKind::Opaque(_) => false,
         }
+    }
+
+    /// `[CORO-3]` — record a `gen fn`'s frame struct and how each of its
+    /// parameter fields (the first ones, in order) was passed.
+    pub fn declare_coroutine_frame(&mut self, name: Symbol, params: Vec<FrameParam>) {
+        self.coroutine_frames.insert(name, params);
+    }
+
+    /// `[CORO-3]` — whether `ty` is a `gen fn`'s frame.
+    pub fn is_coroutine_frame(&self, ty: Ty) -> bool {
+        matches!(self.kind(ty), TyKind::Struct(id) if self.coroutine_frame_params(*id).is_some())
+    }
+
+    /// `[CORO-3]` — whether a struct is a `gen fn`'s frame.
+    pub fn is_coroutine_frame_struct(&self, id: StructId) -> bool {
+        self.coroutine_frame_params(id).is_some()
+    }
+
+    fn coroutine_frame_params(&self, id: StructId) -> Option<&Vec<FrameParam>> {
+        if self.coroutine_frames.is_empty() {
+            return None;
+        }
+        let def = self.struct_def(id);
+        self.coroutine_frames.get(&def.origin.as_ref().map_or(def.name, |(origin, _)| *origin))
+    }
+
+    /// `[CORO-1]`, `[CORO-6]` — a frame holds what each parameter was
+    /// passed as. The checker writes a borrowed parameter's field `ref T` and
+    /// a `mut` one's `ref mut T`, which this settles once `T` is known: a
+    /// borrowed one passed as a copy (`passed_by_address`, ODR-024) is held as
+    /// that copy, and a `MutSpan` is its own reborrow. Its drop is the one the
+    /// coroutine transform writes, which drops what the frame holds at its
+    /// state, so the fields are not dropped again after it.
+    pub fn settle_coroutine_frame(&mut self, id: StructId) {
+        let Some(params) = self.coroutine_frame_params(id).cloned() else { return };
+        let fields: Vec<Ty> = self.struct_def(id).fields.iter().map(|field| field.ty).collect();
+        for (index, (mode, ty)) in params.iter().zip(fields).enumerate() {
+            let settled = match (mode, self.kind(ty).clone()) {
+                (FrameParam::Borrowed, TyKind::Ref { mutable: false, inner }) if !self.passed_by_address(inner) => inner,
+                (FrameParam::Mut, TyKind::Ref { mutable: true, inner })
+                    if matches!(self.kind(inner), TyKind::Span { mutable: true, .. }) =>
+                {
+                    inner
+                }
+                _ => ty,
+            };
+            self.structs[id.0 as usize].fields[index].ty = settled;
+        }
+        self.structs[id.0 as usize].drops_fields = false;
     }
 
     /// `[THR-6]` — record a struct's or class's `@must_drop`.

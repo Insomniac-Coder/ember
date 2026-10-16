@@ -2979,6 +2979,8 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // Part XVIII §4.7 — the NLL borrow checker runs on MIR after drop
     // elaboration, so the drops it sees are the ones that will exist.
     ember_analysis::check_all_with_installed_callable_regions(&bodies, &types, &mut sink);
+    // `[CORO-6]`, `[CORO-12]`, `[CORO-13]` — what a generator holds across a `yield`.
+    ember_analysis::coroutines::check_all(&bodies, &types, &mut sink);
     // `[EXC-7]` — this advisory lint is opt-in. It consumes the explicit
     // method-duration dynamic-access intervals before later optimization may
     // elide or hoist an unrelated short interval.
@@ -3011,6 +3013,11 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
     }
+    // `[CORO-4]` — each generator's body, checked, becomes its frame's state
+    // machine; what borrow checking read of the stubs is made again.
+    if ember_analysis::coroutines::transform(&mut bodies, &mut types) && cfg!(debug_assertions) {
+        ember_mir::verify::verify_all(&bodies);
+    }
     // `[HEAP-5]` — borrow checking has established each mutable loan's exact
     // NLL region. Materialize the matching runtime access interval only after
     // that proof, so dynamic exclusivity follows the loan rather than a scope.
@@ -3029,6 +3036,8 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[EXC-3]`/`[EXC-3a]` — last, once every held interval is final: remove
     // the checks that nothing held anywhere in the program could make fail.
     ember_analysis::remove_never_firing_checks_all(&mut bodies, &types);
+    // `[DSJ-5]` — an `assert_disjoint` comparison of views known apart is left out.
+    ember_analysis::elide_known_disjoint_comparisons_all(&mut bodies, &types);
     // `[EFF-13]` — what is left of the dynamic aliasing checks is the verdict
     // a `@static_safe` function answers for, before inlining mixes callers'
     // and callees' checks.

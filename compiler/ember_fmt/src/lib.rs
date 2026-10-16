@@ -458,6 +458,9 @@ impl Printer<'_> {
             ast::Dispatch::Virtual => "virtual ",
             ast::Dispatch::Override => "override ",
         };
+        // `[GRM-21]` (D-662) — `gen` comes right before `fn`; it was dropped,
+        // so a generator came back as an ordinary function.
+        let dispatch = format!("{dispatch}{}", if decl.is_gen { "gen " } else { "" });
         let generics = self.generics(&decl.generics);
         let ret = format!("{ret}{}", self.where_clause(&decl.where_clause));
         let header = format!(

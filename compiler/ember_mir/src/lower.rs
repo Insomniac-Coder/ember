@@ -21,6 +21,8 @@ use crate::{
     StmtKind, Terminator,
 };
 
+pub mod coroutines;
+
 pub fn lower(
     program: &hir::Program,
     types: &TypeTable,
@@ -2372,6 +2374,8 @@ impl<'a> Builder<'a> {
                     _ => FuncRef::Direct { symbol, latebound: *latebound },
                 };
                 let call_block = self.current;
+                // `[CORO-4]` — a generator's suspension point (`coroutines.rs`).
+                let suspension = coroutines::is_suspension(&function.symbol).then(|| place.clone());
                 self.terminate(Terminator::Call {
                     func,
                     args,
@@ -2386,6 +2390,9 @@ impl<'a> Builder<'a> {
                     self.push(StmtKind::EndAccess { place, mutable: true });
                 }
                 self.emit_write_backs(write_back_mark);
+                if let Some(resumed) = suspension {
+                    self.suspend(resumed);
+                }
             }
             hir::ExprKind::InterfaceCall {
                 interfaces,

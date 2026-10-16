@@ -18,6 +18,7 @@ mod const_eval;
 mod errors;
 mod derives;
 mod comptime;
+mod coroutines;
 
 pub use comptime::{ComptimeAnswer, ComptimeAnswers, ComptimeRequest};
 
@@ -132,6 +133,12 @@ pub fn check(
     // `[DRV-1]` — `@derive(Ord)`, `Default` and `Display` too.
     let (written, derive_requests) = derives::desugar_derives(modules, sink);
     let modules: &[LoadedModule] = written.as_deref().unwrap_or(modules);
+    // `[CORO-1]` — a `gen fn` is the frame, its implementations and its body.
+    let generators = coroutines::desugar_generators(modules, sink);
+    let modules: &[LoadedModule] = generators.as_ref().map_or(modules, |written| written.modules.as_slice());
+    for (frame, params) in generators.iter().flat_map(|written| written.frames.iter()) {
+        types.declare_coroutine_frame(*frame, params.clone());
+    }
     // D-644 — `where P: B` on a declaration's own parameter is `P: B` in its brackets.
     let folded = desugar_where_clauses(modules);
     let modules: &[LoadedModule] = folded.as_deref().unwrap_or(modules);
@@ -2048,6 +2055,8 @@ struct Checker<'a> {
     /// `[TYP-16]` — the type parameters in scope right now: opaque while a
     /// generic body is checked, concrete while one is instantiated.
     type_params: HashMap<Symbol, Ty>,
+    /// `[GRM-31]` — inside a function's return type, where a `some` type is legal.
+    in_return_type: usize,
     /// `[TYP-16]` — each generic type alias, by qualified name: what a use expands.
     generic_aliases: HashMap<Symbol, GenericAlias>,
     /// The generic parameters of the function being checked, so a method call
@@ -2581,6 +2590,7 @@ impl<'a> Checker<'a> {
             current_module: 0,
             type_params: HashMap::new(),
             generic_aliases: HashMap::new(),
+            in_return_type: 0,
             current_generics: Vec::new(),
             local_ranges: HashMap::new(),
             literal_locals: HashMap::new(),
@@ -7521,6 +7531,7 @@ impl<'a> Checker<'a> {
                     let def = self.types.struct_def_mut(id);
                     def.fields = fields;
                     def.has_drop = has_drop;
+                    self.types.settle_coroutine_frame(id);
                     // `[THR-6]` — a `Box`, `Shared` or collection field of a
                     // `@must_drop` value.
                     let held: Vec<(Ty, Span)> = self.types.struct_def(id).fields.iter()
@@ -7861,7 +7872,9 @@ impl<'a> Checker<'a> {
                         .ret
                         .as_ref()
                         .map(|t| {
+                            self.in_return_type += 1;
                             let resolved = self.resolve_type(t);
+                            self.in_return_type -= 1;
                             self.reject_unsized_by_value(resolved, t.span, "a return type")
                         })
                         .unwrap_or(self.common.void);
@@ -8327,6 +8340,16 @@ impl<'a> Checker<'a> {
                     );
                     self.block_interfaces = saved_block;
                     self.collect_assoc_consts(ty, &decl.members);
+                    // `[STR-3]`, `[DRP-1]` (D-661) — a `drop` an `extend` block
+                    // writes is the type's destructor, as one in its body is.
+                    if decl.members.iter().any(|member| matches!(&member.kind, ast::MemberKind::Fn(f) if f.name.name.is("drop"))) {
+                        match *self.types.kind(ty) {
+                            TyKind::Struct(id) => self.types.struct_def_mut(id).has_drop = true,
+                            TyKind::Enum(id) => self.types.enum_def_mut(id).has_drop = true,
+                            TyKind::Class(id) => self.types.class_def_mut(id).has_drop = true,
+                            _ => {}
+                        }
+                    }
                     // Inherent `extend` blocks can add class virtual methods
                     // after the class header.  Keep them in source/module
                     // order for `[DSP-2]`; interface extensions are excluded
@@ -10469,7 +10492,9 @@ impl<'a> Checker<'a> {
             .ret
             .as_ref()
             .map(|t| {
+                self.in_return_type += 1;
                 let resolved = self.resolve_type(t);
+                self.in_return_type -= 1;
                 self.reject_unsized_by_value(resolved, t.span, "a return type")
             })
             .unwrap_or(self.common.void);
@@ -11478,6 +11503,24 @@ impl<'a> Checker<'a> {
         match &ty.kind {
             ast::TypeKind::Void => self.common.void,
             ast::TypeKind::Never => self.common.never,
+            // `[GRM-31]` — a `some` type in a function's return type, or nested inside one; elsewhere
+            // `E2260`. `[TYP-32]`'s meaning, one concrete type the body chooses, is not built.
+            ast::TypeKind::SomeType(_) if self.in_return_type > 0 => {
+                self.sink.emit(
+                    Diagnostic::error(codes::E0900, ty.span, "a `some` return type is not implemented yet")
+                        .help("name the type the function returns, or return a `Box[dyn I]`")
+                        .note("`some I` is one concrete type the body chooses, monomorphised through [TYP-32]"),
+                );
+                self.common.error
+            }
+            ast::TypeKind::SomeType(_) => {
+                self.sink.emit(
+                    Diagnostic::error(codes::E2260, ty.span, "a `some` type is legal only in a function's return type")
+                        .help("name the type, or take a type parameter bounded by the interface: `fn f[T: I](x: T)`")
+                        .note("`some I` is the one type a function's body returns, which only its return type can name [GRM-31]"),
+                );
+                self.common.error
+            }
             // Part IV §8 — `interface Clone: fn clone(self) -> Self`. Inside a
             // type body or an `extend` block `Self` is that type; inside an
             // interface it is the implementing type, which is not known until
@@ -12406,11 +12449,11 @@ impl<'a> Checker<'a> {
             return None;
         }
         // ODR-094 — Box and Cell format as the value they hold. ODR-109 — a `Cell`'s by a copy when
-        // the value writes its own `Debug`: a value that is not `Copy` cannot be shown so, and one
-        // holding something counted is copied inside another value only by MIR (not built here).
+        // the value writes its own `Debug`: a value that is not `Copy` cannot be shown so (one
+        // holding a class handle is copied with its retain, `[TYP-36]`).
         if let Some(inner) = self.cell_inner(ty)
             && self.written_debug(inner)
-            && (!self.types.is_copy(inner) || self.types.needs_drop(inner))
+            && !self.types.is_copy(inner)
         {
             return Some(ty);
         }
@@ -14661,6 +14704,7 @@ impl<'a> Checker<'a> {
             })
             .collect();
         self.types.struct_def_mut(id).fields = fields;
+        self.types.settle_coroutine_frame(id);
         let phantoms = self.phantom_args(&decl.generic_params, decl.fields.iter().map(|field| field.ty), args);
         self.types.set_phantoms(ty, phantoms);
 
@@ -15542,6 +15586,29 @@ impl<'a> Checker<'a> {
         contracts
     }
 
+    /// `[EFF-6a]` — a `@static_safe` function may not take a parameter whose type forces a dynamic
+    /// check at the call site: a `RefCell`, or a `Ref`/`RefMut` guard, which a borrow check made.
+    fn reject_dynamic_check_params(&mut self, params: &[(Symbol, Ty, Mode, Span)]) {
+        if !self.in_static_safe {
+            return;
+        }
+        for &(name, ty, _, span) in params {
+            let what = if self.refcell_inner(ty).is_some() {
+                "a `RefCell`, borrowed by a check where it is used"
+            } else if self.ref_guard_inner(ty).is_some() {
+                "a `RefCell` guard, which a borrow check at the call made"
+            } else {
+                continue;
+            };
+            let shown = self.types.display(ty);
+            self.sink.emit(
+                Diagnostic::error(codes::E4030, span, format!("a `@static_safe` function takes `{name}`, a `{shown}`: {what}"))
+                    .help("take the value itself, or a `ref mut` to it, so the access is proved when it compiles")
+                    .note("`@static_safe` keeps no check of who else holds the data, its callers' included [EFF-6a]"),
+            );
+        }
+    }
+
     fn reject_unsafe_cell_in_static_safe(&mut self, span: Span) {
         if !self.in_static_safe || self.static_safe_unsafe_cell_reported {
             return;
@@ -16128,6 +16195,7 @@ impl<'a> Checker<'a> {
                     {
                         self.reject_unsafe_cell_in_static_safe(item.span);
                     }
+                    self.reject_dynamic_check_params(&signature_params);
                     self.check_declared_defaults(def, decl, &signature_params);
                     let outer_unsafe = std::mem::replace(&mut self.in_unsafe, decl.is_unsafe);
                     self.in_generic_template = true;
@@ -16185,6 +16253,7 @@ impl<'a> Checker<'a> {
             {
                 self.reject_unsafe_cell_in_static_safe(item.span);
             }
+            self.reject_dynamic_check_params(&signature_params);
 
             self.check_declared_defaults(def, decl, &signature_params);
             let outer_unsafe = std::mem::replace(&mut self.in_unsafe, decl.is_unsafe);
@@ -17376,6 +17445,7 @@ impl<'a> Checker<'a> {
         {
             self.reject_unsafe_cell_in_static_safe(span);
         }
+        self.reject_dynamic_check_params(&signature_params);
         let outer_unsafe = std::mem::replace(&mut self.in_unsafe, decl.is_unsafe);
         let body = self.check_body(block);
         let body = self.complete_function_end(body, decl.name.span);
@@ -18166,6 +18236,7 @@ impl<'a> Checker<'a> {
         {
             self.reject_unsafe_cell_in_static_safe(span);
         }
+        self.reject_dynamic_check_params(&signature_params);
 
         let outer_self = self.self_ty.replace(owner);
         let outer_class_init = self.class_init.take();
@@ -29172,6 +29243,14 @@ impl<'a> Checker<'a> {
             }
             return Expr { ty: expected, kind: ExprKind::MakeCallable { closure: def, env: Box::new(expr) }, span };
         }
+        // `[CORO-10]` — a generator's constructor is never a C callback.
+        if let (TyKind::Fn { abi: None, ret: found_ret, .. }, TyKind::Fn { abi: Some(_), .. }) =
+            (self.types.kind(expr.ty), self.types.kind(expected))
+            && self.types.is_coroutine_frame(*found_ret)
+        {
+            self.sink.emit(coroutines::given_to_c(expr.span));
+            return Expr { ty: expected, kind: ExprKind::Error, span: expr.span };
+        }
         // `[FN-6]` — conversion to a C callback crosses an ABI boundary.
         // Retain the native function type until MIR can select its C adapter.
         if let (
@@ -31087,6 +31166,12 @@ impl<'a> Checker<'a> {
                     format!("`{word}` is not usable in this position yet"),
                 );
                 Expr { ty: self.common.never, kind: ExprKind::Error, span }
+            }
+            // `[CORO-2]` — a generator's own `yield`s were written out before
+            // checking (`coroutines.rs`); one left is in no generator's body.
+            ast::ExprKind::Yield(_) => {
+                self.sink.emit(coroutines::stray_yield(span));
+                Expr { ty: self.common.void, kind: ExprKind::Error, span }
             }
 
             _ => {
@@ -48323,7 +48408,7 @@ fn type_names(ty: &ast::TypeExpr, out: &mut HashSet<Symbol>) {
                 type_names(ret, out);
             }
         }
-        ast::TypeKind::Array { elem, .. } => type_names(elem, out),
+        ast::TypeKind::Array { elem, .. } | ast::TypeKind::SomeType(elem) => type_names(elem, out),
         ast::TypeKind::SelfType | ast::TypeKind::Void | ast::TypeKind::Never | ast::TypeKind::Infer => {}
     }
 }
@@ -48646,7 +48731,7 @@ fn type_expr_names(ty: &ast::TypeExpr, out: &mut Vec<Symbol>) {
                 type_expr_names(ret, out);
             }
         }
-        ast::TypeKind::Array { elem, .. } => type_expr_names(elem, out),
+        ast::TypeKind::Array { elem, .. } | ast::TypeKind::SomeType(elem) => type_expr_names(elem, out),
         ast::TypeKind::SelfType | ast::TypeKind::Void | ast::TypeKind::Never | ast::TypeKind::Infer => {}
     }
 }

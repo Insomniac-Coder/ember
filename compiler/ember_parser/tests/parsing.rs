@@ -689,10 +689,22 @@ fn a_generic_range_type_is_rejected() {
 
 #[test]
 fn gen_fn_declares_a_coroutine() {
-    // `[GRM-21]` — `gen_fn := "gen" fn_decl`.
-    let out = dump("gen fn ticks() -> Coroutine[void]:\n    yield 1\n");
-    assert!(out.contains("Fn ticks"), "{out}");
+    // `[GRM-21]` — `gen fn` declares a generator.
+    let out = dump("gen fn ticks() -> Generator[int]:\n    yield 1\n");
+    assert!(out.contains("gen Fn ticks"), "{out}");
     assert!(out.contains("Yield"), "{out}");
+}
+
+#[test]
+fn gen_comes_right_before_fn() {
+    // `[GRM-21]`, D-660 — `fn_header := ["extern" STRING] ["unsafe"] ["virtual" | "override"]
+    // ["gen"] "fn" …`, in an enum's body as anywhere else.
+    let out = dump(
+        "extern \"C\" gen fn a() -> Generator[int]:\n    yield 1\n\nunsafe gen fn b() -> Generator[int]:\n    yield 2\n\nclass C:\n    virtual gen fn c(self) -> Generator[int]:\n        yield 3\n\nenum E:\n    A\n\n    gen fn d(self) -> Generator[int]:\n        yield 4\n",
+    );
+    for name in ["gen Fn a", "gen Fn b", "virtual gen Fn c", "gen Fn d"] {
+        assert!(out.contains(name), "{name}: {out}");
+    }
 }
 
 #[test]
@@ -704,24 +716,25 @@ fn gen_is_contextual_so_a_variable_may_be_named_gen() {
 
 #[test]
 fn a_bare_yield_is_permitted() {
-    // `[GRM-22]` — "A bare `yield` is `yield ()`".
-    let out = dump("gen fn f() -> Coroutine[void]:\n    yield\n");
+    // `[CORO-2]` — a bare `yield` (of a `Generator[void]`).
+    let out = dump("gen fn f() -> Generator[void]:\n    yield\n");
     assert!(out.contains("Yield"), "{out}");
 }
 
 #[test]
-fn yield_may_be_bound() {
-    // `[GRM-22]` — unlike a jump, `yield` has the resume type, so it may be
-    // the right-hand side of a binding.
-    let out = dump("gen fn f() -> Coroutine[void]:\n    v = yield 1\n    pass\n");
+fn yield_parses_where_a_whole_expression_does() {
+    // `yield` parses as the whole of an assignment's value; whether it may
+    // stand there is the checker's (`[GRM-16]`: `E0107`, it being `void`).
+    let out = dump("gen fn f() -> Generator[int]:\n    v = yield 1\n    pass\n");
     assert!(out.contains("Yield"), "{out}");
 }
 
 #[test]
 fn yield_may_not_be_an_operand() {
-    // `[GRM-22]` gives `yield` `return`'s precedence, the lowest there is.
-    let out = run("gen fn f() -> Coroutine[void]:\n    x = 1 + yield 2\n");
-    assert!(!out.codes.is_empty(), "expected a diagnostic:\n{}", out.dump);
+    // `[GRM-16]` — `yield` is a jump expression at `return`'s precedence, the
+    // lowest there is: as an operand it is `E0107`.
+    let out = run("gen fn f() -> Generator[int]:\n    x = 1 + yield 2\n");
+    assert!(out.codes.contains(&"E0107".to_string()), "expected E0107:\n{}", out.dump);
 }
 
 #[test]

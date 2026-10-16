@@ -1866,6 +1866,41 @@ fn dynamic_access_safety_side_table_is_written() {
     );
 }
 
+/// `[DSJ-5]` — each `assert_disjoint` comparison is a `RuntimeCheck(Aliasing)` whose reason is
+/// `establishes_static_fact` in the safety side table, unless the compiler already knows the views
+/// apart (views of two different lists here), when no comparison is emitted and the table says so.
+#[test]
+fn assert_disjoint_records_its_comparison_or_leaves_it_out() {
+    let root = workspace_root();
+    let dir = temporary_directory("disjoint-record");
+    let source = dir.join(format!("disjoint.{SOURCE_EXT}"));
+    std::fs::write(
+        &source,
+        "from std.mem import assert_disjoint_or_panic\n\n\
+         fn pair(a: Span[int], b: Span[int]) -> int:\n    (p, q) = assert_disjoint_or_panic(a, b)\n    return p.len() + q.len()\n\n\
+         fn main():\n    x: Array[int] = [1, 2, 3]\n    y: Array[int] = [4]\n\
+         \x20   (p, q) = assert_disjoint_or_panic(x.as_span(), y.as_span())\n    println(p.len() + q.len(), pair(x[..], y[..]))\n",
+    )
+    .expect("write the program");
+    let out_dir = dir.join("out");
+    let build = ember(&["build", &source.to_string_lossy(), "--out-dir", &out_dir.to_string_lossy()], &root);
+    assert_eq!(build.exit, 0, "build failed:\n{}", build.stderr);
+    let table = out_dir.join("debug").join("inspect").join("disjoint.safety.json");
+    let json = std::fs::read_to_string(&table).expect("the side table");
+    let _ = std::fs::remove_dir_all(&dir);
+    // By where it is written: `pair` may be inlined into `main`.
+    let entry = |line: u32, status: &str, reason: &str| {
+        json.split("},{").any(|entry| {
+            entry.contains(&format!("disjoint.{SOURCE_EXT}:{line}:"))
+                && entry.contains("\"mechanism\":\"assert_disjoint\"")
+                && entry.contains(&format!("\"status\":\"{status}\""))
+                && entry.contains(&format!("\"reason\":\"{reason}\""))
+        })
+    };
+    assert!(entry(4, "emitted", "establishes_static_fact"), "{json}");
+    assert!(entry(10, "elided", "known_disjoint"), "{json}");
+}
+
 /// `[THR-14]` — `Atomic[i128]` and `Atomic[u128]` under clang as under MSVC (the conformance test's
 /// own compiler): the 16-byte compare-exchange inline (`-mcx16`), nothing left to a library the
 /// program does not link, and the same results in both profiles. A machine without clang skips it.

@@ -208,6 +208,8 @@ pub enum CheckKind {
     Overflow,
     DivisionByZero,
     ShiftRange,
+    /// `[DSJ-5]` — an `assert_disjoint` comparison.
+    Aliasing,
 }
 
 impl CheckKind {
@@ -217,6 +219,7 @@ impl CheckKind {
             Self::Overflow => "Overflow",
             Self::DivisionByZero => "DivisionByZero",
             Self::ShiftRange => "ShiftRange",
+            Self::Aliasing => "Aliasing",
         }
     }
 }
@@ -227,6 +230,9 @@ pub enum CheckProof {
     RangeFacts,
     /// `[OPT-2]` — one test before the loop covers every iteration's check.
     LoopEntryTest { loop_span: Span },
+    /// `[DSJ-5]` — the two views are of different lists, or are a proved pair's two parts
+    /// (`[SIMD-3]`'s facts), so they cannot overlap.
+    KnownDisjoint,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
