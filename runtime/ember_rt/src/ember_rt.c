@@ -9367,6 +9367,41 @@ static const ember_rl_variant* rl_variant_for(const ember_rl_type* old, const em
     return NULL;
 }
 
+/* [HR-14] The first unit-enum value inside `value` (of type `old`, becoming `to`, its struct fields
+ * searched depth-first) whose variant was removed: the variant's name, and in `holder` the new
+ * field that holds it; NULL when there is none. */
+static const char* rl_removed_variant(const ember_rl_manifest* next, const ember_rl_type* old, const ember_rl_type* to,
+                                      const unsigned char* value, const ember_rl_field** holder, int depth) {
+    for (uint32_t index = 0; old != NULL && to != NULL && depth <= 32 && index < to->field_count; ++index) {
+        const ember_rl_field* field = &to->fields[index];
+        const ember_rl_field* from = rl_source_field(old, field);
+        int route = rl_field_route(field, from);
+        if (route == RL_VARIANT) {
+            const ember_rl_type* was = rl_old_schema(from->type_name);
+            const ember_rl_type* now = rl_new_schema(next, field->type_name);
+            uint64_t discriminant = rl_read_unsigned(value + from->offset, from->size);
+            if (was == NULL || now == NULL || rl_variant_for(was, now, discriminant) != NULL) {
+                continue;
+            }
+            *holder = field;
+            for (uint32_t k = 0; k < was->variant_count; ++k) {
+                if (was->variants[k].discriminant == discriminant) {
+                    return was->variants[k].name;
+                }
+            }
+            return "?";
+        }
+        if (route == RL_NESTED) {
+            const char* found = rl_removed_variant(next, rl_old_schema(from->type_name), rl_new_schema(next, field->type_name),
+                                                   value + from->offset, holder, depth + 1);
+            if (found != NULL) {
+                return found;
+            }
+        }
+    }
+    return NULL;
+}
+
 /* The decision for one type's change: whether plan can migrate its values, with the report of why
  * not. Recurses into struct fields migrated depth-first. */
 static bool rl_plan_type(const ember_rl_manifest* next, const ember_rl_type* old, const ember_rl_type* to, char* report, size_t cap, int depth) {
@@ -9812,51 +9847,37 @@ static bool rl_plan_instances(const ember_rl_manifest* next, bool checkpoint, ch
         return false;
     }
     /* [HR-11a] A unit enum's values migrate by variant name; [HR-14] a variant removed while values
-     * hold it is refused, naming the variant and how many hold it (each of the first eight such
-     * variants, field and type). */
-    struct { const ember_rl_type* to; uint32_t field; uint64_t discriminant; } named[8];
+     * hold it is refused, naming the variant and how many instances hold it (for each of the first
+     * eight such variants, fields and types). */
+    struct { const ember_rl_type* to; const ember_rl_field* field; const char* variant; size_t count; } named[8];
     size_t named_count = 0;
     for (size_t index = 0; index < g_rl_moves.count; ++index) {
         rl_move* move = &g_rl_moves.moves[index];
-        if (move->to->migrate != NULL) {
+        const ember_rl_field* holder = NULL;
+        const char* variant = move->to->migrate != NULL ? NULL
+            : rl_removed_variant(next, move->from, move->to, (const unsigned char*)move->old, &holder, 0);
+        if (variant == NULL) {
             continue;
         }
-        for (uint32_t at = 0; at < move->to->field_count; ++at) {
-            const ember_rl_field* field = &move->to->fields[at];
-            const ember_rl_field* from = rl_source_field(move->from, field);
-            if (from == NULL || rl_field_route(field, from) != RL_VARIANT) {
-                continue;
-            }
-            const ember_rl_type* was = rl_old_schema(from->type_name);
-            uint64_t discriminant = rl_read_unsigned((unsigned char*)move->old + from->offset, from->size);
-            if (rl_variant_for(was, rl_new_schema(next, field->type_name), discriminant) != NULL) {
-                continue;
-            }
-            fine = false;
-            bool reported = named_count == sizeof named / sizeof named[0];
-            for (size_t k = 0; k < named_count; ++k) {
-                reported = reported || (named[k].to == move->to && named[k].field == at && named[k].discriminant == discriminant);
-            }
-            if (reported) {
-                continue;
-            }
-            named[named_count].to = move->to;
-            named[named_count].field = at;
-            named[named_count].discriminant = discriminant;
-            named_count += 1;
-            size_t holding = 0;
-            for (size_t other = index; other < g_rl_moves.count; ++other) {
-                const rl_move* also = &g_rl_moves.moves[other];
-                holding += also->to == move->to
-                    && rl_read_unsigned((unsigned char*)also->old + from->offset, from->size) == discriminant;
-            }
-            const char* variant = "?";
-            for (uint32_t k = 0; k < was->variant_count; ++k) {
-                variant = was->variants[k].discriminant == discriminant ? was->variants[k].name : variant;
-            }
-            rl_report(report, cap, "refused: variant `%s.%s` was removed while %zu value%s of it live (field `%s` of `%s`) [HR-14]\n",
-                      field->type_name, variant, holding, holding == 1 ? "" : "s", field->name, move->to->name);
+        fine = false;
+        size_t k = 0;
+        while (k < named_count && !(named[k].to == move->to && named[k].field == holder && strcmp(named[k].variant, variant) == 0)) {
+            k += 1;
         }
+        if (k == named_count && named_count < sizeof named / sizeof named[0]) {
+            named[named_count].to = move->to;
+            named[named_count].field = holder;
+            named[named_count].variant = variant;
+            named[named_count++].count = 0;
+        }
+        if (k < named_count) {
+            named[k].count += 1;
+        }
+    }
+    for (size_t k = 0; k < named_count; ++k) {
+        rl_report(report, cap, "refused: variant `%s.%s` was removed while %zu value%s of it live (field `%s` of `%s`) [HR-14]\n",
+                  named[k].field->type_name, named[k].variant, named[k].count, named[k].count == 1 ? "" : "s",
+                  named[k].field->name, named[k].to->name);
     }
     if (!fine) {
         return false;
@@ -10088,7 +10109,38 @@ static bool rl_static_migrates(const ember_rl_manifest* next, const rl_static* k
         const ember_rl_type* old = rl_old_schema(from->type_name);
         const ember_rl_type* now = rl_new_schema(next, to->type_name);
         if (old != NULL && now != NULL && now->migrate == NULL) {
-            return rl_plan_type(next, old, now, report, cap, 0);
+            if (!rl_plan_type(next, old, now, report, cap, 0)) {
+                return false;
+            }
+            const ember_rl_field* holder = NULL;
+            const char* variant = kept->state == 2 ? rl_removed_variant(next, old, now, (const unsigned char*)kept->data, &holder, 0) : NULL;
+            if (variant != NULL) {
+                rl_report(report, cap, "refused: variant `%s.%s` was removed while static `%s` holds it (field `%s`) [HR-14]\n",
+                          holder->type_name, variant, edited->name, holder->name);
+                return false;
+            }
+            return true;
+        }
+    }
+    /* [HR-11a] A unit enum's value keeps its variant, by name; a removed one cannot. */
+    if (from != NULL && to != NULL && from->kind == EMBER_RL_KIND_ENUM && to->kind == EMBER_RL_KIND_ENUM
+        && strcmp(from->type_name, to->type_name) == 0 && !checkpoint) {
+        const ember_rl_type* old = rl_old_schema(from->type_name);
+        const ember_rl_type* now = rl_new_schema(next, to->type_name);
+        if (old != NULL && now != NULL) {
+            if (kept->state != 2) {
+                return true; /* not yet initialised: the new image's initialiser runs */
+            }
+            uint64_t discriminant = rl_read_unsigned(kept->data, from->size);
+            if (rl_variant_for(old, now, discriminant) != NULL) {
+                return true;
+            }
+            const char* variant = "?";
+            for (uint32_t index = 0; index < old->variant_count; ++index) {
+                variant = old->variants[index].discriminant == discriminant ? old->variants[index].name : variant;
+            }
+            rl_report(report, cap, "refused: variant `%s.%s` was removed while static `%s` holds it [HR-14]\n", old->name, variant, edited->name);
+            return false;
         }
     }
 #else
@@ -10317,7 +10369,7 @@ static bool rl_prepare_statics(const ember_rl_manifest* next, rl_pending* pendin
         const ember_rl_static* edited = &next->statics[at];
         rl_static* kept = (rl_static*)rl_table_get(&g_rl.statics, edited->name);
         if (kept == NULL || kept->type_schema == edited->type_schema || kept->state != 2 || edited->shape == NULL
-            || edited->shape->kind != EMBER_RL_KIND_STRUCT || kept->shape == NULL) {
+            || (edited->shape->kind != EMBER_RL_KIND_STRUCT && edited->shape->kind != EMBER_RL_KIND_ENUM) || kept->shape == NULL) {
             continue;
         }
         const ember_rl_type* old = rl_old_schema(kept->shape->type_name);
@@ -10333,7 +10385,12 @@ static bool rl_prepare_statics(const ember_rl_manifest* next, rl_pending* pendin
         pending->migrated_data[pending->migrated_count] = data;
         pending->migrated_from[pending->migrated_count] = old;
         pending->migrated_shape[pending->migrated_count++] = edited->shape;
-        rl_migrate_value(next, old, now, (unsigned char*)data, (const unsigned char*)kept->data);
+        if (edited->shape->kind == EMBER_RL_KIND_ENUM) {
+            const ember_rl_variant* now_variant = rl_variant_for(old, now, rl_read_unsigned(kept->data, kept->shape->size));
+            rl_write_integer(data, edited->shape->size, now_variant != NULL ? now_variant->discriminant : 0);
+        } else {
+            rl_migrate_value(next, old, now, (unsigned char*)data, (const unsigned char*)kept->data);
+        }
         next->static_data[at] = data;
     }
     g_rl_guard = NULL;

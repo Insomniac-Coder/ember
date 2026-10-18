@@ -544,6 +544,28 @@ fn enum_values_migrate_by_variant_name() {
     assert!(run.stdout.ends_with("60\n"), "the old code did not run on: {}", run.stdout);
 }
 
+/// `[HR-17]`, `[HR-11a]` — a static of a unit enum whose variants were reordered keeps its variant,
+/// its discriminant rewritten, alone or inside a struct; one holding a removed variant is refused.
+#[test]
+fn an_enum_static_keeps_its_variant() {
+    let v1 = "from std.sync import Mutex\n\nenum Mode:\n    Slow\n    Fast\n\nstruct Setting:\n    mode: Mode = Mode.Slow\n\n\
+              static START: Mode = Mode.Fast\nstatic NOW: Mutex[Setting] = Mutex(Setting())\n\n\
+              fn speed(mode: Mode) -> int:\n    match mode:\n        Mode.Slow:\n            return 1\n        Mode.Fast:\n            return 10\n\n\
+              @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    with now = NOW.lock():\n        \
+              if turn == 0:\n            now.mode = Mode.Fast\n        return speed(START) * 100 + speed(now.mode)\n\nfn main():\n    pass\n";
+    let reordered = v1
+        .replace("enum Mode:\n    Slow\n    Fast\n", "enum Mode:\n    Fast\n    Turbo\n    Slow\n")
+        .replace("        Mode.Fast:\n            return 10\n", "        Mode.Fast:\n            return 10\n        Mode.Turbo:\n            return 50\n");
+    let run = host_run("reload-enum-static", v1, &[&reordered], 2);
+    assert_eq!(run.stdout, "1010\napplied, 0 migrated\n1010\n", "{}", run.stderr);
+    let removed = v1
+        .replace("enum Mode:\n    Slow\n    Fast\n", "enum Mode:\n    Slow\n    Turbo\n")
+        .replace("Mode.Fast", "Mode.Turbo");
+    let run = host_run("reload-enum-static-removed", v1, &[&removed], 2);
+    assert!(run.stdout.contains("variant `Mode.Fast` was removed while static `NOW` holds it (field `mode`)"), "{}", run.stdout);
+    assert!(run.stdout.ends_with("1010\n"), "the old code did not run on: {}", run.stdout);
+}
+
 /// `[HR-15]`, `[HR-15a]`, `[HR-15b]` — an instance keeps its address where its new size fits: held
 /// in tuples, which the runtime cannot follow yet, a `Particle` that loses a field migrates in
 /// place; one that gains a field must move, its references cannot all be found, and plan refuses
