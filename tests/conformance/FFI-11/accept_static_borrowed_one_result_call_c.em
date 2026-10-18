@@ -9,10 +9,11 @@ unsafe extern "C":
 
 # The raw allocation lives for the process, satisfying from(static).
 pub extern "C" fn process_number() -> *mut i32:
+    number: *mut i32
     unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
-        number: *mut i32 = alloc[i32](1)
+        number = alloc[i32](1)
         write(number, 0, 42)
-        return number
+    return number
 
 fn main():
     println(static_number())

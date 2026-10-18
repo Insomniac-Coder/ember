@@ -13,10 +13,11 @@ pub extern "C" fn process_optional(present: bool) -> *mut i32:
     if not present:
         unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
             return 0 as *mut i32
+    number: *mut i32
     unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
-        number: *mut i32 = alloc[i32](1)
+        number = alloc[i32](1)
         write(number, 0, 42)
-        return number
+    return number
 
 fn main():
     match optional_number(false):

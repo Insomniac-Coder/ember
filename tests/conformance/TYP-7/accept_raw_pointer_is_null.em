@@ -7,6 +7,7 @@ fn is_null_safely(pointer: *mut i32) -> bool:
     return pointer.is_null()
 
 fn main():
-    unsafe:  # SAFETY: this test sets up what the operation requires
-        pointer: *mut i32 = 0 as *mut i32
-        println(is_null_safely(pointer))
+    pointer: *mut i32
+    unsafe:  # SAFETY: the null pointer is only tested, never read
+        pointer = 0 as *mut i32
+    println(is_null_safely(pointer))

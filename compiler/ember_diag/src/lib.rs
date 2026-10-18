@@ -68,8 +68,28 @@ impl Label {
 #[derive(Clone, Debug)]
 pub struct Suggestion {
     pub message: String,
-    /// Replacement text for each span, applied together.
-    pub edits: Vec<(Span, String)>,
+    /// What replaces each span, applied together; edits at one place apply in this order.
+    pub edits: Vec<(Span, Replacement)>,
+    /// `[CLI-20]` — a rewrite of source written for 0.9.8 that `ember fmt --migrate` applies;
+    /// not rendered, since the diagnostic's own help says it.
+    pub migration: bool,
+}
+
+/// The text an edit puts in place of its span.
+#[derive(Clone, Debug)]
+pub enum Replacement {
+    Text(String),
+    /// The source text of another span (a rewrite that moves an expression).
+    Source(Span),
+}
+
+impl Replacement {
+    pub fn text<'a>(&'a self, map: &'a SourceMap) -> &'a str {
+        match self {
+            Replacement::Text(text) => text,
+            Replacement::Source(span) => map.snippet(*span),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -133,8 +153,19 @@ impl Diagnostic {
     pub fn suggest(mut self, message: impl Into<String>, span: Span, text: impl Into<String>) -> Diagnostic {
         self.suggestions.push(Suggestion {
             message: message.into(),
-            edits: vec![(span, text.into())],
+            edits: vec![(span, Replacement::Text(text.into()))],
+            migration: false,
         });
+        self
+    }
+
+    /// `[CLI-20]` — the mechanical rewrite of a 0.9.8 form, which `ember fmt --migrate` applies.
+    pub fn migrate(self, message: impl Into<String>, span: Span, text: impl Into<String>) -> Diagnostic {
+        self.migrate_edits(message, vec![(span, Replacement::Text(text.into()))])
+    }
+
+    pub fn migrate_edits(mut self, message: impl Into<String>, edits: Vec<(Span, Replacement)>) -> Diagnostic {
+        self.suggestions.push(Suggestion { message: message.into(), edits, migration: true });
         self
     }
 
@@ -392,7 +423,7 @@ pub fn render(d: &Diagnostic, map: &SourceMap) -> String {
     for help in &d.helps {
         let _ = writeln!(out, "{pad} = help: {help}");
     }
-    for suggestion in &d.suggestions {
+    for suggestion in d.suggestions.iter().filter(|suggestion| !suggestion.migration) {
         let _ = writeln!(out, "{pad} = help: {}", suggestion.message);
     }
     for note in &d.notes {
@@ -458,9 +489,10 @@ pub fn to_json(d: &Diagnostic, map: &SourceMap) -> serde_json::Value {
         "notes": d.notes,
         "suggestions": d.suggestions.iter().map(|s| json!({
             "message": s.message,
+            "migration": s.migration,
             "edits": s.edits.iter().map(|(span, text)| json!({
                 "span": span_json(*span, map),
-                "replacement": text,
+                "replacement": text.text(map),
             })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
         "rendered": render(d, map),

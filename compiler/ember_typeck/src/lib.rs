@@ -14,6 +14,7 @@
 
 mod usefulness;
 mod name_suggestions;
+pub use name_suggestions::nearest as nearest_names;
 mod const_eval;
 mod errors;
 mod derives;
@@ -350,6 +351,7 @@ pub fn check(
                 .secondary(previous.span, "first definition is here"));
         }
     }
+    checker.report_unneeded_unsafe();
     let callable_declarations = checker.callable_declarations(modules);
     // `[CT-1]` — the functions computing what is still to be evaluated go to
     // the evaluator with the rest; a pass with nothing outstanding has none.
@@ -2510,6 +2512,14 @@ struct Checker<'a> {
     /// `[UNS-1]`, `[UNS-2]` — inside an `unsafe:` block, where the raw memory
     /// operations are permitted.
     in_unsafe: bool,
+    /// `[UNS-3]` — whether the statement of an `unsafe:` block being checked has held an operation
+    /// that needs `unsafe` (`unsafe_context`).
+    unsafe_used: bool,
+    /// `[UNS-3]` — each `unsafe:` block checked, by span, with its statements' spans.
+    unsafe_blocks: HashMap<Span, Vec<Span>>,
+    /// `[UNS-3]` — each statement of an `unsafe:` block, by span, and whether any check of it (its
+    /// generic's or an instance's) needed `unsafe`; reported once checking is done.
+    unsafe_statements: HashMap<Span, bool>,
     /// `[UNS-10b]` — `UnsafeCell` delegates an invariant to unsafe code and
     /// therefore cannot occur in a function that promises `@static_safe`.
     in_static_safe: bool,
@@ -2754,6 +2764,9 @@ impl<'a> Checker<'a> {
             loop_labels: Vec::new(),
             in_defer: false,
             in_unsafe: false,
+            unsafe_used: false,
+            unsafe_blocks: HashMap::new(),
+            unsafe_statements: HashMap::new(),
             in_static_safe: false,
             in_generic_template: false,
             static_safe_unsafe_cell_reported: false,
@@ -4147,11 +4160,7 @@ impl<'a> Checker<'a> {
                     if key == "std" || key.starts_with("std.") {
                         continue;
                     }
-                    self.error(
-                        codes::E1010,
-                        import.span,
-                        format!("cannot find module `{key}`"),
-                    );
+                    self.error(codes::E1060, import.span, format!("no module named '{key}'"));
                     continue;
                 };
 
@@ -4176,9 +4185,9 @@ impl<'a> Checker<'a> {
                             let Some(vis) = public_item(&modules[target].module, item.name.name)
                             else {
                                 self.error(
-                                    codes::E1010,
+                                    codes::E1061,
                                     item.name.span,
-                                    format!("`{key}` has no item named `{}`", item.name.name),
+                                    format!("module '{key}' has no item named `{}`", item.name.name),
                                 );
                                 continue;
                             };
@@ -11539,6 +11548,26 @@ impl<'a> Checker<'a> {
     }
 
     fn resolve_type(&mut self, ty: &ast::TypeExpr) -> Ty {
+        // `[CLI-20]` — 0.9.8's boxed closure `Box[dyn fn(A) -> R]` is 0.9.9's owned callable type
+        // `fn(A) -> R` (`[FN-6]`); a callable type is not an interface.
+        if let ast::TypeKind::Path { segments, args } = &ty.kind
+            && let [name] = segments.as_slice()
+            && name.name.is("Box")
+            && let [ast::GenericArg::Type(inner)] = args.as_slice()
+            && let ast::TypeKind::Dyn(bounds) = &inner.kind
+            && let [bound @ ast::TypeExpr { kind: ast::TypeKind::Fn { .. }, .. }] = bounds.as_slice()
+        {
+            let edits = vec![
+                (Span::new(ty.span.file, ty.span.start, bound.span.start), ember_diag::Replacement::Text(String::new())),
+                (Span::new(ty.span.file, bound.span.end, ty.span.end), ember_diag::Replacement::Text(String::new())),
+            ];
+            self.sink.emit(
+                Diagnostic::error(codes::E1010, bound.span, "a `dyn` bound must name an interface")
+                    .help("a callable type outside a parameter is an owned callable value: write `fn(…) -> R` for `Box[dyn fn(…) -> R]` [FN-6]")
+                    .migrate_edits("`Box[dyn fn]` to an owned callable type", edits),
+            );
+            return self.common.error;
+        }
         match &ty.kind {
             ast::TypeKind::Void => self.common.void,
             ast::TypeKind::Never => self.common.never,
@@ -13060,7 +13089,7 @@ impl<'a> Checker<'a> {
             self.error(codes::E2020, span, format!("`{name}` takes {wanted} arguments, found {}", args.len()));
             return error;
         }
-        if mode == DisjointMode::Assumed && !self.in_unsafe {
+        if mode == DisjointMode::Assumed && !self.unsafe_context() {
             self.sink.emit(
                 Diagnostic::error(codes::E3100, span, "`assume_disjoint` requires an `unsafe` block")
                     .help("use `assert_disjoint`, which checks, or write the call in an `unsafe` block")
@@ -13348,7 +13377,7 @@ impl<'a> Checker<'a> {
             return None;
         };
 
-        if needs_unsafe && !self.in_unsafe {
+        if needs_unsafe && !self.unsafe_context() {
             self.sink.emit(
                 Diagnostic::error(
                     codes::E3100,
@@ -17412,8 +17441,48 @@ impl<'a> Checker<'a> {
         })
     }
 
+    /// `[UNS-1]` — whether an operation that needs `unsafe` is inside one; `[UNS-3]` notes that the
+    /// enclosing `unsafe:` block was needed.
+    pub(crate) fn unsafe_context(&mut self) -> bool {
+        if self.in_unsafe {
+            self.unsafe_used = true;
+        }
+        self.in_unsafe
+    }
+
+    /// `[UNS-3]` — `L3010` for each `unsafe:` block holding a statement no check of which needed
+    /// `unsafe`. Not after an error: a statement rejected before its `unsafe` check would look unneeded.
+    fn report_unneeded_unsafe(&mut self) {
+        if self.sink.has_errors() {
+            return;
+        }
+        let mut blocks: Vec<(&Span, &Vec<Span>)> = self.unsafe_blocks.iter().collect();
+        blocks.sort_by_key(|(span, _)| (span.file, span.start));
+        let mut reports = Vec::new();
+        for (block, statements) in blocks {
+            let unneeded: Vec<Span> = statements.iter().filter(|span| !self.unsafe_statements[span]).copied().collect();
+            if unneeded.is_empty() {
+                continue;
+            }
+            let report = if unneeded.len() == statements.len() {
+                Diagnostic::lint(codes::L3010, *block, "this `unsafe` block contains no operation that needs `unsafe`")
+                    .help("remove `unsafe:` and keep its statements [UNS-3]")
+            } else {
+                unneeded.iter().fold(
+                    Diagnostic::lint(codes::L3010, *block, "this `unsafe` block is larger than necessary"),
+                    |report, span| report.secondary(*span, "this statement needs no `unsafe`"),
+                )
+                .help("move the statements that need no `unsafe` out of the block; it should hold only what needs it [UNS-3]")
+            };
+            reports.push(report);
+        }
+        for report in reports {
+            self.sink.emit(report);
+        }
+    }
+
     fn check_direct_call_safety(&mut self, def: DefId, span: Span) {
-        if !self.signatures[def.0 as usize].is_unsafe || self.in_unsafe {
+        if !self.signatures[def.0 as usize].is_unsafe || self.unsafe_context() {
             return;
         }
         if self.foreign_declarations.contains_key(&def) {
@@ -19739,6 +19808,18 @@ impl<'a> Checker<'a> {
     }
 
     fn check_stmt(&mut self, stmt: &ast::Stmt, out: &mut Vec<Stmt>) {
+        if !self.unsafe_statements.contains_key(&stmt.span) {
+            return self.check_stmt_unrecorded(stmt, out);
+        }
+        // `[UNS-3]` — a statement of an `unsafe:` block: whether it needed `unsafe`, over every check of it.
+        let outer = std::mem::replace(&mut self.unsafe_used, false);
+        self.check_stmt_unrecorded(stmt, out);
+        let used = std::mem::replace(&mut self.unsafe_used, outer);
+        *self.unsafe_statements.entry(stmt.span).or_insert(false) |= used;
+        self.unsafe_used |= used;
+    }
+
+    fn check_stmt_unrecorded(&mut self, stmt: &ast::Stmt, out: &mut Vec<Stmt>) {
         // `[ATT-6]` (0.9.9) — `@simd`, `@parallel`, `@unroll` and `@allow`
         // have no effect built, and an attribute is never accepted and
         // ignored. Their names and places are the parser's (`[ATT-2]`).
@@ -19857,7 +19938,7 @@ impl<'a> Checker<'a> {
                         self.error(codes::E2140, target.span, "a foreign static without `mut` cannot be assigned");
                         return;
                     }
-                    if !self.in_unsafe {
+                    if !self.unsafe_context() {
                         self.error(codes::E5002, target.span, "writing a foreign static requires `unsafe`");
                         return;
                     }
@@ -19904,7 +19985,7 @@ impl<'a> Checker<'a> {
                                 self.error(codes::E1010, stmt.span, "this operator is not supported yet in this phase");
                                 return;
                             };
-                            if self.reject_integer_true_division(op, binding.ty, stmt.span) {
+                            if self.reject_integer_true_division(op, binding.ty, stmt.span, (target.span, value.span), " //= ") {
                                 return;
                             }
                             Expr {
@@ -19937,7 +20018,7 @@ impl<'a> Checker<'a> {
                 if let Some(binding) = self.foreign_static_element_assignment_root(target) {
                     if !binding.is_mut {
                         self.error(codes::E2140, target.span, "a foreign static without `mut` cannot be assigned");
-                    } else if !self.in_unsafe {
+                    } else if !self.unsafe_context() {
                         self.error(codes::E5002, target.span, "writing a foreign static requires `unsafe`");
                     } else {
                         self.error(
@@ -19958,7 +20039,7 @@ impl<'a> Checker<'a> {
                         self.error(codes::E2140, target.span, "a foreign static without `mut` cannot be assigned");
                         return;
                     }
-                    if !self.in_unsafe {
+                    if !self.unsafe_context() {
                         self.error(codes::E5002, target.span, "writing a foreign static requires `unsafe`");
                         return;
                     }
@@ -19997,7 +20078,7 @@ impl<'a> Checker<'a> {
                                 self.error(codes::E1010, stmt.span, "this operator is not supported yet in this phase");
                                 return;
                             };
-                            if self.reject_integer_true_division(op, field_ty, stmt.span) {
+                            if self.reject_integer_true_division(op, field_ty, stmt.span, (target.span, value.span), " //= ") {
                                 return;
                             }
                             Expr {
@@ -20304,7 +20385,7 @@ impl<'a> Checker<'a> {
                         };
                         let op = convert_binop(*bin);
                         if op.is_some_and(|op| {
-                            self.reject_integer_true_division(op, place_ty, stmt.span)
+                            self.reject_integer_true_division(op, place_ty, stmt.span, (target.span, value.span), " //= ")
                         }) {
                             return;
                         }
@@ -20410,10 +20491,16 @@ impl<'a> Checker<'a> {
             // only permits `[UNS-1]`'s operations, which are refused
             // everywhere else.
             ast::StmtKind::Unsafe(block) => {
+                // `[UNS-3]` — each statement's need of `unsafe` is recorded by `check_stmt`.
+                let statements: Vec<Span> = block.stmts.iter().map(|statement| statement.span).collect();
+                for span in &statements {
+                    self.unsafe_statements.entry(*span).or_insert(false);
+                }
+                self.unsafe_blocks.insert(stmt.span, statements);
                 let was = std::mem::replace(&mut self.in_unsafe, true);
-                let block = self.check_block(block);
+                let checked = self.check_block(block);
                 self.in_unsafe = was;
-                out.push(Stmt::Block(block));
+                out.push(Stmt::Block(checked));
             }
             ast::StmtKind::Defer(block) => {
                 // `[CTL-7]` — control may not leave a `defer` block, so the
@@ -28233,6 +28320,41 @@ impl<'a> Checker<'a> {
         if iterable.ty == self.common.error {
             return None;
         }
+        // `[CTL-1]` — a loop over a `Map` gives its keys. A pair pattern over keys that are not
+        // pairs is 0.9.8's `for k, v in m:`, which is `m.items()`'s (`[CLI-20]`).
+        if let ast::PatternKind::Tuple(items) = &pattern.kind
+            && items.len() == 2
+        {
+            let mut seen = iterable.ty;
+            while let TyKind::Ref { inner, .. } = *self.types.kind(seen) {
+                seen = inner;
+            }
+            let key = match *self.types.kind(seen) {
+                TyKind::Struct(id) if self.collection_named(seen) == Some("std.collections.Map") => {
+                    self.types.struct_def(id).origin.as_ref().and_then(|(_, args)| args.first().copied())
+                }
+                _ => None,
+            };
+            if let Some(key) = key
+                && !matches!(self.types.kind(key), TyKind::Tuple(_))
+            {
+                let mut diagnostic = Diagnostic::error(
+                    codes::E2020,
+                    pattern.span,
+                    "a loop over a `Map` gives its keys, which a pair pattern cannot match",
+                )
+                .help("loop over `m.items()` for the key-value pairs [CTL-1]");
+                if matches!(
+                    iter.kind,
+                    ast::ExprKind::Path { .. } | ast::ExprKind::Field { .. } | ast::ExprKind::Call { .. }
+                        | ast::ExprKind::MethodCall { .. } | ast::ExprKind::Paren(_)
+                ) {
+                    diagnostic = diagnostic.migrate("`for k, v in m:` over a `Map` to `m.items()`", iter.span.shrink_to_end(), ".items()");
+                }
+                self.sink.emit(diagnostic);
+                return None;
+            }
+        }
         // `[SOA-6]` — `for p in ps` gives `SoARef`s, `for p in ps.iter_mut()` `SoAMut`s.
         let soa_loop = match &iterable.kind {
             ExprKind::Builtin { which: Builtin::SoA { op: hir::SoAOp::Iter { mutable }, .. }, args } => Some((args[0].clone(), *mutable)),
@@ -29061,7 +29183,9 @@ impl<'a> Checker<'a> {
     /// `[TYP-28]` (0.9.9) — `/` is true division and applies to floats; two
     /// integer operands are `E2240`, whose fix-its are floor division and a
     /// conversion to `float`. Returns whether it reported.
-    fn reject_integer_true_division(&mut self, op: BinOp, operand: Ty, span: Span) -> bool {
+    /// `[CLI-20]`'s migration writes `replacement` in place of the text between the `operands`,
+    /// the operator's, when they were written in order (a desugaring's may not be).
+    fn reject_integer_true_division(&mut self, op: BinOp, operand: Ty, span: Span, operands: (Span, Span), replacement: &str) -> bool {
         // G8-4 — and, on an `i256`, anything but `+`, `-` and comparing,
         // in an expression or an assignment (`c *= 2`).
         if !op.is_comparison()
@@ -29073,12 +29197,15 @@ impl<'a> Checker<'a> {
         if op != BinOp::Div || !self.types.is_integral(operand) {
             return false;
         }
-        self.sink.emit(
-            Diagnostic::error(codes::E2240, span, "`/` on two integers")
-                .note("`/` is true division in Ember, as in Python 3 [TYP-28]")
-                .help("write `a // b` for floor division")
-                .help("or convert both operands, `a as float / b as float`, for a float result"),
-        );
+        let mut diagnostic = Diagnostic::error(codes::E2240, span, "`/` on two integers")
+            .note("`/` is true division in Ember, as in Python 3 [TYP-28]")
+            .help("write `a // b` for floor division")
+            .help("or convert both operands, `a as float / b as float`, for a float result");
+        let (left, right) = operands;
+        if left.file == right.file && left.end <= right.start {
+            diagnostic = diagnostic.migrate("integer `/` to `//`", Span::new(left.file, left.end, right.start), replacement);
+        }
+        self.sink.emit(diagnostic);
         true
     }
 
@@ -31094,7 +31221,7 @@ impl<'a> Checker<'a> {
                         if source == target && (!target_mutable || *source_mutable)
                 );
                 if pointer_integer_cast || pointer_pointer_cast {
-                    if !self.in_unsafe {
+                    if !self.unsafe_context() {
                         self.error(codes::E3100, span, if pointer_integer_cast {
                             "casting between a raw pointer and an integer requires `unsafe`"
                         } else {
@@ -31337,6 +31464,61 @@ impl<'a> Checker<'a> {
     }
 
     fn synth_call(&mut self, callee: &ast::Expr, args: &[ast::Arg], expected: Option<Ty>, span: Span) -> Expr {
+        // `[CLI-20]` — 0.9.8's `std.borrow.with_views2..4` (and `_mut`) were removed in 0.9.9: a
+        // callable type gets fresh regions at each call (`[LT-7]`), so `with_views2(a, b, f)` is
+        // `f(a, b)`, which the migration writes.
+        if let ast::ExprKind::Path { segments } = &callee.kind
+            && let [name] = segments.as_slice()
+            && matches!(
+                name.name.as_str(),
+                "with_views2" | "with_views3" | "with_views4" | "with_views2_mut" | "with_views3_mut" | "with_views4_mut"
+            )
+            && self.lookup(name.name).is_none()
+            && !self.fn_ids.contains_key(&self.resolve_name(name.name))
+            && let Some((f, views)) = args.split_last()
+            && let (Some(first), Some(last)) = (views.first(), views.last())
+            && args.iter().all(|arg| arg.name.is_none())
+        {
+            use ember_diag::Replacement::{Source, Text};
+            let start = first.value.span.start;
+            let at = Span::new(span.file, start, start);
+            let lambda = matches!(f.value.kind, ast::ExprKind::Lambda(_));
+            let mut edits = vec![(Span::new(span.file, span.start, start), Text(if lambda { "(" } else { "" }.to_string()))];
+            // A lambda called where it is written learns nothing from the call: its untyped
+            // parameters are given the views' types, which `with_views` gave them.
+            if let ast::ExprKind::Lambda(written) = &f.value.kind {
+                let mut typed = Vec::new();
+                for (param, view) in written.params.iter().zip(views) {
+                    if let ast::ParamKind::Named { name, ty } = &param.kind
+                        && matches!(ty.kind, ast::TypeKind::Infer)
+                    {
+                        let view = self.synth(&view.value);
+                        if view.ty != self.common.error {
+                            typed.push((name.span.shrink_to_end(), format!(": {}", self.types.display(view.ty))));
+                        }
+                    }
+                }
+                let lambda_span = f.value.span;
+                let mut from = lambda_span.start;
+                for (place, annotation) in typed {
+                    edits.push((at, Source(Span::new(span.file, from, place.start))));
+                    edits.push((at, Text(annotation)));
+                    from = place.start;
+                }
+                edits.push((at, Source(Span::new(span.file, from, lambda_span.end))));
+            } else {
+                edits.push((at, Source(f.value.span)));
+            }
+            edits.push((at, Text(if lambda { ")(" } else { "(" }.to_string())));
+            edits.push((Span::new(span.file, last.value.span.end, span.end), Text(")".to_string())));
+            self.sink.emit(
+                Diagnostic::error(codes::E1010, callee.span, format!("cannot find `{}` in this scope", name.name))
+                    .note("`with_views*` were removed in 0.9.9: a callable type gets fresh regions at each call [LT-7]")
+                    .help("call the callback with the views")
+                    .migrate_edits("`with_views` call to a call of its callback", edits),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         // `Shape.Circle(1.0)` — a variant constructor (`[ENM-1]`), which
         // parses as a call on a field access.
         if let ast::ExprKind::Field { base, name } = &callee.kind {
@@ -34428,7 +34610,7 @@ impl<'a> Checker<'a> {
 
     fn foreign_static_use(&mut self, qualified: Symbol, span: Span) -> Expr {
         let binding = self.foreign_statics[&qualified];
-        if !binding.immutable && !self.in_unsafe {
+        if !binding.immutable && !self.unsafe_context() {
             self.sink.emit(Diagnostic::error(codes::E5002, span,
                 "reading a foreign static requires `unsafe`")
                 .help("wrap the read in `unsafe:` or assert `@ffi(immutable)` for a const C object"));
@@ -36154,7 +36336,7 @@ impl<'a> Checker<'a> {
 
         // `[RNG-10]` — "Any other route is `unsafe`", so `new_unchecked`
         // needs the boundary `[TIER-1]` names.
-        if which == 2 && !self.in_unsafe {
+        if which == 2 && !self.unsafe_context() {
             self.sink.emit(
                 Diagnostic::error(
                     codes::E3100,
@@ -38894,7 +39076,7 @@ impl<'a> Checker<'a> {
         };
         // `[UNS-1]`, `[FN-6]` (ODR-115) — the callee is some `unsafe fn`, whose obligation the
         // `unsafe` block takes on.
-        if is_unsafe && !self.in_unsafe {
+        if is_unsafe && !self.unsafe_context() {
             let shown = self.types.display(callee.ty);
             self.sink.emit(
                 Diagnostic::error(codes::E3100, span, format!("calling a value of type `{shown}` requires an `unsafe` block"))
@@ -40725,7 +40907,7 @@ impl<'a> Checker<'a> {
             };
         }
 
-        if !self.in_unsafe {
+        if !self.unsafe_context() {
             self.sink.emit(
                 Diagnostic::error(
                     codes::E3100,
@@ -40795,7 +40977,7 @@ impl<'a> Checker<'a> {
             };
         }
 
-        if !self.in_unsafe {
+        if !self.unsafe_context() {
             self.sink.emit(
                 Diagnostic::error(codes::E3100, span, "`UnsafeCell.get` needs an `unsafe` block")
                     .help("wrap the raw-pointer operation in `unsafe:`")
@@ -45315,7 +45497,7 @@ impl<'a> Checker<'a> {
             let inner = self.types.intern(TyKind::Ref { mutable, inner: elem });
             (Builtin::SpanGet, 1, self.option_of(inner))
         } else if name.name.is("get_unchecked") {
-            if !self.in_unsafe {
+            if !self.unsafe_context() {
                 self.sink.emit(
                     Diagnostic::error(
                         codes::E3100,
@@ -45471,7 +45653,7 @@ impl<'a> Checker<'a> {
             };
         }
 
-        if !self.in_unsafe {
+        if !self.unsafe_context() {
             self.sink.emit(
                 Diagnostic::error(
                     codes::E3100,
@@ -48247,7 +48429,7 @@ impl<'a> Checker<'a> {
         }
 
         let operand_ty = lhs.ty;
-        if self.reject_integer_true_division(hir_op, operand_ty, span) {
+        if self.reject_integer_true_division(hir_op, operand_ty, span, (lhs_ast.span, rhs_ast.span), " // ") {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         if !hir_op.is_comparison()

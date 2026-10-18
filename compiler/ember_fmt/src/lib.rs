@@ -26,6 +26,211 @@ pub const LINE_WIDTH: usize = 100;
 
 const INDENT: &str = "    ";
 
+/// `[FMT-1]` — `text`, a line at `depth` plus `extra` indentation, as lines of at most
+/// `LINE_WIDTH` columns where it can be broken without changing the program. A line too long
+/// breaks before each top-level operator of the loosest kind it has (`or`, then `and`,
+/// comparisons, `|`, `^`, `&`, shifts, `+` and `-`, then `*`, `/`, `//` and `%`), inside the
+/// brackets it is in or, at a statement, inside parentheses put around the value of a `return`, an
+/// assignment or the condition of an `if`, `elif` or `while` (a parenthesised expression means what
+/// it meant bare). With no such operator it breaks after its last top-level opening bracket: the
+/// contents one indent deeper, one item per line with a trailing comma when they are a list, the
+/// closing bracket and what follows on a line of their own. Each piece is wrapped again (`inside`:
+/// the piece is within brackets). A line with nowhere to break, or holding a comment, is left as
+/// it is.
+fn wrap(text: &str, depth: usize, extra: usize, inside: bool, out: &mut Vec<(usize, String)>) {
+    let fits = |piece: &str, extra: usize| (depth + extra) * INDENT.len() + piece.chars().count() <= LINE_WIDTH;
+    let levels = if fits(text, extra) { None } else { bracket_levels(text) };
+    let Some(levels) = levels else {
+        out.push((extra, text.to_string()));
+        return;
+    };
+    if let Some(cuts) = operator_cuts(text, &levels) {
+        if inside {
+            let mut from = 0;
+            for cut in cuts.into_iter().chain([text.len()]) {
+                wrap(text[from..cut].trim(), depth, extra, true, out);
+                from = cut;
+            }
+            return;
+        }
+        if let Some((head, tail)) = statement_head(text, &levels) {
+            out.push((extra, format!("{}(", &text[..head])));
+            wrap(text[head..tail].trim(), depth, extra + 1, true, out);
+            out.push((extra, format!("){}", &text[tail..])));
+            return;
+        }
+    }
+    let bracket = last_bracket(text, &levels);
+    if let Some((open, close, items)) = &bracket
+        && fits(&text[..=*open], extra)
+    {
+        split_at_bracket(text, (*open, *close, items), depth, extra, inside, out);
+        return;
+    }
+    match bracket {
+        Some((open, close, items)) => split_at_bracket(text, (open, close, &items), depth, extra, inside, out),
+        None => out.push((extra, text.to_string())),
+    }
+}
+
+fn split_at_bracket(
+    text: &str,
+    (open, close, items): (usize, usize, &[usize]),
+    depth: usize,
+    extra: usize,
+    inside: bool,
+    out: &mut Vec<(usize, String)>,
+) {
+    out.push((extra, text[..=open].to_string()));
+    if items.is_empty() {
+        wrap(text[open + 1..close].trim(), depth, extra + 1, true, out);
+    } else {
+        let mut start = open + 1;
+        for comma in items.iter().copied().chain([close]) {
+            let item = text[start..comma].trim().trim_end_matches(',').trim_end();
+            if !item.is_empty() {
+                wrap(&format!("{item},"), depth, extra + 1, true, out);
+            }
+            start = comma + 1;
+        }
+    }
+    wrap(&text[close..], depth, extra, inside, out);
+}
+
+/// Each byte's bracket depth, `u32::MAX` inside a string or character literal. `None` for a line
+/// holding a comment or a line break outside a literal, an unclosed literal or unbalanced brackets.
+fn bracket_levels(text: &str) -> Option<Vec<u32>> {
+    let bytes = text.as_bytes();
+    let mut levels = vec![0u32; bytes.len()];
+    let mut level = 0u32;
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            quote @ (b'"' | b'\'') => {
+                let triple = quote == b'"' && text[at..].starts_with("\"\"\"");
+                let begin = at;
+                at += if triple { 3 } else { 1 };
+                loop {
+                    if at >= bytes.len() {
+                        return None;
+                    }
+                    if bytes[at] == b'\\' {
+                        at += 2;
+                        continue;
+                    }
+                    if triple && text[at..].starts_with("\"\"\"") {
+                        at += 2;
+                        break;
+                    }
+                    if !triple && bytes[at] == quote {
+                        break;
+                    }
+                    at += 1;
+                }
+                levels[begin..=at.min(bytes.len() - 1)].fill(u32::MAX);
+            }
+            // A comment, or a construct printed over several lines (a block lambda).
+            b'#' | b'\n' => return None,
+            b'(' | b'[' | b'{' => {
+                levels[at] = level;
+                level += 1;
+            }
+            b')' | b']' | b'}' => {
+                level = level.checked_sub(1)?;
+                levels[at] = level;
+            }
+            _ => levels[at] = level,
+        }
+        at += 1;
+    }
+    (level == 0).then_some(levels)
+}
+
+/// The byte positions of `text`'s last top-level bracket pair with something between them, and
+/// of the commas at its top level (none when it holds one item; a trailing comma counts as none).
+fn last_bracket(text: &str, levels: &[u32]) -> Option<(usize, usize, Vec<usize>)> {
+    let bytes = text.as_bytes();
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
+    let mut open = None;
+    for (at, &byte) in bytes.iter().enumerate() {
+        if levels[at] != 0 {
+            continue;
+        }
+        match byte {
+            b'(' | b'[' | b'{' => open = Some(at),
+            b')' | b']' | b'}' => pairs.extend(open.take().map(|open| (open, at))),
+            _ => {}
+        }
+    }
+    let &(open, close) = pairs.iter().rev().find(|(open, close)| !text[open + 1..*close].trim().is_empty())?;
+    let mut items: Vec<usize> = (open + 1..close).filter(|&at| levels[at] == 1 && bytes[at] == b',').collect();
+    if items.last().is_some_and(|&last| text[last + 1..close].trim().is_empty()) {
+        items.pop();
+    }
+    Some((open, close, items))
+}
+
+/// Where the pieces after the first start: before each top-level binary operator of the loosest
+/// kind `text` has, written with a space on each side. `None` when it has none.
+fn operator_cuts(text: &str, levels: &[u32]) -> Option<Vec<usize>> {
+    const KINDS: &[&[&str]] = &[
+        &["or"],
+        &["and"],
+        &["==", "!=", "<=", ">=", "<", ">"],
+        &["|"],
+        &["^"],
+        &["&"],
+        &["<<", ">>"],
+        &["+", "-"],
+        &["*", "//", "/", "%"],
+    ];
+    let bytes = text.as_bytes();
+    for kind in KINDS {
+        let mut cuts = Vec::new();
+        let mut at = 1;
+        while at < bytes.len() {
+            if levels[at] == 0 && bytes[at - 1] == b' ' {
+                if let Some(op) = kind.iter().find(|op| text[at..].starts_with(*op) && text[at + op.len()..].starts_with(' ')) {
+                    cuts.push(at);
+                    at += op.len();
+                    continue;
+                }
+            }
+            at += 1;
+        }
+        // An operator first on the line is a unary one, or the line is a piece already.
+        cuts.retain(|&cut| !text[..cut].trim().is_empty());
+        if !cuts.is_empty() {
+            return Some(cuts);
+        }
+    }
+    None
+}
+
+/// The end of a statement's head and the start of its tail, where parentheses may go around the
+/// value between them: `return …`, `… = …` (or an augmented `+=`), and `if …:`, `elif …:` and
+/// `while …:`.
+fn statement_head(text: &str, levels: &[u32]) -> Option<(usize, usize)> {
+    for keyword in ["return ", "if ", "elif ", "while "] {
+        if let Some(rest) = text.strip_prefix(keyword) {
+            let tail = if keyword == "return " { text.len() } else { text.len() - usize::from(rest.ends_with(':')) };
+            return (keyword == "return " || rest.ends_with(':')).then_some((keyword.len(), tail));
+        }
+    }
+    let bytes = text.as_bytes();
+    for at in 1..bytes.len().saturating_sub(1) {
+        if levels[at] != 0 || bytes[at] != b'=' || bytes[at + 1] != b' ' {
+            continue;
+        }
+        // `=` or an augmented `+=`, not `==`, `!=`, `<=`, `>=` or `=>`.
+        let before = &text[..at];
+        if ["//", "**", "<<", ">>", "+", "-", "*", "/", "%", "&", "|", "^", ""].iter().any(|op| before.ends_with(&format!(" {op}"))) {
+            return Some((at + 2, text.len()));
+        }
+    }
+    None
+}
+
 pub fn format(module: &ast::Module, source: &str, comments: &[Comment]) -> String {
     let mut printer = Printer {
         source,
@@ -51,12 +256,11 @@ struct Printer<'a> {
 impl Printer<'_> {
     fn finish(mut self) -> String {
         // Anything after the last item — a trailing comment — still belongs in
-        // the output.
-        while self.next_comment < self.comments.len() {
-            let comment = self.comments[self.next_comment].clone();
-            self.next_comment += 1;
-            let text = self.text(comment.span).to_string();
-            self.line(&text);
+        // the output, where it was: one ending the last line stays on it (a
+        // `#!` comment on a line of its own would be a misplaced directive).
+        if let Some(last) = self.comments.last() {
+            let end = Span::new(last.span.file, u32::MAX, u32::MAX);
+            self.comments_before(end);
         }
         // `[FMT-1]` — one trailing newline, and no blank lines before it.
         while self.out.ends_with("\n\n") {
@@ -106,6 +310,21 @@ impl Printer<'_> {
     }
 
     fn line(&mut self, text: &str) {
+        let mut pieces = Vec::new();
+        wrap(text, self.depth, 0, false, &mut pieces);
+        for (extra, piece) in pieces {
+            if !piece.is_empty() {
+                for _ in 0..self.depth + extra {
+                    self.out.push_str(INDENT);
+                }
+                self.out.push_str(&piece);
+            }
+            self.out.push('\n');
+        }
+    }
+
+    /// A line copied through as written: not wrapped.
+    fn verbatim_line(&mut self, text: &str) {
         if !text.is_empty() {
             for _ in 0..self.depth {
                 self.out.push_str(INDENT);
@@ -137,13 +356,19 @@ impl Printer<'_> {
             if comment.own_line {
                 self.line(&text);
             } else {
-                // A trailing comment goes on the line just written.
-                if self.out.ends_with('\n') {
+                // A trailing comment goes on the line just written, before any
+                // blank lines written after it (a block's last line's comment,
+                // met at the next item).
+                let mut blank = 0;
+                while self.out.ends_with('\n') {
                     self.out.pop();
+                    blank += 1;
                 }
                 self.out.push(' ');
                 self.out.push_str(&text);
-                self.out.push('\n');
+                for _ in 0..blank.max(1) {
+                    self.out.push('\n');
+                }
             }
         }
     }
@@ -268,17 +493,16 @@ impl Printer<'_> {
                                 None => self.name(i.name),
                             })
                             .collect();
-                        format!("from {path} import {}", names.join(", "))
+                        // `[FMT-1]` — a list too long for its line is parenthesised, which
+                        // the grammar allows, so it breaks one name per line.
+                        let text = format!("from {path} import {}", names.join(", "));
+                        if text.chars().count() > LINE_WIDTH { format!("from {path} import ({})", names.join(", ")) } else { text }
                     };
                     (rank, text)
                 }
-                ast::ImportKind::Foreign { language, header, .. } => {
-                    let language = match language {
-                        ast::ForeignLanguage::C => "c",
-                        ast::ForeignLanguage::Cpp => "cpp",
-                    };
-                    (3, format!("import {language} {header:?}"))
-                }
+                // As written: printing only the language and the header dropped
+                // `pub`, `with (…)` and `as`, which change what the import means.
+                ast::ImportKind::Foreign { .. } => (3, self.text(import.span).trim().to_string()),
             };
             lines.push((rank, text));
         }
@@ -391,7 +615,7 @@ impl Printer<'_> {
                 let text = self.text(item.span).to_string();
                 self.skip_comments_in(item.span);
                 for line in text.lines() {
-                    self.line(line.trim_end());
+                    self.verbatim_line(line.trim_end());
                 }
             }
         }
@@ -741,13 +965,11 @@ impl Printer<'_> {
             // `[GRM-28]` — printed as any function is; the catch-all would
             // flatten its body as it once did `unsafe:`'s.
             ast::StmtKind::LocalFn(decl) => self.function("", decl),
-            // Anything the printer does not reshape is copied through.
-            _ => {
-                let text = self.text(stmt.span).to_string();
-                self.skip_comments_in(stmt.span);
-                for line in text.lines() {
-                    self.line(line.trim());
-                }
+            // `[CT-7]` — as `unsafe:`. Every statement has an arm: copying one
+            // through with its lines trimmed flattened a block's body out of it.
+            ast::StmtKind::Comptime(block) => {
+                self.line("comptime:");
+                self.block(block);
             }
         }
     }

@@ -41,7 +41,7 @@
     "SOA-1": "`@soa(flatten)` is not built (Phase 6)",
     "SOA-4": "`ArenaSoA` is not built (Phase 6)",
     "DOC-2": "`ember test --doc` runs every sample under docs/book/ (ADR-192, milestone ember_test_doc_runs_the_documentation_examples), but the user guide itself, with its \"coming from Python\" chapter, does not exist and is not published with a release",
-    "FMT-1": "`ember fmt` is built (and checked over the corpus), but `ember fmt --migrate`, which the rule gives the rewriting of source, is not (`[CLI-20]`)",
+    "FMT-1": "classes, `extern` blocks, extern classes and item-level `comptime:` are copied through as written: not re-indented to four spaces nor kept to 100 columns (the printer has no arm for them; `ember_fmt`'s item catch-all)",
     "BLD-2": "effect sets are computed (`ember_analysis::effects`) but are not part of a module's interface hash",
     "FFI-1": "a foreign declaration's contract has no effects or thread rule yet; contracts beyond link names are E0900 (see FFI-11)",
     "FFI-2": "overlays (§XVI.4) are not built, so a call's missing facts cannot be supplied by one",

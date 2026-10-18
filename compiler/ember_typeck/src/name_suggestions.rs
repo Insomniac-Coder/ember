@@ -80,6 +80,19 @@ fn compare_tie_breaks(use_span: Span, left: &Candidate, right: &Candidate) -> Or
         .then_with(|| left.name.as_bytes().cmp(right.name.as_bytes()))
 }
 
+/// `[MOD-3]` — the (at most) three `candidates` nearest `written`, nearest first, with no distance
+/// limit: what the help of an import naming no module lists.
+pub fn nearest(written: &str, candidates: &[String]) -> Vec<String> {
+    let mut ranked: Vec<(usize, &String)> = candidates
+        .iter()
+        .filter(|candidate| candidate.as_str() != written)
+        .map(|candidate| (damerau_levenshtein(written, candidate), candidate))
+        .collect();
+    ranked.sort();
+    ranked.dedup_by(|a, b| a.1 == b.1);
+    ranked.into_iter().take(3).map(|(_, candidate)| candidate.clone()).collect()
+}
+
 /// Unrestricted Damerau–Levenshtein distance over Unicode scalar values.
 fn damerau_levenshtein(left: &str, right: &str) -> usize {
     let left: Vec<char> = left.chars().collect();

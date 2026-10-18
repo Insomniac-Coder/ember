@@ -23,14 +23,15 @@ fn make[T](cap: usize) -> Buffer[T]:
 
 fn grow[T](mut b: Buffer[T]):
     bigger: usize = b.cap * 2
+    fresh: *mut T
+    i: usize = 0
     unsafe:  # SAFETY: this test sets up what the operation requires
-        fresh: *mut T = alloc[T](bigger)
-        i: usize = 0
+        fresh = alloc[T](bigger)
         while i < b.len:
             write(fresh, i, read(b.ptr, i))
             i = i + 1
         free(b.ptr, b.cap)
-        b.ptr = fresh
+    b.ptr = fresh
     b.cap = bigger
 
 fn push[T](mut b: Buffer[T], v: T):

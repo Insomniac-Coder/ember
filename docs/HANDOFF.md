@@ -10958,7 +10958,14 @@ owner's usage limit to reset (the owner, 2026-10-16). Then (2026-10-18, ADR-201)
 one of D-202/D-218/D-201/D-355/D-358 ran: 9 read-only agents, 11 findings, 9 confirmed by probe
 programs and fixed (D-672 to D-680: `[CTL-8]` exit order, `[EXP-4]` temporary order, three
 associated-type gaps, two inherited-method gaps, arena `()`, retain nesting), 2 refuted;
-`docs/reviews/2026-10-18/`.
+`docs/reviews/2026-10-18/`. Then (2026-10-18, the owner's 85% goal, ADR-202) the solo part of the
+push: `[TOOL-3]`'s `E9002` remedy, `[CLI-15]`'s full `--help`, `[UNS-3]`'s `L3010`, `ember fmt
+--migrate` (`[CLI-20]`, `[VER-9]`; migration suggestions on the diagnostics 0.9.8 forms meet), the
+formatter's 100-column wrapping (`[FMT-1]`, still `unfinished` for classes and `extern` blocks), and
+`[MOD-3]`'s `E1060`/`E1061` (D-681: a missing `std` module was accepted); D-682 to D-684 are
+formatter defects the corpus check found. Helper agents A (hot reload), B (FFI contracts,
+overlays), D (ECS, SIMD, SoA) work in worktrees; C (shared libraries, packages) starts only after
+those three are merged (the owner).
 **Next:** `[TYP-32]`'s `some` return types, `[JOB-5]`'s `local_arena`, N7, the
 `[STD-1]` audit (ADR-197 lists what was tried).
 

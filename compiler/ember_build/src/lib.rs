@@ -336,8 +336,15 @@ pub enum BuildError {
 impl std::fmt::Display for BuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            // `[TOOL-3]` — `E9002` says no C compiler was found, and its help names the host's remedy;
+            // a bare missing path is never the message.
             BuildError::NoToolchain(which) => {
-                write!(f, "no C compiler found (looked for: {which})")
+                let looked = match *which {
+                    "any" => "MSVC, clang or gcc".to_string(),
+                    one => format!("`{one}`"),
+                };
+                write!(f, "error[E9002]: no C compiler was found (looked for {looked})
+  = help: {}", toolchain_remedy())
             }
             BuildError::UnknownToolchain(name) => write!(f, "unknown C compiler `{name}`"),
             BuildError::Io(e) => write!(f, "{e}"),
@@ -352,6 +359,17 @@ impl std::fmt::Display for BuildError {
                 write!(f, "`{toolchain}` does not take `{flag}`, which `{attribute}` needs")
             }
         }
+    }
+}
+
+/// `[TOOL-3]` — what installs a C compiler on this host.
+pub fn toolchain_remedy() -> &'static str {
+    if cfg!(windows) {
+        "install the Visual Studio Build Tools with the \"Desktop development with C++\" workload (it provides MSVC), or clang"
+    } else if cfg!(target_os = "macos") {
+        "install the Xcode Command Line Tools (`xcode-select --install`), which provide clang"
+    } else {
+        "install gcc or clang with the system's package manager (on Debian or Ubuntu, `sudo apt install build-essential`)"
     }
 }
 
@@ -1421,6 +1439,20 @@ fn program_file(program: &Path, search: Option<std::ffi::OsString>) -> Option<Pa
 
 #[cfg(test)]
 mod tests {
+    /// `[TOOL-3]` — with no C compiler, the message is `E9002` saying so, and the help names this
+    /// host's remedy; the path the search tried is never the primary message.
+    #[test]
+    fn no_c_compiler_is_e9002_with_the_hosts_remedy() {
+        let any = super::BuildError::NoToolchain("any").to_string();
+        assert!(any.starts_with("error[E9002]: no C compiler was found"), "{any}");
+        assert!(any.contains("= help: install"), "{any}");
+        if cfg!(windows) {
+            assert!(any.contains("Visual Studio Build Tools"), "{any}");
+        }
+        let one = super::BuildError::NoToolchain("clang-cl").to_string();
+        assert!(one.contains("looked for `clang-cl`"), "{one}");
+    }
+
     /// `[TYP-9c]` — the C compiler's own words for a relaxing flag it ignored or refused are
     /// `E9041`'s evidence: MSVC's `D9002`, clang's "unknown argument", gcc's "unrecognized
     /// command-line option"; any other output, or another flag, is not.

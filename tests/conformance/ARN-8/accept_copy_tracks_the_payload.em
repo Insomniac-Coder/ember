@@ -8,10 +8,12 @@ fn main():
     second = first
     first.write(10i64)
     second.write(20i64)
+    a: i64
+    b: i64
     unsafe:  # SAFETY(uninit): every slot is written before it is read
-        a: i64 = first.assume_init()
-        b: i64 = second.assume_init()
-        println(a)
-        println(b)
+        a = first.assume_init()
+        b = second.assume_init()
+    println(a)
+    println(b)
 #$ stdout: 10
 #$ 20

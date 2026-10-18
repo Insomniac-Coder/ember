@@ -8,10 +8,11 @@ unsafe extern "C":
     safe fn fresh() -> ref mut i32
 
 pub extern "C" fn fresh_mut_number() -> *mut i32:
+    number: *mut i32
     unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
-        number: *mut i32 = alloc[i32](1)
+        number = alloc[i32](1)
         write(number, 0, 42)
-        return number
+    return number
 
 fn main():
     number: ref mut i32 = fresh()

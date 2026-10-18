@@ -11,6 +11,8 @@ from std.mem import assume_disjoint
 fn main():
     x: Array[int] = [1, 2, 3]
     y: Array[int] = [4]
-    unsafe:  # SAFETY: this test sets up what the operation requires
-        (u, v) = assume_disjoint(x[..1], y[..])
-        println(u[0] + v[0])
+    pair: (Span[int], Span[int])
+    unsafe:  # SAFETY: `x` and `y` are two arrays, so their views cannot overlap
+        pair = assume_disjoint(x[..1], y[..])
+    (u, v) = pair
+    println(u[0] + v[0])

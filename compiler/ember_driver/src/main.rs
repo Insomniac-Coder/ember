@@ -25,31 +25,51 @@ use ember_types::TypeTable;
 const USAGE: &str = "\
 ember — the Ember compiler
 
-usage:
-    ember build [file.em|package-dir] [options]
-                                      compile a bin or staticlib package
-    ember run   <file.em> [options]   compile and run
-    ember check <file.em>             type-check without generating code
-    ember test [filter] [--doc] [--no-leak-check] [options]
-                                      run the package's @test functions, each in a process of
-                                      its own (the package of this directory or an ancestor);
-                                      --doc runs the documentation examples under docs/ instead
-    ember fmt <file.em> [--check|--write] [--json]
-                                      print the file in the canonical layout
-    ember explain <CODE> [--json]     describe a diagnostic code
-    ember explain --cycle <path> <Class[.field]> [--json]
-                                      explain one ownership-cycle target
-    ember inspect --safety [options] <path>
-                                      report emitted/elided safety checks
-    ember inspect --cycle [--json] <path>
-                                      report the static ownership graph for a package or source root
-    ember inspect --counts [--json] [--function <name>] <path>
-                                      report the retains and releases left inside loops
-    ember inspect --alloc [--json] [--function <name>] <file.em>
-                                      report every place the program allocates
-    ember tcb [--module <m>] [--json] <file.em>
-                                      list every unsafe block and unsafe fn with its safety note,
-                                      its category and the obligations of the unsafe functions it calls
+usage (`[CLI-15]`: every command and flag of the specification's XVII.1; \"not built yet\" marks those
+this compiler does not have yet):
+    ember new <name> [--lib | --bin | --cdylib]    create a package (not built yet)
+    ember run [file.em] [args…] [--hot | --interp] build and run; a single file needs no manifest
+                                                   (--hot and --interp are not built yet)
+    ember build [file.em|package-dir] [--profile <name>] [--target <triple>] [--backend c|llvm]
+                [--emit tokens|ast|hir|mir|c|obj|header] [--out-dir <dir>]
+                [--emit-optimization-report] [--report=engine|instantiations] [--timings[=json]]
+                [--build-id] [--reload [--explain]] [-D warnings]
+                                                   compile a bin or staticlib package (--target,
+                                                   --backend llvm, --report, --build-id and
+                                                   --reload are not built yet)
+    ember check [file.em] [--syntax-only] [--timings]
+                                                   type, borrow and effect checks without code generation
+    ember test [filter] [--doc] [--no-leak-check]  run the package's @test functions, each in a process
+                                                   of its own; --doc runs the documentation examples
+    ember bench [filter] [--compare]               benchmarks; --compare runs the paired C programs
+                                                   (not built yet)
+    ember fmt <file.em> [--check | --write | --migrate] [--json]
+                                                   print the file in the canonical layout
+                                                   (--migrate: 0.9.8 source rewritten into 0.9.9)
+    ember lint                                     (not built yet)
+    ember doc                                      (not built yet)
+    ember update [package]                         re-resolve dependencies and rewrite ember.lock
+                                                   (not built yet)
+    ember explain <E-code | rule-id> [--json]      the error page or rule text
+    ember explain --borrow <file>:<line>           why each borrow live at that line is still live
+                                                   (not built yet)
+    ember explain --cycle <path> <Class[.field]>   one cycle-capable class or field
+    ember inspect <item> [--safety [--elided-only] | --alloc | --cost | --deterministic | --cycle
+                          | --expand | --counts] [--function <name>]
+                                                   reports on a program (--cost, --deterministic and
+                                                   --expand are not built yet)
+    ember why --alloc|--block|--io|--lock|--sync|--unsafe|--ffi <item>
+                                                   the call chain to that effect (not built yet)
+    ember calls --foreign <item>                   every foreign function the item can reach
+                                                   (not built yet)
+    ember bind <header> [--init [--merge] | --report [--baseline <file> | --write-baseline]
+                         | --check <overlay> | --explain <fn> | --emit-embind]
+                                                   C header bindings (not built yet)
+    ember shader-bind <reflection.json>            Annex D (not built yet)
+    ember tcb [--module <m>] [--json] <file.em>    the trusted-base report (Annex C)
+    ember toolchain list|install|default           manage installed C toolchains (not built yet)
+    ember clean                                    (not built yet)
+    ember --help | --version [--matrix]            (--matrix is not built yet)
 
 options:
     --profile debug|release|shipping   default: debug
@@ -57,20 +77,20 @@ options:
                                       emit a stage and stop; obj and header write files
     --emit-header                     write <package>.h alongside a build or C emit
     --emit-optimization-report        list the calls made direct on the whole program's word
-    --timings[=json]                   each stage's time, module by module where it runs so
-    --syntax-only                      lex and parse only; report E00xx/E01xx
-    --backend c                        the only backend in v1
-    --cc msvc|clang|gcc                override C compiler detection
-    --out-dir <dir>                    default: target/; staticlib archives and headers in <profile>/lib/
-    --leak-check                       `run` and `test`: report leaked ownership cycles at exit
-                                       (the default for both in the debug profile)
-    --no-leak-check                    `run` and `test`: no leak report in the debug profile
-    --json                             machine-readable output and diagnostics (every command)
-    -D warnings                        treat warnings as errors
+    --timings[=json]                  each stage's time, module by module where it runs so
+    --syntax-only                     lex and parse only; report E00xx/E01xx
+    --backend c                       the only backend in v1
+    --cc msvc|clang|gcc|clang-cl      override C compiler detection
+    --out-dir <dir>                   default: target/; staticlib archives and headers in <profile>/lib/
+    --leak-check                      `run` and `test`: report leaked ownership cycles at exit
+                                      (the default for both in the debug profile)
+    --no-leak-check                   `run` and `test`: no leak report in the debug profile
+    --json                            machine-readable output and diagnostics (every command)
+    -D warnings                       treat warnings as errors
 
 inspect options:
-    --function <name>                  restrict safety output to one function
-    --elided-only                      report only statically elided checks
+    --function <name>                 restrict the report to one function
+    --elided-only                     report only statically elided checks
 ";
 
 /// The compiler's stack: the same on every host (D-330). Checking and
@@ -104,6 +124,11 @@ fn main() -> ExitCode {
 fn compile_command(args: &[String]) -> ExitCode {
     match run(args) {
         Ok(code) => code,
+        // A message that is already a coded diagnostic (`error[E9002]: …`, `[TOOL-3]`) prints as it is.
+        Err(message) if message.starts_with("error[") => {
+            eprintln!("{message}");
+            ExitCode::FAILURE
+        }
         Err(message) => {
             eprintln!("error: {message}");
             ExitCode::FAILURE
@@ -540,7 +565,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             let mut input = None;
             for argument in &args[1..] {
                 match argument.as_str() {
-                    "--check" | "--write" | "--json" => {}
+                    "--check" | "--write" | "--json" | "--migrate" => {}
                     option if option.starts_with('-') => return Err(format!("unknown `ember fmt` option `{option}`")),
                     file if input.is_none() => input = Some(file),
                     extra => return Err(format!("unexpected `ember fmt` argument `{extra}`")),
@@ -549,6 +574,12 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             let input = input.ok_or("`ember fmt` needs a source file")?;
             let check_only = args.iter().any(|a| a == "--check");
             let write = args.iter().any(|a| a == "--write");
+            if args.iter().any(|a| a == "--migrate") {
+                if check_only {
+                    return Err("`--migrate` and `--check` cannot be combined".to_string());
+                }
+                return migrate_file(Path::new(input), write, json);
+            }
             format_file(Path::new(input), check_only, write, json)
         }
         other => Err(format!("unknown command `{other}`; try `ember --help`")),
@@ -1867,6 +1898,177 @@ fn format_file(input: &Path, check_only: bool, write: bool, json: bool) -> Resul
     Ok(ExitCode::SUCCESS)
 }
 
+/// `[CLI-20]` — `ember fmt --migrate`: source written for 0.9.8 rewritten into 0.9.9 where the
+/// change is mechanical, then a list of what changed and of what could not be rewritten. Each
+/// rewrite is a migration suggestion on the diagnostic the old form meets (the parser's for `::`
+/// and `@latebound`, the checker's for integer `/`, `Box[dyn fn]`, a pair loop over a `Map` and
+/// `with_views`, the loader's for `std.borrow`); they are applied, and the file checked again,
+/// until none is left. `@view` meets no diagnostic on a view type: it is documentation since 0.9.9
+/// (`[TYP-34]`) and is removed outright. Only the named file is rewritten.
+fn migrate_file(input: &Path, write: bool, json: bool) -> Result<ExitCode, String> {
+    const ROUNDS: usize = 8;
+    let mut original = SourceMap::new();
+    let original_file = original.load(input).map_err(|error| error.to_string())?;
+    let mut text = original.file(original_file).text.clone();
+    let mut changed: Vec<String> = Vec::new();
+    let mut left: Vec<String> = Vec::new();
+    // Each round's applied edits, so a place in a later round's text is reported where it is in
+    // the file as written.
+    let mut rounds: Vec<Vec<(usize, usize, usize)>> = Vec::new();
+    let located = |span: Span, rounds: &[Vec<(usize, usize, usize)>]| {
+        let mut at = span.start as usize;
+        for round in rounds.iter().rev() {
+            let mut shift = 0isize;
+            for &(start, end, written) in round {
+                let new_start = (start as isize + shift) as usize;
+                if at < new_start {
+                    break;
+                }
+                if at < new_start + written {
+                    at = new_start;
+                    break;
+                }
+                shift += written as isize - (end - start) as isize;
+            }
+            at = (at as isize - shift) as usize;
+        }
+        original.location(Span::new(original_file, at as u32, at as u32))
+    };
+    for _ in 0..ROUNDS {
+        let mut map = SourceMap::new();
+        let file = map.add(input, text.clone());
+        let mut sink = Sink::new();
+        let lexed = ember_lexer::lex(file, &text, &mut sink);
+        let module = ember_parser::parse(file, &text, lexed.tokens, &mut sink);
+        let mut edits: Vec<(Span, String)> = Vec::new();
+        // `[TYP-34]` — `@view` on a struct or an enum.
+        for item in &module.items {
+            for attr in item.attrs.iter().filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("view")) {
+                edits.push((attr.span, String::new()));
+                changed.push(format!("{}: `@view` removed", located(attr.span, &rounds)));
+            }
+        }
+        if !sink.has_errors() {
+            let root_dir = package_source_root(input);
+            let lints = manifest_lint_settings(&root_dir, &mut map, &mut sink);
+            let modules = load_modules(module, &root_dir, &mut map, &mut sink);
+            if !sink.has_errors() {
+                let (mut types, common) = TypeTable::new();
+                let mark = sink.mark();
+                let checked = ember_typeck::check(
+                    &modules,
+                    &mut types,
+                    &common,
+                    &mut sink,
+                    overflow_policy(Profile::Debug),
+                    lints.return_intersection,
+                    true,
+                    &ember_typeck::ComptimeAnswers::new(),
+                    lints.realtime,
+                );
+                // What a compile-time evaluation would answer is not this command's.
+                if !checked.comptime.is_empty() {
+                    sink.rollback(mark);
+                }
+            }
+        }
+        left.clear();
+        for diagnostic in sink.diagnostics() {
+            let mut migrations = diagnostic.suggestions.iter().filter(|s| s.migration).peekable();
+            if migrations.peek().is_none() {
+                if diagnostic.severity == ember_diag::Severity::Error {
+                    let at = if diagnostic.primary.span.file == file {
+                        located(diagnostic.primary.span, &rounds)
+                    } else {
+                        map.location(diagnostic.primary.span)
+                    };
+                    left.push(format!("{at}: {}", diagnostic.message));
+                }
+                continue;
+            }
+            for suggestion in migrations {
+                if suggestion.edits.iter().all(|(span, _)| span.file == file) {
+                    edits.extend(suggestion.edits.iter().map(|(span, with)| (*span, with.text(&map).to_string())));
+                    changed.push(format!("{}: {}", located(diagnostic.primary.span, &rounds), suggestion.message));
+                }
+            }
+        }
+        if edits.is_empty() {
+            break;
+        }
+        let (migrated, applied) = apply_migration_edits(&text, edits);
+        text = migrated;
+        rounds.push(applied);
+    }
+    // In the canonical layout, as `ember fmt` prints, when the result parses.
+    let mut map = SourceMap::new();
+    let file = map.add(input, text.clone());
+    let mut sink = Sink::new();
+    let lexed = ember_lexer::lex(file, &text, &mut sink);
+    let module = ember_parser::parse(file, &text, lexed.tokens, &mut sink);
+    if !sink.has_errors() {
+        text = ember_fmt::format(&module, &text, &lexed.comments);
+    }
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({ "schema": 1, "file": input.display().to_string(), "changed": changed, "not_rewritten": left, "text": (!write).then_some(&text) })
+        );
+    } else {
+        for change in &changed {
+            eprintln!("changed: {change}");
+        }
+        for problem in &left {
+            eprintln!("not rewritten: {problem}");
+        }
+    }
+    if write {
+        std::fs::write(input, &text).map_err(|e| e.to_string())?;
+    } else if !json {
+        print!("{text}");
+    }
+    Ok(if left.is_empty() { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+}
+
+/// `[CLI-20]` — `edits` applied to `text`, in order where two share a place; one overlapping an
+/// earlier edit is left out. A deletion takes the spaces after it, and its line when nothing else
+/// is left on it. Also each applied edit: where it was, and how long its text is.
+fn apply_migration_edits(text: &str, mut edits: Vec<(Span, String)>) -> (String, Vec<(usize, usize, usize)>) {
+    let bytes = text.as_bytes();
+    for (span, with) in &mut edits {
+        if !with.is_empty() {
+            continue;
+        }
+        let (mut start, mut end) = (span.start as usize, span.end as usize);
+        while end < bytes.len() && matches!(bytes[end], b' ' | b'\t') {
+            end += 1;
+        }
+        let line_start = text[..start].rfind('\n').map_or(0, |at| at + 1);
+        let blank_before = text[line_start..start].bytes().all(|b| matches!(b, b' ' | b'\t'));
+        if blank_before && (end == bytes.len() || bytes[end] == b'\n' || bytes[end] == b'\r') {
+            start = line_start;
+            end = text[end..].find('\n').map_or(bytes.len(), |at| end + at + 1);
+        }
+        *span = Span::new(span.file, start as u32, end as u32);
+    }
+    edits.sort_by_key(|(span, _)| (span.start, span.end));
+    let mut out = String::with_capacity(text.len());
+    let mut applied = Vec::with_capacity(edits.len());
+    let mut at = 0usize;
+    for (span, with) in edits {
+        let (start, end) = (span.start as usize, span.end as usize);
+        if start < at {
+            continue;
+        }
+        out.push_str(&text[at..start]);
+        out.push_str(&with);
+        applied.push((start, end, with.len()));
+        at = end;
+    }
+    out.push_str(&text[at..]);
+    (out, applied)
+}
+
 fn parse_options(args: &[String]) -> Result<Options, String> {
     let mut options = Options::default();
     let mut index = 0;
@@ -1988,6 +2190,40 @@ fn explain(code: &str, json: bool) -> Result<ExitCode, String> {
 ///
 /// `[MOD-4]` allows import cycles inside a package, so a module already loaded
 /// is skipped rather than reported.
+/// `[MOD-3]` — the module paths an import can name: the standard library's, and the package's
+/// under its source root (three directories deep, which a single file's directory may need).
+fn known_module_paths(root_dir: &Path) -> Vec<String> {
+    fn walk(dir: &Path, prefix: &str, depth: usize, out: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else { continue };
+            let name = if prefix.is_empty() { stem.to_string() } else { format!("{prefix}.{stem}") };
+            if path.is_dir() {
+                if depth < 3 && !stem.starts_with('.') && stem != "target" {
+                    walk(&path, &name, depth + 1, out);
+                }
+            } else if path.extension().is_some_and(|ext| ext == ember_branding::SOURCE_EXT) {
+                out.push(if stem == "mod" { prefix.to_string() } else { name });
+            }
+        }
+    }
+    let mut paths = Vec::new();
+    if let Some(std_root) = ember_branding::std_root() {
+        walk(&std_root, ember_branding::STD_PACKAGE, 0, &mut paths);
+    }
+    walk(root_dir, "", 0, &mut paths);
+    paths.retain(|path| !path.is_empty() && path != "std.lib");
+    paths
+}
+
+/// The standard modules the specification names (Part XV's table), whether or not this compiler
+/// has written them yet.
+const SPECIFIED_STD_MODULES: &[&str] = &[
+    "arena", "cell", "collections", "core", "ecs", "ffi", "fmt", "gpu", "io", "math", "mem", "process", "random",
+    "ser", "simd", "string", "testing", "thread", "time",
+];
+
 fn load_modules(
     root: ember_ast::Module,
     root_dir: &Path,
@@ -2027,7 +2263,7 @@ fn load_modules(
 
     while let Some((path, module)) = queue.pop() {
         // Every import this module names, before it is moved into the list.
-        let mut wanted: Vec<(Vec<String>, ember_span::Span)> = Vec::new();
+        let mut wanted: Vec<(Vec<String>, ember_span::Span, bool)> = Vec::new();
         for import in &module.imports {
             let segments = match &import.kind {
                 ember_ast::ImportKind::Module { path, .. } => path,
@@ -2036,7 +2272,10 @@ fn load_modules(
                 ember_ast::ImportKind::Foreign { .. } => continue,
             };
             let names: Vec<String> = segments.iter().map(|s| s.name.to_string()).collect();
-            wanted.push((names, import.span));
+            // `[CLI-20]` — an import of nothing but 0.9.8's `with_views*`, which 0.9.9 removed.
+            let removed = matches!(&import.kind, ember_ast::ImportKind::Items { items, glob: false, .. }
+                if items.iter().all(|item| item.name.name.as_str().starts_with("with_views")));
+            wanted.push((names, import.span, removed));
         }
 
         // `[GRM-2]` (0.9.9) — only the entry file (the root, with an empty
@@ -2062,7 +2301,7 @@ fn load_modules(
             module,
         });
 
-        for (names, span) in wanted {
+        for (names, span, removed) in wanted {
             let key = names.join(".");
             if seen.contains(&key) {
                 continue;
@@ -2082,21 +2321,37 @@ fn load_modules(
                 }
             }
             let Some(file_path) = resolve_module(root_dir, &names) else {
-                // `[MOD-5]`'s prelude names are compiler-known until the
-                // library can supply each one, so an import of a `std` module
-                // that has no file yet is not an error — it is a module this
-                // phase has not written.
-                if names
-                    .first()
-                    .is_some_and(|f| f == ember_branding::STD_PACKAGE)
+                // `[MOD-3]` — a module path that names no module is `E1060` at
+                // the import, never accepted silently (F-004). A `std` module
+                // the specification lists (Part XV) that this compiler has not
+                // written yet is `E0900` (`[CLI-19]`).
+                let path = names.join(".");
+                if names.first().is_some_and(|f| f == ember_branding::STD_PACKAGE)
+                    && names.len() == 2
+                    && SPECIFIED_STD_MODULES.contains(&names[1].as_str())
                 {
+                    sink.emit(
+                        ember_diag::Diagnostic::error(ember_diag::codes::E0900, span, format!("module `{path}` is not implemented yet"))
+                            .note("the specification's standard library has it (Part XV); this compiler does not yet"),
+                    );
                     continue;
                 }
-                sink.emit(ember_diag::Diagnostic::error(
-                    ember_diag::codes::E1010,
+                let mut diagnostic = ember_diag::Diagnostic::error(
+                    ember_diag::codes::E1060,
                     span,
-                    format!("cannot find module `{key}`"),
-                ));
+                    format!("no module named '{path}'"),
+                );
+                let nearest = ember_typeck::nearest_names(&path, &known_module_paths(root_dir));
+                if !nearest.is_empty() {
+                    let listed: Vec<String> = nearest.iter().map(|module| format!("`{module}`")).collect();
+                    diagnostic = diagnostic.help(format!("the nearest modules: {}", listed.join(", ")));
+                }
+                if removed {
+                    diagnostic = diagnostic
+                        .note("`with_views*` were removed in 0.9.9: a callable type gets fresh regions at each call [LT-7]")
+                        .migrate("`with_views` import removed", span, "");
+                }
+                sink.emit(diagnostic);
                 continue;
             };
             let file = match map.load(&file_path) {

@@ -8,10 +8,11 @@ unsafe extern "C":
     safe fn static_despite_input(input: ref i32) -> ref i32
 
 pub extern "C" fn static_despite_input_c(input: *mut i32) -> *mut i32:
+    number: *mut i32
     unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
-        number: *mut i32 = alloc[i32](1)
+        number = alloc[i32](1)
         write(number, 0, 41 + read(input, 0))
-        return number
+    return number
 
 fn main():
     input: i32 = 1

@@ -169,6 +169,8 @@ codes! {
     E1050 = (Error, 1050, Resolve, "[MOD-7]", "field is read-only outside its module");
     E1051 = (Error, 1051, Resolve, "[MOD-7]", "`read` visibility is valid on fields only");
     E1052 = (Error, 1052, Resolve, "[MOD-2]", "item, field or constructor not visible here");
+    E1060 = (Error, 1060, Resolve, "[MOD-3]", "no module of that name");
+    E1061 = (Error, 1061, Resolve, "[MOD-3]", "no item of that name in the module");
 
     E1021 = (Error, 1021, Resolve, "[BLD-11]", "name is not linked in this build");
 

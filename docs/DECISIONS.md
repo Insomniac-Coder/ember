@@ -5017,6 +5017,67 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-202 — The 85% push, solo part 1: `--migrate`, wrapping, `L3010`, `E1060` (D-681 to D-684)
+
+2026-10-18, the owner's goal "85% in autonomous mode" (helper agents A, B, C, D build hot reload, C
+interop and data-oriented design in worktrees; this is the coordinator's own long tail).
+
+* `[TOOL-3]` — no C compiler is `error[E9002]` naming the host's remedy (the Visual Studio Build
+  Tools' C++ workload or clang on Windows, the Xcode command-line tools on macOS, the distribution's
+  `build-essential`/`gcc` on Linux); the driver prints a message that is already a diagnostic as is.
+* `[CLI-15]` — `ember --help` lists every command and flag of XVII.1, marking those not built; a test
+  reads the listing from the development target itself, so a new flag in the specification fails it.
+* `[UNS-3]` — `L3010` reports an `unsafe:` block holding a statement that needs no `unsafe` (the
+  specification's code table: "larger than necessary"), and one holding nothing that does. Each
+  guard read of the unsafe context goes through `unsafe_context()`, which marks the statement being
+  checked; a statement counts over every check of it (a generic's and each instance's). Not reported
+  after a type error, which may have stopped a statement before its unsafe operation was seen.
+  `dyn_payload` (an `unsafe fn` the checker builds itself) now checks its context too: it never had
+  `E3100` outside `unsafe`. Twenty existing tests had safe statements in their blocks; they declare
+  the binding before the block and assign it inside (Ember has no `unsafe` expression), and three
+  `compile-fail` tests whose point is a statement inside the block expect the lint.
+* `[CLI-20]`, `[VER-9]`, `[FMT-1]` — `ember fmt --migrate <file> [--write] [--json]`. Each 0.9.8 form
+  meets a diagnostic, which now carries a *migration* suggestion (`Suggestion.migration`, not
+  rendered: the diagnostic's own help says it): the parser's for `::` and `@latebound`, the checker's
+  for integer `/` and `/=` (the text between the operands becomes ` // `), `Box[dyn fn(…) -> R]`
+  (the owned callable type `fn(…) -> R`), a pair loop over a `Map` whose keys are not pairs (`.items()`
+  appended) and `with_views2..4(_mut)` (the callback called with the views; a lambda is parenthesised
+  and its untyped parameters given the views' types, since a lambda called where it is written learns
+  nothing from the call), and the loader's for `from std.borrow import with_views…` (removed). An
+  edit's text may be another span's source (`Replacement::Source`), which a moved callback needs.
+  `@view` meets no diagnostic on a view type: it is documentation since 0.9.9 (`[TYP-34]`), and the
+  rule lists its removal, so it is removed outright. The command applies the edits of one check and
+  checks again, up to eight rounds, then prints the result in the canonical layout and lists, on
+  stderr, each change and each error left (`not rewritten:`), at the line and column of the file as
+  written (each round's edits are kept to map a later round's place back). It fails when anything is
+  left. Only the named file is rewritten.
+* `[FMT-1]` — the printer keeps lines to 100 columns (the specification's width; only long `fn`
+  headers broke before). A longer line breaks before each top-level operator of the loosest kind it
+  has (`or`, `and`, comparisons, `|`, `^`, `&`, shifts, `+`/`-`, `*`/`/`/`//`/`%`), inside the brackets
+  it is in or, at a statement, inside parentheses put around the value of a `return`, an assignment
+  or an `if`/`elif`/`while` condition (Black's rule; a parenthesised expression means what it meant
+  bare, and the tree has no parenthesis node). With no such operator it breaks after its last
+  top-level opening bracket: the contents one indent deeper, one item per line with a trailing comma
+  when they are a list, the closing bracket and what follows on a line of their own. Each piece is
+  wrapped again. A long `from m import …` list is parenthesised, which the grammar allows. Not
+  wrapped: a line holding a comment, a construct printed over several lines (a block lambda), and an
+  item copied through as written. Checked over the whole corpus (every test directory and `std/src`,
+  2743 files, then the 496 with a line over 100 columns after each change): each formats to itself
+  and to the same tree, imports aside, which the printer sorts. Lines still over 100 are those with
+  nowhere to break (`[GRM-39]`'s 256-deep nesting) and the copied-through items. That check found
+  D-682 (a `comptime:` statement fell to the catch-all and lost its body's indentation; the
+  statement printer now has an arm for every kind and no catch-all) and D-683 (a trailing comment
+  went below blank lines, or onto a line of its own at the end of a file, where `#!` is a misplaced
+  directive); reading the import printer found D-684 (a foreign import lost its `with (…)`).
+  **Left** (`unfinished`): classes, `extern` blocks, extern classes and item-level `comptime:` have
+  no arm in the item printer and are copied through as written, so they are neither re-indented nor
+  wrapped.
+* D-681, `[MOD-3]` — an import naming no module is `E1060 no module named 'a.b.c'` at the import,
+  whose help lists the three nearest module paths (the standard library's and the package's, by
+  Damerau–Levenshtein distance; the package is walked three directories deep); a missing item is
+  `E1061`. A `std` module the specification lists (Part XV) that this compiler has not written yet is
+  `E0900`; before, any `std` path without a file was skipped in silence (finding F-004).
+
 ## ADR-201 — The 2026-10-18 review: nine defects fixed (D-672 to D-680)
 
 2026-10-18, the owner's go once the usage limit reset. Nine read-only agents (Opus for six parts of

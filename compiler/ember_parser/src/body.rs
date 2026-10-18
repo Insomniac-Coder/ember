@@ -43,7 +43,8 @@ impl Parser<'_> {
         self.report(
             Diagnostic::error(codes::E0100, span, "`::` is not a path separator")
                 .primary_label("found `::`")
-                .help("use '.' for paths"),
+                .help("use '.' for paths")
+                .migrate("`::` to `.`", span, "."),
         );
         self.bump();
     }

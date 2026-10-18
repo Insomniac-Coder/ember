@@ -50,10 +50,13 @@ fn main():
     println(b.fetch_sub(4), b.fetch_and(6), b.fetch_or(1), b.fetch_xor(3), b.load())
     o = pick(false)
     println(b.fetch_add(1, o), b.load(pick(true)))
-    unsafe:  # SAFETY: two fresh allocations, compared and freed once each
-        q: *mut i64 = alloc[i64](2)
-        r: *mut i64 = alloc[i64](2)
-        p: Atomic[*mut i64] = Atomic(q)
-        println(p.swap(r) == q, p.load() == r, p.compare_exchange(r, q).is_ok(), p.load() == q)
+    q: *mut i64
+    r: *mut i64
+    unsafe:  # SAFETY: two fresh allocations
+        q = alloc[i64](2)
+        r = alloc[i64](2)
+    p: Atomic[*mut i64] = Atomic(q)
+    println(p.swap(r) == q, p.load() == r, p.compare_exchange(r, q).is_ok(), p.load() == q)
+    unsafe:  # SAFETY: each allocation is freed once
         free(q, 2)
         free(r, 2)

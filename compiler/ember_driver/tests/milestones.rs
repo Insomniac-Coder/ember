@@ -414,6 +414,209 @@ fn ember_with_input(args: &[&str], root: &Path, input: &[u8]) -> Run {
     }
 }
 
+/// `[CLI-20]`, `[VER-9]`, `[FMT-1]` — `ember fmt --migrate` rewrites source written for 0.9.8 into
+/// 0.9.9 where the change is mechanical — `::` to `.`, integer `/` to `//`, `@view` and `with_views`
+/// removal, `Box[dyn fn]` to an owned callable type, a pair loop over a `Map` to `m.items()` — and
+/// lists what it changed, where the file has it; the result checks and is in the canonical layout.
+#[test]
+fn fmt_migrate_rewrites_the_mechanical_forms_of_0_9_8() {
+    let root = workspace_root();
+    let directory = temporary_directory("migrate");
+    let old = directory.join(ember_branding::source_file("old"));
+    std::fs::write(&old, "\
+from std.borrow import with_views2
+
+enum Color:
+    Red
+    Green
+
+@view
+struct Window:
+    items: Span[int]
+
+fn apply(f: Box[dyn fn(int) -> int], x: int) -> int:
+    return f(x)
+
+fn first_sum(a: Span[int], b: Span[int]) -> int:
+    return with_views2(a, b, fn(x, y) => x[0] + y[0])
+
+fn each(f: @latebound fn(Span[int]) -> int, s: Span[int]) -> int:
+    return f(s)
+
+fn main():
+    _c = Color::Red
+    x: int = 7
+    y = x / 2
+    y /= 2
+    m: Map[str, int] = Map()
+    m.insert(\"a\", 1)
+    for k, v in m:
+        println(k, v)
+    xs: Array[int] = [1, 2]
+    w = Window(xs[..])
+    println(y, first_sum(xs[..], xs[..]), w.items.len())
+").expect("the old source is writable");
+    let old_path = old.to_string_lossy().to_string();
+    let migrated = ember(&["fmt", "--migrate", &old_path], &root);
+    assert_eq!(migrated.exit, 0, "{}", migrated.stderr);
+    for wanted in [
+        "fn apply(f: fn(int) -> int, x: int) -> int:",
+        "return (fn(x: Span[i64], y: Span[i64]) => x[0] + y[0])(a, b)",
+        "fn each(f: fn(Span[int]) -> int, s: Span[int]) -> int:",
+        "_c = Color.Red",
+        "y = x // 2",
+        "y //= 2",
+        "for (k, v) in m.items():",
+    ] {
+        assert!(migrated.stdout.contains(wanted), "the migration lacks {wanted:?}:\n{}", migrated.stdout);
+    }
+    for gone in ["::", "@view", "@latebound", "with_views", "Box[dyn", "std.borrow"] {
+        assert!(!migrated.stdout.contains(gone), "the migration kept {gone:?}:\n{}", migrated.stdout);
+    }
+    // What changed, at the line and column of the file as written.
+    for change in [
+        ":1:1: `with_views` import removed",
+        ":7:1: `@view` removed",
+        ":11:21: `Box[dyn fn]` to an owned callable type",
+        ":15:12: `with_views` call to a call of its callback",
+        ":17:12: `@latebound` removed",
+        ":21:15: `::` to `.`",
+        ":23:9: integer `/` to `//`",
+        ":24:5: integer `/` to `//`",
+        ":27:9: `for k, v in m:` over a `Map` to `m.items()`",
+    ] {
+        assert!(migrated.stderr.contains(change), "the list lacks {change:?}:\n{}", migrated.stderr);
+    }
+    assert!(!migrated.stderr.contains("not rewritten"), "{}", migrated.stderr);
+    // The result is a 0.9.9 program, already in the canonical layout.
+    let new = directory.join(ember_branding::source_file("new"));
+    std::fs::write(&new, &migrated.stdout).expect("the new source is writable");
+    let new_path = new.to_string_lossy().to_string();
+    let checked = ember(&["check", &new_path], &root);
+    assert_eq!(checked.exit, 0, "the migrated program does not check:\n{}\n{}", checked.stderr, migrated.stdout);
+    let formatted = ember(&["fmt", &new_path], &root);
+    assert_eq!(formatted.stdout, migrated.stdout, "the migration is not in the canonical layout");
+    // `--write` rewrites the file in place.
+    let written = ember(&["fmt", "--migrate", "--write", &old_path], &root);
+    assert_eq!(written.exit, 0, "{}", written.stderr);
+    assert_eq!(std::fs::read_to_string(&old).expect("the file"), migrated.stdout);
+}
+
+/// `[CLI-20]` — what `ember fmt --migrate` cannot rewrite it lists, by where the file has it, and
+/// the command fails; the mechanical part is still rewritten.
+#[test]
+fn fmt_migrate_lists_what_it_could_not_rewrite() {
+    let root = workspace_root();
+    let directory = temporary_directory("migrate");
+    let old = directory.join(ember_branding::source_file("old"));
+    std::fs::write(&old, "\
+fn make() -> Box[dyn fn(int) -> int]:
+    return Box(fn(x: int) => x + 1)
+
+fn main():
+    println(make()(1))
+").expect("the old source is writable");
+    let migrated = ember(&["fmt", "--migrate", &old.to_string_lossy()], &root);
+    assert_ne!(migrated.exit, 0, "{}", migrated.stderr);
+    assert!(migrated.stdout.contains("fn make() -> fn(int) -> int:"), "{}", migrated.stdout);
+    assert!(migrated.stderr.contains(":1:22: `Box[dyn fn]` to an owned callable type"), "{}", migrated.stderr);
+    let left: Vec<&str> = migrated.stderr.lines().filter(|line| line.starts_with("not rewritten: ")).collect();
+    assert!(left.len() == 1 && left[0].contains(":2:"), "the boxed lambda is not listed:\n{}", migrated.stderr);
+}
+
+/// `[FMT-1]` — `ember fmt` writes at most 100 columns where brackets allow: a longer line breaks after
+/// its last top-level opening bracket, one item per line with a trailing comma, again where a piece
+/// is still too long, or else before each operator of its loosest kind, in parentheses put around a
+/// statement's value; a long import list is parenthesised. The result formats to itself and parses
+/// to the same tree. A `comptime:` block in a function keeps its body (it was flattened out of it),
+/// a trailing comment stays on its line, a `#!` one at the end of the file too (on a line of its
+/// own it was a misplaced directive), and a foreign import keeps its `with (…)` (it was dropped).
+#[test]
+fn fmt_keeps_lines_within_100_columns_and_changes_layout_only() {
+    let root = workspace_root();
+    let directory = temporary_directory("fmt");
+    let source = directory.join(ember_branding::source_file("wide"));
+    std::fs::write(&source, "\
+from std.math import sqrt, floor, ceil, exp, log, sin, cos, tan, atan2, hypot, round, trunc, fma, pow
+import c \"stdio.h\" with (overlay=\"stdio.overlay\")
+
+fn f(a: int, b: int, c: int, d: int) -> int:
+    return a + b + c + d
+
+fn checked(n: int) -> int:
+    return n    # the last line's comment
+
+fn main():
+    comptime:
+        assert(checked(2) == 2)
+    println(f(1111111111111, 2222222222222, 3333333333333, 4444444444444) + f(5555555555555, 6666666666666, 7777777777777, 8888888888888))
+    xs: Array[int] = [1111111111111, 2222222222222, 3333333333333, 4444444444444, 5555555555555, 6666666666666, 77777777]
+    total = xs[0] * 3 + xs[1] * 4 + xs[0] * xs[1] + xs[2] - xs[3] + xs[4] * xs[4] - xs[5] * xs[5] + xs[6] + 7
+    if total > 1 and xs[0] > 2 and xs[1] + xs[2] > 3 and xs[3] * xs[4] > 4 and xs[5] - xs[6] < 5 and total > 6:
+        println(total)
+    println(xs.len())    #! a comment, not a directive
+").expect("the source is writable");
+    let path = source.to_string_lossy().to_string();
+    let once = ember(&["fmt", &path], &root);
+    assert_eq!(once.exit, 0, "{}", once.stderr);
+    for line in once.stdout.lines() {
+        assert!(line.chars().count() <= 100, "a line over 100 columns: {line:?}\n{}", once.stdout);
+    }
+    assert!(once.stdout.contains("    comptime:\n        assert(checked(2) == 2)\n"), "{}", once.stdout);
+    assert!(once.stdout.contains("return n    # the last line's comment\n") || once.stdout.contains("return n # the last line's comment\n"), "{}", once.stdout);
+    assert!(once.stdout.contains("println(xs.len()) #! a comment, not a directive"), "{}", once.stdout);
+    assert!(once.stdout.contains("    xs: Array[int] = [\n        1111111111111,\n"), "{}", once.stdout);
+    assert!(once.stdout.contains("    total = (\n        xs[0] * 3\n        + xs[1] * 4\n"), "{}", once.stdout);
+    assert!(once.stdout.contains("    if (\n        total > 1\n        and xs[0] > 2\n"), "{}", once.stdout);
+    assert!(once.stdout.contains("import c \"stdio.h\" with (overlay=\"stdio.overlay\")\n"), "{}", once.stdout);
+    assert!(once.stdout.contains("from std.math import (\n    sqrt,\n    floor,\n"), "{}", once.stdout);
+    let scratch = directory.join(ember_branding::source_file("once"));
+    std::fs::write(&scratch, &once.stdout).expect("the scratch file is writable");
+    let scratch_path = scratch.to_string_lossy().to_string();
+    let twice = ember(&["fmt", &scratch_path], &root);
+    assert_eq!(once.stdout, twice.stdout, "fmt(fmt(x)) differs from fmt(x)");
+    let before = ember(&["build", &path, "--emit", "ast"], &root);
+    let after = ember(&["build", &scratch_path, "--emit", "ast"], &root);
+    assert_eq!(before.exit, 0, "{}", before.stderr);
+    assert_eq!(before.stdout, after.stdout, "parse(fmt(x)) differs from parse(x)");
+}
+
+/// `[CLI-15]` — `ember --help` lists every command and flag of XVII.1: each `ember <command>` and each
+/// `--flag` (and `-D`) of the specification's listing, read from the development target itself, is in it.
+#[test]
+fn help_lists_every_command_and_flag_of_the_specification() {
+    let root = workspace_root();
+    let target = std::fs::read_to_string(root.join("docs/spec-source/development-target.json")).expect("the target");
+    let path = target.split("\"path\": \"").nth(1).and_then(|rest| rest.split('"').next()).expect("its path");
+    let spec = std::fs::read_to_string(root.join(path)).expect("the specification");
+    let section = spec.split("## XVII.1 The `ember` command").nth(1).expect("XVII.1");
+    let listing = section.split("```text").nth(1).and_then(|rest| rest.split("```").next()).expect("its listing");
+    let help = ember(&["--help"], &root);
+    let shown = format!("{}{}", help.stdout, help.stderr);
+    let mut wanted = Vec::new();
+    for line in listing.lines() {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        if let Some(at) = words.iter().position(|word| *word == "ember") {
+            if let Some(command) = words.get(at + 1).filter(|word| word.chars().next().is_some_and(char::is_alphabetic)) {
+                wanted.push(format!("ember {command}"));
+            }
+        }
+        for word in &words {
+            for piece in word.split(['|', '[', ']']) {
+                if piece.starts_with("--") || piece == "-D" {
+                    let flag: String = piece.chars().take_while(|c| c.is_alphanumeric() || *c == '-').collect();
+                    if flag.len() > 2 {
+                        wanted.push(flag);
+                    }
+                }
+            }
+        }
+    }
+    assert!(wanted.len() > 40, "the listing was not read: {wanted:?}");
+    let missing: Vec<&String> = wanted.iter().filter(|word| !shown.contains(word.as_str())).collect();
+    assert!(missing.is_empty(), "`ember --help` omits {missing:?}:\n{shown}");
+}
+
 fn ember(args: &[&str], root: &Path) -> Run {
     let (mut command, _output_directory) = test_command(args, root);
     let output = command

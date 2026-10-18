@@ -1178,7 +1178,8 @@ impl Parser<'_> {
                 Diagnostic::error(codes::E0104, span, "`@latebound` is not an attribute")
                     .primary_label("removed in 0.9.9")
                     .note("every callable type gets fresh regions at each call, which is what `@latebound` asked for [LT-7]")
-                    .help("delete `@latebound`"),
+                    .help("delete `@latebound`")
+                    .migrate("`@latebound` removed", span, ""),
             );
         }
 

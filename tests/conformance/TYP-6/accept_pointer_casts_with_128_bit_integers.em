@@ -7,6 +7,7 @@
 # zero-extends, and an integer keeps its low bits (here `1 << 100` above the address drops).
 
 fn main():
+    big: u128 = (1 as u128) << 100
     unsafe:  # SAFETY: the pointer is read only while the allocation lives
         p: *mut i64 = alloc[i64](1)
         write(p, 0, 42)
@@ -15,7 +16,6 @@ fn main():
         back = wide as *mut i64
         again = signed as *mut i64
         println(read(back, 0), read(again, 0), wide == (p as usize) as u128, signed > 0)
-        big: u128 = (1 as u128) << 100
         low = (big + wide) as *mut i64
         println(read(low, 0), (0 as *mut i64) as u128)
         free(p, 1)
