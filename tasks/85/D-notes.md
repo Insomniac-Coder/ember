@@ -196,3 +196,32 @@ Speed: a flattened column is a column like any other (the same views and loops);
   type's instance does (only with `implements`, `[IFC-2]`). Test:
   `tests/run-pass/a_tuple_of_parameters_implements_an_interface.em`. This is what a `Query[(A,
   Mut[B])]` needs to map each parameter to its item type (`[ECS-3]`).
+
+## 5. `[STD-1]`: `std.core`, `std.mem`, `std.math`, `std.simd`, `std.arena` are `@noalloc`
+
+**Built.** The type checker gives every function of those five modules (and `std.math`'s
+submodules) an implied `@noalloc` (`std_contracts`) unless its documentation says it
+`allocates`; the effects pass then checks it as a written contract, `E4001` naming the chain to
+the allocation. So a function of these modules that allocates with nothing saying so stops every
+build, which is the strongest form of the check (the dependency map asked for "something that
+checks"). A generic function, a generic type's or generic extension's method and an interface's
+provided method are exempt where written (`std_generic_members`): their effects are each
+instance's (`[EFF-2]`), which no declaration can promise. `std/src/arena.em` is new (the arenas
+are prelude, compiler-known types; the module says what they are and holds the rule).
+
+**What the check found, and what was done.** 26 functions of `std.core` and 12 of `std.math`
+allocated undocumented. `std.math`'s `Mat2/3/4.col` and `row` panicked with an f-string
+(`[PAN-2]`: that allocates), and `transpose`, `inverse`, `determinant`, `try_inverse`,
+`from_view_projection` reach them: their panics are now plain text ("a Mat3 has columns 0 to 2
+only"), so the whole of the maths is `@noalloc`, which game code wants. In `std.core`, the error
+report and `AnyError`'s `fmt`, `fmt_debug` and `source` (which write text, or call through
+`dyn Error`), `String`'s `default`, and the 128/256-bit count helpers (`of_wide`, `to_wide`,
+`to_int`, …, whose panics name the value in an f-string) now say they allocate; a derived
+`Display`/`Debug`'s `fmt` says so too (`errors.rs`'s `member`). *Choice made:* the count helpers
+keep their informative panic messages (documented as allocating) rather than losing the number.
+
+**Tests.** `STD-1/accept_core_math_and_simd_functions_are_noalloc.em` (a `@noalloc` function using
+vector and matrix maths, `transpose().inverse()`, and an `i32x4`), and the milestone
+`std_functions_are_noalloc_unless_documented` (a copy of `std` whose `core` gains an undocumented
+allocating function is `E4001`; documented, generic, or in `std.thread`, it is accepted).
+`STD-1` leaves the `unfinished` list.

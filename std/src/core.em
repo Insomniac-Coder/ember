@@ -100,6 +100,7 @@ extend[E: Error] AnyError implements From[E]:
 ## `[ERR-10]` — its text is each context message, the last added first, then
 ## the error's own: `reading app.cfg: line 3: expected `key = value``.
 extend AnyError implements Display:
+    ## It allocates: it writes into the formatter's text, and the boxed error's own `fmt` is a call through `dyn Error` (`[STD-1]`).
     fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
         at = self.context.len()
         while at > 0:
@@ -111,6 +112,7 @@ extend AnyError implements Display:
 ## `AnyError(<the error's Debug>)`, and the context messages when there are
 ## any, oldest first.
 extend AnyError implements Debug:
+    ## It allocates: it writes into the formatter's text (`[STD-1]`).
     fn fmt_debug(self, mut f: Formatter) -> Result[void, FmtError]:
         f.write_str("AnyError(")?
         self.error.fmt_debug(f)?
@@ -121,6 +123,7 @@ extend AnyError implements Debug:
 extend AnyError:
     ## The error's cause, past the text this one shows: the boxed error's
     ## `source` (`[ERR-12]` prints one `caused by:` line for each).
+    ## It allocates when the boxed error's `source` does: a call through `dyn Error`, whose effects nothing declares (`[STD-1]`).
     pub fn source(self) -> Option[ref dyn Error]:
         return self.error.source()
 
@@ -143,10 +146,12 @@ fn report_error[E: Error](e: E):
 
 ## `[ERR-12]` — the same for an `AnyError`, whose text holds its context
 ## messages and whose causes are its error's (`AnyError.source`).
+## It allocates: it formats the error's text (`[STD-1]`).
 fn report_any_error(e: AnyError):
     eprintln(f"error: {e}")
     report_causes(e.source())
 
+## It allocates: it formats each cause's text (`[STD-1]`).
 fn report_causes(first: Option[ref dyn Error]):
     cause = first
     while true:
@@ -407,11 +412,13 @@ extend i64 implements ItemCount:
             return int.MAX
         return n as i64
 
+    ## It allocates the text of its panic message when it panics (an f-string, `[PAN-2]`).
     fn of_wide(n: u256) -> i64:
         if n > (int.MAX as u256):
             panic(f"{n} does not fit an int")
         return n as i64
 
+    ## It allocates the text of its panic message when it panics (an f-string, `[PAN-2]`).
     fn to_wide(self) -> u256:
         if self < 0:
             panic(f"{self} is not a count")
@@ -440,6 +447,7 @@ extend i64 implements ItemCount:
 
 ## G8-4 — what a `..` range of 64-bit numbers counts in.
 extend u64 implements ItemCount:
+    ## It allocates the text of its panic message when it panics (an f-string, `[PAN-2]`).
     fn of(n: int) -> u64:
         if n < 0:
             panic(f"a count cannot be negative: {n}")
@@ -450,6 +458,7 @@ extend u64 implements ItemCount:
             return u64.MAX
         return n as u64
 
+    ## It allocates the text of its panic message when it panics (an f-string, `[PAN-2]`).
     fn of_wide(n: u256) -> u64:
         if n > (u64.MAX as u256):
             panic(f"{n} does not fit a u64")
@@ -476,6 +485,7 @@ extend u64 implements ItemCount:
     fn rem_by(self, k: int) -> int:
         return (self % (k as u64)) as int
 
+    ## It allocates the text of its panic message when it panics (an f-string, `[PAN-2]`).
     fn to_int(self) -> int:
         if self > 9223372036854775807:
             panic(f"a count of {self} does not fit an int")
@@ -483,6 +493,7 @@ extend u64 implements ItemCount:
 
 ## G8-4 — what a `..` range of 128-bit numbers counts in, and a `..=` one of 64-bit numbers.
 extend u128 implements ItemCount:
+    ## It allocates the text of its panic message when it panics (an f-string, `[PAN-2]`).
     fn of(n: int) -> u128:
         if n < 0:
             panic(f"a count cannot be negative: {n}")
@@ -493,6 +504,7 @@ extend u128 implements ItemCount:
             return u128.MAX
         return n as u128
 
+    ## It allocates the text of its panic message when it panics (an f-string, `[PAN-2]`).
     fn of_wide(n: u256) -> u128:
         if n > (u128.MAX as u256):
             panic(f"{n} does not fit a u128")
@@ -519,6 +531,7 @@ extend u128 implements ItemCount:
     fn rem_by(self, k: int) -> int:
         return (self % (k as u128)) as int
 
+    ## It allocates the text of its panic message when it panics (an f-string, `[PAN-2]`).
     fn to_int(self) -> int:
         if self > 9223372036854775807:
             panic(f"a count of {self} does not fit an int")
@@ -534,11 +547,13 @@ extend i128 implements ItemCount:
             return i128.MAX
         return n as i128
 
+    ## It allocates the text of its panic message when it panics (an f-string, `[PAN-2]`).
     fn of_wide(n: u256) -> i128:
         if n > (i128.MAX as u256):
             panic(f"{n} does not fit an i128")
         return n as i128
 
+    ## It allocates the text of its panic message when it panics (an f-string, `[PAN-2]`).
     fn to_wide(self) -> u256:
         if self < 0:
             panic(f"{self} is not a count")
@@ -562,6 +577,7 @@ extend i128 implements ItemCount:
     fn rem_by(self, k: int) -> int:
         return (self % (k as i128)) as int
 
+    ## It allocates the text of its panic message when it panics (an f-string, `[PAN-2]`).
     fn to_int(self) -> int:
         if self > (int.MAX as i128) or self < (int.MIN as i128):
             panic(f"a number of {self} does not fit an int")
@@ -574,15 +590,18 @@ extend i256 implements ItemCount:
         return n
 
     ## A count past the largest `i256` has no number: it panics.
+    ## It allocates the text of its panic message when it panics (an f-string, `[PAN-2]`).
     fn at_most(n: u256) -> i256:
         return i256.of_wide(n)
 
+    ## It allocates the text of its panic message when it panics (an f-string, `[PAN-2]`).
     fn of_wide(n: u256) -> i256:
         number = n as i256
         if number < 0:
             panic(f"{n} does not fit an i256")
         return number
 
+    ## It allocates the text of its panic message when it panics (an f-string, `[PAN-2]`).
     fn to_wide(self) -> u256:
         if self < 0:
             panic(f"{self} is not a count")
@@ -601,12 +620,15 @@ extend i256 implements ItemCount:
     fn exceeds(self, n: int) -> bool:
         return self > (n as i256)
 
+    ## It allocates the text of its panic message when it panics (an f-string, `[PAN-2]`).
     fn div_by(self, k: int) -> i256:
         return count_divmod(self.to_wide(), k as u256).0 as i256
 
+    ## It allocates the text of its panic message when it panics (an f-string, `[PAN-2]`).
     fn rem_by(self, k: int) -> int:
         return count_divmod(self.to_wide(), k as u256).1 as int
 
+    ## It allocates the text of its panic message when it panics (an f-string, `[PAN-2]`).
     fn to_int(self) -> int:
         if self > (int.MAX as i256) or self < (int.MIN as i256):
             panic(f"a number of {self} does not fit an int")
@@ -615,6 +637,7 @@ extend i256 implements ItemCount:
 ## G8-4 — what a `..=` range of 128-bit numbers counts in (`u256`, the 256-bit count). It adds,
 ## subtracts and compares, so it divides by doubling.
 extend u256 implements ItemCount:
+    ## It allocates the text of its panic message when it panics (an f-string, `[PAN-2]`).
     fn of(n: int) -> u256:
         if n < 0:
             panic(f"a count cannot be negative: {n}")
@@ -648,6 +671,7 @@ extend u256 implements ItemCount:
     fn rem_by(self, k: int) -> int:
         return count_divmod(self, k as u256).1 as int
 
+    ## It allocates the text of its panic message when it panics (an f-string, `[PAN-2]`).
     fn to_int(self) -> int:
         if self > (int.MAX as u256):
             panic(f"a count of {self} does not fit an int")
@@ -2133,6 +2157,7 @@ extend String implements FromIterator[String]:
         return out
 
 extend String implements Default:
+    ## It allocates the new text (`[STD-1]`).
     fn default() -> String:
         return String.from("")
 

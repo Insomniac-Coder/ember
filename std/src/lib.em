@@ -9,6 +9,8 @@
 ##   `std.collections`  `Map`, `Set` and hashing (`[STD-11]`, `[HASH-1]`), and
 ##                      `[ARN-5]`'s Arena-backed collection declarations
 ##   `std.mem`  `[UNS-10]`'s lowest-level interior-mutability primitive
+##   `std.arena`  what the prelude's arenas are (Part VII.6)
+##   `std.simd`  vector and mask types (Part XII.2)
 ##   `std.sync`  locks, atomics, `Once` and `SyncShared` (Part XI.2)
 ##   `std.thread`  `spawn` and `JoinHandle` (`[THR-10]`)
 ##   `std.jobs`  the job system: `submit`, `wait`, `scope` (Part XI.5)

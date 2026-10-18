@@ -2246,6 +2246,11 @@ struct Checker<'a> {
     deferred_methods: HashMap<DefId, PendingMethod>,
     /// `[COST-1]` — see `CheckOutput::std_instances` and `note_std_instance`.
     std_instances: HashSet<String>,
+    /// `[STD-1]` — the functions of `std` whose documentation says they allocate, by span.
+    allocation_documented: HashSet<Span>,
+    /// `[STD-1]` — the methods of `std`'s generic declarations (a generic type's, a generic
+    /// extension's, an interface's provided ones), by span: their effects are their instances'.
+    std_generic_members: HashSet<Span>,
     /// A generic class/extension declaration can materialize more than once,
     /// but an invalid `override` is one source error, not one per concrete
     /// type argument list.
@@ -2697,6 +2702,8 @@ impl<'a> Checker<'a> {
             emit_if_used_methods: HashSet::new(),
             deferred_methods: HashMap::new(),
             std_instances: HashSet::new(),
+            allocation_documented: HashSet::new(),
+            std_generic_members: HashSet::new(),
             bound_calls: HashMap::new(),
             generically_checked: HashSet::new(),
             reported_generic_override_errors: HashSet::new(),
@@ -15719,6 +15726,22 @@ impl<'a> Checker<'a> {
     }
 
     /// A function's contracts: its own attributes', and `[DET-8]`'s `#! module deterministic`.
+    /// `[STD-1]` — every function of `std.core`, `std.mem`, `std.math`, `std.simd` and `std.arena`
+    /// is `@noalloc` unless its documentation says it allocates (the word `allocates`): the
+    /// contract is checked as a written one is (`E4001`), so a function of these modules that
+    /// allocates undocumented stops every build. A generic function's, or a generic type's
+    /// method's, effects are its instances' (`[EFF-2]`), so it is checked where it is written only.
+    fn std_contracts(&self, mut contracts: hir::Contracts, span: Span, generic: bool) -> hir::Contracts {
+        let module = self.prefixes[self.current_module].as_str();
+        let listed = matches!(module, "std.core" | "std.mem" | "std.math" | "std.math.det" | "std.simd" | "std.arena")
+            || module.starts_with("std.math.");
+        let generic = generic || self.std_generic_members.contains(&span);
+        if listed && !generic && !self.allocation_documented.contains(&span) {
+            contracts.forbidden |= hir::Effects::ALLOC;
+        }
+        contracts
+    }
+
     fn contracts_of(&self, attrs: &[ast::Attribute]) -> hir::Contracts {
         // `[EFF-19]` — the set of the package that declares the function: the standard library's
         // is the default.
@@ -16463,7 +16486,7 @@ impl<'a> Checker<'a> {
                 fp,
                 inline: inline_hint(&item.attrs),
                 static_safe: has_attribute(&item.attrs, "static_safe"),
-                contracts: self.contracts_of(&item.attrs),
+                contracts: self.std_contracts(self.contracts_of(&item.attrs), item.span, false),
                 borrows: self.declared_borrows(def),
                 sources: self.declared_sources(def),
                 is_lambda: false,
@@ -17628,7 +17651,7 @@ impl<'a> Checker<'a> {
             fp,
             inline: inline_hint(attrs),
             static_safe: has_attribute(attrs, "static_safe"),
-            contracts: self.contracts_of(attrs),
+            contracts: self.std_contracts(self.contracts_of(attrs), span, !decl.generics.is_empty()),
             borrows: self.declared_borrows(def),
             sources: self.declared_sources(def),
             is_lambda: false,
@@ -18548,7 +18571,10 @@ impl<'a> Checker<'a> {
             fp,
             inline: inline_hint(attrs),
             static_safe: has_attribute(attrs, "static_safe"),
-            contracts: self.contracts_of(attrs),
+            contracts: {
+                let generic = !decl.generics.is_empty() || self.is_generic_instance(owner) || self.types.is_generic(owner);
+                self.std_contracts(self.contracts_of(attrs), span, generic)
+            },
             borrows: self.declared_borrows(def),
             sources: self.declared_sources(def),
             is_lambda: false,
@@ -34980,6 +35006,32 @@ impl<'a> Checker<'a> {
                 continue;
             }
             self.check_attribute_list(std::slice::from_ref(attr), site);
+        }
+        // `[STD-1]` — a `std` function whose documentation says it allocates.
+        let says_allocates = |doc: &Option<String>| doc.as_deref().is_some_and(|doc| doc.contains("allocates"));
+        if self.is_std_module(self.current_module) {
+            if matches!(item.kind, ast::ItemKind::Fn(_)) && says_allocates(&item.doc) {
+                self.allocation_documented.insert(item.span);
+            }
+            let (members, generic): (&[ast::Member], bool) = match &item.kind {
+                ast::ItemKind::Struct(decl) => (&decl.members, !decl.generics.is_empty()),
+                ast::ItemKind::Class(decl) => (&decl.members, !decl.generics.is_empty()),
+                ast::ItemKind::Enum(decl) => (&decl.members, !decl.generics.is_empty()),
+                ast::ItemKind::Extend(decl) => (&decl.members, !decl.generics.is_empty()),
+                ast::ItemKind::Interface(decl) => (&decl.members, true),
+                _ => (&[], false),
+            };
+            for member in members {
+                if !matches!(member.kind, ast::MemberKind::Fn(_)) {
+                    continue;
+                }
+                if says_allocates(&member.doc) {
+                    self.allocation_documented.insert(member.span);
+                }
+                if generic {
+                    self.std_generic_members.insert(member.span);
+                }
+            }
         }
         // `[SOA-1]` — a field `@soa(flatten)` is split into its own fields' columns.
         if let ast::ItemKind::Struct(decl) = &item.kind {

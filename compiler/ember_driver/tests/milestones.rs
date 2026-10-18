@@ -3319,6 +3319,56 @@ fn the_optimization_report_gives_each_simd_loop_its_verdict_then_the_host_compil
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
+/// `[STD-1]` — every function in `std.core`, `std.mem`, `std.math`, `std.simd` and `std.arena` is
+/// `@noalloc` unless its documentation says it allocates: a copy of `std` whose `core` gains a
+/// function that allocates with nothing saying so stops the build with `E4001`; the same function
+/// whose documentation says it allocates, a generic one, and the same function in `std.thread`
+/// (not one of the five) do not.
+#[test]
+fn std_functions_are_noalloc_unless_documented() {
+    let root = workspace_root();
+    let copy = temporary_directory("std_noalloc");
+    let std_src = root.join("std").join("src");
+    let copied = copy.join("src");
+    fn copy_tree(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).expect("the copy's directory");
+        for entry in std::fs::read_dir(from).expect("std's sources") {
+            let entry = entry.expect("an entry");
+            let target = to.join(entry.file_name());
+            if entry.path().is_dir() {
+                copy_tree(&entry.path(), &target);
+            } else {
+                std::fs::copy(entry.path(), &target).expect("a std file copies");
+            }
+        }
+    }
+    let program = copy.join(format!("main.{SOURCE_EXT}"));
+    std::fs::write(&program, "import std.thread\n\nfn main():\n    println(1)\n").expect("the program writes");
+    let program = program.to_string_lossy().into_owned();
+    let with = |module: &str, extra: &str| {
+        let _ = std::fs::remove_dir_all(&copied);
+        copy_tree(&std_src, &copied);
+        let file = copied.join(format!("{module}.{SOURCE_EXT}"));
+        let text = std::fs::read_to_string(&file).expect("the module reads");
+        std::fs::write(&file, format!("{text}\n{extra}")).expect("the module writes");
+        ember_with_env(&["check", &program], &root, &ember_branding::std_path_var(), &copied.to_string_lossy())
+    };
+    let leaky = "pub fn leaky_text() -> String:\n    return String.from(\"made\")\n";
+    let undocumented = with("core", leaky);
+    assert_ne!(undocumented.exit, 0, "an undocumented allocation in std.core was accepted:\n{}", undocumented.stderr);
+    assert!(
+        undocumented.stderr.contains("E4001") && undocumented.stderr.contains("leaky_text"),
+        "{}",
+        undocumented.stderr
+    );
+    let documented = with("core", &format!("## It allocates the text it gives back.\n{leaky}"));
+    assert_eq!(documented.exit, 0, "a documented allocation was refused:\n{}", documented.stderr);
+    let generic = with("core", "pub fn leaky_list[T](owned x: T) -> Array[T]:\n    return [x]\n");
+    assert_eq!(generic.exit, 0, "a generic function was held to it:\n{}", generic.stderr);
+    let elsewhere = with("thread", leaky);
+    assert_eq!(elsewhere.exit, 0, "a module outside the five was held to it:\n{}", elsewhere.stderr);
+}
+
 /// `[RC-6]` — `ember inspect --counts` lists the retains and releases a build
 /// left inside loops, each with its reason; a loop that reads borrowed
 /// handles has none.
