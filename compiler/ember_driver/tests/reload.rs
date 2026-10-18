@@ -81,6 +81,66 @@ fn reload_is_forbidden_in_shipping() {
     assert!(built.stderr.contains("error[E9033]"), "{}", built.stderr);
 }
 
+/// A reloadable program's build directory: `<out>/debug/bin`, holding the host, the shared runtime
+/// and the images.
+fn bin(out: &Path) -> PathBuf {
+    out.join("debug").join("bin")
+}
+
+fn host(out: &Path) -> PathBuf {
+    bin(out).join(if cfg!(windows) { "main.exe" } else { "main" })
+}
+
+/// Run a built host, as the harness runs every program: its output, never a window.
+fn run_host(out: &Path) -> Run {
+    let mut command = Command::new(host(out));
+    command.current_dir(out);
+    let output = ember_build::output_started(&mut command).expect("the host runs");
+    Run {
+        stdout: String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        stderr: String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+        exit: output.status.code().unwrap_or(-1),
+    }
+}
+
+/// Build `source` as the first image of a reloadable program in `out`, then each of `edits` as
+/// the next image (`ember build --reload`), and run the host: it starts with the first image and
+/// its polls find the last one announced.
+fn reload_run(label: &str, manifest: &str, source: &str, edits: &[&str]) -> (Run, Vec<Run>) {
+    let root = workspace_root();
+    let (package, file) = package(label, manifest, source);
+    let out = package.join("target");
+    let out_arg = out.to_string_lossy().into_owned();
+    let file_arg = file.to_string_lossy().into_owned();
+    let built = ember(&["build", &file_arg, "--out-dir", &out_arg], &root);
+    assert_eq!(built.exit, 0, "the first build failed:\n{}", built.stderr);
+    let mut reloads = Vec::new();
+    for edit in edits {
+        std::fs::write(&file, edit).expect("the edit is writable");
+        reloads.push(ember(&["build", "--reload", &file_arg, "--out-dir", &out_arg], &root));
+    }
+    let run = run_host(&out);
+    drop(package);
+    (run, reloads)
+}
+
+const RELOAD_ALL: &str = "[build]\nreload = \"all\"\n";
+
+/// `[HR-2]`, `[HR-5]`, `[HR-6]`, `[HR-30]`, `[HR-33]` — an edited body is running after the next
+/// poll: the program starts with its first image, `std.hot.checkpoint()` polls, the runtime loads
+/// the image `ember build --reload` announced and repoints the thunks, and the next call of `step`
+/// runs the new body while `main`'s own frame runs on. What was computed before stays.
+#[test]
+fn an_edited_body_runs_after_the_next_checkpoint() {
+    let v1 = "import std.hot\n\nfn step(i: int) -> int:\n    println(f\"v1 step {i}\")\n    return i * 10\n\n\
+              fn main():\n    total = 0\n    for i in 0..3:\n        total += step(i)\n        hot.checkpoint()\n    println(f\"total {total}\")\n";
+    let v2 = v1.replace("v1 step", "v2 step").replace("i * 10", "i * 100");
+    let (run, reloads) = reload_run("reload-body", RELOAD_ALL, v1, &[&v2]);
+    assert_eq!(reloads[0].exit, 0, "the reload build failed:\n{}", reloads[0].stderr);
+    assert_eq!(run.exit, 0, "{}", run.stderr);
+    assert_eq!(run.stdout, "v1 step 0\nv2 step 1\nv2 step 2\ntotal 300\n", "{}", run.stderr);
+}
+
 /// `[HR-29]` — with reload on, one shared runtime serves every image in the process: a reloadable
 /// package whose manifest asks to link the runtime statically is `E9036`.
 #[test]

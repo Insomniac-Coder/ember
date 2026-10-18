@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub mod interface;
+pub mod reload;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum Profile {

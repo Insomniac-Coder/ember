@@ -5,6 +5,7 @@
 //! each command something to do.
 
 mod comptime;
+mod reload;
 mod test_runner;
 
 use std::path::{Path, PathBuf};
@@ -2824,6 +2825,7 @@ fn package_source_root(input: &Path) -> PathBuf {
 }
 
 fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, String> {
+    let started = std::time::Instant::now();
     if options.timings.is_some() {
         start_timings();
     }
@@ -2872,6 +2874,8 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let root_dir = package_source_root(input);
     let lint_settings = manifest_lint_settings(&root_dir, &mut map, &mut sink);
     let reload = reload_mode(&lint_settings, options, &mut sink)?;
+    // `ember test` builds the package's tests as a program of their own, without reload.
+    let reload = if command == "test" { ReloadMode::None } else { reload };
     let modules = load_modules(module, &root_dir, &mut map, &mut sink);
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
@@ -2970,6 +2974,16 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     }
     // `[COST-1]` — an implicit `clone` nothing calls is not emitted.
     ember_mir::prune_unused_implicit(&mut bodies, &types, &checked.std_instances);
+    // Annex B — which functions the image reaches through thunks; `[HR-9a]`, none is inlined.
+    let reload_image = (reload != ReloadMode::None).then(|| {
+        let package = input.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
+        reload::plan(reload, &package, &modules, &map, &bodies)
+    });
+    if let Some(image) = &reload_image {
+        for body in bodies.iter_mut().filter(|body| image.reloadable.contains(&body.symbol)) {
+            body.inline.never = true;
+        }
+    }
     mark("lower", "all modules");
     if cfg!(debug_assertions) {
         ember_mir::verify::verify_all(&bodies);
@@ -3306,8 +3320,11 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         if command == "build" && !matches!(package_kind.as_str(), "bin" | "staticlib") {
             return Err(format!("package kind `{package_kind}` is not implemented for `ember build`"));
         }
-        if matches!(command, "build" | "run" | "test") && runtime_mode != "static" {
+        if matches!(command, "build" | "run" | "test") && runtime_mode != "static" && reload_image.is_none() {
             return Err(format!("runtime mode `{runtime_mode}` is not implemented for this build artifact"));
+        }
+        if reload_image.is_some() && staticlib {
+            return Err("a `staticlib` package is not reloadable: hot reload builds a program".to_string());
         }
     }
     let header_requested = options.emit_header || options.emit.as_deref() == Some("header") ||
@@ -3324,6 +3341,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         staticlib,
         c_for_msvc(&options),
         (command == "test").then(|| tests.iter().map(|test| test.symbol.clone()).collect()),
+        reload_image.as_ref(),
     );
     mark("C generation", "all modules");
     // `[DSP-5]` — on standard error, so it never mixes with `--emit c`.
@@ -3445,6 +3463,21 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let toolchain = Toolchain::detect(requested.as_deref()).map_err(|e| e.to_string())?;
     let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
     let includes = vec![runtime.join("include")];
+    // Annex B — a reloadable program: the shared runtime, an image and the host that runs it.
+    if let Some(image) = &reload_image {
+        if !emitted.relaxed_units.is_empty() {
+            return Err("error[E0900]: `@fastmath` and `@fp(contract)` in a reloadable build are not built yet".to_string());
+        }
+        let built = reload::build(&toolchain, &layout, &module_name, &c_path, &runtime_source, &includes, options.profile,
+            image, options.reload, started)?;
+        mark("C compile and link", "all modules");
+        report(&sink, &map, options);
+        if command == "run" {
+            return run_program(&built.host, options);
+        }
+        eprintln!("built {}", if options.reload { built.image.display() } else { built.host.display() });
+        return Ok(ExitCode::SUCCESS);
+    }
     // `[CG-C-11]` — a relaxed unit calls the package's other functions,
     // which a library keeps internal to its own unit.
     if staticlib && !emitted.relaxed_units.is_empty() {
@@ -3546,26 +3579,31 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         return test_runner::run_tests(&exe, &tests, options);
     }
     if command == "run" {
-        let status = std::process::Command::new(&exe)
-            .args(&options.program_args)
-            .status()
-            .map_err(|e| e.to_string())?;
-        // A status outside 0..=255 (a Windows exception arrives as a large
-        // negative i32) or a Unix signal is a crash: clamping it into a u8
-        // turned one into a clean exit, so it becomes a plain failure, and it
-        // is said what stopped the program (D-464).
-        if let Some(how) = abnormal_end(&status) {
-            eprintln!("error: {how}");
-        }
-        return Ok(match status.code() {
-            Some(0) => ExitCode::SUCCESS,
-            Some(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
-            None => ExitCode::FAILURE,
-        });
+        return run_program(&exe, options);
     }
 
     eprintln!("built {}", exe.display());
     Ok(ExitCode::SUCCESS)
+}
+
+/// `ember run`: the program, with its arguments, its status as the command's.
+fn run_program(exe: &Path, options: &Options) -> Result<ExitCode, String> {
+    let status = std::process::Command::new(exe)
+        .args(&options.program_args)
+        .status()
+        .map_err(|e| e.to_string())?;
+    // A status outside 0..=255 (a Windows exception arrives as a large
+    // negative i32) or a Unix signal is a crash: clamping it into a u8
+    // turned one into a clean exit, so it becomes a plain failure, and it
+    // is said what stopped the program (D-464).
+    if let Some(how) = abnormal_end(&status) {
+        eprintln!("error: {how}");
+    }
+    Ok(match status.code() {
+        Some(0) => ExitCode::SUCCESS,
+        Some(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
+        None => ExitCode::FAILURE,
+    })
 }
 
 /// `[CT-1]` — how many times a program is checked at most: each pass answers

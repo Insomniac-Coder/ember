@@ -14,10 +14,15 @@
 #if defined(__linux__) && !defined(_DEFAULT_SOURCE)
 #define _DEFAULT_SOURCE
 #endif
+/* Annex B — the reload runtime finds where the loader put an image (`dlinfo`). */
+#if defined(EMBER_RELOAD) && defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
 
 #include "ember_rt.h"
 
 #include <inttypes.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -1807,17 +1812,30 @@ void ember_rwlock_release(void* raw, bool write) {
 }
 #endif
 
+#if defined(EMBER_RELOAD)
+static void rl_register_thread(void);
+static void rl_unregister_thread(void);
+#endif
+
 void ember_rt_thread_attach(void) {
     if (!runtime_thread_attached()) {
         g_attached_generation = object_load_u32(&g_thread_generation);
         if (g_main_generation != g_attached_generation) {
             threads_have_started();
         }
+#if defined(EMBER_RELOAD)
+        /* [HR-3a] Every thread that can run Ember code is registered: a host thread on attach,
+         * a `thread.spawn` thread and a job worker as they start (each attaches). */
+        rl_register_thread();
+#endif
     }
 }
 
 void ember_rt_thread_detach(void) {
     g_attached_generation = 0;
+#if defined(EMBER_RELOAD)
+    rl_unregister_thread();
+#endif
 }
 
 void ember_rt_check_main_thread(void) {
@@ -2367,6 +2385,12 @@ void* ember_downcast(ember_obj_header* object, const ember_type_info* target) {
         if (ti == target) {
             return object;
         }
+#if defined(EMBER_RELOAD)
+        /* Annex B — the same class, made by another image. */
+        if (ti->identity != NULL && ember_same_identity(ti->identity, target->identity)) {
+            return object;
+        }
+#endif
     }
     return NULL;
 }
@@ -2378,7 +2402,7 @@ const void* ember_itable_lookup_slow(const ember_type_info* type, const void* in
     for (const ember_type_info* current = type; current != NULL; current = current->base) {
         for (uint32_t index = 0; index < current->itable_count; ++index) {
             const ember_itable_entry* entry = &current->itables[index];
-            if (entry->interface_id == interface_id) {
+            if (ember_same_identity(entry->interface_id, interface_id)) {
                 return entry->table;
             }
         }
@@ -8422,3 +8446,1018 @@ void ember_fmt_spec_char(ember_vec* out, uint32_t value, ember_fmt_spec spec) {
     size_t n = ember_char_encode_utf8(value, buffer);
     fmt_spec_text(out, buffer, n, spec.kind == '?', spec);
 }
+
+/* -- hot reload (Annex B) ------------------------------------------------------
+ *
+ * The shared runtime of a reloadable process ([HR-29]) keeps what outlives an image: the call
+ * table, keyed by each function's mangled name ([HR-7]); the statics' storage ([HR-4a]); the types'
+ * identities and schemas; and every registered thread's Ember-depth counter ([HR-42]). An image is
+ * loaded, never unloaded ([HR-4]), and reloading one runs plan, prepare, commit and reclaim
+ * ([HR-2]). A runtime built without EMBER_RELOAD has only `checkpoint`, which says so. */
+
+#if !defined(EMBER_RELOAD)
+
+int ember_reload_checkpoint(void) { return EMBER_RELOAD_DISABLED; }
+
+#else
+
+#if !defined(_WIN32)
+#include <dlfcn.h>
+#include <elf.h>
+#include <link.h>
+#include <sys/stat.h>
+#include <time.h>
+#include <unistd.h>
+#endif
+
+#if defined(__GNUC__) || defined(__clang__)
+#define RL_ADD_RELAXED(p, v) ((void)__atomic_fetch_add((p), (v), __ATOMIC_RELAXED))
+#define RL_SUB_RELEASE(p, v) ((void)__atomic_fetch_sub((p), (v), __ATOMIC_RELEASE))
+#define RL_FENCE_ACQUIRE() __atomic_thread_fence(__ATOMIC_ACQUIRE)
+#define RL_LOAD_ACQUIRE(p) __atomic_load_n((p), __ATOMIC_ACQUIRE)
+#define RL_STORE_RELEASE(p, v) __atomic_store_n((p), (v), __ATOMIC_RELEASE)
+#elif defined(_MSC_VER)
+/* x64 and arm64: an interlocked add is a full barrier, stronger than relaxed; a plain aligned load
+ * after a compiler barrier is an acquire on x64. */
+#define RL_ADD_RELAXED(p, v) ((void)_InterlockedExchangeAdd((volatile long*)(p), (long)(v)))
+#define RL_SUB_RELEASE(p, v) ((void)_InterlockedExchangeAdd((volatile long*)(p), -(long)(v)))
+#define RL_FENCE_ACQUIRE() _ReadWriteBarrier()
+#define RL_LOAD_ACQUIRE(p) ((uint32_t)_InterlockedCompareExchange((volatile long*)(p), 0, 0))
+#define RL_STORE_RELEASE(p, v) ((void)_InterlockedExchange((volatile long*)(p), (long)(v)))
+#endif
+
+/* [HR-12a] The object header this runtime was built with: an image links only against the one its
+ * own header has. */
+#if defined(EMBER_RELOAD_INSTANCES)
+void ember_obj_header_v40(void) {}
+#define RL_HEADER_BYTES 40u
+#else
+void ember_obj_header_v24(void) {}
+#define RL_HEADER_BYTES 24u
+#endif
+void ember_reload_protocol_v1(void) {}
+
+#if defined(_WIN32)
+#define RL_SECTION_NAME ".emrl"
+#else
+#define RL_SECTION_NAME "ember_reload"
+#endif
+
+/* -- registered threads and their depth ([HR-3a], [HR-42]) ---------------- */
+
+typedef struct rl_thread {
+    uint32_t depth;
+    uint32_t registered;
+    struct rl_thread* next;
+} rl_thread;
+
+static EMBER_RT_THREAD_LOCAL rl_thread* g_rl_self;
+static rl_thread* g_rl_threads;
+static uint32_t g_rl_threads_lock;
+/* [HR-42] Bumped with one release store when a commit publishes; a thread entering Ember code
+ * next acquires it (its fence). */
+static uint32_t g_rl_generation;
+
+static void rl_lock(uint32_t* word) {
+    uint32_t expected = 0;
+    while (!object_compare_exchange_u32(word, &expected, 1)) {
+        expected = 0;
+    }
+}
+
+static void rl_unlock(uint32_t* word) {
+    (void)object_fetch_sub_u32(word, 1);
+}
+
+/* A thread's record, claimed from one a finished thread left, or new. Records are never freed: a
+ * reload reads them while threads come and go. */
+static void rl_register_thread(void) {
+    if (g_rl_self != NULL) {
+        g_rl_self->registered = 1;
+        return;
+    }
+    rl_lock(&g_rl_threads_lock);
+    rl_thread* found = NULL;
+    for (rl_thread* at = g_rl_threads; at != NULL; at = at->next) {
+        if (at->registered == 0 && RL_LOAD_ACQUIRE(&at->depth) == 0) {
+            found = at;
+            break;
+        }
+    }
+    if (found == NULL) {
+        found = (rl_thread*)calloc(1, sizeof *found);
+        if (found == NULL) {
+            rl_unlock(&g_rl_threads_lock);
+            fputs("ember runtime: cannot register a thread for hot reload\n", stderr);
+            runtime_abort();
+        }
+        found->next = g_rl_threads;
+        g_rl_threads = found;
+    }
+    found->registered = 1;
+    rl_unlock(&g_rl_threads_lock);
+    g_rl_self = found;
+}
+
+static void rl_unregister_thread(void) {
+    if (g_rl_self != NULL && g_rl_self->depth == 0) {
+        g_rl_self->registered = 0;
+        g_rl_self = NULL;
+    }
+}
+
+/* [HR-42], [HR-42a] Entering Ember code: one relaxed increment of this thread's own counter and
+ * one acquire fence, whatever the number of threads. [HR-3a] A debug build asserts the thread is
+ * registered. */
+void ember_reload_enter(void) {
+    rl_thread* self = g_rl_self;
+    if (self == NULL || self->registered == 0) {
+#if defined(EMBER_RT_DEBUG_ACCESS)
+        static const char message[] = "Ember code entered from a thread the runtime has not registered [HR-3a]";
+        ember_loc loc = { "<reload>", 0, 0 };
+        ember_panic(message, sizeof message - 1, loc);
+#else
+        rl_register_thread();
+        self = g_rl_self;
+#endif
+    }
+    RL_ADD_RELAXED(&self->depth, 1u);
+    RL_FENCE_ACQUIRE();
+}
+
+void ember_reload_leave(void) {
+    RL_SUB_RELEASE(&g_rl_self->depth, 1u);
+}
+
+/* [HR-3] Whether every registered thread is out of Ember code; `self_allowed` lets the calling
+ * thread be inside it that deep (a checkpoint's own activation). Each counter is read with
+ * acquire ([HR-42]). */
+static bool rl_threads_quiet(uint32_t self_allowed) {
+    bool quiet = true;
+    rl_lock(&g_rl_threads_lock);
+    for (rl_thread* at = g_rl_threads; at != NULL; at = at->next) {
+        uint32_t depth = RL_LOAD_ACQUIRE(&at->depth);
+        if (depth > (at == g_rl_self ? self_allowed : 0u)) {
+            quiet = false;
+            break;
+        }
+    }
+    rl_unlock(&g_rl_threads_lock);
+    return quiet;
+}
+
+/* -- the registry ------------------------------------------------------------ */
+
+/* One call-table slot ([HR-6], [HR-7]): the permanent thunk, the current target, and what the
+ * current definition says of the function. A removed function's target is a stub that panics
+ * naming it. */
+typedef struct rl_slot {
+    char* name;
+    void* thunk;
+    void* target;
+    uint64_t signature;
+    uint64_t body_hash;
+    uint32_t flags;
+    bool removed;
+} rl_slot;
+
+typedef struct rl_static {
+    char* name;
+    void* data;
+    uint32_t state;
+    uint32_t size;
+    uint32_t align;
+    uint64_t type_schema;
+    uint64_t initialiser;
+    uint32_t flags;
+} rl_static;
+
+typedef struct rl_type {
+    char* name;
+    const ember_rl_identity* canonical;
+    const ember_rl_type* schema;
+} rl_type;
+
+typedef struct rl_image {
+    void* handle;
+    const ember_rl_manifest* manifest;
+    char* path;
+} rl_image;
+
+/* An open-addressed table of pointers keyed by the name each points at. */
+typedef struct rl_table {
+    void** items;
+    size_t cap;
+    size_t used;
+} rl_table;
+
+static uint64_t rl_hash_name(const char* name) {
+    uint64_t hash = UINT64_C(0xcbf29ce484222325);
+    for (const unsigned char* at = (const unsigned char*)name; *at != 0; ++at) {
+        hash = (hash ^ *at) * UINT64_C(0x100000001b3);
+    }
+    return hash;
+}
+
+/* The first field of every table entry is its name. */
+static void* rl_table_get(const rl_table* table, const char* name) {
+    if (table->cap == 0) {
+        return NULL;
+    }
+    for (size_t at = (size_t)rl_hash_name(name) & (table->cap - 1);; at = (at + 1) & (table->cap - 1)) {
+        void* item = table->items[at];
+        if (item == NULL) {
+            return NULL;
+        }
+        if (strcmp(*(char* const*)item, name) == 0) {
+            return item;
+        }
+    }
+}
+
+static bool rl_table_put(rl_table* table, void* item) {
+    if ((table->used + 1) * 2 > table->cap) {
+        size_t cap = table->cap == 0 ? 64 : table->cap * 2;
+        void** items = (void**)calloc(cap, sizeof *items);
+        if (items == NULL) {
+            return false;
+        }
+        for (size_t index = 0; index < table->cap; ++index) {
+            void* old = table->items[index];
+            if (old == NULL) {
+                continue;
+            }
+            size_t at = (size_t)rl_hash_name(*(char* const*)old) & (cap - 1);
+            while (items[at] != NULL) {
+                at = (at + 1) & (cap - 1);
+            }
+            items[at] = old;
+        }
+        free(table->items);
+        table->items = items;
+        table->cap = cap;
+    }
+    size_t at = (size_t)rl_hash_name(*(char* const*)item) & (table->cap - 1);
+    while (table->items[at] != NULL) {
+        at = (at + 1) & (table->cap - 1);
+    }
+    table->items[at] = item;
+    table->used += 1;
+    return true;
+}
+
+static char* rl_strdup(const char* text) {
+    size_t length = strlen(text) + 1;
+    char* copy = (char*)malloc(length);
+    if (copy != NULL) {
+        memcpy(copy, text, length);
+    }
+    return copy;
+}
+
+static struct {
+    bool active;
+    uint32_t flags;
+    char* announce;
+    char last_announcement[512];
+    rl_image* images;
+    size_t image_count;
+    size_t image_cap;
+    rl_table slots;
+    rl_table statics;
+    rl_table types;
+    rl_table identities;
+    ember_reload_timings timings;
+} g_rl;
+
+/* -- stubs for removed functions ([HR-7]) -------------------------------------
+ *
+ * A thunk whose function an edit removed jumps to one of these, which panics naming it. A stub
+ * takes whatever arguments its caller passes and never returns, which every ABI Ember targets
+ * allows. */
+#define RL_STUBS 64
+static const char* g_rl_stub_names[RL_STUBS];
+static uint32_t g_rl_stub_count;
+
+void ember_reload_removed_called(const char* name) {
+    char message[512];
+    int n = snprintf(message, sizeof message, "`%s` was removed by a hot reload and is called [HR-7]",
+                     name != NULL ? name : "a function");
+    ember_loc loc = { "<reload>", 0, 0 };
+    ember_panic(message, n > 0 ? (size_t)n : 0, loc);
+}
+
+#define RL_STUB(n) static void rl_stub_##n(void) { ember_reload_removed_called(g_rl_stub_names[n]); }
+#define RL_STUB8(a, b, c, d, e, f, g, h) RL_STUB(a) RL_STUB(b) RL_STUB(c) RL_STUB(d) \
+    RL_STUB(e) RL_STUB(f) RL_STUB(g) RL_STUB(h)
+RL_STUB8(0, 1, 2, 3, 4, 5, 6, 7)
+RL_STUB8(8, 9, 10, 11, 12, 13, 14, 15)
+RL_STUB8(16, 17, 18, 19, 20, 21, 22, 23)
+RL_STUB8(24, 25, 26, 27, 28, 29, 30, 31)
+RL_STUB8(32, 33, 34, 35, 36, 37, 38, 39)
+RL_STUB8(40, 41, 42, 43, 44, 45, 46, 47)
+RL_STUB8(48, 49, 50, 51, 52, 53, 54, 55)
+RL_STUB8(56, 57, 58, 59, 60, 61, 62, 63)
+static void rl_stub_any(void) { ember_reload_removed_called(NULL); }
+
+#define RL_STUB_ROW(a, b, c, d, e, f, g, h) rl_stub_##a, rl_stub_##b, rl_stub_##c, rl_stub_##d, \
+    rl_stub_##e, rl_stub_##f, rl_stub_##g, rl_stub_##h
+static void (*const g_rl_stubs[RL_STUBS])(void) = {
+    RL_STUB_ROW(0, 1, 2, 3, 4, 5, 6, 7), RL_STUB_ROW(8, 9, 10, 11, 12, 13, 14, 15),
+    RL_STUB_ROW(16, 17, 18, 19, 20, 21, 22, 23), RL_STUB_ROW(24, 25, 26, 27, 28, 29, 30, 31),
+    RL_STUB_ROW(32, 33, 34, 35, 36, 37, 38, 39), RL_STUB_ROW(40, 41, 42, 43, 44, 45, 46, 47),
+    RL_STUB_ROW(48, 49, 50, 51, 52, 53, 54, 55), RL_STUB_ROW(56, 57, 58, 59, 60, 61, 62, 63),
+};
+
+static void* rl_stub_for(const char* name) {
+    if (g_rl_stub_count < RL_STUBS) {
+        g_rl_stub_names[g_rl_stub_count] = name;
+        return (void*)g_rl_stubs[g_rl_stub_count++];
+    }
+    return (void*)rl_stub_any;
+}
+
+/* -- time and files ---------------------------------------------------------- */
+
+static uint64_t rl_now_ns(void) {
+#if defined(_WIN32)
+    LARGE_INTEGER counter, frequency;
+    QueryPerformanceCounter(&counter);
+    QueryPerformanceFrequency(&frequency);
+    return (uint64_t)((double)counter.QuadPart * 1e9 / (double)frequency.QuadPart);
+#else
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint64_t)now.tv_sec * UINT64_C(1000000000) + (uint64_t)now.tv_nsec;
+#endif
+}
+
+/* The announcement's text, or "" when there is none. The file is small and read whole, without
+ * waiting ([HR-31]). */
+static void rl_read_announcement(char* out, size_t cap) {
+    out[0] = '\0';
+    if (g_rl.announce == NULL) {
+        return;
+    }
+    FILE* file = fopen(g_rl.announce, "rb");
+    if (file == NULL) {
+        return;
+    }
+    size_t n = fread(out, 1, cap - 1, file);
+    fclose(file);
+    out[n] = '\0';
+}
+
+/* The directory part of `path`, with its separator, into `out`. */
+static void rl_directory_of(const char* path, char* out, size_t cap) {
+    const char* slash = strrchr(path, '/');
+#if defined(_WIN32)
+    const char* backslash = strrchr(path, '\\');
+    if (backslash != NULL && (slash == NULL || backslash > slash)) {
+        slash = backslash;
+    }
+#endif
+    size_t length = slash == NULL ? 0 : (size_t)(slash - path) + 1;
+    if (length >= cap) {
+        length = 0;
+    }
+    memcpy(out, path, length);
+    out[length] = '\0';
+}
+
+/* -- loading an image ([HR-4], [HR-8], [ABI-2]) --------------------------------- */
+
+static void rl_report(char* report, size_t cap, const char* format, ...) {
+    size_t used = strlen(report);
+    if (used + 1 >= cap) {
+        return;
+    }
+    va_list args;
+    va_start(args, format);
+    (void)vsnprintf(report + used, cap - used, format, args);
+    va_end(args);
+}
+
+#if defined(_WIN32)
+static const ember_rl_manifest* rl_find_manifest(void* handle, const char* path) {
+    (void)path;
+    const unsigned char* base = (const unsigned char*)handle;
+    const IMAGE_DOS_HEADER* dos = (const IMAGE_DOS_HEADER*)base;
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) {
+        return NULL;
+    }
+    const IMAGE_NT_HEADERS* nt = (const IMAGE_NT_HEADERS*)(base + dos->e_lfanew);
+    const IMAGE_SECTION_HEADER* section = IMAGE_FIRST_SECTION(nt);
+    for (WORD index = 0; index < nt->FileHeader.NumberOfSections; ++index, ++section) {
+        if (strncmp((const char*)section->Name, RL_SECTION_NAME, IMAGE_SIZEOF_SHORT_NAME) == 0) {
+            return (const ember_rl_manifest*)(base + section->VirtualAddress);
+        }
+    }
+    return NULL;
+}
+
+static void* rl_open(const char* path, char* error, size_t cap) {
+    HMODULE handle = LoadLibraryA(path);
+    if (handle == NULL) {
+        snprintf(error, cap, "cannot load `%s` (Windows error %lu)", path, (unsigned long)GetLastError());
+    }
+    return (void*)handle;
+}
+#else
+/* An ELF image's sections are not mapped as such: the manifest's address is its section's address
+ * in the file, read from the section headers, plus where the loader put the image. */
+static const ember_rl_manifest* rl_find_manifest(void* handle, const char* path) {
+    struct link_map* map = NULL;
+    if (dlinfo(handle, RTLD_DI_LINKMAP, &map) != 0 || map == NULL) {
+        return NULL;
+    }
+    FILE* file = fopen(path, "rb");
+    if (file == NULL) {
+        return NULL;
+    }
+    const ember_rl_manifest* found = NULL;
+    Elf64_Ehdr header;
+    Elf64_Shdr* sections = NULL;
+    char* names = NULL;
+    if (fread(&header, sizeof header, 1, file) != 1 || memcmp(header.e_ident, ELFMAG, SELFMAG) != 0
+        || header.e_ident[EI_CLASS] != ELFCLASS64 || header.e_shentsize != sizeof(Elf64_Shdr)
+        || header.e_shstrndx >= header.e_shnum) {
+        goto done;
+    }
+    sections = (Elf64_Shdr*)malloc((size_t)header.e_shnum * sizeof *sections);
+    if (sections == NULL || fseek(file, (long)header.e_shoff, SEEK_SET) != 0
+        || fread(sections, sizeof *sections, header.e_shnum, file) != header.e_shnum) {
+        goto done;
+    }
+    const Elf64_Shdr* strings = &sections[header.e_shstrndx];
+    names = (char*)malloc((size_t)strings->sh_size + 1);
+    if (names == NULL || fseek(file, (long)strings->sh_offset, SEEK_SET) != 0
+        || fread(names, 1, (size_t)strings->sh_size, file) != (size_t)strings->sh_size) {
+        goto done;
+    }
+    names[strings->sh_size] = '\0';
+    for (uint16_t index = 0; index < header.e_shnum; ++index) {
+        if (sections[index].sh_name < strings->sh_size && strcmp(names + sections[index].sh_name, RL_SECTION_NAME) == 0) {
+            found = (const ember_rl_manifest*)(uintptr_t)(map->l_addr + sections[index].sh_addr);
+            break;
+        }
+    }
+done:
+    free(names);
+    free(sections);
+    fclose(file);
+    return found;
+}
+
+static void* rl_open(const char* path, char* error, size_t cap) {
+    void* handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    if (handle == NULL) {
+        const char* why = dlerror();
+        snprintf(error, cap, "cannot load `%s`: %s", path, why != NULL ? why : "unknown error");
+    }
+    return handle;
+}
+#endif
+
+/* Load an image and check its manifest; NULL with the reason written to `report`. An image that
+ * loads is never unloaded, refused or not ([HR-4]). */
+static rl_image* rl_load(const char* path, char* report, size_t cap) {
+    char error[600];
+    void* handle = rl_open(path, error, sizeof error);
+    if (handle == NULL) {
+        rl_report(report, cap, "%s\n", error);
+        return NULL;
+    }
+    const ember_rl_manifest* manifest = rl_find_manifest(handle, path);
+    if (manifest == NULL || manifest->magic != EMBER_RELOAD_MAGIC) {
+        rl_report(report, cap, "error[E9037]: `%s` carries no reload manifest [ABI-2]\n", path);
+        return NULL;
+    }
+    if (manifest->protocol != EMBER_RELOAD_PROTOCOL || manifest->size != sizeof *manifest) {
+        rl_report(report, cap,
+                  "error[E9037]: `%s` was built for hot-reload protocol %u, and this runtime speaks %u [ABI-2]\n",
+                  path, (unsigned)manifest->protocol, (unsigned)EMBER_RELOAD_PROTOCOL);
+        return NULL;
+    }
+    if (manifest->header_bytes != RL_HEADER_BYTES) {
+        rl_report(report, cap,
+                  "error[E9035]: `%s` was built for a %u-byte object header, and this process uses %u [HR-12a]\n",
+                  path, (unsigned)manifest->header_bytes, RL_HEADER_BYTES);
+        return NULL;
+    }
+    if (g_rl.image_count == g_rl.image_cap) {
+        size_t cap_images = g_rl.image_cap == 0 ? 8 : g_rl.image_cap * 2;
+        rl_image* images = (rl_image*)realloc(g_rl.images, cap_images * sizeof *images);
+        if (images == NULL) {
+            rl_report(report, cap, "out of memory loading `%s`\n", path);
+            return NULL;
+        }
+        g_rl.images = images;
+        g_rl.image_cap = cap_images;
+    }
+    rl_image* image = &g_rl.images[g_rl.image_count++];
+    image->handle = handle;
+    image->manifest = manifest;
+    image->path = rl_strdup(path);
+    return image;
+}
+
+/* -- plan ([HR-2a], [HR-15b]) -------------------------------------------------
+ *
+ * Plan reads schemas and the registry and runs no user code. Every refusal is decided here, before
+ * prepare runs, and each names the function, static or type and the change ([HR-18]). */
+
+static const ember_rl_fn* rl_find_fn(const ember_rl_manifest* manifest, const char* name) {
+    for (uint32_t index = 0; index < manifest->fn_count; ++index) {
+        if (strcmp(manifest->fns[index].name, name) == 0) {
+            return &manifest->fns[index];
+        }
+    }
+    return NULL;
+}
+
+/* Whether `next` can replace what runs now. `checkpoint` is a poll from inside the program
+ * (`std.hot.checkpoint()`), where its own frames stay live and run the old code. */
+static bool rl_plan(const ember_rl_manifest* next, bool first, bool checkpoint, char* report, size_t cap) {
+    bool refused = false;
+    if (first) {
+        return true;
+    }
+    bool bodies_only = next->mode == 3u;
+    /* A reloadable function the edit removed keeps its thunk, now a stub; refused when data may
+     * hold the thunk ([HR-7]). */
+    for (size_t index = 0; index < g_rl.slots.cap; ++index) {
+        rl_slot* slot = (rl_slot*)g_rl.slots.items[index];
+        if (slot == NULL || slot->removed) {
+            continue;
+        }
+        const ember_rl_fn* now = rl_find_fn(next, slot->name);
+        if (now == NULL) {
+            if ((slot->flags & EMBER_RL_FN_ADDRESS) != 0) {
+                rl_report(report, cap, "refused: `%s` was removed, but its address may be held, so its thunk stays reachable [HR-7]\n", slot->name);
+                refused = true;
+            }
+            continue;
+        }
+        if ((now->flags & (EMBER_RL_FN_RELOADABLE | EMBER_RL_FN_NORELOAD)) != (slot->flags & (EMBER_RL_FN_RELOADABLE | EMBER_RL_FN_NORELOAD))) {
+            rl_report(report, cap, "refused: `%s` changed between reloadable and `@noreload`, which needs a restart [HR-10]\n", slot->name);
+            refused = true;
+            continue;
+        }
+        if ((slot->flags & EMBER_RL_FN_NORELOAD) != 0) {
+            if (now->body_hash != slot->body_hash) {
+                rl_report(report, cap, "refused: the body of `@noreload` function `%s` changed, which needs a restart [HR-10]\n", slot->name);
+                refused = true;
+            }
+            continue;
+        }
+        if (now->signature != slot->signature
+            && (bodies_only || checkpoint || (slot->flags & EMBER_RL_FN_ADDRESS) != 0 || (now->flags & EMBER_RL_FN_ADDRESS) != 0)) {
+            rl_report(report, cap, "refused: the signature of `%s` changed%s [HR-19]\n", slot->name,
+                      bodies_only ? ", and `reload = \"bodies\"` admits only body changes"
+                      : checkpoint ? " while frames of the old code are live at this checkpoint"
+                      : ", and its address may be held with the old one");
+            refused = true;
+        }
+    }
+    /* [HR-17], [HR-17a] A static keeps its value while its type and initialiser are unchanged;
+     * an edited initialiser is refused unless the static is `@reinit_on_reload`. */
+    for (uint32_t index = 0; index < next->static_count; ++index) {
+        const ember_rl_static* edited = &next->statics[index];
+        const rl_static* kept = (const rl_static*)rl_table_get(&g_rl.statics, edited->name);
+        if (kept == NULL) {
+            continue;
+        }
+        if (kept->type_schema != edited->type_schema) {
+            rl_report(report, cap, "refused: the type of static `%s` changed [HR-17]\n", edited->name);
+            refused = true;
+        } else if (kept->initialiser != edited->initialiser && (edited->flags & EMBER_RL_STATIC_REINIT) == 0) {
+            rl_report(report, cap, "refused: the initialiser of static `%s` changed; mark it `@reinit_on_reload` to run the new one and discard its value [HR-17a]\n", edited->name);
+            refused = true;
+        }
+    }
+    /* A type whose schema or method tables changed needs its instances migrated or given new type
+     * information, which this tier does not do ([HR-19]). */
+    for (uint32_t index = 0; index < next->type_count; ++index) {
+        const ember_rl_type* edited = &next->types[index];
+        const rl_type* kept = (const rl_type*)rl_table_get(&g_rl.types, edited->name);
+        if (kept == NULL || kept->schema == NULL) {
+            continue;
+        }
+        if (kept->schema->schema != edited->schema) {
+            rl_report(report, cap, "refused: the layout of `%s` changed, and %s [HR-19]\n", edited->name,
+                      bodies_only ? "`reload = \"bodies\"` admits only body changes"
+                      : checkpoint ? "instances do not migrate while frames of the old code are live at a checkpoint"
+                      : "migrating instances is not built yet");
+            refused = true;
+        } else if (kept->schema->methods != edited->methods) {
+            rl_report(report, cap, "refused: the methods of `%s` changed their table, and %s [HR-19]\n", edited->name,
+                      bodies_only ? "`reload = \"bodies\"` admits only body changes" : "giving instances new type information is not built yet");
+            refused = true;
+        }
+    }
+    return !refused;
+}
+
+/* -- prepare, commit, reclaim ([HR-2], [HR-2a]) --------------------------------
+ *
+ * Prepare reserves everything commit writes: a slot for each new function, storage for each new
+ * static, the new image's tables. A failure releases what it made and changes nothing else.
+ * Commit performs only pointer stores into memory prepare reserved, then publishes with one
+ * release store ([HR-42]). */
+
+typedef struct rl_pending {
+    rl_slot** new_slots;
+    size_t new_slot_count;
+    rl_static** new_statics;
+    size_t new_static_count;
+    rl_type** new_types;
+    size_t new_type_count;
+    void** reinit;         /* statics to initialise again: (rl_static*, drop) pairs */
+    size_t reinit_count;
+} rl_pending;
+
+static void rl_pending_free(rl_pending* pending, bool keep) {
+    if (!keep) {
+        for (size_t index = 0; index < pending->new_slot_count; ++index) {
+            free(pending->new_slots[index]->name);
+            free(pending->new_slots[index]);
+        }
+        for (size_t index = 0; index < pending->new_static_count; ++index) {
+            free(pending->new_statics[index]->name);
+            free(pending->new_statics[index]->data);
+            free(pending->new_statics[index]);
+        }
+        for (size_t index = 0; index < pending->new_type_count; ++index) {
+            free(pending->new_types[index]->name);
+            free(pending->new_types[index]);
+        }
+    }
+    free(pending->new_slots);
+    free(pending->new_statics);
+    free(pending->new_types);
+    free(pending->reinit);
+    memset(pending, 0, sizeof *pending);
+}
+
+static void* rl_aligned_zero(uint32_t size, uint32_t align) {
+    size_t bytes = size == 0 ? 1 : size;
+    (void)align;
+    /* calloc's alignment is that of max_align_t, which every Ember type but an over-aligned one
+     * meets; statics of those are refused at compile time. */
+    return calloc(1, bytes);
+}
+
+static bool rl_prepare(const ember_rl_manifest* next, rl_pending* pending, char* report, size_t cap) {
+    pending->new_slots = (rl_slot**)calloc(next->fn_count + 1, sizeof(rl_slot*));
+    pending->new_statics = (rl_static**)calloc(next->static_count + 1, sizeof(rl_static*));
+    pending->new_types = (rl_type**)calloc(next->type_count + 1, sizeof(rl_type*));
+    pending->reinit = (void**)calloc(next->static_count + 1, sizeof(void*));
+    if (pending->new_slots == NULL || pending->new_statics == NULL || pending->new_types == NULL || pending->reinit == NULL) {
+        rl_report(report, cap, "refused: out of memory preparing the reload\n");
+        return false;
+    }
+    for (uint32_t index = 0; index < next->fn_count; ++index) {
+        const ember_rl_fn* fn = &next->fns[index];
+        if (rl_table_get(&g_rl.slots, fn->name) != NULL) {
+            continue;
+        }
+        rl_slot* slot = (rl_slot*)calloc(1, sizeof *slot);
+        char* name = rl_strdup(fn->name);
+        if (slot == NULL || name == NULL) {
+            free(slot);
+            free(name);
+            rl_report(report, cap, "refused: out of memory preparing the reload\n");
+            return false;
+        }
+        slot->name = name;
+        slot->thunk = (void*)fn->thunk;
+        pending->new_slots[pending->new_slot_count++] = slot;
+    }
+    for (uint32_t index = 0; index < next->static_count; ++index) {
+        const ember_rl_static* edited = &next->statics[index];
+        rl_static* kept = (rl_static*)rl_table_get(&g_rl.statics, edited->name);
+        if (kept != NULL) {
+            if (kept->initialiser != edited->initialiser) {
+                pending->reinit[pending->reinit_count++] = kept;
+            }
+            continue;
+        }
+        rl_static* made = (rl_static*)calloc(1, sizeof *made);
+        char* name = rl_strdup(edited->name);
+        void* data = rl_aligned_zero(edited->size, edited->align);
+        if (made == NULL || name == NULL || data == NULL) {
+            free(made);
+            free(name);
+            free(data);
+            rl_report(report, cap, "refused: out of memory preparing the reload\n");
+            return false;
+        }
+        made->name = name;
+        made->data = data;
+        made->size = edited->size;
+        made->align = edited->align;
+        made->type_schema = edited->type_schema;
+        made->initialiser = edited->initialiser;
+        made->flags = edited->flags;
+        /* [STA-3] A constant static starts as the image's data and needs no initialisation. */
+        if ((edited->flags & EMBER_RL_STATIC_CONSTANT) != 0 && edited->initial != NULL) {
+            memcpy(data, edited->initial, edited->size);
+            made->state = 2;
+        }
+        pending->new_statics[pending->new_static_count++] = made;
+    }
+    for (uint32_t index = 0; index < next->type_count; ++index) {
+        const ember_rl_type* type = &next->types[index];
+        if (rl_table_get(&g_rl.types, type->name) != NULL) {
+            continue;
+        }
+        rl_type* made = (rl_type*)calloc(1, sizeof *made);
+        char* name = rl_strdup(type->name);
+        if (made == NULL || name == NULL) {
+            free(made);
+            free(name);
+            rl_report(report, cap, "refused: out of memory preparing the reload\n");
+            return false;
+        }
+        made->name = name;
+        made->canonical = type->identity;
+        pending->new_types[pending->new_type_count++] = made;
+    }
+    /* Room in every table commit adds to: commit itself allocates nothing ([HR-2]). */
+    rl_table* tables[] = { &g_rl.slots, &g_rl.statics, &g_rl.types, &g_rl.identities };
+    size_t adding[] = { pending->new_slot_count, pending->new_static_count, pending->new_type_count, next->identity_count };
+    for (size_t index = 0; index < 4; ++index) {
+        rl_table* table = tables[index];
+        while ((table->used + adding[index] + 1) * 2 > table->cap) {
+            size_t cap_items = table->cap == 0 ? 64 : table->cap * 2;
+            void** items = (void**)calloc(cap_items, sizeof *items);
+            if (items == NULL) {
+                rl_report(report, cap, "refused: out of memory preparing the reload\n");
+                return false;
+            }
+            for (size_t at = 0; at < table->cap; ++at) {
+                void* old = table->items[at];
+                if (old == NULL) {
+                    continue;
+                }
+                size_t to = (size_t)rl_hash_name(*(char* const*)old) & (cap_items - 1);
+                while (items[to] != NULL) {
+                    to = (to + 1) & (cap_items - 1);
+                }
+                items[to] = old;
+            }
+            free(table->items);
+            table->items = items;
+            table->cap = cap_items;
+        }
+    }
+    /* The new image's own tables are its alone until commit: its statics' storage and the
+     * identities of its types and interfaces. */
+    for (uint32_t index = 0; index < next->static_count; ++index) {
+        const ember_rl_static* edited = &next->statics[index];
+        rl_static* kept = (rl_static*)rl_table_get(&g_rl.statics, edited->name);
+        if (kept == NULL) {
+            for (size_t made = 0; made < pending->new_static_count; ++made) {
+                if (strcmp(pending->new_statics[made]->name, edited->name) == 0) {
+                    kept = pending->new_statics[made];
+                }
+            }
+        }
+        next->static_data[index] = kept->data;
+        next->static_state[index] = &kept->state;
+    }
+    for (uint32_t index = 0; index < next->identity_count; ++index) {
+        ember_rl_identity* identity = next->identities[index];
+        const ember_rl_identity* known = NULL;
+        void* found = rl_table_get(&g_rl.identities, identity->name);
+        if (found != NULL) {
+            known = (const ember_rl_identity*)found;
+        }
+        identity->canonical = known != NULL ? known->canonical : identity;
+    }
+    return true;
+}
+
+static void rl_commit(const ember_rl_manifest* next, rl_pending* pending) {
+    for (size_t index = 0; index < pending->new_slot_count; ++index) {
+        (void)rl_table_put(&g_rl.slots, pending->new_slots[index]);
+    }
+    for (size_t index = 0; index < pending->new_static_count; ++index) {
+        (void)rl_table_put(&g_rl.statics, pending->new_statics[index]);
+    }
+    for (size_t index = 0; index < pending->new_type_count; ++index) {
+        (void)rl_table_put(&g_rl.types, pending->new_types[index]);
+    }
+    for (uint32_t index = 0; index < next->identity_count; ++index) {
+        ember_rl_identity* identity = next->identities[index];
+        if (identity->canonical == identity) {
+            (void)rl_table_put(&g_rl.identities, identity);
+        }
+    }
+    for (uint32_t index = 0; index < next->type_count; ++index) {
+        rl_type* type = (rl_type*)rl_table_get(&g_rl.types, next->types[index].name);
+        type->schema = &next->types[index];
+    }
+    /* Each slot's current definition is the new image's; a slot it does not define is removed. */
+    for (size_t index = 0; index < g_rl.slots.cap; ++index) {
+        rl_slot* slot = (rl_slot*)g_rl.slots.items[index];
+        if (slot == NULL) {
+            continue;
+        }
+        const ember_rl_fn* fn = rl_find_fn(next, slot->name);
+        if (fn == NULL) {
+            if (!slot->removed) {
+                slot->removed = true;
+                slot->target = rl_stub_for(slot->name);
+            }
+            continue;
+        }
+        slot->removed = false;
+        slot->target = fn->body != NULL ? (void*)fn->body : NULL;
+        slot->signature = fn->signature;
+        slot->body_hash = fn->body_hash;
+        slot->flags = fn->flags;
+    }
+    /* [HR-6] Every image's copy of the call table, and the permanent thunks. */
+    for (size_t at = 0; at < g_rl.image_count; ++at) {
+        const ember_rl_manifest* manifest = g_rl.images[at].manifest;
+        for (uint32_t index = 0; index < manifest->fn_count; ++index) {
+            const rl_slot* slot = (const rl_slot*)rl_table_get(&g_rl.slots, manifest->fns[index].name);
+            if (slot == NULL || (manifest->fns[index].flags & EMBER_RL_FN_RELOADABLE) == 0) {
+                continue;
+            }
+            manifest->targets[index] = (void (*)(void))slot->target;
+            manifest->addresses[index] = (void (*)(void))slot->thunk;
+        }
+    }
+    /* [HR-17a] A `@reinit_on_reload` static runs its new initialiser on its next access. */
+    for (size_t index = 0; index < pending->reinit_count; ++index) {
+        rl_static* kept = (rl_static*)pending->reinit[index];
+        kept->state = 0;
+    }
+    /* [HR-42] Publish: one release store, which a thread entering Ember code acquires. */
+    RL_STORE_RELEASE(&g_rl_generation, g_rl_generation + 1);
+}
+
+/* -- applying an image ------------------------------------------------------- */
+
+static int rl_apply(const char* path, bool first, bool checkpoint, uint64_t compile_ns) {
+    ember_reload_timings* timings = &g_rl.timings;
+    char* report = timings->report;
+    size_t cap = sizeof timings->report;
+    report[0] = '\0';
+    timings->compile_ns = compile_ns;
+    timings->load_ns = timings->plan_ns = timings->prepare_ns = timings->commit_ns = timings->reclaim_ns = 0;
+    timings->instances_migrated = 0;
+    uint64_t start = rl_now_ns();
+    rl_image* image = rl_load(path, report, cap);
+    uint64_t loaded = rl_now_ns();
+    timings->load_ns = loaded - start;
+    if (image == NULL) {
+        timings->refusals += 1;
+        timings->last_result = EMBER_RELOAD_FAILED;
+        return EMBER_RELOAD_FAILED;
+    }
+    const ember_rl_manifest* next = image->manifest;
+    bool planned = rl_plan(next, first, checkpoint, report, cap);
+    uint64_t planned_at = rl_now_ns();
+    timings->plan_ns = planned_at - loaded;
+    rl_pending pending;
+    memset(&pending, 0, sizeof pending);
+    bool prepared = planned && rl_prepare(next, &pending, report, cap);
+    uint64_t prepared_at = rl_now_ns();
+    timings->prepare_ns = prepared_at - planned_at;
+    if (!prepared) {
+        /* [HR-18a] Nothing of the new image is live. */
+        rl_pending_free(&pending, false);
+        timings->refusals += 1;
+        timings->last_result = EMBER_RELOAD_REFUSED;
+        return EMBER_RELOAD_REFUSED;
+    }
+    rl_commit(next, &pending);
+    uint64_t committed = rl_now_ns();
+    timings->commit_ns = committed - prepared_at;
+    rl_pending_free(&pending, true);
+    timings->reclaim_ns = rl_now_ns() - committed;
+    if (!first) {
+        timings->reloads += 1;
+    }
+    timings->last_result = EMBER_RELOAD_APPLIED;
+    return EMBER_RELOAD_APPLIED;
+}
+
+/* A new announcement names an image not tried yet: its file (relative to the announcement's
+ * directory) on the first line, the build's time in nanoseconds on the second. */
+static int rl_poll(bool checkpoint) {
+    if (!g_rl.active) {
+        return EMBER_RELOAD_DISABLED;
+    }
+    char text[512];
+    rl_read_announcement(text, sizeof text);
+    if (text[0] == '\0' || strcmp(text, g_rl.last_announcement) == 0) {
+        return EMBER_RELOAD_IDLE;
+    }
+    /* [HR-3] Applied only when no registered thread is in Ember code; a checkpoint's own thread
+     * may be in it once, the activation calling it. */
+    if (!rl_threads_quiet(checkpoint ? 1u : 0u)) {
+        return EMBER_RELOAD_UNSAFE_POINT;
+    }
+    memcpy(g_rl.last_announcement, text, sizeof text);
+    uint64_t compile_ns = 0;
+    char* line_end = strpbrk(text, "\r\n");
+    if (line_end != NULL) {
+        compile_ns = strtoull(line_end + strspn(line_end, "\r\n"), NULL, 10);
+        *line_end = '\0';
+    }
+    char path[1024];
+    rl_directory_of(g_rl.announce, path, sizeof path);
+    size_t used = strlen(path);
+    snprintf(path + used, sizeof path - used, "%s", text);
+    int result = rl_apply(path, false, checkpoint, compile_ns);
+    if (result != EMBER_RELOAD_APPLIED && (g_rl.flags & 1u) == 0) {
+        fprintf(stderr, "ember: hot reload of `%s` %s:\n%s", text,
+                result == EMBER_RELOAD_FAILED ? "failed" : "refused; the old code runs on", g_rl.timings.report);
+        fflush(stderr);
+    }
+    return result;
+}
+
+int ember_reload_init_v1(const ember_reload_config* config) {
+    if (g_rl.active) {
+        return 0;
+    }
+    ember_reload_config settings;
+    memset(&settings, 0, sizeof settings);
+    if (config != NULL) {
+        size_t known = config->size < sizeof settings ? config->size : sizeof settings;
+        memcpy(&settings, config, known);
+    }
+    if (settings.image == NULL) {
+        return EMBER_RELOAD_FAILED;
+    }
+    g_rl.timings.size = sizeof g_rl.timings;
+    g_rl.flags = settings.flags;
+    g_rl.announce = settings.announce != NULL ? rl_strdup(settings.announce) : NULL;
+    rl_register_thread();
+    /* A full build removes the announcement, so one already there names an image built after the
+     * first: the first poll applies it. */
+    int result = rl_apply(settings.image, true, false, 0);
+    if (result != EMBER_RELOAD_APPLIED) {
+        fprintf(stderr, "ember: cannot start `%s`:\n%s", settings.image, g_rl.timings.report);
+        return result;
+    }
+    g_rl.active = true;
+    return 0;
+}
+
+int ember_reload_poll(void) { return rl_poll(false); }
+
+int ember_reload_checkpoint(void) { return rl_poll(true); }
+
+const ember_reload_timings* ember_reload_stats(void) { return &g_rl.timings; }
+
+void ember_reload_shutdown(void) {
+    g_rl.active = false;
+}
+
+int ember_reload_host_main(int argc, char** argv, const char* package) {
+    char exe[1024];
+#if defined(_WIN32)
+    DWORD length = GetModuleFileNameA(NULL, exe, (DWORD)sizeof exe);
+    if (length == 0 || length >= sizeof exe) {
+        fputs("ember: cannot find the program's own path\n", stderr);
+        return 101;
+    }
+    const char* extension = "dll";
+#else
+    ssize_t length = readlink("/proc/self/exe", exe, sizeof exe - 1);
+    if (length <= 0) {
+        fputs("ember: cannot find the program's own path\n", stderr);
+        return 101;
+    }
+    exe[length] = '\0';
+    const char* extension = "so";
+#endif
+    char directory[1024];
+    char image[1100];
+    char announce[1100];
+    rl_directory_of(exe, directory, sizeof directory);
+    snprintf(image, sizeof image, "%s%s.image.0.%s", directory, package, extension);
+    snprintf(announce, sizeof announce, "%s%s.reload", directory, package);
+    ember_reload_config config = { sizeof config, image, announce, 0 };
+    if (ember_reload_init(&config) != 0) {
+        return 101;
+    }
+    const ember_rl_manifest* manifest = g_rl.images[0].manifest;
+    if (manifest->entry == NULL) {
+        fprintf(stderr, "ember: `%s` has no `main`\n", image);
+        return 101;
+    }
+    ember_reload_enter();
+    int status = manifest->entry(argc, argv);
+    ember_reload_leave();
+    return status;
+}
+
+#endif

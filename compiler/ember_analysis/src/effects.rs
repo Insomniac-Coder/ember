@@ -1087,6 +1087,8 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         },
         // `[DET-2]` — the system random source (`RandomState`'s seed).
         B::ProcessKey => (Effects::NONDET, "the process's random hash key"),
+        // A reload loads a library, allocates and may run `migrate_from` and `drop` code.
+        B::HotCheckpoint => (Effects::ALLOC | Effects::IO | Effects::NONDET, "`std.hot.checkpoint`"),
         B::ViewsOverlap { .. } | B::TotalLess | B::FloatAbs | B::IntOverflowing(_) | B::IntBits(_)
         | B::RangeCount | B::StrCharCount | B::StrStartsWith | B::StrEndsWith | B::StrFind { .. }
         | B::StrSplitOnce { .. } | B::StrCount | B::StrTrimStart | B::StrTrimEnd | B::StrSliceOk

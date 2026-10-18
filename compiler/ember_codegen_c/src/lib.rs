@@ -28,6 +28,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod header;
 mod integer_reduction;
+mod reload;
+
+pub use reload::{ReloadImage, manifest_symbol};
 
 pub struct Output {
     /// The single translation unit for this module.
@@ -257,7 +260,7 @@ pub struct ComptimeRoot {
 /// and prints its value (`ComptimeRoot`), within the step and heap limits its
 /// second and third arguments give.
 pub fn emit_comptime(mir: VerifiedMir<'_>, map: &SourceMap, roots: Vec<ComptimeRoot>, for_msvc: bool) -> Output {
-    emit_with(mir, map, "comptime", "comptime", false, false, false, for_msvc, Some(roots), None)
+    emit_with(mir, map, "comptime", "comptime", false, false, false, for_msvc, Some(roots), None, None)
 }
 
 /// `[TST-3]` — the line a test binary writes to standard error when its test
@@ -285,8 +288,9 @@ pub fn emit(
     library_mode: bool,
     for_msvc: bool,
     tests: Option<Vec<String>>,
+    reload: Option<&ReloadImage>,
 ) -> Output {
-    emit_with(mir, map, module_name, package_name, has_main, leak_check, library_mode, for_msvc, None, tests)
+    emit_with(mir, map, module_name, package_name, has_main, leak_check, library_mode, for_msvc, None, tests, reload)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -301,9 +305,22 @@ fn emit_with(
     for_msvc: bool,
     comptime: Option<Vec<ComptimeRoot>>,
     tests: Option<Vec<String>>,
+    reload: Option<&ReloadImage>,
 ) -> Output {
     let bodies = mir.bodies();
     let types = mir.types();
+    // `[STA-3]` — every static initialised on first access, by its
+    // initialiser's symbol: declared in each unit, defined in the main one.
+    let lazy_statics: BTreeMap<String, (Ty, String)> = bodies
+        .iter()
+        .flat_map(|body| &body.blocks)
+        .filter_map(|block| match &block.terminator {
+            Terminator::Call { func: FuncRef::Builtin { which: Builtin::LazyStatic { name, init, ty }, .. }, .. } => {
+                Some((init.to_string(), (*ty, name.to_string())))
+            }
+            _ => None,
+        })
+        .collect();
     let modes: BTreeSet<FpMode> = bodies
         .iter()
         .filter(|body| !body.is_abstract && !body.is_extern_declaration && body.fp != FpMode::Strict)
@@ -347,7 +364,14 @@ fn emit_with(
         folded_refs: BTreeMap::new(),
         folded_aggregates: BTreeMap::new(),
         inline_sizes: inline_sizes(bodies),
-        inline_bodies: if split { BTreeMap::new() } else { inline_bodies(bodies, types) },
+        // `[HR-9a]` — a reloadable function is never inlined: the C compiler sees only its thunk.
+        inline_bodies: if split {
+            BTreeMap::new()
+        } else {
+            let mut inline = inline_bodies(bodies, types);
+            inline.retain(|symbol, _| !reload.is_some_and(|reload| reload.reloadable.contains(symbol)));
+            inline
+        },
         view_pointers: BTreeMap::new(),
         parted_views: BTreeSet::new(),
         addressed_locals: BTreeSet::new(),
@@ -370,7 +394,14 @@ fn emit_with(
                 (body.symbol.clone(), views)
             })
             .collect(),
-        split_views: if library_mode { BTreeMap::new() } else { split_view_params(bodies, types) },
+        split_views: if library_mode {
+            BTreeMap::new()
+        } else {
+            // A reloadable function's body is named by the reload manifest, not only called.
+            let mut split = split_view_params(bodies, types);
+            split.retain(|symbol, _| !reload.is_some_and(|reload| reload.reloadable.contains(symbol)));
+            split
+        },
         ffi_export_value_params: bodies
             .iter()
             .filter(|body| body.abi.as_deref() == Some("C") && !body.is_extern_declaration)
@@ -398,6 +429,10 @@ fn emit_with(
         fmt_fns: std::cell::RefCell::new(Vec::new()),
         fmt_prints: std::cell::RefCell::new(Vec::new()),
         fmt_specs: std::cell::RefCell::new(Vec::new()),
+        reload: reload.cloned(),
+        reload_slots: BTreeMap::new(),
+        reload_interface_ids: std::cell::RefCell::new(BTreeSet::new()),
+        lazy_statics: lazy_statics.clone(),
         array_helpers: std::cell::RefCell::new(Vec::new()),
         clone_fns: bodies
             .iter()
@@ -417,18 +452,6 @@ fn emit_with(
             .collect(),
     }
     };
-    // `[STA-3]` — every static initialised on first access, by its
-    // initialiser's symbol: declared in each unit, defined in the main one.
-    let lazy_statics: BTreeMap<String, (Ty, String)> = bodies
-        .iter()
-        .flat_map(|body| &body.blocks)
-        .filter_map(|block| match &block.terminator {
-            Terminator::Call { func: FuncRef::Builtin { which: Builtin::LazyStatic { name, init, ty }, .. }, .. } => {
-                Some((init.to_string(), (*ty, name.to_string())))
-            }
-            _ => None,
-        })
-        .collect();
     let write = |emitter: &mut Emitter<'_>| {
         emitter.collect_native_fn_values(bodies);
         emitter.emit_module(bodies, module_name, has_main, leak_check);
@@ -729,6 +752,14 @@ struct Emitter<'a> {
     /// And those formatted with a spec after `!r`/`!s`, whose wrapper pads
     /// the text the conversion made.
     fmt_specs: std::cell::RefCell<Vec<Ty>>,
+    /// Annex B — a reloadable image's functions, statics and mode (`reload.rs`).
+    reload: Option<ReloadImage>,
+    /// Each function the reload manifest lists, by symbol, with its index in the image's tables.
+    reload_slots: BTreeMap<String, usize>,
+    /// The interface identities a reloadable image defines.
+    reload_interface_ids: std::cell::RefCell<BTreeSet<String>>,
+    /// `[STA-3]` — the statics initialised on first access, by initialiser symbol.
+    lazy_statics: BTreeMap<String, (Ty, String)>,
 }
 
 struct NativeFnValue {
@@ -1046,6 +1077,7 @@ impl Emitter<'_> {
             self.line(COMPTIME_PRELUDE);
         }
 
+        self.plan_reload_slots(bodies);
         self.emit_type_declarations();
         self.line(FOREIGN_STATIC_DECLARATIONS);
         self.collect_virtual_methods(bodies);
@@ -1054,6 +1086,7 @@ impl Emitter<'_> {
         self.emit_interface_vtable_types();
         self.emit_payload_zeros(bodies);
         self.emit_prototypes(bodies);
+        self.emit_reload_tables();
         self.emit_native_fn_values(bodies);
         self.line(DROP_GLUE_PROTOTYPES);
         self.line(EQ_FN_PROTOTYPES);
@@ -1102,6 +1135,7 @@ impl Emitter<'_> {
             let named = self.emit_frame_names(bodies, true);
             self.emit_entry_point(leak_check, entry, named);
         }
+        self.emit_reload_manifest(bodies, has_main);
         if let Some(roots) = self.comptime.clone()
             && self.unit.is_none()
         {
@@ -3119,9 +3153,18 @@ impl Emitter<'_> {
         for (interface, methods) in self.interface_layouts.clone() {
             if class_handle_interfaces.contains(&interface) {
                 let id = interface_id_symbol(&interface);
-                match self.shared_definition() {
-                    Some(linkage) => self.line(&format!("{linkage}const uint8_t {id} = UINT8_C(0);")),
-                    None => self.line(&format!("extern const uint8_t {id};")),
+                // Annex B — an identity the runtime makes one across images.
+                if self.reload.is_some() {
+                    match self.shared_definition() {
+                        Some(linkage) => self.line(&format!("{linkage}{RT}rl_identity {id} = {{ {}, NULL }};", c_string_literal(&id))),
+                        None => self.line(&format!("extern {RT}rl_identity {id};")),
+                    }
+                    self.reload_interface_ids.borrow_mut().insert(id);
+                } else {
+                    match self.shared_definition() {
+                        Some(linkage) => self.line(&format!("{linkage}const uint8_t {id} = UINT8_C(0);")),
+                        None => self.line(&format!("extern const uint8_t {id};")),
+                    }
                 }
             }
             let table = ember_branding::vtable(&format!("dyn_{interface}"));
@@ -3649,6 +3692,10 @@ impl Emitter<'_> {
                     format!("&{}", ember_branding::type_info(&name))
                 })
                 .unwrap_or_else(|| "NULL".to_string());
+            let identity = reload::class_identity_symbol(&def.name.to_string());
+            if self.reload.is_some() {
+                self.line(&format!("static {RT}rl_identity {identity} = {{ {}, NULL }};", c_string_literal(&info)));
+            }
             self.line(&format!(
                 "const {} {info} = {{",
                 ember_branding::runtime("type_info")
@@ -3710,6 +3757,9 @@ impl Emitter<'_> {
                     self.line("    NULL,");
                     self.line("    UINT32_C(0)");
                 }
+            }
+            if self.reload.is_some() {
+                self.line(&format!("    , &{identity}"));
             }
             self.line("};");
         }
@@ -4815,6 +4865,13 @@ impl Emitter<'_> {
                 continue;
             }
             let signature = self.signature(body);
+            // `[HR-6]` — a reloadable function's symbol is its thunk; its body has a name of its own.
+            if self.is_reloadable(&body.symbol) {
+                let own = self.reload_body_signature(body);
+                self.line(&format!("{signature};"));
+                self.line(&format!("{own};"));
+                continue;
+            }
             if self.inline_bodies.contains_key(&body.symbol) || body.inline != ember_mir::InlineHint::default() {
                 let linkage = self.linkage(body);
                 self.line(&format!("{linkage}{signature};"));
@@ -5210,6 +5267,12 @@ impl Emitter<'_> {
     /// is the initialisation-cycle panic.
     fn lazy_static_definitions(&self, statics: &BTreeMap<String, (Ty, String)>) -> String {
         let mut out = String::new();
+        if self.reload.is_some() {
+            for (init, (ty, name)) in statics {
+                out.push_str(&self.reload_lazy_static_definition(init, *ty, name));
+            }
+            return out;
+        }
         for (init, (ty, name)) in statics {
             let c_type = self.c_type(*ty);
             let shown = name.rsplit('.').next().unwrap_or(name);
@@ -5242,8 +5305,12 @@ impl Emitter<'_> {
     }
 
     fn emit_body(&mut self, body: &Body) {
-        let signature = self.signature(body);
-        let linkage = self.linkage(body);
+        let reloadable = self.is_reloadable(&body.symbol);
+        if reloadable && self.unit.is_none() {
+            self.emit_thunk(body);
+        }
+        let signature = if reloadable { self.reload_body_signature(body) } else { self.signature(body) };
+        let linkage = if reloadable { String::new() } else { self.linkage(body) };
         self.line(&format!("{linkage}{signature} {{"));
         if self.comptime.is_some() {
             self.line(&format!("    EMBER_CT_ENTER({});", c_string_literal(&body.name)));
@@ -7269,7 +7336,8 @@ impl Emitter<'_> {
                 // can be: called directly, an argument cast where the body's
                 // C type differs from the slot's (the receiver's class), as
                 // the override adapters do.
-                if let Some(method) = self.only_implementation(*receiver, *slot) {
+                // `[HR-9a]` — a reloadable build is never devirtualised: a reload may add an override.
+                if let Some(method) = self.only_implementation(*receiver, *slot).filter(|_| self.reload.is_none()) {
                     let class = self.types.class_def(*receiver);
                     if class.openness != ember_types::ClassOpenness::Final {
                         self.direct_calls.borrow_mut().insert((
@@ -7343,7 +7411,7 @@ impl Emitter<'_> {
                     // adapter, which the C compiler can inline; the table
                     // search stays for any other class (one loaded from
                     // elsewhere, or a reloaded type). The same method runs.
-                    let known = if cached.is_none() && interfaces.len() == 1 {
+                    let known = if cached.is_none() && interfaces.len() == 1 && self.reload.is_none() {
                         self.interface_implementers(&interface.to_string(), *slot)
                     } else {
                         Vec::new()
@@ -7489,6 +7557,10 @@ impl Emitter<'_> {
                     Builtin::LazyStatic { init, .. } => return format!("{init}_static()"),
                     // `[CT-5]` — the constant data `emit_constant_statics` writes.
                     Builtin::ConstStatic { name, ty } => {
+                        // `[HR-4a]` — a reloadable image's statics are the runtime's.
+                        if self.reload.is_some() {
+                            return self.reload_static_access(name.as_str(), *ty);
+                        }
                         return format!("(({}*)&{})", self.c_type(*ty), constant_static_symbol(name.as_str()));
                     }
                     // `[CT-2]` — the evaluator's own (`COMPTIME_PRELUDE`).
@@ -8129,6 +8201,7 @@ impl Emitter<'_> {
                     Builtin::ProcessKey => {
                         return format!("{RT}process_key({})", rendered[0]);
                     }
+                    Builtin::HotCheckpoint => return format!("(void){RT}reload_checkpoint()"),
                     Builtin::StrContainsChar => {
                         return format!("{RT}str_contains_char({}, {})", rendered[0], rendered[1]);
                     }
@@ -9718,7 +9791,12 @@ impl Emitter<'_> {
     /// A `main` that takes `args` or returns a `Result` is called through the
     /// entry the checker writes (`main_entry`), which returns the status.
     fn emit_entry_point(&mut self, leak_check: bool, entry: bool, named: usize) {
-        self.line("int main(int argc, char** argv) {");
+        // Annex B — a reloadable image's entry is the runtime's to call ([HR-33]).
+        if self.reload.is_some() {
+            self.line(&format!("static int {}rl_entry(int argc, char** argv) {{", ember_branding::mangle_prefix()));
+        } else {
+            self.line("int main(int argc, char** argv) {");
+        }
         self.line(&format!("    {RT}rt_config cfg = {RT}rt_config_default();"));
         if leak_check {
             self.line("    cfg.flags |= EMBER_RT_DEBUG_OBJECTS;");

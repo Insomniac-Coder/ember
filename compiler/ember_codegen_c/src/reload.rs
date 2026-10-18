@@ -1,0 +1,498 @@
+//! Annex B — the C of a reloadable image: each reloadable function's body under a name of its own
+//! and a thunk under the function's symbol that loads its target from the image's copy of the call
+//! table (`[HR-5]`, `[HR-6]`); the statics' storage taken from the runtime (`[HR-4a]`); the types'
+//! identities and schemas (`[HR-11]`); and the reload manifest (`[HR-8]`), which the runtime reads
+//! from the image's section and fills in.
+
+use super::*;
+
+/// What the driver decides of a reloadable build, which the backend writes into the image.
+#[derive(Clone, Debug, Default)]
+pub struct ReloadImage {
+    /// `[build] reload`'s mode as the manifest records it: 1 `opt-in`, 2 `all`, 3 `bodies`.
+    pub mode: u32,
+    /// `[HR-12]` — the 40-byte object header with its live-instance list.
+    pub instances: bool,
+    /// The package's name, which the manifest carries.
+    pub package: String,
+    /// `[HR-5]` — every function reached through a thunk, by symbol.
+    pub reloadable: BTreeSet<String>,
+    /// `[HR-10]` — every `@noreload` function, by symbol, with its body's hash.
+    pub noreload: BTreeMap<String, u64>,
+    /// `[HR-17]`, `[HR-17a]` — each static's initialiser's hash and whether it is
+    /// `@reinit_on_reload`, by the static's name.
+    pub statics: BTreeMap<String, (u64, bool)>,
+    /// The package's own source files: the types declared in them have schemas ([HR-11]).
+    pub files: BTreeSet<ember_span::FileId>,
+}
+
+/// The suffix of a reloadable body's own symbol; the function's symbol is its thunk's.
+const BODY_SUFFIX: &str = "__rl";
+
+/// FNV-1a: a schema or signature hash, stable across builds and hosts.
+pub(crate) fn fnv(parts: &[&str]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for part in parts {
+        for byte in part.bytes().chain(std::iter::once(0xff)) {
+            hash = (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    hash
+}
+
+/// The image's own tables and manifest, named from the mangling prefix.
+fn table(name: &str) -> String {
+    format!("{}rl_{name}", ember_branding::mangle_prefix())
+}
+
+/// The manifest's symbol, which the image's link keeps (`[HR-8]`).
+pub fn manifest_symbol() -> String {
+    format!("{}reload_manifest", ember_branding::mangle_prefix())
+}
+
+impl Emitter<'_> {
+    pub(crate) fn is_reloadable(&self, symbol: &str) -> bool {
+        self.reload.as_ref().is_some_and(|reload| reload.reloadable.contains(symbol))
+    }
+
+    /// The manifest's functions, in order: the reloadable ones and the `@noreload` ones, each
+    /// with its index into the image's tables.
+    pub(crate) fn plan_reload_slots(&mut self, bodies: &[Body]) {
+        let Some(reload) = &self.reload else { return };
+        let mut slots = BTreeMap::new();
+        for body in bodies {
+            if (reload.reloadable.contains(&body.symbol) || reload.noreload.contains_key(&body.symbol))
+                && !slots.contains_key(&body.symbol)
+            {
+                let next = slots.len();
+                slots.insert(body.symbol.clone(), next);
+            }
+        }
+        self.reload_slots = slots;
+    }
+
+    /// A body's C parameters, each its type and its name, as `signature` writes them.
+    pub(crate) fn c_params(&self, body: &Body) -> Vec<(String, String)> {
+        let ffi_values = self.ffi_export_value_params.get(&body.symbol);
+        let split = self.split_views.get(&body.symbol);
+        let mut out = Vec::new();
+        for (index, (id, decl)) in body.args().enumerate() {
+            if split.is_some_and(|split| split.get(index) == Some(&true)) {
+                let pointer = match self.types.kind(decl.ty) {
+                    TyKind::Str => "const unsigned char*",
+                    TyKind::Span { mutable: true, .. } => "void*",
+                    _ => "const void*",
+                };
+                out.push((pointer.to_string(), format!("_{}_p", id.0)));
+                out.push(("size_t".to_string(), format!("_{}_n", id.0)));
+            } else if ffi_values.is_some_and(|values| values.get(index) == Some(&true)) {
+                let TyKind::Ref { inner, .. } = self.types.kind(decl.ty) else { unreachable!() };
+                out.push((self.c_member_type(*inner), format!("_ffi{}", id.0)));
+            } else {
+                out.push((self.c_member_type(decl.ty), format!("_{}", id.0)));
+            }
+        }
+        out
+    }
+
+    /// The symbol a reloadable body is defined under.
+    pub(crate) fn reload_body_symbol(symbol: &str) -> String {
+        format!("{symbol}{BODY_SUFFIX}")
+    }
+
+    /// A body's signature under its own symbol.
+    pub(crate) fn reload_body_signature(&self, body: &Body) -> String {
+        let signature = self.signature(body);
+        let named = format!(" {}(", body.symbol);
+        assert!(signature.contains(&named), "a signature names its function");
+        signature.replacen(&named, &format!(" {}(", Self::reload_body_symbol(&body.symbol)), 1)
+    }
+
+    /// The image's tables, declared before any thunk reads them.
+    pub(crate) fn emit_reload_tables(&mut self) {
+        if self.reload.is_none() {
+            return;
+        }
+        let count = self.reload_slots.len().max(1);
+        let statics = self.reload_static_names().len().max(1);
+        match self.shared_definition() {
+            Some(linkage) => {
+                self.line(&format!("{linkage}void (*{}[{count}])(void);", table("targets")));
+                self.line(&format!("{linkage}void (*{}[{count}])(void);", table("addresses")));
+                self.line(&format!("{linkage}void* {}[{statics}];", table("static_data")));
+                self.line(&format!("{linkage}uint32_t* {}[{statics}];", table("static_state")));
+            }
+            None => {
+                self.line(&format!("extern void (*{}[{count}])(void);", table("targets")));
+                self.line(&format!("extern void (*{}[{count}])(void);", table("addresses")));
+                self.line(&format!("extern void* {}[{statics}];", table("static_data")));
+                self.line(&format!("extern uint32_t* {}[{statics}];", table("static_state")));
+            }
+        }
+        self.line("");
+    }
+
+    /// `[HR-6]` — the thunk: the function's own symbol, which loads the current target from the
+    /// image's copy of the call table and calls it, a tail call the C compiler makes a jump.
+    pub(crate) fn emit_thunk(&mut self, body: &Body) {
+        let Some(&index) = self.reload_slots.get(&body.symbol) else { return };
+        let ret = self.c_type(body.return_ty());
+        let params = self.c_params(body);
+        let declared = if params.is_empty() {
+            "void".to_string()
+        } else {
+            params.iter().map(|(ty, name)| format!("{ty} {name}")).collect::<Vec<_>>().join(", ")
+        };
+        let types = if params.is_empty() {
+            "void".to_string()
+        } else {
+            params.iter().map(|(ty, _)| ty.clone()).collect::<Vec<_>>().join(", ")
+        };
+        let names = params.iter().map(|(_, name)| name.clone()).collect::<Vec<_>>().join(", ");
+        let call = format!("(({ret} (*)({types})){}[{index}])({names})", table("targets"));
+        self.line(&format!("/* [HR-6] the thunk of `{}` */", body.name.replace("*/", "* /")));
+        self.line(&format!("{ret} {}({declared}) {{", body.symbol));
+        if self.is_void(body.return_ty()) {
+            self.line(&format!("    {call};"));
+        } else {
+            self.line(&format!("    return {call};"));
+        }
+        self.line("}");
+        self.line("");
+    }
+
+    /// The statics the image keeps in the runtime's storage, by name, each with its type and,
+    /// for a lazily initialised one, its initialiser's symbol.
+    pub(crate) fn reload_static_names(&self) -> Vec<(String, Ty, Option<String>)> {
+        let mut out: Vec<(String, Ty, Option<String>)> = self
+            .types
+            .constant_statics()
+            .iter()
+            .map(|(name, ty, _)| (name.to_string(), *ty, None))
+            .collect();
+        out.extend(self.lazy_statics.iter().map(|(init, (ty, name))| (name.clone(), *ty, Some(init.clone()))));
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out.dedup_by(|a, b| a.0 == b.0);
+        out
+    }
+
+    pub(crate) fn reload_static_index(&self, name: &str) -> usize {
+        self.reload_static_names().iter().position(|(known, _, _)| known == name).expect("a static of this image")
+    }
+
+    /// `[HR-4a]` — a static's storage and state, the runtime's.
+    pub(crate) fn reload_static_access(&self, name: &str, ty: Ty) -> String {
+        format!("(({}*){}[{}])", self.c_type(ty), table("static_data"), self.reload_static_index(name))
+    }
+
+    /// `[STA-3]`'s accessor in a reloadable image: the storage and the state word are the
+    /// runtime's, found by the static's name, so a reload keeps the value ([HR-17]).
+    pub(crate) fn reload_lazy_static_definition(&self, init: &str, ty: Ty, name: &str) -> String {
+        let c_type = self.c_type(ty);
+        let shown = name.rsplit('.').next().unwrap_or(name);
+        let index = self.reload_static_index(name);
+        format!(
+            "\n{c_type}* {init}_static(void) {{\n    {c_type}* storage = ({c_type}*){data}[{index}];\n    if ({rt}rt_static_begin({state}[{index}], \"{shown}\")) {{\n        *storage = {init}();\n        {rt}rt_static_end({state}[{index}]);\n    }}\n    return storage;\n}}\n",
+            data = table("static_data"),
+            state = table("static_state"),
+            rt = RT,
+        )
+    }
+
+    /// A type's schema hash ([HR-11]): its kind, name, layout and each field's or variant's name
+    /// and schema, so equal hashes mean nothing to migrate. A type met again inside itself (behind
+    /// a pointer) counts by its name.
+    pub(crate) fn type_schema(&self, ty: Ty, seen: &mut Vec<Ty>) -> u64 {
+        if seen.contains(&ty) {
+            return fnv(&["again", &self.types.display(ty)]);
+        }
+        seen.push(ty);
+        let hash = match self.types.kind(ty) {
+            TyKind::Struct(id) => {
+                let def = self.types.struct_def(*id);
+                let mut parts = vec!["struct".to_string(), def.name.to_string()];
+                for field in &def.fields {
+                    parts.push(field.name.to_string());
+                    parts.push(self.type_schema(field.ty, seen).to_string());
+                }
+                fnv(&parts.iter().map(String::as_str).collect::<Vec<_>>())
+            }
+            TyKind::Enum(id) => {
+                let def = self.types.enum_def(*id);
+                let mut parts = vec!["enum".to_string(), def.name.to_string(), self.types.display(def.repr)];
+                for variant in &def.variants {
+                    parts.push(variant.name.to_string());
+                    for field in &variant.fields {
+                        parts.push(field.name.to_string());
+                        parts.push(self.type_schema(field.ty, seen).to_string());
+                    }
+                }
+                fnv(&parts.iter().map(String::as_str).collect::<Vec<_>>())
+            }
+            TyKind::Class(id) => {
+                let mut parts = vec!["class".to_string(), self.types.class_def(*id).name.to_string()];
+                if let Some(base) = self.types.class_def(*id).base {
+                    parts.push(self.types.class_def(base).name.to_string());
+                }
+                for index in 0..self.types.class_field_count(*id) {
+                    if let Some(field) = self.types.class_field_at(*id, index) {
+                        parts.push(field.name.to_string());
+                        parts.push(self.type_schema(field.ty, seen).to_string());
+                    }
+                }
+                fnv(&parts.iter().map(String::as_str).collect::<Vec<_>>())
+            }
+            _ => fnv(&[&self.types.display(ty)]),
+        };
+        seen.pop();
+        hash
+    }
+
+    /// A class's method tables' layout: each slot's method and its C type, and the interfaces it
+    /// implements. Instances keep their data when it changes, but not their type information.
+    fn methods_schema(&self, id: ClassId) -> u64 {
+        let mut parts = Vec::new();
+        if let Some(slots) = self.virtual_tables.get(&id) {
+            for slot in slots {
+                match slot {
+                    Some(method) => {
+                        parts.push(method.name.clone());
+                        parts.extend(method.params.iter().map(|ty| self.c_type(*ty)));
+                        parts.push(self.c_type(method.ret));
+                    }
+                    None => parts.push("-".to_string()),
+                }
+            }
+        }
+        for (interface, _) in self.class_itable_entries(id) {
+            parts.push(interface);
+        }
+        fnv(&parts.iter().map(String::as_str).collect::<Vec<_>>())
+    }
+
+    /// A function's signature hash: its C type, which a slot keeps while its address may be held.
+    fn signature_hash(&self, body: &Body) -> u64 {
+        let ret = self.c_type(body.return_ty());
+        let params = self.c_params(body);
+        let mut parts = vec![ret];
+        parts.extend(params.into_iter().map(|(ty, _)| ty));
+        fnv(&parts.iter().map(String::as_str).collect::<Vec<_>>())
+    }
+
+    /// `[HR-8]` — the manifest: every reloadable function by mangled name, every `@noreload` one
+    /// with its body's hash, every static, every type's schema and every identity, with the
+    /// protocol's version, in the image's own section. The tables it points at are the runtime's
+    /// to fill.
+    pub(crate) fn emit_reload_manifest(&mut self, bodies: &[Body], has_entry: bool) {
+        let Some(reload) = self.reload.clone() else { return };
+        if self.unit.is_some() {
+            return;
+        }
+        let address_taken = address_taken_symbols(bodies);
+        let mut fns = Vec::new();
+        for body in bodies {
+            let Some(&index) = self.reload_slots.get(&body.symbol) else { continue };
+            if fns.len() != index {
+                continue;
+            }
+            let reloadable = reload.reloadable.contains(&body.symbol);
+            let mut flags = if reloadable { "EMBER_RL_FN_RELOADABLE" } else { "EMBER_RL_FN_NORELOAD" }.to_string();
+            if address_taken.contains(body.symbol.as_str()) || body.abi.as_deref() == Some("C") {
+                flags.push_str(" | EMBER_RL_FN_ADDRESS");
+            }
+            let (code, thunk) = if reloadable {
+                (
+                    format!("(void (*)(void)){}", Self::reload_body_symbol(&body.symbol)),
+                    format!("(void (*)(void)){}", body.symbol),
+                )
+            } else {
+                ("NULL".to_string(), "NULL".to_string())
+            };
+            fns.push(format!(
+                "    {{ {}, {code}, {thunk}, UINT64_C(0x{:016x}), UINT64_C(0x{:016x}), {flags} }},",
+                c_string_literal(&body.symbol),
+                self.signature_hash(body),
+                reload.noreload.get(&body.symbol).copied().unwrap_or(0),
+            ));
+        }
+        let statics: Vec<String> = self
+            .reload_static_names()
+            .into_iter()
+            .map(|(name, ty, init)| {
+                let (initialiser, reinit) = reload.statics.get(&name).copied().unwrap_or((0, false));
+                let c_type = self.c_type(ty);
+                let mut flags = Vec::new();
+                if reinit {
+                    flags.push("EMBER_RL_STATIC_REINIT");
+                }
+                let initial = if init.is_none() {
+                    flags.push("EMBER_RL_STATIC_CONSTANT");
+                    format!("&{}", constant_static_symbol(&name))
+                } else {
+                    "NULL".to_string()
+                };
+                let flags = if flags.is_empty() { "0".to_string() } else { flags.join(" | ") };
+                format!(
+                    "    {{ {}, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{:016x}), UINT64_C(0x{:016x}), {flags}, {initial}, NULL }},",
+                    c_string_literal(&name),
+                    self.type_schema(ty, &mut Vec::new()),
+                    initialiser,
+                )
+            })
+            .collect();
+        let mut types = Vec::new();
+        let mut identities = Vec::new();
+        let classes: Vec<ClassId> = self.types.runtime_classes().map(|(id, _)| id).collect();
+        for id in classes {
+            let def = self.types.class_def(id);
+            let name = def.name.to_string();
+            let info = ember_branding::type_info(&name);
+            let identity = class_identity_symbol(&name);
+            identities.push(format!("&{identity}"));
+            if !reload.files.contains(&def.span.file) {
+                continue;
+            }
+            let ty = self.types.find(&TyKind::Class(id));
+            let schema = ty.map_or(0, |ty| self.type_schema(ty, &mut Vec::new()));
+            let base = def.base.map_or("NULL".to_string(), |base| c_string_literal(&self.types.class_def(base).name.to_string()));
+            let object = ember_branding::object_struct(&name);
+            types.push(format!(
+                "    {{ {}, EMBER_RL_TYPE_CLASS, {base}, 0, (uint32_t)sizeof(struct {object}), (uint32_t)_Alignof(struct {object}), UINT64_C(0x{schema:016x}), UINT64_C(0x{:016x}), &{info}, &{identity}, 0, NULL, 0, NULL, NULL, NULL }},",
+                c_string_literal(&name),
+                self.methods_schema(id),
+            ));
+        }
+        for (id, def) in self.types.structs() {
+            if is_compiler_struct(&def.name.to_string()) || !reload.files.contains(&def.span.file) {
+                continue;
+            }
+            let Some(ty) = self.types.find(&TyKind::Struct(id)) else { continue };
+            if !self.structural_type_emitted(ty) {
+                continue;
+            }
+            types.push(format!(
+                "    {{ {}, EMBER_RL_TYPE_STRUCT, NULL, 0, 0, 0, UINT64_C(0x{:016x}), 0, NULL, NULL, 0, NULL, 0, NULL, NULL, NULL }},",
+                c_string_literal(&def.name.to_string()),
+                self.type_schema(ty, &mut Vec::new()),
+            ));
+        }
+        for (id, def) in self.types.enums() {
+            if !reload.files.contains(&def.span.file) {
+                continue;
+            }
+            let Some(ty) = self.types.find(&TyKind::Enum(id)) else { continue };
+            types.push(format!(
+                "    {{ {}, EMBER_RL_TYPE_ENUM, NULL, 0, 0, 0, UINT64_C(0x{:016x}), 0, NULL, NULL, 0, NULL, 0, NULL, NULL, NULL }},",
+                c_string_literal(&def.name.to_string()),
+                self.type_schema(ty, &mut Vec::new()),
+            ));
+        }
+        identities.extend(self.reload_interface_ids.borrow().iter().map(|id| format!("&{id}")));
+
+        let fns_symbol = table("fns");
+        let statics_symbol = table("statics");
+        let types_symbol = table("types");
+        let identities_symbol = table("identities");
+        self.line("/* [HR-8] the reload manifest */");
+        self.line(&format!("static const {RT}rl_fn {fns_symbol}[{}] = {{", fns.len().max(1)));
+        for line in &fns {
+            self.line(line);
+        }
+        if fns.is_empty() {
+            self.line("    { NULL, NULL, NULL, 0, 0, 0 },");
+        }
+        self.line("};");
+        self.line(&format!("static const {RT}rl_static {statics_symbol}[{}] = {{", statics.len().max(1)));
+        for line in &statics {
+            self.line(line);
+        }
+        if statics.is_empty() {
+            self.line("    { NULL, 0, 0, 0, 0, 0, NULL, NULL },");
+        }
+        self.line("};");
+        self.line(&format!("static const {RT}rl_type {types_symbol}[{}] = {{", types.len().max(1)));
+        for line in &types {
+            self.line(line);
+        }
+        if types.is_empty() {
+            self.line("    { NULL, 0, NULL, 0, 0, 0, 0, 0, NULL, NULL, 0, NULL, 0, NULL, NULL, NULL },");
+        }
+        self.line("};");
+        self.line(&format!("static {RT}rl_identity* const {identities_symbol}[{}] = {{", identities.len().max(1)));
+        self.line(&format!("    {}", if identities.is_empty() { "NULL".to_string() } else { identities.join(", ") }));
+        self.line("};");
+        let layout = if reload.instances { "obj_header_v40" } else { "obj_header_v24" };
+        let entry = if has_entry { table("entry") } else { "NULL".to_string() };
+        self.line(&format!("EMBER_RL_MANIFEST const {RT}rl_manifest {} = {{", manifest_symbol()));
+        self.line("    EMBER_RELOAD_MAGIC, EMBER_RELOAD_PROTOCOL,");
+        self.line(&format!("    (uint32_t)sizeof({RT}rl_manifest), (uint32_t)sizeof({RT}obj_header), {}u,", reload.mode));
+        self.line(&format!("    {},", c_string_literal(&reload.package)));
+        self.line(&format!("    {}, {},", ember_branding::runtime(layout), ember_branding::runtime("reload_protocol_v1")));
+        self.line(&format!("    {}u, {fns_symbol}, {}, {},", fns.len(), table("targets"), table("addresses")));
+        self.line(&format!("    {}u, {statics_symbol}, {}, {},", statics.len(), table("static_data"), table("static_state")));
+        self.line(&format!("    {}u, {types_symbol},", types.len()));
+        self.line(&format!("    {}u, {identities_symbol},", identities.len()));
+        self.line(&format!("    {entry}"));
+        self.line("};");
+        self.line("");
+    }
+
+    /// Whether the program defines this struct in its C (not a view, an alias or an erased one).
+    fn structural_type_emitted(&self, ty: Ty) -> bool {
+        let TyKind::Struct(id) = self.types.kind(ty) else { return false };
+        self.box_inner_id(*id).is_none() && self.shared_inner_id(*id).is_none() && self.weak_inner_id(*id).is_none()
+    }
+}
+
+/// A class's identity record across images.
+pub(crate) fn class_identity_symbol(class: &str) -> String {
+    ember_branding::mangled(&format!("tid_{}", class.replace('.', "_")))
+}
+
+/// A struct the compiler supplies, which no edit changes.
+fn is_compiler_struct(name: &str) -> bool {
+    ["Box_", "Shared_", "Weak_", "Cell_", "RefCell_", "UnsafeCell_", "MaybeUninit_", "closure", "Option_", "Result_"]
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+}
+
+/// `[HR-7]` — the functions whose address the program takes: a function value, a table a `dyn`
+/// value points at. Data may hold their thunks, so removing one is refused.
+fn address_taken_symbols(bodies: &[Body]) -> BTreeSet<&str> {
+    let mut taken = BTreeSet::new();
+    for body in bodies {
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                if let StmtKind::Assign { rvalue, .. } = &stmt.kind {
+                    match rvalue {
+                        Rvalue::Use(Operand::Const(Const::Fn(symbol))) => {
+                            taken.insert(symbol.as_str());
+                        }
+                        Rvalue::Aggregate { operands, .. } => {
+                            for operand in operands {
+                                if let Operand::Const(Const::Fn(symbol)) = operand {
+                                    taken.insert(symbol.as_str());
+                                }
+                            }
+                        }
+                        Rvalue::Cast { kind: CastKind::InterfaceUpcast { implementations, .. } | CastKind::ClassInterfaceUpcast { implementations, .. }, .. } => {
+                            taken.extend(implementations.iter().flatten().map(|method| method.symbol.as_str()));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            if let Terminator::Call { func, args, .. } = &block.terminator {
+                if let FuncRef::DynBoxNew { implementations, .. } = func {
+                    taken.extend(implementations.iter().flatten().map(|method| method.symbol.as_str()));
+                }
+                for arg in args {
+                    if let Operand::Const(Const::Fn(symbol)) = arg {
+                        taken.insert(symbol.as_str());
+                    }
+                }
+            }
+        }
+    }
+    taken
+}

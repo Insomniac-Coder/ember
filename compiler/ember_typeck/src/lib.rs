@@ -13303,6 +13303,18 @@ impl<'a> Checker<'a> {
         if self.resolve_name(name).is("std.jobs.wait") {
             return Some(self.synth_jobs_wait(args, span));
         }
+        // `[HR-33]` — `std.hot.checkpoint()`, the runtime's poll from inside the program.
+        if self.resolve_name(name).is("std.hot.checkpoint") {
+            if !args.is_empty() || !explicit.is_empty() {
+                self.error(codes::E2020, span, "`checkpoint` takes no arguments");
+                return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+            }
+            return Some(Expr {
+                ty: self.common.void,
+                kind: ExprKind::Builtin { which: Builtin::HotCheckpoint, args: Vec::new() },
+                span,
+            });
+        }
         // `[HASH-2]` — `std.collections`'s own `process_key(which)`, the
         // process's hash key, which the runtime draws.
         if self.resolve_name(name).is("std.collections.process_key") {

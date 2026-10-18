@@ -1251,6 +1251,8 @@ pub enum Builtin {
     /// `[HASH-2]` — word `which` of the process's hash key, drawn once from
     /// the operating system: `std.collections.process_key`.
     ProcessKey,
+    /// `[HR-33]` — `std.hot.checkpoint()`: where the program lets a waiting reload apply.
+    HotCheckpoint,
     /// `[STD-15]` — `xs.sort()` (stable, in `Ord`'s order), `xs.reverse()`,
     /// `xs.clear()` (dropping each element), `xs.pop() -> Option[T]`,
     /// `xs.remove(i) -> T`, `xs.insert(i, v)` (its arguments are the array,
@@ -1722,6 +1724,7 @@ impl Builtin {
             Builtin::FormatWith(_) => "format",
             Builtin::StrContains | Builtin::StrContainsChar => "contains",
             Builtin::ProcessKey => "process_key",
+            Builtin::HotCheckpoint => "checkpoint",
             Builtin::ArraySort => "sort",
             Builtin::ArrayReverse => "reverse",
             Builtin::ArrayClear => "clear",
