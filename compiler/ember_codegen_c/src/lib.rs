@@ -349,6 +349,7 @@ fn emit_with(
         inline_sizes: inline_sizes(bodies),
         inline_bodies: if split { BTreeMap::new() } else { inline_bodies(bodies, types) },
         view_pointers: BTreeMap::new(),
+        loop_restricted: BTreeMap::new(),
         parted_views: BTreeSet::new(),
         addressed_locals: BTreeSet::new(),
         upcast_copies: BTreeSet::new(),
@@ -664,6 +665,10 @@ struct Emitter<'a> {
     /// its own (`_N_ptr`), set wherever the view is, which MSVC keeps in a
     /// register where it re-reads a struct field.
     view_pointers: BTreeMap<usize, String>,
+    /// `[CG-C-4]` — in the loop being written, the views named through a
+    /// `restrict` pointer (`_N_r`) and a length (`_N_rn`) of their own, by
+    /// local, with whether the local is a reference to the list.
+    loop_restricted: BTreeMap<u32, bool>,
     /// View descriptor storage written by fields, including copies from such
     /// storage. A niche Option's Some payload names the same C descriptor.
     parted_views: BTreeSet<Place>,
@@ -5690,6 +5695,35 @@ impl Emitter<'_> {
                 self.line(&format!("    {} _{local}; (void)_{local};", self.c_type(body.locals[local].ty)));
             }
         }
+        // `[CG-C-4]` — each view `[SIMD-3]` proves apart from the loop's
+        // others is named through a `restrict` pointer and a length hoisted
+        // into a block around the loop (a kernel's views are its parameters).
+        let restricted = if body.restrict_views {
+            Vec::new()
+        } else {
+            ember_analysis::restrict_views(body, self.types, &counted.chain)
+        };
+        let restricted: Vec<(LocalId, bool, String)> = restricted
+            .into_iter()
+            .filter_map(|(local, through)| {
+                let list = if through { Place { local, projection: vec![Projection::Deref] } } else { Place::local(local) };
+                let elem = match self.types.kind(self.place_ty(&list, body)) {
+                    TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => self.c_type(*elem),
+                    _ => return None,
+                };
+                (elem != "void").then_some((local, through, elem))
+            })
+            .collect();
+        if !restricted.is_empty() {
+            self.line("    {");
+            for (local, through, elem) in &restricted {
+                let list = if *through { format!("(*_{})", local.0) } else { format!("_{}", local.0) };
+                let n = local.0;
+                self.line(&format!("    {elem}* restrict _{n}_r = ({elem}*){list}.ptr;"));
+                self.line(&format!("    size_t _{n}_rn = {list}.len; (void)_{n}_rn;"));
+                self.loop_restricted.insert(n, *through);
+            }
+        }
         let (counter, limit) = (counted.counter.0, counted.limit.0);
         let test = if counted.inclusive { "<=" } else { "<" };
         if let Some(sum) = integer_reduction::byte_sum(counted, body, self.types, locals, address_taken, |place| self.place_ty(place, body)) {
@@ -5730,6 +5764,10 @@ impl Emitter<'_> {
             self.line(&format!("    for (; _{counter} {test} _{limit}; ++_{counter}) {{"));
             self.emit_for_body(counted, body, locals);
             self.line("    }");
+        }
+        if !restricted.is_empty() {
+            self.line("    }");
+            self.loop_restricted.clear();
         }
         if !carried.is_empty() || !private.is_empty() {
             for &local in &carried {
@@ -8932,8 +8970,27 @@ impl Emitter<'_> {
         let mut out = format!("_{}", place.local.0);
         let mut at = Cursor { ty: body.local(place.local).ty, variant: None };
         let mut start = 0;
+        // `[CG-C-4]` — a view the loop names through its own `restrict`
+        // pointer and length.
+        if let Some(&through) = self.loop_restricted.get(&place.local.0) {
+            let skip = usize::from(through);
+            match place.projection.get(skip) {
+                Some(Projection::Index(index)) => {
+                    for projection in &place.projection[..=skip] {
+                        at = self.project(at, projection);
+                    }
+                    out = format!("_{}_r[_{}]", place.local.0, index.0);
+                    start = skip + 1;
+                }
+                Some(Projection::Field(1)) if place.projection.len() == skip + 1 => {
+                    return format!("_{}_rn", place.local.0);
+                }
+                _ => {}
+            }
+        }
         // `bind_deep_places`: the longest bound pointer this place reads.
-        if let Some((pointer, name)) = self
+        if start == 0
+            && let Some((pointer, name)) = self
             .deep_bindings
             .iter()
             .filter(|(pointer, _)| {
@@ -12075,6 +12132,7 @@ mod string_descriptor_view_parts_tests {
             inline_bodies: BTreeMap::new(),
             inline_sizes: BTreeMap::new(),
             view_pointers: BTreeMap::new(),
+            loop_restricted: BTreeMap::new(),
             parted_views: BTreeSet::new(),
             addressed_locals: BTreeSet::new(),
             upcast_copies: BTreeSet::new(),

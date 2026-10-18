@@ -225,3 +225,31 @@ vector and matrix maths, `transpose().inverse()`, and an `i32x4`), and the miles
 `std_functions_are_noalloc_unless_documented` (a copy of `std` whose `core` gains an undocumented
 allocating function is `E4001`; documented, generic, or in `std.thread`, it is accepted).
 `STD-1` leaves the `unfinished` list.
+
+## 6. `[CG-C-4]`: views proved apart get a `restrict` pointer and a hoisted length per loop
+
+**Built.** Before, `restrict` reached the C only through ADR-079/098's kernels (a loop moved into a
+function of its own whose views are `restrict` parameters), which each C compiler gets on its own
+conditions, so most loops over views proved apart had none. Now every counted loop written as a C
+`for` (`emit_for_loop`) asks `ember_analysis::restrict_views` (kernels.rs, beside `[SIMD-3]`'s
+`origin`/`apart`) which of its lists and views qualify: indexed in the loop, named there only by
+element and length (never whole, so a view reassigned in the loop is out; never borrowed), the
+loop calling nothing (a call could grow a list or write through a class handle: `[SIMD-3]`'s
+handle condition, kept conservatively for every view), the loop reaching no memory any other way
+(no other reference followed, no other local indexed), and `[SIMD-3]` proving it apart from every
+other list or view the loop names. Each is written in a C block around the loop as
+`T* restrict _N_r = (T*)<view>.ptr; size_t _N_rn = <view>.len;`, and the loop's element accesses
+and length reads (its bounds checks) go through them (`place_in`). A kernel's views are already
+its `restrict` parameters. *Limits:* a loop that is not a C `for` (a body with branches, or with
+a call) gets none; views reached through a class handle never get one (their origin is not
+derived). Both are on the safe side of the rule ("exactly when … proves").
+
+**Speed.** A/B on mains power, performance cores, the 13 benchmark programs whose C changed
+(a11, b13-b16, p1, w13, w1; MSVC and clang): every row within noise of before (0.97-1.04x C both
+ways); no regressions. The compilers mostly ignore a block-scope `restrict` (ADR-079/098 measured
+that MSVC and gcc take it only from parameters), so the kernels stay the fast path.
+
+**Tests.** `CG-C-4/accept_views_proved_apart_get_restrict_pointers_and_hoisted_lengths.em` (two
+owned lists, `[SIMD-3]` (b); two `SoA` columns, (c)) and
+`CG-C-4/accept_views_not_proved_apart_or_reassigned_keep_plain_pointers.em` (two parameter views;
+a view set in its loop): `assert-c` on the emitted C, checked by the conformance milestone.

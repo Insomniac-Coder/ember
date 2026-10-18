@@ -961,6 +961,117 @@ fn elem_of(types: &TypeTable, ty: Ty) -> Ty {
     }
 }
 
+/// `[CG-C-4]` — the views a loop names through a `restrict` pointer and a
+/// length of their own, hoisted before it: each list or view the loop (its
+/// blocks) indexes, whose base and length it cannot change, and that
+/// `[SIMD-3]` proves apart from every other list or view it names. With each,
+/// whether the loop reaches it through a reference (`(*xs)[i]`).
+///
+/// Its base and length are invariant when the loop names it only by element
+/// and by length: never whole (a view reassigned in the loop, or copied into
+/// another), never by reference, and the loop calls nothing (a call could
+/// grow a list, or reach it through a class handle, `[SIMD-3]`'s condition
+/// for those). A `restrict` pointer promises that every access to what it
+/// points to in its block goes through it, so the loop must reach no memory
+/// any other way: no reference followed but a list's own, no other local
+/// indexed, no element borrowed. Otherwise none of its views is named so.
+pub fn restrict_views(body: &Body, types: &TypeTable, blocks: &[usize]) -> Vec<(LocalId, bool)> {
+    // The list kind of a local: a list or view, or a reference to a list.
+    let list_kind = |local: LocalId| -> Option<bool> {
+        match types.kind(body.local(local).ty) {
+            TyKind::Vec { .. } | TyKind::Span { .. } => Some(false),
+            TyKind::Ref { inner, .. } if matches!(types.kind(*inner), TyKind::Vec { .. }) => Some(true),
+            _ => None,
+        }
+    };
+    // Each list local the loop names: whether it may still be restricted,
+    // and whether it is indexed.
+    let mut named: BTreeMap<LocalId, (bool, bool)> = BTreeMap::new();
+    let mut clean = true;
+    let mut visit = |place: &Place, write: bool, is_ref: bool| {
+        let reaches_memory = place.projection.iter().any(|step| matches!(step, Projection::Index(_) | Projection::Deref));
+        let Some(through) = list_kind(place.local) else {
+            // Any other local: its own storage only, never borrowed into.
+            if reaches_memory || (is_ref && !place.projection.is_empty()) {
+                clean = false;
+            }
+            return;
+        };
+        let entry = named.entry(place.local).or_insert((true, false));
+        let rest = if through {
+            match place.projection.split_first() {
+                Some((Projection::Deref, rest)) => rest,
+                _ => {
+                    entry.0 = false;
+                    return;
+                }
+            }
+        } else {
+            &place.projection[..]
+        };
+        match rest.split_first() {
+            Some((Projection::Index(_), after)) if !is_ref => {
+                entry.1 = true;
+                // An element holding a list or a reference reaches memory of its own.
+                if after.iter().any(|step| matches!(step, Projection::Index(_) | Projection::Deref)) {
+                    clean = false;
+                }
+            }
+            Some((Projection::Field(1), [])) if !write && !is_ref => {}
+            _ => {
+                entry.0 = false;
+                if is_ref && reaches_memory {
+                    clean = false;
+                }
+            }
+        }
+    };
+    for &block in blocks {
+        let data = &body.blocks[block];
+        for stmt in &data.stmts {
+            match &stmt.kind {
+                StmtKind::Assign { place, rvalue } => {
+                    visit(place, true, false);
+                    for_each_rvalue_place(rvalue, &mut |place, is_ref| visit(place, false, is_ref));
+                }
+                StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
+                    visit(dest, true, false);
+                    visit(overflow, true, false);
+                    for operand in [lhs, rhs] {
+                        if let Operand::Copy(place) | Operand::Move(place) = operand {
+                            visit(place, false, false);
+                        }
+                    }
+                }
+                StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
+                _ => return Vec::new(),
+            }
+        }
+        if matches!(data.terminator, Terminator::Call { .. }) {
+            return Vec::new();
+        }
+        for_each_terminator_operand(&data.terminator, &mut |operand| {
+            if let Operand::Copy(place) | Operand::Move(place) = operand {
+                visit(place, false, false);
+            }
+        });
+    }
+    if !clean {
+        return Vec::new();
+    }
+    let origins: BTreeMap<LocalId, Option<Origin>> = named.keys().map(|&local| (local, origin(body, types, local))).collect();
+    named
+        .iter()
+        .filter(|(local, (whole_free, indexed))| {
+            *whole_free
+                && *indexed
+                && origins[local].is_some()
+                && origins.iter().all(|(other, theirs)| other == *local || apart(origins[local], *theirs))
+        })
+        .map(|(&local, _)| (local, list_kind(local) == Some(true)))
+        .collect()
+}
+
 /// Whether the loop writes memory: an element, a field, or through a
 /// reference, or takes a mutable reference (ADR-084: a loop that carries a
 /// value moves only when it writes none, so no turn reads what another
