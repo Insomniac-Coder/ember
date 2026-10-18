@@ -34,7 +34,7 @@
     "FN-5": "a parameter default doing float work that the caller's mode cannot keep is refused: docs/NOT-IMPLEMENTED.md N7",
     "GRM-38": "a generator expression with a second `for` is refused as a value (E0900): its `flat_map` over inner generators that borrow both their source and the outer clause's names gets no single source relation from the region analysis (`FlatMap.next`, E3065)",
     "ABI-3": "`ember_module_init` does not check the runtime ABI version (ADR-171)",
-    "STD-1": "`std.simd` and `std.arena` are not in std/src, and nothing checks that every `std.core`, `std.mem` and `std.math` function is free of `Alloc`",
+    "STD-1": "`std.arena` is not in std/src, and nothing checks that every `std.core`, `std.mem` and `std.math` function is free of `Alloc`",
     "STD-14": "nothing checks that a standard function failing on a caller's bug has a non-panicking twin, or that every allocating one is documented as allocating",
     "DET-2": "observing a pointer or handle as an integer, hashing one, and reading uninitialised or padding bytes are not recorded as `Nondet` (`ember_analysis::effects`)",
     "SOA-1": "`@soa(flatten)` is not built (Phase 6)",

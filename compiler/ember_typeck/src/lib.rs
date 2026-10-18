@@ -21321,7 +21321,7 @@ impl<'a> Checker<'a> {
         let at_usize = || Expr { ty: usize_ty, kind: ExprKind::Cast { expr: Box::new(local(at, int_ty)), to: usize_ty }, span };
         let slice = |lo: Expr, hi: Expr| Expr {
             ty: str_ty,
-            kind: ExprKind::Builtin { which: Builtin::Slice { text: true }, args: vec![local(view, str_ty), lo, hi] },
+            kind: ExprKind::Builtin { which: Builtin::Slice { text: true, nonempty: false }, args: vec![local(view, str_ty), lo, hi] },
             span,
         };
         let after_sep = || Expr {
@@ -21577,7 +21577,7 @@ impl<'a> Checker<'a> {
         };
         let slice = Expr {
             ty: str_ty,
-            kind: ExprKind::Builtin { which: Builtin::Slice { text: true }, args: vec![text_local(), as_usize(lo), slice_end] },
+            kind: ExprKind::Builtin { which: Builtin::Slice { text: true, nonempty: false }, args: vec![text_local(), as_usize(lo), slice_end] },
             span,
         };
         let option_ty = self.option_of(str_ty);
@@ -21823,7 +21823,7 @@ impl<'a> Checker<'a> {
                 } else {
                     builtin(Builtin::StrTrimEnd, vec![local()], usize_ty)
                 };
-                let sliced = builtin(Builtin::Slice { text: true }, vec![local(), start, end], str_ty);
+                let sliced = builtin(Builtin::Slice { text: true, nonempty: false }, vec![local(), start, end], str_ty);
                 Expr {
                     ty: str_ty,
                     kind: ExprKind::Block {
@@ -23904,7 +23904,7 @@ impl<'a> Checker<'a> {
     /// `Span`, and part of a text as a `str` by byte offset. The bounds are
     /// checked when the slice is taken (`lo <= hi <= len`, and for text that
     /// both fall on character boundaries); a missing bound is `0` or the
-    /// length. A slice is shared: `MutSpan` slices are not built yet.
+    /// length. A slice is shared, except of a `MutSpan`, whose slice is one.
     fn synth_slice(
         &mut self,
         base: Expr,
@@ -23925,10 +23925,9 @@ impl<'a> Checker<'a> {
                 let view_ty = self.types.intern(TyKind::Span { elem, mutable: false });
                 (self.coerce(base, view_ty), false)
             }
-            TyKind::Span { mutable: true, .. } => {
-                self.error(codes::E0900, span, "slicing a `MutSpan` is not implemented yet");
-                return error;
-            }
+            // `[SPN-2]` — part of a `MutSpan` is a `MutSpan`: a mutable reborrow of the base, for
+            // as long as the part is used (`[SPN-3]`), so the base cannot be used meanwhile.
+            TyKind::Span { elem, mutable: true } => (self.reborrow_span(base, elem, true, span), false),
             _ => {
                 if base.ty != self.common.error {
                     let shown = self.types.display(base.ty);
@@ -23971,7 +23970,7 @@ impl<'a> Checker<'a> {
             args.push(hi);
         }
         let ty = args[0].ty;
-        Expr { ty, kind: ExprKind::Builtin { which: Builtin::Slice { text }, args }, span }
+        Expr { ty, kind: ExprKind::Builtin { which: Builtin::Slice { text, nonempty: false }, args }, span }
     }
 
     /// `[EXP-4]` — a view made from a temporary (`make()[1..]`,
@@ -31088,6 +31087,13 @@ impl<'a> Checker<'a> {
                 // reference.
                 if *op != ast::UnOp::Not {
                     operand = self.read_through(operand);
+                    // `[SIMD-8]` — `-v` on a `std.simd` vector.
+                    if *op == ast::UnOp::Neg {
+                        operand = match self.synth_simd_neg(operand, span) {
+                            Ok(call) => return call,
+                            Err(back) => back,
+                        };
+                    }
                     if *op == ast::UnOp::BitNot && self.refuse_for_count(operand.ty, "`~`", span) {
                         return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                     }
@@ -35340,6 +35346,12 @@ impl<'a> Checker<'a> {
         if matches!(self.types.kind(owner), TyKind::Void) && name.name.is("default") && args.is_empty() {
             return self.void_value(span);
         }
+        // `[SIMD-1]`, `[SIMD-9]` — `std.simd`'s `splat`, loads and gathers.
+        if generic_args.is_empty()
+            && let Some(call) = self.synth_simd_associated(owner, name, args, span)
+        {
+            return call;
+        }
         if let Some(elem) = self.arena_array_element(owner) {
             return self.synth_arena_array_construction(
                 owner,
@@ -37138,6 +37150,13 @@ impl<'a> Checker<'a> {
                 break;
             }
             receiver = self.read_through(receiver);
+        }
+        // `[SIMD-4]`, `[SIMD-8]`, `[SIMD-9]` — what a `std.simd` vector or mask does.
+        if generic_args.is_empty() && self.simd_shape(receiver.ty).is_some() {
+            receiver = match self.synth_simd_method(receiver, name, args, span) {
+                Ok(call) => return call,
+                Err(back) => back,
+            };
         }
         self.extend_instance_at_use(receiver.ty);
         // `[GRM-34]` (ADR-191) — every type's methods, from an extension over a parameter standing
@@ -42059,6 +42078,303 @@ impl<'a> Checker<'a> {
     /// independent (`parallel_independent`). A reduction variable has a copy per chunk, starting
     /// at its operator's identity; the chunks' results are folded into it in chunk order after
     /// the loop.
+    /// `[SIMD-1]` — the shape of a `std.simd` vector or mask type.
+    fn simd_shape(&self, ty: Ty) -> Option<ember_types::SimdShape> {
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
+        ember_types::SimdShape::of(self.types.struct_def(id).name.as_str())
+    }
+
+    /// `[SIMD-1]` — a vector shape's lane type (a mask's lanes are set or clear: `bool`).
+    fn simd_lane_ty(&mut self, shape: ember_types::SimdShape) -> Ty {
+        use ember_types::{FloatTy, IntTy, SimdLane, UintTy};
+        let kind = match (shape.lane, shape.bits) {
+            (SimdLane::Mask, _) => return self.common.bool_,
+            (SimdLane::Float, 32) => TyKind::Float(FloatTy::F32),
+            (SimdLane::Float, _) => TyKind::Float(FloatTy::F64),
+            (SimdLane::Signed, 8) => TyKind::Int(IntTy::I8),
+            (SimdLane::Signed, 16) => TyKind::Int(IntTy::I16),
+            (SimdLane::Signed, 32) => TyKind::Int(IntTy::I32),
+            (SimdLane::Signed, _) => TyKind::Int(IntTy::I64),
+            (SimdLane::Unsigned, 8) => TyKind::Uint(UintTy::U8),
+            (SimdLane::Unsigned, 16) => TyKind::Uint(UintTy::U16),
+            (SimdLane::Unsigned, 32) => TyKind::Uint(UintTy::U32),
+            (SimdLane::Unsigned, _) => TyKind::Uint(UintTy::U64),
+        };
+        self.types.intern(kind)
+    }
+
+    /// `[SIMD-1]` — the mask type of a vector shape (`mask32x8` for `f32x8`), declared in
+    /// `std.simd` beside it.
+    fn simd_mask_ty(&mut self, shape: ember_types::SimdShape, span: Span) -> Ty {
+        match self.named_types.get(&Symbol::intern(&shape.mask_name())).copied() {
+            Some(ty) => ty,
+            None => {
+                self.error(codes::E1010, span, format!("`{}` is not declared", shape.mask_name()));
+                self.common.error
+            }
+        }
+    }
+
+    /// `[SIMD-8]` — the overflow policy integer lanes follow: the function's (`[TYP-8]`); a float
+    /// lane has none, so its operations carry `Wrap`, which checks nothing.
+    fn simd_policy(&self, shape: ember_types::SimdShape) -> OverflowPolicy {
+        match shape.lane {
+            ember_types::SimdLane::Signed | ember_types::SimdLane::Unsigned => self.active_overflow,
+            _ => OverflowPolicy::Wrap,
+        }
+    }
+
+    fn simd_call(&self, op: hir::SimdOp, vector: Ty, ret: Ty, args: Vec<Expr>, span: Span) -> Expr {
+        Expr { ty: ret, kind: ExprKind::Builtin { which: Builtin::Simd { op, vector }, args }, span }
+    }
+
+    /// `[SIMD-9]` — the unchecked forms are `unsafe fn`.
+    fn simd_require_unsafe(&mut self, name: &str, checked_form: &str, span: Span) {
+        if !self.in_unsafe {
+            self.sink.emit(
+                Diagnostic::error(codes::E3100, span, format!("`{name}` needs an `unsafe` block"))
+                    .help(format!("`{checked_form}` checks every lane's index"))
+                    .note("the unchecked vector operations are `unsafe fn` [SIMD-9]"),
+            );
+        }
+    }
+
+    fn simd_arity(&mut self, owner: Ty, name: &str, args: &[ast::Arg], want: usize, span: Span) -> bool {
+        if args.len() != want || args.iter().any(|arg| arg.name.is_some()) {
+            let shown = self.types.display(owner);
+            self.error(codes::E2020, span, format!("`{shown}.{name}` takes {want} argument(s), found {}", args.len()));
+            return false;
+        }
+        true
+    }
+
+    /// `[SIMD-9]` — an index vector: an integer vector of `lanes` lanes.
+    fn simd_index(&mut self, arg: &ast::Arg, lanes: u32) -> Option<Expr> {
+        let index = self.synth_committed(&arg.value);
+        let index = self.read_through(index);
+        match self.simd_shape(index.ty) {
+            Some(shape)
+                if shape.lanes == lanes
+                    && matches!(shape.lane, ember_types::SimdLane::Signed | ember_types::SimdLane::Unsigned) =>
+            {
+                Some(index)
+            }
+            _ => {
+                if index.ty != self.common.error {
+                    let shown = self.types.display(index.ty);
+                    self.sink.emit(
+                        Diagnostic::error(codes::E2020, arg.value.span, format!("expected an integer vector of {lanes} lanes, found `{shown}`"))
+                            .note("a gather or scatter takes one index per lane [SIMD-9]"),
+                    );
+                }
+                None
+            }
+        }
+    }
+
+    /// `[SIMD-1]`, `[SIMD-9]` — `V.splat(x)`, `V.load(s)`, `V.gather(s, idx)` and their unchecked
+    /// forms; `None` for any other name (an ordinary associated item).
+    fn synth_simd_associated(&mut self, owner: Ty, name: ast::Ident, args: &[ast::Arg], span: Span) -> Option<Expr> {
+        let shape = self.simd_shape(owner)?;
+        let mask = shape.lane == ember_types::SimdLane::Mask;
+        let lane = self.simd_lane_ty(shape);
+        let error_ty = self.common.error;
+        let error = || Expr { ty: error_ty, kind: ExprKind::Error, span };
+        let text = name.name.as_str().to_string();
+        match text.as_str() {
+            "splat" => {
+                if !self.simd_arity(owner, "splat", args, 1, span) {
+                    return Some(error());
+                }
+                let value = self.check_expr(&args[0].value, lane);
+                let op = if mask { hir::SimdOp::MaskSplat } else { hir::SimdOp::Splat };
+                Some(self.simd_call(op, owner, owner, vec![value], span))
+            }
+            "load" | "load_unchecked" | "gather" | "gather_unchecked" if !mask => {
+                let checked = !text.ends_with("_unchecked");
+                let gather = text.starts_with("gather");
+                if !checked {
+                    self.simd_require_unsafe(&text, if gather { "gather" } else { "load" }, span);
+                }
+                if !self.simd_arity(owner, &text, args, if gather { 2 } else { 1 }, span) {
+                    return Some(error());
+                }
+                let view = self.types.intern(TyKind::Span { elem: lane, mutable: false });
+                let source = self.check_expr(&args[0].value, view);
+                if !gather {
+                    return Some(self.simd_call(hir::SimdOp::Load { checked }, owner, owner, vec![source], span));
+                }
+                let Some(index) = self.simd_index(&args[1], shape.lanes) else { return Some(error()) };
+                let op = hir::SimdOp::Gather { checked, index: index.ty };
+                Some(self.simd_call(op, owner, owner, vec![source, index], span))
+            }
+            _ => None,
+        }
+    }
+
+    /// `[SIMD-4]`, `[SIMD-8]`, `[SIMD-9]` — a method of a vector or a mask the compiler gives;
+    /// `None` for any other name (`to_array`, written in `std.simd`).
+    fn synth_simd_method(&mut self, receiver: Expr, name: ast::Ident, args: &[ast::Arg], span: Span) -> Result<Expr, Expr> {
+        use ember_types::SimdLane;
+        let Some(shape) = self.simd_shape(receiver.ty) else { return Err(receiver) };
+        let vector = receiver.ty;
+        let lane = self.simd_lane_ty(shape);
+        let text = name.name.as_str().to_string();
+        let float = shape.lane == SimdLane::Float;
+        let integer = matches!(shape.lane, SimdLane::Signed | SimdLane::Unsigned);
+        let mask = shape.lane == SimdLane::Mask;
+        let applies = match text.as_str() {
+            "any" | "all" | "select" => mask,
+            "store" | "store_unchecked" | "scatter" | "scatter_unchecked" | "reduce_add" | "reduce_min" | "reduce_max"
+            | "shuffle" | "min" | "max" | "abs" => !mask,
+            "fma" | "sqrt" | "rsqrt_approx" | "rcp_approx" => float,
+            "wrapping_add" | "wrapping_sub" | "wrapping_mul" | "wrapping_neg" => integer,
+            _ => false,
+        };
+        if !applies {
+            return Err(receiver);
+        }
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let arity = match text.as_str() {
+            "store" | "store_unchecked" | "shuffle" | "min" | "max" | "wrapping_add" | "wrapping_sub" | "wrapping_mul" => 1,
+            "scatter" | "scatter_unchecked" | "fma" | "select" => 2,
+            _ => 0,
+        };
+        if !self.simd_arity(vector, &text, args, arity, span) {
+            return Ok(error);
+        }
+        let policy = self.simd_policy(shape);
+        let same = |this: &mut Self, arg: &ast::Arg| this.check_expr(&arg.value, vector);
+        let unary = |op: hir::SimdOp, this: &mut Self, receiver: Expr| this.simd_call(op, vector, vector, vec![receiver], span);
+        Ok(match text.as_str() {
+            "store" | "store_unchecked" | "scatter" | "scatter_unchecked" => {
+                let checked = !text.ends_with("_unchecked");
+                let scatter = text.starts_with("scatter");
+                if !checked {
+                    self.simd_require_unsafe(&text, if scatter { "scatter" } else { "store" }, span);
+                }
+                let view = self.types.intern(TyKind::Span { elem: lane, mutable: true });
+                let target = self.check_expr(&args[0].value, view);
+                let void = self.common.void;
+                if !scatter {
+                    self.simd_call(hir::SimdOp::Store { checked }, vector, void, vec![receiver, target], span)
+                } else {
+                    let Some(index) = self.simd_index(&args[1], shape.lanes) else { return Ok(error) };
+                    let op = hir::SimdOp::Scatter { checked, index: index.ty };
+                    self.simd_call(op, vector, void, vec![receiver, target, index], span)
+                }
+            }
+            "reduce_add" => self.simd_call(hir::SimdOp::ReduceAdd { policy }, vector, lane, vec![receiver], span),
+            "reduce_min" => self.simd_call(hir::SimdOp::ReduceMin, vector, lane, vec![receiver], span),
+            "reduce_max" => self.simd_call(hir::SimdOp::ReduceMax, vector, lane, vec![receiver], span),
+            "shuffle" => {
+                // `[SIMD-4]` — a constant list, one lane number per lane.
+                let constant = match &args[0].value.kind {
+                    ast::ExprKind::ArrayLit(items) if items.len() == shape.lanes as usize => items.iter().all(|item| {
+                        matches!(&item.kind, ast::ExprKind::Lit(ast::Literal::Int { value, .. }) if *value < shape.lanes as u128)
+                    }),
+                    _ => false,
+                };
+                if !constant {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E2020, args[0].value.span, format!("`shuffle` takes a list of {} constant lane numbers, each below {}", shape.lanes, shape.lanes))
+                            .note("a shuffle's lanes are a constant list [SIMD-4]"),
+                    );
+                    return Ok(error);
+                }
+                let list = self.types.intern(TyKind::Array { elem: self.common.i64, len: shape.lanes as u64 });
+                let lanes = self.check_expr(&args[0].value, list);
+                self.simd_call(hir::SimdOp::Shuffle, vector, vector, vec![receiver, lanes], span)
+            }
+            "min" | "max" => {
+                let other = same(self, &args[0]);
+                let op = if text == "min" { hir::SimdOp::Min } else { hir::SimdOp::Max };
+                self.simd_call(op, vector, vector, vec![receiver, other], span)
+            }
+            "abs" => unary(hir::SimdOp::Abs { policy }, self, receiver),
+            "sqrt" => unary(hir::SimdOp::Sqrt, self, receiver),
+            "rsqrt_approx" => unary(hir::SimdOp::RsqrtApprox, self, receiver),
+            "rcp_approx" => unary(hir::SimdOp::RcpApprox, self, receiver),
+            "fma" => {
+                let (b, c) = (same(self, &args[0]), same(self, &args[1]));
+                self.simd_call(hir::SimdOp::Fma, vector, vector, vec![receiver, b, c], span)
+            }
+            "wrapping_add" | "wrapping_sub" | "wrapping_mul" => {
+                let op = match text.as_str() {
+                    "wrapping_add" => BinOp::Add,
+                    "wrapping_sub" => BinOp::Sub,
+                    _ => BinOp::Mul,
+                };
+                let other = same(self, &args[0]);
+                self.simd_call(hir::SimdOp::Binary { op, policy: OverflowPolicy::Wrap }, vector, vector, vec![receiver, other], span)
+            }
+            "wrapping_neg" => unary(hir::SimdOp::Neg { policy: OverflowPolicy::Wrap }, self, receiver),
+            "any" | "all" => {
+                let op = if text == "any" { hir::SimdOp::Any } else { hir::SimdOp::All };
+                let bool_ = self.common.bool_;
+                self.simd_call(op, vector, bool_, vec![receiver], span)
+            }
+            _ => {
+                // `m.select(a, b)`: two vectors of the mask's shape.
+                let a = self.synth_committed(&args[0].value);
+                let a = self.read_through(a);
+                let fits = self.simd_shape(a.ty).is_some_and(|picked| {
+                    picked.lane != SimdLane::Mask && picked.bits == shape.bits && picked.lanes == shape.lanes
+                });
+                if !fits {
+                    if a.ty != self.common.error {
+                        let shown = self.types.display(a.ty);
+                        self.error(codes::E2020, args[0].value.span, format!("`select` picks between vectors of {} lanes of {} bits, found `{shown}`", shape.lanes, shape.bits));
+                    }
+                    return Ok(error);
+                }
+                let picked = a.ty;
+                let b = self.check_expr(&args[1].value, picked);
+                self.simd_call(hir::SimdOp::Select, picked, picked, vec![receiver, a, b], span)
+            }
+        })
+    }
+
+    /// `[SIMD-8]` — a lane-wise operator on two values of one vector or mask type; `None` when
+    /// it is not one a vector has.
+    fn synth_simd_binary(&mut self, op: BinOp, lhs: Expr, rhs: Expr, span: Span) -> Result<Expr, (Expr, Expr)> {
+        use ember_types::SimdLane;
+        let Some(shape) = self.simd_shape(lhs.ty) else { return Err((lhs, rhs)) };
+        if rhs.ty != lhs.ty {
+            return Err((lhs, rhs));
+        }
+        let vector = lhs.ty;
+        let float = shape.lane == SimdLane::Float;
+        let mask = shape.lane == SimdLane::Mask;
+        let fits = match op {
+            BinOp::Add | BinOp::Sub | BinOp::Mul => !mask,
+            BinOp::Div => float,
+            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => !float,
+            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => !mask,
+            _ => false,
+        };
+        if !fits {
+            return Err((lhs, rhs));
+        }
+        if op.is_comparison() {
+            let mask_ty = self.simd_mask_ty(shape, span);
+            return Ok(self.simd_call(hir::SimdOp::Compare { op }, vector, mask_ty, vec![lhs, rhs], span));
+        }
+        let policy = self.simd_policy(shape);
+        Ok(self.simd_call(hir::SimdOp::Binary { op, policy }, vector, vector, vec![lhs, rhs], span))
+    }
+
+    /// `[SIMD-8]` — `-v`: integer lanes under the function's overflow policy.
+    fn synth_simd_neg(&mut self, operand: Expr, span: Span) -> Result<Expr, Expr> {
+        let Some(shape) = self.simd_shape(operand.ty) else { return Err(operand) };
+        if shape.lane == ember_types::SimdLane::Mask {
+            return Err(operand);
+        }
+        let policy = self.simd_policy(shape);
+        let vector = operand.ty;
+        Ok(self.simd_call(hir::SimdOp::Neg { policy }, vector, vector, vec![operand], span))
+    }
+
     fn check_parallel_for(&mut self, attr: &ast::Attribute, stmt: &ast::Stmt, out: &mut Vec<Stmt>, simd: Option<&ast::Attribute>) {
         let span = stmt.span;
         let ast::StmtKind::For { label, pattern, iter, body, else_block } = &stmt.kind else { return };
@@ -48049,6 +48365,11 @@ impl<'a> Checker<'a> {
         while self.box_inner(rhs.ty).is_some() {
             rhs = self.read_box_through(rhs);
         }
+        // `[SIMD-8]` — a lane-wise operator on two `std.simd` vectors or masks.
+        (lhs, rhs) = match self.synth_simd_binary(hir_op, lhs, rhs, span) {
+            Ok(call) => return call,
+            Err(back) => back,
+        };
 
         // `[CLS-4]`/Part VIII — `is` and `is not` compare class-handle
         // identity. They are deliberately not routed through `Eq`: value

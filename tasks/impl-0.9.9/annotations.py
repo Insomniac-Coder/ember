@@ -26,8 +26,11 @@ OUT = None  # Set only while the main run owns its TemporaryDirectory.
 if os.name == 'nt':
     # SEM_NOGPFAULTERRORBOX, inherited by every program this starts: a test program that
     # crashes ends instead of opening a Windows Error Reporting window and waiting (D-252).
+    # SEM_FAILCRITICALERRORS and SEM_NOOPENFILEERRORBOX too: a program that fails while
+    # starting (0xc0000142 when the console it inherits is gone, as under a runner orphaned
+    # by its stopped shell; a missing DLL) ends instead of opening "unable to start" boxes.
     import ctypes
-    ctypes.windll.kernel32.SetErrorMode(0x0002)
+    ctypes.windll.kernel32.SetErrorMode(0x0001 | 0x0002 | 0x8000)
 
 
 def out_dir(path):

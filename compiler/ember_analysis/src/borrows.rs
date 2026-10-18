@@ -1693,7 +1693,9 @@ pub(crate) fn quiet_builtin(types: &TypeTable, which: &Builtin, arg_ty: Ty) -> b
         | Builtin::StrAsBytes
         | Builtin::StrSliceOk
         | Builtin::Utf8Valid
-        | Builtin::SpanToStr => true,
+        | Builtin::SpanToStr
+        // `[SIMD-1]` — a vector operation runs no program code and touches no class.
+        | Builtin::Simd { .. } => true,
         Builtin::ArrayClear | Builtin::ArrayTruncate => {
             let mut ty = arg_ty;
             while let TyKind::Ref { inner, .. } = *types.kind(ty) {

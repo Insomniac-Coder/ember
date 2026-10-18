@@ -140,10 +140,12 @@ struct Check {
     len: Operand,
     /// The index's type, `usize`: what the entry test compares in.
     index_ty: Ty,
+    /// `[SPN-2]` — a slice's end (`end <= len`): the local holding the end.
+    slice_end: Option<LocalId>,
 }
 
 /// The largest index a check sees in the loop.
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Debug)]
 enum IndexBound {
     /// `counter + offset` (`[OPT-2]`).
     Counter(i128),
@@ -151,6 +153,12 @@ enum IndexBound {
     Constant(i128),
     /// At most `local + c`, for a local the loop does not write (`[RNG-4]`).
     Local(LocalId, i128),
+    /// `[SIMD-9]`, `[OPT-2]` — a stepped loop's value plus `offset`: the
+    /// counter `k` gives the value `RangeNth(start, step, k)`, so with a
+    /// positive step the largest index is the last value's, `start + step *
+    /// (limit - 1)`, plus `offset`. `start` and `step` are of `ty`, locals the
+    /// loop does not write, or constants.
+    Stepped { start: Operand, step: Operand, ty: Ty, offset: i128 },
 }
 
 struct Plan {
@@ -263,6 +271,14 @@ fn plan(
         if !index.projection.is_empty() {
             continue;
         }
+        // `[SPN-2]` — a slice checks its end against the length of a copy of
+        // the view made in the loop (`[EXP-1]`): that is the view's own.
+        let len = &match len {
+            Operand::Copy(place) if place.projection.is_empty() => {
+                copied_view_len(body, &all, &definitions, place.local).map_or_else(|| len.clone(), Operand::Copy)
+            }
+            _ => len.clone(),
+        };
         let invariant = match len {
             Operand::Const(Const::Int { .. }) => true,
             Operand::Copy(len_place) => view_invariant(body, types, facts, len_place, &written),
@@ -272,9 +288,34 @@ fn plan(
             continue;
         }
         let index_ty = body.local(index.local).ty;
+        // A slice's end is checked `end <= len` (`[SPN-2]`), which is `end - 1 < len`.
+        let inclusive_len = match &body.blocks[block].terminator {
+            Terminator::Assert { cond: Operand::Copy(cond), .. } if cond.projection.is_empty() => {
+                body.blocks[block].stmts.iter().rev().any(|stmt| {
+                    matches!(&stmt.kind, StmtKind::Assign { place, rvalue: Rvalue::BinaryOp { op: BinOp::Le, lhs: Operand::Copy(lhs), .. } }
+                        if place == cond && lhs == index)
+                })
+            }
+            _ => false,
+        };
+        let less = i128::from(inclusive_len);
+        let unwritten_operand = |operand: &Operand| match operand {
+            Operand::Const(Const::Int { .. }) => true,
+            Operand::Copy(place) if place.projection.is_empty() => {
+                let loc = Loc { root: Root::Local(place.local), path: Vec::new() };
+                !written.iter().any(|(written, _)| may_alias(written, &loc, facts))
+            }
+            _ => false,
+        };
+        let stepped = stepped_index(body, types, &definitions, &dominators, counter, index.local, block, 0)
+            .filter(|(start, step, _, offset)| offset.abs() <= MAX_OFFSET && unwritten_operand(start) && unwritten_operand(step));
         let bound = match affine(body, types, &definitions, &dominators, counter, index.local, block, 0) {
-            Some(offset) if offset.abs() <= MAX_OFFSET => IndexBound::Counter(offset),
+            Some(offset) if offset.abs() <= MAX_OFFSET => IndexBound::Counter(offset - less),
             Some(_) => continue,
+            None if stepped.is_some() => {
+                let (start, step, ty, offset) = stepped.expect("just checked");
+                IndexBound::Stepped { start, step, ty, offset: offset - less }
+            }
             None => {
                 // `[RNG-4]` — what the range facts know of the index here,
                 // which holds on every iteration.
@@ -295,18 +336,18 @@ fn plan(
                         && ember_types::int_max(types, ty) <= ember_types::int_max(types, index_ty)
                 };
                 if index_max.is_some_and(|max| hi < max) {
-                    IndexBound::Constant(hi)
+                    IndexBound::Constant(hi - less)
                 } else if let Some((local, c)) = symbolic
                     .into_iter()
                     .find(|(local, c)| *local != counter && c.abs() <= MAX_OFFSET && unwritten(*local) && usable(*local))
                 {
-                    IndexBound::Local(local, c)
+                    IndexBound::Local(local, c - less)
                 } else {
                     continue;
                 }
             }
         };
-        checks.push(Check { block, bound, len: len.clone(), index_ty });
+        checks.push(Check { block, bound, len: len.clone(), index_ty, slice_end: inclusive_len.then_some(index.local) });
     }
     if checks.is_empty() {
         return None;
@@ -315,6 +356,76 @@ fn plan(
     let mut region: Vec<usize> = region.into_iter().collect();
     region.sort_unstable();
     Some(Plan { header, region, counter, limit, inclusive: op == BinOp::Le, checks })
+}
+
+/// `[SPN-2]`, `[EXP-1]` — `local` as the length of a view the loop copied:
+/// `local = len(t)`, one call in the loop, where `t` is a view the loop sets
+/// once to a copy of a place `v`, or to a reborrow of `v` through a
+/// reference to it made once in the loop (a `MutSpan` is reborrowed, not
+/// copied), or is not set in the loop at all: then it is `v.len`, a place an
+/// entry test before the loop can read.
+fn copied_view_len(
+    body: &Body,
+    blocks: &[usize],
+    definitions: &HashMap<LocalId, (usize, Definition)>,
+    local: LocalId,
+) -> Option<Place> {
+    let mut found = None;
+    for &block in blocks {
+        if let Terminator::Call { func: FuncRef::Builtin { which, .. }, args, dest, .. } = &body.blocks[block].terminator
+            && *dest == Place::local(local)
+        {
+            if found.is_some() || !matches!(which, Builtin::SpanLen) {
+                return None;
+            }
+            found = Some(args);
+        }
+    }
+    let [Operand::Copy(copy) | Operand::Move(copy)] = found?.as_slice() else { return None };
+    let mut view = if copy.projection.is_empty() && blocks.iter().any(|&block| defines(body, block, copy.local)) {
+        match definitions.get(&copy.local) {
+            Some((_, Definition::Value(Rvalue::Use(Operand::Copy(source))))) => source.clone(),
+            Some(_) => return None,
+            None => {
+                // `t = reborrow(r)` with `r = &v` (`&mut v`), each once.
+                let reborrows: Vec<&Vec<Operand>> = blocks
+                    .iter()
+                    .filter_map(|&block| match &body.blocks[block].terminator {
+                        Terminator::Call {
+                            func: FuncRef::Builtin { which: Builtin::SpanReborrow | Builtin::SpanSharedReborrow, .. },
+                            args,
+                            dest,
+                            ..
+                        } if *dest == Place::local(copy.local) => Some(args),
+                        _ => None,
+                    })
+                    .collect();
+                let [args] = reborrows.as_slice() else { return None };
+                let [Operand::Copy(reference) | Operand::Move(reference)] = args.as_slice() else { return None };
+                if !reference.projection.is_empty() {
+                    return None;
+                }
+                match definitions.get(&reference.local) {
+                    Some((_, Definition::Value(Rvalue::Ref { place, .. }))) => place.clone(),
+                    _ => return None,
+                }
+            }
+        }
+    } else {
+        copy.clone()
+    };
+    view.projection.push(Projection::Field(1));
+    Some(view)
+}
+
+/// Whether a block assigns `local` as a whole.
+fn defines(body: &Body, block: usize, local: LocalId) -> bool {
+    let data = &body.blocks[block];
+    data.stmts.iter().any(|stmt| match &stmt.kind {
+        StmtKind::Assign { place, .. } => place.local == local,
+        StmtKind::CheckedBinaryOp { dest, .. } => dest.local == local,
+        _ => false,
+    }) || matches!(&data.terminator, Terminator::Call { dest, .. } if dest.local == local)
 }
 
 /// The view whose length is `len_place` (`view.len`) keeps its base and
@@ -620,7 +731,10 @@ fn block_writes(
             },
             // Making a view of a list, reborrowing one, or reading a length
             // writes nothing through its argument; what is later written
-            // through the view is an element, which no header is.
+            // through the view is an element, which no header is. A stepped
+            // range's count and values only compute; a `std.simd` operation
+            // computes, or reads and writes the elements of the views it is
+            // given (`[SIMD-9]`).
             FuncRef::Builtin {
                 which:
                     Builtin::SpanFrom { .. }
@@ -628,7 +742,10 @@ fn block_writes(
                     | Builtin::SpanSharedReborrow
                     | Builtin::SpanLen
                     | Builtin::ArrayLen
-                    | Builtin::StringLen,
+                    | Builtin::StringLen
+                    | Builtin::RangeCount
+                    | Builtin::RangeNth
+                    | Builtin::Simd { .. },
                 ..
             } => {}
             FuncRef::Builtin { which, arg_ty } if quiet_builtin(types, which, *arg_ty) => mutable_referents(out),
@@ -958,6 +1075,85 @@ fn affine(
     }
 }
 
+/// `[SIMD-9]`, `[OPT-2]` — `local` as a stepped loop's value plus a
+/// constant: `(start, step, value type, offset)` where the value is
+/// `RangeNth(start, step, counter)`, the call's result defined once in the
+/// loop in a block dominating `use_block`; then, as `affine` follows them,
+/// copies, adds and subtracts of constants in the value's type, and the one
+/// conversion to `usize`. Values of at most 64 bits.
+#[allow(clippy::too_many_arguments)]
+fn stepped_index(
+    body: &Body,
+    types: &TypeTable,
+    definitions: &HashMap<LocalId, (usize, Definition)>,
+    dominators: &HashMap<usize, HashSet<usize>>,
+    counter: LocalId,
+    local: LocalId,
+    use_block: usize,
+    depth: usize,
+) -> Option<(Operand, Operand, Ty, i128)> {
+    if depth > 16 {
+        return None;
+    }
+    let ty = body.local(local).ty;
+    // The value itself: a call of `RangeNth(start, step, counter)`, once in
+    // the loop, in a block dominating the use.
+    let calls: Vec<(usize, &Vec<Operand>)> = dominators
+        .keys()
+        .filter_map(|&block| match &body.blocks[block].terminator {
+            Terminator::Call { func: FuncRef::Builtin { which: Builtin::RangeNth, .. }, args, dest, .. }
+                if *dest == Place::local(local) =>
+            {
+                Some((block, args))
+            }
+            _ => None,
+        })
+        .collect();
+    if let [(block, args)] = calls.as_slice() {
+        if !dominators.get(&use_block)?.contains(block) || ember_types::bit_width(types, ty)? > 64 {
+            return None;
+        }
+        let [start, step, Operand::Copy(k)] = args.as_slice() else { return None };
+        if *k != Place::local(counter) {
+            return None;
+        }
+        return Some((start.clone(), step.clone(), ty, 0));
+    }
+    let (block, definition) = definitions.get(&local)?;
+    if !dominators.get(&use_block)?.contains(block) {
+        return None;
+    }
+    let from = |operand: &Operand| match operand {
+        Operand::Copy(place) | Operand::Move(place) if place.projection.is_empty() => {
+            stepped_index(body, types, definitions, dominators, counter, place.local, *block, depth + 1)
+        }
+        _ => None,
+    };
+    let constant = |operand: &Operand| match operand {
+        Operand::Const(Const::Int { value, ty: of }) if *of == ty => Some(constant_value(types, *value, ty)),
+        _ => None,
+    };
+    match definition {
+        Definition::Value(Rvalue::Use(operand)) => from(operand),
+        Definition::Value(Rvalue::Cast { kind: CastKind::Numeric, operand, .. })
+            if matches!(types.kind(ty), TyKind::Uint(ember_types::UintTy::Usize)) =>
+        {
+            from(operand)
+        }
+        Definition::Value(Rvalue::BinaryOp { op, lhs, rhs }) | Definition::Checked { op, lhs, rhs } => {
+            let shift = |found: Option<(Operand, Operand, Ty, i128)>, c: Option<i128>, sign: i128| {
+                found.zip(c).filter(|(found, _)| found.2 == ty).map(|((a, b, t, o), c)| (a, b, t, o + sign * c))
+            };
+            match op {
+                BinOp::Add => shift(from(lhs), constant(rhs), 1).or_else(|| shift(from(rhs), constant(lhs), 1)),
+                BinOp::Sub => shift(from(lhs), constant(rhs), -1),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 /// A constant's two's-complement bits as a number of type `ty`.
 fn constant_value(types: &TypeTable, value: u128, ty: Ty) -> i128 {
     let width = ember_types::bit_width(types, ty).unwrap_or(64).min(64) as u32;
@@ -1081,6 +1277,16 @@ fn apply(body: &mut Body, types: &TypeTable, plan: Plan) -> usize {
             }
             clone.terminator = Terminator::Goto(next);
         }
+        // `[SPN-2]` — a slice whose end this copy no longer checks has an end
+        // of at least 1 (the entry test's), so its view is not empty.
+        if let Terminator::Call { func: FuncRef::Builtin { which: Builtin::Slice { text: false, nonempty }, .. }, args, .. } =
+            &mut clone.terminator
+            && let Some(Operand::Copy(end)) = args.get(2)
+            && end.projection.is_empty()
+            && plan.checks.iter().any(|check| check.slice_end == Some(end.local))
+        {
+            *nonempty = true;
+        }
         body.blocks.push(clone);
     }
     let fast = remap(BasicBlockId(plan.header as u32));
@@ -1186,15 +1392,82 @@ fn entry_tests(
     let op = if plan.inclusive { BinOp::Le } else { BinOp::Lt };
     tests.push((vec![assign(run, compare(op, counter(), limit()))], run, checked));
 
-    let mut seen: Vec<(IndexBound, String)> = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
     for check in &plan.checks {
-        let key = (check.bound, format!("{:?}", check.len));
+        let key = format!("{:?} {:?}", check.bound, check.len);
         if seen.contains(&key) {
             continue;
         }
         seen.push(key);
-        let offset = match check.bound {
+        let offset = match check.bound.clone() {
             IndexBound::Counter(offset) => offset,
+            IndexBound::Stepped { start, step, ty, offset } => {
+                // `[SIMD-9]`, `[OPT-2]` — the step is positive, so the first
+                // value is the smallest and the last the largest: the first
+                // index is not negative, and the last, `start + step * (limit
+                // - 1)` plus `offset`, is below the length. The last value is
+                // one of the range's, so its unsigned arithmetic gives it
+                // exactly; the run test before says `limit >= 1`.
+                let signed = ember_types::is_signed(types, ty) == Some(true);
+                let width = ember_types::bit_width(types, ty).unwrap_or(64);
+                let max: i128 = if signed { (1i128 << (width - 1)) - 1 } else { (1i128 << width) - 1 };
+                let value = |v: i128| Operand::Const(Const::Int { value: v as u128, ty });
+                let positive = temp(body, bool_ty);
+                tests.push((vec![assign(positive, compare(BinOp::Ge, step.clone(), value(1)))], positive, checked));
+                if signed || offset < 0 {
+                    let low = temp(body, bool_ty);
+                    tests.push((vec![assign(low, compare(BinOp::Ge, start.clone(), value(-offset)))], low, checked));
+                }
+                let wide = types.find(&TyKind::Uint(ember_types::UintTy::U64)).expect("`u64` is interned");
+                let mut stmts = Vec::new();
+                let as_wide = |body: &mut Body, stmts: &mut Vec<Stmt>, operand: Operand, from: Ty| {
+                    if from == wide {
+                        return operand;
+                    }
+                    let local = temp(body, wide);
+                    stmts.push(assign(local, Rvalue::Cast { kind: CastKind::Numeric, operand, to: wide }));
+                    Operand::Copy(Place::local(local))
+                };
+                let last_k = temp(body, counter_ty);
+                stmts.push(assign(last_k, compare(BinOp::Sub, limit(), int(1))));
+                let last_k = as_wide(body, &mut stmts, Operand::Copy(Place::local(last_k)), counter_ty);
+                let start_w = as_wide(body, &mut stmts, start, ty);
+                let step_w = as_wide(body, &mut stmts, step, ty);
+                let product = temp(body, wide);
+                stmts.push(assign(product, compare(BinOp::Mul, step_w, last_k)));
+                let sum = temp(body, wide);
+                stmts.push(assign(sum, compare(BinOp::Add, start_w, Operand::Copy(Place::local(product)))));
+                let last = if ty == wide {
+                    sum
+                } else {
+                    let last = temp(body, ty);
+                    stmts.push(assign(last, Rvalue::Cast { kind: CastKind::Numeric, operand: Operand::Copy(Place::local(sum)), to: ty }));
+                    last
+                };
+                let room = temp(body, bool_ty);
+                stmts.push(assign(room, compare(BinOp::Le, Operand::Copy(Place::local(last)), value(max - offset.max(0)))));
+                tests.push((stmts, room, checked));
+                let mut stmts = Vec::new();
+                let end = if offset == 0 {
+                    Operand::Copy(Place::local(last))
+                } else {
+                    let end = temp(body, ty);
+                    let (op, amount) = if offset > 0 { (BinOp::Add, offset) } else { (BinOp::Sub, -offset) };
+                    stmts.push(assign(end, compare(op, Operand::Copy(Place::local(last)), value(amount))));
+                    Operand::Copy(Place::local(end))
+                };
+                let end = if ty == check.index_ty {
+                    end
+                } else {
+                    let index = temp(body, check.index_ty);
+                    stmts.push(assign(index, Rvalue::Cast { kind: CastKind::Numeric, operand: end, to: check.index_ty }));
+                    Operand::Copy(Place::local(index))
+                };
+                let fits = temp(body, bool_ty);
+                stmts.push(assign(fits, compare(BinOp::Lt, end, check.len.clone())));
+                tests.push((stmts, fits, checked));
+                continue;
+            }
             IndexBound::Constant(hi) => {
                 // `[RNG-4]` — every index is at most `hi`: below the length
                 // when `hi` is.

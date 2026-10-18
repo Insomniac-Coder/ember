@@ -1166,7 +1166,7 @@ pub enum CastKind {
     InterfaceDowncast,
 }
 
-pub use ember_hir::{AtomicOp, BinOp, Builtin, FormatSpec, IntBits, IntOp, MemoryOrder, ParseKind, SoAOp, UnOp};
+pub use ember_hir::{AtomicOp, BinOp, Builtin, FormatSpec, IntBits, IntOp, MemoryOrder, ParseKind, SimdOp, SoAOp, UnOp};
 
 /// One statement, with the source location it came from.
 #[derive(Clone, Debug)]

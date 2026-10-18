@@ -69,3 +69,78 @@ removed.
 **Left / not done.** A `@simd` loop that lowers to neither a counted loop nor an iterator local (none
 found) gets no report line; with `assert` it is `E4020` at once (trip count). The verdict of a loop
 in a generic function instantiated twice is said once, the failing instance's.
+
+## 2. `std.simd` (`[SIMD-1]`, `[SIMD-4]`, `[SIMD-8]`, `[SIMD-9]`)
+
+**Built.**
+- `std/src/simd.em` declares the 30 vector types (`f32x4/8/16`, `f64x2/4/8`, and for each of 8, 16,
+  32, 64-bit lanes the signed and unsigned vectors of 128, 256 and 512 bits) and the 12 mask types
+  (`mask{bits}x{lanes}`), each a `@derive(Copy)` struct of one private `lanes: [T; N]` array with
+  `LANES`, and `from_array` / `to_array` written in Ember; `native_lanes[T]()` is
+  `16 // size_of[T]()` (every C-backend target has 16-byte vector registers; the C is built for the
+  baseline instruction set). The compiler knows the types by name (`ember_types::SimdShape::of`).
+- Type checking (`synth_simd_*` in typeck): `V.splat`, `V.load(_unchecked)`, `V.gather(_unchecked)`
+  (any integer index vector of as many lanes), `v.store(_unchecked)`, `v.scatter(_unchecked)`,
+  `reduce_add/min/max`, `shuffle([...])` (a list literal of constants below the lane count, else
+  `E2020`), `fma`, `min`, `max`, `abs`, `sqrt`, `rsqrt_approx`, `rcp_approx`, `wrapping_add/sub/mul/neg`,
+  the operators `+ - *` (and `/` on floats, `& | ^` on integers and masks), unary `-`, the six
+  comparisons into the mask type, and on masks `any`, `all`, `select`, `M.splat`. Each is one
+  `Builtin::Simd { op, vector }`. Integer lanes take the function's overflow policy
+  (`active_overflow`: checked, wrap or saturate), so `@overflow(wrap)` reaches vector operators as
+  `[SIMD-8]` says; float lanes carry `Wrap` (they check nothing). The unchecked forms need `unsafe`
+  (`E3100`). Effects: checked memory operations `RuntimeCheck(Bounds)`, unchecked ones `Unsafe`,
+  checked integer arithmetic `RuntimeCheck(Arithmetic)`.
+- C: `runtime/ember_rt/templates/ember_simd.h.in` (rendered to `include/ember_simd.h` by
+  `generate_runtime.py`, which now renders every further `*.h.in`; `check_branding.py` treats it as
+  generated). Each vector struct is emitted as `struct V { union { _Alignas(size) <lanes array>
+  lanes; <registers> v[size/16]; }; }`, and after the structs one macro per type the program
+  operates on instantiates its operations as `V_<op>` static inline functions (masks first; one
+  gather/scatter pair per vector and index type used). With SSE2 (every x86-64), splat, loads,
+  stores, float `+ - * /`, `min`, `max`, `sqrt` (IEEE-exact), the approximations (`rsqrtps`/`rcpps`),
+  integer `& | ^` and wrapping `+ -` are written a register at a time, each register's statement
+  written out (no loop: MSVC keeps a rolled two-register loop's vectors in memory, 3.4x the C);
+  everything else, and every operation elsewhere, works lane by lane. Checked integer operations
+  compute every lane and panic once after (`ember_panic_overflow` naming the operator); a checked
+  load/store/gather/scatter panics through the new `ember_panic_lane_bounds` ("lane 2: index 4 is
+  out of bounds for a length of 4"). Reductions add lane 0 first, then each next lane, so every
+  target gives the same answer. `fma` is C's `fmaf`/`fma` (one rounding). Layout: `size_of`/
+  `align_of` give the size for both (`ember_types::layout`).
+- `[SPN-2]` slicing a `MutSpan` (was `E0900`, needed by Part XII.2's own `out[i..i + 8]`): the part
+  is a mutable reborrow of the base, built as `Slice` over `reborrow_span`.
+- `[SIMD-9]`'s "a load or store at a loop's induction variable is covered by the entry test of
+  `[OPT-2]`": `loop_version.rs` now versions (1) a slice's end check (`end <= len`, recognised from
+  the assert's comparison, taken as `end - 1 < len`), resolving the length of the view copy or
+  reborrow the slice makes in the loop to the view's own place (`copied_view_len`), and (2) a
+  stepped loop's value (`for i in (a..b).step_by(k)`: `RangeNth(start, step, k)`,
+  `IndexBound::Stepped`), whose entry test checks `step >= 1`, the first index, and the last
+  value `start + step * (limit - 1)` (computed in `u64`, exact because it is one of the range's
+  values) plus the offset against the length. In the unchecked copy, a slice whose end check was
+  removed is marked `nonempty` (`Builtin::Slice { nonempty }`): its end is at least 1, so its view
+  is not empty and its pointer is not null, and the C takes `ptr + lo` with no test for an empty
+  view's null pointer. `Builtin::Simd`, `RangeNth` and `RangeCount` write no view header
+  (`loop_writes`).
+
+**Speed** (Part XII.2's `scale`, 4096 floats eight at a time, 200 thousand times:
+`bench/probes/simd_scale.em` against `simd_scale.c`'s plain loop, release, performance cores, mains
+power; other helper agents were building and testing on the machine at the same time, so these
+are within a few percent): clang **x1.03**, MSVC **x1.09** (from x1.14 and x3.40 before the work
+above). The fast loop is two loads, two multiplies, two stores and the counter on both compilers;
+MSVC's twin unrolls twice as far because the twin's length is a constant it can see (Ember's is a
+list's, built by `push`). Not chased further: an owner-question-free next step would be to give the
+fast copy's trip count to MSVC as a multiple of 2.
+
+**Tests.** `SIMD-1/accept_vector_and_mask_types.em` (Part XII.2's `scale`, every type's `LANES` /
+`reduce_add`, `native_lanes`, `size_of`/`align_of`), `SIMD-4/accept_reductions_shuffles_gathers_fma_and_approximations.em`,
+`SIMD-4/reject_a_shuffle_that_is_not_a_constant_list.em`, `SIMD-8/accept_lane_wise_operators_follow_the_scalar_rules.em`
+(debug, release, shipping; wrap, saturate, `wrapping_add`, comparisons, `fma` against `*` then `+`),
+`SIMD-8/run_fail_an_overflowing_integer_lane_panics.em`, `SIMD-9/accept_checked_and_unchecked_memory_operations.em`,
+`SIMD-9/run_fail_a_gather_names_its_lane.em`, `SIMD-9/run_fail_a_short_store_panics.em`,
+`SIMD-9/reject_the_unchecked_forms_outside_unsafe.em`,
+`SIMD-9/accept_a_load_at_the_induction_variable_needs_no_check_in_the_loop.em` (release:
+`assert-c-count` two loads, two slice-end checks: the versioned copy has none). gcc (WSL) and clang
+compile the instantiated header for all 42 types with `-std=c11 -Wall -Wextra` clean.
+
+**Left.** Shifts on integer vectors; integer vector division; a vector type in generic code
+through `Add` and the other operator interfaces (the operators are the compiler's, not interface
+implementations); `select` and comparisons are lane by lane in C (no SSE path).
+`STD-1`'s entry now names only `std.arena`.

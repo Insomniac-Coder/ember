@@ -2477,6 +2477,8 @@ void ember_fmt_repr_char(ember_vec* out, uint32_t value);
  * backtrace in debug and release, then calls cfg.on_panic and abort(). */
 EMBER_PANIC_FN void ember_panic(const char* msg, size_t len, ember_loc loc);
 EMBER_PANIC_FN void ember_panic_bounds(size_t index, size_t len, ember_loc loc);
+/* [SIMD-9] — a vector load, store, gather or scatter: names the lane. */
+EMBER_PANIC_FN void ember_panic_lane_bounds(size_t lane, size_t index, size_t len, ember_loc loc);
 EMBER_PANIC_FN void ember_panic_overflow(const char* op, ember_loc loc);
 EMBER_PANIC_FN void ember_panic_div_zero(ember_loc loc);
 EMBER_PANIC_FN void ember_panic_exclusivity(const char* what, ember_loc loc);

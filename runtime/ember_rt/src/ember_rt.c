@@ -6898,6 +6898,17 @@ void ember_panic_bounds(size_t index, size_t len, ember_loc loc) {
     panic_with(buffer, written > 0 ? (size_t)written : 0, loc);
 }
 
+/* [SIMD-9]: the lane whose index failed, then as `ember_panic_bounds`. */
+void ember_panic_lane_bounds(size_t lane, size_t index, size_t len, ember_loc loc) {
+    char buffer[160];
+    int written = index > (size_t)PTRDIFF_MAX
+        ? snprintf(buffer, sizeof buffer, "lane %zu: index %td is out of bounds for a length of %zu",
+                   lane, (ptrdiff_t)index, len)
+        : snprintf(buffer, sizeof buffer, "lane %zu: index %zu is out of bounds for a length of %zu",
+                   lane, index, len);
+    panic_with(buffer, written > 0 ? (size_t)written : 0, loc);
+}
+
 void ember_panic_overflow(const char* op, ember_loc loc) {
     char buffer[128];
     int written = snprintf(buffer, sizeof buffer, "integer overflow in `%s`", op);

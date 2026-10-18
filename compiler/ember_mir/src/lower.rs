@@ -2724,7 +2724,7 @@ impl<'a> Builder<'a> {
             hir::ExprKind::Builtin { which: hir::Builtin::IntOverflowing(op), args } => {
                 self.lower_int_overflowing(place, *op, args, expr.span);
             }
-            hir::ExprKind::Builtin { which: hir::Builtin::Slice { text }, args } => {
+            hir::ExprKind::Builtin { which: hir::Builtin::Slice { text, .. }, args } => {
                 self.lower_slice(place, args, *text, expr.span);
             }
             hir::ExprKind::Builtin {
@@ -3308,6 +3308,7 @@ impl<'a> Builder<'a> {
                     | hir::Builtin::JobScopeSubmit { .. }
                     | hir::Builtin::JobSubmit { .. } => expr.ty,
                     hir::Builtin::SoA { soa, .. } => *soa,
+                    hir::Builtin::Simd { vector, .. } => *vector,
                     hir::Builtin::SizeOf => args.last().map(|a| a.ty).unwrap_or(expr.ty),
                     _ => args.first().map(|a| a.ty).unwrap_or(expr.ty),
                 };
@@ -6655,7 +6656,7 @@ impl<'a> Builder<'a> {
         self.at(span);
         let next = self.new_block();
         self.terminate(Terminator::Call {
-            func: FuncRef::Builtin { which: hir::Builtin::Slice { text }, arg_ty: view_ty },
+            func: FuncRef::Builtin { which: hir::Builtin::Slice { text, nonempty: false }, arg_ty: view_ty },
             args: vec![view, lo, hi],
             dest,
             next,

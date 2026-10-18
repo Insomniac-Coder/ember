@@ -1355,6 +1355,11 @@ impl TypeTable {
             TyKind::Tuple(items) => self.aggregate_layout(items.iter().copied()),
             TyKind::Struct(id) => {
                 let def = self.struct_def(*id);
+                // `[SIMD-1]` — a vector or mask is aligned to its size.
+                if let Some(shape) = SimdShape::of(def.name.as_str()) {
+                    let size = shape.bytes().into();
+                    return Layout { size, align: size, field_offsets: vec![0] };
+                }
                 self.aggregate_layout(def.fields.iter().map(|f| f.ty))
             }
             // A class expression is a non-null handle. The heap object's
@@ -2705,6 +2710,60 @@ pub fn is_signed(table: &TypeTable, ty: Ty) -> Option<bool> {
         TyKind::Int(_) => Some(true),
         TyKind::Uint(_) => Some(false),
         _ => None,
+    }
+}
+
+/// `[SIMD-1]` — what a lane of a `std.simd` type is.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SimdLane {
+    Float,
+    Signed,
+    Unsigned,
+    /// A mask's lane: all ones (set) or all zeros (clear).
+    Mask,
+}
+
+/// `[SIMD-1]` — the shape of a `std.simd` vector or mask type, read from its
+/// name (`std.simd.f32x8`, `std.simd.mask32x8`): the lane kind, the lane's
+/// width in bits, and the lane count.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct SimdShape {
+    pub lane: SimdLane,
+    pub bits: u32,
+    pub lanes: u32,
+}
+
+impl SimdShape {
+    pub fn of(qualified_name: &str) -> Option<SimdShape> {
+        let name = qualified_name.strip_prefix("std.simd.")?;
+        let (lane, rest) = if let Some(rest) = name.strip_prefix("mask") {
+            (SimdLane::Mask, rest)
+        } else {
+            let lane = match name.as_bytes().first()? {
+                b'f' => SimdLane::Float,
+                b'i' => SimdLane::Signed,
+                b'u' => SimdLane::Unsigned,
+                _ => return None,
+            };
+            (lane, &name[1..])
+        };
+        let (bits, lanes) = rest.split_once('x')?;
+        let (bits, lanes): (u32, u32) = (bits.parse().ok()?, lanes.parse().ok()?);
+        let width = bits * lanes;
+        let valid = matches!(bits, 8 | 16 | 32 | 64)
+            && matches!(width, 128 | 256 | 512)
+            && (lane != SimdLane::Float || matches!(bits, 32 | 64));
+        valid.then_some(SimdShape { lane, bits, lanes })
+    }
+
+    /// Its size in bytes, which is also its alignment.
+    pub fn bytes(self) -> u32 {
+        self.bits * self.lanes / 8
+    }
+
+    /// The mask type's name for a vector of this shape (`mask32x8`).
+    pub fn mask_name(self) -> String {
+        format!("std.simd.mask{}x{}", self.bits, self.lanes)
     }
 }
 
