@@ -19,9 +19,10 @@ pub struct ReloadImage {
     pub reloadable: BTreeSet<String>,
     /// `[HR-10]` — every `@noreload` function, by symbol, with its body's hash.
     pub noreload: BTreeMap<String, u64>,
-    /// `[HR-17]`, `[HR-17a]` — each static's initialiser's hash and whether it is
-    /// `@reinit_on_reload`, by the static's name.
-    pub statics: BTreeMap<String, (u64, bool)>,
+    /// `[HR-17]`, `[HR-17a]` — every static the package declares, by its name: its initialiser's
+    /// hash, its declared type's, and whether it is `@reinit_on_reload`. One whose value the
+    /// compiler folds into the code has no storage, but an edit of it is still refused.
+    pub statics: BTreeMap<String, (u64, u64, bool)>,
     /// The package's own source files: the types declared in them have schemas ([HR-11]).
     pub files: BTreeSet<ember_span::FileId>,
 }
@@ -61,12 +62,16 @@ impl Emitter<'_> {
         let Some(reload) = &self.reload else { return };
         let mut slots = BTreeMap::new();
         for body in bodies {
-            if (reload.reloadable.contains(&body.symbol) || reload.noreload.contains_key(&body.symbol))
-                && !slots.contains_key(&body.symbol)
-            {
+            if reload.reloadable.contains(&body.symbol) && !slots.contains_key(&body.symbol) {
                 let next = slots.len();
                 slots.insert(body.symbol.clone(), next);
             }
+        }
+        // `[HR-10]` — every `@noreload` function, whether or not its body was inlined away: a
+        // reload that changes one is refused.
+        for symbol in reload.noreload.keys() {
+            let next = slots.len();
+            slots.entry(symbol.clone()).or_insert(next);
         }
         self.reload_slots = slots;
     }
@@ -114,17 +119,19 @@ impl Emitter<'_> {
             return;
         }
         let count = self.reload_slots.len().max(1);
-        let statics = self.reload_static_names().len().max(1);
+        let statics = self.reload_static_entries().max(1);
         match self.shared_definition() {
             Some(linkage) => {
                 self.line(&format!("{linkage}void (*{}[{count}])(void);", table("targets")));
                 self.line(&format!("{linkage}void (*{}[{count}])(void);", table("addresses")));
+                self.line(&format!("{linkage}const void* {}[{count}];", table("descriptors")));
                 self.line(&format!("{linkage}void* {}[{statics}];", table("static_data")));
                 self.line(&format!("{linkage}uint32_t* {}[{statics}];", table("static_state")));
             }
             None => {
                 self.line(&format!("extern void (*{}[{count}])(void);", table("targets")));
                 self.line(&format!("extern void (*{}[{count}])(void);", table("addresses")));
+                self.line(&format!("extern const void* {}[{count}];", table("descriptors")));
                 self.line(&format!("extern void* {}[{statics}];", table("static_data")));
                 self.line(&format!("extern uint32_t* {}[{statics}];", table("static_state")));
             }
@@ -176,8 +183,29 @@ impl Emitter<'_> {
         out
     }
 
+    /// The manifest's statics: those with storage, then those the compiler folded away.
+    fn reload_static_entries(&self) -> usize {
+        let stored = self.reload_static_names();
+        let folded = self.reload.as_ref().map_or(0, |reload| {
+            reload.statics.keys().filter(|name| !stored.iter().any(|(known, _, _)| known == *name)).count()
+        });
+        stored.len() + folded
+    }
+
     pub(crate) fn reload_static_index(&self, name: &str) -> usize {
         self.reload_static_names().iter().position(|(known, _, _)| known == name).expect("a static of this image")
+    }
+
+    /// `[HR-6]` — a value of a reloadable function: the descriptor the runtime made stand for it in
+    /// every image, so the value is one whichever image made it, and calling it reaches the
+    /// permanent thunk.
+    pub(crate) fn reload_fn_value(&self, symbol: &str) -> Option<String> {
+        let index = *self.reload_slots.get(symbol)?;
+        if !self.is_reloadable(symbol) || !self.native_fn_values.contains_key(symbol) {
+            return None;
+        }
+        let descriptor = format!("((const struct {RT}native_fn_descriptor*){}[{index}])", table("descriptors"));
+        Some(format!("((struct {RT}fn_value){{{descriptor}->native, {descriptor}, {{0, 0, 0}}}})"))
     }
 
     /// `[HR-4a]` — a static's storage and state, the runtime's.
@@ -292,10 +320,10 @@ impl Emitter<'_> {
         let mut fns = Vec::new();
         for body in bodies {
             let Some(&index) = self.reload_slots.get(&body.symbol) else { continue };
-            if fns.len() != index {
+            if fns.len() != index || !reload.reloadable.contains(&body.symbol) {
                 continue;
             }
-            let reloadable = reload.reloadable.contains(&body.symbol);
+            let reloadable = true;
             let mut flags = if reloadable { "EMBER_RL_FN_RELOADABLE" } else { "EMBER_RL_FN_NORELOAD" }.to_string();
             if address_taken.contains(body.symbol.as_str()) || body.abi.as_deref() == Some("C") {
                 flags.push_str(" | EMBER_RL_FN_ADDRESS");
@@ -308,18 +336,34 @@ impl Emitter<'_> {
             } else {
                 ("NULL".to_string(), "NULL".to_string())
             };
+            let descriptor = match self.native_fn_values.get(&body.symbol) {
+                Some(value) if reloadable => format!("&{}", value.descriptor),
+                _ => "NULL".to_string(),
+            };
             fns.push(format!(
-                "    {{ {}, {code}, {thunk}, UINT64_C(0x{:016x}), UINT64_C(0x{:016x}), {flags} }},",
+                "    {{ {}, {code}, {thunk}, {descriptor}, UINT64_C(0x{:016x}), UINT64_C(0x{:016x}), {flags} }},",
                 c_string_literal(&body.symbol),
                 self.signature_hash(body),
                 reload.noreload.get(&body.symbol).copied().unwrap_or(0),
             ));
         }
-        let statics: Vec<String> = self
-            .reload_static_names()
+        let mut fixed: Vec<(&String, &u64)> = reload.noreload.iter().collect();
+        fixed.sort_by_key(|(symbol, _)| self.reload_slots.get(*symbol).copied());
+        for (symbol, hash) in fixed {
+            if self.reload_slots.get(symbol) != Some(&fns.len()) {
+                continue;
+            }
+            fns.push(format!(
+                "    {{ {}, NULL, NULL, NULL, 0, UINT64_C(0x{hash:016x}), EMBER_RL_FN_NORELOAD }},",
+                c_string_literal(symbol)
+            ));
+        }
+        let stored = self.reload_static_names();
+        let mut statics: Vec<String> = stored
+            .clone()
             .into_iter()
             .map(|(name, ty, init)| {
-                let (initialiser, reinit) = reload.statics.get(&name).copied().unwrap_or((0, false));
+                let (initialiser, _, reinit) = reload.statics.get(&name).copied().unwrap_or((0, 0, false));
                 let c_type = self.c_type(ty);
                 let mut flags = Vec::new();
                 if reinit {
@@ -340,6 +384,16 @@ impl Emitter<'_> {
                 )
             })
             .collect();
+        for (name, (initialiser, declared, reinit)) in &reload.statics {
+            if stored.iter().any(|(known, _, _)| known == name) {
+                continue;
+            }
+            statics.push(format!(
+                "    {{ {}, 0, 1, UINT64_C(0x{declared:016x}), UINT64_C(0x{initialiser:016x}), {}, NULL, NULL }},",
+                c_string_literal(name),
+                if *reinit { "EMBER_RL_STATIC_REINIT" } else { "0" },
+            ));
+        }
         let mut types = Vec::new();
         let mut identities = Vec::new();
         let classes: Vec<ClassId> = self.types.runtime_classes().map(|(id, _)| id).collect();
@@ -399,7 +453,7 @@ impl Emitter<'_> {
             self.line(line);
         }
         if fns.is_empty() {
-            self.line("    { NULL, NULL, NULL, 0, 0, 0 },");
+            self.line("    { NULL, NULL, NULL, NULL, 0, 0, 0 },");
         }
         self.line("};");
         self.line(&format!("static const {RT}rl_static {statics_symbol}[{}] = {{", statics.len().max(1)));
@@ -428,7 +482,7 @@ impl Emitter<'_> {
         self.line(&format!("    (uint32_t)sizeof({RT}rl_manifest), (uint32_t)sizeof({RT}obj_header), {}u,", reload.mode));
         self.line(&format!("    {},", c_string_literal(&reload.package)));
         self.line(&format!("    {}, {},", ember_branding::runtime(layout), ember_branding::runtime("reload_protocol_v1")));
-        self.line(&format!("    {}u, {fns_symbol}, {}, {},", fns.len(), table("targets"), table("addresses")));
+        self.line(&format!("    {}u, {fns_symbol}, {}, {}, {},", fns.len(), table("targets"), table("addresses"), table("descriptors")));
         self.line(&format!("    {}u, {statics_symbol}, {}, {},", statics.len(), table("static_data"), table("static_state")));
         self.line(&format!("    {}u, {types_symbol},", types.len()));
         self.line(&format!("    {}u, {identities_symbol},", identities.len()));

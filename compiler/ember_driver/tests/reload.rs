@@ -141,6 +141,127 @@ fn an_edited_body_runs_after_the_next_checkpoint() {
     assert_eq!(run.stdout, "v1 step 0\nv2 step 1\nv2 step 2\ntotal 300\n", "{}", run.stderr);
 }
 
+/// `[HR-6]`, `[HR-6a]` — a function's address is its permanent thunk's: a function value made
+/// before the reload and held across it calls the new body, as one the new image makes does.
+/// `[HR-4a]`, `[HR-17]` — a static lives in the runtime's storage and keeps its value across the
+/// reload.
+#[test]
+fn function_values_and_statics_outlive_their_image() {
+    let v1 = "import std.hot\nfrom std.sync import Atomic\n\nstatic TICKS: Atomic[int] = Atomic(0)\n\n\
+              fn step(i: int) -> int:\n    TICKS.fetch_add(1)\n    return i + 1\n\n\
+              fn make() -> fn(int) -> int:\n    return step\n\n\
+              fn twice(f: fn(int) -> int, x: int) -> int:\n    return f(f(x))\n\n\
+              fn main():\n    held = step\n    println(twice(held, 0))\n    hot.checkpoint()\n    println(twice(held, 0))\n    \
+              println(twice(make(), 1))\n    println(TICKS.load())\n";
+    let v2 = v1.replace("return i + 1", "return i + 1000");
+    let (run, reloads) = reload_run("reload-values", RELOAD_ALL, v1, &[&v2]);
+    assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
+    assert_eq!(run.exit, 0, "{}", run.stderr);
+    assert_eq!(run.stdout, "2\n2000\n2001\n6\n", "{}", run.stderr);
+}
+
+/// `[HR-10]`, `[HR-18]`, `[HR-18a]` — a `@noreload` function is called directly; a reload that
+/// changes its body is refused, naming it, and the refusal is never partial: the reloadable body
+/// edited beside it keeps running as it was.
+#[test]
+fn a_noreload_body_change_is_refused_whole() {
+    let v1 = "import std.hot\n\n@noreload\nfn fixed(i: int) -> int:\n    return i * 2\n\n\
+              fn step(i: int) -> int:\n    return i + 1\n\n\
+              fn main():\n    for i in 0..2:\n        println(fixed(i), step(i))\n        hot.checkpoint()\n";
+    let v2 = v1.replace("return i * 2", "return i * 3").replace("return i + 1", "return i + 100");
+    let (run, reloads) = reload_run("reload-noreload", RELOAD_ALL, v1, &[&v2]);
+    assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
+    assert_eq!(run.exit, 0, "{}", run.stderr);
+    assert_eq!(run.stdout, "0 1\n2 2\n", "{}", run.stderr);
+    assert!(run.stderr.contains("refused") && run.stderr.contains("the body of `@noreload` function `em_fixed` changed"), "{}", run.stderr);
+}
+
+/// `[HR-12]`, `[HR-14]` — a reloadable build registers every instance in the live-instance list, so
+/// a reload that removes a class while instances of it live is refused, naming the class and how
+/// many there are; the old code runs on with its instances.
+#[test]
+fn removing_a_class_with_live_instances_is_refused() {
+    let v1 = "import std.hot\n\nclass Particle:\n    x: int\n\n    fn init(self, x: int):\n        self.x = x\n\n\
+              fn tick(n: int) -> int:\n    return n + 1\n\n\
+              fn main():\n    ps = [Particle(1), Particle(2), Particle(3)]\n    println(tick(ps.len()))\n    hot.checkpoint()\n    \
+              println(tick(ps[2].x))\n";
+    let v2 = "import std.hot\n\nfn tick(n: int) -> int:\n    return n + 100\n\nfn main():\n    println(tick(0))\n";
+    let (run, reloads) = reload_run("reload-class-removed", RELOAD_ALL, v1, &[v2]);
+    assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
+    assert_eq!(run.exit, 0, "{}", run.stderr);
+    assert_eq!(run.stdout, "4\n4\n", "{}", run.stderr);
+    assert!(run.stderr.contains("class `Particle` was removed while 3 instances of it live"), "{}", run.stderr);
+}
+
+/// `[HR-19]` — `reload = "bodies"`, the first tier, admits function-body changes and refuses a
+/// change that needs instances migrated: a field added to a struct.
+#[test]
+fn the_bodies_tier_admits_bodies_and_refuses_layouts() {
+    let manifest = "[build]\nreload = \"bodies\"\n";
+    let v1 = "import std.hot\n\nstruct Point:\n    x: int\n\nfn show(p: Point) -> int:\n    return p.x\n\n\
+              fn main():\n    p = Point(x = 1)\n    println(show(p))\n    hot.checkpoint()\n    println(show(p))\n    hot.checkpoint()\n    println(show(p))\n";
+    let body = v1.replace("return p.x", "return p.x + 10");
+    let layout = body.replace("    x: int\n", "    x: int\n    y: int = 0\n");
+    let (run, reloads) = reload_run("reload-bodies", manifest, v1, &[&body]);
+    assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
+    assert_eq!(run.stdout, "1\n11\n11\n", "a body edit under `bodies`: {}", run.stderr);
+    let (run, _) = reload_run("reload-bodies-layout", manifest, v1, &[&layout]);
+    assert_eq!(run.stdout, "1\n1\n1\n", "a layout edit under `bodies`: {}", run.stderr);
+    assert!(run.stderr.contains("the layout of `Point` changed") && run.stderr.contains("`reload = \"bodies\"` admits only body changes"), "{}", run.stderr);
+}
+
+/// `[HR-17a]` — editing a static's initialiser is refused, naming the static; a
+/// `@reinit_on_reload` static runs its new initialiser instead and its old value is gone.
+#[test]
+fn a_static_initialiser_edit_needs_reinit_on_reload() {
+    let v1 = "import std.hot\n\nstatic LIMIT: int = 10\n\n@reinit_on_reload\nstatic LABEL: str = \"old\"\n\n\
+              fn show() -> String:\n    return f\"{LIMIT} {LABEL}\"\n\n\
+              fn main():\n    println(show())\n    hot.checkpoint()\n    println(show())\n";
+    let refused = v1.replace("LIMIT: int = 10", "LIMIT: int = 20");
+    let (run, _) = reload_run("reload-static-init", RELOAD_ALL, v1, &[&refused]);
+    assert_eq!(run.stdout, "10 old\n10 old\n", "{}", run.stderr);
+    assert!(run.stderr.contains("the initialiser of static `LIMIT` changed"), "{}", run.stderr);
+    let reinit = v1.replace("\"old\"", "\"new\"");
+    let (run, _) = reload_run("reload-static-reinit", RELOAD_ALL, v1, &[&reinit]);
+    assert_eq!(run.stdout, "10 old\n10 new\n", "{}", run.stderr);
+}
+
+/// `[HR-6a]` — method tables and drop glue stay ordinary code pointers: an object made before the
+/// reload keeps its method table, whose entries are thunks, so its virtual method and its `drop`
+/// run the new bodies.
+#[test]
+fn objects_made_before_a_reload_run_the_new_methods() {
+    let v1 = "import std.hot\n\nopen class Shape:\n    virtual fn area(self) -> int:\n        return 0\n\n\
+              class Square(Shape):\n    side: int = 3\n\n    \
+              override fn area(self) -> int:\n        return self.side * self.side\n\n    \
+              fn drop(mut self):\n        println(\"square dropped\")\n\n\
+              fn measure(s: Shape) -> int:\n    return s.area()\n\n\
+              fn main():\n    s = Square()\n    println(measure(s))\n    hot.checkpoint()\n    println(measure(s))\n";
+    let v2 = v1.replace("self.side * self.side", "self.side * 100").replace("square dropped", "square dropped by v2");
+    let (run, reloads) = reload_run("reload-methods", RELOAD_ALL, v1, &[&v2]);
+    assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
+    assert_eq!(run.exit, 0, "{}", run.stderr);
+    assert_eq!(run.stdout, "9\n300\nsquare dropped by v2\n", "{}", run.stderr);
+}
+
+/// `[HR-3]`, `[HR-3a]`, `[HR-42]` — a reload applies only when no registered thread is in Ember
+/// code: while a `thread.spawn` thread runs, the checkpoint leaves the old code running; once it is
+/// joined, the next checkpoint applies the edit.
+#[test]
+fn a_running_thread_holds_the_reload_back() {
+    let v1 = "import std.hot\nimport std.thread\nfrom std.sync import Atomic\n\n\
+              static STARTED: Atomic[int] = Atomic(0)\nstatic STOP: Atomic[int] = Atomic(0)\n\n\
+              fn version() -> int:\n    return 1\n\n\
+              fn spin() -> int:\n    STARTED.store(1)\n    turns = 0\n    while STOP.load() == 0:\n        turns += 1\n    return turns\n\n\
+              fn main():\n    worker = thread.spawn(fn() => spin())\n    while STARTED.load() == 0:\n        pass\n    \
+              hot.checkpoint()\n    println(version())\n    STOP.store(1)\n    turns = worker.join()\n    hot.checkpoint()\n    println(version())\n    println(turns >= 0)\n";
+    let v2 = v1.replace("return 1\n", "return 2\n");
+    let (run, reloads) = reload_run("reload-threads", RELOAD_ALL, v1, &[&v2]);
+    assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
+    assert_eq!(run.exit, 0, "{}", run.stderr);
+    assert_eq!(run.stdout, "1\n2\ntrue\n", "{}", run.stderr);
+}
+
 /// `[HR-29]` — with reload on, one shared runtime serves every image in the process: a reloadable
 /// package whose manifest asks to link the runtime statically is `E9036`.
 #[test]

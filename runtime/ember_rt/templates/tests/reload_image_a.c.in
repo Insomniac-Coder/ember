@@ -32,6 +32,7 @@
 
 static void (*targets[2])(void);
 static void (*addresses[2])(void);
+static const void* descriptors[2];
 static void* static_data[1];
 static uint32_t* static_state[1];
 
@@ -42,8 +43,8 @@ int64_t gone(int64_t x) { return ((int64_t (*)(int64_t))targets[1])(x); }
 static const int64_t counter_initial = 40;
 
 static const ember_rl_fn fns[2] = {
-    { "f", (void (*)(void))f_body, (void (*)(void))f, 1, 0, EMBER_RL_FN_RELOADABLE },
-    { "gone", (void (*)(void))gone_body, (void (*)(void))gone, 2, 0, EMBER_RL_FN_RELOADABLE },
+    { "f", (void (*)(void))f_body, (void (*)(void))f, NULL, 1, 0, EMBER_RL_FN_RELOADABLE },
+    { "gone", (void (*)(void))gone_body, (void (*)(void))gone, NULL, 2, 0, EMBER_RL_FN_RELOADABLE },
 };
 static const ember_rl_static statics[1] = {
     { "counter", 8, 8, 7, 9, EMBER_RL_STATIC_CONSTANT, &counter_initial, NULL },
@@ -60,7 +61,7 @@ EMBER_RL_MANIFEST const ember_rl_manifest ember_test_manifest = {
     ember_obj_header_v24,
 #endif
     ember_reload_protocol_v1,
-    2u, fns, targets, addresses,
+    2u, fns, targets, addresses, descriptors,
     1u, statics, static_data, static_state,
     0u, NULL,
     0u, NULL,

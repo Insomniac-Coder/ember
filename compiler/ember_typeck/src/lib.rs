@@ -34948,7 +34948,7 @@ impl<'a> Checker<'a> {
                 continue;
             }
             if matches!(name, "noalloc" | "nosync" | "noblock" | "noio" | "nolock" | "realtime" | "deterministic"
-                | "test" | "should_panic")
+                | "test" | "should_panic" | "reloadable" | "noreload" | "reinit_on_reload")
                 && !attr.args.is_empty()
             {
                 self.error(codes::E0104, attr.span, format!("`@{name}` takes no arguments"));
@@ -49297,8 +49297,14 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["component"], &["struct"], false),
     (&["soa"], &["field"], false),
     (&["always_specialize", "never_specialize"], &["fn", "struct", "enum", "class", "type"], false),
-    (&["reloadable", "noreload"], &["item", "module"], false),
-    (&["renamed_from", "reinit_on_reload", "allow_reload_terminate"], &["item"], false),
+    // Annex B — `[HR-25]`: which functions a reloadable build reaches through thunks; nothing in
+    // a build without reload, whose C is the same either way (`[HR-27]`).
+    (&["reloadable", "noreload"], &["item", "module"], true),
+    // `[HR-17a]` — the static's edited initialiser runs again at a reload.
+    (&["reinit_on_reload"], &["static"], true),
+    // `[HR-14]`'s carried value, and `[HR-43]`'s admission: instance migration is not built yet.
+    (&["renamed_from"], &["field", "variant"], false),
+    (&["allow_reload_terminate"], &["fn"], false),
     (&["prelude"], &["module"], false),
 ];
 

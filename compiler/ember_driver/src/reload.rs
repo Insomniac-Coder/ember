@@ -75,8 +75,18 @@ pub fn plan(
                     continue;
                 }
                 ember_ast::ItemKind::Static(decl) => {
+                    // Named as the checker names it: bare in the root module, by its module's path
+                    // elsewhere.
                     if let Some(value) = &decl.value {
-                        statics.insert(decl.name.name.to_string(), (text_hash(map, value.span), has_attribute(&item.attrs, "reinit_on_reload")));
+                        let name = if loaded.path.is_empty() {
+                            decl.name.name.to_string()
+                        } else {
+                            format!("{}.{}", loaded.path.join("."), decl.name.name)
+                        };
+                        statics.insert(
+                            name,
+                            (text_hash(map, value.span), text_hash(map, decl.ty.span), has_attribute(&item.attrs, "reinit_on_reload")),
+                        );
                     }
                     continue;
                 }

@@ -4,12 +4,13 @@
 
 static void (*targets[1])(void);
 static void (*addresses[1])(void);
+static const void* descriptors[1];
 
 static int64_t f_body(int64_t x) { return x - 1000; }
 int64_t f(int64_t x) { return ((int64_t (*)(int64_t))targets[0])(x); }
 
 static const ember_rl_fn fns[1] = {
-    { "f", (void (*)(void))f_body, (void (*)(void))f, 1, 0, EMBER_RL_FN_RELOADABLE },
+    { "f", (void (*)(void))f_body, (void (*)(void))f, NULL, 1, 0, EMBER_RL_FN_RELOADABLE },
 };
 
 EMBER_RL_MANIFEST const ember_rl_manifest ember_test_manifest = {
@@ -21,7 +22,7 @@ EMBER_RL_MANIFEST const ember_rl_manifest ember_test_manifest = {
     ember_obj_header_v24,
 #endif
     ember_reload_protocol_v1,
-    1u, fns, targets, addresses,
+    1u, fns, targets, addresses, descriptors,
     0u, NULL, NULL, NULL,
     0u, NULL,
     0u, NULL,

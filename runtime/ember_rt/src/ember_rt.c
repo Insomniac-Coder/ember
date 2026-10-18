@@ -1120,7 +1120,14 @@ static void* thread_main(void* raw) {
 #endif
     ember_thread* thread = (ember_thread*)raw;
     ember_rt_thread_attach();
+#if defined(EMBER_RELOAD)
+    /* [HR-42] The thread's work is Ember code. */
+    ember_reload_enter();
     thread->run(thread);
+    ember_reload_leave();
+#else
+    thread->run(thread);
+#endif
     ember_rt_thread_detach();
     thread_let_go(thread);
     (void)object_fetch_sub_u32(&g_threads_running, 1);
@@ -1388,10 +1395,17 @@ static uint32_t job_take_ready(void) {
 static void job_run(uint32_t index) {
     job_slot* slot = &g_job_slots[index];
     void* state = job_state(slot);
+#if defined(EMBER_RELOAD)
+    /* [HR-42] A job is Ember code, on a worker or on a thread that helps while it waits. */
+    ember_reload_enter();
+#endif
     slot->run(state);
     if (slot->drop != NULL) {
         slot->drop(state);
     }
+#if defined(EMBER_RELOAD)
+    ember_reload_leave();
+#endif
     if (slot->heap != NULL) {
         ember_free(slot->heap, slot->heap_size, slot->heap_align);
         slot->heap = NULL;
@@ -2226,6 +2240,49 @@ static bool object_try_strong_retain(ember_obj_header* object) {
     }
 }
 
+#if defined(EMBER_RELOAD_INSTANCES)
+/* [HR-12] The live-instance list: every object a reloadable build allocates, linked through the
+ * 16 bytes its header has for it, so a reload can find each instance of a type. An object leaves
+ * the list when its memory goes. */
+static ember_obj_header* g_rl_live_head;
+static uint32_t g_rl_live_lock;
+
+static void rl_live_lock(void) {
+    uint32_t expected = 0;
+    while (!object_compare_exchange_u32(&g_rl_live_lock, &expected, 1)) {
+        expected = 0;
+    }
+}
+
+static void rl_live_unlock(void) {
+    (void)object_fetch_sub_u32(&g_rl_live_lock, 1);
+}
+
+static void rl_live_insert(ember_obj_header* object) {
+    rl_live_lock();
+    object->live_prev = NULL;
+    object->live_next = g_rl_live_head;
+    if (g_rl_live_head != NULL) {
+        g_rl_live_head->live_prev = object;
+    }
+    g_rl_live_head = object;
+    rl_live_unlock();
+}
+
+static void rl_live_remove(ember_obj_header* object) {
+    rl_live_lock();
+    if (object->live_prev != NULL) {
+        object->live_prev->live_next = object->live_next;
+    } else {
+        g_rl_live_head = object->live_next;
+    }
+    if (object->live_next != NULL) {
+        object->live_next->live_prev = object->live_prev;
+    }
+    rl_live_unlock();
+}
+#endif
+
 ember_obj_header* ember_obj_new(const ember_type_info* ti) {
     if (ti == NULL || ti->size < sizeof(ember_obj_header)
         || ti->align < _Alignof(ember_obj_header)
@@ -2239,6 +2296,9 @@ ember_obj_header* ember_obj_new(const ember_type_info* ti) {
     object->weak = 1;
     object->ti = ti;
     debug_track_object(object);
+#if defined(EMBER_RELOAD_INSTANCES)
+    rl_live_insert(object);
+#endif
     return object;
 }
 
@@ -2340,6 +2400,9 @@ void ember_weak_release(ember_obj_header* object) {
     if (previous == 1 && object_load_strong(object) == 0) {
         const ember_type_info* ti = object->ti;
         debug_untrack_object(object);
+#if defined(EMBER_RELOAD_INSTANCES)
+        rl_live_remove(object);
+#endif
         ember_free(object, ti->size, ti->align);
     }
 }
@@ -8614,6 +8677,7 @@ static bool rl_threads_quiet(uint32_t self_allowed) {
 typedef struct rl_slot {
     char* name;
     void* thunk;
+    const void* descriptor;
     void* target;
     uint64_t signature;
     uint64_t body_hash;
@@ -8976,6 +9040,24 @@ static const ember_rl_fn* rl_find_fn(const ember_rl_manifest* manifest, const ch
     return NULL;
 }
 
+#if defined(EMBER_RELOAD_INSTANCES)
+/* [HR-12] The live instances of the class `identity` names (by its canonical record), dead ones
+ * a `Weak` still holds left out. */
+static uint64_t rl_live_count(const ember_rl_identity* identity) {
+    uint64_t count = 0;
+    rl_live_lock();
+    for (ember_obj_header* object = g_rl_live_head; object != NULL; object = object->live_next) {
+        const ember_type_info* ti = object->ti;
+        if (ti != NULL && ti->identity != NULL && ti->identity->canonical == identity->canonical
+            && object_load_strong(object) != 0) {
+            count += 1;
+        }
+    }
+    rl_live_unlock();
+    return count;
+}
+#endif
+
 /* Whether `next` can replace what runs now. `checkpoint` is a poll from inside the program
  * (`std.hot.checkpoint()`), where its own frames stay live and run the old code. */
 static bool rl_plan(const ember_rl_manifest* next, bool first, bool checkpoint, char* report, size_t cap) {
@@ -9035,6 +9117,32 @@ static bool rl_plan(const ember_rl_manifest* next, bool first, bool checkpoint, 
             rl_report(report, cap, "refused: the initialiser of static `%s` changed; mark it `@reinit_on_reload` to run the new one and discard its value [HR-17a]\n", edited->name);
             refused = true;
         }
+    }
+    /* [HR-14] A class removed while instances of it live is refused, naming it and the count,
+     * which the live-instance list gives ([HR-12]); without the list it cannot be counted. */
+    for (size_t index = 0; index < g_rl.types.cap; ++index) {
+        const rl_type* kept = (const rl_type*)g_rl.types.items[index];
+        if (kept == NULL || kept->schema == NULL || kept->schema->kind != EMBER_RL_TYPE_CLASS) {
+            continue;
+        }
+        bool still = false;
+        for (uint32_t at = 0; at < next->type_count && !still; ++at) {
+            still = strcmp(next->types[at].name, kept->name) == 0;
+        }
+        if (still) {
+            continue;
+        }
+#if defined(EMBER_RELOAD_INSTANCES)
+        uint64_t live = rl_live_count(kept->canonical);
+        if (live > 0) {
+            rl_report(report, cap, "refused: class `%s` was removed while %llu instance%s of it live [HR-14]\n",
+                      kept->name, (unsigned long long)live, live == 1 ? "" : "s");
+            refused = true;
+        }
+#else
+        rl_report(report, cap, "refused: class `%s` was removed, and `reload = \"bodies\"` cannot count its instances [HR-19]\n", kept->name);
+        refused = true;
+#endif
     }
     /* A type whose schema or method tables changed needs its instances migrated or given new type
      * information, which this tier does not do ([HR-19]). */
@@ -9274,6 +9382,9 @@ static void rl_commit(const ember_rl_manifest* next, rl_pending* pending) {
             continue;
         }
         slot->removed = false;
+        if (slot->descriptor == NULL) {
+            slot->descriptor = fn->descriptor;
+        }
         slot->target = fn->body != NULL ? (void*)fn->body : NULL;
         slot->signature = fn->signature;
         slot->body_hash = fn->body_hash;
@@ -9289,6 +9400,7 @@ static void rl_commit(const ember_rl_manifest* next, rl_pending* pending) {
             }
             manifest->targets[index] = (void (*)(void))slot->target;
             manifest->addresses[index] = (void (*)(void))slot->thunk;
+            manifest->descriptors[index] = slot->descriptor;
         }
     }
     /* [HR-17a] A `@reinit_on_reload` static runs its new initialiser on its next access. */

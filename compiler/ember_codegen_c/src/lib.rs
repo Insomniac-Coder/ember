@@ -4942,7 +4942,19 @@ impl Emitter<'_> {
                         format!("_cb{index}")
                     }
                 }).collect::<Vec<_>>().join(", ");
-                if self.is_void(ret) {
+                // `[HR-42]` — C calling back into Ember code: this thread's depth counter.
+                if self.reload.is_some() {
+                    self.line(&format!("    {RT}reload_enter();"));
+                    if self.is_void(ret) {
+                        self.line(&format!("    {}({arguments});", body.symbol));
+                    } else {
+                        self.line(&format!("    {} _cb_result = {}({arguments});", self.c_type(ret), body.symbol));
+                    }
+                    self.line(&format!("    {RT}reload_leave();"));
+                    if !self.is_void(ret) {
+                        self.line("    return _cb_result;");
+                    }
+                } else if self.is_void(ret) {
                     self.line(&format!("    {}({arguments});", body.symbol));
                 } else {
                     self.line(&format!("    return {}({arguments});", body.symbol));
@@ -5324,6 +5336,10 @@ impl Emitter<'_> {
             // runtime, the same guard as `main` in the current backend.
             if body.export_thread_policy != ember_mir::ExportThreadPolicy::Any {
                 self.line(&format!("    {RT}rt_check_main_thread();"));
+            }
+            // `[HR-42]` — entering Ember code from a foreign caller: this thread's depth counter.
+            if self.reload.is_some() {
+                self.line(&format!("    {RT}reload_enter();"));
             }
         }
         if let Some(values) = self.ffi_export_value_params.get(&body.symbol).cloned() {
@@ -6606,6 +6622,10 @@ impl Emitter<'_> {
             Terminator::Return => {
                 if self.comptime.is_some() {
                     self.line("    EMBER_CT_LEAVE();");
+                }
+                // `[HR-42]` — leaving Ember code for the foreign caller of an export.
+                if self.reload.is_some() && body.abi.as_deref() == Some("C") {
+                    self.line(&format!("    {RT}reload_leave();"));
                 }
                 if self.is_void(body.return_ty()) {
                     self.line("    return;");
@@ -8988,8 +9008,10 @@ impl Emitter<'_> {
             Const::CStrLiteral(bytes) => c_bytes_literal(bytes),
             // A native value selects a static descriptor. An already-C
             // function remains a raw C function pointer.
-            Const::Fn(symbol) => self.native_fn_values.get(symbol).map_or_else(|| symbol.clone(),
-                |value| format!("((struct {RT}fn_value){{{0}.native, &{0}, {{0, 0, 0}}}})", value.descriptor)),
+            Const::Fn(symbol) => self.reload_fn_value(symbol).unwrap_or_else(|| {
+                self.native_fn_values.get(symbol).map_or_else(|| symbol.clone(),
+                    |value| format!("((struct {RT}fn_value){{{0}.native, &{0}, {{0, 0, 0}}}})", value.descriptor))
+            }),
             Const::Void => "0".to_string(),
             Const::OverflowShift { per_word } => {
                 let shift = format!("{}_OVERFLOW_SHIFT", ember_branding::SYMBOL_PREFIX.to_uppercase());

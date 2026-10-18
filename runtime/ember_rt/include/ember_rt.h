@@ -2807,12 +2807,15 @@ void ember_reload_leave(void);
 
 /* One function. A reloadable one's call-table slot is keyed by `name`, its mangled symbol, never
  * by its index ([HR-7]); `body` is this image's code and `thunk` this image's thunk, which becomes
- * the permanent one when the name is new ([HR-6]). A `@noreload` one is listed for its body's
- * hash ([HR-10]). */
+ * the permanent one when the name is new ([HR-6]); `descriptor`, when this image makes values of
+ * the function, its value's descriptor, of which the first one made stands for the function in
+ * every image, so a value of it is one value whichever image made it. A `@noreload` one is listed
+ * for its body's hash ([HR-10]). */
 typedef struct ember_rl_fn {
     const char* name;
     void (*body)(void);
     void (*thunk)(void);
+    const void* descriptor;
     uint64_t signature;
     uint64_t body_hash;
     uint32_t flags;
@@ -2916,6 +2919,7 @@ typedef struct ember_rl_manifest {
     const ember_rl_fn* fns;
     void (**targets)(void);
     void (**addresses)(void);
+    const void** descriptors;
     uint32_t static_count;
     const ember_rl_static* statics;
     void** static_data;
