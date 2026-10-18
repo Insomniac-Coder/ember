@@ -944,7 +944,7 @@ const BENCH_WORLD: &str = "from std.sync import Atomic, Mutex\n\n@sync\nclass Pa
 /// changes through `migrate_from` — are each timed from the save (the source written) through
 /// `ember build --reload` to the host's first frame running the new code. The figures, and the
 /// runtime's split of each reload (`[HR-32]`), are printed with the configuration (`--nocapture`
-/// shows them); `[HR-1]`'s one-second budget is for `bench/bigpkg` on the reference machine, so it
+/// shows them); rule HR-1's one-second budget is for `bench/bigpkg` on the reference machine, so it
 /// is not asserted here.
 #[test]
 fn the_reload_benchmark_times_three_edits() {

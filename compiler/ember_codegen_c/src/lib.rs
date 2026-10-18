@@ -11946,6 +11946,11 @@ mod string_descriptor_view_parts_tests {
             fmt_fns: Default::default(),
             fmt_prints: Default::default(),
             fmt_specs: Default::default(),
+            reload: None,
+            reload_slots: BTreeMap::new(),
+            reload_interface_ids: Default::default(),
+            lazy_statics: BTreeMap::new(),
+            reload_bodies: Vec::new(),
         }
     }
 
