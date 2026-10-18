@@ -1064,6 +1064,10 @@ impl Emitter<'_> {
         self.line(CLONE_PARTS_PROTOTYPES);
         self.line(ARRAY_HELPER_PROTOTYPES);
         self.line(FMT_FN_PROTOTYPES);
+        // Before anything that drops or operates on them: a class field that is an `SoA` is
+        // dropped by the class's drop glue, below (`[SOA-1]`).
+        self.emit_soa_helpers();
+        self.emit_simd_helpers(bodies);
         self.emit_closure_values(bodies);
         // Class tables first: an interface adapter can call through one (D-375).
         self.emit_virtual_tables();
@@ -1078,8 +1082,6 @@ impl Emitter<'_> {
         self.emit_class_type_infos();
         self.emit_shared_type_infos();
         self.emit_thread_helpers();
-        self.emit_soa_helpers();
-        self.emit_simd_helpers(bodies);
         self.emit_constant_statics();
         self.emit_parallel_helpers(bodies);
         if self.comptime.is_some() && self.unit.is_none() {

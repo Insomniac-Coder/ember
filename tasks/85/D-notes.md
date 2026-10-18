@@ -176,3 +176,23 @@ are written over `SoA[T]`; the spec names no operation list for `ArenaSoA`).
 `SOA-4/accept_an_arena_soa_has_a_fixed_capacity.em`, `SOA-4/reject_an_arena_soa_misused.em`,
 `SOA-4/reject_an_arena_soa_outliving_its_arena.em`. `SOA-1` and `SOA-4` leave the `unfinished` list.
 Speed: a flattened column is a column like any other (the same views and loops); not timed apart.
+
+## 4. Defects found on the way to the ECS, fixed (not numbered: the coordinator numbers them)
+
+- **A generic struct could not name a generic class** declared after it, or in a module collected
+  later (`struct Holder[T]: store: Store[T]` was "cannot find type `Store`"): generic structs were
+  collected before generic classes, and only structs were collected on demand. Generic classes are
+  now noted with the structs and collected on demand where a type names them
+  (`collect_generic_class_on_demand`). Test: `tests/run-pass/a_generic_struct_may_name_a_generic_class_declared_after_it.em`.
+- **An `SoA` as a class's field** did not compile (its C helpers were written after the class's
+  drop glue that calls them) and, once it did, a column of it panicked with an exclusivity
+  violation (the column's mutable borrow began before its `SoA`'s length was read). The `SoA` and
+  `std.simd` helpers are now written before the closure values and drop glue, and a column of an
+  `SoA` reached through a class reads the length first. Test: `tests/run-pass/an_soa_in_a_class_field.em`.
+- **A tuple could not be a generic extension's target** (`extend[A: P, B: P] (A, B) implements Q:`
+  did not parse, and was not matched): the parser takes it where the line ends with its `:` (a call
+  `extend[i](x)` stays a call), and the type checker keeps it under `$tupleN` with the elements as
+  its arguments, so every tuple of that arity whose elements meet the bounds takes it, as a generic
+  type's instance does (only with `implements`, `[IFC-2]`). Test:
+  `tests/run-pass/a_tuple_of_parameters_implements_an_interface.em`. This is what a `Query[(A,
+  Mut[B])]` needs to map each parameter to its item type (`[ECS-3]`).

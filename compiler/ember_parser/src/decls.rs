@@ -655,6 +655,20 @@ impl Parser<'_> {
             }
             n += 1;
         }
+        // A tuple type (`extend[A, B] (A, B) implements I:`): a declaration only when the line
+        // ends with its `:`, so a call `extend[i](x)` stays one.
+        if matches!(self.peek_at(n), TokenKind::Punct(Punct::LParen)) && n > 1 {
+            let mut last = None;
+            let mut at = n;
+            loop {
+                match self.peek_at(at) {
+                    TokenKind::Newline | TokenKind::Eof => break,
+                    other => last = Some(other.clone()),
+                }
+                at += 1;
+            }
+            return matches!(last, Some(TokenKind::Punct(Punct::Colon)));
+        }
         matches!(self.peek_at(n), TokenKind::Ident(_) | TokenKind::RawIdent(_))
     }
 

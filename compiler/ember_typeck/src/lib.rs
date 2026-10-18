@@ -2518,6 +2518,9 @@ struct Checker<'a> {
     /// module and item index: one named by an earlier declaration's field or
     /// method is collected on demand.
     pending_generic_structs: HashMap<Symbol, (usize, usize, ast::Item)>,
+    /// Each generic class not yet collected, as `pending_generic_structs`: a generic struct's
+    /// field may name one declared after it (or a class collected later in module order).
+    pending_generic_classes: HashMap<Symbol, (usize, usize, ast::Item)>,
     /// D-407 — each interface's associated types by name, and its parents'
     /// names, read before any generic type is collected: a generic type's
     /// field or an interface's method may name `U.Iter` of an interface
@@ -2778,6 +2781,7 @@ impl<'a> Checker<'a> {
             pending_bound_interfaces: Vec::new(),
             collecting_generic: None,
             pending_generic_structs: HashMap::new(),
+            pending_generic_classes: HashMap::new(),
             noted_assoc: HashMap::new(),
             method_call_expected: None,
             loop_labels: Vec::new(),
@@ -4828,10 +4832,16 @@ impl<'a> Checker<'a> {
     /// D-279 — record every generic struct before any is collected.
     fn note_generic_structs(&mut self, module: &ast::Module) {
         for (item_index, item) in module.items.iter().enumerate() {
-            let ast::ItemKind::Struct(decl) = &item.kind else { continue };
-            if !decl.generics.is_empty() {
-                let name = self.qualified(decl.name.name);
-                self.pending_generic_structs.insert(name, (self.current_module, item_index, item.clone()));
+            match &item.kind {
+                ast::ItemKind::Struct(decl) if !decl.generics.is_empty() => {
+                    let name = self.qualified(decl.name.name);
+                    self.pending_generic_structs.insert(name, (self.current_module, item_index, item.clone()));
+                }
+                ast::ItemKind::Class(decl) if !decl.generics.is_empty() => {
+                    let name = self.qualified(decl.name.name);
+                    self.pending_generic_classes.insert(name, (self.current_module, item_index, item.clone()));
+                }
+                _ => {}
             }
         }
         // D-407 — and each interface's associated types (`noted_assoc`).
@@ -4941,6 +4951,21 @@ impl<'a> Checker<'a> {
 
     /// D-279 — collect the generic struct `name` now, if it is declared and
     /// not collected yet: a declaration before it names it.
+    /// A generic class named before its turn to be collected (a generic struct's field names it):
+    /// collected now, as `collect_generic_struct_on_demand` does a struct.
+    fn collect_generic_class_on_demand(&mut self, name: Symbol) {
+        let Some((module, item_index, item)) = self.pending_generic_classes.remove(&name) else { return };
+        let saved_module = std::mem::replace(&mut self.current_module, module);
+        let saved_params = std::mem::take(&mut self.type_params);
+        let saved_collecting = self.collecting_generic.take();
+        let saved_self = self.self_ty.take();
+        self.collect_generic_class(item_index, &item);
+        self.current_module = saved_module;
+        self.type_params = saved_params;
+        self.collecting_generic = saved_collecting;
+        self.self_ty = saved_self;
+    }
+
     fn collect_generic_struct_on_demand(&mut self, name: Symbol) {
         let Some((module, item_index, item)) = self.pending_generic_structs.remove(&name) else { return };
         let saved_module = std::mem::replace(&mut self.current_module, module);
@@ -5177,6 +5202,18 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let name = self.qualified(decl.name.name);
+            // Collected already, on demand.
+            if self.pending_generic_classes.remove(&name).is_none() {
+                continue;
+            }
+            self.collect_generic_class(item_index, item);
+        }
+    }
+
+    fn collect_generic_class(&mut self, item_index: usize, item: &ast::Item) {
+        {
+            let ast::ItemKind::Class(decl) = &item.kind else { return };
+            let name = self.qualified(decl.name.name);
             let generic_params = self.declare_generics(&decl.generics);
             let params: Vec<Symbol> = generic_params.iter().map(|param| param.name).collect();
             let base = decl.base.clone();
@@ -5276,13 +5313,26 @@ impl<'a> Checker<'a> {
                 self.collect_universal_extension(decl, item, item_index);
                 continue;
             }
-            let ast::TypeKind::Path { segments, args } = &decl.target.kind else {
-                continue;
+            // A tuple target's elements are its arguments (`[GRM-34]`); a tuple is everyone's, so
+            // only an extension implementing an interface may add to it (`[IFC-2]`).
+            let tuple_args: Vec<ast::GenericArg>;
+            let (name, args): (Symbol, &[ast::GenericArg]) = match &decl.target.kind {
+                ast::TypeKind::Tuple(items) => {
+                    tuple_args = items.iter().cloned().map(ast::GenericArg::Type).collect();
+                    (Self::tuple_extension_target(items.len()), &tuple_args)
+                }
+                ast::TypeKind::Path { segments, args } => {
+                    let Some(name) = self.generic_extension_target(&segments[0]) else { continue };
+                    (name, args)
+                }
+                _ => continue,
             };
-            let Some(name) = self.generic_extension_target(&segments[0]) else { continue };
             // `[IFC-2]`, as for `extend T:`.
-            if decl.implements.is_empty() && !self.generic_target_in_this_package(name) {
-                let shown = segments[0].name.to_string();
+            if decl.implements.is_empty() && (name.as_str().starts_with("$tuple") || !self.generic_target_in_this_package(name)) {
+                let shown = match &decl.target.kind {
+                    ast::TypeKind::Path { segments, .. } => segments[0].name.to_string(),
+                    _ => "a tuple".to_string(),
+                };
                 self.report_foreign_extension(&shown, decl.target.span);
                 continue;
             }
@@ -6389,10 +6439,19 @@ impl<'a> Checker<'a> {
         if errors::universal_target(decl) {
             return true;
         }
+        // A tuple of its parameters (`extend[A, B] (A, B) implements I:`), kept as `$tuple2`.
+        if let ast::TypeKind::Tuple(items) = &decl.target.kind {
+            return items.len() >= 2;
+        }
         let ast::TypeKind::Path { segments, args } = &decl.target.kind else {
             return false;
         };
         segments.len() == 1 && !args.is_empty() && self.generic_extension_target(&segments[0]).is_some()
+    }
+
+    /// The name an extension of a tuple of `arity` types is kept under.
+    fn tuple_extension_target(arity: usize) -> Symbol {
+        Symbol::intern(&format!("$tuple{arity}"))
     }
 
     /// The name an extension of the generic type written `segment` is kept
@@ -6427,6 +6486,7 @@ impl<'a> Checker<'a> {
             TyKind::Enum(id) if self.is_result(ty) => {
                 Some((Symbol::intern("Result"), vec![payload(id, 0), payload(id, 1)]))
             }
+            TyKind::Tuple(ref items) if items.len() >= 2 => Some((Self::tuple_extension_target(items.len()), items.clone())),
             _ => None,
         }
     }
@@ -6578,6 +6638,7 @@ impl<'a> Checker<'a> {
             }
             "Option" => Some(self.option_of(*args.first()?)),
             "Result" => Some(self.result_of(*args.first()?, *args.get(1)?)),
+            name if name.starts_with("$tuple") => Some(self.types.intern(TyKind::Tuple(args.to_vec()))),
             _ => None,
         }
     }
@@ -11941,6 +12002,7 @@ impl<'a> Checker<'a> {
         let resolved_name = self.resolve_name(name);
         if self.declared_by_program(name, resolved_name) {
             self.collect_generic_struct_on_demand(resolved_name);
+            self.collect_generic_class_on_demand(resolved_name);
             if let Some(decl) = self.generic_structs.get(&resolved_name).cloned() {
                 let resolved = args.iter().map(|(ty, _)| *ty).collect::<Vec<_>>();
                 return self.instantiate_struct(resolved_name, &decl, &resolved, span);
@@ -12060,6 +12122,7 @@ impl<'a> Checker<'a> {
         }
         // D-279 — a generic struct declared later is collected now.
         self.collect_generic_struct_on_demand(resolved_name);
+            self.collect_generic_class_on_demand(resolved_name);
         if let Some(decl) = self.generic_structs.get(&resolved_name).cloned() {
             let resolved = args.iter().map(|(ty, _)| *ty).collect::<Vec<_>>();
             return self.instantiate_struct(resolved_name, &decl, &resolved, span);
@@ -41992,6 +42055,28 @@ impl<'a> Checker<'a> {
         let borrowed = Expr { ty: reference, kind: ExprKind::Ref { place: Box::new(column_place), mutable }, span };
         let len = Expr { ty: usize_ty, kind: ExprKind::Field { base: Box::new(soa.clone()), index: columns }, span };
         let view = self.types.intern(TyKind::Span { elem, mutable });
+        // An `SoA` that is a class's field is reached through accesses checked at run time
+        // (`[EXC-1]`): its length is read, and that read ended, before the column is borrowed.
+        let mut through = &soa;
+        let mut in_class = false;
+        while let ExprKind::Field { base, .. } | ExprKind::Deref(base) = &through.kind {
+            in_class |= matches!(self.types.kind(base.ty), TyKind::Class(_));
+            through = base;
+        }
+        if in_class {
+            let read = self.declare(None, usize_ty, span);
+            let local = Expr { ty: usize_ty, kind: ExprKind::Local(read), span };
+            let call = Expr {
+                ty: view,
+                kind: ExprKind::Builtin { which: Builtin::SoA { op: hir::SoAOp::Column { mutable }, soa: soa.ty }, args: vec![borrowed, local] },
+                span,
+            };
+            return Expr {
+                ty: view,
+                kind: ExprKind::Block { block: Block { stmts: vec![Stmt::Let { local: read, init: Some(len) }], span }, value: Box::new(call) },
+                span,
+            };
+        }
         Expr {
             ty: view,
             kind: ExprKind::Builtin { which: Builtin::SoA { op: hir::SoAOp::Column { mutable }, soa: soa.ty }, args: vec![borrowed, len] },
