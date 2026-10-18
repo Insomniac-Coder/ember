@@ -843,6 +843,14 @@ fn adopted_foreign_objects_are_freed_by_their_destructor() {
         assert!(run.status.success(), "{profile:?}: {}", String::from_utf8_lossy(&run.stderr));
         assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "3 1\n4 3\n4 2\n3\n7 1\n507 0\n", "{profile:?}");
     }
+    // `[FFI-11]` — `returns_owned` results (one may be null) and `owned` parameters.
+    let transferred = root.join(format!("tests/conformance/FFI-36a/accept_returns_owned_and_owned_parameters.{SOURCE_EXT}"));
+    for profile in [Profile::Debug, Profile::Release] {
+        let program = link_with_fixture(&transferred, "foreign_objects.c", profile, &directory, &format!("owned_{profile:?}"));
+        let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
+        assert!(run.status.success(), "{profile:?}: {}", String::from_utf8_lossy(&run.stderr));
+        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "2 1\nnone\n3 2\n3 1\n23 0\n1063 0\n1\n", "{profile:?}");
+    }
 
     let declarations = "from std.ffi import adopt, ForeignBox\nimport std.thread\n\nunsafe extern \"C\":\n    @ffi(destroys(widget_free))\n    type Widget\n    @ffi(destroys(gadget_close), threads(creator))\n    type Gadget\n    fn widget_new(id: i32) -> *mut Widget\n    fn widget_free(widget: *mut Widget)\n    fn gadget_new(id: i32) -> *mut Gadget\n    fn gadget_close(gadget: *mut Gadget) -> i32\n\n";
     // `[FFI-36b]` — the second `adopt` of one live object, at line 23; the first is at 22.

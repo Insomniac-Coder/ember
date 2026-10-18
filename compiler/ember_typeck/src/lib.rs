@@ -17006,10 +17006,18 @@ impl<'a> Checker<'a> {
                 );
             }
         };
+        // `[FFI-36a]` — a `ForeignBox` (or an `Option` of one) crosses as the object's pointer;
+        // `check_foreign_ownership` checks the contract that moves it.
+        let carries_box = |this: &Self, ty: Ty| decl.is_foreign_decl && decl.is_safe
+            && this.option_some_payload(ty).unwrap_or(ty) != this.common.error
+            && this.lock_inner(this.option_some_payload(ty).unwrap_or(ty), "std.ffi.ForeignBox").is_some();
         for &(name, ty, _, span) in &signature {
             if !decl.is_foreign_decl && self.exported_owner_reachable(ty, &mut HashSet::new()) {
                 self.error(codes::E5015, span,
                     format!("exported parameter `{name}` reaches an owning Ember value"));
+                continue;
+            }
+            if carries_box(self, ty) {
                 continue;
             }
             if decl.is_foreign_decl && decl.is_safe
@@ -17046,7 +17054,7 @@ impl<'a> Checker<'a> {
             self.error(codes::E5015, decl.name.span,
                 "exported result reaches an owning Ember value");
         }
-        if ret != self.common.void && !owning_result {
+        if ret != self.common.void && !owning_result && !carries_box(self, ret) {
             if decl.is_foreign_decl && decl.is_safe
                 && matches!(result_contract, Some(FfiResultContract::SharedCountStatic { .. }
                     | FfiResultContract::SharedCountFrom { .. }
@@ -17192,6 +17200,7 @@ impl<'a> Checker<'a> {
             }
         }
         if decl.is_foreign_decl && decl.is_safe {
+            self.check_foreign_ownership(decl, attrs, &signature, ret);
             for axis in &unknown_result {
                 self.error(codes::E5002, decl.name.span,
                     format!("`safe fn` has an unknown {axis} for its result"));
@@ -17393,6 +17402,74 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `Some`'s payload of an `Option`.
+    fn option_some_payload(&self, ty: Ty) -> Option<Ty> {
+        let TyKind::Enum(id) = *self.types.kind(ty) else { return None };
+        let def = self.types.enum_def(id);
+        (def.name.as_str().starts_with("Option_") && def.variants.len() == 2)
+            .then(|| def.variants[1].fields.first().map(|field| field.ty))
+            .flatten()
+    }
+
+    /// `[FFI-11]`, `[FFI-36a]` — a `safe fn`'s ownership words: a `param(p, owned, one)` takes
+    /// `owned p: ForeignBox[T]` (an `Option` of one with `nullable`), a result
+    /// `returns_owned(destructor=f)` is a `ForeignBox[T]` (likewise) whose `f` takes one `*mut T`,
+    /// and a `ForeignBox` crosses no other way.
+    fn check_foreign_ownership(&mut self, decl: &ast::FnDecl, attrs: &[ast::Attribute], signature: &[(Symbol, Ty, Mode, Span)], ret: Ty) {
+        let foreign_box = |this: &Self, ty: Ty, nullable: bool| {
+            let ty = if nullable { this.option_some_payload(ty) } else { Some(ty) };
+            ty.and_then(|ty| this.lock_inner(ty, "std.ffi.ForeignBox"))
+        };
+        let owned = ffi_owned_params(attrs);
+        for &(name, ty, mode, span) in signature {
+            match owned.iter().find(|(slot, _)| *slot == name) {
+                Some(&(_, nullable)) => {
+                    if mode != Mode::Owned || foreign_box(self, ty, nullable).is_none() {
+                        self.error(codes::E5002, span, format!(
+                            "`owned` contract for `{name}` needs `owned {name}: {}`",
+                            if nullable { "Option[ForeignBox[T]]" } else { "ForeignBox[T]" }));
+                    }
+                }
+                None if foreign_box(self, ty, false).or_else(|| foreign_box(self, ty, true)).is_some() => {
+                    self.error(codes::E5002, span,
+                        format!("a `ForeignBox` parameter crosses only as an object C takes: `param({name}, owned, one)`"));
+                }
+                None => {}
+            }
+        }
+        match ffi_owned_result(attrs) {
+            Some((destructor, nullable, _)) => {
+                let Some(pointee) = foreign_box(self, ret, nullable) else {
+                    self.error(codes::E5002, decl.name.span, format!(
+                        "`returns_owned` needs a `{}` result",
+                        if nullable { "Option[ForeignBox[T]]" } else { "ForeignBox[T]" }));
+                    return;
+                };
+                if self.foreign_destructor(destructor.name, pointee).is_none() {
+                    let shown = self.types.display(pointee);
+                    self.error(codes::E5002, destructor.span,
+                        format!("`{}` frees a `{shown}`, so it is a foreign function taking one `*mut {shown}`", destructor.name));
+                }
+            }
+            None if foreign_box(self, ret, false).or_else(|| foreign_box(self, ret, true)).is_some() => {
+                self.error(codes::E5002, decl.name.span,
+                    "a `ForeignBox` result needs `result(returns_owned(destructor=f), one)`");
+            }
+            None => {}
+        }
+    }
+
+    /// `[FFI-36a]` — the foreign function `name` of this module that frees a `pointee`: its
+    /// definition, C symbol and result type.
+    fn foreign_destructor(&self, name: Symbol, pointee: Ty) -> Option<(DefId, Symbol, Ty)> {
+        let def = *self.fn_ids.get(&self.qualified(name))?;
+        let symbol = *self.foreign_symbols.get(&def)?;
+        let signature = &self.signatures[def.0 as usize];
+        matches!(signature.params.as_slice(),
+            [(_, ty, _, _)] if matches!(*self.types.kind(*ty), TyKind::Ptr { inner, .. } if inner == pointee))
+            .then_some((def, symbol, signature.ret))
+    }
+
     fn foreign_pointer_contract_required(&self, ty: Ty) -> bool {
         match self.types.kind(ty) {
             TyKind::Ptr { .. } | TyKind::Fn { .. } => true,
@@ -17447,8 +17524,25 @@ impl<'a> Checker<'a> {
                     hir::FfiAbiParam::Value { public_index, ty, mode }).collect(),
                 result_array: None,
                 result_span: None,
+                result_owned: None,
             });
         }
+        // `[FFI-11]`, `[FFI-36a]` — the objects the call moves: a parameter C takes, a result the
+        // caller comes to own.
+        let owned_params = ffi_owned_params(attrs);
+        let result_owned = match ffi_owned_result(attrs) {
+            Some((destructor, nullable, creator)) => {
+                let boxed = if nullable { self.option_some_payload(result_ty)? } else { result_ty };
+                let pointee = self.lock_inner(boxed, "std.ffi.ForeignBox")?;
+                let (_, symbol, destructor_ret) = self.foreign_destructor(destructor.name, pointee)?;
+                let type_creator = match *self.types.kind(pointee) {
+                    TyKind::Opaque(name) => self.foreign_type_contracts.get(&name).is_some_and(|contract| contract.creator),
+                    _ => false,
+                };
+                Some(hir::FfiOwnedResult { destructor: symbol, destructor_ret, pointee, nullable, creator: creator || type_creator })
+            }
+            None => None,
+        };
         let result_fixed = match ffi_result_contract(attrs) {
             Some(FfiResultContract::SharedFixedStatic { len }
                 | FfiResultContract::SharedFixedFrom { len, .. }) => Some((len, false, false)),
@@ -17532,7 +17626,8 @@ impl<'a> Checker<'a> {
                 source_nullable: source.nullable })
         } else { None };
         if counted.is_empty() && fixed.is_empty() && result_array.is_none()
-            && result_span.is_none() && !borrowed_aggregate { return None; }
+            && result_span.is_none() && !borrowed_aggregate
+            && owned_params.is_empty() && result_owned.is_none() { return None; }
         let mut abi_params = Vec::new();
         for param in &decl.params {
             let ast::ParamKind::Named { name, .. } = &param.kind else { return None };
@@ -17546,6 +17641,9 @@ impl<'a> Checker<'a> {
                 abi_params.push(hir::FfiAbiParam::SpanPointer { public_index, elem, mutable, nullable });
             } else if let Some(&(public_index, elem, mutable, nullable)) = fixed.get(&name.name) {
                 abi_params.push(hir::FfiAbiParam::ArrayPointer { public_index, elem, mutable, nullable });
+            } else if let Some(&(_, nullable)) = owned_params.iter().find(|(slot, _)| *slot == name.name) {
+                let public_index = visible.iter().position(|(slot, _, _, _)| *slot == name.name)?;
+                abi_params.push(hir::FfiAbiParam::Owned { public_index, nullable });
             } else {
                 let public_index = visible.iter().position(|(slot, _, _, _)| *slot == name.name)?;
                 let (_, ty, mode, _) = visible[public_index];
@@ -17557,6 +17655,7 @@ impl<'a> Checker<'a> {
             abi_params,
             result_array,
             result_span,
+            result_owned,
         })
     }
 
@@ -34820,12 +34919,14 @@ impl<'a> Checker<'a> {
                             }
                             _ => {
                                 if ffi_result_contract_arg(arg).is_some()
+                                    || ffi_owned_result_arg(arg).is_some()
                                     || ffi_unknown_result_fact_arg(arg).is_some() {
                                     if saw_result {
                                         self.error(codes::E0104, attr.span, "duplicate result contract in `@ffi`");
                                     }
                                     saw_result = true;
-                                } else if let Some((name, _)) = ffi_param_contract_arg(arg) {
+                                } else if let Some(name) = ffi_param_contract_arg(arg).map(|(name, _)| name)
+                                    .or_else(|| ffi_owned_param_arg(arg).map(|(name, _)| name)) {
                                     if !contracted.insert(name) {
                                         self.error(codes::E0104, attr.span, "duplicate pointer contract in `@ffi`");
                                     }
@@ -49872,6 +49973,81 @@ fn ffi_result_contract_arg(arg: &ast::AttrArg) -> Option<FfiResultContract> {
         (false, true, true, None, Some(witness)) => FfiResultContract::NullableExclusiveCountFrom { witness, source },
         _ => return None,
     })
+}
+
+/// `[FFI-11]`, `[FFI-36a]` — `result(returns_owned(destructor=f), one[, nullable][,
+/// threads(creator)])`: the result is a new foreign object the caller owns, freed by `f`.
+/// Returns `f`, whether the result may be null, and whether its box records its creator.
+fn ffi_owned_result_arg(arg: &ast::AttrArg) -> Option<(ast::Ident, bool, bool)> {
+    let ast::AttrArg::Expr(expr) = arg else { return None };
+    let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    if !ffi_contract_word(callee).is_some_and(|word| word.is("result")) || args.len() < 2
+        || args.iter().any(|arg| arg.name.is_some()) {
+        return None;
+    }
+    let ast::ExprKind::Call { callee: owned, args: destructor } = &args[0].value.kind else { return None };
+    if !ffi_contract_word(owned).is_some_and(|word| word.is("returns_owned")) {
+        return None;
+    }
+    let [ast::Arg { name: Some(key), value, .. }] = destructor.as_slice() else { return None };
+    let ast::ExprKind::Path { segments } = &value.kind else { return None };
+    if !key.name.is("destructor") || segments.len() != 1 {
+        return None;
+    }
+    if !ffi_contract_word(&args[1].value).is_some_and(|word| word.is("one")) {
+        return None;
+    }
+    let (mut nullable, mut creator) = (false, false);
+    for word in &args[2..] {
+        if ffi_contract_word(&word.value).is_some_and(|word| word.is("nullable")) && !nullable {
+            nullable = true;
+        } else if let ast::ExprKind::Call { callee, args: thread } = &word.value.kind
+            && ffi_contract_word(callee).is_some_and(|word| word.is("threads"))
+            && thread.len() == 1
+            && ffi_contract_word(&thread[0].value).is_some_and(|thread| thread.is("creator"))
+            && !creator
+        {
+            creator = true;
+        } else {
+            return None;
+        }
+    }
+    Some((segments[0], nullable, creator))
+}
+
+/// `[FFI-11]` — `param(p, owned, one[, nullable])`: the callee takes the object; the caller gives
+/// up its `ForeignBox` (`Option` of one when nullable), which frees nothing.
+fn ffi_owned_param_arg(arg: &ast::AttrArg) -> Option<(Symbol, bool)> {
+    let ast::AttrArg::Expr(expr) = arg else { return None };
+    let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    if !ffi_contract_word(callee).is_some_and(|word| word.is("param")) || !(3..=4).contains(&args.len())
+        || args.iter().any(|arg| arg.name.is_some()) {
+        return None;
+    }
+    let name = ffi_contract_word(&args[0].value)?;
+    if !ffi_contract_word(&args[1].value).is_some_and(|word| word.is("owned"))
+        || !ffi_contract_word(&args[2].value).is_some_and(|word| word.is("one")) {
+        return None;
+    }
+    let nullable = match args.get(3) {
+        Some(word) if ffi_contract_word(&word.value).is_some_and(|word| word.is("nullable")) => true,
+        Some(_) => return None,
+        None => false,
+    };
+    Some((name, nullable))
+}
+
+fn ffi_owned_params(attrs: &[ast::Attribute]) -> Vec<(Symbol, bool)> {
+    attrs.iter()
+        .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+        .flat_map(|attr| attr.args.iter().filter_map(ffi_owned_param_arg))
+        .collect()
+}
+
+fn ffi_owned_result(attrs: &[ast::Attribute]) -> Option<(ast::Ident, bool, bool)> {
+    attrs.iter()
+        .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+        .find_map(|attr| attr.args.iter().find_map(ffi_owned_result_arg))
 }
 
 fn ffi_result_contract(attrs: &[ast::Attribute]) -> Option<FfiResultContract> {

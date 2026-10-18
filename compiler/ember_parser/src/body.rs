@@ -1029,6 +1029,15 @@ impl Parser<'_> {
                 self.bump();
                 ExprKind::Path { segments: vec![Ident { name: "static".into(), span }] }
             }
+            // `[FFI-11]` — `owned` and `unsafe` are contract words inside `@ffi(…)`.
+            TokenKind::Keyword(keyword @ (Kw::Owned | Kw::Unsafe))
+                if self.in_ffi_attribute && !self.at_kw_at(1, Kw::Fn) =>
+            {
+                let span = self.span();
+                self.bump();
+                let word = if keyword == Kw::Owned { "owned" } else { "unsafe" };
+                ExprKind::Path { segments: vec![Ident { name: word.into(), span }] }
+            }
             TokenKind::Keyword(Kw::Match) => {
                 let (scrutinee, arms) = self.parse_match_tail();
                 ExprKind::Match { scrutinee: Box::new(scrutinee), arms }

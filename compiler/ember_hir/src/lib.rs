@@ -108,6 +108,21 @@ pub struct FfiCounted {
     pub result_array: Option<FfiArrayResult>,
     /// A counted result's length is supplied by this visible input span.
     pub result_span: Option<FfiSpanResult>,
+    /// `[FFI-36a]` — a result contracted `returns_owned(destructor=f)`: the C
+    /// pointer becomes a `ForeignBox` the runtime records.
+    pub result_owned: Option<FfiOwnedResult>,
+}
+
+/// `[FFI-36a]`, `[FFI-33b]` — a new foreign object the caller owns: freed by
+/// `destructor` (whose result, when it has one, is dropped), `None` for null
+/// when `nullable`, and its box records its creator thread when `creator`.
+#[derive(Debug, Clone)]
+pub struct FfiOwnedResult {
+    pub destructor: Symbol,
+    pub destructor_ret: Ty,
+    pub pointee: Ty,
+    pub nullable: bool,
+    pub creator: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -131,6 +146,10 @@ pub enum FfiAbiParam {
     SpanPointer { public_index: usize, elem: Ty, mutable: bool, nullable: bool },
     ArrayPointer { public_index: usize, elem: Ty, mutable: bool, nullable: bool },
     Count { sources: Vec<FfiCountSource>, ty: Ty },
+    /// `[FFI-11]` — `param(p, owned, one)`: the `ForeignBox` (an `Option` of
+    /// one when `nullable`) gives C its pointer and leaves the runtime's
+    /// record, freeing nothing.
+    Owned { public_index: usize, nullable: bool },
 }
 
 #[derive(Debug, Clone)]

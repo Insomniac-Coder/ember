@@ -39,5 +39,19 @@ int32_t gadget_close(Gadget* gadget) {
     return 0;
 }
 
+/* `returns_owned`: a new widget, or none for a negative id. */
+Widget* widget_maybe(int32_t id) { return id < 0 ? NULL : widget_new(id); }
+
+/* `owned`: C takes the widget and frees it itself, adding ten times its id. */
+void widget_take(Widget* widget) {
+    if (widget == NULL) {
+        g_freed += 1000;
+        return;
+    }
+    g_freed += widget->id * 10;
+    g_live -= 1;
+    free(widget);
+}
+
 int32_t objects_live(void) { return g_live; }
 int32_t objects_freed(void) { return g_freed; }

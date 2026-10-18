@@ -139,6 +139,21 @@ A foreign type's `@ffi` takes `handle`, `destroys(f)`, `adopt=…`, `threads(any
 frees counted, a status-returning destructor, double adoption in debug and release, a creator box
 dropped on a spawned thread panicking in debug only).
 
+## 10. `owned` parameters and `returns_owned` results (`[FFI-11]`, `[FFI-36a]`)
+
+On a `safe fn`: `@ffi(param(p, owned, one[, nullable]))` takes `owned p: ForeignBox[T]` (`Option` of
+one with `nullable`), and `@ffi(result(returns_owned(destructor=f), one[, nullable][,
+threads(creator)]))` gives a `ForeignBox[T]` (`Option`, `None` for null). They use the existing C
+wrapper (`hir::FfiCounted`, new `FfiAbiParam::Owned` and `FfiOwnedResult`): a taken box leaves the
+runtime's record (`ember_ffi_release`, its creator checked in debug) and C gets its pointer; a
+returned pointer is recorded (`ember_ffi_adopt`, the declaration's line as the place) and boxed with
+`f` (or its thunk) and its creator. `check_foreign_ownership` gives `E5002` for an `owned` contract
+on anything but an owned box, a box crossing without a contract, a `returns_owned` result that is not
+a box, and an `f` that is not a foreign function taking one `*mut T`. `owned` and `unsafe` are
+contract words inside `@ffi(…)` (the parser takes the keywords there as words, as it took
+`static`). Tests: `FFI-36a/accept_returns_owned_and_owned_parameters.em` (run by the milestone of
+§9), `FFI-36a/reject_ownership_contract_mismatches.em`.
+
 ## Rules done (each with its test)
 
 | Rule | Test |
@@ -148,6 +163,7 @@ dropped on a spawned thread panicking in debug only).
 | `TCB-2`, `TCB-3` | milestone `tcb_lists_every_foreign_fact_with_its_source_and_grade`; `TCB-2/accept_a_written_grade_stays_asserted.em` |
 | `GRM-35` | `tests/conformance/GRM-35/*` |
 | `FFI-33a` | `ember_build` test `an_object_that_is_not_sync_is_its_makers` |
+| `FFI-36a` | `tests/conformance/FFI-36a/*`, milestone `adopted_foreign_objects_are_freed_by_their_destructor` |
 | `CLI-13` | milestone `calls_foreign_lists_what_an_item_reaches_with_each_contract` |
 | `DIA-18` | `tests/conformance/DIA-18/*` |
 

@@ -4894,14 +4894,20 @@ impl Emitter<'_> {
             if let Terminator::Call { func: FuncRef::Builtin { which: Builtin::ForeignDestructor { symbol, pointee, ret, .. }, .. }, .. } = &block.terminator
                 && !self.is_void(*ret)
             {
-                thunks.insert(symbol.to_string(), *pointee);
+                thunks.insert(symbol.to_string(), (*pointee, *ret));
             }
         }
-        for (symbol, pointee) in thunks {
+        for owned in bodies.iter().filter_map(|body| body.ffi_counted.as_ref()?.result_owned.as_ref()) {
+            if !self.is_void(owned.destructor_ret) {
+                thunks.insert(owned.destructor.to_string(), (owned.pointee, owned.destructor_ret));
+            }
+        }
+        for (symbol, (pointee, ret)) in thunks {
+            let pointer = format!("{}*", self.c_type(pointee));
             self.line(&format!(
-                "static EMBER_MAYBE_UNUSED void {}({}* object) {{ (void){symbol}(object); }}",
+                "static EMBER_MAYBE_UNUSED void {}({pointer} object) {{ extern {} {symbol}({pointer}); (void){symbol}(object); }}",
                 foreign_destructor_thunk(&symbol),
-                self.c_type(pointee),
+                self.c_type(ret),
             ));
         }
         self.line("");
@@ -5158,11 +5164,46 @@ impl Emitter<'_> {
                     if *mutable { format!("{elem}*") } else { format!("const {elem}*") }
                 }
                 FfiAbiParam::Count { ty, .. } => self.c_type(*ty),
+                FfiAbiParam::Owned { public_index, nullable } => {
+                    let arg = body.args().nth(*public_index).expect("the owned parameter").1.ty;
+                    let boxed = self.foreign_box_type(arg, *nullable);
+                    self.c_type(self.foreign_box_fields(boxed)[0])
+                }
             };
             format!("{ty} _ffi{index}")
         }).collect();
         let params = if params.is_empty() { "void".to_string() } else { params.join(", ") };
+        let result = match &counted.result_owned {
+            Some(owned) => format!("{}*", self.c_type(owned.pointee)),
+            None => result,
+        };
         format!("{result} {}{}({params})", calling_convention(body.abi.as_deref()), counted.foreign_symbol)
+    }
+
+    /// An `Option` value `access` of type `ty` (with a tag): the test that it is `Some`, and its
+    /// payload.
+    fn option_some_parts(&self, ty: Ty, access: &str) -> (String, String) {
+        let TyKind::Enum(id) = *self.types.kind(ty) else { unreachable!("an `Option`") };
+        assert!(self.types.option_niche(id).is_none(), "an `Option[ForeignBox[T]]` has a tag");
+        let def = self.types.enum_def(id);
+        let some = &def.variants[1];
+        (format!("({access}).tag == {}", some.discriminant), format!("({access}).payload.{}.{}", some.name, some.fields[0].name))
+    }
+
+    /// `[FFI-36a]` — the `ForeignBox[T]` a value of `ty` is (or holds, as `Option`'s `Some`).
+    fn foreign_box_type(&self, ty: Ty, nullable: bool) -> Ty {
+        if !nullable {
+            return ty;
+        }
+        let TyKind::Enum(id) = *self.types.kind(ty) else { unreachable!("a nullable owned value is an `Option`") };
+        self.types.enum_def(id).variants[1].fields[0].ty
+    }
+
+    /// A `ForeignBox[T]`'s three field types: `*mut T`, the destructor's `extern "C" fn(*mut T)`,
+    /// the creator's `u32`.
+    fn foreign_box_fields(&self, boxed: Ty) -> Vec<Ty> {
+        let TyKind::Struct(id) = *self.types.kind(boxed) else { unreachable!("a `ForeignBox` is a struct") };
+        self.types.struct_def(id).fields.iter().map(|field| field.ty).collect()
     }
 
     fn ffi_count_limit(&self, ty: Ty) -> Option<&'static str> {
@@ -5249,9 +5290,65 @@ impl Emitter<'_> {
                     }
                     foreign_args.push(format!("({}){first}", self.c_type(*ty)));
                 }
+                // `[FFI-11]` — C takes the object: its box leaves the record and frees nothing.
+                FfiAbiParam::Owned { public_index, nullable } => {
+                    let arg = &args[*public_index];
+                    let ty = body.args().nth(*public_index).expect("the owned parameter").1.ty;
+                    let boxed = self.foreign_box_type(ty, *nullable);
+                    let pointer = self.c_type(self.foreign_box_fields(boxed)[0]);
+                    if *nullable {
+                        let (some_tag, payload) = self.option_some_parts(ty, arg);
+                        self.line(&format!("    {pointer} _ffi_owned{public_index} = NULL;"));
+                        self.line(&format!(
+                            "    if ({some_tag}) {{ _ffi_owned{public_index} = {payload}.pointer; {RT}ffi_release((void*){payload}.pointer, {payload}.creator); }}"
+                        ));
+                        foreign_args.push(format!("_ffi_owned{public_index}"));
+                    } else {
+                        self.line(&format!("    {RT}ffi_release((void*)({arg}).pointer, ({arg}).creator);"));
+                        foreign_args.push(format!("({arg}).pointer"));
+                    }
+                }
             }
         }
         let call = format!("{}({})", counted.foreign_symbol, foreign_args.join(", "));
+        // `[FFI-36a]`, `[FFI-33b]` — a new object the caller owns: recorded, boxed with its
+        // destructor, and its creator when the contract says `threads(creator)`.
+        if let Some(owned) = &counted.result_owned {
+            let ret = body.return_ty();
+            let boxed = self.foreign_box_type(ret, owned.nullable);
+            let fields = self.foreign_box_fields(boxed);
+            let (pointer, destructor_ty, box_c) = (self.c_type(fields[0]), self.c_type(fields[1]), self.c_type(boxed));
+            self.line(&format!("    extern {} {}({pointer});", self.c_type(owned.destructor_ret), owned.destructor));
+            let destructor = if self.is_void(owned.destructor_ret) {
+                owned.destructor.to_string()
+            } else {
+                foreign_destructor_thunk(owned.destructor.as_str())
+            };
+            let creator = if owned.creator { format!("{RT}ffi_thread()") } else { "0".to_string() };
+            self.line(&format!("    {pointer} _ffi_result = {call};"));
+            let made = format!(
+                "({box_c}){{ ({pointer}){RT}ffi_adopt((void*)_ffi_result, {}), ({destructor_ty}){destructor}, {creator} }}",
+                self.location(body.span),
+            );
+            if owned.nullable {
+                let option = self.c_type(ret);
+                let TyKind::Enum(id) = *self.types.kind(ret) else { unreachable!("a nullable owned result is an `Option`") };
+                assert!(self.types.option_niche(id).is_none(), "an `Option[ForeignBox[T]]` has a tag");
+                let def = self.types.enum_def(id);
+                let (none, some) = (&def.variants[0], &def.variants[1]);
+                self.line(&format!("    {option} _ffi_option;"));
+                self.line("    memset(&_ffi_option, 0, sizeof _ffi_option);");
+                self.line(&format!("    if (_ffi_result == NULL) {{ _ffi_option.tag = {}; return _ffi_option; }}", none.discriminant));
+                self.line(&format!("    _ffi_option.payload.{}.{} = {made};", some.name, some.fields[0].name));
+                self.line(&format!("    _ffi_option.tag = {};", some.discriminant));
+                self.line("    return _ffi_option;");
+            } else {
+                self.line(&format!("    return {made};"));
+            }
+            self.line("}");
+            self.line("");
+            return;
+        }
         if let Some(result) = &counted.result_span {
             let elem = self.c_type(result.elem);
             let pointer = if result.mutable { format!("{elem}*") } else { format!("const {elem}*") };
