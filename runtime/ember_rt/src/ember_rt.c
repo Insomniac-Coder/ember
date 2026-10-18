@@ -69,6 +69,16 @@ static void threads_have_started(void) {
  * They count this thread's operations, including a free of another thread's
  * block; live_bytes is the local allocation/free balance, saturated at zero. */
 static EMBER_RT_THREAD_LOCAL ember_alloc_stats g_stats = { 0, 0, 0 };
+#if defined(EMBER_RELOAD)
+/* Annex B — prepare's transaction arena and guard see every allocation, free and panic. */
+static void rl_tx_note_alloc(void* p, size_t size, size_t align);
+static void rl_tx_note_free(void* p);
+static void rl_tx_check_budget(size_t size);
+static void rl_panic_guard(const char* msg, size_t len);
+#endif
+#if defined(EMBER_RELOAD_INSTANCES)
+static void rl_tx_note_object(struct ember_obj_header* object);
+#endif
 static EMBER_RT_THREAD_LOCAL uint32_t g_attached_generation;
 /* Identity is a TLS epoch, not an OS thread id that can be reused. It is
  * independent of attachment: detach/attach cannot transfer main authority.
@@ -1911,10 +1921,16 @@ static void raw_free(void* p, size_t align) {
 }
 
 void* ember_try_alloc(size_t size, size_t align) {
+#if defined(EMBER_RELOAD)
+    rl_tx_check_budget(size);
+#endif
     void* p = g_config.alloc ? g_config.alloc(size, align) : raw_alloc(size, align);
     if (p != NULL) {
         g_stats.live_bytes += (uint64_t)size;
         g_stats.total_allocations += 1;
+#if defined(EMBER_RELOAD)
+        rl_tx_note_alloc(p, size, align);
+#endif
     }
     return p;
 }
@@ -1934,6 +1950,9 @@ void ember_free(void* p, size_t size, size_t align) {
     if (p == NULL) {
         return;
     }
+#if defined(EMBER_RELOAD)
+    rl_tx_note_free(p);
+#endif
     if (g_config.free) {
         g_config.free(p, size, align);
     } else {
@@ -2259,6 +2278,7 @@ static void rl_live_unlock(void) {
 }
 
 static void rl_live_insert(ember_obj_header* object) {
+    rl_tx_note_object(object);
     rl_live_lock();
     object->live_prev = NULL;
     object->live_next = g_rl_live_head;
@@ -6954,6 +6974,10 @@ void ember_backtrace_print(void) {
 #endif
 
 static EMBER_NORETURN void panic_with(const char* msg, size_t len, ember_loc loc) {
+#if defined(EMBER_RELOAD)
+    /* [HR-34] Under a reload's prepare a panic fails the reload, not the process. */
+    rl_panic_guard(msg, len);
+#endif
     fflush(stdout);
     if (loc.file != NULL) {
         fprintf(stderr, "panic at %s:%u:%u: ", loc.file, loc.line, loc.column);
@@ -8560,6 +8584,8 @@ void ember_obj_header_v24(void) {}
 #endif
 void ember_reload_protocol_v1(void) {}
 
+#include <setjmp.h>
+
 #if defined(_WIN32)
 #define RL_SECTION_NAME ".emrl"
 #else
@@ -8694,6 +8720,8 @@ typedef struct rl_static {
     uint64_t type_schema;
     uint64_t initialiser;
     uint32_t flags;
+    /* What its value holds, as the image whose layout the value has describes it. */
+    const ember_rl_field* shape;
 } rl_static;
 
 typedef struct rl_type {
@@ -8863,6 +8891,20 @@ static void rl_read_announcement(char* out, size_t cap) {
     if (g_rl.announce == NULL) {
         return;
     }
+#if defined(_WIN32)
+    /* Shared with a build that replaces the file while a poll reads it. */
+    HANDLE file = CreateFileA(g_rl.announce, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) {
+        return;
+    }
+    DWORD n = 0;
+    if (!ReadFile(file, out, (DWORD)(cap - 1), &n, NULL)) {
+        n = 0;
+    }
+    CloseHandle(file);
+    out[n] = '\0';
+#else
     FILE* file = fopen(g_rl.announce, "rb");
     if (file == NULL) {
         return;
@@ -8870,6 +8912,7 @@ static void rl_read_announcement(char* out, size_t cap) {
     size_t n = fread(out, 1, cap - 1, file);
     fclose(file);
     out[n] = '\0';
+#endif
 }
 
 /* The directory part of `path`, with its separator, into `out`. */
@@ -9026,6 +9069,908 @@ static rl_image* rl_load(const char* path, char* report, size_t cap) {
     return image;
 }
 
+/* -- the transaction arena and prepare's guard ([HR-34], [HR-36], [HR-37]) ---------------------
+ *
+ * Everything prepare allocates, its own and what a `migrate_from` allocates by any route, is
+ * recorded: a failed reload releases it whole, a committed one keeps it. A budget bounds it, and
+ * running past the budget fails the reload with `ReloadError.Allocation`. While prepare runs, a
+ * panic anywhere under it (a check in `migrate_from`: overflow, bounds, a stale handle) does not end
+ * the process: it fails the reload with `ReloadError.Migration`, naming the type, the instance and
+ * the check's message. */
+
+typedef struct rl_tx_block {
+    void* p;
+    size_t size;
+    size_t align;
+} rl_tx_block;
+
+typedef struct rl_guard {
+    jmp_buf jump;
+    char message[512];
+    bool allocation;
+} rl_guard;
+
+static struct {
+    bool active;
+    size_t budget;
+    size_t used;
+    rl_tx_block* blocks;
+    size_t count;
+    size_t cap;
+    ember_obj_header** objects;
+    size_t object_count;
+    size_t object_cap;
+} g_rl_tx;
+
+static EMBER_RT_THREAD_LOCAL rl_guard* g_rl_guard;
+
+#define RL_TX_BUDGET ((size_t)256 << 20)
+
+static bool rl_tx_grow(void** items, size_t* cap, size_t each) {
+    size_t grown = *cap == 0 ? 64 : *cap * 2;
+    void* moved = realloc(*items, grown * each);
+    if (moved == NULL) {
+        return false;
+    }
+    *items = moved;
+    *cap = grown;
+    return true;
+}
+
+static void rl_tx_note_alloc(void* p, size_t size, size_t align) {
+    if (!g_rl_tx.active || p == NULL) {
+        return;
+    }
+    if (g_rl_tx.count == g_rl_tx.cap && !rl_tx_grow((void**)&g_rl_tx.blocks, &g_rl_tx.cap, sizeof(rl_tx_block))) {
+        return;
+    }
+    g_rl_tx.blocks[g_rl_tx.count++] = (rl_tx_block){ p, size, align };
+    g_rl_tx.used += size;
+}
+
+static void rl_tx_note_free(void* p) {
+    if (!g_rl_tx.active) {
+        return;
+    }
+    for (size_t index = g_rl_tx.count; index-- > 0;) {
+        if (g_rl_tx.blocks[index].p == p) {
+            g_rl_tx.used -= g_rl_tx.blocks[index].size;
+            g_rl_tx.blocks[index] = g_rl_tx.blocks[--g_rl_tx.count];
+            return;
+        }
+    }
+}
+
+/* Whether an allocation of `size` fits the arena's budget; a guarded prepare that runs past it
+ * fails with `ReloadError.Allocation`. */
+static void rl_tx_check_budget(size_t size) {
+    if (g_rl_tx.active && g_rl_guard != NULL && g_rl_tx.used + size > g_rl_tx.budget) {
+        g_rl_guard->allocation = true;
+        snprintf(g_rl_guard->message, sizeof g_rl_guard->message, "the reload's transaction arena (%zu bytes) is exhausted", g_rl_tx.budget);
+        longjmp(g_rl_guard->jump, 1);
+    }
+}
+
+#if defined(EMBER_RELOAD_INSTANCES)
+static void rl_tx_note_object(ember_obj_header* object) {
+    if (!g_rl_tx.active) {
+        return;
+    }
+    if (g_rl_tx.object_count == g_rl_tx.object_cap
+        && !rl_tx_grow((void**)&g_rl_tx.objects, &g_rl_tx.object_cap, sizeof(ember_obj_header*))) {
+        return;
+    }
+    g_rl_tx.objects[g_rl_tx.object_count++] = object;
+}
+#endif
+
+/* A panic under a guarded prepare: recorded, and prepare fails instead of the process. */
+static void rl_panic_guard(const char* msg, size_t len) {
+    rl_guard* guard = g_rl_guard;
+    if (guard == NULL) {
+        return;
+    }
+    size_t n = len < sizeof guard->message - 1 ? len : sizeof guard->message - 1;
+    memcpy(guard->message, msg, n);
+    guard->message[n] = '\0';
+    longjmp(guard->jump, 1);
+}
+
+static void rl_tx_begin(void) {
+    g_rl_tx.active = true;
+    g_rl_tx.budget = RL_TX_BUDGET;
+    g_rl_tx.used = 0;
+    g_rl_tx.count = 0;
+    g_rl_tx.object_count = 0;
+}
+
+/* [HR-37] A failed reload releases the arena whole: objects `migrate_from` made leave the
+ * live-instance list, and every block goes. */
+static void rl_tx_release(void) {
+    g_rl_tx.active = false;
+#if defined(EMBER_RELOAD_INSTANCES)
+    for (size_t index = 0; index < g_rl_tx.object_count; ++index) {
+        rl_live_remove(g_rl_tx.objects[index]);
+    }
+#endif
+    for (size_t index = 0; index < g_rl_tx.count; ++index) {
+        ember_free(g_rl_tx.blocks[index].p, g_rl_tx.blocks[index].size, g_rl_tx.blocks[index].align);
+    }
+    g_rl_tx.count = 0;
+    g_rl_tx.object_count = 0;
+}
+
+static void rl_tx_keep(void) {
+    g_rl_tx.active = false;
+    g_rl_tx.count = 0;
+    g_rl_tx.object_count = 0;
+}
+
+#if defined(EMBER_RELOAD_INSTANCES)
+static void* rl_tx_alloc(size_t size, size_t align) {
+    void* p = ember_alloc(size == 0 ? 1 : size, align == 0 ? 1 : align);
+    memset(p, 0, size == 0 ? 1 : size);
+    return p;
+}
+#endif
+
+#if defined(EMBER_RELOAD_INSTANCES)
+/* -- migration ([HR-14], [HR-15], [HR-16]) -------------------------------------
+ *
+ * A type whose schema changed is migrated by name: each new field takes the old field of its name
+ * (or of the name `@renamed_from` gives), unchanged, widened, migrated depth-first or rewritten by
+ * variant name; an added field takes its default; a removed field is dropped in reclaim. A type
+ * declaring `migrate_from` is built by it instead. An instance keeps its address where its new
+ * size fits its old allocation; otherwise every reference to it the runtime can enumerate is
+ * rewritten, and plan refuses when it cannot enumerate them all ([HR-15a]). */
+
+/* A type's schema in the image now running, and in the next one. */
+static const ember_rl_type* rl_old_schema(const char* name) {
+    const rl_type* kept = (const rl_type*)rl_table_get(&g_rl.types, name);
+    return kept != NULL ? kept->schema : NULL;
+}
+
+static const ember_rl_type* rl_new_schema(const ember_rl_manifest* next, const char* name) {
+    for (uint32_t index = 0; index < next->type_count; ++index) {
+        if (strcmp(next->types[index].name, name) == 0) {
+            return &next->types[index];
+        }
+    }
+    return NULL;
+}
+
+/* The old field a new one takes its value from: by name, or by the name `@renamed_from` gives. */
+static const ember_rl_field* rl_source_field(const ember_rl_type* old, const ember_rl_field* field) {
+    const char* wanted = field->renamed_from != NULL ? field->renamed_from : field->name;
+    for (uint32_t index = 0; index < old->field_count; ++index) {
+        if (strcmp(old->fields[index].name, wanted) == 0) {
+            return &old->fields[index];
+        }
+    }
+    if (field->renamed_from != NULL) {
+        for (uint32_t index = 0; index < old->field_count; ++index) {
+            if (strcmp(old->fields[index].name, field->name) == 0) {
+                return &old->fields[index];
+            }
+        }
+    }
+    return NULL;
+}
+
+/* [HR-14] `[TYP-5]`'s lossless widenings: a wider integer of the same signedness or a wider signed
+ * one for an unsigned, and `f32` to `f64`. */
+static bool rl_widens(const ember_rl_field* from, const ember_rl_field* to) {
+    if ((from->flags & EMBER_RL_FIELD_FLOAT) != 0) {
+        return (to->flags & EMBER_RL_FIELD_FLOAT) != 0 && to->size > from->size;
+    }
+    if ((from->flags & EMBER_RL_FIELD_SIGNED) != 0) {
+        return (to->flags & EMBER_RL_FIELD_SIGNED) != 0 && to->size > from->size;
+    }
+    if ((from->flags & EMBER_RL_FIELD_UNSIGNED) != 0) {
+        return ((to->flags & EMBER_RL_FIELD_UNSIGNED) != 0 || (to->flags & EMBER_RL_FIELD_SIGNED) != 0) && to->size > from->size
+            && to->size <= 8;
+    }
+    return false;
+}
+
+/* What a new field does with its source, as plan decides it. */
+enum { RL_CARRY = 1, RL_WIDEN, RL_NESTED, RL_VARIANT, RL_DEFAULT, RL_ZERO };
+
+static int rl_field_route(const ember_rl_field* to, const ember_rl_field* from) {
+    if (from == NULL) {
+        if ((to->flags & EMBER_RL_FIELD_DEFAULT) != 0) {
+            return RL_DEFAULT;
+        }
+        return (to->flags & EMBER_RL_FIELD_ZERO) != 0 ? RL_ZERO : 0;
+    }
+    if (from->type_schema == to->type_schema && from->size == to->size) {
+        return RL_CARRY;
+    }
+    /* A handle, or an `Array` of them, is the same bits whatever its class became: the objects
+     * migrate on their own. */
+    if (from->kind == to->kind && from->size == to->size
+        && (to->kind == EMBER_RL_KIND_HANDLE || to->kind == EMBER_RL_KIND_OPTION_HANDLE || to->kind == EMBER_RL_KIND_WEAK
+            || (to->kind == EMBER_RL_KIND_ARRAY && to->element_kind == from->element_kind && to->element_size == from->element_size
+                && (to->element_kind == EMBER_RL_KIND_HANDLE || to->element_kind == EMBER_RL_KIND_OPTION_HANDLE)))) {
+        return RL_CARRY;
+    }
+    if (rl_widens(from, to)) {
+        return RL_WIDEN;
+    }
+    if (to->kind == EMBER_RL_KIND_STRUCT && from->kind == EMBER_RL_KIND_STRUCT && strcmp(to->type_name, from->type_name) == 0) {
+        return RL_NESTED;
+    }
+    if (to->kind == EMBER_RL_KIND_ENUM && from->kind == EMBER_RL_KIND_ENUM && strcmp(to->type_name, from->type_name) == 0) {
+        return RL_VARIANT;
+    }
+    return 0;
+}
+
+static uint64_t rl_read_unsigned(const void* at, uint32_t size) {
+    uint8_t u8; uint16_t u16; uint32_t u32; uint64_t u64 = 0;
+    switch (size) {
+    case 1: memcpy(&u8, at, 1); return u8;
+    case 2: memcpy(&u16, at, 2); return u16;
+    case 4: memcpy(&u32, at, 4); return u32;
+    default: memcpy(&u64, at, 8); return u64;
+    }
+}
+
+static int64_t rl_read_signed(const void* at, uint32_t size) {
+    int8_t i8; int16_t i16; int32_t i32; int64_t i64 = 0;
+    switch (size) {
+    case 1: memcpy(&i8, at, 1); return i8;
+    case 2: memcpy(&i16, at, 2); return i16;
+    case 4: memcpy(&i32, at, 4); return i32;
+    default: memcpy(&i64, at, 8); return i64;
+    }
+}
+
+static void rl_write_integer(void* at, uint32_t size, uint64_t bits) {
+    uint8_t u8 = (uint8_t)bits; uint16_t u16 = (uint16_t)bits; uint32_t u32 = (uint32_t)bits;
+    switch (size) {
+    case 1: memcpy(at, &u8, 1); break;
+    case 2: memcpy(at, &u16, 2); break;
+    case 4: memcpy(at, &u32, 4); break;
+    default: memcpy(at, &bits, 8); break;
+    }
+}
+
+/* [HR-11a] A unit enum's value by variant name: the old discriminant's variant, then the new
+ * variant of that name or the one `@renamed_from` says was it. NULL when the value's variant was
+ * removed. */
+static const ember_rl_variant* rl_variant_for(const ember_rl_type* old, const ember_rl_type* new_type, uint64_t discriminant) {
+    const ember_rl_variant* was = NULL;
+    for (uint32_t index = 0; index < old->variant_count; ++index) {
+        if (old->variants[index].discriminant == discriminant) {
+            was = &old->variants[index];
+        }
+    }
+    if (was == NULL) {
+        return NULL;
+    }
+    for (uint32_t index = 0; index < new_type->variant_count; ++index) {
+        const ember_rl_variant* now = &new_type->variants[index];
+        if (strcmp(now->name, was->name) == 0 || (now->renamed_from != NULL && strcmp(now->renamed_from, was->name) == 0)) {
+            return now;
+        }
+    }
+    return NULL;
+}
+
+/* The decision for one type's change: whether plan can migrate its values, with the report of why
+ * not. Recurses into struct fields migrated depth-first. */
+static bool rl_plan_type(const ember_rl_manifest* next, const ember_rl_type* old, const ember_rl_type* to, char* report, size_t cap, int depth) {
+    bool fine = true;
+    if (depth > 32) {
+        rl_report(report, cap, "refused: `%s` nests too deep to migrate [HR-14]\n", to->name);
+        return false;
+    }
+    if ((old->base == NULL) != (to->base == NULL) || (old->base != NULL && strcmp(old->base, to->base) != 0)) {
+        rl_report(report, cap, "refused: the base class of `%s` changed [HR-14]\n", to->name);
+        return false;
+    }
+    if (old->kind != to->kind) {
+        rl_report(report, cap, "refused: `%s` changed what kind of type it is [HR-14]\n", to->name);
+        return false;
+    }
+    if ((to->layout & EMBER_RL_LAYOUT_CONTAINED) != 0 || (old->layout & EMBER_RL_LAYOUT_CONTAINED) != 0) {
+        rl_report(report, cap, "refused: values of `%s` sit in containers (an `Array`, an `Option`, a payload), whose elements a reload cannot migrate yet [HR-13]\n", to->name);
+        return false;
+    }
+    if (to->migrate != NULL) {
+        /* [HR-16] `Old<Name>` is the previous build's schema: each of its fields must be the running
+         * one's, by name and type. */
+        const ember_rl_type* old_view = to->old_type != NULL ? rl_new_schema(next, to->old_type) : NULL;
+        if (old_view == NULL) {
+            rl_report(report, cap, "refused: `%s.migrate_from` has no `Old%s` to read [HR-16]\n", to->name, to->name);
+            return false;
+        }
+        for (uint32_t index = 0; index < old_view->field_count; ++index) {
+            const ember_rl_field* wanted = &old_view->fields[index];
+            const ember_rl_field* have = NULL;
+            for (uint32_t at = 0; at < old->field_count; ++at) {
+                if (strcmp(old->fields[at].name, wanted->name) == 0) {
+                    have = &old->fields[at];
+                }
+            }
+            if (have == NULL || have->type_schema != wanted->type_schema) {
+                rl_report(report, cap, "refused: `%s` names field `%s` as the running program's `%s` %s; build against the running program's schema [HR-16]\n",
+                          to->old_type, wanted->name, to->name, have == NULL ? "does not have it" : "has it with another type");
+                fine = false;
+            }
+        }
+        return fine;
+    }
+    for (uint32_t index = 0; index < to->field_count; ++index) {
+        const ember_rl_field* field = &to->fields[index];
+        const ember_rl_field* from = rl_source_field(old, field);
+        int route = rl_field_route(field, from);
+        if (route == 0 && from == NULL) {
+            rl_report(report, cap, "refused: field `%s` added to `%s` with no default; give it one (`%s: %s = ...`) [HR-14]\n",
+                      field->name, to->name, field->name, field->type_name);
+            fine = false;
+        } else if (route == 0) {
+            rl_report(report, cap, "refused: field `%s` of `%s` changed type from `%s` to `%s`; `%s` can declare `migrate_from` [HR-14]\n",
+                      field->name, to->name, from->type_name, field->type_name, to->name);
+            fine = false;
+        } else if (route == RL_NESTED) {
+            const ember_rl_type* old_inner = rl_old_schema(from->type_name);
+            const ember_rl_type* new_inner = rl_new_schema(next, field->type_name);
+            if (old_inner == NULL || new_inner == NULL) {
+                rl_report(report, cap, "refused: field `%s` of `%s` holds a `%s` with no schema [HR-14]\n", field->name, to->name, field->type_name);
+                fine = false;
+            } else if (!rl_plan_type(next, old_inner, new_inner, report, cap, depth + 1)) {
+                fine = false;
+            }
+        } else if (field->kind == EMBER_RL_KIND_ARRAY && from->kind == EMBER_RL_KIND_ARRAY && route != RL_CARRY) {
+            rl_report(report, cap, "refused: the elements of `%s.%s` would need migrating through their container [HR-13]\n", to->name, field->name);
+            fine = false;
+        }
+    }
+    return fine;
+}
+
+/* Build the new value of a type at `to_value` from the old one at `from_value`, field by name.
+ * Fields are moved bit by bit: the old value gives up what it owned, but for removed fields, which
+ * reclaim drops. */
+static void rl_migrate_value(const ember_rl_manifest* next, const ember_rl_type* old, const ember_rl_type* to,
+                             unsigned char* to_value, const unsigned char* from_value) {
+    for (uint32_t index = 0; index < to->field_count; ++index) {
+        const ember_rl_field* field = &to->fields[index];
+        const ember_rl_field* from = rl_source_field(old, field);
+        unsigned char* there = to_value + field->offset;
+        switch (rl_field_route(field, from)) {
+        case RL_CARRY:
+            memcpy(there, from_value + from->offset, field->size);
+            break;
+        case RL_WIDEN:
+            if ((from->flags & EMBER_RL_FIELD_FLOAT) != 0) {
+                float narrow;
+                memcpy(&narrow, from_value + from->offset, sizeof narrow);
+                double wide = narrow;
+                memcpy(there, &wide, sizeof wide);
+            } else if ((from->flags & EMBER_RL_FIELD_SIGNED) != 0) {
+                rl_write_integer(there, field->size, (uint64_t)rl_read_signed(from_value + from->offset, from->size));
+            } else {
+                rl_write_integer(there, field->size, rl_read_unsigned(from_value + from->offset, from->size));
+            }
+            break;
+        case RL_NESTED:
+            rl_migrate_value(next, rl_old_schema(from->type_name), rl_new_schema(next, field->type_name), there, from_value + from->offset);
+            break;
+        case RL_VARIANT: {
+            const ember_rl_variant* now = rl_variant_for(rl_old_schema(from->type_name), rl_new_schema(next, field->type_name),
+                                                         rl_read_unsigned(from_value + from->offset, from->size));
+            rl_write_integer(there, field->size, now != NULL ? now->discriminant : 0);
+            break;
+        }
+        case RL_DEFAULT:
+            to->init_field(to_value, index);
+            break;
+        default:
+            memset(there, 0, field->size);
+            break;
+        }
+    }
+}
+
+/* Reclaim's half of a field-wise migration: the old value's fields no new field took. */
+static void rl_drop_removed(const ember_rl_manifest* next, const ember_rl_type* old, const ember_rl_type* to, unsigned char* from_value) {
+    for (uint32_t index = 0; index < old->field_count; ++index) {
+        const ember_rl_field* field = &old->fields[index];
+        const ember_rl_field* taker = NULL;
+        for (uint32_t at = 0; at < to->field_count && taker == NULL; ++at) {
+            if (rl_source_field(old, &to->fields[at]) == field) {
+                taker = &to->fields[at];
+            }
+        }
+        if (taker == NULL) {
+            if (old->drop_field != NULL) {
+                old->drop_field(from_value, index);
+            }
+        } else if (rl_field_route(taker, field) == RL_NESTED) {
+            rl_drop_removed(next, rl_old_schema(field->type_name), rl_new_schema(next, taker->type_name), from_value + field->offset);
+        }
+    }
+}
+
+/* -- the references the runtime can follow ([HR-15]) -------------------------- */
+
+/* One instance that migrates: where it is, its new self, and how it moves. */
+typedef struct rl_move {
+    ember_obj_header* old;
+    ember_obj_header* made;
+    unsigned char* saved;
+    const ember_rl_type* from;
+    const ember_rl_type* to;
+    bool in_place;
+    uint32_t strong_found;
+    uint32_t weak_found;
+} rl_move;
+
+/* A reference commit rewrites: the slot and the object it must name. */
+typedef struct rl_fix {
+    ember_obj_header** slot;
+    ember_obj_header* to;
+} rl_fix;
+
+static struct {
+    rl_move* moves;
+    size_t count;
+    size_t cap;
+    size_t* index;      /* open-addressed: the move of each old address, plus one */
+    size_t index_cap;
+    rl_fix* fixes;
+    size_t fix_count;
+    size_t fix_cap;
+    /* Instances of a class whose method tables changed: they take the new type information. */
+    ember_obj_header** retyped;
+    const ember_type_info** retyped_to;
+    size_t retyped_count;
+    size_t retyped_cap;
+} g_rl_moves;
+
+static size_t rl_move_slot(const void* object) {
+    uint64_t x = (uint64_t)(uintptr_t)object;
+    x ^= x >> 33;
+    x *= UINT64_C(0xff51afd7ed558ccd);
+    x ^= x >> 33;
+    return (size_t)x & (g_rl_moves.index_cap - 1);
+}
+
+static rl_move* rl_move_of(const void* object) {
+    if (g_rl_moves.index_cap == 0 || object == NULL) {
+        return NULL;
+    }
+    for (size_t at = rl_move_slot(object);; at = (at + 1) & (g_rl_moves.index_cap - 1)) {
+        size_t entry = g_rl_moves.index[at];
+        if (entry == 0) {
+            return NULL;
+        }
+        if (g_rl_moves.moves[entry - 1].old == object) {
+            return &g_rl_moves.moves[entry - 1];
+        }
+    }
+}
+
+static void rl_moves_reset(void) {
+    free(g_rl_moves.moves);
+    free(g_rl_moves.index);
+    free(g_rl_moves.fixes);
+    free(g_rl_moves.retyped);
+    free((void*)g_rl_moves.retyped_to);
+    memset(&g_rl_moves, 0, sizeof g_rl_moves);
+}
+
+static bool rl_moves_index(void) {
+    size_t cap = 64;
+    while (cap < g_rl_moves.count * 2 + 2) {
+        cap *= 2;
+    }
+    g_rl_moves.index = (size_t*)calloc(cap, sizeof(size_t));
+    if (g_rl_moves.index == NULL) {
+        return false;
+    }
+    g_rl_moves.index_cap = cap;
+    for (size_t index = 0; index < g_rl_moves.count; ++index) {
+        size_t at = rl_move_slot(g_rl_moves.moves[index].old);
+        while (g_rl_moves.index[at] != 0) {
+            at = (at + 1) & (cap - 1);
+        }
+        g_rl_moves.index[at] = index + 1;
+    }
+    return true;
+}
+
+/* What a walk does with each reference it finds: count it (plan) or record its fix (prepare). */
+enum { RL_COUNT = 1, RL_FIX };
+
+static bool rl_note_reference(ember_obj_header** slot, bool strong, int mode) {
+    rl_move* move = rl_move_of(*slot);
+    if (move == NULL || move->in_place) {
+        return true;
+    }
+    if (mode == RL_COUNT) {
+        if (strong) {
+            move->strong_found += 1;
+        } else {
+            move->weak_found += 1;
+        }
+        return true;
+    }
+    if (g_rl_moves.fix_count == g_rl_moves.fix_cap
+        && !rl_tx_grow((void**)&g_rl_moves.fixes, &g_rl_moves.fix_cap, sizeof(rl_fix))) {
+        return false;
+    }
+    g_rl_moves.fixes[g_rl_moves.fix_count++] = (rl_fix){ slot, move->made };
+    return true;
+}
+
+static bool rl_walk_value(const ember_rl_field* shape, unsigned char* at, int mode, bool old_image, const ember_rl_manifest* next, int depth);
+
+/* Every reference a value of `type` holds at `value`, by its schema. */
+static bool rl_walk_fields(const ember_rl_type* type, unsigned char* value, int mode, bool old_image, const ember_rl_manifest* next, int depth) {
+    if (type == NULL || depth > 32) {
+        return true;
+    }
+    for (uint32_t index = 0; index < type->field_count; ++index) {
+        if (!rl_walk_value(&type->fields[index], value + type->fields[index].offset, mode, old_image, next, depth)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool rl_walk_value(const ember_rl_field* shape, unsigned char* at, int mode, bool old_image, const ember_rl_manifest* next, int depth) {
+    switch (shape->kind) {
+    case EMBER_RL_KIND_HANDLE:
+    case EMBER_RL_KIND_OPTION_HANDLE:
+    case EMBER_RL_KIND_WEAK: {
+        ember_obj_header** slot = (ember_obj_header**)(void*)at;
+        return *slot == NULL || rl_note_reference(slot, shape->kind != EMBER_RL_KIND_WEAK, mode);
+    }
+    case EMBER_RL_KIND_STRUCT:
+        return rl_walk_fields(old_image ? rl_old_schema(shape->type_name) : rl_new_schema(next, shape->type_name), at, mode, old_image, next, depth + 1);
+    case EMBER_RL_KIND_ARRAY: {
+        ember_vec* vec = (ember_vec*)(void*)at;
+        if (shape->element_kind == EMBER_RL_KIND_PLAIN || shape->element_kind == EMBER_RL_KIND_OPAQUE || vec->ptr == NULL) {
+            return true;
+        }
+        ember_rl_field element = *shape;
+        element.kind = shape->element_kind;
+        element.type_name = shape->element_type != NULL ? shape->element_type : "";
+        for (size_t index = 0; index < vec->len; ++index) {
+            if (!rl_walk_value(&element, (unsigned char*)vec->ptr + index * shape->element_size, mode, old_image, next, depth + 1)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    default:
+        return true;
+    }
+}
+
+/* Walk every root the runtime can follow: each live instance by its type's schema (a migrating one
+ * as its new self, once prepare has made it), and each static by its shape. */
+static bool rl_walk_roots(const ember_rl_manifest* next, int mode) {
+    for (ember_obj_header* object = g_rl_live_head; object != NULL; object = object->live_next) {
+        if (object_load_strong(object) == 0 || object->ti == NULL || object->ti->identity == NULL) {
+            continue;
+        }
+        rl_move* move = rl_move_of(object);
+        if (move != NULL && mode == RL_FIX && move->to->migrate == NULL) {
+            if (!rl_walk_fields(move->to, (unsigned char*)move->made, mode, false, next, 0)) {
+                return false;
+            }
+            continue;
+        }
+        if (move != NULL && mode == RL_FIX) {
+            if (!rl_walk_fields(move->to, (unsigned char*)move->made, mode, false, next, 0)) {
+                return false;
+            }
+            continue;
+        }
+        const ember_rl_type* schema = rl_old_schema(object->ti->identity->canonical->name);
+        (void)schema;
+        const rl_type* kept = NULL;
+        for (size_t index = 0; index < g_rl.types.cap && kept == NULL; ++index) {
+            const rl_type* candidate = (const rl_type*)g_rl.types.items[index];
+            if (candidate != NULL && candidate->canonical == object->ti->identity->canonical) {
+                kept = candidate;
+            }
+        }
+        if (kept != NULL && !rl_walk_fields(kept->schema, (unsigned char*)object, mode, true, next, 0)) {
+            return false;
+        }
+    }
+    for (size_t index = 0; index < g_rl.statics.cap; ++index) {
+        rl_static* kept = (rl_static*)g_rl.statics.items[index];
+        if (kept != NULL && kept->shape != NULL && kept->state == 2
+            && !rl_walk_value(kept->shape, (unsigned char*)kept->data, mode, true, next, 0)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* [HR-14], [HR-15], [HR-15a], [HR-15b] Plan's half of migration: each live instance of a class
+ * whose schema changed migrates, in place where its new size fits; one that must move needs every
+ * reference to it found, its strong and weak counts accounted for, else the reload is refused. A
+ * class whose method tables alone changed keeps its instances, which take the new type information. */
+static bool rl_plan_instances(const ember_rl_manifest* next, bool checkpoint, char* report, size_t cap) {
+    bool fine = true;
+    rl_moves_reset();
+    for (uint32_t index = 0; index < next->type_count; ++index) {
+        const ember_rl_type* to = &next->types[index];
+        const rl_type* kept = (const rl_type*)rl_table_get(&g_rl.types, to->name);
+        if (kept == NULL || kept->schema == NULL || kept->schema->schema == to->schema) {
+            continue;
+        }
+        if (checkpoint) {
+            rl_report(report, cap, "refused: the layout of `%s` changed, and instances do not migrate while frames of the old code are live at a checkpoint; poll from the host [HR-3]\n", to->name);
+            fine = false;
+            continue;
+        }
+        if (!rl_plan_type(next, kept->schema, to, report, cap, 0)) {
+            fine = false;
+        }
+    }
+    if (!fine) {
+        return false;
+    }
+    /* The instances that migrate. */
+    rl_live_lock();
+    for (ember_obj_header* object = g_rl_live_head; object != NULL; object = object->live_next) {
+        if (object_load_strong(object) == 0 || object->ti == NULL || object->ti->identity == NULL) {
+            continue;
+        }
+        const char* name = object->ti->identity->canonical->name;
+        const rl_type* kept = NULL;
+        for (size_t at = 0; at < g_rl.types.cap && kept == NULL; ++at) {
+            const rl_type* candidate = (const rl_type*)g_rl.types.items[at];
+            if (candidate != NULL && candidate->canonical == object->ti->identity->canonical) {
+                kept = candidate;
+            }
+        }
+        (void)name;
+        if (kept == NULL || kept->schema == NULL) {
+            continue;
+        }
+        const ember_rl_type* to = rl_new_schema(next, kept->name);
+        if (to == NULL) {
+            continue;
+        }
+        if (kept->schema->schema == to->schema) {
+            if (kept->schema->methods != to->methods && object->ti != to->type_info) {
+                if (g_rl_moves.retyped_count == g_rl_moves.retyped_cap) {
+                    size_t grown = g_rl_moves.retyped_cap;
+                    if (!rl_tx_grow((void**)&g_rl_moves.retyped, &g_rl_moves.retyped_cap, sizeof(ember_obj_header*))
+                        || !rl_tx_grow((void**)&g_rl_moves.retyped_to, &grown, sizeof(const ember_type_info*))) {
+                        rl_live_unlock();
+                        rl_report(report, cap, "refused: out of memory planning the reload\n");
+                        return false;
+                    }
+                }
+                g_rl_moves.retyped[g_rl_moves.retyped_count] = object;
+                g_rl_moves.retyped_to[g_rl_moves.retyped_count++] = to->type_info;
+            }
+            continue;
+        }
+        if (g_rl_moves.count == g_rl_moves.cap && !rl_tx_grow((void**)&g_rl_moves.moves, &g_rl_moves.cap, sizeof(rl_move))) {
+            rl_live_unlock();
+            rl_report(report, cap, "refused: out of memory planning the reload\n");
+            return false;
+        }
+        rl_move* move = &g_rl_moves.moves[g_rl_moves.count++];
+        memset(move, 0, sizeof *move);
+        move->old = object;
+        move->from = kept->schema;
+        move->to = to;
+        /* [HR-15] An instance keeps its address where its new size fits its old allocation. */
+        move->in_place = to->migrate == NULL && to->size <= kept->schema->size && to->align <= kept->schema->align;
+    }
+    rl_live_unlock();
+    if (!rl_moves_index()) {
+        rl_report(report, cap, "refused: out of memory planning the reload\n");
+        return false;
+    }
+    /* [HR-11a] A unit enum's values migrate by variant name; one that holds a removed variant
+     * cannot. */
+    for (size_t index = 0; index < g_rl_moves.count; ++index) {
+        rl_move* move = &g_rl_moves.moves[index];
+        if (move->to->migrate != NULL) {
+            continue;
+        }
+        for (uint32_t at = 0; at < move->to->field_count; ++at) {
+            const ember_rl_field* field = &move->to->fields[at];
+            const ember_rl_field* from = rl_source_field(move->from, field);
+            if (from != NULL && rl_field_route(field, from) == RL_VARIANT) {
+                uint64_t discriminant = rl_read_unsigned((unsigned char*)move->old + from->offset, from->size);
+                if (rl_variant_for(rl_old_schema(from->type_name), rl_new_schema(next, field->type_name), discriminant) == NULL) {
+                    rl_report(report, cap, "refused: field `%s` of a `%s` holds a variant of `%s` that was removed [HR-14]\n",
+                              field->name, move->to->name, field->type_name);
+                    fine = false;
+                }
+            }
+        }
+    }
+    if (!fine) {
+        return false;
+    }
+    /* [HR-15a] An instance that moves has every reference to it rewritten, so every one must be
+     * found: as many strong references as its count says, and as many weak ones. */
+    bool moving = false;
+    for (size_t index = 0; index < g_rl_moves.count; ++index) {
+        moving |= !g_rl_moves.moves[index].in_place;
+    }
+    if (moving) {
+        rl_live_lock();
+        bool walked = rl_walk_roots(next, RL_COUNT);
+        rl_live_unlock();
+        if (!walked) {
+            rl_report(report, cap, "refused: out of memory planning the reload\n");
+            return false;
+        }
+        for (size_t index = 0; index < g_rl_moves.count; ++index) {
+            rl_move* move = &g_rl_moves.moves[index];
+            if (move->in_place) {
+                continue;
+            }
+            uint32_t strong = object_load_strong(move->old);
+            uint32_t weak = object_load_weak(move->old) - 1;
+            if (move->strong_found != strong || move->weak_found != weak) {
+                rl_report(report, cap, "refused: an instance of `%s` must move (its new size does not fit), but %u of its %u references are held where the runtime cannot follow them [HR-15a]\n",
+                          move->to->name, (strong + weak) - (move->strong_found + move->weak_found), strong + weak);
+                fine = false;
+                break;
+            }
+        }
+    }
+    return fine;
+}
+
+/* [HR-2a] Prepare's half: each migrating instance's new self, built from a read-only view of the old
+ * one, in memory the transaction arena holds; then every reference to a moving one, found. */
+static bool rl_prepare_instances(const ember_rl_manifest* next, char* report, size_t cap) {
+    rl_guard guard;
+    memset(&guard, 0, sizeof guard);
+    volatile size_t at = 0;
+    if (setjmp(guard.jump) != 0) {
+        g_rl_guard = NULL;
+        const rl_move* move = &g_rl_moves.moves[at < g_rl_moves.count ? at : 0];
+        if (guard.allocation) {
+            rl_report(report, cap, "refused: Allocation: %s [HR-36]\n", guard.message);
+        } else {
+            rl_report(report, cap, "refused: Migration(%s, %zu, %s) [HR-35]\n", move->to->name, (size_t)at, guard.message);
+        }
+        return false;
+    }
+    g_rl_guard = &guard;
+    for (; at < g_rl_moves.count; ++at) {
+        rl_move* move = &g_rl_moves.moves[at];
+        const ember_rl_type* to = move->to;
+        if (to->migrate != NULL) {
+            /* [HR-16] The old instance as `Old<Name>`, field by name, read only. */
+            const ember_rl_type* view = rl_new_schema(next, to->old_type);
+            unsigned char* old_value = (unsigned char*)rl_tx_alloc(view->size, view->align);
+            for (uint32_t index = 0; index < view->field_count; ++index) {
+                const ember_rl_field* wanted = &view->fields[index];
+                for (uint32_t from = 0; from < move->from->field_count; ++from) {
+                    if (strcmp(move->from->fields[from].name, wanted->name) == 0) {
+                        memcpy(old_value + wanted->offset, (unsigned char*)move->old + move->from->fields[from].offset, wanted->size);
+                    }
+                }
+            }
+            char message[400];
+            message[0] = '\0';
+            ember_obj_header* made = NULL;
+            rl_tx_check_budget(0);
+            if (to->migrate(&made, old_value, message, sizeof message) != 0) {
+                g_rl_guard = NULL;
+                rl_report(report, cap, "refused: `%s.migrate_from` returned %s [HR-16]\n", to->name, message);
+                return false;
+            }
+            move->made = made;
+            continue;
+        }
+        size_t size = move->in_place ? move->from->size : to->size;
+        size_t align = move->in_place ? move->from->align : to->align;
+        rl_tx_check_budget(size);
+        unsigned char* made = (unsigned char*)rl_tx_alloc(size, align);
+        /* The header as it is: the counts and flags stay the object's. */
+        memcpy(made, move->old, sizeof(ember_obj_header));
+        ((ember_obj_header*)made)->ti = to->type_info;
+        rl_migrate_value(next, move->from, to, made, (const unsigned char*)move->old);
+        if (move->in_place) {
+            /* Commit copies the new self over the old; reclaim drops the removed fields of a
+             * copy of the old. */
+            move->saved = (unsigned char*)rl_tx_alloc(move->from->size, move->from->align);
+            memcpy(move->saved, move->old, move->from->size);
+        }
+        move->made = (ember_obj_header*)(void*)made;
+    }
+    g_rl_guard = NULL;
+    bool moving = false;
+    for (size_t index = 0; index < g_rl_moves.count; ++index) {
+        moving |= !g_rl_moves.moves[index].in_place;
+    }
+    if (moving) {
+        rl_live_lock();
+        bool walked = rl_walk_roots(next, RL_FIX);
+        rl_live_unlock();
+        if (!walked) {
+            rl_report(report, cap, "refused: Allocation: out of memory preparing the reload [HR-36]\n");
+            return false;
+        }
+    }
+    return true;
+}
+
+/* [HR-2] Commit's half: pointer stores only. An instance that fits is overwritten by its new self;
+ * one that moves has every reference rewritten and takes the old one's place in the live list. */
+static void rl_commit_instances(void) {
+    /* The references first: some sit in an in-place instance's new self, copied over it next. */
+    for (size_t index = 0; index < g_rl_moves.fix_count; ++index) {
+        *g_rl_moves.fixes[index].slot = g_rl_moves.fixes[index].to;
+    }
+    for (size_t index = 0; index < g_rl_moves.count; ++index) {
+        rl_move* move = &g_rl_moves.moves[index];
+        if (move->in_place) {
+            ember_obj_header* links_prev = move->old->live_prev;
+            ember_obj_header* links_next = move->old->live_next;
+            memcpy(move->old, move->made, move->from->size);
+            move->old->live_prev = links_prev;
+            move->old->live_next = links_next;
+        } else if (move->to->migrate != NULL) {
+            /* `migrate_from`'s new instance takes the old one's references and their counts. */
+            move->made->strong = move->old->strong;
+            move->made->weak = move->old->weak;
+        }
+    }
+    for (size_t index = 0; index < g_rl_moves.retyped_count; ++index) {
+        g_rl_moves.retyped[index]->ti = g_rl_moves.retyped_to[index];
+    }
+    for (size_t index = 0; index < g_rl_moves.count; ++index) {
+        rl_move* move = &g_rl_moves.moves[index];
+        if (!move->in_place && move->to->migrate == NULL) {
+            rl_live_insert(move->made);
+        }
+    }
+}
+
+/* [HR-2a] Reclaim: the fields no new field took are dropped, running user `drop` code; an old
+ * instance that moved leaves the live list and its memory goes. A `migrate_from`'s old instance is
+ * dropped whole, field by field. A panic here is an ordinary panic, after the reload. */
+static uint64_t rl_reclaim_instances(const ember_rl_manifest* next) {
+    uint64_t migrated = 0;
+    for (size_t index = 0; index < g_rl_moves.count; ++index) {
+        rl_move* move = &g_rl_moves.moves[index];
+        migrated += 1;
+        if (move->in_place) {
+            rl_drop_removed(next, move->from, move->to, move->saved);
+            ember_free(move->made, move->from->size, move->from->align);
+            ember_free(move->saved, move->from->size, move->from->align);
+            continue;
+        }
+        if (move->to->migrate != NULL) {
+            if (move->from->drop_field != NULL) {
+                for (uint32_t at = 0; at < move->from->field_count; ++at) {
+                    move->from->drop_field(move->old, at);
+                }
+            }
+        } else {
+            rl_drop_removed(next, move->from, move->to, (unsigned char*)move->old);
+        }
+        rl_live_remove(move->old);
+        ember_free(move->old, move->from->size, move->from->align);
+    }
+    rl_moves_reset();
+    return migrated;
+}
+#endif
+
 /* -- plan ([HR-2a], [HR-15b]) -------------------------------------------------
  *
  * Plan reads schemas and the registry and runs no user code. Every refusal is decided here, before
@@ -9057,6 +10002,38 @@ static uint64_t rl_live_count(const ember_rl_identity* identity) {
     return count;
 }
 #endif
+
+/* [HR-17] A static whose type changed keeps its value when the value's shape is the same (a
+ * handle, whose object migrates on its own) and migrates by `[HR-14]` when it is a struct; any other
+ * change is refused, naming the static. */
+static bool rl_static_migrates(const ember_rl_manifest* next, const rl_static* kept, const ember_rl_static* edited,
+                               bool checkpoint, char* report, size_t cap) {
+    const ember_rl_field* from = kept->shape;
+    const ember_rl_field* to = edited->shape;
+    bool handle = from != NULL && to != NULL && from->kind == to->kind && from->size == to->size
+        && (to->kind == EMBER_RL_KIND_HANDLE || to->kind == EMBER_RL_KIND_OPTION_HANDLE || to->kind == EMBER_RL_KIND_WEAK
+            || (to->kind == EMBER_RL_KIND_ARRAY && to->element_kind == from->element_kind && to->element_size == from->element_size
+                && (to->element_kind == EMBER_RL_KIND_HANDLE || to->element_kind == EMBER_RL_KIND_OPTION_HANDLE)));
+    if (handle) {
+        return true;
+    }
+#if defined(EMBER_RELOAD_INSTANCES)
+    if (from != NULL && to != NULL && from->kind == EMBER_RL_KIND_STRUCT && to->kind == EMBER_RL_KIND_STRUCT
+        && strcmp(from->type_name, to->type_name) == 0 && !checkpoint) {
+        const ember_rl_type* old = rl_old_schema(from->type_name);
+        const ember_rl_type* now = rl_new_schema(next, to->type_name);
+        if (old != NULL && now != NULL && now->migrate == NULL) {
+            return rl_plan_type(next, old, now, report, cap, 0);
+        }
+    }
+#else
+    (void)next;
+    (void)checkpoint;
+#endif
+    rl_report(report, cap, "refused: the type of static `%s` changed from `%s` to `%s` [HR-17]\n", edited->name,
+              from != NULL ? from->type_name : "?", to != NULL ? to->type_name : "?");
+    return false;
+}
 
 /* Whether `next` can replace what runs now. `checkpoint` is a poll from inside the program
  * (`std.hot.checkpoint()`), where its own frames stay live and run the old code. */
@@ -9110,8 +10087,7 @@ static bool rl_plan(const ember_rl_manifest* next, bool first, bool checkpoint, 
         if (kept == NULL) {
             continue;
         }
-        if (kept->type_schema != edited->type_schema) {
-            rl_report(report, cap, "refused: the type of static `%s` changed [HR-17]\n", edited->name);
+        if (kept->type_schema != edited->type_schema && !rl_static_migrates(next, kept, edited, checkpoint, report, cap)) {
             refused = true;
         } else if (kept->initialiser != edited->initialiser && (edited->flags & EMBER_RL_STATIC_REINIT) == 0) {
             rl_report(report, cap, "refused: the initialiser of static `%s` changed; mark it `@reinit_on_reload` to run the new one and discard its value [HR-17a]\n", edited->name);
@@ -9144,8 +10120,16 @@ static bool rl_plan(const ember_rl_manifest* next, bool first, bool checkpoint, 
         refused = true;
 #endif
     }
-    /* A type whose schema or method tables changed needs its instances migrated or given new type
-     * information, which this tier does not do ([HR-19]). */
+#if defined(EMBER_RELOAD_INSTANCES)
+    /* [HR-14] A type whose schema changed has its instances migrated; one whose method tables
+     * changed, its instances given the new type information. */
+    if (!refused && !rl_plan_instances(next, checkpoint, report, cap)) {
+        refused = true;
+    }
+    return !refused;
+#endif
+    /* `reload = "bodies"`: a type whose schema or method tables changed would need its instances
+     * migrated or given new type information, which this tier does not do ([HR-19]). */
     for (uint32_t index = 0; index < next->type_count; ++index) {
         const ember_rl_type* edited = &next->types[index];
         const rl_type* kept = (const rl_type*)rl_table_get(&g_rl.types, edited->name);
@@ -9183,6 +10167,12 @@ typedef struct rl_pending {
     size_t new_type_count;
     void** reinit;         /* statics to initialise again: (rl_static*, drop) pairs */
     size_t reinit_count;
+    /* [HR-17] Statics whose struct type changed: each one's new storage, and what it was. */
+    rl_static** migrated;
+    void** migrated_data;
+    const ember_rl_field** migrated_shape;
+    const ember_rl_type** migrated_from;
+    size_t migrated_count;
 } rl_pending;
 
 static void rl_pending_free(rl_pending* pending, bool keep) {
@@ -9205,6 +10195,15 @@ static void rl_pending_free(rl_pending* pending, bool keep) {
     free(pending->new_statics);
     free(pending->new_types);
     free(pending->reinit);
+    if (!keep) {
+        for (size_t index = 0; index < pending->migrated_count; ++index) {
+            free(pending->migrated_data[index]);
+        }
+    }
+    free(pending->migrated);
+    free(pending->migrated_data);
+    free((void*)pending->migrated_shape);
+    free((void*)pending->migrated_from);
     memset(pending, 0, sizeof *pending);
 }
 
@@ -9217,6 +10216,11 @@ static void* rl_aligned_zero(uint32_t size, uint32_t align) {
 }
 
 static bool rl_prepare(const ember_rl_manifest* next, rl_pending* pending, char* report, size_t cap) {
+    rl_tx_begin();
+    pending->migrated = (rl_static**)calloc(next->static_count + 1, sizeof(rl_static*));
+    pending->migrated_data = (void**)calloc(next->static_count + 1, sizeof(void*));
+    pending->migrated_shape = (const ember_rl_field**)calloc(next->static_count + 1, sizeof(ember_rl_field*));
+    pending->migrated_from = (const ember_rl_type**)calloc(next->static_count + 1, sizeof(ember_rl_type*));
     pending->new_slots = (rl_slot**)calloc(next->fn_count + 1, sizeof(rl_slot*));
     pending->new_statics = (rl_static**)calloc(next->static_count + 1, sizeof(rl_static*));
     pending->new_types = (rl_type**)calloc(next->type_count + 1, sizeof(rl_type*));
@@ -9249,6 +10253,24 @@ static bool rl_prepare(const ember_rl_manifest* next, rl_pending* pending, char*
             if (kept->initialiser != edited->initialiser) {
                 pending->reinit[pending->reinit_count++] = kept;
             }
+#if defined(EMBER_RELOAD_INSTANCES)
+            /* [HR-17] A struct static whose type changed migrates into new storage. */
+            if (kept->type_schema != edited->type_schema && kept->state == 2 && edited->shape != NULL
+                && edited->shape->kind == EMBER_RL_KIND_STRUCT) {
+                const ember_rl_type* old = rl_old_schema(kept->shape->type_name);
+                const ember_rl_type* now = rl_new_schema(next, edited->shape->type_name);
+                void* data = rl_aligned_zero(edited->size, edited->align);
+                if (data == NULL) {
+                    rl_report(report, cap, "refused: Allocation: out of memory migrating static `%s` [HR-36]\n", kept->name);
+                    return false;
+                }
+                rl_migrate_value(next, old, now, (unsigned char*)data, (const unsigned char*)kept->data);
+                pending->migrated[pending->migrated_count] = kept;
+                pending->migrated_data[pending->migrated_count] = data;
+                pending->migrated_from[pending->migrated_count] = old;
+                pending->migrated_shape[pending->migrated_count++] = edited->shape;
+            }
+#endif
             continue;
         }
         rl_static* made = (rl_static*)calloc(1, sizeof *made);
@@ -9263,6 +10285,7 @@ static bool rl_prepare(const ember_rl_manifest* next, rl_pending* pending, char*
         }
         made->name = name;
         made->data = data;
+        made->shape = edited->shape;
         made->size = edited->size;
         made->align = edited->align;
         made->type_schema = edited->type_schema;
@@ -9334,6 +10357,11 @@ static bool rl_prepare(const ember_rl_manifest* next, rl_pending* pending, char*
         }
         next->static_data[index] = kept->data;
         next->static_state[index] = &kept->state;
+        for (size_t at = 0; at < pending->migrated_count; ++at) {
+            if (pending->migrated[at] == kept) {
+                next->static_data[index] = pending->migrated_data[at];
+            }
+        }
     }
     for (uint32_t index = 0; index < next->identity_count; ++index) {
         ember_rl_identity* identity = next->identities[index];
@@ -9344,6 +10372,23 @@ static bool rl_prepare(const ember_rl_manifest* next, rl_pending* pending, char*
         }
         identity->canonical = known != NULL ? known->canonical : identity;
     }
+    /* The new image's own call table, for the code prepare runs (`migrate_from` and what it
+     * calls): its own bodies, until commit publishes them to every image. */
+    for (uint32_t index = 0; index < next->fn_count; ++index) {
+        const ember_rl_fn* fn = &next->fns[index];
+        if ((fn->flags & EMBER_RL_FN_RELOADABLE) == 0) {
+            continue;
+        }
+        const rl_slot* slot = (const rl_slot*)rl_table_get(&g_rl.slots, fn->name);
+        next->targets[index] = fn->body;
+        next->addresses[index] = slot != NULL ? (void (*)(void))slot->thunk : fn->thunk;
+        next->descriptors[index] = slot != NULL && slot->descriptor != NULL ? slot->descriptor : fn->descriptor;
+    }
+#if defined(EMBER_RELOAD_INSTANCES)
+    if (!rl_prepare_instances(next, report, cap)) {
+        return false;
+    }
+#endif
     return true;
 }
 
@@ -9362,10 +10407,6 @@ static void rl_commit(const ember_rl_manifest* next, rl_pending* pending) {
         if (identity->canonical == identity) {
             (void)rl_table_put(&g_rl.identities, identity);
         }
-    }
-    for (uint32_t index = 0; index < next->type_count; ++index) {
-        rl_type* type = (rl_type*)rl_table_get(&g_rl.types, next->types[index].name);
-        type->schema = &next->types[index];
     }
     /* Each slot's current definition is the new image's; a slot it does not define is removed. */
     for (size_t index = 0; index < g_rl.slots.cap; ++index) {
@@ -9408,6 +10449,32 @@ static void rl_commit(const ember_rl_manifest* next, rl_pending* pending) {
         rl_static* kept = (rl_static*)pending->reinit[index];
         kept->state = 0;
     }
+    /* [HR-17] A migrated static's new storage, in every image. */
+    for (size_t index = 0; index < pending->migrated_count; ++index) {
+        rl_static* kept = pending->migrated[index];
+        void* old = kept->data;
+        kept->data = pending->migrated_data[index];
+        pending->migrated_data[index] = old;
+        for (size_t at = 0; at < g_rl.image_count; ++at) {
+            const ember_rl_manifest* manifest = g_rl.images[at].manifest;
+            for (uint32_t which = 0; which < manifest->static_count; ++which) {
+                if (strcmp(manifest->statics[which].name, kept->name) == 0) {
+                    manifest->static_data[which] = kept->data;
+                }
+            }
+        }
+    }
+    for (uint32_t index = 0; index < next->static_count; ++index) {
+        rl_static* kept = (rl_static*)rl_table_get(&g_rl.statics, next->statics[index].name);
+        if (kept != NULL && next->statics[index].shape != NULL) {
+            kept->shape = next->statics[index].shape;
+            kept->type_schema = next->statics[index].type_schema;
+            kept->initialiser = next->statics[index].initialiser;
+        }
+    }
+#if defined(EMBER_RELOAD_INSTANCES)
+    rl_commit_instances();
+#endif
     /* [HR-42] Publish: one release store, which a thread entering Ember code acquires. */
     RL_STORE_RELEASE(&g_rl_generation, g_rl_generation + 1);
 }
@@ -9441,7 +10508,11 @@ static int rl_apply(const char* path, bool first, bool checkpoint, uint64_t comp
     uint64_t prepared_at = rl_now_ns();
     timings->prepare_ns = prepared_at - planned_at;
     if (!prepared) {
-        /* [HR-18a] Nothing of the new image is live. */
+        /* [HR-18a] Nothing of the new image is live: the transaction arena goes whole ([HR-37]). */
+        rl_tx_release();
+#if defined(EMBER_RELOAD_INSTANCES)
+        rl_moves_reset();
+#endif
         rl_pending_free(&pending, false);
         timings->refusals += 1;
         timings->last_result = EMBER_RELOAD_REFUSED;
@@ -9450,6 +10521,21 @@ static int rl_apply(const char* path, bool first, bool checkpoint, uint64_t comp
     rl_commit(next, &pending);
     uint64_t committed = rl_now_ns();
     timings->commit_ns = committed - prepared_at;
+    /* [HR-2a] Reclaim: what the old image owned and no new value took. */
+    rl_tx_keep();
+#if defined(EMBER_RELOAD_INSTANCES)
+    timings->instances_migrated = rl_reclaim_instances(next);
+    for (size_t index = 0; index < pending.migrated_count; ++index) {
+        rl_drop_removed(next, pending.migrated_from[index], rl_new_schema(next, pending.migrated_shape[index]->type_name),
+                        (unsigned char*)pending.migrated_data[index]);
+        free(pending.migrated_data[index]);
+    }
+#endif
+    /* The new image's schemas are the running ones from here: the next reload compares with them. */
+    for (uint32_t index = 0; index < next->type_count; ++index) {
+        rl_type* type = (rl_type*)rl_table_get(&g_rl.types, next->types[index].name);
+        type->schema = &next->types[index];
+    }
     rl_pending_free(&pending, true);
     timings->reclaim_ns = rl_now_ns() - committed;
     if (!first) {
@@ -9524,6 +10610,14 @@ int ember_reload_init_v1(const ember_reload_config* config) {
 }
 
 int ember_reload_poll(void) { return rl_poll(false); }
+
+void (*ember_reload_export(const char* name))(void) {
+    const rl_slot* slot = name != NULL ? (const rl_slot*)rl_table_get(&g_rl.slots, name) : NULL;
+    if (slot == NULL || slot->removed || (slot->flags & EMBER_RL_FN_EXPORT) == 0) {
+        return NULL;
+    }
+    return (void (*)(void))slot->thunk;
+}
 
 int ember_reload_checkpoint(void) { return rl_poll(true); }
 

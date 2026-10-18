@@ -92,7 +92,28 @@ fn host(out: &Path) -> PathBuf {
 }
 
 /// Run a built host, as the harness runs every program: its output, never a window.
+/// Windows: no error box for a program this test starts. SEM_FAILCRITICALERRORS,
+/// SEM_NOGPFAULTERRORBOX and SEM_NOOPENFILEERRORBOX, which every child inherits: a host that
+/// crashes, or cannot start (a missing library, 0xc0000142), ends with its status instead of
+/// opening a window that waits for a click (D-252).
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn quiet_errors() {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn SetErrorMode(mode: u32) -> u32;
+    }
+    // SAFETY: SetErrorMode only sets this process's error mode flags.
+    unsafe {
+        SetErrorMode(0x0001 | 0x0002 | 0x8000);
+    }
+}
+
+#[cfg(not(windows))]
+fn quiet_errors() {}
+
 fn run_host(out: &Path) -> Run {
+    quiet_errors();
     let mut command = Command::new(host(out));
     command.current_dir(out);
     let output = ember_build::output_started(&mut command).expect("the host runs");
@@ -326,6 +347,122 @@ fn an_image_for_the_other_header_is_e9035() {
     assert_ne!(reloaded.exit, 0, "[HR-12a] an image for another header was built");
     assert!(reloaded.stderr.contains("error[E9035]") && reloaded.stderr.contains("40-byte headers, and this image's would have 24"), "{}", reloaded.stderr);
     assert!(!bin(&out).join(format!("main.image.1.{}", if cfg!(windows) { "dll" } else { "so" })).exists());
+}
+
+/// A C host of a reloadable program's images, as a game engine would be: it loads the first
+/// image, calls the export `game_frame` once a frame and polls for a reload between frames, where
+/// no Ember frame is live, printing what each frame returns and what each poll did.
+const FRAME_HOST: &str = r#"#include "ember_rt.h"
+#include <stdio.h>
+#include <stdlib.h>
+#if defined(_WIN32)
+#define EXTENSION "dll"
+#else
+#define EXTENSION "so"
+#endif
+
+int main(int argc, char** argv) {
+    if (argc < 3) {
+        return 100;
+    }
+    char image[1200];
+    char announce[1200];
+    snprintf(image, sizeof image, "%s/main.image.0.%s", argv[1], EXTENSION);
+    snprintf(announce, sizeof announce, "%s/main.reload", argv[1]);
+    RT_reload_config config = { sizeof config, image, announce, 1 };
+    if (RT_reload_init(&config) != 0) {
+        return 101;
+    }
+    RT_rt_config runtime = RT_rt_config_default();
+    RT_rt_init(&runtime);
+    long long (*frame)(long long) = (long long (*)(long long))RT_reload_export("game_frame");
+    if (frame == NULL) {
+        return 102;
+    }
+    int frames = atoi(argv[2]);
+    for (long long turn = 0; turn < frames; ++turn) {
+        printf("%lld\n", frame(turn));
+        int result = RT_reload_poll();
+        const RT_reload_timings* stats = RT_reload_stats();
+        if (result == RT_RELOAD_APPLIED) {
+            printf("applied, %llu migrated\n", (unsigned long long)stats->instances_migrated);
+        } else if (result != RT_RELOAD_IDLE) {
+            printf("refused:\n%s", stats->report);
+        }
+        fflush(stdout);
+    }
+    return 0;
+}
+"#;
+
+/// Build `source` as a reloadable program's first image, then each of `edits` as the next one,
+/// and run `FRAME_HOST` over `frames` frames.
+fn host_run(label: &str, source: &str, edits: &[&str], frames: u32) -> Run {
+    let root = workspace_root();
+    let (package, file) = package(label, RELOAD_ALL, source);
+    let out = package.join("target");
+    let out_arg = out.to_string_lossy().into_owned();
+    let file_arg = file.to_string_lossy().into_owned();
+    let built = ember(&["build", &file_arg, "--out-dir", &out_arg], &root);
+    assert_eq!(built.exit, 0, "the first build failed:\n{}", built.stderr);
+    for edit in edits {
+        std::fs::write(&file, edit).expect("the edit is writable");
+        let reloaded = ember(&["build", "--reload", &file_arg, "--out-dir", &out_arg], &root);
+        assert_eq!(reloaded.exit, 0, "the reload build failed:\n{}", reloaded.stderr);
+    }
+    let runtime = root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+    let includes = vec![runtime.join("include")];
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let toolchain = ember_build::Toolchain::detect(requested.as_deref()).expect("a C toolchain");
+    let shared = ember_build::reload::shared_runtime(
+        &toolchain,
+        &runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX)),
+        &includes,
+        ember_build::Profile::Debug,
+        true,
+        &ember_build::cache_root(),
+        &bin(&out),
+    )
+    .expect("the shared runtime builds");
+    let source = package.join("frame_host.c");
+    std::fs::write(&source, FRAME_HOST.replace("RT_RELOAD", &format!("{}_RELOAD", ember_branding::SYMBOL_PREFIX.to_uppercase())).replace("RT_", ember_branding::RUNTIME_PREFIX))
+        .expect("the host is writable");
+    let program = bin(&out).join(if cfg!(windows) { "frame_host.exe" } else { "frame_host" });
+    let objects = package.join("obj");
+    std::fs::create_dir_all(&objects).expect("the object directory is creatable");
+    ember_build::reload::link_host_source(&toolchain, &source, &includes, ember_build::Profile::Debug, &shared, &objects, &program)
+        .expect("the host links");
+    quiet_errors();
+    let mut command = Command::new(&program);
+    command.arg(bin(&out)).arg(frames.to_string()).env("LD_LIBRARY_PATH", bin(&out));
+    let output = ember_build::output_started(&mut command).expect("the host runs");
+    drop(package);
+    Run {
+        stdout: String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        stderr: String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+        exit: output.status.code().unwrap_or(-1),
+    }
+}
+
+const PARTICLES: &str = "from std.sync import Atomic, Mutex\n\n@sync\nclass Particle:\n    x: Atomic[int] = Atomic(0)\n    step: int = 1\n\n\
+    static WORLD: Mutex[Array[Particle]] = Mutex([])\n\n\
+    @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with world = WORLD.lock():\n        \
+    if world.len() == 0:\n            for k in 0..3:\n                world.push(Particle())\n        \
+    for p in world:\n            p.x.fetch_add(p.step)\n            total += p.x.load()\n    return total\n\nfn main():\n    pass\n";
+
+/// `[HR-14]`, `[HR-15]`, `[HR-2a]`, `[HR-13a]`, `[HR-21]`, `[HR-30]` — a host polls between frames.
+/// A field added with a default grows `Particle`, so each live instance moves: plan finds every
+/// reference to it (in the `Mutex[Array[Particle]]` static, through the schema the package emits
+/// for that standard type) and accounts for its count; prepare builds each new instance with the
+/// old fields carried by name and the new one at its default; commit rewrites the references. The
+/// next frame runs the new code on the migrated instances, their state kept. The export the host
+/// holds is the permanent thunk, so the same pointer calls the new body.
+#[test]
+fn a_field_added_with_a_default_migrates_live_instances() {
+    let v2 = PARTICLES.replace("    step: int = 1\n", "    step: int = 1\n    bonus: int = 100\n").replace("total += p.x.load()", "total += p.x.load() + p.bonus");
+    let run = host_run("reload-migrate-add", PARTICLES, &[&v2], 3);
+    assert_eq!(run.exit, 0, "{}\n{}", run.stdout, run.stderr);
+    assert_eq!(run.stdout, "3\napplied, 3 migrated\n306\n309\n", "{}", run.stderr);
 }
 
 /// `[HR-29]` — with reload on, one shared runtime serves every image in the process: a reloadable

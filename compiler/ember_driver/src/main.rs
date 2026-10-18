@@ -2889,7 +2889,17 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let reload = reload_mode(&lint_settings, options, &mut sink)?;
     // `ember test` builds the package's tests as a program of their own, without reload.
     let reload = if command == "test" { ReloadMode::None } else { reload };
-    let modules = load_modules(module, &root_dir, &mut map, &mut sink);
+    let mut modules = load_modules(module, &root_dir, &mut map, &mut sink);
+    // Annex B — what a reloadable program's reload needs written into it before it is checked: its
+    // fields' defaults as functions, `Old<Name>` from the previous build's schema.
+    let reload_bin = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target")).join(options.profile.name()).join("bin");
+    let reload_stem = input.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
+    let reload_additions = (reload != ReloadMode::None).then(|| {
+        let previous = std::fs::read_to_string(reload_bin.join(format!("{reload_stem}.schema.json")))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+        reload::inject(&mut modules, &mut map, &mut sink, previous.as_ref())
+    });
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
     }
@@ -2990,7 +3000,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // Annex B — which functions the image reaches through thunks; `[HR-9a]`, none is inlined.
     let reload_image = (reload != ReloadMode::None).then(|| {
         let package = input.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
-        reload::plan(reload, &package, &modules, &map, &bodies)
+        reload::plan(reload, &package, &modules, &map, &bodies, reload_additions.as_ref().expect("made with the mode"))
     });
     if let Some(image) = &reload_image {
         for body in bodies.iter_mut().filter(|body| image.reloadable.contains(&body.symbol)) {
@@ -3500,6 +3510,11 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             }
         };
         mark("C compile and link", "all modules");
+        // `[HR-16]` — this build's schema, which the next build's `Old<Name>` structs are made from.
+        if let Some(additions) = &reload_additions {
+            let schema = serde_json::Value::Object(additions.schema.clone());
+            std::fs::write(layout.bin.join(format!("{module_name}.schema.json")), schema.to_string()).map_err(|e| e.to_string())?;
+        }
         report(&sink, &map, options);
         if command == "run" {
             return run_program(&built.host, options);

@@ -2789,6 +2789,10 @@ void ember_reload_shutdown(void);
 /* `std.hot.checkpoint()` ([HR-33]): a poll the program itself makes, from its one live activation
  * on this thread. A runtime built without reload answers EMBER_RELOAD_DISABLED. */
 int ember_reload_checkpoint(void);
+/* [HR-21] An export of the running image by its C name: its permanent thunk, the one address of
+ * it for the life of the process, which a host may keep in a table across every reload; NULL when
+ * no image exports the name. */
+void (*ember_reload_export(const char* name))(void);
 /* The toolchain's own host ([HR-33]): the image `<package>.image.0` beside the executable, the
  * announcement `<package>.reload`, and the image's program run with the process's arguments. */
 int ember_reload_host_main(int argc, char** argv, const char* package);
@@ -2804,6 +2808,7 @@ void ember_reload_leave(void);
 #define EMBER_RL_FN_RELOADABLE UINT32_C(1) /* reached through its thunk ([HR-5]) */
 #define EMBER_RL_FN_NORELOAD UINT32_C(2)   /* called directly; its body may not change ([HR-10]) */
 #define EMBER_RL_FN_ADDRESS UINT32_C(4)    /* its address is taken: data may hold its thunk ([HR-7]) */
+#define EMBER_RL_FN_EXPORT UINT32_C(8)     /* an `extern "C"` export: a host calls it ([HR-21]) */
 
 /* One function. A reloadable one's call-table slot is keyed by `name`, its mangled symbol, never
  * by its index ([HR-7]); `body` is this image's code and `thunk` this image's thunk, which becomes
@@ -2826,7 +2831,8 @@ typedef struct ember_rl_fn {
 #define EMBER_RL_STATIC_CONSTANT UINT32_C(2) /* placed with no initialisation code: `initial` holds it */
 
 /* [HR-4a] One static: its storage is the runtime's, found by name. `type_schema` is its type's
- * schema hash and `initialiser` its initialiser's ([HR-17], [HR-17a]). */
+ * schema hash and `initialiser` its initialiser's ([HR-17], [HR-17a]); `shape` says what its value
+ * holds, as a field at offset 0 would ([HR-15]). */
 typedef struct ember_rl_static {
     const char* name;
     uint32_t size;
@@ -2836,7 +2842,10 @@ typedef struct ember_rl_static {
     uint32_t flags;
     const void* initial;
     void (*drop)(void*);
+    const struct ember_rl_field* shape;
 } ember_rl_static;
+
+struct ember_rl_field;
 
 /* EMBER_RL_TYPE_* — a schema's kind. */
 #define EMBER_RL_TYPE_STRUCT UINT32_C(1)
@@ -2845,16 +2854,24 @@ typedef struct ember_rl_static {
 #define EMBER_RL_TYPE_INTERFACE UINT32_C(4)
 
 /* EMBER_RL_FIELD_* — how a field's value moves to a new schema ([HR-14]). */
-#define EMBER_RL_FIELD_DEFAULT UINT32_C(1)   /* has a declared default, or its type is `Default` */
-#define EMBER_RL_FIELD_SIGNED UINT32_C(2)    /* a signed integer: widened by sign */
-#define EMBER_RL_FIELD_UNSIGNED UINT32_C(4)  /* an unsigned integer: widened by zero */
-#define EMBER_RL_FIELD_FLOAT UINT32_C(8)     /* a float: f32 widens to f64 */
-#define EMBER_RL_FIELD_HANDLE UINT32_C(16)   /* a strong class handle: rewritten if its object moves */
-#define EMBER_RL_FIELD_WEAK UINT32_C(32)     /* a `Weak` handle: rewritten if its object moves */
-#define EMBER_RL_FIELD_FOREIGN UINT32_C(64)  /* a raw pointer or foreign data: cannot be followed */
+#define EMBER_RL_FIELD_DEFAULT UINT32_C(1)   /* has a declared default: `init_field` writes it */
+#define EMBER_RL_FIELD_ZERO UINT32_C(2)      /* its type is `Default`, whose value is all zero bytes */
+#define EMBER_RL_FIELD_SIGNED UINT32_C(4)    /* a signed integer: widened by sign */
+#define EMBER_RL_FIELD_UNSIGNED UINT32_C(8)  /* an unsigned integer: widened by zero */
+#define EMBER_RL_FIELD_FLOAT UINT32_C(16)    /* a float: f32 widens to f64 */
 
-/* [HR-11] A field of a schema: its name, the name `@renamed_from` gives its old self, its type's
- * schema hash, its offset and size. */
+/* EMBER_RL_KIND_* — what a value holds that a reload must follow ([HR-15]). */
+#define EMBER_RL_KIND_PLAIN UINT32_C(0)         /* no reference to an object */
+#define EMBER_RL_KIND_HANDLE UINT32_C(1)        /* a strong class handle */
+#define EMBER_RL_KIND_OPTION_HANDLE UINT32_C(2) /* `Option` of a handle, null for `None` */
+#define EMBER_RL_KIND_WEAK UINT32_C(3)          /* a `Weak` handle, null when empty */
+#define EMBER_RL_KIND_STRUCT UINT32_C(4)        /* a struct, by value: `type_name`'s schema */
+#define EMBER_RL_KIND_ENUM UINT32_C(5)          /* a unit enum: its discriminant, `type_name`'s schema */
+#define EMBER_RL_KIND_ARRAY UINT32_C(6)         /* an `Array`: `element_kind` elements of `element_size` */
+#define EMBER_RL_KIND_OPAQUE UINT32_C(7)        /* holds references the runtime cannot follow */
+
+/* [HR-11] A field of a schema: its name, the name `@renamed_from` gives its old self, its type, its
+ * type's schema hash, its offset and size, and what it holds. */
 typedef struct ember_rl_field {
     const char* name;
     const char* renamed_from;
@@ -2863,6 +2880,10 @@ typedef struct ember_rl_field {
     uint32_t offset;
     uint32_t size;
     uint32_t flags;
+    uint32_t kind;
+    uint32_t element_kind;
+    uint32_t element_size;
+    const char* element_type;
 } ember_rl_field;
 
 /* [HR-11] A variant of an enum's schema: its name, `@renamed_from`'s, its discriminant, and its
@@ -2898,7 +2919,15 @@ typedef struct ember_rl_type {
     /* `migrate_from`, when the type declares one ([HR-16]): builds the new value at `out` from
      * the old one at `old`, returning 0, or writes a ReloadError's report and returns 1. */
     int (*migrate)(void* out, const void* old, char* report, size_t report_size);
+    /* The struct `Old<Name>` the `migrate_from` reads, by name in this image. */
+    const char* old_type;
+    /* Drops field `index` of the value at `object` ([HR-2a]'s reclaim). */
+    void (*drop_field)(void* object, uint32_t index);
 } ember_rl_type;
+
+/* EMBER_RL_LAYOUT_* — a type's layout facts. */
+#define EMBER_RL_LAYOUT_CONTAINED UINT32_C(1) /* a value of it sits in a container somewhere ([HR-13]) */
+#define EMBER_RL_LAYOUT_UNIT UINT32_C(2)      /* an enum with no payload */
 
 /* [HR-8] The reload manifest: in a section of the image named `.emrl` (PE) or `ember_reload`
  * (ELF). `targets`, `addresses`, `static_data` and `static_state` are this image's tables, which

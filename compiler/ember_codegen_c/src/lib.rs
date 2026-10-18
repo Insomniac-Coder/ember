@@ -433,6 +433,11 @@ fn emit_with(
         reload_slots: BTreeMap::new(),
         reload_interface_ids: std::cell::RefCell::new(BTreeSet::new()),
         lazy_statics: lazy_statics.clone(),
+        reload_bodies: if reload.is_some() {
+            bodies.iter().map(|body| (body.name.clone(), body.symbol.clone(), body.return_ty())).collect()
+        } else {
+            Vec::new()
+        },
         array_helpers: std::cell::RefCell::new(Vec::new()),
         clone_fns: bodies
             .iter()
@@ -760,6 +765,8 @@ struct Emitter<'a> {
     reload_interface_ids: std::cell::RefCell<BTreeSet<String>>,
     /// `[STA-3]` — the statics initialised on first access, by initialiser symbol.
     lazy_statics: BTreeMap<String, (Ty, String)>,
+    /// Annex B — every body's name, symbol and return type, for the functions the driver wrote.
+    reload_bodies: Vec<(String, String, Ty)>,
 }
 
 struct NativeFnValue {
