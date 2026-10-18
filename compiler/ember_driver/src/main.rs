@@ -13,7 +13,7 @@ use std::process::ExitCode;
 use ember_build::interface::{
     CallableGenericCallableBound, CallableGenericParameter, CallableInterfaceContract,
     CallableInterfaceRecord, CallableParameter, CallableParameterMode, CallableSignature,
-    ModuleInterfaceArtifact, ModuleInterfaceInput, PreparedInterfaceCache,
+    InterfaceHash, ModuleInterfaceArtifact, ModuleInterfaceInput, PreparedInterfaceCache,
     build_artifacts, cache_directory, compiler_identity, prepare_interface_cache,
     round_trip_artifacts,
 };
@@ -2213,6 +2213,8 @@ fn module_interface_inputs(
         let contract = CallableInterfaceContract {
             signature,
             metadata: None,
+            effects: None,
+            inline_body: None,
         };
         if import_visible_contracts
             .insert(declaration.symbol.clone(), contract.clone())
@@ -2244,7 +2246,12 @@ fn module_interface_inputs(
         }
     }
 
-    for body in bodies {
+    // `[BLD-2]` — the facts a caller may use beside a signature: each body's
+    // effect set (`[EFF-4]`) and, for a function the inline header exports,
+    // its body (`[CG-C-3b]`).
+    let effect_sets = ember_analysis::effect_sets(bodies, types);
+    let inline_symbols = ember_codegen_c::inline_header_symbols(bodies, types);
+    for (index, body) in bodies.iter().enumerate() {
         let source_declaration = declarations_by_span.get(&span_key(body.span)).copied();
         if source_declaration.is_none() && !import_visible_spans.contains(&span_key(body.span)) {
             // The fresh MIR record remains installed for this compilation's
@@ -2281,9 +2288,14 @@ fn module_interface_inputs(
                 body.symbol
             ));
         }
+        let inline_body = inline_symbols.contains_key(&body.symbol).then(|| {
+            InterfaceHash::of_bytes(ember_mir::dump(std::slice::from_ref(body), types).as_bytes())
+        });
         let contract = CallableInterfaceContract {
             signature,
             metadata: Some(metadata.clone()),
+            effects: Some(effect_sets[index].each().map(|(_, name)| name.to_string()).collect()),
+            inline_body,
         };
         if source_declaration.is_some() {
             let expected = import_visible_contracts.get_mut(&body.symbol).ok_or_else(|| {
@@ -2298,7 +2310,7 @@ fn module_interface_inputs(
                     body.symbol
                 ));
             }
-            expected.metadata = contract.metadata.clone();
+            *expected = contract.clone();
             let records = records_by_file.entry(body.span.file).or_default();
             let stored = records.get_mut(&body.symbol).ok_or_else(|| {
                 format!(
@@ -2332,6 +2344,7 @@ fn module_interface_inputs(
         .map(str::to_string)
         .collect();
     let package_config = format!("profile={}", options.profile.name());
+    let mut layouts = type_layouts(modules, types);
     let mut inputs = Vec::with_capacity(modules.len());
     for loaded in modules {
         let module = module_identity(&loaded.path);
@@ -2380,6 +2393,7 @@ fn module_interface_inputs(
                 .into_iter()
                 .map(|(symbol, contract)| CallableInterfaceRecord { symbol, contract })
                 .collect(),
+            layouts: layouts.remove(&loaded.module.span.file).unwrap_or_default(),
         });
     }
     if let Some((file, records)) = records_by_file.into_iter().next() {
@@ -2390,6 +2404,85 @@ fn module_interface_inputs(
         ));
     }
     Ok((inputs, import_visible_contracts))
+}
+
+/// `[BLD-2]` — the layout of each import-visible, non-generic type a module
+/// declares, by its file: the type's canonical name, and its size,
+/// alignment, and fields (name, canonical type, offset) or variants. A change
+/// to one changes the module's interface hash, so its importers recheck.
+fn type_layouts(
+    modules: &[ember_typeck::LoadedModule],
+    types: &TypeTable,
+) -> std::collections::BTreeMap<ember_span::FileId, std::collections::BTreeMap<String, String>> {
+    use ember_ast::{ItemKind, VisKind};
+    use ember_types::{Ty, TyKind};
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::fmt::Write as _;
+
+    let mut visible: BTreeSet<(ember_span::FileId, String)> = BTreeSet::new();
+    for loaded in modules {
+        for item in &loaded.module.items {
+            let name = match &item.kind {
+                ItemKind::Struct(decl) if decl.generics.is_empty() => &decl.name,
+                ItemKind::Class(decl) if decl.generics.is_empty() => &decl.name,
+                ItemKind::Enum(decl) if decl.generics.is_empty() => &decl.name,
+                _ => continue,
+            };
+            if item.vis.kind != VisKind::Private {
+                visible.insert((loaded.module.span.file, name.name.as_str().to_string()));
+            }
+        }
+    }
+    let mut out: BTreeMap<ember_span::FileId, BTreeMap<String, String>> = BTreeMap::new();
+    let mut add = |span: ember_span::Span, name: ember_span::Symbol, ty: Option<Ty>, members: String| {
+        let Some(ty) = ty else { return };
+        if !visible.contains(&(span.file, name.as_str().rsplit('.').next().unwrap_or_default().to_string())) {
+            return;
+        }
+        let Ok(canonical) = types.canonical_name(ty) else { return };
+        let layout = types.layout(ty);
+        let mut text = format!("size {} align {}", layout.size, layout.align);
+        for (offset, member) in layout.field_offsets.iter().zip(members.split('\n')) {
+            let _ = write!(text, "; {member} @{offset}");
+        }
+        if layout.field_offsets.is_empty() && !members.is_empty() {
+            let _ = write!(text, "; {}", members.replace('\n', "; "));
+        }
+        out.entry(span.file).or_default().insert(canonical, text);
+    };
+    let field_list = |fields: &[ember_types::FieldDef]| -> String {
+        fields
+            .iter()
+            .map(|field| format!("{}: {}", field.name.as_str(), types.canonical_name(field.ty).unwrap_or_default()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    for (id, def) in types.structs() {
+        if def.origin.is_none() {
+            add(def.span, def.name, types.find(&TyKind::Struct(id)), field_list(&def.fields));
+        }
+    }
+    for (id, def) in types.classes() {
+        if def.origin.is_none() {
+            add(def.span, def.name, types.find(&TyKind::Class(id)), field_list(&def.fields));
+        }
+    }
+    for (id, def) in types.enums() {
+        if def.origin.is_none() {
+            let variants = def
+                .variants
+                .iter()
+                .map(|variant| {
+                    let payload: Vec<String> =
+                        variant.fields.iter().map(|field| types.canonical_name(field.ty).unwrap_or_default()).collect();
+                    format!("{}({})", variant.name.as_str(), payload.join(", "))
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            add(def.span, def.name, types.find(&TyKind::Enum(id)), variants);
+        }
+    }
+    out
 }
 
 fn install_callable_metadata_from_artifacts(

@@ -253,3 +253,22 @@ that MSVC and gcc take it only from parameters), so the kernels stay the fast pa
 owned lists, `[SIMD-3]` (b); two `SoA` columns, (c)) and
 `CG-C-4/accept_views_not_proved_apart_or_reassigned_keep_plain_pointers.em` (two parameter views;
 a view set in its loop): `assert-c` on the emitted C, checked by the conformance milestone.
+
+## 7. `[BLD-2]`, `[CG-C-3b]`: effect sets, exported inline bodies and layouts in the interface hash
+
+**Built.** The module-interface record (`ember_build::interface`, schema 11) now carries, beside
+each callable's signature and region contract, its effect set (by effect name, from
+`ember_analysis::effect_sets`; `None` for a generic, whose effects are each instance's) and, for a
+function the inline header exports (`ember_codegen_c::inline_header_symbols`, the `[CG-C-3]` set),
+the hash of its MIR body; and, per module, the layout of each import-visible non-generic struct,
+class and enum (size, alignment, fields with canonical types and offsets, or variants). All of it
+is in the interface hash, so an importer's cache key changes exactly when one of those facts
+does. *Limits:* the compiler still checks the whole graph each run (the record is the dependency
+identity, as before; reuse of a cached front-end result is not built), and a generic type's layout
+is not recorded (it has one per instance). `BLD-2` leaves the `unfinished` list.
+
+**Test.** Milestone `effects_inline_bodies_and_layouts_are_in_the_interface_hash`: a private
+constant edit and a private struct edit change nothing; a private body gaining `Io` changes the
+public caller's effects and the hash; an exported inline body edit changes the hash with the same
+signature and effects; a field added to a public struct changes the layouts and the hash; each
+change also changes the importer's cache key.

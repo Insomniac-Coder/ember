@@ -4350,6 +4350,93 @@ fn callable_region_summary_changes_invalidate_importers_interface_key() {
     let _ = std::fs::remove_dir_all(&test_root);
 }
 
+/// `[BLD-2]` / `[CG-C-3b]` — a module's interface hash holds the facts a
+/// caller may use beside signatures: each callable's effect set, the body the
+/// inline header exports, and each visible type's layout. Editing a private
+/// body so that a public function gains an effect, editing an exported inline
+/// body, or adding a field to a public struct changes the hash and the
+/// importer's cache key; an edit that changes none of them (a private
+/// function's constant, a private struct) changes neither.
+#[test]
+fn effects_inline_bodies_and_layouts_are_in_the_interface_hash() {
+    let workspace = workspace_root();
+    let test_root = temporary_directory("bld2-facts");
+    let out_dir = test_root.join("target");
+    let helper = ember_branding::source_file("helper");
+    let main = ember_branding::source_file("main");
+    let _ = std::fs::remove_dir_all(&test_root);
+    std::fs::create_dir_all(&test_root).expect("create BLD-2 package");
+    let helper_source = |quiet: &str, small: &str, point: &str, private: &str| {
+        format!(
+            "pub struct Point:\n{point}\n\nstruct Hidden:\n{private}\n\nfn quiet() -> int:\n{quiet}\n\npub fn effectful() -> int:\n    return quiet()\n\npub fn small(x: int) -> int:\n{small}\n"
+        )
+    };
+    let quiet = "    return 1";
+    let loud = "    println(\"loud\")\n    return 1";
+    let small = "    return x + 1";
+    let point = "    pub x: int";
+    let private = "    a: int";
+    std::fs::write(test_root.join(&helper), helper_source(quiet, small, point, private)).expect("write helper");
+    std::fs::write(
+        test_root.join(&main),
+        "from helper import Point, effectful, small\n\nfn main():\n    p = Point(x=1)\n    println(effectful() + small(p.x))\n",
+    )
+    .expect("write importer");
+    let check = |label: &str| {
+        let output = Command::new(EMBER)
+            .args(["check", &main, "--out-dir", &out_dir.to_string_lossy()])
+            .current_dir(&test_root)
+            .env(ember_branding::std_path_var(), workspace.join("std"))
+            .output()
+            .expect("the Ember compiler runs for BLD-2");
+        assert!(output.status.success(), "{label} check failed:\n{}", String::from_utf8_lossy(&output.stderr));
+        (cached_interface(&out_dir, "helper"), cached_interface(&out_dir, "root"))
+    };
+    let (helper0, root0) = check("initial");
+    let effectful = &helper0.callables[&ember_branding::mangled("helper.effectful")];
+    assert!(!effectful.effects.as_ref().expect("a body's effects").iter().any(|e| e == "Io"), "{effectful:?}");
+    assert!(helper0.callables[&ember_branding::mangled("helper.small")].inline_body.is_some());
+    assert!(helper0.layouts.keys().any(|name| name.ends_with("Point")), "{:?}", helper0.layouts);
+    assert!(!helper0.layouts.keys().any(|name| name.ends_with("Hidden")), "{:?}", helper0.layouts);
+
+    // No fact changes: a private function's constant, a private struct.
+    std::fs::write(test_root.join(&helper), helper_source("    return 2", small, point, "    a: int\n    b: int"))
+        .expect("edit private items");
+    let (helper1, root1) = check("after private edits");
+    assert_eq!(helper0.interface_hash, helper1.interface_hash);
+    assert_eq!(root0.cache_key, root1.cache_key);
+
+    // A private body gains `IO`, and so does the public function calling it.
+    std::fs::write(test_root.join(&helper), helper_source(loud, small, point, private)).expect("make quiet loud");
+    let (helper2, root2) = check("after an effect change");
+    let effectful = &helper2.callables[&ember_branding::mangled("helper.effectful")];
+    assert!(effectful.effects.as_ref().expect("a body's effects").iter().any(|e| e == "Io"), "{effectful:?}");
+    assert_ne!(helper1.interface_hash, helper2.interface_hash);
+    assert_ne!(root1.cache_key, root2.cache_key);
+
+    // An exported inline body changes; its signature and effects do not.
+    std::fs::write(test_root.join(&helper), helper_source(loud, "    return x + 2", point, private)).expect("edit small");
+    let (helper3, root3) = check("after an inline body change");
+    let symbol = ember_branding::mangled("helper.small");
+    assert_eq!(helper2.callables[&symbol].signature, helper3.callables[&symbol].signature);
+    assert_eq!(helper2.callables[&symbol].effects, helper3.callables[&symbol].effects);
+    assert_ne!(helper2.callables[&symbol].inline_body, helper3.callables[&symbol].inline_body);
+    assert_ne!(helper2.interface_hash, helper3.interface_hash);
+    assert_ne!(root2.cache_key, root3.cache_key);
+
+    // A public struct gains a field.
+    std::fs::write(
+        test_root.join(&helper),
+        helper_source(loud, "    return x + 2", "    pub x: int\n    pub y: int = 0", private),
+    )
+    .expect("grow Point");
+    let (helper4, root4) = check("after a layout change");
+    assert_ne!(helper3.layouts, helper4.layouts);
+    assert_ne!(helper3.interface_hash, helper4.interface_hash);
+    assert_ne!(root3.cache_key, root4.cache_key);
+    let _ = std::fs::remove_dir_all(&test_root);
+}
+
 /// `[TYP-8]` / ODR-084 — an imported declaration keeps its module's lexical
 /// policy. Editing only that directive changes the callable interface and
 /// invalidates the importing module even when its own source is unchanged.

@@ -11325,6 +11325,13 @@ fn statement_count(stmts: &[Stmt]) -> usize {
 /// `true`, forced inline as the runtime's fast paths are: a `for` loop calls
 /// `next` for every item, and MSVC left `chars()`'s a call (1.4x the C loop).
 fn inline_bodies(bodies: &[Body], types: &TypeTable) -> BTreeMap<String, bool> {
+    inline_header_symbols(bodies, types)
+}
+
+/// `[CG-C-3]`, `[CG-C-3b]` — the functions whose bodies the inline header
+/// exports (`inline_bodies`), by symbol: their bodies are part of the
+/// interface hash. With each, whether it is forced inline.
+pub fn inline_header_symbols(bodies: &[Body], types: &TypeTable) -> BTreeMap<String, bool> {
     let foreign: BTreeSet<&str> =
         bodies.iter().filter(|body| body.is_extern_declaration).map(|body| body.symbol.as_str()).collect();
     bodies

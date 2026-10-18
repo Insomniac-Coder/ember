@@ -2,9 +2,10 @@
 //!
 //! The current compiler still checks a whole loaded module graph on every
 //! invocation. This module does not pretend otherwise. It establishes the
-//! first real artifact boundary: resolved callable signatures and region
-//! contracts are serialized, reread, independently validated, and included
-//! in the dependency identity that a later item-granular cache can reuse.
+//! first real artifact boundary: resolved callable signatures, region
+//! contracts, effect sets, exported inline bodies and type layouts are
+//! serialized, reread, independently validated, and included in the
+//! dependency identity that a later item-granular cache can reuse.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -35,7 +36,10 @@ const MAGIC: &[u8; 4] = b"EMIF";
 // Schema 10 records whether an implicit Callable bound is `unsafe fn(…)`
 // (ODR-115): a schema 9 record would let an importer pass an `unsafe fn` to a
 // bound that calls it outside `unsafe`, or refuse one a bound accepts.
-const SCHEMA_VERSION: u32 = 10;
+// Schema 11 adds the facts `[BLD-2]` names beside signatures: each callable's
+// effect set and the body it exports to the inline header (`[CG-C-3b]`), and
+// each visible type's layout. A schema 10 record lacks them.
+const SCHEMA_VERSION: u32 = 11;
 const EXTENSION: &str = "emif";
 
 /// A BLAKE3 identity. It is kept opaque so callers cannot accidentally use a
@@ -52,7 +56,7 @@ impl InterfaceHash {
         self.0.iter().map(|byte| format!("{byte:02x}")).collect()
     }
 
-    fn of_bytes(bytes: &[u8]) -> Self {
+    pub fn of_bytes(bytes: &[u8]) -> Self {
         Self(*blake3::hash(bytes).as_bytes())
     }
 }
@@ -95,10 +99,9 @@ pub struct CallableGenericCallableBound {
     pub is_unsafe: bool,
 }
 
-/// The resolved, monomorphic callable facts currently available at the EMIF
-/// boundary. Generic declaration binders/bounds, type layouts, effects, and
-/// inline-body eligibility require their own verified producers and are not
-/// silently approximated here.
+/// The resolved callable signature at the EMIF boundary. The other facts a
+/// caller may use (effects, the exported inline body, region contracts) are
+/// beside it in `CallableInterfaceContract`; type layouts are the module's.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CallableSignature {
     pub parameters: Vec<CallableParameter>,
@@ -180,6 +183,13 @@ pub struct CallableInterfaceContract {
     /// for the declaration. A generic declaration remains a complete source
     /// interface without pretending an uninstantiated MIR body exists.
     pub metadata: Option<CallableRegionMetadata>,
+    /// `[BLD-2]`, `[EFF-4]` — the effect set of that body, by effect name in
+    /// canonical order; `None` where there is no body (a generic's effects
+    /// are each instance's).
+    pub effects: Option<Vec<String>>,
+    /// `[CG-C-3b]` — the hash of the body the inline header exports, when
+    /// the function is one it holds (`[CG-C-3]`).
+    pub inline_body: Option<InterfaceHash>,
 }
 
 impl CallableInterfaceContract {
@@ -191,6 +201,9 @@ impl CallableInterfaceContract {
             .is_some_and(|metadata| !metadata.fingerprint_is_valid())
         {
             return Err("callable-region metadata fingerprint is invalid");
+        }
+        if self.effects.as_ref().is_some_and(|effects| effects.iter().any(String::is_empty)) {
+            return Err("callable effect name is empty");
         }
         Ok(())
     }
@@ -217,12 +230,15 @@ pub struct ModuleInterfaceInput {
     pub package_config: String,
     pub direct_dependencies: Vec<String>,
     pub callables: Vec<CallableInterfaceRecord>,
+    /// `[BLD-2]` — each import-visible type the module declares, by canonical
+    /// name, with its layout (size, alignment, fields and their offsets).
+    pub layouts: BTreeMap<String, String>,
 }
 
-/// The schema-v7 module artifact. Its interface hash contains resolved
-/// import-visible callable signatures and callable-region contracts;
-/// source/cache identity already has the shape required to absorb layouts,
-/// effects, and inline bodies as those compiler facts obtain real producers.
+/// The module artifact. Its interface hash contains resolved import-visible
+/// callable signatures, callable-region contracts, effect sets and exported
+/// inline bodies, and the layouts of the module's import-visible types
+/// (`[BLD-2]`, `[CG-C-3b]`).
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ModuleInterfaceArtifact {
     pub module: String,
@@ -232,6 +248,7 @@ pub struct ModuleInterfaceArtifact {
     pub source_hash: InterfaceHash,
     pub dependencies: BTreeMap<String, InterfaceHash>,
     pub callables: BTreeMap<String, CallableInterfaceContract>,
+    pub layouts: BTreeMap<String, String>,
     pub interface_hash: InterfaceHash,
     pub cache_key: InterfaceHash,
 }
@@ -349,13 +366,14 @@ pub fn build_artifacts(
             }
         }
         let source_hash = InterfaceHash::of_bytes(input.source.as_bytes());
-        let interface_hash = interface_hash(&input.module, &callables)?;
+        let interface_hash = interface_hash(&input.module, &callables, &input.layouts)?;
         preliminary.insert(
             input.module.clone(),
             PreliminaryArtifact {
                 source_hash,
                 interface_hash,
                 callables,
+                layouts: input.layouts.clone(),
             },
         );
     }
@@ -398,6 +416,7 @@ pub fn build_artifacts(
             source_hash: current.source_hash,
             dependencies,
             callables: current.callables.clone(),
+            layouts: current.layouts.clone(),
             interface_hash: current.interface_hash,
             cache_key,
         });
@@ -464,6 +483,7 @@ pub fn prepare_interface_cache(
                 if existing.cache_key == artifact.cache_key {
                     if existing.interface_hash != artifact.interface_hash
                         || existing.callables != artifact.callables
+                        || existing.layouts != artifact.layouts
                     {
                         return Err(InterfaceArtifactError::StaleSummary {
                             module: artifact.module.clone(),
@@ -548,6 +568,11 @@ impl ModuleInterfaceArtifact {
             push_string(&mut out, symbol);
             push_callable_contract(&mut out, contract)?;
         }
+        push_count(&mut out, self.layouts.len());
+        for (name, layout) in &self.layouts {
+            push_string(&mut out, name);
+            push_string(&mut out, layout);
+        }
         Ok(out)
     }
 
@@ -585,6 +610,15 @@ impl ModuleInterfaceArtifact {
                 return Err(InterfaceArtifactError::NonCanonical);
             }
         }
+        let layout_count = reader.count()?;
+        let mut layouts = BTreeMap::new();
+        for _ in 0..layout_count {
+            let name = reader.string()?;
+            let layout = reader.string()?;
+            if layouts.insert(name, layout).is_some() {
+                return Err(InterfaceArtifactError::NonCanonical);
+            }
+        }
         if !reader.is_finished() {
             return Err(InterfaceArtifactError::TrailingBytes);
         }
@@ -596,6 +630,7 @@ impl ModuleInterfaceArtifact {
             source_hash,
             dependencies,
             callables,
+            layouts,
             interface_hash,
             cache_key,
         };
@@ -616,7 +651,7 @@ impl ModuleInterfaceArtifact {
                 }
             })?;
         }
-        let expected = interface_hash(&self.module, &self.callables)?;
+        let expected = interface_hash(&self.module, &self.callables, &self.layouts)?;
         if expected != self.interface_hash {
             return Err(InterfaceArtifactError::StaleInterfaceHash {
                 module: self.module.clone(),
@@ -643,6 +678,7 @@ struct PreliminaryArtifact {
     source_hash: InterfaceHash,
     interface_hash: InterfaceHash,
     callables: BTreeMap<String, CallableInterfaceContract>,
+    layouts: BTreeMap<String, String>,
 }
 
 fn collect_transitive_dependencies(
@@ -670,9 +706,10 @@ fn collect_transitive_dependencies(
 fn interface_hash(
     module: &str,
     callables: &BTreeMap<String, CallableInterfaceContract>,
+    layouts: &BTreeMap<String, String>,
 ) -> Result<InterfaceHash, InterfaceArtifactError> {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"ember-interface-v3:callable-declarations-and-regions\0");
+    hasher.update(b"ember-interface-v4:callables-effects-inline-bodies-layouts\0");
     hash_string(&mut hasher, module);
     hash_count(&mut hasher, callables.len());
     for (symbol, contract) in callables {
@@ -680,6 +717,11 @@ fn interface_hash(
         let mut bytes = Vec::new();
         push_callable_contract(&mut bytes, contract)?;
         hash_bytes(&mut hasher, &bytes);
+    }
+    hash_count(&mut hasher, layouts.len());
+    for (name, layout) in layouts {
+        hash_string(&mut hasher, name);
+        hash_string(&mut hasher, layout);
     }
     Ok(InterfaceHash(*hasher.finalize().as_bytes()))
 }
@@ -809,6 +851,23 @@ fn push_callable_contract(
         }
         None => out.push(0),
     }
+    match &contract.effects {
+        Some(effects) => {
+            out.push(1);
+            push_count(out, effects.len());
+            for effect in effects {
+                push_string(out, effect);
+            }
+        }
+        None => out.push(0),
+    }
+    match &contract.inline_body {
+        Some(hash) => {
+            out.push(1);
+            out.extend_from_slice(&hash.bytes());
+        }
+        None => out.push(0),
+    }
     Ok(())
 }
 
@@ -930,7 +989,24 @@ fn read_callable_contract(
         }
         _ => return Err(InterfaceArtifactError::NonCanonical),
     };
-    let contract = CallableInterfaceContract { signature, metadata };
+    let effects = match reader.u8()? {
+        0 => None,
+        1 => {
+            let count = reader.count()?;
+            let mut effects = Vec::with_capacity(count);
+            for _ in 0..count {
+                effects.push(reader.string()?);
+            }
+            Some(effects)
+        }
+        _ => return Err(InterfaceArtifactError::NonCanonical),
+    };
+    let inline_body = match reader.u8()? {
+        0 => None,
+        1 => Some(InterfaceHash(reader.fixed()?)),
+        _ => return Err(InterfaceArtifactError::NonCanonical),
+    };
+    let contract = CallableInterfaceContract { signature, metadata, effects, inline_body };
     contract
         .validate()
         .map_err(|_| InterfaceArtifactError::NonCanonical)?;
@@ -1182,8 +1258,11 @@ mod tests {
                 contract: CallableInterfaceContract {
                     signature: signature("Span[i32]"),
                     metadata: Some(metadata(field)),
+                    effects: Some(vec!["Alloc".to_string()]),
+                    inline_body: None,
                 },
             }],
+            layouts: BTreeMap::new(),
         }
     }
 
@@ -1371,6 +1450,8 @@ mod tests {
             CallableInterfaceContract {
                 signature: signature("Span[i32]"),
                 metadata: Some(metadata(1)),
+                effects: Some(vec!["Alloc".to_string()]),
+                inline_body: None,
                 },
             );
         let error = match prepare_interface_cache(&directory, &stale) {
