@@ -194,7 +194,8 @@ fn a_noreload_body_change_is_refused_whole() {
     assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
     assert_eq!(run.exit, 0, "{}", run.stderr);
     assert_eq!(run.stdout, "0 1\n2 2\n", "{}", run.stderr);
-    assert!(run.stderr.contains("refused") && run.stderr.contains("the body of `@noreload` function `em_fixed` changed"), "{}", run.stderr);
+    let named = format!("the body of `@noreload` function `{}` changed", ember_branding::mangled("fixed"));
+    assert!(run.stderr.contains("refused") && run.stderr.contains(&named), "{}", run.stderr);
 }
 
 /// `[HR-12]`, `[HR-14]` — a reloadable build registers every instance in the live-instance list, so
@@ -754,7 +755,8 @@ fn explain_predicts_against_the_running_program() {
     let finished = program.wait().expect("the program ends");
     drop(package);
     assert_ne!(refused.exit, 0, "{}{}", refused.stdout, refused.stderr);
-    assert!(refused.stdout.contains("the reload would be refused") && refused.stdout.contains("the body of `@noreload` function `em_fixed` changed"), "{}{}", refused.stdout, refused.stderr);
+    let named = format!("the body of `@noreload` function `{}` changed", ember_branding::mangled("fixed"));
+    assert!(refused.stdout.contains("the reload would be refused") && refused.stdout.contains(&named), "{}{}", refused.stdout, refused.stderr);
     assert_eq!(applies.exit, 0, "{}{}", applies.stdout, applies.stderr);
     assert!(applies.stdout.contains("the reload would apply"), "{}{}", applies.stdout, applies.stderr);
     assert_eq!(reloaded.exit, 0, "{}", reloaded.stderr);
