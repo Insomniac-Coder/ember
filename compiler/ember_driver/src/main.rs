@@ -377,6 +377,13 @@ struct Options {
     /// `[UNS-8]` — `ember tcb`: check the program, then list its `unsafe` instead of generating
     /// code.
     tcb_report: Option<TcbReport>,
+    /// `[BUD-2]`'s B2, Annex B — `ember build --reload`: build the next image of a running reloadable
+    /// program and announce it to the program's polls.
+    reload: bool,
+    /// `[HR-18b]` — `ember build --reload --explain`: predict the reload, apply nothing.
+    explain: bool,
+    /// `[HR-33]` — `ember run --hot`: run, watch the sources, rebuild and reload.
+    hot: bool,
 }
 
 /// What `ember tcb` prints: JSON or text, one module or all.
@@ -514,6 +521,15 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             }
             if options.emit_header && command != "build" {
                 return Err("`--emit-header` is only valid with `ember build`".to_string());
+            }
+            if options.reload && command != "build" {
+                return Err("`--reload` is only valid with `ember build`; `ember run --hot` reloads as it runs".to_string());
+            }
+            if options.explain && !options.reload {
+                return Err("`--explain` is only valid with `ember build --reload`".to_string());
+            }
+            if options.hot && command != "run" {
+                return Err("`--hot` is only valid with `ember run`".to_string());
             }
             if options.emit.as_deref() == Some("header") && command != "build" {
                 return Err("`--emit header` is only valid with `ember build`".to_string());
@@ -1900,6 +1916,9 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--json" => options.json = true,
             "--leak-check" => options.leak_check = true,
             "--no-leak-check" => options.no_leak_check = true,
+            "--reload" => options.reload = true,
+            "--explain" => options.explain = true,
+            "--hot" => options.hot = true,
             "-Dwarnings" | "-D" => {
                 if arg == "-D" {
                     let what = value(&mut index, arg)?;
@@ -2852,6 +2871,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // package root until `ember.toml` is read.
     let root_dir = package_source_root(input);
     let lint_settings = manifest_lint_settings(&root_dir, &mut map, &mut sink);
+    let reload = reload_mode(&lint_settings, options, &mut sink)?;
     let modules = load_modules(module, &root_dir, &mut map, &mut sink);
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
@@ -3696,6 +3716,30 @@ struct ManifestLintSettings {
     long_term_access_across_dynamic_call: bool,
     /// `[EFF-19]` — `[realtime] contracts`, when the manifest declares them.
     realtime: Option<ember_hir::Effects>,
+    /// `[MAN-7]` — `[build] reload`, when written and valid, with where.
+    reload: Option<(ReloadMode, Span)>,
+    /// `[HR-29]` — `[build] runtime = "static"`, when written, with where.
+    static_runtime: Option<Span>,
+}
+
+/// `[MAN-7]`, `[HR-25]` — what a package's `[build] reload` asks for. `OptIn` makes reloadable only
+/// what `@reloadable` names; `All` everything but what `@noreload` names; `Bodies` is `All` admitting
+/// only body changes (`[HR-19]`).
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum ReloadMode {
+    None,
+    OptIn,
+    All,
+    Bodies,
+}
+
+impl ReloadMode {
+    const VALUES: [(&'static str, ReloadMode); 4] =
+        [("opt-in", ReloadMode::OptIn), ("all", ReloadMode::All), ("bodies", ReloadMode::Bodies), ("none", ReloadMode::None)];
+
+    fn parse(value: &str) -> Option<ReloadMode> {
+        ReloadMode::VALUES.iter().find(|(name, _)| *name == value).map(|(_, mode)| *mode)
+    }
 }
 
 fn manifest_lint_settings(
@@ -3758,6 +3802,18 @@ fn manifest_lint_settings(
                         );
                     } else if section == "realtime" && key == "contracts" {
                         settings.realtime = Some(realtime_contracts(value, location, sink));
+                    } else if section == "build" && key == "reload" {
+                        // `[MAN-7]` — one of four words.
+                        let written = value.trim().trim_matches('"');
+                        match ReloadMode::parse(written) {
+                            Some(mode) => settings.reload = Some((mode, location)),
+                            None => sink.emit(
+                                Diagnostic::error(codes::E9031, location, format!("`{written}` is not a `reload` value"))
+                                    .help("`[build] reload` is \"opt-in\", \"all\", \"bodies\" or \"none\" [MAN-7]"),
+                            ),
+                        }
+                    } else if section == "build" && key == "runtime" && value.trim().trim_matches('"') == "static" {
+                        settings.static_runtime = Some(location);
                     } else if section == "lints" {
                         if !manifest_lint_is_known(key) {
                             sink.emit(Diagnostic::error(
@@ -3781,6 +3837,38 @@ fn manifest_lint_settings(
         directory = candidate.parent();
     }
     ManifestLintSettings::default()
+}
+
+/// Annex B — the build's reload mode: the manifest's `[build] reload`, or `all` when `--reload` or
+/// `--hot` asks for reload and the manifest writes none. `[PRF-2]`, `[MAN-7]`: reload is a build mode
+/// of `debug` and `release`, forbidden in `shipping` (`E9033`). `[HR-29]`: a reloadable package
+/// shares the one runtime of its process, so a manifest asking for a static runtime is `E9036`.
+fn reload_mode(settings: &ManifestLintSettings, options: &Options, sink: &mut Sink) -> Result<ReloadMode, String> {
+    let (written, location) = settings.reload.unwrap_or((ReloadMode::None, Span::DUMMY));
+    let asked = options.reload || options.hot;
+    if asked && settings.reload.is_some_and(|(mode, _)| mode == ReloadMode::None) {
+        return Err("this package is not reloadable: its manifest says `[build] reload = \"none\"`".to_string());
+    }
+    let mode = if written == ReloadMode::None && asked { ReloadMode::All } else { written };
+    if mode == ReloadMode::None {
+        return Ok(mode);
+    }
+    if options.profile == Profile::Shipping {
+        let how = if settings.reload.is_some() { "this package's manifest asks for hot reload" } else { "hot reload was asked for" };
+        sink.emit(
+            Diagnostic::error(codes::E9033, location, format!("{how}, which `shipping` does not admit"))
+                .note("hot reload is a build mode of `debug` and `release`, never of `shipping` [PRF-2]")
+                .help("build with `--profile debug` or `--profile release`, or set `[build] reload = \"none\"`"),
+        );
+    }
+    if let Some(at) = settings.static_runtime {
+        sink.emit(
+            Diagnostic::error(codes::E9036, at, "a reloadable package cannot link its own copy of the runtime")
+                .note("with reload on, one shared runtime serves every image in the process [HR-29]")
+                .help("write `[build] runtime = \"shared\"`, or leave `runtime` out"),
+        );
+    }
+    Ok(mode)
 }
 
 /// `[EFF-19]` — `[realtime] contracts = ["noalloc", "nopanic(explicit)", …]`: the contracts
