@@ -575,10 +575,12 @@ const MIGRATED: &str = "from std.sync import Atomic, Mutex\nfrom std.hot import 
 
 /// `[HR-16]`, `[HR-2a]`, `[HR-38]` — a type declaring `migrate_from(old: ref OldSelf)` is built by it:
 /// `OldSelf` is the previous build's schema as `OldParticle`, which the runtime fills from each old
-/// instance by field name, and the new instances replace the old ones, whose fields are dropped.
+/// instance by field name, and the new instances replace the old ones, which reclaim drops field by
+/// field: the old class's own `drop`, removed by this edit, is not called through its stub.
 #[test]
 fn migrate_from_builds_the_new_instances() {
-    let run = host_run("reload-migrate-from", PARTICLES, &[MIGRATED], 3);
+    let dropping = PARTICLES.replace("    step: int = 1\n", "    step: int = 1\n\n    fn drop(self):\n        println(f\"dropped {self.x.load()}\")\n");
+    let run = host_run("reload-migrate-from", &dropping, &[MIGRATED], 3);
     assert_eq!(run.stdout, "3\napplied, 3 migrated\n330\n360\n", "{}", run.stderr);
 }
 

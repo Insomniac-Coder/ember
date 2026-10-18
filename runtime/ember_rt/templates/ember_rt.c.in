@@ -9981,7 +9981,9 @@ static void rl_commit_instances(void) {
 
 /* [HR-2a] Reclaim: the fields no new field took are dropped, running user `drop` code; an old
  * instance that moved leaves the live list and its memory goes. A `migrate_from`'s old instance is
- * dropped whole, field by field. A panic here is an ordinary panic, after the reload. */
+ * dropped field by field, without its class's own `drop`: that method is reached through its
+ * thunk, which now runs the new image's body, compiled for the new layout (an owner question in
+ * tasks/85/A-notes.md). A panic here is an ordinary panic, after the reload. */
 static uint64_t rl_reclaim_instances(const ember_rl_manifest* next) {
     uint64_t migrated = 0;
     for (size_t index = 0; index < g_rl_moves.count; ++index) {
@@ -10001,7 +10003,11 @@ static uint64_t rl_reclaim_instances(const ember_rl_manifest* next) {
             }
         } else {
             rl_drop_removed(next, move->from, move->to, (unsigned char*)move->old);
+            /* A debug build's object registry follows the instance to its new address; a
+             * `migrate_from`'s new instance was registered when it was made. */
+            debug_track_object(move->made);
         }
+        debug_untrack_object(move->old);
         rl_live_remove(move->old);
         ember_free(move->old, move->from->size, move->from->align);
     }
