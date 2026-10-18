@@ -16560,6 +16560,8 @@ impl<'a> Checker<'a> {
                         for_iterator: false,
                         loop_borrowed_handle: false,
                         hoisted_into: None,
+                        simd: None,
+                        declared_reduction: false,
                     })
                     .collect();
                 let params = signature
@@ -17752,6 +17754,8 @@ impl<'a> Checker<'a> {
                         for_iterator: false,
                         loop_borrowed_handle: false,
                         hoisted_into: None,
+                        simd: None,
+                        declared_reduction: false,
                     },
                     LocalDecl {
                         name: Some(Symbol::intern("self")),
@@ -17760,6 +17764,8 @@ impl<'a> Checker<'a> {
                         for_iterator: false,
                         loop_borrowed_handle: false,
                         hoisted_into: None,
+                        simd: None,
+                        declared_reduction: false,
                     },
                 ];
                 let (value, class_owner) = match self.types.kind(ty).clone() {
@@ -18969,6 +18975,8 @@ impl<'a> Checker<'a> {
             for_iterator: false,
             loop_borrowed_handle: false,
             hoisted_into: None,
+            simd: None,
+            declared_reduction: false,
         });
         if let Some(name) = name {
             self.scopes.last_mut().expect("a scope is open").insert(name, id);
@@ -19739,17 +19747,106 @@ impl<'a> Checker<'a> {
     }
 
     fn check_stmt(&mut self, stmt: &ast::Stmt, out: &mut Vec<Stmt>) {
-        // `[ATT-6]` (0.9.9) — `@simd`, `@parallel`, `@unroll` and `@allow`
-        // have no effect built, and an attribute is never accepted and
-        // ignored. Their names and places are the parser's (`[ATT-2]`).
-        // `[PAR-1]` — a `@parallel` loop is built; the other loop attributes are not.
-        if let Some(attr) = stmt.attrs.iter().find(|attr| attr.path.len() == 1 && attr.path[0].name.is("parallel"))
-            && stmt.attrs.len() == 1
+        // `[ATT-6]` (0.9.9) — an attribute is never accepted and ignored: one
+        // whose effect is not built (`@unroll`, `@allow`) is `E0900`. Their
+        // names and places are the parser's (`[ATT-2]`). `[SIMD-2]` — `@simd`
+        // marks the loop for the loop passes' verdict; `[PAR-1]` — `@parallel`
+        // runs it over chunks, and may be written with `@simd`.
+        let named = |attr: &ast::Attribute, name: &str| attr.path.len() == 1 && attr.path[0].name.is(name);
+        let simd = stmt.attrs.iter().find(|attr| named(attr, "simd"));
+        let simd_assert = simd.and_then(|attr| self.simd_request(attr));
+        // `[SIMD-5]` — the running totals a `@parallel(reduce=…)` declares,
+        // on its chunk's loop (an attribute only the compiler writes).
+        if let Some(attr) = stmt.attrs.iter().find(|attr| named(attr, "$reduce")) {
+            for arg in &attr.args {
+                if let ast::AttrArg::Expr(ast::Expr { kind: ast::ExprKind::Path { segments }, .. }) = arg
+                    && let [name] = segments.as_slice()
+                    && let Some(local) = self.lookup(name.name)
+                {
+                    self.locals[local.0 as usize].declared_reduction = true;
+                }
+            }
+        }
+        let rest: Vec<&ast::Attribute> =
+            stmt.attrs.iter().filter(|attr| !named(attr, "simd") && !named(attr, "$reduce")).collect();
+        if let [attr] = rest.as_slice()
+            && named(attr, "parallel")
         {
-            self.check_parallel_for(attr, stmt, out);
+            self.check_parallel_for(attr, stmt, out, simd);
             return;
         }
-        for attr in &stmt.attrs {
+        let start = out.len();
+        self.check_stmt_attrs_and_kind(stmt, &rest, out);
+        if let Some(assert) = simd_assert {
+            self.mark_simd_loop(start, stmt.span, assert, out);
+        }
+    }
+
+    /// `[SIMD-2]` — `@simd` is a request (`false`) and `@simd(assert)` one
+    /// whose failure is `E4020` (`true`); anything else is `E0104`.
+    fn simd_request(&mut self, attr: &ast::Attribute) -> Option<bool> {
+        match attr.args.as_slice() {
+            [] => Some(false),
+            [ast::AttrArg::Expr(ast::Expr { kind: ast::ExprKind::Path { segments }, .. })]
+                if segments.len() == 1 && segments[0].name.is("assert") =>
+            {
+                Some(true)
+            }
+            _ => {
+                if self.reported_stmt_attrs.insert(attr.span) {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E0104, attr.span, "`@simd` takes no argument but `assert`")
+                            .help("write `@simd` to ask for a vectorised loop, or `@simd(assert)` to require one [SIMD-2]"),
+                    );
+                }
+                None
+            }
+        }
+    }
+
+    /// `[SIMD-2]` — mark the loop a `@simd` statement became, from `out[start..]`:
+    /// the counter of each outermost counted loop (`ForRange`) it lowered to
+    /// (a loop picked by its range's width at run time is two), else the
+    /// iterator of the loop it became. The loop passes give each its verdict.
+    fn mark_simd_loop(&mut self, start: usize, span: Span, assert: bool, out: &[Stmt]) {
+        fn counters(stmts: &[Stmt], found: &mut Vec<LocalId>, iterators: &mut Vec<LocalId>) {
+            for stmt in stmts {
+                match stmt {
+                    Stmt::ForRange { local, .. } => found.push(*local),
+                    Stmt::Let { local, .. } => iterators.push(*local),
+                    Stmt::Block(block) => counters(&block.stmts, found, iterators),
+                    Stmt::If { then_block, else_block, .. } => {
+                        counters(&then_block.stmts, found, iterators);
+                        if let Some(block) = else_block {
+                            counters(&block.stmts, found, iterators);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut found = Vec::new();
+        let mut lets = Vec::new();
+        counters(&out[start..], &mut found, &mut lets);
+        if found.is_empty() {
+            found = lets.into_iter().filter(|local| self.locals[local.0 as usize].for_iterator).take(1).collect();
+        }
+        if found.is_empty() {
+            if assert {
+                self.sink.emit(
+                    Diagnostic::error(codes::E4020, span, "`@simd(assert)` loop did not vectorise: its trip count is not known before entry")
+                        .note("a loop in vectorisable form counts over a range or a view [SIMD-5]"),
+                );
+            }
+            return;
+        }
+        for local in found {
+            self.locals[local.0 as usize].simd = Some((span, assert));
+        }
+    }
+
+    fn check_stmt_attrs_and_kind(&mut self, stmt: &ast::Stmt, attrs: &[&ast::Attribute], out: &mut Vec<Stmt>) {
+        for attr in attrs.iter().copied() {
             if self.reported_stmt_attrs.insert(attr.span) {
                 let name = attr.path.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".");
                 self.sink.emit(
@@ -39654,6 +39751,8 @@ impl<'a> Checker<'a> {
             for_iterator: false,
             loop_borrowed_handle: false,
             hoisted_into: None,
+            simd: None,
+            declared_reduction: false,
         };
         let mut locals = Vec::new();
         let mut stmts = Vec::new();
@@ -41960,7 +42059,7 @@ impl<'a> Checker<'a> {
     /// independent (`parallel_independent`). A reduction variable has a copy per chunk, starting
     /// at its operator's identity; the chunks' results are folded into it in chunk order after
     /// the loop.
-    fn check_parallel_for(&mut self, attr: &ast::Attribute, stmt: &ast::Stmt, out: &mut Vec<Stmt>) {
+    fn check_parallel_for(&mut self, attr: &ast::Attribute, stmt: &ast::Stmt, out: &mut Vec<Stmt>, simd: Option<&ast::Attribute>) {
         let span = stmt.span;
         let ast::StmtKind::For { label, pattern, iter, body, else_block } = &stmt.kind else { return };
         let refuse = |this: &mut Self, at: Span, message: String| {
@@ -42079,9 +42178,20 @@ impl<'a> Checker<'a> {
             });
         }
         let range = at(ast::ExprKind::Range { lo: Some(Box::new(path("$lo"))), hi: Some(Box::new(path("$hi"))), inclusive: false });
+        // `[SIMD-2]` — a `@simd` written with `@parallel` is the chunk's loop's;
+        // `[SIMD-5]` — the chunk's running totals are declared reductions.
+        let mut loop_attrs: Vec<ast::Attribute> = simd.into_iter().cloned().collect();
+        if !reductions.is_empty() {
+            loop_attrs.push(ast::Attribute {
+                id: dummy,
+                path: vec![name("$reduce")],
+                args: reductions.iter().map(|(var, ..)| ast::AttrArg::Expr(path(var.as_str()))).collect(),
+                span,
+            });
+        }
         stmts.push(ast::Stmt {
             id: dummy,
-            attrs: Vec::new(),
+            attrs: loop_attrs,
             kind: ast::StmtKind::For { label: *label, pattern: pattern.clone(), iter: range, body: body.clone(), else_block: None },
             span,
         });

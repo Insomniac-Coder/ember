@@ -3127,6 +3127,13 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if ember_analysis::version_bounds_checked_loops_all(&mut bodies, &types, &common) != (0, 0) {
         ember_analysis::install_callable_regions_all(&mut bodies, &types);
     }
+    // `[SIMD-2]` — each `@simd` loop's verdict, now that it is final: an
+    // `@simd(assert)` loop not in vectorisable form is `E4020`, naming the
+    // first clause of `[SIMD-5]` it fails; the report says the same of each.
+    let simd_report = simd_verdicts(&bodies, &map, &mut sink);
+    if sink.has_errors() {
+        return Ok(finish(&sink, &map, options));
+    }
     // `[EXC-8]` — a dynamic exclusivity check every turn of a loop makes on
     // an unchanged handle, where nothing in the loop can change an access,
     // runs once before it; after versioning, so each copy of a loop is done.
@@ -3307,12 +3314,13 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     );
     mark("C generation", "all modules");
     // `[DSP-5]` — on standard error, so it never mixes with `--emit c`.
+    // `[SIMD-2]` — then each `@simd` loop's verdict.
     if options.optimization_report {
         eprintln!("optimization report:");
-        if emitted.optimization_report.is_empty() {
+        if emitted.optimization_report.is_empty() && simd_report.is_empty() {
             eprintln!("  none");
         }
-        for line in &emitted.optimization_report {
+        for line in emitted.optimization_report.iter().chain(&simd_report) {
             eprintln!("  {line}");
         }
     }
@@ -3519,6 +3527,21 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     )
     .map_err(|e| e.to_string())?;
     mark("C compile and link", "all modules");
+    // `[SIMD-6]` — after Ember's verdicts, the host C compiler's own report on
+    // the program's unit, labelled as its opinion: its absence or a
+    // disagreement is never an error.
+    if options.optimization_report {
+        eprintln!("host C compiler's vectorisation report ({}; its opinion only, Ember's verdict is above):", toolchain.name());
+        match ember_build::vectorisation_report(&toolchain, &c_path, &includes, &layout.obj.join("report"), options.profile) {
+            Ok(remarks) if remarks.is_empty() => eprintln!("  none"),
+            Ok(remarks) => {
+                for remark in remarks {
+                    eprintln!("  {remark}");
+                }
+            }
+            Err(error) => eprintln!("  not available: {error}"),
+        }
+    }
 
     report(&sink, &map, options);
 
@@ -3546,6 +3569,53 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 
     eprintln!("built {}", exe.display());
     Ok(ExitCode::SUCCESS)
+}
+
+/// `[SIMD-2]`, `[SIMD-5]` — every `@simd` loop's verdict, one line each for
+/// `--emit-optimization-report` in source order; an `@simd(assert)` loop not
+/// in vectorisable form is `E4020`, naming the first clause it fails and, for
+/// a check that remains, the check's reason (`[EFF-11]`). A loop whose
+/// counter no counted loop has (or a body copied for each instance, which
+/// gives one loop several verdicts: any failing one counts) is said once.
+fn simd_verdicts(bodies: &[ember_mir::Body], map: &SourceMap, sink: &mut Sink) -> Vec<String> {
+    let mut loops: std::collections::BTreeMap<(ember_span::FileId, u32), (Span, bool, Result<(), ember_mir::NotVectorisable>)> = std::collections::BTreeMap::new();
+    for body in bodies {
+        for note in &body.loop_notes.simd {
+            let verdict = note.verdict.clone().unwrap_or_else(|| {
+                Err(ember_mir::NotVectorisable {
+                    clause: 1,
+                    what: "its trip count is not known before entry".to_string(),
+                    check_reason: None,
+                    at: None,
+                })
+            });
+            let entry = loops.entry((note.span.file, note.span.start)).or_insert((note.span, note.assert, Ok(())));
+            if entry.2.is_ok() {
+                entry.2 = verdict;
+            }
+        }
+    }
+    let mut lines = Vec::new();
+    for (span, assert, verdict) in loops.into_values() {
+        match verdict {
+            Ok(()) => lines.push(format!("{}: `@simd` loop is in vectorisable form, so its checks are grouped and the C compiler may vectorise it [SIMD-5]", map.location(span))),
+            Err(why) => {
+                let reason = why.check_reason.map(|reason| format!(" (the check's reason: {reason})")).unwrap_or_default();
+                lines.push(format!("{}: `@simd` loop is not in vectorisable form: {}{reason} [SIMD-5]", map.location(span), why.what));
+                if assert {
+                    let mut diagnostic = Diagnostic::error(codes::E4020, span, format!("`@simd(assert)` loop did not vectorise: {}", why.what));
+                    if let Some(at) = why.at.filter(|at| !at.is_dummy()) {
+                        diagnostic = diagnostic.secondary(at, "here");
+                    }
+                    if let Some(reason) = why.check_reason {
+                        diagnostic = diagnostic.note(format!("the check that remains has the reason `{reason}` [EFF-11]"));
+                    }
+                    sink.emit(diagnostic.note(format!("this is clause {} of vectorisable form [SIMD-5]", why.clause)));
+                }
+            }
+        }
+    }
+    lines
 }
 
 /// `[CT-1]` — how many times a program is checked at most: each pass answers

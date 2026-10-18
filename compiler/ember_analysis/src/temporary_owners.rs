@@ -547,7 +547,7 @@ mod tests {
             class_owner: None, class_virtual_slot: None, borrows_used_fields: false, is_abstract: false,
             is_extern_declaration: false, ffi_counted: None, mut_self: false,
             elided_accesses: Vec::new(), hoisted_accesses: Vec::new(),
-            uncounted_handles: Vec::new(), removed_checks: Vec::new(), restrict_views: false, stack_buffers: Vec::new(),
+            uncounted_handles: Vec::new(), removed_checks: Vec::new(), restrict_views: false, stack_buffers: Vec::new(), loop_notes: Default::default(),
         };
         (body, types, class)
     }

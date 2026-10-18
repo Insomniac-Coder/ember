@@ -41,7 +41,7 @@ use std::collections::{HashMap, HashSet};
 
 use ember_mir::{
     AssertKind, BasicBlock, BasicBlockId, BinOp, Body, Builtin, CastKind, CheckKind, CheckProof, Const, FuncRef, LocalDecl,
-    LocalId, LocalKind, Operand, Place, Projection, RemovedCheck, Rvalue, Stmt, StmtKind, Terminator, UnOp,
+    LocalId, LocalKind, NotVectorisable, Operand, Place, Projection, RemovedCheck, Rvalue, Stmt, StmtKind, Terminator, UnOp,
 };
 use ember_types::{ClassId, CommonTypes, Ty, TyKind, TypeTable};
 
@@ -56,12 +56,37 @@ use crate::regions::place_type;
 pub fn version_bounds_checked_loops_all(bodies: &mut [Body], types: &TypeTable, common: &CommonTypes) -> (usize, usize) {
     let summaries = Summaries::compute(bodies, types);
     let returns = crate::range_facts::returned_arguments(bodies);
+    // `[SIMD-5]`, `[PAR-2b]` — a call in a counted loop to a function the
+    // inline header holds is read through, as if inlined (ODR-062).
+    let callees = crate::inline::read_through_callees(bodies, types);
     let mut versioned = 0;
     let mut grouped = 0;
     for body in bodies.iter_mut() {
-        settle_inclusive_loops(body, types, common, &returns);
-        versioned += version_loops(body, types, common, &summaries, &returns);
-        grouped += group_overflow_checks(body, types, common);
+        let read = if callees.is_empty() { None } else { crate::inline::read_loop_calls(body, &callees, types) };
+        let pass = |body: &mut Body| {
+            settle_inclusive_loops(body, types, common, &returns);
+            let versioned = version_loops(body, types, common, &summaries, &returns);
+            let (grouped, in_form) = group_overflow_checks(body, types, common);
+            (versioned, grouped, in_form)
+        };
+        let (mut here_versioned, mut here_grouped, in_form) = pass(body);
+        // The copy whose calls are read through gives the verdicts; it is
+        // the code only when it puts more loops in vectorisable form (whose
+        // overflow checks `[SIMD-7]` then requires grouped, the callee's
+        // included). Otherwise the calls stay calls and the C compiler
+        // inlines them as it would.
+        if let Some(mut through) = read {
+            let (through_versioned, through_grouped, through_in_form) = pass(&mut through);
+            if through_in_form > in_form {
+                *body = through;
+                here_versioned = through_versioned + 1;
+                here_grouped = through_grouped;
+            } else {
+                body.loop_notes.simd = through.loop_notes.simd;
+            }
+        }
+        versioned += here_versioned;
+        grouped += here_grouped;
     }
     (versioned, grouped)
 }
@@ -1363,13 +1388,13 @@ pub(crate) fn rewrite_places(block: &mut BasicBlock, f: &impl Fn(&mut Place)) {
 //   counter plus a constant, each written view at one offset only;
 // - every written view is disjoint from every other view the loop accesses
 //   (distinct owners, distinct fields, or borrows the borrow rules keep apart);
-// - no call: a call is read through only into a function `[CG-C-3]` places in
-//   the inline header, and that header is not built (`docs/NOT-IMPLEMENTED.md`);
+// - no call but one read through into a function `[CG-C-3]` places in the
+//   inline header (`inline::read_loop_calls`, as `[PAR-2b]` reads it);
 // - no drop that runs anything, no explicit panic, and no check but an
 //   integer overflow check;
 // - no floating-point running total, unless the function is `@fastmath`,
-//   whose C file lets the C compiler reorder it (`@parallel(reduce=…)`, the
-//   other declaration, is not built).
+//   whose C file lets the C compiler reorder it, or `@parallel(reduce=…)`
+//   declares it (`LoopNotes::declared_reductions`).
 
 /// Iterations per group, measured on list loops (ADR-070 item 7). With one
 /// check, 32 was the fastest on MSVC and on clang (at 16 MSVC spent 5% more
@@ -1580,15 +1605,23 @@ fn settle_inclusive_loops(body: &mut Body, types: &TypeTable, common: &CommonTyp
     count
 }
 
-/// Group the overflow checks of every loop of `body` in vectorisable form.
-fn group_overflow_checks(body: &mut Body, types: &TypeTable, common: &CommonTypes) -> usize {
+/// Group the overflow checks of every loop of `body` in vectorisable form;
+/// returns how many loops were grouped, and how many are in that form.
+fn group_overflow_checks(body: &mut Body, types: &TypeTable, common: &CommonTypes) -> (usize, usize) {
     let mut count = 0;
     let snapshot = body.blocks.len();
     for header in 0..snapshot {
         let Some(shape) = counted_loop(body, types, header) else { continue };
         let facts = BodyFacts::new(body, types);
-        let Some((checks, written)) = vectorisable(body, types, &facts, &shape) else { continue };
+        let (checks, written) = match vectorisable(body, types, &facts, &shape) {
+            Ok(found) => found,
+            Err(why) => {
+                note_verdict(body, shape.counter, Err(why));
+                continue;
+            }
+        };
         if checks.is_empty() {
+            note_verdict(body, shape.counter, Ok(()));
             continue;
         }
         // A running total (`acc = acc ± x`) is vectorised under checked
@@ -1599,6 +1632,7 @@ fn group_overflow_checks(body: &mut Body, types: &TypeTable, common: &CommonType
         if checks.iter().any(|check| running_total(&body.blocks[check.block].stmts[check.stmt])) {
             if let Some(entry) = unchecked_totals(body, types, common, &shape, &checks, BasicBlockId(shape.header as u32)) {
                 enter_through(body, &shape, entry);
+                note_verdict(body, shape.counter, Ok(()));
                 count += 1;
                 continue;
             }
@@ -1612,21 +1646,36 @@ fn group_overflow_checks(body: &mut Body, types: &TypeTable, common: &CommonType
             let mut all = shape.region.clone();
             all.push(shape.header);
             let dominators = dominators(body, shape.header, &all);
-            if checks.iter().any(|check| {
+            if let Some(check) = checks.iter().find(|check| {
                 running_total(&body.blocks[check.block].stmts[check.stmt])
                     && !dominators.get(&shape.step).is_some_and(|seen| seen.contains(&check.block))
             }) {
+                let why = remaining_check(
+                    9,
+                    "a running total changes on only some turns, so its overflow checks stay one per operation",
+                    Some(check.span),
+                );
+                note_verdict(body, shape.counter, Err(why));
                 continue;
             }
             let (Some(totals), Some(saves)) =
                 (block_totals(body, types, &shape, &checks), undo_saves(body, types, &shape, &written))
             else {
+                let at = checks.iter().find(|check| running_total(&body.blocks[check.block].stmts[check.stmt])).map(|check| check.span);
+                let why = remaining_check(
+                    9,
+                    "an overflow check on a running total remains: neither its widths nor a test over each block of 64 iterations proves that no partial sum overflows (`[SIMD-7]`)",
+                    at,
+                );
+                note_verdict(body, shape.counter, Err(why));
                 continue;
             };
             group(body, types, common, &shape, &checks, Mode::Rerun, &saves, &totals);
+            note_verdict(body, shape.counter, Ok(()));
             count += 1;
             continue;
         }
+        note_verdict(body, shape.counter, Ok(()));
         if checks.len() == 1 {
             group(body, types, common, &shape, &checks, Mode::Report, &[], &[]);
         } else if let Some(saves) = undo_saves(body, types, &shape, &written) {
@@ -1639,7 +1688,29 @@ fn group_overflow_checks(body: &mut Body, types: &TypeTable, common: &CommonType
         }
         count += 1;
     }
-    count
+    let in_form = body.loop_notes.in_form;
+    (count, in_form)
+}
+
+/// `[SIMD-2]` — the verdict on one copy of a loop, for each `@simd` loop
+/// whose counter it has. A loop's copies (`[OPT-2]`'s checked and unchecked
+/// ones, or a loop picked by its range's width) count by the best of them: in
+/// vectorisable form if any is, else the one that met the most clauses.
+fn note_verdict(body: &mut Body, counter: LocalId, verdict: Result<(), NotVectorisable>) {
+    if verdict.is_ok() {
+        body.loop_notes.in_form += 1;
+    }
+    for note in body.loop_notes.simd.iter_mut().filter(|note| note.local == counter) {
+        let better = match (&note.verdict, &verdict) {
+            (None, _) => true,
+            (Some(Ok(())), _) => false,
+            (Some(Err(_)), Ok(())) => true,
+            (Some(Err(seen)), Err(new)) => new.clause > seen.clause,
+        };
+        if better {
+            note.verdict = Some(verdict.clone());
+        }
+    }
 }
 
 /// One overflow check of the loop: the block whose terminator is its assert,
@@ -1662,18 +1733,37 @@ struct WrittenView {
     read: bool,
 }
 
+/// `[SIMD-5]` — one clause of vectorisable form a loop fails, numbered in the
+/// rule's order (1, its trip count, to 11, its floating-point reductions), so
+/// the first a loop fails is the one with the lowest number.
+fn fail(clause: u8, what: impl Into<String>, at: Option<ember_span::Span>) -> NotVectorisable {
+    NotVectorisable { clause, what: what.into(), check_reason: None, at }
+}
+
+/// `[EFF-11]` — the reason a check left in the loop carries: it may hold
+/// but was not proved.
+fn remaining_check(clause: u8, what: impl Into<String>, at: Option<ember_span::Span>) -> NotVectorisable {
+    NotVectorisable { check_reason: Some("not_proven_by_analysis"), ..fail(clause, what, at) }
+}
+
 /// The loop's overflow checks in execution order when it is in vectorisable
-/// form, and the views it writes; `None` when it is not in that form.
+/// form, and the views it writes; otherwise the first clause of `[SIMD-5]` it
+/// fails (the rule's order, whatever order they are found in).
 fn vectorisable(
     body: &Body,
     types: &TypeTable,
     facts: &BodyFacts,
     shape: &CountedLoop,
-) -> Option<(Vec<OverflowCheck>, Vec<WrittenView>)> {
+) -> Result<(Vec<OverflowCheck>, Vec<WrittenView>), NotVectorisable> {
+    let mut fails: Vec<NotVectorisable> = Vec::new();
     // `[SIMD-5]` (ODR-088): a division no vector instruction set does keeps
     // the loop one iteration at a time.
     if scalar_only(body, types, shape) {
-        return None;
+        fails.push(fail(
+            7,
+            "it divides integers by a divisor that is not a constant, or 64-bit integers by a constant that is not a power of two, which no vector instruction set does",
+            None,
+        ));
     }
     let mut all = shape.region.clone();
     all.push(shape.header);
@@ -1685,33 +1775,51 @@ fn vectorisable(
     // Views accessed: the place each came from, its offsets, whether written,
     // whether read.
     let mut views: Vec<(Place, HashSet<i128>, bool, bool)> = Vec::new();
+    let memory = "it reaches memory other than a local or a view at the loop counter plus a constant";
 
     for &block in &shape.region {
         let data = &body.blocks[block];
+        let at = Some(data.terminator_span);
         // One exit: nothing in the body leaves the loop.
         if successors(&data.terminator).iter().any(|s| !inside.contains(&(s.0 as usize))) {
-            return None;
+            fails.push(fail(10, "it has more than one exit (a `break`, a `return` or a `?`)", at));
         }
         match &data.terminator {
             Terminator::Goto(_) | Terminator::SwitchInt { .. } => {}
             Terminator::Assert { cond: Operand::Copy(cond), expected: false, msg: msg @ AssertKind::Overflow(_), span, .. }
                 if cond.projection.is_empty() =>
             {
-                let stmt = data.stmts.iter().rposition(|stmt| {
+                match data.stmts.iter().rposition(|stmt| {
                     matches!(&stmt.kind, StmtKind::CheckedBinaryOp { overflow, .. } if *overflow == Place::local(cond.local))
-                })?;
-                checks.push(OverflowCheck { block, stmt, msg: msg.clone(), span: *span });
+                }) {
+                    Some(stmt) => checks.push(OverflowCheck { block, stmt, msg: msg.clone(), span: *span }),
+                    None => fails.push(remaining_check(9, "an overflow check remains that cannot be grouped", Some(*span))),
+                }
             }
-            _ => return None,
+            Terminator::Assert { msg: AssertKind::Bounds { .. }, span, .. } => fails.push(remaining_check(
+                8,
+                "a bounds check remains: the entry test of `[OPT-2]` did not prove every index in range",
+                Some(*span),
+            )),
+            Terminator::Assert { msg: AssertKind::Panic { .. }, span, .. } => {
+                fails.push(fail(6, "its body may panic explicitly (`Panic(Explicit)`)", Some(*span)))
+            }
+            Terminator::Assert { msg: AssertKind::RefCellBorrow { .. } | AssertKind::Downcast, span, .. } => {
+                fails.push(remaining_check(2, memory, Some(*span)))
+            }
+            Terminator::Assert { span, .. } => fails.push(remaining_check(9, "an arithmetic check remains that cannot be grouped", Some(*span))),
+            Terminator::Call { .. } => fails.push(fail(5, "it makes a call the analysis cannot read through: to a function the inline header does not hold (`[CG-C-3]`), a built-in, or through a value, an interface or a virtual method", at)),
+            Terminator::Return | Terminator::Unreachable => fails.push(fail(10, "it has more than one exit (a `break`, a `return` or a `?`)", at)),
         }
         for (index, stmt) in data.stmts.iter().enumerate() {
+            let at = Some(stmt.span);
             match &stmt.kind {
                 StmtKind::Assign { place, rvalue } => {
                     if place.projection.is_empty()
                         && matches!(types.kind(body.local(place.local).ty), TyKind::Ref { .. })
                         && carried.contains(&place.local)
                     {
-                        return None;
+                        fails.push(fail(2, memory, at));
                     }
                     if let Rvalue::Ref { place: source, mutable } = rvalue {
                         // Ordinary Array/Span iteration lends a read-only
@@ -1725,7 +1833,7 @@ fn vectorisable(
                                 Ok(Some(_))
                             )
                         {
-                            return None;
+                            fails.push(fail(2, memory, at));
                         }
                     }
                     // A floating-point running total needs `@fastmath` or
@@ -1734,14 +1842,20 @@ fn vectorisable(
                         && place.projection.is_empty()
                         && rvalue_reads_local(rvalue, place.local)
                         && body.fp != ember_types::FpMode::Fast
+                        && !body.loop_notes.declared_reductions.contains(&place.local)
                     {
-                        return None;
+                        let name = body.local(place.local).name.clone().unwrap_or_else(|| "a total".to_string());
+                        fails.push(fail(
+                            11,
+                            format!("it keeps a floating-point running total `{name}` that neither `@parallel(reduce=…)` declares nor `@fastmath` lets be reordered"),
+                            at,
+                        ));
                     }
                 }
                 StmtKind::CheckedBinaryOp { .. } | StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
                 StmtKind::Drop { place, .. } => {
                     if types.needs_drop(place_type(body, types, place)) {
-                        return None;
+                        fails.push(fail(6, "it drops a value whose drop runs code (which may free memory, `Alloc`)", at));
                     }
                 }
                 // Only a check: the begin directly followed by its end.
@@ -1751,7 +1865,7 @@ fn vectorisable(
                         Some(StmtKind::EndAccess { place: end, mutable: end_mutable }) if end == place && end_mutable == mutable
                     );
                     if !paired {
-                        return None;
+                        fails.push(remaining_check(2, memory, at));
                     }
                 }
                 StmtKind::EndAccess { place, mutable } => {
@@ -1761,10 +1875,10 @@ fn vectorisable(
                             StmtKind::BeginAccess { place: begin, mutable: begin_mutable } if begin == place && begin_mutable == mutable
                         );
                     if !paired {
-                        return None;
+                        fails.push(remaining_check(2, memory, at));
                     }
                 }
-                StmtKind::BeginAccessTransfer { .. } | StmtKind::EndAccessTransfer { .. } => return None,
+                StmtKind::BeginAccessTransfer { .. } | StmtKind::EndAccessTransfer { .. } => fails.push(fail(2, memory, at)),
             }
         }
         // Every memory access: a local, or a view held in a local at the
@@ -1788,7 +1902,7 @@ fn vectorisable(
             }
         });
         if !ok {
-            return None;
+            fails.push(fail(2, memory, at));
         }
     }
     // Each written view at one offset, and disjoint from every other view.
@@ -1797,18 +1911,29 @@ fn vectorisable(
             continue;
         }
         if offsets.len() != 1 {
-            return None;
+            fails.push(fail(3, "it accesses a view it writes at more than one offset from the counter", None));
+            continue;
         }
-        let here = locate(body, types, &facts.origins, origin, 0)?;
+        let apart = "a view it writes is not proved disjoint from another view it accesses (`[SIMD-3]`)";
+        let Some(here) = locate(body, types, &facts.origins, origin, 0) else {
+            fails.push(fail(4, apart, None));
+            continue;
+        };
         for (other_index, (other, _, _, _)) in views.iter().enumerate() {
             if other_index == index {
                 continue;
             }
-            let there = locate(body, types, &facts.origins, other, 0)?;
-            if !disjoint(&here, &there) {
-                return None;
+            match locate(body, types, &facts.origins, other, 0) {
+                Some(there) if disjoint(&here, &there) => {}
+                _ => {
+                    fails.push(fail(4, apart, None));
+                    break;
+                }
             }
         }
+    }
+    if let Some(first) = fails.into_iter().min_by_key(|fail| fail.clause) {
+        return Err(first);
     }
     // Execution order: the order the body's blocks are first reached from
     // its entry, then statement order.
@@ -1822,7 +1947,7 @@ fn vectorisable(
             WrittenView { origin, offset, read }
         })
         .collect();
-    Some((checks, written))
+    Ok((checks, written))
 }
 
 fn rvalue_reads_local(rvalue: &Rvalue, local: LocalId) -> bool {

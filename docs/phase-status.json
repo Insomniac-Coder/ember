@@ -33,7 +33,6 @@
     "CG-C-11": "`@fastmath`/`@fp(contract)` in a static library is refused: docs/NOT-IMPLEMENTED.md N6",
     "FN-5": "a parameter default doing float work that the caller's mode cannot keep is refused: docs/NOT-IMPLEMENTED.md N7",
     "GRM-38": "a generator expression with a second `for` is refused as a value (E0900): its `flat_map` over inner generators that borrow both their source and the outer clause's names gets no single source relation from the region analysis (`FlatMap.next`, E3065)",
-    "SIMD-5": "a loop calling a function, or with a float running total, is not put in vectorisable form: docs/NOT-IMPLEMENTED.md N4, N5",
     "ABI-3": "`ember_module_init` does not check the runtime ABI version (ADR-171)",
     "STD-1": "`std.simd` and `std.arena` are not in std/src, and nothing checks that every `std.core`, `std.mem` and `std.math` function is free of `Alloc`",
     "STD-14": "nothing checks that a standard function failing on a caller's bug has a non-panicking twin, or that every allocating one is documented as allocating",

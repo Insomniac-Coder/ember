@@ -17,8 +17,8 @@ use ember_types::{
 
 use crate::{
     AggregateKind, AssertKind, BasicBlock, BasicBlockId, BinOp, Body, CallArgumentBinding, CastKind, Const, FuncRef,
-    LocalDecl, LocalId, LocalKind, Operand, Place, Projection, RETURN_LOCAL, Rvalue, Stmt,
-    StmtKind, Terminator,
+    LocalDecl, LocalId, LocalKind, LoopNotes, Operand, Place, Projection, RETURN_LOCAL, Rvalue, Stmt,
+    SimdLoop, StmtKind, Terminator,
 };
 
 pub mod coroutines;
@@ -422,6 +422,16 @@ impl<'a> Builder<'a> {
             .filter(|(_, decl)| decl.for_iterator)
             .map(|(index, _)| self.local_map[index])
             .collect();
+        // `[SIMD-2]`, `[SIMD-5]` — the loops' attributes, on the MIR locals.
+        let mut loop_notes = LoopNotes::default();
+        for (index, decl) in self.function.locals.iter().enumerate() {
+            if let Some((span, assert)) = decl.simd {
+                loop_notes.simd.push(SimdLoop { local: self.local_map[index], span, assert, verdict: None });
+            }
+            if decl.declared_reduction {
+                loop_notes.declared_reductions.push(self.local_map[index]);
+            }
+        }
         Body {
             name: self.function.name.to_string(),
             symbol: self.function.symbol.clone(),
@@ -461,6 +471,7 @@ impl<'a> Builder<'a> {
             removed_checks: Vec::new(),
             restrict_views: false,
             stack_buffers: Vec::new(),
+            loop_notes,
         }
     }
 

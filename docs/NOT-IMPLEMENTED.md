@@ -23,28 +23,6 @@ followed.
 | **Can a program notice** | yes, as a rejection |
 | **Plan** | Phase 7, with the importer. ERR-037 |
 
-## N4 — a call inside a loop in vectorisable form
-
-| | |
-|---|---|
-| **Rule** | `[SIMD-5]`: "every call in the body is to a function `[CG-C-3]` places in the inline header, read through as `[PAR-2b]` says"; `[SIMD-7]` then groups the loop's overflow checks, the callee's included |
-| **The feature** | a loop that calls a small function (`@inline`, an operator of a type of at most 64 bytes, a view or container accessor, or any function of at most 40 statements with no foreign call) can still be in vectorisable form, the call read through as if inlined |
-| **Requires** | `[CG-C-3]`'s per-package inline header, which is not built, and the read-through (a MIR inliner) |
-| **Meanwhile** | a loop with any call is not in vectorisable form: its overflow checks stay one per operation. `[OPT-2]` still versions it; its bounds checks are removed when the callee is proved not to change the view |
-| **Can a program notice** | no, except as speed |
-| **Plan** | build `[CG-C-3]`'s inline header and the read-through, then admit those calls in `loop_version.rs`'s `vectorisable` |
-
-## N5 — a floating-point running total in a loop in vectorisable form
-
-| | |
-|---|---|
-| **Rule** | `[SIMD-5]`: "every floating-point reduction is declared by `@parallel(reduce=…)` or the function is `@fastmath`" |
-| **The feature** | a loop keeping a floating-point running total is in vectorisable form when it declares the reduction |
-| **Requires** | `@parallel(reduce=…)`, which is not built (`[ATT-6]` rejects it with `E0900`). `@fastmath` is built (ADR-085) and admits the loop |
-| **Meanwhile** | outside `@fastmath` such a loop is not in vectorisable form; it has no integer overflow check to group unless it also does integer arithmetic, which stays checked one operation at a time |
-| **Can a program notice** | no, except as speed |
-| **Plan** | admit the declared reduction once `@parallel` is built |
-
 ## N6 — `@fastmath` and `@fp(contract)` in a static library
 
 | | |

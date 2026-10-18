@@ -3277,6 +3277,48 @@ fn the_optimization_report_lists_each_direct_call() {
     assert!(none.stderr.contains("optimization report:\n  none"), "{}", none.stderr);
 }
 
+/// `[SIMD-2]` — `--emit-optimization-report` says of each `@simd` loop
+/// whether it is in vectorisable form and, when it is not, why (the first
+/// clause of `[SIMD-5]` it fails). `[SIMD-6]` — a build that compiles the C
+/// then prints the host C compiler's own vectorisation report, after Ember's
+/// verdicts and labelled as its opinion; `--emit c` compiles nothing, so it
+/// has none, and neither is ever an error.
+#[test]
+fn the_optimization_report_gives_each_simd_loop_its_verdict_then_the_host_compilers() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/SIMD-2/accept_simd_is_a_request_that_never_changes_meaning.{SOURCE_EXT}");
+    let text = std::fs::read_to_string(root.join(&source)).expect("the program reads");
+    let at = |needle: &str| text.lines().position(|line| line.contains(needle)).expect("the loop is in the program") + 1;
+    let out_dir = temporary_directory("simd_report");
+    let out = out_dir.to_string_lossy().into_owned();
+    let built = ember(&["build", &source, "--profile", "release", "--out-dir", &out, "--emit-optimization-report"], &root);
+    assert_eq!(built.exit, 0, "build failed:\n{}", built.stderr);
+    for (header, says) in [
+        ("for i in 0..xs.len():", "is in vectorisable form"),
+        ("for i in 0..idx.len():", "not in vectorisable form: it reaches memory other than a local or a view at the loop counter plus a constant"),
+        ("for x in xs:", "not in vectorisable form: it keeps a floating-point running total `s`"),
+        ("for c in t.chars():", "not in vectorisable form: its trip count is not known before entry"),
+        ("if xs[i] >= limit:", "not in vectorisable form: it has more than one exit"),
+    ] {
+        // The verdict is at the `for` (the line before an `if` that leaves).
+        let line = if header.starts_with("if") { at(header) - 1 } else { at(header) };
+        let place = format!(".{SOURCE_EXT}:{line}:");
+        assert!(
+            built.stderr.lines().any(|listed| listed.contains(&place) && listed.contains("`@simd` loop") && listed.contains(says)),
+            "missing {says:?} at {place}:\n{}",
+            built.stderr
+        );
+    }
+    let verdicts = built.stderr.find("`@simd` loop").expect("the verdicts are reported");
+    let host = built.stderr.find("host C compiler's vectorisation report").expect("the host compiler's report follows");
+    assert!(verdicts < host, "the host compiler's opinion came first:\n{}", built.stderr);
+    assert!(built.stderr[host..].contains("its opinion only"), "{}", built.stderr);
+    let c = ember(&["build", &source, "--emit", "c", "--emit-optimization-report"], &root);
+    assert_eq!(c.exit, 0, "{}", c.stderr);
+    assert!(c.stderr.contains("`@simd` loop") && !c.stderr.contains("host C compiler"), "{}", c.stderr);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
 /// `[RC-6]` — `ember inspect --counts` lists the retains and releases a build
 /// left inside loops, each with its reason; a loop that reads borrowed
 /// handles has none.

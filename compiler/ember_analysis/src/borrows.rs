@@ -5125,7 +5125,7 @@ mod callable_region_metadata_tests {
             uncounted_handles: Vec::new(),
             removed_checks: Vec::new(),
             restrict_views: false,
-            stack_buffers: Vec::new(),
+            stack_buffers: Vec::new(), loop_notes: Default::default(),
         }
     }
 

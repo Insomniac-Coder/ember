@@ -88,6 +88,13 @@ pub struct LocalDecl {
     /// branch, to the local given: the two are one variable, set in the arm
     /// and read after the branch (D-490).
     pub hoisted_into: Option<LocalId>,
+    /// `[SIMD-2]` — this local identifies a `@simd` loop (its counter, or its
+    /// iterator when it is not counted): the loop's span and whether it is
+    /// `@simd(assert)`.
+    pub simd: Option<(Span, bool)>,
+    /// `[SIMD-5]` — a running total a `@parallel(reduce=…)` declares: its
+    /// floating-point sum may be reordered.
+    pub declared_reduction: bool,
 }
 
 #[derive(Debug)]
