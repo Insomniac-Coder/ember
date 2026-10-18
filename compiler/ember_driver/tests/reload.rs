@@ -703,6 +703,65 @@ fn run_hot_tells_a_program_without_a_checkpoint() {
     assert!(finished, "the program did not finish:\n{seen}");
 }
 
+/// `[HR-21]` — an exported function's address is its permanent thunk, so the host's pointer stays
+/// valid across every reload (the frame tests call the new body through it); and the exports are
+/// the module protocol the host was built against: adding one, removing one or changing one's
+/// signature is refused, since only a rebuilt host could call them.
+#[test]
+fn exports_are_the_module_protocol() {
+    let added = PARTICLES.replace("fn main():", "@export(\"game_extra\")\nextern \"C\" fn extra() -> i64:\n    return 7\n\nfn main():");
+    let run = host_run("reload-export-added", PARTICLES, &[&added], 2);
+    assert!(run.stdout.contains("refused:") && run.stdout.contains("export `game_extra` was added, which changes the module protocol"), "{}", run.stdout);
+    assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
+    let changed = PARTICLES.replace("extern \"C\" fn frame(turn: i64) -> i64:", "extern \"C\" fn frame(turn: i32) -> i64:");
+    let run = host_run("reload-export-changed", PARTICLES, &[&changed], 2);
+    assert!(run.stdout.contains("the signature of export `game_frame` changed"), "{}", run.stdout);
+}
+
+/// `[HR-18b]` — `ember build --reload --explain` predicts the reload against the running program,
+/// at its next checkpoint, and applies nothing: an edit to a `@noreload` body would be refused, and
+/// says why; an edit to a reloadable body would apply. The program runs its old code throughout,
+/// until `ember build --reload` announces an image.
+#[test]
+fn explain_predicts_against_the_running_program() {
+    use std::io::BufRead;
+    let root = workspace_root();
+    let v1 = "import std.hot\n\n@noreload\nfn fixed() -> int:\n    return 1\n\nfn version() -> int:\n    return 1\n\n\
+              fn main():\n    println(\"started\")\n    turns = 0\n    while version() == 1 and turns < 20000000:\n        \
+              hot.checkpoint()\n        turns += 1\n    println(f\"now {version()} {fixed()}\")\n";
+    let (package, file) = package("reload-explain", RELOAD_ALL, v1);
+    let out = package.join("target");
+    let (file_arg, out_arg) = (file.to_string_lossy().into_owned(), out.to_string_lossy().into_owned());
+    let built = ember(&["build", &file_arg, "--out-dir", &out_arg], &root);
+    assert_eq!(built.exit, 0, "{}", built.stderr);
+    quiet_errors();
+    let mut program = Command::new(host(&out))
+        .env(format!("{}_HOT", ember_branding::SYMBOL_PREFIX.to_uppercase()), "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("the program starts");
+    let mut output = std::io::BufReader::new(program.stdout.take().expect("piped")).lines();
+    assert_eq!(output.next().and_then(Result::ok).as_deref(), Some("started"));
+
+    std::fs::write(&file, v1.replace("return 1\n\nfn version", "return 5\n\nfn version")).expect("the edit is writable");
+    let refused = ember(&["build", "--reload", "--explain", &file_arg, "--out-dir", &out_arg], &root);
+    std::fs::write(&file, v1.replace("return 1\n\n\nfn main", "return 2\n\n\nfn main").replace("fn version() -> int:\n    return 1", "fn version() -> int:\n    return 2"))
+        .expect("the edit is writable");
+    let applies = ember(&["build", "--reload", "--explain", &file_arg, "--out-dir", &out_arg], &root);
+    let reloaded = ember(&["build", "--reload", &file_arg, "--out-dir", &out_arg], &root);
+    let last = output.next().and_then(Result::ok);
+    let finished = program.wait().expect("the program ends");
+    drop(package);
+    assert_ne!(refused.exit, 0, "{}{}", refused.stdout, refused.stderr);
+    assert!(refused.stdout.contains("the reload would be refused") && refused.stdout.contains("the body of `@noreload` function `em_fixed` changed"), "{}{}", refused.stdout, refused.stderr);
+    assert_eq!(applies.exit, 0, "{}{}", applies.stdout, applies.stderr);
+    assert!(applies.stdout.contains("the reload would apply"), "{}{}", applies.stdout, applies.stderr);
+    assert_eq!(reloaded.exit, 0, "{}", reloaded.stderr);
+    assert_eq!(last.as_deref(), Some("now 2 1"), "the program did not run the announced image");
+    assert!(finished.success());
+}
+
 /// `[HR-29]` — with reload on, one shared runtime serves every image in the process: a reloadable
 /// package whose manifest asks to link the runtime statically is `E9036`.
 #[test]

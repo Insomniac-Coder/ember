@@ -200,6 +200,31 @@ fn image_path(bin: &Path, module: &str, n: u32) -> PathBuf {
     bin.join(format!("{module}.image.{n}.{}", ember_build::reload::image_extension()))
 }
 
+/// `[HR-18b]` — ask the running program to plan `image` against itself, applying nothing, and
+/// wait for its answer: the plan's verdict and its report. Its next poll or checkpoint answers.
+pub fn explain(bin: &Path, module: &str, image: &Path) -> Result<(bool, String), String> {
+    let request = announcement_path(bin, module).with_extension("reload.explain");
+    let answer = announcement_path(bin, module).with_extension("reload.explained");
+    let _ = std::fs::remove_file(&answer);
+    let name = image.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    let staging = request.with_extension("tmp");
+    std::fs::write(&staging, format!("{name}\n")).map_err(|error| error.to_string())?;
+    std::fs::rename(&staging, &request).map_err(|error| error.to_string())?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        if let Ok(text) = std::fs::read_to_string(&answer)
+            && let Some(rest) = text.strip_prefix(&format!("{name}\n"))
+            && let Some((verdict, report)) = rest.split_once('\n')
+        {
+            let _ = std::fs::remove_file(&request);
+            return Ok((verdict == "apply", report.to_string()));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let _ = std::fs::remove_file(&request);
+    Err(format!("no running `{module}` answered within ten seconds: `--explain` predicts against the running program, at its next poll or checkpoint"))
+}
+
 /// The file a running program's polls read for the newest image ([HR-31]).
 pub fn announcement_path(bin: &Path, module: &str) -> PathBuf {
     bin.join(format!("{module}.reload"))
@@ -242,6 +267,7 @@ pub fn build(
     profile: Profile,
     image: &ReloadImage,
     next: bool,
+    explain: bool,
     started: std::time::Instant,
 ) -> Result<Built, Failure> {
     let host = layout.bin.join(if cfg!(windows) { format!("{module}.exe") } else { module.to_string() });
@@ -280,11 +306,19 @@ pub fn build(
             }
         }
         let _ = std::fs::remove_file(announcement_path(&layout.bin, module));
-        std::fs::write(header_path(&layout.bin, module), format!("{header}
-")).map_err(|error| error.to_string())?;
+        std::fs::write(header_path(&layout.bin, module), format!("{header}\n")).map_err(|error| error.to_string())?;
         0
     };
-    let output = image_path(&layout.bin, module, number);
+    // `[HR-18b]` — an image to explain is never announced, and has a name of its own.
+    let output = if explain {
+        let extension = ember_build::reload::image_extension();
+        (1..)
+            .map(|n| layout.bin.join(format!("{module}.explain.{n}.{extension}")))
+            .find(|path| !path.exists())
+            .unwrap_or_else(|| layout.bin.join(format!("{module}.explain.{extension}")))
+    } else {
+        image_path(&layout.bin, module, number)
+    };
     ember_build::reload::link_image(
         toolchain,
         c_path,
@@ -297,7 +331,7 @@ pub fn build(
         &output,
     )
     .map_err(|error| error.to_string())?;
-    if next {
+    if next && !explain {
         // [HR-32] The build's own time travels with the announcement, for `ember_reload_stats`.
         let name = output.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
         let announcement = format!("{name}\n{}\n", started.elapsed().as_nanos());
@@ -305,7 +339,7 @@ pub fn build(
         let staging = path.with_extension("reload.tmp");
         std::fs::write(&staging, announcement).map_err(|error| error.to_string())?;
         std::fs::rename(&staging, &path).map_err(|error| error.to_string())?;
-    } else {
+    } else if !next {
         ember_build::reload::link_host(toolchain, module, includes, profile, &runtime, &layout.obj, &host)
             .map_err(|error| error.to_string())?;
     }

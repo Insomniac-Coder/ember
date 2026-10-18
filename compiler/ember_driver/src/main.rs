@@ -3497,7 +3497,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             return Err("error[E0900]: `@fastmath` and `@fp(contract)` in a reloadable build are not built yet".to_string());
         }
         let built = match reload::build(&toolchain, &layout, &module_name, &c_path, &runtime_source, &includes,
-            options.profile, image, options.reload, started)
+            options.profile, image, options.reload, options.explain, started)
         {
             Ok(built) => built,
             Err(reload::Failure::Other(message)) => return Err(message),
@@ -3514,6 +3514,14 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             }
         };
         mark("C compile and link", "all modules");
+        // `[HR-18b]` — the running program's own plan of this image, applying nothing.
+        if options.explain {
+            report(&sink, &map, options);
+            let (apply, text) = reload::explain(&layout.bin, &module_name, &built.image)?;
+            println!("{}", if apply { "the reload would apply" } else { "the reload would be refused" });
+            print!("{text}");
+            return Ok(if apply { ExitCode::SUCCESS } else { ExitCode::FAILURE });
+        }
         // `[HR-16]` — this build's schema, which the next build's `Old<Name>` structs are made from.
         if let Some(additions) = &reload_additions {
             let schema = serde_json::Value::Object(additions.schema.clone());

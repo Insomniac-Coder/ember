@@ -8811,6 +8811,7 @@ static struct {
     uint32_t flags;
     char* announce;
     char last_announcement[512];
+    char last_explained[600];
     rl_image* images;
     size_t image_count;
     size_t image_cap;
@@ -10051,7 +10052,10 @@ static bool rl_plan(const ember_rl_manifest* next, bool first, bool checkpoint, 
         }
         const ember_rl_fn* now = rl_find_fn(next, slot->name);
         if (now == NULL) {
-            if ((slot->flags & EMBER_RL_FN_ADDRESS) != 0) {
+            if ((slot->flags & EMBER_RL_FN_EXPORT) != 0) {
+                rl_report(report, cap, "refused: export `%s` was removed, which changes the module protocol: the host must be rebuilt [HR-21]\n", slot->name);
+                refused = true;
+            } else if ((slot->flags & EMBER_RL_FN_ADDRESS) != 0) {
                 rl_report(report, cap, "refused: `%s` was removed, but its address may be held, so its thunk stays reachable [HR-7]\n", slot->name);
                 refused = true;
             }
@@ -10069,12 +10073,25 @@ static bool rl_plan(const ember_rl_manifest* next, bool first, bool checkpoint, 
             }
             continue;
         }
-        if (now->signature != slot->signature
+        if (now->signature != slot->signature && (slot->flags & EMBER_RL_FN_EXPORT) != 0) {
+            rl_report(report, cap, "refused: the signature of export `%s` changed, which changes the module protocol: the host must be rebuilt [HR-21]\n", slot->name);
+            refused = true;
+        } else if (now->signature != slot->signature
             && (bodies_only || checkpoint || (slot->flags & EMBER_RL_FN_ADDRESS) != 0 || (now->flags & EMBER_RL_FN_ADDRESS) != 0)) {
             rl_report(report, cap, "refused: the signature of `%s` changed%s [HR-19]\n", slot->name,
                       bodies_only ? ", and `reload = \"bodies\"` admits only body changes"
                       : checkpoint ? " while frames of the old code are live at this checkpoint"
                       : ", and its address may be held with the old one");
+            refused = true;
+        }
+    }
+    /* [HR-21] The exports are the module protocol the host was built against: one added is
+     * refused like one removed or changed (above), since only a rebuilt host can call it. */
+    for (uint32_t index = 0; index < next->fn_count; ++index) {
+        const ember_rl_fn* fn = &next->fns[index];
+        const rl_slot* slot = (const rl_slot*)rl_table_get(&g_rl.slots, fn->name);
+        if ((fn->flags & EMBER_RL_FN_EXPORT) != 0 && (slot == NULL || slot->removed || (slot->flags & EMBER_RL_FN_EXPORT) == 0)) {
+            rl_report(report, cap, "refused: export `%s` was added, which changes the module protocol: the host must be rebuilt [HR-21]\n", fn->name);
             refused = true;
         }
     }
@@ -10566,11 +10583,70 @@ static int rl_apply(const char* path, bool first, bool checkpoint, uint64_t comp
     return EMBER_RELOAD_APPLIED;
 }
 
+/* [HR-18b] `ember build --reload --explain`: the request file names an image to plan against this
+ * process as it is, applying nothing; the answer file gets its name, the verdict and the report.
+ * Asked at a poll or a checkpoint, where the plan would run. */
+static void rl_explain(bool checkpoint) {
+    char request[600];
+    char path[1200];
+    snprintf(path, sizeof path, "%s.explain", g_rl.announce);
+    char* saved = g_rl.announce;
+    g_rl.announce = path;
+    rl_read_announcement(request, sizeof request);
+    g_rl.announce = saved;
+    char* end = strpbrk(request, "\r\n");
+    if (end != NULL) {
+        *end = '\0';
+    }
+    if (request[0] == '\0' || strcmp(request, g_rl.last_explained) == 0) {
+        return;
+    }
+    snprintf(g_rl.last_explained, sizeof g_rl.last_explained, "%s", request);
+    char image[1200];
+    rl_directory_of(g_rl.announce, image, sizeof image);
+    size_t used = strlen(image);
+    snprintf(image + used, sizeof image - used, "%s", request);
+    char report[2048];
+    report[0] = '\0';
+    rl_image* loaded = rl_load(image, report, sizeof report);
+    bool apply = loaded != NULL && rl_plan(loaded->manifest, false, checkpoint, report, sizeof report);
+#if defined(EMBER_RELOAD_INSTANCES)
+    rl_moves_reset();
+#endif
+    snprintf(path, sizeof path, "%s.explained", g_rl.announce);
+    char staging[1300];
+    snprintf(staging, sizeof staging, "%s.tmp", path);
+    char answer[2800];
+    int length = snprintf(answer, sizeof answer, "%s\n%s\n%s", request, apply ? "apply" : "refused", report);
+    size_t size = length < 0 ? 0 : ((size_t)length < sizeof answer ? (size_t)length : sizeof answer - 1);
+#if defined(_WIN32)
+    HANDLE out = CreateFileA(staging, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (out == INVALID_HANDLE_VALUE) {
+        return;
+    }
+    DWORD written = 0;
+    (void)WriteFile(out, answer, (DWORD)size, &written, NULL);
+    CloseHandle(out);
+    MoveFileExA(staging, path, MOVEFILE_REPLACE_EXISTING);
+#else
+    FILE* out = fopen(staging, "wb");
+    if (out == NULL) {
+        return;
+    }
+    fwrite(answer, 1, size, out);
+    fclose(out);
+    rename(staging, path);
+#endif
+}
+
 /* A new announcement names an image not tried yet: its file (relative to the announcement's
  * directory) on the first line, the build's time in nanoseconds on the second. */
 static int rl_poll(bool checkpoint) {
     if (!g_rl.active) {
         return EMBER_RELOAD_DISABLED;
+    }
+    if (g_rl.announce != NULL && rl_threads_quiet(checkpoint ? 1u : 0u)) {
+        rl_explain(checkpoint);
     }
     char text[512];
     rl_read_announcement(text, sizeof text);
