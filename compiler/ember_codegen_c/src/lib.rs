@@ -2379,8 +2379,17 @@ impl Emitter<'_> {
             if object_write {
                 self.line(&format!("    {RT}object_begin_write({header}, {location});"));
             }
+            // D-681 — `drop(mut self)` takes the handle's address; `drop(self)`, the only form a
+            // `@sync` class may write (`E7003`), takes the handle.
+            let by_address = |symbol: &str| {
+                bodies.iter().find(|body| body.symbol == symbol).is_none_or(|body| {
+                    body.locals.get(1).is_none_or(|receiver| matches!(self.types.kind(receiver.ty), TyKind::Ref { .. }))
+                })
+            };
             if def.has_drop {
-                self.line(&format!("    {}(&handle);", drop_symbol(&owner)));
+                let symbol = drop_symbol(&owner);
+                let argument = if by_address(&symbol) { "&handle" } else { "handle" };
+                self.line(&format!("    {symbol}({argument});"));
             }
             // `[CLS-6]` — a derived destructor runs before each base
             // destructor. All handles point at the same allocation, and the
@@ -2396,8 +2405,10 @@ impl Emitter<'_> {
                     self.line(&format!(
                         "    {base_object}* {base_handle} = ({base_object}*)raw;"
                     ));
+                    let symbol = drop_symbol(&base_def.name.to_string());
+                    let address = if by_address(&symbol) { "&" } else { "" };
                     self.line(&format!(
-                        "    {}(&{base_handle});",
+                        "    {}({address}{base_handle});",
                         drop_symbol(&base_def.name.to_string())
                     ));
                 }

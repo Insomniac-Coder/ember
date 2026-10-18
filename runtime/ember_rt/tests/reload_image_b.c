@@ -17,7 +17,7 @@ static const ember_rl_fn fns[1] = {
     { "f", (void (*)(void))f_body, (void (*)(void))f, NULL, 1, 0, EMBER_RL_FN_RELOADABLE },
 };
 static const ember_rl_static statics[1] = {
-    { "counter", 8, 8, 7, 9, EMBER_RL_STATIC_CONSTANT, &counter_initial, NULL },
+    { "counter", 8, 8, 7, 9, EMBER_RL_STATIC_CONSTANT, &counter_initial, NULL, NULL },
 };
 
 EMBER_RL_MANIFEST const ember_rl_manifest ember_test_manifest = {

@@ -14,6 +14,10 @@
  *   [HR-7] `gone`, which B removed, keeps its thunk, whose target is a stub that panics naming it.
  * Mode `unregistered`:
  *   [HR-3a] a debug build panics when a thread the runtime never registered enters Ember code. */
+/* `usleep`, which `-std=c11` hides. */
+#if defined(__linux__) && !defined(_DEFAULT_SOURCE)
+#define _DEFAULT_SOURCE
+#endif
 #include "ember_rt.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -48,7 +52,7 @@ static const ember_rl_fn fns[2] = {
     { "gone", (void (*)(void))gone_body, (void (*)(void))gone, NULL, 2, 0, EMBER_RL_FN_RELOADABLE },
 };
 static const ember_rl_static statics[1] = {
-    { "counter", 8, 8, 7, 9, EMBER_RL_STATIC_CONSTANT, &counter_initial, NULL },
+    { "counter", 8, 8, 7, 9, EMBER_RL_STATIC_CONSTANT, &counter_initial, NULL, NULL },
 };
 
 static int entry(int argc, char** argv);
