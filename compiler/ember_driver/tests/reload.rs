@@ -607,6 +607,102 @@ fn a_struct_static_migrates() {
     assert_eq!(run.stdout, "5\napplied, 0 migrated\n1010\n1015\n", "exit {}: {}", run.exit, run.stderr);
 }
 
+/// `ember run --hot` on `source`, with its standard streams piped: the child, and a channel of
+/// each line it writes to standard output and to standard error, tagged.
+fn start_hot(label: &str, source: &str) -> (test_directories::TemporaryDirectory, PathBuf, std::process::Child, std::sync::mpsc::Receiver<(bool, String)>) {
+    use std::io::BufRead;
+    quiet_errors();
+    let root = workspace_root();
+    let (package, file) = package(label, "[package]\nname = \"main\"\n", source);
+    let out = package.join("target");
+    let mut child = Command::new(EMBER)
+        .args(["run", "--hot", &file.to_string_lossy(), "--out-dir", &out.to_string_lossy()])
+        .current_dir(&root)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("ember run --hot starts");
+    let (sender, lines) = std::sync::mpsc::channel();
+    for (stream, is_stdout) in [
+        (Box::new(child.stdout.take().expect("piped")) as Box<dyn std::io::Read + Send>, true),
+        (Box::new(child.stderr.take().expect("piped")), false),
+    ] {
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(stream).lines().map_while(Result::ok) {
+                if sender.send((is_stdout, line)).is_err() {
+                    return;
+                }
+            }
+        });
+    }
+    (package, file, child, lines)
+}
+
+/// Wait for a line containing `needle` on standard output (`stdout`) or error; everything seen,
+/// for the failure's message.
+fn wait_for(lines: &std::sync::mpsc::Receiver<(bool, String)>, stdout: bool, needle: &str, seen: &mut String) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while let Some(left) = deadline.checked_duration_since(std::time::Instant::now()) {
+        match lines.recv_timeout(left) {
+            Ok((is_stdout, line)) => {
+                seen.push_str(&format!("{}{line}\n", if is_stdout { "out: " } else { "err: " }));
+                if is_stdout == stdout && line.contains(needle) {
+                    return true;
+                }
+            }
+            Err(_) => return false,
+        }
+    }
+    false
+}
+
+/// `[HR-33]`, `[HR-31]` — `ember run --hot` builds under `debug`, runs the program and watches its
+/// sources: an edit is built in the background while the program runs on, and applies at the
+/// program's next `std.hot.checkpoint()`.
+#[test]
+fn run_hot_applies_an_edit_at_the_next_checkpoint() {
+    let source = "import std.hot\n\nfn version() -> int:\n    return 1\n\nfn main():\n    println(\"started\")\n    turns = 0\n    \
+                  while version() == 1 and turns < 20000000:\n        hot.checkpoint()\n        turns += 1\n    println(f\"now {version()}\")\n";
+    let (package, file, mut child, lines) = start_hot("reload-run-hot", source);
+    let mut seen = String::new();
+    let started = wait_for(&lines, true, "started", &mut seen);
+    if started {
+        std::fs::write(&file, source.replace("return 1\n", "return 2\n")).expect("the edit is writable");
+    }
+    let applied = started && wait_for(&lines, true, "now 2", &mut seen);
+    if !applied {
+        let _ = child.kill();
+    }
+    let status = child.wait().expect("ember run --hot ends");
+    drop(package);
+    assert!(applied, "the edit never ran:\n{seen}");
+    assert!(status.success(), "{status:?}\n{seen}");
+}
+
+/// `[HR-33]` — a program `ember run --hot` runs that reaches no checkpoint is told so after ten
+/// seconds, rather than appearing to ignore its edits.
+#[test]
+fn run_hot_tells_a_program_without_a_checkpoint() {
+    use std::io::Write;
+    let source = "fn main():\n    println(\"waiting\")\n    line = input()\n    println(f\"read {line}\")\n";
+    let (package, _file, mut child, lines) = start_hot("reload-run-hot-quiet", source);
+    let mut seen = String::new();
+    let told = wait_for(&lines, true, "waiting", &mut seen) && wait_for(&lines, false, "has reached no `std.hot.checkpoint()` in ten seconds", &mut seen);
+    if let Some(stdin) = child.stdin.as_mut() {
+        let _ = stdin.write_all(b"done\n");
+    }
+    let finished = wait_for(&lines, true, "read done", &mut seen);
+    if !finished {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+    drop(package);
+    assert!(told, "the program was not told:\n{seen}");
+    assert!(finished, "the program did not finish:\n{seen}");
+}
+
 /// `[HR-29]` — with reload on, one shared runtime serves every image in the process: a reloadable
 /// package whose manifest asks to link the runtime statically is `E9036`.
 #[test]

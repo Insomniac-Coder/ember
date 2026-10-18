@@ -549,6 +549,10 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             } else {
                 PathBuf::from(input)
             };
+            // `[HR-33]` — the toolchain's own host: build, run, watch, rebuild, reload.
+            if command == "run" && options.hot {
+                return run_hot(&source, &options);
+            }
             compile(&source, command, &options)
         }
         // `[FMT-1]` — the canonical printer. `--check` reports whether the
@@ -3628,6 +3632,93 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 
     eprintln!("built {}", exe.display());
     Ok(ExitCode::SUCCESS)
+}
+
+/// `[HR-33]`, `[HR-31]` — `ember run --hot`: build the program under `debug`, run it, and while
+/// it runs watch the package's sources; after each edit, build the next image and announce it,
+/// which the program applies at its next `std.hot.checkpoint()`. Building happens here, in the
+/// background of the program, so a checkpoint never waits for it. A build that fails leaves the
+/// old code running. The program is told when ten seconds pass with no checkpoint reached.
+fn run_hot(input: &Path, options: &Options) -> Result<ExitCode, String> {
+    if options.profile != Profile::Debug {
+        return Err("`ember run --hot` builds under `debug`".to_string());
+    }
+    let build = Options { emit: None, ..options_for_hot(options, false) };
+    let code = compile(input, "build", &build)?;
+    if code != ExitCode::SUCCESS {
+        return Ok(code);
+    }
+    let bin = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target")).join(options.profile.name()).join("bin");
+    let stem = input.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
+    let host = bin.join(if cfg!(windows) { format!("{stem}.exe") } else { stem.clone() });
+    let mut child = std::process::Command::new(&host)
+        .args(&options.program_args)
+        .env(format!("{}_HOT", ember_branding::SYMBOL_PREFIX.to_uppercase()), "1")
+        .spawn()
+        .map_err(|error| format!("cannot start `{}`: {error}", host.display()))?;
+    let root = package_source_root(input);
+    let mut seen = source_stamp(&root);
+    loop {
+        if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
+            if let Some(how) = abnormal_end(&status) {
+                eprintln!("error: {how}");
+            }
+            return Ok(match status.code() {
+                Some(0) => ExitCode::SUCCESS,
+                Some(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
+                None => ExitCode::FAILURE,
+            });
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let now = source_stamp(&root);
+        if now != seen {
+            seen = now;
+            // A failed build is reported and changes nothing the program runs ([HR-41]).
+            match compile(input, "build", &options_for_hot(options, true)) {
+                Ok(_) => {}
+                Err(message) => eprintln!("error: {message}"),
+            }
+        }
+    }
+}
+
+/// The options of one of `ember run --hot`'s builds: the first, or the next image (`--reload`).
+fn options_for_hot(options: &Options, reload: bool) -> Options {
+    Options {
+        profile: options.profile,
+        cc: options.cc.clone(),
+        out_dir: options.out_dir.clone(),
+        json: options.json,
+        deny_warnings: options.deny_warnings,
+        reload,
+        hot: true,
+        ..Options::default()
+    }
+}
+
+/// Every source file of a package, with its size and time of change: what `ember run --hot`
+/// watches.
+fn source_stamp(root: &Path) -> Vec<(PathBuf, u64, Option<std::time::SystemTime>)> {
+    let mut out = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_dir() {
+                if path.file_name().is_some_and(|name| name != "target" && !name.to_string_lossy().starts_with('.')) {
+                    pending.push(path);
+                }
+            } else if path.extension().is_some_and(|extension| extension == ember_branding::SOURCE_EXT)
+                || path.file_name().is_some_and(|name| name == ember_branding::MANIFEST)
+            {
+                out.push((path, meta.len(), meta.modified().ok()));
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
 /// `ember run`: the program, with its arguments, its status as the command's.

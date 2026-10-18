@@ -10641,7 +10641,35 @@ void (*ember_reload_export(const char* name))(void) {
     return (void (*)(void))slot->thunk;
 }
 
-int ember_reload_checkpoint(void) { return rl_poll(true); }
+/* [HR-33] How many checkpoints the program has reached, for `ember run --hot`'s reminder. */
+static uint32_t g_rl_checkpoints;
+
+int ember_reload_checkpoint(void) {
+    (void)object_fetch_add_u32(&g_rl_checkpoints, 1);
+    return rl_poll(true);
+}
+
+/* [HR-33] Under `ember run --hot`, a program that reaches no `std.hot.checkpoint()` in ten seconds is
+ * told so, rather than appearing to ignore its edits. */
+#if defined(_WIN32)
+static DWORD WINAPI rl_hot_reminder(LPVOID unused) {
+    (void)unused;
+    Sleep(10000);
+#else
+static void* rl_hot_reminder(void* unused) {
+    (void)unused;
+    sleep(10);
+#endif
+    if (object_load_u32(&g_rl_checkpoints) == 0) {
+        fputs("ember run --hot: this program has reached no `std.hot.checkpoint()` in ten seconds, and an edit takes effect only at one [HR-33]\n", stderr);
+        fflush(stderr);
+    }
+#if defined(_WIN32)
+    return 0;
+#else
+    return NULL;
+#endif
+}
 
 const ember_reload_timings* ember_reload_stats(void) { return &g_rl.timings; }
 
@@ -10676,6 +10704,28 @@ int ember_reload_host_main(int argc, char** argv, const char* package) {
     ember_reload_config config = { sizeof config, image, announce, 0 };
     if (ember_reload_init(&config) != 0) {
         return 101;
+    }
+#if defined(_WIN32)
+    char hot_value[4] = { 0 };
+    bool hot = GetEnvironmentVariableA("EMBER_HOT", hot_value, (DWORD)sizeof hot_value) > 0 && hot_value[0] == '1';
+#else
+    const char* hot_value = getenv("EMBER_HOT");
+    bool hot = hot_value != NULL && hot_value[0] == '1';
+#endif
+    if (hot) {
+        /* What the program writes is seen as it writes it, between its checkpoints. */
+        setvbuf(stdout, NULL, _IONBF, 0);
+#if defined(_WIN32)
+        HANDLE reminder = CreateThread(NULL, 0, rl_hot_reminder, NULL, 0, NULL);
+        if (reminder != NULL) {
+            CloseHandle(reminder);
+        }
+#else
+        pthread_t reminder;
+        if (pthread_create(&reminder, NULL, rl_hot_reminder, NULL) == 0) {
+            pthread_detach(reminder);
+        }
+#endif
     }
     const ember_rl_manifest* manifest = g_rl.images[0].manifest;
     if (manifest->entry == NULL) {
