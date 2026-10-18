@@ -1,11 +1,9 @@
 #$ test: compile-fail
-#$ rules: FFI-10
-#$ error[E0900]: writing an element of an array inside a foreign static is not implemented yet
-#$ error[E2140]: a foreign static without `mut` cannot be assigned
-# `[FFI-10]` — an element of an array inside a foreign static is C storage. Writing
-# one wrote a copy of the static, so the write was lost, and on a static without
-# `mut` it was accepted (D1). Until it is written in place it is refused, and the
-# immutable static is refused as any write to it is.
+#$ rules: FFI-10, STA-1
+# `[FFI-10]` — an element of an array inside a foreign static is C storage,
+# written in place inside `unsafe` when the static is `static mut` (D1 wrote a
+# copy). A static without `mut` is not written, and a write outside `unsafe`
+# is not allowed either.
 
 @derive(Copy)
 struct Table:
@@ -13,10 +11,13 @@ struct Table:
 
 unsafe extern "C":
     static mut table: Table
+    static mut samples: [i32; 4]
     @ffi(immutable)
     static frozen: Table
 
 fn main():
-    unsafe:  # SAFETY(ffi): each foreign call matches its C declaration
+    unsafe:  # SAFETY(ffi): each global is declared as C defines it
         table.values[0] = 99
-    frozen.values[0] = 5
+        samples[1] += 2
+    frozen.values[0] = 5    #$ error[E2140]: a foreign static without `mut` cannot be assigned
+    samples[2] = 1    #$ error[E5002]: writing a foreign static requires `unsafe`

@@ -1896,6 +1896,9 @@ struct Checker<'a> {
     fn_ids: HashMap<Symbol, DefId>,
     /// A hand-written foreign declaration and whether it asserts a safe call.
     foreign_declarations: HashMap<DefId, bool>,
+    /// `[DIA-18]` — for a foreign declaration not asserted safe to call, each fact a safe call
+    /// still lacks and the declaration line that would supply it.
+    foreign_unknown_facts: HashMap<DefId, ForeignUnknownFacts>,
     signatures: Vec<Signature>,
     /// `[CLO-1]` — the functions a capture-free closure lowers to. They have
     /// no name in source, so they are collected here and appended to the
@@ -2562,6 +2565,7 @@ impl<'a> Checker<'a> {
             named_types: HashMap::new(),
             fn_ids: HashMap::new(),
             foreign_declarations: HashMap::new(),
+            foreign_unknown_facts: HashMap::new(),
             signatures: Vec::new(),
             methods: HashMap::new(),
             class_declared_methods: HashMap::new(),
@@ -7742,13 +7746,19 @@ impl<'a> Checker<'a> {
                         continue;
                     }
                     if decl.is_foreign_decl {
-                        let supported = matches!(self.types.kind(ty),
-                            TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_)
-                                | TyKind::Float(_) | TyKind::Struct(_) | TyKind::Ptr { .. });
-                        if !supported || !self.types.is_ffi_safe(ty) || !self.types.is_copy(ty)
-                            || self.types.is_view(ty) {
-                            self.error(codes::E0900, decl.ty.span,
-                                "foreign static access requires a Copy C-compatible value without borrowed fields");
+                        // `[FFI-10]` — any value C can lay out is a global C may
+                        // hold. It is a place: a record need not be `Copy`, and
+                        // a `cstr` field is the static's own (`[FFI-8]`).
+                        if ty == self.common.void || !self.types.is_ffi_safe(ty) {
+                            if ty != self.common.error {
+                                let shown = self.types.display(ty);
+                                self.sink.emit(
+                                    Diagnostic::error(codes::E5050, decl.ty.span,
+                                        format!("`{shown}` has no foreign representation"))
+                                        .primary_label("the type of this foreign static")
+                                        .note("a foreign static holds a value C lays out: a scalar, a pointer, a `cstr`, an array or record of those [FFI-8]"),
+                                );
+                            }
                             continue;
                         }
                         let immutable = ffi_static_immutable(&item.attrs);
@@ -7920,6 +7930,9 @@ impl<'a> Checker<'a> {
                     self.fn_ids.insert(name, def);
                     if decl.is_foreign_decl {
                         self.foreign_declarations.insert(def, decl.is_safe);
+                        if !decl.is_safe {
+                            self.foreign_unknown_facts.insert(def, ffi_unknown_facts(decl, &item.attrs));
+                        }
                     }
                     // `[PAR-2b]`, `[CG-C-3]` — kept for the parallel analysis to read through.
                     if !decl.is_foreign_decl
@@ -16360,7 +16373,10 @@ impl<'a> Checker<'a> {
                 fp,
                 inline: inline_hint(&item.attrs),
                 static_safe: has_attribute(&item.attrs, "static_safe"),
-                contracts: self.contracts_of(&item.attrs),
+                contracts: hir::Contracts {
+                    foreign: decl.is_foreign_decl.then(|| ffi_declared_effects(&item.attrs)),
+                    ..self.contracts_of(&item.attrs)
+                },
                 borrows: self.declared_borrows(def),
                 sources: self.declared_sources(def),
                 is_lambda: false,
@@ -17417,9 +17433,16 @@ impl<'a> Checker<'a> {
             return;
         }
         if self.foreign_declarations.contains_key(&def) {
-            self.sink.emit(Diagnostic::error(codes::E5002, span,
-                "a foreign call without a complete safe contract requires `unsafe`")
-                .help("wrap the call in `unsafe:` or declare a scalar-only `safe fn`"));
+            // `[DIA-18]` — each fact the call lacks, and the line that supplies it.
+            let mut diagnostic = Diagnostic::error(codes::E5002, span,
+                "a foreign call without a complete safe contract requires `unsafe`");
+            if let Some(unknown) = self.foreign_unknown_facts.get(&def) {
+                for fact in &unknown.facts {
+                    diagnostic = diagnostic.note(format!("unknown: {fact}"));
+                }
+                diagnostic = diagnostic.help(format!("state the facts on its declaration: {}", unknown.line));
+            }
+            self.sink.emit(diagnostic.help("or wrap the call in `unsafe:`, as its caller's own assertion"));
         } else {
             self.sink.emit(Diagnostic::error(codes::E3100, span,
                 "calling an `unsafe fn` requires an `unsafe` block")
@@ -19849,10 +19872,14 @@ impl<'a> Checker<'a> {
                     return;
                 }
 
-                // A foreign global is already a declared item. Treating its
-                // bare name as a fresh local would make an apparent write
-                // leave the C object untouched.
-                if let Some(binding) = self.foreign_static_assignment_target(target) {
+                // `[FFI-10]`, `[STA-1]` — a foreign global is a declared item
+                // and a place in C's storage: the global itself, a field of it,
+                // or an element of an array in it. Only a `static mut` is
+                // written, and only inside `unsafe`; the write then takes the
+                // ordinary path below, through the global's reference.
+                let foreign_target = self.foreign_static_assignment_target(target)
+                    .or_else(|| self.foreign_static_place_root(target));
+                if let Some(binding) = foreign_target {
                     if !binding.is_mut {
                         self.error(codes::E2140, target.span, "a foreign static without `mut` cannot be assigned");
                         return;
@@ -19861,167 +19888,6 @@ impl<'a> Checker<'a> {
                         self.error(codes::E5002, target.span, "writing a foreign static requires `unsafe`");
                         return;
                     }
-                    if let Some(bin) = op
-                        && !self.types.is_numeric(binding.ty)
-                        && !self.float_param(binding.ty)
-                        && binding.ty != self.common.error
-                    {
-                        let shown = self.types.display(binding.ty);
-                        self.error(codes::E2020, stmt.span,
-                            format!("`{}=` is not defined on `{shown}`", bin.as_str()));
-                        return;
-                    }
-                    let rhs = match op {
-                        Some(ast::BinOp::Pow) => {
-                            let exponent = self.synth(value);
-                            let exponent = self.read_through(exponent);
-                            self.commit(exponent)
-                        }
-                        Some(_) | None => self.check_expr(value, binding.ty),
-                    };
-                    let rhs = if op.is_some() {
-                        // `[EXP-2]` evaluates the operand before reading the
-                        // place. A C call on the right may itself change this
-                        // global, so the expression tree alone is insufficient.
-                        self.hold_value(rhs, out)
-                    } else {
-                        rhs
-                    };
-                    let rhs = if let Some(bin) = op {
-                        let lhs = Expr {
-                            ty: binding.ty,
-                            kind: ExprKind::Builtin {
-                                which: Builtin::ForeignStaticRead { symbol: binding.symbol, immutable: false },
-                                args: Vec::new(),
-                            },
-                            span: target.span,
-                        };
-                        if *bin == ast::BinOp::Pow {
-                            let raised = self.power(lhs, rhs, value, stmt.span);
-                            self.coerce(raised, binding.ty)
-                        } else {
-                            let Some(op) = convert_binop(*bin) else {
-                                self.error(codes::E1010, stmt.span, "this operator is not supported yet in this phase");
-                                return;
-                            };
-                            if self.reject_integer_true_division(op, binding.ty, stmt.span) {
-                                return;
-                            }
-                            Expr {
-                                ty: binding.ty,
-                                kind: ExprKind::Binary {
-                                    op,
-                                    lhs: Box::new(lhs),
-                                    rhs: Box::new(rhs),
-                                },
-                                span: stmt.span,
-                            }
-                        }
-                    } else {
-                        rhs
-                    };
-                    out.push(Stmt::Expr(Expr {
-                        ty: self.common.void,
-                        kind: ExprKind::Builtin {
-                            which: Builtin::ForeignStaticWrite { symbol: binding.symbol },
-                            args: vec![rhs],
-                        },
-                        span: stmt.span,
-                    }));
-                    return;
-                }
-
-                // D1 — an element of an array inside a foreign static is C
-                // storage too. Writing it went to a copy of the static and was
-                // lost; until it is written in place it is refused.
-                if let Some(binding) = self.foreign_static_element_assignment_root(target) {
-                    if !binding.is_mut {
-                        self.error(codes::E2140, target.span, "a foreign static without `mut` cannot be assigned");
-                    } else if !self.in_unsafe {
-                        self.error(codes::E5002, target.span, "writing a foreign static requires `unsafe`");
-                    } else {
-                        self.error(
-                            codes::E0900,
-                            target.span,
-                            "writing an element of an array inside a foreign static is not implemented yet",
-                        );
-                    }
-                    return;
-                }
-
-                // A field of a foreign record is a place in C storage, even
-                // though an ordinary read of the record produces a value.
-                if let Some(binding) = self.foreign_static_field_assignment_root(target)
-                    && matches!(self.types.kind(binding.ty), TyKind::Struct(_))
-                {
-                    if !binding.is_mut {
-                        self.error(codes::E2140, target.span, "a foreign static without `mut` cannot be assigned");
-                        return;
-                    }
-                    if !self.in_unsafe {
-                        self.error(codes::E5002, target.span, "writing a foreign static requires `unsafe`");
-                        return;
-                    }
-                    let previous_target = self.in_assignment_target;
-                    self.in_assignment_target = true;
-                    let field = self.synth(target);
-                    self.in_assignment_target = previous_target;
-                    let Some(path) = self.foreign_static_field_path(&field, binding.symbol) else { return };
-                    self.reject_readonly_write_in_assignment(&field, target.span);
-                    let field_ty = field.ty;
-                    if let Some(bin) = op
-                        && !self.types.is_numeric(field_ty)
-                        && !self.float_param(field_ty)
-                        && field_ty != self.common.error
-                    {
-                        let shown = self.types.display(field_ty);
-                        self.error(codes::E2020, stmt.span,
-                            format!("`{}=` is not defined on `{shown}`", bin.as_str()));
-                        return;
-                    }
-                    let rhs = match op {
-                        Some(ast::BinOp::Pow) => {
-                            let exponent = self.synth(value);
-                            let exponent = self.read_through(exponent);
-                            self.commit(exponent)
-                        }
-                        Some(_) | None => self.check_expr(value, field_ty),
-                    };
-                    let rhs = if op.is_some() { self.hold_value(rhs, out) } else { rhs };
-                    let rhs = if let Some(bin) = op {
-                        if *bin == ast::BinOp::Pow {
-                            let raised = self.power(field, rhs, value, stmt.span);
-                            self.coerce(raised, field_ty)
-                        } else {
-                            let Some(op) = convert_binop(*bin) else {
-                                self.error(codes::E1010, stmt.span, "this operator is not supported yet in this phase");
-                                return;
-                            };
-                            if self.reject_integer_true_division(op, field_ty, stmt.span) {
-                                return;
-                            }
-                            Expr {
-                                ty: field_ty,
-                                kind: ExprKind::Binary {
-                                    op,
-                                    lhs: Box::new(field),
-                                    rhs: Box::new(rhs),
-                                },
-                                span: stmt.span,
-                            }
-                        }
-                    } else {
-                        rhs
-                    };
-                    out.push(Stmt::Expr(Expr {
-                        ty: self.common.void,
-                        kind: ExprKind::Builtin {
-                            which: Builtin::ForeignStaticFieldWrite { symbol: binding.symbol, record: binding.ty, path },
-                            args: vec![rhs],
-                        },
-                        span: stmt.span,
-                    }));
-                    return;
                 }
 
                 // `[CLS-7]`, `[EXC-15]` (ODR-072) — in a class method `self`
@@ -20044,6 +19910,7 @@ impl<'a> Checker<'a> {
                 // `[GRM-4]` — a bare name that is not in scope declares.
                 if let ast::ExprKind::Path { segments } = &target.kind {
                     if segments.len() == 1
+                        && foreign_target.is_none()
                         && self.lookup(segments[0].name).is_none()
                         && !self.is_capture_candidate(segments[0].name)
                     {
@@ -34426,6 +34293,9 @@ impl<'a> Checker<'a> {
         literal_copy(&self.constants[&qualified], span)
     }
 
+    /// `[FFI-10]`, `[STA-1]` — a foreign static is the place C's global is: a
+    /// read copies out of it (a non-`Copy` record is read field by field), a
+    /// write changes C's storage. A `static mut` is reached through `ref mut`.
     fn foreign_static_use(&mut self, qualified: Symbol, span: Span) -> Expr {
         let binding = self.foreign_statics[&qualified];
         if !binding.immutable && !self.in_unsafe {
@@ -34434,14 +34304,16 @@ impl<'a> Checker<'a> {
                 .help("wrap the read in `unsafe:` or assert `@ffi(immutable)` for a const C object"));
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        Expr {
-            ty: binding.ty,
+        let reference = self.types.intern(TyKind::Ref { mutable: binding.is_mut, inner: binding.ty });
+        let access = Expr {
+            ty: reference,
             kind: ExprKind::Builtin {
-                which: Builtin::ForeignStaticRead { symbol: binding.symbol, immutable: binding.immutable },
+                which: Builtin::ForeignStatic { symbol: binding.symbol, ty: binding.ty, immutable: binding.immutable },
                 args: Vec::new(),
             },
             span,
-        }
+        };
+        Expr { ty: binding.ty, kind: ExprKind::Deref(Box::new(access)), span }
     }
 
     fn foreign_static_assignment_target(&self, target: &ast::Expr) -> Option<ForeignStatic> {
@@ -34466,59 +34338,19 @@ impl<'a> Checker<'a> {
         self.foreign_statics.get(&qualified).copied()
     }
 
-    fn foreign_static_field_assignment_root(&self, target: &ast::Expr) -> Option<ForeignStatic> {
+    /// The foreign static a written place lies inside: a field of one, or an
+    /// element of an array in one (`table.values[i] = v`, `table.rows[i].x = v`).
+    fn foreign_static_place_root(&self, target: &ast::Expr) -> Option<ForeignStatic> {
         let mut current = target;
-        while let ast::ExprKind::Field { base, .. } = &current.kind {
-            if let Some(binding) = self.foreign_static_assignment_target(base) {
-                return Some(binding);
-            }
-            current = base;
-        }
-        None
-    }
-
-    /// A write to an element of an array inside a foreign static
-    /// (`table.values[i] = v`, `table.rows[i].x = v`): the static, when the
-    /// target's path reaches one through an index.
-    fn foreign_static_element_assignment_root(&self, target: &ast::Expr) -> Option<ForeignStatic> {
-        let mut current = target;
-        let mut indexed = false;
         loop {
-            match &current.kind {
-                ast::ExprKind::Field { base, .. } => current = base,
-                ast::ExprKind::IndexOrInstantiate { base, .. } => {
-                    indexed = true;
-                    current = base;
-                }
-                _ => break,
-            }
-            if indexed && let Some(binding) = self.foreign_static_assignment_target(current) {
-                return Some(binding);
-            }
-        }
-        None
-    }
-
-    /// A checked field expression supplies both the names and their order;
-    /// its innermost base must still be the foreign object we resolved.
-    fn foreign_static_field_path(&self, field: &Expr, symbol: Symbol) -> Option<Symbol> {
-        let mut current = field;
-        let mut names = Vec::new();
-        loop {
-            match &current.kind {
-                ExprKind::Field { base, index } => {
-                    let TyKind::Struct(id) = self.types.kind(base.ty) else { return None };
-                    names.push(self.types.struct_def(*id).fields.get(*index)?.name);
-                    current = base;
-                }
-                ExprKind::Builtin {
-                    which: Builtin::ForeignStaticRead { symbol: found, .. }, ..
-                } if *found == symbol => break,
+            current = match &current.kind {
+                ast::ExprKind::Field { base, .. } | ast::ExprKind::IndexOrInstantiate { base, .. } => base,
                 _ => return None,
+            };
+            if let Some(binding) = self.foreign_static_assignment_target(current) {
+                return Some(binding);
             }
         }
-        names.reverse();
-        Some(Symbol::intern(&names.iter().map(|name| name.as_str()).collect::<Vec<_>>().join(".")))
     }
 
     /// `[GRM-24]` (0.9.9) — `inner.Shape`: the qualified name of an item
@@ -34680,9 +34512,40 @@ impl<'a> Checker<'a> {
                     saw_ffi = true;
                     let mut saw_link_name = false;
                     let mut saw_result = false;
+                    let mut saw_effects = false;
+                    let mut saw_deterministic = false;
                     let mut contracted = HashSet::new();
                     for arg in &attr.args {
                         match arg {
+                            // `[EFF-3]` — the effects the foreign function has.
+                            ast::AttrArg::Named { name, .. } if name.name.is("effects") => {
+                                if saw_effects {
+                                    self.error(codes::E0104, attr.span, "duplicate `effects` in `@ffi`");
+                                }
+                                saw_effects = true;
+                                for (span, effect) in ffi_effects_arg(arg).unwrap_or_default() {
+                                    if effect.is_none() {
+                                        let names: Vec<&str> = hir::Effects::NAMED.iter().map(|(_, name)| *name).collect();
+                                        self.sink.emit(
+                                            Diagnostic::error(codes::E0104, span, "`effects` lists effects by name")
+                                                .help(format!("write a list of {}", names.join(", ")))
+                                                .note("a foreign function's effects are those its contract states, plus `FFI` [EFF-3]"),
+                                        );
+                                    }
+                                }
+                            }
+                            // `[DET-2]` — the function's result is the same on every run.
+                            ast::AttrArg::Expr(value)
+                                if ffi_contract_word(value).is_some_and(|word| word.is("deterministic")) => {
+                                if saw_deterministic {
+                                    self.error(codes::E0104, attr.span, "duplicate `deterministic` in `@ffi`");
+                                }
+                                saw_deterministic = true;
+                                if attr.args.iter().filter_map(ffi_effects_arg).flatten()
+                                    .any(|(_, effect)| effect == Some(hir::Effects::NONDET)) {
+                                    self.error(codes::E0104, attr.span, "a `deterministic` foreign function has no `Nondet` effect");
+                                }
+                            }
                             ast::AttrArg::Named { name, .. } if name.name.is("link_name") => {
                                 if saw_link_name {
                                     self.error(codes::E0104, attr.span, "duplicate `link_name` in `@ffi`");
@@ -48413,8 +48276,15 @@ fn expand_extern_blocks(modules: &[LoadedModule], sink: &mut Sink) -> Option<Vec
             if !block.is_unsafe {
                 sink.emit(Diagnostic::error(codes::E5002, item.span, "a foreign declaration block must be `unsafe extern`"));
             }
-            if block.abi != "C" {
-                sink.emit(Diagnostic::error(codes::E0900, item.span, "only `unsafe extern \"C\"` declaration blocks are implemented yet"));
+            // `[FFI-9]`, `[FFI-10]` — the platform C ABI and the three named
+            // conventions; C++ is Annex C's `import cpp`.
+            match block.abi.as_str() {
+                "C" | "system" | "fastcall" | "vectorcall" => {}
+                "C++" => sink.emit(Diagnostic::error(codes::E0900, item.span,
+                    "an `extern \"C++\"` declaration block is not implemented yet (Annex C)")),
+                other => sink.emit(Diagnostic::error(codes::E0104, item.span,
+                    format!("`extern \"{other}\"` is not a calling convention"))
+                    .help("write `extern \"C\"`, `\"system\"`, `\"fastcall\"` or `\"vectorcall\"` [FFI-9]")),
             }
             for inner in &block.items {
                 if let ast::ItemKind::Static(decl) = &inner.kind {
@@ -48446,7 +48316,7 @@ fn expand_extern_blocks(modules: &[LoadedModule], sink: &mut Sink) -> Option<Vec
                     sink.emit(Diagnostic::error(codes::E0100, inner.span, "a foreign function declaration has no body"));
                 }
                 if !decl.generics.is_empty() || decl.is_gen {
-                    sink.emit(Diagnostic::error(codes::E5050, inner.span, "a foreign function declaration cannot be generic or a generator"));
+                    sink.emit(Diagnostic::error(codes::E0104, inner.span, "a foreign function declaration cannot be generic or a generator"));
                 }
                 let mut declaration = inner.clone();
                 if let ast::ItemKind::Fn(function) = &mut declaration.kind {
@@ -49378,6 +49248,155 @@ fn ffi_link_name(attrs: &[ast::Attribute]) -> Option<&str> {
     attrs.iter()
         .find(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
         .and_then(ffi_link_name_attr)
+}
+
+/// `[DIA-18]` — what a call to a foreign declaration that is not `safe fn` lacks: each unknown
+/// fact, and the declaration line that states them, every one a `TODO(…)` word to replace
+/// (`[FFI-11c]`, which an unsafe declaration accepts as written).
+struct ForeignUnknownFacts {
+    facts: Vec<String>,
+    line: String,
+}
+
+fn ffi_unknown_facts(decl: &ast::FnDecl, attrs: &[ast::Attribute]) -> ForeignUnknownFacts {
+    let name = decl.name.name;
+    let mut facts = vec![format!("`{name}` is not asserted safe to call (`safe fn`)")];
+    let mut clauses = Vec::new();
+    let axes = |unknown: &[&str]| -> String {
+        let named: Vec<&str> = unknown.iter().map(|axis| if *axis == "nullable" { "nullability" } else { axis }).collect();
+        match named.as_slice() {
+            [] => String::new(),
+            [one] => one.to_string(),
+            [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        }
+    };
+    let written = ffi_unknown_fact_contracts(attrs);
+    let complete = ffi_param_contracts(attrs);
+    for param in &decl.params {
+        let ast::ParamKind::Named { name: slot, ty } = &param.kind else { continue };
+        let slot = slot.name;
+        match &ty.kind {
+            ast::TypeKind::Ptr { .. } if complete.iter().any(|(contracted, _)| *contracted == slot) => {
+                facts.push(format!("`{slot}`: none, but a raw pointer is not a safe parameter: declare the type its contract gives"));
+            }
+            ast::TypeKind::Ptr { .. } => {
+                let todo: Vec<&str> = written.iter().filter(|(contracted, _)| *contracted == slot)
+                    .map(|(_, axis)| axis.as_str()).collect();
+                if todo.is_empty() {
+                    let unknown = ["ownership", "count", "nullable"];
+                    facts.push(format!("`{slot}`: its {}", axes(&unknown)));
+                    let words: Vec<String> = unknown.iter().map(|axis| format!("TODO({axis})")).collect();
+                    clauses.push(format!("param({slot}, {})", words.join(", ")));
+                } else {
+                    // The clause as written: its known words stay, its `TODO`s are the unknowns.
+                    facts.push(format!("`{slot}`: its {}", axes(&todo)));
+                    let clause = attrs.iter()
+                        .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+                        .flat_map(|attr| &attr.args)
+                        .find_map(|arg| match arg {
+                            ast::AttrArg::Expr(expr) if ffi_unknown_fact_arg(arg).is_some_and(|(contracted, _)| contracted == slot) =>
+                                Some(contract_text(expr)),
+                            _ => None,
+                        });
+                    clauses.extend(clause);
+                }
+            }
+            ast::TypeKind::Fn { .. } => {
+                facts.push(format!("`{slot}`: its callback contract (`callback(borrowed | retained | once, user_data=p)`)"));
+            }
+            _ => {}
+        }
+    }
+    if decl.ret.as_ref().is_some_and(|ret| matches!(ret.kind, ast::TypeKind::Ptr { .. })) {
+        let todo = ffi_unknown_result_fact_contracts(attrs);
+        let written = attrs.iter()
+            .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+            .flat_map(|attr| &attr.args)
+            .find_map(|arg| match arg {
+                ast::AttrArg::Expr(expr) if ffi_unknown_result_fact_arg(arg).is_some() => Some(contract_text(expr)),
+                _ => None,
+            });
+        let unknown: Vec<&str> = if todo.is_empty() {
+            vec!["ownership", "count", "nullable", "lifetime"]
+        } else {
+            todo.iter().map(|axis| axis.as_str()).collect()
+        };
+        facts.push(format!("the result: its {}", axes(&unknown)));
+        let words: Vec<String> = unknown.iter().map(|axis| format!("TODO({axis})")).collect();
+        clauses.push(written.unwrap_or_else(|| format!("result({})", words.join(", "))));
+    }
+    let line = if clauses.is_empty() {
+        format!("`safe fn {name}`")
+    } else {
+        format!("`@ffi({})` over `safe fn {name}`, each `TODO(…)` replaced by its fact", clauses.join(", "))
+    };
+    ForeignUnknownFacts { facts, line }
+}
+
+/// A contract clause as it is written: words, and calls of words and numbers.
+fn contract_text(expr: &ast::Expr) -> String {
+    match &expr.kind {
+        ast::ExprKind::Path { segments } => segments.iter().map(|segment| segment.name.as_str()).collect::<Vec<_>>().join("."),
+        ast::ExprKind::Lit(ast::Literal::Int { value, .. }) => value.to_string(),
+        ast::ExprKind::Call { callee, args } => format!("{}({})", contract_text(callee),
+            args.iter().map(|arg| match &arg.name {
+                Some(name) => format!("{}={}", name.name, contract_text(&arg.value)),
+                None => contract_text(&arg.value),
+            }).collect::<Vec<_>>().join(", ")),
+        _ => "…".to_string(),
+    }
+}
+
+/// `[EFF-3]` — the effects `@ffi(effects=[…])` lists: `None` when the argument is not that, else
+/// each written name with the effect it names (`None` for a name that is no effect). The names are
+/// Part X.1's; `Panic` is `Panic(Explicit)`.
+fn ffi_effects_arg(arg: &ast::AttrArg) -> Option<Vec<(Span, Option<hir::Effects>)>> {
+    let ast::AttrArg::Named { name, value } = arg else { return None };
+    if !name.name.is("effects") {
+        return None;
+    }
+    let ast::ExprKind::ArrayLit(items) = &value.kind else { return Some(vec![(value.span, None)]) };
+    Some(items.iter().map(|item| {
+        let written = match &item.kind {
+            ast::ExprKind::Path { segments } if segments.len() == 1 => segments[0].name.to_string(),
+            ast::ExprKind::Call { callee, args } if args.len() == 1 && args[0].name.is_none() => {
+                match (&callee.kind, &args[0].value.kind) {
+                    (ast::ExprKind::Path { segments: head }, ast::ExprKind::Path { segments: kind })
+                        if head.len() == 1 && kind.len() == 1 => format!("{}({})", head[0].name, kind[0].name),
+                    _ => String::new(),
+                }
+            }
+            _ => String::new(),
+        };
+        let effect = if written == "Panic" {
+            Some(hir::Effects::PANIC)
+        } else {
+            hir::Effects::NAMED.iter().find(|(_, named)| *named == written).map(|(effect, _)| *effect)
+        };
+        (item.span, effect)
+    }).collect())
+}
+
+/// `[EFF-3]`, `[FFI-10]`, `[DET-2]` — a foreign declaration's effects: those its `@ffi(effects=[…])`
+/// states plus `FFI`, every effect when it states none; `Nondet` unless it says
+/// `@ffi(deterministic)`.
+fn ffi_declared_effects(attrs: &[ast::Attribute]) -> hir::Effects {
+    let args: Vec<&ast::AttrArg> = attrs.iter()
+        .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+        .flat_map(|attr| &attr.args)
+        .collect();
+    let stated = args.iter().find_map(|arg| ffi_effects_arg(arg)).map(|names| {
+        names.into_iter().filter_map(|(_, effect)| effect).fold(hir::Effects::NONE, |all, effect| all | effect)
+    });
+    let deterministic = args.iter().any(|arg| matches!(arg, ast::AttrArg::Expr(value)
+        if ffi_contract_word(value).is_some_and(|word| word.is("deterministic"))));
+    let mut effects = stated.unwrap_or(hir::Effects::ALL) | hir::Effects::FFI;
+    if deterministic {
+        effects = hir::Effects(effects.0 & !hir::Effects::NONDET.0);
+    } else {
+        effects |= hir::Effects::NONDET;
+    }
+    effects
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -274,6 +274,11 @@ impl std::ops::BitAnd for Effects {
 pub struct Contracts {
     pub forbidden: Effects,
     pub realtime: Effects,
+    /// `[EFF-3]`, `[FFI-10]` — for a foreign declaration, the effects its
+    /// contract gives it: those `@ffi(effects=[…])` states and `FFI`, every
+    /// effect when it states none, and `Nondet` unless `@ffi(deterministic)`
+    /// (`[DET-2]`). `None` for a function with an Ember body.
+    pub foreign: Option<Effects>,
 }
 
 #[derive(Debug)]
@@ -1146,8 +1151,13 @@ pub enum Builtin {
     /// `[DSJ-1]`'s two comparisons: whether views of types `a` and `b`
     /// overlap. Empty views overlap nothing.
     ViewsOverlap { a: Ty, b: Ty },
-    /// `[FFI-10]` — read a hand-declared C global at its linker symbol.
-    ForeignStaticRead { symbol: Symbol, immutable: bool },
+    /// `[FFI-10]`, `[STA-1]` — a reference to a hand-declared C global at its
+    /// linker symbol: `ref T`, or `ref mut T` for a `static mut`. Every read
+    /// and write of the global goes through it, so the global is a place like
+    /// any other (a field, an element of an array in it, a whole non-`Copy`
+    /// record) and C's storage is what changes. `immutable` is
+    /// `@ffi(immutable)` (ODR-082): the C declaration is `extern const T`.
+    ForeignStatic { symbol: Symbol, ty: Ty, immutable: bool },
     /// `[STA-3]` — a reference to the one value of a `static` whose
     /// initialiser runs on first access: `init`, a function of no
     /// arguments, the first time any thread asks. `name` is the static's, for
@@ -1163,10 +1173,6 @@ pub enum Builtin {
     /// `[CT-2]` — `comptime.env(name)`: the build environment's variable, an
     /// `option` (`Option[String]`), read while compiling (`[name]`).
     ComptimeEnv { option: Ty },
-    /// `[STA-1]` — write a `static mut` C global inside `unsafe`.
-    ForeignStaticWrite { symbol: Symbol },
-    /// `[STA-1]` — update one field of a C record global in place.
-    ForeignStaticFieldWrite { symbol: Symbol, record: Ty, path: Symbol },
     /// `println(x)` for a scalar or `str`.
     Println,
     /// `[STD-9]` — `eprintln(x)` and `eprint(x)`: the same, to standard error.
@@ -1680,13 +1686,11 @@ impl Builtin {
 
     pub fn name(self) -> &'static str {
         match self {
-            Builtin::ForeignStaticRead { .. } => "foreign_static_read",
+            Builtin::ForeignStatic { .. } => "foreign_static",
             Builtin::LazyStatic { .. } => "lazy_static",
             Builtin::ConstStatic { .. } => "constant_static",
             Builtin::ComptimeReadFile => "read_file",
             Builtin::ComptimeEnv { .. } => "env",
-            Builtin::ForeignStaticWrite { .. } => "foreign_static_write",
-            Builtin::ForeignStaticFieldWrite { .. } => "foreign_static_field_write",
             Builtin::Println => "println",
             Builtin::Print => "print",
             Builtin::EPrintln => "eprintln",

@@ -432,9 +432,17 @@ fn emit_with(
     let write = |emitter: &mut Emitter<'_>| {
         emitter.collect_native_fn_values(bodies);
         emitter.emit_module(bodies, module_name, has_main, leak_check);
+        // ODR-082 — `@ffi(immutable)` declares the object itself `const`: after
+        // a pointer type the qualifier has to follow it (`const char* const`).
         let mut foreign_declarations = emitter.foreign_statics.borrow().iter()
-            .map(|(symbol, (ty, immutable))| format!("extern {}{} {symbol};\n",
-                if *immutable { "const " } else { "" }, emitter.c_type(*ty)))
+            .map(|(symbol, (ty, immutable))| {
+                let c_ty = emitter.c_type(*ty);
+                match (*immutable, c_ty.ends_with('*')) {
+                    (false, _) => format!("extern {c_ty} {symbol};\n"),
+                    (true, false) => format!("extern const {c_ty} {symbol};\n"),
+                    (true, true) => format!("extern {c_ty} const {symbol};\n"),
+                }
+            })
             .collect::<String>();
         for (init, (ty, _)) in &lazy_statics {
             foreign_declarations.push_str(&format!("{}* {init}_static(void);\n", emitter.c_type(*ty)));
@@ -826,9 +834,54 @@ enum Definition {
     Struct(Vec<String>),
     Alias(String),
     /// `typedef R (*name)(A, B);` — a function pointer, whose declarator wraps
-    /// the name rather than preceding it.
-    FnPointer { ret: String, args: String },
+    /// the name rather than preceding it. `convention` is `[FFI-9]`'s calling
+    /// convention macro, written inside the parentheses (`R (CC *name)(A)`).
+    FnPointer { ret: String, convention: &'static str, args: String },
 }
+
+/// `[FFI-9]` — the macro naming a declaration's C calling convention, with a
+/// trailing space, or nothing for `extern "C"` (`calling_convention_macros`
+/// defines them).
+fn calling_convention(abi: Option<&str>) -> &'static str {
+    match abi {
+        Some("system") => "EMBER_CC_SYSTEM ",
+        Some("fastcall") => "EMBER_CC_FASTCALL ",
+        Some("vectorcall") => "EMBER_CC_VECTORCALL ",
+        _ => "",
+    }
+}
+
+/// `[FFI-9]` — `extern "system"` is `stdcall` on 32-bit Windows and C
+/// elsewhere; `"fastcall"` and `"vectorcall"` exist on x86 (on x86-64 the
+/// compilers take `fastcall` as the one convention there). A target or C
+/// compiler without the convention stops the C build, naming it, rather than
+/// calling with another.
+const CALLING_CONVENTION_MACROS: &str = r#"/* [FFI-9] foreign calling conventions */
+#if defined(_M_IX86) || defined(__i386__) || defined(_M_X64) || defined(__x86_64__)
+#define EMBER_CC_X86 1
+#endif
+#if defined(_WIN32) && (defined(_M_IX86) || defined(__i386__))
+#define EMBER_CC_SYSTEM __stdcall
+#else
+#define EMBER_CC_SYSTEM
+#endif
+#if (defined(_M_IX86) || defined(__i386__)) && defined(_MSC_VER)
+#define EMBER_CC_FASTCALL __fastcall
+#elif defined(_M_IX86) || defined(__i386__)
+#define EMBER_CC_FASTCALL __attribute__((fastcall))
+#elif defined(EMBER_CC_X86)
+#define EMBER_CC_FASTCALL
+#else
+#define EMBER_CC_FASTCALL EMBER_CC_FASTCALL_exists_only_on_x86
+#endif
+#if defined(EMBER_CC_X86) && defined(_MSC_VER)
+#define EMBER_CC_VECTORCALL __vectorcall
+#elif defined(EMBER_CC_X86) && defined(__clang__)
+#define EMBER_CC_VECTORCALL __attribute__((vectorcall))
+#else
+#define EMBER_CC_VECTORCALL EMBER_CC_VECTORCALL_needs_x86_and_MSVC_or_Clang
+#endif
+"#;
 
 /// A C type definition: either a named Ember struct or a generated struct
 /// standing in for a tuple or a fixed array.
@@ -897,9 +950,7 @@ impl Emitter<'_> {
             for block in &body.blocks {
                 if let Terminator::Call { func: FuncRef::Builtin { which, .. }, .. } = &block.terminator {
                     let foreign = match which {
-                        Builtin::ForeignStaticRead { symbol, .. }
-                        | Builtin::ForeignStaticWrite { symbol }
-                        | Builtin::ForeignStaticFieldWrite { symbol, .. } => Some(symbol),
+                        Builtin::ForeignStatic { symbol, .. } => Some(symbol),
                         _ => None,
                     };
                     if let Some(symbol) = foreign { used.insert(symbol.to_string()); }
@@ -1044,6 +1095,12 @@ impl Emitter<'_> {
         self.line("");
         if self.comptime.is_some() {
             self.line(COMPTIME_PRELUDE);
+        }
+        let foreign_convention = |abi: Option<&str>| !calling_convention(abi).is_empty();
+        if bodies.iter().any(|body| foreign_convention(body.abi.as_deref()))
+            || self.types.all().any(|(_, kind)| matches!(kind, TyKind::Fn { abi, .. } if foreign_convention(abi.as_ref().map(|abi| abi.as_str()))))
+        {
+            self.out.push_str(CALLING_CONVENTION_MACROS);
         }
 
         self.emit_type_declarations();
@@ -2275,8 +2332,8 @@ impl Emitter<'_> {
                 Definition::Alias(underlying) => {
                     self.line(&format!("typedef {underlying} {name};"));
                 }
-                Definition::FnPointer { ret, args } => {
-                    self.line(&format!("typedef {ret} (*{name})({args});"));
+                Definition::FnPointer { ret, convention, args } => {
+                    self.line(&format!("typedef {ret} ({convention}*{name})({args});"));
                 }
                 Definition::Struct(members) => {
                     self.line(&format!("struct {name} {{"));
@@ -4236,7 +4293,8 @@ impl Emitter<'_> {
                     .map(|param| self.callable_param_c_type(*param, abi.is_some()))
                     .collect();
                 let args = if rendered.is_empty() { "void".to_string() } else { rendered.join(", ") };
-                Definition::FnPointer { ret: self.c_type(*ret), args }
+                let convention = calling_convention(abi.as_ref().map(|abi| abi.as_str()));
+                Definition::FnPointer { ret: self.c_type(*ret), convention, args }
             }
             TypeNode::Structural(ty) => Definition::Struct(match self.types.kind(ty) {
                 TyKind::Tuple(items) => items
@@ -5046,7 +5104,8 @@ impl Emitter<'_> {
             })
             .collect();
         let params = if params.is_empty() { "void".to_string() } else { params.join(", ") };
-        format!("{ret} {}({params})", body.symbol)
+        let convention = if body.is_extern_declaration { calling_convention(body.abi.as_deref()) } else { "" };
+        format!("{ret} {convention}{}({params})", body.symbol)
     }
 
     fn ffi_counted_signature(&self, body: &Body) -> String {
@@ -5081,7 +5140,7 @@ impl Emitter<'_> {
             format!("{ty} _ffi{index}")
         }).collect();
         let params = if params.is_empty() { "void".to_string() } else { params.join(", ") };
-        format!("{result} {}({params})", counted.foreign_symbol)
+        format!("{result} {}{}({params})", calling_convention(body.abi.as_deref()), counted.foreign_symbol)
     }
 
     fn ffi_count_limit(&self, ty: Ty) -> Option<&'static str> {
@@ -7481,9 +7540,11 @@ impl Emitter<'_> {
                     Builtin::AssertDisjoint { .. } | Builtin::ViewsOverlap { .. } => {
                         unreachable!("`assert_disjoint` is lowered in MIR; its comparison is written above")
                     }
-                    Builtin::ForeignStaticRead { symbol, immutable } => {
-                        self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*arg_ty, *immutable));
-                        return symbol.to_string();
+                    // `[FFI-10]` — the C global's address, `const` dropped for an
+                    // `@ffi(immutable)` one (ODR-082), which Ember only reads.
+                    Builtin::ForeignStatic { symbol, ty, immutable } => {
+                        self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*ty, *immutable));
+                        return format!("(({}*)&{symbol})", self.c_type(*ty));
                     }
                     // `[STA-3]` — the accessor `lazy_static_definitions` writes.
                     Builtin::LazyStatic { init, .. } => return format!("{init}_static()"),
@@ -7650,14 +7711,6 @@ impl Emitter<'_> {
                             rendered[0],
                             self.location(span)
                         );
-                    }
-                    Builtin::ForeignStaticWrite { symbol } => {
-                        self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*arg_ty, false));
-                        return format!("({symbol} = {})", rendered[0]);
-                    }
-                    Builtin::ForeignStaticFieldWrite { symbol, record, path } => {
-                        self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*record, false));
-                        return format!("({symbol}.{path} = {})", rendered[0]);
                     }
                     // `[CELL-1]`, `[CELL-2]` — the cell operations are gone by
                     // now. Each is a move out of a field, a store into it, and

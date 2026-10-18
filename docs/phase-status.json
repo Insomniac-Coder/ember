@@ -21,7 +21,7 @@
   },
   "unfinished": {
     "_what": "Rules a test names but that are not fulfilled: each with what is missing and where that is recorded. Remove an entry only when the rule is fulfilled.",
-    "FFI-10": "foreign statics: non-Copy or borrowed record types, writing an element of a foreign static array, and non-C declaration blocks are refused (E0900): tests/conformance/FFI-10/reject_*",
+    "TCB-1": "`ember tcb` lists every assumption by module, each graded asserted; grades above asserted are not: `@grade(…)` is an overlay item's attribute and overlays need the C header importer (`import c`), and there are no evidence records under `[ffi] evidence`, no W5050/E5050, no `ember tcb --require` or `ember build --require-evidence` (tasks/85/B-notes.md)",
     "FFI-11": "only `@ffi` link names and borrowed-one pointer contracts are built (E0900): tests/conformance/FFI-11/reject_exclusive_and_aliased_result.em",
     "FFI-26": "export names that are not C identifiers, and generic exports, are refused (E0900): tests/conformance/FFI-26/reject_unsupported_export_forms.em",
     "FFI-39": "`extern class` is not built: docs/NOT-IMPLEMENTED.md N2, tests/conformance/FFI-39/reject_it_is_not_implemented_yet.em",

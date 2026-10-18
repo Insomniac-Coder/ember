@@ -5,6 +5,7 @@
 //! each command something to do.
 
 mod comptime;
+mod foreign;
 mod test_runner;
 
 use std::path::{Path, PathBuf};
@@ -48,8 +49,12 @@ usage:
     ember inspect --alloc [--json] [--function <name>] <file.em>
                                       report every place the program allocates
     ember tcb [--module <m>] [--json] <file.em>
-                                      list every unsafe block and unsafe fn with its safety note,
-                                      its category and the obligations of the unsafe functions it calls
+                                      the trusted base: every unsafe block and unsafe fn with its
+                                      safety note, its category and the obligations of the unsafe
+                                      functions it calls; every fact a foreign declaration asserts,
+                                      each with its source and grade
+    ember calls --foreign <item> [--json] <file.em>
+                                      every foreign function the item can reach, with its contract
 
 options:
     --profile debug|release|shipping   default: debug
@@ -377,6 +382,15 @@ struct Options {
     /// `[UNS-8]` — `ember tcb`: check the program, then list its `unsafe` instead of generating
     /// code.
     tcb_report: Option<TcbReport>,
+    /// `[CLI-13]` — `ember calls --foreign <item>`: check the program, then list the foreign
+    /// functions the item can reach.
+    foreign_calls: Option<ForeignCalls>,
+}
+
+/// What `ember calls --foreign` prints: JSON or text, for one item.
+struct ForeignCalls {
+    json: bool,
+    item: String,
 }
 
 /// What `ember tcb` prints: JSON or text, one module or all.
@@ -442,6 +456,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         }
         "inspect" => inspect(&args[1..]),
         "tcb" => tcb(&args[1..]),
+        "calls" => calls(&args[1..]),
         "test" => test_runner::command(&args[1..]),
         "build" | "run" | "check" => {
             // The source file may sit before or after the flags. Requiring it
@@ -1197,6 +1212,79 @@ fn tcb(args: &[String]) -> Result<ExitCode, String> {
     compile(&path, "check", &options)
 }
 
+/// `[CLI-13]` — `ember calls --foreign <item> [--json] <file.em>`.
+fn calls(args: &[String]) -> Result<ExitCode, String> {
+    let mut item = None;
+    let mut json = false;
+    let mut path = None;
+    let mut rest = args.iter();
+    while let Some(argument) = rest.next() {
+        match argument.as_str() {
+            "--json" => json = true,
+            "--foreign" => item = Some(rest.next().ok_or("`--foreign` needs an item: a function the program names")?.clone()),
+            flag if flag.starts_with('-') => return Err(format!("unknown `ember calls` option `{flag}`")),
+            file if path.is_none() => path = Some(PathBuf::from(file)),
+            extra => return Err(format!("unexpected `ember calls` argument `{extra}`")),
+        }
+    }
+    let item = item.ok_or("`ember calls` needs `--foreign <item>`")?;
+    let path = path.ok_or("`ember calls` needs a source file")?;
+    let options = Options { foreign_calls: Some(ForeignCalls { json, item }), ..Options::default() };
+    compile(&path, "check", &options)
+}
+
+/// `[CLI-13]` — each foreign function `request.item` can reach, with the chain to it and the
+/// contract its declaration states (each fact with its grade, `[TCB-1]`).
+fn print_foreign_calls(
+    input: &Path,
+    bodies: &[ember_mir::Body],
+    types: &TypeTable,
+    modules: &[ember_typeck::LoadedModule],
+    map: &SourceMap,
+    request: &ForeignCalls,
+) -> Result<(), String> {
+    let reach = ember_analysis::effects::foreign_reach(bodies, types, &request.item)
+        .ok_or_else(|| format!("no function named `{}` in {}", request.item, input.display()))?;
+    let module_name = |loaded: &ember_typeck::LoadedModule| {
+        if loaded.path.is_empty() {
+            input.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default()
+        } else {
+            loaded.path.join(".")
+        }
+    };
+    let declarations = foreign::declarations(modules, map, &module_name);
+    let declaration = |index: usize| declarations.iter().find(|decl| decl.qualified == bodies[index].name);
+    if request.json {
+        let reached: Vec<serde_json::Value> = reach.reached.iter().map(|(index, chain)| {
+            serde_json::json!({
+                "function": bodies[*index].name,
+                "symbol": bodies[*index].symbol,
+                "chain": chain,
+                "declaration": declaration(*index).map(|decl| foreign::json(decl, map)),
+            })
+        }).collect();
+        println!("{}", serde_json::json!({
+            "schema": 1,
+            "item": request.item,
+            "foreign": reached,
+            "unknown_callees": reach.unknown_callees,
+        }));
+        return Ok(());
+    }
+    println!("Foreign functions `{}` can reach ({}):", request.item, reach.reached.len());
+    for (index, chain) in &reach.reached {
+        println!("  {}", chain.join(" -> "));
+        match declaration(*index) {
+            Some(decl) => foreign::print(decl, map, "    "),
+            None => println!("    `{}` (C symbol {})", bodies[*index].name, bodies[*index].symbol),
+        }
+    }
+    for function in &reach.unknown_callees {
+        println!("  and what `{function}` calls through a function or `dyn` value, which nothing here names");
+    }
+    Ok(())
+}
+
 /// `[UNS-8]` — one `unsafe:` block or `unsafe fn` of the program: where, which function, its
 /// safety note (`[LEX-23]`), and what its body may reach only through `unsafe`.
 struct UnsafeEntry {
@@ -1404,6 +1492,12 @@ fn print_tcb_report(
         }
     }
     entries.sort_by_key(|entry| (entry.module.clone(), entry.site.file, entry.site.start));
+    // `[FFI-10]`, `[TCB-1]`, `[TCB-3]` — every fact the program's foreign declarations assert.
+    let mut foreign: Vec<foreign::ForeignDecl> = foreign::declarations(modules, map, &module_name)
+        .into_iter()
+        .filter(|decl| request.module.as_ref().is_none_or(|wanted| *wanted == decl.module))
+        .collect();
+    foreign.sort_by(|a, b| a.module.cmp(&b.module));
     if request.json {
         let unsafe_json: Vec<serde_json::Value> = entries
             .iter()
@@ -1419,10 +1513,20 @@ fn print_tcb_report(
                 })
             })
             .collect();
-        println!("{}", serde_json::json!({ "schema": 1, "unsafe": unsafe_json }));
+        let foreign_json: Vec<serde_json::Value> = foreign.iter().map(|decl| foreign::json(decl, map)).collect();
+        println!("{}", serde_json::json!({
+            "schema": 1,
+            "guaranteed": LANGUAGE_GUARANTEES,
+            "unsafe": unsafe_json,
+            "foreign": foreign_json,
+        }));
         return Ok(());
     }
+    // `[TCB-2]` — what the language guarantees, apart from what the program's own `unsafe` and
+    // the foreign code it declares supply; each of those with its source and grade (`[TCB-3]`).
     println!("Trusted base: {}", input.display());
+    println!("Guaranteed by the language, checked by the compiler: {LANGUAGE_GUARANTEES}");
+    println!("Supplied from outside the language, each fact with its grade:");
     println!("Unsafe ({}):", entries.len());
     let mut module = None;
     for entry in &entries {
@@ -1436,7 +1540,7 @@ fn print_tcb_report(
             Some((None, reason)) => format!("SAFETY: {reason}"),
             None => "no safety note (W3012)".to_string(),
         };
-        println!("    {}  {what}  {note}", map.location(entry.site));
+        println!("    {}  {what}  {note}  [asserted]", map.location(entry.site));
         for (name, obligation) in &entry.calls {
             match obligation {
                 Some(obligation) => println!("      calls `{name}`: {obligation}"),
@@ -1444,8 +1548,21 @@ fn print_tcb_report(
             }
         }
     }
+    println!("C FFI ({} declarations):", foreign.len());
+    let mut module = None;
+    for decl in &foreign {
+        if module != Some(&decl.module) {
+            println!("  module {}", decl.module);
+            module = Some(&decl.module);
+        }
+        foreign::print(decl, map, "    ");
+    }
     Ok(())
 }
+
+/// `[TCB-2]` — what the language guarantees of a program's safe code (`[TIER-1]`'s Safe tier).
+const LANGUAGE_GUARANTEES: &str =
+    "memory, null, bounds and lifetime safety, data-race freedom and deterministic destruction of the safe code";
 
 /// `[EFF-16]` — each function of the program with the two facts that together say it has no panic
 /// the effect model knows of: whether it is `@nopanic(explicit)`
@@ -3085,6 +3202,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if let Some(request) = &options.tcb_report {
         report(&sink, &map, options);
         print_tcb_report(input, &bodies, &types, &modules, &map, request)?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    // `[CLI-13]` — the call graph the effects were computed on, before inlining folds it.
+    if let Some(request) = &options.foreign_calls {
+        report(&sink, &map, options);
+        print_foreign_calls(input, &bodies, &types, &modules, &map, request)?;
         return Ok(ExitCode::SUCCESS);
     }
     // A function called from one place is inlined there, so the analyses

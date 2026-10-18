@@ -96,6 +96,91 @@ pub fn comptime_forbidden(bodies: &[Body], types: &TypeTable, root: usize) -> Op
     Some((effect, chain))
 }
 
+/// `[CLI-13]` — the foreign functions the functions named `item` can reach.
+pub struct ForeignReach {
+    /// Each foreign function reached (its body's index), with the chain of names from the item to
+    /// it, shortest first found.
+    pub reached: Vec<(usize, Vec<String>)>,
+    /// The functions on the way that call through a function value or a `dyn` value, whose
+    /// callee nothing here names: what those reach is not in `reached`.
+    pub unknown_callees: Vec<String>,
+}
+
+/// `[CLI-13]` — every foreign function (a body whose contract is a foreign declaration's,
+/// `[EFF-3]`) that a function named `item` can reach over the call graph the effects are computed
+/// on: its calls, the drops it runs, what it hands the runtime to run, and a foreign function whose
+/// value it takes. `None` when no function has that name (`f`, `module.f`, `Type.method`).
+pub fn foreign_reach(bodies: &[Body], types: &TypeTable, item: &str) -> Option<ForeignReach> {
+    let roots: Vec<usize> = (0..bodies.len())
+        .filter(|&index| bodies[index].name == item || display_name(&bodies[index], types) == item)
+        .collect();
+    if roots.is_empty() {
+        return None;
+    }
+    let graph = Graph::new(bodies, types);
+    let index: HashMap<&str, usize> = bodies.iter().enumerate().map(|(i, body)| (body.symbol.as_str(), i)).collect();
+    let mut parent: HashMap<usize, usize> = HashMap::new();
+    let mut seen: HashSet<usize> = roots.iter().copied().collect();
+    let mut queue: VecDeque<usize> = roots.iter().copied().collect();
+    let mut unknown_callees = Vec::new();
+    while let Some(at) = queue.pop_front() {
+        let mut next: Vec<usize> = Vec::new();
+        for site in &graph.sites[at] {
+            match site.origin {
+                Origin::Call(callee) => next.push(callee),
+                Origin::Operation(operation) if operation.starts_with("a call through") => {
+                    let name = display_name(&bodies[at], types);
+                    if !unknown_callees.contains(&name) {
+                        unknown_callees.push(name);
+                    }
+                }
+                Origin::Operation(_) => {}
+            }
+        }
+        // A function value taken here may be called anywhere it goes.
+        for block in &bodies[at].blocks {
+            let operands = block.stmts.iter().flat_map(|stmt| match &stmt.kind {
+                StmtKind::Assign { rvalue, .. } => rvalue_operands(rvalue),
+                _ => Vec::new(),
+            });
+            let arguments = match &block.terminator {
+                Terminator::Call { args, .. } => args.iter().collect(),
+                _ => Vec::new(),
+            };
+            for operand in operands.chain(arguments) {
+                if let Operand::Const(ember_mir::Const::Fn(symbol)) = operand
+                    && let Some(&callee) = index.get(symbol.as_str())
+                {
+                    next.push(callee);
+                }
+            }
+        }
+        for callee in next {
+            if seen.insert(callee) {
+                parent.insert(callee, at);
+                queue.push_back(callee);
+            }
+        }
+    }
+    let mut reached: Vec<(usize, Vec<String>)> = seen
+        .iter()
+        .copied()
+        .filter(|&found| bodies[found].contracts.foreign.is_some())
+        .map(|found| {
+            let mut chain = vec![display_name(&bodies[found], types)];
+            let mut current = found;
+            while let Some(&caller) = parent.get(&current) {
+                chain.push(display_name(&bodies[caller], types));
+                current = caller;
+            }
+            chain.reverse();
+            (found, chain)
+        })
+        .collect();
+    reached.sort_by(|a, b| a.1.len().cmp(&b.1.len()).then_with(|| a.1.cmp(&b.1)));
+    Some(ForeignReach { reached, unknown_callees })
+}
+
 /// `[PHIL-2]`, `[CLO-10]` — one place a function of the program allocates.
 pub struct AllocationSite {
     /// The function, as the program names it.
@@ -659,10 +744,15 @@ impl SiteBuilder<'_> {
         if body.is_unsafe {
             own(Effects::UNSAFE, body.span, "an `unsafe fn`", &mut sites);
         }
-        // `[EFF-3]`, `[DET-2]` — a foreign function carries `FFI`, and is `Nondet` unless its
-        // declaration says `@ffi(deterministic)`, which is not built yet.
-        if body.is_extern_declaration || (body.abi.is_some() && body.blocks.is_empty()) {
-            own(Effects::FFI | Effects::NONDET, body.span, "a foreign function", &mut sites);
+        // `[EFF-3]`, `[DET-2]` — a foreign function carries what its contract states, `FFI` at
+        // least; every effect when it states none.
+        if let Some(declared) = body.contracts.foreign {
+            let operation = if declared.contains(Effects(Effects::ALL.0 & !Effects::NONDET.0)) {
+                "a foreign function whose contract states no effects (`@ffi(effects=[…])`)"
+            } else {
+                "a foreign function, by the effects its contract states"
+            };
+            own(declared, body.span, operation, &mut sites);
         }
         // `[DET-2]` — floating-point contraction and every `@fastmath` relaxation.
         if body.fp != ember_types::FpMode::Strict {
@@ -1075,9 +1165,7 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         | B::MaybeUninitAssumeInit { .. } | B::MaybeUninitSpanAssumeInit { .. } | B::MaybeUninitWriteAt { .. } => {
             (Effects::UNSAFE, "an `unsafe` operation")
         }
-        B::ForeignStaticRead { .. } | B::ForeignStaticWrite { .. } | B::ForeignStaticFieldWrite { .. } => {
-            (Effects::FFI | Effects::UNSAFE, "a foreign static")
-        }
+        B::ForeignStatic { .. } => (Effects::FFI | Effects::UNSAFE, "a foreign static"),
         // `[DET-2]` — a transcendental function from the platform library.
         B::FloatPow => (Effects::NONDET, "the platform's `pow`"),
         B::FloatLib(lib) => match lib {
