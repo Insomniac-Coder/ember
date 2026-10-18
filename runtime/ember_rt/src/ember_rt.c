@@ -10175,6 +10175,10 @@ static bool rl_plan(const ember_rl_manifest* next, bool first, bool checkpoint, 
             } else if ((slot->flags & EMBER_RL_FN_ADDRESS) != 0) {
                 rl_report(report, cap, "refused: `%s` was removed, but its address may be held, so its thunk stays reachable [HR-7]\n", slot->name);
                 refused = true;
+            } else if (checkpoint) {
+                /* The frames live at a checkpoint run the old code on, which may call it. */
+                rl_report(report, cap, "refused: `%s` was removed while frames of the old code, which may call it, are live at this checkpoint [HR-7]\n", slot->name);
+                refused = true;
             }
             continue;
         }

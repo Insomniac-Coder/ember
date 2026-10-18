@@ -809,8 +809,9 @@ fn explain_predicts_against_the_running_program() {
 }
 
 /// `[HR-7]` — a function an edit removes keeps its thunk, which would reach a stub; while a value
-/// of the function may be held (here by `main`'s own frame), the thunk is reachable, so the reload
-/// is refused, naming it.
+/// of the function may be held (here by `main`'s own frame), or while old code that may call it
+/// runs on (the frames live at a checkpoint), the thunk is reachable, so the reload is refused,
+/// naming it.
 #[test]
 fn removing_a_function_whose_address_is_held_is_refused() {
     let v1 = "import std.hot\n\nfn helper(x: int) -> int:\n    return x + 1\n\nfn version() -> int:\n    return 1\n\n\
@@ -820,6 +821,15 @@ fn removing_a_function_whose_address_is_held_is_refused() {
     assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
     assert_eq!(run.stdout, "2\n1\n", "{}", run.stderr);
     let named = format!("`{}` was removed, but its address may be held", ember_branding::mangled("helper"));
+    assert!(run.stderr.contains(&named), "{}", run.stderr);
+
+    // At a checkpoint the old `main` runs on, and calls it after the checkpoint.
+    let v1 = "import std.hot\n\nfn helper(x: int) -> int:\n    return x + 1\n\nfn main():\n    hot.checkpoint()\n    println(helper(1))\n";
+    let v2 = "import std.hot\n\nfn main():\n    hot.checkpoint()\n    println(0)\n";
+    let (run, reloads) = reload_run("reload-removed-called", RELOAD_ALL, v1, &[v2]);
+    assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
+    assert_eq!(run.stdout, "2\n", "{}", run.stderr);
+    let named = format!("`{}` was removed while frames of the old code, which may call it, are live", ember_branding::mangled("helper"));
     assert!(run.stderr.contains(&named), "{}", run.stderr);
 }
 
