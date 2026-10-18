@@ -421,6 +421,33 @@ mod tests {
     /// runtime's storage and the new body reads it; `[HR-4]` the old image's code still runs;
     /// `[HR-30]`, `[HR-32]` the host contract's stats count the reload and carry the build's time;
     /// `[HR-7]` a removed function's thunk reaches a stub that panics naming it.
+    /// `[HR-42a]` — the depth counter is not a lock: entering Ember code on a registered thread is
+    /// one relaxed increment of the thread's own counter and one acquire fence, and leaving is one
+    /// release decrement; nothing in either waits, takes a lock or looks at another thread.
+    #[test]
+    fn entering_ember_code_is_one_increment_and_one_fence() {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../runtime")
+            .join(format!("{}_rt", ember_branding::SYMBOL_PREFIX))
+            .join("src")
+            .join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX));
+        let text = std::fs::read_to_string(source).expect("the runtime source is readable").replace("\r\n", "\n");
+        let body = |name: &str| -> String {
+            let start = text.find(&format!("void {}{name}(void) {{\n", ember_branding::RUNTIME_PREFIX)).expect("the function is defined");
+            let end = start + text[start..].find("\n}\n").expect("the function ends");
+            text[start..end].to_string()
+        };
+        let enter = body("reload_enter");
+        // The registration branch runs once per thread, on its first entry ([HR-3a]).
+        let fast = &enter[enter.find("    RL_ADD_RELAXED").expect("one relaxed increment")..];
+        assert_eq!(fast.trim(), "RL_ADD_RELAXED(&self->depth, 1u);\n    RL_FENCE_ACQUIRE();", "{enter}");
+        let leave = body("reload_leave");
+        assert!(leave.ends_with("    RL_SUB_RELEASE(&g_rl_self->depth, 1u);"), "{leave}");
+        for word in ["lock", "wait", "Sleep", "mutex", "for ("] {
+            assert!(!enter.contains(word) && !leave.contains(word), "`{word}` in:\n{enter}\n{leave}");
+        }
+    }
+
     #[test]
     fn the_reload_protocol_from_a_c_host() {
         let dir = std::env::temp_dir().join(format!("{}-reload-protocol-{}", ember_branding::CLI_NAME, std::process::id()));

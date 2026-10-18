@@ -412,6 +412,23 @@ fn host_run(label: &str, source: &str, edits: &[&str], frames: u32) -> Run {
         let reloaded = ember(&["build", "--reload", &file_arg, "--out-dir", &out_arg], &root);
         assert_eq!(reloaded.exit, 0, "the reload build failed:\n{}", reloaded.stderr);
     }
+    let program = link_host(&package, &out, FRAME_HOST);
+    quiet_errors();
+    let mut command = Command::new(&program);
+    command.arg(bin(&out)).arg(frames.to_string()).env("LD_LIBRARY_PATH", bin(&out));
+    let output = ember_build::output_started(&mut command).expect("the host runs");
+    drop(package);
+    Run {
+        stdout: String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        stderr: String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+        exit: output.status.code().unwrap_or(-1),
+    }
+}
+
+/// Link the C host `host` (written with `RT_` for the runtime's prefix) against the shared runtime,
+/// into the package's output directory.
+fn link_host(package: &Path, out: &Path, host: &str) -> PathBuf {
+    let root = workspace_root();
     let runtime = root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
     let includes = vec![runtime.join("include")];
     let requested = std::env::var(ember_branding::cc_var()).ok();
@@ -423,27 +440,18 @@ fn host_run(label: &str, source: &str, edits: &[&str], frames: u32) -> Run {
         ember_build::Profile::Debug,
         true,
         &ember_build::cache_root(),
-        &bin(&out),
+        &bin(out),
     )
     .expect("the shared runtime builds");
     let source = package.join("frame_host.c");
-    std::fs::write(&source, FRAME_HOST.replace("RT_RELOAD", &format!("{}_RELOAD", ember_branding::SYMBOL_PREFIX.to_uppercase())).replace("RT_", ember_branding::RUNTIME_PREFIX))
+    std::fs::write(&source, host.replace("RT_RELOAD", &format!("{}_RELOAD", ember_branding::SYMBOL_PREFIX.to_uppercase())).replace("RT_", ember_branding::RUNTIME_PREFIX))
         .expect("the host is writable");
-    let program = bin(&out).join(if cfg!(windows) { "frame_host.exe" } else { "frame_host" });
+    let program = bin(out).join(if cfg!(windows) { "frame_host.exe" } else { "frame_host" });
     let objects = package.join("obj");
     std::fs::create_dir_all(&objects).expect("the object directory is creatable");
     ember_build::reload::link_host_source(&toolchain, &source, &includes, ember_build::Profile::Debug, &shared, &objects, &program)
         .expect("the host links");
-    quiet_errors();
-    let mut command = Command::new(&program);
-    command.arg(bin(&out)).arg(frames.to_string()).env("LD_LIBRARY_PATH", bin(&out));
-    let output = ember_build::output_started(&mut command).expect("the host runs");
-    drop(package);
-    Run {
-        stdout: String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
-        stderr: String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
-        exit: output.status.code().unwrap_or(-1),
-    }
+    program
 }
 
 const PARTICLES: &str = "from std.sync import Atomic, Mutex\n\n@sync\nclass Particle:\n    x: Atomic[int] = Atomic(0)\n    step: int = 1\n\n\
@@ -532,7 +540,7 @@ fn enum_values_migrate_by_variant_name() {
     let removed = v1.replace("enum Mode:\n    Slow\n    Fast\n", "enum Mode:\n    Slow\n").replace("mode: Mode = Mode.Fast", "mode: Mode = Mode.Slow")
         .replace("        Mode.Fast:\n            return 10\n", "");
     let run = host_run("reload-enum-removed", &v1, &[&removed], 2);
-    assert!(run.stdout.contains("holds a variant of `Mode` that was removed"), "{}", run.stdout);
+    assert!(run.stdout.contains("variant `Mode.Fast` was removed while 3 values of it live (field `mode` of `Particle`)"), "{}", run.stdout);
     assert!(run.stdout.ends_with("60\n"), "the old code did not run on: {}", run.stdout);
 }
 
@@ -827,6 +835,156 @@ fn weak_handles_follow_a_moved_instance() {
     let v2 = v1.replace("    step: int = 1\n", "    step: int = 1\n    bonus: int = 100\n");
     let run = host_run("reload-weak", &v1, &[&v2], 3);
     assert_eq!(run.stdout, "3003\napplied, 3 migrated\n3006\n3009\n", "{}", run.stderr);
+}
+
+/// The benchmark's host: `FRAME_HOST` running until a frame returns `argv[2]` (or five minutes
+/// pass), printing a frame's value only when it changes and each applied reload's phases.
+const BENCH_HOST: &str = r#"#include "ember_rt.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#if defined(_WIN32)
+#define EXTENSION "dll"
+#else
+#define EXTENSION "so"
+#endif
+
+int main(int argc, char** argv) {
+    if (argc < 3) {
+        return 100;
+    }
+    char image[1200];
+    char announce[1200];
+    snprintf(image, sizeof image, "%s/main.image.0.%s", argv[1], EXTENSION);
+    snprintf(announce, sizeof announce, "%s/main.reload", argv[1]);
+    RT_reload_config config = { sizeof config, image, announce, 1 };
+    if (RT_reload_init(&config) != 0) {
+        return 101;
+    }
+    RT_rt_config runtime = RT_rt_config_default();
+    RT_rt_init(&runtime);
+    long long (*frame)(long long) = (long long (*)(long long))RT_reload_export("game_frame");
+    if (frame == NULL) {
+        return 102;
+    }
+    long long stop = atoll(argv[2]);
+    long long last = -1;
+    time_t started = time(NULL);
+    for (long long turn = 0; time(NULL) - started < 300; ++turn) {
+        long long value = frame(turn);
+        if (value != last) {
+            printf("frame %lld\n", value);
+            fflush(stdout);
+            last = value;
+            if (value == stop) {
+                return 0;
+            }
+        }
+        int result = RT_reload_poll();
+        const RT_reload_timings* stats = RT_reload_stats();
+        if (result == RT_RELOAD_APPLIED) {
+            printf("applied: build %.1f ms, load %.1f ms, plan %.1f ms, prepare %.1f ms, commit %.1f ms, reclaim %.1f ms, %llu migrated\n",
+                   stats->compile_ns / 1e6, stats->load_ns / 1e6, stats->plan_ns / 1e6, stats->prepare_ns / 1e6,
+                   stats->commit_ns / 1e6, stats->reclaim_ns / 1e6, (unsigned long long)stats->instances_migrated);
+        } else if (result == RT_RELOAD_REFUSED || result == RT_RELOAD_FAILED) {
+            printf("refused:\n%s", stats->report);
+        }
+        fflush(stdout);
+    }
+    return 103;
+}
+"#;
+
+/// The benchmark's program: 10,000 live `Particle`s, each moved on by every frame, and a frame
+/// value saying which edit runs (`tag`) and that every instance is still there.
+const BENCH_WORLD: &str = "from std.sync import Atomic, Mutex\n\n@sync\nclass Particle:\n    x: Atomic[int] = Atomic(0)\n    step: int = 1\n\n\
+    static WORLD: Mutex[Array[Particle]] = Mutex([])\n\nfn tag(p: Particle) -> int:\n    return 1\n\n\
+    @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    with world = WORLD.lock():\n        \
+    if world.len() == 0:\n            for k in 0..10000:\n                world.push(Particle())\n        \
+    for p in world:\n            p.x.fetch_add(p.step)\n        return tag(world[0]) * 100000 + world.len()\n\nfn main():\n    pass\n";
+
+/// `[BEN-8]` — the end-to-end reload benchmark. A host runs a program holding 10,000 live
+/// instances; three edits — a function body, a field added with a default, and a field whose type
+/// changes through `migrate_from` — are each timed from the save (the source written) through
+/// `ember build --reload` to the host's first frame running the new code. The figures, and the
+/// runtime's split of each reload (`[HR-32]`), are printed with the configuration (`--nocapture`
+/// shows them); `[HR-1]`'s one-second budget is for `bench/bigpkg` on the reference machine, so it
+/// is not asserted here.
+#[test]
+fn the_reload_benchmark_times_three_edits() {
+    use std::io::BufRead;
+    let body = BENCH_WORLD.replace("fn tag(p: Particle) -> int:\n    return 1\n", "fn tag(p: Particle) -> int:\n    return 2\n");
+    let field = body
+        .replace("    step: int = 1\n", "    step: int = 1\n    bonus: int = 3\n")
+        .replace("fn tag(p: Particle) -> int:\n    return 2\n", "fn tag(p: Particle) -> int:\n    return p.bonus\n");
+    let retyped = field
+        .replace("from std.sync import Atomic, Mutex\n", "from std.sync import Atomic, Mutex\nfrom std.hot import ReloadError\n")
+        .replace(
+            "    step: int = 1\n    bonus: int = 3\n",
+            "    step: f64 = 1.0\n    bonus: int = 3\n\n    fn init(self, x: int, step: f64, bonus: int):\n        self.x = Atomic(x)\n        \
+             self.step = step\n        self.bonus = bonus\n\n    fn migrate_from(old: ref OldSelf) -> Result[Self, ReloadError]:\n        \
+             return Ok(Particle(old.x.load(), old.step as f64, old.bonus + 1))\n",
+        )
+        .replace("world.push(Particle())", "world.push(Particle(0, 1.0, 3))")
+        .replace("p.x.fetch_add(p.step)", "p.x.fetch_add(1)");
+    let edits = [("a function body", body, 210000), ("a field added with a default", field, 310000), ("a field retyped through `migrate_from`", retyped, 410000)];
+
+    let root = workspace_root();
+    let (package, file) = package("reload-benchmark", RELOAD_ALL, BENCH_WORLD);
+    let out = package.join("target");
+    let out_arg = out.to_string_lossy().into_owned();
+    let file_arg = file.to_string_lossy().into_owned();
+    let built = ember(&["build", &file_arg, "--out-dir", &out_arg], &root);
+    assert_eq!(built.exit, 0, "the first build failed:\n{}", built.stderr);
+    let program = link_host(&package, &out, BENCH_HOST);
+    quiet_errors();
+    let mut child = Command::new(&program)
+        .arg(bin(&out))
+        .arg("410000")
+        .env("LD_LIBRARY_PATH", bin(&out))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("the host starts");
+    let (sender, lines) = std::sync::mpsc::channel();
+    let stdout = child.stdout.take().expect("piped");
+    std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
+            if sender.send((true, line)).is_err() {
+                return;
+            }
+        }
+    });
+    let mut seen = String::new();
+    let mut figures = Vec::new();
+    let mut running = wait_for(&lines, true, "frame 110000", &mut seen);
+    for (what, source, value) in &edits {
+        if !running {
+            break;
+        }
+        let saved = std::time::Instant::now();
+        std::fs::write(&file, source).expect("the edit is writable");
+        let reloaded = ember(&["build", "--reload", &file_arg, "--out-dir", &out_arg], &root);
+        assert_eq!(reloaded.exit, 0, "the reload build of {what} failed:\n{}", reloaded.stderr);
+        let before = seen.len();
+        running = wait_for(&lines, true, &format!("frame {value}"), &mut seen);
+        let phases = seen[before..].lines().find(|line| line.contains("applied:")).unwrap_or("").trim_start_matches("out: ").to_string();
+        figures.push((what, saved.elapsed(), phases));
+    }
+    if !running {
+        let _ = child.kill();
+    }
+    let status = child.wait().expect("the host ends");
+    drop(package);
+    assert!(running, "an edit never ran:\n{seen}");
+    assert!(status.success(), "{status:?}\n{seen}");
+    assert!(!seen.contains("refused"), "{seen}");
+    eprintln!("[BEN-8] save to the new code running, 10,000 live instances, debug profile, {}:", std::env::consts::OS);
+    for (what, elapsed, phases) in &figures {
+        eprintln!("  {what}: {:.0} ms ({phases})", elapsed.as_secs_f64() * 1000.0);
+    }
+    assert_eq!(figures.len(), 3);
+    assert!(figures[1].2.ends_with("10000 migrated") && figures[2].2.ends_with("10000 migrated"), "{figures:?}");
 }
 
 /// `[HR-29]` — with reload on, one shared runtime serves every image in the process: a reloadable

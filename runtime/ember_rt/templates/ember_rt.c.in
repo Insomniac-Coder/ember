@@ -9788,8 +9788,11 @@ static bool rl_plan_instances(const ember_rl_manifest* next, bool checkpoint, ch
         rl_report(report, cap, "refused: out of memory planning the reload\n");
         return false;
     }
-    /* [HR-11a] A unit enum's values migrate by variant name; one that holds a removed variant
-     * cannot. */
+    /* [HR-11a] A unit enum's values migrate by variant name; [HR-14] a variant removed while values
+     * hold it is refused, naming the variant and how many hold it (each of the first eight such
+     * variants, field and type). */
+    struct { const ember_rl_type* to; uint32_t field; uint64_t discriminant; } named[8];
+    size_t named_count = 0;
     for (size_t index = 0; index < g_rl_moves.count; ++index) {
         rl_move* move = &g_rl_moves.moves[index];
         if (move->to->migrate != NULL) {
@@ -9798,14 +9801,38 @@ static bool rl_plan_instances(const ember_rl_manifest* next, bool checkpoint, ch
         for (uint32_t at = 0; at < move->to->field_count; ++at) {
             const ember_rl_field* field = &move->to->fields[at];
             const ember_rl_field* from = rl_source_field(move->from, field);
-            if (from != NULL && rl_field_route(field, from) == RL_VARIANT) {
-                uint64_t discriminant = rl_read_unsigned((unsigned char*)move->old + from->offset, from->size);
-                if (rl_variant_for(rl_old_schema(from->type_name), rl_new_schema(next, field->type_name), discriminant) == NULL) {
-                    rl_report(report, cap, "refused: field `%s` of a `%s` holds a variant of `%s` that was removed [HR-14]\n",
-                              field->name, move->to->name, field->type_name);
-                    fine = false;
-                }
+            if (from == NULL || rl_field_route(field, from) != RL_VARIANT) {
+                continue;
             }
+            const ember_rl_type* was = rl_old_schema(from->type_name);
+            uint64_t discriminant = rl_read_unsigned((unsigned char*)move->old + from->offset, from->size);
+            if (rl_variant_for(was, rl_new_schema(next, field->type_name), discriminant) != NULL) {
+                continue;
+            }
+            fine = false;
+            bool reported = named_count == sizeof named / sizeof named[0];
+            for (size_t k = 0; k < named_count; ++k) {
+                reported = reported || (named[k].to == move->to && named[k].field == at && named[k].discriminant == discriminant);
+            }
+            if (reported) {
+                continue;
+            }
+            named[named_count].to = move->to;
+            named[named_count].field = at;
+            named[named_count].discriminant = discriminant;
+            named_count += 1;
+            size_t holding = 0;
+            for (size_t other = index; other < g_rl_moves.count; ++other) {
+                const rl_move* also = &g_rl_moves.moves[other];
+                holding += also->to == move->to
+                    && rl_read_unsigned((unsigned char*)also->old + from->offset, from->size) == discriminant;
+            }
+            const char* variant = "?";
+            for (uint32_t k = 0; k < was->variant_count; ++k) {
+                variant = was->variants[k].discriminant == discriminant ? was->variants[k].name : variant;
+            }
+            rl_report(report, cap, "refused: variant `%s.%s` was removed while %zu value%s of it live (field `%s` of `%s`) [HR-14]\n",
+                      field->type_name, variant, holding, holding == 1 ? "" : "s", field->name, move->to->name);
         }
     }
     if (!fine) {
