@@ -48,6 +48,57 @@ pub struct Output {
     /// elided-check entries are added when an elision pass provides the
     /// required proof and reason; unsupported cases remain emitted checks.
     pub safety_json: String,
+    /// `[FFI-37]` — for `ember test --instrument-ffi`: the instrumentation's own C unit, each
+    /// foreign function (its name) and each call site the program makes to one (the function's
+    /// index and the place).
+    pub ffi_instrument: Option<FfiInstrumentOutput>,
+}
+
+/// `[FFI-37]`, `[FFI-37b]` — what an instrumented test binary counts.
+pub struct FfiInstrumentOutput {
+    pub source: String,
+    pub functions: Vec<String>,
+    pub sites: Vec<(u32, String)>,
+}
+
+/// `[FFI-37]` — the foreign functions of an instrumented program: each callee symbol's index, each
+/// function's name and the C symbol whose address names its library, and the call sites so far.
+struct FfiInstrument {
+    index: BTreeMap<String, u32>,
+    functions: Vec<(String, String)>,
+    sites: std::cell::RefCell<Vec<(u32, String)>>,
+}
+
+impl FfiInstrument {
+    fn new(bodies: &[Body]) -> FfiInstrument {
+        let mut index = BTreeMap::new();
+        let mut functions = Vec::new();
+        for body in bodies.iter().filter(|body| body.contracts.foreign.is_some()) {
+            let address = match &body.ffi_counted {
+                Some(counted) => counted.foreign_symbol.clone(),
+                None => body.symbol.clone(),
+            };
+            index.insert(body.symbol.clone(), functions.len() as u32);
+            functions.push((body.name.clone(), address));
+        }
+        FfiInstrument { index, functions, sites: Default::default() }
+    }
+}
+
+/// `[FFI-37a]` — the C library's entry points the instrumentation defines off Windows, which the
+/// link keeps (a section collector would drop one the program itself never calls).
+pub const FFI_INTERPOSED: &[&str] = &[
+    "malloc", "calloc", "realloc", "aligned_alloc", "posix_memalign", "pthread_mutex_lock",
+    "pthread_rwlock_rdlock", "pthread_rwlock_wrlock", "pthread_cond_wait", "pthread_cond_timedwait",
+    "pthread_join", "nanosleep", "usleep", "sleep", "poll", "read", "write", "fopen", "fread", "fwrite",
+    "fputs", "puts", "fflush",
+];
+
+/// `[FFI-37]` — the instrumentation unit, for this build's runtime prefix.
+fn ffi_instrument_source() -> String {
+    include_str!("ffi_instrument.c")
+        .replace("@RT@", RT)
+        .replace("@PREFIX@", &ember_branding::SYMBOL_PREFIX.to_uppercase())
 }
 
 pub struct HeaderOutput {
@@ -257,7 +308,7 @@ pub struct ComptimeRoot {
 /// and prints its value (`ComptimeRoot`), within the step and heap limits its
 /// second and third arguments give.
 pub fn emit_comptime(mir: VerifiedMir<'_>, map: &SourceMap, roots: Vec<ComptimeRoot>, for_msvc: bool) -> Output {
-    emit_with(mir, map, "comptime", "comptime", false, false, false, for_msvc, Some(roots), None)
+    emit_with(mir, map, "comptime", "comptime", false, false, false, for_msvc, Some(roots), None, false)
 }
 
 /// `[TST-3]` — the line a test binary writes to standard error when its test
@@ -285,8 +336,9 @@ pub fn emit(
     library_mode: bool,
     for_msvc: bool,
     tests: Option<Vec<String>>,
+    instrument_ffi: bool,
 ) -> Output {
-    emit_with(mir, map, module_name, package_name, has_main, leak_check, library_mode, for_msvc, None, tests)
+    emit_with(mir, map, module_name, package_name, has_main, leak_check, library_mode, for_msvc, None, tests, instrument_ffi)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -301,6 +353,7 @@ fn emit_with(
     for_msvc: bool,
     comptime: Option<Vec<ComptimeRoot>>,
     tests: Option<Vec<String>>,
+    instrument_ffi: bool,
 ) -> Output {
     let bodies = mir.bodies();
     let types = mir.types();
@@ -388,6 +441,7 @@ fn emit_with(
         job_closures: BTreeSet::new(),
         comptime: None,
         tests: None,
+        ffi_instrument: None,
         statement_span: std::cell::Cell::new(ember_span::Span::DUMMY),
         gives_values_to_c: false,
         foreign_statics: std::cell::RefCell::new(BTreeMap::new()),
@@ -456,6 +510,9 @@ fn emit_with(
     let mut emitter = make(None);
     emitter.comptime = comptime.clone();
     emitter.tests = tests;
+    if instrument_ffi {
+        emitter.ffi_instrument = Some(FfiInstrument::new(bodies));
+    }
     write(&mut emitter);
     check_split_views(&emitter.split_views, &emitter.out);
     let header_source = header::render(&emitter, bodies, package_name);
@@ -468,12 +525,34 @@ fn emit_with(
         direct_calls.append(&mut unit.direct_calls.take());
         relaxed_units.push((mode, unit.out));
     }
+    // `[FFI-37]` — the program's table of foreign functions (the address of each one it calls,
+    // which names its library) and how many call sites it counts.
+    let ffi_instrument = emitter.ffi_instrument.take().map(|instrument| {
+        let sites = instrument.sites.take();
+        let called: BTreeSet<u32> = sites.iter().map(|(function, _)| *function).collect();
+        let entries: Vec<String> = instrument.functions.iter().enumerate().map(|(index, (name, address))| {
+            let address = if called.contains(&(index as u32)) { format!("(const void*)&{address}") } else { "0".to_string() };
+            format!("    {{ {}, {address} }},", c_string_literal(name))
+        }).collect();
+        emitter.out.push_str(&format!(
+            "\n/* [FFI-37] the foreign functions an instrumented test counts */\ntypedef struct {RT}ffi_function {{ const char* name; const void* address; }} {RT}ffi_function;\nconst {RT}ffi_function {RT}ffi_functions[] = {{\n{}\n}};\nconst uint32_t {RT}ffi_function_count = {}u;\nconst uint32_t {RT}ffi_site_count = {}u;\n",
+            if entries.is_empty() { "    { 0, 0 },".to_string() } else { entries.join("\n") },
+            instrument.functions.len(),
+            sites.len(),
+        ));
+        FfiInstrumentOutput {
+            source: ffi_instrument_source(),
+            functions: instrument.functions.into_iter().map(|(name, _)| name).collect(),
+            sites,
+        }
+    });
     Output {
         c_source: emitter.out,
         relaxed_units,
         optimization_report: direct_calls.into_iter().map(|(_, _, line)| line).collect(),
         header_source,
         safety_json: safety_json(bodies, map),
+        ffi_instrument,
     }
 }
 
@@ -591,6 +670,8 @@ struct Emitter<'a> {
     /// `[TST-3]` — the symbols of the `@test` functions, in the runner's
     /// order, when this is a test binary.
     tests: Option<Vec<String>>,
+    /// `[FFI-37]` — when the test binary is instrumented: its foreign functions and call sites.
+    ffi_instrument: Option<FfiInstrument>,
     types: &'a TypeTable,
     map: &'a SourceMap,
     out: String,
@@ -4860,6 +4941,13 @@ impl Emitter<'_> {
             return;
         }
         self.line("/* prototypes */");
+        // `[FFI-37]` — the instrumentation unit's entry points.
+        if self.ffi_instrument.is_some() {
+            self.line(&format!("uint32_t {RT}ffi_enter(uint32_t function, uint32_t site);"));
+            self.line(&format!("void {RT}ffi_leave(uint32_t previous);"));
+            self.line(&format!("void {RT}ffi_instrument_begin(void);"));
+            self.line(&format!("void {RT}ffi_instrument_end(void);"));
+        }
         for body in bodies {
             if body.ffi_counted.is_some() {
                 self.line(&format!("extern {};", self.ffi_counted_signature(body)));
@@ -6871,6 +6959,21 @@ impl Emitter<'_> {
                 for line in retains {
                     self.line(&format!("    {line}"));
                 }
+                // `[FFI-37]`, `[FFI-37b]` — an instrumented test counts each call to a foreign
+                // function at its site, and what the call reaches while it runs.
+                let instrumented = match (func, &self.ffi_instrument) {
+                    (FuncRef::Direct { symbol, .. }, Some(instrument)) if self.unit.is_none() => {
+                        instrument.index.get(symbol.as_str()).map(|&function| {
+                            let mut sites = instrument.sites.borrow_mut();
+                            sites.push((function, self.map.location(body.blocks[index].terminator_span)));
+                            (function, sites.len() - 1)
+                        })
+                    }
+                    _ => None,
+                };
+                if let Some((function, site)) = instrumented {
+                    self.line(&format!("    {{ uint32_t {RT}ffi_previous = {RT}ffi_enter({function}u, {site}u);"));
+                }
                 // `[STD-10]` — `input` panics at end of input, at its own call.
                 let call = if matches!(func, FuncRef::Builtin { which: Builtin::Input, .. }) {
                     let location = self.location(body.blocks[index].terminator_span);
@@ -6890,6 +6993,9 @@ impl Emitter<'_> {
                     let dest_text = self.place_in(dest, body);
                     self.line(&format!("    {dest_text} = {call};"));
                     self.set_view_pointer(dest);
+                }
+                if instrumented.is_some() {
+                    self.line(&format!("    {RT}ffi_leave({RT}ffi_previous); }}"));
                 }
                 self.emit_next(next.0 as usize, index);
             }
@@ -10016,12 +10122,18 @@ impl Emitter<'_> {
         if leak_check {
             self.emit_debug_edge_registrations();
         }
+        if self.ffi_instrument.is_some() {
+            self.line(&format!("    {RT}ffi_instrument_begin();"));
+        }
         self.line("    switch (which) {");
         for (index, symbol) in tests.iter().enumerate() {
             self.line(&format!("    case {index}: {symbol}(); break;"));
         }
         self.line("    default: break;");
         self.line("    }");
+        if self.ffi_instrument.is_some() {
+            self.line(&format!("    {RT}ffi_instrument_end();"));
+        }
         self.line("    fflush(stdout);");
         self.line(&format!("    fputs(\"{returned}\\n\", stderr);"));
         self.line(&format!("    {RT}rt_shutdown();"));
@@ -11999,6 +12111,7 @@ mod string_descriptor_view_parts_tests {
             job_closures: BTreeSet::new(),
             comptime: None,
             tests: None,
+            ffi_instrument: None,
             types,
             map,
             usize_ty,

@@ -132,8 +132,310 @@ pub fn json(decl: &ForeignDecl, map: &SourceMap) -> serde_json::Value {
     })
 }
 
-/// The facts of one declaration, as `ember tcb` and `ember calls --foreign` print them.
-pub fn print(decl: &ForeignDecl, map: &SourceMap, indent: &str) {
+// -- `ember test --instrument-ffi` ([FFI-37]–[FFI-37d], [TCB-5], [TCB-6]) ------------------------
+
+/// `[TCB-1]` — where evidence records live when the manifest's `[ffi] evidence` names nowhere.
+pub fn default_evidence_dir() -> String {
+    format!(".{}/ffi-evidence", ember_branding::SYMBOL_PREFIX)
+}
+
+/// The variable an instrumented test binary reads for the file its counts go to.
+pub fn evidence_variable() -> String {
+    format!("{}_FFI_EVIDENCE", ember_branding::SYMBOL_PREFIX.to_uppercase())
+}
+
+/// `[FFI-37d]` — the effect facts instrumentation can grade, by the bit the instrumentation
+/// records each with, and the effect they are.
+const EFFECT_FACTS: [(u32, &str, ember_hir::Effects); 4] = [
+    (1, "Alloc", ember_hir::Effects::ALLOC),
+    (2, "Lock", ember_hir::Effects::LOCK),
+    (4, "Block", ember_hir::Effects::BLOCK),
+    (8, "Io", ember_hir::Effects::IO),
+];
+
+/// One foreign function of an instrumented test binary: its name, the effect kinds its
+/// `@ffi(effects=[…])` states it has (`None` when it states none: then it has every effect, and
+/// no absence to test), and its declaration.
+struct InstrumentedFunction {
+    name: String,
+    declared: Option<u32>,
+    span: Span,
+}
+
+/// `[FFI-37]` — what an instrumented test binary counts, with what the program declares of it.
+pub struct InstrumentedRun {
+    functions: Vec<InstrumentedFunction>,
+    sites: Vec<(u32, String)>,
+    dir: std::path::PathBuf,
+    package: String,
+    exe: std::path::PathBuf,
+    toolchain: String,
+}
+
+impl InstrumentedRun {
+    /// The functions in the order the code generator numbered them: the program's bodies that
+    /// are foreign declarations.
+    pub fn new(
+        instrument: &ember_codegen_c::FfiInstrumentOutput,
+        bodies: &[ember_mir::Body],
+        dir: std::path::PathBuf,
+        package: &str,
+        exe: &std::path::Path,
+        toolchain: String,
+    ) -> InstrumentedRun {
+        let functions = bodies.iter().filter_map(|body| {
+            let effects = body.contracts.foreign?;
+            let stated = !effects.contains(ember_hir::Effects(ember_hir::Effects::ALL.0 & !ember_hir::Effects::NONDET.0));
+            let declared = stated.then(|| EFFECT_FACTS.iter().filter(|(_, _, effect)| effects.contains(*effect)).map(|(bit, _, _)| bit).sum());
+            Some(InstrumentedFunction { name: body.name.clone(), declared, span: body.span })
+        }).collect::<Vec<_>>();
+        debug_assert_eq!(functions.len(), instrument.functions.len());
+        InstrumentedRun { functions, sites: instrument.sites.clone(), dir, package: package.to_string(), exe: exe.to_path_buf(), toolchain }
+    }
+}
+
+/// What the test runs observed, merged.
+#[derive(Default)]
+struct Observed {
+    intercepted: String,
+    calls: Vec<u64>,
+    reached: Vec<u32>,
+    module: Vec<String>,
+    site_hits: Vec<u64>,
+}
+
+fn read_counts(files: &[std::path::PathBuf], functions: usize, sites: usize) -> Observed {
+    let mut observed = Observed { calls: vec![0; functions], reached: vec![0; functions], module: vec![String::new(); functions], site_hits: vec![0; sites], ..Observed::default() };
+    for file in files {
+        let Ok(text) = std::fs::read_to_string(file) else { continue };
+        for line in text.lines() {
+            if let Some(rest) = line.strip_prefix("intercepted ") {
+                observed.intercepted = rest.to_string();
+            } else if let Some(rest) = line.strip_prefix("function ") {
+                let mut parts = rest.splitn(4, ' ');
+                let (Some(index), Some(calls), Some(reached)) = (parts.next(), parts.next(), parts.next()) else { continue };
+                let (Ok(index), Ok(calls), Ok(reached)) = (index.parse::<usize>(), calls.parse::<u64>(), reached.parse::<u32>()) else { continue };
+                if index < functions {
+                    observed.calls[index] += calls;
+                    observed.reached[index] |= reached;
+                    if let Some(module) = parts.next().filter(|module| !module.is_empty()) {
+                        observed.module[index] = module.to_string();
+                    }
+                }
+            } else if let Some(rest) = line.strip_prefix("site ") {
+                let mut parts = rest.split(' ');
+                if let (Some(Ok(index)), Some(Ok(hits))) = (parts.next().map(str::parse::<usize>), parts.next().map(str::parse::<u64>))
+                    && index < sites
+                {
+                    observed.site_hits[index] += hits;
+                }
+            }
+        }
+    }
+    observed
+}
+
+/// `[FFI-37]`–`[FFI-37d]`, `[TCB-5]` — grade each declared effect fact by what the runs observed:
+/// a fact a run contradicted is `E5053`; one whose function no test called is `W5054` and counts
+/// for nothing; the rest are `instrumented` — no counterexample on the paths exercised, partial
+/// when not every call site ran, never "holds". Prints the grades, writes the evidence record
+/// (its identities, its environment) and reports the diagnostics; true when one is `E5053`.
+pub fn instrument_report(
+    run: &InstrumentedRun,
+    files: &[std::path::PathBuf],
+    map: &SourceMap,
+    options: &crate::Options,
+) -> Result<bool, String> {
+    let observed = read_counts(files, run.functions.len(), run.sites.len());
+    let mut sink = ember_diag::Sink::new();
+    let mut lines = Vec::new();
+    let mut records = Vec::new();
+    let mut contradicted = false;
+    for (index, function) in run.functions.iter().enumerate() {
+        let Some(declared) = function.declared else { continue };
+        let facts: Vec<&(u32, &str, ember_hir::Effects)> = EFFECT_FACTS.iter().filter(|(bit, _, _)| declared & bit == 0).collect();
+        if facts.is_empty() {
+            continue;
+        }
+        let total_sites = run.sites.iter().filter(|(owner, _)| *owner as usize == index).count();
+        let site_records: Vec<serde_json::Value> = run.sites.iter().enumerate()
+            .filter(|(_, (owner, _))| *owner as usize == index)
+            .map(|(site, (_, at))| serde_json::json!({ "at": at, "hits": observed.site_hits[site] }))
+            .collect();
+        let ran_sites = run.sites.iter().enumerate().filter(|(site, (owner, _))| *owner as usize == index && observed.site_hits[*site] > 0).count();
+        let calls = observed.calls[index];
+        let fact_names: Vec<String> = facts.iter().map(|(_, name, _)| format!("no {name}")).collect();
+        let mut grades = Vec::new();
+        let summary;
+        if calls == 0 {
+            sink.emit(
+                ember_diag::Diagnostic::warning(ember_diag::codes::W5054, function.span,
+                    format!("`{}`'s effect facts were never exercised: no test called it", function.name))
+                    .note(format!("{}: unexercised, so they count for nothing [FFI-37b]", fact_names.join(", "))),
+            );
+            for (_, name, _) in &facts {
+                grades.push(serde_json::json!({ "effect": name, "grade": "unexercised" }));
+            }
+            summary = format!("{}: unexercised (W5054)", fact_names.join(", "));
+        } else {
+            let mut parts = Vec::new();
+            for (bit, name, _) in &facts {
+                if observed.reached[index] & bit != 0 {
+                    contradicted = true;
+                    sink.emit(
+                        ember_diag::Diagnostic::error(ember_diag::codes::E5053, function.span,
+                            format!("an instrumented run contradicted `{}`'s effects: it reached {name}", function.name))
+                            .help(format!("add `{name}` to its `@ffi(effects=[…])`, if the function does that"))
+                            .note("a run of `test --instrument-ffi` saw the call reach an intercepted entry point of that kind [FFI-37c]"),
+                    );
+                    grades.push(serde_json::json!({ "effect": name, "grade": "contradicted" }));
+                    parts.push(format!("no {name}: contradicted (E5053)"));
+                } else {
+                    let partial = ran_sites < total_sites;
+                    grades.push(serde_json::json!({ "effect": name, "grade": "instrumented", "partial": partial }));
+                    parts.push(format!("no {name}: instrumented{}", if partial { ", partial" } else { "" }));
+                }
+            }
+            summary = parts.join("; ");
+        }
+        lines.push(format!("  `{}`: {calls} call{} from {ran_sites} of {total_sites} call site{}; {summary}",
+            function.name, if calls == 1 { "" } else { "s" }, if total_sites == 1 { "" } else { "s" }));
+        let file = map.file(function.span.file);
+        let library = &observed.module[index];
+        records.push(serde_json::json!({
+            "name": function.name,
+            "declared_in": file.path.display().to_string(),
+            "source_hash": ember_build::content_hash(file.text.as_bytes()),
+            "library": {
+                "path": library,
+                "hash": std::fs::read(library).ok().map(|bytes| ember_build::content_hash(&bytes)),
+            },
+            "calls": calls,
+            "sites": site_records,
+            "facts": grades,
+        }));
+    }
+    let unobservable = "an allocation, lock, wait or I/O through anything outside the intercepted set (a custom pool, a driver, a module loaded after the start, a system call made directly) is structurally unobservable, and counts for nothing";
+    let machine = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_default();
+    let recorded = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|time| time.as_secs()).unwrap_or(0);
+    let record = serde_json::json!({
+        "schema": 1,
+        "package": run.package,
+        "intercepted": observed.intercepted,
+        "unobservable": unobservable,
+        "identity": {
+            "toolchain": run.toolchain,
+            "test_binary": {
+                "path": run.exe.display().to_string(),
+                "hash": std::fs::read(&run.exe).ok().map(|bytes| ember_build::content_hash(&bytes)),
+            },
+        },
+        "environment": { "machine": machine, "recorded": recorded },
+        "functions": records,
+    });
+    std::fs::create_dir_all(&run.dir).map_err(|error| format!("cannot write the evidence record: {error}"))?;
+    let path = run.dir.join(format!("{}.json", run.package));
+    std::fs::write(&path, serde_json::to_string_pretty(&record).map_err(|error| error.to_string())?)
+        .map_err(|error| format!("cannot write the evidence record `{}`: {error}", path.display()))?;
+    if !options.json {
+        println!("\nforeign effects, instrumented [FFI-37]:");
+        println!("  intercepted: {}", observed.intercepted);
+        println!("  {unobservable} [FFI-37a]");
+        println!("  ownership, nullability, lifetime, aliasing and exception facts stay asserted [FFI-37d]");
+        for line in &lines {
+            println!("{line}");
+        }
+        println!("  evidence: {}", path.display());
+    }
+    crate::report(&sink, map, options);
+    Ok(contradicted)
+}
+
+/// `[TCB-5]`, `[TCB-6]` — a package's evidence record, read back for `ember tcb`: whether its
+/// identity inputs still hold (the test binary and the C toolchain here; each function's
+/// declaring source and library below), and where it was measured (an environment input, which
+/// is reported and never makes it stale).
+pub struct Evidence {
+    pub path: std::path::PathBuf,
+    record: serde_json::Value,
+    stale: Vec<String>,
+    elsewhere: Option<String>,
+}
+
+/// The evidence record of the package whose entry is `input`, if a run of
+/// `test --instrument-ffi` wrote one.
+pub fn load_evidence(input: &std::path::Path) -> Option<Evidence> {
+    let start = std::fs::canonicalize(input).ok()?;
+    let manifest = start.ancestors().map(|dir| dir.join(ember_branding::MANIFEST)).find(|path| path.is_file())?;
+    let root = manifest.parent()?;
+    let text = std::fs::read_to_string(&manifest).ok()?;
+    let dir = crate::manifest_string(&text, "ffi", "evidence").unwrap_or_else(default_evidence_dir);
+    let stem = input.file_stem()?.to_string_lossy().into_owned();
+    let path = root.join(dir).join(format!("{stem}.json"));
+    let record: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).ok()?).ok()?;
+    let mut stale = Vec::new();
+    let file_hash = |path: &str| std::fs::read(path).ok().map(|bytes| ember_build::content_hash(&bytes));
+    let binary = &record["identity"]["test_binary"];
+    if binary["path"].as_str().and_then(file_hash).as_deref() != binary["hash"].as_str() {
+        stale.push("the test binary".to_string());
+    }
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let toolchain = ember_build::Toolchain::detect(requested.as_deref()).ok().map(|toolchain| toolchain.identity());
+    if toolchain.as_deref() != record["identity"]["toolchain"].as_str() {
+        stale.push("the C toolchain".to_string());
+    }
+    let machine = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_default();
+    let recorded_on = record["environment"]["machine"].as_str().unwrap_or("").to_string();
+    let elsewhere = (recorded_on != machine).then_some(recorded_on);
+    Some(Evidence { path, record, stale, elsewhere })
+}
+
+/// `[FFI-37c]`, `[TCB-5]`, `[TCB-6]` — what the evidence says of the effect facts of `decl`: each
+/// graded fact (instrumented, partial when not every call site ran; contradicted; unexercised),
+/// or why the record no longer counts. `None` when the record holds nothing of `decl`.
+pub fn evidence_lines(decl: &ForeignDecl, evidence: &Evidence, map: &SourceMap) -> Option<Vec<String>> {
+    let function = evidence.record["functions"].as_array()?.iter().find(|function| function["name"] == decl.qualified)?;
+    let file_hash = |path: &str| std::fs::read(path).ok().map(|bytes| ember_build::content_hash(&bytes));
+    let mut stale = evidence.stale.clone();
+    let source = map.file(decl.source.file);
+    if function["source_hash"].as_str() != Some(ember_build::content_hash(source.text.as_bytes()).as_str()) {
+        stale.push(format!("its declaration in {}", source.path.display()));
+    }
+    let library = function["library"]["path"].as_str().unwrap_or("");
+    if !library.is_empty() && file_hash(library).as_deref() != function["library"]["hash"].as_str() {
+        stale.push(format!("its library {library}"));
+    }
+    let mut lines = Vec::new();
+    if !stale.is_empty() {
+        lines.push(format!("evidence stale, so its effect facts stay asserted: {} changed since {} [TCB-6]",
+            stale.join(", "), evidence.path.display()));
+        return Some(lines);
+    }
+    let sites = function["sites"].as_array().map(|sites| sites.as_slice()).unwrap_or(&[]);
+    let ran = sites.iter().filter(|site| site["hits"].as_u64().unwrap_or(0) > 0).count();
+    let grades: Vec<String> = function["facts"].as_array().map(|facts| facts.as_slice()).unwrap_or(&[]).iter().map(|fact| {
+        let effect = fact["effect"].as_str().unwrap_or("?");
+        match (fact["grade"].as_str(), fact["partial"].as_bool()) {
+            (Some("instrumented"), Some(true)) => format!("no {effect}: instrumented, partial ({ran} of {} call sites ran)", sites.len()),
+            (Some("instrumented"), _) => format!("no {effect}: instrumented"),
+            (Some(grade), _) => format!("no {effect}: {grade}"),
+            (None, _) => format!("no {effect}: asserted"),
+        }
+    }).collect();
+    lines.push(format!("by evidence {}: {} [FFI-37c]", evidence.path.display(), grades.join(", ")));
+    if grades.iter().any(|grade| grade.contains("instrumented")) {
+        lines.push("instrumented: no counterexample was observed on the paths exercised, which is not that the fact holds".to_string());
+    }
+    if let Some(machine) = &evidence.elsewhere {
+        lines.push(format!("measured on {}, not this machine: an environment input, reported, not a reason the record is stale [TCB-6]",
+            if machine.is_empty() { "an unnamed machine" } else { machine }));
+    }
+    Some(lines)
+}
+
+/// The facts of one declaration, as `ember tcb` and `ember calls --foreign` print them, with what
+/// an evidence record says of its effect facts.
+pub fn print(decl: &ForeignDecl, map: &SourceMap, indent: &str, evidence: Option<&Evidence>) {
     let safety = if decl.kind == "fn" { if decl.safe { " safe" } else { " unsafe to call" } } else { "" };
     println!("{indent}{}  {} `{}`{safety}", map.location(decl.source), decl.kind, decl.name);
     for fact in &decl.facts {
@@ -141,5 +443,8 @@ pub fn print(decl: &ForeignDecl, map: &SourceMap, indent: &str) {
     }
     if decl.kind == "fn" && !decl.facts.iter().any(|fact| fact.text.starts_with("its effects")) {
         println!("{indent}  its effects: none stated, so every effect [EFF-3]");
+    }
+    for line in evidence.and_then(|evidence| evidence_lines(decl, evidence, map)).unwrap_or_default() {
+        println!("{indent}  {line}");
     }
 }

@@ -55,6 +55,11 @@ pub enum Toolchain {
     Gcc(PathBuf),
 }
 
+/// `[TCB-5]` — a content hash, for an evidence record's identities.
+pub fn content_hash(bytes: &[u8]) -> String {
+    blake3::hash(bytes).to_hex().to_string()
+}
+
 impl Toolchain {
     pub fn name(&self) -> &'static str {
         match self {
@@ -62,6 +67,24 @@ impl Toolchain {
             Toolchain::Clang(_) => "clang",
             Toolchain::Gcc(_) => "gcc",
         }
+    }
+
+    /// `[TCB-5]` — the C compiler's identity: its kind, where it is, and its executable's hash
+    /// (a bare name is looked up on `PATH`).
+    pub fn identity(&self) -> String {
+        let path = match self {
+            Toolchain::Msvc { cl, .. } => cl.clone(),
+            Toolchain::Clang(path) | Toolchain::Gcc(path) => path.clone(),
+        };
+        let found = if path.is_file() {
+            Some(path.clone())
+        } else {
+            std::env::var_os("PATH").and_then(|paths| {
+                std::env::split_paths(&paths).map(|dir| dir.join(&path)).find(|candidate| candidate.is_file())
+            })
+        };
+        let hash = found.as_ref().and_then(|file| std::fs::read(file).ok()).map(|bytes| content_hash(&bytes));
+        format!("{} {} {}", self.name(), found.unwrap_or(path).display(), hash.unwrap_or_else(|| "unhashed".to_string()))
     }
 
     /// Find a usable C compiler, preferring `requested` when it is given.

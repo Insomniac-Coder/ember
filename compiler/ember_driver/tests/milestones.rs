@@ -2175,6 +2175,109 @@ fn tcb_lists_every_foreign_fact_with_its_source_and_grade() {
     assert!(value["guaranteed"].is_string(), "{}", json.stdout);
 }
 
+/// `[FFI-37]`, `[FFI-37a]`, `[FFI-37b]`, `[FFI-37c]`, `[FFI-37d]`, `[TCB-5]`, `[TCB-6]` —
+/// `ember test --instrument-ffi` runs the tests with the allocation, lock, wait and I/O entry
+/// points intercepted while a foreign function runs. A declared absence a run contradicts is
+/// `E5053` and fails the run; one whose function no test called is `W5054` and counts for
+/// nothing; the rest are graded `instrumented`, partial when a call site never ran, and the
+/// report says what stays unobservable and which facts stay asserted. The evidence record names
+/// its identity inputs (toolchain, test binary, each declaration's source and library) and its
+/// environment; `ember tcb` shows the grades by it, says the record is stale once an identity
+/// input changes, and only notes a record measured on another machine.
+#[test]
+fn instrumented_tests_grade_foreign_effect_facts() {
+    let package = test_package("measured", "bin", "\
+unsafe extern \"C\":
+    @ffi(effects=[])
+    safe fn abs(x: i32) -> i32
+    @ffi(effects=[])
+    safe fn llabs(x: i64) -> i64
+    @ffi(param(text, borrowed, nul_terminated), effects=[])
+    safe fn strlen(text: cstr) -> usize
+    @ffi(effects=[])
+    fn malloc(size: usize) -> *mut void
+    @ffi(effects=[Alloc])
+    fn free(block: *mut void)
+
+@test
+fn magnitudes():
+    assert(abs(-5) == 5)
+    assert(abs(7) == 7)
+
+@test
+fn lengths():
+    length = strlen(c\"four\")
+    if length > 10:
+        assert(strlen(c\"never\") == 5)
+    assert(length == 4)
+
+@test
+fn allocates():
+    unsafe:  # SAFETY(ffi): the block is freed once, by the allocator that made it
+        block = malloc(16)
+        free(block)
+
+fn main():
+    println(llabs(-3))
+");
+    let out_dir = package.join("target");
+    let out_arg = out_dir.to_string_lossy().into_owned();
+    let run = ember(&["test", "--instrument-ffi", "--out-dir", &out_arg], &package);
+    let text = format!("{}{}", run.stdout, run.stderr);
+    assert_ne!(run.exit, 0, "a contradicted fact passed the run:\n{text}");
+    assert!(run.stdout.contains("test result: ok. 3 passed"), "the tests themselves pass:\n{text}");
+    for line in [
+        "foreign effects, instrumented [FFI-37]:",
+        "is structurally unobservable, and counts for nothing [FFI-37a]",
+        "ownership, nullability, lifetime, aliasing and exception facts stay asserted [FFI-37d]",
+        "`abs`: 2 calls from 2 of 2 call sites; no Alloc: instrumented; no Lock: instrumented; no Block: instrumented; no Io: instrumented",
+        "`strlen`: 1 call from 1 of 2 call sites; no Alloc: instrumented, partial;",
+        "`malloc`: 1 call from 1 of 1 call site; no Alloc: contradicted (E5053)",
+        "`llabs`: 0 calls from 0 of 1 call site; no Alloc, no Lock, no Block, no Io: unexercised (W5054)",
+    ] {
+        assert!(run.stdout.contains(line), "missing `{line}`:\n{text}");
+    }
+    assert!(!run.stdout.contains("`free`: ") || run.stdout.contains("`free`: 1 call"), "{text}");
+    assert!(run.stderr.contains("error[E5053]: an instrumented run contradicted `malloc`'s effects: it reached Alloc"), "{text}");
+    assert!(run.stderr.contains("warning[W5054]: `llabs`'s effect facts were never exercised"), "{text}");
+    assert!(!run.stderr.contains("`abs`"), "nothing contradicted `abs`:\n{text}");
+
+    let record_path = package.join(format!(".{}/ffi-evidence/main.json", ember_branding::SYMBOL_PREFIX));
+    let record: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&record_path).expect("the evidence record is written"))
+        .expect("the evidence record is JSON");
+    assert!(record["identity"]["toolchain"].is_string() && record["identity"]["test_binary"]["hash"].is_string(), "{record}");
+    assert!(record["environment"]["machine"].is_string() && record["intercepted"].as_str().is_some_and(|text| text.contains("alloc:")), "{record}");
+    let functions = record["functions"].as_array().expect("a function list");
+    let abs = functions.iter().find(|function| function["name"] == "abs").expect("`abs` is recorded");
+    assert!(abs["source_hash"].is_string() && abs["library"]["path"].as_str().is_some_and(|path| !path.is_empty()), "{abs}");
+    assert_eq!(abs["facts"][0]["grade"], "instrumented", "{abs}");
+
+    // `[TCB-5]` — `ember tcb` grades the facts by the record.
+    let entry = package.join("src").join(ember_branding::source_file("main"));
+    let entry_arg = entry.to_string_lossy().into_owned();
+    let tcb = ember(&["tcb", &entry_arg], &package);
+    assert_eq!(tcb.exit, 0, "{}{}", tcb.stdout, tcb.stderr);
+    assert!(tcb.stdout.contains("no Alloc: instrumented, no Lock: instrumented, no Block: instrumented, no Io: instrumented [FFI-37c]"), "{}", tcb.stdout);
+    assert!(tcb.stdout.contains("no Alloc: instrumented, partial (1 of 2 call sites ran)"), "{}", tcb.stdout);
+    assert!(tcb.stdout.contains("instrumented: no counterexample was observed on the paths exercised, which is not that the fact holds"), "{}", tcb.stdout);
+    assert!(tcb.stdout.contains("no Alloc: contradicted") && tcb.stdout.contains("no Alloc: unexercised"), "{}", tcb.stdout);
+    assert!(!tcb.stdout.contains("not this machine"), "{}", tcb.stdout);
+
+    // `[TCB-6]` — an environment input is reported, never a reason the record is stale.
+    let elsewhere = std::fs::read_to_string(&record_path).expect("the record").replacen("\"machine\": \"", "\"machine\": \"elsewhere-", 1);
+    std::fs::write(&record_path, elsewhere).expect("the record is writable");
+    let moved = ember(&["tcb", &entry_arg], &package);
+    assert!(moved.stdout.contains("not this machine: an environment input, reported, not a reason the record is stale [TCB-6]"), "{}", moved.stdout);
+    assert!(moved.stdout.contains("no Io: instrumented [FFI-37c]") && !moved.stdout.contains("evidence stale"), "{}", moved.stdout);
+
+    // `[TCB-6]` — an identity input changed (the declaring source): the facts stay asserted.
+    let source = std::fs::read_to_string(&entry).expect("the source");
+    std::fs::write(&entry, source.replace("strlen(c\"never\") == 5", "strlen(c\"nevermore\") == 9")).expect("the source is writable");
+    let stale = ember(&["tcb", &entry_arg], &package);
+    assert!(stale.stdout.contains("evidence stale, so its effect facts stay asserted: its declaration in "), "{}", stale.stdout);
+    assert!(!stale.stdout.contains("[FFI-37c]"), "{}", stale.stdout);
+}
+
 /// `[CLI-13]` — `ember calls --foreign <item>` lists every foreign function the item can reach —
 /// through calls, a method, another module, a function value it takes — with the chain to it and
 /// the contract its declaration states; one it cannot reach is not listed, and a call through a

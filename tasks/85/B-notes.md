@@ -96,7 +96,8 @@ one. The checker (`check_overlay`): `E5067` when an overlay states a fact (a fun
 contract word, an `@ffi` attribute) and is not `unsafe overlay`; each contract word is the
 vocabulary's (`E0104`); `@ffi` applies to `fn`/`type`/`enum` entries; `@grade(asserted |
 instrumented | checked | proven)` on an entry, a grade above asserted with no evidence `W5050`
-(no evidence record exists: `[FFI-37]`'s runner does not write any), the fact staying asserted.
+(an overlay entry has no evidence record to name until the importer turns it into a declaration;
+section 12's records are for hand declarations), the fact staying asserted.
 Nothing applies an overlay: that is `import c … with (overlay=…)`, the importer's. A module may
 hold an overlay beside other items (the grammar describes an overlay file; tests need a `main`
 for the harness's run); deciding to refuse the mix was not needed.
@@ -172,6 +173,37 @@ choice the spec leaves open (owner question 4). Tests: `tests/conformance/FFI-23
 `retained_tokens_let_c_keep_ember_objects` (a class object outliving the handle it was pinned from
 until its token drops, the kept address, C reading a pinned `Box`'s value).
 
+## 12. `ember test --instrument-ffi` and evidence records (`[FFI-37]`–`[FFI-37d]`, `[TCB-5]`, `[TCB-6]`)
+
+The code generator (only when the flag is given) wraps every call to a foreign declaration in the
+test binary's main unit with `ember_ffi_enter(function, site)` / `ember_ffi_leave(previous)` (a
+thread-local "foreign function running now"), numbers the call sites, and links a unit of its own,
+`compiler/ember_codegen_c/src/ffi_instrument.c`. That unit intercepts the allocation, lock, wait and
+I/O entry points: on Windows by patching the import table of every module loaded at the test's start
+(`malloc`/`calloc`/`realloc`/`_aligned_malloc` of the UCRT, `HeapAlloc`, `VirtualAlloc`, critical
+sections and SRW locks, `Sleep`/`WaitFor*`/condition variables, `ReadFile`/`WriteFile`/`CreateFile`/
+`WriteConsole`); on Linux (glibc) by defining the C library's names in the executable (`malloc` via
+`__libc_malloc`, the rest via `dlsym(RTLD_NEXT)`). Each test writes its counts to the file the runner
+names (`EMBER_FFI_EVIDENCE`); the runner merges them, grades each declared absence (`@ffi(effects=
+[…])` without `Alloc`, `Lock`, `Block` or `Io`): reached is `E5053` and fails the run; a function no
+test called is `W5054`, `unexercised`; otherwise `instrumented`, `partial` when a call site never
+ran. The report prints the intercepted set, what is structurally unobservable, and that the other
+fact kinds stay asserted. The evidence record (`<[ffi] evidence>/<entry>.json`, default
+`.ember/ffi-evidence`) holds the intercepted set, the identities with hashes (toolchain, test binary;
+per function its declaring source and the library its address is in), the environment (machine,
+time) and per function its calls, its sites with hits and its graded facts. `ember tcb` reads it:
+graded facts per declaration with "no counterexample was observed on the paths exercised, which is
+not that the fact holds"; stale (facts stay asserted) when an identity input's hash changed; a
+record from another machine is only noted. Off Windows and Linux the flag is `E0900` (an empty
+intercepted set would grade without observing). `E5053`/`W5054` keep no page: their examples need a
+test run, and `error_pages.py` checks a page with `ember check` (they stay in the baseline).
+Test: milestone `instrumented_tests_grade_foreign_effect_facts` (MSVC and Clang on Windows; GCC on
+Linux not run here: no Linux toolchain reachable from this worktree).
+
+Known limit: a foreign function that calls back into Ember has the callback's allocations counted
+as its own (the "running now" mark is not cleared on entry to an Ember function called from C).
+Callbacks with `user_data` are not built (`[FFI-11]`); when they are, the trampoline should clear it.
+
 ## Rules done (each with its test)
 
 | Rule | Test |
@@ -185,12 +217,16 @@ until its token drops, the kept address, C reading a pinned `Box`'s value).
 | `FFI-23` | `tests/conformance/FFI-23/*`, milestone `retained_tokens_let_c_keep_ember_objects` |
 | `CLI-13` | milestone `calls_foreign_lists_what_an_item_reaches_with_each_contract` |
 | `DIA-18` | `tests/conformance/DIA-18/*` |
+| `FFI-37`, `FFI-37a`–`FFI-37d`, `TCB-6` | milestone `instrumented_tests_grade_foreign_effect_facts` |
 
 ## Left, and why
 
-* `[TCB-1]` (now in `unfinished`): grades above asserted. `@grade(…)` is an overlay item's attribute
-  (the attribute table), overlays reach a program only through `import c … with (overlay=…)`, and the
-  C header importer is outside this job. No evidence records, W5050/E5050, `--require`.
+* `[TCB-1]` (in `unfinished`): a written grade backed by evidence. `@grade(…)` is an overlay item's
+  attribute (the attribute table), overlays reach a program only through `import c … with
+  (overlay=…)`, and the C header importer is outside this job. Evidence records exist now (section
+  12) and `ember tcb` shows them; W5050/E5050 for a claimed grade and `--require` wait for overlays.
+* `[TCB-5]` (in `unfinished`): the record holds every identity there is now except the header's;
+  hand declarations have none. Add its hash when `import c` lands.
 
 ## Defects found
 

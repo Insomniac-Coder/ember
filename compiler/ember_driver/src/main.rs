@@ -31,10 +31,12 @@ usage:
                                       compile a bin or staticlib package
     ember run   <file.em> [options]   compile and run
     ember check <file.em>             type-check without generating code
-    ember test [filter] [--doc] [--no-leak-check] [options]
+    ember test [filter] [--doc] [--no-leak-check] [--instrument-ffi] [options]
                                       run the package's @test functions, each in a process of
                                       its own (the package of this directory or an ancestor);
-                                      --doc runs the documentation examples under docs/ instead
+                                      --doc runs the documentation examples under docs/ instead;
+                                      --instrument-ffi grades foreign effect facts by what the
+                                      tests observe, into an evidence record
     ember fmt <file.em> [--check|--write] [--json]
                                       print the file in the canonical layout
     ember explain <CODE> [--json]     describe a diagnostic code
@@ -385,6 +387,9 @@ struct Options {
     /// `[CLI-13]` — `ember calls --foreign <item>`: check the program, then list the foreign
     /// functions the item can reach.
     foreign_calls: Option<ForeignCalls>,
+    /// `[FFI-37]` — `ember test --instrument-ffi`: the directory its evidence record goes to
+    /// (`[TCB-1]`'s `[ffi] evidence`).
+    ffi_evidence: Option<PathBuf>,
 }
 
 /// What `ember calls --foreign` prints: JSON or text, for one item.
@@ -1275,7 +1280,7 @@ fn print_foreign_calls(
     for (index, chain) in &reach.reached {
         println!("  {}", chain.join(" -> "));
         match declaration(*index) {
-            Some(decl) => foreign::print(decl, map, "    "),
+            Some(decl) => foreign::print(decl, map, "    ", None),
             None => println!("    `{}` (C symbol {})", bodies[*index].name, bodies[*index].symbol),
         }
     }
@@ -1498,6 +1503,8 @@ fn print_tcb_report(
         .filter(|decl| request.module.as_ref().is_none_or(|wanted| *wanted == decl.module))
         .collect();
     foreign.sort_by(|a, b| a.module.cmp(&b.module));
+    // `[FFI-37c]`, `[TCB-5]`, `[TCB-6]` — what an instrumented test run recorded of the effect facts.
+    let evidence = foreign::load_evidence(input);
     if request.json {
         let unsafe_json: Vec<serde_json::Value> = entries
             .iter()
@@ -1513,7 +1520,13 @@ fn print_tcb_report(
                 })
             })
             .collect();
-        let foreign_json: Vec<serde_json::Value> = foreign.iter().map(|decl| foreign::json(decl, map)).collect();
+        let foreign_json: Vec<serde_json::Value> = foreign.iter().map(|decl| {
+            let mut value = foreign::json(decl, map);
+            if let Some(lines) = evidence.as_ref().and_then(|evidence| foreign::evidence_lines(decl, evidence, map)) {
+                value["evidence"] = serde_json::json!(lines);
+            }
+            value
+        }).collect();
         println!("{}", serde_json::json!({
             "schema": 1,
             "guaranteed": LANGUAGE_GUARANTEES,
@@ -1555,7 +1568,7 @@ fn print_tcb_report(
             println!("  module {}", decl.module);
             module = Some(&decl.module);
         }
-        foreign::print(decl, map, "    ");
+        foreign::print(decl, map, "    ", evidence.as_ref());
     }
     Ok(())
 }
@@ -3427,6 +3440,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         staticlib,
         c_for_msvc(&options),
         (command == "test").then(|| tests.iter().map(|test| test.symbol.clone()).collect()),
+        command == "test" && options.ffi_evidence.is_some(),
     );
     mark("C generation", "all modules");
     // `[DSP-5]` — on standard error, so it never mixes with `--emit c`.
@@ -3599,6 +3613,13 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     .map_err(|e| e.to_string())?
     .unwrap_or(runtime_source);
     let mut sources = vec![c_path.clone(), runtime_input];
+    // `[FFI-37]` — the instrumentation is a unit of its own (it defines the C library's entry
+    // points it intercepts off Windows).
+    if let Some(instrument) = &emitted.ffi_instrument {
+        let unit = layout.c.join(format!("{module_name}.ffi.c"));
+        std::fs::write(&unit, &instrument.source).map_err(|e| e.to_string())?;
+        sources.push(unit);
+    }
     // `[CG-C-11]` — each relaxed unit compiled with its own flags.
     let object_ext = if matches!(&toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
     for (mode, source) in &emitted.relaxed_units {
@@ -3627,6 +3648,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             && !body.is_extern_declaration && !body.is_abstract)
         .map(|body| body.symbol.clone())
         .collect();
+    if emitted.ffi_instrument.is_some() && !cfg!(windows) {
+        retained_symbols.extend(ember_codegen_c::FFI_INTERPOSED.iter().map(|name| name.to_string()));
+    }
     retained_symbols.sort();
     retained_symbols.dedup();
     ember_build::compile_and_link_executable_with_roots(
@@ -3646,7 +3670,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     report(&sink, &map, options);
 
     if command == "test" {
-        return test_runner::run_tests(&exe, &tests, options);
+        // `[FFI-37]` — what the instrumented binary counts, with what the program declares of it.
+        let instrumented = emitted.ffi_instrument.as_ref().zip(options.ffi_evidence.as_ref()).map(|(instrument, dir)| {
+            let package = input.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
+            foreign::InstrumentedRun::new(instrument, &bodies, dir.clone(), &package, &exe, toolchain.identity())
+        });
+        return test_runner::run_tests(&exe, &tests, options, instrumented.as_ref(), &map);
     }
     if command == "run" {
         let status = std::process::Command::new(&exe)
