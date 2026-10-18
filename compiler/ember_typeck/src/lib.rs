@@ -34391,7 +34391,96 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[GRM-35]`, `[TIER-1]`, `[TCB-1]` — an overlay's own checks: one that states a fact about
+    /// foreign code is `unsafe overlay` (`E5067`), each contract word is the vocabulary's
+    /// (`[FFI-11]`), and a grade above asserted claimed with no evidence behind it is `W5050`.
+    /// Applying the overlay to its header is the importer's (`import c … with (overlay=…)`).
+    fn check_overlay(&mut self, overlay: &ast::OverlayDecl) {
+        let mut first_fact: Option<(Span, String)> = None;
+        let mut fact = |at: Span, what: String| {
+            first_fact.get_or_insert((at, what));
+        };
+        for item in &overlay.items {
+            for attr in &item.attrs {
+                let name = (attr.path.len() == 1).then(|| attr.path[0].name.as_str()).unwrap_or("");
+                match name {
+                    "ffi" => {
+                        fact(attr.span, "an `@ffi(…)` attribute".to_string());
+                        if matches!(item.kind, ast::OverlayItemKind::Rename { .. } | ast::OverlayItemKind::Hide(_)
+                            | ast::OverlayItemKind::Extend(_)) {
+                            self.error(codes::E0104, attr.span, "`@ffi` applies to an overlay's `fn`, `type` or `enum` entry");
+                        }
+                    }
+                    "grade" => self.check_grade(attr, &item.kind),
+                    _ => self.check_attribute_list(std::slice::from_ref(attr), "overlay item"),
+                }
+            }
+            let ast::OverlayItemKind::Fn { name, params, result } = &item.kind else { continue };
+            fact(name.span, format!("the entry for `{}`, which asserts it safe to call", name.name));
+            for contract in params.iter().flat_map(|param| &param.contract).chain(result) {
+                if !FFI_CONTRACT_WORDS.contains(&contract.word.name.as_str()) {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E0104, contract.span,
+                            format!("`{}` is not a contract word", contract.word.name))
+                            .help(format!("the contract words are {}", FFI_CONTRACT_WORDS.join(", ")))
+                            .note("a contract word takes the place of a type in an overlay entry [FFI-11]"),
+                    );
+                }
+            }
+        }
+        if !overlay.is_unsafe && let Some((at, what)) = first_fact {
+            self.sink.emit(
+                Diagnostic::error(codes::E5067, overlay.span, "an overlay that states facts about foreign code is not declared `unsafe overlay`")
+                    .secondary(at, format!("{what} states a fact"))
+                    .help("write `unsafe overlay`: the overlay asserts what the header cannot say")
+                    .note("an `unsafe overlay` is the third boundary safe code may rest on [TIER-1]; one of only `rename` and `hide` needs no `unsafe` [GRM-35]"),
+            );
+        }
+    }
+
+    /// `[TCB-1]` — `@grade(asserted | instrumented | checked | proven)` on an overlay entry. A grade
+    /// above asserted is a claim that evidence backs: none is recorded here (no evidence record
+    /// under `[ffi] evidence` holds one), so the claim is unbacked, `W5050`, and the fact stays
+    /// asserted (`[TCB-2]`).
+    fn check_grade(&mut self, attr: &ast::Attribute, kind: &ast::OverlayItemKind) {
+        if !matches!(kind, ast::OverlayItemKind::Fn { .. } | ast::OverlayItemKind::Type(_) | ast::OverlayItemKind::Enum(_)) {
+            self.error(codes::E0104, attr.span, "`@grade` applies to an overlay entry that states facts");
+            return;
+        }
+        let grade = match attr.args.as_slice() {
+            [ast::AttrArg::Expr(value)] => ffi_contract_word(value)
+                .filter(|grade| matches!(grade.as_str(), "asserted" | "instrumented" | "checked" | "proven")),
+            _ => None,
+        };
+        match grade {
+            None => {
+                self.sink.emit(
+                    Diagnostic::error(codes::E0104, attr.span, "`@grade` names one grade")
+                        .help("write `@grade(asserted)`, `@grade(instrumented)`, `@grade(checked)` or `@grade(proven)` [TCB-1]"),
+                );
+            }
+            Some(grade) if !grade.is("asserted") => {
+                let evidence = match grade.as_str() {
+                    "instrumented" => "a run of `ember test --instrument-ffi` that observed it",
+                    "checked" => "a check of the fact against the header",
+                    _ => "an analysis of the adapter",
+                };
+                self.sink.emit(
+                    Diagnostic::warning(codes::W5050, attr.span, format!("`{grade}` is claimed with no evidence: the fact stays asserted"))
+                        .note(format!("`{grade}` needs {evidence}, recorded under the manifest's `[ffi] evidence` (`.ember/ffi-evidence`) [TCB-1]"))
+                        .note("writing a grade never raises it [TCB-2]"),
+                );
+            }
+            Some(_) => {}
+        }
+    }
+
     fn check_item_attributes(&mut self, item: &ast::Item, in_extern: bool) {
+        if let ast::ItemKind::Overlay(overlay) = &item.kind {
+            self.check_attribute_list(&item.attrs, "overlay");
+            self.check_overlay(overlay);
+            return;
+        }
         if let ast::ItemKind::Static(decl) = &item.kind && decl.is_foreign_decl {
             let mut saw_ffi = false;
             for attr in &item.attrs {
@@ -34624,6 +34713,7 @@ impl<'a> Checker<'a> {
             ast::ItemKind::ExternBlock(_) => "extern block",
             ast::ItemKind::ExternClass(_) => "extern item",
             ast::ItemKind::Comptime(_) => "comptime block",
+            ast::ItemKind::Overlay(_) => "overlay",
         };
         for attr in &item.attrs {
             if matches!(&item.kind, ast::ItemKind::Fn(decl) if !decl.is_foreign_decl)
@@ -48696,7 +48786,8 @@ fn item_name(item: &ast::Item) -> Option<Symbol> {
         ast::ItemKind::Extend(_)
         | ast::ItemKind::ExternBlock(_)
         | ast::ItemKind::ExternClass(_)
-        | ast::ItemKind::Comptime(_) => return None,
+        | ast::ItemKind::Comptime(_)
+        | ast::ItemKind::Overlay(_) => return None,
     })
 }
 
@@ -49140,7 +49231,9 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["deprecated", "allow"], &["item"], false),
     (&["export"], &["fn", "static"], false),
     (&["export_table"], &["struct"], false),
-    (&["ffi"], &["extern item"], false),
+    (&["ffi"], &["extern item", "overlay item"], false),
+    // `[TCB-1]` — checked on the entry it grades (`check_grade`).
+    (&["grade"], &["overlay item"], true),
     // `[TST-3]` — `ember test` runs them (`test_form`); `ember bench` is not built.
     (&["test", "should_panic"], &["fn"], true),
     (&["bench"], &["fn"], false),
@@ -49158,6 +49251,14 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["reloadable", "noreload"], &["item", "module"], false),
     (&["renamed_from", "reinit_on_reload", "allow_reload_terminate"], &["item"], false),
     (&["prelude"], &["module"], false),
+];
+
+/// `[FFI-11]` — the contract vocabulary: the five axes' words and the others, and `TODO`
+/// (`[FFI-11c]`).
+const FFI_CONTRACT_WORDS: &[&str] = &[
+    "borrowed", "owned", "returns_owned", "retained", "one", "count", "nul_terminated", "fixed",
+    "inout_count", "nullable", "from", "exclusive", "aliased", "out", "status", "handle", "callback",
+    "threads", "destroys", "unsafe", "TODO",
 ];
 
 /// `[ATT-1]` — reserved, and rejected with `E0104` naming the version.

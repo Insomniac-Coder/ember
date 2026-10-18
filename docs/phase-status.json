@@ -44,7 +44,7 @@
     "FMT-1": "`ember fmt` is built (and checked over the corpus), but `ember fmt --migrate`, which the rule gives the rewriting of source, is not (`[CLI-20]`)",
     "BLD-2": "effect sets are computed (`ember_analysis::effects`) but are not part of a module's interface hash",
     "FFI-1": "a foreign declaration's contract has no effects or thread rule yet; contracts beyond link names are E0900 (see FFI-11)",
-    "FFI-2": "overlays (§XVI.4) are not built, so a call's missing facts cannot be supplied by one",
+    "FFI-2": "an overlay file parses and is checked (`[GRM-35]`, `E5067`), but nothing applies one: overlays reach a program only through `import c … with (overlay=…)`, and the C header importer is not built, so a call's missing facts cannot be supplied by one",
     "FFI-33c": "`@export_table` is not built (ATTRIBUTE_TABLE in ember_typeck)",
     "CLO-6a": "a `once fn` is built as a parameter's bound only: as a value (a local, a field, a `Box` or a collection element), whose call empties its place, it is refused (E0900)"
   }

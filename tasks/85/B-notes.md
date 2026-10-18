@@ -86,13 +86,32 @@ written (`[FFI-11c]`), which `DIA-18/accept_printed_contract_line_compiles.em` c
 functions (overlays) will print the overlay form of the same words; the importer does not exist.
 Tests: `tests/conformance/DIA-18/`.
 
+## 7. Overlay files (`[GRM-35]`, `E5067`; `@grade` and `W5050` of `[TCB-1]`/`[TCB-2]`)
+
+`ast::ItemKind::Overlay(OverlayDecl)`: `[unsafe] overlay c|cpp "header":` with `fn` entries whose
+parameters take contract words (`ast::Contract`: a word, optional arguments) in place of types,
+`-> words`, `type`, `enum`, `rename … as …`, `hide …` and `extend` blocks; `overlay` is a keyword
+only where an item begins with `overlay c "…"` (or `unsafe overlay`), `rename`/`hide` only inside
+one. The checker (`check_overlay`): `E5067` when an overlay states a fact (a function entry, a
+contract word, an `@ffi` attribute) and is not `unsafe overlay`; each contract word is the
+vocabulary's (`E0104`); `@ffi` applies to `fn`/`type`/`enum` entries; `@grade(asserted |
+instrumented | checked | proven)` on an entry, a grade above asserted with no evidence `W5050`
+(no evidence record exists: `[FFI-37]`'s runner does not write any), the fact staying asserted.
+Nothing applies an overlay: that is `import c … with (overlay=…)`, the importer's. A module may
+hold an overlay beside other items (the grammar describes an overlay file; tests need a `main`
+for the harness's run); deciding to refuse the mix was not needed.
+`spec_check`'s baseline shrank by one (Part XVI's overlay example parses now).
+Pages `docs/errors/E5067.md`, `W5050.md`. Tests: `tests/conformance/GRM-35/`,
+`tests/conformance/TCB-2/accept_a_written_grade_stays_asserted.em`.
+
 ## Rules done (each with its test)
 
 | Rule | Test |
 |---|---|
 | `FFI-10` | `tests/conformance/FFI-10/*`, milestones `foreign_statics_are_places_in_c_storage`, `vectorcall_declarations_compile_with_the_convention`, `tcb_lists_every_foreign_fact_with_its_source_and_grade` |
 | `EFF-3` | `tests/conformance/EFF-3/*` |
-| `TCB-2`, `TCB-3` | milestone `tcb_lists_every_foreign_fact_with_its_source_and_grade` |
+| `TCB-2`, `TCB-3` | milestone `tcb_lists_every_foreign_fact_with_its_source_and_grade`; `TCB-2/accept_a_written_grade_stays_asserted.em` |
+| `GRM-35` | `tests/conformance/GRM-35/*` |
 | `CLI-13` | milestone `calls_foreign_lists_what_an_item_reaches_with_each_contract` |
 | `DIA-18` | `tests/conformance/DIA-18/*` |
 

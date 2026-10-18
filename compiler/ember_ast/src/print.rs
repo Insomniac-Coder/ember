@@ -178,6 +178,28 @@ impl Printer {
                 })
             }
             ItemKind::Comptime(b) => self.nest("Comptime", |p| p.block(b)),
+            ItemKind::Overlay(o) => {
+                let head = format!("Overlay{} {:?} {:?}", if o.is_unsafe { " unsafe" } else { "" }, o.language, o.header);
+                self.nest(&head, |p| {
+                    for overlay_item in &o.items {
+                        let words = |contract: &[Contract]| {
+                            contract.iter().map(|c| c.word.name.to_string()).collect::<Vec<_>>().join(" ")
+                        };
+                        match &overlay_item.kind {
+                            OverlayItemKind::Fn { name, params, result } => {
+                                let params: Vec<String> =
+                                    params.iter().map(|param| format!("{}: {}", param.name.name, words(&param.contract))).collect();
+                                p.line(&format!("Fn {}({}) -> {}", name.name, params.join(", "), words(result)));
+                            }
+                            OverlayItemKind::Type(name) => p.line(&format!("Type {}", name.name)),
+                            OverlayItemKind::Enum(name) => p.line(&format!("Enum {}", name.name)),
+                            OverlayItemKind::Rename { from, to } => p.line(&format!("Rename {} as {}", from.name, to.name)),
+                            OverlayItemKind::Hide(name) => p.line(&format!("Hide {}", name.name)),
+                            OverlayItemKind::Extend(_) => p.line("Extend"),
+                        }
+                    }
+                })
+            }
         }
     }
 

@@ -154,6 +154,60 @@ pub enum ItemKind {
     /// be inherited.
     ExternClass(ExternClass),
     Comptime(Block),
+    /// `[GRM-35]` — `[unsafe] overlay c "header.h":`, the contracts for a
+    /// foreign header's declarations (§XVI.4).
+    Overlay(OverlayDecl),
+}
+
+/// `[GRM-35]` — `overlay_decl := ["unsafe"] "overlay" ("c" | "cpp") STRING ":"
+/// NEWLINE INDENT {overlay_item} DEDENT`.
+#[derive(Clone, Debug)]
+pub struct OverlayDecl {
+    /// The head, `overlay c "header":`.
+    pub span: Span,
+    pub is_unsafe: bool,
+    pub language: ForeignLanguage,
+    pub header: String,
+    pub items: Vec<OverlayItem>,
+}
+
+#[derive(Clone, Debug)]
+pub struct OverlayItem {
+    pub attrs: Vec<Attribute>,
+    pub kind: OverlayItemKind,
+    pub span: Span,
+}
+
+/// `overlay_item := {attribute} (overlay_fn | "type" IDENT NEWLINE | "enum"
+/// IDENT NEWLINE | "rename" IDENT "as" IDENT NEWLINE | "hide" IDENT NEWLINE |
+/// extend_decl)`.
+#[derive(Clone, Debug)]
+pub enum OverlayItemKind {
+    /// `overlay_fn := "fn" IDENT "(" [overlay_param {"," overlay_param} [","]] ")"
+    /// ["->" contract {contract}] NEWLINE`; a function entry asserts the
+    /// function safe to call (`[FFI-2]`).
+    Fn { name: Ident, params: Vec<OverlayParam>, result: Vec<Contract> },
+    Type(Ident),
+    Enum(Ident),
+    Rename { from: Ident, to: Ident },
+    Hide(Ident),
+    Extend(ExtendDecl),
+}
+
+/// `overlay_param := IDENT [":" contract {contract}]`.
+#[derive(Clone, Debug)]
+pub struct OverlayParam {
+    pub name: Ident,
+    pub contract: Vec<Contract>,
+}
+
+/// `contract := IDENT ["(" [attr_arg {"," attr_arg}] ")"]` — one contract word
+/// (`[FFI-11]`); words take the place of a type and are separated by spaces.
+#[derive(Clone, Debug)]
+pub struct Contract {
+    pub word: Ident,
+    pub args: Option<Vec<AttrArg>>,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug)]
