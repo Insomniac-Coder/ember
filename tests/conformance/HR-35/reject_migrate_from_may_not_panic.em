@@ -1,8 +1,8 @@
 #$ test: compile-fail
 #$ rules: HR-35, HR-16
 #$ help: use `?` to return the error
-#$ help: return `Err(ReloadError.Migration(type_name, instance, message))` instead
 #$ help: test it with `if` and return `Err(ReloadError.Migration(…))`
+#$ help: return `Err(ReloadError.Migration(type_name, instance, message))` instead
 # `migrate_from` cannot abort the process: an explicit `panic`, `unwrap`, `expect` or `assert` in
 # it is `E2225`, whose help names the fallible form. The words in a string or a comment are not
 # calls: panic("no") here is text.

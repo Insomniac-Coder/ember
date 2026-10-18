@@ -13,7 +13,7 @@
 #$ assert-c: contains("->ti->vtable))->slot0)(_1)")
 #$ assert-c: contains("EMBER_RL_MANIFEST const ember_rl_manifest em_reload_manifest = {")
 #$ assert-c: contains("EMBER_RELOAD_MAGIC, EMBER_RELOAD_PROTOCOL,")
-#$ assert-c: contains("{ \"em_add_one\", (void (*)(void))em_add_one__rl, (void (*)(void))em_add_one,")
+#$ assert-c: contains("{ "em_add_one", (void (*)(void))em_add_one__rl, (void (*)(void))em_add_one,")
 # In a reloadable build (this directory's manifest says `reload = "all"`) a call to `add_one` goes
 # to its symbol, which is its thunk: the thunk loads the current target from the image's copy of
 # the call table and calls it. The body has a name of its own and is never inlined, however small

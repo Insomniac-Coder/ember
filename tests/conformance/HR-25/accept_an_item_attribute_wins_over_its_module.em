@@ -3,7 +3,7 @@
 #$ stdout: 9
 #$ assert-c: contains("int64_t em_moved__rl(int64_t _1) {")
 #$ assert-c: !contains("em_kept__rl")
-#$ assert-c: contains("{ \"em_kept\", NULL, NULL, NULL, 0, UINT64_C(")
+#$ assert-c: contains("{ "em_kept", NULL, NULL, NULL, 0, UINT64_C(")
 # `#! module reloadable` makes the module's functions reloadable under `reload = "opt-in"`; an
 # item's own `@noreload` wins over it.
 
