@@ -413,14 +413,6 @@ mod tests {
         crate::output_started(&mut command).expect("the reload host runs")
     }
 
-    /// The runtime's reload protocol, driven from C (`reload_image_a.c.in` says each step):
-    /// `[ABI-2]` an image of another protocol is refused on load with `E9037`; `[HR-3]` a poll while
-    /// a registered thread is inside Ember code is `EMBER_RELOAD_UNSAFE_POINT`, read from that
-    /// thread's depth counter (`[HR-42]`); `[HR-2]`, `[HR-6]` the next poll applies the new image and
-    /// the same thunk runs its body; `[HR-4a]`, `[HR-17]` the static keeps its value in the
-    /// runtime's storage and the new body reads it; `[HR-4]` the old image's code still runs;
-    /// `[HR-30]`, `[HR-32]` the host contract's stats count the reload and carry the build's time;
-    /// `[HR-7]` a removed function's thunk reaches a stub that panics naming it.
     /// `[HR-42a]` — the depth counter is not a lock: entering Ember code on a registered thread is
     /// one relaxed increment of the thread's own counter and one acquire fence, and leaving is one
     /// release decrement; nothing in either waits, takes a lock or looks at another thread.
@@ -448,6 +440,14 @@ mod tests {
         }
     }
 
+    /// The runtime's reload protocol, driven from C (`reload_image_a.c.in` says each step):
+    /// `[ABI-2]` an image of another protocol is refused on load with `E9037`; `[HR-3]` a poll while
+    /// a registered thread is inside Ember code is `EMBER_RELOAD_UNSAFE_POINT`, read from that
+    /// thread's depth counter (`[HR-42]`); `[HR-2]`, `[HR-6]` the next poll applies the new image and
+    /// the same thunk runs its body; `[HR-4a]`, `[HR-17]` the static keeps its value in the
+    /// runtime's storage and the new body reads it; `[HR-4]` the old image's code still runs;
+    /// `[HR-30]`, `[HR-32]` the host contract's stats count the reload and carry the build's time;
+    /// `[HR-7]` a removed function's thunk reaches a stub that panics naming it.
     #[test]
     fn the_reload_protocol_from_a_c_host() {
         let dir = std::env::temp_dir().join(format!("{}-reload-protocol-{}", ember_branding::CLI_NAME, std::process::id()));
