@@ -9214,6 +9214,19 @@ static void* rl_tx_alloc(size_t size, size_t align) {
 }
 #endif
 
+/* A handle (strong or weak), or an `Array` of them, is the same bits whatever its class became:
+ * the objects migrate on their own. */
+static bool rl_is_handle_kind(uint32_t kind) {
+    return kind == EMBER_RL_KIND_HANDLE || kind == EMBER_RL_KIND_OPTION_HANDLE || kind == EMBER_RL_KIND_WEAK;
+}
+
+static bool rl_handle_bits(const ember_rl_field* from, const ember_rl_field* to) {
+    return from->kind == to->kind && from->size == to->size
+        && (rl_is_handle_kind(to->kind)
+            || (to->kind == EMBER_RL_KIND_ARRAY && to->element_kind == from->element_kind
+                && to->element_size == from->element_size && rl_is_handle_kind(to->element_kind)));
+}
+
 #if defined(EMBER_RELOAD_INSTANCES)
 /* -- migration ([HR-14], [HR-15], [HR-16]) -------------------------------------
  *
@@ -9286,12 +9299,7 @@ static int rl_field_route(const ember_rl_field* to, const ember_rl_field* from) 
     if (from->type_schema == to->type_schema && from->size == to->size) {
         return RL_CARRY;
     }
-    /* A handle, or an `Array` of them, is the same bits whatever its class became: the objects
-     * migrate on their own. */
-    if (from->kind == to->kind && from->size == to->size
-        && (to->kind == EMBER_RL_KIND_HANDLE || to->kind == EMBER_RL_KIND_OPTION_HANDLE || to->kind == EMBER_RL_KIND_WEAK
-            || (to->kind == EMBER_RL_KIND_ARRAY && to->element_kind == from->element_kind && to->element_size == from->element_size
-                && (to->element_kind == EMBER_RL_KIND_HANDLE || to->element_kind == EMBER_RL_KIND_OPTION_HANDLE)))) {
+    if (rl_handle_bits(from, to)) {
         return RL_CARRY;
     }
     if (rl_widens(from, to)) {
@@ -9372,6 +9380,10 @@ static bool rl_plan_type(const ember_rl_manifest* next, const ember_rl_type* old
     }
     if (old->kind != to->kind) {
         rl_report(report, cap, "refused: `%s` changed what kind of type it is [HR-14]\n", to->name);
+        return false;
+    }
+    if ((to->layout & EMBER_RL_LAYOUT_FOREIGN) != 0 || (old->layout & EMBER_RL_LAYOUT_FOREIGN) != 0) {
+        rl_report(report, cap, "refused: a value of `%s` may be reachable only through a raw pointer or foreign memory, which a reload cannot follow, and its schema changed [HR-13b]\n", to->name);
         return false;
     }
     if ((to->layout & EMBER_RL_LAYOUT_CONTAINED) != 0 || (old->layout & EMBER_RL_LAYOUT_CONTAINED) != 0) {
@@ -10010,10 +10022,7 @@ static bool rl_static_migrates(const ember_rl_manifest* next, const rl_static* k
                                bool checkpoint, char* report, size_t cap) {
     const ember_rl_field* from = kept->shape;
     const ember_rl_field* to = edited->shape;
-    bool handle = from != NULL && to != NULL && from->kind == to->kind && from->size == to->size
-        && (to->kind == EMBER_RL_KIND_HANDLE || to->kind == EMBER_RL_KIND_OPTION_HANDLE || to->kind == EMBER_RL_KIND_WEAK
-            || (to->kind == EMBER_RL_KIND_ARRAY && to->element_kind == from->element_kind && to->element_size == from->element_size
-                && (to->element_kind == EMBER_RL_KIND_HANDLE || to->element_kind == EMBER_RL_KIND_OPTION_HANDLE)));
+    bool handle = from != NULL && to != NULL && rl_handle_bits(from, to);
     if (handle) {
         return true;
     }

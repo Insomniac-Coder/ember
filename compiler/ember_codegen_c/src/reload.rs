@@ -581,6 +581,25 @@ impl Emitter<'_> {
         mentions
     }
 
+    /// `[HR-13b]` — the package types a raw pointer can reach: a value behind one may sit in
+    /// foreign memory, which no reload can find, so a change to its schema is refused.
+    fn pointed_structs(&self, reload: &ReloadImage) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        for (_, kind) in self.types.all() {
+            let TyKind::Ptr { inner, .. } = kind else { continue };
+            match self.types.kind(*inner) {
+                TyKind::Struct(id) if self.has_schema(*inner, reload) => {
+                    out.insert(self.types.struct_def(*id).name.to_string());
+                }
+                TyKind::Class(id) if reload.files.contains(&self.types.class_def(*id).span.file) => {
+                    out.insert(self.types.class_def(*id).name.to_string());
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
     /// Whether a type has a schema in this image: a struct, a class or a unit enum the package
     /// declares, and `[HR-13a]` a standard-library struct holding the package's types (a
     /// `Mutex[Array[Particle]]`), whose schema the instantiating package emits so a reload can
@@ -618,6 +637,8 @@ impl Emitter<'_> {
                 TyKind::Enum(id) if this.types.option_niche(*id).is_some_and(|niche| matches!(this.types.kind(niche.payload), TyKind::Class(_))) => {
                     ("EMBER_RL_KIND_OPTION_HANDLE", String::new())
                 }
+                TyKind::Struct(id) if this.weak_inner_id(*id).is_some() => ("EMBER_RL_KIND_WEAK", String::new()),
+                TyKind::Struct(id) if this.shared_inner_id(*id).is_some() => ("EMBER_RL_KIND_HANDLE", String::new()),
                 TyKind::Struct(id) if this.has_schema(elem, reload) => {
                     ("EMBER_RL_KIND_STRUCT", this.types.struct_def(*id).name.to_string())
                 }
@@ -676,6 +697,7 @@ impl Emitter<'_> {
         let mut types = Vec::new();
         let mut identities = Vec::new();
         let contained = self.contained_structs(reload);
+        let foreign = self.pointed_structs(reload);
         // A field's row and, when it has a declared default, its default's case.
         let mut layouts: Vec<(String, String, Vec<(String, Ty)>, String)> = Vec::new();
         let classes: Vec<ClassId> = self.types.runtime_classes().map(|(id, _)| id).collect();
@@ -789,7 +811,11 @@ impl Emitter<'_> {
                 self.line("}");
                 drop_name
             };
-            let layout = if kind == "struct" && contained.contains(&name) { "EMBER_RL_LAYOUT_CONTAINED" } else { "0" };
+            let layout = match (kind == "struct" && contained.contains(&name), foreign.contains(&name)) {
+                (_, true) => "EMBER_RL_LAYOUT_FOREIGN",
+                (true, false) => "EMBER_RL_LAYOUT_CONTAINED",
+                (false, false) => "0",
+            };
             let ty = if kind == "class" {
                 self.types.classes().find(|(_, def)| def.name.to_string() == name).and_then(|(id, _)| self.types.find(&TyKind::Class(id)))
             } else {

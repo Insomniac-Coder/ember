@@ -764,6 +764,71 @@ fn explain_predicts_against_the_running_program() {
     assert!(finished.success());
 }
 
+/// `[HR-7]` — a function an edit removes keeps its thunk, which would reach a stub; while a value
+/// of the function may be held (here by `main`'s own frame), the thunk is reachable, so the reload
+/// is refused, naming it.
+#[test]
+fn removing_a_function_whose_address_is_held_is_refused() {
+    let v1 = "import std.hot\n\nfn helper(x: int) -> int:\n    return x + 1\n\nfn version() -> int:\n    return 1\n\n\
+              fn main():\n    held = helper\n    println(held(1))\n    hot.checkpoint()\n    println(version())\n";
+    let v2 = "import std.hot\n\nfn version() -> int:\n    return 2\n\nfn main():\n    hot.checkpoint()\n    println(version())\n";
+    let (run, reloads) = reload_run("reload-removed-held", RELOAD_ALL, v1, &[v2]);
+    assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
+    assert_eq!(run.stdout, "2\n1\n", "{}", run.stderr);
+    let named = format!("`{}` was removed, but its address may be held", ember_branding::mangled("helper"));
+    assert!(run.stderr.contains(&named), "{}", run.stderr);
+}
+
+/// `[HR-13b]` — a value a raw pointer can reach may sit in foreign memory, where no reload can find
+/// it: a change to its type's schema is refused, naming it.
+#[test]
+fn a_type_behind_a_raw_pointer_does_not_migrate() {
+    let v1 = "from std.sync import Mutex\n\nstruct Score:\n    points: int = 0\n\nstatic BOARD: Mutex[Score] = Mutex(Score())\n\n\
+              fn raw(p: *mut Score) -> int:\n    return 0\n\n\
+              @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    with board = BOARD.lock():\n        board.points += 5\n        return board.points\n\nfn main():\n    pass\n";
+    let v2 = v1.replace("    points: int = 0\n", "    points: int = 0\n    bonus: int = 1000\n");
+    let run = host_run("reload-raw-pointer", v1, &[&v2], 2);
+    assert!(run.stdout.contains("a value of `Score` may be reachable only through a raw pointer or foreign memory"), "{}", run.stdout);
+    assert!(run.stdout.ends_with("10\n"), "the old code did not run on: {}", run.stdout);
+}
+
+/// `[HR-14]` — a class whose base changed is refused, and an enum variant renamed with
+/// `@renamed_from` keeps the values that held it.
+#[test]
+fn a_changed_base_is_refused_and_a_renamed_variant_kept() {
+    let based = PARTICLES.replace(
+        "@sync\nclass Particle:\n",
+        "@sync\nopen class Body:\n    mass: int = 1\n\n@sync\nopen class Shape:\n    sides: int = 4\n\n@sync\nclass Particle(Body):\n",
+    );
+    let rebased = based.replace("class Particle(Body):", "class Particle(Shape):");
+    let run = host_run("reload-rebased", &based, &[&rebased], 2);
+    assert!(run.stdout.contains("the base class of `Particle` changed"), "{}", run.stdout);
+    assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
+
+    let v1 = PARTICLES
+        .replace("@sync\nclass Particle:\n", "enum Mode:\n    Slow\n    Fast\n\n@sync\nclass Particle:\n    mode: Mode = Mode.Fast\n")
+        .replace("p.x.fetch_add(p.step)", "p.x.fetch_add(speed(p.mode))")
+        .replace("fn main():", "fn speed(mode: Mode) -> int:\n    match mode:\n        Mode.Slow:\n            return 1\n        Mode.Fast:\n            return 10\n\nfn main():");
+    let renamed = v1
+        .replace("enum Mode:\n    Slow\n    Fast\n", "enum Mode:\n    Slow\n    @renamed_from(\"Fast\")\n    Quick\n")
+        .replace("Mode.Fast", "Mode.Quick");
+    let run = host_run("reload-variant-renamed", &v1, &[&renamed], 3);
+    assert_eq!(run.stdout, "30\napplied, 3 migrated\n60\n90\n", "{}", run.stderr);
+}
+
+/// `[HR-15]` — when an instance moves, its `Weak` handles are rewritten with its strong ones: a
+/// `Weak` kept in another static upgrades to the moved instance.
+#[test]
+fn weak_handles_follow_a_moved_instance() {
+    let v1 = PARTICLES
+        .replace("static WORLD: Mutex[Array[Particle]] = Mutex([])", "static WORLD: Mutex[Array[Particle]] = Mutex([])\nstatic WATCH: Mutex[Array[Weak[Particle]]] = Mutex([])")
+        .replace("                world.push(Particle())", "                p = Particle()\n                with watch = WATCH.lock():\n                    watch.push(Weak(p))\n                world.push(p)")
+        .replace("    return total\n", "    with watch = WATCH.lock():\n        for w in watch:\n            match w.upgrade():\n                Some(p):\n                    total += 1000 * p.step\n                None:\n                    pass\n    return total\n");
+    let v2 = v1.replace("    step: int = 1\n", "    step: int = 1\n    bonus: int = 100\n");
+    let run = host_run("reload-weak", &v1, &[&v2], 3);
+    assert_eq!(run.stdout, "3003\napplied, 3 migrated\n3006\n3009\n", "{}", run.stderr);
+}
+
 /// `[HR-29]` — with reload on, one shared runtime serves every image in the process: a reloadable
 /// package whose manifest asks to link the runtime statically is `E9036`.
 #[test]

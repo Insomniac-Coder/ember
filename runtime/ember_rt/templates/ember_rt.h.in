@@ -2927,6 +2927,7 @@ typedef struct ember_rl_type {
 /* EMBER_RL_LAYOUT_* — a type's layout facts. */
 #define EMBER_RL_LAYOUT_CONTAINED UINT32_C(1) /* a value of it sits in a container somewhere ([HR-13]) */
 #define EMBER_RL_LAYOUT_UNIT UINT32_C(2)      /* an enum with no payload */
+#define EMBER_RL_LAYOUT_FOREIGN UINT32_C(4)   /* a raw pointer can reach a value of it ([HR-13b]) */
 
 /* [HR-8] The reload manifest: in a section of the image named `.emrl` (PE) or `ember_reload`
  * (ELF). `targets`, `addresses`, `static_data` and `static_state` are this image's tables, which
