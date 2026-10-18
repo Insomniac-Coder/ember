@@ -6491,7 +6491,11 @@ impl<'a> Builder<'a> {
             (hir::ExprKind::Field { base: soa, .. }, TyKind::Ptr { .. }) => match *self.types.kind(soa.ty) {
                 TyKind::Struct(id) => {
                     let def = self.types.struct_def(id);
-                    def.origin.as_ref().is_some_and(|(origin, _)| origin.as_str() == "SoA").then(|| def.fields.len() - 2)
+                    def.origin
+                        .as_ref()
+                        .is_some_and(|(origin, _)| matches!(origin.as_str(), "SoA" | "ArenaSoA"))
+                        .then(|| def.fields.iter().position(|field| field.name.is("len")))
+                        .flatten()
                 }
                 _ => None,
             },

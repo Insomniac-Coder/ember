@@ -1341,6 +1341,7 @@ pub fn verify_views(body: &Body, types: &TypeTable) -> Vec<Violation> {
                     | Builtin::CStringAsCStr
                     | Builtin::ArenaArrayWithCapacity { .. }
                     | Builtin::ArenaMapWithCapacity { .. }
+                    | Builtin::SoA { op: crate::SoAOp::WithCapacityIn, .. }
                     | Builtin::ArenaAlloc { .. }
                     | Builtin::ArenaAllocUninit { .. }
                     | Builtin::ArenaAllocArrayZeroed { .. }

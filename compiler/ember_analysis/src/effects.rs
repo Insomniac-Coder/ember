@@ -1049,6 +1049,8 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         B::SoA { op: ember_mir::SoAOp::WithCapacity | ember_mir::SoAOp::Push | ember_mir::SoAOp::Reserve, .. } => {
             (Effects::ALLOC, "growing an `SoA`")
         }
+        // `[SOA-4]`, `[ARN-4]` — taking the block from a growing arena may grow it.
+        B::SoA { op: ember_mir::SoAOp::WithCapacityIn, .. } => (ALLOC, "an `ArenaSoA`'s block, from its arena"),
         B::SoA { op: ember_mir::SoAOp::SwapRemove, .. } => (Effects::PANIC, "`SoA.swap_remove`"),
         B::SoA { op: ember_mir::SoAOp::Truncate | ember_mir::SoAOp::DropAt, .. } => (Effects::NONE, "dropping an `SoA`'s elements"),
         B::SoA { .. } => (Effects::NONE, "an `SoA` operation"),

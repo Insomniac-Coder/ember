@@ -1185,6 +1185,17 @@ extend[T: Eq + Hash, H: Hasher + Default] Set[T, H] implements Default:
 pub enum CapacityError:
     Full
 
+## `[SOA-4]` — the fixed-capacity, arena-backed `SoA[T]`: `ArenaSoA[T].with_capacity(arena, n)`
+## takes one block for `n` elements from `arena`, which it borrows for its life, and the block never
+## grows or moves (`[ARN-5]`). `push` past the capacity returns `Err(CapacityError.Full)` and
+## changes nothing; `capacity()` tells it; the elements must not need drop (`E3090`). Its columns,
+## elements, proxies and other operations are an `SoA[T]`'s (`[SOA-1]`..`[SOA-7]`). The compiler
+## builds it for each `T`, as it builds `SoA[T]`; this declaration gives it its name here.
+@view
+pub struct ArenaSoA[T]:
+    arena: ref Arena
+    first: *mut T
+
 @view
 pub struct ArenaArray[T]:
     arena: ref Arena

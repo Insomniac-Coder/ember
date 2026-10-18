@@ -2489,7 +2489,7 @@ impl Emitter<'_> {
             .types
             .structs()
             .filter_map(|(id, def)| match &def.origin {
-                Some((origin, args)) if origin.as_str() == "SoA" && args.len() == 1 => Some((id, args[0])),
+                Some((origin, args)) if matches!(origin.as_str(), "SoA" | "ArenaSoA") && args.len() == 1 => Some((id, args[0])),
                 _ => None,
             })
             .collect();
@@ -2503,7 +2503,26 @@ impl Emitter<'_> {
             let name = self.c_named(&self.types.struct_def(id).name.to_string());
             let soa_c = self.c_type(self.types.find(&TyKind::Struct(id)).expect("an SoA's type is interned"));
             let element_c = self.c_type(element);
-            let fields: Vec<(String, Ty)> = self.types.struct_def(element_id).fields.iter().map(|f| (f.name.to_string(), f.ty)).collect();
+            // `[SOA-1]` — one column per field, a flattened field's split into its own; `access` is
+            // where each lives in a whole element (`.pos.x`).
+            let columns = self.types.soa_columns(element_id);
+            let fields: Vec<(String, Ty)> = columns.iter().map(|column| (column.name.clone(), column.ty)).collect();
+            let access: BTreeMap<String, String> = columns
+                .iter()
+                .map(|column| {
+                    let mut structure = element_id;
+                    let mut path = String::new();
+                    for &index in &column.path {
+                        let field = &self.types.struct_def(structure).fields[index];
+                        path.push('.');
+                        path.push_str(field.name.as_str());
+                        if let TyKind::Struct(inner) = *self.types.kind(field.ty) {
+                            structure = inner;
+                        }
+                    }
+                    (column.name.clone(), path)
+                })
+                .collect();
             let count = fields.len().max(1);
             // Layout.
             self.line(&format!("static inline EMBER_MAYBE_UNUSED size_t {name}_layout(size_t cap, size_t* at) {{"));
@@ -2538,6 +2557,34 @@ impl Emitter<'_> {
             }
             self.line("    s->cap = cap;");
             self.line("}");
+            // `[SOA-4]` — an `ArenaSoA`: its one block taken from the arena, never grown or freed.
+            if matches!(&self.types.struct_def(id).origin, Some((origin, _)) if origin.as_str() == "ArenaSoA") {
+                let arena_field = self.types.struct_def(id).fields.last().expect("an `ArenaSoA` holds its arena").ty;
+                let arena_c = self.c_type(arena_field);
+                self.line(&format!("static inline EMBER_MAYBE_UNUSED {soa_c} {name}_with_capacity_in({arena_c} arena, int64_t n) {{"));
+                self.line(&format!("    {soa_c} s;"));
+                self.line("    memset(&s, 0, sizeof s);");
+                self.line("    s.arena = arena;");
+                self.line("    size_t cap = n > 0 ? (size_t)n : 0;");
+                self.line(&format!("    size_t at[{count}];"));
+                self.line(&format!("    size_t size = {name}_layout(cap, at);"));
+                self.line(&format!("    unsigned char* block = (unsigned char*){RT}arena_alloc_uninit(arena->state, 1, size ? size : 1, 64);"));
+                for (k, (field, ty)) in fields.iter().enumerate() {
+                    let c = self.c_type(*ty);
+                    self.line(&format!("    s.col_{field} = ({c}*)(block + at[{k}]);"));
+                }
+                self.line("    s.cap = cap;");
+                self.line("    return s;");
+                self.line("}");
+                self.line(&format!("static inline EMBER_MAYBE_UNUSED bool {name}_try_push({soa_c}* s, {element_c} v) {{"));
+                self.line("    if (s->len == s->cap) { return true; }");
+                for (field, _) in &fields {
+                    self.line(&format!("    s->col_{field}[s->len] = v{};", access[field]));
+                }
+                self.line("    s->len += 1;");
+                self.line("    return false;");
+                self.line("}");
+            }
             // with_capacity
             self.line(&format!("static inline EMBER_MAYBE_UNUSED {soa_c} {name}_with_capacity(int64_t n) {{"));
             self.line(&format!("    {soa_c} s;"));
@@ -2549,7 +2596,7 @@ impl Emitter<'_> {
             self.line(&format!("static inline EMBER_MAYBE_UNUSED void {name}_push({soa_c}* s, {element_c} v) {{"));
             self.line(&format!("    if (s->len == s->cap) {{ {name}_grow(s, s->len + 1); }}"));
             for (field, _) in &fields {
-                self.line(&format!("    s->col_{field}[s->len] = v.{field};"));
+                self.line(&format!("    s->col_{field}[s->len] = v{};", access[field]));
             }
             self.line("    s->len += 1;");
             self.line("}");
@@ -2558,7 +2605,7 @@ impl Emitter<'_> {
             self.line("    s->len -= 1;");
             self.line(&format!("    {element_c} v;"));
             for (field, _) in &fields {
-                self.line(&format!("    v.{field} = s->col_{field}[s->len];"));
+                self.line(&format!("    v{} = s->col_{field}[s->len];", access[field]));
             }
             self.line("    return v;");
             self.line("}");
@@ -2634,7 +2681,7 @@ impl Emitter<'_> {
             self.line(&format!("    if (i < 0 || (size_t)i >= s->len) {{ {RT}panic_bounds((size_t)i, s->len, loc); }}"));
             self.line(&format!("    {element_c} v;"));
             for (field, _) in &fields {
-                self.line(&format!("    v.{field} = s->col_{field}[i];"));
+                self.line(&format!("    v{} = s->col_{field}[i];", access[field]));
             }
             self.line("    s->len -= 1;");
             self.line("    if ((size_t)i != s->len) {");
@@ -7746,6 +7793,8 @@ impl Emitter<'_> {
                         let r = |i: usize| rendered[i].clone();
                         return match op {
                             ember_mir::SoAOp::WithCapacity => format!("{name}_with_capacity({})", r(0)),
+                            ember_mir::SoAOp::WithCapacityIn => format!("{name}_with_capacity_in({}, {})", r(0), r(1)),
+                            ember_mir::SoAOp::TryPush => format!("{name}_try_push({}, {})", r(0), r(1)),
                             ember_mir::SoAOp::Column { mutable } => {
                                 let view = if *mutable { format!("{RT}mutspan") } else { format!("{RT}span") };
                                 format!("(({view}){{ *({}), {} }})", r(0), r(1))

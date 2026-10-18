@@ -499,6 +499,8 @@ pub struct TypeTable {
     /// `[ARN-11]` — the structs declared `@derive(Zeroable)`, by declared
     /// name (a generic struct's instances share its name as their origin).
     zeroable_derived: HashSet<Symbol>,
+    /// `[SOA-1]` — the fields marked `@soa(flatten)`: (declared struct name, field name).
+    soa_flattened: HashSet<(Symbol, Symbol)>,
     /// `[THR-6]` — the structs and classes declared `@must_drop`, by declared
     /// name (a generic one's instances share it as their origin).
     must_drop_declared: HashSet<Symbol>,
@@ -612,6 +614,7 @@ impl TypeTable {
             written_as: HashMap::new(),
             phantoms: HashMap::new(),
             zeroable_derived: HashSet::new(),
+            soa_flattened: HashSet::new(),
             must_drop_declared: HashSet::new(),
             debug_writers: HashMap::new(),
             manual_markers: Vec::new(),
@@ -2030,6 +2033,49 @@ impl TypeTable {
         out
     }
 
+    /// `[SOA-1]` — record a field's `@soa(flatten)`.
+    pub fn mark_soa_flatten(&mut self, structure: Symbol, field: Symbol) {
+        self.soa_flattened.insert((structure, field));
+    }
+
+    /// `[SOA-1]` — the columns of `SoA[T]` for the struct `element`, in field order: one per field,
+    /// and for a field marked `@soa(flatten)` whose type is a struct, one per field of its own (by
+    /// the same rule, so a flattened field of it is split again). Each column is the path of field
+    /// indices from the element to it, its name (the field names joined by `__`), and its type.
+    pub fn soa_columns(&self, element: StructId) -> Vec<SoaColumn> {
+        let mut out = Vec::new();
+        self.soa_columns_into(element, &mut Vec::new(), &mut String::new(), &mut out);
+        out
+    }
+
+    fn soa_columns_into(&self, structure: StructId, path: &mut Vec<usize>, name: &mut String, out: &mut Vec<SoaColumn>) {
+        let def = self.struct_def(structure);
+        let declared = def.origin.as_ref().map_or(def.name, |(origin, _)| *origin);
+        for (index, field) in def.fields.iter().enumerate() {
+            let at = name.len();
+            if !name.is_empty() {
+                name.push_str("__");
+            }
+            name.push_str(field.name.as_str());
+            path.push(index);
+            match self.kind(field.ty) {
+                TyKind::Struct(inner) if self.soa_flattened.contains(&(declared, field.name)) => {
+                    self.soa_columns_into(*inner, path, name, out)
+                }
+                _ => out.push(SoaColumn { path: path.clone(), name: name.clone(), ty: field.ty }),
+            }
+            path.pop();
+            name.truncate(at);
+        }
+    }
+
+    /// `[SOA-1]` — whether `structure`'s field `field` is marked `@soa(flatten)`.
+    pub fn soa_flattened(&self, structure: StructId, field: Symbol) -> bool {
+        let def = self.struct_def(structure);
+        let declared = def.origin.as_ref().map_or(def.name, |(origin, _)| *origin);
+        self.soa_flattened.contains(&(declared, field))
+    }
+
     /// `[ARN-11]` — record a struct's or an enum's `@derive(Zeroable)`; each instance is `Zeroable`
     /// when every field of it is (of an enum, of its variant whose discriminant is zero).
     pub fn derive_zeroable(&mut self, name: Symbol) {
@@ -2711,6 +2757,16 @@ pub fn is_signed(table: &TypeTable, ty: Ty) -> Option<bool> {
         TyKind::Uint(_) => Some(false),
         _ => None,
     }
+}
+
+/// `[SOA-1]` — one column of an `SoA[T]` (`TypeTable::soa_columns`).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SoaColumn {
+    /// The field indices from `T` to the column's field.
+    pub path: Vec<usize>,
+    /// The field names joined by `__` (`pos__x`).
+    pub name: String,
+    pub ty: Ty,
 }
 
 /// `[SIMD-1]` — what a lane of a `std.simd` type is.

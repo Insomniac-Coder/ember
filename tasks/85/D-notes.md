@@ -144,3 +144,35 @@ compile the instantiated header for all 42 types with `-std=c11 -Wall -Wextra` c
 through `Add` and the other operator interfaces (the operators are the compiler's, not interface
 implementations); `select` and comparisons are lane by lane in C (no SSE path).
 `STD-1`'s entry now names only `std.arena`.
+
+## 3. `@soa(flatten)` and `ArenaSoA[T]` (`[SOA-1]`, `[SOA-4]`)
+
+**`@soa(flatten)`.** The attribute is built (`@soa` takes only `flatten`, `E0104` otherwise); a
+struct's flattened fields are recorded in the type table (`mark_soa_flatten`), and
+`TypeTable::soa_columns` gives an `SoA`'s columns: one per field, a flattened struct field split
+into one per field of its own, recursively; each column has the path of field indices from the
+element, a name (`pos__x`, the C field `col_pos__x`) and a type. Everything that took columns to be
+the element's fields now goes through that list: the `SoA` struct's pointer fields, column views,
+element and proxy places, gathers (`get`, `load`, a flattened field read whole), scatters
+(`ps[i] = v`), and the C helpers (`push`, `pop`, `swap_remove` reach a column's value at `v.pos.x`).
+In the source, `ps.pos.x` is a column (`MutSpan[f32]`), `ps[i].pos.x` and `p.pos.x` places in it,
+`ps[i].pos` a value gathered from the three, and `ps[i].pos = v` (or `op=`) writes the three. A
+flattened field reached as the base of a further field access is a group (`soa_groups`, by the
+span of the expression standing for it); `ps.pos` used whole has no column (`E2020`). Flattening a
+field that is not a struct is `E0104` where an `SoA` of it is made. Two columns of one flattened
+field are distinct places, borrowed mutably at once, and distinct columns for `[SIMD-3]`.
+
+**`ArenaSoA[T]`** (`std.collections`, not in the prelude, as `[ARN-5]` puts its arena
+containers): the same compiler-built struct as `SoA[T]` with the arena it borrows as a last field
+(so it is a view and cannot outlive the arena: `E3061`, `E3021`), no drop, and origin `ArenaSoA`.
+`ArenaSoA[T].with_capacity(arena, n)` (`SoAOp::WithCapacityIn`) takes one 64-byte-aligned block for
+`n` elements from the arena (`ember_arena_alloc_uninit`); `push` (`SoAOp::TryPush`) returns
+`Err(CapacityError.Full)` past capacity and changes nothing; `capacity()`; no `reserve`; elements
+that need drop are `E3090` at construction. Columns, elements, proxies, `get`, `pop`,
+`swap_remove`, `clear` are an `SoA`'s. `std`'s `retain` and `sort_by_key` stay `SoA`'s only (they
+are written over `SoA[T]`; the spec names no operation list for `ArenaSoA`).
+
+**Tests.** `SOA-1/accept_a_flattened_field_is_a_column_per_field.em`, `SOA-1/reject_flatten_misused.em`,
+`SOA-4/accept_an_arena_soa_has_a_fixed_capacity.em`, `SOA-4/reject_an_arena_soa_misused.em`,
+`SOA-4/reject_an_arena_soa_outliving_its_arena.em`. `SOA-1` and `SOA-4` leave the `unfinished` list.
+Speed: a flattened column is a column like any other (the same views and loops); not timed apart.

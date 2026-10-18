@@ -846,6 +846,11 @@ pub enum SoAOp {
     DropAt,
     /// std's own, for `retain`: `[ref mut ps, n]`: the length set, the slots past it already empty.
     SetLen,
+    /// `[SOA-4]` — `ArenaSoA[T].with_capacity(arena, n)`: `[ref arena, n]`; the block is taken
+    /// from the arena once.
+    WithCapacityIn,
+    /// `[SOA-4]` — `[ref mut ps, value]`: `true` when it was full and nothing changed.
+    TryPush,
 }
 
 /// `[SIMD-1]`, `[SIMD-4]`, `[SIMD-8]`, `[SIMD-9]` — an operation of a `std.simd` vector or mask
@@ -949,6 +954,8 @@ impl SoAOp {
             SoAOp::MoveSlot => "move_slot",
             SoAOp::DropAt => "drop_at",
             SoAOp::SetLen => "set_len",
+            SoAOp::WithCapacityIn => "with_capacity",
+            SoAOp::TryPush => "push",
         }
     }
 }

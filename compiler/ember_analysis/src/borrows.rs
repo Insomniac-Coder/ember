@@ -2529,6 +2529,7 @@ fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elis
                 Builtin::SpanFrom { .. }
                 | Builtin::ArenaArrayWithCapacity { .. }
                 | Builtin::ArenaMapWithCapacity { .. }
+                | Builtin::SoA { op: ember_mir::SoAOp::WithCapacityIn, .. }
                 | Builtin::ArenaAlloc { .. }
                 | Builtin::ArenaAllocUninit { .. }
                 | Builtin::ArenaAllocArrayZeroed { .. }
