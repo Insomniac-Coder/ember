@@ -145,7 +145,10 @@ pub enum FfiAbiParam {
     Value { public_index: usize, ty: Ty, mode: Mode },
     SpanPointer { public_index: usize, elem: Ty, mutable: bool, nullable: bool },
     ArrayPointer { public_index: usize, elem: Ty, mutable: bool, nullable: bool },
-    Count { sources: Vec<FfiCountSource>, ty: Ty },
+    /// A count witness: the span lengths at its ABI position, or with `inout`
+    /// (`[FFI-11b]`'s `inout_count(p)`) the address of a local holding them,
+    /// which C writes back and the call returns.
+    Count { sources: Vec<FfiCountSource>, ty: Ty, inout: bool },
     /// `[FFI-11]` — `param(p, owned, one)`: the `ForeignBox` (an `Option` of
     /// one when `nullable`) gives C its pointer and leaves the runtime's
     /// record, freeing nothing.

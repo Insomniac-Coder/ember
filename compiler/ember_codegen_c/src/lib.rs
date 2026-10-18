@@ -5226,7 +5226,11 @@ impl Emitter<'_> {
 
     fn ffi_counted_signature(&self, body: &Body) -> String {
         let counted = body.ffi_counted.as_ref().expect("counted wrapper metadata");
-        let result = if let Some(span) = &counted.result_span {
+        // `[FFI-11b]` — C writes the count back through its pointer and returns nothing.
+        let inout = counted.abi_params.iter().any(|param| matches!(param, FfiAbiParam::Count { inout: true, .. }));
+        let result = if inout {
+            "void".to_string()
+        } else if let Some(span) = &counted.result_span {
             let elem = self.c_type(span.elem);
             if span.mutable { format!("{elem}*") } else { format!("const {elem}*") }
         } else if let Some(array) = &counted.result_array {
@@ -5251,6 +5255,7 @@ impl Emitter<'_> {
                     let elem = self.c_type(*elem);
                     if *mutable { format!("{elem}*") } else { format!("const {elem}*") }
                 }
+                FfiAbiParam::Count { ty, inout: true, .. } => format!("{}*", self.c_type(*ty)),
                 FfiAbiParam::Count { ty, .. } => self.c_type(*ty),
                 FfiAbiParam::Owned { public_index, nullable } => {
                     let arg = body.args().nth(*public_index).expect("the owned parameter").1.ty;
@@ -5368,7 +5373,7 @@ impl Emitter<'_> {
                         format!("({} ? {value} : NULL)", args[*public_index])
                     } else { value });
                 }
-                FfiAbiParam::Count { sources, ty } => {
+                FfiAbiParam::Count { sources, ty, inout } => {
                     let first = self.ffi_span_length(&args[sources[0].public_index], sources[0].nullable);
                     for other in sources.iter().skip(1) {
                         let location = self.location(body.span);
@@ -5385,7 +5390,13 @@ impl Emitter<'_> {
                         ));
                         self.line("#endif");
                     }
-                    foreign_args.push(format!("({}){first}", self.c_type(*ty)));
+                    if *inout {
+                        // `[FFI-11b]` — C reads the capacity and writes the count back here.
+                        self.line(&format!("    {ty} _ffi_count = ({ty}){first};", ty = self.c_type(*ty)));
+                        foreign_args.push("&_ffi_count".to_string());
+                    } else {
+                        foreign_args.push(format!("({}){first}", self.c_type(*ty)));
+                    }
                 }
                 // `[FFI-23]` — C keeps the address of the object the token holds.
                 FfiAbiParam::Retained { public_index } => {
@@ -5457,7 +5468,10 @@ impl Emitter<'_> {
             self.line("");
             return;
         }
-        if let Some(result) = &counted.result_span {
+        if counted.abi_params.iter().any(|param| matches!(param, FfiAbiParam::Count { inout: true, .. })) {
+            self.line(&format!("    {call};"));
+            self.line("    return _ffi_count;");
+        } else if let Some(result) = &counted.result_span {
             let elem = self.c_type(result.elem);
             let pointer = if result.mutable { format!("{elem}*") } else { format!("const {elem}*") };
             self.line(&format!("    {pointer} _ffi_result = {call};"));

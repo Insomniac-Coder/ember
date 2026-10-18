@@ -204,6 +204,20 @@ Known limit: a foreign function that calls back into Ember has the callback's al
 as its own (the "running now" mark is not cleared on entry to an Ember function called from C).
 Callbacks with `user_data` are not built (`[FFI-11]`); when they are, the trampoline should clear it.
 
+## 13. `inout_count` (`[FFI-11b]`, `[FFI-11]`)
+
+`@ffi(param(count, inout_count(items)), param(items, borrowed, count(count), nullable, exclusive))`
+over `safe fn f(mut count: u32, items: Option[MutSpan[T]])`: the count is written at its C ABI
+position as `mut` (C's `uint32_t*`, the hand-declaration form of a pointer to one value) and hidden
+from the callable signature as ODR-074's `count(n)` witness is; the callable is
+`f(items: Option[MutSpan[T]]) -> u32`. The C wrapper (`FfiAbiParam::Count { inout: true }`) holds
+the capacity (0 for `None`, the span's length otherwise, `Some(empty)` a non-null sentinel per
+ODR-079) in a local, passes its address, and returns what C wrote back. `check_inout_counts`: `E5002`
+for a count that is not `mut` of an integer type, an `items` not `nullable count(count)`
+`exclusive`, or two `inout_count`s; a C result beside it is `E0900` (with a status it would be
+`Result[count, <E>Error]`, `[FFI-16]`, whose status enum is an overlay's). Tests:
+`tests/conformance/FFI-11b/`.
+
 ## Rules done (each with its test)
 
 | Rule | Test |
@@ -218,6 +232,7 @@ Callbacks with `user_data` are not built (`[FFI-11]`); when they are, the trampo
 | `CLI-13` | milestone `calls_foreign_lists_what_an_item_reaches_with_each_contract` |
 | `DIA-18` | `tests/conformance/DIA-18/*` |
 | `FFI-37`, `FFI-37a`–`FFI-37d`, `TCB-6` | milestone `instrumented_tests_grade_foreign_effect_facts` |
+| `FFI-11b` | `tests/conformance/FFI-11b/*` |
 
 ## Left, and why
 
@@ -227,6 +242,17 @@ Callbacks with `user_data` are not built (`[FFI-11]`); when they are, the trampo
   12) and `ember tcb` shows them; W5050/E5050 for a claimed grade and `--require` wait for overlays.
 * `[TCB-5]` (in `unfinished`): the record holds every identity there is now except the header's;
   hand declarations have none. Add its hash when `import c` lands.
+* `[CLI-6]`, `[CLI-7]`, `[FFI-12]`, `[FFI-13]`: about what the C header importer produces
+  (skipped declarations, an overlay checked against its header, `extend` blocks over a foreign
+  module); outside this job.
+* `[FFI-16]`, `[ERR-6]`: the status enum is marked in an overlay (`@ffi` sits on extern and overlay
+  items only, the attribute table; a hand declaration has no enum), so `-> status` waits for the
+  importer, or for an owner decision on a hand-declared form (question 5). `[ERR-6]`'s example also
+  names the error type differently from `[FFI-16]` (question 6).
+* `[FFI-11]` (in `unfinished`): `out`, `status`, `callback(…)` with `user_data` (`[FFI-21]`'s
+  trampolines), `threads(…)`/`destroys(f)` on functions, `unsafe`.
+* `[FFI-33b]` (in `unfinished`): callbacks carrying `threads(creator)` wait for callbacks.
+* `[FFI-36b]` (in `unfinished`): the compile-time half needs a code (question 2).
 
 ## Defects found
 
@@ -256,3 +282,14 @@ Callbacks with `user_data` are not built (`[FFI-11]`); when they are, the trampo
    token told apart in the type.
 4. **Calling a `static` of function type by name** (`HOOK(7)`) is `E1010 cannot find`: a defect
    outside this job, noted under "Defects found".
+5. **A status enum without an overlay (`[FFI-16]`).** `@ffi(status, ok=X)` marks an enum, and
+   `@ffi` applies to extern and overlay items only; extern blocks hold `fn`, `static` and `type`.
+   Should a hand declaration get a form (an `@repr(i32) @ffi(status, ok=X) enum` at module level, or
+   an `enum` inside `unsafe extern`), or is `-> status` an overlay's only?
+6. **The error type's name (`[ERR-6]` against `[FFI-16]`).** `[FFI-16]` generates `<E>Error` (for
+   `VkResult`, `VkResultError`); `[ERR-6]`'s example turns a `VkResult` return into
+   `Result[void, VkError]`, and spells the overlay `@ffi(status=VkResult, ok=VK_SUCCESS)` where
+   `[FFI-16]` writes `@ffi(status, ok=X)` on the enum. Which name and which spelling?
+7. **`inout_count` beside a C result (`[FFI-11b]`).** Built for C functions returning `void` (the
+   call returns the count). With a status result it is `Result[count, <E>Error]` once `[FFI-16]` is
+   built; with any other result (an `int` that is not a status), what does the call return?

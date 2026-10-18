@@ -7903,6 +7903,14 @@ impl<'a> Checker<'a> {
                     } else {
                         HashSet::new()
                     };
+                    // `[FFI-11b]` — the two-call idiom returns the count C wrote back, in place
+                    // of C's `void` (`check_foreign_signature` refuses another result).
+                    let inout_count = if decl.is_foreign_decl && decl.is_safe && decl.ret.is_none() {
+                        ffi_inout_counts(&item.attrs).first().and_then(|(count, _)|
+                            params.iter().find(|(name, _, _, _)| name == count).map(|(_, ty, _, _)| *ty))
+                    } else {
+                        None
+                    };
                     params.retain(|(name, _, _, _)| !count_witnesses.contains(name));
                     let ret = decl
                         .ret
@@ -7913,6 +7921,7 @@ impl<'a> Checker<'a> {
                             self.in_return_type -= 1;
                             self.reject_unsized_by_value(resolved, t.span, "a return type")
                         })
+                        .or(inout_count)
                         .unwrap_or(self.common.void);
                     let explicit_borrows = self.check_borrows_attribute(&item.attrs, &params, ret);
                     let borrows = if decl.is_foreign_decl && decl.is_safe {
@@ -17126,21 +17135,30 @@ impl<'a> Checker<'a> {
             }
         }
         if decl.is_foreign_decl {
+            let inout_counts = ffi_inout_counts(attrs);
+            if decl.is_safe {
+                self.check_inout_counts(decl, &inout_counts, &contracts);
+            }
             let mut checked_witnesses = HashSet::new();
             for &(_, kind) in &contracts {
                 if let FfiPointerContract::Count { witness, .. } = kind
                     && checked_witnesses.insert(witness) {
                     let source = decl.params.iter().find(|param| matches!(&param.kind,
                         ast::ParamKind::Named { name, .. } if name.name == witness));
+                    // `[FFI-11b]` — an `inout_count` witness is C's pointer to it, written `mut`.
+                    let mode = if inout_counts.iter().any(|(count, _)| *count == witness) { Mode::Mut } else { Mode::Borrow };
                     let integer = source.and_then(|param| match &param.kind {
                         ast::ParamKind::Named { ty, .. }
-                            if mode_of(param.mode) == Mode::Borrow && param.default.is_none() =>
+                            if mode_of(param.mode) == mode && param.default.is_none() =>
                                 ffi_integer_witness_type(ty),
                         _ => None,
                     });
                     if integer.is_none() {
-                        self.error(codes::E5002, decl.name.span,
-                            format!("`count({witness})` needs integer ABI witness `{witness}`"));
+                        // An `inout_count` witness's own check said what it needs.
+                        if mode == Mode::Borrow || !decl.is_safe {
+                            self.error(codes::E5002, decl.name.span,
+                                format!("`count({witness})` needs integer ABI witness `{witness}`"));
+                        }
                     } else if integer.is_some_and(|name| matches!(name.as_str(), "i128" | "u128")) {
                         self.error(codes::E0900, decl.name.span,
                             format!("`count({witness})` with a 128-bit integer witness is not implemented yet"));
@@ -17445,6 +17463,47 @@ impl<'a> Checker<'a> {
             .flatten()
     }
 
+    /// `[FFI-11b]` — the two-call enumeration idiom on a `safe fn`: `param(count, inout_count(items))`
+    /// over `mut count: <integer>` (C's pointer to the count, hidden from the callable signature as a
+    /// `count(n)` witness is), with `param(items, borrowed, count(count), nullable, exclusive)`, so
+    /// the function takes `Option[MutSpan[T]]` and returns the count C wrote back.
+    fn check_inout_counts(&mut self, decl: &ast::FnDecl, inout_counts: &[(Symbol, Symbol)], contracts: &[(Symbol, FfiPointerContract)]) {
+        if inout_counts.len() > 1 {
+            self.error(codes::E5002, decl.name.span,
+                "a function has one `inout_count`: its count is what the call returns [FFI-11b]");
+        }
+        for &(count, items) in inout_counts.iter().take(1) {
+            let witness = decl.params.iter().find(|param| matches!(&param.kind,
+                ast::ParamKind::Named { name, .. } if name.name == count));
+            let integer = witness.is_some_and(|param| mode_of(param.mode) == Mode::Mut && match &param.kind {
+                ast::ParamKind::Named { ty, .. } => ffi_integer_witness_type(ty).is_some(),
+                ast::ParamKind::Receiver { .. } => false,
+            });
+            if !integer {
+                self.sink.emit(
+                    Diagnostic::error(codes::E5002, decl.name.span,
+                        format!("`inout_count({items})` needs `mut {count}` of an integer type: C's pointer to the count"))
+                        .note("C reads the capacity through it and writes the count back [FFI-11b]"),
+                );
+            }
+            if !contracts.iter().any(|&(slot, contract)| slot == items && contract
+                == FfiPointerContract::Count { witness: count, exclusive: true, nullable: true }) {
+                self.sink.emit(
+                    Diagnostic::error(codes::E5002, decl.name.span,
+                        format!("`inout_count({items})` needs `param({items}, borrowed, count({count}), nullable, exclusive)`"))
+                        .note("the function takes `Option[MutSpan[T]]`: `None` asks for the count, `Some` is filled [FFI-11b]"),
+                );
+            }
+            if let Some(result) = &decl.ret {
+                self.sink.emit(
+                    Diagnostic::error(codes::E0900, result.span,
+                        "an `inout_count` function with a C result is not implemented yet")
+                        .note("the call returns the count; with a status result it would be `Result[count, <E>Error]` (`-> status`, [FFI-16]), which needs a status enum, an overlay's [FFI-11b]"),
+                );
+            }
+        }
+    }
+
     /// `[FFI-11]`, `[FFI-36a]` — a `safe fn`'s ownership words: a `param(p, owned, one)` takes
     /// `owned p: ForeignBox[T]` (an `Option` of one with `nullable`), a result
     /// `returns_owned(destructor=f)` is a `ForeignBox[T]` (likewise) whose `f` takes one `*mut T`,
@@ -17638,6 +17697,7 @@ impl<'a> Checker<'a> {
             Some(hir::FfiArrayResult { elem: *elem, mutable })
         } else { None };
         let contracts = ffi_param_contracts(attrs);
+        let inout_counts = ffi_inout_counts(attrs);
         let mut counted = HashMap::<Symbol, (usize, Ty, bool, bool)>::new();
         let mut fixed = HashMap::<Symbol, (usize, Ty, bool, bool)>::new();
         let mut witnesses = HashMap::<Symbol, Vec<hir::FfiCountSource>>::new();
@@ -17666,7 +17726,9 @@ impl<'a> Checker<'a> {
             if mutable != exclusive || !self.types.is_ffi_safe(elem) { return None; }
             let source = decl.params.iter().find(|param| matches!(&param.kind,
                 ast::ParamKind::Named { name, .. } if name.name == witness))?;
-            if mode_of(source.mode) != Mode::Borrow || source.default.is_some() { return None; }
+            // `[FFI-11b]` — an `inout_count` witness is C's `T*`, written `mut`.
+            let mode = if inout_counts.iter().any(|(count, _)| *count == witness) { Mode::Mut } else { Mode::Borrow };
+            if mode_of(source.mode) != mode || source.default.is_some() { return None; }
             let ast::ParamKind::Named { ty, .. } = &source.kind else { return None };
             let witness_name = ffi_integer_witness_type(ty)?;
             if matches!(witness_name.as_str(), "i128" | "u128") { return None; }
@@ -17697,6 +17759,7 @@ impl<'a> Checker<'a> {
                 let witness_ty = self.scalar_named(ffi_integer_witness_type(ty)?.as_str())?;
                 abi_params.push(hir::FfiAbiParam::Count {
                     sources: sources.clone(), ty: witness_ty,
+                    inout: inout_counts.iter().any(|(count, _)| *count == name.name),
                 });
             } else if let Some(&(public_index, elem, mutable, nullable)) = counted.get(&name.name) {
                 abi_params.push(hir::FfiAbiParam::SpanPointer { public_index, elem, mutable, nullable });
@@ -34991,7 +35054,8 @@ impl<'a> Checker<'a> {
                                     saw_result = true;
                                 } else if let Some(name) = ffi_param_contract_arg(arg).map(|(name, _)| name)
                                     .or_else(|| ffi_owned_param_arg(arg).map(|(name, _)| name))
-                                    .or_else(|| ffi_retained_param_arg(arg).map(|(name, _)| name)) {
+                                    .or_else(|| ffi_retained_param_arg(arg).map(|(name, _)| name))
+                                    .or_else(|| ffi_inout_count_arg(arg).map(|(name, _)| name)) {
                                     if !contracted.insert(name) {
                                         self.error(codes::E0104, attr.span, "duplicate pointer contract in `@ffi`");
                                     }
@@ -50236,6 +50300,31 @@ fn ffi_count_witnesses(attrs: &[ast::Attribute]) -> HashSet<Symbol> {
             None
         }
     }).collect()
+}
+
+/// `[FFI-11b]` — `param(count, inout_count(items))`: the two-call enumeration idiom's count, C's
+/// pointer to the capacity of `items` on the way in and to the number there on the way out.
+/// Returns the count parameter and the items parameter.
+fn ffi_inout_count_arg(arg: &ast::AttrArg) -> Option<(Symbol, Symbol)> {
+    let ast::AttrArg::Expr(expr) = arg else { return None };
+    let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    if !ffi_contract_word(callee).is_some_and(|word| word.is("param")) || args.len() != 2
+        || args.iter().any(|arg| arg.name.is_some()) {
+        return None;
+    }
+    let count = ffi_contract_word(&args[0].value)?;
+    let ast::ExprKind::Call { callee: word, args: items } = &args[1].value.kind else { return None };
+    if !ffi_contract_word(word).is_some_and(|word| word.is("inout_count")) || items.len() != 1 || items[0].name.is_some() {
+        return None;
+    }
+    Some((count, ffi_contract_word(&items[0].value)?))
+}
+
+fn ffi_inout_counts(attrs: &[ast::Attribute]) -> Vec<(Symbol, Symbol)> {
+    attrs.iter()
+        .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+        .flat_map(|attr| attr.args.iter().filter_map(ffi_inout_count_arg))
+        .collect()
 }
 
 fn ffi_integer_witness_type(ty: &ast::TypeExpr) -> Option<Symbol> {
