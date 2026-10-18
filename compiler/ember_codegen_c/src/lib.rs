@@ -392,6 +392,7 @@ fn emit_with(
         gives_values_to_c: false,
         foreign_statics: std::cell::RefCell::new(BTreeMap::new()),
         drop_glue: std::cell::RefCell::new(Vec::new()),
+        retain_glue: std::cell::RefCell::new(Vec::new()),
         eq_fns: std::cell::RefCell::new(Vec::new()),
         clone_parts_fns: std::cell::RefCell::new(Vec::new()),
         fmt_fns: std::cell::RefCell::new(Vec::new()),
@@ -702,6 +703,10 @@ struct Emitter<'a> {
     /// an indirection (`struct Tree: kids: Array[Tree]`) is a runtime
     /// recursion instead of an infinite inline expansion.
     drop_glue: std::cell::RefCell<Vec<Ty>>,
+    /// D-680 — the types whose retain lines (a `Copy` value holding class handles) go through a
+    /// `static` function, as `drop_glue` does for drops: an enum payload whose own retain opens
+    /// another `switch`, so no function nests more than one.
+    retain_glue: std::cell::RefCell<Vec<Ty>>,
     /// D-187 — the aggregates `==` has been asked of, one generated
     /// field-wise equality function each, requested and emitted like
     /// `drop_glue`.
@@ -2134,6 +2139,28 @@ impl Emitter<'_> {
                 let c_ty = self.c_type(ty);
                 let mut lines = Vec::new();
                 self.drop_lines("(*value)", ty, &mut lines);
+                prototypes.push(format!("static void {symbol}({c_ty}* value);"));
+                self.line(&format!("static void {symbol}({c_ty}* value) {{"));
+                for line in lines {
+                    self.line(&format!("    {line}"));
+                }
+                self.line("}");
+                self.line("");
+                emitted += 1;
+            }
+        }
+        // D-680 — the retain glue, each one's body requesting the next level's.
+        let mut emitted = 0;
+        loop {
+            let pending: Vec<Ty> = self.retain_glue.borrow()[emitted..].to_vec();
+            if pending.is_empty() {
+                break;
+            }
+            for ty in pending {
+                let symbol = retain_glue_symbol(emitted);
+                let c_ty = self.c_type(ty);
+                let mut lines = Vec::new();
+                self.retain_lines_for_value("(*value)", ty, &mut lines);
                 prototypes.push(format!("static void {symbol}({c_ty}* value);"));
                 self.line(&format!("static void {symbol}({c_ty}* value) {{"));
                 for line in lines {
@@ -6174,6 +6201,42 @@ impl Emitter<'_> {
     /// ownership. Moves transfer the existing reference and therefore do not
     /// retain. A copied aggregate is walked recursively so its nested class
     /// handles receive the same ownership treatment as a direct handle.
+    /// D-680 — whether `ty`'s retain lines open a `switch`: an enum holding a handle, or an aggregate
+    /// holding such an enum.
+    fn retain_nests(&self, ty: Ty) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Enum(_) => {
+                let mut lines = Vec::new();
+                self.retain_lines_for_value("x", ty, &mut lines);
+                !lines.is_empty()
+            }
+            TyKind::Struct(id) => {
+                let def = self.types.struct_def(*id);
+                self.shared_inner_id(*id).is_none()
+                    && self.weak_inner_id(*id).is_none()
+                    && !def.name.as_str().starts_with("MaybeUninit_")
+                    && def.drops_fields
+                    && def.fields.clone().into_iter().any(|field| self.retain_nests(field.ty))
+            }
+            TyKind::Tuple(items) => items.clone().into_iter().any(|item| self.retain_nests(item)),
+            TyKind::Array { elem, .. } => self.retain_nests(*elem),
+            _ => false,
+        }
+    }
+
+    /// D-680 — a call of `ty`'s retain glue on `access`, requesting the glue.
+    fn retain_glue_call(&self, access: &str, ty: Ty) -> String {
+        let mut glue = self.retain_glue.borrow_mut();
+        let index = match glue.iter().position(|&known| known == ty) {
+            Some(index) => index,
+            None => {
+                glue.push(ty);
+                glue.len() - 1
+            }
+        };
+        format!("{}(&{access});", retain_glue_symbol(index))
+    }
+
     fn retain_lines_for_value(&self, access: &str, ty: Ty, out: &mut Vec<String>) {
         match self.types.kind(ty) {
             TyKind::Class(_) | TyKind::ClassInterface(_) => {
@@ -6244,7 +6307,14 @@ impl Emitter<'_> {
                     let mut retains = Vec::new();
                     for (field_index, (_, field_ty)) in fields.into_iter().enumerate() {
                         let member = self.enum_member(*id, access, variant_index, field_index);
-                        self.retain_lines_for_value(&member, field_ty, &mut retains);
+                        // D-680 — a payload whose own retain opens another `switch` goes through its
+                        // glue: inline, `Option[Option[…]]` 200 deep was MSVC's "blocks nested too
+                        // deeply" (C1061).
+                        if self.retain_nests(field_ty) {
+                            retains.push(self.retain_glue_call(&member, field_ty));
+                        } else {
+                            self.retain_lines_for_value(&member, field_ty, &mut retains);
+                        }
                     }
                     if !retains.is_empty() {
                         arms.push(format!(
@@ -7690,8 +7760,8 @@ impl Emitter<'_> {
                     Builtin::ArenaAlloc { elem } => {
                         let elem_c = self.c_type(*elem);
                         return format!(
-                            "({elem_c}*){RT}arena_alloc_copy(({})->state, {elem_c_size}, {elem_c_align}, &{})",
-                            rendered[0], rendered[1], elem_c_size = c_size(&elem_c), elem_c_align = c_align(&elem_c)
+                            "({elem_c}*){RT}arena_alloc_copy(({})->state, {elem_c_size}, {elem_c_align}, {})",
+                            rendered[0], copy_source(&elem_c, &rendered[1]), elem_c_size = c_size(&elem_c), elem_c_align = c_align(&elem_c)
                         );
                     }
                     Builtin::ArenaAllocUninit { elem } => {
@@ -7730,8 +7800,8 @@ impl Emitter<'_> {
                         let fixed = self.c_type(self.element_of(*arg_ty));
                         let elem_c = self.c_type(*elem);
                         return format!(
-                            "({elem_c}*){RT}fixed_arena_alloc_copy((void*)(({fixed}*){})->buffer.ptr, (({fixed}*){})->buffer.len, &(({fixed}*){})->used, {elem_c_size}, {elem_c_align}, &{})",
-                            rendered[0], rendered[0], rendered[0], rendered[1], elem_c_size = c_size(&elem_c), elem_c_align = c_align(&elem_c)
+                            "({elem_c}*){RT}fixed_arena_alloc_copy((void*)(({fixed}*){})->buffer.ptr, (({fixed}*){})->buffer.len, &(({fixed}*){})->used, {elem_c_size}, {elem_c_align}, {})",
+                            rendered[0], rendered[0], rendered[0], copy_source(&elem_c, &rendered[1]), elem_c_size = c_size(&elem_c), elem_c_align = c_align(&elem_c)
                         );
                     }
                     Builtin::FixedArenaReset => {
@@ -7750,8 +7820,8 @@ impl Emitter<'_> {
                         let scoped = self.c_type(self.element_of(*arg_ty));
                         let elem_c = self.c_type(*elem);
                         return format!(
-                            "({elem_c}*){RT}arena_alloc_copy((({scoped}*){})->state, {elem_c_size}, {elem_c_align}, &{})",
-                            rendered[0], rendered[1], elem_c_size = c_size(&elem_c), elem_c_align = c_align(&elem_c)
+                            "({elem_c}*){RT}arena_alloc_copy((({scoped}*){})->state, {elem_c_size}, {elem_c_align}, {})",
+                            rendered[0], copy_source(&elem_c, &rendered[1]), elem_c_size = c_size(&elem_c), elem_c_align = c_align(&elem_c)
                         );
                     }
                     // `[CLS-1]` — an empty class constructor allocates the
@@ -11472,6 +11542,13 @@ fn conjunction(parts: Vec<String>) -> String {
 /// of it stores nothing and every element is at its base pointer (D-354,
 /// D-355). A `void` struct member is a byte (`c_member_type`); only buffers,
 /// boxes and `size_of` see this size.
+/// D-679 — what an arena allocation copies from: the value's address, or for a zero-sized element
+/// (`()`, whose value is the constant `0`, which C cannot take the address of) a byte that exists,
+/// of which nothing is read.
+fn copy_source(elem_c: &str, value: &str) -> String {
+    if elem_c == "void" { "&(unsigned char){0}".to_string() } else { format!("&{value}") }
+}
+
 fn c_size(c: &str) -> String {
     if c == "void" { "0".to_string() } else { format!("sizeof({c})") }
 }
@@ -11508,6 +11585,10 @@ fn access_word_member(field: &str) -> String {
 /// (`emit_payload_zeros`).
 fn payload_zero_name(c_type: &str) -> String {
     format!("{RT}zero_{c_type}")
+}
+
+fn retain_glue_symbol(index: usize) -> String {
+    ember_branding::mangled(&format!("retain_glue_{index}"))
 }
 
 fn drop_glue_symbol(index: usize) -> String {
@@ -11739,6 +11820,7 @@ mod string_descriptor_view_parts_tests {
             gives_values_to_c: false,
             foreign_statics: Default::default(),
             drop_glue: Default::default(),
+            retain_glue: Default::default(),
             eq_fns: Default::default(),
             clone_parts_fns: Default::default(),
             array_helpers: Default::default(),

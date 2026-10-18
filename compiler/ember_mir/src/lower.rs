@@ -163,6 +163,23 @@ struct Loop {
     /// The statement temporaries pending when the body starts: a `break` or
     /// `continue` ends those made after it (D-504).
     temps_mark: usize,
+    /// The scopes open when the body starts: a `break` or `continue` leaves
+    /// the ones opened after.
+    scopes: usize,
+}
+
+/// `[CTL-8]` (D-672) — one open block: what was pending when it opened, and
+/// when its statement being lowered began. An early exit ends the blocks it
+/// leaves one by one, the innermost first: what that statement made, the
+/// block's `defer`s, then the block's own locals.
+#[derive(Clone, Copy)]
+struct Scope {
+    defers: usize,
+    owned: usize,
+    temps: usize,
+    /// `cleanup_count` when the block's current statement began: what was
+    /// registered after it is the statement's, and ends before the `defer`s.
+    statement: u32,
 }
 
 struct Builder<'a> {
@@ -184,6 +201,8 @@ struct Builder<'a> {
     /// `[CTL-7]` — `defer` blocks registered in the scopes currently open,
     /// in registration order. They run in reverse.
     defers: Vec<&'a hir::Block>,
+    /// `[CTL-8]` (D-672) — the blocks currently open, the innermost last.
+    scopes: Vec<Scope>,
     /// `[OWN-2]` — the locals the scopes currently open will drop, in
     /// declaration order. They drop in reverse.
     owned: Vec<LocalId>,
@@ -351,6 +370,7 @@ impl<'a> Builder<'a> {
             current: BasicBlockId(0),
             loops: Vec::new(),
             defers: Vec::new(),
+            scopes: Vec::new(),
             owned,
             statement_temps: Vec::new(),
             plain_temps: Vec::new(),
@@ -499,6 +519,20 @@ impl<'a> Builder<'a> {
         self.order(local);
     }
 
+    /// `[EXP-4]` (D-673) — temporaries drop in reverse order of creation, and
+    /// one is created when its value is complete: after the temporaries it
+    /// was built from, though its slot was taken first (`width(hold(text()))`
+    /// dropped `text()`'s `String` before the `hold(...)` holding a view of
+    /// it, `E3060` on a valid program). So a temporary given its whole value
+    /// moves to the end of its statement's list.
+    fn made(&mut self, local: LocalId) {
+        if let Some(at) = self.statement_temps.iter().rposition(|&temp| temp == local) {
+            self.statement_temps.remove(at);
+            self.statement_temps.push(local);
+            self.order(local);
+        }
+    }
+
     /// Note when `local` was registered to be ended (`cleanup_order`). A
     /// local registered again takes the later place, as the later entry of
     /// the list is the one that ends it first.
@@ -511,32 +545,87 @@ impl<'a> Builder<'a> {
         self.cleanup_order[index] = self.cleanup_count;
     }
 
-    /// `[CTL-8]`, `[EXP-4]` (D-504) — what a `return`, `break` or `continue`
-    /// leaves: the locals of every scope it leaves and the temporaries of
-    /// every statement it leaves, the last made first. A statement's
-    /// temporaries are made after the locals of the scopes around it and
-    /// before those of the blocks inside it, so one order serves both. Only
-    /// the locals were ended before: a `for` bound's, a `match` scrutinee's
-    /// or a condition's temporary was never dropped on these paths. The lists
-    /// are not shortened: the paths that stay still end them.
-    fn emit_exit_drops(&mut self, owned_mark: usize, temps_mark: usize) {
-        // Each list last first, then a stable merge: the owned parameters,
-        // registered before any of this, share order 0 and keep that order.
+    /// `[CTL-8]`, `[EXP-4]` (D-504, D-672) — what a `return`, `break` or
+    /// `continue` leaves, block by block, the innermost first: the
+    /// temporaries and bindings of the block's statement being lowered, then
+    /// the block's `defer`s, then the locals it declared, each list the last
+    /// registered first. `defers`, `owned` and `temps` are what the exit's
+    /// target had pending, and `depth` the scopes open there: what was
+    /// registered after them but outside every scope left (a loop's own
+    /// locals) ends last. The lists are not shortened: the paths that stay
+    /// still end them. Before D-672 every `defer` ran first, before an inner
+    /// block's locals.
+    fn emit_exit(&mut self, defers: usize, owned: usize, temps: usize, depth: usize) {
+        let mut bounds = vec![Scope { defers, owned, temps, statement: u32::MAX }];
+        bounds.extend(self.scopes[depth.min(self.scopes.len())..].iter().copied());
+        let ends = Scope {
+            defers: self.defers.len(),
+            owned: self.owned.len(),
+            temps: self.statement_temps.len(),
+            statement: 0,
+        };
+        for index in (0..bounds.len()).rev() {
+            let low = bounds[index];
+            let high = bounds.get(index + 1).copied().unwrap_or(ends);
+            // Each list last first, then a stable merge: the owned
+            // parameters, registered before any of this, share order 0.
+            let order = |local: &LocalId| self.cleanup_order.get(local.0 as usize).copied().unwrap_or(0);
+            let mut pending: Vec<(u32, LocalId, bool)> = self.owned[low.owned..high.owned.max(low.owned)]
+                .iter()
+                .rev()
+                .map(|local| (order(local), *local, false))
+                .chain(
+                    self.statement_temps[low.temps..high.temps.max(low.temps)]
+                        .iter()
+                        .rev()
+                        .map(|local| (order(local), *local, true)),
+                )
+                .collect();
+            pending.sort_by_key(|&(order, _, _)| std::cmp::Reverse(order));
+            let (statement, block): (Vec<_>, Vec<_>) =
+                pending.into_iter().partition(|&(order, _, _)| order > low.statement);
+            self.emit_exit_drops(&statement);
+            let blocks: Vec<&'a hir::Block> =
+                self.defers[low.defers..high.defers.max(low.defers)].iter().rev().copied().collect();
+            for block in blocks {
+                for stmt in &block.stmts {
+                    self.lower_stmt(stmt);
+                }
+            }
+            self.emit_exit_drops(&block);
+        }
+    }
+
+    /// A suspended coroutine dropped (`suspend`): everything pending ends as on
+    /// a `return`, the last registered first, and no `defer` runs.
+    pub(super) fn emit_all_drops(&mut self) {
         let order = |local: &LocalId| self.cleanup_order.get(local.0 as usize).copied().unwrap_or(0);
-        let mut pending: Vec<(u32, LocalId, bool)> = self.owned[owned_mark..]
-            .iter()
-            .rev()
-            .map(|local| (order(local), *local, false))
-            .chain(self.statement_temps[temps_mark..].iter().rev().map(|local| (order(local), *local, true)))
+        let mut pending: Vec<(u32, LocalId, bool)> = self.owned.iter().rev().map(|local| (order(local), *local, false))
+            .chain(self.statement_temps.iter().rev().map(|local| (order(local), *local, true)))
             .collect();
         pending.sort_by_key(|&(order, _, _)| std::cmp::Reverse(order));
-        for (_, local, temporary) in pending {
+        self.emit_exit_drops(&pending);
+    }
+
+    fn emit_exit_drops(&mut self, pending: &[(u32, LocalId, bool)]) {
+        for &(_, local, temporary) in pending {
             if temporary || self.types.needs_drop(self.locals[local.0 as usize].ty) {
                 self.push(StmtKind::Drop { place: Place::local(local), flag: None, scope_end: true });
             } else {
                 self.push(StmtKind::StorageDead(local));
             }
         }
+    }
+
+    /// `[CTL-8]` (D-672) — a block opens: what it ends on an early exit is
+    /// what is registered from here.
+    fn open_scope(&mut self) {
+        self.scopes.push(Scope {
+            defers: self.defers.len(),
+            owned: self.owned.len(),
+            temps: self.statement_temps.len(),
+            statement: self.cleanup_count,
+        });
     }
 
     /// `[DRP-3]` — drop the temporaries this statement made, last first.
@@ -668,9 +757,11 @@ impl<'a> Builder<'a> {
     fn lower_block(&mut self, block: &'a hir::Block) {
         let mark = self.defers.len();
         let owned_mark = self.owned.len();
+        self.open_scope();
         for stmt in &block.stmts {
             self.lower_stmt(stmt);
         }
+        self.scopes.pop();
         // `[CTL-7]` — leaving the block runs whatever it registered, last
         // first. `[CTL-8]` — the deferred blocks run before the drops.
         self.emit_defers_from(mark);
@@ -722,6 +813,9 @@ impl<'a> Builder<'a> {
     fn lower_stmt(&mut self, stmt: &'a hir::Stmt) {
         let temps = self.statement_temps.len();
         let plain = self.plain_temps.len();
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.statement = self.cleanup_count;
+        }
         self.lower_stmt_inner(stmt);
         // `[EXP-4]` — a temporary made by a `for` iterable lives to the end of
         // the loop: the hidden iterator's temporaries end with the loop's
@@ -878,8 +972,7 @@ impl<'a> Builder<'a> {
                 // every scope it is leaving, and then what those scopes own,
                 // with the temporaries of the statements it is inside.
                 self.emit_statement_temps(own);
-                self.emit_defers_from(0);
-                self.emit_exit_drops(0, 0);
+                self.emit_exit(0, 0, 0, 0);
                 self.terminate(Terminator::Return);
                 // Anything after a `return` in the same block is unreachable;
                 // start a fresh block so later statements still lower cleanly.
@@ -932,6 +1025,7 @@ impl<'a> Builder<'a> {
                     defer_mark: self.defers.len(),
                     owned_mark: self.owned.len(),
                     temps_mark: self.statement_temps.len(),
+                    scopes: self.scopes.len(),
                 });
                 self.current = body_bb;
                 self.lower_block(body);
@@ -956,8 +1050,7 @@ impl<'a> Builder<'a> {
             hir::Stmt::Block(block) => self.lower_block(block),
             hir::Stmt::Break { depth } => {
                 if let Some(target) = self.loop_at(*depth).copied() {
-                    self.emit_defers_from(target.defer_mark);
-                    self.emit_exit_drops(target.owned_mark, target.temps_mark);
+                    self.emit_exit(target.defer_mark, target.owned_mark, target.temps_mark, target.scopes);
                     self.terminate(Terminator::Goto(target.break_bb));
                     self.current = self.new_block();
                 }
@@ -967,8 +1060,7 @@ impl<'a> Builder<'a> {
                 // loop has to run its increment first, or `continue` would
                 // spin forever.
                 if let Some(target) = self.loop_at(*depth).copied() {
-                    self.emit_defers_from(target.defer_mark);
-                    self.emit_exit_drops(target.owned_mark, target.temps_mark);
+                    self.emit_exit(target.defer_mark, target.owned_mark, target.temps_mark, target.scopes);
                     self.terminate(Terminator::Goto(target.continue_bb));
                     self.current = self.new_block();
                 }
@@ -1037,6 +1129,7 @@ impl<'a> Builder<'a> {
             defer_mark: self.defers.len(),
             owned_mark: self.owned.len(),
             temps_mark: self.statement_temps.len(),
+            scopes: self.scopes.len(),
         });
         self.current = body_bb;
         self.lower_block(body);
@@ -2221,6 +2314,14 @@ impl<'a> Builder<'a> {
 
     /// Lower `expr` so that its value ends up in `place`.
     fn lower_into(&mut self, place: Place, expr: &'a hir::Expr) {
+        let whole = place.projection.is_empty().then_some(place.local);
+        self.lower_value_into(place, expr);
+        if let Some(local) = whole {
+            self.made(local);
+        }
+    }
+
+    fn lower_value_into(&mut self, place: Place, expr: &'a hir::Expr) {
         self.at(expr.span);
         match &expr.kind {
             hir::ExprKind::OverflowScope { policy, expr: inner } => {
@@ -3327,10 +3428,12 @@ impl<'a> Builder<'a> {
             hir::ExprKind::Block { block, value } => {
                 let mark = self.defers.len();
                 let owned_mark = self.owned.len();
+                self.open_scope();
                 for stmt in &block.stmts {
                     self.lower_evaluation_step(stmt);
                 }
                 self.lower_into(place, value);
+                self.scopes.pop();
                 self.emit_defers_from(mark);
                 self.defers.truncate(mark);
                 self.emit_drops_from(owned_mark);
@@ -7116,9 +7219,6 @@ impl<'a> Builder<'a> {
                 let temp = self.temp(expr.ty, expr.span);
                 self.push(StmtKind::StorageLive(temp));
                 self.lower_into(Place::local(temp), expr);
-                if self.types.needs_drop(expr.ty) {
-                    self.statement_temp(temp);
-                }
                 Place::local(temp)
             }
         }

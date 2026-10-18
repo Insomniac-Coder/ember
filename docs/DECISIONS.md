@@ -5017,6 +5017,41 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-201 — The 2026-10-18 review: nine defects fixed (D-672 to D-680)
+
+2026-10-18, the owner's go once the usage limit reset. Nine read-only agents (Opus for six parts of
+the compiler written solo, Sonnet for the five defects fixed solo on 2026-09-26), three at a time,
+reported 11 findings; each was then checked with a probe program (no checker agents, the owner's
+choice). Record: `docs/reviews/2026-10-18/`.
+
+**Clean:** ADR-120's progress reduction, ADR-114's temporary owners, ADR-158's outer-loop access
+(`[EXC-10]`), D-201's `String`/`Array[u8]` split. **Refuted by probe:** a view through a shared
+`ref` to a `Copy` struct holding a class (F06): the field's access word is held, and the write
+panics with an exclusivity violation in debug and release; Debug printing 200 nested `Box`es (F10)
+compiles with clang and MSVC.
+
+**Fixed:**
+* D-672 (`[CTL-8]`) — `lower.rs` keeps a stack of open blocks (`Scope`: what was pending when each
+  opened, and when its current statement began); `emit_exit` ends the blocks a `return`, `break` or
+  `continue` leaves one by one, the innermost first: the statement's temporaries and bindings, then
+  the block's `defer`s, then its locals. A suspended coroutine dropped keeps the old order without
+  `defer`s (`emit_all_drops`).
+* D-673 (`[EXP-4]`) — `lower_into` moves a temporary given its whole value to the end of its
+  statement's list (`made`): temporaries drop in reverse order of creation, not of slot. So a
+  replacement owner made from a fresh temporary (an interface upcast of `Circle(1.0)`) now drops
+  directly before it; ADR-114's transfer takes that adjacent case too (nothing runs between the two
+  drops), which keeps `a07_virtual_calls` free of a retain/release pair per push.
+* D-674, D-675, D-676 (`[IFC-4]`, `[GRM-8c]`, `[TYP-17]`) — an associated type's generic-interface bound
+  takes its defaults with `Self` the associated type, and a projection's bounds and bindings name the
+  hidden parameter for each `Self.X`; a projection a bound binds is that type; a `where` clause on
+  `T.Name` bounds the hidden parameter (checked against the type when a binding fixes it).
+* D-677, D-678 (`[RC-5]`, `[LT-1]`) — the generic method path upcasts its receiver to the declaring
+  class; a receiver read through a local reference (`self` by address, `r = ref d`) is borrowed as
+  D-460's local is.
+* D-679 (`[ARN-1]`) — an arena copies a zero-sized value from a byte that exists.
+* D-680 (`[OWN-7]`) — retain lines go through per-type retain functions where an enum payload would
+  open another `switch`, as D-358 did for drops.
+
 ## ADR-200 — A `MutSpan` where a `Span` is expected (ODR-116, 0.9.10_Hardened_12)
 
 2026-10-16. ADR-184 (`SoA` stage A) noted an owner question that was never queued: Part XII.1's

@@ -7854,6 +7854,7 @@ impl<'a> Checker<'a> {
                         .chain(decl.ret.as_ref())
                         .collect();
                     self.declare_projections(&mentioned, &mut generics, 0);
+                    self.apply_projection_where_clauses(&decl.where_clause, &mut generics, 0);
                     let mut params: Vec<(Symbol, Ty, Mode, Span)> = decl
                         .params
                         .iter()
@@ -8612,6 +8613,8 @@ impl<'a> Checker<'a> {
         let mut found = Vec::new();
         for (instance, assoc, value) in self.interface_assoc_bindings(declaring, name) {
             let value = self.assoc_to_projection(value, base, generics, index_base, span);
+            // D-674 — the instance as the projection's bound names it (`Add[S.Scalar]`).
+            let instance = self.bound_assoc_to_projection(instance, base, generics, index_base, span);
             found.push((instance, assoc, value));
         }
         found
@@ -8632,6 +8635,17 @@ impl<'a> Checker<'a> {
             }
         }
         self.replace_assoc(value, &map)
+    }
+
+    /// D-674 — `bound` with each `Self.X` among its arguments the hidden parameter `base.X`.
+    fn bound_assoc_to_projection(&mut self, bound: Symbol, base: Symbol, generics: &mut Vec<GenericParam>, index_base: usize, span: Span) -> Symbol {
+        let Some((origin, args)) = self.open_interface_origin.get(&bound).cloned() else { return bound };
+        let Some(definition) = self.interfaces.get(&origin).cloned() else { return bound };
+        let mut mapped = Vec::with_capacity(args.len());
+        for arg in args {
+            mapped.push(self.assoc_to_projection(arg, base, generics, index_base, span));
+        }
+        self.instantiate_interface(origin, &definition, &mapped, span).unwrap_or(bound)
     }
 
     /// The `Self.X` names `ty` mentions.
@@ -9762,9 +9776,24 @@ impl<'a> Checker<'a> {
                     let ast::TypeKind::Path { segments, args } = &bound.kind else { continue };
                     let [segment] = segments.as_slice() else { continue };
                     let positional = args.iter().any(|arg| !matches!(arg, ast::GenericArg::Assoc { .. }));
-                    let instance = match positional {
-                        false => self.resolve_name(segment.name),
-                        true => match self.resolve_interface_use(bound) {
+                    // Part IV §8, D-674 — a generic interface named without positional arguments
+                    // takes its defaults with `Self` the associated type, as a parameter's bound
+                    // does (`type Scalar: Add` is `Add[Self.Scalar]`); the bare origin it was
+                    // recorded as was implemented by nothing and provided no operator.
+                    let generic = self
+                        .interfaces
+                        .get(&self.resolve_name(segment.name))
+                        .is_some_and(|def| !def.generic_params.is_empty());
+                    let instance = match (positional, generic) {
+                        (false, false) => self.resolve_name(segment.name),
+                        (false, true) => {
+                            let assoc = self.types.intern(TyKind::Assoc { name: alias.name.name });
+                            match self.bound_interface(bound, assoc) {
+                                Some(instance) => instance,
+                                None => continue,
+                            }
+                        }
+                        (true, _) => match self.resolve_interface_use(bound) {
                             Some(instance) => instance,
                             None => continue,
                         },
@@ -10462,6 +10491,7 @@ impl<'a> Checker<'a> {
                 .chain(decl.ret.as_ref())
                 .collect();
             self.declare_projections(&mentioned, &mut generics, generic_index_base);
+            self.apply_projection_where_clauses(&decl.where_clause, &mut generics, generic_index_base);
         }
         let mut receiver = None;
         let mut params = Vec::new();
@@ -32965,7 +32995,9 @@ impl<'a> Checker<'a> {
         let mut checked = Vec::new();
         let has_receiver = receiver.is_some();
         if let Some((receiver, receiver_mode, receiver_span)) = receiver {
-            checked.push(self.pass_receiver_to(receiver, receiver_mode, def, receiver_span));
+            let passed = self.pass_receiver_to(receiver, receiver_mode, def, receiver_span);
+            let passed = if signature_has_receiver { self.upcast_passed_receiver(passed, def, receiver_span) } else { passed };
+            checked.push(passed);
         }
         let mut arg_for_param = vec![None; concrete.len()];
         for (arg_index, slot) in slots.iter().copied().enumerate() {
@@ -33605,6 +33637,55 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// D-676 — a `where` clause on a parameter's associated type (`where I.Item: Display`)
+    /// bounds the hidden parameter `I.Item`, as one on the parameter itself bounds it (D-644
+    /// folds those into the brackets). It was read nowhere: the body could not use it and no
+    /// call had to meet it. When a bound's binding makes the name a type that is no parameter
+    /// here (`I: Iterator[Item = int]`), the clause is checked against that type.
+    fn apply_projection_where_clauses(&mut self, clauses: &[ast::Bound], generics: &mut Vec<GenericParam>, index_base: usize) {
+        for clause in clauses {
+            let ast::TypeKind::Path { segments, args } = &clause.subject.kind else { continue };
+            let ([base, assoc], true) = (segments.as_slice(), args.is_empty()) else { continue };
+            if !generics.iter().any(|param| param.name == base.name) {
+                continue;
+            }
+            self.declare_one_projection(base.name, *assoc, generics, index_base);
+            let Some(&ty) = self.projection_params.get(&(base.name, assoc.name)) else { continue };
+            let slot = match *self.types.kind(ty) {
+                TyKind::Param { index, .. } => (index as usize).checked_sub(index_base).filter(|&slot| slot < generics.len()),
+                _ => None,
+            };
+            let Some(slot) = slot else {
+                for bound in &clause.bounds {
+                    if let Some(instance) = self.bound_interface(bound, ty)
+                        && ty != self.common.error
+                        && !self.implements(ty, instance)
+                    {
+                        let shown = self.types.display(ty);
+                        let interface = self.interface_shown(instance);
+                        self.error(
+                            codes::E2040,
+                            bound.span,
+                            format!("`{}.{}` is `{shown}`, which does not implement `{interface}`", base.name, assoc.name),
+                        );
+                    }
+                }
+                continue;
+            };
+            let mut bounds = std::mem::take(&mut generics[slot].bounds);
+            let mut bindings = std::mem::take(&mut generics[slot].bindings);
+            for bound in &clause.bounds {
+                if let Some(instance) = self.bound_interface(bound, ty) {
+                    bounds.push(instance);
+                    bindings.extend(self.bound_bindings(bound, instance));
+                }
+            }
+            self.close_bounds(&mut bounds, &mut bindings);
+            generics[slot].bounds = bounds;
+            generics[slot].bindings = bindings;
+        }
+    }
+
     /// D-407 — `base.assoc` for each hidden parameter of a generic struct
     /// `ty` names, where the argument it projects is a parameter (or one of
     /// its projections) written as a path.
@@ -33673,6 +33754,13 @@ impl<'a> Checker<'a> {
             if self.projection_params.contains_key(&(base, assoc.name)) {
                 return;
             }
+            // D-675 — a bound that binds the name says what it is (`T: Add[Output = T]`: `T.Output`
+            // is `T`), as the body's `project` reads it; a hidden parameter of its own made the
+            // signature's `T.Output` and the body's `T` two types.
+            if let Some(&(_, _, value)) = generics[base_index].bindings.iter().find(|&&(_, name, _)| name == assoc.name) {
+                self.projection_params.insert((base, assoc.name), value);
+                return;
+            }
             let declared = generics[base_index].bounds.iter().find_map(|&bound| self.assoc_bounds_of(bound, assoc.name));
             let Some(bounds) = declared else {
                 self.error(
@@ -33703,7 +33791,13 @@ impl<'a> Checker<'a> {
             let base_bounds = generics[base_index].bounds.clone();
             let slot = index as usize - index_base;
             let mut bindings = self.projection_bindings(&base_bounds, base, assoc.name, generics, index_base, assoc.span);
-            let mut bounds = std::mem::take(&mut generics[slot].bounds);
+            // D-674 — and its bounds' arguments: `type Scalar: Add` is `Add[Self.Scalar]`,
+            // which for `S.Scalar` is `Add[S.Scalar]`.
+            let declared = std::mem::take(&mut generics[slot].bounds);
+            let mut bounds = Vec::with_capacity(declared.len());
+            for bound in declared {
+                bounds.push(self.bound_assoc_to_projection(bound, base, generics, index_base, assoc.span));
+            }
             self.close_bounds(&mut bounds, &mut bindings);
             generics[slot].bounds = bounds;
             generics[slot].bindings = bindings;
@@ -38204,10 +38298,18 @@ impl<'a> Checker<'a> {
                     (TyKind::Class(derived), TyKind::Class(base))
                         if derived != base && self.types.class_is_subclass_of(*derived, *base)
                 );
+                // D-678 — or read through a local reference: `self` taken by address, or `r` in
+                // `r = ref d`; the borrow is then a reborrow of what it points at. Upcast into a
+                // temporary, the view borrowed a handle the statement released (E3060).
+                let local_place = match &receiver.kind {
+                    ExprKind::Local(_) => true,
+                    ExprKind::Deref(inner) => matches!(inner.kind, ExprKind::Local(_)),
+                    _ => false,
+                };
                 if inherited
                     && receiver_mode == Mode::Borrow
                     && derived
-                    && matches!(receiver.kind, ExprKind::Local(_))
+                    && local_place
                     && self.receiver_by_address(receiver_ty, def)
                 {
                     upcast_borrow = Some(receiver_ty);
@@ -45726,6 +45828,26 @@ impl<'a> Checker<'a> {
     }
 
     /// `pass_receiver` for a call whose callee is known.
+    /// D-677 — an inherited generic method's receiver, as passed (a borrow of a derived local, or the
+    /// handle), upcast to the class that declares the method, as the non-generic path does (D-460):
+    /// a `ref Derived` went where the instance takes a `ref Base`, which C compilers refuse (gcc) or
+    /// read through the wrong pointer type.
+    fn upcast_passed_receiver(&mut self, passed: Expr, def: DefId, span: Span) -> Expr {
+        let Some(&(_, base, _, _)) = self.signatures[def.0 as usize].params.first() else { return passed };
+        let TyKind::Class(base_class) = *self.types.kind(base) else { return passed };
+        let below = |this: &Self, ty: Ty| {
+            matches!(*this.types.kind(ty), TyKind::Class(derived) if derived != base_class && this.types.class_is_subclass_of(derived, base_class))
+        };
+        match *self.types.kind(passed.ty) {
+            TyKind::Ref { mutable, inner } if below(self, inner) => {
+                let expected = self.types.intern(TyKind::Ref { mutable, inner: base });
+                Expr { ty: expected, kind: ExprKind::Cast { expr: Box::new(passed), to: expected }, span }
+            }
+            _ if below(self, passed.ty) => self.coerce(passed, base),
+            _ => passed,
+        }
+    }
+
     fn pass_receiver_to(&mut self, receiver: Expr, mode: Mode, callee: DefId, span: Span) -> Expr {
         if mode == Mode::Borrow && self.receiver_by_address(receiver.ty, callee) {
             let ty = receiver.ty;

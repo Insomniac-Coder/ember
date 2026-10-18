@@ -10954,7 +10954,11 @@ systems, Russian, Greek, Arabic and emoji text gain, short Hindi/Japanese/Korean
 accepted, ADR-199's follow-up); and (ADR-200,
 0.9.10_Hardened_12) ODR-116, a `MutSpan` converts to a `Span` where one is expected. The review
 workflow over ADR-114/120/127, EXC-10, ADR-134/D-467 and the `T`/`T.Name` sweep waits for the
-owner's usage limit to reset (the owner, 2026-10-16).
+owner's usage limit to reset (the owner, 2026-10-16). Then (2026-10-18, ADR-201) that review and the
+one of D-202/D-218/D-201/D-355/D-358 ran: 9 read-only agents, 11 findings, 9 confirmed by probe
+programs and fixed (D-672 to D-680: `[CTL-8]` exit order, `[EXP-4]` temporary order, three
+associated-type gaps, two inherited-method gaps, arena `()`, retain nesting), 2 refuted;
+`docs/reviews/2026-10-18/`.
 **Next:** `[TYP-32]`'s `some` return types, `[JOB-5]`'s `local_arena`, N7, the
 `[STD-1]` audit (ADR-197 lists what was tried).
 

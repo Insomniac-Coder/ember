@@ -85,7 +85,12 @@ fn transfer_with_budget(body: &mut Body, types: &TypeTable, edges: &[Vec<usize>]
                 match sink {
                     Sink::Local(owner) => {
                         let target = &uses[owner.0 as usize];
-                        !target.definitions.contains(&point) && !target.drops.contains(&point)
+                        // D-673 — `[EXP-4]` ends a statement's temporaries in reverse order of
+                        // creation, so the replacement (made from the source) drops first. Its drop
+                        // directly before the source's, with nothing between, ends the object at
+                        // the same moment: no earlier end to observe.
+                        let adjacent = point.0 == drop.0 && point.1 + 1 == drop.1;
+                        !target.definitions.contains(&point) && (!target.drops.contains(&point) || adjacent)
                             && !storage_end(body, point, owner)
                     }
                     // A push takes ownership into the list. Before the old
@@ -726,10 +731,28 @@ mod tests {
         let ty = body.local(LocalId(1)).ty;
         body.blocks = vec![
             block(vec![], allocate(class, ty, 1, 1)),
-            block(vec![copy_owner(1, 2), drop_owner(2), drop_owner(1)], Terminator::Return),
+            block(vec![copy_owner(1, 2), drop_owner(2)], Terminator::Goto(BasicBlockId(2))),
+            block(vec![drop_owner(1)], Terminator::Return),
         ];
         assert_eq!(transfer(&mut body, &types), 0);
-        assert_original_owner(&body, 1, (1, 0), (1, 2));
+        assert_original_owner(&body, 1, (1, 0), (2, 0));
+    }
+
+    #[test]
+    fn a_replacement_dropped_directly_before_the_original_takes_it_over() {
+        // D-673 — `[EXP-4]`'s reverse order of creation: the replacement drops first, at the
+        // very statement before the source's drop.
+        let (mut body, types, class) = owner_body(1);
+        let ty = body.local(LocalId(1)).ty;
+        body.blocks = vec![
+            block(vec![], allocate(class, ty, 1, 1)),
+            block(vec![copy_owner(1, 2), drop_owner(2), drop_owner(1)], Terminator::Return),
+        ];
+        assert_eq!(transfer(&mut body, &types), 1);
+        assert!(matches!(&body.blocks[1].stmts[0].kind,
+            StmtKind::Assign { rvalue: Rvalue::Use(Operand::Move(place)), .. } if place.local == LocalId(1)));
+        assert!(matches!(body.blocks[1].stmts[1].kind, StmtKind::Drop { .. }));
+        assert!(matches!(body.blocks[1].stmts[2].kind, StmtKind::Nop));
     }
 
     #[test]

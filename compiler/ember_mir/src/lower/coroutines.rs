@@ -53,7 +53,7 @@ impl Builder<'_> {
         let resume = self.new_block();
         self.terminate(Terminator::SwitchInt { discr: Operand::Copy(resumed), targets: vec![(0, dropped)], otherwise: resume });
         self.current = dropped;
-        self.emit_exit_drops(0, 0);
+        self.emit_all_drops();
         self.terminate(Terminator::Return);
         self.current = resume;
     }
