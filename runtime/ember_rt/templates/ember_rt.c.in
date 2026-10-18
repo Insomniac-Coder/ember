@@ -9430,7 +9430,7 @@ static bool rl_plan_type(const ember_rl_manifest* next, const ember_rl_type* old
          * one's, by name and type. */
         const ember_rl_type* old_view = to->old_type != NULL ? rl_new_schema(next, to->old_type) : NULL;
         if (old_view == NULL) {
-            rl_report(report, cap, "refused: `%s.migrate_from` has no `Old%s` to read [HR-16]\n", to->name, to->name);
+            rl_report(report, cap, "refused: `%s.migrate_from` has no `OldSelf` to read [HR-16]\n", to->name);
             return false;
         }
         for (uint32_t index = 0; index < old_view->field_count; ++index) {
@@ -9442,8 +9442,8 @@ static bool rl_plan_type(const ember_rl_manifest* next, const ember_rl_type* old
                 }
             }
             if (have == NULL || have->type_schema != wanted->type_schema) {
-                rl_report(report, cap, "refused: `%s` names field `%s` as the running program's `%s` %s; build against the running program's schema [HR-16]\n",
-                          to->old_type, wanted->name, to->name, have == NULL ? "does not have it" : "has it with another type");
+                rl_report(report, cap, "refused: `%s.migrate_from`'s `OldSelf` has field `%s`, which the running program's `%s` %s; build against the running program's schema [HR-16]\n",
+                          to->name, wanted->name, to->name, have == NULL ? "does not have" : "has with another type");
                 fine = false;
             }
         }

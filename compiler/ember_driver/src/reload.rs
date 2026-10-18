@@ -491,7 +491,9 @@ pub fn inject(
             };
             check_migrate_from_panics(map, member.span, sink);
             let ember_ast::MemberKind::Fn(decl) = &mut member.kind else { continue };
-            let old_name = format!("Old{ident}");
+            // `Old<Name>` under a helper's name, which no source spells: it is visible only as
+            // `migrate_from`'s `OldSelf`, and a type of the package named `Old<Name>` is its own.
+            let old_name = helper("__reload_Old", ident.as_str(), "");
             let old_symbol = Symbol::intern(&old_name);
             for param in &mut decl.params {
                 if let ember_ast::ParamKind::Named { ty, .. } = &mut param.kind {
