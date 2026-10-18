@@ -275,6 +275,8 @@ impl Emitter<'_> {
                 }
                 fnv(&parts.iter().map(String::as_str).collect::<Vec<_>>())
             }
+            // Held inside another value, a class is a handle: its own layout is not the holder's.
+            TyKind::Class(id) if seen.len() > 1 => fnv(&["handle", &self.types.class_def(*id).name.to_string()]),
             TyKind::Class(id) => {
                 let mut parts = vec!["class".to_string(), self.types.class_def(*id).name.to_string()];
                 if let Some(base) = self.types.class_def(*id).base {

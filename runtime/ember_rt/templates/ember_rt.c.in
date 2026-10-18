@@ -10214,6 +10214,51 @@ static void* rl_aligned_zero(uint32_t size, uint32_t align) {
     return calloc(1, bytes);
 }
 
+#if defined(EMBER_RELOAD_INSTANCES)
+/* [HR-17] Each struct static whose type changed migrates into new storage, which commit publishes
+ * to every image; under prepare's guard, since a field's default runs code ([HR-34]). */
+static bool rl_prepare_statics(const ember_rl_manifest* next, rl_pending* pending, char* report, size_t cap) {
+    rl_guard guard;
+    memset(&guard, 0, sizeof guard);
+    volatile uint32_t at = 0;
+    if (setjmp(guard.jump) != 0) {
+        g_rl_guard = NULL;
+        if (guard.allocation) {
+            rl_report(report, cap, "refused: Allocation: %s [HR-36]\n", guard.message);
+        } else {
+            rl_report(report, cap, "refused: Migration(static %s, 0, %s) [HR-35]\n", next->statics[at].name, guard.message);
+        }
+        return false;
+    }
+    g_rl_guard = &guard;
+    for (; at < next->static_count; ++at) {
+        const ember_rl_static* edited = &next->statics[at];
+        rl_static* kept = (rl_static*)rl_table_get(&g_rl.statics, edited->name);
+        if (kept == NULL || kept->type_schema == edited->type_schema || kept->state != 2 || edited->shape == NULL
+            || edited->shape->kind != EMBER_RL_KIND_STRUCT || kept->shape == NULL) {
+            continue;
+        }
+        const ember_rl_type* old = rl_old_schema(kept->shape->type_name);
+        const ember_rl_type* now = rl_new_schema(next, edited->shape->type_name);
+        void* data = rl_aligned_zero(edited->size, edited->align);
+        if (data == NULL || old == NULL || now == NULL) {
+            g_rl_guard = NULL;
+            free(data);
+            rl_report(report, cap, "refused: Allocation: out of memory migrating static `%s` [HR-36]\n", kept->name);
+            return false;
+        }
+        pending->migrated[pending->migrated_count] = kept;
+        pending->migrated_data[pending->migrated_count] = data;
+        pending->migrated_from[pending->migrated_count] = old;
+        pending->migrated_shape[pending->migrated_count++] = edited->shape;
+        rl_migrate_value(next, old, now, (unsigned char*)data, (const unsigned char*)kept->data);
+        next->static_data[at] = data;
+    }
+    g_rl_guard = NULL;
+    return true;
+}
+#endif
+
 static bool rl_prepare(const ember_rl_manifest* next, rl_pending* pending, char* report, size_t cap) {
     rl_tx_begin();
     pending->migrated = (rl_static**)calloc(next->static_count + 1, sizeof(rl_static*));
@@ -10252,24 +10297,6 @@ static bool rl_prepare(const ember_rl_manifest* next, rl_pending* pending, char*
             if (kept->initialiser != edited->initialiser) {
                 pending->reinit[pending->reinit_count++] = kept;
             }
-#if defined(EMBER_RELOAD_INSTANCES)
-            /* [HR-17] A struct static whose type changed migrates into new storage. */
-            if (kept->type_schema != edited->type_schema && kept->state == 2 && edited->shape != NULL
-                && edited->shape->kind == EMBER_RL_KIND_STRUCT) {
-                const ember_rl_type* old = rl_old_schema(kept->shape->type_name);
-                const ember_rl_type* now = rl_new_schema(next, edited->shape->type_name);
-                void* data = rl_aligned_zero(edited->size, edited->align);
-                if (data == NULL) {
-                    rl_report(report, cap, "refused: Allocation: out of memory migrating static `%s` [HR-36]\n", kept->name);
-                    return false;
-                }
-                rl_migrate_value(next, old, now, (unsigned char*)data, (const unsigned char*)kept->data);
-                pending->migrated[pending->migrated_count] = kept;
-                pending->migrated_data[pending->migrated_count] = data;
-                pending->migrated_from[pending->migrated_count] = old;
-                pending->migrated_shape[pending->migrated_count++] = edited->shape;
-            }
-#endif
             continue;
         }
         rl_static* made = (rl_static*)calloc(1, sizeof *made);
@@ -10356,11 +10383,6 @@ static bool rl_prepare(const ember_rl_manifest* next, rl_pending* pending, char*
         }
         next->static_data[index] = kept->data;
         next->static_state[index] = &kept->state;
-        for (size_t at = 0; at < pending->migrated_count; ++at) {
-            if (pending->migrated[at] == kept) {
-                next->static_data[index] = pending->migrated_data[at];
-            }
-        }
     }
     for (uint32_t index = 0; index < next->identity_count; ++index) {
         ember_rl_identity* identity = next->identities[index];
@@ -10384,7 +10406,7 @@ static bool rl_prepare(const ember_rl_manifest* next, rl_pending* pending, char*
         next->descriptors[index] = slot != NULL && slot->descriptor != NULL ? slot->descriptor : fn->descriptor;
     }
 #if defined(EMBER_RELOAD_INSTANCES)
-    if (!rl_prepare_instances(next, report, cap)) {
+    if (!rl_prepare_statics(next, pending, report, cap) || !rl_prepare_instances(next, report, cap)) {
         return false;
     }
 #endif

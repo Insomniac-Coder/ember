@@ -382,6 +382,7 @@ int main(int argc, char** argv) {
     int frames = atoi(argv[2]);
     for (long long turn = 0; turn < frames; ++turn) {
         printf("%lld\n", frame(turn));
+        fflush(stdout);
         int result = RT_reload_poll();
         const RT_reload_timings* stats = RT_reload_stats();
         if (result == RT_RELOAD_APPLIED) {
@@ -463,6 +464,147 @@ fn a_field_added_with_a_default_migrates_live_instances() {
     let run = host_run("reload-migrate-add", PARTICLES, &[&v2], 3);
     assert_eq!(run.exit, 0, "{}\n{}", run.stdout, run.stderr);
     assert_eq!(run.stdout, "3\napplied, 3 migrated\n306\n309\n", "{}", run.stderr);
+}
+
+/// `[HR-14]` — the rest of the table, edit by edit, each against the running `PARTICLES`: a field
+/// renamed with `@renamed_from` carries its value; a field widened losslessly is converted; a field
+/// removed is dropped in reclaim, running its `drop` code (`[HR-2a]`); a field added with neither a
+/// default nor a `Default` type is refused, naming it and suggesting a default; a field whose type
+/// changed otherwise is refused, naming `migrate_from`; a base class changed is refused. A refusal
+/// is a report and leaves the old code running (`[HR-18]`, `[HR-2]`).
+#[test]
+fn the_migration_table_by_name() {
+    // Renamed: `step` (now 2) becomes `stride`, whose own default would be 1.
+    let v1 = PARTICLES.replace("step: int = 1", "step: int = 2");
+    let renamed = v1.replace("    step: int = 2\n", "    @renamed_from(\"step\")\n    stride: int = 1\n").replace("p.step", "p.stride");
+    let run = host_run("reload-renamed", &v1, &[&renamed], 3);
+    assert_eq!(run.stdout, "6\napplied, 3 migrated\n12\n18\n", "{}", run.stderr);
+    // Without `@renamed_from` it is a removal and an addition: the new field starts at its default.
+    let replaced = v1.replace("    step: int = 2\n", "    stride: int = 1\n").replace("p.step", "p.stride");
+    let run = host_run("reload-replaced", &v1, &[&replaced], 3);
+    assert_eq!(run.stdout, "6\napplied, 3 migrated\n9\n12\n", "{}", run.stderr);
+
+    // Widened: `i32` to `i64`, the value kept.
+    let narrow = PARTICLES.replace("step: int = 1", "step: i32 = 5").replace("p.x.fetch_add(p.step)", "p.x.fetch_add(p.step as int)");
+    let wide = narrow.replace("step: i32 = 5", "step: i64 = 9").replace("p.step as int", "p.step");
+    let run = host_run("reload-widened", &narrow, &[&wide], 3);
+    assert_eq!(run.stdout, "15\napplied, 3 migrated\n30\n45\n", "{}", run.stderr);
+
+    // Removed: the field's value is dropped in reclaim.
+    let tracked = PARTICLES.replace(
+        "@sync\nclass Particle:\n",
+        "@sync\nclass Tag:\n    id: int = 0\n\n    fn drop(self):\n        println(\"tag dropped\")\n\n@sync\nclass Particle:\n    tag: Tag = Tag()\n",
+    );
+    let untracked = tracked.replace("    tag: Tag = Tag()\n", "");
+    let run = host_run("reload-removed", &tracked, &[&untracked], 2);
+    assert_eq!(run.stdout, "3\ntag dropped\ntag dropped\ntag dropped\napplied, 3 migrated\n6\n", "{}", run.stderr);
+
+    // Added with no default: refused, naming the field.
+    let undefaulted = PARTICLES.replace("    step: int = 1\n", "    step: int = 1\n    mass: Tag2\n\n    fn init(self):\n        self.mass = Tag2(w = 1)\n").replace(
+        "@sync\nclass Particle:\n",
+        "struct Tag2:\n    w: int\n\n@sync\nclass Particle:\n",
+    );
+    let run = host_run("reload-undefaulted", PARTICLES, &[&undefaulted], 2);
+    assert_eq!(run.stdout.lines().next(), Some("3"), "{}", run.stderr);
+    assert!(run.stdout.contains("refused:") && run.stdout.contains("field `mass` added to `Particle` with no default; give it one (`mass: Tag2 = ...`)"), "{}", run.stdout);
+    assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
+
+    // Changed type with no `migrate_from`: refused, naming it.
+    let retyped = PARTICLES.replace("step: int = 1", "step: str = \"one\"").replace("p.x.fetch_add(p.step)", "p.x.fetch_add(p.step.len())");
+    let run = host_run("reload-retyped", PARTICLES, &[&retyped], 2);
+    assert!(run.stdout.contains("field `step` of `Particle` changed type from `i64` to `str`; `Particle` can declare `migrate_from`"), "{}", run.stdout);
+    assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
+}
+
+/// `[HR-11a]`, `[HR-14]` — an enum value migrates by variant name: reordering the variants
+/// rewrites each value's discriminant; removing a variant a live value holds is refused, naming it.
+#[test]
+fn enum_values_migrate_by_variant_name() {
+    let v1 = PARTICLES
+        .replace("@sync\nclass Particle:\n", "enum Mode:\n    Slow\n    Fast\n\n@sync\nclass Particle:\n    mode: Mode = Mode.Fast\n")
+        .replace("p.x.fetch_add(p.step)", "p.x.fetch_add(speed(p.mode))")
+        .replace("fn main():", "fn speed(mode: Mode) -> int:\n    match mode:\n        Mode.Slow:\n            return 1\n        Mode.Fast:\n            return 10\n\nfn main():");
+    let reordered = v1.replace("enum Mode:\n    Slow\n    Fast\n", "enum Mode:\n    Fast\n    Slow\n    Turbo\n")
+        .replace("        Mode.Fast:\n            return 10\n", "        Mode.Fast:\n            return 10\n        Mode.Turbo:\n            return 100\n");
+    let run = host_run("reload-enum-reordered", &v1, &[&reordered], 3);
+    assert_eq!(run.stdout, "30\napplied, 3 migrated\n60\n90\n", "{}", run.stderr);
+    let removed = v1.replace("enum Mode:\n    Slow\n    Fast\n", "enum Mode:\n    Slow\n").replace("mode: Mode = Mode.Fast", "mode: Mode = Mode.Slow")
+        .replace("        Mode.Fast:\n            return 10\n", "");
+    let run = host_run("reload-enum-removed", &v1, &[&removed], 2);
+    assert!(run.stdout.contains("holds a variant of `Mode` that was removed"), "{}", run.stdout);
+    assert!(run.stdout.ends_with("60\n"), "the old code did not run on: {}", run.stdout);
+}
+
+/// `[HR-15]`, `[HR-15a]`, `[HR-15b]` — an instance keeps its address where its new size fits: held
+/// in a `Map`, whose slots the runtime cannot follow, a `Particle` that loses a field migrates in
+/// place; one that gains a field must move, its references cannot all be found, and plan refuses
+/// before prepare runs, saying how many it could not follow.
+#[test]
+fn an_instance_moves_only_where_its_references_are_found() {
+    let mapped = PARTICLES
+        .replace("static WORLD: Mutex[Array[Particle]] = Mutex([])", "static WORLD: Mutex[Map[int, Particle]] = Mutex({})")
+        .replace("                world.push(Particle())", "                world[k] = Particle()")
+        .replace("        for p in world:\n            p.x.fetch_add(p.step)\n            total += p.x.load()",
+                 "        for k in 0..3:\n            p = world[k]\n            p.x.fetch_add(p.step)\n            total += p.x.load()")
+        .replace("    step: int = 1\n", "    step: int = 1\n    spare: int = 7\n");
+    let smaller = mapped.replace("    spare: int = 7\n", "");
+    let run = host_run("reload-in-place", &mapped, &[&smaller], 3);
+    assert_eq!(run.stdout, "3\napplied, 3 migrated\n6\n9\n", "{}", run.stderr);
+    let larger = mapped.replace("    spare: int = 7\n", "    spare: int = 7\n    more: int = 8\n");
+    let run = host_run("reload-cannot-move", &mapped, &[&larger], 2);
+    assert!(run.stdout.contains("an instance of `Particle` must move (its new size does not fit), but 1 of its 1 references are held where the runtime cannot follow them"), "{}", run.stdout);
+    assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
+}
+
+const MIGRATED: &str = "from std.sync import Atomic, Mutex\nfrom std.hot import ReloadError\n\n@sync\nclass Particle:\n    x: Atomic[int] = Atomic(0)\n    speed: int = 10\n\n    \
+    fn init(self, x: int, speed: int):\n        self.x = Atomic(x)\n        self.speed = speed\n\n    \
+    fn migrate_from(old: ref OldSelf) -> Result[Self, ReloadError]:\n        return Ok(Particle(old.x.load() * 100, old.step * 10))\n\n\
+    static WORLD: Mutex[Array[Particle]] = Mutex([])\n\n\
+    @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with world = WORLD.lock():\n        \
+    if world.len() == 0:\n            for k in 0..3:\n                world.push(Particle(0, 1))\n        \
+    for p in world:\n            p.x.fetch_add(p.speed)\n            total += p.x.load()\n    return total\n\nfn main():\n    pass\n";
+
+/// `[HR-16]`, `[HR-2a]`, `[HR-38]` — a type declaring `migrate_from(old: ref OldSelf)` is built by it:
+/// `OldSelf` is the previous build's schema as `OldParticle`, which the runtime fills from each old
+/// instance by field name, and the new instances replace the old ones, whose fields are dropped.
+#[test]
+fn migrate_from_builds_the_new_instances() {
+    let run = host_run("reload-migrate-from", PARTICLES, &[MIGRATED], 3);
+    assert_eq!(run.stdout, "3\napplied, 3 migrated\n330\n360\n", "{}", run.stderr);
+}
+
+/// `[HR-35]`, `[HR-34]`, `[HR-2]`, `[HR-37]` — a run-time check failing inside `migrate_from`
+/// (an index out of bounds here) does not end the process: prepare fails with
+/// `ReloadError.Migration`, naming the type, the instance and the check's message; nothing of the
+/// new image is live and the old code runs on. `[HR-36]` — an allocation past the transaction
+/// arena's bound fails it with `ReloadError.Allocation`.
+#[test]
+fn a_failing_migration_is_reported_not_fatal() {
+    let bounds = MIGRATED.replace(
+        "        return Ok(Particle(old.x.load() * 100, old.step * 10))",
+        "        limits = [1, 2]\n        return Ok(Particle(limits[old.step + 5], 1))",
+    );
+    let run = host_run("reload-migrate-check", PARTICLES, &[&bounds], 2);
+    assert!(run.stdout.contains("refused: Migration(Particle, 0, index 6 is out of bounds for a length of 2)"), "{}", run.stdout);
+    assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
+    let hungry = MIGRATED.replace(
+        "        return Ok(Particle(old.x.load() * 100, old.step * 10))",
+        "        big: Array[int] = []\n        big.reserve(100000000)\n        return Ok(Particle(big.len(), 1))",
+    );
+    let run = host_run("reload-migrate-alloc", PARTICLES, &[&hungry], 2);
+    assert!(run.stdout.contains("refused: Allocation: the reload's transaction arena"), "{}", run.stdout);
+    assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
+}
+
+/// `[HR-17]` — a static whose struct type changed migrates by `[HR-14]`: a field added with a
+/// default, the others kept.
+#[test]
+fn a_struct_static_migrates() {
+    let v1 = "from std.sync import Mutex\n\nstruct Score:\n    points: int = 0\n\nstatic BOARD: Mutex[Score] = Mutex(Score())\n\n\
+              @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    with board = BOARD.lock():\n        board.points += 5\n        return board.points\n\nfn main():\n    pass\n";
+    let v2 = v1.replace("    points: int = 0\n", "    points: int = 0\n    bonus: int = 1000\n").replace("return board.points", "return board.points + board.bonus");
+    let run = host_run("reload-static-struct", v1, &[&v2], 3);
+    assert_eq!(run.stdout, "5\napplied, 0 migrated\n1010\n1015\n", "exit {}: {}", run.exit, run.stderr);
 }
 
 /// `[HR-29]` — with reload on, one shared runtime serves every image in the process: a reloadable

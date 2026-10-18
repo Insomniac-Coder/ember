@@ -68,6 +68,10 @@ pub fn plan(
             !has_attribute(attrs, "inline") && written(attrs).or(owner).unwrap_or(fallback)
         };
         for item in &loaded.module.items {
+            // What the driver wrote for the reload is called directly by its own image.
+            if additions.files.contains(&item.span.file) {
+                continue;
+            }
             let owner = written(&item.attrs);
             let members = match &item.kind {
                 ember_ast::ItemKind::Fn(decl) => {

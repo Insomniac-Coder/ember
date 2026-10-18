@@ -34954,6 +34954,13 @@ impl<'a> Checker<'a> {
                 self.error(codes::E0104, attr.span, format!("`@{name}` takes no arguments"));
                 continue;
             }
+            // `[HR-14]` — the old name, as one string.
+            if name == "renamed_from"
+                && !matches!(attr.args.as_slice(), [ast::AttrArg::Expr(ast::Expr { kind: ast::ExprKind::Lit(ast::Literal::Str(_)), .. })])
+            {
+                self.error(codes::E0104, attr.span, "`@renamed_from` takes the old name as one string: `@renamed_from(\"old\")`");
+                continue;
+            }
             if !built {
                 self.sink.emit(
                     Diagnostic::error(
@@ -49302,8 +49309,9 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["reloadable", "noreload"], &["item", "module"], true),
     // `[HR-17a]` — the static's edited initialiser runs again at a reload.
     (&["reinit_on_reload"], &["static"], true),
-    // `[HR-14]`'s carried value, and `[HR-43]`'s admission: instance migration is not built yet.
-    (&["renamed_from"], &["field", "variant"], false),
+    // `[HR-14]` — a field's or a variant's old name, whose value a reload carries over.
+    (&["renamed_from"], &["field", "variant"], true),
+    // `[HR-43]` — admitting a call that may end the process: C++ calls are not built.
     (&["allow_reload_terminate"], &["fn"], false),
     (&["prelude"], &["module"], false),
 ];
