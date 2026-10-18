@@ -154,6 +154,24 @@ contract words inside `@ffi(…)` (the parser takes the keywords there as words,
 `static`). Tests: `FFI-36a/accept_returns_owned_and_owned_parameters.em` (run by the milestone of
 §9), `FFI-36a/reject_ownership_contract_mismatches.em`.
 
+## 11. `Retained` and `retained` parameters (`[FFI-23]`, `[FFI-11]`, `[FFI-22]`)
+
+`std.ffi.Retained[T]` holds the pinned value itself (`value: T`): a class handle's strong count, or
+the `Box`. `Retained.pin(v)` (Ember) calls the compiler-known `retained_pin` (a class object's
+header gets `EMBER_OBJ_PINNED` through the new `ember_obj_pin`; a `Box` nothing) and `ptr()` the
+compiler-known `retained_address` (`*mut u8`: the handle, the `Box`'s `T*`, or a `Box[dyn]`'s
+data). Dropping the token drops the value, which releases the object or frees the box; no `drop` of
+its own. A `T` that is neither a class nor a `Box` is refused where `Retained[T]` is instantiated
+(`E2020` at the user's `pin`), so the std bodies never see one. The pinned flag is set and not
+cleared: a single bit cannot count tokens, and keeping it is the safe side for `[HR-20]` (an object
+foreign code may hold is never moved). A safe declaration's `param(p, retained, one[,
+threads(main | creator)])` takes a borrowed `Retained[T]` and gives C the address (`FfiAbiParam::
+Retained`); without a thread word `T` must be `Send` (`E7004`, `[FFI-22]`). `E5002` for the contract
+on another type, or a token crossing without it. `ptr()`'s type (`*mut u8` for every `T`) is a
+choice the spec leaves open (owner question 4). Tests: `tests/conformance/FFI-23/`, milestone
+`retained_tokens_let_c_keep_ember_objects` (a class object outliving the handle it was pinned from
+until its token drops, the kept address, C reading a pinned `Box`'s value).
+
 ## Rules done (each with its test)
 
 | Rule | Test |
@@ -164,6 +182,7 @@ contract words inside `@ffi(…)` (the parser takes the keywords there as words,
 | `GRM-35` | `tests/conformance/GRM-35/*` |
 | `FFI-33a` | `ember_build` test `an_object_that_is_not_sync_is_its_makers` |
 | `FFI-36a` | `tests/conformance/FFI-36a/*`, milestone `adopted_foreign_objects_are_freed_by_their_destructor` |
+| `FFI-23` | `tests/conformance/FFI-23/*`, milestone `retained_tokens_let_c_keep_ember_objects` |
 | `CLI-13` | milestone `calls_foreign_lists_what_an_item_reaches_with_each_contract` |
 | `DIA-18` | `tests/conformance/DIA-18/*` |
 
@@ -195,5 +214,9 @@ contract words inside `@ffi(…)` (the parser takes the keywords there as words,
 2. **The code for two `adopt`s of one local in one function (`[FFI-36b]`).** The rule says it is
    caught at compile time, and the registry has no code for it (`E5052` is `adopt=false`). Which
    code? Until then only the run-time half is built.
-3. **Calling a `static` of function type by name** (`HOOK(7)`) is `E1010 cannot find`: a defect
+3. **The type of `Retained.ptr()` (`[FFI-23]`).** "`tok.ptr()` is the raw pointer" names no type.
+   Built as `*mut u8` for every `T` (a class object has no Ember pointer type of its own; C
+   usually keeps a `void*`). A typed `*mut U` for `Retained[Box[U]]` would need the two kinds of
+   token told apart in the type.
+4. **Calling a `static` of function type by name** (`HOOK(7)`) is `E1010 cannot find`: a defect
    outside this job, noted under "Defects found".

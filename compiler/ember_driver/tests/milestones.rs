@@ -879,6 +879,22 @@ fn adopted_foreign_objects_are_freed_by_their_destructor() {
     assert!(run.status.success(), "release does not check the thread: {}", String::from_utf8_lossy(&run.stderr));
 }
 
+/// `[FFI-23]`, `[FFI-11]` — a `Retained` token lets C keep an Ember object's address: a class
+/// object outlives the handle it was pinned from until the token is dropped, its address is the
+/// one C keeps, and a pinned `Box`'s value is read by C through the kept address.
+#[test]
+fn retained_tokens_let_c_keep_ember_objects() {
+    let root = workspace_root();
+    let directory = temporary_directory("retained");
+    let source = root.join(format!("tests/conformance/FFI-23/accept_retained_lets_foreign_code_keep_ember_memory.{SOURCE_EXT}"));
+    for profile in [Profile::Debug, Profile::Release] {
+        let program = link_with_fixture(&source, "foreign_objects.c", profile, &directory, &format!("retained_{profile:?}"));
+        let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
+        assert!(run.status.success(), "{profile:?}: {}", String::from_utf8_lossy(&run.stderr));
+        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "still alive\n1\ndropped kept\nreleased\n7\n", "{profile:?}");
+    }
+}
+
 /// `[FFI-10]`, `[FFI-9]` — a function of an `extern "vectorcall"` block is
 /// declared and called with that convention: the C compiler takes the
 /// prototype (MSVC and Clang have it; GCC is told it has not).

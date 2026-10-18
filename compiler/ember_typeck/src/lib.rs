@@ -13420,6 +13420,26 @@ impl<'a> Checker<'a> {
         if resolved.is("std.ffi.adopt") {
             return Some(self.synth_foreign_adopt(args, explicit, span));
         }
+        // `[FFI-23]` — what `Retained` pins: a class handle or a `Box`.
+        if (resolved.is("std.ffi.retained_pin") || resolved.is("std.ffi.retained_address")) && args.len() == 1 {
+            let value = self.synth_committed(&args[0].value);
+            let pinnable = matches!(self.types.kind(value.ty), TyKind::Class(_) | TyKind::Param { .. } | TyKind::Error)
+                || self.box_inner(value.ty).is_some();
+            if !pinnable {
+                let shown = self.types.display(value.ty);
+                self.sink.emit(
+                    Diagnostic::error(codes::E2020, span, format!("`Retained` pins a class handle or a `Box`, not a `{shown}`"))
+                        .note("foreign code keeps Ember memory only through a class object or a `Box`'s value [FFI-23]"),
+                );
+                return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+            }
+            let (which, ty) = if resolved.is("std.ffi.retained_pin") {
+                (Builtin::RetainedPin, self.common.void)
+            } else {
+                (Builtin::RetainedAddress, self.types.intern(TyKind::Ptr { mutable: true, inner: self.common.u8 }))
+            };
+            return Some(Expr { ty, kind: ExprKind::Builtin { which, args: vec![value] }, span });
+        }
         if resolved.is("std.ffi.foreign_release") && args.len() == 2 {
             let pointer = self.synth_committed(&args[0].value);
             let creator = self.check_expr(&args[1].value, self.common.u32);
@@ -14817,6 +14837,20 @@ impl<'a> Checker<'a> {
         }
         // `[TYP-41]` — each const argument for a `const` parameter, fitting its type.
         if decl.generic_params.iter().zip(args).any(|(param, &arg)| arg != self.common.error && !self.const_argument_fits(&param.clone(), arg, span)) {
+            return self.common.error;
+        }
+        // `[FFI-23]` — a `Retained` token holds a class handle or a `Box`: what foreign code keeps
+        // is an object's address. Refused where the type is named (or inferred, at `pin`).
+        if name.is("std.ffi.Retained")
+            && let [held] = args
+            && !matches!(self.types.kind(*held), TyKind::Class(_) | TyKind::Param { .. } | TyKind::Error | TyKind::Infer(_))
+            && self.box_inner(*held).is_none()
+        {
+            let shown = self.types.display(*held);
+            self.sink.emit(
+                Diagnostic::error(codes::E2020, span, format!("`Retained` pins a class handle or a `Box`, not a `{shown}`"))
+                    .note("foreign code keeps Ember memory only through a class object or a `Box`'s value [FFI-23]"),
+            );
             return self.common.error;
         }
         // `[STD-11]`, `[TYP-15]` (ODR-069, SP-013) — a `Map`'s keys and
@@ -17009,8 +17043,8 @@ impl<'a> Checker<'a> {
         // `[FFI-36a]` — a `ForeignBox` (or an `Option` of one) crosses as the object's pointer;
         // `check_foreign_ownership` checks the contract that moves it.
         let carries_box = |this: &Self, ty: Ty| decl.is_foreign_decl && decl.is_safe
-            && this.option_some_payload(ty).unwrap_or(ty) != this.common.error
-            && this.lock_inner(this.option_some_payload(ty).unwrap_or(ty), "std.ffi.ForeignBox").is_some();
+            && (this.lock_inner(this.option_some_payload(ty).unwrap_or(ty), "std.ffi.ForeignBox").is_some()
+                || this.lock_inner(ty, "std.ffi.Retained").is_some());
         for &(name, ty, _, span) in &signature {
             if !decl.is_foreign_decl && self.exported_owner_reachable(ty, &mut HashSet::new()) {
                 self.error(codes::E5015, span,
@@ -17421,6 +17455,32 @@ impl<'a> Checker<'a> {
             ty.and_then(|ty| this.lock_inner(ty, "std.ffi.ForeignBox"))
         };
         let owned = ffi_owned_params(attrs);
+        // `[FFI-23]`, `[FFI-22]` — a `retained` parameter takes a `Retained[T]` token; foreign code
+        // may use what it keeps on any thread, so `T` is `Send` unless the contract binds it.
+        let retained = ffi_retained_params(attrs);
+        for &(name, ty, mode, span) in signature {
+            let token = self.lock_inner(ty, "std.ffi.Retained");
+            match retained.iter().find(|(slot, _)| *slot == name) {
+                Some(&(_, bound)) => match token {
+                    Some(held) if mode == Mode::Borrow => {
+                        if !bound && !self.types.is_send(held) {
+                            let shown = self.types.display(held);
+                            self.sink.emit(
+                                Diagnostic::error(codes::E7004, span, format!("`{name}` hands foreign code a `{shown}` to keep, and a `{shown}` is not `Send`"))
+                                    .help(format!("say which thread C uses it on: `param({name}, retained, one, threads(creator))` or `threads(main)`"))
+                                    .note("C may call back from any thread, so what it keeps must be `Send` unless the contract says otherwise [FFI-22]"),
+                            );
+                        }
+                    }
+                    _ => self.error(codes::E5002, span, format!("`retained` contract for `{name}` needs `{name}: Retained[T]`")),
+                },
+                None if token.is_some() => {
+                    self.error(codes::E5002, span,
+                        format!("a `Retained` parameter crosses only as an address C keeps: `param({name}, retained, one)`"));
+                }
+                None => {}
+            }
+        }
         for &(name, ty, mode, span) in signature {
             match owned.iter().find(|(slot, _)| *slot == name) {
                 Some(&(_, nullable)) => {
@@ -17530,6 +17590,7 @@ impl<'a> Checker<'a> {
         // `[FFI-11]`, `[FFI-36a]` — the objects the call moves: a parameter C takes, a result the
         // caller comes to own.
         let owned_params = ffi_owned_params(attrs);
+        let retained_params = ffi_retained_params(attrs);
         let result_owned = match ffi_owned_result(attrs) {
             Some((destructor, nullable, creator)) => {
                 let boxed = if nullable { self.option_some_payload(result_ty)? } else { result_ty };
@@ -17627,7 +17688,7 @@ impl<'a> Checker<'a> {
         } else { None };
         if counted.is_empty() && fixed.is_empty() && result_array.is_none()
             && result_span.is_none() && !borrowed_aggregate
-            && owned_params.is_empty() && result_owned.is_none() { return None; }
+            && owned_params.is_empty() && retained_params.is_empty() && result_owned.is_none() { return None; }
         let mut abi_params = Vec::new();
         for param in &decl.params {
             let ast::ParamKind::Named { name, .. } = &param.kind else { return None };
@@ -17644,6 +17705,9 @@ impl<'a> Checker<'a> {
             } else if let Some(&(_, nullable)) = owned_params.iter().find(|(slot, _)| *slot == name.name) {
                 let public_index = visible.iter().position(|(slot, _, _, _)| *slot == name.name)?;
                 abi_params.push(hir::FfiAbiParam::Owned { public_index, nullable });
+            } else if retained_params.iter().any(|(slot, _)| *slot == name.name) {
+                let public_index = visible.iter().position(|(slot, _, _, _)| *slot == name.name)?;
+                abi_params.push(hir::FfiAbiParam::Retained { public_index });
             } else {
                 let public_index = visible.iter().position(|(slot, _, _, _)| *slot == name.name)?;
                 let (_, ty, mode, _) = visible[public_index];
@@ -34926,7 +34990,8 @@ impl<'a> Checker<'a> {
                                     }
                                     saw_result = true;
                                 } else if let Some(name) = ffi_param_contract_arg(arg).map(|(name, _)| name)
-                                    .or_else(|| ffi_owned_param_arg(arg).map(|(name, _)| name)) {
+                                    .or_else(|| ffi_owned_param_arg(arg).map(|(name, _)| name))
+                                    .or_else(|| ffi_retained_param_arg(arg).map(|(name, _)| name)) {
                                     if !contracted.insert(name) {
                                         self.error(codes::E0104, attr.span, "duplicate pointer contract in `@ffi`");
                                     }
@@ -50035,6 +50100,44 @@ fn ffi_owned_param_arg(arg: &ast::AttrArg) -> Option<(Symbol, bool)> {
         None => false,
     };
     Some((name, nullable))
+}
+
+/// `[FFI-11]`, `[FFI-23]`, `[FFI-22]` — `param(p, retained, one[, threads(main | creator)])`: the
+/// callee keeps the pointer past the call; the caller passes a `Retained[T]` token it keeps alive.
+/// Returns the parameter and whether its contract binds it to one thread (else `T` must be `Send`).
+fn ffi_retained_param_arg(arg: &ast::AttrArg) -> Option<(Symbol, bool)> {
+    let ast::AttrArg::Expr(expr) = arg else { return None };
+    let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    if !ffi_contract_word(callee).is_some_and(|word| word.is("param")) || !(3..=4).contains(&args.len())
+        || args.iter().any(|arg| arg.name.is_some()) {
+        return None;
+    }
+    let name = ffi_contract_word(&args[0].value)?;
+    if !ffi_contract_word(&args[1].value).is_some_and(|word| word.is("retained"))
+        || !ffi_contract_word(&args[2].value).is_some_and(|word| word.is("one")) {
+        return None;
+    }
+    let bound = match args.get(3).map(|word| &word.value.kind) {
+        None => false,
+        Some(ast::ExprKind::Call { callee, args: thread })
+            if ffi_contract_word(callee).is_some_and(|word| word.is("threads")) && thread.len() == 1 =>
+        {
+            match ffi_contract_word(&thread[0].value)?.as_str() {
+                "main" | "creator" => true,
+                "any" => false,
+                _ => return None,
+            }
+        }
+        Some(_) => return None,
+    };
+    Some((name, bound))
+}
+
+fn ffi_retained_params(attrs: &[ast::Attribute]) -> Vec<(Symbol, bool)> {
+    attrs.iter()
+        .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+        .flat_map(|attr| attr.args.iter().filter_map(ffi_retained_param_arg))
+        .collect()
 }
 
 fn ffi_owned_params(attrs: &[ast::Attribute]) -> Vec<(Symbol, bool)> {

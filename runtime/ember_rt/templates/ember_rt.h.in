@@ -2720,6 +2720,9 @@ void ember_rt_check_main_thread(void);
  * returns it; `ember_ffi_release` removes it when its box ends or gives it to C (`owned`). With
  * `creator` nonzero (`threads(creator)`, `[FFI-33b]`), the debug profile checks that the box
  * ends on the thread that made it, which `ember_ffi_thread` names. */
+/* `[FFI-23]` — `Retained.pin` of a class object: its header's pinned flag, set for good (an object
+ * foreign code may hold is never moved, `[HR-20]`). */
+void ember_obj_pin(ember_obj_header* object);
 void* ember_ffi_adopt(void* object, ember_loc at);
 void ember_ffi_release(void* object, uint32_t creator);
 uint32_t ember_ffi_thread(void);

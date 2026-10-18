@@ -61,6 +61,33 @@ unsafe extend[T] ForeignBox[T] implements Send:  # SAFETY: a box's thread rule i
 pub unsafe fn adopt[T](h: *mut T) -> ForeignBox[T]:  # SAFETY: the declaration states the obligation; the compiler supplies the body
     pass
 
+## `[FFI-23]` — `Retained[T]` is the only way to let foreign code keep Ember memory.
+## `Retained.pin(v)` takes `v`, a class handle or a `Box`: for a class handle the token holds a
+## strong count of the object (it is retained) and the object's header gets its pinned flag, which
+## stays (`[HR-20]`: an object foreign code may hold is never moved); for a `Box` the token owns it.
+## `tok.ptr()` is the object's address, which C keeps; dropping the token releases the object (the
+## class handle's count, or the box and its value). A parameter contracted `retained` takes a
+## token and gives C its address (`[FFI-11]`).
+pub struct Retained[T]:
+    value: T
+
+    pub fn pin(owned value: T) -> Retained[T]:
+        retained_pin(value)
+        return Retained(value)
+
+    ## The object's address: the class object's, or the `Box`'s value's.
+    pub fn ptr(self) -> *mut u8:
+        return retained_address(self.value)
+
+## `[FFI-23]` — compiler-known: a class object's pinned flag is set, a `Box` needs nothing, and any
+## other value is refused.
+fn retained_pin[T](value: T):
+    pass
+
+## `[FFI-23]` — compiler-known: the address of the object a class handle or a `Box` holds.
+fn retained_address[T](value: T) -> *mut u8:
+    return null[*mut u8]()
+
 ## `[FFI-36b]`, `[FFI-33b]` — a box's end: the address leaves the runtime's record, and a box
 ## that records its creator is checked to end on that thread (debug). Compiler-known.
 fn foreign_release[T](pointer: *mut T, creator: u32):

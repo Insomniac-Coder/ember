@@ -150,6 +150,9 @@ pub enum FfiAbiParam {
     /// one when `nullable`) gives C its pointer and leaves the runtime's
     /// record, freeing nothing.
     Owned { public_index: usize, nullable: bool },
+    /// `[FFI-11]`, `[FFI-23]` — `param(p, retained, one)`: C keeps the
+    /// address of the object a `Retained` token holds; the token stays.
+    Retained { public_index: usize },
 }
 
 #[derive(Debug, Clone)]
@@ -1193,6 +1196,12 @@ pub enum Builtin {
     /// T)`): itself when it returns nothing (`ret` void), else a C thunk that
     /// calls it and drops its result.
     ForeignDestructor { symbol: Symbol, pointee: Ty, ret: Ty, fn_ty: Ty },
+    /// `[FFI-23]` — `Retained.pin`'s mark: a class object's header gets its
+    /// pinned flag; a `Box` needs none. The argument is the value pinned.
+    RetainedPin,
+    /// `[FFI-23]` — the address of the object a class handle or a `Box`
+    /// holds, as `*mut u8`.
+    RetainedAddress,
     /// `[STA-3]` — a reference to the one value of a `static` whose
     /// initialiser runs on first access: `init`, a function of no
     /// arguments, the first time any thread asks. `name` is the static's, for
@@ -1726,6 +1735,8 @@ impl Builtin {
             Builtin::ForeignRelease => "ffi_release",
             Builtin::ForeignThread => "ffi_thread",
             Builtin::ForeignDestructor { .. } => "ffi_destructor",
+            Builtin::RetainedPin => "retained_pin",
+            Builtin::RetainedAddress => "retained_address",
             Builtin::LazyStatic { .. } => "lazy_static",
             Builtin::ConstStatic { .. } => "constant_static",
             Builtin::ComptimeReadFile => "read_file",

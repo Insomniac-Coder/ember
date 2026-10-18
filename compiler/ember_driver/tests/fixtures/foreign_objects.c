@@ -53,5 +53,14 @@ void widget_take(Widget* widget) {
     free(widget);
 }
 
+/* `retained` (`[FFI-23]`): C keeps an address past the call, and reads it later. */
+static void* g_kept;
+void keep(uint8_t* address) { g_kept = address; }
+int32_t kept_is(uint8_t* address) { return g_kept == (void*)address; }
+int64_t kept_point_sum(void) {
+    const int64_t* point = (const int64_t*)g_kept;
+    return point[0] + point[1];
+}
+
 int32_t objects_live(void) { return g_live; }
 int32_t objects_freed(void) { return g_freed; }

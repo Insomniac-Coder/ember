@@ -2413,6 +2413,17 @@ ember_obj_header* ember_obj_new_copy(
     return object;
 }
 
+void ember_obj_pin(ember_obj_header* object) {
+    if (object == NULL) {
+        return;
+    }
+    if (object_is_sync(object)) {
+        (void)object_fetch_or_u32(&object->flags, EMBER_OBJ_PINNED);
+    } else {
+        object->flags |= EMBER_OBJ_PINNED;
+    }
+}
+
 void ember_obj_retain(ember_obj_header* object) {
     if (object == NULL) {
         return;

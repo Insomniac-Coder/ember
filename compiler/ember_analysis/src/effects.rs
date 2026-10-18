@@ -1170,7 +1170,9 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         // and the second-owner panic; a box's end may panic on the wrong thread (`[FFI-33b]`).
         B::ForeignAdopt => (ALLOC | Effects::SYNC, "recording a foreign object Ember owns"),
         B::ForeignRelease => (Effects::SYNC | Effects::PANIC, "a foreign object's end"),
-        B::ForeignThread | B::ForeignDestructor { .. } => (Effects::NONE, ""),
+        B::ForeignThread | B::ForeignDestructor { .. } | B::RetainedAddress => (Effects::NONE, ""),
+        // `[FFI-23]` — setting a Sync object's pinned flag is an atomic or.
+        B::RetainedPin => (Effects::SYNC, "pinning an object for foreign code"),
         // `[DET-2]` — a transcendental function from the platform library.
         B::FloatPow => (Effects::NONDET, "the platform's `pow`"),
         B::FloatLib(lib) => match lib {

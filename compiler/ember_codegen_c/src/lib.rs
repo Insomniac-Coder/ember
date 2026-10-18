@@ -5169,6 +5169,7 @@ impl Emitter<'_> {
                     let boxed = self.foreign_box_type(arg, *nullable);
                     self.c_type(self.foreign_box_fields(boxed)[0])
                 }
+                FfiAbiParam::Retained { .. } => "uint8_t*".to_string(),
             };
             format!("{ty} _ffi{index}")
         }).collect();
@@ -5178,6 +5179,14 @@ impl Emitter<'_> {
             None => result,
         };
         format!("{result} {}{}({params})", calling_convention(body.abi.as_deref()), counted.foreign_symbol)
+    }
+
+    /// `[FFI-23]` — the address of the object `value`, a class handle or a `Box`, holds: the
+    /// handle itself, the `Box`'s pointer (`T*`), or a `Box[dyn …]`'s data.
+    fn retained_address(&self, value: &str, ty: Ty) -> String {
+        let dyn_box = matches!(self.types.kind(ty), TyKind::Struct(id)
+            if self.box_inner_id(*id).is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. })));
+        if dyn_box { format!("((uint8_t*)({value}).data)") } else { format!("((uint8_t*)({value}))") }
     }
 
     /// An `Option` value `access` of type `ty` (with a tag): the test that it is `Some`, and its
@@ -5289,6 +5298,17 @@ impl Emitter<'_> {
                         self.line("#endif");
                     }
                     foreign_args.push(format!("({}){first}", self.c_type(*ty)));
+                }
+                // `[FFI-23]` — C keeps the address of the object the token holds.
+                FfiAbiParam::Retained { public_index } => {
+                    let ty = body.args().nth(*public_index).expect("the retained parameter").1.ty;
+                    let (token, ty) = match *self.types.kind(ty) {
+                        TyKind::Ref { inner, .. } => (format!("(*{})", args[*public_index]), inner),
+                        _ => (args[*public_index].clone(), ty),
+                    };
+                    let TyKind::Struct(id) = *self.types.kind(ty) else { unreachable!("a `Retained` token is a struct") };
+                    let held = self.types.struct_def(id).fields[0].ty;
+                    foreign_args.push(self.retained_address(&format!("({token}).value"), held));
                 }
                 // `[FFI-11]` — C takes the object: its box leaves the record and frees nothing.
                 FfiAbiParam::Owned { public_index, nullable } => {
@@ -7675,6 +7695,17 @@ impl Emitter<'_> {
                         return format!("{RT}ffi_release((void*)({}), {})", rendered[0], rendered[1]);
                     }
                     Builtin::ForeignThread => return format!("{RT}ffi_thread()"),
+                    // `[FFI-23]` — a class object is pinned in its header; a `Box`'s value is
+                    // its own, and needs nothing.
+                    Builtin::RetainedPin => {
+                        let boxed = matches!(self.types.kind(*arg_ty), TyKind::Struct(id) if self.box_inner_id(*id).is_some());
+                        return if boxed {
+                            "((void)0)".to_string()
+                        } else {
+                            format!("{RT}obj_pin(({RT}obj_header*)({}))", rendered[0])
+                        };
+                    }
+                    Builtin::RetainedAddress => return self.retained_address(&rendered[0], *arg_ty),
                     Builtin::ForeignDestructor { symbol, ret, fn_ty, .. } => {
                         let callee = if self.is_void(*ret) {
                             rendered[0].clone()

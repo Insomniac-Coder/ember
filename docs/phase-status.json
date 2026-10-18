@@ -22,7 +22,7 @@
   "unfinished": {
     "_what": "Rules a test names but that are not fulfilled: each with what is missing and where that is recorded. Remove an entry only when the rule is fulfilled.",
     "TCB-1": "`ember tcb` lists every assumption by module, each graded asserted; grades above asserted are not: `@grade(…)` is an overlay item's attribute and overlays need the C header importer (`import c`), and there are no evidence records under `[ffi] evidence`, no W5050/E5050, no `ember tcb --require` or `ember build --require-evidence` (tasks/85/B-notes.md)",
-    "FFI-11": "built on hand declarations: `borrowed` with `one`/`count(n)`/`fixed(N)`/`nul_terminated`, `nullable`, `exclusive`/`aliased`, `from(…)`, `owned`, `returns_owned(destructor=f)`, `TODO(…)`, and the vocabulary checked in overlays; not built: `retained`, `inout_count`, `out`, `status`, `callback(…)` with `user_data`, `threads(…)` and `destroys(f)` on functions, `unsafe` (tasks/85/B-notes.md)",
+    "FFI-11": "built on hand declarations: `borrowed` with `one`/`count(n)`/`fixed(N)`/`nul_terminated`, `nullable`, `exclusive`/`aliased`, `from(…)`, `owned`, `returns_owned(destructor=f)`, `retained` (with `threads(main | creator)`), `TODO(…)`, and the vocabulary checked in overlays; not built: `inout_count`, `out`, `status`, `callback(…)` with `user_data`, `threads(…)` and `destroys(f)` on functions, `unsafe` (tasks/85/B-notes.md)",
     "FFI-26": "export names that are not C identifiers, and generic exports, are refused (E0900): tests/conformance/FFI-26/reject_unsupported_export_forms.em",
     "FFI-39": "`extern class` is not built: docs/NOT-IMPLEMENTED.md N2, tests/conformance/FFI-39/reject_it_is_not_implemented_yet.em",
     "FFI-49": "`link_name`s that are not C identifiers, and `@ffi` contracts beyond link names, are refused (E0900): tests/conformance/FFI-49/reject_*",
@@ -45,7 +45,7 @@
     "BLD-2": "effect sets are computed (`ember_analysis::effects`) but are not part of a module's interface hash",
     "FFI-1": "a foreign declaration's contract has no effects or thread rule yet; contracts beyond link names are E0900 (see FFI-11)",
     "FFI-36b": "`adopt=false` (`E5052`) and the run-time second-owner panic are built; the compile-time report of two `adopt`s of one local in one function is not: the registry has no code for it (owner question in tasks/85/B-notes.md)",
-    "FFI-33b": "a `ForeignBox` of a `threads(creator)` type records its creator and panics in debug when it ends elsewhere; `Retained` and callbacks carrying `threads(creator)` are not built",
+    "FFI-33b": "a `ForeignBox` of a `threads(creator)` type or result records its creator and panics in debug when it ends elsewhere, and a `retained` parameter carries `threads(creator)`; callbacks carrying it are not built (no `callback(…)` contracts)",
     "FFI-2": "an overlay file parses and is checked (`[GRM-35]`, `E5067`), but nothing applies one: overlays reach a program only through `import c … with (overlay=…)`, and the C header importer is not built, so a call's missing facts cannot be supplied by one",
     "FFI-33c": "`@export_table` is not built (ATTRIBUTE_TABLE in ember_typeck)",
     "CLO-6a": "a `once fn` is built as a parameter's bound only: as a value (a local, a field, a `Box` or a collection element), whose call empties its place, it is refused (E0900)"
