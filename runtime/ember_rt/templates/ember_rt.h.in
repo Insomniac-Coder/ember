@@ -1436,8 +1436,24 @@ static inline const void* ember_itable_lookup(const ember_type_info* type, const
  * its end goes out of line: an empty handle, a count at zero or at its
  * maximum (a panic), and the release to zero, which deinitialises and runs
  * `[OBJ-5]`'s checks. A deinitialising object's count is zero, so its retain
- * leaves the fast path without a test of its own. */
+ * leaves the fast path without a test of its own.
+ *
+ * `[FFI-33a]` — in the debug profile an object that is not Sync records the
+ * thread that made it (the high half of its flags), and a retain or release
+ * on another thread panics, naming the class and both threads: attaching a
+ * thread (`ember_rt_thread_attach`) gives it no right to another thread's
+ * objects. Elsewhere the check is nothing. */
+void ember_obj_check_thread(const ember_obj_header* object);
+#ifdef EMBER_RT_DEBUG_ACCESS
+#define EMBER_OBJ_CHECK_THREAD(object) ember_obj_check_thread(object)
+#else
+#define EMBER_OBJ_CHECK_THREAD(object) ((void)0)
+#endif
+
 EMBER_INLINED void ember_retain_plain(ember_obj_header* object) {
+    if (object != NULL) {
+        EMBER_OBJ_CHECK_THREAD(object);
+    }
     if (object != NULL && object->strong - 1u < UINT32_MAX - 1u) {
         object->strong += 1;
         return;
@@ -1446,6 +1462,9 @@ EMBER_INLINED void ember_retain_plain(ember_obj_header* object) {
 }
 
 EMBER_INLINED void ember_release_plain(ember_obj_header* object) {
+    if (object != NULL) {
+        EMBER_OBJ_CHECK_THREAD(object);
+    }
     if (object != NULL && object->strong > 1) {
         object->strong -= 1;
         return;
@@ -2691,6 +2710,19 @@ void ember_rt_thread_attach(void);
 void ember_rt_thread_detach(void);
 /* [FFI-33c] Panic unless called on the current module initialization thread. */
 void ember_rt_check_main_thread(void);
+
+/* -- foreign objects Ember owns ------------------------------------------------
+ *
+ * `[FFI-36a]`, `[FFI-36b]` — a `ForeignBox` owns a foreign object: the runtime records each one
+ * by address with where it was taken (`std.ffi.adopt`, a `returns_owned` result), and taking a
+ * live one again panics, naming both places, in every profile: two owners would free it twice.
+ * `ember_ffi_adopt` records `object` (a null pointer is no object, and is not recorded) and
+ * returns it; `ember_ffi_release` removes it when its box ends or gives it to C (`owned`). With
+ * `creator` nonzero (`threads(creator)`, `[FFI-33b]`), the debug profile checks that the box
+ * ends on the thread that made it, which `ember_ffi_thread` names. */
+void* ember_ffi_adopt(void* object, ember_loc at);
+void ember_ffi_release(void* object, uint32_t creator);
+uint32_t ember_ffi_thread(void);
 
 /* -- debug facilities ------------------------------------------------------- */
 

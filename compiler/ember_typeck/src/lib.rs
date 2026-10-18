@@ -1873,6 +1873,17 @@ struct BodySnapshot {
     reported_defaults: HashSet<Span>,
 }
 
+/// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — an opaque foreign type's `@ffi(destroys(f), adopt=…,
+/// threads(creator))`: the function that frees one of its objects (named in `module`), whether one
+/// may be adopted, and whether its boxes record the thread that made them.
+#[derive(Clone)]
+struct ForeignTypeContract {
+    module: usize,
+    destroys: Option<ast::Ident>,
+    adopt: bool,
+    creator: bool,
+}
+
 #[derive(Clone, Copy)]
 struct ForeignStatic {
     ty: Ty,
@@ -1899,6 +1910,11 @@ struct Checker<'a> {
     /// `[DIA-18]` — for a foreign declaration not asserted safe to call, each fact a safe call
     /// still lacks and the declaration line that would supply it.
     foreign_unknown_facts: HashMap<DefId, ForeignUnknownFacts>,
+    /// Each foreign function's C symbol (`@ffi(link_name=…)` or its name).
+    foreign_symbols: HashMap<DefId, Symbol>,
+    /// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — what an opaque foreign type's declaration says of
+    /// its objects, by the type's qualified name.
+    foreign_type_contracts: HashMap<Symbol, ForeignTypeContract>,
     signatures: Vec<Signature>,
     /// `[CLO-1]` — the functions a capture-free closure lowers to. They have
     /// no name in source, so they are collected here and appended to the
@@ -2566,6 +2582,8 @@ impl<'a> Checker<'a> {
             fn_ids: HashMap::new(),
             foreign_declarations: HashMap::new(),
             foreign_unknown_facts: HashMap::new(),
+            foreign_symbols: HashMap::new(),
+            foreign_type_contracts: HashMap::new(),
             signatures: Vec::new(),
             methods: HashMap::new(),
             class_declared_methods: HashMap::new(),
@@ -3222,6 +3240,7 @@ impl<'a> Checker<'a> {
             }
             let ty = self.types.intern(TyKind::Opaque(name));
             self.named_types.insert(name, ty);
+            self.foreign_type_contracts.insert(name, foreign_type_contract(&item.attrs, self.current_module));
         }
     }
 
@@ -7933,6 +7952,7 @@ impl<'a> Checker<'a> {
                         if !decl.is_safe {
                             self.foreign_unknown_facts.insert(def, ffi_unknown_facts(decl, &item.attrs));
                         }
+                        self.foreign_symbols.insert(def, Symbol::intern(ffi_link_name(&item.attrs).unwrap_or(decl.name.name.as_str())));
                     }
                     // `[PAR-2b]`, `[CG-C-3]` — kept for the parallel analysis to read through.
                     if !decl.is_foreign_decl
@@ -13284,6 +13304,104 @@ impl<'a> Checker<'a> {
         Some(result)
     }
 
+    /// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — `std.ffi.adopt[T](h)`: a `ForeignBox[T]` owning the
+    /// foreign object at `h`, freed by the destructor the declaration of `T` names
+    /// (`@ffi(destroys(f))`); one whose declaration says `adopt=false` is `E5052`. The box's
+    /// address is recorded at run time where the call is (a second owner of a live object panics
+    /// naming both places), and with `threads(creator)` it keeps the thread that made it.
+    fn synth_foreign_adopt(&mut self, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if !self.in_unsafe {
+            self.sink.emit(Diagnostic::error(codes::E3100, span, "calling an `unsafe fn` requires an `unsafe` block")
+                .help("wrap the call in `unsafe:` and state its safety reason"));
+        }
+        if args.len() != 1 || explicit.len() > 1 {
+            self.error(codes::E2020, span, "`adopt` takes one type argument and one pointer, `adopt[T](h)`");
+            return error;
+        }
+        let pointer = match explicit.first() {
+            Some(&pointee) => {
+                let expected = self.types.intern(TyKind::Ptr { mutable: true, inner: pointee });
+                self.check_expr(&args[0].value, expected)
+            }
+            None => self.synth_committed(&args[0].value),
+        };
+        if pointer.ty == self.common.error {
+            return error;
+        }
+        let TyKind::Ptr { mutable: true, inner: pointee } = *self.types.kind(pointer.ty) else {
+            let shown = self.types.display(pointer.ty);
+            self.error(codes::E2020, args[0].value.span, format!("`adopt` takes a `*mut T`, found `{shown}`"));
+            return error;
+        };
+        let shown = self.types.display(pointee);
+        let contract = match *self.types.kind(pointee) {
+            TyKind::Opaque(name) => self.foreign_type_contracts.get(&name).cloned(),
+            _ => None,
+        };
+        let Some(contract) = contract else {
+            self.sink.emit(
+                Diagnostic::error(codes::E5002, span, format!("`{shown}` is not a foreign type, so nothing names what frees one"))
+                    .help("declare the type in an `unsafe extern` block, with `@ffi(destroys(f))` naming its destructor [FFI-36a]"),
+            );
+            return error;
+        };
+        if !contract.adopt {
+            self.sink.emit(
+                Diagnostic::error(codes::E5052, span, format!("a `{shown}` may not be adopted: its declaration says `adopt=false`"))
+                    .note("the foreign library keeps ownership of its objects; Ember borrows them [FFI-36b]"),
+            );
+            return error;
+        }
+        let Some(destroys) = contract.destroys else {
+            self.sink.emit(
+                Diagnostic::error(codes::E5002, span, format!("the declaration of `{shown}` names no destructor"))
+                    .help(format!("write `@ffi(destroys(f))` on `type {shown}`, naming the foreign function that frees one [FFI-36a]")),
+            );
+            return error;
+        };
+        let qualified = self.qualified_in_module(contract.module, destroys.name);
+        let destructor = self.fn_ids.get(&qualified).copied()
+            .and_then(|def| self.foreign_symbols.get(&def).map(|symbol| (def, *symbol)));
+        let Some((def, symbol)) = destructor else {
+            self.error(codes::E5002, destroys.span, format!("`{}` is not a foreign function of this module", destroys.name));
+            return error;
+        };
+        let signature = &self.signatures[def.0 as usize];
+        let frees = matches!(signature.params.as_slice(),
+            [(_, ty, _, _)] if matches!(*self.types.kind(*ty), TyKind::Ptr { inner, .. } if inner == pointee));
+        if !frees {
+            self.error(codes::E5002, destroys.span,
+                format!("`{}` frees a `{shown}`, so it takes one `*mut {shown}`", destroys.name));
+            return error;
+        }
+        let ret = signature.ret;
+        let destructor_value = self.fn_value_of(def, destroys.name, destroys.span);
+        let boxed = self.instantiate_named_generic("std.ffi.ForeignBox", &[pointee], span);
+        let TyKind::Struct(id) = *self.types.kind(boxed) else { return error };
+        let fields: Vec<Ty> = self.types.struct_def(id).fields.iter().map(|field| field.ty).collect();
+        let [pointer_ty, fn_ty, creator_ty] = fields[..] else { return error };
+        let adopted = Expr {
+            ty: pointer_ty,
+            kind: ExprKind::Builtin { which: Builtin::ForeignAdopt, args: vec![pointer] },
+            span,
+        };
+        let destructor = Expr {
+            ty: fn_ty,
+            kind: ExprKind::Builtin {
+                which: Builtin::ForeignDestructor { symbol, pointee, ret, fn_ty },
+                args: vec![destructor_value],
+            },
+            span,
+        };
+        let creator = if contract.creator {
+            Expr { ty: creator_ty, kind: ExprKind::Builtin { which: Builtin::ForeignThread, args: Vec::new() }, span }
+        } else {
+            Expr { ty: creator_ty, kind: ExprKind::Int(0), span }
+        };
+        Expr { ty: boxed, kind: ExprKind::StructLit { struct_id: id, fields: vec![adopted, destructor, creator] }, span }
+    }
+
     /// `[UNS-5]` — `std.mem`'s raw primitives: `alloc[T]`, `free[T]`,
     /// `read[T]`, `write[T]`, `size_of[T]`, and `align_of[T]`. The two layout
     /// queries need no `unsafe`; the raw-memory operations do (`[UNS-1]`).
@@ -13296,6 +13414,20 @@ impl<'a> Checker<'a> {
     ) -> Option<Expr> {
         if let Some(built) = self.synth_mem_ownership_builtin(name, args, explicit, span) {
             return Some(built);
+        }
+        // `[FFI-36a]` — `std.ffi`'s compiler-known operations on foreign objects.
+        let resolved = self.resolve_name(name);
+        if resolved.is("std.ffi.adopt") {
+            return Some(self.synth_foreign_adopt(args, explicit, span));
+        }
+        if resolved.is("std.ffi.foreign_release") && args.len() == 2 {
+            let pointer = self.synth_committed(&args[0].value);
+            let creator = self.check_expr(&args[1].value, self.common.u32);
+            return Some(Expr {
+                ty: self.common.void,
+                kind: ExprKind::Builtin { which: Builtin::ForeignRelease, args: vec![pointer, creator] },
+                span,
+            });
         }
         if let Some(built) = self.synth_error_builtin(name, args, explicit, span) {
             return Some(built);
@@ -34481,6 +34613,44 @@ impl<'a> Checker<'a> {
             self.check_overlay(overlay);
             return;
         }
+        // `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — an opaque foreign type's contract: what frees one
+        // of its objects, whether one may be adopted, its thread rule, and `handle`.
+        if let ast::ItemKind::TypeAlias(alias) = &item.kind && alias.is_foreign_decl {
+            for attr in &item.attrs {
+                if attr.path.len() != 1 || !attr.path[0].name.is("ffi") {
+                    self.check_attribute_list(std::slice::from_ref(attr), "extern item");
+                    continue;
+                }
+                let mut seen = HashSet::new();
+                for arg in &attr.args {
+                    let word = match arg {
+                        ast::AttrArg::Named { name, value } if name.name.is("adopt")
+                            && matches!(value.kind, ast::ExprKind::Lit(ast::Literal::Bool(_))) => Some(name.name),
+                        ast::AttrArg::Expr(expr) => match &expr.kind {
+                            ast::ExprKind::Path { segments } if segments.len() == 1 && segments[0].name.is("handle") => Some(segments[0].name),
+                            ast::ExprKind::Call { callee, args } if args.len() == 1 => ffi_contract_word(callee).filter(|word| {
+                                let inner = ffi_contract_word(&args[0].value);
+                                (word.is("destroys") && inner.is_some())
+                                    || (word.is("threads") && inner.is_some_and(|thread| matches!(thread.as_str(), "any" | "main" | "creator")))
+                            }),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    match word {
+                        Some(word) if !seen.insert(word) => {
+                            self.error(codes::E0104, attr.span, format!("duplicate `{word}` in `@ffi`"));
+                        }
+                        Some(_) => {}
+                        None => self.sink.emit(
+                            Diagnostic::error(codes::E0104, attr.span, "this is not a foreign type's contract word")
+                                .help("a foreign type takes `handle`, `destroys(f)`, `adopt=false` and `threads(any | main | creator)` [FFI-36a]"),
+                        ),
+                    }
+                }
+            }
+            return;
+        }
         if let ast::ItemKind::Static(decl) = &item.kind && decl.is_foreign_decl {
             let mut saw_ffi = false;
             for attr in &item.attrs {
@@ -49349,6 +49519,33 @@ fn ffi_link_name(attrs: &[ast::Attribute]) -> Option<&str> {
     attrs.iter()
         .find(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
         .and_then(ffi_link_name_attr)
+}
+
+/// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — an opaque foreign type's `@ffi(…)`: `destroys(f)`,
+/// `adopt=false`, `threads(creator)` (the other words are checked where the attribute is).
+fn foreign_type_contract(attrs: &[ast::Attribute], module: usize) -> ForeignTypeContract {
+    let mut contract = ForeignTypeContract { module, destroys: None, adopt: true, creator: false };
+    for arg in attrs.iter().filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi")).flat_map(|attr| &attr.args) {
+        match arg {
+            ast::AttrArg::Named { name, value } if name.name.is("adopt") => {
+                contract.adopt = !matches!(value.kind, ast::ExprKind::Lit(ast::Literal::Bool(false)));
+            }
+            ast::AttrArg::Expr(expr) => {
+                let ast::ExprKind::Call { callee, args } = &expr.kind else { continue };
+                let (Some(word), [only]) = (ffi_contract_word(callee), args.as_slice()) else { continue };
+                if word.is("destroys")
+                    && let ast::ExprKind::Path { segments } = &only.value.kind
+                    && segments.len() == 1
+                {
+                    contract.destroys = Some(segments[0]);
+                } else if word.is("threads") {
+                    contract.creator = ffi_contract_word(&only.value).is_some_and(|thread| thread.is("creator"));
+                }
+            }
+            _ => {}
+        }
+    }
+    contract
 }
 
 /// `[DIA-18]` — what a call to a foreign declaration that is not `safe fn` lacks: each unknown

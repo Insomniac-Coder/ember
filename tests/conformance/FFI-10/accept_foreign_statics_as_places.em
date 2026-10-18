@@ -28,23 +28,32 @@ unsafe extern "C":
     safe fn samples_sum() -> i32
     fn bump_table_total() -> i32
 
+fn apply(f: extern "C" fn(i32) -> i32, x: i32) -> i32:
+    return f(x)
+
 fn main():
     unsafe:  # SAFETY(ffi): each global is declared as the fixture defines it
         println(account.id)
         account.balance = 250
-        println(account_sum())
+    println(account_sum())
+    unsafe:  # SAFETY(ffi): as above
         account = Account(id = 9, balance = 1000)
-        println(account_sum())
+    println(account_sum())
+    unsafe:  # SAFETY(ffi): as above
         account.balance += 1
         println(account.balance)
         table.values[1] = 40
-        println(table_sum())
+    println(table_sum())
+    unsafe:  # SAFETY(ffi): as above; `bump_table_total` changes only `table.total`
         table.values[2] += bump_table_total()
-        println(table_sum())
+    println(table_sum())
+    unsafe:  # SAFETY(ffi): as above
         samples[3] = 20
         samples[0] *= 3
-        println(samples_sum())
+    println(samples_sum())
+    tripled = 0
+    unsafe:  # SAFETY(ffi): as above
         println(samples[0] + samples[3])
-        triple = scale
-        println(triple(7))
+        tripled = apply(scale, 7)
+    println(tripled)
     println(frozen_samples[1] + frozen_samples[2])

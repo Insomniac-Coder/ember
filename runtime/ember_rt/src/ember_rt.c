@@ -74,6 +74,22 @@ static bool runtime_thread_attached(void) {
     return g_attached_generation == object_load_u32(&g_thread_generation);
 }
 
+/* `[FFI-33a]` — each thread's number, given the first time it asks: 1 for the thread that
+ * initialises the runtime, then in order. In the debug profile an object that is not Sync keeps
+ * its maker's number in the high half of its flags (0: not recorded; a number past 16 bits is
+ * recorded as its low half, so after 65535 threads two can share one: a missed report, never a
+ * false one between threads that differ there). */
+static uint32_t g_thread_numbers;
+static EMBER_RT_THREAD_LOCAL uint32_t g_thread_number;
+static uint32_t g_main_thread_number;
+
+static uint32_t thread_number(void) {
+    if (g_thread_number == 0) {
+        g_thread_number = object_fetch_add_u32(&g_thread_numbers, 1) + 1;
+    }
+    return g_thread_number;
+}
+
 /* `[WK-8]` is deliberately diagnostic-only: the set records live headers
  * while debug objects are enabled, and is never a collector root or a source
  * of mutation. Compiler-generated enumerators own layout knowledge. It is an
@@ -895,6 +911,7 @@ int ember_rt_init_v2(const ember_rt_config* cfg, uint32_t caller_abi) {
     }
     g_config = config;
     g_main_generation = object_load_u32(&g_thread_generation);
+    g_main_thread_number = thread_number();
     g_initialised = true;
     ember_rt_thread_attach();
     return 0;
@@ -1820,6 +1837,136 @@ void ember_rt_thread_detach(void) {
     g_attached_generation = 0;
 }
 
+/* -- foreign objects Ember owns ([FFI-36a], [FFI-36b], [FFI-33b]) -------------
+ *
+ * An open-addressing table of the addresses `ForeignBox`es own, each with where it was taken,
+ * under a spin lock as the leak tracker's: adoption is rare (a foreign object's life), so the
+ * lock is never held for long. A removed entry is a tombstone, dropped at the next rehash. */
+typedef struct foreign_owned_slot {
+    void* object;
+    ember_loc at;
+} foreign_owned_slot;
+
+#define FOREIGN_REMOVED ((void*)(uintptr_t)1)
+static foreign_owned_slot* g_foreign_owned;
+static size_t g_foreign_owned_cap;
+static size_t g_foreign_owned_used;
+static size_t g_foreign_owned_filled;
+static uint32_t g_foreign_owned_lock;
+
+static void foreign_owned_lock(void) {
+    uint32_t expected = 0;
+    while (!object_compare_exchange_u32(&g_foreign_owned_lock, &expected, 1)) {
+        expected = 0;
+    }
+}
+
+static void foreign_owned_unlock(void) {
+    (void)object_fetch_sub_u32(&g_foreign_owned_lock, 1);
+}
+
+static void foreign_owned_rehash(size_t cap) {
+    foreign_owned_slot* slots = (foreign_owned_slot*)calloc(cap, sizeof *slots);
+    if (slots == NULL) {
+        fputs("ember runtime: unable to allocate the record of owned foreign objects\n", stderr);
+        runtime_abort();
+    }
+    for (size_t index = 0; index < g_foreign_owned_cap; ++index) {
+        void* object = g_foreign_owned[index].object;
+        if (object == NULL || object == FOREIGN_REMOVED) {
+            continue;
+        }
+        size_t at = debug_slot_of(object, cap);
+        while (slots[at].object != NULL) {
+            at = (at + 1) & (cap - 1);
+        }
+        slots[at] = g_foreign_owned[index];
+    }
+    free(g_foreign_owned);
+    g_foreign_owned = slots;
+    g_foreign_owned_cap = cap;
+    g_foreign_owned_filled = g_foreign_owned_used;
+}
+
+void* ember_ffi_adopt(void* object, ember_loc at) {
+    if (object == NULL) {
+        return object;
+    }
+    foreign_owned_lock();
+    if ((g_foreign_owned_filled + 1) * 2 > g_foreign_owned_cap) {
+        size_t cap = g_foreign_owned_cap == 0 ? 16 : g_foreign_owned_cap;
+        while ((g_foreign_owned_used + 1) * 2 > cap) {
+            cap *= 2;
+        }
+        foreign_owned_rehash(cap);
+    }
+    size_t slot = debug_slot_of(object, g_foreign_owned_cap);
+    size_t free_slot = SIZE_MAX;
+    while (g_foreign_owned[slot].object != NULL) {
+        if (g_foreign_owned[slot].object == object) {
+            ember_loc first = g_foreign_owned[slot].at;
+            foreign_owned_unlock();
+            char buffer[512];
+            int written = snprintf(buffer, sizeof buffer,
+                "a foreign object at %p is adopted at %s:%u:%u, and Ember already owns it since %s:%u:%u: "
+                "two owners would free it twice [FFI-36b]",
+                object, at.file, (unsigned)at.line, (unsigned)at.column,
+                first.file, (unsigned)first.line, (unsigned)first.column);
+            ember_panic(buffer, written > 0 ? (size_t)written : 0, at);
+        }
+        if (g_foreign_owned[slot].object == FOREIGN_REMOVED && free_slot == SIZE_MAX) {
+            free_slot = slot;
+        }
+        slot = (slot + 1) & (g_foreign_owned_cap - 1);
+    }
+    if (free_slot == SIZE_MAX) {
+        free_slot = slot;
+        g_foreign_owned_filled += 1;
+    }
+    g_foreign_owned[free_slot].object = object;
+    g_foreign_owned[free_slot].at = at;
+    g_foreign_owned_used += 1;
+    foreign_owned_unlock();
+    return object;
+}
+
+void ember_ffi_release(void* object, uint32_t creator) {
+#ifdef EMBER_RT_DEBUG_ACCESS
+    if (creator != 0 && creator != thread_number()) {
+        char buffer[320];
+        int written = snprintf(buffer, sizeof buffer,
+            "a foreign object at %p made on thread %u%s ends on thread %u%s: its contract says "
+            "`threads(creator)` [FFI-33b]",
+            object, (unsigned)creator, creator == g_main_thread_number ? " (main)" : "",
+            (unsigned)thread_number(), thread_number() == g_main_thread_number ? " (main)" : "");
+        ember_loc loc = { "<foreign-object>", 0, 0 };
+        ember_panic(buffer, written > 0 ? (size_t)written : 0, loc);
+    }
+#else
+    (void)creator;
+#endif
+    if (object == NULL) {
+        return;
+    }
+    foreign_owned_lock();
+    if (g_foreign_owned_cap != 0) {
+        size_t slot = debug_slot_of(object, g_foreign_owned_cap);
+        while (g_foreign_owned[slot].object != NULL) {
+            if (g_foreign_owned[slot].object == object) {
+                g_foreign_owned[slot].object = FOREIGN_REMOVED;
+                g_foreign_owned_used -= 1;
+                break;
+            }
+            slot = (slot + 1) & (g_foreign_owned_cap - 1);
+        }
+    }
+    foreign_owned_unlock();
+}
+
+uint32_t ember_ffi_thread(void) {
+    return thread_number();
+}
+
 void ember_rt_check_main_thread(void) {
     /* [FFI-33c] This is mandatory even in shipping builds. Shutdown revokes
      * all prior main identities before a later init can establish a new one. */
@@ -2208,6 +2355,29 @@ static bool object_try_strong_retain(ember_obj_header* object) {
     }
 }
 
+#define EMBER_OBJ_CREATOR_SHIFT 16
+
+void ember_obj_check_thread(const ember_obj_header* object) {
+    uint32_t creator = object->flags >> EMBER_OBJ_CREATOR_SHIFT;
+    if (creator == 0 || (object->ti != NULL && (object->ti->flags & EMBER_TI_SYNC) != 0)) {
+        return;
+    }
+    uint32_t here = thread_number();
+    if ((here & 0xFFFFu) == creator) {
+        return;
+    }
+    char buffer[320];
+    const char* name = object->ti && object->ti->name ? object->ti->name : "<anonymous>";
+    int written = snprintf(buffer, sizeof buffer,
+        "a `%s` object made on thread %u%s is retained or released on thread %u%s: an object that "
+        "is not `@sync` belongs to the thread that made it, and attaching a thread gives it no "
+        "right to another's objects [FFI-33a]",
+        name, (unsigned)creator, creator == g_main_thread_number ? " (main)" : "",
+        (unsigned)here, here == g_main_thread_number ? " (main)" : "");
+    ember_loc loc = { "<object-runtime>", 0, 0 };
+    ember_panic(buffer, written > 0 ? (size_t)written : 0, loc);
+}
+
 ember_obj_header* ember_obj_new(const ember_type_info* ti) {
     if (ti == NULL || ti->size < sizeof(ember_obj_header)
         || ti->align < _Alignof(ember_obj_header)
@@ -2220,6 +2390,11 @@ ember_obj_header* ember_obj_new(const ember_type_info* ti) {
     object->strong = 1;
     object->weak = 1;
     object->ti = ti;
+#ifdef EMBER_RT_DEBUG_ACCESS
+    if ((ti->flags & EMBER_TI_SYNC) == 0) {
+        object->flags = (thread_number() & 0xFFFFu) << EMBER_OBJ_CREATOR_SHIFT;
+    }
+#endif
     debug_track_object(object);
     return object;
 }
@@ -2291,6 +2466,9 @@ void ember_weak_retain(ember_obj_header* object) {
     if (object == NULL) {
         return;
     }
+#ifdef EMBER_RT_DEBUG_ACCESS
+    ember_obj_check_thread(object);
+#endif
     bool sync = object_is_sync(object);
     uint32_t current = object_load_weak(object);
     if (current == 0 || current == UINT32_MAX) {
@@ -2307,6 +2485,9 @@ void ember_weak_release(ember_obj_header* object) {
     if (object == NULL) {
         return;
     }
+#ifdef EMBER_RT_DEBUG_ACCESS
+    ember_obj_check_thread(object);
+#endif
     bool sync = object_is_sync(object);
     uint32_t current = object_load_weak(object);
     if (current == 0) {

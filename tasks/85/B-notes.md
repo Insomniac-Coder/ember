@@ -104,6 +104,41 @@ for the harness's run); deciding to refuse the mix was not needed.
 Pages `docs/errors/E5067.md`, `W5050.md`. Tests: `tests/conformance/GRM-35/`,
 `tests/conformance/TCB-2/accept_a_written_grade_stays_asserted.em`.
 
+## 8. An object that is not Sync is its maker's (`[FFI-33a]`)
+
+In the debug profile (`EMBER_RT_DEBUG_ACCESS`) `ember_obj_new` writes the making thread's number
+into the high 16 bits of a non-Sync object's `flags` (the layout table assigns only bits 0 and 1),
+and `ember_retain_plain`/`ember_release_plain` (inline) and `ember_weak_retain`/`_release` call
+`ember_obj_check_thread`, which panics naming the class and both threads (`thread 1 (main)`).
+Thread numbers are a thread-local counter, 1 for the thread that initialises the runtime; past 65535
+threads two can share a number, which can miss a report but never make a false one. Release
+profiles neither record nor check. Safe Ember never moves a non-Sync handle to another thread (it is
+not `Send`), so the check fires only for foreign threads that attached and touch Ember objects, which
+is the rule's subject. Test: `runtime/ember_rt/templates/tests/object_creator_thread.c.in`, run by
+`ember_build`'s `an_object_that_is_not_sync_is_its_makers` (debug and release, a C thread that
+attaches and retains, releases or weakly retains; a Sync object; the maker itself).
+
+## 9. `ForeignBox`, `std.ffi.adopt` (`[FFI-36a]`, `[FFI-36b]`, part of `[FFI-33b]`)
+
+`std.ffi.ForeignBox[T]` is written in Ember: `pointer: *mut T`, `destructor: extern "C" fn(*mut T)`,
+`creator: u32`; `as_ptr()`; its `drop` calls the compiler-known `foreign_release` then the
+destructor. It is `Send` (`unsafe extend`): a box's thread rule is its contract's, checked at its end.
+`std.ffi.adopt[T](h)` is compiler-known (`synth_foreign_adopt`): `T` must be an opaque foreign type
+whose declaration names its destructor, `@ffi(destroys(f))` (`f` a foreign function of the same
+module taking one `*mut T`); `@ffi(adopt=false)` is `E5052`; no destructor or not a foreign type is
+`E5002`; outside `unsafe` `E3100`. It builds the box as a struct literal: `Builtin::ForeignAdopt`
+(the runtime's `ember_ffi_adopt`, recording the address with the call's place),
+`Builtin::ForeignDestructor` (the function itself when it returns nothing, else a C thunk
+`ember_ffi_destroy_<f>` that drops its status), and `Builtin::ForeignThread` when the type says
+`@ffi(threads(creator))`. The runtime's record (an open-addressing table under a spin lock, in every
+profile as `[FFI-36b]` says) panics at a second owner of a live address naming both places;
+`ember_ffi_release` takes the address out and, in debug, checks a creator box ends on its thread.
+A foreign type's `@ffi` takes `handle`, `destroys(f)`, `adopt=…`, `threads(any|main|creator)`
+(`E0104` otherwise). Tests: `tests/conformance/FFI-36a/`, `FFI-36b/`, milestone
+`adopted_foreign_objects_are_freed_by_their_destructor` (fixture `tests/fixtures/foreign_objects.c`:
+frees counted, a status-returning destructor, double adoption in debug and release, a creator box
+dropped on a spawned thread panicking in debug only).
+
 ## Rules done (each with its test)
 
 | Rule | Test |
@@ -112,6 +147,7 @@ Pages `docs/errors/E5067.md`, `W5050.md`. Tests: `tests/conformance/GRM-35/`,
 | `EFF-3` | `tests/conformance/EFF-3/*` |
 | `TCB-2`, `TCB-3` | milestone `tcb_lists_every_foreign_fact_with_its_source_and_grade`; `TCB-2/accept_a_written_grade_stays_asserted.em` |
 | `GRM-35` | `tests/conformance/GRM-35/*` |
+| `FFI-33a` | `ember_build` test `an_object_that_is_not_sync_is_its_makers` |
 | `CLI-13` | milestone `calls_foreign_lists_what_an_item_reaches_with_each_contract` |
 | `DIA-18` | `tests/conformance/DIA-18/*` |
 
@@ -135,4 +171,13 @@ Pages `docs/errors/E5067.md`, `W5050.md`. Tests: `tests/conformance/GRM-35/`,
 
 ## Owner questions
 
-(none yet)
+1. **How a foreign type's declaration names its destructor (`[FFI-36a]`).** "`adopt` … reading its
+   destructor from the contract of `T`'s declaration": the spec gives no spelling for a type's
+   contract. Built as `@ffi(destroys(f))` on `type T` (the vocabulary's `destroys(f)`), with
+   `@ffi(adopt=false)` (`[FFI-36b]`'s words) and `@ffi(threads(creator))` beside it. If the owner
+   wants `destructor=f` (the `returns_owned` spelling), it is a rename.
+2. **The code for two `adopt`s of one local in one function (`[FFI-36b]`).** The rule says it is
+   caught at compile time, and the registry has no code for it (`E5052` is `adopt=false`). Which
+   code? Until then only the run-time half is built.
+3. **Calling a `static` of function type by name** (`HOOK(7)`) is `E1010 cannot find`: a defect
+   outside this job, noted under "Defects found".

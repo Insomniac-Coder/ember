@@ -19,4 +19,4 @@ fn main():
         println(current.fd)
         current.fd = 4
         taken = current    #$ error[E3013]: cannot move out of a reference
-        println(taken.fd)
+        current.fd = taken.fd

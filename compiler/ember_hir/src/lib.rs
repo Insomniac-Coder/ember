@@ -1158,6 +1158,22 @@ pub enum Builtin {
     /// record) and C's storage is what changes. `immutable` is
     /// `@ffi(immutable)` (ODR-082): the C declaration is `extern const T`.
     ForeignStatic { symbol: Symbol, ty: Ty, immutable: bool },
+    /// `[FFI-36a]`, `[FFI-36b]` — record the foreign object at the pointer
+    /// (the one argument, also the result) as one Ember owns, with where;
+    /// a second owner of a live one panics naming both places.
+    ForeignAdopt,
+    /// `[FFI-36b]`, `[FFI-33b]` — a `ForeignBox`'s end, or its object given
+    /// to C: out of the record. Arguments: the pointer, the creator thread
+    /// (0 for none), checked in the debug profile.
+    ForeignRelease,
+    /// `[FFI-33b]` — the number of the thread running it, recorded by a box
+    /// whose contract says `threads(creator)`.
+    ForeignThread,
+    /// `[FFI-36a]` — the foreign function `symbol` (the argument is its
+    /// value) as a box's destructor, of type `fn_ty` (`extern "C" fn(*mut
+    /// T)`): itself when it returns nothing (`ret` void), else a C thunk that
+    /// calls it and drops its result.
+    ForeignDestructor { symbol: Symbol, pointee: Ty, ret: Ty, fn_ty: Ty },
     /// `[STA-3]` — a reference to the one value of a `static` whose
     /// initialiser runs on first access: `init`, a function of no
     /// arguments, the first time any thread asks. `name` is the static's, for
@@ -1687,6 +1703,10 @@ impl Builtin {
     pub fn name(self) -> &'static str {
         match self {
             Builtin::ForeignStatic { .. } => "foreign_static",
+            Builtin::ForeignAdopt => "ffi_adopt",
+            Builtin::ForeignRelease => "ffi_release",
+            Builtin::ForeignThread => "ffi_thread",
+            Builtin::ForeignDestructor { .. } => "ffi_destructor",
             Builtin::LazyStatic { .. } => "lazy_static",
             Builtin::ConstStatic { .. } => "constant_static",
             Builtin::ComptimeReadFile => "read_file",

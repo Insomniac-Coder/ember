@@ -839,6 +839,11 @@ enum Definition {
     FnPointer { ret: String, convention: &'static str, args: String },
 }
 
+/// `[FFI-36a]` — the thunk that calls foreign destructor `symbol` and drops its result.
+fn foreign_destructor_thunk(symbol: &str) -> String {
+    format!("{RT}ffi_destroy_{symbol}")
+}
+
 /// `[FFI-9]` — the macro naming a declaration's C calling convention, with a
 /// trailing space, or nothing for `extern "C"` (`calling_convention_macros`
 /// defines them).
@@ -4882,6 +4887,23 @@ impl Emitter<'_> {
                 self.line(&format!("{signature};"));
             }
         }
+        // `[FFI-36a]` — a foreign destructor that returns a value is called through a thunk
+        // that drops it, so the box's destructor is `void (*)(T*)` exactly.
+        let mut thunks = BTreeMap::new();
+        for block in bodies.iter().flat_map(|body| &body.blocks) {
+            if let Terminator::Call { func: FuncRef::Builtin { which: Builtin::ForeignDestructor { symbol, pointee, ret, .. }, .. }, .. } = &block.terminator
+                && !self.is_void(*ret)
+            {
+                thunks.insert(symbol.to_string(), *pointee);
+            }
+        }
+        for (symbol, pointee) in thunks {
+            self.line(&format!(
+                "static EMBER_MAYBE_UNUSED void {}({}* object) {{ (void){symbol}(object); }}",
+                foreign_destructor_thunk(&symbol),
+                self.c_type(pointee),
+            ));
+        }
         self.line("");
     }
 
@@ -7545,6 +7567,24 @@ impl Emitter<'_> {
                     Builtin::ForeignStatic { symbol, ty, immutable } => {
                         self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*ty, *immutable));
                         return format!("(({}*)&{symbol})", self.c_type(*ty));
+                    }
+                    // `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — the runtime's record of foreign
+                    // objects Ember owns.
+                    Builtin::ForeignAdopt => {
+                        return format!("(({}){RT}ffi_adopt((void*)({}), {}))",
+                            self.c_type(*arg_ty), rendered[0], self.location(span));
+                    }
+                    Builtin::ForeignRelease => {
+                        return format!("{RT}ffi_release((void*)({}), {})", rendered[0], rendered[1]);
+                    }
+                    Builtin::ForeignThread => return format!("{RT}ffi_thread()"),
+                    Builtin::ForeignDestructor { symbol, ret, fn_ty, .. } => {
+                        let callee = if self.is_void(*ret) {
+                            rendered[0].clone()
+                        } else {
+                            foreign_destructor_thunk(symbol.as_str())
+                        };
+                        return format!("(({}){callee})", self.c_type(*fn_ty));
                     }
                     // `[STA-3]` — the accessor `lazy_static_definitions` writes.
                     Builtin::LazyStatic { init, .. } => return format!("{init}_static()"),

@@ -1166,6 +1166,11 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
             (Effects::UNSAFE, "an `unsafe` operation")
         }
         B::ForeignStatic { .. } => (Effects::FFI | Effects::UNSAFE, "a foreign static"),
+        // `[FFI-36b]` — the runtime's record of owned foreign objects: a lock, a table that grows,
+        // and the second-owner panic; a box's end may panic on the wrong thread (`[FFI-33b]`).
+        B::ForeignAdopt => (ALLOC | Effects::SYNC, "recording a foreign object Ember owns"),
+        B::ForeignRelease => (Effects::SYNC | Effects::PANIC, "a foreign object's end"),
+        B::ForeignThread | B::ForeignDestructor { .. } => (Effects::NONE, ""),
         // `[DET-2]` — a transcendental function from the platform library.
         B::FloatPow => (Effects::NONDET, "the platform's `pow`"),
         B::FloatLib(lib) => match lib {

@@ -2043,6 +2043,39 @@ int main(int argc, char** argv) {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// `[FFI-33a]` — in the debug profile an object that is not Sync is its maker's: a foreign
+    /// thread that attaches and then retains, releases or weakly retains one panics naming the
+    /// class and both threads; a Sync object is any thread's, and the maker counts freely
+    /// (`templates/tests/object_creator_thread.c.in`). A release build does not check.
+    #[test]
+    fn an_object_that_is_not_sync_is_its_makers() {
+        let requested = std::env::var(ember_branding::cc_var()).ok();
+        let toolchain = Toolchain::detect(requested.as_deref()).expect("a C toolchain");
+        let runtime = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+        let dir = std::env::temp_dir().join(format!("creator-thread-{}", std::process::id()));
+        for profile in [Profile::Debug, Profile::Release] {
+            let program = dir.join(format!("creator_thread_{profile:?}{}", if cfg!(windows) { ".exe" } else { "" }));
+            std::fs::create_dir_all(dir.join(format!("obj_{profile:?}"))).expect("the test directory is creatable");
+            compile_and_link(&toolchain, &LinkRequest {
+                sources: &[runtime.join("tests/object_creator_thread.c"), runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX))],
+                include_dirs: &[runtime.join("include")], output: program.clone(),
+                profile, obj_dir: dir.join(format!("obj_{profile:?}")),
+            }).expect("the creator-thread oracle compiles");
+            for mode in ["retain", "release", "weak", "sync", "same"] {
+                let output = run_fresh(Command::new(&program).arg(mode)).expect("the creator-thread oracle runs");
+                assert!(output.status.success(), "[FFI-33a] {profile:?} {mode}: exit {:?}: {}", output.status.code(), String::from_utf8_lossy(&output.stderr));
+                let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if profile == Profile::Debug && matches!(mode, "retain" | "release" | "weak") {
+                    assert!(out.starts_with("a `Node` object made on thread 1 (main) is retained or released on thread 2:"), "[FFI-33a] {mode}: {out}");
+                } else {
+                    assert_eq!(out, "ok", "[FFI-33a] {profile:?} {mode}");
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// `[THR-3]` — a mutex word serialises four threads' critical sections: no addition under
     /// the lock is lost, contended locking sleeps on the word, and the word ends unlocked.
     #[test]

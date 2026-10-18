@@ -800,6 +800,77 @@ fn foreign_statics_are_places_in_c_storage() {
         "3\n253\n1009\n1001\n54\n66\n28\n23\n21\n13\n");
 }
 
+/// Build `source` (an Ember file) against `tests/fixtures/<fixture>` and the runtime in
+/// `profile`, returning the program's path.
+fn link_with_fixture(source: &Path, fixture: &str, profile: Profile, directory: &Path, label: &str) -> PathBuf {
+    let root = workspace_root();
+    let source_arg = source.to_string_lossy().into_owned();
+    let profile_name = match profile { Profile::Debug => "debug", Profile::Release => "release", Profile::Shipping => "shipping" };
+    let emitted = ember(&["build", &source_arg, "--emit", "c", "--profile", profile_name], &root);
+    assert_eq!(emitted.exit, 0, "{label}: C emission failed: {}", emitted.stderr);
+    let generated = directory.join(format!("{label}.c"));
+    std::fs::write(&generated, emitted.stdout).expect("generated C is writable");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(fixture);
+    let runtime = root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+    let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
+    let output = directory.join(if cfg!(windows) { format!("{label}.exe") } else { label.to_string() });
+    let objects = directory.join(format!("obj_{label}"));
+    std::fs::create_dir_all(&objects).expect("object directory is creatable");
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
+    ember_build::compile_and_link(&toolchain, &LinkRequest {
+        sources: &[generated, fixture, runtime_source],
+        include_dirs: &[runtime.join("include")],
+        output: output.clone(),
+        profile,
+        obj_dir: objects,
+    }).unwrap_or_else(|error| panic!("{label}: the program and its C fixture link: {error:?}"));
+    output
+}
+
+/// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — `adopt` makes a `ForeignBox` that frees its object
+/// once with the destructor its type's declaration names (a status-returning one too); adopting a
+/// live object a second time panics in every profile, naming both places; and a box of a
+/// `threads(creator)` type that ends on another thread panics in the debug profile.
+#[test]
+fn adopted_foreign_objects_are_freed_by_their_destructor() {
+    let root = workspace_root();
+    let directory = temporary_directory("foreign-objects");
+    let accepted = root.join(format!("tests/conformance/FFI-36a/accept_adopt_frees_with_the_declared_destructor.{SOURCE_EXT}"));
+    for profile in [Profile::Debug, Profile::Release] {
+        let program = link_with_fixture(&accepted, "foreign_objects.c", profile, &directory, &format!("adopt_{profile:?}"));
+        let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
+        assert!(run.status.success(), "{profile:?}: {}", String::from_utf8_lossy(&run.stderr));
+        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "3 1\n4 3\n4 2\n3\n7 1\n507 0\n", "{profile:?}");
+    }
+
+    let declarations = "from std.ffi import adopt, ForeignBox\nimport std.thread\n\nunsafe extern \"C\":\n    @ffi(destroys(widget_free))\n    type Widget\n    @ffi(destroys(gadget_close), threads(creator))\n    type Gadget\n    fn widget_new(id: i32) -> *mut Widget\n    fn widget_free(widget: *mut Widget)\n    fn gadget_new(id: i32) -> *mut Gadget\n    fn gadget_close(gadget: *mut Gadget) -> i32\n\n";
+    // `[FFI-36b]` — the second `adopt` of one live object, at line 23; the first is at 22.
+    let twice = root.join(format!("tests/conformance/FFI-36b/accept_a_second_owner_panics_naming_both_places.{SOURCE_EXT}"));
+    for profile in [Profile::Debug, Profile::Release] {
+        let program = link_with_fixture(&twice, "foreign_objects.c", profile, &directory, &format!("twice_{profile:?}"));
+        let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(!run.status.success(), "{profile:?}: adopting twice did not panic");
+        let second_at = stderr.find("is adopted at").expect("the second place is named");
+        let first_at = stderr.find("Ember already owns it since").expect("the first place is named");
+        assert!(stderr[second_at..first_at].contains(&format!("both_places.{SOURCE_EXT}:23:")), "{profile:?}: {stderr}");
+        assert!(stderr[first_at..].contains(&format!("both_places.{SOURCE_EXT}:22:")), "{profile:?}: {stderr}");
+        assert!(!String::from_utf8_lossy(&run.stdout).contains("unreachable"));
+    }
+
+    let elsewhere = directory.join(format!("elsewhere.{SOURCE_EXT}"));
+    std::fs::write(&elsewhere, format!("{declarations}fn make() -> ForeignBox[Gadget]:\n    unsafe:  # SAFETY(ffi): a fresh gadget\n        return adopt(gadget_new(2))\n\nfn main():\n    gadget = make()\n    worker = thread.spawn(owned fn() => gadget.as_ptr() == gadget.as_ptr())\n    println(worker.join())\n")).expect("program is writable");
+    let program = link_with_fixture(&elsewhere, "foreign_objects.c", Profile::Debug, &directory, "elsewhere_debug");
+    let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(!run.status.success(), "a creator box ended on another thread without a panic");
+    assert!(stderr.contains("made on thread 1 (main) ends on thread") && stderr.contains("`threads(creator)`"), "{stderr}");
+    let program = link_with_fixture(&elsewhere, "foreign_objects.c", Profile::Release, &directory, "elsewhere_release");
+    let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
+    assert!(run.status.success(), "release does not check the thread: {}", String::from_utf8_lossy(&run.stderr));
+}
+
 /// `[FFI-10]`, `[FFI-9]` — a function of an `extern "vectorcall"` block is
 /// declared and called with that convention: the C compiler takes the
 /// prototype (MSVC and Clang have it; GCC is told it has not).
