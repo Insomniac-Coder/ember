@@ -262,6 +262,72 @@ fn a_running_thread_holds_the_reload_back() {
     assert_eq!(run.stdout, "1\n2\ntrue\n", "{}", run.stderr);
 }
 
+/// `[HR-27]` — a `shipping` build is the same whether or not the source uses any reload attribute:
+/// with each attribute in place of a comment, so no line moves, the C is byte for byte the same.
+#[test]
+fn shipping_is_the_same_with_reload_attributes() {
+    let root = workspace_root();
+    let plain = "# the module's reload default would go here\n\n# an attribute would go here\nfn tuned(x: int) -> int:\n    return x * 3\n\n\
+                 # an attribute would go here\nfn fixed(x: int) -> int:\n    return x + 1\n\n\
+                 # an attribute would go here\nstatic LIMIT: int = 7\n\nfn main():\n    println(tuned(fixed(LIMIT)))\n";
+    let attributed = plain
+        .replacen("# the module's reload default would go here", "#! module noreload", 1)
+        .replacen("# an attribute would go here", "@reloadable", 1)
+        .replacen("# an attribute would go here", "@noreload", 1)
+        .replacen("# an attribute would go here", "@reinit_on_reload", 1);
+    let (package, file) = package("reload-shipping-identical", "[package]\nname = \"p\"\n", plain);
+    let file_arg = file.to_string_lossy().into_owned();
+    let without = ember(&["build", &file_arg, "--emit", "c", "--profile", "shipping"], &root);
+    assert_eq!(without.exit, 0, "{}", without.stderr);
+    std::fs::write(&file, &attributed).expect("the source is writable");
+    let with = ember(&["build", &file_arg, "--emit", "c", "--profile", "shipping"], &root);
+    assert_eq!(with.exit, 0, "{}", with.stderr);
+    drop(package);
+    assert!(without.stdout.len() > 1000, "no C was emitted");
+    assert!(without.stdout == with.stdout, "[HR-27] the reload attributes changed a shipping build's C");
+}
+
+/// `[HR-28]` — `ember inspect --safety` reports, beside each function's checks, whether a call
+/// reaches it through its thunk.
+#[test]
+fn inspect_safety_reports_the_thunk_indirection() {
+    let root = workspace_root();
+    let source = "@noreload\nfn fixed(xs: Array[int], i: int) -> int:\n    return xs[i]\n\nfn tuned(x: int) -> int:\n    return x * 2\n\n\
+                  fn main():\n    println(tuned(fixed([1, 2], 1)))\n";
+    let (package, file) = package("reload-inspect", RELOAD_ALL, source);
+    let out = package.join("target");
+    let built = ember(&["build", &file.to_string_lossy(), "--out-dir", &out.to_string_lossy()], &root);
+    assert_eq!(built.exit, 0, "{}", built.stderr);
+    let table = out.join("debug").join("inspect").join("main.safety.json");
+    let report = ember(&["inspect", "--safety", &table.to_string_lossy()], &root);
+    assert_eq!(report.exit, 0, "{}", report.stderr);
+    let line = |name: &str| {
+        report.stdout.lines().find(|line| line.trim_start().starts_with(&format!("{name} "))).unwrap_or_default().to_string()
+    };
+    assert!(line("fixed").contains("Bounds") && line("fixed").contains("Call: direct"), "{}", report.stdout);
+    assert!(line("tuned").contains("Call: through its thunk"), "{}", report.stdout);
+    assert!(line("main").contains("Call: through its thunk"), "{}", report.stdout);
+}
+
+/// `[HR-12a]` — the object header is the whole process's: once a program runs with the 40-byte
+/// header of `reload = "all"`, an image built for `reload = "bodies"`'s 24-byte one cannot join it
+/// (`E9035`), and nothing is built.
+#[test]
+fn an_image_for_the_other_header_is_e9035() {
+    let root = workspace_root();
+    let (package, file) = package("reload-header", RELOAD_ALL, "fn main():\n    println(1)\n");
+    let out = package.join("target");
+    let file_arg = file.to_string_lossy().into_owned();
+    let out_arg = out.to_string_lossy().into_owned();
+    let built = ember(&["build", &file_arg, "--out-dir", &out_arg], &root);
+    assert_eq!(built.exit, 0, "{}", built.stderr);
+    std::fs::write(package.join(MANIFEST), "[build]\nreload = \"bodies\"\n").expect("manifest is writable");
+    let reloaded = ember(&["build", "--reload", &file_arg, "--out-dir", &out_arg], &root);
+    assert_ne!(reloaded.exit, 0, "[HR-12a] an image for another header was built");
+    assert!(reloaded.stderr.contains("error[E9035]") && reloaded.stderr.contains("40-byte headers, and this image's would have 24"), "{}", reloaded.stderr);
+    assert!(!bin(&out).join(format!("main.image.1.{}", if cfg!(windows) { "dll" } else { "so" })).exists());
+}
+
 /// `[HR-29]` — with reload on, one shared runtime serves every image in the process: a reloadable
 /// package whose manifest asks to link the runtime statically is `E9036`.
 #[test]

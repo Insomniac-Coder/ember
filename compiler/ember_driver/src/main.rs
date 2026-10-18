@@ -1471,6 +1471,7 @@ fn safety_functions_json(
     bodies: &[ember_mir::Body],
     types: &TypeTable,
     modules: &[ember_typeck::LoadedModule],
+    reloadable: Option<&std::collections::BTreeSet<String>>,
 ) -> String {
     use ember_hir::Effects;
     let standard_files: std::collections::BTreeSet<ember_span::FileId> = modules
@@ -1493,11 +1494,17 @@ fn safety_functions_json(
         .map(|(body, effects)| {
             let contracts = body.contracts.forbidden | body.contracts.realtime;
             let kinds: Vec<&str> = checks.iter().filter(|(effect, _)| effects.contains(*effect)).map(|(_, name)| *name).collect();
-            serde_json::json!({
+            let mut entry = serde_json::json!({
                 "function": body.name,
                 "nopanic_explicit": contracts.contains(Effects::PANIC),
                 "runtime_checks": kinds,
-            })
+            });
+            // `[HR-28]` — in a reloadable build, whether a call reaches the function through its
+            // thunk or directly.
+            if let Some(reloadable) = reloadable {
+                entry["call"] = serde_json::json!(if reloadable.contains(&body.symbol) { "thunk" } else { "direct" });
+            }
+            entry
         })
         .collect();
     serde_json::to_string(&functions).unwrap_or_else(|_| "[]".to_string())
@@ -1829,7 +1836,13 @@ fn print_safety_functions(functions: &[serde_json::Value]) {
         let checks = if kinds.is_empty() { "none".to_string() } else { kinds.join(", ") };
         let contract = if nopanic { "  @nopanic(explicit)" } else { "" };
         let verdict = if nopanic && kinds.is_empty() { "  (no panic the effect model knows of)" } else { "" };
-        println!("  {name}{contract}  RuntimeCheck: {checks}{verdict}");
+        // `[HR-28]` — a reloadable build's thunk indirection, beside the checks.
+        let call = match entry.get("call").and_then(serde_json::Value::as_str) {
+            Some("thunk") => "  Call: through its thunk (one load and one indirect jump)",
+            Some(_) => "  Call: direct",
+            None => "",
+        };
+        println!("  {name}{contract}  RuntimeCheck: {checks}{verdict}{call}");
     }
 }
 
@@ -2983,6 +2996,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         for body in bodies.iter_mut().filter(|body| image.reloadable.contains(&body.symbol)) {
             body.inline.never = true;
         }
+        reload::lint_noreload_loops(&bodies, image, &mut sink);
     }
     mark("lower", "all modules");
     if cfg!(debug_assertions) {
@@ -3103,7 +3117,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     }
     // `[EFF-16]` — what the safety side table says of each function, read where the contracts
     // were checked: inlining below folds a small function into its callers.
-    let safety_functions = safety_functions_json(&bodies, &types, &modules);
+    let safety_functions = safety_functions_json(&bodies, &types, &modules, reload_image.as_ref().map(|image| &image.reloadable));
     // `[THR-5]` — a `Scope` binding stays where its `with` put it.
     if ember_analysis::check_scope_moves_all(&bodies, &types, &mut sink) > 0 {
         return Ok(finish(&sink, &map, options));
@@ -3468,8 +3482,23 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         if !emitted.relaxed_units.is_empty() {
             return Err("error[E0900]: `@fastmath` and `@fp(contract)` in a reloadable build are not built yet".to_string());
         }
-        let built = reload::build(&toolchain, &layout, &module_name, &c_path, &runtime_source, &includes, options.profile,
-            image, options.reload, started)?;
+        let built = match reload::build(&toolchain, &layout, &module_name, &c_path, &runtime_source, &includes,
+            options.profile, image, options.reload, started)
+        {
+            Ok(built) => built,
+            Err(reload::Failure::Other(message)) => return Err(message),
+            // `[HR-12a]` — the process's header is fixed when it starts: an image built for the other
+            // header cannot join it.
+            Err(reload::Failure::Header { running, built }) => {
+                sink.emit(
+                    Diagnostic::error(codes::E9035, Span::DUMMY, format!(
+                        "the running program's objects have {running}-byte headers, and this image's would have {built}"))
+                        .note("whether reload migrates instances (`[build] reload`) is the whole process's to agree on: it fixes the object header [HR-12a]")
+                        .help("build the program again with `ember build` and restart it"),
+                );
+                return Ok(finish(&sink, &map, options));
+            }
+        };
         mark("C compile and link", "all modules");
         report(&sink, &map, options);
         if command == "run" {

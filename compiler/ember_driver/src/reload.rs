@@ -134,6 +134,58 @@ pub fn plan(
     }
 }
 
+/// `[LNT-5]` — `L2005`: a `@noreload` function calling a reloadable one inside a loop pays the
+/// thunk's load and indirect jump on every turn, where the hot code it was kept out of reload for
+/// wants none ([HR-10]).
+pub fn lint_noreload_loops(bodies: &[ember_mir::Body], image: &ReloadImage, sink: &mut ember_diag::Sink) {
+    use ember_mir::{FuncRef, Terminator};
+    let successors = |terminator: &Terminator| -> Vec<usize> {
+        match terminator {
+            Terminator::Goto(bb) => vec![bb.0 as usize],
+            Terminator::SwitchInt { targets, otherwise, .. } => {
+                targets.iter().map(|(_, bb)| bb.0 as usize).chain(std::iter::once(otherwise.0 as usize)).collect()
+            }
+            Terminator::Call { next, .. } | Terminator::Assert { next, .. } => vec![next.0 as usize],
+            Terminator::Return | Terminator::Unreachable => Vec::new(),
+        }
+    };
+    for body in bodies.iter().filter(|body| image.noreload.contains_key(&body.symbol)) {
+        for (index, block) in body.blocks.iter().enumerate() {
+            let Terminator::Call { func: FuncRef::Direct { symbol, .. }, .. } = &block.terminator else { continue };
+            if !image.reloadable.contains(symbol) {
+                continue;
+            }
+            // ponytail: a walk from each call's block, quadratic in a body's blocks; a loop
+            // forest would serve if one ever is large.
+            let mut seen = vec![false; body.blocks.len()];
+            let mut pending = successors(&block.terminator);
+            let mut in_loop = false;
+            while let Some(at) = pending.pop() {
+                if at == index {
+                    in_loop = true;
+                    break;
+                }
+                if at < seen.len() && !std::mem::replace(&mut seen[at], true) {
+                    pending.extend(successors(&body.blocks[at].terminator));
+                }
+            }
+            if !in_loop {
+                continue;
+            }
+            let callee = bodies.iter().find(|other| other.symbol == *symbol).map_or(symbol.as_str(), |other| other.name.as_str());
+            sink.emit(
+                ember_diag::Diagnostic::lint(
+                    ember_diag::codes::L2005,
+                    block.terminator_span,
+                    format!("`@noreload` function `{}` calls reloadable `{callee}` inside a loop", body.name),
+                )
+                .note("each turn pays the thunk's load and indirect jump [HR-9], in code kept out of reload for its speed [HR-10]")
+                .help(format!("mark `{callee}` `@noreload` too, or move the loop into a reloadable function")),
+            );
+        }
+    }
+}
+
 /// The image file of number `n`: `<module>.image.<n>.dll` (or `.so`) beside the host.
 fn image_path(bin: &Path, module: &str, n: u32) -> PathBuf {
     bin.join(format!("{module}.image.{n}.{}", ember_build::reload::image_extension()))
@@ -142,6 +194,24 @@ fn image_path(bin: &Path, module: &str, n: u32) -> PathBuf {
 /// The file a running program's polls read for the newest image ([HR-31]).
 pub fn announcement_path(bin: &Path, module: &str) -> PathBuf {
     bin.join(format!("{module}.reload"))
+}
+
+/// Why a reloadable build stopped.
+pub enum Failure {
+    /// `[HR-12a]` — the next image's object header is not the running program's.
+    Header { running: u32, built: u32 },
+    Other(String),
+}
+
+impl From<String> for Failure {
+    fn from(message: String) -> Failure {
+        Failure::Other(message)
+    }
+}
+
+/// The file recording the object header a program was built with, beside it.
+fn header_path(bin: &Path, module: &str) -> PathBuf {
+    bin.join(format!("{module}.header"))
 }
 
 /// What a reloadable build made: the host to run, and the image it built.
@@ -164,8 +234,15 @@ pub fn build(
     image: &ReloadImage,
     next: bool,
     started: std::time::Instant,
-) -> Result<Built, String> {
+) -> Result<Built, Failure> {
     let host = layout.bin.join(if cfg!(windows) { format!("{module}.exe") } else { module.to_string() });
+    let header: u32 = if image.instances { 40 } else { 24 };
+    if next {
+        let running = std::fs::read_to_string(header_path(&layout.bin, module)).ok().and_then(|text| text.trim().parse().ok());
+        if let Some(running) = running.filter(|running| *running != header) {
+            return Err(Failure::Header { running, built: header });
+        }
+    }
     let runtime = ember_build::reload::shared_runtime(
         toolchain,
         runtime_source,
@@ -178,9 +255,9 @@ pub fn build(
     .map_err(|error| error.to_string())?;
     let number = if next {
         if !image_path(&layout.bin, module, 0).is_file() || !host.is_file() {
-            return Err(format!(
+            return Err(Failure::Other(format!(
                 "there is no build of `{module}` to reload: run `ember build` first, then `ember build --reload` after each edit"
-            ));
+            )));
         }
         (1..).find(|n| !image_path(&layout.bin, module, *n).exists()).unwrap_or(1)
     } else {
@@ -194,6 +271,8 @@ pub fn build(
             }
         }
         let _ = std::fs::remove_file(announcement_path(&layout.bin, module));
+        std::fs::write(header_path(&layout.bin, module), format!("{header}
+")).map_err(|error| error.to_string())?;
         0
     };
     let output = image_path(&layout.bin, module, number);
