@@ -9423,6 +9423,11 @@ static bool rl_plan_type(const ember_rl_manifest* next, const ember_rl_type* old
             rl_report(report, cap, "refused: field `%s` added to `%s` with no default; give it one (`%s: %s = ...`) [HR-14]\n",
                       field->name, to->name, field->name, field->type_name);
             fine = false;
+        } else if (route == 0 && field->kind == EMBER_RL_KIND_PAYLOAD && from->kind == EMBER_RL_KIND_PAYLOAD
+                   && strcmp(field->type_name, from->type_name) == 0) {
+            rl_report(report, cap, "refused: the payloads of `%s` (field `%s` of `%s`) changed, which a reload cannot migrate yet [HR-14]\n",
+                      field->type_name, field->name, to->name);
+            fine = false;
         } else if (route == 0) {
             rl_report(report, cap, "refused: field `%s` of `%s` changed type from `%s` to `%s`; `%s` can declare `migrate_from` [HR-14]\n",
                       field->name, to->name, from->type_name, field->type_name, to->name);
@@ -9645,6 +9650,23 @@ static bool rl_walk_value(const ember_rl_field* shape, unsigned char* at, int mo
     }
     case EMBER_RL_KIND_STRUCT:
         return rl_walk_fields(old_image ? rl_old_schema(shape->type_name) : rl_new_schema(next, shape->type_name), at, mode, old_image, next, depth + 1);
+    case EMBER_RL_KIND_PAYLOAD: {
+        /* The payload of the variant the tag names. */
+        const ember_rl_type* type = old_image ? rl_old_schema(shape->type_name) : rl_new_schema(next, shape->type_name);
+        if (type == NULL || type->field_count == 0 || depth > 32) {
+            return true;
+        }
+        uint64_t tag = rl_read_unsigned(at + type->fields[0].offset, type->fields[0].size);
+        for (uint32_t index = 0; index < type->variant_count; ++index) {
+            const ember_rl_variant* variant = &type->variants[index];
+            for (uint32_t field = 0; variant->discriminant == tag && field < variant->field_count; ++field) {
+                if (!rl_walk_value(&variant->fields[field], at + variant->fields[field].offset, mode, old_image, next, depth + 1)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
     case EMBER_RL_KIND_ARRAY: {
         ember_vec* vec = (ember_vec*)(void*)at;
         if (shape->element_kind == EMBER_RL_KIND_PLAIN || shape->element_kind == EMBER_RL_KIND_OPAQUE || vec->ptr == NULL) {

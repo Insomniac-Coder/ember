@@ -614,7 +614,14 @@ impl Emitter<'_> {
             }
             TyKind::Enum(id) => {
                 let def = self.types.enum_def(*id);
-                reload.files.contains(&def.span.file) && def.is_unit_only()
+                if def.is_unit_only() {
+                    reload.files.contains(&def.span.file)
+                } else {
+                    // `[HR-15]` — a payload enum (`Option[MapSlot[int, Particle]]` in a `Map`) has
+                    // a schema too, so a reload can follow the references its payloads hold.
+                    self.types.option_niche(*id).is_none()
+                        && (reload.files.contains(&def.span.file) || self.mentions_package(ty, reload, &mut Vec::new()))
+                }
             }
             _ => false,
         }
@@ -642,6 +649,9 @@ impl Emitter<'_> {
                 TyKind::Struct(id) if this.has_schema(elem, reload) => {
                     ("EMBER_RL_KIND_STRUCT", this.types.struct_def(*id).name.to_string())
                 }
+                TyKind::Enum(id) if !this.types.enum_def(*id).is_unit_only() && this.has_schema(elem, reload) => {
+                    ("EMBER_RL_KIND_PAYLOAD", this.types.enum_def(*id).name.to_string())
+                }
                 _ if this.holds_objects(elem, &mut Vec::new()) => ("EMBER_RL_KIND_OPAQUE", String::new()),
                 _ => ("EMBER_RL_KIND_PLAIN", String::new()),
             }
@@ -665,7 +675,7 @@ impl Emitter<'_> {
                 if self.types.option_niche(*id).is_some_and(|niche| matches!(self.types.kind(niche.payload), TyKind::Class(_))) {
                     shape.kind = "EMBER_RL_KIND_OPTION_HANDLE";
                 } else if self.has_schema(ty, reload) {
-                    shape.kind = "EMBER_RL_KIND_ENUM";
+                    shape.kind = if self.types.enum_def(*id).is_unit_only() { "EMBER_RL_KIND_ENUM" } else { "EMBER_RL_KIND_PAYLOAD" };
                     shape.type_name = self.types.enum_def(*id).name.to_string();
                 } else if self.holds_objects(ty, &mut Vec::new()) {
                     shape.kind = "EMBER_RL_KIND_OPAQUE";
@@ -846,18 +856,53 @@ impl Emitter<'_> {
         for (id, name) in enums {
             let Some(ty) = self.types.find(&TyKind::Enum(id)) else { continue };
             let def = self.types.enum_def(id);
-            if !reload.files.contains(&def.span.file) {
+            if !reload.files.contains(&def.span.file) && !self.has_schema(ty, reload) {
                 continue;
+            }
+            let c_type = self.c_type(ty);
+            // `[HR-11]`, `[HR-15]` — a payload enum's schema: its tag as its one field, and each
+            // variant's payload fields, which a reload walks for the variant the tag names.
+            let payloads = !def.is_unit_only() && self.has_schema(ty, reload);
+            let tag_name = table(&format!("tag_{}", c_name(&name)));
+            if payloads {
+                self.line(&format!(
+                    "static const {RT}rl_field {tag_name}[1] = {{ {{ \"tag\", NULL, \"tag\", 0, (uint32_t)offsetof({c_type}, tag), (uint32_t)sizeof((({c_type}*)0)->tag), 0, EMBER_RL_KIND_PLAIN, EMBER_RL_KIND_PLAIN, 0, NULL }} }};"
+                ));
             }
             let mut rows = Vec::new();
             for variant in &def.variants {
                 let renamed = reload.renamed.get(&(name.clone(), variant.name.to_string())).map_or("NULL".to_string(), |old| c_string_literal(old));
                 let payload: Vec<String> = variant.fields.iter().map(|field| self.type_schema(field.ty, &mut Vec::new()).to_string()).collect();
+                let mut fields = Vec::new();
+                for field in variant.fields.iter().filter(|field| payloads && !self.is_void(field.ty)) {
+                    let shape = self.field_shape(field.ty, reload);
+                    let member = format!("payload.{}.{}", variant.name, field.name);
+                    let element_type = if shape.element_type.is_empty() { "NULL".to_string() } else { c_string_literal(&shape.element_type) };
+                    fields.push(format!(
+                        "    {{ {}, NULL, {}, UINT64_C(0x{:016x}), (uint32_t)offsetof({c_type}, {member}), (uint32_t)sizeof((({c_type}*)0)->{member}), 0, {}, {}, {}, {element_type} }},",
+                        c_string_literal(&field.name.to_string()),
+                        c_string_literal(&shape.type_name),
+                        self.type_schema(field.ty, &mut Vec::new()),
+                        shape.kind,
+                        shape.element_kind,
+                        shape.element_size,
+                    ));
+                }
+                let payload_table = table(&format!("payload_{}_{}", c_name(&name), c_name(&variant.name.to_string())));
+                if !fields.is_empty() {
+                    self.line(&format!("static const {RT}rl_field {payload_table}[{}] = {{", fields.len()));
+                    for row in &fields {
+                        self.line(row);
+                    }
+                    self.line("};");
+                }
                 rows.push(format!(
-                    "    {{ {}, {renamed}, UINT64_C({}), UINT64_C(0x{:016x}) }},",
+                    "    {{ {}, {renamed}, UINT64_C({}), UINT64_C(0x{:016x}), {}u, {} }},",
                     c_string_literal(&variant.name.to_string()),
                     variant.discriminant as u64,
                     fnv(&payload.iter().map(String::as_str).collect::<Vec<_>>()),
+                    fields.len(),
+                    if fields.is_empty() { "NULL".to_string() } else { payload_table },
                 ));
             }
             let table_name = table(&format!("variants_{}", c_name(&name)));
@@ -868,12 +913,12 @@ impl Emitter<'_> {
                 }
                 self.line("};");
             }
-            let c_type = self.c_type(ty);
             types.push(format!(
-                "    {{ {}, EMBER_RL_TYPE_ENUM, NULL, {}, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{:016x}), 0, NULL, NULL, 0, NULL, {}u, {}, NULL, NULL, NULL, NULL }},",
+                "    {{ {}, EMBER_RL_TYPE_ENUM, NULL, {}, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{:016x}), 0, NULL, NULL, {}, {}u, {}, NULL, NULL, NULL, NULL }},",
                 c_string_literal(&name),
                 if def.is_unit_only() { "EMBER_RL_LAYOUT_UNIT" } else { "0" },
                 self.type_schema(ty, &mut Vec::new()),
+                if payloads { format!("1u, {tag_name}") } else { "0, NULL".to_string() },
                 rows.len(),
                 if rows.is_empty() { "NULL".to_string() } else { table_name },
             ));

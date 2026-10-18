@@ -545,24 +545,34 @@ fn enum_values_migrate_by_variant_name() {
 }
 
 /// `[HR-15]`, `[HR-15a]`, `[HR-15b]` — an instance keeps its address where its new size fits: held
-/// in a `Map`, whose slots the runtime cannot follow, a `Particle` that loses a field migrates in
+/// in tuples, which the runtime cannot follow yet, a `Particle` that loses a field migrates in
 /// place; one that gains a field must move, its references cannot all be found, and plan refuses
-/// before prepare runs, saying how many it could not follow.
+/// before prepare runs, saying how many it could not follow. `[HR-13a]` — held in a `Map`, whose
+/// entries are payload enums (`Option[MapSlot[int, Particle]]`) the package gives schemas, every
+/// reference is found and rewritten, and the instances move.
 #[test]
 fn an_instance_moves_only_where_its_references_are_found() {
+    let paired = PARTICLES
+        .replace("static WORLD: Mutex[Array[Particle]] = Mutex([])", "static WORLD: Mutex[Array[(int, Particle)]] = Mutex([])")
+        .replace("                world.push(Particle())", "                world.push((k, Particle()))")
+        .replace("        for p in world:\n", "        for pair in world:\n            p = pair.1\n")
+        .replace("    step: int = 1\n", "    step: int = 1\n    spare: int = 7\n");
+    let smaller = paired.replace("    spare: int = 7\n", "");
+    let run = host_run("reload-in-place", &paired, &[&smaller], 3);
+    assert_eq!(run.stdout, "3\napplied, 3 migrated\n6\n9\n", "{}", run.stderr);
+    let larger = paired.replace("    spare: int = 7\n", "    spare: int = 7\n    more: int = 8\n");
+    let run = host_run("reload-cannot-move", &paired, &[&larger], 2);
+    assert!(run.stdout.contains("an instance of `Particle` must move (its new size does not fit), but 1 of its 1 references are held where the runtime cannot follow them"), "{}", run.stdout);
+    assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
+
     let mapped = PARTICLES
         .replace("static WORLD: Mutex[Array[Particle]] = Mutex([])", "static WORLD: Mutex[Map[int, Particle]] = Mutex({})")
         .replace("                world.push(Particle())", "                world[k] = Particle()")
         .replace("        for p in world:\n            p.x.fetch_add(p.step)\n            total += p.x.load()",
-                 "        for k in 0..3:\n            p = world[k]\n            p.x.fetch_add(p.step)\n            total += p.x.load()")
-        .replace("    step: int = 1\n", "    step: int = 1\n    spare: int = 7\n");
-    let smaller = mapped.replace("    spare: int = 7\n", "");
-    let run = host_run("reload-in-place", &mapped, &[&smaller], 3);
+                 "        for k in 0..3:\n            p = world[k]\n            p.x.fetch_add(p.step)\n            total += p.x.load()");
+    let grown = mapped.replace("    step: int = 1\n", "    step: int = 1\n    more: int = 8\n");
+    let run = host_run("reload-map-moves", &mapped, &[&grown], 3);
     assert_eq!(run.stdout, "3\napplied, 3 migrated\n6\n9\n", "{}", run.stderr);
-    let larger = mapped.replace("    spare: int = 7\n", "    spare: int = 7\n    more: int = 8\n");
-    let run = host_run("reload-cannot-move", &mapped, &[&larger], 2);
-    assert!(run.stdout.contains("an instance of `Particle` must move (its new size does not fit), but 1 of its 1 references are held where the runtime cannot follow them"), "{}", run.stdout);
-    assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
 }
 
 const MIGRATED: &str = "from std.sync import Atomic, Mutex\nfrom std.hot import ReloadError\n\n@sync\nclass Particle:\n    x: Atomic[int] = Atomic(0)\n    speed: int = 10\n\n    \

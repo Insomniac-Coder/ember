@@ -2869,6 +2869,7 @@ struct ember_rl_field;
 #define EMBER_RL_KIND_ENUM UINT32_C(5)          /* a unit enum: its discriminant, `type_name`'s schema */
 #define EMBER_RL_KIND_ARRAY UINT32_C(6)         /* an `Array`: `element_kind` elements of `element_size` */
 #define EMBER_RL_KIND_OPAQUE UINT32_C(7)        /* holds references the runtime cannot follow */
+#define EMBER_RL_KIND_PAYLOAD UINT32_C(8)       /* an enum with payloads: `type_name`'s schema */
 
 /* [HR-11] A field of a schema: its name, the name `@renamed_from` gives its old self, its type, its
  * type's schema hash, its offset and size, and what it holds. */
@@ -2886,13 +2887,17 @@ typedef struct ember_rl_field {
     const char* element_type;
 } ember_rl_field;
 
-/* [HR-11] A variant of an enum's schema: its name, `@renamed_from`'s, its discriminant, and its
- * payload's schema hash. Enum values migrate by variant name, never by discriminant ([HR-11a]). */
+/* [HR-11] A variant of an enum's schema: its name, `@renamed_from`'s, its discriminant, its
+ * payload's schema hash and its payload's fields, at their offsets in the enum's value (an enum with
+ * payloads has its tag as its type's one field). Enum values migrate by variant name, never by
+ * discriminant ([HR-11a]). */
 typedef struct ember_rl_variant {
     const char* name;
     const char* renamed_from;
     uint64_t discriminant;
     uint64_t payload_schema;
+    uint32_t field_count;
+    const struct ember_rl_field* fields;
 } ember_rl_variant;
 
 /* [HR-11] A type's schema: its kind, base, layout attributes, and fields or variants. `schema` is
