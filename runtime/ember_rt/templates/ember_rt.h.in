@@ -2665,6 +2665,13 @@ typedef struct ember_frame_name {
     uint32_t line;
 } ember_frame_name;
 void ember_backtrace_names(const ember_frame_name* names, size_t count);
+/* [RT-12] — each function of the program by its code's address, in every profile: what a stack
+ * overflow names. The compiler emits the table and gives it to the runtime before `main` runs. */
+typedef struct ember_code_name {
+    const void* entry;
+    const char* name;
+} ember_code_name;
+void ember_stack_names(const ember_code_name* names, size_t count);
 /* [RT-4] — the frames of the program's own functions between the panic and `main`, innermost
  * first, each by its Ember name and declaration; nothing in `release` (no table was given). The
  * C symbol of each return address comes from the platform: `dbghelp` and the program's PDB on

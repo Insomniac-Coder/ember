@@ -13,8 +13,9 @@
 #if defined(__linux__) && !defined(_DEFAULT_SOURCE)
 #define _DEFAULT_SOURCE
 #endif
-/* Annex B — the reload runtime finds where the loader put an image (`dlinfo`). */
-#if defined(EMBER_RELOAD) && defined(__linux__) && !defined(_GNU_SOURCE)
+/* Annex B — the reload runtime finds where the loader put an image (`dlinfo`); `[RT-12]` — a
+ * thread's stack bounds (`pthread_getattr_np`) and a fault's instruction (`REG_RIP`). */
+#if defined(__linux__) && !defined(_GNU_SOURCE)
 #define _GNU_SOURCE
 #endif
 
@@ -1291,6 +1292,275 @@ void ember_mutex_wake(uint32_t* word) {
 #include <pthread.h>
 #endif
 
+/* [RT-12] Stack overflow faults. Every thread the runtime creates has a guard page below its stack
+ * (the system's default, asked for explicitly), and a program's start-up installs a handler that
+ * turns a fault on it into `stack overflow in <function>` and an abort, in every profile: Windows'
+ * vectored handler (with a stack guarantee so it has room to run), elsewhere a SIGSEGV handler on
+ * an alternate signal stack. The function is the one whose code holds the faulting instruction,
+ * from the table the compiler gives (`ember_stack_names`). */
+static ember_code_name* g_code_names;
+static size_t g_code_count;
+static bool g_overflow_handler;
+
+static int rt_code_order(const void* a, const void* b) {
+    uintptr_t x = (uintptr_t)((const ember_code_name*)a)->entry;
+    uintptr_t y = (uintptr_t)((const ember_code_name*)b)->entry;
+    return x < y ? -1 : x > y ? 1 : 0;
+}
+
+void ember_stack_names(const ember_code_name* names, size_t count) {
+    ember_code_name* copy = (ember_code_name*)malloc(count * sizeof *copy);
+    if (copy == NULL || count == 0) {
+        free(copy);
+        return;
+    }
+    for (size_t i = 0; i < count; i++) {
+        copy[i] = names[i];
+#if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
+        /* An incrementally linked function's address is a `jmp rel32` to its code. */
+        const unsigned char* at = (const unsigned char*)copy[i].entry;
+        if (at != NULL && at[0] == 0xE9) {
+            int32_t offset;
+            memcpy(&offset, at + 1, sizeof offset);
+            copy[i].entry = at + 5 + offset;
+        }
+#endif
+    }
+    qsort(copy, count, sizeof *copy, rt_code_order);
+    g_code_names = copy;
+    g_code_count = count;
+}
+
+/* The function whose code starts at or most nearly below `pc`, or NULL before the first. */
+static const char* rt_code_name(uintptr_t pc, bool exact) {
+    size_t lo = 0;
+    size_t hi = g_code_count;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if ((uintptr_t)g_code_names[mid].entry <= pc) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    if (lo == 0) {
+        return NULL;
+    }
+    const ember_code_name* found = &g_code_names[lo - 1];
+    if (exact && (uintptr_t)found->entry != pc) {
+        return NULL;
+    }
+    return found->name;
+}
+
+static void rt_overflow_message(const char* name) {
+    char text[512];
+    size_t length = 0;
+    const char* parts[3] = { "stack overflow in ", name != NULL ? name : "code outside the program", "\n" };
+    for (int i = 0; i < 3; i++) {
+        for (const char* c = parts[i]; *c != 0 && length < sizeof text - 1; c++) {
+            text[length++] = *c;
+        }
+    }
+#if defined(_WIN32)
+    DWORD written = 0;
+    (void)WriteFile(GetStdHandle(STD_ERROR_HANDLE), text, (DWORD)length, &written, NULL);
+#else
+    ssize_t written = write(2, text, length);
+    (void)written;
+#endif
+}
+
+#if defined(_WIN32)
+/* The function the fault is in, walking out of code that is not the program's (a stack probe, a C
+ * library function) by the unwind data every non-leaf x64 function has. */
+static const char* rt_overflow_function(CONTEXT* context) {
+#if defined(_M_X64) || defined(__x86_64__)
+    CONTEXT walk = *context;
+    uintptr_t first_own = 0;
+    /* Out through the C library's and the runtime's own frames (an allocation the overflow fell
+     * in takes a dozen or more), to the first of the program's functions. */
+    for (int depth = 0; depth < 128; depth++) {
+        DWORD64 image = 0;
+        PRUNTIME_FUNCTION entry = RtlLookupFunctionEntry(walk.Rip, &image, NULL);
+        if (entry == NULL) {
+            /* A leaf: its return address is at the top of the stack. */
+            walk.Rip = *(DWORD64*)walk.Rsp;
+            walk.Rsp += 8;
+            continue;
+        }
+        const char* name = rt_code_name((uintptr_t)(image + entry->BeginAddress), true);
+        /* The first frame in the program's code: its function, or (when the C compiler made a copy
+         * of it, as whole-program optimisation does) the function placed nearest below it. */
+        uintptr_t begin = (uintptr_t)(image + entry->BeginAddress);
+        if (first_own == 0 && g_code_count > 0 && begin >= (uintptr_t)g_code_names[0].entry
+            && begin <= (uintptr_t)g_code_names[g_code_count - 1].entry) {
+            first_own = begin;
+        }
+        if (name != NULL) {
+            return name;
+        }
+        void* handler_data = NULL;
+        DWORD64 frame = 0;
+        RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, walk.Rip, entry, &walk, &handler_data, &frame, NULL);
+        if (walk.Rip == 0) {
+            break;
+        }
+    }
+    return rt_code_name(first_own != 0 ? first_own : (uintptr_t)context->Rip, false);
+#elif defined(_M_ARM64) || defined(__aarch64__)
+    return rt_code_name((uintptr_t)context->Pc, false);
+#else
+    (void)context;
+    return NULL;
+#endif
+}
+
+static LONG CALLBACK rt_overflow_handler(PEXCEPTION_POINTERS info) {
+    if (info->ExceptionRecord->ExceptionCode != EXCEPTION_STACK_OVERFLOW) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    rt_overflow_message(rt_overflow_function(info->ContextRecord));
+    TerminateProcess(GetCurrentProcess(), 3);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+/* Room for the handler to run on a thread whose stack has overflowed. */
+static void rt_overflow_thread(void) {
+    ULONG guarantee = 64 * 1024;
+    (void)SetThreadStackGuarantee(&guarantee);
+}
+
+static void rt_overflow_thread_end(void) {
+}
+
+static void rt_overflow_install(void) {
+    if (!g_overflow_handler) {
+        g_overflow_handler = true;
+        (void)AddVectoredExceptionHandler(1, rt_overflow_handler);
+    }
+    rt_overflow_thread();
+}
+#else
+#include <signal.h>
+#include <ucontext.h>
+#include <unwind.h>
+
+static EMBER_RT_THREAD_LOCAL uintptr_t t_stack_low;
+static EMBER_RT_THREAD_LOCAL void* t_signal_stack;
+static uintptr_t g_page_size = 4096;
+
+/* This thread's lowest stack address, and a stack for the handler to run on. */
+static void rt_overflow_thread(void) {
+    pthread_attr_t attr;
+    if (pthread_getattr_np(pthread_self(), &attr) == 0) {
+        void* low = NULL;
+        size_t size = 0;
+        if (pthread_attr_getstack(&attr, &low, &size) == 0) {
+            t_stack_low = (uintptr_t)low;
+        }
+        pthread_attr_destroy(&attr);
+    }
+    size_t size = 64 * 1024;
+    void* memory = malloc(size);
+    if (memory != NULL) {
+        stack_t alternate;
+        alternate.ss_sp = memory;
+        alternate.ss_size = size;
+        alternate.ss_flags = 0;
+        if (sigaltstack(&alternate, NULL) == 0) {
+            t_signal_stack = memory;
+        } else {
+            free(memory);
+        }
+    }
+}
+
+static void rt_overflow_thread_end(void) {
+    if (t_signal_stack != NULL) {
+        stack_t off;
+        off.ss_sp = NULL;
+        off.ss_size = 0;
+        off.ss_flags = SS_DISABLE;
+        (void)sigaltstack(&off, NULL);
+        free(t_signal_stack);
+        t_signal_stack = NULL;
+    }
+}
+
+/* The walk out of the signal frame: the first frame whose function is the program's names it; the
+ * first in the program's code, when the C compiler made a copy of a function, names the function
+ * placed nearest below it. */
+typedef struct rt_overflow_walk {
+    const char* name;
+    uintptr_t first_own;
+    int depth;
+} rt_overflow_walk;
+
+static _Unwind_Reason_Code rt_overflow_frame(struct _Unwind_Context* context, void* data) {
+    rt_overflow_walk* walk = (rt_overflow_walk*)data;
+    uintptr_t ip = (uintptr_t)_Unwind_GetIP(context);
+    if (ip == 0 || ++walk->depth > 256) {
+        return _URC_END_OF_STACK;
+    }
+    uintptr_t begin = (uintptr_t)_Unwind_FindEnclosingFunction((void*)ip);
+    if (begin == 0) {
+        return _URC_NO_REASON;
+    }
+    const char* name = rt_code_name(begin, true);
+    if (name != NULL) {
+        walk->name = name;
+        return _URC_END_OF_STACK;
+    }
+    if (walk->first_own == 0 && g_code_count > 0 && begin >= (uintptr_t)g_code_names[0].entry
+        && begin <= (uintptr_t)g_code_names[g_code_count - 1].entry) {
+        walk->first_own = begin;
+    }
+    return _URC_NO_REASON;
+}
+
+static void rt_overflow_signal(int signal_number, siginfo_t* info, void* context) {
+    uintptr_t at = (uintptr_t)info->si_addr;
+    /* A fault in the guard below this thread's stack (the main thread's is the kernel's gap). */
+    if (t_stack_low != 0 && at < t_stack_low + g_page_size && at + (uintptr_t)(1u << 20) >= t_stack_low) {
+        ucontext_t* machine = (ucontext_t*)context;
+        uintptr_t pc = 0;
+#if defined(__x86_64__)
+        pc = (uintptr_t)machine->uc_mcontext.gregs[REG_RIP];
+#elif defined(__aarch64__)
+        pc = (uintptr_t)machine->uc_mcontext.pc;
+#else
+        (void)machine;
+#endif
+        rt_overflow_walk walk = { NULL, 0, 0 };
+        _Unwind_Backtrace(rt_overflow_frame, &walk);
+        rt_overflow_message(walk.name != NULL ? walk.name : rt_code_name(walk.first_own != 0 ? walk.first_own : pc, false));
+        signal(SIGABRT, SIG_DFL);
+        abort();
+    }
+    /* Any other fault is what it was before the handler. */
+    signal(signal_number, SIG_DFL);
+}
+
+static void rt_overflow_install(void) {
+    if (!g_overflow_handler) {
+        g_overflow_handler = true;
+        long page = sysconf(_SC_PAGESIZE);
+        if (page > 0) {
+            g_page_size = (uintptr_t)page;
+        }
+        struct sigaction action;
+        memset(&action, 0, sizeof action);
+        action.sa_sigaction = rt_overflow_signal;
+        action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+        sigemptyset(&action.sa_mask);
+        (void)sigaction(SIGSEGV, &action, NULL);
+        (void)sigaction(SIGBUS, &action, NULL);
+    }
+    rt_overflow_thread();
+}
+#endif
+
 /* [DET-10] The defined floating-point environment, at a program's start-up and on every thread the
  * runtime creates (a new thread may inherit its creator's, which foreign code may have changed):
  * round to nearest, ties to even; no flush-to-zero or denormals-are-zero; no exception traps. */
@@ -1342,6 +1612,7 @@ static void* thread_main(void* raw) {
 #endif
     ember_thread* thread = (ember_thread*)raw;
     rt_fp_environment();
+    rt_overflow_thread();
     ember_rt_thread_attach();
 #if defined(EMBER_RELOAD)
     /* [HR-42] The thread's work is Ember code. */
@@ -1352,6 +1623,7 @@ static void* thread_main(void* raw) {
     thread->run(thread);
 #endif
     ember_rt_thread_detach();
+    rt_overflow_thread_end();
     thread_let_go(thread);
     (void)object_fetch_sub_u32(&g_threads_running, 1);
 #if defined(_WIN32)
@@ -1691,6 +1963,7 @@ static void* job_worker(void* unused) {
 #endif
     (void)unused;
     rt_fp_environment();
+    rt_overflow_thread();
     ember_rt_thread_attach();
     for (;;) {
         uint32_t seen = object_load_u32(&g_job_signal);
@@ -8470,6 +8743,8 @@ void ember_rt_set_args(int argc, char** argv) {
     /* [DET-10] Only a program's entry calls this, first: its start-up. A host keeps its own
      * environment on its own threads. */
     rt_fp_environment();
+    /* [RT-12] And its stack-overflow handler. */
+    rt_overflow_install();
     g_argc = argc;
     g_argv = argv;
 }

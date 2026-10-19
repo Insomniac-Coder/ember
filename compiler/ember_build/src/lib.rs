@@ -642,8 +642,11 @@ fn compile_and_link_impl(
 ) -> Result<(), BuildError> {
     let mut command = compiler_command(toolchain);
     match toolchain {
-        Toolchain::Msvc { .. } => {
-            command.args(msvc_flags(request.profile));
+        Toolchain::Msvc { cl, .. } => {
+            // `[TST-27]` (D-714) clang-cl ignores `/GL` with a warning, which `/WX` makes an error;
+            // its link-time optimisation is `-flto`, which an MSVC link cannot read.
+            let clang_cl = is_clang_cl(cl);
+            command.args(msvc_flags(request.profile).into_iter().filter(|flag| !(clang_cl && *flag == "/GL")));
             if warnings_as_errors() {
                 command.arg("/WX");
             }
@@ -1386,7 +1389,10 @@ fn gnu_flags(profile: Profile) -> Vec<&'static str> {
     // `[THR-14]` — x64's 16-byte compare-exchange inline, for `Atomic[i128]`: without it GCC calls
     // libatomic, which a program does not link.
     let cx16: &[&str] = if cfg!(target_arch = "x86_64") { &["-mcx16"] } else { &[] };
-    ["-std=c11", "-Wall", "-Wextra", "-ffp-contract=off", "-fno-fast-math"].iter().chain(optimisation).chain(cx16).copied().collect()
+    // `[RT-12]` — a frame larger than a page touches each page in order, so no write lands beyond
+    // the guard page (MSVC and clang-cl probe by default).
+    let probes: &[&str] = if cfg!(target_os = "linux") { &["-fstack-clash-protection"] } else { &[] };
+    ["-std=c11", "-Wall", "-Wextra", "-ffp-contract=off", "-fno-fast-math"].iter().chain(optimisation).chain(cx16).chain(probes).copied().collect()
 }
 
 /// ADR-098 — gcc's own flags for a profile, after `gnu_flags`. At `-O2` gcc's

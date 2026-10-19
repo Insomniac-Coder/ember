@@ -287,7 +287,10 @@ fn check_split_views(split: &BTreeMap<String, Vec<bool>>, c: &str) {
                 && !after.is_some_and(|a| a.is_ascii_alphanumeric() || a == '_');
             // `[RT-4]` — the backtrace's table writes symbols as strings: no use of the function.
             let quoted = before == Some('"') && after == Some('"');
-            if whole && after != Some('(') && !quoted {
+            // `[RT-12]` — the overflow handler's table holds addresses as `const void*`: a place in
+            // the code, never called.
+            let located = c[..at].ends_with("(const void*)&");
+            if whole && after != Some('(') && !quoted && !located {
                 panic!("internal error: `{symbol}`, whose views go as two words (D-569), is named other than in a call");
             }
         }
@@ -1288,6 +1291,19 @@ impl Emitter<'_> {
         self.line("#if defined(_MSC_VER) && !defined(__clang__)");
         self.line("#pragma warning(disable: 4273)");
         self.line("#endif");
+        // `[TST-27]` (D-714) — gcc's "may be used uninitialized" reports a read on a path that cannot
+        // run: an enum's payload read under a test of the tag that the value was just given another
+        // (`None`'s tag, then `Some`'s payload behind `tag == 1`). A place Ember reads is assigned
+        // on every path (`[OWN-3]`, `[BRW-7]`); gcc's definite warning, `-Wuninitialized`, stays on.
+        self.line("#if defined(__GNUC__) && !defined(__clang__)");
+        self.line("#pragma GCC diagnostic ignored \"-Wmaybe-uninitialized\"");
+        self.line("#endif");
+        // `[TST-27]` (D-714) — a function that calls itself on every path is an accepted program
+        // whose stack overflow is reported (`[RT-12]`); gcc 12 and later warn of it. (Older gcc
+        // warns of the unknown name instead.)
+        self.line("#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 12");
+        self.line("#pragma GCC diagnostic ignored \"-Winfinite-recursion\"");
+        self.line("#endif");
         // `[CG-C-1]` — every division by zero is defined in Ember: a float one
         // is IEEE's (`[TYP-29]`), an integer one is checked before it divides.
         // MSVC's "potential divide by 0" (C4723), which it reports after
@@ -1415,7 +1431,8 @@ impl Emitter<'_> {
         if has_main && self.unit.is_none() {
             let entry = bodies.iter().any(|body| body.symbol == ember_branding::mangled("main_entry"));
             let named = self.emit_frame_names(bodies, true);
-            self.emit_entry_point(leak_check, entry, named);
+            let coded = self.emit_code_names(bodies);
+            self.emit_entry_point(leak_check, entry, named, coded);
         }
         // `[FFI-26]` — each export table: a constant of its struct holding each field's function,
         // under a symbol carrying its protocol version (ODR-129).
@@ -1442,7 +1459,8 @@ impl Emitter<'_> {
         {
             // The C entry point runs a test, not `main`.
             let named = self.emit_frame_names(bodies, false);
-            self.emit_test_entry(leak_check, named, &tests);
+            let coded = self.emit_code_names(bodies);
+            self.emit_test_entry(leak_check, named, coded, &tests);
         }
         self.emit_fmt_fns();
         self.collect_clone_dependencies();
@@ -10681,6 +10699,30 @@ impl Emitter<'_> {
     /// is and where it is declared, sorted by symbol: a panic's backtrace names the program's
     /// functions by it, never by a C symbol. Strings only: no function is kept alive by it. How
     /// many there are (none: no table).
+    /// `[RT-12]` — each function of the program by its code's address, in every profile, for the name
+    /// a stack overflow prints (`ember_stack_names`).
+    fn emit_code_names(&mut self, bodies: &[Body]) -> usize {
+        let mut entries: Vec<(String, String)> = Vec::new();
+        for body in bodies {
+            if body.is_abstract || body.is_extern_declaration || body.blocks.is_empty() || body.span.is_dummy() {
+                continue;
+            }
+            let name = if body.is_lambda { "a lambda".to_string() } else { body.name.clone() };
+            entries.push((body.symbol.clone(), name));
+        }
+        entries.sort();
+        entries.dedup_by(|a, b| a.0 == b.0);
+        if entries.is_empty() {
+            return 0;
+        }
+        self.line(&format!("static const {RT}code_name {}code_names[] = {{", ember_branding::mangle_prefix()));
+        for (symbol, name) in &entries {
+            self.line(&format!("    {{(const void*)&{symbol}, {}}},", c_string_literal(name)));
+        }
+        self.line("};");
+        entries.len()
+    }
+
     fn emit_frame_names(&mut self, bodies: &[Body], entry_runs_main: bool) -> usize {
         let mut entries: Vec<(String, String, String, u32)> = Vec::new();
         for body in bodies {
@@ -10723,7 +10765,7 @@ impl Emitter<'_> {
     ///
     /// A `main` that takes `args` or returns a `Result` is called through the
     /// entry the checker writes (`main_entry`), which returns the status.
-    fn emit_entry_point(&mut self, leak_check: bool, entry: bool, named: usize) {
+    fn emit_entry_point(&mut self, leak_check: bool, entry: bool, named: usize, coded: usize) {
         // Annex B — a reloadable image's entry is the runtime's to call ([HR-33]).
         if self.reload.is_some() {
             self.line(&format!("static int {}rl_entry(int argc, char** argv) {{", ember_branding::mangle_prefix()));
@@ -10740,6 +10782,10 @@ impl Emitter<'_> {
             self.line("#if !defined(EMBER_RELEASE)");
             self.line(&format!("    {RT}backtrace_names({}frame_names, {named}u);", ember_branding::mangle_prefix()));
             self.line("#endif");
+        }
+        // `[RT-12]` — what a stack overflow names, in every profile.
+        if coded > 0 {
+            self.line(&format!("    {RT}stack_names({}code_names, {coded}u);", ember_branding::mangle_prefix()));
         }
         if leak_check {
             self.emit_debug_edge_registrations();
@@ -10809,7 +10855,7 @@ impl Emitter<'_> {
     /// A panic says so on standard error before it aborts (`test_panic_marker`),
     /// and a test that returns says so before the shutdown's leak report
     /// (`test_end_marker`). An unknown number exits with status 2.
-    fn emit_test_entry(&mut self, leak_check: bool, named: usize, tests: &[String]) {
+    fn emit_test_entry(&mut self, leak_check: bool, named: usize, coded: usize, tests: &[String]) {
         let panicked = test_panic_marker();
         let returned = test_end_marker();
         self.line(&format!("static void {RT}test_on_panic(const char* msg, size_t len) {{"));
@@ -10849,6 +10895,10 @@ impl Emitter<'_> {
             self.line("#if !defined(EMBER_RELEASE)");
             self.line(&format!("    {RT}backtrace_names({}frame_names, {named}u);", ember_branding::mangle_prefix()));
             self.line("#endif");
+        }
+        // `[RT-12]` — what a stack overflow names, in every profile.
+        if coded > 0 {
+            self.line(&format!("    {RT}stack_names({}code_names, {coded}u);", ember_branding::mangle_prefix()));
         }
         if leak_check {
             self.emit_debug_edge_registrations();

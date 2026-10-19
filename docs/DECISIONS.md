@@ -5017,6 +5017,37 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-218 — Stack overflow faults (`[RT-12]`)
+
+2026-10-19, toward 90% (solo).
+* **Probes:** gcc and clang on Linux get `-fstack-clash-protection` (MSVC and clang-cl probe by
+  default), so a frame larger than a page touches each page in order.
+* **Guard pages:** every thread the runtime creates keeps the system's guard page; on POSIX each also
+  gets an alternate signal stack (64 KiB, freed when the thread ends) so the handler can run on an
+  overflowed thread; on Windows a stack guarantee (`SetThreadStackGuarantee`) does that.
+* **The report:** a program's start-up (`ember_rt_set_args`) installs a vectored handler for
+  `EXCEPTION_STACK_OVERFLOW` on Windows and a `SIGSEGV`/`SIGBUS` handler elsewhere (acting only on a
+  fault in the guard region below the thread's stack, read with `pthread_getattr_np`; anything else
+  is left to the default). It prints `stack overflow in <function>` and aborts, in every profile.
+  The compiler emits a table of every function's code address and Ember name in every profile
+  (`ember_stack_names`; an incrementally linked address is followed through its `jmp`), and the
+  handler walks out of the C library's and the runtime's frames (the overflow often falls inside an
+  allocation) to the first frame whose function starts at a table entry: Windows' unwind data
+  (`RtlLookupFunctionEntry`, `RtlVirtualUnwind`), libgcc's unwinder elsewhere
+  (`_Unwind_Backtrace`, `_Unwind_FindEnclosingFunction`). **Limit:** when whole-program optimisation
+  makes a copy of a function (MSVC's `release`), no frame starts at a table entry, and the first frame
+  in the program's code is named by the function placed nearest below it, which is the copied one in
+  the cases measured, not by construction.
+* `_GNU_SOURCE` is defined on Linux for the whole runtime (it was only for reload builds).
+* The split-view check (D-569: a function whose views go as two words is only ever called) accepts
+  the table's `(const void*)&f`: an address held as a place in the code, never called through.
+* D-714 fixed in the same change: the C gate on clang-cl (no `/GL`) and gcc (`-Wmaybe-uninitialized`
+  off in the program's C, and from gcc 12 `-Winfinite-recursion`: endless recursion is a reported
+  overflow, not an error).
+* Tests: `RT-12/run_fail_a_stack_overflow_names_its_function` (debug and release),
+  `run_fail_a_thread_overflow_names_its_function`, `accept_a_deep_finite_recursion_runs`; checked with
+  MSVC and gcc.
+
 ## ADR-217 — Names beyond ASCII, `asm`, error pages built in, `str` at the C ABI, the C gate
 
 2026-10-19, toward 90% (solo).

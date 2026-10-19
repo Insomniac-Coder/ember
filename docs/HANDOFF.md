@@ -10746,6 +10746,9 @@ formal 1/9 count or Phase 2's estimate.
 > compiler (`[DOC-1]`), `[TXT-6]`, the C gate (`[TST-27]`). The owner then allowed one helper agent:
 > helper L builds `[LAY-2]` in the worktree `.claude/worktrees/helper-L` (branch `helper-L`; job sheet
 > in the session scratchpad `jobs/job_L.md`, notes to `tasks/90/L-notes.md`); merge it when it reports.
+> Then ADR-218: stack overflow faults (`[RT-12]`), with D-714 (the C gate failed CI on clang-cl's
+> `/GL` and gcc's `-Wmaybe-uninitialized`). The local check runs MSVC only: before a push that touches
+> the C, run `bench/gcc/gate.sh` in WSL (the conformance and run-pass suites through gcc with the gate).
 
 
 **2026-10-12 (autopilot), a Part V.5 class probe sweep: D-560..D-566, ODR-104 (0.9.10_Hardened_8).**
