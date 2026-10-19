@@ -1240,18 +1240,32 @@ pub fn compile_object(
     output: &Path,
     profile: Profile,
 ) -> Result<(), BuildError> {
+    compile_object_with_flags(toolchain, source, include_dirs, &[], output, profile)
+}
+
+/// [`compile_object`] with flags of the program's own after the build's: `[BLD-FFI-1a]` an
+/// `import c`'s shim and C sources, with the package's `[c] flags` and the import's `-D`/`-I`
+/// (every toolchain takes those two spellings).
+pub fn compile_object_with_flags(
+    toolchain: &Toolchain,
+    source: &Path,
+    include_dirs: &[PathBuf],
+    flags: &[String],
+    output: &Path,
+    profile: Profile,
+) -> Result<(), BuildError> {
     if let Some(parent) = output.parent() { std::fs::create_dir_all(parent)?; }
     let mut command = compiler_command(toolchain);
     match toolchain {
         Toolchain::Msvc { .. } => {
             command.args(msvc_flags(profile).into_iter().map(|flag|
                 if flag == "/Zi" { "/Z7" } else { flag }));
-            command.arg("/c");
+            command.arg("/c").args(flags);
             for dir in include_dirs { command.arg(format!("/I{}", dir.display())); }
             command.arg(source).arg(format!("/Fo{}", output.display()));
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
-            command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile)).arg("-c");
+            command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile)).arg("-c").args(flags);
             folder_names(&mut command, &[source.to_path_buf()], include_dirs);
             for dir in include_dirs { command.arg("-I").arg(dir); }
             command.arg(source).arg("-o").arg(output);

@@ -61,10 +61,11 @@ impl Parser<'_> {
                 }
                 self.expect_punct(Punct::RParen);
             }
+            let alias = self.eat_kw(Kw::As).then(|| self.expect_ident());
             self.expect_newline();
             return Some(Import {
                 id,
-                kind: ImportKind::Foreign { language, header, options },
+                kind: ImportKind::Foreign { language, header, options, alias },
                 span: start.to(self.prev_span()),
             });
         }

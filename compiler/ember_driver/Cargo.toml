@@ -21,6 +21,9 @@ ember_codegen_c.workspace = true
 ember_fmt.workspace = true
 ember_build.workspace = true
 serde_json = "1"
+# `[FFI-6]` — `import c` parses headers with libclang, loaded at run time: the compiler builds and
+# runs without it, and only a program that imports a header needs it.
+clang-sys = { version = "1.9", features = ["runtime", "clang_9_0"] }
 
 [lints]
 workspace = true

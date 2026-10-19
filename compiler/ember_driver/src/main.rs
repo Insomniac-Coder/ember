@@ -4,6 +4,7 @@
 //! stage dumps. The rest of the CLI surface arrives with the phases that give
 //! each command something to do.
 
+mod cimport;
 mod comptime;
 mod foreign;
 mod packages;
@@ -3216,7 +3217,9 @@ fn load_package_modules(
 ) -> Vec<ember_typeck::LoadedModule> {
     let mut loaded: Vec<ember_typeck::LoadedModule> = Vec::new();
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut queue: Vec<(usize, Vec<String>, ember_ast::Module)> = Vec::new();
+    let mut queue: Vec<(usize, Vec<String>, ember_ast::Module, Option<ember_typeck::ForeignImport>)> = Vec::new();
+    // `[FFI-6]` — each `import c` loaded so far, by its header, folder and options.
+    let mut foreign_known: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
 
     // `[MOD-5]` — source-backed prelude interfaces must exist even when the
     // user did not write an import. Loading a module does not make all of its
@@ -3241,15 +3244,29 @@ fn load_package_modules(
         let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
         mark("read and parse", &key);
         seen.insert(key);
-        queue.push((usize::MAX, names, parsed));
+        queue.push((usize::MAX, names, parsed, None));
     }
-    queue.push((0, Vec::new(), root));
+    queue.push((0, Vec::new(), root, None));
 
-    while let Some((package, path, mut module)) = queue.pop() {
+    while let Some((package, path, mut module, foreign)) = queue.pop() {
         // Every import this module names, before it is moved into the list: one of a package
         // (`[MOD-1]`) is already resolved, its path rewritten to the module's in the build.
         let mut wanted: Vec<(Vec<String>, ember_span::Span, bool, Option<(usize, PathBuf)>)> = Vec::new();
         for import in &mut module.imports {
+            // `[FFI-6]` — `import c "header"`: a module written from the header, the import
+            // rewritten to bind it.
+            if matches!(import.kind, ember_ast::ImportKind::Foreign { .. }) {
+                let importer = map.file(import.span.file).path.clone();
+                let package_dir = packages.list.get(package).map(|found| found.dir.clone());
+                let manifest = package_dir.as_ref().and_then(|dir| std::fs::read_to_string(dir.join(ember_branding::MANIFEST)).ok());
+                let flags = manifest.as_deref().and_then(|text| manifest_list(text, "c", "flags")).unwrap_or_default();
+                let base = package_dir.unwrap_or_else(|| importer.parent().unwrap_or(Path::new(".")).to_path_buf());
+                if let Some(written) = cimport::load(import, &importer, &base, &flags, &mut foreign_known, map, sink) {
+                    seen.insert(written.path.join("."));
+                    queue.push((package, written.path, written.module, Some(written.foreign)));
+                }
+                continue;
+            }
             let resolved = if package == usize::MAX { None } else { resolve_package_import(packages, package, import) };
             let segments = match &import.kind {
                 ember_ast::ImportKind::Module { path, .. } => path,
@@ -3285,6 +3302,7 @@ fn load_package_modules(
             path: path.clone(),
             module,
             package: if package == usize::MAX { None } else { Some(package) },
+            foreign,
         });
 
         for (names, span, removed, resolved) in wanted {
@@ -3308,7 +3326,7 @@ fn load_package_modules(
                 let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
                 check_safety_notes(&parsed, &lexed.comments, map, sink);
                 mark("read and parse", &key);
-                queue.push((found, names, parsed));
+                queue.push((found, names, parsed, None));
                 continue;
             }
             // `[MOD-3]` — a standard module may be named without `std.`
@@ -3372,7 +3390,7 @@ fn load_package_modules(
             let lexed = ember_lexer::lex(file, &text, sink);
             let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
             mark("read and parse", &names.join("."));
-            queue.push((usize::MAX, names, parsed));
+            queue.push((usize::MAX, names, parsed, None));
         }
     }
     loaded
@@ -5010,7 +5028,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[BLD-FFI-3]` — `[link] libs`, in the order written.
     // A path is the package's: relative to the directory of its manifest.
     let package_dir = nearest_manifest_path(input).and_then(|path| path.parent().map(Path::to_path_buf));
-    let libraries: Vec<String> = manifest.as_deref().and_then(|text| manifest_list(text, "link", "libs")).unwrap_or_default()
+    let mut libraries: Vec<String> = manifest.as_deref().and_then(|text| manifest_list(text, "link", "libs")).unwrap_or_default()
         .into_iter()
         .map(|library| match &package_dir {
             Some(dir) if ember_build::cdylib::is_library_path(&library) && Path::new(&library).is_relative() =>
@@ -5018,6 +5036,16 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             _ => library,
         })
         .collect();
+    // `[FFI-29]`, `[BLD-FFI-1]` — each `import c`'s shim and C sources, compiled by the `[c]`
+    // section's compiler (the backend's by default) into objects of their own; `[BLD-FFI-3]` its
+    // libraries after the manifest's, in the order written.
+    let c_toolchain = match manifest.as_deref().and_then(|text| manifest_string(text, "c", "compiler")) {
+        Some(compiler) => Toolchain::detect(Some(&compiler)).map_err(|e| e.to_string())?,
+        None => toolchain.clone(),
+    };
+    let (foreign_objects, foreign_libraries) = cimport::build_objects(&modules, &c_toolchain, &layout.c, &layout.obj, options.profile)?;
+    libraries.extend(foreign_libraries);
+    library_relaxed.extend(foreign_objects.iter().cloned());
     // `[FFI-28]`, `[FFI-31]` — a shared library exporting only its exports and the module's entry
     // points; `[FFI-31c]` with `runtime = "shared"` it imports the runtime its process shares.
     if cdylib {
@@ -5099,6 +5127,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     .map_err(|e| e.to_string())?
     .unwrap_or(runtime_source);
     let mut sources = vec![c_path.clone(), runtime_input];
+    sources.extend(foreign_objects);
     // `[FFI-37]` — the instrumentation is a unit of its own (it defines the C library's entry
     // points it intercepts off Windows).
     if let Some(instrument) = &emitted.ffi_instrument {

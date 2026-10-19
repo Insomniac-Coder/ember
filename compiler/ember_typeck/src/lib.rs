@@ -49,6 +49,26 @@ pub struct LoadedModule {
     /// `[MOD-2]` — the package it belongs to among the build's (0 is the root); `None` for the
     /// standard library's.
     pub package: Option<usize>,
+    /// `[FFI-6]` — a module `import c` wrote from a header: what else the import found.
+    pub foreign: Option<ForeignImport>,
+}
+
+/// `[FFI-6]` — what `import c` found in a header beside the declarations it wrote.
+#[derive(Clone, Debug, Default)]
+pub struct ForeignImport {
+    /// The header, as found.
+    pub header: String,
+    /// `[FFI-20a]` — each declaration not imported, with the construct that defeated it.
+    pub skipped: Vec<(String, String)>,
+    /// `[FFI-5]` — Clang's layout of each imported struct: its name, size, alignment, and each
+    /// field's offset.
+    pub layouts: Vec<(String, u64, u64, Vec<(String, u64)>)>,
+    /// The build's: `[FFI-29]` the shim's C, `[BLD-FFI-1]` the C sources to compile with it, the
+    /// flags both are compiled with (`[BLD-FFI-1a]`), and `[BLD-FFI-3]` the libraries to link.
+    pub shim: String,
+    pub sources: Vec<std::path::PathBuf>,
+    pub flags: Vec<String>,
+    pub link: Vec<String>,
 }
 
 /// The semantically resolved declaration surface a build artifact may expose
@@ -195,6 +215,10 @@ pub fn check(
     checker.module_packages = modules.iter().map(|m| m.package).collect();
     checker.visible = vec![HashMap::new(); modules.len()];
     checker.ambiguous_globs = vec![HashMap::new(); modules.len()];
+    checker.foreign_skipped = modules
+        .iter()
+        .map(|m| m.foreign.as_ref().map(|foreign| (foreign.header.clone(), foreign.skipped.iter().map(|(name, why)| (Symbol::intern(name), why.clone())).collect())))
+        .collect();
     checker.namespaces = vec![HashMap::new(); modules.len()];
     checker.module_overflow = vec![default_overflow; modules.len()];
     checker.module_deterministic = vec![false; modules.len()];
@@ -281,6 +305,12 @@ pub fn check(
         checker.collect(&loaded.module);
     }
     checker.check_view_attributes();
+    // `[FFI-5]` — each struct `import c` wrote, laid out as Clang lays it out.
+    for (index, loaded) in modules.iter().enumerate() {
+        if let Some(foreign) = &loaded.foreign {
+            checker.check_foreign_layouts(index, foreign, &loaded.module);
+        }
+    }
     // `[CLS-4]` depends on the completed openness of every nominal base, so
     // validate inheritance only after all modules have been collected.
     for (index, loaded) in modules.iter().enumerate() {
@@ -2157,6 +2187,9 @@ struct Checker<'a> {
     /// `[MOD-8]` — per module: each name two glob imports bind to different
     /// items, with the modules they came from. Using one is `E1031`.
     ambiguous_globs: Vec<HashMap<Symbol, Vec<String>>>,
+    /// `[FFI-20a]` — per module `import c` wrote: its header, and each declaration it could not
+    /// represent with why.
+    foreign_skipped: Vec<Option<(String, HashMap<Symbol, String>)>>,
     /// Declaration spans for module items, keyed by their canonical names.
     /// N1 uses each span's file identity before considering its offset, so
     /// imported aliases never compare unrelated source coordinates.
@@ -2769,6 +2802,7 @@ impl<'a> Checker<'a> {
             module_packages: Vec::new(),
             visible: vec![HashMap::new()],
             ambiguous_globs: vec![HashMap::new()],
+            foreign_skipped: Vec::new(),
             item_spans: HashMap::new(),
             item_visibility: HashMap::new(),
             namespaces: vec![HashMap::new()],
@@ -4450,6 +4484,52 @@ impl<'a> Checker<'a> {
                     self.visible[index].remove(&name);
                     self.ambiguous_globs[index].insert(name, sources.into_iter().map(|(_, key)| key).collect());
                 }
+            }
+        }
+    }
+
+    /// `[FFI-20a]` — `E1010` naming why, when `name` is a declaration of the header `module` was
+    /// written from that `import c` could not represent: never just "cannot find".
+    fn report_skipped_foreign(&mut self, module: usize, name: Symbol, span: Span) -> bool {
+        let Some(Some((header, skipped))) = self.foreign_skipped.get(module) else { return false };
+        let Some(why) = skipped.get(&name) else { return false };
+        let diagnostic = Diagnostic::error(codes::E1010, span, format!("`{name}` was not imported from `{header}`: {why}"))
+            .note("`import c` skipped it, and said so at the import (W5002, W5001) [FFI-20a]");
+        self.sink.emit(diagnostic);
+        true
+    }
+
+    /// `[FFI-5]` — Ember's layout of each struct `import c` wrote against Clang's for the target
+    /// and flags: `E5001` names the type, the field and both numbers.
+    fn check_foreign_layouts(&mut self, module: usize, foreign: &ForeignImport, ast_module: &ast::Module) {
+        let prefix = self.prefixes[module].clone();
+        for (name, size, align, fields) in &foreign.layouts {
+            let qualified = Symbol::intern(&format!("{prefix}.{}", name.trim_start_matches("r#")));
+            let Some(&ty) = self.named_types.get(&qualified) else { continue };
+            let span = ast_module
+                .items
+                .iter()
+                .find(|item| matches!(&item.kind, ast::ItemKind::Struct(decl) if decl.name.name.as_str() == name.trim_start_matches("r#")))
+                .map_or(Span::DUMMY, |item| item.span);
+            let layout = self.types.layout(ty);
+            let mut wrong = Vec::new();
+            if layout.size != *size {
+                wrong.push(format!("its size is {} bytes in Ember and {size} in C", layout.size));
+            }
+            if layout.align != *align {
+                wrong.push(format!("its alignment is {} in Ember and {align} in C", layout.align));
+            }
+            for ((field, offset), ember) in fields.iter().zip(&layout.field_offsets) {
+                if ember != offset {
+                    wrong.push(format!("field `{}` is at offset {ember} in Ember and {offset} in C", field.trim_start_matches("r#")));
+                }
+            }
+            if !wrong.is_empty() {
+                self.sink.emit(
+                    Diagnostic::error(codes::E5001, span, format!("the layout of `{name}` does not match `{}`'s: {}", foreign.header, wrong.join("; ")))
+                        .note("Clang's sizes, alignments and offsets are for this target and these flags; Ember's must equal them [FFI-5]")
+                        .help("a packing Ember cannot write (`#pragma pack(2)`) cannot be imported; wrap the struct in C functions"),
+                );
             }
         }
     }
@@ -12352,6 +12432,9 @@ impl<'a> Checker<'a> {
             && !self.generic_enums.contains_key(&qualified)
             && !self.generic_classes.contains_key(&qualified)
         {
+            if self.report_skipped_foreign(module, last.name, last.span) {
+                return self.common.error;
+            }
             let module_name = segments[..segments.len() - 1].iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".");
             self.error(codes::E1010, last.span, format!("cannot find type `{}` in module `{module_name}`", last.name));
             return self.common.error;
@@ -31616,6 +31699,9 @@ impl<'a> Checker<'a> {
                             None => Expr { ty: self.common.error, kind: ExprKind::Error, span },
                         };
                     }
+                    if self.report_skipped_foreign(module, name.name, name.span) {
+                        return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                    }
                 }
                 let outer = self.soa_element_field.replace(base.span);
                 let base = self.synth(base);
@@ -31984,6 +32070,9 @@ impl<'a> Checker<'a> {
                 // with the module's own candidates, written as the program
                 // wrote the module.
                 if self.visible[module].get(&name.name) != Some(&qualified) {
+                    if self.report_skipped_foreign(module, name.name, name.span) {
+                        return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                    }
                     let written = self
                         .namespace_segments(recv)
                         .expect("just resolved")
