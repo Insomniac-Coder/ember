@@ -3219,7 +3219,7 @@ fn load_package_modules(
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut queue: Vec<(usize, Vec<String>, ember_ast::Module, Option<ember_typeck::ForeignImport>)> = Vec::new();
     // `[FFI-6]` — each `import c` loaded so far, by its header, folder and options.
-    let mut foreign_known: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut foreign_known = cimport::Known::default();
 
     // `[MOD-5]` — source-backed prelude interfaces must exist even when the
     // user did not write an import. Loading a module does not make all of its
@@ -3263,6 +3263,10 @@ fn load_package_modules(
                 let base = package_dir.unwrap_or_else(|| importer.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf());
                 if let Some(written) = cimport::load(import, &importer, &base, &flags, &mut foreign_known, map, sink) {
                     seen.insert(written.path.join("."));
+                    if let Some((overlay_path, overlay)) = written.overlay {
+                        seen.insert(overlay_path.join("."));
+                        queue.push((package, overlay_path, overlay, None));
+                    }
                     queue.push((package, written.path, written.module, Some(written.foreign)));
                 }
                 continue;

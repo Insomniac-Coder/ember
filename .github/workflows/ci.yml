@@ -37,6 +37,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
+      # `[FFI-6]` — `import c` loads libclang at run time. The Windows image has LLVM installed
+      # (`C:\Program Files\LLVM\bin\libclang.dll`); the Ubuntu image has no `libclang.so`.
+      - name: libclang
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
       - name: Build
         run: cargo build --workspace --locked --profile ci
       # The platform's own shell: on Windows, Git's bash would put its own

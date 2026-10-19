@@ -64,7 +64,6 @@ pub struct Function {
     /// The symbol it binds when that is not its name: a shim wrapper (`[FFI-29a]`).
     pub link_name: Option<String>,
     pub abi: &'static str,
-    pub at: String,
 }
 
 /// A C type as the importer maps it (`[FFI-8]`).
@@ -78,9 +77,31 @@ pub struct CType {
     pub char_pointer: bool,
 }
 
-pub struct Imported {
-    /// The module's Ember source.
+/// What a declaration of the header became: an overlay finds it by its C name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// A struct, an enum or a type alias.
+    Type,
+    Const,
+    /// An `extern type` of the `unsafe extern` block.
+    Opaque,
+    /// An `extern static`.
+    Static,
+}
+
+/// One declaration of the module, without `pub` (an overlay may hide it).
+#[derive(Clone, Debug)]
+pub struct Item {
+    /// Its C name.
+    pub name: String,
+    pub kind: Kind,
+    /// Its text at column 0; attributes first.
     pub text: String,
+}
+
+pub struct Imported {
+    /// The module's declarations but its functions, in the order written.
+    pub items: Vec<Item>,
     /// The header file found.
     pub header: PathBuf,
     /// `W5002`.
@@ -345,7 +366,7 @@ pub fn import_header(config: &Config) -> Result<Imported, String> {
             };
             match outcome {
                 Ok((ty, value)) if writer.claim(name) => {
-                    let _ = writeln!(writer.items, "pub const {}: {ty} = {value}\n", ident(name));
+                    writer.push(name, Kind::Const, format!("const {}: {ty} = {value}", ident(name)));
                 }
                 Ok(_) => writer.macro_skipped.push(Skipped {
                     name: name.clone(),
@@ -373,10 +394,7 @@ enum Record {
 struct Writer {
     header: String,
     stem: String,
-    /// Types, constants and aliases, in the order written.
-    items: String,
-    /// The `unsafe extern "C"` block's members, by calling convention.
-    externs: Vec<(&'static str, String)>,
+    items: Vec<Item>,
     shim: String,
     skipped: Vec<Skipped>,
     opaque: Vec<Skipped>,
@@ -403,6 +421,10 @@ impl Writer {
     fn skip(&mut self, cursor: CXCursor, name: &str, reason: impl Into<String>) {
         let at = self.at(cursor);
         self.skipped.push(Skipped { name: name.to_string(), reason: reason.into(), at });
+    }
+
+    fn push(&mut self, name: &str, kind: Kind, text: String) {
+        self.items.push(Item { name: name.to_string(), kind, text: text.trim_end().to_string() });
     }
 
     /// Take `name` in the module's one namespace; C's tags and ordinary names are two.
@@ -612,7 +634,7 @@ impl Writer {
         let outcome = match outcome {
             Ok(None) => Ok(ident(&name)),
             Ok(Some(target)) if self.claim(&name) => {
-                let _ = writeln!(self.items, "pub type {} = {target}\n", ident(&name));
+                self.push(&name, Kind::Type, format!("type {} = {target}", ident(&name)));
                 Ok(ident(&name))
             }
             Ok(Some(_)) => {
@@ -739,7 +761,7 @@ impl Writer {
             if align > if packed { 1 } else { natural } {
                 let _ = writeln!(attributes, "@align({align})");
             }
-            let _ = write!(self.items, "{attributes}pub struct {name}:\n{}\n", fields.concat());
+            self.push(&named, Kind::Type, format!("{attributes}struct {name}:\n{}", fields.concat()));
             // `[FFI-5a]` — the project's C compiler checks the layout on every build.
             // `struct Point`, or the typedef name of a struct with no tag of its own.
             let spelled = type_spelling(ty);
@@ -763,7 +785,7 @@ impl Writer {
             return self.opaque_unclaimed(cursor, key, named);
         }
         let name = ident(named);
-        self.externs.push(("C", format!("    pub type {name}\n")));
+        self.push(named, Kind::Opaque, format!("type {name}"));
         if let Some(why) = &why {
             let at = self.at(cursor);
             self.opaque.push(Skipped { name: named.to_string(), reason: why.clone(), at });
@@ -798,7 +820,7 @@ impl Writer {
             Ok(repr) => {
                 let unsigned = repr.starts_with('u');
                 let mut variants = String::new();
-                let mut aliases = String::new();
+                let mut aliases = Vec::new();
                 let mut values: HashMap<i128, String> = HashMap::new();
                 for child in children(cursor).into_iter().filter(|child| kind(*child) == CXCursor_EnumConstantDecl) {
                     let constant = ident(&spelling(child));
@@ -807,9 +829,7 @@ impl Writer {
                         if unsigned { clang_getEnumConstantDeclUnsignedValue(child) as i128 } else { clang_getEnumConstantDeclValue(child) as i128 }
                     };
                     match values.get(&value) {
-                        Some(first) => {
-                            let _ = writeln!(aliases, "pub const {constant}: {name} = {name}.{first}");
-                        }
+                        Some(first) => aliases.push((spelling(child), format!("const {constant}: {name} = {name}.{first}"))),
                         None => {
                             values.insert(value, constant.clone());
                             let _ = writeln!(variants, "    {constant} = {value}");
@@ -819,9 +839,11 @@ impl Writer {
                 if variants.is_empty() {
                     variants.push_str("    pass\n");
                 }
-                let _ = write!(self.items, "@repr({repr})\n@non_exhaustive\npub enum {name}:\n{variants}\n{aliases}");
-                if !aliases.is_empty() {
-                    self.items.push('\n');
+                self.push(&named, Kind::Type, format!("@repr({repr})\n@non_exhaustive\nenum {name}:\n{variants}"));
+                for (alias, text) in aliases {
+                    if self.claim(&alias) {
+                        self.push(&alias, Kind::Const, text);
+                    }
                 }
                 Ok(name)
             }
@@ -854,7 +876,7 @@ impl Writer {
             let value = unsafe {
                 if repr.starts_with('u') { clang_getEnumConstantDeclUnsignedValue(child) as i128 } else { clang_getEnumConstantDeclValue(child) as i128 }
             };
-            let _ = writeln!(self.items, "pub const {}: {repr} = {value}\n", ident(&constant));
+            self.push(&constant, Kind::Const, format!("const {}: {repr} = {value}", ident(&constant)));
         }
     }
 
@@ -905,7 +927,7 @@ impl Writer {
                 self.wrapper(cursor, &wrapper, name);
                 wrapper
             });
-            Ok(Function { name: name.to_string(), params, result, link_name, abi, at: self.at(cursor) })
+            Ok(Function { name: name.to_string(), params, result, link_name, abi })
         }
     }
 
@@ -941,7 +963,7 @@ impl Writer {
                 let outcome = if constant { self.constant_value(cursor) } else { Err(String::new()) };
                 match outcome {
                     Ok((ty, value)) if self.claim(&name) => {
-                        let _ = writeln!(self.items, "pub const {}: {ty} = {value}\n", ident(&name));
+                        self.push(&name, Kind::Const, format!("const {}: {ty} = {value}", ident(&name)));
                     }
                     _ => self.skip(cursor, &name, "a global with internal linkage (`static`): each C file has its own, which no binding may name ([FFI-29a])"),
                 }
@@ -950,7 +972,7 @@ impl Writer {
             match self.ty(ty, false) {
                 Ok(mapped) if self.claim(&name) => {
                     let mutable = if constant { "" } else { "mut " };
-                    self.externs.push(("C", format!("    pub static {mutable}{}: {mapped}\n", ident(&name))));
+                    self.push(&name, Kind::Static, format!("static {mutable}{}: {mapped}", ident(&name)));
                 }
                 Ok(_) => self.skip(cursor, &name, "its name is taken by another declaration of the header"),
                 Err(reason) => self.skip(cursor, &name, reason),
@@ -1032,28 +1054,7 @@ impl Writer {
         }
     }
 
-    fn finish(mut self, header: PathBuf) -> Imported {
-        let mut text = format!(
-            "# The declarations of `{}`, written by `import c` ([FFI-6]).\n\n",
-            header.file_name().map_or(String::new(), |name| name.to_string_lossy().into_owned())
-        );
-        text.push_str(&self.items);
-        for function in &self.functions {
-            let mut line = String::from("    @safety(\"the header states no contract: each pointer's ownership, count, nullability and lifetime are the caller's to keep ([FFI-38])\")\n");
-            if let Some(link) = &function.link_name {
-                let _ = writeln!(line, "    @ffi(link_name=\"{link}\")");
-            }
-            let params: Vec<String> = function.params.iter().map(|(name, ty)| format!("{name}: {}", ty.ember)).collect();
-            let result = function.result.as_ref().map_or(String::new(), |ty| format!(" -> {}", ty.ember));
-            let _ = writeln!(line, "    pub fn {}({}){result}", ident(&function.name), params.join(", "));
-            self.externs.push((function.abi, line));
-        }
-        for abi in ["C", "system", "fastcall", "vectorcall"] {
-            let members: Vec<&str> = self.externs.iter().filter(|(of, _)| *of == abi).map(|(_, member)| member.as_str()).collect();
-            if !members.is_empty() {
-                let _ = write!(text, "unsafe extern \"{abi}\":\n{}\n", members.concat());
-            }
-        }
+    fn finish(self, header: PathBuf) -> Imported {
         let shim = format!(
             "/* The shim of `import c \"{}\"` ([FFI-29]): the layout checks and wrappers Ember needs. */\n#include <stddef.h>\n#include \"{}\"\n\n{}",
             header.display(),
@@ -1061,7 +1062,7 @@ impl Writer {
             self.shim
         );
         Imported {
-            text,
+            items: self.items,
             header,
             skipped: self.skipped,
             opaque: self.opaque,
@@ -1140,11 +1141,23 @@ fn options(written: &[AttrArg], sink: &mut Sink) -> Option<Options> {
     ok.then_some(options)
 }
 
+/// What a build's `import c`s have loaded so far.
+#[derive(Default)]
+pub struct Known {
+    /// Each import (its header, folder and options), with its module's path.
+    modules: HashMap<String, Vec<String>>,
+    /// `[FFI-29b]` — each header's implementation macros compiled, with the import that asked.
+    implementations: HashMap<(PathBuf, String), Span>,
+}
+
 /// A module `import c` wrote: its path, its declarations, and what else the import found.
 pub struct Loaded {
     pub path: Vec<String>,
     pub module: ast::Module,
     pub foreign: ember_typeck::ForeignImport,
+    /// The import's overlay file, a module of its own whose entries are checked as any overlay's
+    /// (`[GRM-35]`).
+    pub overlay: Option<(Vec<String>, ast::Module)>,
 }
 
 /// `[FFI-6]` — the module an `import c` names, written from its header, and the import rewritten
@@ -1157,7 +1170,7 @@ pub fn load(
     importer: &Path,
     base: &Path,
     flags: &[String],
-    known: &mut HashMap<String, Vec<String>>,
+    known: &mut Known,
     map: &mut SourceMap,
     sink: &mut Sink,
 ) -> Option<Loaded> {
@@ -1176,12 +1189,19 @@ pub fn load(
         Some(stem) => (format!("{stem}.h"), Some(from_dir.join(header))),
         None => (header.clone(), None),
     };
-    let key = format!("{}|{header}|{:?}|{:?}|{:?}", from_dir.display(), options.include_paths, options.defines, options.overlay.as_ref().map(|o| &o.0));
+    let key = format!(
+        "{}|{header}|{:?}|{:?}|{:?}|{:?}",
+        from_dir.display(),
+        options.include_paths,
+        options.defines,
+        options.overlay.as_ref().map(|o| &o.0),
+        options.implementation
+    );
     let rewrite = |import: &mut ast::Import, path: &[String]| {
         let segments = path.iter().map(|segment| ast::Ident { name: Symbol::intern(segment), span }).collect();
         import.kind = ast::ImportKind::Module { path: segments, alias: Some(ast::Ident { name: bound, span }) };
     };
-    if let Some(path) = known.get(&key) {
+    if let Some(path) = known.modules.get(&key) {
         let path = path.clone();
         rewrite(import, &path);
         return None;
@@ -1192,7 +1212,7 @@ pub fn load(
         .unwrap_or_default();
     let mut path = vec!["c".to_string(), format!("h_{stem}")];
     let mut suffix = 1;
-    while known.values().any(|taken| *taken == path) {
+    while known.modules.values().any(|taken| *taken == path) {
         suffix += 1;
         path[1] = format!("h_{stem}_{suffix}");
     }
@@ -1237,10 +1257,60 @@ pub fn load(
                 .note(format!("defined at {} [FFI-6a]", skipped.at)),
         );
     }
-    let file = map.add(PathBuf::from(format!("<import c \"{header}\">")), imported.text.clone());
+    // `[FFI-2]` — the overlay, applied before the module is written.
+    let mut applied = Applied::default();
+    let mut overlay_module = None;
+    if let Some((written, at)) = &options.overlay {
+        let overlay_file = base.join(written);
+        match map.load(&overlay_file) {
+            Err(error) => sink.emit(crate::load_diagnostic(&error, *at)),
+            Ok(file) => {
+                let text = map.file(file).text.clone();
+                let lexed = ember_lexer::lex(file, &text, sink);
+                let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
+                let overlays: Vec<&ast::OverlayDecl> = parsed
+                    .items
+                    .iter()
+                    .filter_map(|item| match &item.kind {
+                        ast::ItemKind::Overlay(overlay) if overlay.language == ast::ForeignLanguage::C => Some(overlay),
+                        _ => None,
+                    })
+                    .collect();
+                match overlays.as_slice() {
+                    [overlay] => applied = apply(overlay, &text, &shown, &imported, sink),
+                    _ => sink.emit(
+                        Diagnostic::error(codes::E5010, *at, format!("`{written}` holds {} `overlay c` declarations: an import's overlay file holds one", overlays.len()))
+                            .note("an overlay states the contracts of one header's declarations [FFI-12]"),
+                    ),
+                }
+                let mut overlay_path = path.clone();
+                overlay_path[1].push_str("_overlay");
+                overlay_module = Some((overlay_path, parsed));
+            }
+        }
+    }
+    let file = map.add(PathBuf::from(format!("<import c \"{header}\">")), render(&imported, &applied));
     let text = map.file(file).text.clone();
     let lexed = ember_lexer::lex(file, &text, sink);
     let module = ember_parser::parse(file, &text, lexed.tokens, sink);
+    // `[FFI-29b]` — a single-header library's implementation, compiled once per build: in this
+    // import's shim, with its macros defined; a second request for one header is `E5014`.
+    let mut shim = String::new();
+    for macro_name in &options.implementation {
+        match known.implementations.get(&(imported.header.clone(), macro_name.clone())) {
+            Some(&first) => sink.emit(
+                Diagnostic::error(codes::E5014, span, format!("`{shown}`'s implementation (`{macro_name}`) is already compiled into this build"))
+                    .secondary(first, "requested here first")
+                    .note("a single-header library's implementation is compiled exactly once per build [FFI-29b]")
+                    .help("request it in one `import c` only, or import the header the same way everywhere"),
+            ),
+            None => {
+                known.implementations.insert((imported.header.clone(), macro_name.clone()), span);
+                let _ = writeln!(shim, "#define {macro_name}");
+            }
+        }
+    }
+    shim.push_str(&imported.shim);
     let mut c_flags: Vec<String> = flags.to_vec();
     c_flags.extend(include_paths.iter().map(|dir| format!("-I{}", dir.display())));
     c_flags.extend(options.defines.iter().map(|define| format!("-D{define}")));
@@ -1253,7 +1323,7 @@ pub fn load(
             .chain(imported.macros.iter().map(|skipped| (skipped.name.clone(), format!("a macro, {}", skipped.reason))))
             .collect(),
         layouts: imported.layouts.iter().map(|layout| (layout.name.clone(), layout.size, layout.align, layout.fields.clone())).collect(),
-        shim: imported.shim,
+        shim,
         sources: source.into_iter().collect(),
         flags: c_flags,
         link: options
@@ -1263,8 +1333,8 @@ pub fn load(
             .collect(),
     };
     rewrite(import, &path);
-    known.insert(key, path.clone());
-    Some(Loaded { path, module, foreign })
+    known.modules.insert(key, path.clone());
+    Some(Loaded { path, module, foreign, overlay: overlay_module })
 }
 
 /// `[FFI-29]`, `[BLD-FFI-1]`, `[BLD-FFI-1a]`, `[BLD-FFI-3]` — each `import c`'s shim and C sources,
@@ -1296,6 +1366,306 @@ pub fn build_objects(
         libraries.extend(foreign.link.iter().cloned());
     }
     Ok((objects, libraries))
+}
+
+/// `[FFI-2]`, `[FFI-12]`, `[FFI-13]`, `[FFI-30a]` — what an overlay changes in an imported module:
+/// the contracts, safety and names of functions, facts on opaque types and enums, what is hidden,
+/// and the wrappers its `extend` blocks add. It never changes a type's identity, layout or fields.
+#[derive(Default)]
+struct Applied {
+    hidden: HashSet<String>,
+    /// A function's new name; a type's second name (an alias, so its identity stays).
+    renamed: HashMap<String, String>,
+    /// The attributes a `type` or `enum` entry states, as written.
+    attributes: HashMap<String, Vec<String>>,
+    functions: HashMap<String, Entry>,
+    /// Each `extend` block, as written, at column 0.
+    extends: Vec<String>,
+}
+
+/// An overlay's function entry: each parameter's contract words, the result's, and the entry's own
+/// `@ffi(…)` arguments, each as written.
+struct Entry {
+    params: Vec<Vec<String>>,
+    result: Vec<String>,
+    arguments: Vec<String>,
+}
+
+/// The word of a contract word as written: `count` of `count(n)`.
+fn word(written: &str) -> &str {
+    written.split('(').next().unwrap_or(written).trim()
+}
+
+/// `[FFI-12]` — apply an overlay to the module the header made; an entry whose name, parameter
+/// count or parameter names do not match the header is `E5010`.
+fn apply(overlay: &ast::OverlayDecl, text: &str, header: &str, imported: &Imported, sink: &mut Sink) -> Applied {
+    let snippet = |span: Span| text.get(span.start as usize..span.end as usize).unwrap_or("").to_string();
+    let mut applied = Applied::default();
+    let written = Path::new(&overlay.header).file_name().map(|name| name.to_string_lossy().into_owned());
+    if written.as_deref() != Some(header) {
+        sink.emit(
+            Diagnostic::error(codes::E5010, overlay.span, format!("this overlay is for `{}`, and the import is of `{header}`", overlay.header))
+                .note("an overlay states the contracts of one header's declarations [FFI-12]"),
+        );
+        return applied;
+    }
+    let item = |name: &str, kind: Kind| imported.items.iter().any(|item| item.name == name && item.kind == kind);
+    let mismatch = |sink: &mut Sink, span: Span, message: String| {
+        sink.emit(Diagnostic::error(codes::E5010, span, message).note("an overlay entry matches the header's declaration, so overlays cannot drift [FFI-12]"));
+    };
+    for entry in &overlay.items {
+        let attributes = || entry.attrs.iter().map(|attr| snippet(attr.span)).collect::<Vec<_>>();
+        match &entry.kind {
+            ast::OverlayItemKind::Fn { name, params, result } => {
+                let Some(function) = imported.functions.iter().find(|function| function.name == name.name.as_str()) else {
+                    mismatch(sink, name.span, format!("`{header}` declares no function `{}`", name.name));
+                    continue;
+                };
+                if applied.functions.contains_key(&function.name) {
+                    mismatch(sink, name.span, format!("a second entry for `{}`", name.name));
+                    continue;
+                }
+                if params.len() != function.params.len() {
+                    mismatch(sink, name.span, format!("`{}` takes {} parameters in `{header}`, and the entry names {}", name.name, function.params.len(), params.len()));
+                    continue;
+                }
+                let mut matched = true;
+                for (param, (c_name, _)) in params.iter().zip(&function.params) {
+                    if param.name.name.as_str() != c_name.trim_start_matches("r#") {
+                        mismatch(sink, param.name.span, format!("parameter `{}` of `{}` is `{c_name}` in `{header}`", param.name.name, name.name));
+                        matched = false;
+                    }
+                }
+                if !matched {
+                    continue;
+                }
+                let arguments = entry
+                    .attrs
+                    .iter()
+                    .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+                    .flat_map(|attr| &attr.args)
+                    .map(|arg| match arg {
+                        AttrArg::Expr(expr) => snippet(expr.span),
+                        AttrArg::Named { name, value } => snippet(name.span.to(value.span)),
+                    })
+                    .collect();
+                applied.functions.insert(
+                    function.name.clone(),
+                    Entry {
+                        params: params.iter().map(|param| param.contract.iter().map(|word| snippet(word.span)).collect()).collect(),
+                        result: result.iter().map(|word| snippet(word.span)).collect(),
+                        arguments,
+                    },
+                );
+            }
+            ast::OverlayItemKind::Type(name) | ast::OverlayItemKind::Enum(name) => {
+                let kind = if matches!(entry.kind, ast::OverlayItemKind::Type(_)) { Kind::Opaque } else { Kind::Type };
+                let found = imported.items.iter().any(|item| item.name == name.name.as_str() && item.kind == kind && (kind == Kind::Opaque || item.text.starts_with("@repr")));
+                if !found {
+                    let what = if kind == Kind::Opaque { "opaque type" } else { "enum" };
+                    mismatch(sink, name.span, format!("`{header}` declares no {what} `{}`", name.name));
+                    continue;
+                }
+                applied.attributes.entry(name.name.to_string()).or_default().extend(attributes());
+            }
+            ast::OverlayItemKind::Rename { from, to } => {
+                let function = imported.functions.iter().any(|function| function.name == from.name.as_str());
+                if !function && !item(from.name.as_str(), Kind::Type) && !item(from.name.as_str(), Kind::Opaque) {
+                    mismatch(sink, from.span, format!("`{header}` declares no function or type `{}` to rename", from.name));
+                    continue;
+                }
+                applied.renamed.insert(from.name.to_string(), to.name.to_string());
+            }
+            ast::OverlayItemKind::Hide(name) => {
+                let function = imported.functions.iter().any(|function| function.name == name.name.as_str());
+                if !function && !imported.items.iter().any(|item| item.name == name.name.as_str()) {
+                    mismatch(sink, name.span, format!("`{header}` declares no `{}` to hide", name.name));
+                    continue;
+                }
+                applied.hidden.insert(name.name.to_string());
+            }
+            // `[FFI-13]` — wrappers written in Ember, over the module's own declarations.
+            ast::OverlayItemKind::Extend(_) => {
+                let start = entry.attrs.first().map_or(entry.span, |attr| attr.span).start as usize;
+                let line_start = text[..start].rfind('\n').map_or(0, |at| at + 1);
+                let indent = start - line_start;
+                let block: Vec<&str> = text[line_start..entry.span.end as usize].lines().collect();
+                let dedented: Vec<&str> = block.iter().map(|line| line.get(indent.min(line.len() - line.trim_start().len())..).unwrap_or("")).collect();
+                applied.extends.push(dedented.join("\n"));
+            }
+        }
+    }
+    applied
+}
+
+/// `[FFI-11]` — the Ember type a contracted pointer parameter is, as a hand declaration writes it:
+/// `T*` is a mutable borrow and `const T*` a shared one (`[FFI-2a]`, derived, never written).
+fn safe_parameter(name: &str, ty: &CType, words: &[String]) -> String {
+    let has = |wanted: &str| words.iter().any(|written| word(written) == wanted);
+    let raw = format!("{name}: {}", ty.ember);
+    let Some((inner, constant)) = &ty.pointee else { return raw };
+    if has("out") || has("inout_count") {
+        return format!("mut {name}: {inner}");
+    }
+    let nullable = has("nullable");
+    let optional = |base: String| if nullable { format!("Option[{base}]") } else { base };
+    if has("owned") {
+        return format!("owned {name}: {}", optional(format!("ForeignBox[{inner}]")));
+    }
+    if !has("borrowed") {
+        return raw;
+    }
+    let mutable = !constant && !has("aliased");
+    let fixed = words.iter().find_map(|written| written.strip_prefix("fixed(").and_then(|rest| rest.strip_suffix(')')));
+    let base = if has("nul_terminated") && ty.char_pointer {
+        "cstr".to_string()
+    } else if has("count") {
+        format!("{}[{inner}]", if mutable { "MutSpan" } else { "Span" })
+    } else if let Some(length) = fixed {
+        format!("ref {}[{inner}; {length}]", if mutable { "mut " } else { "" })
+    } else if has("one") {
+        if mutable && !nullable {
+            return format!("mut {name}: {inner}");
+        }
+        format!("ref {}{inner}", if mutable { "mut " } else { "" })
+    } else {
+        return raw;
+    };
+    format!("{name}: {}", optional(base))
+}
+
+/// `[FFI-11]` — the Ember type a contracted pointer result is: shared unless `exclusive`.
+fn safe_result(ty: &CType, words: &[String]) -> String {
+    let has = |wanted: &str| words.iter().any(|written| word(written) == wanted);
+    let Some((inner, _)) = &ty.pointee else { return ty.ember.clone() };
+    let optional = |base: String| if has("nullable") { format!("Option[{base}]") } else { base };
+    let exclusive = has("exclusive");
+    let fixed = words.iter().find_map(|written| written.strip_prefix("fixed(").and_then(|rest| rest.strip_suffix(')')));
+    let base = if has("returns_owned") {
+        format!("ForeignBox[{inner}]")
+    } else if !has("borrowed") {
+        return ty.ember.clone();
+    } else if has("nul_terminated") && ty.char_pointer {
+        "cstr".to_string()
+    } else if has("count") {
+        format!("{}[{inner}]", if exclusive { "MutSpan" } else { "Span" })
+    } else if let Some(length) = fixed {
+        format!("ref {}[{inner}; {length}]", if exclusive { "mut " } else { "" })
+    } else if has("one") {
+        format!("ref {}{inner}", if exclusive { "mut " } else { "" })
+    } else {
+        return ty.ember.clone();
+    };
+    optional(base)
+}
+
+const UNCONTRACTED: &str = "the header states no contract: each pointer's ownership, count, nullability and lifetime are the caller's to keep ([FFI-38])";
+
+/// A function of the `unsafe extern` block: as the header declares it, uncontracted (`[FFI-38]`),
+/// or as its overlay entry contracts it (`[FFI-2]`).
+fn render_function(function: &Function, entry: Option<&Entry>, renamed: Option<&String>, hidden: bool) -> String {
+    let name = ident(renamed.unwrap_or(&function.name));
+    let link = function.link_name.clone().or_else(|| renamed.map(|_| function.name.clone()));
+    let mut arguments = Vec::new();
+    let mut params: Vec<String> = function.params.iter().map(|(name, ty)| format!("{name}: {}", ty.ember)).collect();
+    let mut result = function.result.as_ref().map(|ty| ty.ember.clone());
+    let mut safe = false;
+    if let Some(entry) = entry {
+        let words = entry.params.iter().flatten().chain(&entry.result);
+        // `[FFI-11c]` — a `TODO(…)` or `unsafe` word leaves the call unsafe.
+        safe = !words.into_iter().any(|written| matches!(word(written), "TODO" | "unsafe"));
+        for ((param, ty), written) in function.params.iter().zip(&entry.params) {
+            if written.is_empty() {
+                continue;
+            }
+            let mut words = written.clone();
+            // `[FFI-2a]` — `T*` is a mutable borrow: Ember's is exclusive.
+            if ty.pointee.as_ref().is_some_and(|(_, constant)| !constant)
+                && words.iter().any(|written| word(written) == "borrowed")
+                && !words.iter().any(|written| matches!(word(written), "exclusive" | "aliased"))
+            {
+                words.push("exclusive".to_string());
+            }
+            arguments.push(format!("param({param}, {})", words.join(", ")));
+        }
+        if !entry.result.is_empty() {
+            arguments.push(format!("result({})", entry.result.join(", ")));
+        }
+        arguments.extend(entry.arguments.iter().cloned());
+        if safe {
+            params = function.params.iter().zip(&entry.params).map(|((param, ty), words)| safe_parameter(param, ty, words)).collect();
+            result = function.result.as_ref().map(|ty| safe_result(ty, &entry.result));
+        }
+    }
+    if let Some(link) = link {
+        arguments.push(format!("link_name=\"{link}\""));
+    }
+    let mut text = String::new();
+    if !arguments.is_empty() {
+        let _ = writeln!(text, "    @ffi({})", arguments.join(", "));
+    }
+    if !safe {
+        let _ = writeln!(text, "    @safety(\"{UNCONTRACTED}\")");
+    }
+    let arrow = result.map_or(String::new(), |result| format!(" -> {result}"));
+    let public = if hidden { "" } else { "pub " };
+    let _ = writeln!(text, "    {public}{}fn {name}({}){arrow}", if safe { "safe " } else { "" }, params.join(", "));
+    text
+}
+
+/// The module's text: its declarations with an overlay applied.
+fn render(imported: &Imported, applied: &Applied) -> String {
+    let header = imported.header.file_name().map_or(String::new(), |name| name.to_string_lossy().into_owned());
+    let mut body = String::new();
+    let declare = |item: &Item, indent: &str| -> String {
+        let mut out = String::new();
+        for attribute in applied.attributes.get(&item.name).into_iter().flatten() {
+            let _ = writeln!(out, "{indent}{attribute}");
+        }
+        let public = if applied.hidden.contains(&item.name) { "" } else { "pub " };
+        let mut first = true;
+        for line in item.text.lines() {
+            if first && !line.starts_with('@') {
+                let _ = writeln!(out, "{indent}{public}{line}");
+                first = false;
+            } else {
+                let _ = writeln!(out, "{indent}{line}");
+            }
+        }
+        out
+    };
+    let alias = |item: &Item| applied.renamed.get(&item.name).map(|to| format!("pub type {} = {}\n", ident(to), ident(&item.name)));
+    for item in imported.items.iter().filter(|item| matches!(item.kind, Kind::Type | Kind::Const)) {
+        body.push_str(&declare(item, ""));
+        if let Some(alias) = alias(item) {
+            body.push_str(&alias);
+        }
+        body.push('\n');
+    }
+    let mut blocks: Vec<(&str, String)> = Vec::new();
+    let mut member = |abi: &'static str, text: String| match blocks.iter_mut().find(|(of, _)| *of == abi) {
+        Some((_, members)) => members.push_str(&text),
+        None => blocks.push((abi, text)),
+    };
+    for item in imported.items.iter().filter(|item| matches!(item.kind, Kind::Opaque | Kind::Static)) {
+        member("C", declare(item, "    "));
+        if let Some(alias) = alias(item) {
+            body.push_str(&alias);
+        }
+    }
+    // A hidden declaration stays, private to the module: another may name it (`destructor=f`).
+    for function in &imported.functions {
+        let hidden = applied.hidden.contains(&function.name);
+        member(function.abi, render_function(function, applied.functions.get(&function.name), applied.renamed.get(&function.name), hidden));
+    }
+    for (abi, members) in blocks {
+        let _ = write!(body, "unsafe extern \"{abi}\":\n{members}\n");
+    }
+    for extend in &applied.extends {
+        let _ = write!(body, "{extend}\n\n");
+    }
+    let import = if body.contains("ForeignBox[") { "from std.ffi import ForeignBox\n\n" } else { "" };
+    format!("# The declarations of `{header}`, written by `import c` ([FFI-6]).\n\n{import}{body}")
 }
 
 fn opaque_by_value(name: &str, why: Option<&str>) -> String {
