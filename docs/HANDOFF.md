@@ -10750,7 +10750,9 @@ formal 1/9 count or Phase 2's estimate.
 > `/GL` and gcc's `-Wmaybe-uninitialized`). The local check runs MSVC only: before a push that touches
 > the C, run `bench/gcc/gate.sh` in WSL (the conformance and run-pass suites through gcc with the gate).
 > Then ADR-219: C enums (`@non_exhaustive`), `out` parameters and status results (`[FFI-16]`,
-> `[ERR-6]`; ODR-137, 0.9.10_Hardened_20).
+> `[ERR-6]`; ODR-137, 0.9.10_Hardened_20), with D-715 (CI failed on clang-cl and a Linux unit test).
+> **Before a push that touches C or the runtime:** `bench/gcc/gate.sh` in WSL (the workspace through
+> gcc) and `EMBER_CC=clang-cl cargo test --profile ci --workspace` on Windows, besides the full check.
 
 
 **2026-10-12 (autopilot), a Part V.5 class probe sweep: D-560..D-566, ODR-104 (0.9.10_Hardened_8).**

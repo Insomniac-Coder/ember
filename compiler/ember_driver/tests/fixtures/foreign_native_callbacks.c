@@ -1,3 +1,8 @@
+/* D-715 — the runtime's Linux functions are GNU extensions, declared only when `_GNU_SOURCE`
+ * comes before the first system header, which the emitted unit includes. */
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
 /* Including the emitted translation unit keeps the host's declarations
  * exactly matched, while the separate tests for C record exports cover
  * independently compiled declarations. */

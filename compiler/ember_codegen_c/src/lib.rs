@@ -1291,6 +1291,10 @@ impl Emitter<'_> {
         self.line("#if defined(_MSC_VER) && !defined(__clang__)");
         self.line("#pragma warning(disable: 4273)");
         self.line("#endif");
+        // D-715 — clang-cl's name for the same (`-Winconsistent-dllimport`).
+        self.line("#if defined(__clang__) && defined(_WIN32)");
+        self.line("#pragma clang diagnostic ignored \"-Winconsistent-dllimport\"");
+        self.line("#endif");
         // `[TST-27]` (D-714) — gcc's "may be used uninitialized" reports a read on a path that cannot
         // run: an enum's payload read under a test of the tag that the value was just given another
         // (`None`'s tag, then `Some`'s payload behind `tag == 1`). A place Ember reads is assigned
@@ -10780,11 +10784,16 @@ impl Emitter<'_> {
     /// functions by it, never by a C symbol. Strings only: no function is kept alive by it. How
     /// many there are (none: no table).
     /// `[RT-12]` — each function of the program by its code's address, in every profile, for the name
-    /// a stack overflow prints (`ember_stack_names`).
+    /// a stack overflow prints (`ember_stack_names`). Only the functions the program can reach
+    /// (`reachable_bodies`): an address in the table keeps a function the linker would otherwise
+    /// drop (D-715).
     fn emit_code_names(&mut self, bodies: &[Body]) -> usize {
+        let reachable = self.reachable_bodies(bodies);
         let mut entries: Vec<(String, String)> = Vec::new();
-        for body in bodies {
-            if body.is_abstract || body.is_extern_declaration || body.blocks.is_empty() || body.span.is_dummy() {
+        for (index, body) in bodies.iter().enumerate() {
+            if body.is_abstract || body.is_extern_declaration || body.blocks.is_empty() || body.span.is_dummy()
+                || !reachable[index]
+            {
                 continue;
             }
             let name = if body.is_lambda { "a lambda".to_string() } else { body.name.clone() };
@@ -10801,6 +10810,46 @@ impl Emitter<'_> {
         }
         self.line("};");
         entries.len()
+    }
+
+    /// D-715 — which bodies a run can be inside: those reached (`ember_mir::reached_bodies`) from
+    /// the roots, which are `main` and the tests, every function C can call (an export, an
+    /// `extern "C"` definition), and every method, which the backend's own code may call (a
+    /// `drop`, a `fmt`, an `eq`), as it may an implicit derive; in a reloadable build, everything.
+    fn reachable_bodies(&self, bodies: &[Body]) -> Vec<bool> {
+        let by_symbol: std::collections::HashMap<String, usize> =
+            bodies.iter().enumerate().map(|(index, body)| (body.symbol.clone(), index)).collect();
+        let clone_of: std::collections::HashMap<Ty, usize> = bodies
+            .iter()
+            .enumerate()
+            .filter(|(_, body)| body.emit_if_used)
+            .map(|(index, body)| (body.return_ty(), index))
+            .collect();
+        let tests = self.tests.clone().unwrap_or_default();
+        let entry = [ember_branding::mangled("main"), ember_branding::mangled("main_entry")];
+        let mut live: Vec<bool> = bodies
+            .iter()
+            .map(|body| {
+                self.reload.is_some()
+                    || entry.contains(&body.symbol)
+                    || tests.contains(&body.symbol)
+                    || !body.symbol.starts_with(ember_branding::mangle_prefix().as_str())
+                    || body.abi.is_some()
+                    || body.class_owner.is_some()
+                    || body.name.contains('.')
+                    || body.emit_if_used
+            })
+            .collect();
+        let mut work: Vec<usize> = (0..bodies.len()).filter(|&index| live[index]).collect();
+        while let Some(index) = work.pop() {
+            for reached in ember_mir::reached_bodies(&bodies[index], self.types, &by_symbol, &clone_of) {
+                if !live[reached] {
+                    live[reached] = true;
+                    work.push(reached);
+                }
+            }
+        }
+        live
     }
 
     fn emit_frame_names(&mut self, bodies: &[Body], entry_runs_main: bool) -> usize {
@@ -13227,14 +13276,17 @@ mod string_descriptor_view_parts_tests {
 const COMPTIME_PRELUDE: &str = r#"#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-/* The stubs of functions the requests do not run leave locals unread: not worth a word here. */
+/* The stubs of functions the requests do not run leave locals unread: not worth a word here.
+ * D-715 — `comptime.read_file` reads with `fopen`, which the Windows C library marks deprecated
+ * in favour of `fopen_s` (clang-cl: `-Wdeprecated-declarations`, MSVC: C4996). */
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic ignored "-Wunused-variable"
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
 #pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #elif defined(_MSC_VER)
-#pragma warning(disable: 4100 4101 4189)
+#pragma warning(disable: 4100 4101 4189 4996)
 #endif
 #if defined(_WIN32)
 __declspec(dllimport) unsigned int __stdcall SetErrorMode(unsigned int mode);

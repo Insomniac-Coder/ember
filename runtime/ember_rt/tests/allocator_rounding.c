@@ -3,6 +3,11 @@
  * No allocation result is dereferenced or freed; no huge real request is made.
  * [RT-11] NULL failures preserve all allocation counters.
  * Warmup proves both default routes are intercepted before boundary requests. */
+/* D-715 — the runtime's Linux functions (`pthread_getattr_np`) are GNU extensions, which the
+ * C library declares only when `_GNU_SOURCE` is defined before its first header. */
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
 /* Parse CRT declarations before installing allocator interception. */
 #include <stddef.h>
 #include <stdlib.h>

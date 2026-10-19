@@ -1433,6 +1433,106 @@ pub enum FuncRef {
     },
 }
 
+/// The bodies `body` reaches: a direct call, a function value, an interface table's
+/// implementation, a structural clone's helper reaching a derived `clone`, and the written `Debug`
+/// a format runs. `by_symbol` indexes the bodies; `clone_of` maps a type to its implicit `clone`.
+pub fn reached_bodies(
+    body: &Body,
+    types: &ember_types::TypeTable,
+    by_symbol: &std::collections::HashMap<String, usize>,
+    clone_of: &std::collections::HashMap<Ty, usize>,
+) -> Vec<usize> {
+    let function_value = |operand: &Operand| match operand {
+        Operand::Const(Const::Fn(symbol)) => by_symbol.get(symbol.as_str()).copied(),
+        _ => None,
+    };
+    let table = |implementations: &[Option<InterfaceAdapterMethod>]| {
+        implementations
+            .iter()
+            .flatten()
+            .filter_map(|method| by_symbol.get(method.symbol.as_str()).copied())
+            .collect::<Vec<_>>()
+    };
+    let mut reached = Vec::new();
+    for block in &body.blocks {
+        for stmt in &block.stmts {
+            let StmtKind::Assign { rvalue, .. } = &stmt.kind else { continue };
+            match rvalue {
+                Rvalue::Use(operand)
+                | Rvalue::UnaryOp { operand, .. }
+                | Rvalue::Repeat { value: operand, .. } => reached.extend(function_value(operand)),
+                Rvalue::BinaryOp { lhs, rhs, .. } => {
+                    reached.extend(function_value(lhs));
+                    reached.extend(function_value(rhs));
+                }
+                Rvalue::Aggregate { operands, .. } => reached.extend(operands.iter().filter_map(function_value)),
+                Rvalue::Cast { kind, operand, .. } => {
+                    reached.extend(function_value(operand));
+                    if let CastKind::InterfaceUpcast { implementations, .. }
+                    | CastKind::ClassInterfaceUpcast { implementations, .. } = kind
+                    {
+                        reached.extend(table(implementations));
+                    }
+                }
+                Rvalue::Discriminant(_) | Rvalue::Ref { .. } => {}
+            }
+        }
+        let Terminator::Call { func, args, .. } = &block.terminator else { continue };
+        reached.extend(args.iter().filter_map(function_value));
+        match func {
+            FuncRef::Direct { symbol, .. } => reached.extend(by_symbol.get(symbol.as_str()).copied()),
+            FuncRef::DynBoxNew { implementations, .. } => reached.extend(table(implementations)),
+            FuncRef::Indirect { operand, .. } => reached.extend(function_value(operand)),
+            FuncRef::Builtin { which: Builtin::ArrayClone { elem }, .. } => {
+                clone_dependencies(*elem, types, clone_of, &mut reached, &mut Default::default());
+            }
+            FuncRef::Builtin { which: Builtin::CloneParts { ty }, .. } => {
+                clone_dependencies(*ty, types, clone_of, &mut reached, &mut Default::default());
+            }
+            // ADR-186 — formatting a value runs the written `Debug` of
+            // each part of it that has one, which the backend calls.
+            FuncRef::Builtin {
+                which: Builtin::Format | Builtin::FormatWith(_) | Builtin::Print | Builtin::EPrint,
+                arg_ty,
+            } => reached.extend(
+                types.debug_writers_reached(*arg_ty).into_iter().filter_map(|writer| by_symbol.get(writer).copied()),
+            ),
+            _ => {}
+        }
+    }
+    reached
+}
+
+fn clone_dependencies(
+    ty: Ty,
+    types: &ember_types::TypeTable,
+    clone_of: &std::collections::HashMap<Ty, usize>,
+    reached: &mut Vec<usize>,
+    seen: &mut std::collections::HashSet<Ty>,
+) {
+    if !seen.insert(ty) { return; }
+    if let Some(&body) = clone_of.get(&ty) {
+        reached.push(body);
+        return;
+    }
+    match types.kind(ty) {
+        ember_types::TyKind::Vec { elem, .. } => {
+            clone_dependencies(*elem, types, clone_of, reached, seen);
+        }
+        ember_types::TyKind::Tuple(items) => {
+            for &item in items { clone_dependencies(item, types, clone_of, reached, seen); }
+        }
+        ember_types::TyKind::Enum(id) => {
+            for variant in &types.enum_def(*id).variants {
+                for field in &variant.fields {
+                    clone_dependencies(field.ty, types, clone_of, reached, seen);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 /// `--emit=mir`: a stable textual form, for snapshot tests.
 /// `[COST-1]` — drop the implicit derives (`emit_if_used`) and the bodies
 /// instantiated from `std` (`std_instances`) nothing kept reaches: a direct
@@ -1445,35 +1545,6 @@ pub fn prune_unused_implicit(
     std_instances: &std::collections::HashSet<String>,
 ) {
     use std::collections::HashMap;
-    fn clone_dependencies(
-        ty: Ty,
-        types: &ember_types::TypeTable,
-        clone_of: &HashMap<Ty, usize>,
-        reached: &mut Vec<usize>,
-        seen: &mut std::collections::HashSet<Ty>,
-    ) {
-        if !seen.insert(ty) { return; }
-        if let Some(&body) = clone_of.get(&ty) {
-            reached.push(body);
-            return;
-        }
-        match types.kind(ty) {
-            ember_types::TyKind::Vec { elem, .. } => {
-                clone_dependencies(*elem, types, clone_of, reached, seen);
-            }
-            ember_types::TyKind::Tuple(items) => {
-                for &item in items { clone_dependencies(item, types, clone_of, reached, seen); }
-            }
-            ember_types::TyKind::Enum(id) => {
-                for variant in &types.enum_def(*id).variants {
-                    for field in &variant.fields {
-                        clone_dependencies(field.ty, types, clone_of, reached, seen);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
     let by_symbol: HashMap<String, usize> =
         bodies.iter().enumerate().map(|(i, body)| (body.symbol.clone(), i)).collect();
     let clone_of: HashMap<Ty, usize> = bodies
@@ -1485,66 +1556,8 @@ pub fn prune_unused_implicit(
     let mut live: Vec<bool> =
         bodies.iter().map(|body| !body.emit_if_used && !std_instances.contains(&body.symbol)).collect();
     let mut work: Vec<usize> = (0..bodies.len()).filter(|&i| live[i]).collect();
-    let function_value = |operand: &Operand| match operand {
-        Operand::Const(Const::Fn(symbol)) => by_symbol.get(symbol.as_str()).copied(),
-        _ => None,
-    };
-    let table = |implementations: &[Option<InterfaceAdapterMethod>]| {
-        implementations
-            .iter()
-            .flatten()
-            .filter_map(|method| by_symbol.get(method.symbol.as_str()).copied())
-            .collect::<Vec<_>>()
-    };
     while let Some(i) = work.pop() {
-        let mut reached = Vec::new();
-        for block in &bodies[i].blocks {
-            for stmt in &block.stmts {
-                let StmtKind::Assign { rvalue, .. } = &stmt.kind else { continue };
-                match rvalue {
-                    Rvalue::Use(operand)
-                    | Rvalue::UnaryOp { operand, .. }
-                    | Rvalue::Repeat { value: operand, .. } => reached.extend(function_value(operand)),
-                    Rvalue::BinaryOp { lhs, rhs, .. } => {
-                        reached.extend(function_value(lhs));
-                        reached.extend(function_value(rhs));
-                    }
-                    Rvalue::Aggregate { operands, .. } => reached.extend(operands.iter().filter_map(function_value)),
-                    Rvalue::Cast { kind, operand, .. } => {
-                        reached.extend(function_value(operand));
-                        if let CastKind::InterfaceUpcast { implementations, .. }
-                        | CastKind::ClassInterfaceUpcast { implementations, .. } = kind
-                        {
-                            reached.extend(table(implementations));
-                        }
-                    }
-                    Rvalue::Discriminant(_) | Rvalue::Ref { .. } => {}
-                }
-            }
-            let Terminator::Call { func, args, .. } = &block.terminator else { continue };
-            reached.extend(args.iter().filter_map(function_value));
-            match func {
-                FuncRef::Direct { symbol, .. } => reached.extend(by_symbol.get(symbol.as_str()).copied()),
-                FuncRef::DynBoxNew { implementations, .. } => reached.extend(table(implementations)),
-                FuncRef::Indirect { operand, .. } => reached.extend(function_value(operand)),
-                FuncRef::Builtin { which: Builtin::ArrayClone { elem }, .. } => {
-                    clone_dependencies(*elem, types, &clone_of, &mut reached, &mut Default::default());
-                }
-                FuncRef::Builtin { which: Builtin::CloneParts { ty }, .. } => {
-                    clone_dependencies(*ty, types, &clone_of, &mut reached, &mut Default::default());
-                }
-                // ADR-186 — formatting a value runs the written `Debug` of
-                // each part of it that has one, which the backend calls.
-                FuncRef::Builtin {
-                    which: Builtin::Format | Builtin::FormatWith(_) | Builtin::Print | Builtin::EPrint,
-                    arg_ty,
-                } => reached.extend(
-                    types.debug_writers_reached(*arg_ty).into_iter().filter_map(|writer| by_symbol.get(writer).copied()),
-                ),
-                _ => {}
-            }
-        }
-        for j in reached {
+        for j in reached_bodies(&bodies[i], types, &by_symbol, &clone_of) {
             if !live[j] {
                 live[j] = true;
                 work.push(j);

@@ -5041,6 +5041,11 @@ guard setup cost is separate and remains OPEN under D-498.
   `safe fn`, are `E0104`. Not built: `inout_count` beside `out` or a status (`E0900`).
 * The C wrapper (`emit_ffi_outputs`) is the counted wrappers' (`FfiCounted.outputs`,
   `FfiAbiParam::Out`).
+* D-715 fixed alongside: clang-cl's `-Winconsistent-dllimport` and `-Wdeprecated-declarations`
+  (the evaluator's `fopen`), the test sources' `_GNU_SOURCE` on Linux, and `[RT-12]`'s name table,
+  which now holds only the functions reachable from the roots (`main`, the tests, every function C
+  can call, every method, the implicit derives; everything in a reloadable build), so the linker
+  still drops the rest.
 * Tests: `FFI-16/accept_a_status_result_is_a_result` (with `?` through `[ERR-6]`, a code no variant
   names, two outputs), `FFI-16/reject_status_contract_misuse`, `FFI-11/accept_out_parameters_are_returned`,
   `FFI-8/accept_a_c_enum_holds_any_value`, `FFI-8/reject_a_c_enum_match_without_a_wildcard`.
