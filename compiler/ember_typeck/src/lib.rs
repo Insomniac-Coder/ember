@@ -5306,6 +5306,9 @@ impl<'a> Checker<'a> {
             self.collecting_generic = None;
             self.type_params.clear();
             let (repr, repr_is_explicit) = self.enum_repr(&item.attrs, decl);
+            if repr_is_explicit {
+                self.check_discriminants_fit(repr, &variants);
+            }
             if has_derive(&item.attrs, "Hash") {
                 self.hash_derived.insert(name);
             }
@@ -7901,6 +7904,10 @@ impl<'a> Checker<'a> {
                     let has_drop = decl.members.iter().any(|m| {
                         matches!(&m.kind, ast::MemberKind::Fn(f) if f.name.name.is("drop"))
                     });
+                    let def = self.types.enum_def(id);
+                    if def.repr_is_explicit {
+                        self.check_discriminants_fit(def.repr, &variants);
+                    }
                     let def = self.types.enum_def_mut(id);
                     def.variants = variants;
                     def.has_drop = has_drop;
@@ -8262,6 +8269,21 @@ impl<'a> Checker<'a> {
             c.i32
         };
         (ty, false)
+    }
+
+    /// `[LAY-2]` — `@repr(T)` makes `T` the discriminant's type, so every discriminant, written
+    /// or counted on from the one before, fits `T` (`E2010` otherwise).
+    fn check_discriminants_fit(&mut self, repr: Ty, variants: &[VariantDef]) {
+        let high = int_max(self.types, repr).map_or(i128::MAX, |max| i128::try_from(max).unwrap_or(i128::MAX));
+        let low = ember_types::signed_min_magnitude(self.types, repr)
+            .map_or(0, |magnitude| i128::try_from(magnitude).map_or(i128::MIN, |magnitude| -magnitude));
+        for variant in variants.iter().filter(|variant| !(low..=high).contains(&variant.discriminant)) {
+            let shown = self.types.display(repr);
+            self.sink.emit(
+                Diagnostic::error(codes::E2010, variant.span, format!("discriminant {} of `{}` does not fit `{shown}`", variant.discriminant, variant.name))
+                    .note(format!("`@repr({shown})` makes `{shown}` the discriminant's type [LAY-2]")),
+            );
+        }
     }
 
     /// `[LAY-2]` — a struct's or an enum's `@packed` and `@align(N)`, recorded for its layout.

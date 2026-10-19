@@ -995,6 +995,24 @@ fn a_type_behind_a_raw_pointer_does_not_migrate() {
     assert!(run.stdout.ends_with("10\n"), "the old code did not run on: {}", run.stdout);
 }
 
+/// `[HR-14]`, `[LAY-2]` — a type's layout attributes are in its schema (`[HR-11]`): one changed on a
+/// type a raw pointer can reach, as a type used across FFI is, is refused (the table's last row,
+/// through `[HR-13b]`); on any other type the values migrate by name into the new layout.
+#[test]
+fn a_changed_layout_attribute_is_a_schema_change() {
+    let v1 = "from std.sync import Mutex\n\nstruct Score:\n    level: u8 = 3\n    points: int = 0\n\nstatic BOARD: Mutex[Score] = Mutex(Score())\n\n\
+              fn raw(p: *mut Score) -> int:\n    return 0\n\n\
+              @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    with board = BOARD.lock():\n        board.points += 5\n        return board.points * 10 + board.level as int\n\nfn main():\n    pass\n";
+    let aligned = v1.replace("struct Score:\n", "@align(64)\nstruct Score:\n");
+    let run = host_run("reload-layout-foreign", v1, &[&aligned], 2);
+    assert!(run.stdout.contains("a value of `Score` may be reachable only through a raw pointer or foreign memory"), "{}", run.stdout);
+    assert!(run.stdout.ends_with("103\n"), "the old code did not run on: {}", run.stdout);
+    let plain = v1.replace("fn raw(p: *mut Score) -> int:\n    return 0\n\n", "");
+    let packed = plain.replace("struct Score:\n", "@packed\nstruct Score:\n");
+    let run = host_run("reload-layout-packed", &plain, &[&packed], 2);
+    assert_eq!(run.stdout, "53\napplied, 0 migrated\n103\n", "{}", run.stderr);
+}
+
 /// `[HR-14]` — a class whose base changed is refused, and an enum variant renamed with
 /// `@renamed_from` keeps the values that held it.
 #[test]
