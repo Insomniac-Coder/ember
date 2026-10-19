@@ -310,9 +310,12 @@ Not fixed (outside the job; each has a probe):
    …])` runs systems at once when their sets do not conflict". Running them on threads needs the
    design in §5 (views made on the calling thread, bodies as jobs of one scope; `Commands` made
    `Send`; the literal's systems kept unerased by the compiler; for systems passed as values, nested
-   scopes or running in turn). Options: (a) build that design; (b) rule that running in turn
-   meets "at once" (no program can tell the difference, as the sets do not conflict), so `ECS-4`
-   is done as built; (c) parallel for literals only, values in turn. Built meanwhile: in turn.
+   scopes or running in turn), and two language decisions under it: when a function value or a
+   callable parameter is `Send`/`Sync` (today a generic job cannot capture one, `E7005`), and
+   whether components must be `Send`/`Sync` to run in parallel. Options: (a) build that design,
+   with those decisions; (b) rule that running in turn meets "at once" (no program can tell the
+   difference, as the sets do not conflict), so `ECS-4`'s parallel half is done as built; (c)
+   parallel for literals only, values in turn. Built meanwhile: in turn.
 2. **`run(system, args…)` without variadic parameters.** Built: one argument after the system
    (`world.run(integrate, 0.016)` as the spec writes it); several are a tuple
    (`fn step(mut q: Query[…], ctx: (f32, int))`), none is `()` (`fn tick(mut q: Query[…], _: ())`,
