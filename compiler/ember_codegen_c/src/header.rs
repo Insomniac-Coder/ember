@@ -19,6 +19,9 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
             reachable.visit(parameter.ty)?;
         }
     }
+    for table in emitter.types.export_tables() {
+        reachable.visit(table.ty)?;
+    }
 
     // Hex of the exact UTF-8 bytes is injective: e.g. foo-bar, foo_bar and
     // differently spelled Unicode names must never suppress each other.
@@ -91,7 +94,29 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
     if !exports.is_empty() { line(&mut out, ""); }
     for body in exports {
         line(&mut out, &format!("/* threads: {} */", body.export_thread_policy.as_str()));
-        line(&mut out, &format!("{};", emitter.signature(body)));
+        match ember_branding::export_alias_symbol(&body.symbol) {
+            // `[MNG-2]` — its symbol, which C cannot spell, under its C name.
+            Some(exact) => {
+                line(&mut out, &format!("/* symbol: {exact} */"));
+                line(&mut out, &super::exact_symbol_prototype(&emitter.signature(body), &body.symbol, &exact));
+            }
+            None => line(&mut out, &format!("{};", emitter.signature(body))),
+        }
+    }
+    // `[FFI-26]` — each export table, its protocol version, and each entry's thread contract.
+    for table in emitter.types.export_tables() {
+        let TyKind::Struct(id) = emitter.types.kind(table.ty) else { continue };
+        let fields = emitter.types.struct_def(*id).fields.iter().map(|field| field.name).collect::<Vec<_>>();
+        line(&mut out, "");
+        line(&mut out, &format!("/* export table `{}`, protocol {}; each entry's threads: */", table.name, table.protocol));
+        for (field, symbol) in fields.iter().zip(&table.entries) {
+            let policy = bodies.iter().find(|body| &body.symbol == symbol)
+                .map_or("any", |body| body.export_thread_policy.as_str());
+            line(&mut out, &format!("/*   {field}: {policy} */"));
+        }
+        line(&mut out, &format!("#define {}_PROTOCOL {}u", table.name, table.protocol));
+        line(&mut out, &format!("extern const {} {};", emitter.c_type(table.ty), table.name));
+        line(&mut out, &format!("extern const uint32_t {}_protocol;", table.name));
     }
     if emitter.module {
         let rt = ember_branding::runtime("");

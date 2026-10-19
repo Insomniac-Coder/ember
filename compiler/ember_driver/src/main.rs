@@ -4059,6 +4059,11 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             .map(|body| body.symbol.clone())
             .collect();
         exports.extend([ember_branding::runtime("module_init"), ember_branding::runtime("module_shutdown")]);
+        // `[FFI-26]` — each export table and its protocol version, as data.
+        for table in types.export_tables() {
+            exports.push(format!("{} DATA", table.name));
+            exports.push(format!("{}_protocol DATA", table.name));
+        }
         exports.sort();
         exports.dedup();
         let shared = if runtime_mode == "shared" {
@@ -4153,13 +4158,17 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     }
     // The C header and executable expose the same definitions. Root selected
     // ABI symbols, including renamed/imported exports, never declarations.
+    // `[MNG-2]` — an export's object-file symbol, which is its alias's exact one.
     let mut retained_symbols: Vec<String> = bodies.iter()
         .filter(|body| body.abi.is_some()
             && !body.is_extern_declaration && !body.is_abstract)
-        .map(|body| body.symbol.clone())
+        .map(|body| ember_branding::export_alias_symbol(&body.symbol).unwrap_or_else(|| body.symbol.clone()))
         .collect();
     if emitted.ffi_instrument.is_some() && !cfg!(windows) {
         retained_symbols.extend(ember_codegen_c::FFI_INTERPOSED.iter().map(|name| name.to_string()));
+    }
+    for table in types.export_tables() {
+        retained_symbols.extend([table.name.clone(), format!("{}_protocol", table.name)]);
     }
     retained_symbols.sort();
     retained_symbols.dedup();

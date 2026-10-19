@@ -294,6 +294,10 @@ pub fn check(
     // known.
     checker.settle_consts();
     checker.settle_statics();
+    for (index, loaded) in modules.iter().enumerate() {
+        checker.current_module = index;
+        checker.collect_export_tables(&loaded.module);
+    }
     // `[TYP-17]` — each generic type's methods, and each generic extension's,
     // are checked once with the parameters opaque, as a generic function's
     // body is (D-248).
@@ -337,6 +341,25 @@ pub fn check(
     // `[FFI-26]`/`[MNG-2]` — a stable C name is an asserted linker identity.
     // Diagnose collisions while both source locations are still available,
     // before a backend reports only a duplicate C definition.
+    // `[FFI-26]` — each export table, with the C symbol of the function each field holds; its
+    // two symbols are as asserted a linker identity as an `@export`'s.
+    let mut table_symbols = HashMap::<String, Span>::new();
+    for (name, protocol, ty, defs, span) in std::mem::take(&mut checker.export_tables) {
+        let entries: Vec<String> = defs.iter()
+            .map(|def| functions.iter().find(|function| function.def == *def).map(|function| function.symbol.clone()).unwrap_or_default())
+            .collect();
+        for symbol in [name.clone(), format!("{name}_protocol")] {
+            let clash = functions.iter().find(|function| !function.is_extern_declaration && function.symbol == symbol)
+                .map(|function| function.span).or_else(|| table_symbols.get(&symbol).copied());
+            if let Some(previous) = clash {
+                checker.sink.emit(Diagnostic::error(codes::E0104, span,
+                    format!("C symbol `{symbol}` is defined by more than one Ember item"))
+                    .secondary(previous, "first definition is here"));
+            }
+            table_symbols.insert(symbol, span);
+        }
+        checker.types.add_export_table(ember_types::ExportTable { ty, name, protocol, entries });
+    }
     let mut emitted_symbols = HashMap::<&str, &Function>::new();
     for function in &functions {
         if function.is_extern_declaration {
@@ -1995,6 +2018,9 @@ struct Checker<'a> {
     /// own. A lambda over concrete types only is kept, because an instance
     /// made during the same check may call it.
     opaque_lambdas: HashSet<DefId>,
+    /// `[FFI-26]` — each `@export_table` checked: its symbol, protocol, struct, the function
+    /// each field holds and where it was written, made `ExportTable`s once symbols are known.
+    export_tables: Vec<(String, u32, Ty, Vec<DefId>, Span)>,
     /// `[OWN-8]` — generated `@derive(Clone)` bodies have no AST declaration.
     derived_clone_methods: Vec<(DefId, Ty, Span, bool)>,
     /// Candidates resolved after every source method is known, so field order
@@ -2696,6 +2722,7 @@ impl<'a> Checker<'a> {
             lambda_values: HashMap::new(),
             skipped_instances: 0,
             opaque_lambdas: HashSet::new(),
+            export_tables: Vec::new(),
             derived_clone_methods: Vec::new(),
             pending_derived_clones: Vec::new(),
             clones_resolved: false,
@@ -16715,7 +16742,8 @@ impl<'a> Checker<'a> {
             // symbol is the name as written — `[MNG-1]`'s module-qualified
             // mangling would make it unfindable, which defeats the point.
             let symbol = if let Some(exported) = export_symbol(&item.attrs) {
-                exported.to_string()
+                // `[MNG-2]` — a symbol C cannot spell is named in C by its alias.
+                if c_link_identifier(exported) { exported.to_string() } else { ember_branding::export_alias(exported) }
             } else { match &decl.abi {
                 Some(_) if ffi_counted.is_some() => mangle(name, false),
                 Some(_) if decl.is_foreign_decl => ffi_link_name(&item.attrs)
@@ -17174,6 +17202,92 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[FFI-26]` — `@export_table("Name", protocol=N)` on a struct of `extern` function pointer
+    /// fields: each field holds the function of its own name, which must have exactly the field's
+    /// type (an `extern` function, so a host calls it with the field's convention). Each entry's
+    /// thread contract is its function's (`[FFI-33c]`: `@export(threads=…)` on it, else the
+    /// file's `#! threads`), so a table sets `threads` field by field.
+    fn collect_export_tables(&mut self, module: &ast::Module) {
+        for item in &module.items {
+            let ast::ItemKind::Struct(decl) = &item.kind else { continue };
+            let Some(attr) = item.attrs.iter().find(|attr| attr.path.len() == 1 && attr.path[0].name.is("export_table"))
+            else { continue };
+            let mut name = None;
+            let mut protocol = None;
+            for arg in &attr.args {
+                match arg {
+                    ast::AttrArg::Expr(ast::Expr { kind: ast::ExprKind::Lit(ast::Literal::Str(symbol)), .. })
+                        if name.is_none() => name = Some(symbol.clone()),
+                    ast::AttrArg::Named { name: key, value: ast::Expr { kind: ast::ExprKind::Lit(ast::Literal::Int { value, .. }), .. } }
+                        if key.name.is("protocol") && protocol.is_none() && *value <= u128::from(u32::MAX) =>
+                        protocol = Some(*value as u32),
+                    _ => {
+                        self.sink.emit(
+                            Diagnostic::error(codes::E0104, attr.span, "`@export_table` takes the table's C symbol and its protocol version")
+                                .help("write `@export_table(\"Name\", protocol=1)`"),
+                        );
+                        break;
+                    }
+                }
+            }
+            let (Some(name), Some(protocol)) = (name, protocol) else {
+                self.sink.emit(
+                    Diagnostic::error(codes::E0104, attr.span, "`@export_table` needs the table's C symbol and its protocol version")
+                        .help("write `@export_table(\"Name\", protocol=1)`"),
+                );
+                continue;
+            };
+            if !c_link_identifier(&name) {
+                self.error(codes::E0104, attr.span, format!("`{name}` is not a C identifier, which a table's symbol must be: a host declares it in C"));
+                continue;
+            }
+            if !decl.generics.is_empty() {
+                self.error(codes::E0104, attr.span, "an exported table is one struct: a generic struct is not one");
+                continue;
+            }
+            let Some(&ty) = self.named_types.get(&self.qualified(decl.name.name)) else { continue };
+            let TyKind::Struct(id) = *self.types.kind(ty) else { continue };
+            let fields: Vec<(Symbol, Ty, Span)> = self.types.struct_def(id).fields.iter()
+                .map(|field| (field.name, field.ty, field.span)).collect();
+            let mut entries = Vec::new();
+            for (field, field_ty, span) in fields {
+                if field_ty == self.common.error {
+                    continue;
+                }
+                if !matches!(self.types.kind(field_ty), TyKind::Fn { abi: Some(_), .. }) {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E0104, span, format!("field `{field}` of an exported table is not an `extern` function pointer"))
+                            .note("an `@export_table` is a table of function pointers a host calls [FFI-26]"),
+                    );
+                    continue;
+                }
+                let Some(value) = self.function_value(field, span) else {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E1010, span, format!("no function `{field}` for the exported table's field"))
+                            .help(format!("each field holds the function of its own name: define `pub extern \"C\" fn {field}(…)`")),
+                    );
+                    continue;
+                };
+                if value.ty == self.common.error {
+                    continue;
+                }
+                if value.ty != field_ty {
+                    let (expected, found) = (self.types.display(field_ty), self.types.display(value.ty));
+                    self.sink.emit(
+                        Diagnostic::error(codes::E2020, span, format!("expected `{expected}`, found `{found}`"))
+                            .primary_label(format!("function `{field}` is `{found}`"))
+                            .note("a table's field holds the function of its own name, with exactly the field's type"),
+                    );
+                    continue;
+                }
+                if let ExprKind::FnValue(def) = value.kind {
+                    entries.push(def);
+                }
+            }
+            self.export_tables.push((name, protocol, ty, entries, attr.span));
+        }
+    }
+
     /// `[FFI-9]` — `extern "C"`, `"system"`, `"fastcall"` and `"vectorcall"` are the calling
     /// conventions of a definition and a function pointer; `"C++"` is Annex C's. Whether `abi` is one.
     fn check_calling_convention(&mut self, abi: &str, span: Span) -> bool {
@@ -17197,6 +17311,10 @@ impl<'a> Checker<'a> {
     /// a range value must instead enter through its checked constructor.
     fn check_foreign_signature(&mut self, decl: &ast::FnDecl, def: DefId, attrs: &[ast::Attribute]) {
         if decl.abi.is_none() && !has_attribute(attrs, "export") {
+            return;
+        }
+        // A generic export is `E2060` where its attribute is checked: its types are not known.
+        if !decl.generics.is_empty() && has_attribute(attrs, "export") {
             return;
         }
         // `[FFI-9]` — an Ember function may be defined with any of the four conventions.
@@ -35467,13 +35585,22 @@ impl<'a> Checker<'a> {
                                 "only a C export symbol, `on_panic=abort`, and `threads=main|any|creator` are supported"),
                         }
                     }
-                    if symbol.is_some_and(|symbol| !c_link_identifier(symbol)) {
-                        self.error(codes::E0900, attr.span,
-                            "an export name that is not a C identifier is not implemented yet");
+                    // `[MNG-2]` — the symbol is set exactly, a C identifier or not; a linker
+                    // symbol holds no space, quote or backslash, and no control character.
+                    if let Some(symbol) = symbol.filter(|symbol| !linker_symbol(symbol)) {
+                        self.sink.emit(
+                            Diagnostic::error(codes::E0104, attr.span, format!("`{symbol}` cannot be a linker symbol"))
+                                .note("a symbol is not empty and holds no space, quote, backslash or control character"),
+                        );
                     }
+                    // A C symbol names one function, and a generic's parameters have nothing to be
+                    // inferred from at an export: each instance is its own function [TYP-16].
                     if !decl.generics.is_empty() {
-                        self.error(codes::E0900, attr.span,
-                            "exporting a generic function before instantiation is not implemented yet");
+                        self.sink.emit(
+                            Diagnostic::error(codes::E2060, attr.span,
+                                format!("`{}` is generic, so its type parameters cannot be inferred for one C symbol", decl.name.name))
+                                .help("export a function that is not generic and calls the instance you mean"),
+                        );
                     }
                 }
             }
@@ -50794,7 +50921,8 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["must_use"], &["fn", "struct", "enum", "class", "type"], false),
     (&["deprecated", "allow"], &["item"], false),
     (&["export"], &["fn", "static"], false),
-    (&["export_table"], &["struct"], false),
+    // `[FFI-26]` — its arguments and fields are checked by `collect_export_tables`.
+    (&["export_table"], &["struct"], true),
     (&["ffi"], &["extern item", "overlay item"], false),
     // `[TCB-1]` — checked on the entry it grades (`check_grade`).
     (&["grade"], &["overlay item"], true),
@@ -51649,6 +51777,12 @@ fn ffi_count_siblings(decl: &ast::FnDecl, pointer: Option<Symbol>) -> Vec<String
 
 /// A C declaration cannot spell an arbitrary linker symbol portably. Names
 /// needing an assembler alias remain an explicit implementation gap.
+/// `[MNG-2]` — a symbol a linker takes: not empty, and no space, quote, backslash or control
+/// character (which no object format, module-definition file or version script can carry).
+fn linker_symbol(symbol: &str) -> bool {
+    !symbol.is_empty() && !symbol.chars().any(|ch| ch.is_whitespace() || ch.is_control() || matches!(ch, '"' | '\\'))
+}
+
 fn c_link_identifier(symbol: &str) -> bool {
     let mut chars = symbol.chars();
     matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')

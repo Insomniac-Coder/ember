@@ -142,6 +142,10 @@ fn leak() -> i32:
     b = Node("b", Some(a))
     a.next = Some(b)
     return 1
+
+@export("plugin-odd")
+fn odd() -> i32:
+    return 9
 "#;
 
 /// `[FFI-28]` — a `cdylib` exports its `@export` symbols, `ember_module_init` and
@@ -205,7 +209,8 @@ int main(int argc, char** argv) {{
     value_fn on_main = (value_fn)find(g_lib, "plugin_on_main");
     value_fn leak = (value_fn)find(g_lib, "plugin_leak");
     unary_fn twice = (unary_fn)find(g_lib, "plugin_double");
-    if (!init || !shutdown || !on_main || !leak || !twice) return 3;
+    value_fn odd = (value_fn)find(g_lib, "plugin-odd"); /* [MNG-2]: exactly the symbol written */
+    if (!init || !shutdown || !on_main || !leak || !twice || !odd) return 3;
     /* Nothing but the exports and the entry points: no runtime symbol, no private function. */
     if (find(g_lib, "ember_rt_init_v2") || find(g_lib, "ember_alloc") || find(g_lib, "ember_rt_shutdown")) return 4;
     if (strcmp(mode, "before") == 0) {{ on_main(); return 5; }}
@@ -222,7 +227,7 @@ int main(int argc, char** argv) {{
 #endif
         return 7;
     }}
-    if (twice(21) != 42 || on_main() != 7) return 8;
+    if (twice(21) != 42 || on_main() != 7 || odd() != 9) return 8;
     if (init(&cfg) != 0 || on_main() != 7) return 9; /* a second init changes nothing */
 #if defined(_WIN32)
     HANDLE thread = CreateThread(NULL, 0, worker, NULL, 0, NULL);
@@ -287,7 +292,7 @@ int main(int argc, char** argv) {{
         String::from_utf8_lossy(&listed.stdout).lines().filter_map(|line| line.split_whitespace().nth(2).map(str::to_string)).collect()
     };
     exports.sort();
-    assert_eq!(exports, ["ember_module_init", "ember_module_shutdown", "plugin_double", "plugin_leak", "plugin_on_main"]);
+    assert_eq!(exports, ["ember_module_init", "ember_module_shutdown", "plugin-odd", "plugin_double", "plugin_leak", "plugin_on_main"]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -416,6 +421,82 @@ fn a_module_built_for_another_runtime_abi_is_refused_first() {
     let output = run_host(&exe, &[], &dir);
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok", "{:?} {}", output.status.code(),
         String::from_utf8_lossy(&output.stderr));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `[FFI-26]` — a host that loads a library through one entry point finds its `@export_table` by
+/// name, checks its protocol version, and calls through it. `[FFI-33c]`: each entry keeps its own
+/// thread contract, its function's: a `main` entry called on another thread panics, an `any`
+/// entry beside it does not, in every profile; the header names each entry's contract.
+#[test]
+fn an_export_table_is_found_by_name_with_threads_per_entry() {
+    let dir = scratch();
+    let toolchain = toolchain();
+    package(&dir.join("game"), "[package]\nname = \"game\"\nkind = \"cdylib\"\n",
+        "@export(threads=main)\npub extern \"C\" fn on_draw() -> i32:\n    return 5\n\n\
+         pub extern \"C\" fn on_tick(n: i32) -> i32:\n    return n + 1\n\n\
+         @export_table(\"GameApi\", protocol=3)\nstruct GameApi:\n    on_draw: extern \"C\" fn() -> i32\n    on_tick: extern \"C\" fn(i32) -> i32\n");
+    for profile in ["debug", "release", "shipping"] {
+        let built = ember(&["build", "--profile", profile], &dir.join("game"));
+        assert_success(&built, "the cdylib with a table");
+        let lib = dir.join("game/target").join(profile).join("lib");
+        let header = std::fs::read_to_string(lib.join("game.h")).unwrap();
+        for text in ["/*   on_draw: main */", "/*   on_tick: any */", "#define GameApi_PROTOCOL 3u", "extern const uint32_t GameApi_protocol;"] {
+            assert!(header.contains(text), "the header lacks `{text}`:\n{header}");
+        }
+        let path = library_file(&lib, "game").to_string_lossy().replace('\\', "\\\\");
+        // A library's types are named in C under its package's namespace.
+        let package_bytes = "game".bytes().map(|byte| format!("{byte:02x}")).collect::<String>();
+        let table_type = format!("{}pkg_{package_bytes}_{}", ember_branding::mangle_prefix(), ember_branding::mangled("GameApi"));
+        assert!(header.contains(&format!("extern const {table_type} GameApi;")), "{header}");
+        let host = format!(r#"{HOST_PRELUDE}
+#include "game.h"
+static const {table_type}* g_api;
+static const char* g_mode;
+#if defined(_WIN32)
+static DWORD WINAPI other(LPVOID unused) {{
+#else
+static void* other(void* unused) {{
+#endif
+    (void)unused;
+    if (strcmp(g_mode, "main") == 0) {{
+        g_api->on_draw();
+    }} else {{
+        printf("%d\n", g_api->on_tick(41));
+    }}
+    return 0;
+}}
+int main(int argc, char** argv) {{
+    g_mode = argc > 1 ? argv[1] : "any";
+    ember_rt_config cfg = ember_rt_config_default();
+    cfg.on_panic = host_panic;
+    library l = load("{path}");
+    if (!l) return 2;
+    module_init_fn init = (module_init_fn)find(l, "ember_module_init");
+    g_api = (const {table_type}*)find(l, "GameApi");
+    const uint32_t* protocol = (const uint32_t*)find(l, "GameApi_protocol");
+    if (!init || !g_api || !protocol || *protocol != GameApi_PROTOCOL) return 3;
+    if (init(&cfg) != 0) return 4;
+    if (g_api->on_draw() != 5 || g_api->on_tick(1) != 2) return 5;
+#if defined(_WIN32)
+    HANDLE t = CreateThread(NULL, 0, other, NULL, 0, NULL);
+    WaitForSingleObject(t, INFINITE);
+#else
+    pthread_t t;
+    pthread_create(&t, NULL, other, NULL);
+    pthread_join(t, NULL);
+#endif
+    return 0;
+}}
+    "#);
+        let exe = link_host(&toolchain, &dir, &lib, &format!("host_{profile}"), &host);
+        let any = run_host(&exe, &["any"], &dir);
+        assert_eq!(String::from_utf8_lossy(&any.stdout).trim(), "42", "{profile}: {:?} {}", any.status.code(), String::from_utf8_lossy(&any.stderr));
+        assert!(any.status.success());
+        let main = run_host(&exe, &["main"], &dir);
+        assert!(String::from_utf8_lossy(&main.stdout).contains("panic: export requires the module initialization thread"),
+            "{profile}: {:?} {}{}", main.status.code(), String::from_utf8_lossy(&main.stdout), String::from_utf8_lossy(&main.stderr));
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 

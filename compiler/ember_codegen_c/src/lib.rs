@@ -969,6 +969,18 @@ enum Definition {
     FnPointer { ret: String, convention: &'static str, args: String },
 }
 
+/// `[MNG-2]` — the prototype of a function whose `@export` symbol `exact` is not a C identifier,
+/// named `alias` in C: GCC and Clang give the object-file symbol with an assembler label (after
+/// the platform's user label prefix; GCC writes its label into the assembly as it is, so there it
+/// is quoted for the assembler, as Clang quotes on its own); MSVC, which has none, defines `alias`
+/// and makes `exact` its linker alias, which a reference to `exact` resolves to (a shared library
+/// exports it as `exact` through its module-definition file).
+pub(crate) fn exact_symbol_prototype(signature: &str, alias: &str, exact: &str) -> String {
+    format!(
+        "#if defined(_MSC_VER) && !defined(__clang__)\n#pragma comment(linker, \"/ALTERNATENAME:{exact}={alias}\")\n{signature};\n#else\n#define EMBER_LABEL_TEXT(x) #x\n#define EMBER_LABEL_PREFIX(x) EMBER_LABEL_TEXT(x)\n#if defined(__clang__)\n{signature} __asm__(EMBER_LABEL_PREFIX(__USER_LABEL_PREFIX__) \"{exact}\");\n#else\n{signature} __asm__(\"\\\"\" EMBER_LABEL_PREFIX(__USER_LABEL_PREFIX__) \"{exact}\\\"\");\n#endif\n#undef EMBER_LABEL_PREFIX\n#undef EMBER_LABEL_TEXT\n#endif"
+    )
+}
+
 /// `[FFI-36a]` — the thunk that calls foreign destructor `symbol` and drops its result.
 fn foreign_destructor_thunk(symbol: &str) -> String {
     format!("{RT}ffi_destroy_{symbol}")
@@ -1323,6 +1335,16 @@ impl Emitter<'_> {
             let entry = bodies.iter().any(|body| body.symbol == ember_branding::mangled("main_entry"));
             let named = self.emit_frame_names(bodies, true);
             self.emit_entry_point(leak_check, entry, named);
+        }
+        // `[FFI-26]` — each export table: a constant of its struct holding each field's function,
+        // and its protocol version beside it.
+        if self.unit.is_none() {
+            for table in self.types.export_tables().to_vec() {
+                let c_ty = self.c_type(table.ty);
+                let entries = if table.entries.is_empty() { "0".to_string() } else { table.entries.join(", ") };
+                self.line(&format!("const {c_ty} {} = {{ {entries} }};", table.name));
+                self.line(&format!("const uint32_t {}_protocol = {}u;", table.name, table.protocol));
+            }
         }
         // ponytail: a module names no backtrace frames: the runtime keeps one table, which a
         // module sharing it would leave dangling when it unloads. Per-module tables if wanted.
@@ -5252,6 +5274,11 @@ impl Emitter<'_> {
                 let own = self.reload_body_signature(body);
                 self.line(&format!("{signature};"));
                 self.line(&format!("{own};"));
+                continue;
+            }
+            // `[MNG-2]` — an `@export` symbol C cannot spell: the function keeps its alias in C.
+            if let Some(exact) = ember_branding::export_alias_symbol(&body.symbol) {
+                self.line(&exact_symbol_prototype(&signature, &body.symbol, &exact));
                 continue;
             }
             if self.inline_bodies.contains_key(&body.symbol) || body.inline != ember_mir::InlineHint::default() {

@@ -25,8 +25,8 @@ pub struct Cdylib {
 }
 
 /// Compile `source` (the package's C) and, without `shared`, the runtime into one shared library
-/// in `lib`, exporting exactly `exports`; `libraries` are linked after them, in order
-/// (`[BLD-FFI-3]`).
+/// in `lib`, exporting exactly `exports` (a datum's name ends in ` DATA`); `libraries` are linked
+/// after them, in order (`[BLD-FFI-3]`).
 #[allow(clippy::too_many_arguments)]
 pub fn link_cdylib(
     toolchain: &Toolchain,
@@ -68,7 +68,7 @@ pub fn link_cdylib(
     match toolchain {
         Toolchain::Msvc { .. } => {
             let definitions = obj_dir.join(format!("{name}.def"));
-            write_definitions(&definitions, name, exports)?;
+            write_definitions(&definitions, name, exports, !matches!(toolchain, Toolchain::Msvc { cl, .. } if crate::is_clang_cl(cl)))?;
             command.args(["/nologo", "/LD", "/MD"]).args(&objects);
             if let Some(shared) = shared {
                 command.arg(&shared.link_with);
@@ -85,7 +85,7 @@ pub fn link_cdylib(
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) if cfg!(windows) => {
             let definitions = obj_dir.join(format!("{name}.def"));
-            write_definitions(&definitions, name, exports)?;
+            write_definitions(&definitions, name, exports, false)?;
             command.arg("-shared").args(&objects);
             if let Some(shared) = shared {
                 command.arg(&shared.link_with);
@@ -101,7 +101,12 @@ pub fn link_cdylib(
             let script = obj_dir.join(format!("{name}.map"));
             let mut text = String::from("{\n  global:\n");
             for symbol in exports {
-                text.push_str(&format!("    {symbol};\n"));
+                let symbol = symbol.trim_end_matches(" DATA");
+                // `[MNG-2]` — an alias's object-file symbol is its exact one (an assembler label).
+                match ember_branding::export_alias_symbol(symbol) {
+                    Some(exact) => text.push_str(&format!("    \"{exact}\";\n")),
+                    None => text.push_str(&format!("    {symbol};\n")),
+                }
             }
             text.push_str("  local: *;\n};\n");
             std::fs::write(&script, text)?;
@@ -125,10 +130,18 @@ pub fn link_cdylib(
 }
 
 /// The module-definition file: the library's name and each export, by name.
-fn write_definitions(file: &Path, name: &str, exports: &[String]) -> Result<(), BuildError> {
+fn write_definitions(file: &Path, name: &str, exports: &[String], aliases: bool) -> Result<(), BuildError> {
     let mut text = format!("LIBRARY {name}\nEXPORTS\n");
     for symbol in exports {
-        text.push_str(&format!("    {symbol}\n"));
+        // `[MNG-2]` — an alias is exported under its exact symbol: MSVC's object defines the alias
+        // (`aliases`), Clang's the exact symbol itself.
+        match ember_branding::export_alias_symbol(symbol) {
+            // ponytail: written bare (the linker keeps quotes as part of the name), so a symbol
+            // holding `=`, `@` or `,` cannot be exported from a Windows library.
+            Some(exact) if aliases => text.push_str(&format!("    {exact}={symbol}\n")),
+            Some(exact) => text.push_str(&format!("    {exact}\n")),
+            None => text.push_str(&format!("    {symbol}\n")),
+        }
     }
     std::fs::write(file, text)?;
     Ok(())

@@ -1077,7 +1077,7 @@ fn relaxed_msvc_flags(profile: Profile, fast: bool) -> Vec<&'static str> {
 
 /// Whether an MSVC-style compiler is clang's driver for it, which reads
 /// `/fp:fast` as all of `-ffast-math`.
-fn is_clang_cl(cl: &Path) -> bool {
+pub(crate) fn is_clang_cl(cl: &Path) -> bool {
     cl.file_stem().is_some_and(|stem| stem.eq_ignore_ascii_case("clang-cl"))
 }
 
