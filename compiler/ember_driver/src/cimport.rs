@@ -190,8 +190,8 @@ fn ident(name: &str) -> String {
 /// `[FFI-8]` — the C names whose Ember type is fixed whatever they are defined as.
 fn standard_typedef(name: &str) -> Option<&'static str> {
     Some(match name {
-        "size_t" | "uintptr_t" => "usize",
-        "ptrdiff_t" | "intptr_t" | "ssize_t" => "isize",
+        "size_t" | "__size_t" | "uintptr_t" => "usize",
+        "ptrdiff_t" | "__ptrdiff_t" | "intptr_t" | "ssize_t" => "isize",
         _ => return None,
     })
 }
@@ -1013,7 +1013,16 @@ impl Writer {
     fn constant_value(&mut self, cursor: CXCursor) -> Result<(String, String), String> {
         // SAFETY(ffi): a live variable cursor; the result is disposed.
         unsafe {
-            let ty = clang_getCanonicalType(clang_getCursorType(cursor));
+            // A macro's probe is `__auto_type`, whose deduced type keeps its typedef only in its
+            // spelling: `sizeof` is `size_t` (Clang's `__size_t`), `usize` ([FFI-8]).
+            let written = clang_getCursorType(cursor);
+            let ty = clang_getCanonicalType(written);
+            let spelled = type_spelling(written);
+            let fixed = standard_typedef(spelled.trim_start_matches("const ").trim());
+            let written = if written.kind == CXType_Auto { ty } else { written };
+            if ty.kind == CXType_Enum {
+                return Err("a constant of an enum type: Ember's enum constants are its variants".to_string());
+            }
             if ty.kind == CXType_Pointer {
                 let pointee = clang_getCanonicalType(clang_getPointeeType(ty)).kind;
                 if !matches!(pointee, CXType_Char_S | CXType_Char_U) {
@@ -1025,7 +1034,7 @@ impl Writer {
                 return Err("Clang does not evaluate it to a constant".to_string());
             }
             let value = match clang_EvalResult_getKind(result) {
-                CXEval_Int => self.ty(ty, false).map(|mapped| {
+                CXEval_Int => fixed.map(|fixed| Ok(fixed.to_string())).unwrap_or_else(|| self.ty(written, false)).map(|mapped| {
                     let value = if clang_EvalResult_isUnsignedInt(result) != 0 {
                         clang_EvalResult_getAsUnsigned(result).to_string()
                     } else {
@@ -1033,7 +1042,7 @@ impl Writer {
                     };
                     if mapped == "bool" { (mapped, (value != "0").to_string()) } else { (mapped, value) }
                 }),
-                CXEval_Float => self.ty(ty, false).and_then(|mapped| {
+                CXEval_Float => self.ty(written, false).and_then(|mapped| {
                     let value = clang_EvalResult_getAsDouble(result);
                     if value.is_finite() { Ok((mapped, float_literal(value))) } else { Err("an infinite or NaN value".to_string()) }
                 }),

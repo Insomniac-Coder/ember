@@ -7271,7 +7271,6 @@ int bind_log(const char* format, ...);
 /// adds only what it lacks, keeping what was written by hand.
 #[test]
 fn bind_init_writes_a_starter_overlay_that_compiles_unchanged() {
-    let root = workspace_root();
     let dir = temporary_directory("bind-init");
     std::fs::write(dir.join("calc.h"), BIND_HEADER).unwrap();
     let init = ember(&["bind", "calc.h", "--init"], &dir);
@@ -7308,7 +7307,6 @@ fn bind_init_writes_a_starter_overlay_that_compiles_unchanged() {
     assert!(after.contains("    fn bind_neg(a) -> unsafe\n"), "the new function is missing:\n{after}");
     assert_eq!(after.matches("fn bind_sum(").count(), 1, "an entry was added twice:\n{after}");
     assert_eq!(after.matches("# skipped: `bind_log`").count(), 1, "a skip was noted twice:\n{after}");
-    let _ = root;
 }
 
 /// `[CLI-6]` — `ember bind --report` lists every skipped declaration and every declaration still
