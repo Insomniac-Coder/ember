@@ -7,6 +7,7 @@
 #$ 0 0 0 0 0 0 0 0 0 0
 #$ 0 0 0 0 0
 #$ 217 3
+#$ 32 32 64
 # `[LAY-2]` — `@align(N)` raises a type's alignment to `N` and makes its size a multiple of `N`
 # (a struct's or an enum's), and every place holding it honours it: a local, a field of another
 # struct, an element of a tuple, a `Box`'s payload and, by `[HEAP-9]`, every buffer of an `Array`
@@ -36,6 +37,10 @@ struct Wide:
 @align(2)
 struct Twice:
     a: u32
+
+@align(32)
+struct Cell32[T]:
+    value: T
 
 fn off(p: *Line) -> int:
     unsafe:  # SAFETY: only the address is read, as a number; nothing is accessed through it
@@ -72,3 +77,4 @@ fn main():
         Slot.Empty => 0 as u64
         Slot.Full(n) => n
     println(h.line.b + boxed.b + pair.1.b + held + 100 as u64, built[3].b)
+    println(size_of[Cell32[u8]](), align_of[Cell32[u64]](), size_of[Cell32[Line]]())

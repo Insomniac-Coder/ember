@@ -8,11 +8,13 @@
 #$ 30 2 32
 #$ hi 3 ok 2
 #$ 11 1 25
+#$ 5 9 1 8
 # `[LAY-2]` — `@packed`: no padding, so the fields sit back to back and the type is aligned to one
 # byte; `size_of`, `align_of` and `offset_of` report it. Unaligned fields are read and written by
 # value: plain and compound assignment, through a nested struct, in a list's elements, a packed
-# enum's payload, and fields that own memory, which move out and drop like any other. A field
-# aligned to one byte is never unaligned, so a reference to it is allowed.
+# enum's payload, and fields that own memory, which move out and drop like any other. A generic
+# type's instances are packed each. A field aligned to one byte is never unaligned, so a
+# reference to it is allowed.
 
 @packed
 @derive(Copy)
@@ -49,6 +51,11 @@ struct Record:
     name: String
     items: Array[int]
 
+@packed
+struct Pair[T]:
+    a: u8
+    b: T
+
 fn first(t: ref u8) -> u8:
     return t
 
@@ -78,3 +85,6 @@ fn main():
     latest = r.name
     println(name, len(items), latest, r.tag)
     println(size_of[Message](), offset_of[Record](name), offset_of[Record](items))
+    p = Pair[u64](a = 1, b = 7)
+    p.b += 1
+    println(size_of[Pair[u32]](), size_of[Pair[u64]](), align_of[Pair[u64]](), p.b)

@@ -2714,6 +2714,7 @@ impl Emitter<'_> {
         if attrs.is_none() {
             return out;
         }
+        // A generic template's fields stand for no type yet, so it has no layout to check.
         let (ty, fields): (Ty, Vec<String>) = match node {
             TypeNode::Struct(id) => (
                 self.types.find(&TyKind::Struct(id)).expect("a defined struct is interned"),
@@ -2722,6 +2723,9 @@ impl Emitter<'_> {
             TypeNode::Enum(id) => (self.types.find(&TyKind::Enum(id)).expect("a defined enum is interned"), vec!["tag".to_string(), "payload".to_string()]),
             _ => return out,
         };
+        if self.types.is_generic(ty) {
+            return out;
+        }
         let layout = self.types.layout(ty);
         let mut facts = Vec::new();
         if !members.is_empty() {
