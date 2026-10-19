@@ -5017,6 +5017,27 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-211 — A `mut` parameter's default in another float mode (N7, `[TYP-9]`, `[FN-5]`)
+
+2026-10-19. A default doing float work keeps its declaration's mode (ODR-090): it is the body of a
+closure of that mode (`in_float_mode`), called at the call. A `mut` parameter's default is a place,
+which a closure returning a value cannot give, so such a call was `E0900` (N7).
+* The closure now returns `ref mut` to the place (its body is `ref mut <default>`); the call's
+  argument is that reference, dereferenced and borrowed again, as a written `mut` argument is.
+* A returned reference must come from a parameter's referent (`[LT-1]`), so for a place every name
+  the default can use that is not already a reference (a class handle passed by copy, chiefly) is
+  passed to the closure as `ref`. The 2026-10-17 attempt hoisted only the index into a closure and
+  met `E3080` (the handle's access held to the end of the statement); this avoids that.
+* The closure's parameters stay borrowed: each earlier `mut` parameter (and a `mut self` receiver) is
+  reserved for the call until it is made (`[BRW-3]`), so a default that writes through one, or is a
+  place inside one, is refused in every mode, strict included (`E3022`), and a `mut` closure
+  parameter would only make a read conflict. The default that is valid reaches its place through a
+  class handle.
+* Test: `TYP-9/accept_a_mut_default_keeps_its_declarations_float_mode` (both directions, the place
+  computed in its declaration's C unit, and a `mut self` method's default). The reject test for N7
+  is gone; `docs/NOT-IMPLEMENTED.md` N7 removed, `[TYP-9]`'s and `[FN-5]`'s `unfinished` entries removed.
+  If the closure still cannot be built, the call stays `E0900`, never evaluated in the wrong mode.
+
 ## ADR-210 — `@fastmath` and `@fp(contract)` in libraries and reloadable builds (N6, `[CG-C-11]`)
 
 2026-10-19. A relaxed function is a C unit of its own compiled with the relaxed flags (`[CG-C-11]`).

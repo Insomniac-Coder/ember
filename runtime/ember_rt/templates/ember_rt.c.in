@@ -1291,6 +1291,41 @@ void ember_mutex_wake(uint32_t* word) {
 #include <pthread.h>
 #endif
 
+/* [DET-10] The defined floating-point environment, at a program's start-up and on every thread the
+ * runtime creates (a new thread may inherit its creator's, which foreign code may have changed):
+ * round to nearest, ties to even; no flush-to-zero or denormals-are-zero; no exception traps. */
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#include <xmmintrin.h>
+#elif defined(_MSC_VER)
+#include <float.h>
+#endif
+
+static void rt_fp_environment(void) {
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    /* MXCSR: DAZ (bit 6) and FTZ (bit 15) clear, the six exception masks (bits 7-12) set, the
+     * rounding control (bits 13-14) to nearest; the sticky flags (bits 0-5) are kept. */
+    _mm_setcsr((_mm_getcsr() & ~0xFFC0u) | 0x1F80u);
+#if defined(__GNUC__) || defined(__clang__)
+    /* The x87 control word too, which `long double` and C's <fenv.h> read: the rounding control
+     * (bits 10-11) to nearest, the six exception masks (bits 0-5) set. */
+    unsigned short control;
+    __asm__ __volatile__("fnstcw %0" : "=m"(control));
+    control = (unsigned short)((control & ~0x0C00u) | 0x003Fu);
+    __asm__ __volatile__("fldcw %0" : : "m"(control));
+#endif
+#elif defined(__aarch64__) && !defined(_MSC_VER)
+    /* FPCR: the rounding mode (bits 22-23) to nearest; FZ (24), FZ16 (19) and the trap enables
+     * (8-12, 15) clear. */
+    uint64_t fpcr;
+    __asm__ __volatile__("mrs %0, fpcr" : "=r"(fpcr));
+    fpcr &= ~(uint64_t)((3u << 22) | (1u << 24) | (1u << 19) | (0x1Fu << 8) | (1u << 15));
+    __asm__ __volatile__("msr fpcr, %0" : : "r"(fpcr));
+#elif defined(_MSC_VER)
+    unsigned int current;
+    (void)_controlfp_s(&current, _RC_NEAR | _MCW_EM | _DN_SAVE, _MCW_RC | _MCW_EM | _MCW_DN);
+#endif
+}
+
 static void thread_let_go(ember_thread* thread) {
     if (object_fetch_sub_u32(&thread->refs, 1) == 1) {
         if (thread->drop_result != NULL) {
@@ -1306,6 +1341,7 @@ static DWORD WINAPI thread_main(LPVOID raw) {
 static void* thread_main(void* raw) {
 #endif
     ember_thread* thread = (ember_thread*)raw;
+    rt_fp_environment();
     ember_rt_thread_attach();
 #if defined(EMBER_RELOAD)
     /* [HR-42] The thread's work is Ember code. */
@@ -1654,6 +1690,7 @@ static DWORD WINAPI job_worker(LPVOID unused) {
 static void* job_worker(void* unused) {
 #endif
     (void)unused;
+    rt_fp_environment();
     ember_rt_thread_attach();
     for (;;) {
         uint32_t seen = object_load_u32(&g_job_signal);
@@ -8424,6 +8461,9 @@ static int g_argc;
 static char** g_argv;
 
 void ember_rt_set_args(int argc, char** argv) {
+    /* [DET-10] Only a program's entry calls this, first: its start-up. A host keeps its own
+     * environment on its own threads. */
+    rt_fp_environment();
     g_argc = argc;
     g_argv = argv;
 }

@@ -47967,15 +47967,16 @@ impl<'a> Checker<'a> {
             let mut not_in_mode = false;
             if fp != self.active_fp && self.sink.error_count() == errors_before && self.float_work(&value) {
                 let closure_mark = self.sink.mark();
-                if mode == Mode::Mut {
+                let closure = self.in_float_mode(&default, ty, fp, mode == Mode::Mut);
+                if self.sink.rollback(closure_mark) {
                     not_in_mode = true;
+                } else if mode == Mode::Mut {
+                    // The closure hands back the place, which the call takes as the argument.
+                    let span = closure.span;
+                    let place = Expr { ty, kind: ExprKind::Deref(Box::new(closure)), span };
+                    value = Expr { ty: value.ty, kind: ExprKind::Ref { place: Box::new(place), mutable: true }, span };
                 } else {
-                    let closure = self.in_float_mode(&default, ty, fp);
-                    if self.sink.rollback(closure_mark) {
-                        not_in_mode = true;
-                    } else {
-                        value = if mode == Mode::Borrow && by_address { self.borrow_argument(closure, ty) } else { closure };
-                    }
+                    value = if mode == Mode::Borrow && by_address { self.borrow_argument(closure, ty) } else { closure };
                 }
             }
             if let Some(previous) = caller_owner { self.self_ty = previous; }
@@ -47990,7 +47991,7 @@ impl<'a> Checker<'a> {
                     codes::E0900,
                     span,
                     format!(
-                        "the default of `{name}` does float work in its function's `{}` mode, which a call from here cannot keep yet",
+                        "the default of `{name}` does float work in its function's `{}` mode, and no function of that mode could be made to compute it here",
                         fp.name()
                     ),
                 );
@@ -48567,7 +48568,7 @@ impl<'a> Checker<'a> {
             && self.float_work(&value)
         {
             let closure_mark = self.sink.mark();
-            let closure = self.in_float_mode(default, ty, FpMode::Strict);
+            let closure = self.in_float_mode(default, ty, FpMode::Strict, false);
             if self.sink.rollback(closure_mark) {
                 self.error(
                     codes::E0900,
@@ -48597,17 +48598,33 @@ impl<'a> Checker<'a> {
     /// here. Each mode is compiled with its own flags (`[CG-C-11]`), so the
     /// closure is where the mode holds. What the default can name (`self` and
     /// the earlier parameters) is passed to it, borrowed, under the same
-    /// names: a closure does not capture `self`.
-    fn in_float_mode(&mut self, default: &ast::Expr, ty: Ty, fp: FpMode) -> Expr {
+    /// names: a closure does not capture `self`. Borrowed is all a default
+    /// can have of them: each `mut` one is reserved for the call until it is
+    /// made (`[BRW-3]`), so a default that writes through one is refused in
+    /// any mode. A `mut` parameter's default is a place: the closure returns
+    /// `ref mut` to it.
+    fn in_float_mode(&mut self, default: &ast::Expr, ty: Ty, fp: FpMode, place: bool) -> Expr {
         let span = default.span;
         let mut names: Vec<(Symbol, LocalId)> =
             self.scopes.iter().flat_map(|scope| scope.iter().map(|(name, local)| (*name, *local))).collect();
         names.sort_by_key(|(_, local)| local.0);
+        // A place is handed back as a reference, which must come from a parameter's referent
+        // (`[LT-1]`): for a place, each name not already a reference is passed as one.
+        let by_ref: Vec<bool> = names
+            .iter()
+            .map(|(_, local)| place && !matches!(self.types.kind(self.locals[local.0 as usize].ty), TyKind::Ref { .. }))
+            .collect();
         let params = names
             .iter()
-            .map(|(_, local)| FnParam { ty: self.locals[local.0 as usize].ty, mode: FnParamMode::Borrow })
+            .zip(&by_ref)
+            .map(|((_, local), &by_ref)| {
+                let ty = self.locals[local.0 as usize].ty;
+                let ty = if by_ref { self.types.intern(TyKind::Ref { mutable: false, inner: ty }) } else { ty };
+                FnParam { ty, mode: FnParamMode::Borrow }
+            })
             .collect();
-        let fn_ty = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: true, is_unsafe: false, params, ret: ty });
+        let ret = if place { self.types.intern(TyKind::Ref { mutable: true, inner: ty }) } else { ty };
+        let fn_ty = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: true, is_unsafe: false, params, ret });
         let ident = |name: Symbol| ast::Ident { name, span };
         let lambda = ast::Lambda {
             is_owned: false,
@@ -48625,16 +48642,24 @@ impl<'a> Checker<'a> {
                 })
                 .collect(),
             ret: None,
-            body: ast::LambdaBody::Expr(Box::new(default.clone())),
+            body: ast::LambdaBody::Expr(Box::new(if place {
+                ast::Expr {
+                    id: ast::NodeId::DUMMY,
+                    kind: ast::ExprKind::RefOf { mutable: true, place: Box::new(default.clone()) },
+                    span,
+                }
+            } else {
+                default.clone()
+            })),
         };
         let caller_fp = std::mem::replace(&mut self.active_fp, fp);
         let closure = self.synth_lambda(&lambda, Some(fn_ty), span);
         self.active_fp = caller_fp;
         let args: Vec<ast::Arg> = names
             .iter()
-            .map(|(name, _)| ast::Arg {
-                name: None,
-                value: ast::Expr {
+            .zip(&by_ref)
+            .map(|((name, _), &by_ref)| {
+                let value = ast::Expr {
                     id: ast::NodeId::DUMMY,
                     kind: if name.is("self") {
                         ast::ExprKind::SelfExpr
@@ -48642,8 +48667,13 @@ impl<'a> Checker<'a> {
                         ast::ExprKind::Path { segments: vec![ident(*name)] }
                     },
                     span,
-                },
-                span,
+                };
+                let value = if by_ref {
+                    ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::RefOf { mutable: false, place: Box::new(value) }, span }
+                } else {
+                    value
+                };
+                ast::Arg { name: None, value, span }
             })
             .collect();
         self.call_value(closure, &args, span)

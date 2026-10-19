@@ -22,14 +22,3 @@ followed.
 | **Meanwhile** | it parses, then is refused with `E1010` "not supported yet in this phase". Refused rather than ignored: a declaration that is stored and then ignored would build a program that is wrong |
 | **Can a program notice** | yes, as a rejection |
 | **Plan** | Phase 7, with the importer. ERR-037 |
-
-## N7 — a default doing float work that its mode's closure cannot hold
-
-| | |
-|---|---|
-| **Rule** | `[TYP-9]` (ODR-090): "a parameter default keeps its declaring function's mode ... wherever ... evaluated" |
-| **The feature** | a default of another float mode than the calling function's that does float work and cannot be the body of a closure: a `mut` parameter's default (a place, which a closure cannot hand back), or one using `self` or an earlier parameter in a way a borrowed closure parameter cannot (a `mut self` method) |
-| **Requires** | evaluating a place, or a mutating default, out of line in another C unit: a function of the declaration's mode taking the earlier parameters in their own modes |
-| **Meanwhile** | `E0900` at the call, naming the parameter and the mode (`TYP-9/reject_a_mut_default_doing_float_work_from_another_mode`); a default doing no float work, or called from its own mode, is not affected |
-| **Can a program notice** | yes: such a call does not compile |
-| **Plan** | give each such default a function of its declaration's mode whose parameters take the earlier parameters' modes |

@@ -10723,6 +10723,14 @@ formal 1/9 count or Phase 2's estimate.
 > ADR-207). B3 built (0.9.10_Hardened_15, ADR-208). The owner then set the goal: solo and
 > autonomous, 85% and then 90%. A1 built (0.9.10_Hardened_16, ADR-209): layout changes apply at a
 > checkpoint unless a frame below it still uses the old layout. Every owner decision is now done.
+> Then, toward 90% (solo): N6 (`@fastmath` in libraries and reload images, ADR-210); `[EFF-7]`
+> `@assume_noalloc(call)` (the call's own MIR terminator takes the call's span, which
+> `Body::assume_noalloc` matches); `[DET-10]` (the runtime sets MXCSR, the x87 control word and
+> AArch64's FPCR at a program's start-up and on each thread it creates; `ember_rt_set_args` is the
+> program's start-up, so a host keeps its own); `[HR-11]`'s schema test; `[EFF-10]` (the safety
+> side table lists every runtime check left in, by site, beside the removed ones); N7 (ADR-211: a
+> `mut` parameter's default in another float mode, a closure of its mode returning `ref mut`).
+> Overall crossed 85% here; the goal is now 90%.
 
 
 **2026-10-12 (autopilot), a Part V.5 class probe sweep: D-560..D-566, ODR-104 (0.9.10_Hardened_8).**
