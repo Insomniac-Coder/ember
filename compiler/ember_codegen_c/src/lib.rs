@@ -1219,6 +1219,21 @@ impl Emitter<'_> {
             self.line("#endif");
         }
         self.line("");
+        // Annex B — an image's C is compiled with the reload definitions, which change the runtime
+        // header's object header and declarations (`[HR-12]`); it states them itself, so the file
+        // means the same however it is compiled (the build passes them too).
+        if let Some(image) = &self.reload {
+            let upper = ember_branding::SYMBOL_PREFIX.to_uppercase();
+            let mut defines = vec![format!("{upper}_RELOAD")];
+            if image.instances {
+                defines.push(format!("{upper}_RELOAD_INSTANCES"));
+            }
+            for define in defines {
+                self.line(&format!("#ifndef {define}"));
+                self.line(&format!("#define {define} 1"));
+                self.line("#endif");
+            }
+        }
         let header = ember_branding::runtime_header();
         self.line(&format!("#include \"{header}\""));
         // `[SIMD-1]` — `std.simd`'s types lower through the runtime's vector header.
@@ -4412,6 +4427,11 @@ impl Emitter<'_> {
             self.line("    UINT32_C(0),");
             self.line("    NULL,");
             self.line("    UINT32_C(0)");
+            // Annex B — a reload build's type information ends with the type's identity across
+            // images; a shared value's has none (as a class's is made, `class_identity_symbol`).
+            if self.reload.is_some() {
+                self.line("    , NULL");
+            }
             self.line("};");
         }
     }
@@ -6122,6 +6142,10 @@ impl Emitter<'_> {
                 let n = local.0;
                 self.line(&format!("    {elem}* restrict _{n}_r = ({elem}*){list}.ptr;"));
                 self.line(&format!("    size_t _{n}_rn = {list}.len; (void)_{n}_rn;"));
+                // The loop reads the view through `_r`; its own pointer may then be read nowhere.
+                if self.view_pointers.contains_key(&(n as usize)) {
+                    self.line(&format!("    (void)_{n}_ptr;"));
+                }
                 self.loop_restricted.insert(n, *through);
             }
         }
@@ -8142,12 +8166,17 @@ impl Emitter<'_> {
                     }
                     Builtin::RetainedAddress => return self.retained_address(&rendered[0], *arg_ty),
                     Builtin::ForeignDestructor { symbol, ret, fn_ty, .. } => {
-                        let callee = if self.is_void(*ret) {
-                            rendered[0].clone()
-                        } else {
+                        if self.is_void(*ret) {
+                            return format!("(({}){})", self.c_type(*fn_ty), rendered[0]);
+                        }
+                        // A destructor with a result is called through its `void` thunk; the
+                        // function value given is still read, so its local is not left unused.
+                        return format!(
+                            "((void)({}), ({}){})",
+                            rendered[0],
+                            self.c_type(*fn_ty),
                             foreign_destructor_thunk(symbol.as_str())
-                        };
-                        return format!("(({}){callee})", self.c_type(*fn_ty));
+                        );
                     }
                     // `[STA-3]` — the accessor `lazy_static_definitions` writes.
                     Builtin::LazyStatic { init, .. } => return format!("{init}_static()"),

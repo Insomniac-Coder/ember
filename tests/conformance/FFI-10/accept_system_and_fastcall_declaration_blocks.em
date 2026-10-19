@@ -5,7 +5,7 @@
 #$ stdout: 9000000000
 #$ stdout: 17
 #$ assert-c: contains("EMBER_CC_SYSTEM abs(")
-#$ assert-c: contains("EMBER_CC_FASTCALL llabs(")
+#$ assert-c: contains("EMBER_CC_FASTCALL imaxabs(")
 # `[FFI-10]`, `[FFI-9]` — a declaration block names its calling convention:
 # `"system"` is `stdcall` on 32-bit Windows and C elsewhere, and on x86-64
 # `"fastcall"` is the one convention there, so the C library's functions are
@@ -15,10 +15,10 @@ unsafe extern "system":
     safe fn abs(x: i32) -> i32
 
 unsafe extern "fastcall":
-    safe fn llabs(x: i64) -> i64
+    safe fn imaxabs(x: i64) -> i64
 
 fn main():
     println(abs(-42))
-    println(llabs(-9000000000))
+    println(imaxabs(-9000000000))
     absolute = abs
     println(absolute(-17))

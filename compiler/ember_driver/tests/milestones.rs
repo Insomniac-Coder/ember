@@ -115,6 +115,7 @@ fn code_and_message(value: &str) -> Option<(String, String)> {
 fn parse_expectations(source: &str) -> Expectations {
     let mut expectations = Expectations::default();
     let mut collecting_stdout = false;
+    let mut names_c_compilers = false;
     let mut stdin_lines: Vec<String> = Vec::new();
     let mut stdout_lines: Vec<String> = Vec::new();
 
@@ -246,13 +247,19 @@ fn parse_expectations(source: &str) -> Expectations {
             }
         } else if collecting_stdout {
             stdout_lines.push(rest.to_string());
+        } else if rest.starts_with("c-compilers:") {
+            // The C compilers this test's C is for (`extern "vectorcall"`, `[FFI-9]`): the C
+            // warning sweep skips the others. This suite compiles no C for a `compile-pass` or
+            // `compile-fail` test, the only kinds that may name them (checked below).
+            names_c_compilers = true;
+            collecting_stdout = false;
         } else if !rest.is_empty() && !rest.starts_with("rules:") && !rest.starts_with("note") {
             // An unrecognised key used to fall through in silence, so
             // `#$ panic:` for `#$ panics:` asserted nothing and the test
             // passed. Every annotation is now either understood or refused.
             panic!(
                 "unrecognised `#$` annotation: {rest:?}
-  known keys:                  test, profiles, exit, assert-c, error[…], warning[…], help, not-help, panics, stdout, stderr, stdin, args, rules, note"
+  known keys:                  test, profiles, exit, assert-c, error[…], warning[…], help, not-help, panics, stdout, stderr, stdin, args, rules, note, c-compilers"
             );
         }
     }
@@ -260,6 +267,10 @@ fn parse_expectations(source: &str) -> Expectations {
     if !stdout_lines.is_empty() {
         expectations.stdout = Some(stdout_lines.join("\n"));
     }
+    assert!(
+        !names_c_compilers || matches!(expectations.kind.as_deref(), Some("compile-pass" | "compile-fail")),
+        "`#$ c-compilers:` is for a test whose C only the C warning sweep compiles (compile-pass, compile-fail)"
+    );
     if !stdin_lines.is_empty() {
         expectations.stdin = Some(stdin_lines.iter().map(|line| format!("{line}\n")).collect());
     }
@@ -2394,7 +2405,7 @@ unsafe extern \"C\":
     @ffi(effects=[])
     safe fn abs(x: i32) -> i32
     @ffi(effects=[])
-    safe fn llabs(x: i64) -> i64
+    safe fn imaxabs(x: i64) -> i64
     @ffi(param(text, borrowed, nul_terminated), effects=[])
     safe fn strlen(text: cstr) -> usize
     @ffi(effects=[])
@@ -2421,7 +2432,7 @@ fn allocates():
         free(block)
 
 fn main():
-    println(llabs(-3))
+    println(imaxabs(-3))
 ");
     let out_dir = package.join("target");
     let out_arg = out_dir.to_string_lossy().into_owned();
@@ -2436,13 +2447,13 @@ fn main():
         "`abs`: 2 calls from 2 of 2 call sites; no Alloc: instrumented; no Lock: instrumented; no Block: instrumented; no Io: instrumented",
         "`strlen`: 1 call from 1 of 2 call sites; no Alloc: instrumented, partial;",
         "`malloc`: 1 call from 1 of 1 call site; no Alloc: contradicted (E5053)",
-        "`llabs`: 0 calls from 0 of 1 call site; no Alloc, no Lock, no Block, no Io: unexercised (W5054)",
+        "`imaxabs`: 0 calls from 0 of 1 call site; no Alloc, no Lock, no Block, no Io: unexercised (W5054)",
     ] {
         assert!(run.stdout.contains(line), "missing `{line}`:\n{text}");
     }
     assert!(!run.stdout.contains("`free`: ") || run.stdout.contains("`free`: 1 call"), "{text}");
     assert!(run.stderr.contains("error[E5053]: an instrumented run contradicted `malloc`'s effects: it reached Alloc"), "{text}");
-    assert!(run.stderr.contains("warning[W5054]: `llabs`'s effect facts were never exercised"), "{text}");
+    assert!(run.stderr.contains("warning[W5054]: `imaxabs`'s effect facts were never exercised"), "{text}");
     assert!(!run.stderr.contains("`abs`"), "nothing contradicted `abs`:\n{text}");
 
     let record_path = package.join(format!(".{}/ffi-evidence/main.json", ember_branding::SYMBOL_PREFIX));
@@ -2502,7 +2513,7 @@ fn calls_foreign_lists_what_an_item_reaches_with_each_contract() {
          \x20   @ffi(param(text, borrowed, nul_terminated), link_name=\"strlen\")\n\
          \x20   safe fn length(text: cstr) -> usize\n\
          \x20   @ffi(effects=[])\n    safe fn labs(x: i64) -> i64\n\
-         \x20   safe fn llabs(x: i64) -> i64\n\n\
+         \x20   safe fn imaxabs(x: i64) -> i64\n\n\
          interface Shape:\n    fn area(self) -> i64\n\n\
          struct Square:\n    side: i64\n\n\
          extend Square implements Shape:\n    fn area(self) -> i64:\n        return labs(self.side * self.side)\n\n\
@@ -2510,7 +2521,7 @@ fn calls_foreign_lists_what_an_item_reaches_with_each_contract() {
          fn noisy() -> i32:\n    unsafe:  # SAFETY(ffi): rand has no precondition\n        return clib.rand()\n\n\
          fn measure(shape: ref dyn Shape) -> i64:\n    return shape.area()\n\n\
          fn main():\n    counter = Counter(count = 0)\n    println(counter.bump(), length(c\"abc\"), noisy())\n\
-         \x20   pick = llabs\n    println(pick(-4))\n    square = Square(side = 2)\n    println(measure(ref square))\n",
+         \x20   pick = imaxabs\n    println(pick(-4))\n    square = Square(side = 2)\n    println(measure(ref square))\n",
     )
     .expect("write the program");
     let source_arg = source.to_string_lossy().into_owned();
@@ -2525,7 +2536,7 @@ fn calls_foreign_lists_what_an_item_reaches_with_each_contract() {
     assert!(out.contains("its effects: `effects=[]`  [asserted]"), "{out}");
     assert!(out.contains("  main -> noisy -> clib.rand\n"), "{out}");
     assert!(out.contains("fn `rand` unsafe to call") && out.contains("its effects: none stated, so every effect"), "{out}");
-    assert!(out.contains("  main -> llabs\n"), "a function value taken is reachable: {out}");
+    assert!(out.contains("  main -> imaxabs\n"), "a function value taken is reachable: {out}");
     assert!(out.contains("and what `measure` calls through a function or `dyn` value"), "{out}");
     let helper = ember(&["calls", "--foreign", "Counter.bump", &source_arg], &root);
     assert!(helper.stdout.contains("(1):") && helper.stdout.contains("Counter.bump -> clib.abs"), "{}", helper.stdout);

@@ -1,8 +1,30 @@
 # The owner's answers to the 85% helpers' questions (2026-10-18/19)
 
 Each was put to the owner one at a time; the helpers' own wording is in `A-notes.md`, `B-notes.md`
-and `D-notes.md`. None is applied yet: each is a change to the specification or the code that
-follows the merge (ADR-204).
+and `D-notes.md`. **These are the owner's decisions: apply them as written, never re-decide them.**
+The rules for applying them (the owner, 2026-10-19):
+* Every specification change is shown to the owner, in its new wording, before it is built.
+* Spec questions are the owner's: explain each one at a time, starting with the issue, with a real
+  example; never decide one yourself. Bugs are fixed, never asked. Something that only waits on
+  unbuilt work is recorded as waiting, not raised as a question.
+
+## Status and order of work (2026-10-19; update this table as each is done)
+
+| # | Decision | What is left | Size | Status |
+|---|---|---|---|---|
+| B1 | `@ffi(destroys(f))` on the foreign type | nothing: built that way | — | done |
+| A5 | `ReloadError` as A built it (`type_name: String`, `instance: u64`, …) | spec `[HR-38]` states the types and `type_name` | small | spec text |
+| B5 | not a question: `[FFI-16]`/`[ERR-6]` wait for C header import | nothing until C header import | — | waiting |
+| B4 | fix `HOOK(7)` on a `static` of function type (D-692) | the fix and a test | small | to do 1 |
+| A2 | a shipping build ignores `[build] reload`, printing `note: hot reload is off in shipping builds` | spec `[MAN-7]`, `[PRF-2]`, the `E9033` row; the code | small | to do 2 |
+| A3 | in a hot-reload build `@inline` is not applied to a reloadable function; other builds inline | spec `[CG-C-3a]`/`[HR-9a]`; the code | small | to do 3 |
+| A4 | an upgraded object runs no user `drop` | spec `[HR-2a]`'s wording only (code already does it) | small | to do 4 |
+| B6 | `[ERR-6]`'s spelling `@ffi(status=E, ok=X, error=Name)`, error named in the label | spec text now; code when the status feature is built | small | to do 5 |
+| B2 | `E5059` "adopted twice" at compile time (`[FFI-36b]`) | spec code row + rule; the check; a test | medium | to do 6 |
+| B7 | an `inout_count` call gives back C's own result first, then every pointer output in declaration order | spec `[FFI-11b]`; the code; tests | medium | to do 7 |
+| A6 | references in tuples, `Box` contents and closure captures are searched when an object moves | spec `[HR-15]`; compiler describes those types to the runtime; tests | medium | to do 8 |
+| B3 | `Retained.ptr()` is a typed pointer; a new pointer type for class objects | design shown to the owner first; spec `[FFI-23]`; code | medium | to do 9 |
+| A1 | at `std.hot.checkpoint()` the live values below it are rebuilt in the new shape (stack maps), so layout changes apply live | spec `[HR-3]`/`[HR-33]`; stack maps; the swap; tests | large | to do 10 |
 
 ## Helper B (C interop 1)
 

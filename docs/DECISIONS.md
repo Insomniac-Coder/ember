@@ -5050,6 +5050,13 @@ into `main` in that order; conflicts kept both sides (codegen's `emit` takes A's
 `instrument_ffi`; the driver's options, the runtime templates; the runtime regenerated), took D's
 restructured statement checker inside `[UNS-3]`'s recording wrapper, and routed B's `adopt` and D's
 unchecked vector operations through `unsafe_context()` so `L3010` sees them. A's D-681 became D-685.
+The C warning sweep (not run by the helpers) then found what the merged code emits: a reload image's
+C now states `EMBER_RELOAD` (and `EMBER_RELOAD_INSTANCES`) itself before the runtime header, so the
+file means the same however it is compiled; a loop that reads a view through its `restrict` pointer
+marks the view's own pointer read; a shared value's type information ends with its (null) identity
+in a reload build; a destructor with a result still reads the function value it was given. A test
+whose C only some compilers build says so on a `#$ c-compilers:` line, which the sweep honours
+(`extern "vectorcall"`, `[FFI-9]`); B's tests use `imaxabs` for `llabs` (D-693).
 * **A, hot reload (Annex B; 50 of its 62 rules):** `[build] reload`, images and permanent thunks,
   the shared runtime and the four-phase transaction (plan, prepare, commit, reclaim), per-thread
   depth counters at every foreign entry, the live-instance list, migration by schema and

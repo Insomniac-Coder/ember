@@ -10709,6 +10709,13 @@ formal 1/9 count or Phase 2's estimate.
 
 #### Start here after a context reset — state at 2026-10-04 (autopilot)
 
+> **FIRST (2026-10-19): the owner's decisions on the 85% helpers' questions.** They are in
+> `tasks/85/owner-answers.md` (status table and order of work at its top) and ADR-204. Apply them as
+> written and never re-decide them; show each specification change to the owner in its new wording
+> before building it. Helper C (shared libraries, packages: `job_C`) starts only after helpers A, B
+> and D are merged (done 2026-10-19, ADR-203).
+
+
 **2026-10-12 (autopilot), a Part V.5 class probe sweep: D-560..D-566, ODR-104 (0.9.10_Hardened_8).**
 CI went green on `fb5b02e` (closure thunks copy their state with `memcpy`: gcc -O3's strict
 aliasing broke the cast read; local checks never run gcc -O3 code, so any type pun goes through

@@ -5,7 +5,7 @@ where some of their warnings come from; clang checks the syntax).
 
 usage: python tools/c_warning_sweep.py clang|msvc|gcc [--jobs N] [--only <path part>] [--keep] [--all]
   Uses target/release/ember (build it first). Programs that do not compile (the reject tests) are
-  skipped. Prints each warning kind with its count and first places (every place with --all), then the totals; exits
+  skipped, and so is a test whose `#$ c-compilers:` line does not name this compiler. Prints each warning kind with its count and first places (every place with --all), then the totals; exits
   non-zero when any program warns. Work files go to build/c-warnings/<compiler>/ and are deleted
   at the end unless --keep."""
 import collections
@@ -62,7 +62,20 @@ CL = re.compile(r'^(?P<file>.+?)\((?P<line>\d+)\) ?: (?:error|warning) (?P<kind>
 TIME_LIMIT = 180
 
 
+def wanted_compilers(program):
+    """A test's `#$ c-compilers: msvc, clang` line: the C compilers its C is for (a calling
+    convention only some have, `[FFI-9]`); None when it names none, meaning every one."""
+    for line in program.read_text(encoding='utf-8', errors='replace').splitlines()[:20]:
+        line = line.strip()
+        if line.startswith('#$') and line[2:].strip().startswith('c-compilers:'):
+            return {name.strip() for name in line[2:].strip()[len('c-compilers:'):].split(',') if name.strip()}
+    return None
+
+
 def sweep_one(cc, program, work, env):
+    wanted = wanted_compilers(program)
+    if wanted is not None and cc not in wanted:
+        return program, None
     c_file = work / (program.relative_to(ROOT).as_posix().replace('/', '__') + '.c')
     emitted = subprocess.run([str(EMBER), 'build', str(program), '--emit', 'c', '--profile', 'release', '--cc', cc],
                              capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=ROOT, env=env)
