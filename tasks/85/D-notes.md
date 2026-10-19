@@ -260,15 +260,121 @@ a view set in its loop): `assert-c` on the emitted C, checked by the conformance
 each callable's signature and region contract, its effect set (by effect name, from
 `ember_analysis::effect_sets`; `None` for a generic, whose effects are each instance's) and, for a
 function the inline header exports (`ember_codegen_c::inline_header_symbols`, the `[CG-C-3]` set),
-the hash of its MIR body; and, per module, the layout of each import-visible non-generic struct,
-class and enum (size, alignment, fields with canonical types and offsets, or variants). All of it
-is in the interface hash, so an importer's cache key changes exactly when one of those facts
-does. *Limits:* the compiler still checks the whole graph each run (the record is the dependency
-identity, as before; reuse of a cached front-end result is not built), and a generic type's layout
-is not recorded (it has one per instance). `BLD-2` leaves the `unfinished` list.
+the hash of its MIR body; and, per module, the layout of each import-visible struct, class and
+enum as declared (its placing attributes, its fields with their types and defaults, or its
+variants). All of it is in the interface hash, so an importer's cache key changes exactly when one
+of those facts does. *Choice made:* the layout is read from the declaration, not from the type
+checker's table: a first version used the table's sizes and offsets, and `tools/error_pages.py`
+caught that a type the checker makes only when a program names it (`std.thread.Scope`) then
+appears in one program's record of `std.thread` and not another's, which the cache reports as a
+stale summary. The declaration is the same in every program. *Limits:* the compiler still checks
+the whole graph each run (the record is the dependency identity, as before; reuse of a cached
+front-end result is not built); a size change that comes only from another module's type shows
+through that module's own record, which the importer's key also holds. `BLD-2` leaves the `unfinished` list.
 
 **Test.** Milestone `effects_inline_bodies_and_layouts_are_in_the_interface_hash`: a private
 constant edit and a private struct edit change nothing; a private body gaining `Io` changes the
 public caller's effects and the hash; an exported inline body edit changes the hash with the same
 signature and effects; a field added to a public struct changes the layouts and the hash; each
 change also changes the importer's cache key.
+
+## 8. `std.ecs`: `Entity`, sparse-set storage, `@derive(Component)` and the registry (`[ECS-1]`, `[ECS-2]`, `[ECS-7]`)
+
+**Built.** `std/src/ecs.em` (new; listed in `std/src/lib.em`):
+- `Entity` (`[ECS-1]`): a 32-bit handle, `index()` the low 20 bits, `generation()` the high 12,
+  `Entity.NULL` all ones, `Entity.new`. `World.create/destroy/is_alive/len`: a generation per
+  index and a free list; a destroyed index comes back at its next generation (mod 2^12).
+- Storage (`[ECS-2]`): one sparse set per component type in `World.storages: Map[u64, AnyStorage]`,
+  keyed by `type_hash[T]()`. `AnyStorage` holds the entities in dense order and the sparse index
+  (slot + 1 by entity index); `AosStorage[T]` (the default) adds an `Array[T]`, `SoaStorage[T]`
+  (`@component(layout=soa)`) an `SoA[T]`. Removal swaps the last entity into the hole.
+  `World.add/remove/has/storage/entities_with`.
+- `@derive(Component)` (`[ECS-7]`, `derives.rs`): written out, as `Ord` and `Default` are, as
+  `extend T implements std.ecs.Component` with `component_name()` (the fully qualified name),
+  `component_hash()` (its 64-bit FNV-1a, computed when the derive is written) and
+  `component_soa()`. `@component(layout=soa|aos)` is read and taken out there (`E0104` for any
+  other layout, or `soa` on an enum, or `@component` with no `Component` derive). The registry:
+  the derive collects every component of the program, in declaration order, and writes
+  `std.ecs.components()`'s body as the array of `ComponentInfo(name, hash, soa)`.
+  `type_hash[T]()` is `T.component_hash()`. *Choices made:* the identity is computed by the derive
+  (ordinary Ember constants) rather than by a compiler-known `type_hash`, so the library needs no
+  compiler support of its own beyond the derive (Part XII.3 says it has none); a generic component
+  is `E0900` (its identity would be per instance); `components()` returns an `Array` (it
+  allocates): a `static` cannot hold the `str` names (`E3063`).
+
+**Tests.** `ECS-1/accept_an_entity_is_a_20_bit_index_and_a_12_bit_generation.em`,
+`ECS-2/accept_each_component_type_is_a_sparse_set_keyed_by_its_type_hash.em`,
+`ECS-2/reject_a_component_layout_that_is_not_soa_or_aos.em`,
+`ECS-7/accept_derive_component_registers_the_type.em`. `CLI-19`'s unimplemented-construct test
+now names `@derive(Serialize)` (Component is built).
+
+**Not built: `[ECS-3]`, `[ECS-4]`, `[ECS-5]`, `[ECS-6]`.** A `Query` was written and probed (the
+`QueryParam` interface with `Item`, `ReadItem` and `State` associated types; `Mut[T]`, `Not[T]`,
+`Option[T]` and tuples of 2 and 3 as parameters; `iter`/`iter_mut` iterators driving from the
+narrowest required storage; `World.run(system, args)` applying a `Commands` buffer after the
+system returns). It type-checks generically, but a concrete query fails in the type checker:
+`QueryIterMut[(Mut[Pos], Vel, Not[Frozen])]` and `fn(mut Query[…], f32)` are each made as two
+instances that differ only in their hidden projection parameter (`Q.State`, D-407's mechanism),
+"expected `X`, found `X`". The fix belongs to how hidden parameters are filled for a tuple whose
+associated types come from a generic tuple extension; it is a type-checker job, not this sheet's,
+and was taken out of `ecs.em` rather than left half-working. Also needed: a plain component as a
+query parameter needs a `QueryParam` implementation, which a blanket `extend[T: Component] T`
+cannot give (`E2041` against `Option[T]`'s: no negative reasoning), so the derive would write one
+too. `[ECS-4]`'s compile-time read/write sets and `E7020` need compile-time evaluation over the
+query's type (or compiler support, which Part XII.3 rules out), and `run(system, args…)` is
+variadic. `[ECS-6]` is about query iteration; storage order (insertion, swap-remove holes) is
+built and tested through `entities_with`, but the rule is not claimed without queries.
+
+## 9. Defects found on the way to the ECS (not numbered; the coordinator numbers them)
+
+Fixed:
+1. **An `override` in a generic class instance made early was refused (`E2110`).** A generic
+   extension's associated type naming `Store[T]` (`Store[T](AnyStore)`) made the instance while
+   extensions are collected, before any class's own methods are recorded, so the base had no
+   virtual methods yet. Now such an instance's overrides are checked once every class's methods
+   are recorded (`deferred_override_checks`). Test:
+   `tests/run-pass/an_extension_may_name_a_generic_subclass_before_its_base_is_collected.em`
+   (fails `E2110` before).
+2. **A generic struct with a projection field, named before its declaration, was two types.**
+   `Maker[Q]`'s `-> Holder[Q]` before `struct Holder[Q: P]: state: Q.State`: the signature's
+   instance had no hidden parameter, the body's had one ("expected `Holder[Q]`, found
+   `Holder[Q]`"). `induced_projections` now collects such a struct first. Test:
+   `tests/run-pass/a_generic_struct_with_a_projection_field_may_be_named_before_it_is_declared.em`.
+3. **A generic class instantiated from another module resolved its base there.** `AosStorage[T]
+   (AnyStorage)` named in a user signature: `AnyStorage` was looked up in the user's module
+   (`E1010`). The base is now resolved in the declaring module. Covered by
+   `ECS-2/accept_each_component_type_is_a_sparse_set_keyed_by_its_type_hash.em` (`count`).
+4. **A standard library override reached only through its base's slot was pruned.** A virtual call
+   (`storage.remove_entity(e)` on `AnyStorage`) kept no `std` body of that slot, and the backend
+   stopped ("virtual call has a collected vtable signature"). `retain_referenced_standard_bodies`
+   now keeps every standard body in a called slot. Covered by the ECS-2 test (`remove`, `destroy`).
+
+Found, not fixed (owner/coordinator decision):
+5. **A `mut self` method calling a shared method on `self` panics.** `fn add(mut self): if not
+   self.alive(i): …` panics "exclusivity violation: read access to W.gens while a write access to
+   W.gens is active": the caller's whole-object write (`[EXC-15]`) covers the `mut self` method's
+   own accesses, but the shared callee checks its reads against it. `[EXC-5]` ("accesses nested
+   inside the same `mut self` method are reborrows") says this must not panic. A caller-side
+   downgrade (end the write, begin a read around the call, and back) was tried and is refused by
+   the MIR verifier, which requires each body to balance its own accesses; the fix needs a runtime
+   downgrade operation or a covered variant of shared methods, which is EXC work. `std.ecs` avoids
+   the pattern (its `mut self` methods read through free functions over the fields).
+   Probe: a class with `fn alive(self, i)` reading a field and `fn add(mut self, i)` calling it.
+
+## Owner questions
+
+1. `Entity` is a standalone 32-bit struct; `[ECS-1]` says it is `Handle` with `Split20`
+   (`[HND-2]`), which is not built. Should `Entity` become that once handles exist?
+2. A query over a component stored as an `SoA` (`@component(layout=soa)`): an element is not one
+   place, so `ref T`/`ref mut T` items cannot point at it. What should such a query yield
+   (per-column views, a proxy, or copies)?
+3. `world.run(system, args…)`: Ember has no variadic parameters. One `args` value (a tuple for
+   several), or something else?
+4. `ArenaSoA` was put in `std.collections` beside `ArenaArray`/`ArenaMap` (section 3): confirm.
+5. Defect 5 above (shared call on `self` inside `mut self`): which fix (runtime downgrade, or
+   shared methods compiled in a covered variant)?
+6. `[BEN-6]` (thresholds) and `[TST-6]` (Appendix A fixture compiled) were not attempted: BEN-6's
+   timings cannot be a test (benchmarks run on the owner's machine, mains power), and its
+   `@noalloc` allocation counts and FFI instruction comparison need tooling that does not exist;
+   TST-6 needs fixture items (CommandList, Formatter, Mutex, overlays) other jobs own, and the
+   fixture's `#! language "0.5"` is `E0006`. Should they go to another job?

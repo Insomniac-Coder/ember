@@ -3,7 +3,7 @@
 #$ profiles: debug, release, shipping
 #$ stdout: 0 51 117 30.0
 #$ stdout: 0 51 117 30.0
-#$ assert-c-count: contains("((uint64_t)((int64_t*)") == 2
+#$ assert-c-count: contains("((uint64_t)_") == 2
 # `[SIMD-5]` — a floating-point running total keeps a loop out of vectorisable
 # form "unless the function is `@fastmath`": its C file lets the C compiler
 # reorder the total (`[CG-C-11]`). So in `fast` the loop is in vectorisable

@@ -260,6 +260,8 @@ pub fn check(
     // may have missed an extension whose bound they meet (`Map[String, V]`'s
     // `K: Hash` needs `String`'s); it is offered each one again.
     checker.extend_early_instances();
+    checker.class_methods_recorded = true;
+    checker.check_deferred_overrides();
     checker.resolve_derived_clones();
     checker.clones_resolved = true;
     checker.validate_class_methods(modules);
@@ -2255,6 +2257,13 @@ struct Checker<'a> {
     /// but an invalid `override` is one source error, not one per concrete
     /// type argument list.
     reported_generic_override_errors: HashSet<(usize, usize, usize)>,
+    /// Whether every class's own methods are recorded (`collect_methods`). A generic class
+    /// instantiated before then (by a signature or an extension's associated type) has its
+    /// `override`s checked once they are (`deferred_override_checks`).
+    class_methods_recorded: bool,
+    /// `[CLS-4]` — an early generic class instance's `override`s: the instance, the method's
+    /// name, its source and span.
+    deferred_override_checks: Vec<(ClassId, Symbol, (usize, usize, usize), Span)>,
     /// `[CELL-1]` — every `Cell[T]` built so far, and the `T` it holds. A cell
     /// is an ordinary `StructId` everywhere else in the compiler, so this is
     /// what tells method dispatch that `set` on it is a builtin rather than a
@@ -2707,6 +2716,8 @@ impl<'a> Checker<'a> {
             bound_calls: HashMap::new(),
             generically_checked: HashSet::new(),
             reported_generic_override_errors: HashSet::new(),
+            class_methods_recorded: false,
+            deferred_override_checks: Vec::new(),
             cells: HashMap::new(),
             boxes: HashMap::new(),
             shareds: HashMap::new(),
@@ -4758,6 +4769,18 @@ impl<'a> Checker<'a> {
         let mut layouts: HashMap<ClassId, HashMap<Symbol, usize>> = HashMap::new();
         for id in ids {
             let _ = self.class_virtual_layout(id, &mut layouts);
+        }
+    }
+
+    /// `[CLS-4]` — the `override`s of generic class instances made before every class's methods
+    /// were recorded, checked against their bases' virtual methods now.
+    fn check_deferred_overrides(&mut self) {
+        for (id, name, source, span) in std::mem::take(&mut self.deferred_override_checks) {
+            let Some(base) = self.types.class_def(id).base else { continue };
+            let inherited = self.class_virtual_layout(base, &mut HashMap::new());
+            if !inherited.contains_key(&name) && self.reported_generic_override_errors.insert(source) {
+                self.error(codes::E2110, span, "override of a method that is not virtual");
+            }
         }
     }
 
@@ -15122,7 +15145,10 @@ impl<'a> Checker<'a> {
                 bindings.insert(param, arg);
             }
             let saved = std::mem::replace(&mut self.type_params, bindings);
+            // The base is named in the class's own module, whichever module names the instance.
+            let saved_module = std::mem::replace(&mut self.current_module, decl.declaring_module);
             let resolved = self.resolve_type(base_expr);
+            self.current_module = saved_module;
             self.type_params = saved;
             match self.types.kind(resolved) {
                 TyKind::Class(base) => {
@@ -15234,7 +15260,10 @@ impl<'a> Checker<'a> {
             .map(|base| self.class_virtual_layout(base, &mut inherited_layouts))
             .unwrap_or_default();
         for (method, owner_bindings, interface, extension_index) in method_recipes {
-            if method.dispatch == ast::Dispatch::Override
+            // A base whose own methods are not recorded yet has no virtual methods to see.
+            if method.dispatch == ast::Dispatch::Override && !self.class_methods_recorded && base.is_some() {
+                self.deferred_override_checks.push((id, method.name, method.source, method.span));
+            } else if method.dispatch == ast::Dispatch::Override
                 && !inherited_virtuals.contains_key(&method.name)
                 && self.reported_generic_override_errors.insert(method.source)
             {
@@ -33927,11 +33956,19 @@ impl<'a> Checker<'a> {
     /// D-407 — `base.assoc` for each hidden parameter of a generic struct
     /// `ty` names, where the argument it projects is a parameter (or one of
     /// its projections) written as a path.
-    fn induced_projections(&self, ty: &ast::TypeExpr, out: &mut Vec<(Symbol, ast::Ident)>) {
+    fn induced_projections(&mut self, ty: &ast::TypeExpr, out: &mut Vec<(Symbol, ast::Ident)>) {
         match &ty.kind {
             ast::TypeKind::Path { segments, args } => {
+                // A generic struct declared later in its module is collected now, so its hidden
+                // parameters are known (a signature naming it before it is declared).
+                if let [segment] = segments.as_slice() {
+                    let resolved = self.resolve_name(segment.name);
+                    if self.pending_generic_structs.contains_key(&resolved) {
+                        self.collect_generic_struct_on_demand(resolved);
+                    }
+                }
                 if let [segment] = segments.as_slice()
-                    && let Some(recipe) = self.generic_structs.get(&self.resolve_name(segment.name))
+                    && let Some(recipe) = self.generic_structs.get(&self.resolve_name(segment.name)).cloned()
                     && recipe.generic_params.len() > recipe.params.len()
                 {
                     let written = recipe.params.len();
@@ -35266,12 +35303,11 @@ impl<'a> Checker<'a> {
                     // `Ord`, `Default`, `Display` and `Error` on a struct or enum were written out
                     // before this (`derives.rs`, `errors.rs`).
                     let built = matches!(derived, "Copy" | "Clone" | "Eq" | "Hash")
-                        || matches!(derived, "Debug" | "Zeroable") && matches!(site, "struct" | "enum");
+                        || matches!(derived, "Debug" | "Zeroable" | "Component") && matches!(site, "struct" | "enum");
                     if !built {
                         let note = match derived {
                             "Serialize" | "Deserialize" => "serialisation is `[SER-1]`'s, not built yet",
-                            "Component" => "components are `[ECS-7]`'s, not built yet",
-                            _ => "a struct or an enum derives every built-in derive but `Serialize`, `Deserialize` and `Component`; a class `Copy`, `Clone`, `Eq` and `Hash` [DRV-1]",
+                            _ => "a struct or an enum derives every built-in derive but `Serialize` and `Deserialize`; a class `Copy`, `Clone`, `Eq` and `Hash` [DRV-1]",
                         };
                         self.sink.emit(
                             Diagnostic::error(

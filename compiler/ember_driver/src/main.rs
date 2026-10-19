@@ -143,6 +143,14 @@ fn retain_referenced_standard_bodies(
         .collect();
     let mut keep = BTreeSet::new();
     let mut pending = Vec::new();
+    // A virtual call reaches every body in its slot: a standard class's override is called
+    // through its base's slot, never by name.
+    let mut by_slot: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+    for body in bodies.iter().filter(|body| standard(body)) {
+        if let Some(slot) = body.class_virtual_slot {
+            by_slot.entry(slot).or_default().push(body.symbol.clone());
+        }
+    }
 
     for body in bodies.iter() {
         let drop_glue = body.name == "drop" || body.name.ends_with(".drop");
@@ -174,6 +182,9 @@ fn retain_referenced_standard_bodies(
             } = &block.terminator
             {
                 referenced.extend(types.debug_writers_reached(*arg_ty).into_iter().map(str::to_string));
+            }
+            if let ember_mir::Terminator::Call { func: ember_mir::FuncRef::Virtual { slot, .. }, .. } = &block.terminator {
+                referenced.extend(by_slot.get(slot).into_iter().flatten().cloned());
             }
         }
         for target in referenced {
@@ -2344,7 +2355,7 @@ fn module_interface_inputs(
         .map(str::to_string)
         .collect();
     let package_config = format!("profile={}", options.profile.name());
-    let mut layouts = type_layouts(modules, types);
+    let mut layouts = type_layouts(modules, map);
     let mut inputs = Vec::with_capacity(modules.len());
     for loaded in modules {
         let module = module_identity(&loaded.path);
@@ -2406,80 +2417,47 @@ fn module_interface_inputs(
     Ok((inputs, import_visible_contracts))
 }
 
-/// `[BLD-2]` — the layout of each import-visible, non-generic type a module
-/// declares, by its file: the type's canonical name, and its size,
-/// alignment, and fields (name, canonical type, offset) or variants. A change
-/// to one changes the module's interface hash, so its importers recheck.
+/// `[BLD-2]` — the layout of each import-visible type a module declares, by
+/// its file and name: its kind, its fields as declared (name, type, default)
+/// or its variants, and the attributes that place them (`repr`, `soa`, …). It
+/// is read from the declaration, so it is the same in every program that
+/// loads the module (a type the checker makes only when a program names it
+/// would otherwise appear in some records and not others). A change to one
+/// changes the module's interface hash, so its importers recheck.
 fn type_layouts(
     modules: &[ember_typeck::LoadedModule],
-    types: &TypeTable,
+    map: &SourceMap,
 ) -> std::collections::BTreeMap<ember_span::FileId, std::collections::BTreeMap<String, String>> {
-    use ember_ast::{ItemKind, VisKind};
-    use ember_types::{Ty, TyKind};
-    use std::collections::{BTreeMap, BTreeSet};
-    use std::fmt::Write as _;
+    use ember_ast::{ItemKind, MemberKind, VisKind};
+    use std::collections::BTreeMap;
 
-    let mut visible: BTreeSet<(ember_span::FileId, String)> = BTreeSet::new();
+    let mut out: BTreeMap<ember_span::FileId, BTreeMap<String, String>> = BTreeMap::new();
     for loaded in modules {
+        let file = loaded.module.span.file;
+        let text = &map.file(file).text;
+        let source = |span: ember_span::Span| -> String {
+            text.get(span.start as usize..span.end as usize).unwrap_or_default().split_whitespace().collect::<Vec<_>>().join(" ")
+        };
         for item in &loaded.module.items {
-            let name = match &item.kind {
-                ItemKind::Struct(decl) if decl.generics.is_empty() => &decl.name,
-                ItemKind::Class(decl) if decl.generics.is_empty() => &decl.name,
-                ItemKind::Enum(decl) if decl.generics.is_empty() => &decl.name,
+            if item.vis.kind == VisKind::Private {
+                continue;
+            }
+            let (kind, name, members, variants) = match &item.kind {
+                ItemKind::Struct(decl) => ("struct", decl.name, &decl.members, Vec::new()),
+                ItemKind::Class(decl) => ("class", decl.name, &decl.members, Vec::new()),
+                ItemKind::Enum(decl) => ("enum", decl.name, &decl.members, decl.variants.iter().map(|variant| source(variant.span)).collect()),
                 _ => continue,
             };
-            if item.vis.kind != VisKind::Private {
-                visible.insert((loaded.module.span.file, name.name.as_str().to_string()));
-            }
-        }
-    }
-    let mut out: BTreeMap<ember_span::FileId, BTreeMap<String, String>> = BTreeMap::new();
-    let mut add = |span: ember_span::Span, name: ember_span::Symbol, ty: Option<Ty>, members: String| {
-        let Some(ty) = ty else { return };
-        if !visible.contains(&(span.file, name.as_str().rsplit('.').next().unwrap_or_default().to_string())) {
-            return;
-        }
-        let Ok(canonical) = types.canonical_name(ty) else { return };
-        let layout = types.layout(ty);
-        let mut text = format!("size {} align {}", layout.size, layout.align);
-        for (offset, member) in layout.field_offsets.iter().zip(members.split('\n')) {
-            let _ = write!(text, "; {member} @{offset}");
-        }
-        if layout.field_offsets.is_empty() && !members.is_empty() {
-            let _ = write!(text, "; {}", members.replace('\n', "; "));
-        }
-        out.entry(span.file).or_default().insert(canonical, text);
-    };
-    let field_list = |fields: &[ember_types::FieldDef]| -> String {
-        fields
-            .iter()
-            .map(|field| format!("{}: {}", field.name.as_str(), types.canonical_name(field.ty).unwrap_or_default()))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    for (id, def) in types.structs() {
-        if def.origin.is_none() {
-            add(def.span, def.name, types.find(&TyKind::Struct(id)), field_list(&def.fields));
-        }
-    }
-    for (id, def) in types.classes() {
-        if def.origin.is_none() {
-            add(def.span, def.name, types.find(&TyKind::Class(id)), field_list(&def.fields));
-        }
-    }
-    for (id, def) in types.enums() {
-        if def.origin.is_none() {
-            let variants = def
-                .variants
-                .iter()
-                .map(|variant| {
-                    let payload: Vec<String> =
-                        variant.fields.iter().map(|field| types.canonical_name(field.ty).unwrap_or_default()).collect();
-                    format!("{}({})", variant.name.as_str(), payload.join(", "))
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            add(def.span, def.name, types.find(&TyKind::Enum(id)), variants);
+            let mut parts: Vec<String> = item.attrs.iter().map(|attr| source(attr.span)).collect();
+            parts.push(kind.to_string());
+            parts.extend(
+                members
+                    .iter()
+                    .filter(|member| matches!(member.kind, MemberKind::Field(_)))
+                    .map(|member| source(member.span)),
+            );
+            parts.extend(variants);
+            out.entry(file).or_default().insert(name.name.as_str().to_string(), parts.join("; "));
         }
     }
     out
