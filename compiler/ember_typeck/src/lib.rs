@@ -8385,7 +8385,12 @@ impl<'a> Checker<'a> {
                     if decl.is_foreign_decl {
                         self.foreign_declarations.insert(def, decl.is_safe);
                         if !decl.is_safe {
-                            self.foreign_unknown_facts.insert(def, ffi_unknown_facts(decl, &item.attrs));
+                            let mut unknown = ffi_unknown_facts(decl, &item.attrs);
+                            // `[DIA-18]` — a header's function: the overlay line that states them.
+                            if let Some(Some((header, _))) = self.foreign_skipped.get(self.current_module) {
+                                unknown.line = overlay_unknown_line(decl, header);
+                            }
+                            self.foreign_unknown_facts.insert(def, unknown);
                         }
                         self.foreign_symbols.insert(def, Symbol::intern(ffi_link_name(&item.attrs).unwrap_or(decl.name.name.as_str())));
                     }
@@ -52223,6 +52228,26 @@ fn ffi_unknown_facts(decl: &ast::FnDecl, attrs: &[ast::Attribute]) -> ForeignUnk
         format!("`@ffi({})` over `safe fn {name}`, each `TODO(…)` replaced by its fact", clauses.join(", "))
     };
     ForeignUnknownFacts { facts, line }
+}
+
+/// `[DIA-18]`, `[FFI-2]` — the overlay entry that states an imported function's unknown facts.
+fn overlay_unknown_line(decl: &ast::FnDecl, header: &str) -> String {
+    let pointer = |ty: &ast::TypeExpr| matches!(ty.kind, ast::TypeKind::Ptr { .. });
+    let params: Vec<String> = decl
+        .params
+        .iter()
+        .filter_map(|param| match &param.kind {
+            ast::ParamKind::Named { name, ty } if pointer(ty) => Some(format!("{}: TODO(ownership) TODO(count) TODO(nullable)", name.name)),
+            ast::ParamKind::Named { name, .. } => Some(name.name.to_string()),
+            _ => None,
+        })
+        .collect();
+    let result = if decl.ret.as_ref().is_some_and(pointer) { " -> TODO(ownership) TODO(count) TODO(nullable) TODO(lifetime)" } else { "" };
+    format!(
+        "`fn {}({}){result}` in an `unsafe overlay c \"{header}\":` the import names with `overlay = \"…\"`, each `TODO(…)` replaced by its fact",
+        decl.name.name,
+        params.join(", ")
+    )
 }
 
 /// A contract clause as it is written: words, and calls of words and numbers.

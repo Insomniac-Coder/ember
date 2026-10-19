@@ -85,6 +85,8 @@ pub struct Imported {
     pub header: PathBuf,
     /// `W5002`.
     pub skipped: Vec<Skipped>,
+    /// `W5002` too: a struct imported only as an opaque type, with why.
+    pub opaque: Vec<Skipped>,
     /// `W5001`.
     pub macros: Vec<Skipped>,
     pub layouts: Vec<RecordLayout>,
@@ -285,7 +287,9 @@ fn arguments(config: &Config) -> Vec<String> {
 /// `[FFI-6]` — parse the header and write its module.
 pub fn import_header(config: &Config) -> Result<Imported, String> {
     load_libclang()?;
-    let main = config.from_dir.join(format!("{}_import_c.c", ember_branding::SYMBOL_PREFIX));
+    // An absolute folder: Clang then names every file it finds by its absolute path.
+    let from_dir = std::path::absolute(config.from_dir).map_err(|e| e.to_string())?;
+    let main = from_dir.join(format!("{}_import_c.c", ember_branding::SYMBOL_PREFIX));
     let args = arguments(config);
     let include = format!("#include \"{}\"\n", config.header.replace('\\', "/"));
     let unit = Unit::parse(&main, &include, &args)?;
@@ -299,8 +303,7 @@ pub fn import_header(config: &Config) -> Result<Imported, String> {
         return Err(errors.join("\n"));
     }
     let header = unit.included_directly().into_iter().next().ok_or_else(|| format!("`{}` was not found", config.header))?;
-    // Clang names it as it found it, relative to the importing file's folder.
-    let header_path = std::path::absolute(config.from_dir.join(&header)).unwrap_or_else(|_| PathBuf::from(&header));
+    let header_path = std::path::absolute(from_dir.join(&header)).unwrap_or_else(|_| PathBuf::from(&header));
     let mut writer = Writer { header: header.clone(), stem: config.symbol_stem.to_string(), ..Writer::default() };
     for cursor in children(unit.cursor()) {
         let (file, _, system) = location(cursor);
@@ -376,6 +379,7 @@ struct Writer {
     externs: Vec<(&'static str, String)>,
     shim: String,
     skipped: Vec<Skipped>,
+    opaque: Vec<Skipped>,
     macro_skipped: Vec<Skipped>,
     layouts: Vec<RecordLayout>,
     functions: Vec<Function>,
@@ -761,7 +765,8 @@ impl Writer {
         let name = ident(named);
         self.externs.push(("C", format!("    pub type {name}\n")));
         if let Some(why) = &why {
-            self.skip(cursor, named, format!("imported as an opaque type, usable only behind a pointer: {why}"));
+            let at = self.at(cursor);
+            self.opaque.push(Skipped { name: named.to_string(), reason: why.clone(), at });
         }
         let record = Record::Opaque(name, why);
         self.records.insert(key.to_string(), record.clone());
@@ -1059,6 +1064,7 @@ impl Writer {
             text,
             header,
             skipped: self.skipped,
+            opaque: self.opaque,
             macros: self.macro_skipped,
             layouts: self.layouts,
             shim,
@@ -1163,7 +1169,8 @@ pub fn load(
     }
     let options = options(written, sink)?;
     let bound = alias.map_or_else(|| Symbol::intern("c"), |alias| alias.name);
-    let from_dir = importer.parent().unwrap_or(Path::new(".")).to_path_buf();
+    // A bare file name's folder is the working one.
+    let from_dir = importer.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf();
     // `[BLD-FFI-1]` — `import c "./bridge.c"` compiles `bridge.c` and imports `bridge.h`.
     let (header, source) = match header.strip_suffix(".c") {
         Some(stem) => (format!("{stem}.h"), Some(from_dir.join(header))),
@@ -1215,6 +1222,13 @@ pub fn load(
             Diagnostic::warning(codes::W5002, span, format!("`{}` is not imported from `{shown}`: {}", skipped.name, skipped.reason))
                 .note(format!("declared at {} [FFI-20a]", skipped.at))
                 .help("to use it, declare it by hand in an `unsafe extern \"C\":` block with types Ember has, or wrap it in a C function the header declares"),
+        );
+    }
+    for opaque in &imported.opaque {
+        sink.emit(
+            Diagnostic::warning(codes::W5002, span, format!("`{}` is imported from `{shown}` only as an opaque type, usable behind a pointer: {}", opaque.name, opaque.reason))
+                .note(format!("declared at {} [FFI-20a]", opaque.at))
+                .help("to reach its fields, wrap them in C functions the header declares"),
         );
     }
     for skipped in &imported.macros {
