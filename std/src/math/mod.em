@@ -1186,7 +1186,7 @@ pub struct Mat2:
             return self.x_axis
         if i == 1:
             return self.y_axis
-        panic(f"a Mat2 has no column {i}")
+        panic("a Mat2 has columns 0 and 1 only")
 
     ## Row `i`, 0 or 1; another `i` panics.
     pub fn row(self, i: int) -> Vec2:
@@ -1194,7 +1194,7 @@ pub struct Mat2:
             return Vec2(self.x_axis.x, self.y_axis.x)
         if i == 1:
             return Vec2(self.x_axis.y, self.y_axis.y)
-        panic(f"a Mat2 has no row {i}")
+        panic("a Mat2 has rows 0 and 1 only")
 
     pub fn transpose(self) -> Mat2:
         return Mat2(self.row(0), self.row(1))
@@ -1308,7 +1308,7 @@ pub struct Mat3:
             return self.y_axis
         if i == 2:
             return self.z_axis
-        panic(f"a Mat3 has no column {i}")
+        panic("a Mat3 has columns 0 to 2 only")
 
     ## Row `i`, 0 to 2; another `i` panics.
     pub fn row(self, i: int) -> Vec3:
@@ -1318,7 +1318,7 @@ pub struct Mat3:
             return Vec3(self.x_axis.y, self.y_axis.y, self.z_axis.y)
         if i == 2:
             return Vec3(self.x_axis.z, self.y_axis.z, self.z_axis.z)
-        panic(f"a Mat3 has no row {i}")
+        panic("a Mat3 has rows 0 to 2 only")
 
     pub fn transpose(self) -> Mat3:
         return Mat3(self.row(0), self.row(1), self.row(2))
@@ -1484,7 +1484,7 @@ pub struct Mat4:
             return self.z_axis
         if i == 3:
             return self.w_axis
-        panic(f"a Mat4 has no column {i}")
+        panic("a Mat4 has columns 0 to 3 only")
 
     ## Row `i`, 0 to 3; another `i` panics.
     pub fn row(self, i: int) -> Vec4:
@@ -1496,7 +1496,7 @@ pub struct Mat4:
             return Vec4(self.x_axis.z, self.y_axis.z, self.z_axis.z, self.w_axis.z)
         if i == 3:
             return Vec4(self.x_axis.w, self.y_axis.w, self.z_axis.w, self.w_axis.w)
-        panic(f"a Mat4 has no row {i}")
+        panic("a Mat4 has rows 0 to 3 only")
 
     pub fn transpose(self) -> Mat4:
         return Mat4(self.row(0), self.row(1), self.row(2), self.row(3))

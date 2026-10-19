@@ -426,6 +426,7 @@ fn emit_with(
             inline
         },
         view_pointers: BTreeMap::new(),
+        loop_restricted: BTreeMap::new(),
         parted_views: BTreeSet::new(),
         addressed_locals: BTreeSet::new(),
         upcast_copies: BTreeSet::new(),
@@ -781,6 +782,10 @@ struct Emitter<'a> {
     /// its own (`_N_ptr`), set wherever the view is, which MSVC keeps in a
     /// register where it re-reads a struct field.
     view_pointers: BTreeMap<usize, String>,
+    /// `[CG-C-4]` — in the loop being written, the views named through a
+    /// `restrict` pointer (`_N_r`) and a length (`_N_rn`) of their own, by
+    /// local, with whether the local is a reference to the list.
+    loop_restricted: BTreeMap<u32, bool>,
     /// View descriptor storage written by fields, including copies from such
     /// storage. A niche Option's Some payload names the same C descriptor.
     parted_views: BTreeSet<Place>,
@@ -1216,6 +1221,10 @@ impl Emitter<'_> {
         self.line("");
         let header = ember_branding::runtime_header();
         self.line(&format!("#include \"{header}\""));
+        // `[SIMD-1]` — `std.simd`'s types lower through the runtime's vector header.
+        if self.order.iter().any(|node| matches!(node, TypeNode::Struct(id) if self.simd_shape_of(*id).is_some())) {
+            self.line(&format!("#include \"{}_simd.h\"", ember_branding::SYMBOL_PREFIX));
+        }
         self.line("");
         if self.comptime.is_some() {
             self.line(COMPTIME_PRELUDE);
@@ -1243,6 +1252,10 @@ impl Emitter<'_> {
         self.line(CLONE_PARTS_PROTOTYPES);
         self.line(ARRAY_HELPER_PROTOTYPES);
         self.line(FMT_FN_PROTOTYPES);
+        // Before anything that drops or operates on them: a class field that is an `SoA` is
+        // dropped by the class's drop glue, below (`[SOA-1]`).
+        self.emit_soa_helpers();
+        self.emit_simd_helpers(bodies);
         self.emit_closure_values(bodies);
         // Class tables first: an interface adapter can call through one (D-375).
         self.emit_virtual_tables();
@@ -1257,7 +1270,6 @@ impl Emitter<'_> {
         self.emit_class_type_infos();
         self.emit_shared_type_infos();
         self.emit_thread_helpers();
-        self.emit_soa_helpers();
         self.emit_constant_statics();
         self.emit_parallel_helpers(bodies);
         if self.comptime.is_some() && self.unit.is_none() {
@@ -2574,12 +2586,112 @@ impl Emitter<'_> {
     /// column at the larger of 64 bytes and its element's alignment, `[SOA-7]`), growth (one new
     /// block, the columns copied over, the old one freed), and the operations, each keeping the
     /// columns aligned element for element. Static in every unit that needs them.
+    /// `[SIMD-1]` — the shape of a `std.simd` vector or mask struct.
+    fn simd_shape_of(&self, id: StructId) -> Option<ember_types::SimdShape> {
+        ember_types::SimdShape::of(self.types.struct_def(id).name.as_str())
+    }
+
+    /// `[SIMD-1]` — the C name of a `std.simd` type and its shape.
+    fn simd_c(&self, ty: Ty) -> (String, ember_types::SimdShape) {
+        let TyKind::Struct(id) = *self.types.kind(ty) else { unreachable!("a vector is a struct") };
+        let shape = self.simd_shape_of(id).expect("a `std.simd` type");
+        (self.c_type(ty), shape)
+    }
+
+    /// `[SIMD-1]` — for each `std.simd` vector the program operates on, and its mask, the
+    /// operations of `ember_simd.h`, instantiated for its C type; a gather's or scatter's pair
+    /// of vector and index type once each.
+    fn emit_simd_helpers(&mut self, bodies: &[ember_mir::Body]) {
+        use ember_types::SimdLane;
+        let mut used: BTreeSet<Ty> = BTreeSet::new();
+        let mut pairs: BTreeSet<(Ty, Ty)> = BTreeSet::new();
+        for body in bodies {
+            for block in &body.blocks {
+                let Terminator::Call { func: FuncRef::Builtin { which: Builtin::Simd { op, vector }, .. }, .. } = &block.terminator else {
+                    continue;
+                };
+                used.insert(*vector);
+                if let ember_mir::SimdOp::Gather { index, .. } | ember_mir::SimdOp::Scatter { index, .. } = op {
+                    pairs.insert((*vector, *index));
+                }
+            }
+        }
+        if used.is_empty() {
+            return;
+        }
+        // Each vector's mask, which its comparisons give and `select` takes.
+        let masks: Vec<Ty> = used
+            .iter()
+            .filter_map(|ty| {
+                let (_, shape) = self.simd_c(*ty);
+                let name = shape.mask_name();
+                let (id, _) = self.types.structs().find(|(_, def)| def.name.as_str() == name)?;
+                self.types.find(&TyKind::Struct(id))
+            })
+            .collect();
+        used.extend(masks);
+        self.line("/* [SIMD-1] std.simd operations (the runtime's vector header) */");
+        let lane_c = |shape: ember_types::SimdShape| -> (&'static str, &'static str, &'static str, &'static str, &'static str) {
+            // (C lane type, scalar helper suffix, unsigned type, low bound, high bound)
+            match (shape.lane, shape.bits) {
+                (SimdLane::Float, 32) => ("float", "", "", "", ""),
+                (SimdLane::Float, _) => ("double", "", "", "", ""),
+                (SimdLane::Signed | SimdLane::Mask, 8) => ("int8_t", "i8", "uint8_t", "INT8_MIN", "INT8_MAX"),
+                (SimdLane::Signed | SimdLane::Mask, 16) => ("int16_t", "i16", "uint16_t", "INT16_MIN", "INT16_MAX"),
+                (SimdLane::Signed | SimdLane::Mask, 32) => ("int32_t", "i32", "uint32_t", "INT32_MIN", "INT32_MAX"),
+                (SimdLane::Signed | SimdLane::Mask, _) => ("int64_t", "i64", "uint64_t", "INT64_MIN", "INT64_MAX"),
+                (SimdLane::Unsigned, 8) => ("uint8_t", "u8", "uint8_t", "0", "UINT8_MAX"),
+                (SimdLane::Unsigned, 16) => ("uint16_t", "u16", "uint16_t", "0", "UINT16_MAX"),
+                (SimdLane::Unsigned, 32) => ("uint32_t", "u32", "uint32_t", "0", "UINT32_MAX"),
+                (SimdLane::Unsigned, _) => ("uint64_t", "u64", "uint64_t", "0", "UINT64_MAX"),
+            }
+        };
+        let mask_c = |this: &Self, shape: ember_types::SimdShape| -> String {
+            let name = shape.mask_name();
+            let (id, _) = this.types.structs().find(|(_, def)| def.name.as_str() == name).expect("a vector's mask is declared beside it");
+            this.c_type(this.types.find(&TyKind::Struct(id)).expect("a declared mask's type is interned"))
+        };
+        // Masks first: a vector's operations name its mask's type.
+        for ty in used.iter().copied().filter(|ty| self.simd_c(*ty).1.lane == SimdLane::Mask).collect::<Vec<_>>() {
+            let (name, shape) = self.simd_c(ty);
+            let (mt, ..) = lane_c(shape);
+            self.line(&format!("EMBER_SIMD_MASK({name}, {mt}, {}, {})", shape.lanes, shape.bytes() / 16));
+        }
+        for ty in used.iter().copied().filter(|ty| self.simd_c(*ty).1.lane != SimdLane::Mask).collect::<Vec<_>>() {
+            let (name, shape) = self.simd_c(ty);
+            let mask = mask_c(self, shape);
+            let mt = lane_c(ember_types::SimdShape { lane: SimdLane::Mask, ..shape }).0;
+            let (t, suffix, unsigned, low, high) = lane_c(shape);
+            let (n, chunks, bits) = (shape.lanes, shape.bytes() / 16, shape.bits);
+            match shape.lane {
+                SimdLane::Float => {
+                    let (sqrt, fma) = if shape.bits == 32 { ("sqrtf", "fmaf") } else { ("sqrt", "fma") };
+                    self.line(&format!("EMBER_SIMD_FLOAT({name}, {t}, {n}, {mask}, {mt}, {sqrt}, {fma}, {chunks})"));
+                }
+                _ => {
+                    let signed = u8::from(shape.lane == SimdLane::Signed);
+                    self.line(&format!(
+                        "EMBER_SIMD_INT({name}, {t}, {n}, {mask}, {mt}, {suffix}, {unsigned}, {low}, {high}, {signed}, {bits}, {chunks})"
+                    ));
+                }
+            }
+        }
+        for (vector, index) in pairs {
+            let (name, shape) = self.simd_c(vector);
+            let (index_name, index_shape) = self.simd_c(index);
+            let t = lane_c(shape).0;
+            let signed = u8::from(index_shape.lane == SimdLane::Signed);
+            self.line(&format!("EMBER_SIMD_GATHER({name}, {t}, {}, {index_name}, {signed})", shape.lanes));
+        }
+        self.line("");
+    }
+
     fn emit_soa_helpers(&mut self) {
         let soas: Vec<(StructId, Ty)> = self
             .types
             .structs()
             .filter_map(|(id, def)| match &def.origin {
-                Some((origin, args)) if origin.as_str() == "SoA" && args.len() == 1 => Some((id, args[0])),
+                Some((origin, args)) if matches!(origin.as_str(), "SoA" | "ArenaSoA") && args.len() == 1 => Some((id, args[0])),
                 _ => None,
             })
             .collect();
@@ -2593,7 +2705,26 @@ impl Emitter<'_> {
             let name = self.c_named(&self.types.struct_def(id).name.to_string());
             let soa_c = self.c_type(self.types.find(&TyKind::Struct(id)).expect("an SoA's type is interned"));
             let element_c = self.c_type(element);
-            let fields: Vec<(String, Ty)> = self.types.struct_def(element_id).fields.iter().map(|f| (f.name.to_string(), f.ty)).collect();
+            // `[SOA-1]` — one column per field, a flattened field's split into its own; `access` is
+            // where each lives in a whole element (`.pos.x`).
+            let columns = self.types.soa_columns(element_id);
+            let fields: Vec<(String, Ty)> = columns.iter().map(|column| (column.name.clone(), column.ty)).collect();
+            let access: BTreeMap<String, String> = columns
+                .iter()
+                .map(|column| {
+                    let mut structure = element_id;
+                    let mut path = String::new();
+                    for &index in &column.path {
+                        let field = &self.types.struct_def(structure).fields[index];
+                        path.push('.');
+                        path.push_str(field.name.as_str());
+                        if let TyKind::Struct(inner) = *self.types.kind(field.ty) {
+                            structure = inner;
+                        }
+                    }
+                    (column.name.clone(), path)
+                })
+                .collect();
             let count = fields.len().max(1);
             // Layout.
             self.line(&format!("static inline EMBER_MAYBE_UNUSED size_t {name}_layout(size_t cap, size_t* at) {{"));
@@ -2628,6 +2759,34 @@ impl Emitter<'_> {
             }
             self.line("    s->cap = cap;");
             self.line("}");
+            // `[SOA-4]` — an `ArenaSoA`: its one block taken from the arena, never grown or freed.
+            if matches!(&self.types.struct_def(id).origin, Some((origin, _)) if origin.as_str() == "ArenaSoA") {
+                let arena_field = self.types.struct_def(id).fields.last().expect("an `ArenaSoA` holds its arena").ty;
+                let arena_c = self.c_type(arena_field);
+                self.line(&format!("static inline EMBER_MAYBE_UNUSED {soa_c} {name}_with_capacity_in({arena_c} arena, int64_t n) {{"));
+                self.line(&format!("    {soa_c} s;"));
+                self.line("    memset(&s, 0, sizeof s);");
+                self.line("    s.arena = arena;");
+                self.line("    size_t cap = n > 0 ? (size_t)n : 0;");
+                self.line(&format!("    size_t at[{count}];"));
+                self.line(&format!("    size_t size = {name}_layout(cap, at);"));
+                self.line(&format!("    unsigned char* block = (unsigned char*){RT}arena_alloc_uninit(arena->state, 1, size ? size : 1, 64);"));
+                for (k, (field, ty)) in fields.iter().enumerate() {
+                    let c = self.c_type(*ty);
+                    self.line(&format!("    s.col_{field} = ({c}*)(block + at[{k}]);"));
+                }
+                self.line("    s.cap = cap;");
+                self.line("    return s;");
+                self.line("}");
+                self.line(&format!("static inline EMBER_MAYBE_UNUSED bool {name}_try_push({soa_c}* s, {element_c} v) {{"));
+                self.line("    if (s->len == s->cap) { return true; }");
+                for (field, _) in &fields {
+                    self.line(&format!("    s->col_{field}[s->len] = v{};", access[field]));
+                }
+                self.line("    s->len += 1;");
+                self.line("    return false;");
+                self.line("}");
+            }
             // with_capacity
             self.line(&format!("static inline EMBER_MAYBE_UNUSED {soa_c} {name}_with_capacity(int64_t n) {{"));
             self.line(&format!("    {soa_c} s;"));
@@ -2639,7 +2798,7 @@ impl Emitter<'_> {
             self.line(&format!("static inline EMBER_MAYBE_UNUSED void {name}_push({soa_c}* s, {element_c} v) {{"));
             self.line(&format!("    if (s->len == s->cap) {{ {name}_grow(s, s->len + 1); }}"));
             for (field, _) in &fields {
-                self.line(&format!("    s->col_{field}[s->len] = v.{field};"));
+                self.line(&format!("    s->col_{field}[s->len] = v{};", access[field]));
             }
             self.line("    s->len += 1;");
             self.line("}");
@@ -2648,7 +2807,7 @@ impl Emitter<'_> {
             self.line("    s->len -= 1;");
             self.line(&format!("    {element_c} v;"));
             for (field, _) in &fields {
-                self.line(&format!("    v.{field} = s->col_{field}[s->len];"));
+                self.line(&format!("    v{} = s->col_{field}[s->len];", access[field]));
             }
             self.line("    return v;");
             self.line("}");
@@ -2724,7 +2883,7 @@ impl Emitter<'_> {
             self.line(&format!("    if (i < 0 || (size_t)i >= s->len) {{ {RT}panic_bounds((size_t)i, s->len, loc); }}"));
             self.line(&format!("    {element_c} v;"));
             for (field, _) in &fields {
-                self.line(&format!("    v.{field} = s->col_{field}[i];"));
+                self.line(&format!("    v{} = s->col_{field}[i];", access[field]));
             }
             self.line("    s->len -= 1;");
             self.line("    if ((size_t)i != s->len) {");
@@ -4357,6 +4516,23 @@ impl Emitter<'_> {
                 if self.shared_inner_id(id).is_some() {
                     return Definition::Alias(format!("{}obj_header*", RT));
                 }
+                // `[SIMD-1]` — a vector or mask is its lanes, aligned to its size, and the
+                // target's registers over them (`ember_simd.h`).
+                if let Some(shape) = self.simd_shape_of(id) {
+                    let field = &self.types.struct_def(id).fields[0];
+                    let kind = match (shape.lane, shape.bits) {
+                        (ember_types::SimdLane::Float, 32) => "float",
+                        (ember_types::SimdLane::Float, _) => "double",
+                        _ => "int",
+                    };
+                    return Definition::Struct(vec![format!(
+                        "union {{ EMBER_SIMD_ALIGN({}) {} {}; EMBER_SIMD_REGS({kind}, {}); }}",
+                        shape.bytes(),
+                        self.c_member_type(field.ty),
+                        field.name,
+                        shape.bytes() / 16
+                    )]);
+                }
                 Definition::Struct(
                     self.types
                         .struct_def(id)
@@ -5920,6 +6096,35 @@ impl Emitter<'_> {
                 self.line(&format!("    {} _{local}; (void)_{local};", self.c_type(body.locals[local].ty)));
             }
         }
+        // `[CG-C-4]` — each view `[SIMD-3]` proves apart from the loop's
+        // others is named through a `restrict` pointer and a length hoisted
+        // into a block around the loop (a kernel's views are its parameters).
+        let restricted = if body.restrict_views {
+            Vec::new()
+        } else {
+            ember_analysis::restrict_views(body, self.types, &counted.chain)
+        };
+        let restricted: Vec<(LocalId, bool, String)> = restricted
+            .into_iter()
+            .filter_map(|(local, through)| {
+                let list = if through { Place { local, projection: vec![Projection::Deref] } } else { Place::local(local) };
+                let elem = match self.types.kind(self.place_ty(&list, body)) {
+                    TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => self.c_type(*elem),
+                    _ => return None,
+                };
+                (elem != "void").then_some((local, through, elem))
+            })
+            .collect();
+        if !restricted.is_empty() {
+            self.line("    {");
+            for (local, through, elem) in &restricted {
+                let list = if *through { format!("(*_{})", local.0) } else { format!("_{}", local.0) };
+                let n = local.0;
+                self.line(&format!("    {elem}* restrict _{n}_r = ({elem}*){list}.ptr;"));
+                self.line(&format!("    size_t _{n}_rn = {list}.len; (void)_{n}_rn;"));
+                self.loop_restricted.insert(n, *through);
+            }
+        }
         let (counter, limit) = (counted.counter.0, counted.limit.0);
         let test = if counted.inclusive { "<=" } else { "<" };
         if let Some(sum) = integer_reduction::byte_sum(counted, body, self.types, locals, address_taken, |place| self.place_ty(place, body)) {
@@ -5960,6 +6165,10 @@ impl Emitter<'_> {
             self.line(&format!("    for (; _{counter} {test} _{limit}; ++_{counter}) {{"));
             self.emit_for_body(counted, body, locals);
             self.line("    }");
+        }
+        if !restricted.is_empty() {
+            self.line("    }");
+            self.loop_restricted.clear();
         }
         if !carried.is_empty() || !private.is_empty() {
             for &local in &carried {
@@ -7300,14 +7509,14 @@ impl Emitter<'_> {
             return None;
         }
         match which {
-            Builtin::Slice { text } => {
+            Builtin::Slice { text, nonempty } => {
                 let (view, lo, hi) = (self.operand(&args[0], body), self.operand(&args[1], body), self.operand(&args[2], body));
                 let ptr = if *text {
                     format!("({lo} == 0 ? ({view}).ptr : ({view}).ptr + {lo})")
                 } else {
                     let elem = self.c_type(self.span_element(*arg_ty));
                     let tail = element_pointer(&format!("({view}).ptr"), &elem, &lo, false);
-                    format!("({lo} == 0 ? ({view}).ptr : (const void*){tail})")
+                    if *nonempty { format!("(const void*){tail}") } else { format!("({lo} == 0 ? ({view}).ptr : (const void*){tail})") }
                 };
                 Some((ptr, format!("{hi} - {lo}")))
             }
@@ -7988,6 +8197,94 @@ impl Emitter<'_> {
                         let name = self.c_named(&self.types.struct_def(id).name.to_string());
                         return format!("{name}_join(({RT}thread*)({}).thread)", rendered[0]);
                     }
+                    // `[SIMD-1]` — through the helpers `emit_simd_helpers` instantiates.
+                    Builtin::Simd { op, vector } => {
+                        use ember_mir::SimdOp as S;
+                        use ember_mir::BinOp;
+                        use ember_types::OverflowPolicy as P;
+                        let (name, shape) = self.simd_c(*vector);
+                        let integer = matches!(shape.lane, ember_types::SimdLane::Signed | ember_types::SimdLane::Unsigned);
+                        let loc = self.location(span);
+                        let r = |i: usize| rendered[i].clone();
+                        let all = rendered.join(", ");
+                        let form = |policy: &P| match policy {
+                            P::Panic => "checked",
+                            P::Wrap => "wrap",
+                            P::Saturate => "sat",
+                        };
+                        return match op {
+                            S::Splat | S::MaskSplat => format!("{name}_splat({})", r(0)),
+                            S::Load { checked: true } => format!("{name}_load({}, {loc})", r(0)),
+                            S::Load { checked: false } => format!("{name}_load_unchecked({})", r(0)),
+                            S::Store { checked: true } => format!("{name}_store({}, {}, {loc})", r(0), r(1)),
+                            S::Store { checked: false } => format!("{name}_store_unchecked({}, {})", r(0), r(1)),
+                            S::Gather { checked, index } | S::Scatter { checked, index } => {
+                                let index_name = self.simd_c(*index).0;
+                                let what = if matches!(op, S::Gather { .. }) { "gather" } else { "scatter" };
+                                if *checked {
+                                    format!("{name}_{what}_{index_name}({all}, {loc})")
+                                } else {
+                                    format!("{name}_{what}_unchecked_{index_name}({all})")
+                                }
+                            }
+                            S::Binary { op: binary, policy } => {
+                                let stem = match binary {
+                                    BinOp::Add => "add",
+                                    BinOp::Sub => "sub",
+                                    BinOp::Mul => "mul",
+                                    BinOp::Div => "div",
+                                    BinOp::BitAnd => "and",
+                                    BinOp::BitOr => "or",
+                                    _ => "xor",
+                                };
+                                if integer && matches!(binary, BinOp::Add | BinOp::Sub | BinOp::Mul) {
+                                    match policy {
+                                        P::Panic => format!("{name}_{stem}_checked({all}, {loc})"),
+                                        other => format!("{name}_{stem}_{}({all})", form(other)),
+                                    }
+                                } else {
+                                    format!("{name}_{stem}({all})")
+                                }
+                            }
+                            S::Neg { policy } | S::Abs { policy } | S::ReduceAdd { policy } => {
+                                let stem = match op {
+                                    S::Neg { .. } => "neg",
+                                    S::Abs { .. } => "abs",
+                                    _ => "reduce_add",
+                                };
+                                match (integer, policy) {
+                                    (false, _) => format!("{name}_{stem}({all})"),
+                                    (true, P::Panic) => format!("{name}_{stem}_checked({all}, {loc})"),
+                                    (true, other) => format!("{name}_{stem}_{}({all})", form(other)),
+                                }
+                            }
+                            S::Compare { op: compare } => {
+                                let stem = match compare {
+                                    BinOp::Eq => "eq",
+                                    BinOp::Ne => "ne",
+                                    BinOp::Lt => "lt",
+                                    BinOp::Le => "le",
+                                    BinOp::Gt => "gt",
+                                    _ => "ge",
+                                };
+                                format!("{name}_{stem}({all})")
+                            }
+                            // The lane list is an array of `int`s; the helper reads its elements.
+                            S::Shuffle => format!("{name}_shuffle({}, ({})._0)", r(0), r(1)),
+                            S::ReduceMin => format!("{name}_reduce_min({all})"),
+                            S::ReduceMax => format!("{name}_reduce_max({all})"),
+                            S::Fma => format!("{name}_fma({all})"),
+                            S::Min => format!("{name}_min({all})"),
+                            S::Max => format!("{name}_max({all})"),
+                            S::Sqrt => format!("{name}_sqrt({all})"),
+                            S::RsqrtApprox => format!("{name}_rsqrt_approx({all})"),
+                            S::RcpApprox => format!("{name}_rcp_approx({all})"),
+                            S::Any => format!("{name}_any({all})"),
+                            S::All => format!("{name}_all({all})"),
+                            // `m.select(a, b)`: named for the selected vectors.
+                            S::Select => format!("{name}_select({all})"),
+                        };
+                    }
                     // `[SOA-1]`..`[SOA-7]` — through the helpers `emit_soa_helpers` writes.
                     Builtin::SoA { op, soa } => {
                         let TyKind::Struct(id) = *self.types.kind(*soa) else { unreachable!("an SoA is a struct") };
@@ -7995,6 +8292,8 @@ impl Emitter<'_> {
                         let r = |i: usize| rendered[i].clone();
                         return match op {
                             ember_mir::SoAOp::WithCapacity => format!("{name}_with_capacity({})", r(0)),
+                            ember_mir::SoAOp::WithCapacityIn => format!("{name}_with_capacity_in({}, {})", r(0), r(1)),
+                            ember_mir::SoAOp::TryPush => format!("{name}_try_push({}, {})", r(0), r(1)),
                             ember_mir::SoAOp::Column { mutable } => {
                                 let view = if *mutable { format!("{RT}mutspan") } else { format!("{RT}span") };
                                 format!("(({view}){{ *({}), {} }})", r(0), r(1))
@@ -8971,14 +9270,21 @@ impl Emitter<'_> {
                     // Part VI's slice row — the bounds were checked in MIR.
                     // An empty view may have no buffer, so an offset of 0
                     // keeps the pointer as it is.
-                    Builtin::Slice { text } => {
+                    Builtin::Slice { text, nonempty } => {
                         let (view, lo, hi) = (&rendered[0], &rendered[1], &rendered[2]);
                         return if *text {
                             format!("(({RT}str){{ ({lo} == 0 ? ({view}).ptr : ({view}).ptr + {lo}), {hi} - {lo} }})")
                         } else {
                             let elem = self.c_type(self.span_element(*arg_ty));
-                            let tail = element_pointer(&format!("({view}).ptr"), &elem, lo, false);
-                            format!("(({RT}span){{ ({lo} == 0 ? ({view}).ptr : (const void*){tail}), {hi} - {lo} }})")
+                            // `[SPN-2]` — a `MutSpan`'s part is a `MutSpan`.
+                            let mutable = matches!(self.types.kind(*arg_ty), TyKind::Span { mutable: true, .. });
+                            let (view_c, pointer_c) = if mutable { ("mutspan", "void*") } else { ("span", "const void*") };
+                            let tail = element_pointer(&format!("({view}).ptr"), &elem, lo, mutable);
+                            if *nonempty {
+                                format!("(({RT}{view_c}){{ ({pointer_c}){tail}, {hi} - {lo} }})")
+                            } else {
+                                format!("(({RT}{view_c}){{ ({lo} == 0 ? ({view}).ptr : ({pointer_c}){tail}), {hi} - {lo} }})")
+                            }
                         };
                     }
                     Builtin::StrAsBytes => {
@@ -9116,8 +9422,27 @@ impl Emitter<'_> {
         let mut out = format!("_{}", place.local.0);
         let mut at = Cursor { ty: body.local(place.local).ty, variant: None };
         let mut start = 0;
+        // `[CG-C-4]` — a view the loop names through its own `restrict`
+        // pointer and length.
+        if let Some(&through) = self.loop_restricted.get(&place.local.0) {
+            let skip = usize::from(through);
+            match place.projection.get(skip) {
+                Some(Projection::Index(index)) => {
+                    for projection in &place.projection[..=skip] {
+                        at = self.project(at, projection);
+                    }
+                    out = format!("_{}_r[_{}]", place.local.0, index.0);
+                    start = skip + 1;
+                }
+                Some(Projection::Field(1)) if place.projection.len() == skip + 1 => {
+                    return format!("_{}_rn", place.local.0);
+                }
+                _ => {}
+            }
+        }
         // `bind_deep_places`: the longest bound pointer this place reads.
-        if let Some((pointer, name)) = self
+        if start == 0
+            && let Some((pointer, name)) = self
             .deep_bindings
             .iter()
             .filter(|(pointer, _)| {
@@ -11465,6 +11790,13 @@ fn statement_count(stmts: &[Stmt]) -> usize {
 /// `true`, forced inline as the runtime's fast paths are: a `for` loop calls
 /// `next` for every item, and MSVC left `chars()`'s a call (1.4x the C loop).
 fn inline_bodies(bodies: &[Body], types: &TypeTable) -> BTreeMap<String, bool> {
+    inline_header_symbols(bodies, types)
+}
+
+/// `[CG-C-3]`, `[CG-C-3b]` — the functions whose bodies the inline header
+/// exports (`inline_bodies`), by symbol: their bodies are part of the
+/// interface hash. With each, whether it is forced inline.
+pub fn inline_header_symbols(bodies: &[Body], types: &TypeTable) -> BTreeMap<String, bool> {
     let foreign: BTreeSet<&str> =
         bodies.iter().filter(|body| body.is_extern_declaration).map(|body| body.symbol.as_str()).collect();
     bodies
@@ -12230,7 +12562,7 @@ mod string_descriptor_view_parts_tests {
             uncounted_handles: Vec::new(),
             removed_checks: Vec::new(),
             restrict_views: false,
-            stack_buffers: Vec::new(),
+            stack_buffers: Vec::new(), loop_notes: Default::default(),
         }
     }
 
@@ -12273,6 +12605,7 @@ mod string_descriptor_view_parts_tests {
             inline_bodies: BTreeMap::new(),
             inline_sizes: BTreeMap::new(),
             view_pointers: BTreeMap::new(),
+            loop_restricted: BTreeMap::new(),
             parted_views: BTreeSet::new(),
             addressed_locals: BTreeSet::new(),
             upcast_copies: BTreeSet::new(),

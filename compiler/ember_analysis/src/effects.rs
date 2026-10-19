@@ -18,10 +18,10 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use ember_diag::{Diagnostic, Sink, codes};
-use ember_hir::{Builtin, Effects, FloatLib};
+use ember_hir::{Builtin, Effects, FloatLib, SimdOp};
 use ember_mir::{AggregateKind, AssertKind, Body, FuncRef, Operand, Rvalue, StmtKind, Terminator};
 use ember_span::Span;
-use ember_types::{ClassId, Ty, TyKind, TypeTable};
+use ember_types::{ClassId, OverflowPolicy, Ty, TyKind, TypeTable};
 
 use crate::regions::place_type;
 
@@ -1139,9 +1139,26 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         B::SoA { op: ember_mir::SoAOp::WithCapacity | ember_mir::SoAOp::Push | ember_mir::SoAOp::Reserve, .. } => {
             (Effects::ALLOC, "growing an `SoA`")
         }
+        // `[SOA-4]`, `[ARN-4]` — taking the block from a growing arena may grow it.
+        B::SoA { op: ember_mir::SoAOp::WithCapacityIn, .. } => (ALLOC, "an `ArenaSoA`'s block, from its arena"),
         B::SoA { op: ember_mir::SoAOp::SwapRemove, .. } => (Effects::PANIC, "`SoA.swap_remove`"),
         B::SoA { op: ember_mir::SoAOp::Truncate | ember_mir::SoAOp::DropAt, .. } => (Effects::NONE, "dropping an `SoA`'s elements"),
         B::SoA { .. } => (Effects::NONE, "an `SoA` operation"),
+        // `[SIMD-9]` — a vector's load, store, gather or scatter is bounds-checked; the
+        // unchecked forms are `unsafe`. `[SIMD-8]` — integer lanes check overflow as scalars do.
+        B::Simd { op: SimdOp::Load { checked: true } | SimdOp::Store { checked: true }
+            | SimdOp::Gather { checked: true, .. } | SimdOp::Scatter { checked: true, .. }, .. } => {
+            (Effects::CHECK_BOUNDS, "a vector's bounds check")
+        }
+        B::Simd { op: SimdOp::Load { .. } | SimdOp::Store { .. } | SimdOp::Gather { .. } | SimdOp::Scatter { .. }, .. } => {
+            (Effects::UNSAFE, "an unchecked vector load or store")
+        }
+        B::Simd {
+            op: SimdOp::Binary { policy: OverflowPolicy::Panic, .. } | SimdOp::Neg { policy: OverflowPolicy::Panic }
+                | SimdOp::ReduceAdd { policy: OverflowPolicy::Panic } | SimdOp::Abs { policy: OverflowPolicy::Panic },
+            ..
+        } => (Effects::CHECK_ARITHMETIC, "a vector's overflow check"),
+        B::Simd { .. } => (Effects::NONE, ""),
         B::ScopeSpawn { .. } => (Effects::SYNC | Effects::ALLOC, "`Scope.spawn`"),
         B::ScopedJoin => (Effects::SYNC | Effects::BLOCK, "`ScopedJoinHandle.join`"),
         // `[JOB-1]`, `[JOB-2]` — a job is handed to the pool; one with more than six jobs to wait

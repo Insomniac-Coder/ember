@@ -91,6 +91,7 @@ dependencies = [
 name = "ember_codegen_c"
 version = "0.1.0"
 dependencies = [
+ "ember_analysis",
  "ember_branding",
  "ember_mir",
  "ember_span",

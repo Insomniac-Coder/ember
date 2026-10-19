@@ -261,6 +261,8 @@ pub fn check(
     // may have missed an extension whose bound they meet (`Map[String, V]`'s
     // `K: Hash` needs `String`'s); it is offered each one again.
     checker.extend_early_instances();
+    checker.class_methods_recorded = true;
+    checker.check_deferred_overrides();
     checker.resolve_derived_clones();
     checker.clones_resolved = true;
     checker.validate_class_methods(modules);
@@ -366,6 +368,24 @@ pub fn check(
         comptime,
         incomplete: std::mem::take(&mut checker.incomplete),
     }
+}
+
+/// `[SOA-1]` — where a field of an `SoA`'s element is reached from: the `SoA` itself (a column is a
+/// view), an element `ps[i]` (an `SoA` place and an index), or an element proxy.
+#[derive(Clone)]
+enum SoaAt {
+    Soa(Expr),
+    Element(Expr, Expr),
+    Proxy(Expr),
+}
+
+/// `[SOA-1]` — a field split into columns by `@soa(flatten)`: where it is reached from, the
+/// `SoA`'s type, and the path of field indices from the element to it.
+#[derive(Clone)]
+struct SoaGroup {
+    at: SoaAt,
+    soa: Ty,
+    path: Vec<usize>,
 }
 
 /// `[TYP-16]` — a generic type alias: its parameters, its value, and the module its value's names
@@ -2249,10 +2269,22 @@ struct Checker<'a> {
     deferred_methods: HashMap<DefId, PendingMethod>,
     /// `[COST-1]` — see `CheckOutput::std_instances` and `note_std_instance`.
     std_instances: HashSet<String>,
+    /// `[STD-1]` — the functions of `std` whose documentation says they allocate, by span.
+    allocation_documented: HashSet<Span>,
+    /// `[STD-1]` — the methods of `std`'s generic declarations (a generic type's, a generic
+    /// extension's, an interface's provided ones), by span: their effects are their instances'.
+    std_generic_members: HashSet<Span>,
     /// A generic class/extension declaration can materialize more than once,
     /// but an invalid `override` is one source error, not one per concrete
     /// type argument list.
     reported_generic_override_errors: HashSet<(usize, usize, usize)>,
+    /// Whether every class's own methods are recorded (`collect_methods`). A generic class
+    /// instantiated before then (by a signature or an extension's associated type) has its
+    /// `override`s checked once they are (`deferred_override_checks`).
+    class_methods_recorded: bool,
+    /// `[CLS-4]` — an early generic class instance's `override`s: the instance, the method's
+    /// name, its source and span.
+    deferred_override_checks: Vec<(ClassId, Symbol, (usize, usize, usize), Span)>,
     /// `[CELL-1]` — every `Cell[T]` built so far, and the `T` it holds. A cell
     /// is an ordinary `StructId` everywhere else in the compiler, so this is
     /// what tells method dispatch that `set` on it is a builtin rather than a
@@ -2274,11 +2306,19 @@ struct Checker<'a> {
     with_scope_item: Option<Span>,
     /// `[SOA-1]` — each `SoA[T]` instance, by its struct, and its `T`.
     soas: HashMap<StructId, Ty>,
+    /// `[SOA-4]` — which of `soas` are `ArenaSoA`.
+    arena_soas: HashSet<StructId>,
     /// `[SOA-6]` — each element proxy type (`SoARef[T]`, `SoAMut[T]`), by its struct: its `SoA`
     /// and whether it writes.
     soa_proxies: HashMap<StructId, (Ty, bool)>,
     /// `[SOA-6]` — the `ps[i]` whose field a field access is about to take (`ps[i].f`).
     soa_element_field: Option<Span>,
+    /// `[SOA-1]` — a field `@soa(flatten)` split into columns, reached as the base of a further
+    /// field access (`ps.pos` of `ps.pos.x`), by the span of the expression standing for it.
+    soa_groups: HashMap<Span, SoaGroup>,
+    /// `[SOA-1]` — a flattened field of an element read whole (`ps[i].pos`), gathered from its
+    /// columns, by the span of the field access: an assignment to it writes the columns.
+    soa_gathers: HashMap<Span, SoaGroup>,
     /// `[THR-11]` — a scoped task's lambda, which copies the `Copy` variables it only reads
     /// (`[CLO-13]`), as one stored as a callable value does: a loop's variable lives one pass.
     scoped_task_lambda: Option<Span>,
@@ -2513,6 +2553,9 @@ struct Checker<'a> {
     /// module and item index: one named by an earlier declaration's field or
     /// method is collected on demand.
     pending_generic_structs: HashMap<Symbol, (usize, usize, ast::Item)>,
+    /// Each generic class not yet collected, as `pending_generic_structs`: a generic struct's
+    /// field may name one declared after it (or a class collected later in module order).
+    pending_generic_classes: HashMap<Symbol, (usize, usize, ast::Item)>,
     /// D-407 — each interface's associated types by name, and its parents'
     /// names, read before any generic type is collected: a generic type's
     /// field or an interface's method may name `U.Iter` of an interface
@@ -2700,9 +2743,13 @@ impl<'a> Checker<'a> {
             emit_if_used_methods: HashSet::new(),
             deferred_methods: HashMap::new(),
             std_instances: HashSet::new(),
+            allocation_documented: HashSet::new(),
+            std_generic_members: HashSet::new(),
             bound_calls: HashMap::new(),
             generically_checked: HashSet::new(),
             reported_generic_override_errors: HashSet::new(),
+            class_methods_recorded: false,
+            deferred_override_checks: Vec::new(),
             cells: HashMap::new(),
             boxes: HashMap::new(),
             shareds: HashMap::new(),
@@ -2710,8 +2757,11 @@ impl<'a> Checker<'a> {
             with_scope_item: None,
             scoped_task_lambda: None,
             soas: HashMap::new(),
+            arena_soas: HashSet::new(),
             soa_proxies: HashMap::new(),
             soa_element_field: None,
+            soa_groups: HashMap::new(),
+            soa_gathers: HashMap::new(),
             weaks: HashMap::new(),
             refcells: HashMap::new(),
             maybe_uninit: HashMap::new(),
@@ -2781,6 +2831,7 @@ impl<'a> Checker<'a> {
             pending_bound_interfaces: Vec::new(),
             collecting_generic: None,
             pending_generic_structs: HashMap::new(),
+            pending_generic_classes: HashMap::new(),
             noted_assoc: HashMap::new(),
             method_call_expected: None,
             loop_labels: Vec::new(),
@@ -4753,6 +4804,18 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[CLS-4]` — the `override`s of generic class instances made before every class's methods
+    /// were recorded, checked against their bases' virtual methods now.
+    fn check_deferred_overrides(&mut self) {
+        for (id, name, source, span) in std::mem::take(&mut self.deferred_override_checks) {
+            let Some(base) = self.types.class_def(id).base else { continue };
+            let inherited = self.class_virtual_layout(base, &mut HashMap::new());
+            if !inherited.contains_key(&name) && self.reported_generic_override_errors.insert(source) {
+                self.error(codes::E2110, span, "override of a method that is not virtual");
+            }
+        }
+    }
+
     fn class_virtual_layout(
         &mut self,
         id: ClassId,
@@ -4831,10 +4894,16 @@ impl<'a> Checker<'a> {
     /// D-279 — record every generic struct before any is collected.
     fn note_generic_structs(&mut self, module: &ast::Module) {
         for (item_index, item) in module.items.iter().enumerate() {
-            let ast::ItemKind::Struct(decl) = &item.kind else { continue };
-            if !decl.generics.is_empty() {
-                let name = self.qualified(decl.name.name);
-                self.pending_generic_structs.insert(name, (self.current_module, item_index, item.clone()));
+            match &item.kind {
+                ast::ItemKind::Struct(decl) if !decl.generics.is_empty() => {
+                    let name = self.qualified(decl.name.name);
+                    self.pending_generic_structs.insert(name, (self.current_module, item_index, item.clone()));
+                }
+                ast::ItemKind::Class(decl) if !decl.generics.is_empty() => {
+                    let name = self.qualified(decl.name.name);
+                    self.pending_generic_classes.insert(name, (self.current_module, item_index, item.clone()));
+                }
+                _ => {}
             }
         }
         // D-407 — and each interface's associated types (`noted_assoc`).
@@ -4944,6 +5013,21 @@ impl<'a> Checker<'a> {
 
     /// D-279 — collect the generic struct `name` now, if it is declared and
     /// not collected yet: a declaration before it names it.
+    /// A generic class named before its turn to be collected (a generic struct's field names it):
+    /// collected now, as `collect_generic_struct_on_demand` does a struct.
+    fn collect_generic_class_on_demand(&mut self, name: Symbol) {
+        let Some((module, item_index, item)) = self.pending_generic_classes.remove(&name) else { return };
+        let saved_module = std::mem::replace(&mut self.current_module, module);
+        let saved_params = std::mem::take(&mut self.type_params);
+        let saved_collecting = self.collecting_generic.take();
+        let saved_self = self.self_ty.take();
+        self.collect_generic_class(item_index, &item);
+        self.current_module = saved_module;
+        self.type_params = saved_params;
+        self.collecting_generic = saved_collecting;
+        self.self_ty = saved_self;
+    }
+
     fn collect_generic_struct_on_demand(&mut self, name: Symbol) {
         let Some((module, item_index, item)) = self.pending_generic_structs.remove(&name) else { return };
         let saved_module = std::mem::replace(&mut self.current_module, module);
@@ -5180,6 +5264,18 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let name = self.qualified(decl.name.name);
+            // Collected already, on demand.
+            if self.pending_generic_classes.remove(&name).is_none() {
+                continue;
+            }
+            self.collect_generic_class(item_index, item);
+        }
+    }
+
+    fn collect_generic_class(&mut self, item_index: usize, item: &ast::Item) {
+        {
+            let ast::ItemKind::Class(decl) = &item.kind else { return };
+            let name = self.qualified(decl.name.name);
             let generic_params = self.declare_generics(&decl.generics);
             let params: Vec<Symbol> = generic_params.iter().map(|param| param.name).collect();
             let base = decl.base.clone();
@@ -5279,13 +5375,26 @@ impl<'a> Checker<'a> {
                 self.collect_universal_extension(decl, item, item_index);
                 continue;
             }
-            let ast::TypeKind::Path { segments, args } = &decl.target.kind else {
-                continue;
+            // A tuple target's elements are its arguments (`[GRM-34]`); a tuple is everyone's, so
+            // only an extension implementing an interface may add to it (`[IFC-2]`).
+            let tuple_args: Vec<ast::GenericArg>;
+            let (name, args): (Symbol, &[ast::GenericArg]) = match &decl.target.kind {
+                ast::TypeKind::Tuple(items) => {
+                    tuple_args = items.iter().cloned().map(ast::GenericArg::Type).collect();
+                    (Self::tuple_extension_target(items.len()), &tuple_args)
+                }
+                ast::TypeKind::Path { segments, args } => {
+                    let Some(name) = self.generic_extension_target(&segments[0]) else { continue };
+                    (name, args)
+                }
+                _ => continue,
             };
-            let Some(name) = self.generic_extension_target(&segments[0]) else { continue };
             // `[IFC-2]`, as for `extend T:`.
-            if decl.implements.is_empty() && !self.generic_target_in_this_package(name) {
-                let shown = segments[0].name.to_string();
+            if decl.implements.is_empty() && (name.as_str().starts_with("$tuple") || !self.generic_target_in_this_package(name)) {
+                let shown = match &decl.target.kind {
+                    ast::TypeKind::Path { segments, .. } => segments[0].name.to_string(),
+                    _ => "a tuple".to_string(),
+                };
                 self.report_foreign_extension(&shown, decl.target.span);
                 continue;
             }
@@ -6392,10 +6501,19 @@ impl<'a> Checker<'a> {
         if errors::universal_target(decl) {
             return true;
         }
+        // A tuple of its parameters (`extend[A, B] (A, B) implements I:`), kept as `$tuple2`.
+        if let ast::TypeKind::Tuple(items) = &decl.target.kind {
+            return items.len() >= 2;
+        }
         let ast::TypeKind::Path { segments, args } = &decl.target.kind else {
             return false;
         };
         segments.len() == 1 && !args.is_empty() && self.generic_extension_target(&segments[0]).is_some()
+    }
+
+    /// The name an extension of a tuple of `arity` types is kept under.
+    fn tuple_extension_target(arity: usize) -> Symbol {
+        Symbol::intern(&format!("$tuple{arity}"))
     }
 
     /// The name an extension of the generic type written `segment` is kept
@@ -6423,10 +6541,14 @@ impl<'a> Checker<'a> {
                 Some((Symbol::intern(if mutable { "MutSpan" } else { "Span" }), vec![elem]))
             }
             TyKind::Enum(id) if self.is_option(ty) => Some((Symbol::intern("Option"), vec![payload(id, 1)])),
-            TyKind::Struct(id) if self.soas.contains_key(&id) => Some((Symbol::intern("SoA"), vec![self.soas[&id]])),
+            // `std`'s extensions of `SoA[T]` are an `SoA`'s; an `ArenaSoA` has its own operations.
+            TyKind::Struct(id) if self.soas.contains_key(&id) && !self.arena_soas.contains(&id) => {
+                Some((Symbol::intern("SoA"), vec![self.soas[&id]]))
+            }
             TyKind::Enum(id) if self.is_result(ty) => {
                 Some((Symbol::intern("Result"), vec![payload(id, 0), payload(id, 1)]))
             }
+            TyKind::Tuple(ref items) if items.len() >= 2 => Some((Self::tuple_extension_target(items.len()), items.clone())),
             _ => None,
         }
     }
@@ -6578,6 +6700,7 @@ impl<'a> Checker<'a> {
             }
             "Option" => Some(self.option_of(*args.first()?)),
             "Result" => Some(self.result_of(*args.first()?, *args.get(1)?)),
+            name if name.starts_with("$tuple") => Some(self.types.intern(TyKind::Tuple(args.to_vec()))),
             _ => None,
         }
     }
@@ -11980,6 +12103,7 @@ impl<'a> Checker<'a> {
         let resolved_name = self.resolve_name(name);
         if self.declared_by_program(name, resolved_name) {
             self.collect_generic_struct_on_demand(resolved_name);
+            self.collect_generic_class_on_demand(resolved_name);
             if let Some(decl) = self.generic_structs.get(&resolved_name).cloned() {
                 let resolved = args.iter().map(|(ty, _)| *ty).collect::<Vec<_>>();
                 return self.instantiate_struct(resolved_name, &decl, &resolved, span);
@@ -12041,6 +12165,14 @@ impl<'a> Checker<'a> {
             let (inner, _) = args[0];
             return self.counted_of(inner, !name.is("Shared"));
         }
+        // `[SOA-4]` — the fixed-capacity, arena-backed form, `std.collections`'s (`[ARN-5]`).
+        if resolved_name.as_str() == "std.collections.ArenaSoA" {
+            if !require(self, 1) {
+                return self.common.error;
+            }
+            let (inner, inner_span) = args[0];
+            return self.soa_of_kind(inner, inner_span, true);
+        }
         if name.is("SoA") || name.is("SoARef") || name.is("SoAMut") {
             if !require(self, 1) {
                 return self.common.error;
@@ -12091,6 +12223,7 @@ impl<'a> Checker<'a> {
         }
         // D-279 — a generic struct declared later is collected now.
         self.collect_generic_struct_on_demand(resolved_name);
+            self.collect_generic_class_on_demand(resolved_name);
         if let Some(decl) = self.generic_structs.get(&resolved_name).cloned() {
             let resolved = args.iter().map(|(ty, _)| *ty).collect::<Vec<_>>();
             return self.instantiate_struct(resolved_name, &decl, &resolved, span);
@@ -15241,7 +15374,10 @@ impl<'a> Checker<'a> {
                 bindings.insert(param, arg);
             }
             let saved = std::mem::replace(&mut self.type_params, bindings);
+            // The base is named in the class's own module, whichever module names the instance.
+            let saved_module = std::mem::replace(&mut self.current_module, decl.declaring_module);
             let resolved = self.resolve_type(base_expr);
+            self.current_module = saved_module;
             self.type_params = saved;
             match self.types.kind(resolved) {
                 TyKind::Class(base) => {
@@ -15353,7 +15489,10 @@ impl<'a> Checker<'a> {
             .map(|base| self.class_virtual_layout(base, &mut inherited_layouts))
             .unwrap_or_default();
         for (method, owner_bindings, interface, extension_index) in method_recipes {
-            if method.dispatch == ast::Dispatch::Override
+            // A base whose own methods are not recorded yet has no virtual methods to see.
+            if method.dispatch == ast::Dispatch::Override && !self.class_methods_recorded && base.is_some() {
+                self.deferred_override_checks.push((id, method.name, method.source, method.span));
+            } else if method.dispatch == ast::Dispatch::Override
                 && !inherited_virtuals.contains_key(&method.name)
                 && self.reported_generic_override_errors.insert(method.source)
             {
@@ -15845,6 +15984,22 @@ impl<'a> Checker<'a> {
     }
 
     /// A function's contracts: its own attributes', and `[DET-8]`'s `#! module deterministic`.
+    /// `[STD-1]` — every function of `std.core`, `std.mem`, `std.math`, `std.simd` and `std.arena`
+    /// is `@noalloc` unless its documentation says it allocates (the word `allocates`): the
+    /// contract is checked as a written one is (`E4001`), so a function of these modules that
+    /// allocates undocumented stops every build. A generic function's, or a generic type's
+    /// method's, effects are its instances' (`[EFF-2]`), so it is checked where it is written only.
+    fn std_contracts(&self, mut contracts: hir::Contracts, span: Span, generic: bool) -> hir::Contracts {
+        let module = self.prefixes[self.current_module].as_str();
+        let listed = matches!(module, "std.core" | "std.mem" | "std.math" | "std.math.det" | "std.simd" | "std.arena")
+            || module.starts_with("std.math.");
+        let generic = generic || self.std_generic_members.contains(&span);
+        if listed && !generic && !self.allocation_documented.contains(&span) {
+            contracts.forbidden |= hir::Effects::ALLOC;
+        }
+        contracts
+    }
+
     fn contracts_of(&self, attrs: &[ast::Attribute]) -> hir::Contracts {
         // `[EFF-19]` — the set of the package that declares the function: the standard library's
         // is the default.
@@ -16591,7 +16746,7 @@ impl<'a> Checker<'a> {
                 static_safe: has_attribute(&item.attrs, "static_safe"),
                 contracts: hir::Contracts {
                     foreign: decl.is_foreign_decl.then(|| ffi_declared_effects(&item.attrs)),
-                    ..self.contracts_of(&item.attrs)
+                    ..self.std_contracts(self.contracts_of(&item.attrs), item.span, false)
                 },
                 borrows: self.declared_borrows(def),
                 sources: self.declared_sources(def),
@@ -16792,6 +16947,8 @@ impl<'a> Checker<'a> {
                         for_iterator: false,
                         loop_borrowed_handle: false,
                         hoisted_into: None,
+                        simd: None,
+                        declared_reduction: false,
                     })
                     .collect();
                 let params = signature
@@ -17985,7 +18142,7 @@ impl<'a> Checker<'a> {
             fp,
             inline: inline_hint(attrs),
             static_safe: has_attribute(attrs, "static_safe"),
-            contracts: self.contracts_of(attrs),
+            contracts: self.std_contracts(self.contracts_of(attrs), span, !decl.generics.is_empty()),
             borrows: self.declared_borrows(def),
             sources: self.declared_sources(def),
             is_lambda: false,
@@ -18214,6 +18371,8 @@ impl<'a> Checker<'a> {
                         for_iterator: false,
                         loop_borrowed_handle: false,
                         hoisted_into: None,
+                        simd: None,
+                        declared_reduction: false,
                     },
                     LocalDecl {
                         name: Some(Symbol::intern("self")),
@@ -18222,6 +18381,8 @@ impl<'a> Checker<'a> {
                         for_iterator: false,
                         loop_borrowed_handle: false,
                         hoisted_into: None,
+                        simd: None,
+                        declared_reduction: false,
                     },
                 ];
                 let (value, class_owner) = match self.types.kind(ty).clone() {
@@ -18901,7 +19062,10 @@ impl<'a> Checker<'a> {
             fp,
             inline: inline_hint(attrs),
             static_safe: has_attribute(attrs, "static_safe"),
-            contracts: self.contracts_of(attrs),
+            contracts: {
+                let generic = !decl.generics.is_empty() || self.is_generic_instance(owner) || self.types.is_generic(owner);
+                self.std_contracts(self.contracts_of(attrs), span, generic)
+            },
             borrows: self.declared_borrows(def),
             sources: self.declared_sources(def),
             is_lambda: false,
@@ -19431,6 +19595,8 @@ impl<'a> Checker<'a> {
             for_iterator: false,
             loop_borrowed_handle: false,
             hoisted_into: None,
+            simd: None,
+            declared_reduction: false,
         });
         if let Some(name) = name {
             self.scopes.last_mut().expect("a scope is open").insert(name, id);
@@ -20213,17 +20379,106 @@ impl<'a> Checker<'a> {
     }
 
     fn check_stmt_unrecorded(&mut self, stmt: &ast::Stmt, out: &mut Vec<Stmt>) {
-        // `[ATT-6]` (0.9.9) — `@simd`, `@parallel`, `@unroll` and `@allow`
-        // have no effect built, and an attribute is never accepted and
-        // ignored. Their names and places are the parser's (`[ATT-2]`).
-        // `[PAR-1]` — a `@parallel` loop is built; the other loop attributes are not.
-        if let Some(attr) = stmt.attrs.iter().find(|attr| attr.path.len() == 1 && attr.path[0].name.is("parallel"))
-            && stmt.attrs.len() == 1
+        // `[ATT-6]` (0.9.9) — an attribute is never accepted and ignored: one
+        // whose effect is not built (`@unroll`, `@allow`) is `E0900`. Their
+        // names and places are the parser's (`[ATT-2]`). `[SIMD-2]` — `@simd`
+        // marks the loop for the loop passes' verdict; `[PAR-1]` — `@parallel`
+        // runs it over chunks, and may be written with `@simd`.
+        let named = |attr: &ast::Attribute, name: &str| attr.path.len() == 1 && attr.path[0].name.is(name);
+        let simd = stmt.attrs.iter().find(|attr| named(attr, "simd"));
+        let simd_assert = simd.and_then(|attr| self.simd_request(attr));
+        // `[SIMD-5]` — the running totals a `@parallel(reduce=…)` declares,
+        // on its chunk's loop (an attribute only the compiler writes).
+        if let Some(attr) = stmt.attrs.iter().find(|attr| named(attr, "$reduce")) {
+            for arg in &attr.args {
+                if let ast::AttrArg::Expr(ast::Expr { kind: ast::ExprKind::Path { segments }, .. }) = arg
+                    && let [name] = segments.as_slice()
+                    && let Some(local) = self.lookup(name.name)
+                {
+                    self.locals[local.0 as usize].declared_reduction = true;
+                }
+            }
+        }
+        let rest: Vec<&ast::Attribute> =
+            stmt.attrs.iter().filter(|attr| !named(attr, "simd") && !named(attr, "$reduce")).collect();
+        if let [attr] = rest.as_slice()
+            && named(attr, "parallel")
         {
-            self.check_parallel_for(attr, stmt, out);
+            self.check_parallel_for(attr, stmt, out, simd);
             return;
         }
-        for attr in &stmt.attrs {
+        let start = out.len();
+        self.check_stmt_attrs_and_kind(stmt, &rest, out);
+        if let Some(assert) = simd_assert {
+            self.mark_simd_loop(start, stmt.span, assert, out);
+        }
+    }
+
+    /// `[SIMD-2]` — `@simd` is a request (`false`) and `@simd(assert)` one
+    /// whose failure is `E4020` (`true`); anything else is `E0104`.
+    fn simd_request(&mut self, attr: &ast::Attribute) -> Option<bool> {
+        match attr.args.as_slice() {
+            [] => Some(false),
+            [ast::AttrArg::Expr(ast::Expr { kind: ast::ExprKind::Path { segments }, .. })]
+                if segments.len() == 1 && segments[0].name.is("assert") =>
+            {
+                Some(true)
+            }
+            _ => {
+                if self.reported_stmt_attrs.insert(attr.span) {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E0104, attr.span, "`@simd` takes no argument but `assert`")
+                            .help("write `@simd` to ask for a vectorised loop, or `@simd(assert)` to require one [SIMD-2]"),
+                    );
+                }
+                None
+            }
+        }
+    }
+
+    /// `[SIMD-2]` — mark the loop a `@simd` statement became, from `out[start..]`:
+    /// the counter of each outermost counted loop (`ForRange`) it lowered to
+    /// (a loop picked by its range's width at run time is two), else the
+    /// iterator of the loop it became. The loop passes give each its verdict.
+    fn mark_simd_loop(&mut self, start: usize, span: Span, assert: bool, out: &[Stmt]) {
+        fn counters(stmts: &[Stmt], found: &mut Vec<LocalId>, iterators: &mut Vec<LocalId>) {
+            for stmt in stmts {
+                match stmt {
+                    Stmt::ForRange { local, .. } => found.push(*local),
+                    Stmt::Let { local, .. } => iterators.push(*local),
+                    Stmt::Block(block) => counters(&block.stmts, found, iterators),
+                    Stmt::If { then_block, else_block, .. } => {
+                        counters(&then_block.stmts, found, iterators);
+                        if let Some(block) = else_block {
+                            counters(&block.stmts, found, iterators);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut found = Vec::new();
+        let mut lets = Vec::new();
+        counters(&out[start..], &mut found, &mut lets);
+        if found.is_empty() {
+            found = lets.into_iter().filter(|local| self.locals[local.0 as usize].for_iterator).take(1).collect();
+        }
+        if found.is_empty() {
+            if assert {
+                self.sink.emit(
+                    Diagnostic::error(codes::E4020, span, "`@simd(assert)` loop did not vectorise: its trip count is not known before entry")
+                        .note("a loop in vectorisable form counts over a range or a view [SIMD-5]"),
+                );
+            }
+            return;
+        }
+        for local in found {
+            self.locals[local.0 as usize].simd = Some((span, assert));
+        }
+    }
+
+    fn check_stmt_attrs_and_kind(&mut self, stmt: &ast::Stmt, attrs: &[&ast::Attribute], out: &mut Vec<Stmt>) {
+        for attr in attrs.iter().copied() {
             if self.reported_stmt_attrs.insert(attr.span) {
                 let name = attr.path.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".");
                 self.sink.emit(
@@ -20312,6 +20567,12 @@ impl<'a> Checker<'a> {
                 }
                 let target = &targets[0];
 
+                // `[SOA-1]` — a flattened field written whole writes its columns.
+                if matches!(&target.kind, ast::ExprKind::Field { .. })
+                    && self.soa_group_assign(target, *op, value, stmt.span, out)
+                {
+                    return;
+                }
                 // `[SOA-6]` — `ps[i] = v` scatters `v` into the columns.
                 if op.is_none()
                     && let ast::ExprKind::IndexOrInstantiate { base, args } = &target.kind
@@ -21548,7 +21809,7 @@ impl<'a> Checker<'a> {
         let at_usize = || Expr { ty: usize_ty, kind: ExprKind::Cast { expr: Box::new(local(at, int_ty)), to: usize_ty }, span };
         let slice = |lo: Expr, hi: Expr| Expr {
             ty: str_ty,
-            kind: ExprKind::Builtin { which: Builtin::Slice { text: true }, args: vec![local(view, str_ty), lo, hi] },
+            kind: ExprKind::Builtin { which: Builtin::Slice { text: true, nonempty: false }, args: vec![local(view, str_ty), lo, hi] },
             span,
         };
         let after_sep = || Expr {
@@ -21804,7 +22065,7 @@ impl<'a> Checker<'a> {
         };
         let slice = Expr {
             ty: str_ty,
-            kind: ExprKind::Builtin { which: Builtin::Slice { text: true }, args: vec![text_local(), as_usize(lo), slice_end] },
+            kind: ExprKind::Builtin { which: Builtin::Slice { text: true, nonempty: false }, args: vec![text_local(), as_usize(lo), slice_end] },
             span,
         };
         let option_ty = self.option_of(str_ty);
@@ -22050,7 +22311,7 @@ impl<'a> Checker<'a> {
                 } else {
                     builtin(Builtin::StrTrimEnd, vec![local()], usize_ty)
                 };
-                let sliced = builtin(Builtin::Slice { text: true }, vec![local(), start, end], str_ty);
+                let sliced = builtin(Builtin::Slice { text: true, nonempty: false }, vec![local(), start, end], str_ty);
                 Expr {
                     ty: str_ty,
                     kind: ExprKind::Block {
@@ -24131,7 +24392,7 @@ impl<'a> Checker<'a> {
     /// `Span`, and part of a text as a `str` by byte offset. The bounds are
     /// checked when the slice is taken (`lo <= hi <= len`, and for text that
     /// both fall on character boundaries); a missing bound is `0` or the
-    /// length. A slice is shared: `MutSpan` slices are not built yet.
+    /// length. A slice is shared, except of a `MutSpan`, whose slice is one.
     fn synth_slice(
         &mut self,
         base: Expr,
@@ -24152,10 +24413,9 @@ impl<'a> Checker<'a> {
                 let view_ty = self.types.intern(TyKind::Span { elem, mutable: false });
                 (self.coerce(base, view_ty), false)
             }
-            TyKind::Span { mutable: true, .. } => {
-                self.error(codes::E0900, span, "slicing a `MutSpan` is not implemented yet");
-                return error;
-            }
+            // `[SPN-2]` — part of a `MutSpan` is a `MutSpan`: a mutable reborrow of the base, for
+            // as long as the part is used (`[SPN-3]`), so the base cannot be used meanwhile.
+            TyKind::Span { elem, mutable: true } => (self.reborrow_span(base, elem, true, span), false),
             _ => {
                 if base.ty != self.common.error {
                     let shown = self.types.display(base.ty);
@@ -24198,7 +24458,7 @@ impl<'a> Checker<'a> {
             args.push(hi);
         }
         let ty = args[0].ty;
-        Expr { ty, kind: ExprKind::Builtin { which: Builtin::Slice { text }, args }, span }
+        Expr { ty, kind: ExprKind::Builtin { which: Builtin::Slice { text, nonempty: false }, args }, span }
     }
 
     /// `[EXP-4]` — a view made from a temporary (`make()[1..]`,
@@ -31355,6 +31615,13 @@ impl<'a> Checker<'a> {
                 // reference.
                 if *op != ast::UnOp::Not {
                     operand = self.read_through(operand);
+                    // `[SIMD-8]` — `-v` on a `std.simd` vector.
+                    if *op == ast::UnOp::Neg {
+                        operand = match self.synth_simd_neg(operand, span) {
+                            Ok(call) => return call,
+                            Err(back) => back,
+                        };
+                    }
                     if *op == ast::UnOp::BitNot && self.refuse_for_count(operand.ty, "`~`", span) {
                         return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                     }
@@ -34108,11 +34375,19 @@ impl<'a> Checker<'a> {
     /// D-407 — `base.assoc` for each hidden parameter of a generic struct
     /// `ty` names, where the argument it projects is a parameter (or one of
     /// its projections) written as a path.
-    fn induced_projections(&self, ty: &ast::TypeExpr, out: &mut Vec<(Symbol, ast::Ident)>) {
+    fn induced_projections(&mut self, ty: &ast::TypeExpr, out: &mut Vec<(Symbol, ast::Ident)>) {
         match &ty.kind {
             ast::TypeKind::Path { segments, args } => {
+                // A generic struct declared later in its module is collected now, so its hidden
+                // parameters are known (a signature naming it before it is declared).
+                if let [segment] = segments.as_slice() {
+                    let resolved = self.resolve_name(segment.name);
+                    if self.pending_generic_structs.contains_key(&resolved) {
+                        self.collect_generic_struct_on_demand(resolved);
+                    }
+                }
                 if let [segment] = segments.as_slice()
-                    && let Some(recipe) = self.generic_structs.get(&self.resolve_name(segment.name))
+                    && let Some(recipe) = self.generic_structs.get(&self.resolve_name(segment.name)).cloned()
                     && recipe.generic_params.len() > recipe.params.len()
                 {
                     let written = recipe.params.len();
@@ -35316,6 +35591,43 @@ impl<'a> Checker<'a> {
             }
             self.check_attribute_list(std::slice::from_ref(attr), site);
         }
+        // `[STD-1]` — a `std` function whose documentation says it allocates.
+        let says_allocates = |doc: &Option<String>| doc.as_deref().is_some_and(|doc| doc.contains("allocates"));
+        if self.is_std_module(self.current_module) {
+            if matches!(item.kind, ast::ItemKind::Fn(_)) && says_allocates(&item.doc) {
+                self.allocation_documented.insert(item.span);
+            }
+            let (members, generic): (&[ast::Member], bool) = match &item.kind {
+                ast::ItemKind::Struct(decl) => (&decl.members, !decl.generics.is_empty()),
+                ast::ItemKind::Class(decl) => (&decl.members, !decl.generics.is_empty()),
+                ast::ItemKind::Enum(decl) => (&decl.members, !decl.generics.is_empty()),
+                ast::ItemKind::Extend(decl) => (&decl.members, !decl.generics.is_empty()),
+                ast::ItemKind::Interface(decl) => (&decl.members, true),
+                _ => (&[], false),
+            };
+            for member in members {
+                if !matches!(member.kind, ast::MemberKind::Fn(_)) {
+                    continue;
+                }
+                if says_allocates(&member.doc) {
+                    self.allocation_documented.insert(member.span);
+                }
+                if generic {
+                    self.std_generic_members.insert(member.span);
+                }
+            }
+        }
+        // `[SOA-1]` — a field `@soa(flatten)` is split into its own fields' columns.
+        if let ast::ItemKind::Struct(decl) = &item.kind {
+            let structure = self.qualified(decl.name.name);
+            for member in &decl.members {
+                if let ast::MemberKind::Field(field) = &member.kind
+                    && member.attrs.iter().any(|attr| attr.path.len() == 1 && attr.path[0].name.is("soa") && attribute_names(attr, "flatten"))
+                {
+                    self.types.mark_soa_flatten(structure, field.name.name);
+                }
+            }
+        }
         let members: &[ast::Member] = match &item.kind {
             ast::ItemKind::Struct(decl) => &decl.members,
             ast::ItemKind::Class(decl) => &decl.members,
@@ -35482,6 +35794,10 @@ impl<'a> Checker<'a> {
                 self.error(codes::E0104, attr.span, "`@nopanic` takes `explicit`: `@nopanic(explicit)`");
                 continue;
             }
+            if name == "soa" && !(attr.args.len() == 1 && attribute_names(attr, "flatten")) {
+                self.error(codes::E0104, attr.span, "`@soa` takes `flatten`: `@soa(flatten)`");
+                continue;
+            }
             if matches!(name, "noalloc" | "nosync" | "noblock" | "noio" | "nolock" | "realtime" | "deterministic"
                 | "test" | "should_panic" | "reloadable" | "noreload" | "reinit_on_reload")
                 && !attr.args.is_empty()
@@ -35541,12 +35857,11 @@ impl<'a> Checker<'a> {
                     // `Ord`, `Default`, `Display` and `Error` on a struct or enum were written out
                     // before this (`derives.rs`, `errors.rs`).
                     let built = matches!(derived, "Copy" | "Clone" | "Eq" | "Hash")
-                        || matches!(derived, "Debug" | "Zeroable") && matches!(site, "struct" | "enum");
+                        || matches!(derived, "Debug" | "Zeroable" | "Component") && matches!(site, "struct" | "enum");
                     if !built {
                         let note = match derived {
                             "Serialize" | "Deserialize" => "serialisation is `[SER-1]`'s, not built yet",
-                            "Component" => "components are `[ECS-7]`'s, not built yet",
-                            _ => "a struct or an enum derives every built-in derive but `Serialize`, `Deserialize` and `Component`; a class `Copy`, `Clone`, `Eq` and `Hash` [DRV-1]",
+                            _ => "a struct or an enum derives every built-in derive but `Serialize` and `Deserialize`; a class `Copy`, `Clone`, `Eq` and `Hash` [DRV-1]",
                         };
                         self.sink.emit(
                             Diagnostic::error(
@@ -35796,6 +36111,12 @@ impl<'a> Checker<'a> {
         // `[TYP-36]` — `void.default()` is `()` (D-463).
         if matches!(self.types.kind(owner), TyKind::Void) && name.name.is("default") && args.is_empty() {
             return self.void_value(span);
+        }
+        // `[SIMD-1]`, `[SIMD-9]` — `std.simd`'s `splat`, loads and gathers.
+        if generic_args.is_empty()
+            && let Some(call) = self.synth_simd_associated(owner, name, args, span)
+        {
+            return call;
         }
         if let Some(elem) = self.arena_array_element(owner) {
             return self.synth_arena_array_construction(
@@ -37596,6 +37917,13 @@ impl<'a> Checker<'a> {
             }
             receiver = self.read_through(receiver);
         }
+        // `[SIMD-4]`, `[SIMD-8]`, `[SIMD-9]` — what a `std.simd` vector or mask does.
+        if generic_args.is_empty() && self.simd_shape(receiver.ty).is_some() {
+            receiver = match self.synth_simd_method(receiver, name, args, span) {
+                Ok(call) => return call,
+                Err(back) => back,
+            };
+        }
         self.extend_instance_at_use(receiver.ty);
         // `[GRM-34]` (ADR-191) — every type's methods, from an extension over a parameter standing
         // alone, are a type's when a call names one, as an associated function's are.
@@ -38166,7 +38494,7 @@ impl<'a> Checker<'a> {
             && matches!(
                 name.name.as_str(),
                 "push" | "pop" | "len" | "is_empty" | "clear" | "reserve" | "get" | "swap_remove" | "iter" | "iter_mut"
-                    | "swap" | "truncate" | "move_slot" | "drop_at" | "set_len"
+                    | "swap" | "truncate" | "move_slot" | "drop_at" | "set_len" | "capacity"
             )
         {
             if !explicit.is_empty() {
@@ -39262,32 +39590,29 @@ impl<'a> Checker<'a> {
     /// reference and a `Box` are read through first (`[CELL-7]`, `[TYP-14]`,
     /// IX.1), then the struct or class field is selected.
     fn field_of(&mut self, base: Expr, name: ast::Ident, span: Span) -> Expr {
+        // `[SOA-1]` — a field of a flattened field: a column, or a field split again.
+        if matches!(base.kind, ExprKind::Error)
+            && let Some(group) = self.soa_groups.get(&base.span).cloned()
+        {
+            return self.soa_member(group.at, group.soa, group.path, name, span);
+        }
         // `[SOA-6]` — `ps[i].f`: the place at `i` in column `f`, its pointer field indexed (MIR
         // checks `i` against the length): a place, so `ps[i].f -= x` reads and writes it once.
         if let ExprKind::Builtin { which: Builtin::SoA { op: hir::SoAOp::Element { .. }, soa }, args } = &base.kind {
             let [soa_place, index] = args.as_slice() else { unreachable!("an element is its `SoA` and an index") };
-            let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            let (Some(inner), &TyKind::Struct(soa_id)) = (self.soa_inner(*soa), self.types.kind(*soa)) else { return error };
-            let TyKind::Struct(element) = *self.types.kind(inner) else { return error };
-            let Some(column) = self.types.struct_def(element).fields.iter().position(|f| f.name == name.name) else {
-                let shown = self.types.display(*soa);
-                self.error(codes::E1010, name.span, format!("`{shown}` has no column `{}`", name.name));
-                return error;
-            };
-            let elem = self.types.struct_def(element).fields[column].ty;
-            let pointer = self.types.struct_def(soa_id).fields[column].ty;
-            let column_place = Expr { ty: pointer, kind: ExprKind::Field { base: Box::new(soa_place.clone()), index: column }, span };
-            return Expr { ty: elem, kind: ExprKind::Index { base: Box::new(column_place), index: Box::new(index.clone()) }, span };
+            let at = SoaAt::Element(soa_place.clone(), index.clone());
+            return self.soa_member(at, *soa, Vec::new(), name, span);
         }
         // `[SOA-2]` — `ps.f`: column `f`.
         if self.soa_inner(base.ty).is_some() {
-            return self.soa_column(base, name, span);
+            let soa = base.ty;
+            return self.soa_member(SoaAt::Soa(base), soa, Vec::new(), name, span);
         }
         // `[SOA-6]` — `p.f` on an element proxy: the place at `p.index` in column `f` of `*p.soa`.
         if let TyKind::Struct(id) = *self.types.kind(base.ty)
             && let Some(&(soa, _)) = self.soa_proxies.get(&id)
         {
-            return self.soa_proxy_field(base, soa, name, span);
+            return self.soa_member(SoaAt::Proxy(base), soa, Vec::new(), name, span);
         }
         // `[CELL-7]` — a temporary guard (e.g. `c.borrow().x`) reads
         // through like a local one does via `read_local_expecting`.
@@ -40208,6 +40533,8 @@ impl<'a> Checker<'a> {
             for_iterator: false,
             loop_borrowed_handle: false,
             hoisted_into: None,
+            simd: None,
+            declared_reduction: false,
         };
         let mut locals = Vec::new();
         let mut stmts = Vec::new();
@@ -41924,6 +42251,12 @@ impl<'a> Checker<'a> {
     /// per field of `T` (its column, in one heap block, `[SOA-7]`), then the length and the capacity.
     /// The backend writes its operations and its drop.
     fn soa_of(&mut self, inner: Ty, span: Span) -> Ty {
+        self.soa_of_kind(inner, span, false)
+    }
+
+    /// `SoA[T]`, or with `in_arena` `[SOA-4]`'s `ArenaSoA[T]`: the same columns, taken once from an
+    /// arena it borrows (a view), with a fixed capacity.
+    fn soa_of_kind(&mut self, inner: Ty, span: Span, in_arena: bool) -> Ty {
         if inner == self.common.error {
             return inner;
         }
@@ -41942,7 +42275,8 @@ impl<'a> Checker<'a> {
                 return self.common.error;
             }
         };
-        let name = self.unique_instance_name("SoA", &[inner]);
+        let kind = if in_arena { "ArenaSoA" } else { "SoA" };
+        let name = self.unique_instance_name(kind, &[inner]);
         if let Some(&ty) = self.named_types.get(&name) {
             return ty;
         }
@@ -41956,8 +42290,21 @@ impl<'a> Checker<'a> {
             read_only_outside: false,
             vis: FieldVis::Private,
         };
+        // `[SOA-1]` — one column per field, a field `@soa(flatten)` split into its own fields'.
         let columns: Vec<(Symbol, Ty)> = match element {
-            Some(element) => self.types.struct_def(element).fields.iter().map(|f| (f.name, f.ty)).collect(),
+            Some(element) => {
+                let fields: Vec<(Symbol, Ty)> = self.types.struct_def(element).fields.iter().map(|f| (f.name, f.ty)).collect();
+                for (name, ty) in fields {
+                    if self.types.soa_flattened(element, name) && !matches!(self.types.kind(ty), TyKind::Struct(_)) {
+                        let shown = self.types.display(ty);
+                        self.sink.emit(
+                            Diagnostic::error(codes::E0104, span, format!("`@soa(flatten)` splits a struct field, and `{name}` is a `{shown}`"))
+                                .note("a flattened field's columns are its own fields [SOA-1]"),
+                        );
+                    }
+                }
+                self.types.soa_columns(element).into_iter().map(|column| (Symbol::intern(&column.name), column.ty)).collect()
+            }
             None => Vec::new(),
         };
         let mut fields: Vec<FieldDef> = columns
@@ -41970,19 +42317,28 @@ impl<'a> Checker<'a> {
         let usize_ty = self.common.usize;
         fields.push(field(Symbol::intern("len"), usize_ty));
         fields.push(field(Symbol::intern("cap"), usize_ty));
+        // `[SOA-4]` — the arena it was taken from, borrowed for its life (so it is a view).
+        if in_arena {
+            let arena = self.arena_ty();
+            let arena_ref = self.types.intern(TyKind::Ref { mutable: false, inner: arena });
+            fields.push(field(Symbol::intern("arena"), arena_ref));
+        }
         let id = self.types.add_struct(StructDef {
             name,
             fields,
             span: Span::DUMMY,
             derives_copy: false,
-            has_drop: true,
+            has_drop: !in_arena,
             drops_fields: false,
-            origin: Some((Symbol::intern("SoA"), vec![inner])),
+            origin: Some((Symbol::intern(kind), vec![inner])),
             declaring_module: ember_types::COMPILER_MODULE,
         });
         let ty = self.types.intern(TyKind::Struct(id));
         self.named_types.insert(name, ty);
         self.soas.insert(id, inner);
+        if in_arena {
+            self.arena_soas.insert(id);
+        }
         // The views and references its operations make.
         for (_, column) in &columns {
             for mutable in [false, true] {
@@ -42005,7 +42361,11 @@ impl<'a> Checker<'a> {
     fn soa_named(&mut self, expr: &ast::Expr) -> Option<Ty> {
         let ast::ExprKind::IndexOrInstantiate { base, args } = &expr.kind else { return None };
         let ast::ExprKind::Path { segments } = &base.kind else { return None };
-        if segments.len() != 1 || !segments[0].name.is("SoA") || self.lookup(Symbol::intern("SoA")).is_some() {
+        let in_arena = segments.len() == 1 && self.resolve_name(segments[0].name).as_str() == "std.collections.ArenaSoA";
+        if segments.len() != 1
+            || !(segments[0].name.is("SoA") || in_arena)
+            || self.lookup(segments[0].name).is_some()
+        {
             return None;
         }
         let [ast::TypeOrExpr::Type(arg)] = args.as_slice() else {
@@ -42016,10 +42376,10 @@ impl<'a> Checker<'a> {
                     return Some(self.common.error);
                 }
             };
-            return Some(self.soa_of(inner, expr.span));
+            return Some(self.soa_of_kind(inner, expr.span, in_arena));
         };
         let inner = self.resolve_type(arg);
-        Some(self.soa_of(inner, arg.span))
+        Some(self.soa_of_kind(inner, arg.span, in_arena))
     }
 
     /// `[SOA-3]` — `SoA[T].with_capacity(n)`.
@@ -42033,6 +42393,10 @@ impl<'a> Checker<'a> {
             self.error(codes::E1010, name.span, format!("`{shown}` has no associated function named `{}`", name.name));
             return error;
         }
+        let in_arena = matches!(*self.types.kind(soa), TyKind::Struct(id) if self.arena_soas.contains(&id));
+        if in_arena {
+            return self.synth_arena_soa_construction(soa, generic_args, args, span);
+        }
         if !generic_args.is_empty() || args.len() != 1 || args[0].name.is_some() {
             self.error(codes::E2020, span, "`with_capacity` takes one argument, how many elements to make room for");
             return error;
@@ -42040,6 +42404,41 @@ impl<'a> Checker<'a> {
         let int = self.common.i64;
         let n = self.check_expr(&args[0].value, int);
         Expr { ty: soa, kind: ExprKind::Builtin { which: Builtin::SoA { op: hir::SoAOp::WithCapacity, soa }, args: vec![n] }, span }
+    }
+
+    /// `[SOA-4]` — `ArenaSoA[T].with_capacity(arena, n)`: room for `n` elements taken from the arena
+    /// once (`[ARN-5]`); the elements must not need drop (`E3090`), as an `ArenaArray`'s.
+    fn synth_arena_soa_construction(&mut self, soa: Ty, generic_args: &[ast::GenericArg], args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if !generic_args.is_empty() || args.len() != 2 || args.iter().any(|arg| arg.name.is_some()) {
+            self.error(codes::E2020, span, "`ArenaSoA.with_capacity` takes 2 arguments, the arena and how many elements it holds");
+            return error;
+        }
+        let Some(inner) = self.soa_inner(soa) else { return error };
+        if self.types.needs_drop(inner) {
+            let shown = self.types.display(inner);
+            self.sink.emit_classified(
+                Diagnostic::error(codes::E3090, span, format!("`ArenaSoA[{shown}]` requires `!needs_drop({shown})`"))
+                    .primary_label("Arena-backed collection elements are not dropped individually")
+                    .help("use an `SoA[T]` when elements need destruction")
+                    .note("Arena rewind/drop reclaims bytes without an element destructor walk [ARN-5e]"),
+            );
+            return error;
+        }
+        let arena_ty = self.arena_ty();
+        let arena = self.check_expr(&args[0].value, arena_ty);
+        if arena.ty == self.common.error {
+            return error;
+        }
+        if !is_place(&arena.kind) {
+            self.error(codes::E2140, args[0].value.span, "an Arena-backed container needs an Arena variable to borrow");
+            return error;
+        }
+        let arena_ref = self.types.intern(TyKind::Ref { mutable: false, inner: arena_ty });
+        let borrowed = Expr { ty: arena_ref, kind: ExprKind::Ref { place: Box::new(arena), mutable: false }, span: args[0].value.span };
+        let int = self.common.i64;
+        let n = self.check_expr(&args[1].value, int);
+        Expr { ty: soa, kind: ExprKind::Builtin { which: Builtin::SoA { op: hir::SoAOp::WithCapacityIn, soa }, args: vec![borrowed, n] }, span }
     }
 
     /// Whether `place` may be written: not reached through a shared reference or a borrowed
@@ -42062,37 +42461,264 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// `[SOA-2]` — `ps.f`: a view of column `f`, made from a borrow of that column's own pointer
-    /// field, so two columns are two places (`[BRW-4]`) and a length-changing operation, which
-    /// borrows all of `ps`, conflicts with either.
-    fn soa_column(&mut self, soa: Expr, name: ast::Ident, span: Span) -> Expr {
-        let mutable = self.place_writable(&soa);
-        self.soa_column_as(soa, name, mutable, span)
+    /// `[SOA-1]` — the column at `path` (an index among the `SoA`'s columns), and whether any
+    /// column lies below `path` (a field `@soa(flatten)` split).
+    fn soa_column_at_path(&self, soa: Ty, path: &[usize]) -> (Option<usize>, bool) {
+        let Some(inner) = self.soa_inner(soa) else { return (None, false) };
+        let TyKind::Struct(element) = *self.types.kind(inner) else { return (None, false) };
+        let columns = self.types.soa_columns(element);
+        let exact = columns.iter().position(|column| column.path == path);
+        let below = columns.iter().any(|column| column.path.len() > path.len() && column.path.starts_with(path));
+        (exact, below)
     }
 
-    fn soa_column_as(&mut self, soa: Expr, name: ast::Ident, mutable: bool, span: Span) -> Expr {
+    /// `[SOA-1]` — the type the field path from an `SoA`'s element reaches.
+    fn soa_path_ty(&self, soa: Ty, path: &[usize]) -> Option<Ty> {
+        let mut ty = self.soa_inner(soa)?;
+        for &index in path {
+            let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
+            ty = self.types.struct_def(id).fields.get(index)?.ty;
+        }
+        Some(ty)
+    }
+
+    /// `[SOA-1]`, `[SOA-2]`, `[SOA-6]` — field `name` of the field at `path` of an element of
+    /// `soa`, reached from `at`: from the `SoA` itself a column view (`ps.f`); from an element or a
+    /// proxy the place in that column at its index (`ps[i].f`, `p.f`). A field `@soa(flatten)` has
+    /// no column of its own: as the base of a further field access it stands for its columns
+    /// (`ps.pos.x`, `p.pos.x`); read whole from an element it is gathered from them.
+    fn soa_member(&mut self, at: SoaAt, soa: Ty, mut path: Vec<usize>, name: ast::Ident, span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let Some(parent) = self.soa_path_ty(soa, &path) else { return error };
+        let TyKind::Struct(parent_id) = *self.types.kind(parent) else { return error };
+        let Some(index) = self.types.struct_def(parent_id).fields.iter().position(|f| f.name == name.name) else {
+            if matches!(at, SoaAt::Soa(_)) && path.is_empty() {
+                let shown = self.types.display(soa);
+                self.error(codes::E1010, name.span, format!("`{shown}` has no column `{}`", name.name));
+            } else {
+                let shown = self.types.display(parent);
+                self.error(codes::E1010, name.span, format!("`{shown}` has no field `{}`", name.name));
+            }
+            return error;
+        };
+        let field_ty = self.types.struct_def(parent_id).fields[index].ty;
+        path.push(index);
+        let (exact, below) = self.soa_column_at_path(soa, &path);
+        if let Some(column) = exact {
+            return match at {
+                SoaAt::Soa(place) => {
+                    let mutable = self.place_writable(&place);
+                    self.soa_column_view(place, column, mutable, span)
+                }
+                _ => self.soa_place(&at, soa, column, span),
+            };
+        }
+        if !below {
+            return error;
+        }
+        if self.soa_element_field == Some(span) {
+            self.soa_groups.insert(span, SoaGroup { at, soa, path });
+            return Expr { ty: field_ty, kind: ExprKind::Error, span };
+        }
+        if let SoaAt::Soa(_) = at {
+            self.sink.emit(
+                Diagnostic::error(codes::E2020, span, format!("`{}` is split into a column per field by `@soa(flatten)`, so it has no column of its own", name.name))
+                    .help(format!("name one of its fields' columns: `….{}.<field>`", name.name))
+                    .note("a flattened field's columns are its own fields [SOA-1]"),
+            );
+            return error;
+        }
+        self.soa_gathers.insert(span, SoaGroup { at: at.clone(), soa, path: path.clone() });
+        self.soa_gather(&at, soa, path, span)
+    }
+
+    /// `[SOA-1]` — `ps[i].pos = v` (or `op=`) for a field `@soa(flatten)`: the value, then each of
+    /// its columns written from the matching field of it. `None` when `target` is not one.
+    fn soa_group_assign(&mut self, target: &ast::Expr, op: Option<ast::BinOp>, value: &ast::Expr, span: Span, out: &mut Vec<Stmt>) -> bool {
+        // Only a field reached from an element or a proxy can be one: look no further otherwise.
+        let mut root = target;
+        while let ast::ExprKind::Field { base, .. } = &root.kind {
+            root = base;
+        }
+        let from_element = match &root.kind {
+            ast::ExprKind::IndexOrInstantiate { base, args } => {
+                matches!(args.as_slice(), [ast::TypeOrExpr::Expr(_)])
+                    && matches!(&base.kind, ast::ExprKind::Path { .. } | ast::ExprKind::Field { .. })
+                    && self.soa_scatter_target(base)
+            }
+            ast::ExprKind::Path { .. } => {
+                let quiet = self.sink.mark();
+                let looked = self.synth(root);
+                self.sink.rollback(quiet);
+                let looked = match *self.types.kind(looked.ty) {
+                    TyKind::Ref { inner, .. } => inner,
+                    _ => looked.ty,
+                };
+                matches!(*self.types.kind(looked), TyKind::Struct(id) if self.soa_proxies.contains_key(&id))
+            }
+            _ => false,
+        };
+        if !from_element {
+            return false;
+        }
+        let quiet = self.sink.mark();
+        let looked = self.synth(target);
+        self.sink.rollback(quiet);
+        let Some(group) = self.soa_gathers.get(&looked.span).cloned().filter(|_| looked.span == target.span) else { return false };
+        let Some(ty) = self.soa_path_ty(group.soa, &group.path) else { return false };
+        let new_value = match op {
+            None => self.check_expr(value, ty),
+            Some(bin) => {
+                let combined = self.synth_binary(bin, target, value, span);
+                self.coerce(combined, ty)
+            }
+        };
+        let held = self.declare(None, ty, span);
+        out.push(Stmt::Let { local: held, init: Some(new_value) });
+        // The element's index once, before the writes.
+        let at = match group.at {
+            SoaAt::Element(soa, index) if !matches!(index.kind, ExprKind::Int(_) | ExprKind::Local(_)) => {
+                let bound = self.declare(None, index.ty, span);
+                let index_ty = index.ty;
+                out.push(Stmt::Let { local: bound, init: Some(index) });
+                SoaAt::Element(soa, Expr { ty: index_ty, kind: ExprKind::Local(bound), span })
+            }
+            other => other,
+        };
+        let Some(inner) = self.soa_inner(group.soa) else { return true };
+        let TyKind::Struct(element) = *self.types.kind(inner) else { return true };
+        let columns = self.types.soa_columns(element);
+        for (k, column) in columns.into_iter().enumerate() {
+            if !column.path.starts_with(&group.path) {
+                continue;
+            }
+            let place = self.soa_place(&at, group.soa, k, span);
+            self.reject_write_through_shared_ref(&place, span);
+            self.reject_borrowed_parameter_write(&place, span, true);
+            let mut part = Expr { ty, kind: ExprKind::Local(held), span };
+            let mut structure = ty;
+            for &index in &column.path[group.path.len()..] {
+                let TyKind::Struct(id) = *self.types.kind(structure) else { break };
+                let field_ty = self.types.struct_def(id).fields[index].ty;
+                part = Expr { ty: field_ty, kind: ExprKind::Field { base: Box::new(part), index }, span };
+                structure = field_ty;
+            }
+            out.push(Stmt::Assign { place, value: part });
+        }
+        true
+    }
+
+    /// `[SOA-1]` — the value at `path` of an element of type `ty`, built from `places`, one per
+    /// column in `columns`' order.
+    fn soa_gathered_from(&mut self, ty: Ty, columns: &[ember_types::SoaColumn], places: &[Expr], path: Vec<usize>, span: Span) -> Expr {
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return Expr { ty: self.common.error, kind: ExprKind::Error, span } };
+        let fields: Vec<Ty> = self.types.struct_def(id).fields.iter().map(|f| f.ty).collect();
+        let mut values = Vec::new();
+        for (index, field_ty) in fields.into_iter().enumerate() {
+            let mut below = path.clone();
+            below.push(index);
+            match columns.iter().position(|column| column.path == below) {
+                Some(column) => values.push(self.clone_value(places[column].clone())),
+                None => values.push(self.soa_gathered_from(field_ty, columns, places, below, span)),
+            }
+        }
+        Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields: values }, span }
+    }
+
+    /// `[SOA-6]` — the place at an element's index in column `column` (an element `ps[i]`, or a
+    /// proxy's `*p.soa` at `p.index`).
+    fn soa_place(&mut self, at: &SoaAt, soa: Ty, column: usize, span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let (Some(inner), &TyKind::Struct(soa_id)) = (self.soa_inner(soa), self.types.kind(soa)) else { return error };
+        let TyKind::Struct(element) = *self.types.kind(inner) else { return error };
+        let elem = self.types.soa_columns(element)[column].ty;
+        let pointer = self.types.struct_def(soa_id).fields[column].ty;
+        let int = self.common.i64;
+        let (target, index) = match at {
+            SoaAt::Element(place, index) => (place.clone(), index.clone()),
+            SoaAt::Proxy(proxy) => {
+                let TyKind::Struct(proxy_id) = *self.types.kind(proxy.ty) else { return error };
+                let reference = self.types.struct_def(proxy_id).fields[0].ty;
+                let target = Expr {
+                    ty: soa,
+                    kind: ExprKind::Deref(Box::new(Expr { ty: reference, kind: ExprKind::Field { base: Box::new(proxy.clone()), index: 0 }, span })),
+                    span,
+                };
+                (target, Expr { ty: int, kind: ExprKind::Field { base: Box::new(proxy.clone()), index: 1 }, span })
+            }
+            SoaAt::Soa(_) => return error,
+        };
+        let column_place = Expr { ty: pointer, kind: ExprKind::Field { base: Box::new(target), index: column }, span };
+        Expr { ty: elem, kind: ExprKind::Index { base: Box::new(column_place), index: Box::new(index) }, span }
+    }
+
+    /// `[SOA-1]`, `[SOA-6]` — a clone of the value at `path` of an element (the whole element for an
+    /// empty path), gathered from its columns.
+    fn soa_gather(&mut self, at: &SoaAt, soa: Ty, path: Vec<usize>, span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let Some(ty) = self.soa_path_ty(soa, &path) else { return error };
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return error };
+        let count = self.types.struct_def(id).fields.len();
+        let mut values = Vec::new();
+        for index in 0..count {
+            let mut below = path.clone();
+            below.push(index);
+            match self.soa_column_at_path(soa, &below) {
+                (Some(column), _) => {
+                    let place = self.soa_place(at, soa, column, span);
+                    values.push(self.clone_value(place));
+                }
+                (None, true) => values.push(self.soa_gather(at, soa, below, span)),
+                (None, false) => return error,
+            }
+        }
+        Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields: values }, span }
+    }
+
+    /// `[SOA-2]` — a view of column `column`, made from a borrow of that column's own pointer field,
+    /// so two columns are two places (`[BRW-4]`) and a length-changing operation, which borrows all
+    /// of `ps`, conflicts with either.
+    fn soa_column_view(&mut self, soa: Expr, column: usize, mutable: bool, span: Span) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         let Some(inner) = self.soa_inner(soa.ty) else { return error };
         let TyKind::Struct(element) = *self.types.kind(inner) else { return error };
         let TyKind::Struct(soa_id) = *self.types.kind(soa.ty) else { return error };
-        let columns = self.types.struct_def(element).fields.len();
-        let Some(column) = self.types.struct_def(element).fields.iter().position(|f| f.name == name.name) else {
-            let shown = self.types.display(soa.ty);
-            self.error(codes::E1010, name.span, format!("`{shown}` has no column `{}`", name.name));
-            return error;
-        };
+        let column_list = self.types.soa_columns(element);
+        let columns = column_list.len();
         if !is_place(&soa.kind) {
             self.error(codes::E2140, span, "a column needs its `SoA` in a variable to point into");
             return error;
         }
         let pointer = self.types.struct_def(soa_id).fields[column].ty;
-        let elem = self.types.struct_def(element).fields[column].ty;
+        let elem = column_list[column].ty;
         let usize_ty = self.common.usize;
         let reference = self.types.intern(TyKind::Ref { mutable, inner: pointer });
         let column_place = Expr { ty: pointer, kind: ExprKind::Field { base: Box::new(soa.clone()), index: column }, span };
         let borrowed = Expr { ty: reference, kind: ExprKind::Ref { place: Box::new(column_place), mutable }, span };
         let len = Expr { ty: usize_ty, kind: ExprKind::Field { base: Box::new(soa.clone()), index: columns }, span };
         let view = self.types.intern(TyKind::Span { elem, mutable });
+        // An `SoA` that is a class's field is reached through accesses checked at run time
+        // (`[EXC-1]`): its length is read, and that read ended, before the column is borrowed.
+        let mut through = &soa;
+        let mut in_class = false;
+        while let ExprKind::Field { base, .. } | ExprKind::Deref(base) = &through.kind {
+            in_class |= matches!(self.types.kind(base.ty), TyKind::Class(_));
+            through = base;
+        }
+        if in_class {
+            let read = self.declare(None, usize_ty, span);
+            let local = Expr { ty: usize_ty, kind: ExprKind::Local(read), span };
+            let call = Expr {
+                ty: view,
+                kind: ExprKind::Builtin { which: Builtin::SoA { op: hir::SoAOp::Column { mutable }, soa: soa.ty }, args: vec![borrowed, local] },
+                span,
+            };
+            return Expr {
+                ty: view,
+                kind: ExprKind::Block { block: Block { stmts: vec![Stmt::Let { local: read, init: Some(len) }], span }, value: Box::new(call) },
+                span,
+            };
+        }
         Expr {
             ty: view,
             kind: ExprKind::Builtin { which: Builtin::SoA { op: hir::SoAOp::Column { mutable }, soa: soa.ty }, args: vec![borrowed, len] },
@@ -42169,33 +42795,6 @@ impl<'a> Checker<'a> {
         Expr { ty: proxy, kind: ExprKind::StructLit { struct_id: id, fields: vec![borrowed, index] }, span }
     }
 
-    /// `p.f` — the place at `p.index` in column `f` of `*p.soa` (bounds-checked by MIR).
-    fn soa_proxy_field(&mut self, proxy: Expr, soa: Ty, name: ast::Ident, span: Span) -> Expr {
-        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        let (Some(inner), &TyKind::Struct(soa_id), &TyKind::Struct(proxy_id)) =
-            (self.soa_inner(soa), self.types.kind(soa), self.types.kind(proxy.ty))
-        else {
-            return error;
-        };
-        let TyKind::Struct(element) = *self.types.kind(inner) else { return error };
-        let Some(column) = self.types.struct_def(element).fields.iter().position(|f| f.name == name.name) else {
-            let shown = self.types.display(inner);
-            self.error(codes::E1010, name.span, format!("`{shown}` has no field `{}`", name.name));
-            return error;
-        };
-        let elem = self.types.struct_def(element).fields[column].ty;
-        let pointer = self.types.struct_def(soa_id).fields[column].ty;
-        let reference = self.types.struct_def(proxy_id).fields[0].ty;
-        let int = self.common.i64;
-        let target = Expr {
-            ty: soa,
-            kind: ExprKind::Deref(Box::new(Expr { ty: reference, kind: ExprKind::Field { base: Box::new(proxy.clone()), index: 0 }, span })),
-            span,
-        };
-        let column_place = Expr { ty: pointer, kind: ExprKind::Field { base: Box::new(target), index: column }, span };
-        let index = Expr { ty: int, kind: ExprKind::Field { base: Box::new(proxy), index: 1 }, span };
-        Expr { ty: elem, kind: ExprKind::Index { base: Box::new(column_place), index: Box::new(index) }, span }
-    }
 
     /// `[SOA-6]` — `p.load()`: a clone of each field gathered into a `T` (`T: Clone`).
     fn soa_proxy_load(&mut self, proxy: Expr, soa: Ty, span: Span) -> Expr {
@@ -42206,8 +42805,6 @@ impl<'a> Checker<'a> {
             self.error(codes::E2020, span, format!("`load` gathers a copy of an element: `{shown}` must be `Clone`"));
             return error;
         }
-        let TyKind::Struct(element) = *self.types.kind(inner) else { return error };
-        let names: Vec<Symbol> = self.types.struct_def(element).fields.iter().map(|f| f.name).collect();
         let (proxy, prefix) = if is_place(&proxy.kind) {
             (proxy, Vec::new())
         } else {
@@ -42215,12 +42812,7 @@ impl<'a> Checker<'a> {
             let ty = proxy.ty;
             (Expr { ty, kind: ExprKind::Local(local), span }, vec![Stmt::Let { local, init: Some(proxy) }])
         };
-        let mut values = Vec::new();
-        for field in names {
-            let place = self.soa_proxy_field(proxy.clone(), soa, ast::Ident { name: field, span }, span);
-            values.push(self.clone_value(place));
-        }
-        let gathered = Expr { ty: inner, kind: ExprKind::StructLit { struct_id: element, fields: values }, span };
+        let gathered = self.soa_gather(&SoaAt::Proxy(proxy), soa, Vec::new(), span);
         if prefix.is_empty() {
             return gathered;
         }
@@ -42252,20 +42844,22 @@ impl<'a> Checker<'a> {
         let (taken, at) = (self.declare(None, inner, span), self.declare(None, int, span));
         out.push(Stmt::Let { local: taken, init: Some(value) });
         out.push(Stmt::Let { local: at, init: Some(index) });
-        let fields: Vec<(Symbol, Ty)> = self.types.struct_def(element).fields.iter().map(|f| (f.name, f.ty)).collect();
-        for (k, (field, ty)) in fields.into_iter().enumerate() {
-            let element_place = Expr {
-                ty: int,
-                kind: ExprKind::Builtin {
-                    which: Builtin::SoA { op: hir::SoAOp::Element { mutable: true }, soa: soa.ty },
-                    args: vec![soa.clone(), Expr { ty: int, kind: ExprKind::Local(at), span }],
-                },
-                span,
-            };
-            let place = self.field_of(element_place, ast::Ident { name: field, span }, span);
+        // `[SOA-1]` — each column's value is the field at its path, moved out of `v`.
+        let columns = self.types.soa_columns(element);
+        let element_at = SoaAt::Element(soa.clone(), Expr { ty: int, kind: ExprKind::Local(at), span });
+        for (k, column) in columns.into_iter().enumerate() {
+            let place = self.soa_place(&element_at, soa.ty, k, span);
             self.reject_write_through_shared_ref(&place, span);
             self.reject_borrowed_parameter_write(&place, span, true);
-            let moved = Expr { ty, kind: ExprKind::Field { base: Box::new(Expr { ty: inner, kind: ExprKind::Local(taken), span }), index: k }, span };
+            let mut moved = Expr { ty: inner, kind: ExprKind::Local(taken), span };
+            let mut structure = element;
+            for &index in &column.path {
+                let ty = self.types.struct_def(structure).fields[index].ty;
+                moved = Expr { ty, kind: ExprKind::Field { base: Box::new(moved), index }, span };
+                if let TyKind::Struct(next) = *self.types.kind(ty) {
+                    structure = next;
+                }
+            }
             out.push(Stmt::Assign { place, value: moved });
         }
         true
@@ -42283,15 +42877,23 @@ impl<'a> Checker<'a> {
             self.error(codes::E1010, name.span, format!("`{shown}` has no method named `{method}`"));
             return error;
         }
+        // `[SOA-4]` — an `ArenaSoA` never grows: no `reserve`; it tells its `capacity`.
+        let in_arena = matches!(*self.types.kind(soa), TyKind::Struct(id) if self.arena_soas.contains(&id));
         let wanted = match method {
+            "reserve" if in_arena => usize::MAX,
+            "capacity" if !in_arena => usize::MAX,
             "swap" | "move_slot" => 2,
             "push" | "reserve" | "get" | "swap_remove" | "truncate" | "drop_at" | "set_len" => 1,
-            "pop" | "len" | "is_empty" | "clear" | "iter" | "iter_mut" => 0,
-            _ => {
+            "pop" | "len" | "is_empty" | "clear" | "iter" | "iter_mut" | "capacity" => 0,
+            _ => usize::MAX,
+        };
+        let wanted = match wanted {
+            usize::MAX => {
                 let shown = self.types.display(soa);
                 self.error(codes::E1010, name.span, format!("`{shown}` has no method named `{method}`"));
                 return error;
             }
+            wanted => wanted,
         };
         if args.len() != wanted || args.iter().any(|a| a.name.is_some()) {
             self.error(codes::E2020, span, format!("`{method}` takes {wanted} argument{}", if wanted == 1 { "" } else { "s" }));
@@ -42319,6 +42921,31 @@ impl<'a> Checker<'a> {
                     return error;
                 }
                 call(hir::SoAOp::Iter { mutable }, vec![receiver], soa)
+            }
+            "push" if in_arena => {
+                // `[SOA-4]`, `[ARN-5]` — past capacity, `Err(CapacityError.Full)` and nothing changed.
+                let value = self.check_expr(&args[0].value, inner);
+                let target = self.pass_receiver(receiver, Mode::Mut, span);
+                let full = call(hir::SoAOp::TryPush, vec![target, value], bool_ty);
+                let Some(capacity_error) = self.named_types.get(&Symbol::intern("std.collections.CapacityError")).copied() else {
+                    self.error(codes::E1010, span, "`ArenaSoA.push` needs `std.collections.CapacityError`");
+                    return error;
+                };
+                let TyKind::Enum(capacity_id) = *self.types.kind(capacity_error) else { return error };
+                let result = self.result_of(void, capacity_error);
+                let TyKind::Enum(result_id) = *self.types.kind(result) else { return error };
+                let unit = self.void_value(span);
+                let ok = Expr { ty: result, kind: ExprKind::EnumLit { enum_id: result_id, variant: 0, fields: vec![unit] }, span };
+                let full_value = Expr { ty: capacity_error, kind: ExprKind::EnumLit { enum_id: capacity_id, variant: 0, fields: vec![] }, span };
+                let err = Expr { ty: result, kind: ExprKind::EnumLit { enum_id: result_id, variant: 1, fields: vec![full_value] }, span };
+                self.if_value(full, err, ok, result, span)
+            }
+            "capacity" => {
+                let TyKind::Struct(soa_id) = *self.types.kind(soa) else { return error };
+                let cap = self.types.struct_def(soa_id).fields.iter().position(|f| f.name.is("cap")).expect("an `ArenaSoA` has a capacity");
+                let usize_ty = self.common.usize;
+                let read = Expr { ty: usize_ty, kind: ExprKind::Field { base: Box::new(receiver), index: cap }, span };
+                Expr { ty: int, kind: ExprKind::Cast { expr: Box::new(read), to: int }, span }
             }
             "push" => {
                 let value = self.check_expr(&args[0].value, inner);
@@ -42390,14 +43017,15 @@ impl<'a> Checker<'a> {
                     binary(BinOp::Lt, local(at), len(receiver.clone())),
                 );
                 let TyKind::Struct(element) = *self.types.kind(inner) else { return error };
-                let fields: Vec<(Symbol, Ty)> = self.types.struct_def(element).fields.iter().map(|f| (f.name, f.ty)).collect();
-                let mut values = Vec::new();
-                for (field, field_ty) in fields {
-                    let column = self.soa_column_as(receiver.clone(), ast::Ident { name: field, span }, false, span);
-                    let place = Expr { ty: field_ty, kind: ExprKind::Index { base: Box::new(column), index: Box::new(local(at)) }, span };
-                    values.push(self.clone_value(place));
+                let columns = self.types.soa_columns(element);
+                // Each column read through a shared view of it, at an index the test above keeps in
+                // range; a flattened field gathered from its columns (`[SOA-1]`).
+                let mut views = Vec::new();
+                for column in 0..columns.len() {
+                    let view = self.soa_column_view(receiver.clone(), column, false, span);
+                    views.push(Expr { ty: columns[column].ty, kind: ExprKind::Index { base: Box::new(view), index: Box::new(local(at)) }, span });
                 }
-                let gathered = Expr { ty: inner, kind: ExprKind::StructLit { struct_id: element, fields: values }, span };
+                let gathered = self.soa_gathered_from(inner, &columns, &views, Vec::new(), span);
                 let none = Expr { ty: option, kind: ExprKind::EnumLit { enum_id: option_id, variant: 0, fields: vec![] }, span };
                 let some = Expr { ty: option, kind: ExprKind::EnumLit { enum_id: option_id, variant: 1, fields: vec![gathered] }, span };
                 let value = self.if_value(inside, some, none, option, span);
@@ -42514,7 +43142,304 @@ impl<'a> Checker<'a> {
     /// independent (`parallel_independent`). A reduction variable has a copy per chunk, starting
     /// at its operator's identity; the chunks' results are folded into it in chunk order after
     /// the loop.
-    fn check_parallel_for(&mut self, attr: &ast::Attribute, stmt: &ast::Stmt, out: &mut Vec<Stmt>) {
+    /// `[SIMD-1]` — the shape of a `std.simd` vector or mask type.
+    fn simd_shape(&self, ty: Ty) -> Option<ember_types::SimdShape> {
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
+        ember_types::SimdShape::of(self.types.struct_def(id).name.as_str())
+    }
+
+    /// `[SIMD-1]` — a vector shape's lane type (a mask's lanes are set or clear: `bool`).
+    fn simd_lane_ty(&mut self, shape: ember_types::SimdShape) -> Ty {
+        use ember_types::{FloatTy, IntTy, SimdLane, UintTy};
+        let kind = match (shape.lane, shape.bits) {
+            (SimdLane::Mask, _) => return self.common.bool_,
+            (SimdLane::Float, 32) => TyKind::Float(FloatTy::F32),
+            (SimdLane::Float, _) => TyKind::Float(FloatTy::F64),
+            (SimdLane::Signed, 8) => TyKind::Int(IntTy::I8),
+            (SimdLane::Signed, 16) => TyKind::Int(IntTy::I16),
+            (SimdLane::Signed, 32) => TyKind::Int(IntTy::I32),
+            (SimdLane::Signed, _) => TyKind::Int(IntTy::I64),
+            (SimdLane::Unsigned, 8) => TyKind::Uint(UintTy::U8),
+            (SimdLane::Unsigned, 16) => TyKind::Uint(UintTy::U16),
+            (SimdLane::Unsigned, 32) => TyKind::Uint(UintTy::U32),
+            (SimdLane::Unsigned, _) => TyKind::Uint(UintTy::U64),
+        };
+        self.types.intern(kind)
+    }
+
+    /// `[SIMD-1]` — the mask type of a vector shape (`mask32x8` for `f32x8`), declared in
+    /// `std.simd` beside it.
+    fn simd_mask_ty(&mut self, shape: ember_types::SimdShape, span: Span) -> Ty {
+        match self.named_types.get(&Symbol::intern(&shape.mask_name())).copied() {
+            Some(ty) => ty,
+            None => {
+                self.error(codes::E1010, span, format!("`{}` is not declared", shape.mask_name()));
+                self.common.error
+            }
+        }
+    }
+
+    /// `[SIMD-8]` — the overflow policy integer lanes follow: the function's (`[TYP-8]`); a float
+    /// lane has none, so its operations carry `Wrap`, which checks nothing.
+    fn simd_policy(&self, shape: ember_types::SimdShape) -> OverflowPolicy {
+        match shape.lane {
+            ember_types::SimdLane::Signed | ember_types::SimdLane::Unsigned => self.active_overflow,
+            _ => OverflowPolicy::Wrap,
+        }
+    }
+
+    fn simd_call(&self, op: hir::SimdOp, vector: Ty, ret: Ty, args: Vec<Expr>, span: Span) -> Expr {
+        Expr { ty: ret, kind: ExprKind::Builtin { which: Builtin::Simd { op, vector }, args }, span }
+    }
+
+    /// `[SIMD-9]` — the unchecked forms are `unsafe fn`.
+    fn simd_require_unsafe(&mut self, name: &str, checked_form: &str, span: Span) {
+        if !self.unsafe_context() {
+            self.sink.emit(
+                Diagnostic::error(codes::E3100, span, format!("`{name}` needs an `unsafe` block"))
+                    .help(format!("`{checked_form}` checks every lane's index"))
+                    .note("the unchecked vector operations are `unsafe fn` [SIMD-9]"),
+            );
+        }
+    }
+
+    fn simd_arity(&mut self, owner: Ty, name: &str, args: &[ast::Arg], want: usize, span: Span) -> bool {
+        if args.len() != want || args.iter().any(|arg| arg.name.is_some()) {
+            let shown = self.types.display(owner);
+            self.error(codes::E2020, span, format!("`{shown}.{name}` takes {want} argument(s), found {}", args.len()));
+            return false;
+        }
+        true
+    }
+
+    /// `[SIMD-9]` — an index vector: an integer vector of `lanes` lanes.
+    fn simd_index(&mut self, arg: &ast::Arg, lanes: u32) -> Option<Expr> {
+        let index = self.synth_committed(&arg.value);
+        let index = self.read_through(index);
+        match self.simd_shape(index.ty) {
+            Some(shape)
+                if shape.lanes == lanes
+                    && matches!(shape.lane, ember_types::SimdLane::Signed | ember_types::SimdLane::Unsigned) =>
+            {
+                Some(index)
+            }
+            _ => {
+                if index.ty != self.common.error {
+                    let shown = self.types.display(index.ty);
+                    self.sink.emit(
+                        Diagnostic::error(codes::E2020, arg.value.span, format!("expected an integer vector of {lanes} lanes, found `{shown}`"))
+                            .note("a gather or scatter takes one index per lane [SIMD-9]"),
+                    );
+                }
+                None
+            }
+        }
+    }
+
+    /// `[SIMD-1]`, `[SIMD-9]` — `V.splat(x)`, `V.load(s)`, `V.gather(s, idx)` and their unchecked
+    /// forms; `None` for any other name (an ordinary associated item).
+    fn synth_simd_associated(&mut self, owner: Ty, name: ast::Ident, args: &[ast::Arg], span: Span) -> Option<Expr> {
+        let shape = self.simd_shape(owner)?;
+        let mask = shape.lane == ember_types::SimdLane::Mask;
+        let lane = self.simd_lane_ty(shape);
+        let error_ty = self.common.error;
+        let error = || Expr { ty: error_ty, kind: ExprKind::Error, span };
+        let text = name.name.as_str().to_string();
+        match text.as_str() {
+            "splat" => {
+                if !self.simd_arity(owner, "splat", args, 1, span) {
+                    return Some(error());
+                }
+                let value = self.check_expr(&args[0].value, lane);
+                let op = if mask { hir::SimdOp::MaskSplat } else { hir::SimdOp::Splat };
+                Some(self.simd_call(op, owner, owner, vec![value], span))
+            }
+            "load" | "load_unchecked" | "gather" | "gather_unchecked" if !mask => {
+                let checked = !text.ends_with("_unchecked");
+                let gather = text.starts_with("gather");
+                if !checked {
+                    self.simd_require_unsafe(&text, if gather { "gather" } else { "load" }, span);
+                }
+                if !self.simd_arity(owner, &text, args, if gather { 2 } else { 1 }, span) {
+                    return Some(error());
+                }
+                let view = self.types.intern(TyKind::Span { elem: lane, mutable: false });
+                let source = self.check_expr(&args[0].value, view);
+                if !gather {
+                    return Some(self.simd_call(hir::SimdOp::Load { checked }, owner, owner, vec![source], span));
+                }
+                let Some(index) = self.simd_index(&args[1], shape.lanes) else { return Some(error()) };
+                let op = hir::SimdOp::Gather { checked, index: index.ty };
+                Some(self.simd_call(op, owner, owner, vec![source, index], span))
+            }
+            _ => None,
+        }
+    }
+
+    /// `[SIMD-4]`, `[SIMD-8]`, `[SIMD-9]` — a method of a vector or a mask the compiler gives;
+    /// `None` for any other name (`to_array`, written in `std.simd`).
+    fn synth_simd_method(&mut self, receiver: Expr, name: ast::Ident, args: &[ast::Arg], span: Span) -> Result<Expr, Expr> {
+        use ember_types::SimdLane;
+        let Some(shape) = self.simd_shape(receiver.ty) else { return Err(receiver) };
+        let vector = receiver.ty;
+        let lane = self.simd_lane_ty(shape);
+        let text = name.name.as_str().to_string();
+        let float = shape.lane == SimdLane::Float;
+        let integer = matches!(shape.lane, SimdLane::Signed | SimdLane::Unsigned);
+        let mask = shape.lane == SimdLane::Mask;
+        let applies = match text.as_str() {
+            "any" | "all" | "select" => mask,
+            "store" | "store_unchecked" | "scatter" | "scatter_unchecked" | "reduce_add" | "reduce_min" | "reduce_max"
+            | "shuffle" | "min" | "max" | "abs" => !mask,
+            "fma" | "sqrt" | "rsqrt_approx" | "rcp_approx" => float,
+            "wrapping_add" | "wrapping_sub" | "wrapping_mul" | "wrapping_neg" => integer,
+            _ => false,
+        };
+        if !applies {
+            return Err(receiver);
+        }
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let arity = match text.as_str() {
+            "store" | "store_unchecked" | "shuffle" | "min" | "max" | "wrapping_add" | "wrapping_sub" | "wrapping_mul" => 1,
+            "scatter" | "scatter_unchecked" | "fma" | "select" => 2,
+            _ => 0,
+        };
+        if !self.simd_arity(vector, &text, args, arity, span) {
+            return Ok(error);
+        }
+        let policy = self.simd_policy(shape);
+        let same = |this: &mut Self, arg: &ast::Arg| this.check_expr(&arg.value, vector);
+        let unary = |op: hir::SimdOp, this: &mut Self, receiver: Expr| this.simd_call(op, vector, vector, vec![receiver], span);
+        Ok(match text.as_str() {
+            "store" | "store_unchecked" | "scatter" | "scatter_unchecked" => {
+                let checked = !text.ends_with("_unchecked");
+                let scatter = text.starts_with("scatter");
+                if !checked {
+                    self.simd_require_unsafe(&text, if scatter { "scatter" } else { "store" }, span);
+                }
+                let view = self.types.intern(TyKind::Span { elem: lane, mutable: true });
+                let target = self.check_expr(&args[0].value, view);
+                let void = self.common.void;
+                if !scatter {
+                    self.simd_call(hir::SimdOp::Store { checked }, vector, void, vec![receiver, target], span)
+                } else {
+                    let Some(index) = self.simd_index(&args[1], shape.lanes) else { return Ok(error) };
+                    let op = hir::SimdOp::Scatter { checked, index: index.ty };
+                    self.simd_call(op, vector, void, vec![receiver, target, index], span)
+                }
+            }
+            "reduce_add" => self.simd_call(hir::SimdOp::ReduceAdd { policy }, vector, lane, vec![receiver], span),
+            "reduce_min" => self.simd_call(hir::SimdOp::ReduceMin, vector, lane, vec![receiver], span),
+            "reduce_max" => self.simd_call(hir::SimdOp::ReduceMax, vector, lane, vec![receiver], span),
+            "shuffle" => {
+                // `[SIMD-4]` — a constant list, one lane number per lane.
+                let constant = match &args[0].value.kind {
+                    ast::ExprKind::ArrayLit(items) if items.len() == shape.lanes as usize => items.iter().all(|item| {
+                        matches!(&item.kind, ast::ExprKind::Lit(ast::Literal::Int { value, .. }) if *value < shape.lanes as u128)
+                    }),
+                    _ => false,
+                };
+                if !constant {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E2020, args[0].value.span, format!("`shuffle` takes a list of {} constant lane numbers, each below {}", shape.lanes, shape.lanes))
+                            .note("a shuffle's lanes are a constant list [SIMD-4]"),
+                    );
+                    return Ok(error);
+                }
+                let list = self.types.intern(TyKind::Array { elem: self.common.i64, len: shape.lanes as u64 });
+                let lanes = self.check_expr(&args[0].value, list);
+                self.simd_call(hir::SimdOp::Shuffle, vector, vector, vec![receiver, lanes], span)
+            }
+            "min" | "max" => {
+                let other = same(self, &args[0]);
+                let op = if text == "min" { hir::SimdOp::Min } else { hir::SimdOp::Max };
+                self.simd_call(op, vector, vector, vec![receiver, other], span)
+            }
+            "abs" => unary(hir::SimdOp::Abs { policy }, self, receiver),
+            "sqrt" => unary(hir::SimdOp::Sqrt, self, receiver),
+            "rsqrt_approx" => unary(hir::SimdOp::RsqrtApprox, self, receiver),
+            "rcp_approx" => unary(hir::SimdOp::RcpApprox, self, receiver),
+            "fma" => {
+                let (b, c) = (same(self, &args[0]), same(self, &args[1]));
+                self.simd_call(hir::SimdOp::Fma, vector, vector, vec![receiver, b, c], span)
+            }
+            "wrapping_add" | "wrapping_sub" | "wrapping_mul" => {
+                let op = match text.as_str() {
+                    "wrapping_add" => BinOp::Add,
+                    "wrapping_sub" => BinOp::Sub,
+                    _ => BinOp::Mul,
+                };
+                let other = same(self, &args[0]);
+                self.simd_call(hir::SimdOp::Binary { op, policy: OverflowPolicy::Wrap }, vector, vector, vec![receiver, other], span)
+            }
+            "wrapping_neg" => unary(hir::SimdOp::Neg { policy: OverflowPolicy::Wrap }, self, receiver),
+            "any" | "all" => {
+                let op = if text == "any" { hir::SimdOp::Any } else { hir::SimdOp::All };
+                let bool_ = self.common.bool_;
+                self.simd_call(op, vector, bool_, vec![receiver], span)
+            }
+            _ => {
+                // `m.select(a, b)`: two vectors of the mask's shape.
+                let a = self.synth_committed(&args[0].value);
+                let a = self.read_through(a);
+                let fits = self.simd_shape(a.ty).is_some_and(|picked| {
+                    picked.lane != SimdLane::Mask && picked.bits == shape.bits && picked.lanes == shape.lanes
+                });
+                if !fits {
+                    if a.ty != self.common.error {
+                        let shown = self.types.display(a.ty);
+                        self.error(codes::E2020, args[0].value.span, format!("`select` picks between vectors of {} lanes of {} bits, found `{shown}`", shape.lanes, shape.bits));
+                    }
+                    return Ok(error);
+                }
+                let picked = a.ty;
+                let b = self.check_expr(&args[1].value, picked);
+                self.simd_call(hir::SimdOp::Select, picked, picked, vec![receiver, a, b], span)
+            }
+        })
+    }
+
+    /// `[SIMD-8]` — a lane-wise operator on two values of one vector or mask type; `None` when
+    /// it is not one a vector has.
+    fn synth_simd_binary(&mut self, op: BinOp, lhs: Expr, rhs: Expr, span: Span) -> Result<Expr, (Expr, Expr)> {
+        use ember_types::SimdLane;
+        let Some(shape) = self.simd_shape(lhs.ty) else { return Err((lhs, rhs)) };
+        if rhs.ty != lhs.ty {
+            return Err((lhs, rhs));
+        }
+        let vector = lhs.ty;
+        let float = shape.lane == SimdLane::Float;
+        let mask = shape.lane == SimdLane::Mask;
+        let fits = match op {
+            BinOp::Add | BinOp::Sub | BinOp::Mul => !mask,
+            BinOp::Div => float,
+            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => !float,
+            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => !mask,
+            _ => false,
+        };
+        if !fits {
+            return Err((lhs, rhs));
+        }
+        if op.is_comparison() {
+            let mask_ty = self.simd_mask_ty(shape, span);
+            return Ok(self.simd_call(hir::SimdOp::Compare { op }, vector, mask_ty, vec![lhs, rhs], span));
+        }
+        let policy = self.simd_policy(shape);
+        Ok(self.simd_call(hir::SimdOp::Binary { op, policy }, vector, vector, vec![lhs, rhs], span))
+    }
+
+    /// `[SIMD-8]` — `-v`: integer lanes under the function's overflow policy.
+    fn synth_simd_neg(&mut self, operand: Expr, span: Span) -> Result<Expr, Expr> {
+        let Some(shape) = self.simd_shape(operand.ty) else { return Err(operand) };
+        if shape.lane == ember_types::SimdLane::Mask {
+            return Err(operand);
+        }
+        let policy = self.simd_policy(shape);
+        let vector = operand.ty;
+        Ok(self.simd_call(hir::SimdOp::Neg { policy }, vector, vector, vec![operand], span))
+    }
+
+    fn check_parallel_for(&mut self, attr: &ast::Attribute, stmt: &ast::Stmt, out: &mut Vec<Stmt>, simd: Option<&ast::Attribute>) {
         let span = stmt.span;
         let ast::StmtKind::For { label, pattern, iter, body, else_block } = &stmt.kind else { return };
         let refuse = |this: &mut Self, at: Span, message: String| {
@@ -42633,9 +43558,20 @@ impl<'a> Checker<'a> {
             });
         }
         let range = at(ast::ExprKind::Range { lo: Some(Box::new(path("$lo"))), hi: Some(Box::new(path("$hi"))), inclusive: false });
+        // `[SIMD-2]` — a `@simd` written with `@parallel` is the chunk's loop's;
+        // `[SIMD-5]` — the chunk's running totals are declared reductions.
+        let mut loop_attrs: Vec<ast::Attribute> = simd.into_iter().cloned().collect();
+        if !reductions.is_empty() {
+            loop_attrs.push(ast::Attribute {
+                id: dummy,
+                path: vec![name("$reduce")],
+                args: reductions.iter().map(|(var, ..)| ast::AttrArg::Expr(path(var.as_str()))).collect(),
+                span,
+            });
+        }
         stmts.push(ast::Stmt {
             id: dummy,
-            attrs: Vec::new(),
+            attrs: loop_attrs,
             kind: ast::StmtKind::For { label: *label, pattern: pattern.clone(), iter: range, body: body.clone(), else_block: None },
             span,
         });
@@ -48493,6 +49429,11 @@ impl<'a> Checker<'a> {
         while self.box_inner(rhs.ty).is_some() {
             rhs = self.read_box_through(rhs);
         }
+        // `[SIMD-8]` — a lane-wise operator on two `std.simd` vectors or masks.
+        (lhs, rhs) = match self.synth_simd_binary(hir_op, lhs, rhs, span) {
+            Ok(call) => return call,
+            Err(back) => back,
+        };
 
         // `[CLS-4]`/Part VIII — `is` and `is not` compare class-handle
         // identity. They are deliberately not routed through `Eq`: value
@@ -49847,7 +50788,8 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["must_drop"], &["struct", "class"], true),
     (&["non_exhaustive"], &["enum"], false),
     (&["component"], &["struct"], false),
-    (&["soa"], &["field"], false),
+    // `[SOA-1]` — `@soa(flatten)` splits a struct field into a column per field of its own.
+    (&["soa"], &["field"], true),
     (&["always_specialize", "never_specialize"], &["fn", "struct", "enum", "class", "type"], false),
     // Annex B — `[HR-25]`: which functions a reloadable build reaches through thunks; nothing in
     // a build without reload, whose C is the same either way (`[HR-27]`).

@@ -15,7 +15,7 @@ use std::process::ExitCode;
 use ember_build::interface::{
     CallableGenericCallableBound, CallableGenericParameter, CallableInterfaceContract,
     CallableInterfaceRecord, CallableParameter, CallableParameterMode, CallableSignature,
-    ModuleInterfaceArtifact, ModuleInterfaceInput, PreparedInterfaceCache,
+    InterfaceHash, ModuleInterfaceArtifact, ModuleInterfaceInput, PreparedInterfaceCache,
     build_artifacts, cache_directory, compiler_identity, prepare_interface_cache,
     round_trip_artifacts,
 };
@@ -175,6 +175,14 @@ fn retain_referenced_standard_bodies(
         .collect();
     let mut keep = BTreeSet::new();
     let mut pending = Vec::new();
+    // A virtual call reaches every body in its slot: a standard class's override is called
+    // through its base's slot, never by name.
+    let mut by_slot: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+    for body in bodies.iter().filter(|body| standard(body)) {
+        if let Some(slot) = body.class_virtual_slot {
+            by_slot.entry(slot).or_default().push(body.symbol.clone());
+        }
+    }
 
     for body in bodies.iter() {
         let drop_glue = body.name == "drop" || body.name.ends_with(".drop");
@@ -206,6 +214,9 @@ fn retain_referenced_standard_bodies(
             } = &block.terminator
             {
                 referenced.extend(types.debug_writers_reached(*arg_ty).into_iter().map(str::to_string));
+            }
+            if let ember_mir::Terminator::Call { func: ember_mir::FuncRef::Virtual { slot, .. }, .. } = &block.terminator {
+                referenced.extend(by_slot.get(slot).into_iter().flatten().cloned());
             }
         }
         for target in referenced {
@@ -2634,6 +2645,8 @@ fn module_interface_inputs(
         let contract = CallableInterfaceContract {
             signature,
             metadata: None,
+            effects: None,
+            inline_body: None,
         };
         if import_visible_contracts
             .insert(declaration.symbol.clone(), contract.clone())
@@ -2665,7 +2678,12 @@ fn module_interface_inputs(
         }
     }
 
-    for body in bodies {
+    // `[BLD-2]` — the facts a caller may use beside a signature: each body's
+    // effect set (`[EFF-4]`) and, for a function the inline header exports,
+    // its body (`[CG-C-3b]`).
+    let effect_sets = ember_analysis::effect_sets(bodies, types);
+    let inline_symbols = ember_codegen_c::inline_header_symbols(bodies, types);
+    for (index, body) in bodies.iter().enumerate() {
         let source_declaration = declarations_by_span.get(&span_key(body.span)).copied();
         if source_declaration.is_none() && !import_visible_spans.contains(&span_key(body.span)) {
             // The fresh MIR record remains installed for this compilation's
@@ -2702,9 +2720,14 @@ fn module_interface_inputs(
                 body.symbol
             ));
         }
+        let inline_body = inline_symbols.contains_key(&body.symbol).then(|| {
+            InterfaceHash::of_bytes(ember_mir::dump(std::slice::from_ref(body), types).as_bytes())
+        });
         let contract = CallableInterfaceContract {
             signature,
             metadata: Some(metadata.clone()),
+            effects: Some(effect_sets[index].each().map(|(_, name)| name.to_string()).collect()),
+            inline_body,
         };
         if source_declaration.is_some() {
             let expected = import_visible_contracts.get_mut(&body.symbol).ok_or_else(|| {
@@ -2719,7 +2742,7 @@ fn module_interface_inputs(
                     body.symbol
                 ));
             }
-            expected.metadata = contract.metadata.clone();
+            *expected = contract.clone();
             let records = records_by_file.entry(body.span.file).or_default();
             let stored = records.get_mut(&body.symbol).ok_or_else(|| {
                 format!(
@@ -2753,6 +2776,7 @@ fn module_interface_inputs(
         .map(str::to_string)
         .collect();
     let package_config = format!("profile={}", options.profile.name());
+    let mut layouts = type_layouts(modules, map);
     let mut inputs = Vec::with_capacity(modules.len());
     for loaded in modules {
         let module = module_identity(&loaded.path);
@@ -2801,6 +2825,7 @@ fn module_interface_inputs(
                 .into_iter()
                 .map(|(symbol, contract)| CallableInterfaceRecord { symbol, contract })
                 .collect(),
+            layouts: layouts.remove(&loaded.module.span.file).unwrap_or_default(),
         });
     }
     if let Some((file, records)) = records_by_file.into_iter().next() {
@@ -2811,6 +2836,52 @@ fn module_interface_inputs(
         ));
     }
     Ok((inputs, import_visible_contracts))
+}
+
+/// `[BLD-2]` — the layout of each import-visible type a module declares, by
+/// its file and name: its kind, its fields as declared (name, type, default)
+/// or its variants, and the attributes that place them (`repr`, `soa`, …). It
+/// is read from the declaration, so it is the same in every program that
+/// loads the module (a type the checker makes only when a program names it
+/// would otherwise appear in some records and not others). A change to one
+/// changes the module's interface hash, so its importers recheck.
+fn type_layouts(
+    modules: &[ember_typeck::LoadedModule],
+    map: &SourceMap,
+) -> std::collections::BTreeMap<ember_span::FileId, std::collections::BTreeMap<String, String>> {
+    use ember_ast::{ItemKind, MemberKind, VisKind};
+    use std::collections::BTreeMap;
+
+    let mut out: BTreeMap<ember_span::FileId, BTreeMap<String, String>> = BTreeMap::new();
+    for loaded in modules {
+        let file = loaded.module.span.file;
+        let text = &map.file(file).text;
+        let source = |span: ember_span::Span| -> String {
+            text.get(span.start as usize..span.end as usize).unwrap_or_default().split_whitespace().collect::<Vec<_>>().join(" ")
+        };
+        for item in &loaded.module.items {
+            if item.vis.kind == VisKind::Private {
+                continue;
+            }
+            let (kind, name, members, variants) = match &item.kind {
+                ItemKind::Struct(decl) => ("struct", decl.name, &decl.members, Vec::new()),
+                ItemKind::Class(decl) => ("class", decl.name, &decl.members, Vec::new()),
+                ItemKind::Enum(decl) => ("enum", decl.name, &decl.members, decl.variants.iter().map(|variant| source(variant.span)).collect()),
+                _ => continue,
+            };
+            let mut parts: Vec<String> = item.attrs.iter().map(|attr| source(attr.span)).collect();
+            parts.push(kind.to_string());
+            parts.extend(
+                members
+                    .iter()
+                    .filter(|member| matches!(member.kind, MemberKind::Field(_)))
+                    .map(|member| source(member.span)),
+            );
+            parts.extend(variants);
+            out.entry(file).or_default().insert(name.name.as_str().to_string(), parts.join("; "));
+        }
+    }
+    out
 }
 
 fn install_callable_metadata_from_artifacts(
@@ -3579,6 +3650,13 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if ember_analysis::version_bounds_checked_loops_all(&mut bodies, &types, &common) != (0, 0) {
         ember_analysis::install_callable_regions_all(&mut bodies, &types);
     }
+    // `[SIMD-2]` — each `@simd` loop's verdict, now that it is final: an
+    // `@simd(assert)` loop not in vectorisable form is `E4020`, naming the
+    // first clause of `[SIMD-5]` it fails; the report says the same of each.
+    let simd_report = simd_verdicts(&bodies, &map, &mut sink);
+    if sink.has_errors() {
+        return Ok(finish(&sink, &map, options));
+    }
     // `[EXC-8]` — a dynamic exclusivity check every turn of a loop makes on
     // an unchanged handle, where nothing in the loop can change an access,
     // runs once before it; after versioning, so each copy of a loop is done.
@@ -3764,12 +3842,13 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     );
     mark("C generation", "all modules");
     // `[DSP-5]` — on standard error, so it never mixes with `--emit c`.
+    // `[SIMD-2]` — then each `@simd` loop's verdict.
     if options.optimization_report {
         eprintln!("optimization report:");
-        if emitted.optimization_report.is_empty() {
+        if emitted.optimization_report.is_empty() && simd_report.is_empty() {
             eprintln!("  none");
         }
-        for line in &emitted.optimization_report {
+        for line in emitted.optimization_report.iter().chain(&simd_report) {
             eprintln!("  {line}");
         }
     }
@@ -4029,6 +4108,21 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     )
     .map_err(|e| e.to_string())?;
     mark("C compile and link", "all modules");
+    // `[SIMD-6]` — after Ember's verdicts, the host C compiler's own report on
+    // the program's unit, labelled as its opinion: its absence or a
+    // disagreement is never an error.
+    if options.optimization_report {
+        eprintln!("host C compiler's vectorisation report ({}; its opinion only, Ember's verdict is above):", toolchain.name());
+        match ember_build::vectorisation_report(&toolchain, &c_path, &includes, &layout.obj.join("report"), options.profile) {
+            Ok(remarks) if remarks.is_empty() => eprintln!("  none"),
+            Ok(remarks) => {
+                for remark in remarks {
+                    eprintln!("  {remark}");
+                }
+            }
+            Err(error) => eprintln!("  not available: {error}"),
+        }
+    }
 
     report(&sink, &map, options);
 
@@ -4153,6 +4247,53 @@ fn run_program(exe: &Path, options: &Options) -> Result<ExitCode, String> {
         Some(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
         None => ExitCode::FAILURE,
     })
+}
+
+/// `[SIMD-2]`, `[SIMD-5]` — every `@simd` loop's verdict, one line each for
+/// `--emit-optimization-report` in source order; an `@simd(assert)` loop not
+/// in vectorisable form is `E4020`, naming the first clause it fails and, for
+/// a check that remains, the check's reason (`[EFF-11]`). A loop whose
+/// counter no counted loop has (or a body copied for each instance, which
+/// gives one loop several verdicts: any failing one counts) is said once.
+fn simd_verdicts(bodies: &[ember_mir::Body], map: &SourceMap, sink: &mut Sink) -> Vec<String> {
+    let mut loops: std::collections::BTreeMap<(ember_span::FileId, u32), (Span, bool, Result<(), ember_mir::NotVectorisable>)> = std::collections::BTreeMap::new();
+    for body in bodies {
+        for note in &body.loop_notes.simd {
+            let verdict = note.verdict.clone().unwrap_or_else(|| {
+                Err(ember_mir::NotVectorisable {
+                    clause: 1,
+                    what: "its trip count is not known before entry".to_string(),
+                    check_reason: None,
+                    at: None,
+                })
+            });
+            let entry = loops.entry((note.span.file, note.span.start)).or_insert((note.span, note.assert, Ok(())));
+            if entry.2.is_ok() {
+                entry.2 = verdict;
+            }
+        }
+    }
+    let mut lines = Vec::new();
+    for (span, assert, verdict) in loops.into_values() {
+        match verdict {
+            Ok(()) => lines.push(format!("{}: `@simd` loop is in vectorisable form, so its checks are grouped and the C compiler may vectorise it [SIMD-5]", map.location(span))),
+            Err(why) => {
+                let reason = why.check_reason.map(|reason| format!(" (the check's reason: {reason})")).unwrap_or_default();
+                lines.push(format!("{}: `@simd` loop is not in vectorisable form: {}{reason} [SIMD-5]", map.location(span), why.what));
+                if assert {
+                    let mut diagnostic = Diagnostic::error(codes::E4020, span, format!("`@simd(assert)` loop did not vectorise: {}", why.what));
+                    if let Some(at) = why.at.filter(|at| !at.is_dummy()) {
+                        diagnostic = diagnostic.secondary(at, "here");
+                    }
+                    if let Some(reason) = why.check_reason {
+                        diagnostic = diagnostic.note(format!("the check that remains has the reason `{reason}` [EFF-11]"));
+                    }
+                    sink.emit(diagnostic.note(format!("this is clause {} of vectorisable form [SIMD-5]", why.clause)));
+                }
+            }
+        }
+    }
+    lines
 }
 
 /// `[CT-1]` — how many times a program is checked at most: each pass answers

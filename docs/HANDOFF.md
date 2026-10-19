@@ -10965,7 +10965,10 @@ formatter's 100-column wrapping (`[FMT-1]`, still `unfinished` for classes and `
 `[MOD-3]`'s `E1060`/`E1061` (D-681: a missing `std` module was accepted); D-682 to D-684 are
 formatter defects the corpus check found. Helper agents A (hot reload), B (FFI contracts,
 overlays), D (ECS, SIMD, SoA) work in worktrees; C (shared libraries, packages) starts only after
-those three are merged (the owner).
+those three are merged (the owner). Then (2026-10-19, ADR-203) A, B and D were merged: hot reload,
+C interop 1 and data-oriented design; their notes are `tasks/85/`. The owner answered the helpers'
+questions one at a time (ADR-204, `tasks/85/owner-answers.md`): the specification changes and two
+bugs (D-690, D-692) are the next work, then helper C (shared libraries, packages).
 **Next:** `[TYP-32]`'s `some` return types, `[JOB-5]`'s `local_arena`, N7, the
 `[STD-1]` audit (ADR-197 lists what was tried).
 

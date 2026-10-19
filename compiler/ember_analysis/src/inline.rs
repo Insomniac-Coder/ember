@@ -25,7 +25,7 @@ use ember_types::{TyKind, TypeTable};
 
 use ember_mir::{
     AggregateKind, BasicBlock, BasicBlockId, Body, Const, FuncRef, LocalId, Operand, ParameterMode, Place, Projection,
-    Rvalue, Stmt, StmtKind, Terminator,
+    Rvalue, SimdLoop, Stmt, StmtKind, Terminator,
 };
 
 /// Inline every function called from exactly one place into that place;
@@ -225,6 +225,85 @@ fn copyable(body: &Body, types: &TypeTable) -> bool {
                 )
             })
         })
+}
+
+/// `[SIMD-5]`, `[PAR-2b]` (ODR-062) — the functions a call in a counted loop
+/// is read through to: those `[CG-C-3]` puts in the inline header (`@inline`,
+/// or at most 40 statements and no foreign call), whose call boundary carries
+/// nothing but the call (`copyable`), and which do not call themselves.
+pub(crate) fn read_through_callees(bodies: &[Body], types: &TypeTable) -> HashMap<String, Body> {
+    let foreign: HashSet<&str> =
+        bodies.iter().filter(|body| body.is_extern_declaration).map(|body| body.symbol.as_str()).collect();
+    bodies
+        .iter()
+        .filter(|body| {
+            if !copyable(body, types) || calls_itself(body) || body.restrict_views {
+                return false;
+            }
+            if body.inline.always {
+                return true;
+            }
+            let mut statements = 0;
+            for data in &body.blocks {
+                statements += 1 + data
+                    .stmts
+                    .iter()
+                    .filter(|stmt| !matches!(stmt.kind, StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop))
+                    .count();
+                if let Terminator::Call { func: FuncRef::Direct { symbol, .. }, .. } = &data.terminator
+                    && foreign.contains(symbol.as_str())
+                {
+                    return false;
+                }
+            }
+            statements <= READ_THROUGH_STATEMENTS
+        })
+        .map(|body| (body.symbol.clone(), body.clone()))
+        .collect()
+}
+
+/// `[CG-C-3]` — the most statements a function the inline header holds may
+/// have (the backend's `INLINE_STATEMENTS`).
+const READ_THROUGH_STATEMENTS: usize = 40;
+
+/// `[SIMD-5]`, `[PAR-2b]` — a copy of `body` in which every call a counted
+/// loop makes to one of `callees` (of the caller's floating-point mode) is
+/// that function's body, and so are the calls those copies make, to a depth
+/// of four: what the analysis reads, as if inlined. `None` when no counted
+/// loop makes such a call.
+pub(crate) fn read_loop_calls(body: &Body, callees: &HashMap<String, Body>, types: &TypeTable) -> Option<Body> {
+    let mut copy: Option<Body> = None;
+    for _ in 0..4 {
+        let current = copy.as_ref().unwrap_or(body);
+        let mut in_loops: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+        for header in 0..current.blocks.len() {
+            if let Some(shape) = crate::loop_version::counted_loop(current, types, header) {
+                in_loops.extend(shape.region);
+            }
+        }
+        let sites: Vec<(usize, String)> = in_loops
+            .into_iter()
+            .filter_map(|block| match &current.blocks[block].terminator {
+                Terminator::Call { func: FuncRef::Direct { symbol, .. }, .. }
+                    if *symbol != current.symbol
+                        && callees.get(symbol).is_some_and(|callee| callee.fp == current.fp)
+                        && !current.call_argument_bindings.iter().any(|binding| binding.call_block.0 as usize == block) =>
+                {
+                    Some((block, symbol.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        if sites.is_empty() {
+            break;
+        }
+        let target = copy.get_or_insert_with(|| body.clone());
+        // Inlining appends blocks and keeps every block's number.
+        for (block, symbol) in sites {
+            inline_call(target, block, &callees[&symbol]);
+        }
+    }
+    copy
 }
 
 fn calls_itself(body: &Body) -> bool {
@@ -738,6 +817,9 @@ fn inline_call(caller: &mut Body, block: usize, callee: &Body) {
     caller.elided_accesses.extend(callee.elided_accesses.iter().cloned());
     caller.uncounted_handles.extend(callee.uncounted_handles.iter().map(|id| local(*id)));
     caller.for_iterators.extend(callee.for_iterators.iter().map(|id| local(*id)));
+    // `[SIMD-2]`, `[SIMD-5]` — the callee's loops are the caller's now.
+    caller.loop_notes.simd.extend(callee.loop_notes.simd.iter().map(|note| SimdLoop { local: local(note.local), ..note.clone() }));
+    caller.loop_notes.declared_reductions.extend(callee.loop_notes.declared_reductions.iter().map(|id| local(*id)));
 }
 
 fn renumber_place(place: &mut Place, local: &impl Fn(LocalId) -> LocalId) {

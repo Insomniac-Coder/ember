@@ -1129,6 +1129,68 @@ pub fn compile_object(
     Ok(())
 }
 
+/// `[SIMD-6]` — the host C compiler's own vectorisation remarks on one
+/// unit, as corroborating evidence only: the unit is compiled again, with the
+/// build's flags, to an object nothing uses, adding the compiler's report
+/// flags (clang `-Rpass{,-missed,-analysis}=loop-vectorize`, gcc
+/// `-fopt-info-vec-all`, MSVC `/Qvec-report:2`). The remarks kept are those
+/// placed in Ember source (the C carries `#line`s, `[CG-C-8]`) or in the unit
+/// itself, not the runtime's header, in the order given, each once.
+pub fn vectorisation_report(
+    toolchain: &Toolchain,
+    source: &Path,
+    include_dirs: &[PathBuf],
+    scratch: &Path,
+    profile: Profile,
+) -> Result<Vec<String>, BuildError> {
+    std::fs::create_dir_all(scratch)?;
+    let object = scratch.join(match toolchain {
+        Toolchain::Msvc { .. } => "vectorisation_report.obj",
+        _ => "vectorisation_report.o",
+    });
+    let mut command = compiler_command(toolchain);
+    match toolchain {
+        Toolchain::Msvc { .. } => {
+            command.args(msvc_flags(profile).into_iter().filter(|flag| *flag != "/Zi" && !flag.starts_with("/GL")));
+            command.arg("/Qvec-report:2").arg("/c");
+            for dir in include_dirs { command.arg(format!("/I{}", dir.display())); }
+            command.arg(source).arg(format!("/Fo{}", object.display()));
+        }
+        Toolchain::Clang(_) => {
+            command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile));
+            command.args(["-Rpass=loop-vectorize", "-Rpass-missed=loop-vectorize", "-Rpass-analysis=loop-vectorize", "-c"]);
+            for dir in include_dirs { command.arg("-I").arg(dir); }
+            command.arg(source).arg("-o").arg(&object);
+        }
+        Toolchain::Gcc(_) => {
+            command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile));
+            command.args(["-fopt-info-vec-all", "-c"]);
+            for dir in include_dirs { command.arg("-I").arg(dir); }
+            command.arg(source).arg("-o").arg(&object);
+        }
+    }
+    let output = run_output(command);
+    let _ = std::fs::remove_file(&object);
+    let output = output?;
+    let ext = ember_branding::SOURCE_EXT;
+    let unit = source.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut remarks = Vec::new();
+    for stream in [&output.stdout, &output.stderr] {
+        for line in String::from_utf8_lossy(stream).lines() {
+            let line = line.trim();
+            // clang places a loop's remark at its function in the C when the
+            // loop has no line of its own; MSVC and gcc follow the `#line`s.
+            let in_source = line.contains(&format!(".{ext}:")) || line.contains(&format!(".{ext}(")) || line.contains(&unit);
+            let remark = ["remark:", "optimized:", "missed:", "C5001", "C5002"].iter().any(|mark| line.contains(mark));
+            if in_source && remark && seen.insert(line.to_string()) {
+                remarks.push(line.to_string());
+            }
+        }
+    }
+    Ok(remarks)
+}
+
 /// The archive extension follows the C ABI toolchain, not just the host OS.
 pub fn archive_name(toolchain: &Toolchain, stem: &str) -> String {
     match toolchain {

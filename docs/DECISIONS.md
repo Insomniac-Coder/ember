@@ -5017,6 +5017,65 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-204 — The owner's answers to the helpers' questions (applied after the merge)
+
+2026-10-18/19. The helpers' questions were put to the owner one at a time; the record is
+`tasks/85/owner-answers.md`. A question that was a bug went to the fix list, one that waits on
+unbuilt work was recorded as waiting, and only real choices went to the owner (the owner's rule after
+B's question 5, which was a dependency on C header import raised as a question). To do, in order:
+* **Bugs:** D-692 (a `static` of function type called by name), D-690 (`mut self` calling a shared
+  method on `self`).
+* **Specification changes, shown to the owner before building:** `E5059` for one object adopted twice
+  (`[FFI-36b]`); `Retained.ptr()` a typed pointer, with a pointer type for class objects
+  (`[FFI-23]`); `[ERR-6]`'s spelling `@ffi(status=E, ok=X, error=Name)` with the error named in the
+  label (FFI-16 aligned, applied when the status feature is built); an `inout_count` call gives back
+  C's own result first, then every pointer output in declaration order (`[FFI-11b]`); at
+  `std.hot.checkpoint()` the live values below the checkpoint are rebuilt in the new shape from a
+  stack map, so layout changes apply live (`[HR-3]`, `[HR-33]`; replaces A's body-only reading); a
+  shipping build ignores `reload` with a one-line note (`[MAN-7]`, `[PRF-2]`, `E9033` retired); in
+  a hot-reload build `@inline` is not applied to a reloadable function (`[CG-C-3a]` against
+  `[HR-9a]`); an upgraded object's old version runs no user `drop` (`[HR-2a]`'s wording);
+  `ReloadError`'s parts as A built them, `type` spelt `type_name` (`[HR-38]`); tuples, `Box`
+  contents and closure captures are searched for references to a moving object (`[HR-15]`).
+* **Kept as built:** `@ffi(destroys(f))` on a foreign type (`[FFI-36a]`).
+* **Waiting on unbuilt work:** `[FFI-16]`/`[ERR-6]` on C header import; `Entity` as `Handle`
+  (`[HND-2]`); `run(system, args…)` (`[ECS-5]`); a query over an `SoA` component follows
+  `[SOA-6]`'s element proxies when queries are built.
+
+## ADR-203 — Helpers A, B and D merged: hot reload, C interop 1, data-oriented design
+
+2026-10-19. The 85% push's helper agents (ADR-202) worked in worktrees, one job sheet each; their
+notes, rule-by-rule with tests, are `tasks/85/A-notes.md`, `B-notes.md` and `D-notes.md`. Merged
+into `main` in that order; conflicts kept both sides (codegen's `emit` takes A's `reload` and B's
+`instrument_ffi`; the driver's options, the runtime templates; the runtime regenerated), took D's
+restructured statement checker inside `[UNS-3]`'s recording wrapper, and routed B's `adopt` and D's
+unchecked vector operations through `unsafe_context()` so `L3010` sees them. A's D-681 became D-685.
+* **A, hot reload (Annex B; 50 of its 62 rules):** `[build] reload`, images and permanent thunks,
+  the shared runtime and the four-phase transaction (plan, prepare, commit, reclaim), per-thread
+  depth counters at every foreign entry, the live-instance list, migration by schema and
+  `migrate_from`, `@renamed_from`, statics under the guard, `ember run --hot` at
+  `std.hot.checkpoint()`, `ember build --reload --explain`, `std.hot.ReloadError`. Measured
+  (`[BEN-8]`): about 0.4 s from saving a source to the new code running. Not done: `[HR-2a]` (old
+  instances lose their user `drop`; ADR-204 rewords the rule), `[HR-14]`'s refused rows, `[HR-11]`,
+  `[HR-13]`, `[HR-1]`/`[BUD-2]` (need `bench/bigpkg`), `[HR-9]` (a measurement), `[HR-20]`/
+  `[HR-22]` (now unblocked by B), `[ABI-1]`.
+* **B, C interop 1:** foreign statics as places (`[FFI-10]`), non-C blocks, `@ffi(effects=…)`
+  (`[EFF-3]`), overlay files (`[GRM-35]`, `E5067`, `@grade`, `W5050`), `ember calls --foreign`
+  (`[CLI-13]`), `E5002` naming each missing fact (`[DIA-18]`), `ForeignBox` and `std.ffi.adopt`
+  (`[FFI-36a]`), `Retained` (`[FFI-23]`), `owned`/`returns_owned`, `inout_count` (`[FFI-11b]`),
+  `ember test --instrument-ffi` with evidence records (`[FFI-37]`–`[FFI-37d]`, `[TCB-6]`). Not done:
+  everything that needs C header import (`[TCB-1]`'s grades, `[CLI-6]`, `[CLI-7]`, `[FFI-12]`,
+  `[FFI-13]`, `[FFI-16]`, `[ERR-6]`), callbacks (`[FFI-33b]`), `[FFI-36b]`'s compile-time half
+  (`E5059`, ADR-204).
+* **D, data-oriented design:** `@simd`/`@simd(assert)` with a per-loop verdict (`[SIMD-2]`,
+  `[SIMD-5]`, `[SIMD-6]`), `std.simd` (`[SIMD-1]`, `[SIMD-4]`, `[SIMD-8]`, `[SIMD-9]`),
+  `@soa(flatten)` and `ArenaSoA` (`[SOA-1]`, `[SOA-4]`), `@noalloc` standard modules (`[STD-1]`),
+  `restrict` pointers and hoisted lengths per loop (`[CG-C-4]`; the benchmark programs whose C
+  changed stay at 0.97–1.04x C), effect sets, inline bodies and layouts in the interface hash
+  (`[BLD-2]`, `[CG-C-3b]`), `std.ecs` (`[ECS-1]`, `[ECS-2]`, `[ECS-7]`). Fixed D-686 to D-689;
+  found D-690. Not done: queries, systems and commands (`[ECS-3]`–`[ECS-6]`: a tuple-query type made
+  as two instances; variadics), `[BEN-6]`, `[TST-6]`.
+
 ## ADR-202 — The 85% push, solo part 1: `--migrate`, wrapping, `L3010`, `E1060` (D-681 to D-684)
 
 2026-10-18, the owner's goal "85% in autonomous mode" (helper agents A, B, C, D build hot reload, C

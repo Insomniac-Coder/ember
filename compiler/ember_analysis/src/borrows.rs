@@ -1693,7 +1693,9 @@ pub(crate) fn quiet_builtin(types: &TypeTable, which: &Builtin, arg_ty: Ty) -> b
         | Builtin::StrAsBytes
         | Builtin::StrSliceOk
         | Builtin::Utf8Valid
-        | Builtin::SpanToStr => true,
+        | Builtin::SpanToStr
+        // `[SIMD-1]` — a vector operation runs no program code and touches no class.
+        | Builtin::Simd { .. } => true,
         Builtin::ArrayClear | Builtin::ArrayTruncate => {
             let mut ty = arg_ty;
             while let TyKind::Ref { inner, .. } = *types.kind(ty) {
@@ -2527,6 +2529,7 @@ fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elis
                 Builtin::SpanFrom { .. }
                 | Builtin::ArenaArrayWithCapacity { .. }
                 | Builtin::ArenaMapWithCapacity { .. }
+                | Builtin::SoA { op: ember_mir::SoAOp::WithCapacityIn, .. }
                 | Builtin::ArenaAlloc { .. }
                 | Builtin::ArenaAllocUninit { .. }
                 | Builtin::ArenaAllocArrayZeroed { .. }
@@ -5125,7 +5128,7 @@ mod callable_region_metadata_tests {
             uncounted_handles: Vec::new(),
             removed_checks: Vec::new(),
             restrict_views: false,
-            stack_buffers: Vec::new(),
+            stack_buffers: Vec::new(), loop_notes: Default::default(),
         }
     }
 

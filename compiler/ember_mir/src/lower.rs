@@ -17,8 +17,8 @@ use ember_types::{
 
 use crate::{
     AggregateKind, AssertKind, BasicBlock, BasicBlockId, BinOp, Body, CallArgumentBinding, CastKind, Const, FuncRef,
-    LocalDecl, LocalId, LocalKind, Operand, Place, Projection, RETURN_LOCAL, Rvalue, Stmt,
-    StmtKind, Terminator,
+    LocalDecl, LocalId, LocalKind, LoopNotes, Operand, Place, Projection, RETURN_LOCAL, Rvalue, Stmt,
+    SimdLoop, StmtKind, Terminator,
 };
 
 pub mod coroutines;
@@ -422,6 +422,16 @@ impl<'a> Builder<'a> {
             .filter(|(_, decl)| decl.for_iterator)
             .map(|(index, _)| self.local_map[index])
             .collect();
+        // `[SIMD-2]`, `[SIMD-5]` — the loops' attributes, on the MIR locals.
+        let mut loop_notes = LoopNotes::default();
+        for (index, decl) in self.function.locals.iter().enumerate() {
+            if let Some((span, assert)) = decl.simd {
+                loop_notes.simd.push(SimdLoop { local: self.local_map[index], span, assert, verdict: None });
+            }
+            if decl.declared_reduction {
+                loop_notes.declared_reductions.push(self.local_map[index]);
+            }
+        }
         Body {
             name: self.function.name.to_string(),
             symbol: self.function.symbol.clone(),
@@ -461,6 +471,7 @@ impl<'a> Builder<'a> {
             removed_checks: Vec::new(),
             restrict_views: false,
             stack_buffers: Vec::new(),
+            loop_notes,
         }
     }
 
@@ -2713,7 +2724,7 @@ impl<'a> Builder<'a> {
             hir::ExprKind::Builtin { which: hir::Builtin::IntOverflowing(op), args } => {
                 self.lower_int_overflowing(place, *op, args, expr.span);
             }
-            hir::ExprKind::Builtin { which: hir::Builtin::Slice { text }, args } => {
+            hir::ExprKind::Builtin { which: hir::Builtin::Slice { text, .. }, args } => {
                 self.lower_slice(place, args, *text, expr.span);
             }
             hir::ExprKind::Builtin {
@@ -3297,6 +3308,7 @@ impl<'a> Builder<'a> {
                     | hir::Builtin::JobScopeSubmit { .. }
                     | hir::Builtin::JobSubmit { .. } => expr.ty,
                     hir::Builtin::SoA { soa, .. } => *soa,
+                    hir::Builtin::Simd { vector, .. } => *vector,
                     hir::Builtin::SizeOf => args.last().map(|a| a.ty).unwrap_or(expr.ty),
                     _ => args.first().map(|a| a.ty).unwrap_or(expr.ty),
                 };
@@ -6479,7 +6491,11 @@ impl<'a> Builder<'a> {
             (hir::ExprKind::Field { base: soa, .. }, TyKind::Ptr { .. }) => match *self.types.kind(soa.ty) {
                 TyKind::Struct(id) => {
                     let def = self.types.struct_def(id);
-                    def.origin.as_ref().is_some_and(|(origin, _)| origin.as_str() == "SoA").then(|| def.fields.len() - 2)
+                    def.origin
+                        .as_ref()
+                        .is_some_and(|(origin, _)| matches!(origin.as_str(), "SoA" | "ArenaSoA"))
+                        .then(|| def.fields.iter().position(|field| field.name.is("len")))
+                        .flatten()
                 }
                 _ => None,
             },
@@ -6644,7 +6660,7 @@ impl<'a> Builder<'a> {
         self.at(span);
         let next = self.new_block();
         self.terminate(Terminator::Call {
-            func: FuncRef::Builtin { which: hir::Builtin::Slice { text }, arg_ty: view_ty },
+            func: FuncRef::Builtin { which: hir::Builtin::Slice { text, nonempty: false }, arg_ty: view_ty },
             args: vec![view, lo, hi],
             dest,
             next,

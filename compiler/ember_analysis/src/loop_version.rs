@@ -41,7 +41,7 @@ use std::collections::{HashMap, HashSet};
 
 use ember_mir::{
     AssertKind, BasicBlock, BasicBlockId, BinOp, Body, Builtin, CastKind, CheckKind, CheckProof, Const, FuncRef, LocalDecl,
-    LocalId, LocalKind, Operand, Place, Projection, RemovedCheck, Rvalue, Stmt, StmtKind, Terminator, UnOp,
+    LocalId, LocalKind, NotVectorisable, Operand, Place, Projection, RemovedCheck, Rvalue, Stmt, StmtKind, Terminator, UnOp,
 };
 use ember_types::{ClassId, CommonTypes, Ty, TyKind, TypeTable};
 
@@ -56,12 +56,37 @@ use crate::regions::place_type;
 pub fn version_bounds_checked_loops_all(bodies: &mut [Body], types: &TypeTable, common: &CommonTypes) -> (usize, usize) {
     let summaries = Summaries::compute(bodies, types);
     let returns = crate::range_facts::returned_arguments(bodies);
+    // `[SIMD-5]`, `[PAR-2b]` — a call in a counted loop to a function the
+    // inline header holds is read through, as if inlined (ODR-062).
+    let callees = crate::inline::read_through_callees(bodies, types);
     let mut versioned = 0;
     let mut grouped = 0;
     for body in bodies.iter_mut() {
-        settle_inclusive_loops(body, types, common, &returns);
-        versioned += version_loops(body, types, common, &summaries, &returns);
-        grouped += group_overflow_checks(body, types, common);
+        let read = if callees.is_empty() { None } else { crate::inline::read_loop_calls(body, &callees, types) };
+        let pass = |body: &mut Body| {
+            settle_inclusive_loops(body, types, common, &returns);
+            let versioned = version_loops(body, types, common, &summaries, &returns);
+            let (grouped, in_form) = group_overflow_checks(body, types, common);
+            (versioned, grouped, in_form)
+        };
+        let (mut here_versioned, mut here_grouped, in_form) = pass(body);
+        // The copy whose calls are read through gives the verdicts; it is
+        // the code only when it puts more loops in vectorisable form (whose
+        // overflow checks `[SIMD-7]` then requires grouped, the callee's
+        // included). Otherwise the calls stay calls and the C compiler
+        // inlines them as it would.
+        if let Some(mut through) = read {
+            let (through_versioned, through_grouped, through_in_form) = pass(&mut through);
+            if through_in_form > in_form {
+                *body = through;
+                here_versioned = through_versioned + 1;
+                here_grouped = through_grouped;
+            } else {
+                body.loop_notes.simd = through.loop_notes.simd;
+            }
+        }
+        versioned += here_versioned;
+        grouped += here_grouped;
     }
     (versioned, grouped)
 }
@@ -115,10 +140,12 @@ struct Check {
     len: Operand,
     /// The index's type, `usize`: what the entry test compares in.
     index_ty: Ty,
+    /// `[SPN-2]` — a slice's end (`end <= len`): the local holding the end.
+    slice_end: Option<LocalId>,
 }
 
 /// The largest index a check sees in the loop.
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Debug)]
 enum IndexBound {
     /// `counter + offset` (`[OPT-2]`).
     Counter(i128),
@@ -126,6 +153,12 @@ enum IndexBound {
     Constant(i128),
     /// At most `local + c`, for a local the loop does not write (`[RNG-4]`).
     Local(LocalId, i128),
+    /// `[SIMD-9]`, `[OPT-2]` — a stepped loop's value plus `offset`: the
+    /// counter `k` gives the value `RangeNth(start, step, k)`, so with a
+    /// positive step the largest index is the last value's, `start + step *
+    /// (limit - 1)`, plus `offset`. `start` and `step` are of `ty`, locals the
+    /// loop does not write, or constants.
+    Stepped { start: Operand, step: Operand, ty: Ty, offset: i128 },
 }
 
 struct Plan {
@@ -238,6 +271,14 @@ fn plan(
         if !index.projection.is_empty() {
             continue;
         }
+        // `[SPN-2]` — a slice checks its end against the length of a copy of
+        // the view made in the loop (`[EXP-1]`): that is the view's own.
+        let len = &match len {
+            Operand::Copy(place) if place.projection.is_empty() => {
+                copied_view_len(body, &all, &definitions, place.local).map_or_else(|| len.clone(), Operand::Copy)
+            }
+            _ => len.clone(),
+        };
         let invariant = match len {
             Operand::Const(Const::Int { .. }) => true,
             Operand::Copy(len_place) => view_invariant(body, types, facts, len_place, &written),
@@ -247,9 +288,34 @@ fn plan(
             continue;
         }
         let index_ty = body.local(index.local).ty;
+        // A slice's end is checked `end <= len` (`[SPN-2]`), which is `end - 1 < len`.
+        let inclusive_len = match &body.blocks[block].terminator {
+            Terminator::Assert { cond: Operand::Copy(cond), .. } if cond.projection.is_empty() => {
+                body.blocks[block].stmts.iter().rev().any(|stmt| {
+                    matches!(&stmt.kind, StmtKind::Assign { place, rvalue: Rvalue::BinaryOp { op: BinOp::Le, lhs: Operand::Copy(lhs), .. } }
+                        if place == cond && lhs == index)
+                })
+            }
+            _ => false,
+        };
+        let less = i128::from(inclusive_len);
+        let unwritten_operand = |operand: &Operand| match operand {
+            Operand::Const(Const::Int { .. }) => true,
+            Operand::Copy(place) if place.projection.is_empty() => {
+                let loc = Loc { root: Root::Local(place.local), path: Vec::new() };
+                !written.iter().any(|(written, _)| may_alias(written, &loc, facts))
+            }
+            _ => false,
+        };
+        let stepped = stepped_index(body, types, &definitions, &dominators, counter, index.local, block, 0)
+            .filter(|(start, step, _, offset)| offset.abs() <= MAX_OFFSET && unwritten_operand(start) && unwritten_operand(step));
         let bound = match affine(body, types, &definitions, &dominators, counter, index.local, block, 0) {
-            Some(offset) if offset.abs() <= MAX_OFFSET => IndexBound::Counter(offset),
+            Some(offset) if offset.abs() <= MAX_OFFSET => IndexBound::Counter(offset - less),
             Some(_) => continue,
+            None if stepped.is_some() => {
+                let (start, step, ty, offset) = stepped.expect("just checked");
+                IndexBound::Stepped { start, step, ty, offset: offset - less }
+            }
             None => {
                 // `[RNG-4]` — what the range facts know of the index here,
                 // which holds on every iteration.
@@ -270,18 +336,18 @@ fn plan(
                         && ember_types::int_max(types, ty) <= ember_types::int_max(types, index_ty)
                 };
                 if index_max.is_some_and(|max| hi < max) {
-                    IndexBound::Constant(hi)
+                    IndexBound::Constant(hi - less)
                 } else if let Some((local, c)) = symbolic
                     .into_iter()
                     .find(|(local, c)| *local != counter && c.abs() <= MAX_OFFSET && unwritten(*local) && usable(*local))
                 {
-                    IndexBound::Local(local, c)
+                    IndexBound::Local(local, c - less)
                 } else {
                     continue;
                 }
             }
         };
-        checks.push(Check { block, bound, len: len.clone(), index_ty });
+        checks.push(Check { block, bound, len: len.clone(), index_ty, slice_end: inclusive_len.then_some(index.local) });
     }
     if checks.is_empty() {
         return None;
@@ -290,6 +356,76 @@ fn plan(
     let mut region: Vec<usize> = region.into_iter().collect();
     region.sort_unstable();
     Some(Plan { header, region, counter, limit, inclusive: op == BinOp::Le, checks })
+}
+
+/// `[SPN-2]`, `[EXP-1]` — `local` as the length of a view the loop copied:
+/// `local = len(t)`, one call in the loop, where `t` is a view the loop sets
+/// once to a copy of a place `v`, or to a reborrow of `v` through a
+/// reference to it made once in the loop (a `MutSpan` is reborrowed, not
+/// copied), or is not set in the loop at all: then it is `v.len`, a place an
+/// entry test before the loop can read.
+fn copied_view_len(
+    body: &Body,
+    blocks: &[usize],
+    definitions: &HashMap<LocalId, (usize, Definition)>,
+    local: LocalId,
+) -> Option<Place> {
+    let mut found = None;
+    for &block in blocks {
+        if let Terminator::Call { func: FuncRef::Builtin { which, .. }, args, dest, .. } = &body.blocks[block].terminator
+            && *dest == Place::local(local)
+        {
+            if found.is_some() || !matches!(which, Builtin::SpanLen) {
+                return None;
+            }
+            found = Some(args);
+        }
+    }
+    let [Operand::Copy(copy) | Operand::Move(copy)] = found?.as_slice() else { return None };
+    let mut view = if copy.projection.is_empty() && blocks.iter().any(|&block| defines(body, block, copy.local)) {
+        match definitions.get(&copy.local) {
+            Some((_, Definition::Value(Rvalue::Use(Operand::Copy(source))))) => source.clone(),
+            Some(_) => return None,
+            None => {
+                // `t = reborrow(r)` with `r = &v` (`&mut v`), each once.
+                let reborrows: Vec<&Vec<Operand>> = blocks
+                    .iter()
+                    .filter_map(|&block| match &body.blocks[block].terminator {
+                        Terminator::Call {
+                            func: FuncRef::Builtin { which: Builtin::SpanReborrow | Builtin::SpanSharedReborrow, .. },
+                            args,
+                            dest,
+                            ..
+                        } if *dest == Place::local(copy.local) => Some(args),
+                        _ => None,
+                    })
+                    .collect();
+                let [args] = reborrows.as_slice() else { return None };
+                let [Operand::Copy(reference) | Operand::Move(reference)] = args.as_slice() else { return None };
+                if !reference.projection.is_empty() {
+                    return None;
+                }
+                match definitions.get(&reference.local) {
+                    Some((_, Definition::Value(Rvalue::Ref { place, .. }))) => place.clone(),
+                    _ => return None,
+                }
+            }
+        }
+    } else {
+        copy.clone()
+    };
+    view.projection.push(Projection::Field(1));
+    Some(view)
+}
+
+/// Whether a block assigns `local` as a whole.
+fn defines(body: &Body, block: usize, local: LocalId) -> bool {
+    let data = &body.blocks[block];
+    data.stmts.iter().any(|stmt| match &stmt.kind {
+        StmtKind::Assign { place, .. } => place.local == local,
+        StmtKind::CheckedBinaryOp { dest, .. } => dest.local == local,
+        _ => false,
+    }) || matches!(&data.terminator, Terminator::Call { dest, .. } if dest.local == local)
 }
 
 /// The view whose length is `len_place` (`view.len`) keeps its base and
@@ -595,7 +731,10 @@ fn block_writes(
             },
             // Making a view of a list, reborrowing one, or reading a length
             // writes nothing through its argument; what is later written
-            // through the view is an element, which no header is.
+            // through the view is an element, which no header is. A stepped
+            // range's count and values only compute; a `std.simd` operation
+            // computes, or reads and writes the elements of the views it is
+            // given (`[SIMD-9]`).
             FuncRef::Builtin {
                 which:
                     Builtin::SpanFrom { .. }
@@ -603,7 +742,10 @@ fn block_writes(
                     | Builtin::SpanSharedReborrow
                     | Builtin::SpanLen
                     | Builtin::ArrayLen
-                    | Builtin::StringLen,
+                    | Builtin::StringLen
+                    | Builtin::RangeCount
+                    | Builtin::RangeNth
+                    | Builtin::Simd { .. },
                 ..
             } => {}
             FuncRef::Builtin { which, arg_ty } if quiet_builtin(types, which, *arg_ty) => mutable_referents(out),
@@ -933,6 +1075,85 @@ fn affine(
     }
 }
 
+/// `[SIMD-9]`, `[OPT-2]` — `local` as a stepped loop's value plus a
+/// constant: `(start, step, value type, offset)` where the value is
+/// `RangeNth(start, step, counter)`, the call's result defined once in the
+/// loop in a block dominating `use_block`; then, as `affine` follows them,
+/// copies, adds and subtracts of constants in the value's type, and the one
+/// conversion to `usize`. Values of at most 64 bits.
+#[allow(clippy::too_many_arguments)]
+fn stepped_index(
+    body: &Body,
+    types: &TypeTable,
+    definitions: &HashMap<LocalId, (usize, Definition)>,
+    dominators: &HashMap<usize, HashSet<usize>>,
+    counter: LocalId,
+    local: LocalId,
+    use_block: usize,
+    depth: usize,
+) -> Option<(Operand, Operand, Ty, i128)> {
+    if depth > 16 {
+        return None;
+    }
+    let ty = body.local(local).ty;
+    // The value itself: a call of `RangeNth(start, step, counter)`, once in
+    // the loop, in a block dominating the use.
+    let calls: Vec<(usize, &Vec<Operand>)> = dominators
+        .keys()
+        .filter_map(|&block| match &body.blocks[block].terminator {
+            Terminator::Call { func: FuncRef::Builtin { which: Builtin::RangeNth, .. }, args, dest, .. }
+                if *dest == Place::local(local) =>
+            {
+                Some((block, args))
+            }
+            _ => None,
+        })
+        .collect();
+    if let [(block, args)] = calls.as_slice() {
+        if !dominators.get(&use_block)?.contains(block) || ember_types::bit_width(types, ty)? > 64 {
+            return None;
+        }
+        let [start, step, Operand::Copy(k)] = args.as_slice() else { return None };
+        if *k != Place::local(counter) {
+            return None;
+        }
+        return Some((start.clone(), step.clone(), ty, 0));
+    }
+    let (block, definition) = definitions.get(&local)?;
+    if !dominators.get(&use_block)?.contains(block) {
+        return None;
+    }
+    let from = |operand: &Operand| match operand {
+        Operand::Copy(place) | Operand::Move(place) if place.projection.is_empty() => {
+            stepped_index(body, types, definitions, dominators, counter, place.local, *block, depth + 1)
+        }
+        _ => None,
+    };
+    let constant = |operand: &Operand| match operand {
+        Operand::Const(Const::Int { value, ty: of }) if *of == ty => Some(constant_value(types, *value, ty)),
+        _ => None,
+    };
+    match definition {
+        Definition::Value(Rvalue::Use(operand)) => from(operand),
+        Definition::Value(Rvalue::Cast { kind: CastKind::Numeric, operand, .. })
+            if matches!(types.kind(ty), TyKind::Uint(ember_types::UintTy::Usize)) =>
+        {
+            from(operand)
+        }
+        Definition::Value(Rvalue::BinaryOp { op, lhs, rhs }) | Definition::Checked { op, lhs, rhs } => {
+            let shift = |found: Option<(Operand, Operand, Ty, i128)>, c: Option<i128>, sign: i128| {
+                found.zip(c).filter(|(found, _)| found.2 == ty).map(|((a, b, t, o), c)| (a, b, t, o + sign * c))
+            };
+            match op {
+                BinOp::Add => shift(from(lhs), constant(rhs), 1).or_else(|| shift(from(rhs), constant(lhs), 1)),
+                BinOp::Sub => shift(from(lhs), constant(rhs), -1),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 /// A constant's two's-complement bits as a number of type `ty`.
 fn constant_value(types: &TypeTable, value: u128, ty: Ty) -> i128 {
     let width = ember_types::bit_width(types, ty).unwrap_or(64).min(64) as u32;
@@ -1056,6 +1277,16 @@ fn apply(body: &mut Body, types: &TypeTable, plan: Plan) -> usize {
             }
             clone.terminator = Terminator::Goto(next);
         }
+        // `[SPN-2]` — a slice whose end this copy no longer checks has an end
+        // of at least 1 (the entry test's), so its view is not empty.
+        if let Terminator::Call { func: FuncRef::Builtin { which: Builtin::Slice { text: false, nonempty }, .. }, args, .. } =
+            &mut clone.terminator
+            && let Some(Operand::Copy(end)) = args.get(2)
+            && end.projection.is_empty()
+            && plan.checks.iter().any(|check| check.slice_end == Some(end.local))
+        {
+            *nonempty = true;
+        }
         body.blocks.push(clone);
     }
     let fast = remap(BasicBlockId(plan.header as u32));
@@ -1161,15 +1392,82 @@ fn entry_tests(
     let op = if plan.inclusive { BinOp::Le } else { BinOp::Lt };
     tests.push((vec![assign(run, compare(op, counter(), limit()))], run, checked));
 
-    let mut seen: Vec<(IndexBound, String)> = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
     for check in &plan.checks {
-        let key = (check.bound, format!("{:?}", check.len));
+        let key = format!("{:?} {:?}", check.bound, check.len);
         if seen.contains(&key) {
             continue;
         }
         seen.push(key);
-        let offset = match check.bound {
+        let offset = match check.bound.clone() {
             IndexBound::Counter(offset) => offset,
+            IndexBound::Stepped { start, step, ty, offset } => {
+                // `[SIMD-9]`, `[OPT-2]` — the step is positive, so the first
+                // value is the smallest and the last the largest: the first
+                // index is not negative, and the last, `start + step * (limit
+                // - 1)` plus `offset`, is below the length. The last value is
+                // one of the range's, so its unsigned arithmetic gives it
+                // exactly; the run test before says `limit >= 1`.
+                let signed = ember_types::is_signed(types, ty) == Some(true);
+                let width = ember_types::bit_width(types, ty).unwrap_or(64);
+                let max: i128 = if signed { (1i128 << (width - 1)) - 1 } else { (1i128 << width) - 1 };
+                let value = |v: i128| Operand::Const(Const::Int { value: v as u128, ty });
+                let positive = temp(body, bool_ty);
+                tests.push((vec![assign(positive, compare(BinOp::Ge, step.clone(), value(1)))], positive, checked));
+                if signed || offset < 0 {
+                    let low = temp(body, bool_ty);
+                    tests.push((vec![assign(low, compare(BinOp::Ge, start.clone(), value(-offset)))], low, checked));
+                }
+                let wide = types.find(&TyKind::Uint(ember_types::UintTy::U64)).expect("`u64` is interned");
+                let mut stmts = Vec::new();
+                let as_wide = |body: &mut Body, stmts: &mut Vec<Stmt>, operand: Operand, from: Ty| {
+                    if from == wide {
+                        return operand;
+                    }
+                    let local = temp(body, wide);
+                    stmts.push(assign(local, Rvalue::Cast { kind: CastKind::Numeric, operand, to: wide }));
+                    Operand::Copy(Place::local(local))
+                };
+                let last_k = temp(body, counter_ty);
+                stmts.push(assign(last_k, compare(BinOp::Sub, limit(), int(1))));
+                let last_k = as_wide(body, &mut stmts, Operand::Copy(Place::local(last_k)), counter_ty);
+                let start_w = as_wide(body, &mut stmts, start, ty);
+                let step_w = as_wide(body, &mut stmts, step, ty);
+                let product = temp(body, wide);
+                stmts.push(assign(product, compare(BinOp::Mul, step_w, last_k)));
+                let sum = temp(body, wide);
+                stmts.push(assign(sum, compare(BinOp::Add, start_w, Operand::Copy(Place::local(product)))));
+                let last = if ty == wide {
+                    sum
+                } else {
+                    let last = temp(body, ty);
+                    stmts.push(assign(last, Rvalue::Cast { kind: CastKind::Numeric, operand: Operand::Copy(Place::local(sum)), to: ty }));
+                    last
+                };
+                let room = temp(body, bool_ty);
+                stmts.push(assign(room, compare(BinOp::Le, Operand::Copy(Place::local(last)), value(max - offset.max(0)))));
+                tests.push((stmts, room, checked));
+                let mut stmts = Vec::new();
+                let end = if offset == 0 {
+                    Operand::Copy(Place::local(last))
+                } else {
+                    let end = temp(body, ty);
+                    let (op, amount) = if offset > 0 { (BinOp::Add, offset) } else { (BinOp::Sub, -offset) };
+                    stmts.push(assign(end, compare(op, Operand::Copy(Place::local(last)), value(amount))));
+                    Operand::Copy(Place::local(end))
+                };
+                let end = if ty == check.index_ty {
+                    end
+                } else {
+                    let index = temp(body, check.index_ty);
+                    stmts.push(assign(index, Rvalue::Cast { kind: CastKind::Numeric, operand: end, to: check.index_ty }));
+                    Operand::Copy(Place::local(index))
+                };
+                let fits = temp(body, bool_ty);
+                stmts.push(assign(fits, compare(BinOp::Lt, end, check.len.clone())));
+                tests.push((stmts, fits, checked));
+                continue;
+            }
             IndexBound::Constant(hi) => {
                 // `[RNG-4]` — every index is at most `hi`: below the length
                 // when `hi` is.
@@ -1363,13 +1661,13 @@ pub(crate) fn rewrite_places(block: &mut BasicBlock, f: &impl Fn(&mut Place)) {
 //   counter plus a constant, each written view at one offset only;
 // - every written view is disjoint from every other view the loop accesses
 //   (distinct owners, distinct fields, or borrows the borrow rules keep apart);
-// - no call: a call is read through only into a function `[CG-C-3]` places in
-//   the inline header, and that header is not built (`docs/NOT-IMPLEMENTED.md`);
+// - no call but one read through into a function `[CG-C-3]` places in the
+//   inline header (`inline::read_loop_calls`, as `[PAR-2b]` reads it);
 // - no drop that runs anything, no explicit panic, and no check but an
 //   integer overflow check;
 // - no floating-point running total, unless the function is `@fastmath`,
-//   whose C file lets the C compiler reorder it (`@parallel(reduce=…)`, the
-//   other declaration, is not built).
+//   whose C file lets the C compiler reorder it, or `@parallel(reduce=…)`
+//   declares it (`LoopNotes::declared_reductions`).
 
 /// Iterations per group, measured on list loops (ADR-070 item 7). With one
 /// check, 32 was the fastest on MSVC and on clang (at 16 MSVC spent 5% more
@@ -1580,15 +1878,23 @@ fn settle_inclusive_loops(body: &mut Body, types: &TypeTable, common: &CommonTyp
     count
 }
 
-/// Group the overflow checks of every loop of `body` in vectorisable form.
-fn group_overflow_checks(body: &mut Body, types: &TypeTable, common: &CommonTypes) -> usize {
+/// Group the overflow checks of every loop of `body` in vectorisable form;
+/// returns how many loops were grouped, and how many are in that form.
+fn group_overflow_checks(body: &mut Body, types: &TypeTable, common: &CommonTypes) -> (usize, usize) {
     let mut count = 0;
     let snapshot = body.blocks.len();
     for header in 0..snapshot {
         let Some(shape) = counted_loop(body, types, header) else { continue };
         let facts = BodyFacts::new(body, types);
-        let Some((checks, written)) = vectorisable(body, types, &facts, &shape) else { continue };
+        let (checks, written) = match vectorisable(body, types, &facts, &shape) {
+            Ok(found) => found,
+            Err(why) => {
+                note_verdict(body, shape.counter, Err(why));
+                continue;
+            }
+        };
         if checks.is_empty() {
+            note_verdict(body, shape.counter, Ok(()));
             continue;
         }
         // A running total (`acc = acc ± x`) is vectorised under checked
@@ -1599,6 +1905,7 @@ fn group_overflow_checks(body: &mut Body, types: &TypeTable, common: &CommonType
         if checks.iter().any(|check| running_total(&body.blocks[check.block].stmts[check.stmt])) {
             if let Some(entry) = unchecked_totals(body, types, common, &shape, &checks, BasicBlockId(shape.header as u32)) {
                 enter_through(body, &shape, entry);
+                note_verdict(body, shape.counter, Ok(()));
                 count += 1;
                 continue;
             }
@@ -1612,21 +1919,36 @@ fn group_overflow_checks(body: &mut Body, types: &TypeTable, common: &CommonType
             let mut all = shape.region.clone();
             all.push(shape.header);
             let dominators = dominators(body, shape.header, &all);
-            if checks.iter().any(|check| {
+            if let Some(check) = checks.iter().find(|check| {
                 running_total(&body.blocks[check.block].stmts[check.stmt])
                     && !dominators.get(&shape.step).is_some_and(|seen| seen.contains(&check.block))
             }) {
+                let why = remaining_check(
+                    9,
+                    "a running total changes on only some turns, so its overflow checks stay one per operation",
+                    Some(check.span),
+                );
+                note_verdict(body, shape.counter, Err(why));
                 continue;
             }
             let (Some(totals), Some(saves)) =
                 (block_totals(body, types, &shape, &checks), undo_saves(body, types, &shape, &written))
             else {
+                let at = checks.iter().find(|check| running_total(&body.blocks[check.block].stmts[check.stmt])).map(|check| check.span);
+                let why = remaining_check(
+                    9,
+                    "an overflow check on a running total remains: neither its widths nor a test over each block of 64 iterations proves that no partial sum overflows (`[SIMD-7]`)",
+                    at,
+                );
+                note_verdict(body, shape.counter, Err(why));
                 continue;
             };
             group(body, types, common, &shape, &checks, Mode::Rerun, &saves, &totals);
+            note_verdict(body, shape.counter, Ok(()));
             count += 1;
             continue;
         }
+        note_verdict(body, shape.counter, Ok(()));
         if checks.len() == 1 {
             group(body, types, common, &shape, &checks, Mode::Report, &[], &[]);
         } else if let Some(saves) = undo_saves(body, types, &shape, &written) {
@@ -1639,7 +1961,29 @@ fn group_overflow_checks(body: &mut Body, types: &TypeTable, common: &CommonType
         }
         count += 1;
     }
-    count
+    let in_form = body.loop_notes.in_form;
+    (count, in_form)
+}
+
+/// `[SIMD-2]` — the verdict on one copy of a loop, for each `@simd` loop
+/// whose counter it has. A loop's copies (`[OPT-2]`'s checked and unchecked
+/// ones, or a loop picked by its range's width) count by the best of them: in
+/// vectorisable form if any is, else the one that met the most clauses.
+fn note_verdict(body: &mut Body, counter: LocalId, verdict: Result<(), NotVectorisable>) {
+    if verdict.is_ok() {
+        body.loop_notes.in_form += 1;
+    }
+    for note in body.loop_notes.simd.iter_mut().filter(|note| note.local == counter) {
+        let better = match (&note.verdict, &verdict) {
+            (None, _) => true,
+            (Some(Ok(())), _) => false,
+            (Some(Err(_)), Ok(())) => true,
+            (Some(Err(seen)), Err(new)) => new.clause > seen.clause,
+        };
+        if better {
+            note.verdict = Some(verdict.clone());
+        }
+    }
 }
 
 /// One overflow check of the loop: the block whose terminator is its assert,
@@ -1662,18 +2006,37 @@ struct WrittenView {
     read: bool,
 }
 
+/// `[SIMD-5]` — one clause of vectorisable form a loop fails, numbered in the
+/// rule's order (1, its trip count, to 11, its floating-point reductions), so
+/// the first a loop fails is the one with the lowest number.
+fn fail(clause: u8, what: impl Into<String>, at: Option<ember_span::Span>) -> NotVectorisable {
+    NotVectorisable { clause, what: what.into(), check_reason: None, at }
+}
+
+/// `[EFF-11]` — the reason a check left in the loop carries: it may hold
+/// but was not proved.
+fn remaining_check(clause: u8, what: impl Into<String>, at: Option<ember_span::Span>) -> NotVectorisable {
+    NotVectorisable { check_reason: Some("not_proven_by_analysis"), ..fail(clause, what, at) }
+}
+
 /// The loop's overflow checks in execution order when it is in vectorisable
-/// form, and the views it writes; `None` when it is not in that form.
+/// form, and the views it writes; otherwise the first clause of `[SIMD-5]` it
+/// fails (the rule's order, whatever order they are found in).
 fn vectorisable(
     body: &Body,
     types: &TypeTable,
     facts: &BodyFacts,
     shape: &CountedLoop,
-) -> Option<(Vec<OverflowCheck>, Vec<WrittenView>)> {
+) -> Result<(Vec<OverflowCheck>, Vec<WrittenView>), NotVectorisable> {
+    let mut fails: Vec<NotVectorisable> = Vec::new();
     // `[SIMD-5]` (ODR-088): a division no vector instruction set does keeps
     // the loop one iteration at a time.
     if scalar_only(body, types, shape) {
-        return None;
+        fails.push(fail(
+            7,
+            "it divides integers by a divisor that is not a constant, or 64-bit integers by a constant that is not a power of two, which no vector instruction set does",
+            None,
+        ));
     }
     let mut all = shape.region.clone();
     all.push(shape.header);
@@ -1685,33 +2048,51 @@ fn vectorisable(
     // Views accessed: the place each came from, its offsets, whether written,
     // whether read.
     let mut views: Vec<(Place, HashSet<i128>, bool, bool)> = Vec::new();
+    let memory = "it reaches memory other than a local or a view at the loop counter plus a constant";
 
     for &block in &shape.region {
         let data = &body.blocks[block];
+        let at = Some(data.terminator_span);
         // One exit: nothing in the body leaves the loop.
         if successors(&data.terminator).iter().any(|s| !inside.contains(&(s.0 as usize))) {
-            return None;
+            fails.push(fail(10, "it has more than one exit (a `break`, a `return` or a `?`)", at));
         }
         match &data.terminator {
             Terminator::Goto(_) | Terminator::SwitchInt { .. } => {}
             Terminator::Assert { cond: Operand::Copy(cond), expected: false, msg: msg @ AssertKind::Overflow(_), span, .. }
                 if cond.projection.is_empty() =>
             {
-                let stmt = data.stmts.iter().rposition(|stmt| {
+                match data.stmts.iter().rposition(|stmt| {
                     matches!(&stmt.kind, StmtKind::CheckedBinaryOp { overflow, .. } if *overflow == Place::local(cond.local))
-                })?;
-                checks.push(OverflowCheck { block, stmt, msg: msg.clone(), span: *span });
+                }) {
+                    Some(stmt) => checks.push(OverflowCheck { block, stmt, msg: msg.clone(), span: *span }),
+                    None => fails.push(remaining_check(9, "an overflow check remains that cannot be grouped", Some(*span))),
+                }
             }
-            _ => return None,
+            Terminator::Assert { msg: AssertKind::Bounds { .. }, span, .. } => fails.push(remaining_check(
+                8,
+                "a bounds check remains: the entry test of `[OPT-2]` did not prove every index in range",
+                Some(*span),
+            )),
+            Terminator::Assert { msg: AssertKind::Panic { .. }, span, .. } => {
+                fails.push(fail(6, "its body may panic explicitly (`Panic(Explicit)`)", Some(*span)))
+            }
+            Terminator::Assert { msg: AssertKind::RefCellBorrow { .. } | AssertKind::Downcast, span, .. } => {
+                fails.push(remaining_check(2, memory, Some(*span)))
+            }
+            Terminator::Assert { span, .. } => fails.push(remaining_check(9, "an arithmetic check remains that cannot be grouped", Some(*span))),
+            Terminator::Call { .. } => fails.push(fail(5, "it makes a call the analysis cannot read through: to a function the inline header does not hold (`[CG-C-3]`), a built-in, or through a value, an interface or a virtual method", at)),
+            Terminator::Return | Terminator::Unreachable => fails.push(fail(10, "it has more than one exit (a `break`, a `return` or a `?`)", at)),
         }
         for (index, stmt) in data.stmts.iter().enumerate() {
+            let at = Some(stmt.span);
             match &stmt.kind {
                 StmtKind::Assign { place, rvalue } => {
                     if place.projection.is_empty()
                         && matches!(types.kind(body.local(place.local).ty), TyKind::Ref { .. })
                         && carried.contains(&place.local)
                     {
-                        return None;
+                        fails.push(fail(2, memory, at));
                     }
                     if let Rvalue::Ref { place: source, mutable } = rvalue {
                         // Ordinary Array/Span iteration lends a read-only
@@ -1725,7 +2106,7 @@ fn vectorisable(
                                 Ok(Some(_))
                             )
                         {
-                            return None;
+                            fails.push(fail(2, memory, at));
                         }
                     }
                     // A floating-point running total needs `@fastmath` or
@@ -1734,14 +2115,20 @@ fn vectorisable(
                         && place.projection.is_empty()
                         && rvalue_reads_local(rvalue, place.local)
                         && body.fp != ember_types::FpMode::Fast
+                        && !body.loop_notes.declared_reductions.contains(&place.local)
                     {
-                        return None;
+                        let name = body.local(place.local).name.clone().unwrap_or_else(|| "a total".to_string());
+                        fails.push(fail(
+                            11,
+                            format!("it keeps a floating-point running total `{name}` that neither `@parallel(reduce=…)` declares nor `@fastmath` lets be reordered"),
+                            at,
+                        ));
                     }
                 }
                 StmtKind::CheckedBinaryOp { .. } | StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
                 StmtKind::Drop { place, .. } => {
                     if types.needs_drop(place_type(body, types, place)) {
-                        return None;
+                        fails.push(fail(6, "it drops a value whose drop runs code (which may free memory, `Alloc`)", at));
                     }
                 }
                 // Only a check: the begin directly followed by its end.
@@ -1751,7 +2138,7 @@ fn vectorisable(
                         Some(StmtKind::EndAccess { place: end, mutable: end_mutable }) if end == place && end_mutable == mutable
                     );
                     if !paired {
-                        return None;
+                        fails.push(remaining_check(2, memory, at));
                     }
                 }
                 StmtKind::EndAccess { place, mutable } => {
@@ -1761,10 +2148,10 @@ fn vectorisable(
                             StmtKind::BeginAccess { place: begin, mutable: begin_mutable } if begin == place && begin_mutable == mutable
                         );
                     if !paired {
-                        return None;
+                        fails.push(remaining_check(2, memory, at));
                     }
                 }
-                StmtKind::BeginAccessTransfer { .. } | StmtKind::EndAccessTransfer { .. } => return None,
+                StmtKind::BeginAccessTransfer { .. } | StmtKind::EndAccessTransfer { .. } => fails.push(fail(2, memory, at)),
             }
         }
         // Every memory access: a local, or a view held in a local at the
@@ -1788,7 +2175,7 @@ fn vectorisable(
             }
         });
         if !ok {
-            return None;
+            fails.push(fail(2, memory, at));
         }
     }
     // Each written view at one offset, and disjoint from every other view.
@@ -1797,18 +2184,29 @@ fn vectorisable(
             continue;
         }
         if offsets.len() != 1 {
-            return None;
+            fails.push(fail(3, "it accesses a view it writes at more than one offset from the counter", None));
+            continue;
         }
-        let here = locate(body, types, &facts.origins, origin, 0)?;
+        let apart = "a view it writes is not proved disjoint from another view it accesses (`[SIMD-3]`)";
+        let Some(here) = locate(body, types, &facts.origins, origin, 0) else {
+            fails.push(fail(4, apart, None));
+            continue;
+        };
         for (other_index, (other, _, _, _)) in views.iter().enumerate() {
             if other_index == index {
                 continue;
             }
-            let there = locate(body, types, &facts.origins, other, 0)?;
-            if !disjoint(&here, &there) {
-                return None;
+            match locate(body, types, &facts.origins, other, 0) {
+                Some(there) if disjoint(&here, &there) => {}
+                _ => {
+                    fails.push(fail(4, apart, None));
+                    break;
+                }
             }
         }
+    }
+    if let Some(first) = fails.into_iter().min_by_key(|fail| fail.clause) {
+        return Err(first);
     }
     // Execution order: the order the body's blocks are first reached from
     // its entry, then statement order.
@@ -1822,7 +2220,7 @@ fn vectorisable(
             WrittenView { origin, offset, read }
         })
         .collect();
-    Some((checks, written))
+    Ok((checks, written))
 }
 
 fn rvalue_reads_local(rvalue: &Rvalue, local: LocalId) -> bool {

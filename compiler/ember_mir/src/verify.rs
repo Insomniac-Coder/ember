@@ -622,7 +622,7 @@ mod tests {
             uncounted_handles: Vec::new(),
             removed_checks: Vec::new(),
             restrict_views: false,
-            stack_buffers: Vec::new(),
+            stack_buffers: Vec::new(), loop_notes: Default::default(),
         }
     }
 
@@ -1341,6 +1341,7 @@ pub fn verify_views(body: &Body, types: &TypeTable) -> Vec<Violation> {
                     | Builtin::CStringAsCStr
                     | Builtin::ArenaArrayWithCapacity { .. }
                     | Builtin::ArenaMapWithCapacity { .. }
+                    | Builtin::SoA { op: crate::SoAOp::WithCapacityIn, .. }
                     | Builtin::ArenaAlloc { .. }
                     | Builtin::ArenaAllocUninit { .. }
                     | Builtin::ArenaAllocArrayZeroed { .. }
@@ -1885,7 +1886,7 @@ mod view_invariant_tests {
             uncounted_handles: Vec::new(),
             removed_checks: Vec::new(),
             restrict_views: false,
-            stack_buffers: Vec::new(),
+            stack_buffers: Vec::new(), loop_notes: Default::default(),
         };
         (body, types)
     }
@@ -2055,7 +2056,7 @@ mod interface_upcast_invariant_tests {
             uncounted_handles: Vec::new(),
             removed_checks: Vec::new(),
             restrict_views: false,
-            stack_buffers: Vec::new(),
+            stack_buffers: Vec::new(), loop_notes: Default::default(),
         };
         (body, types)
     }

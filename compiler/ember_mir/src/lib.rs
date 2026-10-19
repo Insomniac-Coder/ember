@@ -183,6 +183,47 @@ pub struct Body {
     /// ADR-141 — lists and strings that start in a buffer of this function's
     /// own frame (`stack_lists.rs`); set last, for C only.
     pub stack_buffers: Vec<StackBuffer>,
+    /// `[SIMD-2]`, `[SIMD-5]` — what the loops' attributes ask of the loop
+    /// passes, and their verdicts.
+    pub loop_notes: LoopNotes,
+}
+
+/// `[SIMD-2]`, `[SIMD-5]` — what a body's loop attributes ask of the loop
+/// passes (`ember_analysis::loop_version`), and what those found.
+#[derive(Clone, Debug, Default)]
+pub struct LoopNotes {
+    /// Each `@simd` loop.
+    pub simd: Vec<SimdLoop>,
+    /// Running totals a `@parallel(reduce=…)` declares: a floating-point
+    /// sum into one of these does not keep its loop out of vectorisable form.
+    pub declared_reductions: Vec<LocalId>,
+    /// How many loop copies the loop pass found in vectorisable form.
+    pub in_form: usize,
+}
+
+/// `[SIMD-2]` — one `@simd` loop: the local that identifies it (the counter
+/// of the counted loop it became, or its iterator when it is not counted),
+/// the source loop's span, whether it is `@simd(assert)`, and the verdict
+/// once the loop pass has looked at it (`None` when no counted loop has
+/// that counter: its trip count is not known before entry).
+#[derive(Clone, Debug)]
+pub struct SimdLoop {
+    pub local: LocalId,
+    pub span: Span,
+    pub assert: bool,
+    pub verdict: Option<Result<(), NotVectorisable>>,
+}
+
+/// `[SIMD-5]` — the first clause of vectorisable form a loop fails, in the
+/// rule's order (`clause` counts from 1), what failed, and for a check that
+/// remains, its reason (`[EFF-11]`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NotVectorisable {
+    pub clause: u8,
+    pub what: String,
+    pub check_reason: Option<&'static str>,
+    /// Where in the loop it failed, when one place did.
+    pub at: Option<Span>,
 }
 
 /// A list or string whose `Array.new()`/`String.new()` gives it `capacity`
@@ -1125,7 +1166,7 @@ pub enum CastKind {
     InterfaceDowncast,
 }
 
-pub use ember_hir::{AtomicOp, BinOp, Builtin, FormatSpec, IntBits, IntOp, MemoryOrder, ParseKind, SoAOp, UnOp};
+pub use ember_hir::{AtomicOp, BinOp, Builtin, FormatSpec, IntBits, IntOp, MemoryOrder, ParseKind, SimdOp, SoAOp, UnOp};
 
 /// One statement, with the source location it came from.
 #[derive(Clone, Debug)]

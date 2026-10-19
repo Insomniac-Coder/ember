@@ -79,6 +79,17 @@ def generated_contents(prefix: str) -> tuple[str, str]:
     return render(header, prefix), render(source, prefix)
 
 
+def generated_headers(out_dir: Path, prefix: str) -> list[tuple[Path, str]]:
+    """Each further header template's (``ember_simd.h.in``, ``[SIMD-1]``) output path and text."""
+
+    return [
+        (out_dir / "include" / template.name[: -len(".in")].replace("ember_", f"{prefix}_", 1),
+         render(template.read_text(encoding="utf-8"), prefix))
+        for template in sorted(TEMPLATES.glob("*.h.in"))
+        if template.name != "ember_rt.h.in"
+    ]
+
+
 def generated_tests(out_dir: Path, prefix: str) -> list[tuple[Path, str]]:
     """Each C test template's output path and rendered text."""
 
@@ -95,14 +106,14 @@ def write_outputs(out_dir: Path, prefix: str) -> tuple[Path, Path]:
     source_path.parent.mkdir(parents=True, exist_ok=True)
     header_path.write_text(header, encoding="utf-8", newline="\n")
     source_path.write_text(source, encoding="utf-8", newline="\n")
-    for test_path, test in generated_tests(out_dir, prefix):
+    for test_path, test in [*generated_headers(out_dir, prefix), *generated_tests(out_dir, prefix)]:
         test_path.parent.mkdir(parents=True, exist_ok=True)
         test_path.write_text(test, encoding="utf-8", newline="\n")
     return header_path, source_path
 
 
 def check_outputs(out_dir: Path, prefix: str) -> bool:
-    tests = generated_tests(out_dir, prefix)
+    tests = [*generated_headers(out_dir, prefix), *generated_tests(out_dir, prefix)]
     expected = [*generated_contents(prefix), *(test for _, test in tests)]
     paths = [*output_paths(out_dir, prefix), *(path for path, _ in tests)]
     ok = True

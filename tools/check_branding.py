@@ -32,7 +32,7 @@ import re
 import sys
 from pathlib import Path
 
-from generate_runtime import DEFAULT_OUT, GENERATED_MARKER, branding_prefix, generated_tests
+from generate_runtime import DEFAULT_OUT, GENERATED_MARKER, branding_prefix, generated_headers, generated_tests
 
 ROOT = Path(__file__).resolve().parent.parent
 BASELINE = ROOT / "tools" / "check_branding_baseline.json"
@@ -52,6 +52,9 @@ GENERATED_RUNTIME = {
 }
 GENERATED_RUNTIME.update(
     path.relative_to(ROOT) for path, _ in generated_tests(DEFAULT_OUT, branding_prefix())
+)
+GENERATED_RUNTIME.update(
+    path.relative_to(ROOT) for path, _ in generated_headers(DEFAULT_OUT, branding_prefix())
 )
 
 SEARCH = [

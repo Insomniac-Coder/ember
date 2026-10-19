@@ -24,7 +24,7 @@ pub(crate) struct DeriveRequest {
     pub span: Span,
 }
 
-const WRITTEN: [&str; 3] = ["Ord", "Default", "Display"];
+const WRITTEN: [&str; 4] = ["Ord", "Default", "Display", "Component"];
 const CHECKED: [&str; 2] = ["Eq", "Debug"];
 
 pub(crate) fn desugar_derives(modules: &[LoadedModule], sink: &mut Sink) -> (Option<Vec<LoadedModule>>, Vec<DeriveRequest>) {
@@ -37,8 +37,12 @@ pub(crate) fn desugar_derives(modules: &[LoadedModule], sink: &mut Sink) -> (Opt
         return (None, requests);
     }
     let mut out = modules.to_vec();
+    // `[ECS-7]` — the component registry, in declaration order.
+    let mut registry: Vec<(String, u64, bool)> = Vec::new();
+    let ecs_loaded = modules.iter().any(|loaded| loaded.path == ["std", "ecs"]);
     for (module, loaded) in out.iter_mut().enumerate() {
         let mut generated = Vec::new();
+        let module_path = loaded.path.join(".");
         for item in &mut loaded.module.items {
             if !named(item) {
                 continue;
@@ -65,6 +69,33 @@ pub(crate) fn desugar_derives(modules: &[LoadedModule], sink: &mut Sink) -> (Opt
                         (Some(unit_display(decl, span)), None, Vec::new())
                     }
                     (ast::ItemKind::Struct(decl), "Display") => (Some(debug_display(decl.name, &decl.generics, span)), Some("Debug"), Vec::new()),
+                    (ast::ItemKind::Struct(_) | ast::ItemKind::Enum(_), "Component") => {
+                        let generics = match &item.kind {
+                            ast::ItemKind::Struct(decl) => &decl.generics,
+                            ast::ItemKind::Enum(decl) => &decl.generics,
+                            _ => unreachable!("matched above"),
+                        };
+                        let soa = component_layout(&mut item.attrs, matches!(item.kind, ast::ItemKind::Struct(_)), sink);
+                        if !generics.is_empty() {
+                            sink.emit(
+                                Diagnostic::error(codes::E0900, span, format!("deriving `Component` for the generic `{name}` is not implemented yet"))
+                                    .note("a component's identity is its fully qualified name, one per type; a generic has one per instance [ECS-2]"),
+                            );
+                            (None, None, Vec::new())
+                        } else if !ecs_loaded {
+                            sink.emit(
+                                Diagnostic::error(codes::E1010, span, format!("`{name}` derives `Component`, but `std.ecs` is not imported"))
+                                    .help("import it: `from std.ecs import Component`")
+                                    .note("`Component` is `std.ecs`'s interface [ECS-7]"),
+                            );
+                            (None, None, Vec::new())
+                        } else {
+                            let qualified = if module_path.is_empty() { name.to_string() } else { format!("{module_path}.{name}") };
+                            let hash = fnv1a64(&qualified);
+                            registry.push((qualified.clone(), hash, soa));
+                            (Some(component(item_ident(item), &qualified, hash, soa, span)), None, Vec::new())
+                        }
+                    }
                     (ast::ItemKind::Enum(decl), "Display") => (Some(debug_display(decl.name, &decl.generics, span)), Some("Debug"), Vec::new()),
                     _ => (None, None, Vec::new()),
                 };
@@ -76,7 +107,107 @@ pub(crate) fn desugar_derives(modules: &[LoadedModule], sink: &mut Sink) -> (Opt
         }
         loaded.module.items.extend(generated);
     }
+    if !registry.is_empty()
+        && let Some(ecs) = out.iter_mut().find(|loaded| loaded.path == ["std", "ecs"])
+    {
+        write_registry(&mut ecs.module, &registry);
+    }
+    // `@component` with no `@derive(Component)` beside it.
+    for loaded in &out {
+        for item in &loaded.module.items {
+            if let Some(attr) = item.attrs.iter().find(|attr| attr.path.len() == 1 && attr.path[0].name.is("component")) {
+                sink.emit(
+                    Diagnostic::error(codes::E0104, attr.span, "`@component` is written on a type that derives `Component`")
+                        .help("add `Component` to the type's `@derive`, or remove `@component`")
+                        .note("`@component(layout=soa)` chooses how `std.ecs` stores a component [ECS-2]"),
+                );
+            }
+        }
+    }
     (Some(out), requests)
+}
+
+/// `[ECS-2]` — 64-bit FNV-1a, a component's identity from its fully qualified name.
+fn fnv1a64(text: &str) -> u64 {
+    text.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3))
+}
+
+fn item_ident(item: &ast::Item) -> ast::Ident {
+    match &item.kind {
+        ast::ItemKind::Struct(decl) => decl.name,
+        ast::ItemKind::Enum(decl) => decl.name,
+        _ => unreachable!("only structs and enums derive here"),
+    }
+}
+
+/// `[ECS-2]` — `@component(layout=soa)` or `@component(layout=aos)` (the default) on a type that
+/// derives `Component`, taken out: whether it is stored as an `SoA`. Only a struct is (`[SOA-1]`).
+fn component_layout(attrs: &mut Vec<ast::Attribute>, is_struct: bool, sink: &mut Sink) -> bool {
+    let mut soa = false;
+    let (taken, kept): (Vec<ast::Attribute>, Vec<ast::Attribute>) =
+        std::mem::take(attrs).into_iter().partition(|attr| attr.path.len() == 1 && attr.path[0].name.is("component"));
+    *attrs = kept;
+    for attr in taken {
+        let layout = match attr.args.as_slice() {
+            [ast::AttrArg::Named { name, value: ast::Expr { kind: ast::ExprKind::Path { segments }, .. } }]
+                if name.name.is("layout") && segments.len() == 1 =>
+            {
+                Some(segments[0].name)
+            }
+            _ => None,
+        };
+        match layout.as_ref().map(|name| name.as_str()) {
+            Some("soa") if is_struct => soa = true,
+            Some("aos") => soa = false,
+            Some("soa") => sink.emit(
+                Diagnostic::error(codes::E0104, attr.span, "only a struct is stored as an `SoA`")
+                    .note("`SoA[T]` takes a struct, one column per field [SOA-1]"),
+            ),
+            _ => sink.emit(
+                Diagnostic::error(codes::E0104, attr.span, "`@component` takes `layout=soa` or `layout=aos`")
+                    .note("`aos`, an `Array[T]`, is the default [ECS-2]"),
+            ),
+        }
+    }
+    soa
+}
+
+/// `[ECS-2]`, `[ECS-7]` — `extend T implements std.ecs.Component` with `T`'s fully qualified name,
+/// its 64-bit FNV-1a hash and its layout, each a function returning the constant.
+fn component(name: ast::Ident, qualified: &str, hash: u64, soa: bool, span: Span) -> ast::Item {
+    let constant = |function: &str, ty: &str, value: ast::Literal| {
+        let decl = ast::FnDecl { name: ident(function, span), ret: Some(named_type(ty, span)), ..fn_decl(span) };
+        member(decl, block(vec![ret(Some(expr(ast::ExprKind::Lit(value), span)), span)], span), span)
+    };
+    let members = vec![
+        constant("component_name", "str", ast::Literal::Str(qualified.to_string())),
+        constant("component_hash", "u64", ast::Literal::Int { value: u128::from(hash), suffix: None }),
+        constant("component_soa", "bool", ast::Literal::Bool(soa)),
+    ];
+    extend_item(&[], owner_type(name, &[]), vec![named_type("std.ecs.Component", span)], members, span)
+}
+
+/// `[ECS-7]` — `std.ecs.components()`'s body: the registry's entries as the array it returns.
+fn write_registry(module: &mut ast::Module, registry: &[(String, u64, bool)]) {
+    for item in &mut module.items {
+        let ast::ItemKind::Fn(decl) = &mut item.kind else { continue };
+        if !decl.name.name.is("components") {
+            continue;
+        }
+        let span = decl.name.span;
+        let entries = registry
+            .iter()
+            .map(|(name, hash, soa)| {
+                let args = vec![
+                    expr(ast::ExprKind::Lit(ast::Literal::Str(name.clone())), span),
+                    expr(ast::ExprKind::Lit(ast::Literal::Int { value: u128::from(*hash), suffix: None }), span),
+                    expr(ast::ExprKind::Lit(ast::Literal::Bool(*soa)), span),
+                ];
+                call(path(&[Symbol::intern("ComponentInfo")], span), args, span)
+            })
+            .collect();
+        decl.body = Some(block(vec![ret(Some(expr(ast::ExprKind::ArrayLit(entries), span)), span)], span));
+    }
 }
 
 fn item_name(item: &ast::Item) -> Symbol {

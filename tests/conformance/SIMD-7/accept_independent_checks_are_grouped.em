@@ -2,7 +2,7 @@
 #$ rules: SIMD-7, SIMD-5, OPT-2
 #$ profiles: debug, release, shipping
 #$ stdout: 0 51 117
-#$ assert-c-count: contains("((uint64_t)((int64_t*)") == 2
+#$ assert-c-count: contains("((uint64_t)_") == 2
 # `out[i] = a[i] + b[i]` is in vectorisable form: its overflow checks are
 # grouped. The grouped `+` computes its wrapped sum through `uint64_t` of the
 # two elements and its overflow from the signs, with no branch, once per

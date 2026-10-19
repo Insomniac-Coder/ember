@@ -1249,12 +1249,15 @@ pub(crate) fn named_param(name: Symbol, mode: ast::Mode, ty: ast::TypeExpr, span
 
 pub(crate) fn member(mut decl: ast::FnDecl, body: ast::Block, span: Span) -> ast::Member {
     decl.body = Some(body);
+    // `[STD-1]` — a derived `Display` or `Debug` writes into its formatter's text, which allocates.
+    let doc = matches!(decl.name.name.as_str(), "fmt" | "fmt_debug")
+        .then(|| "Written by a derive. It allocates: it writes into the formatter's text.".to_string());
     ast::Member {
         id: ast::NodeId::DUMMY,
         attrs: Vec::new(),
         vis: ast::Visibility::private(),
         read_only_outside: false,
-        doc: None,
+        doc,
         kind: ast::MemberKind::Fn(decl),
         span,
     }

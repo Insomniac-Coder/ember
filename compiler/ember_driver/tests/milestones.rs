@@ -3861,6 +3861,98 @@ fn the_optimization_report_lists_each_direct_call() {
     assert!(none.stderr.contains("optimization report:\n  none"), "{}", none.stderr);
 }
 
+/// `[SIMD-2]` — `--emit-optimization-report` says of each `@simd` loop
+/// whether it is in vectorisable form and, when it is not, why (the first
+/// clause of `[SIMD-5]` it fails). `[SIMD-6]` — a build that compiles the C
+/// then prints the host C compiler's own vectorisation report, after Ember's
+/// verdicts and labelled as its opinion; `--emit c` compiles nothing, so it
+/// has none, and neither is ever an error.
+#[test]
+fn the_optimization_report_gives_each_simd_loop_its_verdict_then_the_host_compilers() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/SIMD-2/accept_simd_is_a_request_that_never_changes_meaning.{SOURCE_EXT}");
+    let text = std::fs::read_to_string(root.join(&source)).expect("the program reads");
+    let at = |needle: &str| text.lines().position(|line| line.contains(needle)).expect("the loop is in the program") + 1;
+    let out_dir = temporary_directory("simd_report");
+    let out = out_dir.to_string_lossy().into_owned();
+    let built = ember(&["build", &source, "--profile", "release", "--out-dir", &out, "--emit-optimization-report"], &root);
+    assert_eq!(built.exit, 0, "build failed:\n{}", built.stderr);
+    for (header, says) in [
+        ("for i in 0..xs.len():", "is in vectorisable form"),
+        ("for i in 0..idx.len():", "not in vectorisable form: it reaches memory other than a local or a view at the loop counter plus a constant"),
+        ("for x in xs:", "not in vectorisable form: it keeps a floating-point running total `s`"),
+        ("for c in t.chars():", "not in vectorisable form: its trip count is not known before entry"),
+        ("if xs[i] >= limit:", "not in vectorisable form: it has more than one exit"),
+    ] {
+        // The verdict is at the `for` (the line before an `if` that leaves).
+        let line = if header.starts_with("if") { at(header) - 1 } else { at(header) };
+        let place = format!(".{SOURCE_EXT}:{line}:");
+        assert!(
+            built.stderr.lines().any(|listed| listed.contains(&place) && listed.contains("`@simd` loop") && listed.contains(says)),
+            "missing {says:?} at {place}:\n{}",
+            built.stderr
+        );
+    }
+    let verdicts = built.stderr.find("`@simd` loop").expect("the verdicts are reported");
+    let host = built.stderr.find("host C compiler's vectorisation report").expect("the host compiler's report follows");
+    assert!(verdicts < host, "the host compiler's opinion came first:\n{}", built.stderr);
+    assert!(built.stderr[host..].contains("its opinion only"), "{}", built.stderr);
+    let c = ember(&["build", &source, "--emit", "c", "--emit-optimization-report"], &root);
+    assert_eq!(c.exit, 0, "{}", c.stderr);
+    assert!(c.stderr.contains("`@simd` loop") && !c.stderr.contains("host C compiler"), "{}", c.stderr);
+    let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// `[STD-1]` — every function in `std.core`, `std.mem`, `std.math`, `std.simd` and `std.arena` is
+/// `@noalloc` unless its documentation says it allocates: a copy of `std` whose `core` gains a
+/// function that allocates with nothing saying so stops the build with `E4001`; the same function
+/// whose documentation says it allocates, a generic one, and the same function in `std.thread`
+/// (not one of the five) do not.
+#[test]
+fn std_functions_are_noalloc_unless_documented() {
+    let root = workspace_root();
+    let copy = temporary_directory("std_noalloc");
+    let std_src = root.join("std").join("src");
+    let copied = copy.join("src");
+    fn copy_tree(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).expect("the copy's directory");
+        for entry in std::fs::read_dir(from).expect("std's sources") {
+            let entry = entry.expect("an entry");
+            let target = to.join(entry.file_name());
+            if entry.path().is_dir() {
+                copy_tree(&entry.path(), &target);
+            } else {
+                std::fs::copy(entry.path(), &target).expect("a std file copies");
+            }
+        }
+    }
+    let program = copy.join(format!("main.{SOURCE_EXT}"));
+    std::fs::write(&program, "import std.thread\n\nfn main():\n    println(1)\n").expect("the program writes");
+    let program = program.to_string_lossy().into_owned();
+    let with = |module: &str, extra: &str| {
+        let _ = std::fs::remove_dir_all(&copied);
+        copy_tree(&std_src, &copied);
+        let file = copied.join(format!("{module}.{SOURCE_EXT}"));
+        let text = std::fs::read_to_string(&file).expect("the module reads");
+        std::fs::write(&file, format!("{text}\n{extra}")).expect("the module writes");
+        ember_with_env(&["check", &program], &root, &ember_branding::std_path_var(), &copied.to_string_lossy())
+    };
+    let leaky = "pub fn leaky_text() -> String:\n    return String.from(\"made\")\n";
+    let undocumented = with("core", leaky);
+    assert_ne!(undocumented.exit, 0, "an undocumented allocation in std.core was accepted:\n{}", undocumented.stderr);
+    assert!(
+        undocumented.stderr.contains("E4001") && undocumented.stderr.contains("leaky_text"),
+        "{}",
+        undocumented.stderr
+    );
+    let documented = with("core", &format!("## It allocates the text it gives back.\n{leaky}"));
+    assert_eq!(documented.exit, 0, "a documented allocation was refused:\n{}", documented.stderr);
+    let generic = with("core", "pub fn leaky_list[T](owned x: T) -> Array[T]:\n    return [x]\n");
+    assert_eq!(generic.exit, 0, "a generic function was held to it:\n{}", generic.stderr);
+    let elsewhere = with("thread", leaky);
+    assert_eq!(elsewhere.exit, 0, "a module outside the five was held to it:\n{}", elsewhere.stderr);
+}
+
 /// `[RC-6]` — `ember inspect --counts` lists the retains and releases a build
 /// left inside loops, each with its reason; a loop that reads borrowed
 /// handles has none.
@@ -4839,6 +4931,93 @@ fn callable_region_summary_changes_invalidate_importers_interface_key() {
         .signature;
     assert_eq!(signature.parameters[0].ty, "i64");
     assert_eq!(signature.result, "i64");
+    let _ = std::fs::remove_dir_all(&test_root);
+}
+
+/// `[BLD-2]` / `[CG-C-3b]` — a module's interface hash holds the facts a
+/// caller may use beside signatures: each callable's effect set, the body the
+/// inline header exports, and each visible type's layout. Editing a private
+/// body so that a public function gains an effect, editing an exported inline
+/// body, or adding a field to a public struct changes the hash and the
+/// importer's cache key; an edit that changes none of them (a private
+/// function's constant, a private struct) changes neither.
+#[test]
+fn effects_inline_bodies_and_layouts_are_in_the_interface_hash() {
+    let workspace = workspace_root();
+    let test_root = temporary_directory("bld2-facts");
+    let out_dir = test_root.join("target");
+    let helper = ember_branding::source_file("helper");
+    let main = ember_branding::source_file("main");
+    let _ = std::fs::remove_dir_all(&test_root);
+    std::fs::create_dir_all(&test_root).expect("create BLD-2 package");
+    let helper_source = |quiet: &str, small: &str, point: &str, private: &str| {
+        format!(
+            "pub struct Point:\n{point}\n\nstruct Hidden:\n{private}\n\nfn quiet() -> int:\n{quiet}\n\npub fn effectful() -> int:\n    return quiet()\n\npub fn small(x: int) -> int:\n{small}\n"
+        )
+    };
+    let quiet = "    return 1";
+    let loud = "    println(\"loud\")\n    return 1";
+    let small = "    return x + 1";
+    let point = "    pub x: int";
+    let private = "    a: int";
+    std::fs::write(test_root.join(&helper), helper_source(quiet, small, point, private)).expect("write helper");
+    std::fs::write(
+        test_root.join(&main),
+        "from helper import Point, effectful, small\n\nfn main():\n    p = Point(x=1)\n    println(effectful() + small(p.x))\n",
+    )
+    .expect("write importer");
+    let check = |label: &str| {
+        let output = Command::new(EMBER)
+            .args(["check", &main, "--out-dir", &out_dir.to_string_lossy()])
+            .current_dir(&test_root)
+            .env(ember_branding::std_path_var(), workspace.join("std"))
+            .output()
+            .expect("the Ember compiler runs for BLD-2");
+        assert!(output.status.success(), "{label} check failed:\n{}", String::from_utf8_lossy(&output.stderr));
+        (cached_interface(&out_dir, "helper"), cached_interface(&out_dir, "root"))
+    };
+    let (helper0, root0) = check("initial");
+    let effectful = &helper0.callables[&ember_branding::mangled("helper.effectful")];
+    assert!(!effectful.effects.as_ref().expect("a body's effects").iter().any(|e| e == "Io"), "{effectful:?}");
+    assert!(helper0.callables[&ember_branding::mangled("helper.small")].inline_body.is_some());
+    assert!(helper0.layouts.keys().any(|name| name.ends_with("Point")), "{:?}", helper0.layouts);
+    assert!(!helper0.layouts.keys().any(|name| name.ends_with("Hidden")), "{:?}", helper0.layouts);
+
+    // No fact changes: a private function's constant, a private struct.
+    std::fs::write(test_root.join(&helper), helper_source("    return 2", small, point, "    a: int\n    b: int"))
+        .expect("edit private items");
+    let (helper1, root1) = check("after private edits");
+    assert_eq!(helper0.interface_hash, helper1.interface_hash);
+    assert_eq!(root0.cache_key, root1.cache_key);
+
+    // A private body gains `IO`, and so does the public function calling it.
+    std::fs::write(test_root.join(&helper), helper_source(loud, small, point, private)).expect("make quiet loud");
+    let (helper2, root2) = check("after an effect change");
+    let effectful = &helper2.callables[&ember_branding::mangled("helper.effectful")];
+    assert!(effectful.effects.as_ref().expect("a body's effects").iter().any(|e| e == "Io"), "{effectful:?}");
+    assert_ne!(helper1.interface_hash, helper2.interface_hash);
+    assert_ne!(root1.cache_key, root2.cache_key);
+
+    // An exported inline body changes; its signature and effects do not.
+    std::fs::write(test_root.join(&helper), helper_source(loud, "    return x + 2", point, private)).expect("edit small");
+    let (helper3, root3) = check("after an inline body change");
+    let symbol = ember_branding::mangled("helper.small");
+    assert_eq!(helper2.callables[&symbol].signature, helper3.callables[&symbol].signature);
+    assert_eq!(helper2.callables[&symbol].effects, helper3.callables[&symbol].effects);
+    assert_ne!(helper2.callables[&symbol].inline_body, helper3.callables[&symbol].inline_body);
+    assert_ne!(helper2.interface_hash, helper3.interface_hash);
+    assert_ne!(root2.cache_key, root3.cache_key);
+
+    // A public struct gains a field.
+    std::fs::write(
+        test_root.join(&helper),
+        helper_source(loud, "    return x + 2", "    pub x: int\n    pub y: int = 0", private),
+    )
+    .expect("grow Point");
+    let (helper4, root4) = check("after a layout change");
+    assert_ne!(helper3.layouts, helper4.layouts);
+    assert_ne!(helper3.interface_hash, helper4.interface_hash);
+    assert_ne!(root3.cache_key, root4.cache_key);
     let _ = std::fs::remove_dir_all(&test_root);
 }
 

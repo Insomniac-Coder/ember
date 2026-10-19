@@ -499,6 +499,8 @@ pub struct TypeTable {
     /// `[ARN-11]` — the structs declared `@derive(Zeroable)`, by declared
     /// name (a generic struct's instances share its name as their origin).
     zeroable_derived: HashSet<Symbol>,
+    /// `[SOA-1]` — the fields marked `@soa(flatten)`: (declared struct name, field name).
+    soa_flattened: HashSet<(Symbol, Symbol)>,
     /// `[THR-6]` — the structs and classes declared `@must_drop`, by declared
     /// name (a generic one's instances share it as their origin).
     must_drop_declared: HashSet<Symbol>,
@@ -612,6 +614,7 @@ impl TypeTable {
             written_as: HashMap::new(),
             phantoms: HashMap::new(),
             zeroable_derived: HashSet::new(),
+            soa_flattened: HashSet::new(),
             must_drop_declared: HashSet::new(),
             debug_writers: HashMap::new(),
             manual_markers: Vec::new(),
@@ -1355,6 +1358,11 @@ impl TypeTable {
             TyKind::Tuple(items) => self.aggregate_layout(items.iter().copied()),
             TyKind::Struct(id) => {
                 let def = self.struct_def(*id);
+                // `[SIMD-1]` — a vector or mask is aligned to its size.
+                if let Some(shape) = SimdShape::of(def.name.as_str()) {
+                    let size = shape.bytes().into();
+                    return Layout { size, align: size, field_offsets: vec![0] };
+                }
                 self.aggregate_layout(def.fields.iter().map(|f| f.ty))
             }
             // A class expression is a non-null handle. The heap object's
@@ -2023,6 +2031,49 @@ impl TypeTable {
             }
         }
         out
+    }
+
+    /// `[SOA-1]` — record a field's `@soa(flatten)`.
+    pub fn mark_soa_flatten(&mut self, structure: Symbol, field: Symbol) {
+        self.soa_flattened.insert((structure, field));
+    }
+
+    /// `[SOA-1]` — the columns of `SoA[T]` for the struct `element`, in field order: one per field,
+    /// and for a field marked `@soa(flatten)` whose type is a struct, one per field of its own (by
+    /// the same rule, so a flattened field of it is split again). Each column is the path of field
+    /// indices from the element to it, its name (the field names joined by `__`), and its type.
+    pub fn soa_columns(&self, element: StructId) -> Vec<SoaColumn> {
+        let mut out = Vec::new();
+        self.soa_columns_into(element, &mut Vec::new(), &mut String::new(), &mut out);
+        out
+    }
+
+    fn soa_columns_into(&self, structure: StructId, path: &mut Vec<usize>, name: &mut String, out: &mut Vec<SoaColumn>) {
+        let def = self.struct_def(structure);
+        let declared = def.origin.as_ref().map_or(def.name, |(origin, _)| *origin);
+        for (index, field) in def.fields.iter().enumerate() {
+            let at = name.len();
+            if !name.is_empty() {
+                name.push_str("__");
+            }
+            name.push_str(field.name.as_str());
+            path.push(index);
+            match self.kind(field.ty) {
+                TyKind::Struct(inner) if self.soa_flattened.contains(&(declared, field.name)) => {
+                    self.soa_columns_into(*inner, path, name, out)
+                }
+                _ => out.push(SoaColumn { path: path.clone(), name: name.clone(), ty: field.ty }),
+            }
+            path.pop();
+            name.truncate(at);
+        }
+    }
+
+    /// `[SOA-1]` — whether `structure`'s field `field` is marked `@soa(flatten)`.
+    pub fn soa_flattened(&self, structure: StructId, field: Symbol) -> bool {
+        let def = self.struct_def(structure);
+        let declared = def.origin.as_ref().map_or(def.name, |(origin, _)| *origin);
+        self.soa_flattened.contains(&(declared, field))
     }
 
     /// `[ARN-11]` — record a struct's or an enum's `@derive(Zeroable)`; each instance is `Zeroable`
@@ -2705,6 +2756,70 @@ pub fn is_signed(table: &TypeTable, ty: Ty) -> Option<bool> {
         TyKind::Int(_) => Some(true),
         TyKind::Uint(_) => Some(false),
         _ => None,
+    }
+}
+
+/// `[SOA-1]` — one column of an `SoA[T]` (`TypeTable::soa_columns`).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SoaColumn {
+    /// The field indices from `T` to the column's field.
+    pub path: Vec<usize>,
+    /// The field names joined by `__` (`pos__x`).
+    pub name: String,
+    pub ty: Ty,
+}
+
+/// `[SIMD-1]` — what a lane of a `std.simd` type is.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SimdLane {
+    Float,
+    Signed,
+    Unsigned,
+    /// A mask's lane: all ones (set) or all zeros (clear).
+    Mask,
+}
+
+/// `[SIMD-1]` — the shape of a `std.simd` vector or mask type, read from its
+/// name (`std.simd.f32x8`, `std.simd.mask32x8`): the lane kind, the lane's
+/// width in bits, and the lane count.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct SimdShape {
+    pub lane: SimdLane,
+    pub bits: u32,
+    pub lanes: u32,
+}
+
+impl SimdShape {
+    pub fn of(qualified_name: &str) -> Option<SimdShape> {
+        let name = qualified_name.strip_prefix("std.simd.")?;
+        let (lane, rest) = if let Some(rest) = name.strip_prefix("mask") {
+            (SimdLane::Mask, rest)
+        } else {
+            let lane = match name.as_bytes().first()? {
+                b'f' => SimdLane::Float,
+                b'i' => SimdLane::Signed,
+                b'u' => SimdLane::Unsigned,
+                _ => return None,
+            };
+            (lane, &name[1..])
+        };
+        let (bits, lanes) = rest.split_once('x')?;
+        let (bits, lanes): (u32, u32) = (bits.parse().ok()?, lanes.parse().ok()?);
+        let width = bits * lanes;
+        let valid = matches!(bits, 8 | 16 | 32 | 64)
+            && matches!(width, 128 | 256 | 512)
+            && (lane != SimdLane::Float || matches!(bits, 32 | 64));
+        valid.then_some(SimdShape { lane, bits, lanes })
+    }
+
+    /// Its size in bytes, which is also its alignment.
+    pub fn bytes(self) -> u32 {
+        self.bits * self.lanes / 8
+    }
+
+    /// The mask type's name for a vector of this shape (`mask32x8`).
+    pub fn mask_name(self) -> String {
+        format!("std.simd.mask{}x{}", self.bits, self.lanes)
     }
 }
 

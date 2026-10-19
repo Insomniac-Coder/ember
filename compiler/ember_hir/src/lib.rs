@@ -88,6 +88,13 @@ pub struct LocalDecl {
     /// branch, to the local given: the two are one variable, set in the arm
     /// and read after the branch (D-490).
     pub hoisted_into: Option<LocalId>,
+    /// `[SIMD-2]` — this local identifies a `@simd` loop (its counter, or its
+    /// iterator when it is not counted): the loop's span and whether it is
+    /// `@simd(assert)`.
+    pub simd: Option<(Span, bool)>,
+    /// `[SIMD-5]` — a running total a `@parallel(reduce=…)` declares: its
+    /// floating-point sum may be reordered.
+    pub declared_reduction: bool,
 }
 
 #[derive(Debug)]
@@ -869,6 +876,94 @@ pub enum SoAOp {
     DropAt,
     /// std's own, for `retain`: `[ref mut ps, n]`: the length set, the slots past it already empty.
     SetLen,
+    /// `[SOA-4]` — `ArenaSoA[T].with_capacity(arena, n)`: `[ref arena, n]`; the block is taken
+    /// from the arena once.
+    WithCapacityIn,
+    /// `[SOA-4]` — `[ref mut ps, value]`: `true` when it was full and nothing changed.
+    TryPush,
+}
+
+/// `[SIMD-1]`, `[SIMD-4]`, `[SIMD-8]`, `[SIMD-9]` — an operation of a `std.simd` vector or mask
+/// type. The arguments are listed with each; `v` is a vector (or mask) by value, `s` a `Span` or
+/// `MutSpan` of its lane type, `idx` an integer vector of as many lanes.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SimdOp {
+    /// `V.splat(x)`: `[x]`.
+    Splat,
+    /// `V.load(s)`, `V.load_unchecked(s)`: `[s]`.
+    Load { checked: bool },
+    /// `v.store(s)`, `v.store_unchecked(s)`: `[v, s]`.
+    Store { checked: bool },
+    /// `V.gather(s, idx)`, `V.gather_unchecked(s, idx)`: `[s, idx]`; `index` is `idx`'s type.
+    Gather { checked: bool, index: Ty },
+    /// `v.scatter(s, idx)`, `v.scatter_unchecked(s, idx)`: `[v, s, idx]`.
+    Scatter { checked: bool, index: Ty },
+    /// A lane-wise `+`, `-`, `*`, `/`, `&`, `|` or `^`: `[a, b]`; integer lanes under `policy`
+    /// (`[SIMD-8]`: the function's, or `Wrap` for `wrapping_*`).
+    Binary { op: BinOp, policy: OverflowPolicy },
+    /// Unary `-`: `[v]`.
+    Neg { policy: OverflowPolicy },
+    /// A lane-wise comparison into the mask type: `[a, b]`.
+    Compare { op: BinOp },
+    /// `v.reduce_add()`: `[v]`, lane 0 first, then each next one.
+    ReduceAdd { policy: OverflowPolicy },
+    /// `v.reduce_min()`: `[v]`.
+    ReduceMin,
+    /// `v.reduce_max()`: `[v]`.
+    ReduceMax,
+    /// `v.shuffle(lanes)`: `[v, lanes]`, `lanes` a constant array of lane numbers.
+    Shuffle,
+    /// `v.fma(b, c)`: `[v, b, c]`, `v * b + c` rounded once.
+    Fma,
+    /// `v.min(w)`, `v.max(w)`: `[v, w]`.
+    Min,
+    Max,
+    /// `v.abs()`: `[v]`; an integer lane's `MIN` under `policy`.
+    Abs { policy: OverflowPolicy },
+    /// `v.sqrt()`, `v.rsqrt_approx()`, `v.rcp_approx()`: `[v]`.
+    Sqrt,
+    RsqrtApprox,
+    RcpApprox,
+    /// A mask's `any()`, `all()`: `[m]`.
+    Any,
+    All,
+    /// `m.select(a, b)`: `[m, a, b]`; the operation is named for `a`'s vector type.
+    Select,
+    /// `M.splat(b)`: `[b]`, a mask with every lane set or clear.
+    MaskSplat,
+}
+
+impl SimdOp {
+    pub fn name(self) -> &'static str {
+        match self {
+            SimdOp::Splat | SimdOp::MaskSplat => "splat",
+            SimdOp::Load { checked: true } => "load",
+            SimdOp::Load { checked: false } => "load_unchecked",
+            SimdOp::Store { checked: true } => "store",
+            SimdOp::Store { checked: false } => "store_unchecked",
+            SimdOp::Gather { checked: true, .. } => "gather",
+            SimdOp::Gather { checked: false, .. } => "gather_unchecked",
+            SimdOp::Scatter { checked: true, .. } => "scatter",
+            SimdOp::Scatter { checked: false, .. } => "scatter_unchecked",
+            SimdOp::Binary { .. } => "operator",
+            SimdOp::Neg { .. } => "negation",
+            SimdOp::Compare { .. } => "comparison",
+            SimdOp::ReduceAdd { .. } => "reduce_add",
+            SimdOp::ReduceMin => "reduce_min",
+            SimdOp::ReduceMax => "reduce_max",
+            SimdOp::Shuffle => "shuffle",
+            SimdOp::Fma => "fma",
+            SimdOp::Min => "min",
+            SimdOp::Max => "max",
+            SimdOp::Abs { .. } => "abs",
+            SimdOp::Sqrt => "sqrt",
+            SimdOp::RsqrtApprox => "rsqrt_approx",
+            SimdOp::RcpApprox => "rcp_approx",
+            SimdOp::Any => "any",
+            SimdOp::All => "all",
+            SimdOp::Select => "select",
+        }
+    }
 }
 
 impl SoAOp {
@@ -889,6 +984,8 @@ impl SoAOp {
             SoAOp::MoveSlot => "move_slot",
             SoAOp::DropAt => "drop_at",
             SoAOp::SetLen => "set_len",
+            SoAOp::WithCapacityIn => "with_capacity",
+            SoAOp::TryPush => "push",
         }
     }
 }
@@ -1405,7 +1502,14 @@ pub enum Builtin {
     /// Part VI's slice row, `[TXT-4]` — `v[lo..hi]` of a view (`Span` or
     /// `str`), as a view of the same kind; `args` are the view and the two
     /// bounds, already checked. `text` slices a `str`.
-    Slice { text: bool },
+    Slice {
+        text: bool,
+        /// The view is known not to be empty (`[OPT-2]`'s unchecked copy of a
+        /// loop whose entry test proved the slice's end at least 1), so its
+        /// pointer is never null and the part's start is the pointer plus
+        /// `lo` with no test for an empty view's null pointer.
+        nonempty: bool,
+    },
     /// `[TXT-4]` — whether a byte offset of a `str` starts a character (or
     /// is its end).
     StrIsCharBoundary,
@@ -1649,6 +1753,9 @@ pub enum Builtin {
     ParallelFor { closure: Option<DefId>, combine: Option<DefId> },
     /// `[SOA-1]`..`[SOA-7]` — an operation on `soa`, an `SoA[T]` type.
     SoA { op: SoAOp, soa: Ty },
+    /// `[SIMD-1]` — an operation of `vector`, a `std.simd` vector or mask type (the receiver's,
+    /// or for a constructor the result's; for `select`, the selected vectors').
+    Simd { op: SimdOp, vector: Ty },
     /// `[ARN-1]`, `[ARN-4]` — `Arena.with_capacity(bytes)`. The Arena itself
     /// is a compiler-known move-only struct; the runtime state it owns is
     /// opaque to Ember source.
@@ -1905,6 +2012,7 @@ impl Builtin {
             Builtin::JobWait => "wait",
             Builtin::ParallelFor { .. } => "parallel for",
             Builtin::SoA { op, .. } => op.name(),
+            Builtin::Simd { op, .. } => op.name(),
             Builtin::ArenaWithCapacity => "with_capacity",
             Builtin::ArenaAlloc { .. }
             | Builtin::FixedArenaAlloc { .. }
