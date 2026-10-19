@@ -92,6 +92,8 @@ pub struct CType {
     pub pointee: Option<(String, bool)>,
     /// `const char*` or `char*`: a `cstr` under `nul_terminated`.
     pub char_pointer: bool,
+    /// The C type as the header writes it.
+    pub c: String,
 }
 
 /// What a declaration of the header became: an overlay finds it by its C name.
@@ -296,12 +298,12 @@ impl Unit {
         out
     }
 
-    /// The files the main file includes itself.
-    fn included_directly(&self) -> Vec<String> {
+    /// Every file the main file includes, with how deep: 1 for the ones it includes itself.
+    fn inclusions(&self) -> Vec<(String, u32)> {
         let mut out: Vec<(String, u32)> = Vec::new();
         // SAFETY(ffi): the visitor only pushes into `out`.
         unsafe { clang_getInclusions(self.tu, inclusion, &mut out as *mut Vec<(String, u32)> as CXClientData) };
-        out.into_iter().filter(|(_, depth)| *depth == 1).map(|(file, _)| file).collect()
+        out
     }
 }
 
@@ -328,7 +330,8 @@ fn arguments(config: &Config) -> Vec<String> {
 }
 
 /// `[FFI-6]` — parse the header and write its module.
-pub fn import_header(config: &Config) -> Result<Imported, String> {
+/// `[FFI-6]` — parse the header and write its module, with every file the header includes.
+pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String> {
     load_libclang()?;
     // An absolute folder: Clang then names every file it finds by its absolute path.
     let from_dir = std::path::absolute(config.from_dir).map_err(|e| e.to_string())?;
@@ -345,7 +348,9 @@ pub fn import_header(config: &Config) -> Result<Imported, String> {
     if !errors.is_empty() {
         return Err(errors.join("\n"));
     }
-    let header = unit.included_directly().into_iter().next().ok_or_else(|| format!("`{}` was not found", config.header))?;
+    let inclusions = unit.inclusions();
+    let header = inclusions.iter().find(|(_, depth)| *depth == 1).map(|(file, _)| file.clone()).ok_or_else(|| format!("`{}` was not found", config.header))?;
+    let files: Vec<String> = inclusions.into_iter().filter(|(_, depth)| *depth > 0).map(|(file, _)| file).collect();
     let header_path = std::path::absolute(from_dir.join(&header)).unwrap_or_else(|_| PathBuf::from(&header));
     let mut writer = Writer {
         header: header.clone(),
@@ -405,7 +410,7 @@ pub fn import_header(config: &Config) -> Result<Imported, String> {
             }
         }
     }
-    Ok(writer.finish(header_path))
+    Ok((writer.finish(header_path), files))
 }
 
 /// What a C record became.
@@ -642,14 +647,15 @@ impl Writer {
                 _ => None,
             }
         };
-        let Some(pointee) = pointee else { return Ok(CType { ember, pointee: None, char_pointer: false }) };
+        let c = type_spelling(ty);
+        let Some(pointee) = pointee else { return Ok(CType { ember, pointee: None, char_pointer: false, c }) };
         // SAFETY(ffi): as above.
         let (constant, character) = unsafe {
             let kind = clang_getCanonicalType(pointee).kind;
             (clang_isConstQualifiedType(pointee) != 0, matches!(kind, CXType_Char_S | CXType_Char_U))
         };
         let inner = self.ty(pointee, true)?;
-        Ok(CType { ember, pointee: Some((inner, constant)), char_pointer: character })
+        Ok(CType { ember, pointee: Some((inner, constant)), char_pointer: character, c })
     }
 
     fn typedef(&mut self, cursor: CXCursor) -> Result<String, String> {
@@ -1330,8 +1336,14 @@ pub fn load(
         shared: &known.shared,
         binding: bound.as_str(),
     };
-    let imported = match import_header(&config) {
-        Ok(imported) => imported,
+    // `[FFI-7]` — the overlay is part of what the record is for.
+    let overlay_text = options.overlay.as_ref().and_then(|(written, _)| std::fs::read_to_string(base.join(written)).ok()).unwrap_or_default();
+    let mut cached = false;
+    let imported = match import_cached(&config, &overlay_text, &mut cached) {
+        Ok((imported, _)) => {
+            crate::mark(if cached { "import c, from its .embind" } else { "import c, parsed" }, &header);
+            imported
+        }
         Err(message) => {
             sink.emit(
                 Diagnostic::error(codes::E9002, span, format!("cannot import `{header}`"))
@@ -1838,6 +1850,7 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
     let (mut include_paths, mut defines) = (Vec::new(), Vec::new());
     let (mut init, mut merge, mut report) = (false, false, false);
     let (mut check, mut overlay, mut baseline, mut write_baseline) = (None, None, None, None);
+    let (mut explain, mut emit) = (None, false);
     let mut rest = args.iter();
     while let Some(argument) = rest.next() {
         let mut value = |flag: &str| rest.next().cloned().ok_or(format!("`{flag}` needs a value"));
@@ -1851,7 +1864,8 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
             "--write-baseline" => write_baseline = Some(value("--write-baseline")?),
             "-I" => include_paths.push(PathBuf::from(value("-I")?)),
             "-D" => defines.push(value("-D")?),
-            "--explain" | "--emit-embind" => return Err(format!("`ember bind {argument}` is not implemented yet (E0900)")),
+            "--explain" => explain = Some(value("--explain")?),
+            "--emit-embind" => emit = true,
             flag if flag.starts_with('-') => return Err(format!("unknown `ember bind` option `{flag}`")),
             file if header.is_none() => header = Some(PathBuf::from(file)),
             extra => return Err(format!("unexpected `ember bind` argument `{extra}`")),
@@ -1871,7 +1885,15 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
         shared: &shared,
         binding: "c",
     };
-    let imported = import_header(&config)?;
+    let (imported, files) = import_header(&config)?;
+    if emit {
+        // `[FFI-14]` — the record a build keeps for this header, written beside it.
+        let files: Vec<(String, String)> = files.into_iter().filter_map(|file| file_hash(&file).map(|hash| (file, hash))).collect();
+        let path = dir.join(format!("{}.embind", header.file_stem().unwrap_or_default().to_string_lossy()));
+        std::fs::write(&path, embind(&imported, &files, &arguments(&config).join(" "), "", "")).map_err(|error| format!("cannot write `{}`: {error}", path.display()))?;
+        println!("wrote {}", path.display());
+        return Ok(ExitCode::SUCCESS);
+    }
     let skipped: Vec<&Skipped> = imported.skipped.iter().chain(&imported.macros).collect();
     let mut map = SourceMap::new();
     let mut sink = Sink::new();
@@ -1928,6 +1950,57 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
         std::fs::write(&path, text).map_err(|error| format!("cannot write `{}`: {error}", path.display()))?;
         println!("wrote {}", path.display());
         return Ok(ExitCode::SUCCESS);
+    }
+    if let Some(name) = explain {
+        // `[FFI-14]` — a function's contract, each fact with where it comes from.
+        let applied = match &overlay {
+            Some(path) => load_overlay(path, &mut sink)?,
+            None => Applied::default(),
+        };
+        eprint!("{}", sink.render(&map));
+        let Some(function) = imported.functions.iter().find(|function| function.name == name) else {
+            let why = skipped.iter().find(|skip| skip.name == name).map_or("it declares no such function".to_string(), |skip| format!("it was skipped: {}", skip.reason));
+            return Err(format!("`{name}` is not imported from `{file}`: {why}"));
+        };
+        let entry = applied.functions.get(&function.name);
+        print!("{}", render_function(function, entry, applied.renamed.get(&function.name), false));
+        let words = |index: Option<usize>| -> Vec<String> {
+            entry.map_or(Vec::new(), |entry| match index {
+                Some(index) => entry.params.get(index).cloned().unwrap_or_default(),
+                None => entry.result.clone(),
+            })
+        };
+        let explain_slot = |slot: &str, ty: &CType, written: Vec<String>, result: bool| {
+            let mut facts = Vec::new();
+            match &ty.pointee {
+                Some((_, constant)) => {
+                    facts.push(if *constant { "a read-only borrow (derived: `const`)".to_string() } else { "a mutable borrow (derived: no `const`)".to_string() });
+                    if written.is_empty() {
+                        let unknown = if result { "ownership, count, nullability and lifetime (a result's lifetime is never derived)" } else { "ownership, count and nullability" };
+                        facts.push(format!("unknown: its {unknown}"));
+                    } else {
+                        facts.push(format!("stated by the overlay: {}", written.join(" ")));
+                    }
+                }
+                None if ty.ember.starts_with("Option[") => facts.push("a function pointer, which may be null".to_string()),
+                None => facts.push("a value: nothing to state".to_string()),
+            }
+            println!("  {slot}: `{}` — {}", ty.c, facts.join("; "));
+        };
+        for (index, (param, ty)) in function.params.iter().enumerate() {
+            explain_slot(&format!("`{param}`"), ty, words(Some(index)), false);
+        }
+        if let Some(ty) = &function.result {
+            explain_slot("result", ty, words(None), true);
+        }
+        match entry {
+            Some(_) => println!("  safe to call: asserted by the overlay's entry for it ([FFI-2])"),
+            None => println!("  safe to call: unknown — never derived, since a scalar can be an address; an overlay entry asserts it ([FFI-2])"),
+        }
+        if function.link_name.is_some() {
+            println!("  called through the import's shim: it has internal linkage (`static inline`) ([FFI-29a])");
+        }
+        return Ok(if sink.has_errors() { ExitCode::FAILURE } else { ExitCode::SUCCESS });
     }
     if let Some(path) = check {
         // `[CLI-7]` — `[FFI-12]`, then how many declarations are safe, still unsafe, and skipped.
@@ -2014,7 +2087,403 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
         }
         return Ok(if new > 0 || sink.has_errors() { ExitCode::FAILURE } else { ExitCode::SUCCESS });
     }
-    Err("`ember bind` needs `--init`, `--report` or `--check <overlay>`".to_string())
+    Err("`ember bind` needs `--init`, `--report`, `--check <overlay>`, `--explain <fn>` or `--emit-embind`".to_string())
+}
+
+/// `[FFI-14]` — the `.embind` file: an import's result as versioned CBOR. Only the forms it needs:
+/// unsigned integers, text, arrays and maps with text keys.
+mod cbor {
+    #[derive(Clone, Debug, PartialEq)]
+    pub enum Value {
+        Uint(u64),
+        Text(String),
+        Array(Vec<Value>),
+        Map(Vec<(String, Value)>),
+    }
+
+    fn head(out: &mut Vec<u8>, major: u8, n: u64) {
+        let major = major << 5;
+        match n {
+            0..=23 => out.push(major | n as u8),
+            24..=0xff => out.extend([major | 24, n as u8]),
+            0x100..=0xffff => {
+                out.push(major | 25);
+                out.extend((n as u16).to_be_bytes());
+            }
+            0x1_0000..=0xffff_ffff => {
+                out.push(major | 26);
+                out.extend((n as u32).to_be_bytes());
+            }
+            _ => {
+                out.push(major | 27);
+                out.extend(n.to_be_bytes());
+            }
+        }
+    }
+
+    pub fn encode(value: &Value, out: &mut Vec<u8>) {
+        match value {
+            Value::Uint(n) => head(out, 0, *n),
+            Value::Text(text) => {
+                head(out, 3, text.len() as u64);
+                out.extend(text.as_bytes());
+            }
+            Value::Array(items) => {
+                head(out, 4, items.len() as u64);
+                items.iter().for_each(|item| encode(item, out));
+            }
+            Value::Map(entries) => {
+                head(out, 5, entries.len() as u64);
+                for (key, item) in entries {
+                    encode(&Value::Text(key.clone()), out);
+                    encode(item, out);
+                }
+            }
+        }
+    }
+
+    pub fn decode(bytes: &[u8]) -> Option<Value> {
+        let mut at = 0;
+        let value = item(bytes, &mut at)?;
+        (at == bytes.len()).then_some(value)
+    }
+
+    fn item(bytes: &[u8], at: &mut usize) -> Option<Value> {
+        let first = *bytes.get(*at)?;
+        *at += 1;
+        let extra = |at: &mut usize, size: usize| -> Option<u64> {
+            let slice = bytes.get(*at..*at + size)?;
+            *at += size;
+            Some(slice.iter().fold(0u64, |n, &byte| (n << 8) | u64::from(byte)))
+        };
+        let n = match first & 0x1f {
+            small @ 0..=23 => u64::from(small),
+            24 => extra(at, 1)?,
+            25 => extra(at, 2)?,
+            26 => extra(at, 4)?,
+            27 => extra(at, 8)?,
+            _ => return None,
+        };
+        Some(match first >> 5 {
+            0 => Value::Uint(n),
+            3 => {
+                let text = bytes.get(*at..*at + usize::try_from(n).ok()?)?;
+                *at += text.len();
+                Value::Text(String::from_utf8(text.to_vec()).ok()?)
+            }
+            4 => Value::Array((0..n).map(|_| item(bytes, at)).collect::<Option<_>>()?),
+            5 => Value::Map(
+                (0..n)
+                    .map(|_| match item(bytes, at)? {
+                        Value::Text(key) => Some((key, item(bytes, at)?)),
+                        _ => None,
+                    })
+                    .collect::<Option<_>>()?,
+            ),
+            _ => return None,
+        })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// `[FFI-14]` — what is written reads back.
+        #[test]
+        fn values_round_trip() {
+            let value = Value::Map(vec![
+                ("version".to_string(), Value::Uint(1)),
+                ("big".to_string(), Value::Uint(1 << 40)),
+                ("text".to_string(), Value::Text("é".repeat(300))),
+                ("list".to_string(), Value::Array(vec![Value::Uint(24), Value::Uint(256), Value::Array(Vec::new())])),
+            ]);
+            let mut bytes = Vec::new();
+            encode(&value, &mut bytes);
+            assert_eq!(decode(&bytes), Some(value));
+            assert_eq!(decode(&bytes[..bytes.len() - 1]), None);
+        }
+    }
+}
+
+use cbor::Value;
+
+const EMBIND_VERSION: u64 = 1;
+
+fn text_of(value: &Value) -> Option<String> {
+    match value {
+        Value::Text(text) => Some(text.clone()),
+        _ => None,
+    }
+}
+
+fn uint_of(value: &Value) -> Option<u64> {
+    match value {
+        Value::Uint(n) => Some(*n),
+        _ => None,
+    }
+}
+
+fn array_of(value: &Value) -> Option<&[Value]> {
+    match value {
+        Value::Array(items) => Some(items),
+        _ => None,
+    }
+}
+
+fn field<'v>(value: &'v Value, name: &str) -> Option<&'v Value> {
+    match value {
+        Value::Map(entries) => entries.iter().find(|(key, _)| key == name).map(|(_, item)| item),
+        _ => None,
+    }
+}
+
+fn texts(items: &[&str]) -> Value {
+    Value::Array(items.iter().map(|item| Value::Text(item.to_string())).collect())
+}
+
+fn skips(list: &[Skipped]) -> Value {
+    Value::Array(list.iter().map(|skip| texts(&[&skip.name, &skip.reason, &skip.at])).collect())
+}
+
+fn read_skips(value: &Value) -> Option<Vec<Skipped>> {
+    array_of(value)?
+        .iter()
+        .map(|entry| {
+            let entry = array_of(entry)?;
+            Some(Skipped { name: text_of(entry.first()?)?, reason: text_of(entry.get(1)?)?, at: text_of(entry.get(2)?)? })
+        })
+        .collect()
+}
+
+fn c_type_value(ty: &CType) -> Value {
+    let (inner, constant) = ty.pointee.clone().map_or((String::new(), 2), |(inner, constant)| (inner, u64::from(constant)));
+    Value::Array(vec![
+        Value::Text(ty.ember.clone()),
+        Value::Text(inner),
+        Value::Uint(constant),
+        Value::Uint(u64::from(ty.char_pointer)),
+        Value::Text(ty.c.clone()),
+    ])
+}
+
+fn read_c_type(value: &Value) -> Option<CType> {
+    let entry = array_of(value)?;
+    let constant = uint_of(entry.get(2)?)?;
+    Some(CType {
+        ember: text_of(entry.first()?)?,
+        pointee: (constant != 2).then(|| Some((text_of(&entry[1])?, constant == 1))).flatten(),
+        char_pointer: uint_of(entry.get(3)?)? == 1,
+        c: text_of(entry.get(4)?)?,
+    })
+}
+
+const KINDS: [Kind; 4] = [Kind::Type, Kind::Const, Kind::Opaque, Kind::Static];
+const ABIS: [&str; 4] = ["C", "system", "fastcall", "vectorcall"];
+
+/// `[FFI-14]` — the `.embind` record: the header's files and their hashes (`[FFI-7]`'s "content"),
+/// the Clang configuration, the overlay's hash and the contracts it gave, the declarations with
+/// their layouts, and what was skipped.
+fn embind(imported: &Imported, files: &[(String, String)], configuration: &str, overlay: &str, contracts: &str) -> Vec<u8> {
+    let value = Value::Map(vec![
+        ("version".to_string(), Value::Uint(EMBIND_VERSION)),
+        ("files".to_string(), Value::Array(files.iter().map(|(path, hash)| texts(&[path, hash])).collect())),
+        ("clang".to_string(), Value::Text(configuration.to_string())),
+        ("overlay".to_string(), Value::Text(overlay.to_string())),
+        ("contracts".to_string(), Value::Text(contracts.to_string())),
+        ("header".to_string(), Value::Text(imported.header.to_string_lossy().into_owned())),
+        (
+            "items".to_string(),
+            Value::Array(
+                imported
+                    .items
+                    .iter()
+                    .map(|item| {
+                        let kind = KINDS.iter().position(|kind| *kind == item.kind).unwrap_or(0) as u64;
+                        Value::Array(vec![Value::Text(item.name.clone()), Value::Uint(kind), Value::Text(item.text.clone())])
+                    })
+                    .collect(),
+            ),
+        ),
+        (
+            "functions".to_string(),
+            Value::Array(
+                imported
+                    .functions
+                    .iter()
+                    .map(|function| {
+                        Value::Map(vec![
+                            ("name".to_string(), Value::Text(function.name.clone())),
+                            ("abi".to_string(), Value::Text(function.abi.to_string())),
+                            ("link".to_string(), Value::Text(function.link_name.clone().unwrap_or_default())),
+                            (
+                                "params".to_string(),
+                                Value::Array(function.params.iter().map(|(name, ty)| Value::Array(vec![Value::Text(name.clone()), c_type_value(ty)])).collect()),
+                            ),
+                            ("result".to_string(), Value::Array(function.result.iter().map(c_type_value).collect())),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        (
+            "layouts".to_string(),
+            Value::Array(
+                imported
+                    .layouts
+                    .iter()
+                    .map(|layout| {
+                        Value::Array(vec![
+                            Value::Text(layout.name.clone()),
+                            Value::Uint(layout.size),
+                            Value::Uint(layout.align),
+                            Value::Array(layout.fields.iter().map(|(name, offset)| Value::Array(vec![Value::Text(name.clone()), Value::Uint(*offset)])).collect()),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        ("skipped".to_string(), skips(&imported.skipped)),
+        ("opaque".to_string(), skips(&imported.opaque)),
+        ("macros".to_string(), skips(&imported.macros)),
+        ("shim".to_string(), Value::Text(imported.shim.clone())),
+        ("uses".to_string(), Value::Array(imported.uses.iter().map(|path| Value::Array(path.iter().map(|segment| Value::Text(segment.clone())).collect())).collect())),
+        ("entities".to_string(), Value::Array(imported.entities.iter().map(|(usr, name, layout)| texts(&[usr, name, layout])).collect())),
+        ("conflicts".to_string(), Value::Array(imported.conflicts.iter().map(|(name, header)| texts(&[name, header])).collect())),
+    ]);
+    let mut bytes = Vec::new();
+    cbor::encode(&value, &mut bytes);
+    bytes
+}
+
+/// An `.embind` record read back: its files and hashes, and the import.
+fn read_embind(bytes: &[u8]) -> Option<(Vec<(String, String)>, Imported)> {
+    let value = cbor::decode(bytes)?;
+    if uint_of(field(&value, "version")?)? != EMBIND_VERSION {
+        return None;
+    }
+    let pairs = |value: &Value| -> Option<Vec<(String, String)>> {
+        array_of(value)?.iter().map(|entry| Some((text_of(array_of(entry)?.first()?)?, text_of(array_of(entry)?.get(1)?)?))).collect()
+    };
+    let files = pairs(field(&value, "files")?)?;
+    let items = array_of(field(&value, "items")?)?
+        .iter()
+        .map(|entry| {
+            let entry = array_of(entry)?;
+            Some(Item { name: text_of(entry.first()?)?, kind: *KINDS.get(uint_of(entry.get(1)?)? as usize)?, text: text_of(entry.get(2)?)? })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let functions = array_of(field(&value, "functions")?)?
+        .iter()
+        .map(|entry| {
+            let link = text_of(field(entry, "link")?)?;
+            let abi = text_of(field(entry, "abi")?)?;
+            Some(Function {
+                name: text_of(field(entry, "name")?)?,
+                abi: ABIS.iter().find(|known| **known == abi)?,
+                link_name: (!link.is_empty()).then_some(link),
+                params: array_of(field(entry, "params")?)?
+                    .iter()
+                    .map(|param| Some((text_of(array_of(param)?.first()?)?, read_c_type(array_of(param)?.get(1)?)?)))
+                    .collect::<Option<_>>()?,
+                result: match array_of(field(entry, "result")?)? {
+                    [] => None,
+                    [ty] => Some(read_c_type(ty)?),
+                    _ => return None,
+                },
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let layouts = array_of(field(&value, "layouts")?)?
+        .iter()
+        .map(|entry| {
+            let entry = array_of(entry)?;
+            Some(RecordLayout {
+                name: text_of(entry.first()?)?,
+                size: uint_of(entry.get(1)?)?,
+                align: uint_of(entry.get(2)?)?,
+                fields: array_of(entry.get(3)?)?
+                    .iter()
+                    .map(|field| Some((text_of(array_of(field)?.first()?)?, uint_of(array_of(field)?.get(1)?)?)))
+                    .collect::<Option<_>>()?,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let triples = |value: &Value| -> Option<Vec<(String, String, String)>> {
+        array_of(value)?
+            .iter()
+            .map(|entry| {
+                let entry = array_of(entry)?;
+                Some((text_of(entry.first()?)?, text_of(entry.get(1)?)?, text_of(entry.get(2)?)?))
+            })
+            .collect()
+    };
+    let imported = Imported {
+        items,
+        header: PathBuf::from(text_of(field(&value, "header")?)?),
+        skipped: read_skips(field(&value, "skipped")?)?,
+        opaque: read_skips(field(&value, "opaque")?)?,
+        macros: read_skips(field(&value, "macros")?)?,
+        layouts,
+        shim: text_of(field(&value, "shim")?)?,
+        functions,
+        uses: array_of(field(&value, "uses")?)?.iter().map(|path| array_of(path)?.iter().map(text_of).collect::<Option<Vec<_>>>()).collect::<Option<_>>()?,
+        entities: triples(field(&value, "entities")?)?,
+        conflicts: pairs(field(&value, "conflicts")?)?,
+    };
+    Some((files, imported))
+}
+
+/// The hash of a file's bytes, or nothing when it cannot be read.
+fn file_hash(path: &str) -> Option<String> {
+    std::fs::read(path).ok().map(|bytes| ember_build::content_hash(&bytes))
+}
+
+/// `[FFI-7]` — the import from its `.embind` record when nothing that can change it has: the key is
+/// the Clang configuration (libclang, standard, target, flags, defines, include paths), the header as
+/// written and where from, the overlay's hash and the declarations other imports of the build wrote;
+/// the record holds every file the header included with its hash, each read again here. Otherwise
+/// the header is parsed and the record written.
+fn import_cached(config: &Config, overlay: &str, cached: &mut bool) -> Result<(Imported, PathBuf), String> {
+    load_libclang()?;
+    let overlay_hash = if overlay.is_empty() { String::new() } else { ember_build::content_hash(overlay.as_bytes()) };
+    let library = clang_sys::get_library().map(|library| library.path().display().to_string()).unwrap_or_default();
+    let mut shared: Vec<String> = config
+        .shared
+        .iter()
+        .map(|(usr, shared)| format!("{usr}={}:{}:{}:{}", shared.module.join("."), shared.name, shared.layout, shared.binding))
+        .collect();
+    shared.sort();
+    let configuration = format!("{library}\n{}\n{}\n{}", arguments(config).join(" "), config.header, std::path::absolute(config.from_dir).unwrap_or_default().display());
+    // The compiler itself is part of the key: another build of the importer may write another module.
+    let key = ember_build::content_hash(
+        format!(
+            "{EMBIND_VERSION} {}\n{configuration}\n{}\n{overlay_hash}\n{}\n{}",
+            ember_build::interface::compiler_identity(),
+            config.symbol_stem,
+            config.binding,
+            shared.join("\n")
+        )
+        .as_bytes(),
+    );
+    let path = ember_build::cache_root().join("embind").join(format!("{key}.embind"));
+    if let Some((files, imported)) = std::fs::read(&path).ok().and_then(|bytes| read_embind(&bytes))
+        && files.iter().all(|(file, hash)| file_hash(file).as_deref() == Some(hash.as_str()))
+    {
+        *cached = true;
+        return Ok((imported, path));
+    }
+    let (imported, files) = import_header(config)?;
+    let files: Vec<(String, String)> = files.into_iter().filter_map(|file| file_hash(&file).map(|hash| (file, hash))).collect();
+    let bytes = embind(&imported, &files, &configuration, &overlay_hash, overlay);
+    // Written aside then renamed: builds side by side read whole records only.
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+        let partial = dir.join(format!("{key}.{}.partial", std::process::id()));
+        if std::fs::write(&partial, &bytes).is_ok() && std::fs::rename(&partial, &path).is_err() {
+            let _ = std::fs::remove_file(&partial);
+        }
+    }
+    Ok((imported, path))
 }
 
 fn opaque_by_value(name: &str, why: Option<&str>) -> String {

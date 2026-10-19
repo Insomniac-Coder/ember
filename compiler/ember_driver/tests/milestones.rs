@@ -7372,3 +7372,61 @@ int wrapped_plain(int x);
     assert!(report.stdout.contains("wrapped_twice`, wrapped (static inline)"), "{}", report.stdout);
     assert!(report.stdout.contains("wrapped_plain`, one direct call"), "{}", report.stdout);
 }
+
+/// `[FFI-7]` — a header is parsed again only when its content, its overlay, or a setting that can
+/// change a binding (its defines) changes; otherwise the import is read from its `.embind` record.
+/// `[FFI-14]` — the record is versioned CBOR holding the header's files and their hashes, the Clang
+/// configuration, the overlay's hash, and the declarations with their layouts; `ember bind
+/// --emit-embind` writes one, and `ember bind --explain <fn>` prints a function's contract and why.
+#[test]
+fn import_c_parses_a_header_again_only_when_it_changes() {
+    let root = workspace_root();
+    let dir = temporary_directory("embind");
+    let cache = temporary_directory("embind-cache");
+    let cache_arg = cache.to_string_lossy().into_owned();
+    std::fs::write(dir.join("cached.h"), "typedef struct Pair { int a; int b; } Pair;\nstatic inline int cached_sum(const int* items, int n) { return n > 0 ? items[0] : 0; }\nstatic inline int cached_one(int x) { return x; }\n").unwrap();
+    std::fs::write(dir.join(format!("overlay.{SOURCE_EXT}")), "unsafe overlay c \"cached.h\":\n    fn cached_sum(items: TODO(ownership) TODO(count) TODO(nullable), n)\n").unwrap();
+    let source = dir.join(format!("main.{SOURCE_EXT}"));
+    let program = |defines: &str| format!("import c \"cached.h\" with (overlay = \"overlay.{SOURCE_EXT}\"{defines})\n\nfn main():\n    p = c.Pair(a=1, b=2)\n    println(p.a + p.b)\n");
+    std::fs::write(&source, program("")).unwrap();
+    let source_arg = source.to_string_lossy().into_owned();
+    let check = || ember_with_env(&["check", &source_arg, "--timings"], &root, &ember_branding::cache_dir_var(), &cache_arg);
+    let parsed = |run: &Run| run.stdout.contains("import c, parsed") || run.stderr.contains("import c, parsed");
+    let reused = |run: &Run| run.stdout.contains("import c, from its .embind") || run.stderr.contains("import c, from its .embind");
+    let first = check();
+    assert_eq!(first.exit, 0, "{}", first.stderr);
+    assert!(parsed(&first), "the first build did not parse the header:\n{}{}", first.stdout, first.stderr);
+    let second = check();
+    assert!(reused(&second) && !parsed(&second), "nothing changed, and the header was parsed again:\n{}{}", second.stdout, second.stderr);
+    // The header's content.
+    std::fs::write(dir.join("cached.h"), "typedef struct Pair { int a; int b; } Pair;\nstatic inline int cached_sum(const int* items, int n) { return n; }\nstatic inline int cached_one(int x) { return x; }\n").unwrap();
+    assert!(parsed(&check()), "a changed header was not parsed again");
+    assert!(reused(&check()));
+    // Its overlay.
+    std::fs::write(dir.join(format!("overlay.{SOURCE_EXT}")), "unsafe overlay c \"cached.h\":\n    fn cached_sum(items: TODO(ownership) TODO(count) TODO(nullable), n)\n    fn cached_one(x)\n").unwrap();
+    assert!(parsed(&check()), "a changed overlay did not parse the header again");
+    // A define.
+    std::fs::write(&source, program(", defines = [\"CACHED_EXTRA=1\"]")).unwrap();
+    assert!(parsed(&check()), "a new define did not parse the header again");
+    // The record: versioned CBOR, a map whose first key is `version`.
+    let records: Vec<PathBuf> = std::fs::read_dir(cache.join("embind")).expect("the records' folder").filter_map(|entry| entry.ok().map(|entry| entry.path())).collect();
+    assert!(!records.is_empty());
+    let bytes = std::fs::read(&records[0]).unwrap();
+    assert_eq!(bytes[0] >> 5, 5, "not a CBOR map");
+    assert_eq!(&bytes[1..9], b"\x67version", "the record does not open with its version");
+    for wanted in ["files", "clang", "overlay", "contracts", "layouts", "cached.h"] {
+        assert!(bytes.windows(wanted.len()).any(|window| window == wanted.as_bytes()), "the record lacks {wanted}");
+    }
+    let emitted = ember(&["bind", "cached.h", "--emit-embind"], &dir);
+    assert_eq!(emitted.exit, 0, "{}", emitted.stderr);
+    assert!(dir.join("cached.embind").is_file());
+    let explained = ember(&["bind", "cached.h", "--explain", "cached_sum", "--overlay", &format!("overlay.{SOURCE_EXT}")], &dir);
+    assert_eq!(explained.exit, 0, "{}", explained.stderr);
+    for line in [
+        "`items`: `const int *` — a read-only borrow (derived: `const`); stated by the overlay: TODO(ownership) TODO(count) TODO(nullable)",
+        "`n`: `int` — a value: nothing to state",
+        "called through the import's shim",
+    ] {
+        assert!(explained.stdout.contains(line), "--explain lacks {line:?}:\n{}", explained.stdout);
+    }
+}

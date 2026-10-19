@@ -154,9 +154,28 @@ is never written over, and `--merge` appends only the functions and skips it lac
 [--overlay f]` lists skipped declarations, opaque structs and every function still unsafe with its
 unknown facts, non-zero on a skip; `--baseline f` counts only skips the file does not list,
 `--write-baseline f` writes them. `--check <overlay>` runs `[FFI-12]` and prints "N safe, M still
-unsafe, K skipped". `--explain` and `--emit-embind` are refused (`[FFI-14]` is not built).
+unsafe, K skipped". `--explain <fn> [--overlay f]` prints the declaration the import writes and, per
+parameter and result, its C type, the fact derived from it (a read-only or mutable borrow), what the
+overlay states or what is still unknown, and whether it is safe to call and why (`[FFI-14]`).
+`--emit-embind` writes `<stem>.embind` beside the header.
 `[FFI-35a]`: `--report` also lists, per function an overlay contracts, each pointer parameter with no
 `retained` word ("does not retain the pointer") and each pointer result with no lifetime word.
+
+### N8b. The `.embind` record (`[FFI-7]`, `[FFI-14]`)
+
+An import's result is kept in the global build cache (`<cache>/embind/<key>.embind`): versioned CBOR
+(a small codec in `cimport.rs`: unsigned integers, text, arrays, maps) holding every file the header
+included with its hash, the Clang configuration, the overlay's hash and text (its contracts), the
+header's path, the declarations (items, functions with their C and Ember types), the layouts, what
+was skipped, the shim, and the `[FFI-30]` entities. The key is the record's version, this compiler
+(`compiler_identity`), libclang's path, the arguments (standard, flags, defines, include paths), the
+header as written and its folder, the module's name and binding, the overlay's hash, and the
+declarations other imports of the build wrote. A record is used when every file it lists still has
+its hash; otherwise the header is parsed and the record written (aside, then renamed). So a header is
+parsed again only when its content, an included header, its overlay, or a setting changes. `--timings`
+says which happened ("import c, parsed" / "import c, from its .embind"): about 140 ms against 100 ms
+here, most of the second being libclang's load, which the key needs. The overlay is still applied on
+each build (it is cheap and its diagnostics must be repeated).
 
 ### N8a. Wrapped calls in the cost report (`[FFI-29c]`)
 
@@ -197,6 +216,7 @@ the shim's wrapper (its symbol is the wrapper's), and "one direct call" otherwis
 | `CLI-5` | milestone `bind_init_writes_a_starter_overlay_that_compiles_unchanged` |
 | `CLI-6`, `CLI-7`, `FFI-35a` | milestone `bind_report_and_check_count_what_is_safe_unsafe_and_skipped` |
 | `FFI-29c` | milestone `inspect_reports_a_wrapped_static_inline_call` |
+| `FFI-7`, `FFI-14` | milestone `import_c_parses_a_header_again_only_when_it_changes`; the codec's unit test `cbor::tests::values_round_trip` |
 
 Test overlays live in an `overlays/` folder beside the tests: the runners take every `*.em` directly
 in a rule folder for a test.
@@ -213,8 +233,6 @@ in a rule folder for a test.
   anonymous members (`<Parent>_anon<N>`), flexible array members (unsized structs), `_Atomic`,
   `va_list` and variadic calls, `long double` (`c_longdouble`), `volatile`, `@ffi(newtype)`; and
   `std.ffi` has none of `c_int`, `c_char`, `c_long` and the other C aliases Part XV lists (D-N4).
-* `[FFI-7]`, `[FFI-14]` — no `.embind` cache: each build parses each header again (about 0.2–1 s per
-  import); `ember bind --explain` and `--emit-embind` are refused.
 * `[FFI-30b]` — `pub import c … as vk` (re-export) does not parse: Ember has no re-exports or
   module-in-module namespaces to build it on.
 * `[FFI-30c]` — overlays from several packages, their order and `override`: one overlay file per
