@@ -302,11 +302,14 @@ pub class World:
             sets.push(system.accesses())
         for i in 0..systems.len():
             for j in i + 1..systems.len():
-                for a in sets[i]:
-                    for b in sets[j]:
-                        if a.hash == b.hash and (a.write or b.write):
-                            writer = systems[i].name if a.write else systems[j].name
-                            panic(f"systems `{systems[i].name}` and `{systems[j].name}` cannot run at once: `{writer}` writes `{a.name}`, which the other uses")
+                match conflict(sets[i], sets[j]):
+                    Some(found):
+                        first = systems[i].name
+                        second = systems[j].name
+                        writer = first if found.write else second
+                        panic(f"systems `{first}` and `{second}` cannot run at once: `{writer}` writes `{found.name}`, which the other uses")
+                    None:
+                        pass
         for system in systems.iter_mut():
             system.run_on(self)
 
@@ -322,6 +325,15 @@ pub class World:
         for command in commands.queued:
             command.apply(self)
         commands.queued.clear()
+
+## `[ECS-4]` — the first component one of two access sets writes and the other uses: `a`'s access
+## to it, whose `write` says whether `a` is the writer.
+fn conflict(a: Span[Access], b: Span[Access]) -> Option[Access]:
+    for x in a:
+        for y in b:
+            if x.hash == y.hash and (x.write or y.write):
+                return Some(x)
+    return None
 
 ## `[ECS-3]` — `Mut[T]` in a query: `iter_mut` yields `ref mut T` for it (an `SoAMut[T]` for a
 ## component stored as an `SoA`); `iter` yields what `T` does. A marker: `T` is phantom

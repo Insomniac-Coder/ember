@@ -111,6 +111,17 @@ against C++ (an EnTT-style view): the house rules forbid running programs outsid
 the benchmark is for the coordinator. Possible later gains: skip the driving parameter's own probe
 (its slot is the index), count with a range instead of a checked `+= 1`.
 
+**Compile time.** Measured on the performance cores, mains power, `ember check` against the
+branch's base (db8b2b38, built in the scratchpad): four programs that do not import `std.ecs`
+take the same time (141–188 ms each, within noise), so the type-checker changes cost nothing
+measurable; `ECS-2`'s test, which imports `std.ecs`, went from about 325 ms to 480 ms
+(`--timings`: check 60 → 69 ms, borrow checks 104 → about 128 ms). Every program that imports
+`std.ecs` now lowers and borrow-checks its non-generic bodies (the `Command` classes, `World.apply`,
+`World.run_parallel` …; about twenty more), and `run_parallel`'s pairwise check alone is about
+20 ms of borrow checking, which moving its inner loops into `conflict` did not change. Not chased
+further; an unused standard body being borrow-checked in every program is the compiler's general
+behaviour.
+
 ## 4. The derive (`[ECS-7]` machinery, for `[ECS-3]`)
 
 `@derive(Component)` (`derives.rs`, `component`) now writes, beside the name, hash and layout,
