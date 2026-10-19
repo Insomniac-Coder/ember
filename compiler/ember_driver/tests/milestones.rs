@@ -2266,7 +2266,7 @@ fn every_command_accepts_json() {
     assert_eq!(explained.exit, 0, "{}", explained.stderr);
     let value = parse(&explained);
     assert_eq!(value["code"], "E9001");
-    assert_eq!(value["rule"], "[MAN-1]");
+    assert_eq!(value["rule"], "[MAN-1], [PRF-3]");
     let unknown = ember(&["explain", "--json", "E99999"], &root);
     assert_ne!(unknown.exit, 0, "[CLI-1] an unknown code succeeded");
 
@@ -5386,6 +5386,47 @@ fn callable_region_summary_changes_invalidate_importers_interface_key() {
     assert_eq!(signature.parameters[0].ty, "i64");
     assert_eq!(signature.result, "i64");
     let _ = std::fs::remove_dir_all(&test_root);
+}
+
+/// `[EFF-4]` — effects are part of a function's interface for incremental builds: when an edit to
+/// a private body gives an imported function a new effect, the importer's contracts are checked
+/// again although its own source is unchanged. `main`'s `@noio` caller of `helper.effectful` is
+/// accepted while `effectful` is quiet and refused (`E4041`) once `helper`'s private `quiet`
+/// prints, with the interface cache of the first check in place.
+#[test]
+fn a_callee_gaining_an_effect_rechecks_its_callers_contracts() {
+    let workspace = workspace_root();
+    let test_root = temporary_directory("eff4-contracts");
+    let out_dir = test_root.join("target");
+    let helper = ember_branding::source_file("helper");
+    let main = ember_branding::source_file("main");
+    std::fs::create_dir_all(&test_root).expect("create the EFF-4 package");
+    let helper_source = |quiet: &str| format!("fn quiet() -> int:\n{quiet}\n\npub fn effectful() -> int:\n    return quiet()\n");
+    std::fs::write(test_root.join(&helper), helper_source("    return 1")).expect("write helper");
+    std::fs::write(
+        test_root.join(&main),
+        "from helper import effectful\n\n@noio\nfn steady() -> int:\n    return effectful()\n\nfn main():\n    println(steady())\n",
+    )
+    .expect("write importer");
+    let check = || {
+        Command::new(EMBER)
+            .args(["check", &main, "--out-dir", &out_dir.to_string_lossy()])
+            .current_dir(&test_root)
+            .env(ember_branding::std_path_var(), workspace.join("std"))
+            .output()
+            .expect("the Ember compiler runs for EFF-4")
+    };
+    let quiet = check();
+    assert!(quiet.status.success(), "the quiet callee is refused:\n{}", String::from_utf8_lossy(&quiet.stderr));
+    let before = cached_interface(&out_dir, "helper");
+    let effectful = &before.callables[&ember_branding::mangled("helper.effectful")];
+    assert!(!effectful.effects.as_ref().expect("a body's effects").iter().any(|effect| effect == "Io"), "{effectful:?}");
+
+    std::fs::write(test_root.join(&helper), helper_source("    println(\"loud\")\n    return 1")).expect("edit helper");
+    let loud = check();
+    let stderr = String::from_utf8_lossy(&loud.stderr);
+    assert!(!loud.status.success() && stderr.contains("E4041") && stderr.contains("steady"),
+        "the caller's `@noio` was not checked again:\n{stderr}");
 }
 
 /// `[BLD-2]` / `[CG-C-3b]` — a module's interface hash holds the facts a

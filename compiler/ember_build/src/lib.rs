@@ -666,7 +666,12 @@ fn compile_and_link_impl(
             // `[BLD-13]` — clang-cl's debug information names folders as gcc's does, and its objects
             // carry no time stamp: the linker's `/Brepro` hashes them into the program.
             if clang_cl {
-                command.arg("/Brepro").arg("/clang:-gno-codeview-command-line").arg("/clang:-fdebug-compilation-dir=.");
+                command.arg("/Brepro");
+                // Only where there is debug information: a `release` build has none, and clang-cl
+                // warns of a flag it does not use (an error under the C gate, `[TST-27]`).
+                if request.profile != Profile::Release {
+                    command.arg("/clang:-gno-codeview-command-line").arg("/clang:-fdebug-compilation-dir=.");
+                }
                 // The object's own folder too: CodeView names the object file.
                 let sources: Vec<PathBuf> = request.sources.iter().cloned().chain([request.obj_dir.join("object")]).collect();
                 command.args(folder_name_flags(&sources, request.include_dirs).into_iter().map(|flag| format!("/clang:{flag}")));

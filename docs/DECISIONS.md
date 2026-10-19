@@ -5017,6 +5017,27 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-222 — The code registry against the development target (`[DIA-6a]`); `[EFF-4]`
+
+2026-10-19, toward 90% (solo).
+* `tools/rule_index.py` checks the registry against the *adopted* specification (0.8.5), so the
+  registry had drifted from the development target: six codes 0.9.9/0.9.10 define were not
+  registered (`E2261` `[TYP-32]`, `E5066` `[FFI-43]`, `E9040` `[MNG-1]`, `L4003` `[LNT-6]`, `W1003`
+  `[MOD-3]`, `W2016` `[PAN-1]`), and 78 entries' titles or rules were older wording (`E0100` cited
+  `[AST-2]` where the target says `[GRM-2]`). Every entry now has the target table's title and rules
+  (a script over the table, not by hand); the six are registered, and `rule_index`'s baseline grew by
+  their missing pages and tests (`--allow-growth`, the 0.9.9/0.9.10 revisions opened them; 88 stale
+  baseline entries closed).
+* `ember_diag` test `the_registry_and_the_specification_name_the_same_codes` reads the development
+  target and holds `[DIA-6a]` both ways: every code it names (outside ranges and its retired codes)
+  is registered, every registered code is one row of its table (or of the retired codes, kept so a
+  number is never reused) with the same rules, and every cited rule is defined.
+* Where the compiler emits a code for something other than the target's meaning (`E5050`, D-691;
+  `E2130`, D-721) the registry states the target's meaning and the defect records the emission.
+* `[EFF-4]`: test `a_callee_gaining_an_effect_rechecks_its_callers_contracts` — an edit to a
+  private body that gives an imported function `Io` makes the importer's `@noio` caller `E4041`
+  with its source unchanged (the effect set is in the interface hash, `[BLD-2]`).
+
 ## ADR-221 — Reproducible builds and the build id (`[BLD-13]`, `[DET-7]`)
 
 2026-10-19, toward 90% (solo).
@@ -5036,7 +5057,9 @@ guard setup cost is separate and remains OPEN under D-498.
   the object names itself relatively); and it links with `lld-link` (`-fuse-ld=lld`,
   `/pdbsourcepath:.`): Microsoft's linker writes a clang-cl object's relative paths into the
   program database as absolute ones and hashes them into `/Brepro`'s time stamp (measured: 20 bytes
-  differed between two folders in `debug`).
+  differed between two folders in `debug`). The CodeView flags go only to builds with debug
+  information: CI's older clang-cl warned that `-gno-codeview-command-line` was unused in `release`,
+  an error under the C gate (34b7f10f's CI).
 * **`ember build --build-id`** prints, before building, the BLAKE3 of the inputs: this compiler's
   own bytes, the profile, the target, the C compiler by the version it states (`Toolchain::version`:
   `cl`'s banner, `--version`'s first line), the runtime's sources, and every source the build read

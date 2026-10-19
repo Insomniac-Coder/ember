@@ -42,7 +42,7 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 | 1 | Core language (Parts II–VI) | 96% |
 | 2 | Ownership, borrowing, regions | 96% |
 | 3 | Classes, reference counting, exclusivity | 98% |
-| 4 | Effects, compile time, reflection, derives | 81% |
+| 4 | Effects, compile time, reflection, derives | 82% |
 | 5 | C interoperability | 51% |
 | 6 | Concurrency and data-oriented design | 88% |
 | 7 | C++ interoperability and the interpreter | 0% |
