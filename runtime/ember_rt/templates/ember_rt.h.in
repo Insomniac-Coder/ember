@@ -1316,6 +1316,26 @@ void* ember_box_new_copy(size_t size, size_t align, const void* value);
 typedef struct ember_type_info ember_type_info;
 typedef struct ember_vtable ember_vtable;
 typedef struct ember_itable_entry ember_itable_entry;
+
+/* Annex B — an identity compared across images: a type's or an interface's, by its name. The
+ * runtime sets `canonical` to the first image's record of the same name when it loads an image, so
+ * code of any image recognises an object made by any other. */
+typedef struct ember_rl_identity {
+    const char* name;
+    const struct ember_rl_identity* canonical;
+} ember_rl_identity;
+
+/* Whether two type or interface identities are one: their addresses, and in a reloadable build
+ * their canonical records, since each image has its own. */
+static inline bool ember_same_identity(const void* a, const void* b) {
+#if defined(EMBER_RELOAD)
+    return a == b || (a != NULL && b != NULL
+        && ((const ember_rl_identity*)a)->canonical == ((const ember_rl_identity*)b)->canonical
+        && ((const ember_rl_identity*)a)->canonical != NULL);
+#else
+    return a == b;
+#endif
+}
 typedef struct ember_field_desc ember_field_desc;
 
 /* `[DSP-3]` — a class TypeInfo carries a small sorted compiler-owned list of
@@ -1349,6 +1369,10 @@ struct ember_type_info {
     uint32_t itable_count;
     const ember_field_desc* fields;
     uint32_t field_count;
+#if defined(EMBER_RELOAD)
+    /* Annex B — the type's identity across images, which the runtime makes one per name. */
+    const ember_rl_identity* identity;
+#endif
 };
 
 /* Type-info flags. The remaining bits are reserved for future ABI-compatible
@@ -1366,6 +1390,12 @@ typedef struct ember_obj_header {
     uint32_t access;
     uint32_t flags;
     const ember_type_info* ti;
+#if defined(EMBER_RELOAD_INSTANCES)
+    /* [HR-12] A reloadable build registers every instance in the live-instance list, which a
+     * reload walks to migrate them: 16 bytes more, 40 in all. */
+    struct ember_obj_header* live_prev;
+    struct ember_obj_header* live_next;
+#endif
 } ember_obj_header;
 
 /* `[OBJ-1]`: a foreign build must fail rather than silently use a different
@@ -1375,7 +1405,9 @@ typedef struct ember_obj_header {
 #else
 #define EMBER_ABI_ASSERT(condition, message) _Static_assert((condition), message)
 #endif
-#if UINTPTR_MAX == UINT64_MAX
+#if UINTPTR_MAX == UINT64_MAX && defined(EMBER_RELOAD_INSTANCES)
+EMBER_ABI_ASSERT(sizeof(ember_obj_header) == 40, "a reloadable build's object header must be 40 bytes [HR-12]");
+#elif UINTPTR_MAX == UINT64_MAX
 EMBER_ABI_ASSERT(sizeof(ember_obj_header) == 24, "Ember object header must be 24 bytes");
 EMBER_ABI_ASSERT(offsetof(ember_obj_header, strong) == 0, "Ember strong count offset changed");
 EMBER_ABI_ASSERT(offsetof(ember_obj_header, weak) == 4, "Ember weak count offset changed");
@@ -1421,7 +1453,7 @@ EMBER_COLD const void* ember_itable_lookup_slow(const ember_type_info* type, con
 static inline const void* ember_itable_lookup(const ember_type_info* type, const void* interface_id) {
     const ember_itable_entry* entry = type->itables;
     for (uint32_t left = type->itable_count; left != 0; --left, ++entry) {
-        if (entry->interface_id == interface_id) {
+        if (ember_same_identity(entry->interface_id, interface_id)) {
             return entry->table;
         }
     }
@@ -2691,6 +2723,266 @@ void ember_rt_thread_attach(void);
 void ember_rt_thread_detach(void);
 /* [FFI-33c] Panic unless called on the current module initialization thread. */
 void ember_rt_check_main_thread(void);
+
+/* -- hot reload (Annex B) -----------------------------------------------------
+ *
+ * A package built with `[build] reload` is an image: a shared library loaded at run time beside its
+ * host, whose functions are reached through permanent thunks. The runtime that serves it is one
+ * shared library for the whole process ([HR-29]), built with EMBER_RELOAD; the image is compiled
+ * with it too. A reload loads the next image and runs plan, prepare, commit and reclaim ([HR-2]).
+ *
+ * [ABI-1] The hot-reload protocol has a version of its own, independent of the language and of the
+ * runtime ABI. Its number is in the name of the entry points a host and an image link against
+ * (ember_reload_init_v1, ember_reload_protocol_v1), so a host or an image built for another
+ * protocol fails to link; [ABI-2] an image is loaded at run time, so its manifest carries the
+ * number too and the runtime refuses a mismatch on load (E9037). */
+#define EMBER_RELOAD_PROTOCOL 1
+#define EMBER_RELOAD_MAGIC UINT64_C(0x44414F4C45524D45) /* "EMRELOAD" */
+#if EMBER_RELOAD_PROTOCOL != 1
+#error "rename ember_reload_init_v1 and ember_reload_protocol_v1 with the protocol version"
+#endif
+
+/* What ember_reload_poll() and ember_reload_checkpoint() return. */
+#define EMBER_RELOAD_IDLE 0         /* no new image is waiting */
+#define EMBER_RELOAD_APPLIED 1      /* the new image is running */
+#define EMBER_RELOAD_REFUSED 2      /* plan or prepare refused; the old image runs on ([HR-2]) */
+#define EMBER_RELOAD_UNSAFE_POINT 3 /* [HR-3] a registered thread is executing Ember code */
+#define EMBER_RELOAD_FAILED 4       /* the image could not be loaded; the old one runs on */
+#define EMBER_RELOAD_DISABLED 5     /* no reload in this process */
+
+/* [HR-30] What the host passes to ember_reload_init: the first image, and the file a build
+ * (`ember build --reload`) rewrites to name the newest one, read by each poll without blocking
+ * ([HR-31]). [VER-4]: fields are only ever added at the end, behind `size`. */
+typedef struct ember_reload_config {
+    size_t size;
+    const char* image;
+    const char* announce;
+    uint32_t flags;
+} ember_reload_config;
+
+/* [HR-32] The last reload, split into its phases (nanoseconds), with the instances migrated and,
+ * for a refusal, the report naming each type and change that caused it ([HR-18]). `compile_ns` is
+ * the build's own time, which the announcement carries. */
+typedef struct ember_reload_timings {
+    size_t size;
+    uint64_t reloads;
+    uint64_t refusals;
+    int last_result;
+    uint64_t compile_ns;
+    uint64_t load_ns;
+    uint64_t plan_ns;
+    uint64_t prepare_ns;
+    uint64_t commit_ns;
+    uint64_t reclaim_ns;
+    uint64_t instances_migrated;
+    char report[2048];
+} ember_reload_timings;
+
+/* [HR-30] The host contract: init once, poll where no Ember frame is live (between frames, for a
+ * game), stats for timing, shutdown. */
+int ember_reload_init_v1(const ember_reload_config* config);
+#define ember_reload_init(config) ember_reload_init_v1(config)
+int ember_reload_poll(void);
+const ember_reload_timings* ember_reload_stats(void);
+void ember_reload_shutdown(void);
+/* `std.hot.checkpoint()` ([HR-33]): a poll the program itself makes, from its one live activation
+ * on this thread. A runtime built without reload answers EMBER_RELOAD_DISABLED. */
+int ember_reload_checkpoint(void);
+/* [HR-21] An export of the running image by its C name: its permanent thunk, the one address of
+ * it for the life of the process, which a host may keep in a table across every reload; NULL when
+ * no image exports the name. */
+void (*ember_reload_export(const char* name))(void);
+/* The toolchain's own host ([HR-33]): the image `<package>.image.0` beside the executable, the
+ * announcement `<package>.reload`, and the image's program run with the process's arguments. */
+int ember_reload_host_main(int argc, char** argv, const char* package);
+/* [HR-42] Entering Ember code from foreign code (an export, a callback, a thread's start, the
+ * program's entry) and leaving it: the thread's depth counter, which a reload reads. */
+void ember_reload_enter(void);
+void ember_reload_leave(void);
+
+/* What an image carries, read by the runtime from the image's reload manifest section ([HR-8]),
+ * never from the platform's export table. */
+
+/* EMBER_RL_FN_* — what the manifest says of a function. */
+#define EMBER_RL_FN_RELOADABLE UINT32_C(1) /* reached through its thunk ([HR-5]) */
+#define EMBER_RL_FN_NORELOAD UINT32_C(2)   /* called directly; its body may not change ([HR-10]) */
+#define EMBER_RL_FN_ADDRESS UINT32_C(4)    /* its address is taken: data may hold its thunk ([HR-7]) */
+#define EMBER_RL_FN_EXPORT UINT32_C(8)     /* an `extern "C"` export: a host calls it ([HR-21]) */
+
+/* One function. A reloadable one's call-table slot is keyed by `name`, its mangled symbol, never
+ * by its index ([HR-7]); `body` is this image's code and `thunk` this image's thunk, which becomes
+ * the permanent one when the name is new ([HR-6]); `descriptor`, when this image makes values of
+ * the function, its value's descriptor, of which the first one made stands for the function in
+ * every image, so a value of it is one value whichever image made it. A `@noreload` one is listed
+ * for its body's hash ([HR-10]). */
+typedef struct ember_rl_fn {
+    const char* name;
+    void (*body)(void);
+    void (*thunk)(void);
+    const void* descriptor;
+    uint64_t signature;
+    uint64_t body_hash;
+    uint32_t flags;
+} ember_rl_fn;
+
+/* EMBER_RL_STATIC_* — what the manifest says of a static. */
+#define EMBER_RL_STATIC_REINIT UINT32_C(1)   /* `@reinit_on_reload` ([HR-17a]) */
+#define EMBER_RL_STATIC_CONSTANT UINT32_C(2) /* placed with no initialisation code: `initial` holds it */
+
+/* [HR-4a] One static: its storage is the runtime's, found by name. `type_schema` is its type's
+ * schema hash and `initialiser` its initialiser's ([HR-17], [HR-17a]); `shape` says what its value
+ * holds, as a field at offset 0 would ([HR-15]). */
+typedef struct ember_rl_static {
+    const char* name;
+    uint32_t size;
+    uint32_t align;
+    uint64_t type_schema;
+    uint64_t initialiser;
+    uint32_t flags;
+    const void* initial;
+    void (*drop)(void*);
+    const struct ember_rl_field* shape;
+} ember_rl_static;
+
+struct ember_rl_field;
+
+/* EMBER_RL_TYPE_* — a schema's kind. */
+#define EMBER_RL_TYPE_STRUCT UINT32_C(1)
+#define EMBER_RL_TYPE_CLASS UINT32_C(2)
+#define EMBER_RL_TYPE_ENUM UINT32_C(3)
+#define EMBER_RL_TYPE_INTERFACE UINT32_C(4)
+
+/* EMBER_RL_FIELD_* — how a field's value moves to a new schema ([HR-14]). */
+#define EMBER_RL_FIELD_DEFAULT UINT32_C(1)   /* has a declared default: `init_field` writes it */
+#define EMBER_RL_FIELD_ZERO UINT32_C(2)      /* its type is `Default`, whose value is all zero bytes */
+#define EMBER_RL_FIELD_SIGNED UINT32_C(4)    /* a signed integer: widened by sign */
+#define EMBER_RL_FIELD_UNSIGNED UINT32_C(8)  /* an unsigned integer: widened by zero */
+#define EMBER_RL_FIELD_FLOAT UINT32_C(16)    /* a float: f32 widens to f64 */
+
+/* EMBER_RL_KIND_* — what a value holds that a reload must follow ([HR-15]). */
+#define EMBER_RL_KIND_PLAIN UINT32_C(0)         /* no reference to an object */
+#define EMBER_RL_KIND_HANDLE UINT32_C(1)        /* a strong class handle */
+#define EMBER_RL_KIND_OPTION_HANDLE UINT32_C(2) /* `Option` of a handle, null for `None` */
+#define EMBER_RL_KIND_WEAK UINT32_C(3)          /* a `Weak` handle, null when empty */
+#define EMBER_RL_KIND_STRUCT UINT32_C(4)        /* a struct, by value: `type_name`'s schema */
+#define EMBER_RL_KIND_ENUM UINT32_C(5)          /* a unit enum: its discriminant, `type_name`'s schema */
+#define EMBER_RL_KIND_ARRAY UINT32_C(6)         /* an `Array`: `element_kind` elements of `element_size` */
+#define EMBER_RL_KIND_OPAQUE UINT32_C(7)        /* holds references the runtime cannot follow */
+#define EMBER_RL_KIND_PAYLOAD UINT32_C(8)       /* an enum with payloads: `type_name`'s schema */
+
+/* [HR-11] A field of a schema: its name, the name `@renamed_from` gives its old self, its type, its
+ * type's schema hash, its offset and size, and what it holds. */
+typedef struct ember_rl_field {
+    const char* name;
+    const char* renamed_from;
+    const char* type_name;
+    uint64_t type_schema;
+    uint32_t offset;
+    uint32_t size;
+    uint32_t flags;
+    uint32_t kind;
+    uint32_t element_kind;
+    uint32_t element_size;
+    const char* element_type;
+} ember_rl_field;
+
+/* [HR-11] A variant of an enum's schema: its name, `@renamed_from`'s, its discriminant, its
+ * payload's schema hash and its payload's fields, at their offsets in the enum's value (an enum with
+ * payloads has its tag as its type's one field). Enum values migrate by variant name, never by
+ * discriminant ([HR-11a]). */
+typedef struct ember_rl_variant {
+    const char* name;
+    const char* renamed_from;
+    uint64_t discriminant;
+    uint64_t payload_schema;
+    uint32_t field_count;
+    const struct ember_rl_field* fields;
+} ember_rl_variant;
+
+/* [HR-11] A type's schema: its kind, base, layout attributes, and fields or variants. `schema` is
+ * the hash of all of it, so equal hashes need no migration. A class's `type_info` and `identity`
+ * are this image's. `methods` hashes its method tables' layout: a class whose methods changed
+ * keeps its instances but takes the new type information ([HR-14]). */
+typedef struct ember_rl_type {
+    const char* name;
+    uint32_t kind;
+    const char* base;
+    uint32_t layout;
+    uint32_t size;
+    uint32_t align;
+    uint64_t schema;
+    uint64_t methods;
+    const ember_type_info* type_info;
+    ember_rl_identity* identity;
+    uint32_t field_count;
+    const ember_rl_field* fields;
+    uint32_t variant_count;
+    const ember_rl_variant* variants;
+    /* Writes field `index`'s default into `object`'s new instance ([HR-14]). */
+    void (*init_field)(void* object, uint32_t index);
+    /* `migrate_from`, when the type declares one ([HR-16]): builds the new value at `out` from
+     * the old one at `old`, returning 0, or writes a ReloadError's report and returns 1. */
+    int (*migrate)(void* out, const void* old, char* report, size_t report_size);
+    /* The struct `Old<Name>` the `migrate_from` reads, by name in this image. */
+    const char* old_type;
+    /* Drops field `index` of the value at `object` ([HR-2a]'s reclaim). */
+    void (*drop_field)(void* object, uint32_t index);
+} ember_rl_type;
+
+/* EMBER_RL_LAYOUT_* — a type's layout facts. */
+#define EMBER_RL_LAYOUT_CONTAINED UINT32_C(1) /* a value of it sits in a container somewhere ([HR-13]) */
+#define EMBER_RL_LAYOUT_UNIT UINT32_C(2)      /* an enum with no payload */
+#define EMBER_RL_LAYOUT_FOREIGN UINT32_C(4)   /* a raw pointer can reach a value of it ([HR-13b]) */
+
+/* [HR-8] The reload manifest: in a section of the image named `.emrl` (PE) or `ember_reload`
+ * (ELF). `targets`, `addresses`, `static_data` and `static_state` are this image's tables, which
+ * the runtime fills: a thunk loads its target from `targets`; code that takes a reloadable
+ * function's address reads it from `addresses`, so it is the permanent thunk's ([HR-6]); a static's
+ * storage and state are the runtime's ([HR-4a]). `layout` names the runtime function whose
+ * presence says both agree on the object header ([HR-12a]). */
+typedef struct ember_rl_manifest {
+    uint64_t magic;
+    uint32_t protocol;
+    uint32_t size;
+    uint32_t header_bytes;
+    uint32_t mode;
+    const char* package;
+    void (*layout)(void);
+    void (*protocol_witness)(void);
+    uint32_t fn_count;
+    const ember_rl_fn* fns;
+    void (**targets)(void);
+    void (**addresses)(void);
+    const void** descriptors;
+    uint32_t static_count;
+    const ember_rl_static* statics;
+    void** static_data;
+    uint32_t** static_state;
+    uint32_t type_count;
+    const ember_rl_type* types;
+    uint32_t identity_count;
+    ember_rl_identity* const* identities;
+    int (*entry)(int argc, char** argv);
+} ember_rl_manifest;
+
+/* Where an image's manifest goes: its own section, which the linker keeps. */
+#if defined(EMBER_RELOAD) && defined(_MSC_VER)
+#pragma section(".emrl", read)
+#define EMBER_RL_MANIFEST __declspec(allocate(".emrl"))
+#elif defined(EMBER_RELOAD) && defined(_WIN32)
+#define EMBER_RL_MANIFEST __attribute__((section(".emrl"), used))
+#elif defined(EMBER_RELOAD)
+#define EMBER_RL_MANIFEST __attribute__((section("ember_reload"), used))
+#endif
+
+/* [ABI-1] An image's link-time witness of the protocol it was built for. */
+void ember_reload_protocol_v1(void);
+/* [HR-12a] An image's link-time witness of the object header it was built for: the shared
+ * runtime defines only the one it was built with. */
+void ember_obj_header_v24(void);
+void ember_obj_header_v40(void);
+/* [HR-7] The target of a removed function's thunk: a stub that panics naming it. */
+EMBER_PANIC_FN void ember_reload_removed_called(const char* name);
 
 /* -- debug facilities ------------------------------------------------------- */
 

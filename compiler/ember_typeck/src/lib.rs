@@ -13332,6 +13332,18 @@ impl<'a> Checker<'a> {
         if self.resolve_name(name).is("std.jobs.wait") {
             return Some(self.synth_jobs_wait(args, span));
         }
+        // `[HR-33]` — `std.hot.checkpoint()`, the runtime's poll from inside the program.
+        if self.resolve_name(name).is("std.hot.checkpoint") {
+            if !args.is_empty() || !explicit.is_empty() {
+                self.error(codes::E2020, span, "`checkpoint` takes no arguments");
+                return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+            }
+            return Some(Expr {
+                ty: self.common.void,
+                kind: ExprKind::Builtin { which: Builtin::HotCheckpoint, args: Vec::new() },
+                span,
+            });
+        }
         // `[HASH-2]` — `std.collections`'s own `process_key(which)`, the
         // process's hash key, which the runtime draws.
         if self.resolve_name(name).is("std.collections.process_key") {
@@ -35118,10 +35130,17 @@ impl<'a> Checker<'a> {
                 continue;
             }
             if matches!(name, "noalloc" | "nosync" | "noblock" | "noio" | "nolock" | "realtime" | "deterministic"
-                | "test" | "should_panic")
+                | "test" | "should_panic" | "reloadable" | "noreload" | "reinit_on_reload")
                 && !attr.args.is_empty()
             {
                 self.error(codes::E0104, attr.span, format!("`@{name}` takes no arguments"));
+                continue;
+            }
+            // `[HR-14]` — the old name, as one string.
+            if name == "renamed_from"
+                && !matches!(attr.args.as_slice(), [ast::AttrArg::Expr(ast::Expr { kind: ast::ExprKind::Lit(ast::Literal::Str(_)), .. })])
+            {
+                self.error(codes::E0104, attr.span, "`@renamed_from` takes the old name as one string: `@renamed_from(\"old\")`");
                 continue;
             }
             if !built {
@@ -49467,8 +49486,15 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["component"], &["struct"], false),
     (&["soa"], &["field"], false),
     (&["always_specialize", "never_specialize"], &["fn", "struct", "enum", "class", "type"], false),
-    (&["reloadable", "noreload"], &["item", "module"], false),
-    (&["renamed_from", "reinit_on_reload", "allow_reload_terminate"], &["item"], false),
+    // Annex B — `[HR-25]`: which functions a reloadable build reaches through thunks; nothing in
+    // a build without reload, whose C is the same either way (`[HR-27]`).
+    (&["reloadable", "noreload"], &["item", "module"], true),
+    // `[HR-17a]` — the static's edited initialiser runs again at a reload.
+    (&["reinit_on_reload"], &["static"], true),
+    // `[HR-14]` — a field's or a variant's old name, whose value a reload carries over.
+    (&["renamed_from"], &["field", "variant"], true),
+    // `[HR-43]` — admitting a call that may end the process: C++ calls are not built.
+    (&["allow_reload_terminate"], &["fn"], false),
     (&["prelude"], &["module"], false),
 ];
 

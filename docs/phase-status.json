@@ -46,6 +46,8 @@
     "FFI-1": "a foreign declaration's contract has no effects or thread rule yet; contracts beyond link names are E0900 (see FFI-11)",
     "FFI-2": "overlays (§XVI.4) are not built, so a call's missing facts cannot be supplied by one",
     "FFI-33c": "`@export_table` is not built (ATTRIBUTE_TABLE in ember_typeck)",
-    "CLO-6a": "a `once fn` is built as a parameter's bound only: as a value (a local, a field, a `Box` or a collection element), whose call empties its place, it is refused (E0900)"
+    "CLO-6a": "a `once fn` is built as a parameter's bound only: as a value (a local, a field, a `Box` or a collection element), whose call empties its place, it is refused (E0900)",
+    "HR-2a": "reclaim drops a `migrate_from`'s old instance field by field without its class's own `drop`: that method's thunk now reaches the new image's body, built for the new layout (owner question in tasks/85/A-notes.md)",
+    "HR-14": "four rows are not built and are refused instead: a field added whose type is a user `Default` type (the built-in ones start at zero), a field changed to a range type (`T.checked`), an enum whose variants' payloads changed, and a changed layout attribute, which the schema does not record (tasks/85/A-notes.md)"
   }
 }

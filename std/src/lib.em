@@ -14,6 +14,7 @@
 ##   `std.jobs`  the job system: `submit`, `wait`, `scope` (Part XI.5)
 ##   `std.coroutine`  gameplay sequencing on generators: `Wait`, `Scheduler`
 ##                    (`[CORO-11]`)
+##   `std.hot`  hot reload's program side: `ReloadError` and `checkpoint` (Annex B)
 ##
 ## `Option`, `Result`, `Array` and `String` are still compiler-known: Part XX.1
 ## makes them so "until Phase 2's generics let the standard library write

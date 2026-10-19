@@ -5,6 +5,7 @@
 //! each command something to do.
 
 mod comptime;
+mod reload;
 mod test_runner;
 
 use std::path::{Path, PathBuf};
@@ -402,6 +403,13 @@ struct Options {
     /// `[UNS-8]` — `ember tcb`: check the program, then list its `unsafe` instead of generating
     /// code.
     tcb_report: Option<TcbReport>,
+    /// `[BUD-2]`'s B2, Annex B — `ember build --reload`: build the next image of a running reloadable
+    /// program and announce it to the program's polls.
+    reload: bool,
+    /// `[HR-18b]` — `ember build --reload --explain`: predict the reload, apply nothing.
+    explain: bool,
+    /// `[HR-33]` — `ember run --hot`: run, watch the sources, rebuild and reload.
+    hot: bool,
 }
 
 /// What `ember tcb` prints: JSON or text, one module or all.
@@ -540,6 +548,15 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             if options.emit_header && command != "build" {
                 return Err("`--emit-header` is only valid with `ember build`".to_string());
             }
+            if options.reload && command != "build" {
+                return Err("`--reload` is only valid with `ember build`; `ember run --hot` reloads as it runs".to_string());
+            }
+            if options.explain && !options.reload {
+                return Err("`--explain` is only valid with `ember build --reload`".to_string());
+            }
+            if options.hot && command != "run" {
+                return Err("`--hot` is only valid with `ember run`".to_string());
+            }
             if options.emit.as_deref() == Some("header") && command != "build" {
                 return Err("`--emit header` is only valid with `ember build`".to_string());
             }
@@ -557,6 +574,10 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             } else {
                 PathBuf::from(input)
             };
+            // `[HR-33]` — the toolchain's own host: build, run, watch, rebuild, reload.
+            if command == "run" && options.hot {
+                return run_hot(&source, &options);
+            }
             compile(&source, command, &options)
         }
         // `[FMT-1]` — the canonical printer. `--check` reports whether the
@@ -1485,6 +1506,7 @@ fn safety_functions_json(
     bodies: &[ember_mir::Body],
     types: &TypeTable,
     modules: &[ember_typeck::LoadedModule],
+    reloadable: Option<&std::collections::BTreeSet<String>>,
 ) -> String {
     use ember_hir::Effects;
     let standard_files: std::collections::BTreeSet<ember_span::FileId> = modules
@@ -1507,11 +1529,17 @@ fn safety_functions_json(
         .map(|(body, effects)| {
             let contracts = body.contracts.forbidden | body.contracts.realtime;
             let kinds: Vec<&str> = checks.iter().filter(|(effect, _)| effects.contains(*effect)).map(|(_, name)| *name).collect();
-            serde_json::json!({
+            let mut entry = serde_json::json!({
                 "function": body.name,
                 "nopanic_explicit": contracts.contains(Effects::PANIC),
                 "runtime_checks": kinds,
-            })
+            });
+            // `[HR-28]` — in a reloadable build, whether a call reaches the function through its
+            // thunk or directly.
+            if let Some(reloadable) = reloadable {
+                entry["call"] = serde_json::json!(if reloadable.contains(&body.symbol) { "thunk" } else { "direct" });
+            }
+            entry
         })
         .collect();
     serde_json::to_string(&functions).unwrap_or_else(|_| "[]".to_string())
@@ -1843,7 +1871,13 @@ fn print_safety_functions(functions: &[serde_json::Value]) {
         let checks = if kinds.is_empty() { "none".to_string() } else { kinds.join(", ") };
         let contract = if nopanic { "  @nopanic(explicit)" } else { "" };
         let verdict = if nopanic && kinds.is_empty() { "  (no panic the effect model knows of)" } else { "" };
-        println!("  {name}{contract}  RuntimeCheck: {checks}{verdict}");
+        // `[HR-28]` — a reloadable build's thunk indirection, beside the checks.
+        let call = match entry.get("call").and_then(serde_json::Value::as_str) {
+            Some("thunk") => "  Call: through its thunk (one load and one indirect jump)",
+            Some(_) => "  Call: direct",
+            None => "",
+        };
+        println!("  {name}{contract}  RuntimeCheck: {checks}{verdict}{call}");
     }
 }
 
@@ -2102,6 +2136,9 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--json" => options.json = true,
             "--leak-check" => options.leak_check = true,
             "--no-leak-check" => options.no_leak_check = true,
+            "--reload" => options.reload = true,
+            "--explain" => options.explain = true,
+            "--hot" => options.hot = true,
             "-Dwarnings" | "-D" => {
                 if arg == "-D" {
                     let what = value(&mut index, arg)?;
@@ -3060,6 +3097,7 @@ fn package_source_root(input: &Path) -> PathBuf {
 }
 
 fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, String> {
+    let started = std::time::Instant::now();
     if options.timings.is_some() {
         start_timings();
     }
@@ -3107,7 +3145,20 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // package root until `ember.toml` is read.
     let root_dir = package_source_root(input);
     let lint_settings = manifest_lint_settings(&root_dir, &mut map, &mut sink);
-    let modules = load_modules(module, &root_dir, &mut map, &mut sink);
+    let reload = reload_mode(&lint_settings, options, &mut sink)?;
+    // `ember test` builds the package's tests as a program of their own, without reload.
+    let reload = if command == "test" { ReloadMode::None } else { reload };
+    let mut modules = load_modules(module, &root_dir, &mut map, &mut sink);
+    // Annex B — what a reloadable program's reload needs written into it before it is checked: its
+    // fields' defaults as functions, `Old<Name>` from the previous build's schema.
+    let reload_bin = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target")).join(options.profile.name()).join("bin");
+    let reload_stem = input.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
+    let reload_additions = (reload != ReloadMode::None).then(|| {
+        let previous = std::fs::read_to_string(reload_bin.join(format!("{reload_stem}.schema.json")))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+        reload::inject(&mut modules, &mut map, &mut sink, previous.as_ref())
+    });
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
     }
@@ -3205,6 +3256,17 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     }
     // `[COST-1]` — an implicit `clone` nothing calls is not emitted.
     ember_mir::prune_unused_implicit(&mut bodies, &types, &checked.std_instances);
+    // Annex B — which functions the image reaches through thunks; `[HR-9a]`, none is inlined.
+    let reload_image = (reload != ReloadMode::None).then(|| {
+        let package = input.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
+        reload::plan(reload, &package, &modules, &map, &bodies, reload_additions.as_ref().expect("made with the mode"))
+    });
+    if let Some(image) = &reload_image {
+        for body in bodies.iter_mut().filter(|body| image.reloadable.contains(&body.symbol)) {
+            body.inline.never = true;
+        }
+        reload::lint_noreload_loops(&bodies, image, &mut sink);
+    }
     mark("lower", "all modules");
     if cfg!(debug_assertions) {
         ember_mir::verify::verify_all(&bodies);
@@ -3324,7 +3386,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     }
     // `[EFF-16]` — what the safety side table says of each function, read where the contracts
     // were checked: inlining below folds a small function into its callers.
-    let safety_functions = safety_functions_json(&bodies, &types, &modules);
+    let safety_functions = safety_functions_json(&bodies, &types, &modules, reload_image.as_ref().map(|image| &image.reloadable));
     // `[THR-5]` — a `Scope` binding stays where its `with` put it.
     if ember_analysis::check_scope_moves_all(&bodies, &types, &mut sink) > 0 {
         return Ok(finish(&sink, &map, options));
@@ -3541,8 +3603,11 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         if command == "build" && !matches!(package_kind.as_str(), "bin" | "staticlib") {
             return Err(format!("package kind `{package_kind}` is not implemented for `ember build`"));
         }
-        if matches!(command, "build" | "run" | "test") && runtime_mode != "static" {
+        if matches!(command, "build" | "run" | "test") && runtime_mode != "static" && reload_image.is_none() {
             return Err(format!("runtime mode `{runtime_mode}` is not implemented for this build artifact"));
+        }
+        if reload_image.is_some() && staticlib {
+            return Err("a `staticlib` package is not reloadable: hot reload builds a program".to_string());
         }
     }
     let header_requested = options.emit_header || options.emit.as_deref() == Some("header") ||
@@ -3559,6 +3624,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         staticlib,
         c_for_msvc(&options),
         (command == "test").then(|| tests.iter().map(|test| test.symbol.clone()).collect()),
+        reload_image.as_ref(),
     );
     mark("C generation", "all modules");
     // `[DSP-5]` — on standard error, so it never mixes with `--emit c`.
@@ -3680,6 +3746,49 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let toolchain = Toolchain::detect(requested.as_deref()).map_err(|e| e.to_string())?;
     let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
     let includes = vec![runtime.join("include")];
+    // Annex B — a reloadable program: the shared runtime, an image and the host that runs it.
+    if let Some(image) = &reload_image {
+        if !emitted.relaxed_units.is_empty() {
+            return Err("error[E0900]: `@fastmath` and `@fp(contract)` in a reloadable build are not built yet".to_string());
+        }
+        let built = match reload::build(&toolchain, &layout, &module_name, &c_path, &runtime_source, &includes,
+            options.profile, image, options.reload, options.explain, started)
+        {
+            Ok(built) => built,
+            Err(reload::Failure::Other(message)) => return Err(message),
+            // `[HR-12a]` — the process's header is fixed when it starts: an image built for the other
+            // header cannot join it.
+            Err(reload::Failure::Header { running, built }) => {
+                sink.emit(
+                    Diagnostic::error(codes::E9035, Span::DUMMY, format!(
+                        "the running program's objects have {running}-byte headers, and this image's would have {built}"))
+                        .note("whether reload migrates instances (`[build] reload`) is the whole process's to agree on: it fixes the object header [HR-12a]")
+                        .help("build the program again with `ember build` and restart it"),
+                );
+                return Ok(finish(&sink, &map, options));
+            }
+        };
+        mark("C compile and link", "all modules");
+        // `[HR-18b]` — the running program's own plan of this image, applying nothing.
+        if options.explain {
+            report(&sink, &map, options);
+            let (apply, text) = reload::explain(&layout.bin, &module_name, &built.image)?;
+            println!("{}", if apply { "the reload would apply" } else { "the reload would be refused" });
+            print!("{text}");
+            return Ok(if apply { ExitCode::SUCCESS } else { ExitCode::FAILURE });
+        }
+        // `[HR-16]` — this build's schema, which the next build's `Old<Name>` structs are made from.
+        if let Some(additions) = &reload_additions {
+            let schema = serde_json::Value::Object(additions.schema.clone());
+            std::fs::write(layout.bin.join(format!("{module_name}.schema.json")), schema.to_string()).map_err(|e| e.to_string())?;
+        }
+        report(&sink, &map, options);
+        if command == "run" {
+            return run_program(&built.host, options);
+        }
+        eprintln!("built {}", if options.reload { built.image.display() } else { built.host.display() });
+        return Ok(ExitCode::SUCCESS);
+    }
     // `[CG-C-11]` — a relaxed unit calls the package's other functions,
     // which a library keeps internal to its own unit.
     if staticlib && !emitted.relaxed_units.is_empty() {
@@ -3781,26 +3890,118 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         return test_runner::run_tests(&exe, &tests, options);
     }
     if command == "run" {
-        let status = std::process::Command::new(&exe)
-            .args(&options.program_args)
-            .status()
-            .map_err(|e| e.to_string())?;
-        // A status outside 0..=255 (a Windows exception arrives as a large
-        // negative i32) or a Unix signal is a crash: clamping it into a u8
-        // turned one into a clean exit, so it becomes a plain failure, and it
-        // is said what stopped the program (D-464).
-        if let Some(how) = abnormal_end(&status) {
-            eprintln!("error: {how}");
-        }
-        return Ok(match status.code() {
-            Some(0) => ExitCode::SUCCESS,
-            Some(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
-            None => ExitCode::FAILURE,
-        });
+        return run_program(&exe, options);
     }
 
     eprintln!("built {}", exe.display());
     Ok(ExitCode::SUCCESS)
+}
+
+/// `[HR-33]`, `[HR-31]` — `ember run --hot`: build the program under `debug`, run it, and while
+/// it runs watch the package's sources; after each edit, build the next image and announce it,
+/// which the program applies at its next `std.hot.checkpoint()`. Building happens here, in the
+/// background of the program, so a checkpoint never waits for it. A build that fails leaves the
+/// old code running. The program is told when ten seconds pass with no checkpoint reached.
+fn run_hot(input: &Path, options: &Options) -> Result<ExitCode, String> {
+    if options.profile != Profile::Debug {
+        return Err("`ember run --hot` builds under `debug`".to_string());
+    }
+    let build = Options { emit: None, ..options_for_hot(options, false) };
+    let code = compile(input, "build", &build)?;
+    if code != ExitCode::SUCCESS {
+        return Ok(code);
+    }
+    let bin = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target")).join(options.profile.name()).join("bin");
+    let stem = input.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
+    let host = bin.join(if cfg!(windows) { format!("{stem}.exe") } else { stem.clone() });
+    let mut child = std::process::Command::new(&host)
+        .args(&options.program_args)
+        .env(format!("{}_HOT", ember_branding::SYMBOL_PREFIX.to_uppercase()), "1")
+        .spawn()
+        .map_err(|error| format!("cannot start `{}`: {error}", host.display()))?;
+    let root = package_source_root(input);
+    let mut seen = source_stamp(&root);
+    loop {
+        if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
+            if let Some(how) = abnormal_end(&status) {
+                eprintln!("error: {how}");
+            }
+            return Ok(match status.code() {
+                Some(0) => ExitCode::SUCCESS,
+                Some(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
+                None => ExitCode::FAILURE,
+            });
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let now = source_stamp(&root);
+        if now != seen {
+            seen = now;
+            // A failed build is reported and changes nothing the program runs ([HR-41]).
+            match compile(input, "build", &options_for_hot(options, true)) {
+                Ok(_) => {}
+                Err(message) => eprintln!("error: {message}"),
+            }
+        }
+    }
+}
+
+/// The options of one of `ember run --hot`'s builds: the first, or the next image (`--reload`).
+fn options_for_hot(options: &Options, reload: bool) -> Options {
+    Options {
+        profile: options.profile,
+        cc: options.cc.clone(),
+        out_dir: options.out_dir.clone(),
+        json: options.json,
+        deny_warnings: options.deny_warnings,
+        reload,
+        hot: true,
+        ..Options::default()
+    }
+}
+
+/// Every source file of a package, with its size and time of change: what `ember run --hot`
+/// watches.
+fn source_stamp(root: &Path) -> Vec<(PathBuf, u64, Option<std::time::SystemTime>)> {
+    let mut out = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_dir() {
+                if path.file_name().is_some_and(|name| name != "target" && !name.to_string_lossy().starts_with('.')) {
+                    pending.push(path);
+                }
+            } else if path.extension().is_some_and(|extension| extension == ember_branding::SOURCE_EXT)
+                || path.file_name().is_some_and(|name| name == ember_branding::MANIFEST)
+            {
+                out.push((path, meta.len(), meta.modified().ok()));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// `ember run`: the program, with its arguments, its status as the command's.
+fn run_program(exe: &Path, options: &Options) -> Result<ExitCode, String> {
+    let status = std::process::Command::new(exe)
+        .args(&options.program_args)
+        .status()
+        .map_err(|e| e.to_string())?;
+    // A status outside 0..=255 (a Windows exception arrives as a large
+    // negative i32) or a Unix signal is a crash: clamping it into a u8
+    // turned one into a clean exit, so it becomes a plain failure, and it
+    // is said what stopped the program (D-464).
+    if let Some(how) = abnormal_end(&status) {
+        eprintln!("error: {how}");
+    }
+    Ok(match status.code() {
+        Some(0) => ExitCode::SUCCESS,
+        Some(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
+        None => ExitCode::FAILURE,
+    })
 }
 
 /// `[CT-1]` — how many times a program is checked at most: each pass answers
@@ -3951,6 +4152,30 @@ struct ManifestLintSettings {
     long_term_access_across_dynamic_call: bool,
     /// `[EFF-19]` — `[realtime] contracts`, when the manifest declares them.
     realtime: Option<ember_hir::Effects>,
+    /// `[MAN-7]` — `[build] reload`, when written and valid, with where.
+    reload: Option<(ReloadMode, Span)>,
+    /// `[HR-29]` — `[build] runtime = "static"`, when written, with where.
+    static_runtime: Option<Span>,
+}
+
+/// `[MAN-7]`, `[HR-25]` — what a package's `[build] reload` asks for. `OptIn` makes reloadable only
+/// what `@reloadable` names; `All` everything but what `@noreload` names; `Bodies` is `All` admitting
+/// only body changes (`[HR-19]`).
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum ReloadMode {
+    None,
+    OptIn,
+    All,
+    Bodies,
+}
+
+impl ReloadMode {
+    const VALUES: [(&'static str, ReloadMode); 4] =
+        [("opt-in", ReloadMode::OptIn), ("all", ReloadMode::All), ("bodies", ReloadMode::Bodies), ("none", ReloadMode::None)];
+
+    fn parse(value: &str) -> Option<ReloadMode> {
+        ReloadMode::VALUES.iter().find(|(name, _)| *name == value).map(|(_, mode)| *mode)
+    }
 }
 
 fn manifest_lint_settings(
@@ -4013,6 +4238,18 @@ fn manifest_lint_settings(
                         );
                     } else if section == "realtime" && key == "contracts" {
                         settings.realtime = Some(realtime_contracts(value, location, sink));
+                    } else if section == "build" && key == "reload" {
+                        // `[MAN-7]` — one of four words.
+                        let written = value.trim().trim_matches('"');
+                        match ReloadMode::parse(written) {
+                            Some(mode) => settings.reload = Some((mode, location)),
+                            None => sink.emit(
+                                Diagnostic::error(codes::E9031, location, format!("`{written}` is not a `reload` value"))
+                                    .help("`[build] reload` is \"opt-in\", \"all\", \"bodies\" or \"none\" [MAN-7]"),
+                            ),
+                        }
+                    } else if section == "build" && key == "runtime" && value.trim().trim_matches('"') == "static" {
+                        settings.static_runtime = Some(location);
                     } else if section == "lints" {
                         if !manifest_lint_is_known(key) {
                             sink.emit(Diagnostic::error(
@@ -4036,6 +4273,38 @@ fn manifest_lint_settings(
         directory = candidate.parent();
     }
     ManifestLintSettings::default()
+}
+
+/// Annex B — the build's reload mode: the manifest's `[build] reload`, or `all` when `--reload` or
+/// `--hot` asks for reload and the manifest writes none. `[PRF-2]`, `[MAN-7]`: reload is a build mode
+/// of `debug` and `release`, forbidden in `shipping` (`E9033`). `[HR-29]`: a reloadable package
+/// shares the one runtime of its process, so a manifest asking for a static runtime is `E9036`.
+fn reload_mode(settings: &ManifestLintSettings, options: &Options, sink: &mut Sink) -> Result<ReloadMode, String> {
+    let (written, location) = settings.reload.unwrap_or((ReloadMode::None, Span::DUMMY));
+    let asked = options.reload || options.hot;
+    if asked && settings.reload.is_some_and(|(mode, _)| mode == ReloadMode::None) {
+        return Err("this package is not reloadable: its manifest says `[build] reload = \"none\"`".to_string());
+    }
+    let mode = if written == ReloadMode::None && asked { ReloadMode::All } else { written };
+    if mode == ReloadMode::None {
+        return Ok(mode);
+    }
+    if options.profile == Profile::Shipping {
+        let how = if settings.reload.is_some() { "this package's manifest asks for hot reload" } else { "hot reload was asked for" };
+        sink.emit(
+            Diagnostic::error(codes::E9033, location, format!("{how}, which `shipping` does not admit"))
+                .note("hot reload is a build mode of `debug` and `release`, never of `shipping` [PRF-2]")
+                .help("build with `--profile debug` or `--profile release`, or set `[build] reload = \"none\"`"),
+        );
+    }
+    if let Some(at) = settings.static_runtime {
+        sink.emit(
+            Diagnostic::error(codes::E9036, at, "a reloadable package cannot link its own copy of the runtime")
+                .note("with reload on, one shared runtime serves every image in the process [HR-29]")
+                .help("write `[build] runtime = \"shared\"`, or leave `runtime` out"),
+        );
+    }
+    Ok(mode)
 }
 
 /// `[EFF-19]` — `[realtime] contracts = ["noalloc", "nopanic(explicit)", …]`: the contracts
