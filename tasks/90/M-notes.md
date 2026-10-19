@@ -159,8 +159,8 @@ with `@derive(Component) struct A` and one with `A` and `B`, in one folder.
   conflict is `E7020`, at the later system, naming both and the component, with the first marked.
   Part XII.3 says the ECS "has no compiler support of its own"; `E7020` cannot come from a library,
   so this is owner question 5. `docs/errors/E7020.md` is new.
-- **Workaround in the library**: `system` calls `accesses_of[Q](out)` rather than
-  `Q.Ops.accesses(out)` inside its lambda (defect 2 below).
+- `system`'s lambda calls `Q.Ops.accesses(out)`, which stopped the compiler until the defect of
+  §8 was fixed.
 
 **Tests** (`tests/conformance/ECS-4/`): `accept_a_run_borrows_only_the_storages_its_query_names`,
 `run_fail_a_system_writes_a_storage_its_query_holds`,
@@ -204,6 +204,34 @@ Built by the storage (insertion order, swap-remove holes) and the query walking 
 storage in dense order. **Test:** `ECS-6/accept_iteration_order_is_insertion_order_with_swap_remove_holes`
 (removals, an add at the end, the same operations in a second world, destroys).
 
+## 8. A lambda making a call through a bound in a generic body (D-257's rule, fixed)
+
+A lambda in a generic function is emitted when its own types are concrete (D-257 keeps one over
+concrete types, since an instance made during the same check may call it). One whose body calls
+an associated function or method through a bound of the body's opaque parameter
+(`owned fn(x: int) => P.O.apply(x)`) names the interface's method, which has no body and is never
+emitted: MIR lowering stopped with "every DefId names a function that was checked". A call through
+a bound now counts as D-257's "instance that is a signature only" (`skipped_instances`), so such a
+lambda is opaque and each instance of the body makes its own. Test:
+`tests/run-pass/a_lambda_in_a_generic_function_calls_through_a_projection.em`.
+
+## 9. D-690 (a `mut self` method calling a shared method on `self`): not attempted
+
+The job sheet asked for it if queries needed it; they did not (`World.run` is a shared method,
+and `std.ecs`'s `mut self` methods read through free functions). What I found looking at it, for
+whoever builds it: the runtime already has `ember_object_end_write`/`ember_object_begin_read` and
+the reverse, so a call that lends `self` (as a shared receiver or a borrowed argument) from a
+`mut self` method can turn the whole-object write into a whole-object read for the call and back.
+That is sound (the callee may read every field; any write, through any handle, panics as a
+conflict with the read) and simple, but it needs a MIR statement pair the verifier accepts as
+balanced in a `mut self` body (the caller did not begin the write it lends), and the access passes
+(`access.rs`, `check_hoisting.rs`, `loop_access.rs`, the quiet-function rule of `[EXC-19]`) taught
+it. A "covered variant" of shared methods (no checks on `self`) is unsound when the shared
+method also writes through `self` (a class allows that): an iteration in the `mut self` method
+over a field the callee grows would not be caught. A shared callee that writes `self` would
+still panic under the read; whether `[EXC-5]` means such writes are covered too is a question
+for the owner, not this job.
+
 ## Rules now done (each with its test)
 
 | Rule | Status | Tests |
@@ -218,9 +246,9 @@ storage in dense order. **Test:** `ECS-6/accept_iteration_order_is_insertion_ord
 
 ## Defects found (not numbered; the coordinator numbers them)
 
-Fixed (sections 1, 2, 4): the three D-407 causes; the chained projection in a generic struct;
+Fixed (sections 1, 2, 4, 8): the three D-407 causes; the chained projection in a generic struct;
 `is_generic` ignoring an instance's arguments (phantom parameters, `SoA[T]`); `std.ecs`'s
-interface-cache key.
+interface-cache key; a lambda calling through a bound in a generic body.
 
 Not fixed (outside the job; each has a probe):
 
@@ -229,23 +257,20 @@ Not fixed (outside the job; each has a probe):
    one implementation, an empty `main` — five `E2040` "`Q` does not implement
    `std.collections.AsKey[Q]`" inside `std/src/collections.em` (`get_or`, `index`, `index_mut`,
    `index_set`, `contains_key`…). Present before this branch. `std.ecs` passes the `World` instead.
-2. **A lambda in a generic function calling an associated function through a projection stops
-   the compiler.** Probe: `fn make[P: HasOp]() -> Holder: return Holder(f=owned fn(x: int) =>
-   P.O.apply(x))` with `interface HasOp: type O: Op`: `panicked at ember_hir/src/lib.rs:63: every
-   DefId names a function that was checked` (MIR lowering). The same call in the generic function
-   itself, or through a generic helper, works. `std.ecs.system` uses a helper.
-3. **Two generic structs that name each other are `E1010`.** Probe: `struct A[T]: n: T; fn b(mut
+2. **Two generic structs that name each other are `E1010`.** Probe: `struct A[T]: n: T; fn b(mut
    self) -> B[T]: return B[T](a=ref mut self)` and `struct B[T]: a: ref mut A[T]`: "cannot find
    type `A`" on `B`'s field (collecting `A` collects `B` on demand from `A`'s signature, and `B`'s
    field then names `A`, which is half collected). Extensions are the workaround (std writes its
    iterators' constructors in `extend` blocks).
-4. **A generic method's view parameter whose type is a generic struct over an opaque associated
+3. **A generic method's view parameter whose type is a generic struct over an opaque associated
    type is a place, not a view, in its instances.** Probe: `struct Maybe[O: Ops]: inner: O.View`
    with `extend[O: Ops] Maybe[O] implements Ops: fn get(view: Maybe[O]) -> Option[ref int]:
    return O.get(view.inner)`, and `fn first(m: Maybe[Col]) -> Option[ref int]: return
    Maybe[Col].get(m)` with `Col` holding a `Span[int]`: `E3060` "`m` is a view passed as a copy; a
    reference to the view itself points into this frame". `Maybe[Col]` is a view, so by `[LT-1]`
-   (ODR-048) `get`'s result may borrow what it views. `std.ecs` passes such views by `ref`.
+   (ODR-048) `get`'s result may borrow what it views. The instance takes `view` by address, as
+   its generic declaration (whose `Maybe[O]` is no known view) does (D-284), and the caller's loan
+   is then on the place `m` rather than on what `m` views. `std.ecs` passes such views by `ref`.
 
 ## Owner questions
 

@@ -28284,6 +28284,9 @@ impl<'a> Checker<'a> {
             return Ok(Expr { ty: self.common.error, kind: ExprKind::Error, span });
         };
         self.bound_calls.insert(span, bound);
+        // D-257 — a call through a bound names no function that is emitted: a lambda making one
+        // is over the body's opaque parameters, whatever its own types are.
+        self.skipped_instances += 1;
         let concrete = lhs.ty;
         let ret = self.signatures[declaration.0 as usize].ret;
         let ret = self.substitute_self(ret, concrete);
@@ -36972,6 +36975,8 @@ impl<'a> Checker<'a> {
             self.sink.emit(diagnostic);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
+        // D-257 — as a method called through a bound: a lambda calling this is opaque.
+        self.skipped_instances += 1;
         let explicit = self.resolve_method_type_args(generic_args);
         if !self.signatures[def.0 as usize].generics.is_empty() {
             // D-437 — `M.make(3)` gives an `M`, not a `Self`.
@@ -40249,6 +40254,9 @@ impl<'a> Checker<'a> {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
         self.bound_calls.insert(span, bound);
+        // D-257 — a call through a bound names no function that is emitted: a lambda making one
+        // is over the body's opaque parameters, whatever its own types are.
+        self.skipped_instances += 1;
 
         if !self.signatures[def.0 as usize].generics.is_empty() {
             // D-437 — `Self` is the parameter, its associated types the
@@ -45992,6 +46000,9 @@ impl<'a> Checker<'a> {
         let receiver = self.pass_receiver(*place, receiver_mode, receiver_span);
         args.insert(0, receiver);
         self.bound_calls.insert(span, bound);
+        // D-257 — a call through a bound names no function that is emitted: a lambda making one
+        // is over the body's opaque parameters, whatever its own types are.
+        self.skipped_instances += 1;
         let ret = self.signatures[declaration.0 as usize].ret;
         let ret = self.substitute_self(ret, concrete);
         let saved_instance = self.assoc_instance.replace(bound);

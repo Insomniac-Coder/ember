@@ -1150,9 +1150,4 @@ pub struct System:
 
 ## `[ECS-4]` — the system `body`, named `name` (what a conflict reports).
 pub fn system[Q: QueryParam](body: fn(mut Query[Q]), name: str) -> System:
-    return System(name=name, accesses_of=owned fn(mut out: Array[Access]) => accesses_of[Q](out), run_on=owned fn(world: World) => world.run_query[Q](body))
-
-## `Q`'s accesses. (A lambda calling `Q.Ops.accesses` itself stopped the compiler: see
-## tasks/90/M-notes.md.)
-fn accesses_of[Q: QueryParam](mut out: Array[Access]):
-    Q.Ops.accesses(out)
+    return System(name=name, accesses_of=owned fn(mut out: Array[Access]) => Q.Ops.accesses(out), run_on=owned fn(world: World) => world.run_query[Q](body))
