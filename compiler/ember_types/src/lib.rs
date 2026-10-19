@@ -537,6 +537,14 @@ pub struct ExportTable {
     pub entries: Vec<String>,
 }
 
+impl ExportTable {
+    /// `[ABI-1]` — the table's protocol version as a linked symbol whose name carries the number
+    /// (`Name_protocol_3`, holding 3): a host built for another version does not find it.
+    pub fn protocol_symbol(name: &str, protocol: u32) -> String {
+        format!("{name}_protocol_{protocol}")
+    }
+}
+
 /// `[CORO-1]`, `[CORO-6]` — how a `gen fn`'s parameter was passed, which says
 /// how its frame holds it: an `owned` one by value; a borrowed one by value
 /// when the caller passes it as a copy, else as the `ref` the caller passes;

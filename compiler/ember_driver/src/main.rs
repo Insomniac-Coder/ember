@@ -4225,7 +4225,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         // `[FFI-26]` — each export table and its protocol version, as data.
         for table in types.export_tables() {
             exports.push(format!("{} DATA", table.name));
-            exports.push(format!("{}_protocol DATA", table.name));
+            exports.push(format!("{} DATA", ember_types::ExportTable::protocol_symbol(&table.name, table.protocol)));
         }
         exports.sort();
         exports.dedup();
@@ -4331,7 +4331,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         retained_symbols.extend(ember_codegen_c::FFI_INTERPOSED.iter().map(|name| name.to_string()));
     }
     for table in types.export_tables() {
-        retained_symbols.extend([table.name.clone(), format!("{}_protocol", table.name)]);
+        retained_symbols.extend([table.name.clone(), ember_types::ExportTable::protocol_symbol(&table.name, table.protocol)]);
     }
     retained_symbols.sort();
     retained_symbols.dedup();

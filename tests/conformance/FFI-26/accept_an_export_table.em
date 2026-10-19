@@ -5,11 +5,12 @@
 #$ stdout: 11
 #$ stdout: 21
 #$ assert-c: contains("RvScriptApi = { on_create, on_update };")
-#$ assert-c: contains("const uint32_t RvScriptApi_protocol = 3u;")
+#$ assert-c: contains("const uint32_t RvScriptApi_protocol_3 = 3u;")
 # `[FFI-26]` — `@export_table("Name", protocol=N)` exports a constant of the struct under the
 # C symbol `Name`, each field holding the function of its own name, and its protocol version
-# as `Name_protocol`. The program reads the table back through its own symbol, as a host that
-# loads the module through that one entry point does.
+# as `Name_protocol_N`, a symbol whose name carries the number (ABI-1). The program reads the
+# table back through its own symbol, as a host that loads the module through that one entry
+# point does.
 
 pub extern "C" fn on_create(id: u64) -> i32:
     return (id + 10) as i32
@@ -26,9 +27,9 @@ unsafe extern "C":
     @ffi(immutable)
     static RvScriptApi: ScriptApi
     @ffi(immutable)
-    static RvScriptApi_protocol: u32
+    static RvScriptApi_protocol_3: u32
 
 fn main():
-    println(RvScriptApi_protocol)
+    println(RvScriptApi_protocol_3)
     println(RvScriptApi.on_create(1))
     println(RvScriptApi.on_update(42, 0.5))

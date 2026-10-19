@@ -352,7 +352,7 @@ pub fn check(
         let entries: Vec<String> = defs.iter()
             .map(|def| functions.iter().find(|function| function.def == *def).map(|function| function.symbol.clone()).unwrap_or_default())
             .collect();
-        for symbol in [name.clone(), format!("{name}_protocol")] {
+        for symbol in [name.clone(), ember_types::ExportTable::protocol_symbol(&name, protocol)] {
             let clash = functions.iter().find(|function| !function.is_extern_declaration && function.symbol == symbol)
                 .map(|function| function.span).or_else(|| table_symbols.get(&symbol).copied());
             if let Some(previous) = clash {

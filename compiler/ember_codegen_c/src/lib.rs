@@ -1343,7 +1343,7 @@ impl Emitter<'_> {
                 let c_ty = self.c_type(table.ty);
                 let entries = if table.entries.is_empty() { "0".to_string() } else { table.entries.join(", ") };
                 self.line(&format!("const {c_ty} {} = {{ {entries} }};", table.name));
-                self.line(&format!("const uint32_t {}_protocol = {}u;", table.name, table.protocol));
+                self.line(&format!("const uint32_t {} = {}u;", ember_types::ExportTable::protocol_symbol(&table.name, table.protocol), table.protocol));
             }
         }
         // ponytail: a module names no backtrace frames: the runtime keeps one table, which a

@@ -116,7 +116,7 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
         }
         line(&mut out, &format!("#define {}_PROTOCOL {}u", table.name, table.protocol));
         line(&mut out, &format!("extern const {} {};", emitter.c_type(table.ty), table.name));
-        line(&mut out, &format!("extern const uint32_t {}_protocol;", table.name));
+        line(&mut out, &format!("extern const uint32_t {};", ember_types::ExportTable::protocol_symbol(&table.name, table.protocol)));
     }
     if emitter.module {
         let rt = ember_branding::runtime("");

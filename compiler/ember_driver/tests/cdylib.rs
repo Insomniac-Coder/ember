@@ -451,7 +451,7 @@ fn an_export_table_is_found_by_name_with_threads_per_entry() {
         assert_success(&built, "the cdylib with a table");
         let lib = dir.join("game/target").join(profile).join("lib");
         let header = std::fs::read_to_string(lib.join("game.h")).unwrap();
-        for text in ["/*   on_draw: main */", "/*   on_tick: any */", "#define GameApi_PROTOCOL 3u", "extern const uint32_t GameApi_protocol;"] {
+        for text in ["/*   on_draw: main */", "/*   on_tick: any */", "#define GameApi_PROTOCOL 3u", "extern const uint32_t GameApi_protocol_3;"] {
             assert!(header.contains(text), "the header lacks `{text}`:\n{header}");
         }
         let path = library_file(&lib, "game").to_string_lossy().replace('\\', "\\\\");
@@ -484,7 +484,7 @@ int main(int argc, char** argv) {{
     if (!l) return 2;
     module_init_fn init = (module_init_fn)find(l, "@RT@module_init");
     g_api = (const {table_type}*)find(l, "GameApi");
-    const uint32_t* protocol = (const uint32_t*)find(l, "GameApi_protocol");
+    const uint32_t* protocol = (const uint32_t*)find(l, "GameApi_protocol_3");
     if (!init || !g_api || !protocol || *protocol != GameApi_PROTOCOL) return 3;
     if (init(&cfg) != 0) return 4;
     if (g_api->on_draw() != 5 || g_api->on_tick(1) != 2) return 5;
