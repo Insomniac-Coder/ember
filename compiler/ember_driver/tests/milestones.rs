@@ -5911,6 +5911,52 @@ fn main():
     let _ = std::fs::remove_dir_all(&test_root);
 }
 
+/// `[ECS-7]`, `[LT-40]` — `std.ecs.components()` is written from each program's components, so
+/// `std.ecs`'s interface-cache key takes them: two programs with different components in one
+/// folder found each other's record "stale" and stopped with an internal error.
+#[test]
+fn programs_with_different_components_share_a_folder() {
+    let workspace = workspace_root();
+    let test_root = temporary_directory("component-interface-cache");
+    let out_dir = test_root.join("target");
+    let _ = std::fs::remove_dir_all(&test_root);
+    std::fs::create_dir_all(&test_root).expect("create shared-cache folder");
+    let one = ember_branding::source_file("one");
+    let two = ember_branding::source_file("two");
+    let program = |extra: &str| format!("from std.ecs import World, Component
+
+@derive(Component)
+struct A:
+    x: int
+{extra}
+fn main():
+    w = World()
+    e = w.create()
+    w.add(e, A(1))
+");
+    std::fs::write(test_root.join(&one), program("")).expect("write the first program");
+    std::fs::write(test_root.join(&two), program("
+@derive(Component)
+struct B:
+    y: int
+")).expect("write the second program");
+    for program in [&one, &two, &one] {
+        let output = Command::new(EMBER)
+            .args(["check", program, "--out-dir", &out_dir.to_string_lossy()])
+            .current_dir(&test_root)
+            .env(ember_branding::std_path_var(), workspace.join("std"))
+            .output()
+            .expect("the Ember compiler runs");
+        assert!(
+            output.status.success(),
+            "{program} failed after another program filled the folder's cache:
+{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&test_root);
+}
+
 fn cached_interface(out_dir: &Path, module: &str) -> ModuleInterfaceArtifact {
     let directory = out_dir.join("debug").join("interface");
     for package in std::fs::read_dir(&directory).expect("interface cache has a package directory") {

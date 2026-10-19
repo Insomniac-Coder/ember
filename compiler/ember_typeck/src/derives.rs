@@ -93,7 +93,10 @@ pub(crate) fn desugar_derives(modules: &[LoadedModule], sink: &mut Sink) -> (Opt
                             let qualified = if module_path.is_empty() { name.to_string() } else { format!("{module_path}.{name}") };
                             let hash = fnv1a64(&qualified);
                             registry.push((qualified.clone(), hash, soa));
-                            (Some(component(item_ident(item), &qualified, hash, soa, span)), None, Vec::new())
+                            let mut blocks = component(item_ident(item), &qualified, hash, soa, span);
+                            let first = blocks.remove(0);
+                            generated.extend(blocks);
+                            (Some(first), None, Vec::new())
                         }
                     }
                     (ast::ItemKind::Enum(decl), "Display") => (Some(debug_display(decl.name, &decl.generics, span)), Some("Debug"), Vec::new()),
@@ -125,6 +128,33 @@ pub(crate) fn desugar_derives(modules: &[LoadedModule], sink: &mut Sink) -> (Opt
         }
     }
     (Some(out), requests)
+}
+
+/// `[ECS-7]`, `[LT-40]` — what the component registry written into `std.ecs` depends on: each type
+/// deriving `Component`, in declaration order, with its `@component` attribute. `std.ecs`'s body is
+/// the program's in that one function, so its interface-cache key takes this beside its source (two
+/// programs with different components in one directory were one stale record).
+pub fn component_registry_key(modules: &[LoadedModule]) -> String {
+    let mut key = String::new();
+    for loaded in modules {
+        for item in &loaded.module.items {
+            if !matches!(item.kind, ast::ItemKind::Struct(_) | ast::ItemKind::Enum(_)) || derive_span(&item.attrs, "Component").is_none() {
+                continue;
+            }
+            key.push_str(&loaded.path.join("."));
+            key.push('.');
+            key.push_str(item_name(item).as_str());
+            for attr in item.attrs.iter().filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("component")) {
+                for arg in &attr.args {
+                    if let ast::AttrArg::Named { name, value: ast::Expr { kind: ast::ExprKind::Path { segments }, .. } } = arg {
+                        key.push_str(&format!(" {}={}", name.name, segments.iter().map(|segment| segment.name.as_str()).collect::<Vec<_>>().join(".")));
+                    }
+                }
+            }
+            key.push('\n');
+        }
+    }
+    key
 }
 
 /// `[ECS-2]` — 64-bit FNV-1a, a component's identity from its fully qualified name.
@@ -173,18 +203,51 @@ fn component_layout(attrs: &mut Vec<ast::Attribute>, is_struct: bool, sink: &mut
 }
 
 /// `[ECS-2]`, `[ECS-7]` — `extend T implements std.ecs.Component` with `T`'s fully qualified name,
-/// its 64-bit FNV-1a hash and its layout, each a function returning the constant.
-fn component(name: ast::Ident, qualified: &str, hash: u64, soa: bool, span: Span) -> ast::Item {
+/// its 64-bit FNV-1a hash and its layout, each a function returning the constant, and the library
+/// types a query reads and writes it with (`[ECS-3]`); and `extend T implements std.ecs.QueryParam`,
+/// so `T` itself is a query's parameter (a blanket over every component would overlap `Mut[T]`'s
+/// and the others', `[IFC-2]`).
+fn component(name: ast::Ident, qualified: &str, hash: u64, soa: bool, span: Span) -> Vec<ast::Item> {
     let constant = |function: &str, ty: &str, value: ast::Literal| {
         let decl = ast::FnDecl { name: ident(function, span), ret: Some(named_type(ty, span)), ..fn_decl(span) };
         member(decl, block(vec![ret(Some(expr(ast::ExprKind::Lit(value), span)), span)], span), span)
     };
+    // `std.ecs.Read[T]`, or the `SoA` one.
+    let ops = |kind: &str| ast::TypeExpr {
+        id: ast::NodeId::DUMMY,
+        kind: ast::TypeKind::Path {
+            segments: vec![ident(&format!("std.ecs.{kind}{}", if soa { "Soa" } else { "" }), span)],
+            args: vec![ast::GenericArg::Type(owner_type(name, &[]))],
+        },
+        span,
+    };
+    let alias = |alias: &str, value: ast::TypeExpr| ast::Member {
+        id: ast::NodeId::DUMMY,
+        attrs: Vec::new(),
+        vis: ast::Visibility::private(),
+        read_only_outside: false,
+        doc: None,
+        kind: ast::MemberKind::TypeAlias(ast::TypeAlias {
+            name: ident(alias, span),
+            generics: Vec::new(),
+            is_foreign_decl: false,
+            value: Some(value),
+            bounds: Vec::new(),
+            range: None,
+        }),
+        span,
+    };
     let members = vec![
+        alias("Read", ops("Read")),
+        alias("Write", ops("Write")),
         constant("component_name", "str", ast::Literal::Str(qualified.to_string())),
         constant("component_hash", "u64", ast::Literal::Int { value: u128::from(hash), suffix: None }),
         constant("component_soa", "bool", ast::Literal::Bool(soa)),
     ];
-    extend_item(&[], owner_type(name, &[]), vec![named_type("std.ecs.Component", span)], members, span)
+    vec![
+        extend_item(&[], owner_type(name, &[]), vec![named_type("std.ecs.Component", span)], members, span),
+        extend_item(&[], owner_type(name, &[]), vec![named_type("std.ecs.QueryParam", span)], vec![alias("Ops", ops("Read"))], span),
+    ]
 }
 
 /// `[ECS-7]` — `std.ecs.components()`'s body: the registry's entries as the array it returns.

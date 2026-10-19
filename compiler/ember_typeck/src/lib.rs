@@ -22,6 +22,7 @@ mod comptime;
 mod coroutines;
 
 pub use comptime::{ComptimeAnswer, ComptimeAnswers, ComptimeRequest};
+pub use derives::component_registry_key;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -266,6 +267,7 @@ pub fn check(
     // parents' associated types (`[IFC-3]`, D-394), so every parent is
     // collected before it, in whichever module each is (D-458).
     checker.collect_interfaces(modules);
+    checker.interfaces_collected = true;
     checker.close_recipe_bounds();
     for (index, loaded) in modules.iter().enumerate().rev() {
         checker.current_module = index;
@@ -2367,6 +2369,9 @@ struct Checker<'a> {
     /// from a generic tuple extension over its elements' implementations) is named, and filled
     /// in once they can (`complete_early_instances`).
     implementations_known: bool,
+    /// Whether every interface is collected (`collect_interfaces`): before then, a hidden
+    /// parameter's bounds may still be unknown (`close_projection_bounds`).
+    interfaces_collected: bool,
     /// Those instances: the instance, its generic struct, its written arguments, where.
     early_instances: Vec<(Ty, Symbol, Vec<Ty>, Span)>,
     /// `[CLS-4]` — an early generic class instance's `override`s: the instance, the method's
@@ -2852,6 +2857,7 @@ impl<'a> Checker<'a> {
             struct_hidden: HashMap::new(),
             concrete_instances: HashMap::new(),
             implementations_known: false,
+            interfaces_collected: false,
             early_instances: Vec::new(),
             deferred_override_checks: Vec::new(),
             cells: HashMap::new(),
@@ -34992,6 +34998,10 @@ impl<'a> Checker<'a> {
                 return;
             }
             let declared = generics[base_index].bounds.iter().find_map(|&bound| self.assoc_bounds_of(bound, assoc.name));
+            // A chain (`Q.Ops.View`) whose base's bounds wait for its interface to be collected
+            // waits with it: `close_projection_bounds` closes the base, then this.
+            let waiting = !self.interfaces_collected && generics[base_index].projection.is_some() && generics[base_index].bounds.is_empty();
+            let declared = declared.or_else(|| waiting.then(Vec::new));
             let Some(bounds) = declared else {
                 self.error(
                     codes::E2040,
@@ -35279,23 +35289,21 @@ impl<'a> Checker<'a> {
     /// parameter the hidden parameter standing for it.
     fn project(&mut self, ty: Ty, name: Symbol) -> Option<Ty> {
         let found = self.project_now(ty, name);
-        if found.is_some() || self.types.is_generic(ty) {
+        if found.is_some() || self.types.is_generic(ty) || !self.implementations_known {
             return found;
         }
-        // A concrete instance of a generic type (a tuple, `Mut[Pos]`) that has not taken the
-        // extension saying it yet: one made before its arguments' implementations were collected
-        // was refused it then, and a built-in one takes them only at a first method call.
-        let origin = self.builtin_generic_origin(ty).or_else(|| match *self.types.kind(ty) {
-            TyKind::Struct(id) => self.types.struct_def(id).origin.clone(),
-            TyKind::Enum(id) => self.types.enum_def(id).origin.clone(),
-            TyKind::Class(id) => self.types.class_def(id).origin.clone(),
-            _ => None,
-        });
-        let (origin, args) = origin?;
-        if !self.implementations_known || !self.generic_extensions.contains_key(&origin) {
+        // An instance named before the implementations were known, reached from another's hidden
+        // arguments before its turn, is filled in now.
+        if self.early_instances.iter().any(|&(early, ..)| early == ty) {
+            self.complete_early_instance(ty);
+            return self.project_now(ty, name);
+        }
+        // A built-in generic instance (a tuple, an `Option`) takes its extensions at a first method
+        // call; one whose extension says what `name` is takes them now.
+        let (origin, args) = self.builtin_generic_origin(ty)?;
+        if !self.generic_extensions.contains_key(&origin) {
             return None;
         }
-        self.complete_early_instance(ty);
         self.apply_generic_extensions(ty, origin, &args);
         self.project_now(ty, name)
     }

@@ -2,9 +2,11 @@
 ##
 ## An ordinary library: a `World` holds one sparse-set storage per component type, keyed by the
 ## type's identity (`type_hash`). `@derive(Component)` writes the type's identity and layout as an
-## `extend … implements Component` block, as every derive writes ordinary Ember (`[DRV-1]`), and
-## adds the type to the component registry (`components()`). Queries, systems (`World.run`) and
-## the `Commands` buffer (`[ECS-3]`..`[ECS-5]`) are not built yet: see tasks/85/D-notes.md.
+## `extend … implements Component` block, as every derive writes ordinary Ember (`[DRV-1]`), says
+## how a query reads the type (`extend … implements QueryParam`), and adds the type to the
+## component registry (`components()`). A system is a function taking a `Query` (`[ECS-3]`);
+## `World.run` borrows the storages its query names, runs it and applies its `Commands`
+## (`[ECS-4]`, `[ECS-5]`). See tasks/90/M-notes.md for the design.
 
 from std.collections import Map
 
@@ -40,6 +42,10 @@ pub struct Entity:
 ## its identity (the 64-bit FNV-1a hash of that name) and whether `@component(layout=soa)` stores
 ## it as an `SoA`.
 pub interface Component:
+    ## `[ECS-3]` — how a query reads the type (`Read[T]`, or `ReadSoa[T]` for an `SoA`) and how
+    ## `Mut[T]` writes it (`Write[T]`, `WriteSoa[T]`).
+    type Read: ParamOps
+    type Write: ParamOps
     fn component_name() -> str
     fn component_hash() -> u64
     fn component_soa() -> bool
@@ -277,3 +283,596 @@ pub class World:
                 return found.entities.clone()
             None:
                 return []
+
+    ## `[ECS-4]` — runs `system` over this world's `Query[Q]` with `args`: the storages `Q` names
+    ## are borrowed for the run, those it writes (`Mut[T]`) mutably and the others shared, and no
+    ## other; the `Commands` it queued are applied once it returns (`[ECS-5]`).
+    pub fn run[Q: QueryParam, A](self, system: fn(mut Query[Q], A), owned args: A):
+        fetched = Q.Ops.fetch(self)
+        q = Query[Q](view=Q.Ops.view(ref fetched), cmds=Commands())
+        system(q, args)
+        self.apply(q.cmds)
+
+    ## `[ECS-5]` — the changes `commands` holds, in the order they were asked for.
+    pub fn apply(self, commands: Commands):
+        for command in commands.queued:
+            command.apply(self)
+        commands.queued.clear()
+
+## `[ECS-3]` — `Mut[T]` in a query: `iter_mut` yields `ref mut T` for it (an `SoAMut[T]` for a
+## component stored as an `SoA`); `iter` yields what `T` does. A marker: `T` is phantom
+## (`[TYP-35]`).
+@derive(Copy)
+pub struct Mut[T]:
+    pass
+
+## `[ECS-3]` — `Not[T]` in a query: only entities without a `T`. It yields nothing (`()`).
+@derive(Copy)
+pub struct Not[T]:
+    pass
+
+## `[ECS-3]` — a query's parameter, as written: a component `T` (read), `Mut[T]`, `Option[P]`,
+## `Not[T]`, `Entity`, or a tuple of them. Each names the library type that reads it (`Ops`):
+## `@derive(Component)` writes a component's, and the library the others'.
+pub interface QueryParam:
+    type Ops: ParamOps
+
+## `[ECS-3]`, `[ECS-4]` — what a query does with one parameter (or a tuple of them).
+pub interface ParamOps:
+    ## What `iter_mut` yields for it.
+    type Item
+    ## What `iter` yields for it.
+    type ReadItem
+    ## The storages it holds for a run.
+    type Fetch
+    ## Their contents, borrowed for the run.
+    type View
+    ## `[ECS-4]` — the components it reads and those it writes, as a component or a tuple of them
+    ## (`()` for none): compile-time constants of its type.
+    type Reads
+    type Writes
+    ## Its storages in `world` (each made, empty, if no entity has had one yet).
+    fn fetch(world: World) -> Fetch
+    ## Borrows them for a run.
+    fn view(fetch: ref Fetch) -> View
+    ## The entities it requires one of its components of, in its storage's order: the query
+    ## iterates the shortest such list and probes the rest (`None` requires nothing).
+    fn driver(view: View) -> Option[Span[Entity]]
+    ## Its item for `e`, read-only, or `None` where `e` does not match it.
+    fn get(view: View, e: Entity) -> Option[ReadItem]
+    ## Its item for `e`, or `None` where `e` does not match it.
+    fn get_mut(mut view: View, e: Entity) -> Option[Item]
+    ## `[ECS-4]` — its accesses, at run time: each component it reads or writes.
+    fn accesses(mut out: Array[Access])
+
+## `[ECS-4]` — one component a system reads or writes.
+@derive(Copy, Debug)
+pub struct Access:
+    pub hash: u64
+    pub name: str
+    pub write: bool
+
+## A storage's sparse set borrowed for a run: its entities in dense order and the sparse index.
+@derive(Copy)
+pub struct SetView:
+    entities: Span[Entity]
+    sparse: Span[u32]
+
+    ## The dense slot of `e`, if it has one.
+    fn slot(self, e: Entity) -> Option[int]:
+        i = e.index() as int
+        if i >= self.sparse.len():
+            return None
+        at = self.sparse[i]
+        if at == 0u32 or self.entities[(at - 1u32) as int] != e:
+            return None
+        return Some((at - 1u32) as int)
+
+## `T`'s `aos` storage in `world`, made if no entity has had a `T` yet.
+fn aos_storage[T: Component](world: World) -> AosStorage[T]:
+    key = T.component_hash()
+    if not world.storages.contains_key(key):
+        _none = world.storages.insert(key, AosStorage[T]())
+    return world.storages[key] as! AosStorage[T]
+
+## `[ECS-3]` — a component `T` (`aos`) read by a query: `ref T`.
+pub struct Read[T]:
+    set: SetView
+    values: Span[T]
+
+extend[T: Component] Read[T] implements ParamOps:
+    type Item = ref T
+    type ReadItem = ref T
+    type Fetch = AosStorage[T]
+    type View = Read[T]
+    type Reads = T
+    type Writes = ()
+
+    fn fetch(world: World) -> AosStorage[T]:
+        return aos_storage[T](world)
+
+    fn view(fetch: ref AosStorage[T]) -> Read[T]:
+        return Read[T](set=SetView(entities=fetch.entities.as_span(), sparse=fetch.sparse.as_span()), values=fetch.dense.as_span())
+
+    fn driver(view: Read[T]) -> Option[Span[Entity]]:
+        return Some(view.set.entities)
+
+    fn get(view: Read[T], e: Entity) -> Option[ref T]:
+        match view.set.slot(e):
+            Some(at):
+                return Some(ref view.values[at])
+            None:
+                return None
+
+    fn get_mut(mut view: Read[T], e: Entity) -> Option[ref T]:
+        match view.set.slot(e):
+            Some(at):
+                return Some(ref view.values[at])
+            None:
+                return None
+
+    fn accesses(mut out: Array[Access]):
+        out.push(Access(hash=T.component_hash(), name=T.component_name(), write=false))
+
+## `[ECS-3]` — `Mut[T]` (`aos`) in a query: `ref mut T` from `iter_mut`, `ref T` from `iter`.
+pub struct Write[T]:
+    set: SetView
+    values: MutSpan[T]
+
+extend[T: Component] Write[T] implements ParamOps:
+    type Item = ref mut T
+    type ReadItem = ref T
+    type Fetch = AosStorage[T]
+    type View = Write[T]
+    type Reads = ()
+    type Writes = T
+
+    fn fetch(world: World) -> AosStorage[T]:
+        return aos_storage[T](world)
+
+    fn view(fetch: ref AosStorage[T]) -> Write[T]:
+        return Write[T](set=SetView(entities=fetch.entities.as_span(), sparse=fetch.sparse.as_span()), values=fetch.dense.as_mut_span())
+
+    fn driver(view: Write[T]) -> Option[Span[Entity]]:
+        return Some(view.set.entities)
+
+    fn get(view: Write[T], e: Entity) -> Option[ref T]:
+        match view.set.slot(e):
+            Some(at):
+                return Some(ref view.values[at])
+            None:
+                return None
+
+    fn get_mut(mut view: Write[T], e: Entity) -> Option[ref mut T]:
+        match view.set.slot(e):
+            Some(at):
+                return Some(ref mut view.values[at])
+            None:
+                return None
+
+    fn accesses(mut out: Array[Access]):
+        out.push(Access(hash=T.component_hash(), name=T.component_name(), write=true))
+
+extend[T: Component] Mut[T] implements QueryParam:
+    type Ops = T.Write
+
+## `T`'s `soa` storage in `world`, made if no entity has had a `T` yet.
+fn soa_storage[T: Component](world: World) -> SoaStorage[T]:
+    key = T.component_hash()
+    if not world.storages.contains_key(key):
+        _none = world.storages.insert(key, SoaStorage[T]())
+    return world.storages[key] as! SoaStorage[T]
+
+## `[ECS-3]`, `[SOA-6]` — a component `T` stored as an `SoA` (`@component(layout=soa)`) read by a
+## query: its element proxy `SoARef[T]`, whose fields are places in the columns.
+pub struct ReadSoa[T]:
+    set: SetView
+    values: ref SoA[T]
+
+extend[T: Component] ReadSoa[T] implements ParamOps:
+    type Item = SoARef[T]
+    type ReadItem = SoARef[T]
+    type Fetch = SoaStorage[T]
+    type View = ReadSoa[T]
+    type Reads = T
+    type Writes = ()
+
+    fn fetch(world: World) -> SoaStorage[T]:
+        return soa_storage[T](world)
+
+    fn view(fetch: ref SoaStorage[T]) -> ReadSoa[T]:
+        return ReadSoa[T](set=SetView(entities=fetch.entities.as_span(), sparse=fetch.sparse.as_span()), values=ref fetch.dense)
+
+    fn driver(view: ReadSoa[T]) -> Option[Span[Entity]]:
+        return Some(view.set.entities)
+
+    fn get(view: ReadSoa[T], e: Entity) -> Option[SoARef[T]]:
+        match view.set.slot(e):
+            Some(at):
+                return Some(view.values[at])
+            None:
+                return None
+
+    fn get_mut(mut view: ReadSoa[T], e: Entity) -> Option[SoARef[T]]:
+        match view.set.slot(e):
+            Some(at):
+                return Some(view.values[at])
+            None:
+                return None
+
+    fn accesses(mut out: Array[Access]):
+        out.push(Access(hash=T.component_hash(), name=T.component_name(), write=false))
+
+## `[ECS-3]`, `[SOA-6]` — `Mut[T]` for a component stored as an `SoA`: `SoAMut[T]` from `iter_mut`,
+## `SoARef[T]` from `iter`.
+pub struct WriteSoa[T]:
+    set: SetView
+    values: ref mut SoA[T]
+
+extend[T: Component] WriteSoa[T] implements ParamOps:
+    type Item = SoAMut[T]
+    type ReadItem = SoARef[T]
+    type Fetch = SoaStorage[T]
+    type View = WriteSoa[T]
+    type Reads = ()
+    type Writes = T
+
+    fn fetch(world: World) -> SoaStorage[T]:
+        return soa_storage[T](world)
+
+    fn view(fetch: ref SoaStorage[T]) -> WriteSoa[T]:
+        return WriteSoa[T](set=SetView(entities=fetch.entities.as_span(), sparse=fetch.sparse.as_span()), values=ref mut fetch.dense)
+
+    fn driver(view: WriteSoa[T]) -> Option[Span[Entity]]:
+        return Some(view.set.entities)
+
+    fn get(view: WriteSoa[T], e: Entity) -> Option[SoARef[T]]:
+        match view.set.slot(e):
+            Some(at):
+                return Some(view.values[at])
+            None:
+                return None
+
+    fn get_mut(mut view: WriteSoa[T], e: Entity) -> Option[SoAMut[T]]:
+        match view.set.slot(e):
+            Some(at):
+                return Some(view.values[at])
+            None:
+                return None
+
+    fn accesses(mut out: Array[Access]):
+        out.push(Access(hash=T.component_hash(), name=T.component_name(), write=true))
+
+## `[ECS-3]` — `Option[P]` in a query: every entity matches it, with `Some` of `P`'s item where
+## the entity has one.
+pub struct Maybe[O: ParamOps]:
+    inner: O.View
+
+extend[O: ParamOps] Maybe[O] implements ParamOps:
+    type Item = Option[O.Item]
+    type ReadItem = Option[O.ReadItem]
+    type Fetch = O.Fetch
+    type View = Maybe[O]
+    type Reads = O.Reads
+    type Writes = O.Writes
+
+    fn fetch(world: World) -> O.Fetch:
+        return O.fetch(world)
+
+    fn view(fetch: ref O.Fetch) -> Maybe[O]:
+        return Maybe[O](inner=O.view(fetch))
+
+    fn driver(view: Maybe[O]) -> Option[Span[Entity]]:
+        return None
+
+    fn get(view: Maybe[O], e: Entity) -> Option[Option[O.ReadItem]]:
+        return Some(O.get(view.inner, e))
+
+    fn get_mut(mut view: Maybe[O], e: Entity) -> Option[Option[O.Item]]:
+        return Some(O.get_mut(view.inner, e))
+
+    fn accesses(mut out: Array[Access]):
+        O.accesses(out)
+
+extend[P: QueryParam] Option[P] implements QueryParam:
+    type Ops = Maybe[P.Ops]
+
+## `[ECS-3]` — `Not[T]` in a query: entities with a `T` do not match it.
+pub struct Without[T]:
+    set: SetView
+
+extend[T: Component] Without[T] implements ParamOps:
+    type Item = ()
+    type ReadItem = ()
+    type Fetch = AnyStorage
+    type View = Without[T]
+    type Reads = ()
+    type Writes = ()
+
+    fn fetch(world: World) -> AnyStorage:
+        key = T.component_hash()
+        if not world.storages.contains_key(key):
+            if T.component_soa():
+                _none = world.storages.insert(key, SoaStorage[T]())
+            else:
+                _none = world.storages.insert(key, AosStorage[T]())
+        return world.storages[key]
+
+    fn view(fetch: ref AnyStorage) -> Without[T]:
+        return Without[T](set=SetView(entities=fetch.entities.as_span(), sparse=fetch.sparse.as_span()))
+
+    fn driver(view: Without[T]) -> Option[Span[Entity]]:
+        return None
+
+    fn get(view: Without[T], e: Entity) -> Option[()]:
+        if view.set.slot(e).is_some():
+            return None
+        return Some(())
+
+    fn get_mut(mut view: Without[T], e: Entity) -> Option[()]:
+        if view.set.slot(e).is_some():
+            return None
+        return Some(())
+
+    fn accesses(mut out: Array[Access]):
+        pass
+
+extend[T: Component] Not[T] implements QueryParam:
+    type Ops = Without[T]
+
+## `[ECS-3]` — `Entity` in a query: the entity itself, matching every entity.
+@derive(Copy)
+pub struct Entities:
+    pass
+
+extend Entities implements ParamOps:
+    type Item = Entity
+    type ReadItem = Entity
+    type Fetch = ()
+    type View = Entities
+    type Reads = ()
+    type Writes = ()
+
+    fn fetch(world: World) -> ():
+        return ()
+
+    fn view(fetch: ref ()) -> Entities:
+        return Entities()
+
+    fn driver(view: Entities) -> Option[Span[Entity]]:
+        return None
+
+    fn get(view: Entities, e: Entity) -> Option[Entity]:
+        return Some(e)
+
+    fn get_mut(mut view: Entities, e: Entity) -> Option[Entity]:
+        return Some(e)
+
+    fn accesses(mut out: Array[Access]):
+        pass
+
+extend Entity implements QueryParam:
+    type Ops = Entities
+
+## The shorter of two driving lists (`None` requires nothing).
+fn shorter(a: Option[Span[Entity]], b: Option[Span[Entity]]) -> Option[Span[Entity]]:
+    match a:
+        Some(x):
+            match b:
+                Some(y):
+                    if y.len() < x.len():
+                        return b
+                    return a
+                None:
+                    return a
+        None:
+            return b
+
+## `[ECS-3]` — a tuple of parameters: an entity matches it where it matches each; it is driven by
+## the shortest list any of them requires.
+extend[A: ParamOps, B: ParamOps] (A, B) implements ParamOps:
+    type Item = (A.Item, B.Item)
+    type ReadItem = (A.ReadItem, B.ReadItem)
+    type Fetch = (A.Fetch, B.Fetch)
+    type View = (A.View, B.View)
+    type Reads = (A.Reads, B.Reads)
+    type Writes = (A.Writes, B.Writes)
+
+    fn fetch(world: World) -> (A.Fetch, B.Fetch):
+        return (A.fetch(world), B.fetch(world))
+
+    fn view(fetch: ref (A.Fetch, B.Fetch)) -> (A.View, B.View):
+        return (A.view(ref fetch.0), B.view(ref fetch.1))
+
+    fn driver(view: (A.View, B.View)) -> Option[Span[Entity]]:
+        return shorter(A.driver(view.0), B.driver(view.1))
+
+    fn get(view: (A.View, B.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem)]:
+        a = A.get(view.0, e)?
+        b = B.get(view.1, e)?
+        return Some((a, b))
+
+    fn get_mut(mut view: (A.View, B.View), e: Entity) -> Option[(A.Item, B.Item)]:
+        a = A.get_mut(view.0, e)?
+        b = B.get_mut(view.1, e)?
+        return Some((a, b))
+
+    fn accesses(mut out: Array[Access]):
+        A.accesses(out)
+        B.accesses(out)
+
+extend[A: QueryParam, B: QueryParam] (A, B) implements QueryParam:
+    type Ops = (A.Ops, B.Ops)
+
+extend[A: ParamOps, B: ParamOps, C: ParamOps] (A, B, C) implements ParamOps:
+    type Item = (A.Item, B.Item, C.Item)
+    type ReadItem = (A.ReadItem, B.ReadItem, C.ReadItem)
+    type Fetch = (A.Fetch, B.Fetch, C.Fetch)
+    type View = (A.View, B.View, C.View)
+    type Reads = (A.Reads, B.Reads, C.Reads)
+    type Writes = (A.Writes, B.Writes, C.Writes)
+
+    fn fetch(world: World) -> (A.Fetch, B.Fetch, C.Fetch):
+        return (A.fetch(world), B.fetch(world), C.fetch(world))
+
+    fn view(fetch: ref (A.Fetch, B.Fetch, C.Fetch)) -> (A.View, B.View, C.View):
+        return (A.view(ref fetch.0), B.view(ref fetch.1), C.view(ref fetch.2))
+
+    fn driver(view: (A.View, B.View, C.View)) -> Option[Span[Entity]]:
+        return shorter(shorter(A.driver(view.0), B.driver(view.1)), C.driver(view.2))
+
+    fn get(view: (A.View, B.View, C.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem, C.ReadItem)]:
+        a = A.get(view.0, e)?
+        b = B.get(view.1, e)?
+        c = C.get(view.2, e)?
+        return Some((a, b, c))
+
+    fn get_mut(mut view: (A.View, B.View, C.View), e: Entity) -> Option[(A.Item, B.Item, C.Item)]:
+        a = A.get_mut(view.0, e)?
+        b = B.get_mut(view.1, e)?
+        c = C.get_mut(view.2, e)?
+        return Some((a, b, c))
+
+    fn accesses(mut out: Array[Access]):
+        A.accesses(out)
+        B.accesses(out)
+        C.accesses(out)
+
+extend[A: QueryParam, B: QueryParam, C: QueryParam] (A, B, C) implements QueryParam:
+    type Ops = (A.Ops, B.Ops, C.Ops)
+
+## `[ECS-3]` — a view over a world's storages for one system's run: `iter` yields each matching
+## entity's items read-only, `iter_mut` yields `ref mut` for `Mut` parameters (and needs `mut q`).
+## Entities come in the order of the shortest storage the query requires (`[ECS-6]`).
+pub struct Query[Q: QueryParam]:
+    view: Q.Ops.View
+    cmds: Commands
+
+    pub fn iter(self) -> QueryIter[Q]:
+        driver = driving(Q.Ops.driver(self.view))
+        return QueryIter[Q](view=ref self.view, driver=driver, at=0)
+
+    pub fn iter_mut(mut self) -> QueryIterMut[Q]:
+        driver = driving(Q.Ops.driver(self.view))
+        return QueryIterMut[Q](view=ref mut self.view, driver=driver, at=0)
+
+    ## `[ECS-5]` — the buffer for adding, removing and destroying while iterating: applied after
+    ## the system returns.
+    pub fn commands(self) -> Commands:
+        return self.cmds
+
+## A query's driving list: one of its parameters must require a component.
+fn driving(list: Option[Span[Entity]]) -> Span[Entity]:
+    match list:
+        Some(found):
+            return found
+        None:
+            panic("a query requires at least one component (a parameter that is not `Option`, `Not` or `Entity`)")
+
+## `q.iter()`.
+pub struct QueryIter[Q: QueryParam]:
+    view: ref Q.Ops.View
+    driver: Span[Entity]
+    at: int
+
+    pub fn next(mut self) -> Option[Q.Ops.ReadItem]:
+        while self.at < self.driver.len():
+            e = self.driver[self.at]
+            self.at += 1
+            match Q.Ops.get(self.view, e):
+                Some(item):
+                    return Some(item)
+                None:
+                    pass
+        return None
+
+extend[Q: QueryParam] QueryIter[Q] implements Iterator:
+    type Item = Q.Ops.ReadItem
+
+## `q.iter_mut()`.
+pub struct QueryIterMut[Q: QueryParam]:
+    view: ref mut Q.Ops.View
+    driver: Span[Entity]
+    at: int
+
+    pub fn next(mut self) -> Option[Q.Ops.Item]:
+        while self.at < self.driver.len():
+            e = self.driver[self.at]
+            self.at += 1
+            match Q.Ops.get_mut(self.view, e):
+                Some(item):
+                    return Some(item)
+                None:
+                    pass
+        return None
+
+extend[Q: QueryParam] QueryIterMut[Q] implements Iterator:
+    type Item = Q.Ops.Item
+
+## `[ECS-5]` — one change a system asked for, made once it has returned.
+pub open class Command:
+    fn init(mut self):
+        pass
+
+    virtual fn apply(self, world: World):
+        pass
+
+class DestroyCommand(Command):
+    e: Entity
+
+    fn init(mut self, e: Entity):
+        self.e = e
+        super.init()
+
+    override fn apply(self, world: World):
+        _was = world.destroy(self.e)
+
+class RemoveCommand[T: Component](Command):
+    e: Entity
+
+    fn init(mut self, e: Entity):
+        self.e = e
+        super.init()
+
+    override fn apply(self, world: World):
+        _had = world.remove[T](self.e)
+
+class AddCommand[T: Component](Command):
+    e: Entity
+    value: Option[T]
+
+    fn init(mut self, e: Entity, owned value: T):
+        self.e = e
+        self.value = Some(value)
+        super.init()
+
+    override fn apply(self, world: World):
+        match self.value.take():
+            Some(value):
+                world.add(self.e, value)
+            None:
+                pass
+
+## `[ECS-5]` — the changes a system asks for while it iterates, in order: applied to the world
+## after the system returns (`World.run`), so no storage changes under a query.
+pub class Commands:
+    queued: Array[Command]
+
+    fn init(mut self):
+        self.queued = []
+
+    ## Destroys `e` (and every component it has).
+    pub fn destroy(self, e: Entity):
+        self.queued.push(DestroyCommand(e))
+
+    ## Gives `e` the component `value`.
+    pub fn add[T: Component](self, e: Entity, owned value: T):
+        self.queued.push(AddCommand[T](e, value))
+
+    ## Removes `e`'s component of type `T`.
+    pub fn remove[T: Component](self, e: Entity):
+        self.queued.push(RemoveCommand[T](e))
+
+    ## How many changes are waiting.
+    pub fn len(self) -> int:
+        return self.queued.len()

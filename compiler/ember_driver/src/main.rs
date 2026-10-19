@@ -3434,9 +3434,14 @@ fn module_interface_inputs(
             })
             // `[VER-8]` — the one language; a directive can only repeat it.
             .unwrap_or_else(|| ember_parser::LANGUAGE_VERSION.to_string());
+        // `[ECS-7]` — `std.ecs.components()` is written from the program's components.
+        let mut source = map.file(loaded.module.span.file).text.clone();
+        if module == "std.ecs" {
+            source.push_str(&ember_typeck::component_registry_key(modules));
+        }
         inputs.push(ModuleInterfaceInput {
             module,
-            source: map.file(loaded.module.span.file).text.clone(),
+            source,
             language_version,
             package_config: package_config.clone(),
             direct_dependencies: dependencies.into_iter().collect(),
