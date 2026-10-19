@@ -83,6 +83,38 @@ pub struct Package {
     /// Each dependency, by the name this package imports it with.
     pub deps: BTreeMap<String, usize>,
     pub source: Source,
+    /// `[STD-6]` — `[package] layers`, when written: the `std` layers the package may use.
+    pub layers: Option<Vec<String>>,
+}
+
+/// `[STD-6]` — the layers, in order: each depends only on the ones before it.
+pub const LAYER_ORDER: [&str; 5] = ["core", "alloc", "sync", "io", "ffi"];
+
+impl Package {
+    /// Whether the package may use `layer`: every layer when it declares none.
+    pub fn uses(&self, layer: &str) -> bool {
+        self.layers.as_ref().is_none_or(|layers| layers.iter().any(|written| written == layer))
+    }
+}
+
+/// `[STD-6]` — `layers = ["core", "alloc"]`: known layers, `core` among them, and each with the
+/// ones before it (it depends on them).
+fn parse_layers(value: &str, file: &Path) -> Result<Vec<String>, String> {
+    let items = value.trim().strip_prefix('[').and_then(|rest| rest.strip_suffix(']'))
+        .ok_or_else(|| format!("error[E9001]: `[package] layers` in {} is a list such as [\"core\", \"alloc\"]", file.display()))?;
+    let layers: Vec<String> = items.split(',').map(|item| item.trim().trim_matches('"').to_string()).filter(|item| !item.is_empty()).collect();
+    for layer in &layers {
+        let Some(at) = LAYER_ORDER.iter().position(|known| known == layer) else {
+            return Err(format!("error[E9001]: `{layer}` is not a layer of `std` ({}); the layers are {}", file.display(), LAYER_ORDER.join(", ")));
+        };
+        if let Some(missing) = LAYER_ORDER[..at].iter().find(|before| !layers.iter().any(|written| written == *before)) {
+            return Err(format!("error[E9001]: the `{layer}` layer depends on `{missing}`, which `[package] layers` in {} leaves out [STD-6]", file.display()));
+        }
+    }
+    if layers.is_empty() {
+        return Err(format!("error[E9001]: `[package] layers` in {} names no layer: it needs at least \"core\"", file.display()));
+    }
+    Ok(layers)
 }
 
 /// The packages of a build, the root first.
@@ -115,6 +147,7 @@ enum Spec {
 struct Manifest {
     name: Option<String>,
     version: Option<String>,
+    layers: Option<Vec<String>>,
     deps: Vec<(String, Spec)>,
 }
 
@@ -151,7 +184,7 @@ fn spec_from_pairs(name: &str, pairs: &[(String, String)], file: &Path) -> Resul
 
 fn read_manifest(file: &Path) -> Result<Manifest, String> {
     let text = std::fs::read_to_string(file).map_err(|error| format!("cannot read `{}`: {error}", file.display()))?;
-    let mut manifest = Manifest { name: None, version: None, deps: Vec::new() };
+    let mut manifest = Manifest { name: None, version: None, layers: None, deps: Vec::new() };
     let mut section = String::new();
     let mut table_dep: Option<(String, Vec<(String, String)>)> = None;
     let finish_table = |table: &mut Option<(String, Vec<(String, String)>)>, deps: &mut Vec<(String, Spec)>| -> Result<(), String> {
@@ -176,6 +209,7 @@ fn read_manifest(file: &Path) -> Result<Manifest, String> {
         match section.as_str() {
             "package" if key == "name" => manifest.name = unquote(value),
             "package" if key == "version" => manifest.version = unquote(value),
+            "package" if key == "layers" => manifest.layers = Some(parse_layers(value, file)?),
             "dependencies" => {
                 // `[MOD-1]` — `std` is implicit, and may be pinned; this compiler is its version.
                 if key == ember_branding::STD_PACKAGE {
@@ -246,7 +280,7 @@ impl Packages {
     pub fn alone(root_dir: &Path) -> Packages {
         Packages { list: vec![Package {
             name: String::new(), version: Version { major: 0, minor: 0, patch: 0 }, dir: root_dir.to_path_buf(),
-            src: root_dir.to_path_buf(), prefix: Vec::new(), deps: BTreeMap::new(), source: Source::Root,
+            src: root_dir.to_path_buf(), prefix: Vec::new(), deps: BTreeMap::new(), source: Source::Root, layers: None,
         }] }
     }
 }
@@ -266,6 +300,7 @@ pub fn resolve(root_dir: &Path) -> Result<Packages, String> {
         prefix: Vec::new(),
         deps: BTreeMap::new(),
         source: Source::Root,
+        layers: manifest.layers.clone(),
     }] };
     let mut pending = vec![(0usize, manifest.deps, root.clone())];
     while let Some((from, deps, from_dir)) = pending.pop() {
@@ -313,7 +348,7 @@ pub fn resolve(root_dir: &Path) -> Result<Packages, String> {
                     };
                     packages.list.push(Package {
                         name: name.clone(), version, dir: dir.clone(), src: dir.join("src"),
-                        prefix: vec![namespace], deps: BTreeMap::new(), source,
+                        prefix: vec![namespace], deps: BTreeMap::new(), source, layers: manifest.layers.clone(),
                     });
                     pending.push((packages.list.len() - 1, manifest.deps, dir.clone()));
                     packages.list.len() - 1
@@ -328,6 +363,19 @@ pub fn resolve(root_dir: &Path) -> Result<Packages, String> {
     for name in packages.list[0].deps.keys() {
         if crate::module_file(root_src, std::slice::from_ref(name)).is_some() || root_src.join(name).is_dir() {
             return Err(format!("error[E9001]: dependency `{name}` has the name of this package's own module `{name}` ({})", root_src.display()));
+        }
+    }
+    // `[BLD-11]` — a package that leaves a layer out cannot depend on a package that uses it.
+    for package in &packages.list {
+        for (name, &dep) in &package.deps {
+            let dependency = &packages.list[dep];
+            if let Some(layer) = LAYER_ORDER.iter().find(|layer| !package.uses(layer) && dependency.uses(layer)) {
+                let who = if package.name.is_empty() { "this package".to_string() } else { format!("`{}`", package.name) };
+                return Err(format!(
+                    "error[E1021]: {who} leaves out the `{layer}` layer, which its dependency `{name}` uses: it is not linked in this build
+  = note: a package that omits a layer cannot use it or depend on a package that does [BLD-11]
+  = help: add \"{layer}\" to `[package] layers`, or depend on a package that declares fewer layers"));
+            }
         }
     }
     // `[MOD-4]` — no cycle between packages.

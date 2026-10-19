@@ -3746,6 +3746,26 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if ember_analysis::check_effects_all(&bodies, &types, &mut sink) > 0 {
         return Ok(finish(&sink, &map, options));
     }
+    // `[STD-6]`, `[BLD-11]` — a package's functions use only the layers it declares: the effects
+    // of a layer it leaves out need what is not linked in this build.
+    let file_packages: std::collections::HashMap<ember_span::FileId, usize> = modules.iter()
+        .filter_map(|loaded| loaded.package.map(|package| (loaded.module.span.file, package)))
+        .collect();
+    let omitted = |body: &ember_mir::Body| -> Option<(ember_hir::Effects, String)> {
+        let package = &packages.list[*file_packages.get(&body.span.file)?];
+        let declared = package.layers.as_ref()?;
+        let mut left_out = ember_hir::Effects::NONE;
+        for (layer, effects) in ember_analysis::effects::LAYERS {
+            if !package.uses(layer) {
+                left_out |= effects;
+            }
+        }
+        let declared: Vec<String> = declared.iter().map(|layer| format!("\"{layer}\"")).collect();
+        Some((left_out, declared.join(", ")))
+    };
+    if ember_analysis::effects::check_layers_all(&bodies, &types, &omitted, &mut sink) > 0 {
+        return Ok(finish(&sink, &map, options));
+    }
     // `[EFF-16]` — what the safety side table says of each function, read where the contracts
     // were checked: inlining below folds a small function into its callers.
     let safety_functions = safety_functions_json(&bodies, &types, &modules, reload_image.as_ref().map(|image| &image.reloadable));

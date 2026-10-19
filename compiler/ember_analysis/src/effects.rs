@@ -587,6 +587,49 @@ fn contract_diagnostic(
     diagnostic
 }
 
+/// `[STD-6]`, `[BLD-11]` — the `std` layers, in order, and the effects that need each one linked:
+/// the allocator for `alloc`, the threads, atomics and locks (and so waiting) for `sync`, the
+/// console, files, clocks and processes for `io`, foreign code for `ffi`. `core` needs nothing.
+pub const LAYERS: [(&str, Effects); 5] = [
+    ("core", Effects::NONE),
+    ("alloc", Effects::ALLOC),
+    ("sync", Effects(Effects::SYNC.0 | Effects::LOCK.0 | Effects::BLOCK.0)),
+    ("io", Effects::IO),
+    ("ffi", Effects::FFI),
+];
+
+/// `[BLD-11]` — a package that leaves a layer out cannot use it: each function of it whose
+/// effects need an omitted layer (`omitted` gives, for a body, the effects its package's layers
+/// leave out and the layers it declares) is `E1021` at the first operation on the way, with the
+/// call chain. Returns how many were reported.
+pub fn check_layers_all(bodies: &[Body], types: &TypeTable, omitted: &dyn Fn(&Body) -> Option<(Effects, String)>, sink: &mut Sink) -> usize {
+    let wanted: Vec<Option<(Effects, String)>> = bodies.iter().map(omitted).collect();
+    if wanted.iter().all(Option::is_none) {
+        return 0;
+    }
+    let graph = Graph::new(bodies, types);
+    let mut reported = 0;
+    for (index, body) in bodies.iter().enumerate() {
+        let Some((left_out, declared)) = &wanted[index] else { continue };
+        let broken = *left_out & graph.effects[index];
+        for (layer, effects) in LAYERS {
+            let Some((effect, _)) = (broken & effects).each().next() else { continue };
+            let Some((first, _, chain)) = graph.chain(index, effect, types) else { continue };
+            let span = if first.span.file == body.span.file { first.span } else { body.span };
+            sink.emit(
+                Diagnostic::error(codes::E1021, span, format!(
+                    "`{}` needs the `{layer}` layer, which is not linked in this build", display_name(body, types)))
+                    .primary_label("reached from here")
+                    .note(chain.join(" -> "))
+                    .note(format!("this package declares `[package] layers = [{declared}]` [STD-6]"))
+                    .help(format!("add \"{layer}\" to the package's layers, or do without it")),
+            );
+            reported += 1;
+        }
+    }
+    reported
+}
+
 /// `[EFF-8]` — an override inherits its base method's contracts: for each method, the contracts
 /// of the methods in the same slot of the classes above its own, and the nearest one's name.
 fn inherited_contracts(bodies: &[Body], types: &TypeTable) -> Vec<Option<(Effects, String)>> {

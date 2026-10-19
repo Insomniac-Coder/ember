@@ -217,6 +217,47 @@ fn dependency_errors() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `[STD-6]` — `std` is layered (core, alloc, sync, io, ffi), each depending only on the ones
+/// before it, and a package that declares `[package] layers = ["core"]` may use only core: its
+/// options, results, integers, fixed arrays and math are there, an `Array` (the allocator) is not,
+/// and with `alloc` added neither is the console. `[BLD-11]`: each is `E1021`, naming the layer
+/// and the call chain; a package that leaves a layer out cannot depend on a package that uses it;
+/// a layer listed without the ones it depends on is `E9001`.
+#[test]
+fn a_package_uses_only_its_layers() {
+    let dir = scratch();
+    let core_only = "[package]\nname = \"firmware\"\nversion = \"1.0.0\"\nkind = \"lib\"\nlayers = [\"core\"]\n";
+    let fits = "pub fn checksum(data: ref [u8; 4]) -> Option[u32]:\n    total: u32 = 0\n    for byte in data:\n        total = total * 31 + byte as u32\n    if total == 0:\n        return None\n    return Some(max(total, 7))\n\npub fn clamp_to(x: i32, hi: i32) -> Result[i32, i32]:\n    if x > hi:\n        return Err(x - hi)\n    return Ok(x)\n";
+    package(&dir.join("firmware"), core_only, &[("lib.em", fits)]);
+    let checked = ember(&["check"], &dir.join("firmware"));
+    assert!(checked.ok, "core-only code was refused: {}", checked.stderr);
+
+    package(&dir.join("firmware"), core_only, &[("lib.em", &format!("{fits}\npub fn readings() -> i32:\n    values = [1, 2, 3]\n    values.push(4)\n    return values.len() as i32\n"))]);
+    let alloc = ember(&["check"], &dir.join("firmware"));
+    assert!(!alloc.ok && alloc.stderr.contains("error[E1021]: `readings` needs the `alloc` layer, which is not linked in this build"), "{}", alloc.stderr);
+    assert!(alloc.stderr.contains("this package declares `[package] layers = [\"core\"]`"), "{}", alloc.stderr);
+
+    let with_alloc = "[package]\nname = \"firmware\"\nversion = \"1.0.0\"\nkind = \"lib\"\nlayers = [\"core\", \"alloc\"]\n";
+    package(&dir.join("firmware"), with_alloc, &[("lib.em", "pub fn report(x: i32) -> i32:\n    values = [x]\n    println(values.len())\n    return x\n")]);
+    let io = ember(&["check"], &dir.join("firmware"));
+    assert!(!io.ok && io.stderr.contains("error[E1021]: `report` needs the `io` layer"), "{}", io.stderr);
+    assert!(!io.stderr.contains("needs the `alloc` layer"), "{}", io.stderr);
+
+    // A dependency that uses every layer (it declares none) cannot serve a core-only package.
+    package(&dir.join("helpers"), "[package]\nname = \"helpers\"\nversion = \"1.0.0\"\nkind = \"lib\"\n", &[("lib.em", "pub fn one() -> i32:\n    return 1\n")]);
+    package(&dir.join("firmware"), &format!("{core_only}\n[dependencies]\nhelpers = {{ path = \"../helpers\" }}\n"), &[("lib.em", fits)]);
+    let dependency = ember(&["check"], &dir.join("firmware"));
+    assert!(!dependency.ok && dependency.stderr.contains("error[E1021]: `firmware` leaves out the `alloc` layer, which its dependency `helpers` uses"), "{}", dependency.stderr);
+    package(&dir.join("helpers"), "[package]\nname = \"helpers\"\nversion = \"1.0.0\"\nkind = \"lib\"\nlayers = [\"core\"]\n", &[]);
+    let fitting = ember(&["check"], &dir.join("firmware"));
+    assert!(fitting.ok, "{}", fitting.stderr);
+
+    package(&dir.join("firmware"), "[package]\nname = \"firmware\"\nversion = \"1.0.0\"\nkind = \"lib\"\nlayers = [\"core\", \"io\"]\n", &[]);
+    let skipped = ember(&["check"], &dir.join("firmware"));
+    assert!(!skipped.ok && skipped.stderr.contains("error[E9001]: the `io` layer depends on `alloc`"), "{}", skipped.stderr);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `[VER-2]` — a package opts into its language with the manifest's `language` key; before 1.0
 /// there is one language (`[VER-8]`), so the key names the current version or the manifest is
 /// invalid (`E9001`, naming the current one).
