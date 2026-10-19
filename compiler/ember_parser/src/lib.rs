@@ -417,7 +417,6 @@ impl<'a> Parser<'a> {
                         | Kw::Pub
                         | Kw::Import
                         | Kw::Extern
-                        | Kw::Open
                 )
             ) {
                 return;

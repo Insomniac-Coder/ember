@@ -2354,6 +2354,32 @@ bool ember_utf8_valid(ember_span bytes);
  * is read as UTF-16 and converted. */
 void ember_rt_set_args(int argc, char** argv);
 ember_vec ember_process_args(void);
+/* `[STD-24]` — `std.process`: `args_os()`, each argument's own bytes (on Windows, the UTF-16
+ * command line's WTF-8: a lone surrogate keeps its three bytes, so nothing is replaced); `exit`,
+ * which flushes the standard streams and ends the process without running destructors or
+ * `defer` blocks; `abort`. `std.env.var`: whether `name` is set, its value appended to `out`. */
+ember_vec ember_process_args_os(void);
+EMBER_NORETURN EMBER_COLD void ember_process_exit(int64_t code);
+EMBER_NORETURN EMBER_COLD void ember_process_abort(void);
+bool ember_env_var(ember_str name, ember_vec* out);
+/* `[STD-22]` — `std.fs`, `std.io`: each returns 0 or the C library's `errno` for what failed. */
+int64_t ember_fs_read(ember_str path, ember_vec* out);
+int64_t ember_fs_write(ember_str path, ember_span data, bool append);
+bool ember_fs_exists(ember_str path);
+int64_t ember_fs_metadata(ember_str path, int64_t* size, int64_t* kind);
+int64_t ember_fs_remove(ember_str path);
+int64_t ember_fs_create_dir_all(ember_str path);
+int64_t ember_fs_read_dir(ember_str path, ember_vec* names);
+int64_t ember_file_open(ember_str path, int64_t mode, int64_t* handle);
+int64_t ember_file_read(int64_t handle, ember_mutspan into, int64_t* got);
+int64_t ember_file_write(int64_t handle, ember_span data);
+int64_t ember_file_flush(int64_t handle);
+int64_t ember_file_close(int64_t handle);
+int64_t ember_stdin_read_line(ember_vec* out, bool* end);
+int64_t ember_io_error_kind(int64_t code);
+void ember_io_error_message(int64_t code, ember_vec* out);
+/* `[STD-25]` — 64 bits from the operating system's generator, drawn at each call. */
+uint64_t ember_entropy(void);
 /* Append one valid Unicode scalar to a UTF-8 String. */
 void ember_vec_push_char(ember_vec* out, uint32_t c);
 

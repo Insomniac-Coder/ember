@@ -13637,6 +13637,20 @@ impl<'a> Checker<'a> {
         }
         // `[FFI-36a]` — `std.ffi`'s compiler-known operations on foreign objects.
         let resolved = self.resolve_name(name);
+        // `[STD-22]`, `[STD-24]`, `[STD-25]` — a standard function whose body is the runtime's: its
+        // arguments are checked by its declaration, and the call is the runtime's.
+        if let Some(function) = ember_hir::RuntimeFn::ALL.into_iter().find(|function| resolved.is(function.path()))
+            && let Some(&def) = self.fn_ids.get(&resolved)
+        {
+            let signature = &self.signatures[def.0 as usize];
+            let (params, ret) = (signature.params.clone(), signature.ret);
+            if args.len() != params.len() {
+                self.error(codes::E2020, span, format!("`{}` takes {} arguments, found {}", name, params.len(), args.len()));
+                return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+            }
+            let checked = args.iter().zip(&params).map(|(arg, &(_, ty, mode, _))| self.check_argument_by(&arg.value, ty, mode, false)).collect();
+            return Some(Expr { ty: ret, kind: ExprKind::Builtin { which: Builtin::Runtime(function), args: checked }, span });
+        }
         if resolved.is("std.ffi.adopt") {
             return Some(self.synth_foreign_adopt(args, explicit, span));
         }

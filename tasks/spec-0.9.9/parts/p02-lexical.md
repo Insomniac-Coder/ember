@@ -67,21 +67,21 @@ identifier := XID_Start XID_Continue*          (Unicode; NFC-normalised)
 * `[LEX-14]` A raw identifier `r#name` uses a keyword as a name (for imported C fields such as
   `type`).
 
-**Keywords** (reserved everywhere; 48):
+**Keywords** (reserved everywhere; 47):
 
 ```text
 and        as         break      class      comptime   const      continue
 defer      dyn        elif       else       enum       extern     false
 fn         for        if         implements import     in         interface
-is         let        match      mut        not        open       or
-override   owned      pass       pub        ref        return     self
-Self       static     struct     super      true       type       unsafe
-virtual    void       where      while      with       yield
+is         let        match      mut        not        or         override
+owned      pass       pub        ref        return     self       Self
+static     struct     super      true       type       unsafe     virtual
+void       where      while      with       yield
 ```
 
 * `[LEX-15]` *(changed in 0.9.9)* *(changed in 0.9.10)* The table above is the complete reserved set. **Contextual
   keywords** are keywords only in the stated position and identifiers everywhere else: `abstract`
-  before `class`; `from` at the start of an import; `extend` at the start of an item when the type
+  and `open` before `class` (so `File` can have its `open`, `[STD-22]`, ODR-134); `from` at the start of an import; `extend` at the start of an item when the type
   it extends follows, directly or after generic parameters (`[GRM-34]`); `gen` and `once` immediately before `fn`; `safe` before `fn` in an extern block; `some`
   at the start of a type; `c` and `cpp` between `import` or `overlay` and a string; `language` and
   `threads` after `#!`; `overlay` at the start of an item, and `rename` and `hide` inside an overlay

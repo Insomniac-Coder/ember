@@ -2577,6 +2577,12 @@ static void process_key_draw(uint64_t key[2]) {
     key[1] = (uint64_t)clock() * 0xC2B2AE3D27D4EB4Full ^ (uint64_t)(uintptr_t)&drawn;
 }
 
+uint64_t ember_entropy(void) {
+    uint64_t key[2];
+    process_key_draw(key);
+    return key[0] ^ key[1];
+}
+
 uint64_t ember_process_key(int64_t which) {
     if (object_load_u32(&g_process_key_state) != 2) {
         uint32_t expected = 0;
@@ -8539,6 +8545,478 @@ ember_vec ember_process_args(void) {
     }
 #endif
     return args;
+}
+
+#if defined(_WIN32)
+/* WTF-8: UTF-8 of each scalar, and a lone surrogate as the three bytes its value would take. */
+static void push_wtf8_unit(ember_vec* out, uint32_t c) {
+    unsigned char bytes[4];
+    size_t count;
+    if (c < 0x80) {
+        bytes[0] = (unsigned char)c;
+        count = 1;
+    } else if (c < 0x800) {
+        bytes[0] = (unsigned char)(0xC0 | (c >> 6));
+        bytes[1] = (unsigned char)(0x80 | (c & 0x3F));
+        count = 2;
+    } else if (c < 0x10000) {
+        bytes[0] = (unsigned char)(0xE0 | (c >> 12));
+        bytes[1] = (unsigned char)(0x80 | ((c >> 6) & 0x3F));
+        bytes[2] = (unsigned char)(0x80 | (c & 0x3F));
+        count = 3;
+    } else {
+        bytes[0] = (unsigned char)(0xF0 | (c >> 18));
+        bytes[1] = (unsigned char)(0x80 | ((c >> 12) & 0x3F));
+        bytes[2] = (unsigned char)(0x80 | ((c >> 6) & 0x3F));
+        bytes[3] = (unsigned char)(0x80 | (c & 0x3F));
+        count = 4;
+    }
+    ember_vec_extend(out, bytes, count);
+}
+#endif
+
+ember_vec ember_process_args_os(void) {
+    ember_vec args = ember_vec_empty();
+#if defined(_WIN32)
+    int count = 0;
+    struct HINSTANCE__* shell = LoadLibraryW(L"shell32.dll");
+    ember_split_command_line split = shell == NULL
+        ? NULL
+        : (ember_split_command_line)GetProcAddress(shell, "CommandLineToArgvW");
+    wchar_t** wide = split == NULL ? NULL : split(GetCommandLineW(), &count);
+    for (int i = 0; wide != NULL && i < count; i++) {
+        ember_vec bytes = ember_vec_empty();
+        for (size_t at = 0; wide[i][at] != 0; at++) {
+            uint32_t c = (uint16_t)wide[i][at];
+            uint32_t next = (uint16_t)wide[i][at + 1];
+            if (c >= 0xD800 && c < 0xDC00 && next >= 0xDC00 && next < 0xE000) {
+                c = 0x10000 + ((c - 0xD800) << 10) + (next - 0xDC00);
+                at++;
+            }
+            push_wtf8_unit(&bytes, c);
+        }
+        ember_vec_push(&args, sizeof(ember_vec), &bytes);
+    }
+    if (wide != NULL) {
+        LocalFree(wide);
+    }
+#else
+    for (int i = 0; i < g_argc; i++) {
+        ember_vec bytes = ember_vec_empty();
+        ember_vec_extend(&bytes, g_argv[i], strlen(g_argv[i]));
+        ember_vec_push(&args, sizeof(ember_vec), &bytes);
+    }
+#endif
+    return args;
+}
+
+void ember_process_exit(int64_t code) {
+    fflush(stdout);
+    fflush(stderr);
+    /* `_Exit` runs no `atexit` handler: nothing of the program's runs after this call. */
+    _Exit((int)code);
+}
+
+void ember_process_abort(void) {
+    fflush(stdout);
+    fflush(stderr);
+    abort();
+}
+
+bool ember_env_var(ember_str name, ember_vec* out) {
+#if defined(_WIN32)
+    /* The environment is UTF-16: the name converted, the value read and converted back. */
+    int wide_len = MultiByteToWideChar(65001, 0, (const char*)name.ptr, (int)name.len, NULL, 0);
+    wchar_t* wide = (wchar_t*)malloc(((size_t)wide_len + 1) * sizeof(wchar_t));
+    if (wide == NULL) {
+        return false;
+    }
+    MultiByteToWideChar(65001, 0, (const char*)name.ptr, (int)name.len, wide, wide_len);
+    wide[wide_len] = 0;
+    DWORD size = GetEnvironmentVariableW(wide, NULL, 0);
+    if (size == 0) {
+        free(wide);
+        return false;
+    }
+    wchar_t* value = (wchar_t*)malloc((size_t)size * sizeof(wchar_t));
+    if (value == NULL) {
+        free(wide);
+        return false;
+    }
+    DWORD got = GetEnvironmentVariableW(wide, value, size);
+    free(wide);
+    int bytes = WideCharToMultiByte(65001, 0, value, (int)got, NULL, 0, NULL, NULL);
+    if (bytes > 0) {
+        ember_vec_reserve_more(out, 1, (size_t)bytes);
+        WideCharToMultiByte(65001, 0, value, (int)got, (char*)out->ptr + out->len, bytes, NULL, NULL);
+        out->len += (size_t)bytes;
+    }
+    free(value);
+    return true;
+#else
+    char* key = (char*)malloc(name.len + 1);
+    if (key == NULL) {
+        return false;
+    }
+    memcpy(key, name.ptr, name.len);
+    key[name.len] = 0;
+    const char* value = getenv(key);
+    free(key);
+    if (value == NULL) {
+        return false;
+    }
+    push_utf8_lossy(out, (const unsigned char*)value, strlen(value));
+    return true;
+#endif
+}
+
+/* -- [STD-22] std.io and std.fs ------------------------------------------------
+ *
+ * Each operation returns 0 or the C library's `errno` for what failed; `std.io.Error` asks
+ * `ember_io_error_kind` and `ember_io_error_message` about it. Windows' calls are the C runtime's
+ * wide ones, so a path is UTF-16 there and every failure is an `errno` on both systems. */
+#include <errno.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#if defined(_WIN32)
+#include <direct.h>
+#include <io.h>
+#include <share.h>
+#include <wchar.h>
+typedef wchar_t rt_path_char;
+#else
+#include <dirent.h>
+#include <unistd.h>
+typedef char rt_path_char;
+#endif
+
+/* `path` as the system's, NUL-terminated (NULL with `*failed` set if it holds a NUL or memory ran
+ * out). The caller frees it. */
+static rt_path_char* rt_path(ember_str path, int64_t* failed) {
+    if (path.len > 0 && memchr(path.ptr, 0, path.len) != NULL) {
+        *failed = EINVAL;
+        return NULL;
+    }
+#if defined(_WIN32)
+    int count = path.len == 0 ? 0 : MultiByteToWideChar(65001, 0, (const char*)path.ptr, (int)path.len, NULL, 0);
+    wchar_t* wide = (wchar_t*)malloc(((size_t)count + 1) * sizeof(wchar_t));
+    if (wide == NULL) {
+        *failed = ENOMEM;
+        return NULL;
+    }
+    if (count > 0) {
+        MultiByteToWideChar(65001, 0, (const char*)path.ptr, (int)path.len, wide, count);
+    }
+    wide[count] = 0;
+    return wide;
+#else
+    char* bytes = (char*)malloc(path.len + 1);
+    if (bytes == NULL) {
+        *failed = ENOMEM;
+        return NULL;
+    }
+    if (path.len > 0) {
+        memcpy(bytes, path.ptr, path.len);
+    }
+    bytes[path.len] = 0;
+    return bytes;
+#endif
+}
+
+/* `mode` is "rb", "wb" or "ab". */
+static FILE* rt_open(const rt_path_char* path, const char* mode, int64_t* failed) {
+#if defined(_WIN32)
+    /* Shared as on other systems: `_wfopen_s` would refuse a second open of a file being written. */
+    wchar_t wide_mode[3] = { (wchar_t)mode[0], (wchar_t)mode[1], 0 };
+    FILE* file = _wfsopen(path, wide_mode, _SH_DENYNO);
+    if (file == NULL) {
+        *failed = errno != 0 ? errno : EIO;
+    }
+    return file;
+#else
+    FILE* file = fopen(path, mode);
+    if (file == NULL) {
+        *failed = errno != 0 ? errno : EIO;
+    }
+    return file;
+#endif
+}
+
+/* 0 a file, 1 a directory, 2 something else; -1 with `*failed` set when it cannot be read. */
+static int rt_kind(const rt_path_char* path, int64_t* size, int64_t* failed) {
+#if defined(_WIN32)
+    struct _stat64 info;
+    if (_wstat64(path, &info) != 0) {
+        *failed = errno != 0 ? errno : EIO;
+        return -1;
+    }
+    *size = (int64_t)info.st_size;
+    return (info.st_mode & _S_IFDIR) ? 1 : (info.st_mode & _S_IFREG) ? 0 : 2;
+#else
+    struct stat info;
+    if (stat(path, &info) != 0) {
+        *failed = errno != 0 ? errno : EIO;
+        return -1;
+    }
+    *size = (int64_t)info.st_size;
+    return S_ISDIR(info.st_mode) ? 1 : S_ISREG(info.st_mode) ? 0 : 2;
+#endif
+}
+
+int64_t ember_fs_read(ember_str path, ember_vec* out) {
+    int64_t failed = 0;
+    rt_path_char* system = rt_path(path, &failed);
+    FILE* file = system == NULL ? NULL : rt_open(system, "rb", &failed);
+    free(system);
+    if (file == NULL) {
+        return failed;
+    }
+    unsigned char buffer[16384];
+    size_t got;
+    while ((got = fread(buffer, 1, sizeof buffer, file)) > 0) {
+        ember_vec_extend(out, buffer, got);
+    }
+    if (ferror(file)) {
+        failed = errno != 0 ? errno : EIO;
+    }
+    fclose(file);
+    return failed;
+}
+
+int64_t ember_fs_write(ember_str path, ember_span data, bool append) {
+    int64_t failed = 0;
+    rt_path_char* system = rt_path(path, &failed);
+    FILE* file = system == NULL ? NULL : rt_open(system, append ? "ab" : "wb", &failed);
+    free(system);
+    if (file == NULL) {
+        return failed;
+    }
+    if (data.len > 0 && fwrite(data.ptr, 1, data.len, file) != data.len) {
+        failed = errno != 0 ? errno : EIO;
+    }
+    if (fclose(file) != 0 && failed == 0) {
+        failed = errno != 0 ? errno : EIO;
+    }
+    return failed;
+}
+
+bool ember_fs_exists(ember_str path) {
+    int64_t failed = 0;
+    int64_t size = 0;
+    rt_path_char* system = rt_path(path, &failed);
+    bool found = system != NULL && rt_kind(system, &size, &failed) >= 0;
+    free(system);
+    return found;
+}
+
+int64_t ember_fs_metadata(ember_str path, int64_t* size, int64_t* kind) {
+    int64_t failed = 0;
+    rt_path_char* system = rt_path(path, &failed);
+    if (system == NULL) {
+        return failed;
+    }
+    *kind = rt_kind(system, size, &failed);
+    free(system);
+    return failed;
+}
+
+int64_t ember_fs_remove(ember_str path) {
+    int64_t failed = 0;
+    int64_t size = 0;
+    rt_path_char* system = rt_path(path, &failed);
+    if (system == NULL) {
+        return failed;
+    }
+    int kind = rt_kind(system, &size, &failed);
+#if defined(_WIN32)
+    int result = kind < 0 ? -1 : kind == 1 ? _wrmdir(system) : _wremove(system);
+#else
+    int result = kind < 0 ? -1 : kind == 1 ? rmdir(system) : remove(system);
+#endif
+    if (kind >= 0 && result != 0) {
+        failed = errno != 0 ? errno : EIO;
+    }
+    free(system);
+    return failed;
+}
+
+int64_t ember_fs_create_dir_all(ember_str path) {
+    int64_t failed = 0;
+    rt_path_char* system = rt_path(path, &failed);
+    if (system == NULL) {
+        return failed;
+    }
+    /* Each prefix that ends at a separator, then the whole path: one that is a directory already
+     * is kept. */
+    size_t length = 0;
+    while (system[length] != 0) {
+        length++;
+    }
+    for (size_t at = 1; at <= length && failed == 0; at++) {
+        rt_path_char c = system[at];
+#if defined(_WIN32)
+        bool separator = c == L'/' || c == L'\\';
+#else
+        bool separator = c == '/';
+#endif
+        if (!separator && c != 0) {
+            continue;
+        }
+        system[at] = 0;
+        int64_t size = 0;
+        int64_t ignored = 0;
+        int kind = rt_kind(system, &size, &ignored);
+        if (kind < 0) {
+#if defined(_WIN32)
+            int made = _wmkdir(system);
+#else
+            int made = mkdir(system, 0777);
+#endif
+            if (made != 0 && errno != EEXIST) {
+                failed = errno != 0 ? errno : EIO;
+            }
+        } else if (kind != 1) {
+            failed = EEXIST;
+        }
+        system[at] = c;
+    }
+    free(system);
+    return failed;
+}
+
+int64_t ember_fs_read_dir(ember_str path, ember_vec* names) {
+    int64_t failed = 0;
+#if defined(_WIN32)
+    ember_vec pattern = ember_vec_empty();
+    ember_vec_extend(&pattern, path.ptr, path.len);
+    ember_vec_extend(&pattern, "\\*", 2);
+    rt_path_char* system = rt_path((ember_str){ pattern.ptr, pattern.len }, &failed);
+    ember_vec_free(&pattern, 1);
+    if (system == NULL) {
+        return failed;
+    }
+    struct _wfinddata64_t entry;
+    intptr_t search = _wfindfirst64(system, &entry);
+    free(system);
+    if (search == -1) {
+        return errno != 0 ? errno : EIO;
+    }
+    do {
+        if (wcscmp(entry.name, L".") == 0 || wcscmp(entry.name, L"..") == 0) {
+            continue;
+        }
+        ember_vec name = ember_vec_empty();
+        int size = WideCharToMultiByte(65001, 0, entry.name, -1, NULL, 0, NULL, NULL);
+        if (size > 1) {
+            ember_vec_reserve(&name, 1, (size_t)size);
+            WideCharToMultiByte(65001, 0, entry.name, -1, (char*)name.ptr, size, NULL, NULL);
+            name.len = (size_t)size - 1;
+        }
+        ember_vec_push(names, sizeof(ember_vec), &name);
+    } while (_wfindnext64(search, &entry) == 0);
+    _findclose(search);
+#else
+    rt_path_char* system = rt_path(path, &failed);
+    if (system == NULL) {
+        return failed;
+    }
+    DIR* directory = opendir(system);
+    free(system);
+    if (directory == NULL) {
+        return errno != 0 ? errno : EIO;
+    }
+    struct dirent* entry;
+    while ((entry = readdir(directory)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        ember_vec name = ember_vec_empty();
+        push_utf8_lossy(&name, (const unsigned char*)entry->d_name, strlen(entry->d_name));
+        ember_vec_push(names, sizeof(ember_vec), &name);
+    }
+    closedir(directory);
+#endif
+    return failed;
+}
+
+/* A `File` is its `FILE*`, as an integer. `mode`: 0 to read, 1 to write from empty, 2 to append. */
+int64_t ember_file_open(ember_str path, int64_t mode, int64_t* handle) {
+    int64_t failed = 0;
+    rt_path_char* system = rt_path(path, &failed);
+    FILE* file = system == NULL ? NULL : rt_open(system, mode == 0 ? "rb" : mode == 1 ? "wb" : "ab", &failed);
+    free(system);
+    *handle = (int64_t)(intptr_t)file;
+    return failed;
+}
+
+int64_t ember_file_read(int64_t handle, ember_mutspan into, int64_t* got) {
+    FILE* file = (FILE*)(intptr_t)handle;
+    size_t count = into.len == 0 ? 0 : fread(into.ptr, 1, into.len, file);
+    *got = (int64_t)count;
+    return count < into.len && ferror(file) ? (errno != 0 ? errno : EIO) : 0;
+}
+
+int64_t ember_file_write(int64_t handle, ember_span data) {
+    FILE* file = (FILE*)(intptr_t)handle;
+    return data.len > 0 && fwrite(data.ptr, 1, data.len, file) != data.len ? (errno != 0 ? errno : EIO) : 0;
+}
+
+int64_t ember_file_flush(int64_t handle) {
+    return fflush((FILE*)(intptr_t)handle) != 0 ? (errno != 0 ? errno : EIO) : 0;
+}
+
+int64_t ember_file_close(int64_t handle) {
+    return fclose((FILE*)(intptr_t)handle) != 0 ? (errno != 0 ? errno : EIO) : 0;
+}
+
+/* One line of standard input, its bytes appended to `out` without the `\n` (or `\r\n`); `*end`
+ * when the input had ended before it. */
+int64_t ember_stdin_read_line(ember_vec* out, bool* end) {
+    fflush(stdout);
+    int c;
+    bool read_any = false;
+    while ((c = getchar()) != EOF) {
+        read_any = true;
+        if (c == '\n') {
+            break;
+        }
+        uint8_t byte = (uint8_t)c;
+        ember_vec_push(out, 1, &byte);
+    }
+    if (out->len > 0 && ((uint8_t*)out->ptr)[out->len - 1] == '\r') {
+        out->len -= 1;
+    }
+    *end = !read_any;
+    return !read_any && ferror(stdin) ? (errno != 0 ? errno : EIO) : 0;
+}
+
+/* `std.io.ErrorKind`'s index for `code`: 0 not found, 1 permission denied, 2 already exists, 4
+ * anything else (3, invalid data, is Ember's own). */
+int64_t ember_io_error_kind(int64_t code) {
+    switch (code) {
+    case ENOENT:
+        return 0;
+    case EACCES:
+    case EPERM:
+        return 1;
+    case EEXIST:
+        return 2;
+    default:
+        return 4;
+    }
+}
+
+void ember_io_error_message(int64_t code, ember_vec* out) {
+    char text[256];
+#if defined(_MSC_VER)
+    if (strerror_s(text, sizeof text, (int)code) != 0) {
+        text[0] = 0;
+    }
+#else
+    const char* message = strerror((int)code);
+    snprintf(text, sizeof text, "%s", message != NULL ? message : "");
+#endif
+    ember_vec_extend(out, text, strlen(text));
 }
 
 /* `[STD-10]` — `input(prompt)`: the prompt, flushed, then one line of

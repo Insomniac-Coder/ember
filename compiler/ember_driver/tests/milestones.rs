@@ -2258,7 +2258,8 @@ fn dynamic_access_safety_side_table_is_written() {
 
 /// `[EFF-10]` — the effect set says only which kinds of check a function has; the safety side table
 /// lists each one: every check left in with its kind, location, mechanism and reason, and every one
-/// removed with the proof that removed it (the loop's index is in range, `[RNG-4]`).
+/// removed with the proof that removed it (the loop's index is in range, `[RNG-4]`). `[EFF-11]` —
+/// every check left in carries one reason, one of the table's five.
 #[test]
 fn the_safety_table_lists_every_check_by_site() {
     let root = workspace_root();
@@ -2290,6 +2291,11 @@ fn the_safety_table_lists_every_check_by_site() {
     assert!(entry("2:12", "Bounds", "index test", "emitted", "not_proven_by_analysis"), "{json}");
     assert!(entry("7:9", "Overflow", "overflow test", "emitted", "not_proven_by_analysis"), "{json}");
     assert!(entry("7:17", "Bounds", "range facts", "elided", "range_facts"), "{json}");
+    let table: serde_json::Value = serde_json::from_str(&json).expect("the side table is JSON");
+    let reasons = ["not_provable_in_principle", "not_proven_by_analysis", "requested_by_type", "inherent_to_mechanism", "establishes_static_fact"];
+    for check in table["checks"].as_array().expect("the checks").iter().filter(|check| check["status"] == "emitted") {
+        assert!(check["reason"].as_str().is_some_and(|reason| reasons.contains(&reason)), "[EFF-11] {check}");
+    }
 }
 
 /// `[DSJ-5]` — each `assert_disjoint` comparison is a `RuntimeCheck(Aliasing)` whose reason is
@@ -2595,6 +2601,84 @@ fn calls_foreign_lists_what_an_item_reaches_with_each_contract() {
     assert_eq!(value["foreign"][0]["declaration"]["safe"], false, "{}", json.stdout);
     let missing = ember(&["calls", "--foreign", "absent", &source_arg], &root);
     assert_ne!(missing.exit, 0);
+}
+
+/// `[CLI-12]` — `ember why --alloc <item>` prints the shortest call chain from the item to an
+/// operation that allocates, whether or not the item carries a contract, and says so when it reaches
+/// none; `--io` and the other effects likewise. With `--unsafe` it prints the obligation each unsafe
+/// function on the chain states (`@safety`, `[UNS-7]`).
+#[test]
+fn why_prints_the_shortest_chain_to_an_effect() {
+    let root = workspace_root();
+    let dir = temporary_directory("why-effect");
+    let source = dir.join(format!("why.{SOURCE_EXT}"));
+    std::fs::write(
+        &source,
+        "fn grow(mut xs: Array[int]):\n    xs.push(1)\n\n\
+         fn deep(mut xs: Array[int]):\n    grow(xs)\n\n\
+         fn shallow(mut xs: Array[int]):\n    xs.push(2)\n\n\
+         fn pure(x: int) -> int:\n    return x * 2\n\n\
+         @safety(\"`n` is at least 1\")\n\
+         unsafe fn first(p: *mut int, n: int) -> int:  # SAFETY: slot 0 exists, as `n` says\n    return read(p, 0)\n\n\
+         fn through(p: *mut int) -> int:\n    unsafe:  # SAFETY: the caller's one slot\n        return first(p, 1)\n\n\
+         fn peek() -> int:\n    value = 0\n    unsafe:  # SAFETY: one slot, written before it is read and freed once\n        p = alloc[int](1)\n        write(p, 0, 7)\n        value = first(p, 1)\n        free(p, 1)\n    return value\n\n\
+         fn main():\n    xs: Array[int] = []\n    deep(xs)\n    shallow(xs)\n    println(pure(3), peek())\n",
+    )
+    .expect("write the program");
+    let source_arg = source.to_string_lossy().into_owned();
+    let alloc = ember(&["why", "--alloc", "main", &source_arg], &root);
+    assert_eq!(alloc.exit, 0, "why failed:\n{}\n{}", alloc.stdout, alloc.stderr);
+    assert!(alloc.stdout.contains("`main` reaches `Alloc`:"), "{}", alloc.stdout);
+    // The shortest chain: `shallow` pushes itself, `deep` only through `grow`.
+    let deep = ember(&["why", "--alloc", "deep", &source_arg], &root);
+    assert!(deep.stdout.contains("  deep -> grow -> `Array.push`"), "{}", deep.stdout);
+    let pure = ember(&["why", "--alloc", "pure", &source_arg], &root);
+    assert!(pure.stdout.contains("`pure` does not reach `Alloc`"), "{}", pure.stdout);
+    let io = ember(&["why", "--io", "main", &source_arg], &root);
+    assert!(io.stdout.contains("`main` reaches `Io`:") && io.stdout.contains("main -> console output"), "{}", io.stdout);
+    let unsafe_chain = ember(&["why", "--unsafe", "through", &source_arg], &root);
+    assert!(unsafe_chain.stdout.contains("  through -> first -> an `unsafe fn`"), "{}", unsafe_chain.stdout);
+    assert!(unsafe_chain.stdout.contains("  `first` requires: `n` is at least 1"), "{}", unsafe_chain.stdout);
+    let json = ember(&["why", "--alloc", "deep", "--json", &source_arg], &root);
+    let value: serde_json::Value = serde_json::from_str(json.stdout.trim()).expect("why --json is JSON");
+    assert_eq!(value["chains"][0]["chain"], serde_json::json!(["deep", "grow", "`Array.push`"]), "{}", json.stdout);
+    let missing = ember(&["why", "--alloc", "absent", &source_arg], &root);
+    assert_ne!(missing.exit, 0);
+}
+
+/// `[DET-9]` — `ember inspect --deterministic <item>` prints whether the item satisfies `[DET-1]`
+/// and, if not, the shortest chain to each `Nondet` source; one that relies on a foreign function's
+/// asserted determinism (`@ffi(deterministic)`) is reported as asserted, not verified.
+#[test]
+fn inspect_deterministic_names_each_nondeterministic_source() {
+    let root = workspace_root();
+    let dir = temporary_directory("inspect-deterministic");
+    let source = dir.join(format!("det.{SOURCE_EXT}"));
+    std::fs::write(
+        &source,
+        "import std.random\n\n\
+         unsafe extern \"C\":\n    @ffi(effects=[], deterministic)\n    safe fn imaxabs(x: i64) -> i64\n\n\
+         fn wave(x: f64) -> f64:\n    return x.sin()\n\n\
+         fn noisy(x: f64) -> f64:\n    rng = random.Rng.from_entropy()\n    return wave(x) + rng.float()\n\n\
+         fn total(xs: Span[int]) -> int:\n    t = 0\n    for x in xs:\n        t += x\n    return t\n\n\
+         fn distance(a: i64, b: i64) -> i64:\n    return imaxabs(a - b)\n\n\
+         fn main():\n    xs = [1, 2]\n    println(noisy(1.0), total(xs.as_span()), distance(3, 9))\n",
+    )
+    .expect("write the program");
+    let source_arg = source.to_string_lossy().into_owned();
+    let noisy = ember(&["inspect", "--deterministic", "noisy", &source_arg], &root);
+    assert_eq!(noisy.exit, 0, "inspect failed:\n{}\n{}", noisy.stdout, noisy.stderr);
+    assert!(noisy.stdout.contains("`noisy` does not satisfy [DET-1]: it reaches 2 `Nondet` source(s)"), "{}", noisy.stdout);
+    assert!(noisy.stdout.contains("noisy -> wave -> a transcendental function from the platform library"), "{}", noisy.stdout);
+    assert!(noisy.stdout.contains("the system random source"), "{}", noisy.stdout);
+    let total = ember(&["inspect", "--deterministic", "total", &source_arg], &root);
+    assert!(total.stdout.contains("`total` satisfies [DET-1]\n"), "{}", total.stdout);
+    let distance = ember(&["inspect", "--deterministic", "distance", &source_arg], &root);
+    assert!(distance.stdout.contains("`distance` satisfies [DET-1] on asserted foreign facts, not verified:"), "{}", distance.stdout);
+    assert!(distance.stdout.contains("distance -> imaxabs (`@ffi(deterministic)` asserted)"), "{}", distance.stdout);
+    let json = ember(&["inspect", "--deterministic", "total", "--json", &source_arg], &root);
+    let value: serde_json::Value = serde_json::from_str(json.stdout.trim()).expect("--json is JSON");
+    assert_eq!(value["deterministic"], true, "{}", json.stdout);
 }
 
 /// `[EFF-16]` — `ember inspect --safety` reports each function's `@nopanic(explicit)` beside the

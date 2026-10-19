@@ -247,7 +247,6 @@ impl Parser<'_> {
                 | Kw::Override
                 | Kw::Struct
                 | Kw::Class
-                | Kw::Open
                 | Kw::Enum
                 | Kw::Interface
                 | Kw::Const
@@ -261,7 +260,7 @@ impl Parser<'_> {
                     || matches!(self.peek_at(1), TokenKind::Ident(s) if s.is("extend"))
                     || self.at_overlay_decl(1)
             }
-            TokenKind::Ident(s) if s.is("abstract") => self.at_kw_at(1, Kw::Class),
+            TokenKind::Ident(s) if s.is("abstract") || s.is("open") => self.at_kw_at(1, Kw::Class),
             TokenKind::Ident(s) if s.is("safe") => self.at_fn_at(1),
             TokenKind::Ident(_) => {
                 self.at_gen_fn() || self.at_extend_decl() || self.at_union_decl() || self.at_overlay_decl(0)
@@ -396,7 +395,11 @@ impl Parser<'_> {
                 Some(ItemKind::Fn(self.parse_fn()))
             }
             TokenKind::Keyword(Kw::Struct) => Some(ItemKind::Struct(self.parse_struct())),
-            TokenKind::Keyword(Kw::Class | Kw::Open) => Some(ItemKind::Class(self.parse_class())),
+            TokenKind::Keyword(Kw::Class) => Some(ItemKind::Class(self.parse_class())),
+            // `[LEX-15]` (ODR-134) — `open` is a keyword only before `class`.
+            TokenKind::Ident(s) if s.is("open") && self.at_kw_at(1, Kw::Class) => {
+                Some(ItemKind::Class(self.parse_class()))
+            }
             TokenKind::Keyword(Kw::Enum) => Some(ItemKind::Enum(self.parse_enum())),
             TokenKind::Keyword(Kw::Interface) => {
                 Some(ItemKind::Interface(self.parse_interface()))
@@ -971,7 +974,8 @@ impl Parser<'_> {
     }
 
     fn parse_class(&mut self) -> ClassDecl {
-        let openness = if self.eat_kw(Kw::Open) {
+        let openness = if self.at_contextual("open") {
+            self.bump();
             Openness::Open
         } else if self.at_contextual("abstract") {
             self.bump();

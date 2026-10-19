@@ -96,6 +96,30 @@ pub fn comptime_forbidden(bodies: &[Body], types: &TypeTable, root: usize) -> Op
     Some((effect, chain))
 }
 
+/// `[CLI-12]`, `[DET-9]` — for each function named `item` (`f`, `module.f`, `Type.method`), every
+/// operation with `effect` it reaches, nearest first, each with where it is and the shortest chain of
+/// names down to it. `None` when no function has that name.
+pub fn effect_sources(
+    bodies: &[Body],
+    types: &TypeTable,
+    item: &str,
+    effect: Effects,
+) -> Option<Vec<(usize, Vec<(Span, Vec<String>)>)>> {
+    let roots: Vec<usize> = (0..bodies.len())
+        .filter(|&index| bodies[index].name == item || display_name(&bodies[index], types) == item)
+        .collect();
+    if roots.is_empty() {
+        return None;
+    }
+    let graph = Graph::new(bodies, types);
+    Some(roots.into_iter().map(|root| (root, graph.sources(root, effect, types))).collect())
+}
+
+/// `[CLI-12]` — a function as the program names it (a class method with its class).
+pub fn function_name(body: &Body, types: &TypeTable) -> String {
+    display_name(body, types)
+}
+
 /// `[CLI-13]` — the foreign functions the functions named `item` can reach.
 pub struct ForeignReach {
     /// Each foreign function reached (its body's index), with the chain of names from the item to
@@ -687,6 +711,46 @@ impl<'a> Graph<'a> {
         Graph { bodies, sites, effects }
     }
 
+    /// `[CLI-12]`, `[DET-9]` — every operation with `effect` that `from` reaches, in the order a
+    /// breadth-first walk meets them (so each chain is a shortest one), with where it is.
+    fn sources(&self, from: usize, effect: Effects, types: &TypeTable) -> Vec<(Span, Vec<String>)> {
+        let mut parent: HashMap<usize, usize> = HashMap::new();
+        let mut seen = HashSet::from([from]);
+        let mut queue = VecDeque::from([from]);
+        let mut met: HashSet<(&'static str, Span)> = HashSet::new();
+        let mut found = Vec::new();
+        while let Some(at) = queue.pop_front() {
+            for site in &self.sites[at] {
+                if !site.effects.intersects(effect) {
+                    continue;
+                }
+                match site.origin {
+                    Origin::Operation(operation) => {
+                        if !met.insert((operation, site.span)) {
+                            continue;
+                        }
+                        let mut names = vec![operation.to_string()];
+                        let mut current = at;
+                        while let Some(&caller) = parent.get(&current) {
+                            names.push(display_name(&self.bodies[current], types));
+                            current = caller;
+                        }
+                        names.push(display_name(&self.bodies[from], types));
+                        names.reverse();
+                        found.push((site.span, names));
+                    }
+                    Origin::Call(callee) => {
+                        if self.effects[callee].intersects(effect) && seen.insert(callee) {
+                            parent.insert(callee, at);
+                            queue.push_back(callee);
+                        }
+                    }
+                }
+            }
+        }
+        found
+    }
+
     /// `[EFF-6]` — the nearest operation that gives `from` the effect: the site in `from` it is
     /// reached through, and the chain of names down to the operation.
     fn chain(&self, from: usize, effect: Effects, types: &TypeTable) -> Option<(Site, Site, Vec<String>)> {
@@ -1249,6 +1313,7 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         },
         // `[DET-2]` — the system random source (`RandomState`'s seed).
         B::ProcessKey => (Effects::NONDET, "the process's random hash key"),
+        B::Runtime(function) => function.effects(),
         // A reload loads a library, allocates and may run `migrate_from` and `drop` code.
         B::HotCheckpoint => (Effects::ALLOC | Effects::IO | Effects::NONDET, "`std.hot.checkpoint`"),
         B::ViewsOverlap { .. } | B::TotalLess | B::FloatAbs | B::IntOverflowing(_) | B::IntBits(_)

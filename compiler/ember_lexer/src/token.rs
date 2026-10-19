@@ -228,7 +228,7 @@ keywords! { Kw,
     Fn => "fn", For => "for", If => "if", Implements => "implements",
     Import => "import", In => "in", Interface => "interface", Is => "is",
     Let => "let", Match => "match", Mut => "mut", Not => "not",
-    Open => "open", Or => "or", Override => "override", Owned => "owned",
+Or => "or", Override => "override", Owned => "owned",
     Pass => "pass", Pub => "pub", Ref => "ref", Return => "return",
     SelfValue => "self", SelfType => "Self", Static => "static",
     Struct => "struct", Super => "super", True => "true", Type => "type",
@@ -279,7 +279,7 @@ impl Reserved {
 /// still reserved where a declaration would begin, an item starting `union`
 /// and a name (ODR-035, 0.9.9_Hardened_13).
 pub const CONTEXTUAL_KEYWORDS: &[&str] =
-    &["abstract", "final", "lazy", "test", "bench", "from", "gen", "extend", "union"];
+    &["abstract", "open", "final", "lazy", "test", "bench", "from", "gen", "extend", "union"];
 
 // ---------------------------------------------------------------------------
 // Punctuation
@@ -348,7 +348,7 @@ mod tests {
         // Part II §4 lists 48: seven on each of six rows and six on the
         // seventh, `yield` included (ERR-025) and `extend` not (ODR-030). A
         // count that drifts means the table and this enum disagree.
-        assert_eq!(Kw::ALL.len(), 48);
+        assert_eq!(Kw::ALL.len(), 47);
         assert_eq!(Kw::from_str("yield"), Some(Kw::Yield), "[LEX-15b]");
         assert_eq!(Reserved::from_str("yield"), None, "[LEX-15b], errata ERR-025");
         // `[LEX-15]` (0.9.9): `async`, `await` and `macro` only (D-642).

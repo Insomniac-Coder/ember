@@ -262,6 +262,19 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-134 — `open` blocks `File.open` — **CLOSED**
+
+    ID:        ODR-134
+    Status:    CLOSED — ruled under the delegation 2026-10-19 by the owner's standing rule; incorporated in 0.9.10_Hardened_17
+    Category:  LEXICAL
+    Location:  Ember_v0.9.10_Hardened_16.md [LEX-15], [STD-22]
+
+**The question.** `[STD-22]` names `File.open`, but `open` was a reserved keyword (it begins `open class`), so `std.fs` could not declare it and no program could call it.
+
+**Ruling.** Ruled under the delegation by the owner's standing rule for such collisions (2026-09-08, ERR-017, `from`): the word becomes contextual. `open` is a keyword only immediately before `class` (as `abstract` is) and an ordinary identifier everywhere else; the reserved set goes from 48 words to 47. ADR-212.
+
+---
+
 ## ODR-133 — layout changes at `std.hot.checkpoint()` — **CLOSED**
 
     ID:        ODR-133

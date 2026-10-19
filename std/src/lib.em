@@ -18,6 +18,9 @@
 ##   `std.coroutine`  gameplay sequencing on generators: `Wait`, `Scheduler`
 ##                    (`[CORO-11]`)
 ##   `std.hot`  hot reload's program side: `ReloadError` and `checkpoint` (Annex B)
+##   `std.process`  the command line, `exit` and `abort` (`[STD-24]`)
+##   `std.env`  the environment: `var` (`[STD-24]`)
+##   `std.random`  `Rng`, seeded or from the system's generator (`[STD-25]`)
 ##
 ## `Option`, `Result`, `Array` and `String` are still compiler-known: Part XX.1
 ## makes them so "until Phase 2's generics let the standard library write

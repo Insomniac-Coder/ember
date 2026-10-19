@@ -453,6 +453,9 @@ pub(crate) struct Analysis<'a> {
     types: &'a TypeTable,
     /// Per local: a whole integer local no reference can write.
     tracked: Vec<bool>,
+    /// Per local: a reference is taken to it, so a call or a write through the reference can change
+    /// it unseen (D-709): no `bool` fact is kept for it.
+    referenced: Vec<bool>,
     views: Vec<View>,
     lists: Lists,
     /// Per followed list: the range of its elements, narrower than the type's.
@@ -584,6 +587,7 @@ impl<'a> Analysis<'a> {
             body,
             types,
             tracked: Vec::new(),
+            referenced: Vec::new(),
             views: Vec::new(),
             lists: Lists::default(),
             elements: BTreeMap::new(),
@@ -596,6 +600,7 @@ impl<'a> Analysis<'a> {
             entry_ranges,
         };
         analysis.tracked = analysis.tracked_locals();
+        analysis.referenced = analysis.referenced_locals();
         analysis.views = analysis.collect_views();
         analysis.len_ranges = analysis
             .views
@@ -642,6 +647,18 @@ impl<'a> Analysis<'a> {
             analysis.solve()?;
         }
         Some(analysis)
+    }
+
+    fn referenced_locals(&self) -> Vec<bool> {
+        let mut referenced = vec![false; self.body.locals.len()];
+        for block in &self.body.blocks {
+            for stmt in &block.stmts {
+                if let StmtKind::Assign { rvalue: Rvalue::Ref { place, .. }, .. } = &stmt.kind {
+                    referenced[place.local.0 as usize] = true;
+                }
+            }
+        }
+        referenced
     }
 
     fn tracked_locals(&self) -> Vec<bool> {
@@ -1384,6 +1401,9 @@ impl<'a> Analysis<'a> {
     }
 
     fn assume_bool(&self, state: &mut State, local: LocalId, truth: bool) -> Option<()> {
+        if self.referenced[local.0 as usize] {
+            return Some(());
+        }
         match state.bools.get(&local).copied() {
             Some(BoolFact::Known(value)) => (value == truth).then_some(()),
             Some(BoolFact::Cmp { op, lhs, rhs }) => {
@@ -1625,7 +1645,7 @@ impl<'a> Analysis<'a> {
                         _ => None,
                     };
                     self.forget_bool(state, local);
-                    if let Some(fact) = fact {
+                    if let Some(fact) = fact.filter(|_| !self.referenced[local.0 as usize]) {
                         state.bools.insert(local, fact);
                     }
                 } else {
@@ -1760,7 +1780,7 @@ impl<'a> Analysis<'a> {
                                 }
                             }
                         }
-                        FuncRef::Builtin { which: Builtin::TotalLess, .. } if args.len() == 2 => {
+                        FuncRef::Builtin { which: Builtin::TotalLess, .. } if args.len() == 2 && !self.referenced[local.0 as usize] => {
                             if let Some(fact) = self.compare(&state, BinOp::Lt, &args[0], &args[1]) {
                                 state.bools.insert(local, fact);
                             }

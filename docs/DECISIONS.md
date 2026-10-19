@@ -5017,6 +5017,50 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-213 — `ember why` and `ember inspect --deterministic` (`[CLI-12]`, `[DET-9]`)
+
+2026-10-19. Both read the effect graph the contracts are checked on (before inlining), through one
+walk, `effects::effect_sources`: breadth first from the item, so each chain to an operation is a
+shortest one.
+* `ember why --alloc|--block|--io|--lock|--sync|--unsafe|--ffi <fn> <file>` prints the shortest chain
+  to an operation with that effect, whether or not the item has a contract, or that it reaches none;
+  with `--unsafe`, the obligation (`@safety`) each unsafe function on the chain states
+  (`function_obligations`, now shared with `ember tcb`). `--json` too.
+* `ember inspect --deterministic <fn> <file>` prints whether the item satisfies `[DET-1]` and, if not,
+  every `Nondet` source it reaches with its shortest chain (relaxed floating point is one, as the
+  graph already records it). A foreign function it reaches whose determinism `@ffi(deterministic)`
+  asserts is reported as asserted, not verified.
+
+## ADR-212 — `std.random`, `std.process`, `std.env`, `std.io`, `std.fs`; `open` contextual (ODR-134); D-709
+
+2026-10-19, toward 90% (solo).
+* **A standard function whose body is the runtime's** (`ember_hir::RuntimeFn`): one table names the
+  std declaration (`path`), the runtime function (`runtime`) and its effects. A call to the
+  declaration is checked against its signature and becomes `Builtin::Runtime`, which the C backend
+  emits as the runtime call; the declaration's own body is a staging body that never runs (as
+  `process_key`'s already was). A new std function on the runtime is a row, a C function and the
+  Ember wrapper; `mut` parameters reach C as pointers.
+* `[STD-25]` `std.random.Rng`: xoshiro256** seeded by SplitMix64, integer arithmetic under
+  `@overflow(wrap)`, so a seed gives one sequence everywhere (checked against the published
+  algorithms); `int_in` rejects the draws that would favour low values; `float` is 53 bits scaled
+  exactly; `shuffle` swaps through `split_at` (a `MutSpan` has no `swap`); `from_entropy` is the
+  runtime's `entropy` (`Nondet`).
+* `[STD-24]` `std.process`: `exit` flushes the standard streams and `_Exit`s (no destructor, `defer`
+  or `atexit` hook runs), `abort`, `args`, `args_os` (raw bytes; Windows' UTF-16 command line as
+  WTF-8). `std.env.var` (Windows: `GetEnvironmentVariableW`).
+* `[STD-22]` `std.io` (`Error` with `ErrorKind`, the C library's code and message; `stdin()`,
+  `read_line`, `lines`) and `std.fs` (`read`, `read_to_string`, `write`, `append`, `exists`, `remove`,
+  `create_dir_all`, `read_dir` sorted, `metadata`, `File` closing on drop, `BufReader`, `BufWriter`
+  flushing on drop). The runtime uses the C library everywhere (the wide CRT calls on Windows, opened
+  shared with `_wfsopen` as on other systems), so every failure is an `errno`. Windows still refuses
+  to remove a file that is open.
+* **ODR-134, `open` contextual** (0.9.10_Hardened_17): `[STD-22]` names `File.open`, which the
+  keyword `open` blocked. By the owner's standing rule for such collisions (contextual, never a
+  rename or `r#`), `open` is a keyword only before `class`, as `abstract` is; the reserved set has
+  47 words.
+* **D-709**: `range_facts` kept a `bool` local's known value across a call given `ref mut` to it,
+  so a `mut bool` argument's write was lost in the caller. Found by `read_line`'s end flag.
+
 ## ADR-211 — A `mut` parameter's default in another float mode (N7, `[TYP-9]`, `[FN-5]`)
 
 2026-10-19. A default doing float work keeps its declaration's mode (ODR-090): it is the body of a

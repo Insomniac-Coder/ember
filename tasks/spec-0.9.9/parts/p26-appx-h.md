@@ -412,6 +412,7 @@ ODR-132, the type of `Retained.ptr()` (§H.20).
 | ODR-132 | ruled under the delegation (2026-10-19, autopilot), the owner having chosen a typed pointer: `tok.ptr()` is a `std.ffi.ObjectPtr[C]` for a class `C`, a `*mut U` for a `Box[U]`, a `*mut u8` for a `Box[dyn I]`; an `ObjectPtr` is a class object's address with no count of its own, one pointer to C | `[FFI-23]` |
 | ODR-131 | ruled by the owner (2026-10-19): a `cdylib` exports the marker `ember_module_protocol_vN`, which its host looks up before calling into it; `[FFI-28]` and `[ABI-1]` disagreed | `[FFI-28]`, `[FFI-31]`, `[ABI-1]` |
 | ODR-133 | ruled by the owner (2026-10-19, A1: the data is fixed at a checkpoint, so layout changes apply live too), built under the delegation: each function keeps a record of the call it is in and the image lists what the rest of it depends on; a change no frame below the checkpoint depends on applies (instances migrate, one a frame references in place), one a frame depends on is refused, naming it | `[HR-3]`, `[HR-3b]`, `[HR-33]` |
+| ODR-134 | ruled under the delegation by the owner's standing rule (2026-09-08, ERR-017: a reserved word that blocks a name the standard library must declare becomes contextual, never a rename or `r#`): `open` is a keyword only before `class`, so `File.open` (`[STD-22]`) can be declared; the reserved set has 47 words | `[LEX-15]`, `[STD-22]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -918,3 +919,15 @@ Generated: every rule whose text differs from 0.9.10_Hardened_15.
 |---|---|
 | `[HR-3]` | changed |
 | `[HR-3b]` | added |
+
+## H.22 Changes in 0.9.10_Hardened_17 (from 0.9.10_Hardened_16)
+
+**0.9.10_Hardened_17** records ODR-134, ruled under the delegation by the owner's standing rule for a keyword that collides with a name the standard library must declare (`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-212):
+
+* `open` is a contextual keyword, a keyword only before `class`, as `abstract` is, so `std.fs.File` can have the `open` that `[STD-22]` names; the reserved set has 47 words (`[LEX-15]`, ODR-134).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_16.
+
+| Rule | 0.9.10_Hardened_16 → 0.9.10_Hardened_17 |
+|---|---|
+| `[LEX-15]` | changed |

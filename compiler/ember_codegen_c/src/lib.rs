@@ -9098,6 +9098,9 @@ impl Emitter<'_> {
                     Builtin::ProcessKey => {
                         return format!("{RT}process_key({})", rendered[0]);
                     }
+                    Builtin::Runtime(function) => {
+                        return format!("{RT}{}({})", function.runtime(), rendered.join(", "));
+                    }
                     Builtin::HotCheckpoint => return format!("(void){RT}reload_checkpoint()"),
                     Builtin::StrContainsChar => {
                         return format!("{RT}str_contains_char({}, {})", rendered[0], rendered[1]);

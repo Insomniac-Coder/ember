@@ -10730,7 +10730,13 @@ formal 1/9 count or Phase 2's estimate.
 > program's start-up, so a host keeps its own); `[HR-11]`'s schema test; `[EFF-10]` (the safety
 > side table lists every runtime check left in, by site, beside the removed ones); N7 (ADR-211: a
 > `mut` parameter's default in another float mode, a closure of its mode returning `ref mut`).
-> Overall crossed 85% here; the goal is now 90%.
+> Overall crossed 85% here; the goal is now 90%. Then ADR-212: `std.random` (`[STD-25]`),
+> `std.process` and `std.env` (`[STD-24]`), `std.io` and `std.fs` (`[STD-22]`), all on one mechanism,
+> `ember_hir::RuntimeFn` (a std declaration whose call is the runtime's: add a row, a C function and
+> the wrapper); ODR-134 `open` contextual (0.9.10_Hardened_17); D-709 fixed (a `mut bool` argument's
+> write was lost to `range_facts`). `[STD-18]` (`format`, `format_to`) is next to consider: it needs
+> a `Formatter` over a fixed buffer and a run-time spec. Then ADR-213: `ember why` (`[CLI-12]`) and
+> `ember inspect --deterministic` (`[DET-9]`) on `effects::effect_sources`.
 
 
 **2026-10-12 (autopilot), a Part V.5 class probe sweep: D-560..D-566, ODR-104 (0.9.10_Hardened_8).**

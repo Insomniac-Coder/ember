@@ -1268,8 +1268,146 @@ pub enum DisjointMode {
     All,
 }
 
+/// `[STD-22]`, `[STD-24]`, `[STD-25]` — a standard function whose body is the runtime's: a call to
+/// the declaration at `path` is a call to the runtime's function `runtime` (with its prefix). The
+/// declaration's own body is a staging body that never runs; its signature is the call's.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum RuntimeFn {
+    Entropy,
+    ProcessExit,
+    ProcessAbort,
+    ProcessArgs,
+    ProcessArgsOs,
+    EnvVar,
+    FsRead,
+    FsWrite,
+    FsExists,
+    FsMetadata,
+    FsRemove,
+    FsCreateDirAll,
+    FsReadDir,
+    FileOpen,
+    FileRead,
+    FileWrite,
+    FileFlush,
+    FileClose,
+    StdinReadLine,
+    IoErrorKind,
+    IoErrorMessage,
+}
+
+impl RuntimeFn {
+    pub const ALL: [RuntimeFn; 21] = [
+        RuntimeFn::Entropy,
+        RuntimeFn::ProcessExit,
+        RuntimeFn::ProcessAbort,
+        RuntimeFn::ProcessArgs,
+        RuntimeFn::ProcessArgsOs,
+        RuntimeFn::EnvVar,
+        RuntimeFn::FsRead,
+        RuntimeFn::FsWrite,
+        RuntimeFn::FsExists,
+        RuntimeFn::FsMetadata,
+        RuntimeFn::FsRemove,
+        RuntimeFn::FsCreateDirAll,
+        RuntimeFn::FsReadDir,
+        RuntimeFn::FileOpen,
+        RuntimeFn::FileRead,
+        RuntimeFn::FileWrite,
+        RuntimeFn::FileFlush,
+        RuntimeFn::FileClose,
+        RuntimeFn::StdinReadLine,
+        RuntimeFn::IoErrorKind,
+        RuntimeFn::IoErrorMessage,
+    ];
+
+    /// The standard declaration a call names.
+    pub fn path(self) -> &'static str {
+        match self {
+            RuntimeFn::Entropy => "std.random.entropy",
+            RuntimeFn::ProcessExit => "std.process.exit_now",
+            RuntimeFn::ProcessAbort => "std.process.abort_now",
+            RuntimeFn::ProcessArgs => "std.process.args_utf8",
+            RuntimeFn::ProcessArgsOs => "std.process.args_bytes",
+            RuntimeFn::EnvVar => "std.env.lookup",
+            RuntimeFn::FsRead => "std.fs.read_raw",
+            RuntimeFn::FsWrite => "std.fs.write_raw",
+            RuntimeFn::FsExists => "std.fs.exists_raw",
+            RuntimeFn::FsMetadata => "std.fs.metadata_raw",
+            RuntimeFn::FsRemove => "std.fs.remove_raw",
+            RuntimeFn::FsCreateDirAll => "std.fs.create_dir_all_raw",
+            RuntimeFn::FsReadDir => "std.fs.read_dir_raw",
+            RuntimeFn::FileOpen => "std.fs.file_open",
+            RuntimeFn::FileRead => "std.fs.file_read",
+            RuntimeFn::FileWrite => "std.fs.file_write",
+            RuntimeFn::FileFlush => "std.fs.file_flush",
+            RuntimeFn::FileClose => "std.fs.file_close",
+            RuntimeFn::StdinReadLine => "std.io.stdin_read_line",
+            RuntimeFn::IoErrorKind => "std.io.error_kind",
+            RuntimeFn::IoErrorMessage => "std.io.error_message",
+        }
+    }
+
+    /// The runtime function, without its prefix.
+    pub fn runtime(self) -> &'static str {
+        match self {
+            RuntimeFn::Entropy => "entropy",
+            RuntimeFn::ProcessExit => "process_exit",
+            RuntimeFn::ProcessAbort => "process_abort",
+            RuntimeFn::ProcessArgs => "process_args",
+            RuntimeFn::ProcessArgsOs => "process_args_os",
+            RuntimeFn::EnvVar => "env_var",
+            RuntimeFn::FsRead => "fs_read",
+            RuntimeFn::FsWrite => "fs_write",
+            RuntimeFn::FsExists => "fs_exists",
+            RuntimeFn::FsMetadata => "fs_metadata",
+            RuntimeFn::FsRemove => "fs_remove",
+            RuntimeFn::FsCreateDirAll => "fs_create_dir_all",
+            RuntimeFn::FsReadDir => "fs_read_dir",
+            RuntimeFn::FileOpen => "file_open",
+            RuntimeFn::FileRead => "file_read",
+            RuntimeFn::FileWrite => "file_write",
+            RuntimeFn::FileFlush => "file_flush",
+            RuntimeFn::FileClose => "file_close",
+            RuntimeFn::StdinReadLine => "stdin_read_line",
+            RuntimeFn::IoErrorKind => "io_error_kind",
+            RuntimeFn::IoErrorMessage => "io_error_message",
+        }
+    }
+
+    /// `[EFF-1]` — what a call does, and how a contract violation names it.
+    pub fn effects(self) -> (Effects, &'static str) {
+        match self {
+            // `[DET-2]` — the system random source.
+            RuntimeFn::Entropy => (Effects::NONDET, "the system random source"),
+            RuntimeFn::ProcessExit => (Effects::IO, "`process.exit`"),
+            RuntimeFn::ProcessAbort => (Effects::IO, "`process.abort`"),
+            RuntimeFn::ProcessArgs | RuntimeFn::ProcessArgsOs => (Effects::ALLOC, "the command line"),
+            RuntimeFn::EnvVar => (Effects(Effects::IO.0 | Effects::ALLOC.0), "`env.var`"),
+            // `[STD-22]` — every operation on the outside world carries `Io`.
+            RuntimeFn::FsRead => (Effects(Effects::IO.0 | Effects::ALLOC.0), "`std.fs`"),
+            RuntimeFn::FsWrite => (Effects(Effects::IO.0 | Effects::ALLOC.0), "`std.fs`"),
+            RuntimeFn::FsExists => (Effects(Effects::IO.0 | Effects::ALLOC.0), "`std.fs`"),
+            RuntimeFn::FsMetadata => (Effects(Effects::IO.0 | Effects::ALLOC.0), "`std.fs`"),
+            RuntimeFn::FsRemove => (Effects(Effects::IO.0 | Effects::ALLOC.0), "`std.fs`"),
+            RuntimeFn::FsCreateDirAll => (Effects(Effects::IO.0 | Effects::ALLOC.0), "`std.fs`"),
+            RuntimeFn::FsReadDir => (Effects(Effects::IO.0 | Effects::ALLOC.0), "`std.fs`"),
+            RuntimeFn::FileOpen => (Effects(Effects::IO.0 | Effects::ALLOC.0), "a `File`"),
+            RuntimeFn::FileRead => (Effects(Effects::IO.0 | Effects::ALLOC.0), "a `File`"),
+            RuntimeFn::FileWrite => (Effects(Effects::IO.0 | Effects::ALLOC.0), "a `File`"),
+            RuntimeFn::FileFlush => (Effects(Effects::IO.0 | Effects::ALLOC.0), "a `File`"),
+            RuntimeFn::FileClose => (Effects(Effects::IO.0 | Effects::ALLOC.0), "a `File`"),
+            RuntimeFn::StdinReadLine => (Effects(Effects::IO.0 | Effects::ALLOC.0 | Effects::BLOCK.0), "standard input"),
+            RuntimeFn::IoErrorKind => (Effects::NONE, ""),
+            RuntimeFn::IoErrorMessage => (Effects::ALLOC, "an `io.Error`'s message"),
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Builtin {
+    /// A standard function whose body is the runtime's (`RuntimeFn`).
+    Runtime(RuntimeFn),
     /// `[DSJ-1]` — establish that two views do not overlap (`result` is the
     /// call's type).
     AssertDisjoint { mode: DisjointMode, result: Ty },
@@ -1845,6 +1983,7 @@ impl Builtin {
 
     pub fn name(self) -> &'static str {
         match self {
+            Builtin::Runtime(function) => function.runtime(),
             Builtin::ForeignStatic { .. } => "foreign_static",
             Builtin::ForeignAdopt => "ffi_adopt",
             Builtin::ForeignRelease => "ffi_release",

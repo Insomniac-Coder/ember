@@ -63,12 +63,12 @@ this compiler does not have yet):
     ember explain --borrow <file>:<line>           why each borrow live at that line is still live
                                                    (not built yet)
     ember explain --cycle <path> <Class[.field]>   one cycle-capable class or field
-    ember inspect <item> [--safety [--elided-only] | --alloc | --cost | --deterministic | --cycle
+    ember inspect <item> [--safety [--elided-only] | --alloc | --cost | --deterministic <fn> | --cycle
                           | --expand | --counts] [--function <name>]
-                                                   reports on a program (--cost, --deterministic and
-                                                   --expand are not built yet)
-    ember why --alloc|--block|--io|--lock|--sync|--unsafe|--ffi <item>
-                                                   the call chain to that effect (not built yet)
+                                                   reports on a program (--cost and --expand are not
+                                                   built yet)
+    ember why --alloc|--block|--io|--lock|--sync|--unsafe|--ffi <fn> <file>
+                                                   the shortest call chain to that effect
     ember calls --foreign <item>                   every foreign function the item can reach
     ember bind <header> [--init [--merge] | --report [--baseline <file> | --write-baseline]
                          | --check <overlay> | --explain <fn> | --emit-embind]
@@ -433,6 +433,8 @@ struct Options {
     /// `[CLI-13]` — `ember calls --foreign <item>`: check the program, then list the foreign
     /// functions the item can reach.
     foreign_calls: Option<ForeignCalls>,
+    /// `[CLI-12]`, `[DET-9]` — `ember why` and `ember inspect --deterministic`.
+    effect_report: Option<EffectReport>,
     /// `[FFI-37]` — `ember test --instrument-ffi`: the directory its evidence record goes to
     /// (`[TCB-1]`'s `[ffi] evidence`).
     ffi_evidence: Option<PathBuf>,
@@ -442,6 +444,15 @@ struct Options {
 struct ForeignCalls {
     json: bool,
     item: String,
+}
+
+/// `[CLI-12]` — the shortest chain from `item` to an operation with `effect`; `[DET-9]`
+/// (`deterministic`) — every `Nondet` source `item` reaches.
+struct EffectReport {
+    effect: ember_hir::Effects,
+    item: String,
+    json: bool,
+    deterministic: bool,
 }
 
 /// What `ember tcb` prints: JSON or text, one module or all.
@@ -529,6 +540,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "inspect" => inspect(&args[1..]),
         "tcb" => tcb(&args[1..]),
         "calls" => calls(&args[1..]),
+        "why" => why(&args[1..]),
         "test" => test_runner::command(&args[1..]),
         "build" | "run" | "check" => {
             // The source file may sit before or after the flags. Requiring it
@@ -732,6 +744,7 @@ fn inspect(args: &[String]) -> Result<ExitCode, String> {
     let mut counts = false;
     let mut cycle = false;
     let mut alloc = false;
+    let mut deterministic: Option<String> = None;
     let mut elided_only = false;
     let mut json = false;
     let mut function = None;
@@ -744,6 +757,11 @@ fn inspect(args: &[String]) -> Result<ExitCode, String> {
             "--counts" => counts = true,
             "--cycle" => cycle = true,
             "--alloc" => alloc = true,
+            "--deterministic" => {
+                index += 1;
+                let item = args.get(index).filter(|item| !item.starts_with('-'));
+                deterministic = Some(item.ok_or("`--deterministic` needs an item: a function the program names")?.clone());
+            }
             "--elided-only" => elided_only = true,
             "--json" => json = true,
             "--function" => {
@@ -767,11 +785,21 @@ fn inspect(args: &[String]) -> Result<ExitCode, String> {
         index += 1;
     }
 
-    if [safety, counts, cycle, alloc].iter().filter(|&&kind| kind).count() > 1 {
+    if [safety, counts, cycle, alloc, deterministic.is_some()].iter().filter(|&&kind| kind).count() > 1 {
         return Err("`ember inspect` accepts only one report kind at a time".to_string());
     }
-    if !safety && !counts && !cycle && !alloc {
-        return Err("`ember inspect` requires `--safety`, `--counts`, `--cycle` or `--alloc`".to_string());
+    if !safety && !counts && !cycle && !alloc && deterministic.is_none() {
+        return Err("`ember inspect` requires `--safety`, `--counts`, `--cycle`, `--alloc` or `--deterministic <item>`".to_string());
+    }
+    // `[DET-9]` — checked as `ember check` does.
+    if let Some(item) = deterministic {
+        if elided_only || function.is_some() {
+            return Err("`--elided-only` and `--function` apply only to `--safety` and `--alloc`".to_string());
+        }
+        let path = path.ok_or("`ember inspect --deterministic` needs a source file")?;
+        let report = EffectReport { effect: ember_hir::Effects::NONDET, item, json, deterministic: true };
+        let options = Options { effect_report: Some(report), ..Options::default() };
+        return compile(&path, "check", &options);
     }
     // `[PHIL-2]`, `[CLO-10]` — checked as `ember check` does; diagnostics as
     // text on standard error, as `--cycle`'s are, so `--json` is the report's.
@@ -1392,6 +1420,170 @@ fn calls(args: &[String]) -> Result<ExitCode, String> {
     compile(&path, "check", &options)
 }
 
+/// `[CLI-12]` — `ember why --alloc|--block|--io|--lock|--sync|--unsafe|--ffi <item> <file>`.
+fn why(args: &[String]) -> Result<ExitCode, String> {
+    use ember_hir::Effects;
+    let mut wanted: Option<(Effects, String)> = None;
+    let mut json = false;
+    let mut path = None;
+    let mut rest = args.iter();
+    while let Some(argument) = rest.next() {
+        let effect = match argument.as_str() {
+            "--json" => {
+                json = true;
+                continue;
+            }
+            "--alloc" => Effects::ALLOC,
+            "--block" => Effects::BLOCK,
+            "--io" => Effects::IO,
+            "--lock" => Effects::LOCK,
+            "--sync" => Effects::SYNC,
+            "--unsafe" => Effects::UNSAFE,
+            "--ffi" => Effects::FFI,
+            flag if flag.starts_with('-') => return Err(format!("unknown `ember why` option `{flag}`")),
+            file if path.is_none() => {
+                path = Some(PathBuf::from(file));
+                continue;
+            }
+            extra => return Err(format!("unexpected `ember why` argument `{extra}`")),
+        };
+        let item = rest.next().ok_or_else(|| format!("`{argument}` needs an item: a function the program names"))?;
+        if wanted.replace((effect, item.clone())).is_some() {
+            return Err("`ember why` takes one effect at a time".to_string());
+        }
+    }
+    let (effect, item) =
+        wanted.ok_or("`ember why` needs an effect and an item: `--alloc|--block|--io|--lock|--sync|--unsafe|--ffi <item>`")?;
+    let path = path.ok_or("`ember why` needs a source file")?;
+    let options = Options { effect_report: Some(EffectReport { effect, item, json, deterministic: false }), ..Options::default() };
+    compile(&path, "check", &options)
+}
+
+/// `[CLI-12]`, `[DET-9]` — the chains `request` asks for. For `--unsafe`, the obligation of every
+/// unsafe function on the chain (`@safety`, `[UNS-7]`); for `--deterministic`, the foreign
+/// functions reached whose determinism is asserted (`@ffi(deterministic)`), never verified.
+fn print_effect_report(
+    input: &Path,
+    bodies: &[ember_mir::Body],
+    types: &TypeTable,
+    modules: &[ember_typeck::LoadedModule],
+    map: &SourceMap,
+    request: &EffectReport,
+) -> Result<(), String> {
+    use ember_hir::Effects;
+    let effect = if request.deterministic { Effects::NONDET } else { request.effect };
+    let word = Effects::NAMED.iter().find(|(named, _)| *named == effect).map_or("?", |(_, word)| *word);
+    let roots = ember_analysis::effects::effect_sources(bodies, types, &request.item, effect)
+        .ok_or_else(|| format!("no function named `{}` in {}", request.item, input.display()))?;
+    let obligations = function_obligations(modules);
+    let obligation_of = |name: &str| -> Option<Option<String>> {
+        let body = bodies.iter().find(|body| body.is_unsafe && ember_analysis::effects::function_name(body, types) == name)?;
+        Some(
+            obligations
+                .iter()
+                .filter(|(span, _)| span.file == body.span.file && span.start <= body.span.start && body.span.start < span.end.max(span.start + 1))
+                .min_by_key(|(span, _)| span.end - span.start)
+                .and_then(|(_, obligation)| obligation.clone()),
+        )
+    };
+    // `[DET-9]` — determinism a foreign declaration asserts is reported as asserted.
+    let asserted: Vec<Vec<String>> = if request.deterministic {
+        ember_analysis::effects::foreign_reach(bodies, types, &request.item)
+            .map(|reach| {
+                reach
+                    .reached
+                    .into_iter()
+                    .filter(|(index, _)| bodies[*index].contracts.foreign.is_some_and(|facts| !facts.contains(Effects::NONDET)))
+                    .map(|(_, chain)| chain)
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let (_, sources) = &roots[0];
+    let shown: &[(ember_span::Span, Vec<String>)] = if request.deterministic { sources } else { &sources[..sources.len().min(1)] };
+    if request.json {
+        let chains: Vec<serde_json::Value> = shown
+            .iter()
+            .map(|(span, chain)| {
+                let mut entry = serde_json::json!({ "chain": chain, "source": map.location(*span) });
+                if effect == Effects::UNSAFE {
+                    entry["obligations"] = serde_json::json!(chain
+                        .iter()
+                        .filter_map(|name| obligation_of(name).map(|obligation| serde_json::json!({ "function": name, "obligation": obligation })))
+                        .collect::<Vec<_>>());
+                }
+                entry
+            })
+            .collect();
+        let mut report = serde_json::json!({ "schema": 1, "item": request.item, "effect": word, "chains": chains });
+        if request.deterministic {
+            report["deterministic"] = serde_json::json!(shown.is_empty());
+            report["asserted"] = serde_json::json!(asserted);
+        }
+        println!("{report}");
+        return Ok(());
+    }
+    if request.deterministic {
+        if shown.is_empty() && asserted.is_empty() {
+            println!("`{}` satisfies [DET-1]", request.item);
+        } else if shown.is_empty() {
+            println!("`{}` satisfies [DET-1] on asserted foreign facts, not verified:", request.item);
+            for chain in &asserted {
+                println!("  {} (`@ffi(deterministic)` asserted)", chain.join(" -> "));
+            }
+        } else {
+            println!("`{}` does not satisfy [DET-1]: it reaches {} `Nondet` source(s)", request.item, shown.len());
+            for (span, chain) in shown {
+                println!("  {}  ({})", chain.join(" -> "), map.location(*span));
+            }
+        }
+        return Ok(());
+    }
+    let Some((span, chain)) = shown.first() else {
+        println!("`{}` does not reach `{word}`", request.item);
+        return Ok(());
+    };
+    println!("`{}` reaches `{word}`:", request.item);
+    println!("  {}  ({})", chain.join(" -> "), map.location(*span));
+    if effect == Effects::UNSAFE {
+        for name in chain {
+            match obligation_of(name) {
+                Some(Some(obligation)) => println!("  `{name}` requires: {obligation}"),
+                Some(None) => println!("  `{name}` states no obligation"),
+                None => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `[UNS-7]` — every function's declaration and the obligation it states (`@safety`), standard ones
+/// too.
+fn function_obligations(modules: &[ember_typeck::LoadedModule]) -> Vec<(Span, Option<String>)> {
+    let mut obligations: Vec<(Span, Option<String>)> = Vec::new();
+    for loaded in modules {
+        for item in &loaded.module.items {
+            match &item.kind {
+                ember_ast::ItemKind::Fn(_) => obligations.push((item.span, safety_obligation(&item.attrs))),
+                ember_ast::ItemKind::Struct(ember_ast::StructDecl { members, .. })
+                | ember_ast::ItemKind::Class(ember_ast::ClassDecl { members, .. })
+                | ember_ast::ItemKind::Enum(ember_ast::EnumDecl { members, .. })
+                | ember_ast::ItemKind::Extend(ember_ast::ExtendDecl { members, .. }) => {
+                    for member in members {
+                        if matches!(member.kind, ember_ast::MemberKind::Fn(_)) {
+                            obligations.push((member.span, safety_obligation(&member.attrs)));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    obligations
+}
+
 /// `[CLI-13]` — each foreign function `request.item` can reach, with the chain to it and the
 /// contract its declaration states (each fact with its grade, `[TCB-1]`).
 fn print_foreign_calls(
@@ -1553,25 +1745,7 @@ fn print_tcb_report(
     let contains = |outer: Span, inner: Span| outer.file == inner.file && outer.start <= inner.start && inner.start < outer.end.max(outer.start + 1);
     // Every function's declaration and its stated obligation, standard ones too: a program's
     // `unsafe` calls them.
-    let mut obligations: Vec<(Span, Option<String>)> = Vec::new();
-    for loaded in modules {
-        for item in &loaded.module.items {
-            match &item.kind {
-                ember_ast::ItemKind::Fn(_) => obligations.push((item.span, safety_obligation(&item.attrs))),
-                ember_ast::ItemKind::Struct(ember_ast::StructDecl { members, .. })
-                | ember_ast::ItemKind::Class(ember_ast::ClassDecl { members, .. })
-                | ember_ast::ItemKind::Enum(ember_ast::EnumDecl { members, .. })
-                | ember_ast::ItemKind::Extend(ember_ast::ExtendDecl { members, .. }) => {
-                    for member in members {
-                        if matches!(member.kind, ember_ast::MemberKind::Fn(_)) {
-                            obligations.push((member.span, safety_obligation(&member.attrs)));
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
+    let obligations = function_obligations(modules);
     let mut entries: Vec<UnsafeEntry> = Vec::new();
     for loaded in modules {
         if loaded.path.first().is_some_and(|package| package == ember_branding::STD_PACKAGE) || loaded.module.unsafe_sites.is_empty() {
@@ -3786,6 +3960,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if let Some(request) = &options.tcb_report {
         report(&sink, &map, options);
         print_tcb_report(input, &bodies, &types, &modules, &map, request)?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    // `[CLI-12]`, `[DET-9]` — likewise.
+    if let Some(request) = &options.effect_report {
+        report(&sink, &map, options);
+        print_effect_report(input, &bodies, &types, &modules, &map, request)?;
         return Ok(ExitCode::SUCCESS);
     }
     // `[CLI-13]` — the call graph the effects were computed on, before inlining folds it.
