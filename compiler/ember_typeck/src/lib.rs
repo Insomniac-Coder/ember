@@ -8316,7 +8316,7 @@ impl<'a> Checker<'a> {
         for (ty, fields, unit_only) in holders {
             let attrs = self.types.layout_attrs(ty);
             if attrs.packed {
-                for (name, field, span) in fields {
+                for &(name, field, span) in &fields {
                     let (aligned, simd) = self.types.stated_alignment(field);
                     if (aligned || simd) && reported.insert(span) {
                         let shown = self.types.display(field);
@@ -8327,6 +8327,18 @@ impl<'a> Checker<'a> {
                             Diagnostic::error(codes::E0900, span, format!("field `{name}` of a `@packed` type holds a SIMD vector (`{shown}`), which is not implemented yet"))
                                 .note("a vector is aligned to its size [SIMD-1]; packing one is not built [ATT-6]")
                         });
+                    }
+                }
+            }
+            // A derived `hash` borrows each part (`synth_hash_of`); a packed one that may be
+            // unaligned is copied first, which a part passed by address cannot be.
+            if attrs.packed && self.derives_hash(ty) {
+                for &(name, field, span) in &fields {
+                    if self.types.layout(field).align > 1 && self.types.passed_by_address(field) && reported.insert(span) {
+                        self.sink.emit(
+                            Diagnostic::error(codes::E2170, span, format!("`@derive(Hash)` borrows field `{name}` of a `@packed` type, which may be unaligned"))
+                                .note("a field of a `@packed` type is read by value, and this one is passed by address [LAY-2]"),
+                        );
                     }
                 }
             }
@@ -45298,7 +45310,9 @@ impl<'a> Checker<'a> {
                 let fields: Vec<Ty> = self.types.struct_def(id).fields.iter().map(|field| field.ty).collect();
                 for (index, field) in fields.into_iter().enumerate() {
                     let part = Expr { ty: field, kind: ExprKind::Field { base: Box::new(read()), index }, span };
-                    stmts.push(Stmt::Expr(self.synth_hash_of(part, recv_span, args, span)));
+                    if let Some(part) = self.packed_part(ty, part, &mut stmts) {
+                        stmts.push(Stmt::Expr(self.synth_hash_of(part, recv_span, args, span)));
+                    }
                 }
             }
             TyKind::Enum(id) if self.types.enum_def(id).is_unit_only() => {
@@ -45325,7 +45339,9 @@ impl<'a> Checker<'a> {
                             kind: ExprKind::EnumField { base: Box::new(read()), variant, index },
                             span,
                         };
-                        body.push(Stmt::Expr(self.synth_hash_of(part, recv_span, args, span)));
+                        if let Some(part) = self.packed_part(ty, part, &mut body) {
+                            body.push(Stmt::Expr(self.synth_hash_of(part, recv_span, args, span)));
+                        }
                     }
                     arms.push(hir::MatchArm {
                         pattern: hir::Pattern {
@@ -45348,6 +45364,23 @@ impl<'a> Checker<'a> {
             _ => unreachable!("hash_provided admits only the kinds above"),
         }
         self.void_block(stmts, span)
+    }
+
+    /// `[LAY-2]` — a part of a `@packed` value that a derived operation reads: a field that may
+    /// be unaligned is copied into a local first, which is borrowed in its place. One that is
+    /// passed by address cannot be copied, and is `E2170` at its declaration
+    /// (`check_declared_layouts`), so it is left out here.
+    fn packed_part(&mut self, owner: Ty, part: Expr, stmts: &mut Vec<Stmt>) -> Option<Expr> {
+        if !self.types.layout_attrs(owner).packed || self.types.layout(part.ty).align <= 1 {
+            return Some(part);
+        }
+        if self.types.passed_by_address(part.ty) {
+            return None;
+        }
+        let (ty, span) = (part.ty, part.span);
+        let local = self.declare(None, ty, span);
+        stmts.push(Stmt::Let { local, init: Some(part) });
+        Some(Expr { ty, kind: ExprKind::Local(local), span })
     }
 
     /// `[TYP-17]` — `E2040` for a type argument that misses a bound, with

@@ -1863,6 +1863,22 @@ impl Emitter<'_> {
     /// D-187 — a C expression, true when `a` and `b` (values of `ty`) are
     /// equal: IEEE `==` on floats, identity on class handles, bytes on text
     /// and `[STR-5]`'s field-wise equality on aggregates.
+    /// `[LAY-2]` — a C statement using a part of `owner` at `at`: when `owner` is `@packed`
+    /// the part may be unaligned, and the statement uses an aligned copy of it instead, since
+    /// `use_part` may take its address.
+    fn packed_use(&self, owner: Ty, at: &str, ty: Ty, use_part: impl Fn(&Self, &str) -> String) -> String {
+        if !self.types.layout_attrs(owner).packed || self.types.layout(ty).align <= 1 {
+            return use_part(self, at);
+        }
+        format!("{{ {} _pf = {at}; {} }}", self.c_member_type(ty), use_part(self, "_pf"))
+    }
+
+    /// `[LAY-2]` — one field of two `@packed` values compared from aligned copies, returning
+    /// false from the equality function when they differ.
+    fn packed_eq_stmt(&self, a: &str, b: &str, ty: Ty) -> String {
+        format!("{{ {} _pa = {a}, _pb = {b}; if (!{}) return 0; }}", self.c_member_type(ty), self.eq_expr("_pa", "_pb", ty))
+    }
+
     fn eq_expr(&self, a: &str, b: &str, ty: Ty) -> String {
         // `void` has one value (`[TYP-36]`); a zero-sized element has no
         // storage to read (D-355).
@@ -2169,7 +2185,7 @@ impl Emitter<'_> {
                                 parts.push(text(", "));
                             }
                             parts.push(text(&format!("{}=", field.name)));
-                            parts.push(self.debug_stmt("out", &format!("v->{}", field.name), field.ty));
+                            parts.push(self.packed_use(ty, &format!("v->{}", field.name), field.ty, |this, at| this.debug_stmt("out", at, field.ty)));
                         }
                         parts.push(text(")"));
                         parts.join(" ")
@@ -2200,7 +2216,7 @@ impl Emitter<'_> {
                                         parts.push(text(&format!("{}=", field.name)));
                                     }
                                     let member = self.enum_member(id, "*v", variant_index, i);
-                                    parts.push(self.debug_stmt("out", &member, field.ty));
+                                    parts.push(self.packed_use(ty, &member, field.ty, |this, at| this.debug_stmt("out", at, field.ty)));
                                 }
                                 parts.push(text(")"));
                             }
@@ -2284,6 +2300,14 @@ impl Emitter<'_> {
                 let symbol = eq_fn_symbol(emitted);
                 let c_ty = self.c_type(ty);
                 let body = match self.types.kind(ty).clone() {
+                    TyKind::Struct(id) if self.types.layout_attrs(ty).packed => {
+                        let fields = self.types.struct_def(id).fields.clone();
+                        let parts: Vec<String> = fields
+                            .iter()
+                            .map(|f| self.packed_eq_stmt(&format!("a->{}", f.name), &format!("b->{}", f.name), f.ty))
+                            .collect();
+                        format!("{} return 1;", parts.join(" "))
+                    }
                     TyKind::Struct(id) => {
                         let fields = self.types.struct_def(id).fields.clone();
                         let parts: Vec<String> = fields
@@ -2317,6 +2341,7 @@ impl Emitter<'_> {
                     }
                     TyKind::Enum(id) => {
                         let def = self.types.enum_def(id).clone();
+                        let packed = self.types.layout_attrs(ty).packed;
                         let mut arms = Vec::new();
                         for (variant_index, variant) in def.variants.iter().enumerate() {
                             let parts: Vec<String> = variant
@@ -2326,10 +2351,15 @@ impl Emitter<'_> {
                                 .map(|(field_index, f)| {
                                     let a = self.enum_member(id, "(*a)", variant_index, field_index);
                                     let b = self.enum_member(id, "(*b)", variant_index, field_index);
-                                    self.eq_expr(&a, &b, f.ty)
+                                    if packed { self.packed_eq_stmt(&a, &b, f.ty) } else { self.eq_expr(&a, &b, f.ty) }
                                 })
                                 .collect();
-                            if !parts.is_empty() {
+                            if parts.is_empty() {
+                                continue;
+                            }
+                            if packed {
+                                arms.push(format!("case {}: {{ {} return 1; }}", variant.discriminant, parts.join(" ")));
+                            } else {
                                 arms.push(format!("case {}: return {};", variant.discriminant, conjunction(parts)));
                             }
                         }
