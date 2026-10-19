@@ -6,7 +6,7 @@
 ##               `From` and `AnyError`
 ##   `std.fmt`  the `Formatter` a written `Display` or `Debug` writes through
 ##   `std.math`  Part XV's scalar mathematics
-##   `std.collections`  `Map`, `Set` and hashing (`[STD-11]`, `[HASH-1]`), and
+##   `std.collections`  `Map`, `Set` and hashing (`[STD-11]`, `[HASH-1]`), `Pool` and `Handle` (`[HND-1]`), and
 ##                      `[ARN-5]`'s Arena-backed collection declarations
 ##   `std.mem`  `[UNS-10]`'s lowest-level interior-mutability primitive
 ##   `std.arena`  what the prelude's arenas are (Part VII.6)
@@ -21,6 +21,7 @@
 ##   `std.process`  the command line, `exit` and `abort` (`[STD-24]`)
 ##   `std.env`  the environment: `var` (`[STD-24]`)
 ##   `std.random`  `Rng`, seeded or from the system's generator (`[STD-25]`)
+##   `std.time`  `Instant`, `Duration` and `sleep` (`[STD-23]`)
 ##
 ## `Option`, `Result`, `Array` and `String` are still compiler-known: Part XX.1
 ## makes them so "until Phase 2's generics let the standard library write

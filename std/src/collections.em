@@ -1294,3 +1294,179 @@ pub struct ArenaMap[K, V]:
 pub struct ArenaMapIter[K, V]:
     owner: ref ArenaMap[K, V]
     index: usize
+
+## `[HND-2]` — how a `Pool`'s handle splits into an index and a generation, and the word that holds
+## both. `Split32` (the default) is a `u64` of 32 and 32 bits; `Split20` a `u32` of a 20-bit index
+## and a 12-bit generation, for pools that want small handles and few reuses of a slot.
+pub interface HandleSplit:
+    type Word: Copy
+    fn index_bits() -> int
+    fn generation_bits() -> int
+    fn pack(index: int, generation: int) -> Word
+    fn index_of(word: Word) -> int
+    fn generation_of(word: Word) -> int
+
+pub struct Split32:
+    pass
+
+extend Split32 implements HandleSplit:
+    type Word = u64
+
+    fn index_bits() -> int:
+        return 32
+
+    fn generation_bits() -> int:
+        return 32
+
+    fn pack(index: int, generation: int) -> u64:
+        return ((generation as u64) << 32) | (index as u64)
+
+    fn index_of(word: u64) -> int:
+        return (word & 0xFFFFFFFF) as int
+
+    fn generation_of(word: u64) -> int:
+        return (word >> 32) as int
+
+pub struct Split20:
+    pass
+
+extend Split20 implements HandleSplit:
+    type Word = u32
+
+    fn index_bits() -> int:
+        return 20
+
+    fn generation_bits() -> int:
+        return 12
+
+    fn pack(index: int, generation: int) -> u32:
+        return ((generation as u32) << 20) | (index as u32)
+
+    fn index_of(word: u32) -> int:
+        return (word & 0xFFFFF) as int
+
+    fn generation_of(word: u32) -> int:
+        return (word >> 20) as int
+
+## `[HND-1]` — a reference into a `Pool`: a plain `Copy` value holding the slot's index and the
+## generation the slot had when the handle was given out (`[HND-2]`: in one `B.Word`).
+@derive(Copy)
+pub struct Handle[T, B: HandleSplit = Split32]:
+    word: B.Word
+
+    ## The slot's index.
+    pub fn index(self) -> int:
+        return B.index_of(self.word)
+
+    ## The slot's generation when this handle was given out.
+    pub fn generation(self) -> int:
+        return B.generation_of(self.word)
+
+## `[HND-1]`, `[HND-3]` — values reached through handles that a removal makes stale. Every lookup
+## compares the handle's generation with the slot's, in every profile: a stale handle gives `None`
+## (`pool[h]` panics). A removal moves its slot to the next generation; a slot whose generation is
+## exhausted is retired and never reused, so an old handle never becomes valid again. When every
+## slot is retired or live, `insert` panics and `try_insert` returns `Err(CapacityError.Full)`.
+pub struct Pool[T, B: HandleSplit = Split32]:
+    slots: Array[Option[T]] = []
+    generations: Array[int] = []
+    free: Array[int] = []
+    live: int = 0
+
+    ## `Pool[T]()` is an empty pool (`[STR-6]`: every field has a default).
+    pub fn init(self):
+        pass
+
+    ## How many values the pool holds.
+    pub fn len(self) -> int:
+        return self.live
+
+    ## Puts `value` in a free slot and gives its handle; panics when every slot is retired or live.
+    pub fn insert(mut self, owned value: T) -> Handle[T, B]:
+        match self.try_insert(value):
+            Ok(handle):
+                return handle
+            Err(_):
+                panic("`Pool.insert`: every slot is retired or live")
+
+    ## Puts `value` in a free slot and gives its handle, or `Err(CapacityError.Full)` when every slot
+    ## is retired or live.
+    pub fn try_insert(mut self, owned value: T) -> Result[Handle[T, B], CapacityError]:
+        index = 0
+        if self.free.len() > 0:
+            match self.free.pop():
+                Some(at):
+                    index = at
+                None:
+                    pass
+            self.slots[index] = Some(value)
+        elif self.slots.len() < (1 << B.index_bits()):
+            index = self.slots.len()
+            self.slots.push(Some(value))
+            self.generations.push(0)
+        else:
+            return Err(CapacityError.Full)
+        self.live += 1
+        return Ok(Handle[T, B](word = B.pack(index, self.generations[index])))
+
+    ## Whether `h` is live: its slot holds a value of `h`'s generation.
+    pub fn contains(self, h: Handle[T, B]) -> bool:
+        at = h.index()
+        return at < self.slots.len() and self.generations[at] == h.generation() and self.slots[at].is_some()
+
+    ## The value `h` refers to, or `None` when `h` is stale.
+    @borrows(self)
+    pub fn get(self, h: Handle[T, B]) -> Option[ref T]:
+        if not self.contains(h):
+            return None
+        match self.slots[h.index()]:
+            Some(ref value):
+                return Some(value)
+            None:
+                return None
+
+    ## The value `h` refers to, mutably, or `None` when `h` is stale.
+    @borrows(self)
+    pub fn get_mut(mut self, h: Handle[T, B]) -> Option[ref mut T]:
+        if not self.contains(h):
+            return None
+        match self.slots[h.index()]:
+            Some(ref mut value):
+                return Some(value)
+            None:
+                return None
+
+    ## The value `h` refers to, without comparing generations: `h` must be live.
+    @safety("`h` is live: given by this pool and not removed since")
+    @borrows(self)
+    pub unsafe fn get_unchecked(self, h: Handle[T, B]) -> ref T:  # SAFETY: the caller keeps `h` live
+        match self.slots[h.index()]:
+            Some(ref value):
+                return value
+            None:
+                panic("`Pool.get_unchecked`: the slot is empty")
+
+    ## Takes the value `h` refers to out of the pool, or `None` when `h` is stale. Its slot moves to
+    ## the next generation, or is retired when its generations are exhausted.
+    pub fn remove(mut self, h: Handle[T, B]) -> Option[T]:
+        if not self.contains(h):
+            return None
+        at = h.index()
+        taken = self.slots[at].take()
+        self.live -= 1
+        next = self.generations[at] + 1
+        self.generations[at] = next
+        if next < (1 << B.generation_bits()):
+            self.free.push(at)
+        return taken
+
+extend[T, B: HandleSplit] Pool[T, B] implements Index[Handle[T, B]]:
+    type Output = T
+
+    ## `pool[h]` — the value `h` refers to; a stale handle panics.
+    fn index(self, h: Handle[T, B]) -> ref T:
+        match self.get(h):
+            Some(value):
+                return value
+            None:
+                panic("stale handle")

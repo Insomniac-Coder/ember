@@ -413,6 +413,7 @@ ODR-132, the type of `Retained.ptr()` (§H.20).
 | ODR-131 | ruled by the owner (2026-10-19): a `cdylib` exports the marker `ember_module_protocol_vN`, which its host looks up before calling into it; `[FFI-28]` and `[ABI-1]` disagreed | `[FFI-28]`, `[FFI-31]`, `[ABI-1]` |
 | ODR-133 | ruled by the owner (2026-10-19, A1: the data is fixed at a checkpoint, so layout changes apply live too), built under the delegation: each function keeps a record of the call it is in and the image lists what the rest of it depends on; a change no frame below the checkpoint depends on applies (instances migrate, one a frame references in place), one a frame depends on is refused, naming it | `[HR-3]`, `[HR-3b]`, `[HR-33]` |
 | ODR-134 | ruled under the delegation by the owner's standing rule (2026-09-08, ERR-017: a reserved word that blocks a name the standard library must declare becomes contextual, never a rename or `r#`): `open` is a keyword only before `class`, so `File.open` (`[STD-22]`) can be declared; the reserved set has 47 words | `[LEX-15]`, `[STD-22]` |
+| ODR-135 | ruled under the delegation: `[build] max_instantiations` applies to the package's own generics; the standard library's instances are not the package's to budget, and counting them made any small ceiling warn on code the program never wrote | `[MONO-3]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -931,3 +932,15 @@ Generated: every rule whose text differs from 0.9.10_Hardened_16.
 | Rule | 0.9.10_Hardened_16 → 0.9.10_Hardened_17 |
 |---|---|
 | `[LEX-15]` | changed |
+
+## H.23 Changes in 0.9.10_Hardened_18 (from 0.9.10_Hardened_17)
+
+**0.9.10_Hardened_18** records ODR-135, ruled under the delegation while `[MONO-3]` was built (`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-214):
+
+* `[build] max_instantiations` is a ceiling on the package's own generics: the standard library's (the prelude alone instantiates `NonZero` twelve times) are not the package's to budget (`[MONO-3]`, ODR-135).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_17.
+
+| Rule | 0.9.10_Hardened_17 → 0.9.10_Hardened_18 |
+|---|---|
+| `[MONO-3]` | changed |

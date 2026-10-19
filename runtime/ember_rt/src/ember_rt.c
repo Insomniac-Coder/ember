@@ -8671,6 +8671,46 @@ bool ember_env_var(ember_str name, ember_vec* out) {
 #endif
 }
 
+/* -- [STD-23] std.time --------------------------------------------------------- */
+
+int64_t ember_time_now(void) {
+#if defined(_WIN32)
+    LARGE_INTEGER frequency;
+    LARGE_INTEGER counter;
+    QueryPerformanceFrequency(&frequency);
+    QueryPerformanceCounter(&counter);
+    /* Whole seconds and the rest apart, so the product cannot overflow. */
+    int64_t seconds = counter.QuadPart / frequency.QuadPart;
+    int64_t rest = counter.QuadPart % frequency.QuadPart;
+    return seconds * 1000000000LL + rest * 1000000000LL / frequency.QuadPart;
+#else
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (int64_t)now.tv_sec * 1000000000LL + (int64_t)now.tv_nsec;
+#endif
+}
+
+void ember_time_sleep(int64_t nanos) {
+    if (nanos <= 0) {
+        return;
+    }
+#if defined(_WIN32)
+    /* Whole milliseconds, rounded up: never shorter than asked. */
+    int64_t millis = (nanos + 999999) / 1000000;
+    while (millis > 0) {
+        DWORD step = millis > 0x7FFFFFFF ? 0x7FFFFFFF : (DWORD)millis;
+        Sleep(step);
+        millis -= step;
+    }
+#else
+    struct timespec wanted = { (time_t)(nanos / 1000000000LL), (long)(nanos % 1000000000LL) };
+    struct timespec left;
+    while (nanosleep(&wanted, &left) != 0 && errno == EINTR) {
+        wanted = left;
+    }
+#endif
+}
+
 /* -- [STD-22] std.io and std.fs ------------------------------------------------
  *
  * Each operation returns 0 or the C library's `errno` for what failed; `std.io.Error` asks
@@ -8863,6 +8903,13 @@ int64_t ember_fs_create_dir_all(ember_str path) {
         if (!separator && c != 0) {
             continue;
         }
+#if defined(_WIN32)
+        /* A drive, `C:`, is no directory to make: alone it names that drive's current directory,
+         * which a process working on another drive may not have. */
+        if (at == 2 && system[1] == L':') {
+            continue;
+        }
+#endif
         system[at] = 0;
         int64_t size = 0;
         int64_t ignored = 0;

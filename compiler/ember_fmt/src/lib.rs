@@ -552,6 +552,52 @@ impl Printer<'_> {
                 self.line(&header);
                 self.variants(&decl.variants, &decl.members, item.span);
             }
+            // `[GRM-1]` — the base class follows the name and its parameters.
+            ast::ItemKind::Class(decl) => {
+                let keyword = match decl.openness {
+                    ast::Openness::Final => "class",
+                    ast::Openness::Open => "open class",
+                    ast::Openness::Abstract => "abstract class",
+                };
+                let params = self.generics(&decl.generics);
+                let mut header = format!("{vis}{keyword} {}{params}", self.name(decl.name));
+                if let Some(base) = &decl.base {
+                    header.push_str(&format!("({})", self.type_expr(base)));
+                }
+                if !decl.implements.is_empty() {
+                    let names: Vec<String> = decl.implements.iter().map(|t| self.type_expr(t)).collect();
+                    header.push_str(&format!(" implements {}", names.join(", ")));
+                }
+                header.push_str(&self.where_clause(&decl.where_clause));
+                header.push(':');
+                self.line(&header);
+                self.members(&decl.members, item.span);
+            }
+            // `[FFI-1]` — a block of foreign declarations, each printed as an item is.
+            ast::ItemKind::ExternBlock(block) => {
+                let unsafe_ = if block.is_unsafe { "unsafe " } else { "" };
+                self.line(&format!("{unsafe_}extern \"{}\":", block.abi));
+                self.depth += 1;
+                if block.items.is_empty() {
+                    self.line("pass");
+                }
+                for inner in &block.items {
+                    self.comments_before(inner.span);
+                    self.item(inner);
+                }
+                self.depth -= 1;
+            }
+            // `[FFI-39]` — a declared foreign base, by its foreign path.
+            ast::ItemKind::ExternClass(decl) => {
+                let path: Vec<String> = decl.path.iter().map(|segment| self.name(*segment)).collect();
+                self.line(&format!("extern class {}:", path.join(".")));
+                self.members(&decl.members, item.span);
+            }
+            // `[CT-1]` — an item-level `comptime:` block.
+            ast::ItemKind::Comptime(block) => {
+                self.line("comptime:");
+                self.block(block);
+            }
             ast::ItemKind::Interface(decl) => {
                 let params = self.generics(&decl.generics);
                 let mut header = format!("{vis}interface {}{params}", self.name(decl.name));
@@ -676,7 +722,8 @@ impl Printer<'_> {
             .as_ref()
             .map(|t| format!(" -> {}", self.type_expr(t)))
             .unwrap_or_default();
-        let unsafe_ = if decl.is_unsafe { "unsafe " } else { "" };
+        // `safe fn`, a hand-written foreign declaration's (`[FFI-10]`).
+        let unsafe_ = if decl.is_unsafe { "unsafe " } else if decl.is_safe { "safe " } else { "" };
         let dispatch = match decl.dispatch {
             ast::Dispatch::Static => "",
             ast::Dispatch::Virtual => "virtual ",

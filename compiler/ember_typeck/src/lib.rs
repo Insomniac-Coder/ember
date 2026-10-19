@@ -108,7 +108,22 @@ pub struct CallableDeclarationCallableBound {
 /// The checker result separates executable HIR from the source declaration
 /// interface. Generic declarations deliberately have no emitted HIR body
 /// until instantiated, but their type/bound contract is still importer-visible.
+/// `[MONO-2]` — one generic's instances: what each was made with, oldest first, and the time
+/// checking them took.
+#[derive(Clone, Debug)]
+pub struct Instantiation {
+    pub generic: String,
+    pub span: Span,
+    /// Each instance as the program would name it, in the order they were made.
+    pub instances: Vec<String>,
+    /// For each of `instances`, when it was made: its definition's or type's index.
+    pub made: Vec<u32>,
+    pub elapsed: std::time::Duration,
+}
+
 pub struct CheckOutput {
+    /// `[MONO-2]`, `[MONO-3]` — each generic instantiated, in the order first instantiated.
+    pub instantiations: Vec<Instantiation>,
     pub program: Program,
     pub callable_declarations: Vec<CallableDeclaration>,
     /// `[COST-1]` — the bodies instantiated from a declaration in `std`, kept
@@ -391,6 +406,7 @@ pub fn check(
         functions.extend(std::mem::take(&mut checker.comptime_functions));
     }
     CheckOutput {
+        instantiations: std::mem::take(&mut checker.instantiations),
         program: Program { functions, main, tests, assume_noalloc: std::mem::take(&mut checker.assume_noalloc) },
         callable_declarations,
         std_instances: std::mem::take(&mut checker.std_instances),
@@ -1612,6 +1628,8 @@ struct GenericExtension {
 struct GenericMethod {
     name: Symbol,
     dispatch: ast::Dispatch,
+    /// `[UNS-1]` (D-710) — an `unsafe fn` method: its calls need `unsafe` in every instance.
+    is_unsafe: bool,
     /// Abstract class methods have a callable declaration but no body to
     /// instantiate. Their declarations still participate in lookup and the
     /// class-vtable layout.
@@ -2303,6 +2321,8 @@ struct Checker<'a> {
     deferred_methods: HashMap<DefId, PendingMethod>,
     /// `[COST-1]` — see `CheckOutput::std_instances` and `note_std_instance`.
     std_instances: HashSet<String>,
+    /// `[MONO-2]` — `CheckOutput::instantiations`.
+    instantiations: Vec<Instantiation>,
     /// `[STD-1]` — the functions of `std` whose documentation says they allocate, by span.
     allocation_documented: HashSet<Span>,
     /// `[STD-1]` — the methods of `std`'s generic declarations (a generic type's, a generic
@@ -2781,6 +2801,7 @@ impl<'a> Checker<'a> {
             emit_if_used_methods: HashSet::new(),
             deferred_methods: HashMap::new(),
             std_instances: HashSet::new(),
+            instantiations: Vec::new(),
             allocation_documented: HashSet::new(),
             std_generic_members: HashSet::new(),
             bound_calls: HashMap::new(),
@@ -5165,6 +5186,7 @@ impl<'a> Checker<'a> {
                 methods.push(GenericMethod {
                     name: fn_decl.name.name,
                     dispatch: fn_decl.dispatch,
+                    is_unsafe: fn_decl.is_unsafe,
                     has_body: true,
                     receiver,
                     params: signature.params,
@@ -5250,6 +5272,7 @@ impl<'a> Checker<'a> {
                 methods.push(GenericMethod {
                     name: fn_decl.name.name,
                     dispatch: fn_decl.dispatch,
+                    is_unsafe: fn_decl.is_unsafe,
                     has_body: true,
                     receiver,
                     params: signature.params,
@@ -5356,6 +5379,7 @@ impl<'a> Checker<'a> {
                 methods.push(GenericMethod {
                     name: fn_decl.name.name,
                     dispatch: fn_decl.dispatch,
+                    is_unsafe: fn_decl.is_unsafe,
                     has_body: fn_decl.body.is_some(),
                     receiver,
                     params: signature.params,
@@ -5502,6 +5526,7 @@ impl<'a> Checker<'a> {
                 methods.push(GenericMethod {
                     name: fn_decl.name.name,
                     dispatch: fn_decl.dispatch,
+                    is_unsafe: fn_decl.is_unsafe,
                     has_body: fn_decl.body.is_some(),
                     receiver,
                     params: signature.params,
@@ -7201,7 +7226,7 @@ impl<'a> Checker<'a> {
             params,
             ret: self.substitute_self(ret, ty),
             abi: None,
-            is_unsafe: false,
+            is_unsafe: method.is_unsafe,
             overflow: method.overflow,
             fp: method.fp,
             generics,
@@ -15146,6 +15171,10 @@ impl<'a> Checker<'a> {
         self.struct_ids.insert(instance, id);
         self.named_types.insert(instance, ty);
         self.struct_default_exprs.insert(id, decl.defaults.clone());
+        // `[MONO-2]` — a new concrete instance of the generic type.
+        if !self.is_opaque_instance(ty) {
+            self.note_instantiation(name.to_string(), span, id.0, self.types.display(ty), std::time::Duration::ZERO);
+        }
 
         // The fields were resolved once with the parameters left opaque, so
         // instantiating is a substitution rather than a re-resolve.
@@ -16901,8 +16930,14 @@ impl<'a> Checker<'a> {
 
                 let quiet_before = quiet.diagnostics().len();
                 let saved = std::mem::replace(self.sink, std::mem::take(&mut quiet));
+                let started = std::time::Instant::now();
                 let function = self.check_one_function(decl, block, instance, &item.attrs,
                     &modules[module_index].module.directives, item.span);
+                // `[MONO-2]` — this instance, and the time its check took.
+                let path = &modules[module_index].path;
+                let generic = if path.is_empty() { decl.name.name.to_string() } else { format!("{}.{}", path.join("."), decl.name.name) };
+                let made_with: Vec<String> = key.args.iter().map(|&ty| self.types.display(ty)).collect();
+                self.note_instantiation(generic, item.span, instance.0, format!("{}[{}]", decl.name.name, made_with.join(", ")), started.elapsed());
                 quiet = std::mem::replace(self.sink, saved);
                 // `[STD-19]` — an instance can refuse a line its generic check left
                 // to the uses: say which use.
@@ -18247,6 +18282,24 @@ impl<'a> Checker<'a> {
         }
         for report in reports {
             self.sink.emit(report);
+        }
+    }
+
+    /// `[MONO-2]` — one more instance of `generic` (once each), made `made`-th, and the time its
+    /// check took. Instances are checked in no particular order, so they are kept in the order made.
+    fn note_instantiation(&mut self, generic: String, span: Span, made: u32, instance: String, elapsed: std::time::Duration) {
+        let entry = match self.instantiations.iter().position(|entry| entry.generic == generic) {
+            Some(at) => &mut self.instantiations[at],
+            None => {
+                self.instantiations.push(Instantiation { generic, span, instances: Vec::new(), made: Vec::new(), elapsed: std::time::Duration::ZERO });
+                self.instantiations.last_mut().expect("just pushed")
+            }
+        };
+        entry.elapsed += elapsed;
+        if !entry.instances.contains(&instance) {
+            let at = entry.made.partition_point(|&other| other < made);
+            entry.made.insert(at, made);
+            entry.instances.insert(at, instance);
         }
     }
 

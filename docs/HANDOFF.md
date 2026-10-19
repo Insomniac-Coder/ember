@@ -10736,7 +10736,9 @@ formal 1/9 count or Phase 2's estimate.
 > the wrapper); ODR-134 `open` contextual (0.9.10_Hardened_17); D-709 fixed (a `mut bool` argument's
 > write was lost to `range_facts`). `[STD-18]` (`format`, `format_to`) is next to consider: it needs
 > a `Formatter` over a fixed buffer and a run-time spec. Then ADR-213: `ember why` (`[CLI-12]`) and
-> `ember inspect --deterministic` (`[DET-9]`) on `effects::effect_sources`.
+> `ember inspect --deterministic` (`[DET-9]`) on `effects::effect_sources`. Then ADR-214: `Pool`/`Handle`
+> (`[HND-1..3]`), `std.time` (`[STD-23]`), `[FMT-1]` complete, `--report=instantiations` and
+> `max_instantiations` (`[MONO-2]`, `[MONO-3]`, ODR-135, 0.9.10_Hardened_18), D-710, D-711.
 
 
 **2026-10-12 (autopilot), a Part V.5 class probe sweep: D-560..D-566, ODR-104 (0.9.10_Hardened_8).**

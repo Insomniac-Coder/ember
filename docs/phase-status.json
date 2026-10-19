@@ -32,7 +32,6 @@
     "STD-14": "nothing checks that a standard function failing on a caller's bug has a non-panicking twin, or that every allocating one is documented as allocating",
     "DET-2": "observing a pointer or handle as an integer, hashing one, and reading uninitialised or padding bytes are not recorded as `Nondet` (`ember_analysis::effects`)",
     "DOC-2": "`ember test --doc` runs every sample under docs/book/ (ADR-192, milestone ember_test_doc_runs_the_documentation_examples), but the user guide itself, with its \"coming from Python\" chapter, does not exist and is not published with a release",
-    "FMT-1": "classes, `extern` blocks, extern classes and item-level `comptime:` are copied through as written: not re-indented to four spaces nor kept to 100 columns (the printer has no arm for them; `ember_fmt`'s item catch-all)",
     "FFI-1": "a foreign declaration's contract has no effects or thread rule yet; contracts beyond link names are E0900 (see FFI-11)",
     "FFI-33b": "a `ForeignBox` of a `threads(creator)` type or result records its creator and panics in debug when it ends elsewhere, and a `retained` parameter carries `threads(creator)`; callbacks carrying it are not built (no `callback(…)` contracts)",
     "FFI-2": "an overlay file parses and is checked (`[GRM-35]`, `E5067`), but nothing applies one: overlays reach a program only through `import c … with (overlay=…)`, and the C header importer is not built, so a call's missing facts cannot be supplied by one",

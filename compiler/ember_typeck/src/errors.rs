@@ -651,6 +651,7 @@ impl<'a> Checker<'a> {
             methods.push(GenericMethod {
                 name: fn_decl.name.name,
                 dispatch: fn_decl.dispatch,
+                is_unsafe: fn_decl.is_unsafe,
                 has_body: fn_decl.body.is_some(),
                 receiver,
                 params: signature.params,

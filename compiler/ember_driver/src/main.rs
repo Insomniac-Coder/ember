@@ -41,8 +41,8 @@ this compiler does not have yet):
                                                    compile a bin, staticlib or cdylib package; --reload
                                                    builds the next image of a running program and
                                                    --explain predicts that reload (--target,
-                                                   --backend llvm, --report and --build-id are
-                                                   not built yet)
+                                                   --backend llvm, --report=engine and --build-id
+                                                   are not built yet)
     ember check [file.em] [--syntax-only] [--timings]
                                                    type, borrow and effect checks without code generation
     ember test [filter] [--doc] [--no-leak-check] [--instrument-ffi]
@@ -435,6 +435,8 @@ struct Options {
     foreign_calls: Option<ForeignCalls>,
     /// `[CLI-12]`, `[DET-9]` — `ember why` and `ember inspect --deterministic`.
     effect_report: Option<EffectReport>,
+    /// `[MONO-2]` — `--report=instantiations`.
+    instantiation_report: bool,
     /// `[FFI-37]` — `ember test --instrument-ffi`: the directory its evidence record goes to
     /// (`[TCB-1]`'s `[ffi] evidence`).
     ffi_evidence: Option<PathBuf>,
@@ -2530,6 +2532,9 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--emit-optimization-report" => options.optimization_report = true,
             "--timings" => options.timings = Some(false),
             "--timings=json" => options.timings = Some(true),
+            // `[MONO-2]` — the instances each generic produced and the time they took.
+            "--report=instantiations" => options.instantiation_report = true,
+            "--report=engine" => return Err("`--report=engine` is not built yet".to_string()),
             "--cc" => options.cc = Some(value(&mut index, arg)?),
             "--out-dir" => options.out_dir = Some(PathBuf::from(value(&mut index, arg)?)),
             "--backend" => {
@@ -3749,6 +3754,35 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             }
         }
     };
+    // `[MONO-3]` — a generic of the program's with more instances than the manifest's ceiling. The
+    // standard library's generics are not the package's to budget.
+    if let Some((ceiling, at)) = lint_settings.max_instantiations {
+        let standard = format!("{}.", ember_branding::STD_PACKAGE);
+        for entry in &checked.instantiations {
+            if entry.instances.len() > ceiling && !entry.generic.starts_with(&standard) {
+                let newest: Vec<&str> = entry.instances.iter().rev().take(3).map(String::as_str).collect();
+                sink.emit(
+                    Diagnostic::warning(
+                        codes::W2220,
+                        entry.span,
+                        format!("`{}` has {} instances, more than `max_instantiations = {ceiling}`", entry.generic, entry.instances.len()),
+                    )
+                    .secondary(at, "the ceiling is set here")
+                    .note(format!("its newest: {}", newest.join(", "))),
+                );
+            }
+        }
+    }
+    // `[MONO-2]` — each generic's instances and the time checking them took.
+    if options.instantiation_report {
+        println!("Instantiations:");
+        for entry in &checked.instantiations {
+            println!("  {}: {} instance(s), {:.3} ms", entry.generic, entry.instances.len(), entry.elapsed.as_secs_f64() * 1000.0);
+            for instance in &entry.instances {
+                println!("    {instance}");
+            }
+        }
+    }
     let only_these = !sink.has_errors();
     for report in reports {
         sink.emit(report);
@@ -4889,6 +4923,8 @@ struct ManifestLintSettings {
     reload: Option<(ReloadMode, Span)>,
     /// `[HR-29]` — `[build] runtime = "static"`, when written, with where.
     static_runtime: Option<Span>,
+    /// `[MONO-3]` — `[build] max_instantiations`, when written, with where.
+    max_instantiations: Option<(usize, Span)>,
 }
 
 /// `[MAN-7]`, `[HR-25]` — what a package's `[build] reload` asks for. `OptIn` makes reloadable only
@@ -5002,6 +5038,15 @@ fn manifest_lint_settings(
                         }
                     } else if section == "build" && key == "runtime" && value.trim().trim_matches('"') == "static" {
                         settings.static_runtime = Some(location);
+                    } else if section == "build" && key == "max_instantiations" {
+                        // `[MONO-3]` — a per-generic ceiling, a positive whole number.
+                        match value.trim().parse::<usize>() {
+                            Ok(ceiling) if ceiling > 0 => settings.max_instantiations = Some((ceiling, location)),
+                            _ => sink.emit(
+                                Diagnostic::error(codes::E9034, location, format!("`max_instantiations = {}` is not a positive whole number", value.trim()))
+                                    .help("write the most instances one generic may have, such as `max_instantiations = 64` [MONO-3]"),
+                            ),
+                        }
                     } else if section == "lints" {
                         if !manifest_lint_is_known(key) {
                             sink.emit(Diagnostic::error(

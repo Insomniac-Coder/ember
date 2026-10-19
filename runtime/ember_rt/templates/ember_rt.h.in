@@ -2377,6 +2377,9 @@ int64_t ember_file_close(int64_t handle);
 int64_t ember_stdin_read_line(ember_vec* out, bool* end);
 int64_t ember_io_error_kind(int64_t code);
 void ember_io_error_message(int64_t code, ember_vec* out);
+/* `[STD-23]` — `std.time`: the monotonic clock in nanoseconds, and a sleep of at least `nanos`. */
+int64_t ember_time_now(void);
+void ember_time_sleep(int64_t nanos);
 /* `[STD-25]` — 64 bits from the operating system's generator, drawn at each call. */
 uint64_t ember_entropy(void);
 /* Append one valid Unicode scalar to a UTF-8 String. */

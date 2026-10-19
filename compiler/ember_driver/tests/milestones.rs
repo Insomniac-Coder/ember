@@ -594,6 +594,102 @@ fn main():
     assert_eq!(before.stdout, after.stdout, "parse(fmt(x)) differs from parse(x)");
 }
 
+/// `[FMT-1]` — every declaration is laid out, none copied through as written: a class (its base,
+/// interfaces and members), an `unsafe extern` block (its attributes, `safe fn`s and comments), an
+/// `extern class` and an item-level `comptime:` block are re-indented to four spaces. The result
+/// formats to itself and parses to the same tree.
+#[test]
+fn fmt_lays_out_classes_extern_blocks_and_comptime_items() {
+    let root = workspace_root();
+    let directory = temporary_directory("fmt-items");
+    let source = directory.join(ember_branding::source_file("items"));
+    std::fs::write(&source, "\
+interface Named:
+  fn name(self) -> int
+
+open class Base:
+  id: int = 0
+
+  fn get(self) -> int:
+        return self.id
+
+class Leaf(Base) implements Named:
+  extra: int = 1
+  fn name(self) -> int:
+        return self.extra
+
+unsafe extern \"C\":
+  # the C library's absolute value
+  @ffi(effects=[], deterministic)
+  safe fn abs(x: i32) -> i32
+  fn rand() -> i32
+
+extern class cpp.RageV.Layer:
+  pass
+
+comptime:
+      assert(1 + 1 == 2)
+
+fn main():
+    leaf = Leaf()
+    println(leaf.name(), abs(-3))
+").expect("the source is writable");
+    let path = source.to_string_lossy().to_string();
+    let once = ember(&["fmt", &path], &root);
+    assert_eq!(once.exit, 0, "{}", once.stderr);
+    let out = &once.stdout;
+    assert!(out.contains("open class Base:\n    id: int = 0\n\n    fn get(self) -> int:\n        return self.id\n"), "{out}");
+    assert!(out.contains("class Leaf(Base) implements Named:\n    extra: int = 1\n\n    fn name(self) -> int:\n        return self.extra\n"), "{out}");
+    assert!(out.contains("unsafe extern \"C\":\n    # the C library's absolute value\n    @ffi(effects=[], deterministic)\n    safe fn abs(x: i32) -> i32\n    fn rand() -> i32\n"), "{out}");
+    assert!(out.contains("extern class cpp.RageV.Layer:\n    pass\n"), "{out}");
+    assert!(out.contains("comptime:\n    assert(1 + 1 == 2)\n"), "{out}");
+    let scratch = directory.join(ember_branding::source_file("once"));
+    std::fs::write(&scratch, &once.stdout).expect("the scratch file is writable");
+    let scratch_path = scratch.to_string_lossy().to_string();
+    let twice = ember(&["fmt", &scratch_path], &root);
+    assert_eq!(once.stdout, twice.stdout, "fmt(fmt(x)) differs from fmt(x)");
+    let before = ember(&["build", &path, "--emit", "ast"], &root);
+    let after = ember(&["build", &scratch_path, "--emit", "ast"], &root);
+    assert_eq!(before.stdout, after.stdout, "parse(fmt(x)) differs from parse(x)");
+}
+
+/// `[MONO-2]` — `ember build --report=instantiations` prints, per generic, how many instances it
+/// produced (a function's and a type's alike), each in the order made, and the time checking them
+/// took. `[MONO-3]` — `[build] max_instantiations = N` is a per-generic ceiling: past it, `W2220`
+/// names the generic and its newest instances. The standard library's generics are not the
+/// package's to budget (ODR-135), and a ceiling that is not a positive whole number is `E9034`.
+#[test]
+fn instantiations_are_reported_and_a_ceiling_warns() {
+    let root = workspace_root();
+    let directory = temporary_directory("instantiations");
+    std::fs::create_dir_all(directory.join("src")).expect("the package is writable");
+    std::fs::write(directory.join(MANIFEST), "[package]\nname = \"mono\"\n\n[build]\nmax_instantiations = 2\n")
+        .expect("the manifest is writable");
+    std::fs::write(
+        directory.join("src").join(ember_branding::source_file("main")),
+        "fn pick[T](a: T, b: T) -> T:\n    return b\n\n\
+         struct Wrap[T]:\n    value: T\n\n\
+         fn main():\n    println(pick(1, 2), pick(1.5, 2.5), pick(\"a\", \"b\"))\n\
+         \x20   w = Wrap[int](value = 3)\n    v = Wrap[bool](value = true)\n    println(w.value, v.value)\n",
+    )
+    .expect("the source is writable");
+    let package = directory.to_string_lossy().into_owned();
+    let out = directory.join("out").to_string_lossy().into_owned();
+    let built = ember(&["build", "--report=instantiations", &package, "--out-dir", &out], &root);
+    assert_eq!(built.exit, 0, "{}", built.stderr);
+    assert!(built.stdout.contains("  pick: 3 instance(s), "), "{}", built.stdout);
+    assert!(built.stdout.contains("    pick[i64]\n    pick[f64]\n    pick[str]\n"), "{}", built.stdout);
+    assert!(built.stdout.contains("  Wrap: 2 instance(s), ") && built.stdout.contains("    Wrap[i64]\n    Wrap[bool]\n"), "{}", built.stdout);
+    assert!(built.stderr.contains("warning[W2220]: `pick` has 3 instances, more than `max_instantiations = 2`"), "{}", built.stderr);
+    assert!(built.stderr.contains("its newest: pick[str], pick[f64], pick[i64]"), "{}", built.stderr);
+    assert_eq!(built.stderr.matches("warning[W2220]").count(), 1, "only the program's own generics: {}", built.stderr);
+    std::fs::write(directory.join(MANIFEST), "[package]\nname = \"mono\"\n\n[build]\nmax_instantiations = 0\n")
+        .expect("the manifest is writable");
+    let refused = ember(&["check", &package], &root);
+    assert_ne!(refused.exit, 0);
+    assert!(refused.stderr.contains("error[E9034]") && refused.stderr.contains("is not a positive whole number"), "{}", refused.stderr);
+}
+
 /// `[CLI-15]` — `ember --help` lists every command and flag of XVII.1: each `ember <command>` and each
 /// `--flag` (and `-D`) of the specification's listing, read from the development target itself, is in it.
 #[test]

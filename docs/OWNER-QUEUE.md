@@ -262,6 +262,19 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-135 — whose generics `max_instantiations` budgets — **CLOSED**
+
+    ID:        ODR-135
+    Status:    CLOSED — ruled under the delegation 2026-10-19; incorporated in 0.9.10_Hardened_18
+    Category:  IMPLEMENTATION
+    Location:  Ember_v0.9.10_Hardened_17.md [MONO-3]
+
+**The question.** `[MONO-3]` sets a per-generic ceiling without saying whose generics: the standard library's are instantiated by the prelude itself (`NonZero` twelve times, `ArrayIntoIter` once per element type iterated), so a ceiling of 2 warned on generics the program never wrote.
+
+**Ruling.** Ruled under the delegation: the ceiling applies to the package's own generics. `ember build --report=instantiations` still lists every generic, the standard library's included. ADR-214.
+
+---
+
 ## ODR-134 — `open` blocks `File.open` — **CLOSED**
 
     ID:        ODR-134

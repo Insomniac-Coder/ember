@@ -77,8 +77,9 @@ The reference implementation compiles Ember to C11 and hands it to the platform'
   time.
 * `[MONO-2]` The compiler records, per generic, how many instances it produced and the time they took;
   `ember build --report=instantiations` prints it.
-* `[MONO-3]` `[build] max_instantiations = N` sets a per-generic ceiling (unset by default); exceeding it
-  is warning `W2220`, naming the generic and its newest instances.
+* `[MONO-3]` `[build] max_instantiations = N` sets a per-generic ceiling (unset by default) on the
+  package's own generics, the standard library's not being the package's to budget (ODR-135);
+  exceeding it is warning `W2220`, naming the generic and its newest instances.
 * `[MONO-5]` A generic is **shareable** at a parameter `T` when `T` appears in its body only as the
   receiver of calls to methods of `T`'s bounds.
 * `[MONO-6]` Only for a shareable generic whose instance count exceeds the ceiling of `[MONO-3]`, and

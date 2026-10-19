@@ -5017,6 +5017,31 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-214 — `Pool` and `Handle`, `std.time`, the formatter's last items, instantiation reports; D-710, D-711
+
+2026-10-19, toward 90% (solo).
+* `[HND-1]`..`[HND-3]` `std.collections.Pool[T, B: HandleSplit = Split32]` and `Handle[T, B]`, written
+  in Ember: a defaulted type parameter picks the split, an interface with an associated `Word` type
+  and static functions packs it (`Split32`: a `u64`, 32/32; `Split20`: a `u32`, 20/12). Slots are
+  `Option[T]` with a generation each; removal moves a slot to its next generation and retires it when
+  the generations run out (it never returns to the free list); `try_insert` is
+  `Err(CapacityError.Full)` when no slot is free and the index space is used; `insert` panics then.
+  `pool[h]` is `Index`, panicking on a stale handle; `get_unchecked` is `unsafe`.
+* `[STD-23]` `std.time`: `Instant.now()` (the runtime's monotonic clock, `Nondet`), `Duration` (whole
+  nanoseconds, checked arithmetic, `+` and `-`), `sleep` (`Block`), two more `RuntimeFn` rows.
+* `[FMT-1]` the printer lays out classes (base, interfaces, members), `extern` blocks (attributes,
+  `safe fn`, comments), `extern class` and item-level `comptime:`; nothing is copied through any
+  more.
+* D-710: a generic type's `unsafe fn` method was callable outside `unsafe` (the method recipe lost
+  `is_unsafe`).
+* `[MONO-2]` `ember build --report=instantiations`: the checker notes each generic's instances (a
+  function's when its body is checked, timed; a type's when it is made) in the order made
+  (`CheckOutput::instantiations`). `[MONO-3]` `[build] max_instantiations = N` (`E9034` if not a
+  positive whole number): past it, `W2220` at the generic, its newest instances named, the ceiling's
+  line beside. ODR-135 (0.9.10_Hardened_18): the ceiling budgets the package's own generics only.
+* D-711: `fs.create_dir_all` tried to make the drive (`C:`) when the process worked on another drive
+  (the Windows CI runners): a drive prefix is skipped.
+
 ## ADR-213 — `ember why` and `ember inspect --deterministic` (`[CLI-12]`, `[DET-9]`)
 
 2026-10-19. Both read the effect graph the contracts are checked on (before inlining), through one

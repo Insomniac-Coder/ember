@@ -1294,10 +1294,12 @@ pub enum RuntimeFn {
     StdinReadLine,
     IoErrorKind,
     IoErrorMessage,
+    TimeNow,
+    TimeSleep,
 }
 
 impl RuntimeFn {
-    pub const ALL: [RuntimeFn; 21] = [
+    pub const ALL: [RuntimeFn; 23] = [
         RuntimeFn::Entropy,
         RuntimeFn::ProcessExit,
         RuntimeFn::ProcessAbort,
@@ -1319,6 +1321,8 @@ impl RuntimeFn {
         RuntimeFn::StdinReadLine,
         RuntimeFn::IoErrorKind,
         RuntimeFn::IoErrorMessage,
+        RuntimeFn::TimeNow,
+        RuntimeFn::TimeSleep,
     ];
 
     /// The standard declaration a call names.
@@ -1345,6 +1349,8 @@ impl RuntimeFn {
             RuntimeFn::StdinReadLine => "std.io.stdin_read_line",
             RuntimeFn::IoErrorKind => "std.io.error_kind",
             RuntimeFn::IoErrorMessage => "std.io.error_message",
+            RuntimeFn::TimeNow => "std.time.monotonic_now",
+            RuntimeFn::TimeSleep => "std.time.sleep_nanos",
         }
     }
 
@@ -1372,6 +1378,8 @@ impl RuntimeFn {
             RuntimeFn::StdinReadLine => "stdin_read_line",
             RuntimeFn::IoErrorKind => "io_error_kind",
             RuntimeFn::IoErrorMessage => "io_error_message",
+            RuntimeFn::TimeNow => "time_now",
+            RuntimeFn::TimeSleep => "time_sleep",
         }
     }
 
@@ -1400,6 +1408,9 @@ impl RuntimeFn {
             RuntimeFn::StdinReadLine => (Effects(Effects::IO.0 | Effects::ALLOC.0 | Effects::BLOCK.0), "standard input"),
             RuntimeFn::IoErrorKind => (Effects::NONE, ""),
             RuntimeFn::IoErrorMessage => (Effects::ALLOC, "an `io.Error`'s message"),
+            // `[STD-23]`, `[DET-2]` — the monotonic clock is `Nondet`; sleeping waits.
+            RuntimeFn::TimeNow => (Effects::NONDET, "the monotonic clock"),
+            RuntimeFn::TimeSleep => (Effects::BLOCK, "`time.sleep`"),
         }
     }
 }
