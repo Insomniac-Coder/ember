@@ -2376,7 +2376,14 @@ fn safety_costs_json(
                 ember_mir::FuncRef::Indirect { .. } => add("Owned callable value", "guaranteed present", span, &body.name, "one indirect call".to_string()),
                 ember_mir::FuncRef::Direct { symbol, .. } => {
                     if let Some(callee) = by_symbol.get(symbol.as_str()) && callee.contracts.foreign.is_some() {
-                        add("FFI call", "guaranteed present", span, &body.name, format!("`{}`, one direct call", callee.name));
+                        // `[FFI-29c]` — a `static inline` function is reached through the shim's wrapper.
+                        let detail = if symbol.starts_with(&format!("{}_cshim_", ember_branding::SYMBOL_PREFIX)) {
+                            format!("`{}`, wrapped (static inline): a direct call to the import's shim, which calls it \
+                                     (one call more, unless the shim takes part in link-time optimisation)", callee.name)
+                        } else {
+                            format!("`{}`, one direct call", callee.name)
+                        };
+                        add("FFI call", "guaranteed present", span, &body.name, detail);
                     }
                 }
                 _ => {}

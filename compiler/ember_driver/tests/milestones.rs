@@ -7311,8 +7311,10 @@ fn bind_init_writes_a_starter_overlay_that_compiles_unchanged() {
 
 /// `[CLI-6]` — `ember bind --report` lists every skipped declaration and every declaration still
 /// `unsafe` with its unknown facts, and exits non-zero on a skip; `--baseline` limits that to skips
-/// the baseline does not list. `[CLI-7]` — `ember bind --check <overlay>` checks `[FFI-12]` and
-/// prints how many declarations are safe, still `unsafe`, and skipped.
+/// the baseline does not list. `[FFI-35a]` — it lists, as an assumption, every pointer parameter
+/// the overlay gives no `retained` word: it does not retain the pointer. `[CLI-7]` — `ember bind
+/// --check <overlay>` checks `[FFI-12]` and prints how many declarations are safe, still `unsafe`,
+/// and skipped.
 #[test]
 fn bind_report_and_check_count_what_is_safe_unsafe_and_skipped() {
     let dir = temporary_directory("bind-report");
@@ -7320,7 +7322,12 @@ fn bind_report_and_check_count_what_is_safe_unsafe_and_skipped() {
     std::fs::write(dir.join(format!("good.{SOURCE_EXT}")), "unsafe overlay c \"calc.h\":\n    fn bind_add(a, b)\n    fn bind_sum(items: borrowed count(n), n)\n    fn bind_zero(items: borrowed TODO(count), n)\n").unwrap();
     let report = ember(&["bind", "calc.h", "--report", "--overlay", &format!("good.{SOURCE_EXT}")], &dir);
     assert_ne!(report.exit, 0, "a skip did not fail the report:\n{}", report.stdout);
-    for line in ["skipped: `bind_log` (calc.h:5): variadic", "unsafe: `bind_zero`: `items`: TODO(count)", "1 skipped declaration(s)"] {
+    for line in [
+        "skipped: `bind_log` (calc.h:5): variadic",
+        "unsafe: `bind_zero`: `items`: TODO(count)",
+        "assumes: `bind_sum`: `items` does not retain the pointer",
+        "1 skipped declaration(s)",
+    ] {
         assert!(report.stdout.contains(line), "the report lacks {line:?}:\n{}", report.stdout);
     }
     assert!(!report.stdout.contains("unsafe: `bind_add`") && !report.stdout.contains("unsafe: `bind_sum`"), "{}", report.stdout);
@@ -7336,4 +7343,32 @@ fn bind_report_and_check_count_what_is_safe_unsafe_and_skipped() {
     let drifted = ember(&["bind", "calc.h", "--check", &format!("drifted.{SOURCE_EXT}")], &dir);
     assert_ne!(drifted.exit, 0, "a drifted overlay passed the check");
     assert!(drifted.stderr.contains("E5010") && drifted.stderr.contains("`bind_add` takes 2 parameters"), "{}", drifted.stderr);
+}
+
+/// `[FFI-29c]` — a call to a wrapped `static inline` function costs one extra call: `ember inspect
+/// --cost` reports it as `wrapped (static inline)`, beside an ordinary foreign call's one direct
+/// call; a variadic `static inline` function cannot be wrapped and is skipped with `W5002`.
+#[test]
+fn inspect_reports_a_wrapped_static_inline_call() {
+    let root = workspace_root();
+    let dir = temporary_directory("inspect-wrapped");
+    std::fs::write(dir.join("wrapped.h"), "\
+static inline int wrapped_twice(int x) { return 2 * x; }
+static inline int wrapped_sum(int n, ...) { return n; }
+int wrapped_plain(int x);
+").unwrap();
+    std::fs::write(dir.join("wrapped.c"), "#include \"wrapped.h\"\nint wrapped_plain(int x) { return x + 1; }\n").unwrap();
+    let source = dir.join(format!("calls.{SOURCE_EXT}"));
+    std::fs::write(&source, "import c \"./wrapped.c\"\n\nfn main():\n    unsafe:  # SAFETY(ffi): scalar calls\n        \
+        println(c.wrapped_twice(2), c.wrapped_plain(2))\n").unwrap();
+    let out_dir = dir.join("out");
+    let build = ember(&["build", &source.to_string_lossy(), "--out-dir", &out_dir.to_string_lossy()], &root);
+    assert_eq!(build.exit, 0, "build failed:\n{}", build.stderr);
+    assert!(build.stderr.contains("W5002") && build.stderr.contains("`wrapped_sum` is not imported") && build.stderr.contains("variadic"),
+        "the variadic static inline function was not reported:\n{}", build.stderr);
+    let table = out_dir.join("debug").join("inspect").join("calls.safety.json").to_string_lossy().into_owned();
+    let report = ember(&["inspect", &table, "--cost"], &root);
+    assert_eq!(report.exit, 0, "{}", report.stderr);
+    assert!(report.stdout.contains("wrapped_twice`, wrapped (static inline)"), "{}", report.stdout);
+    assert!(report.stdout.contains("wrapped_plain`, one direct call"), "{}", report.stdout);
 }

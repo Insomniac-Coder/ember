@@ -155,6 +155,14 @@ is never written over, and `--merge` appends only the functions and skips it lac
 unknown facts, non-zero on a skip; `--baseline f` counts only skips the file does not list,
 `--write-baseline f` writes them. `--check <overlay>` runs `[FFI-12]` and prints "N safe, M still
 unsafe, K skipped". `--explain` and `--emit-embind` are refused (`[FFI-14]` is not built).
+`[FFI-35a]`: `--report` also lists, per function an overlay contracts, each pointer parameter with no
+`retained` word ("does not retain the pointer") and each pointer result with no lifetime word.
+
+### N8a. Wrapped calls in the cost report (`[FFI-29c]`)
+
+`ember inspect --cost`'s "FFI call" row says `wrapped (static inline)` for a call that goes through
+the shim's wrapper (its symbol is the wrapper's), and "one direct call" otherwise. A variadic
+`static inline` function is skipped with `W5002` (it is variadic).
 
 ### N9. Small fixes on the way
 
@@ -187,7 +195,8 @@ unsafe, K skipped". `--explain` and `--emit-embind` are refused (`[FFI-14]` is n
 | `FFI-30a` | `FFI-2/accept_an_overlay_makes_calls_safe.em`, `FFI-30/accept_two_imports_of_one_declaration_are_one_entity.em` |
 | `BLD-FFI-1`, `BLD-FFI-1a`, `BLD-FFI-3` | `ember_driver/tests/cdylib.rs` `import_c_compiles_its_source_with_the_c_section_and_links_in_order`; `FFI-6/accept_a_header_and_its_c_source.em`; `FFI-6/accept_static_inline_functions_through_the_shim.em` (defines) |
 | `CLI-5` | milestone `bind_init_writes_a_starter_overlay_that_compiles_unchanged` |
-| `CLI-6`, `CLI-7` | milestone `bind_report_and_check_count_what_is_safe_unsafe_and_skipped` |
+| `CLI-6`, `CLI-7`, `FFI-35a` | milestone `bind_report_and_check_count_what_is_safe_unsafe_and_skipped` |
+| `FFI-29c` | milestone `inspect_reports_a_wrapped_static_inline_call` |
 
 Test overlays live in an `overlays/` folder beside the tests: the runners take every `*.em` directly
 in a rule folder for a test.
@@ -199,7 +208,7 @@ in a rule folder for a test.
   `const`. Owner question 1.
 * `[FFI-6b]` — function-like macros through an overlay: the overlay grammar gives an entry no types,
   so a macro's signature cannot be written. Owner question 3. With it, `[FFI-29]`'s "wrappers of
-  `[FFI-6b]`" (unfinished) and `[FFI-29c]`'s `ember inspect` report are not built.
+  `[FFI-6b]`" (unfinished) are not built.
 * `[FFI-8]` — rows not built for imports: unions (no Ember `union` yet), bit-fields (`get_`/`set_`),
   anonymous members (`<Parent>_anon<N>`), flexible array members (unsized structs), `_Atomic`,
   `va_list` and variadic calls, `long double` (`c_longdouble`), `volatile`, `@ffi(newtype)`; and

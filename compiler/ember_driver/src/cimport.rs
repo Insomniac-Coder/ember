@@ -1987,6 +1987,19 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
                 println!("unsafe: `{}`: {}", function.name, unknown.join("; "));
             }
         }
+        // `[FFI-35a]` — what a contract leaves unsaid is assumed: a pointer parameter with no
+        // `retained` word does not retain it, and a pointer result with no lifetime word is listed.
+        for function in &imported.functions {
+            let Some(entry) = applied.functions.get(&function.name) else { continue };
+            for ((name, ty), words) in function.params.iter().zip(&entry.params) {
+                if ty.pointee.is_some() && !words.iter().any(|written| word(written) == "retained") {
+                    println!("assumes: `{}`: `{name}` does not retain the pointer", function.name);
+                }
+            }
+            if function.result.as_ref().is_some_and(|ty| ty.pointee.is_some()) && !entry.result.iter().any(|written| word(written) == "from") {
+                println!("assumes: `{}`: its pointer result states no lifetime", function.name);
+            }
+        }
         let names: Vec<&str> = skipped.iter().map(|skip| skip.name.as_str()).collect();
         if let Some(path) = write_baseline {
             std::fs::write(&path, names.join("\n") + "\n").map_err(|error| format!("cannot write `{path}`: {error}"))?;
