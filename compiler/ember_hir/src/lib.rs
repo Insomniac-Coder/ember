@@ -121,6 +121,19 @@ pub struct FfiCounted {
     /// `[FFI-36a]` — a result contracted `returns_owned(destructor=f)`: the C
     /// pointer becomes a `ForeignBox` the runtime records.
     pub result_owned: Option<FfiOwnedResult>,
+    /// `[FFI-11]`, `[FFI-16]` — a call that returns its `out` parameters, or a
+    /// status as a `Result`, in place of C's own result.
+    pub outputs: Option<FfiOutputs>,
+}
+
+/// `[FFI-11]`, `[FFI-16]` — C's own result type, and with a status the value
+/// of its success code: the Ember result is `Result[T, N]` then, `T` the
+/// `out` parameters (`void`, the one, or a tuple), and otherwise C's result
+/// followed by them (ODR-137).
+#[derive(Debug, Clone)]
+pub struct FfiOutputs {
+    pub c_result: Ty,
+    pub status_ok: Option<i128>,
 }
 
 /// `[FFI-36a]`, `[FFI-33b]` — a new foreign object the caller owns: freed by
@@ -166,6 +179,9 @@ pub enum FfiAbiParam {
     /// `[FFI-11]`, `[FFI-23]` — `param(p, retained, one)`: C keeps the
     /// address of the object a `Retained` token holds; the token stays.
     Retained { public_index: usize },
+    /// `[FFI-11]` — `param(p, out, one)`: the address of a local C writes,
+    /// which the call returns; not a parameter of the Ember function.
+    Out { ty: Ty },
 }
 
 #[derive(Debug, Clone)]

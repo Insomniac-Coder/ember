@@ -2538,6 +2538,10 @@ ember_u128 ember_range_nth_u128(ember_u128 start, ember_u128 step, size_t k);
  * one from the argument's type, exactly as it does for `println`. */
 void ember_fmt_i64(ember_vec* out, int64_t value);
 void ember_fmt_u64(ember_vec* out, uint64_t value);
+/* `[FFI-8]` (ODR-137) — the decimal text of a C enum's value that no variant names, for its
+ * `Display`: in a buffer of the calling thread's, valid until that thread's next call. */
+ember_str ember_int_text(int64_t value);
+ember_str ember_uint_text(uint64_t value);
 void ember_fmt_i128(ember_vec* out, ember_i128 value);
 void ember_fmt_i256(ember_vec* out, ember_i256 value);
 void ember_fmt_u256(ember_vec* out, ember_u256 value);

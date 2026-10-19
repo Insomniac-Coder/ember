@@ -16,7 +16,7 @@ use std::fmt::Write as _;
 // resolves to it through Rust's implicit format arguments.
 use ember_branding::RUNTIME_PREFIX as RT;
 use ember_mir::{
-    AggregateKind, AssertKind, Body, Builtin, CastKind, Const, FfiAbiParam, FuncRef, LocalId, LocalKind, Operand, Place,
+    AggregateKind, AssertKind, Body, Builtin, CastKind, Const, FfiAbiParam, FfiOutputs, FuncRef, LocalId, LocalKind, Operand, Place,
     ParameterMode, Projection, RETURN_LOCAL, Rvalue, Stmt, StmtKind, Terminator,
 };
 use ember_mir::verify::VerifiedMir;
@@ -1938,7 +1938,12 @@ impl Emitter<'_> {
         if !def.is_unit_only() {
             return None;
         }
-        let mut expr = format!("{RT}str_lit(\"\", 0)");
+        // `[FFI-8]` — a C enum's value no variant names shows its number (ODR-137).
+        let mut expr = match (def.open, matches!(self.types.kind(def.repr), TyKind::Int(_))) {
+            (true, true) => format!("{RT}int_text((int64_t)({v}))"),
+            (true, false) => format!("{RT}uint_text((uint64_t)({v}))"),
+            (false, _) => format!("{RT}str_lit(\"\", 0)"),
+        };
         for variant in def.variants.iter().rev() {
             let name = variant.name.as_str();
             expr = format!("(({v}) == {} ? {RT}str_lit(\"{name}\", {}) : {expr})", variant.discriminant, name.len());
@@ -2219,7 +2224,14 @@ impl Emitter<'_> {
                         }
                         // A unit-only enum is its tag.
                         let tag = if def.is_unit_only() { "*v".to_string() } else { self.enum_tag(id, "*v") };
-                        format!("switch ({tag}) {{ {} default: break; }}", arms.join(" "))
+                        // `[FFI-8]` — a C enum's value no variant names: `Color(9)` (ODR-137).
+                        let other = if def.open {
+                            let name = self.debug_type_name(def.name.as_str(), def.origin.as_ref());
+                            format!("{} {} {}", text(&format!("{name}(")), self.debug_stmt("out", "*v", def.repr), text(")"))
+                        } else {
+                            String::new()
+                        };
+                        format!("switch ({tag}) {{ {} default: {other} break; }}", arms.join(" "))
                     }
                     _ => unreachable!("[TYP-39] Display functions are requested only for aggregates"),
                 };
@@ -5677,7 +5689,10 @@ impl Emitter<'_> {
         // `[FFI-11b]` — C writes the count back through its pointer, and returns nothing or the
         // first of the Ember function's tuple (ODR-125).
         let inout = counted.abi_params.iter().any(|param| matches!(param, FfiAbiParam::Count { inout: true, .. }));
-        let result = if inout {
+        // `[FFI-11]`, `[FFI-16]` — C's own result, which the outputs or the status replace.
+        let result = if let Some(outputs) = &counted.outputs {
+            if self.is_void(outputs.c_result) { "void".to_string() } else { self.c_type(outputs.c_result) }
+        } else if inout {
             match self.types.kind(body.return_ty()) {
                 TyKind::Tuple(items) => self.c_type(items[0]),
                 _ => "void".to_string(),
@@ -5715,6 +5730,7 @@ impl Emitter<'_> {
                     self.c_type(self.foreign_box_fields(boxed)[0])
                 }
                 FfiAbiParam::Retained { .. } => "uint8_t*".to_string(),
+                FfiAbiParam::Out { ty } => format!("{}*", self.c_type(*ty)),
             };
             format!("{ty} _ffi{index}")
         }).collect();
@@ -5784,14 +5800,72 @@ impl Emitter<'_> {
         else { format!("({arg}).len") }
     }
 
+    /// `[FFI-11]`, `[FFI-16]` — the end of a wrapper whose call returns its `out` parameters:
+    /// with a status, `Ok` of them when C returned the success code and `Err(N(code))`
+    /// otherwise (an output is not read then); without one, C's own result and then them, or
+    /// them alone where C returns `void` (ODR-137).
+    fn emit_ffi_outputs(&mut self, body: &Body, outputs: &FfiOutputs, call: &str, outs: &[String]) {
+        let ret = body.return_ty();
+        // What the outputs make: nothing, the one, or a tuple of type `ty`.
+        let value = |this: &Self, ty: Ty| match outs {
+            [] => None,
+            [one] => Some(one.clone()),
+            many => Some(format!("({}){{ {} }}", this.c_type(ty), many.join(", "))),
+        };
+        let Some(ok) = outputs.status_ok else {
+            if self.is_void(outputs.c_result) {
+                self.line(&format!("    {call};"));
+                let made = value(self, ret).expect("a call with no C result returns its outputs");
+                self.line(&format!("    return {made};"));
+            } else {
+                self.line(&format!("    {} _ffi_c = {call};", self.c_type(outputs.c_result)));
+                self.line(&format!("    return ({}){{ _ffi_c, {} }};", self.c_type(ret), outs.join(", ")));
+            }
+            return;
+        };
+        let TyKind::Enum(id) = *self.types.kind(ret) else { unreachable!("a status call returns a `Result`") };
+        assert!(self.types.option_niche(id).is_none(), "a `Result` has a tag");
+        let def = self.types.enum_def(id).clone();
+        let variant = |name: &str| def.variants.iter().find(|variant| variant.name.as_str() == name).expect("`Ok` and `Err`");
+        let (ok_variant, err_variant) = (variant("Ok"), variant("Err"));
+        let status = self.c_type(outputs.c_result);
+        let result = self.c_type(ret);
+        self.line(&format!("    {status} _ffi_status = {call};"));
+        self.line(&format!("    {result} _ffi_result;"));
+        self.line("    memset(&_ffi_result, 0, sizeof _ffi_result);");
+        self.line(&format!("    if (_ffi_status == ({status}){ok}) {{"));
+        let ok_field = &ok_variant.fields[0];
+        if !self.is_void(ok_field.ty)
+            && let Some(made) = value(self, ok_field.ty)
+        {
+            self.line(&format!("        _ffi_result.payload.{}.{} = {made};", ok_variant.name, ok_field.name));
+        }
+        self.line(&format!("        _ffi_result.tag = {};", ok_variant.discriminant));
+        self.line("    } else {");
+        let err_field = &err_variant.fields[0];
+        self.line(&format!("        _ffi_result.payload.{}.{} = ({}){{ _ffi_status }};", err_variant.name, err_field.name, self.c_type(err_field.ty)));
+        self.line(&format!("        _ffi_result.tag = {};", err_variant.discriminant));
+        self.line("    }");
+        self.line("    return _ffi_result;");
+    }
+
     fn emit_ffi_counted_wrapper(&mut self, body: &Body) {
         let counted = body.ffi_counted.as_ref().expect("counted wrapper metadata");
         let args: Vec<_> = body.args().map(|(id, _)| format!("_{}", id.0)).collect();
         let linkage = if self.internal_linkage() { "static " } else { "" };
         self.line(&format!("{linkage}{} {{", self.signature(body)));
         let mut foreign_args = Vec::new();
+        let mut outs = Vec::new();
         for param in &counted.abi_params {
             match param {
+                // `[FFI-11]` — C writes the value here; the call returns it.
+                FfiAbiParam::Out { ty } => {
+                    let local = format!("_ffi_out{}", outs.len());
+                    self.line(&format!("    {} {local};", self.c_type(*ty)));
+                    self.line(&format!("    memset(&{local}, 0, sizeof {local});"));
+                    foreign_args.push(format!("&{local}"));
+                    outs.push(local);
+                }
                 FfiAbiParam::Value { public_index, ty, mode } => {
                     let arg = &args[*public_index];
                     foreign_args.push(if *mode == ParameterMode::Borrow
@@ -5882,6 +5956,12 @@ impl Emitter<'_> {
             }
         }
         let call = format!("{}({})", counted.foreign_symbol, foreign_args.join(", "));
+        if let Some(outputs) = &counted.outputs {
+            self.emit_ffi_outputs(body, outputs, &call, &outs);
+            self.line("}");
+            self.line("");
+            return;
+        }
         // `[FFI-36a]`, `[FFI-33b]` — a new object the caller owns: recorded, boxed with its
         // destructor, and its creator when the contract says `threads(creator)`.
         if let Some(owned) = &counted.result_owned {

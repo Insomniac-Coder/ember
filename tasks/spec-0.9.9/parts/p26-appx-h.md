@@ -415,6 +415,7 @@ ODR-132, the type of `Retained.ptr()` (§H.20).
 | ODR-134 | ruled under the delegation by the owner's standing rule (2026-09-08, ERR-017: a reserved word that blocks a name the standard library must declare becomes contextual, never a rename or `r#`): `open` is a keyword only before `class`, so `File.open` (`[STD-22]`) can be declared; the reserved set has 47 words | `[LEX-15]`, `[STD-22]` |
 | ODR-135 | ruled under the delegation: `[build] max_instantiations` applies to the package's own generics; the standard library's instances are not the package's to budget, and counting them made any small ceiling warn on code the program never wrote | `[MONO-3]` |
 | ODR-136 | ruled under the delegation: `Nondet` for padding is recorded at the reinterpreting cast of a pointer to a type with padding; reading uninitialised memory is undefined (`[PHIL-10]` lists it among what Safe Ember cannot do), an `unsafe` obligation, not a nondeterministic result | `[DET-2]`, `[PHIL-10]` |
+| ODR-137 | ruled under the delegation: `@non_exhaustive` is a C enum's (unit-only, with `@repr`), holding any value of its integer type (`match` needs `_`, no niche, `E(9)`/`9` for an unnamed value) and crossing the boundary as that integer; on a hand declaration `param(p, out, one)` is `mut p: T` returned by the call; `@ffi(status=E, ok=X, error=N)` is written on `E` itself, and `T` in `Result[T, N]` is `void`, the one output's type, or the tuple of several | `[FFI-8]`, `[FFI-11]`, `[FFI-11b]`, `[FFI-16]`, `[ERR-6]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -957,3 +958,17 @@ Generated: every rule whose text differs from 0.9.10_Hardened_18.
 | Rule | 0.9.10_Hardened_18 → 0.9.10_Hardened_19 |
 |---|---|
 | `[DET-2]` | changed |
+
+## H.25 Changes in 0.9.10_Hardened_20 (from 0.9.10_Hardened_19)
+
+**0.9.10_Hardened_20** records ODR-137, ruled under the delegation while `[FFI-16]` and `[ERR-6]` were built on hand declarations (`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-219):
+
+* `@non_exhaustive` is a C enum's: a unit-only enum with its `@repr`. Any value of its integer type is a value of the enum, so a `match` needs `_`, `Option` of it keeps a tag, `Debug` shows an unnamed value as `E(9)` and `Display` as `9`; it crosses the C boundary as its integer, where an exhaustive enum does not (`[FFI-8]`).
+* On a hand declaration (ODR-073), `param(p, out, one)` is written on `mut p: T`: C gets a `T*`, `p` leaves the callable signature and the call returns the value, several in a tuple in C's order, after C's own result when it has one (`[FFI-11]`, `[FFI-11b]`).
+* `@ffi(status=E, ok=X, error=N)` is written on the C enum `E` itself, `X` one of its variants; `N` is declared with the enum's visibility, `Copy`, with `Display` the code's `Debug`. `result(status)` makes the result `Result[T, N]`, `T` the outputs: `void`, the one output's type, or a tuple of several; the outputs are not read on an error code (`[FFI-16]`, `[ERR-6]`).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_19.
+
+| Rule | 0.9.10_Hardened_19 → 0.9.10_Hardened_20 |
+|---|---|
+

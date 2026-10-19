@@ -158,6 +158,9 @@ pub fn check(
     comptime_answers: &ComptimeAnswers,
     realtime: Option<hir::Effects>,
 ) -> CheckOutput {
+    // `[FFI-16]` — a status enum's error type, `struct N(code: E)` implementing `Error`.
+    let status_errors = errors::desugar_status_errors(modules);
+    let modules: &[LoadedModule] = status_errors.as_deref().unwrap_or(modules);
     // `[ERR-3]` — `@derive(Error)` is the `extend` blocks it stands for.
     let derived = errors::desugar_error_derives(modules, sink);
     let modules: &[LoadedModule] = derived.as_deref().unwrap_or(modules);
@@ -2597,6 +2600,13 @@ struct Checker<'a> {
     /// `[TYP-36]` — the structs and enums declared `@derive(Hash)`, by
     /// declaration name (a generic one's instances by their origin).
     hash_derived: HashSet<Symbol>,
+    /// `[FFI-16]` — each status enum's success variant and its error struct's qualified name.
+    status_enums: HashMap<EnumId, (Symbol, Symbol)>,
+    /// `[FFI-11]`, `[FFI-16]` — a `safe fn` whose `out` parameters or status the call returns:
+    /// the C function's own result type, which its Ember result replaces.
+    foreign_c_results: HashMap<DefId, Ty>,
+    /// `[FFI-11]` — a `safe fn`'s `out` parameters and their types, in C's order.
+    foreign_outs: HashMap<DefId, Vec<(Symbol, Ty)>>,
     /// `[EFF-19]` — what `@realtime` stands for in the program's package: its manifest's
     /// `[realtime] contracts`, by default `@noalloc @nolock @noblock @nopanic(explicit)`.
     realtime_contracts: hir::Effects,
@@ -2896,6 +2906,9 @@ impl<'a> Checker<'a> {
             pending_struct_bounds: Vec::new(),
             unmet_instances: HashSet::new(),
             hash_derived: HashSet::new(),
+            status_enums: HashMap::new(),
+            foreign_c_results: HashMap::new(),
+            foreign_outs: HashMap::new(),
             derive_requests: Vec::new(),
             realtime_contracts: hir::Effects::REALTIME_DEFAULT,
             refused_derives: HashSet::new(),
@@ -4512,6 +4525,10 @@ impl<'a> Checker<'a> {
                     if has_derive(&item.attrs, "Zeroable") {
                         self.types.derive_zeroable(name);
                     }
+                    // `[FFI-8]` — `@non_exhaustive` is a C enum's: unit-only, with its `@repr`
+                    // (`check_c_enum` reports any other).
+                    let open = has_attribute(&item.attrs, "non_exhaustive") && repr_is_explicit
+                        && decl.variants.iter().all(|variant| variant.fields.is_empty());
                     let id = self.types.add_enum(EnumDef {
                         name,
                         variants: Vec::new(),
@@ -4521,10 +4538,18 @@ impl<'a> Checker<'a> {
                         repr_is_explicit,
                         derives_copy: has_derive(&item.attrs, "Copy"),
                         has_drop: false,
+                        open,
                     });
                     let ty = self.types.intern(TyKind::Enum(id));
                     self.enum_ids.insert(name, id);
                     self.named_types.insert(name, ty);
+                    if let Some(status) = ffi_status_attr(&item.attrs)
+                        && open && status.status.name == decl.name.name
+                        && decl.variants.iter().any(|variant| variant.name.name == status.ok.name)
+                    {
+                        let error = self.qualified(status.error.name);
+                        self.status_enums.insert(id, (status.ok.name, error));
+                    }
                 }
                 _ => {}
             }
@@ -8125,6 +8150,13 @@ impl<'a> Checker<'a> {
                         None
                     };
                     params.retain(|(name, _, _, _)| !count_witnesses.contains(name));
+                    // `[FFI-11]` — each `out` parameter leaves the callable signature; the call
+                    // returns what C wrote there, in C's order (ODR-137).
+                    let outs = if decl.is_foreign_decl && decl.is_safe { ffi_out_params(&item.attrs) } else { Vec::new() };
+                    let out_params: Vec<(Symbol, Ty)> = params.iter().filter(|(name, _, _, _)| outs.contains(name)).map(|(name, ty, _, _)| (*name, *ty)).collect();
+                    let out_tys: Vec<Ty> = out_params.iter().map(|(_, ty)| *ty).collect();
+                    params.retain(|(name, _, _, _)| !outs.contains(name));
+                    let status = decl.is_foreign_decl && decl.is_safe && ffi_status_result(&item.attrs);
                     let ret = decl
                         .ret
                         .as_ref()
@@ -8140,6 +8172,50 @@ impl<'a> Checker<'a> {
                         })
                         .or(inout_count)
                         .unwrap_or(self.common.void);
+                    let mut c_result = None;
+                    let ret = if (status || !out_tys.is_empty()) && inout_count.is_some() {
+                        self.error(codes::E0900, decl.name.span,
+                            "an `inout_count` function with `out` parameters or a status result is not implemented yet");
+                        ret
+                    } else if status {
+                        // `[FFI-16]` — `Result[T, N]`, `T` the outputs.
+                        let error = match *self.types.kind(ret) {
+                            TyKind::Enum(id) => self.status_enums.get(&id).and_then(|(_, error)| self.named_types.get(error).copied()),
+                            _ => None,
+                        };
+                        match error {
+                            Some(error) => {
+                                c_result = Some(ret);
+                                let value = self.ffi_outputs_value(&out_tys);
+                                self.result_of(value, error)
+                            }
+                            None => {
+                                if ret != self.common.error {
+                                    let shown = self.types.display(ret);
+                                    let at = item.attrs.iter().find(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+                                        .map_or(decl.name.span, |attr| attr.span);
+                                    self.sink.emit(
+                                        Diagnostic::error(codes::E0104, at,
+                                            format!("`result(status)` needs a status enum result, not `{shown}`"))
+                                            .help("declare the C enum with `@repr(…)`, `@non_exhaustive` and `@ffi(status=E, ok=X, error=N)`, and return it")
+                                            .note("the call then returns `Result[T, N]`, `T` the `out` parameters [FFI-16]"),
+                                    );
+                                }
+                                ret
+                            }
+                        }
+                    } else if !out_tys.is_empty() {
+                        // `[FFI-11b]` — C's own result first, then the outputs; the outputs
+                        // alone where C returns `void`.
+                        c_result = Some(ret);
+                        if ret == self.common.void {
+                            self.ffi_outputs_value(&out_tys)
+                        } else {
+                            self.types.intern(TyKind::Tuple(std::iter::once(ret).chain(out_tys.iter().copied()).collect()))
+                        }
+                    } else {
+                        ret
+                    };
                     let explicit_borrows = self.check_borrows_attribute(&item.attrs, &params, ret);
                     let borrows = if decl.is_foreign_decl && decl.is_safe {
                         let from = match ffi_result_contract(&item.attrs) {
@@ -8173,6 +8249,12 @@ impl<'a> Checker<'a> {
                     self.projection_params.clear();
                     let def = DefId(self.signatures.len() as u32);
                     self.fn_ids.insert(name, def);
+                    if let Some(c_result) = c_result {
+                        self.foreign_c_results.insert(def, c_result);
+                    }
+                    if !out_params.is_empty() {
+                        self.foreign_outs.insert(def, out_params);
+                    }
                     if decl.is_foreign_decl {
                         self.foreign_declarations.insert(def, decl.is_safe);
                         if !decl.is_safe {
@@ -15349,6 +15431,7 @@ impl<'a> Checker<'a> {
             repr_is_explicit: decl.repr_is_explicit,
             derives_copy: decl.derives_copy,
             has_drop: false,
+            open: false,
         });
         let ty = self.types.intern(TyKind::Enum(id));
         self.enum_ids.insert(instance, id);
@@ -16582,6 +16665,7 @@ impl<'a> Checker<'a> {
             repr_is_explicit: false,
             derives_copy: true,
             has_drop: false,
+            open: false,
         });
         let ty = self.types.intern(TyKind::Enum(id));
         self.enum_ids.insert(name, id);
@@ -16816,7 +16900,7 @@ impl<'a> Checker<'a> {
             }
             let overflow = self.signatures[def.0 as usize].overflow;
             let fp = self.signatures[def.0 as usize].fp;
-            let ffi_counted = self.foreign_counted_metadata(decl, &item.attrs, &signature_params, self.ret_ty);
+            let ffi_counted = self.foreign_counted_metadata(def, decl, &item.attrs, &signature_params, self.ret_ty);
             // `extern "C" fn` DEFINES a function a host links against, so its
             // symbol is the name as written — `[MNG-1]`'s module-qualified
             // mangling would make it unfindable, which defeats the point.
@@ -17444,10 +17528,15 @@ impl<'a> Checker<'a> {
             .collect();
         let ret = self.signatures[def.0 as usize].ret;
         // `[FFI-11b]` — an `inout_count` function's tuple: C returns its first part (ODR-125).
+        // `[FFI-11]`, `[FFI-16]` — one returning its `out` parameters or a status, C's own result.
         let ret = match self.types.kind(ret) {
+            _ if self.foreign_c_results.contains_key(&def) => self.foreign_c_results[&def],
             TyKind::Tuple(items) if decl.is_foreign_decl && !ffi_inout_counts(attrs).is_empty() => items[0],
             _ => ret,
         };
+        if decl.is_foreign_decl {
+            self.check_ffi_outputs(def, decl, attrs);
+        }
         let contracts = ffi_param_contracts(attrs);
         let result_contract = ffi_result_contract(attrs);
         let unknown_result = ffi_unknown_result_fact_contracts(attrs);
@@ -17825,7 +17914,9 @@ impl<'a> Checker<'a> {
                     self.error(codes::E5002, span,
                         format!("`safe fn` has an unknown {axis} for parameter `{name}`"));
                 }
-                if mode == Mode::Mut && contract != Some(FfiPointerContract::MutOne) && unknown.is_empty() {
+                let uncounted = attrs.iter().filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+                    .flat_map(|attr| attr.args.iter().filter_map(ffi_missing_count_arg)).any(|slot| slot == name);
+                if mode == Mode::Mut && contract != Some(FfiPointerContract::MutOne) && unknown.is_empty() && !uncounted {
                     self.error(codes::E5002, span,
                         format!("`safe fn` needs an `@ffi` contract for mutable parameter `{name}`"));
                 }
@@ -18080,6 +18171,7 @@ impl<'a> Checker<'a> {
 
     fn foreign_counted_metadata(
         &self,
+        def: DefId,
         decl: &ast::FnDecl,
         attrs: &[ast::Attribute],
         visible: &[(Symbol, Ty, Mode, Span)],
@@ -18100,6 +18192,7 @@ impl<'a> Checker<'a> {
                 result_array: None,
                 result_span: None,
                 result_owned: None,
+                outputs: None,
             });
         }
         // `[FFI-11]`, `[FFI-36a]` — the objects the call moves: a parameter C takes, a result the
@@ -18204,9 +18297,20 @@ impl<'a> Checker<'a> {
             Some(hir::FfiSpanResult { public_index, elem, nullable, mutable,
                 source_nullable: source.nullable })
         } else { None };
+        // `[FFI-11]`, `[FFI-16]` — the `out` parameters, and the status's success code.
+        let outs = self.foreign_outs.get(&def).cloned().unwrap_or_default();
+        let outputs = self.foreign_c_results.get(&def).map(|&c_result| {
+            let status_ok = match *self.types.kind(c_result) {
+                TyKind::Enum(id) if ffi_status_result(attrs) => self.status_enums.get(&id).and_then(|(ok, _)|
+                    self.types.enum_def(id).variants.iter().find(|variant| variant.name == *ok).map(|variant| variant.discriminant)),
+                _ => None,
+            };
+            hir::FfiOutputs { c_result, status_ok }
+        });
         if counted.is_empty() && fixed.is_empty() && result_array.is_none()
             && result_span.is_none() && !borrowed_aggregate
-            && owned_params.is_empty() && retained_params.is_empty() && result_owned.is_none() { return None; }
+            && owned_params.is_empty() && retained_params.is_empty() && result_owned.is_none()
+            && outputs.is_none() { return None; }
         let mut abi_params = Vec::new();
         for param in &decl.params {
             let ast::ParamKind::Named { name, .. } = &param.kind else { return None };
@@ -18227,6 +18331,8 @@ impl<'a> Checker<'a> {
             } else if retained_params.iter().any(|(slot, _)| *slot == name.name) {
                 let public_index = visible.iter().position(|(slot, _, _, _)| *slot == name.name)?;
                 abi_params.push(hir::FfiAbiParam::Retained { public_index });
+            } else if let Some(&(_, ty)) = outs.iter().find(|(slot, _)| *slot == name.name) {
+                abi_params.push(hir::FfiAbiParam::Out { ty });
             } else {
                 let public_index = visible.iter().position(|(slot, _, _, _)| *slot == name.name)?;
                 let (_, ty, mode, _) = visible[public_index];
@@ -18239,6 +18345,7 @@ impl<'a> Checker<'a> {
             result_array,
             result_span,
             result_owned,
+            outputs,
         })
     }
 
@@ -35864,7 +35971,8 @@ impl<'a> Checker<'a> {
                             _ => {
                                 if ffi_result_contract_arg(arg).is_some()
                                     || ffi_owned_result_arg(arg).is_some()
-                                    || ffi_unknown_result_fact_arg(arg).is_some() {
+                                    || ffi_unknown_result_fact_arg(arg).is_some()
+                                    || ffi_status_result_arg(arg) {
                                     if saw_result {
                                         self.error(codes::E0104, attr.span, "duplicate result contract in `@ffi`");
                                     }
@@ -35872,7 +35980,8 @@ impl<'a> Checker<'a> {
                                 } else if let Some(name) = ffi_param_contract_arg(arg).map(|(name, _)| name)
                                     .or_else(|| ffi_owned_param_arg(arg).map(|(name, _)| name))
                                     .or_else(|| ffi_retained_param_arg(arg).map(|(name, _)| name))
-                                    .or_else(|| ffi_inout_count_arg(arg).map(|(name, _)| name)) {
+                                    .or_else(|| ffi_inout_count_arg(arg).map(|(name, _)| name))
+                                    .or_else(|| ffi_out_param_arg(arg)) {
                                     if !contracted.insert(name) {
                                         self.error(codes::E0104, attr.span, "duplicate pointer contract in `@ffi`");
                                     }
@@ -35938,6 +36047,9 @@ impl<'a> Checker<'a> {
                 continue;
             }
             self.check_attribute_list(std::slice::from_ref(attr), site);
+        }
+        if let ast::ItemKind::Enum(decl) = &item.kind {
+            self.check_c_enum(item, decl);
         }
         // `[STD-1]` — a `std` function whose documentation says it allocates.
         let says_allocates = |doc: &Option<String>| doc.as_deref().is_some_and(|doc| doc.contains("allocates"));
@@ -36069,6 +36181,98 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[FFI-8]` — `@non_exhaustive` is a C enum: unit-only, with its `@repr`. `[FFI-16]` —
+    /// `@ffi(status=E, ok=X, error=N)` is written on such an enum `E` itself, `X` one of its
+    /// variants and `N` a name for its error type (ODR-137). Each other form is `E0104`.
+    /// `[FFI-11]` — an `out` parameter is written `mut p: T`, `T` a value C lays out, at C's
+    /// `T*`; `out` and `status` are a `safe fn`'s, whose call returns them (ODR-137).
+    fn check_ffi_outputs(&mut self, def: DefId, decl: &ast::FnDecl, attrs: &[ast::Attribute]) {
+        let outs = ffi_out_params(attrs);
+        if !decl.is_safe && (!outs.is_empty() || ffi_status_result(attrs)) {
+            self.sink.emit(
+                Diagnostic::error(codes::E0104, decl.name.span, "`out` and `result(status)` are contracts of a `safe fn`")
+                    .help("declare it `safe fn`: its call then returns the outputs and the status [FFI-11], [FFI-16]"),
+            );
+            return;
+        }
+        let mut seen = HashSet::new();
+        for name in outs {
+            if !seen.insert(name) {
+                continue;
+            }
+            let param = decl.params.iter().find(|param| matches!(&param.kind, ast::ParamKind::Named { name: n, .. } if n.name == name));
+            let Some(param) = param else {
+                self.error(codes::E5002, decl.name.span, format!("`@ffi` names no parameter `{name}`"));
+                continue;
+            };
+            let ty = self.foreign_outs.get(&def).and_then(|outs| outs.iter().find(|(slot, _)| *slot == name)).map_or(self.common.error, |(_, ty)| *ty);
+            let plain = self.types.is_ffi_safe(ty) && ty != self.common.void && !matches!(self.types.kind(ty), TyKind::Ref { .. });
+            if mode_of(param.mode) != Mode::Mut || param.default.is_some() || (!plain && ty != self.common.error) {
+                self.sink.emit(
+                    Diagnostic::error(codes::E0104, param.span, format!("`out` parameter `{name}` is written `mut {name}: T`"))
+                        .help("`T` a value C lays out: C gets a `T*` to write, and the call returns the value")
+                        .note("an `out` parameter leaves the callable signature [FFI-11]"),
+                );
+            }
+        }
+    }
+
+    /// `[FFI-11]`, `[FFI-16]` — what a call returns of its pointer outputs: nothing, the one, or a
+    /// tuple of them in C's order (ODR-137).
+    fn ffi_outputs_value(&mut self, outs: &[Ty]) -> Ty {
+        match outs {
+            [] => self.common.void,
+            [one] => *one,
+            many => self.types.intern(TyKind::Tuple(many.to_vec())),
+        }
+    }
+
+    fn check_c_enum(&mut self, item: &ast::Item, decl: &ast::EnumDecl) {
+        let c_enum = has_attribute(&item.attrs, "repr") && decl.generics.is_empty()
+            && decl.variants.iter().all(|variant| variant.fields.is_empty());
+        if let Some(attr) = item.attrs.iter().find(|attr| attr.path.len() == 1 && attr.path[0].name.is("non_exhaustive")) {
+            if !attr.args.is_empty() {
+                self.error(codes::E0104, attr.span, "`@non_exhaustive` takes no arguments");
+            } else if !c_enum {
+                self.sink.emit(
+                    Diagnostic::error(codes::E0104, attr.span, "`@non_exhaustive` is written on a C enum")
+                        .help("give a unit-only enum its C integer type: `@repr(i32)`")
+                        .note("a C enum may hold any value of its integer type, named by a variant or not [FFI-8]"),
+                );
+            }
+        }
+        let Some(attr) = item.attrs.iter().find(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi")) else { return };
+        let Some(status) = ffi_status_attr(&item.attrs) else {
+            self.sink.emit(
+                Diagnostic::error(codes::E0104, attr.span, "`@ffi` on an enum names its status codes")
+                    .help(format!("write `@ffi(status={0}, ok=<success variant>, error={0}Error)`", decl.name.name))
+                    .note("a function contracted `result(status)` then returns `Result[T, N]` [FFI-16]"),
+            );
+            return;
+        };
+        if status.status.name != decl.name.name {
+            self.sink.emit(
+                Diagnostic::error(codes::E0104, status.status.span,
+                    format!("`status={}` names another type than the enum it is written on", status.status.name))
+                    .help(format!("write `status={}`", decl.name.name)),
+            );
+        }
+        if !c_enum || !has_attribute(&item.attrs, "non_exhaustive") {
+            self.sink.emit(
+                Diagnostic::error(codes::E0104, attr.span, "a status enum is a C enum")
+                    .help("declare it as C maps it: `@repr(<its integer type>)` and `@non_exhaustive` on a unit-only enum")
+                    .note("C may return a code no variant names, which then reaches the error [FFI-8], [FFI-16]"),
+            );
+        }
+        if !decl.variants.iter().any(|variant| variant.name.name == status.ok.name) {
+            let names: Vec<String> = decl.variants.iter().map(|variant| format!("`{}`", variant.name.name)).collect();
+            self.sink.emit(
+                Diagnostic::error(codes::E0104, status.ok.span, format!("`ok={}` names no variant of `{}`", status.ok.name, decl.name.name))
+                    .help(format!("name its success code: one of {}", names.join(", "))),
+            );
+        }
+    }
+
     fn check_attribute_list(&mut self, attrs: &[ast::Attribute], site: &str) {
         for attr in attrs {
             let written = attr.path.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".");
@@ -36124,6 +36328,10 @@ impl<'a> Checker<'a> {
                     )
                     .help(format!("it applies to: {}", applies.join(", "))),
                 );
+                continue;
+            }
+            // `[FFI-16]` — a status enum's attribute is checked with the enum (`check_c_enum`).
+            if name == "ffi" && site == "enum" {
                 continue;
             }
             let built = built && !(name == "repr" && site == "struct");
@@ -51177,7 +51385,8 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["export"], &["fn", "static"], false),
     // `[FFI-26]` — its arguments and fields are checked by `collect_export_tables`.
     (&["export_table"], &["struct"], true),
-    (&["ffi"], &["extern item", "overlay item"], false),
+    // `[FFI-16]` — on an enum, `@ffi(status=E, ok=X, error=N)` (`check_c_enum`).
+    (&["ffi"], &["extern item", "overlay item", "enum"], false),
     // `[TCB-1]` — checked on the entry it grades (`check_grade`).
     (&["grade"], &["overlay item"], true),
     // `[TST-3]` — `ember test` runs them (`test_form`); `ember bench` is not built.
@@ -51190,7 +51399,8 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["borrows"], &["fn"], true),
     (&["safety"], &["fn"], true),
     (&["must_drop"], &["struct", "class"], true),
-    (&["non_exhaustive"], &["enum"], false),
+    // `[FFI-8]` — a C enum's (`check_c_enum`).
+    (&["non_exhaustive"], &["enum"], true),
     (&["component"], &["struct"], false),
     // `[SOA-1]` — `@soa(flatten)` splits a struct field into a column per field of its own.
     (&["soa"], &["field"], true),
@@ -51288,6 +51498,69 @@ fn attr_argument(attrs: &[ast::Attribute], name: &str) -> Option<Symbol> {
 /// interface so a renamed symbol never changes only one side of a call.
 fn ffi_link_name_attr(attr: &ast::Attribute) -> Option<&str> {
     attr.args.iter().find_map(ffi_link_name_arg)
+}
+
+/// `[FFI-16]` — `@ffi(status=E, ok=X, error=N)` on an enum, each a name; `None` for any other
+/// shape (`Checker::check_status_enum` says what is wrong with it).
+/// `[FFI-11]` — `param(p, out, one)`: C writes through `p`'s pointer and the call returns it.
+fn ffi_out_param_arg(arg: &ast::AttrArg) -> Option<Symbol> {
+    let ast::AttrArg::Expr(expr) = arg else { return None };
+    let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    if !ffi_contract_word(callee).is_some_and(|word| word.is("param")) || args.len() != 3
+        || args.iter().any(|arg| arg.name.is_some()) {
+        return None;
+    }
+    let name = ffi_contract_word(&args[0].value)?;
+    (ffi_contract_word(&args[1].value)?.is("out") && ffi_contract_word(&args[2].value)?.is("one")).then_some(name)
+}
+
+fn ffi_out_params(attrs: &[ast::Attribute]) -> Vec<Symbol> {
+    attrs.iter()
+        .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+        .flat_map(|attr| attr.args.iter().filter_map(ffi_out_param_arg))
+        .collect()
+}
+
+/// `[FFI-16]` — `result(status)`.
+fn ffi_status_result_arg(arg: &ast::AttrArg) -> bool {
+    let ast::AttrArg::Expr(expr) = arg else { return false };
+    let ast::ExprKind::Call { callee, args } = &expr.kind else { return false };
+    ffi_contract_word(callee).is_some_and(|word| word.is("result")) && args.len() == 1 && args[0].name.is_none()
+        && ffi_contract_word(&args[0].value).is_some_and(|word| word.is("status"))
+}
+
+fn ffi_status_result(attrs: &[ast::Attribute]) -> bool {
+    attrs.iter()
+        .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+        .any(|attr| attr.args.iter().any(ffi_status_result_arg))
+}
+
+pub(crate) struct FfiStatusAttr {
+    pub status: ast::Ident,
+    pub ok: ast::Ident,
+    pub error: ast::Ident,
+}
+
+pub(crate) fn ffi_status_attr(attrs: &[ast::Attribute]) -> Option<FfiStatusAttr> {
+    let attr = attrs.iter().find(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))?;
+    let named = |key: &str| {
+        let mut found = attr.args.iter().filter_map(|arg| match arg {
+            ast::AttrArg::Named { name, value } if name.name.is(key) => Some(value),
+            _ => None,
+        });
+        let value = found.next()?;
+        if found.next().is_some() {
+            return None;
+        }
+        match &value.kind {
+            ast::ExprKind::Path { segments } if segments.len() == 1 => Some(segments[0]),
+            _ => None,
+        }
+    };
+    if attr.args.len() != 3 {
+        return None;
+    }
+    Some(FfiStatusAttr { status: named("status")?, ok: named("ok")?, error: named("error")? })
 }
 
 fn ffi_link_name_arg(arg: &ast::AttrArg) -> Option<&str> {
@@ -51941,7 +52214,7 @@ fn ffi_missing_count_arg(arg: &ast::AttrArg) -> Option<Symbol> {
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
     if !ffi_contract_word(callee).is_some_and(|word| word.is("param"))
         || args.len() < 2 || args.iter().any(|arg| arg.name.is_some())
-        || !ffi_contract_word(&args[1].value).is_some_and(|word| word.is("borrowed")) {
+        || !ffi_contract_word(&args[1].value).is_some_and(|word| word.is("borrowed") || word.is("out")) {
         return None;
     }
     let name = ffi_contract_word(&args[0].value)?;

@@ -812,6 +812,79 @@ impl<'a> Checker<'a> {
 /// overruled, since `Error` needs it. A misplaced `@error` or `@from`, a
 /// variant without its text, or a text naming no field is reported here and
 /// dropped, so nothing is checked twice.
+/// `[FFI-16]` — `@ffi(status=E, ok=X, error=N)` on a C enum `E` declares `struct N(code: E)`
+/// implementing `Error`, as these items (ODR-137):
+///
+/// ```text
+/// @derive(Copy)
+/// struct N:
+///     pub code: E
+/// extend N implements Display:
+///     fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
+///         return implicit_fmt_debug(self.code, f)
+/// extend N implements Error
+/// ```
+///
+/// with the enum's visibility. Its `Display` is the code's `Debug` (`Status.Busy`, or `Status(7)`
+/// for a code no variant names); its `Debug` and `Eq` are a struct's own. The attribute's other
+/// checks are the checker's (`Checker::check_status_enum`).
+pub(crate) fn desugar_status_errors(modules: &[LoadedModule]) -> Option<Vec<LoadedModule>> {
+    let marked = |item: &ast::Item| matches!(item.kind, ast::ItemKind::Enum(_)) && ffi_status_attr(&item.attrs).is_some();
+    if !modules.iter().any(|loaded| loaded.module.items.iter().any(marked)) {
+        return None;
+    }
+    let mut out = modules.to_vec();
+    for loaded in &mut out {
+        let mut generated = Vec::new();
+        for item in loaded.module.items.iter().filter(|item| marked(item)) {
+            let ast::ItemKind::Enum(decl) = &item.kind else { continue };
+            let Some(status) = ffi_status_attr(&item.attrs) else { continue };
+            let span = status.error.span;
+            let code = ast::Member {
+                id: ast::NodeId::DUMMY,
+                attrs: Vec::new(),
+                vis: ast::Visibility { kind: ast::VisKind::Public, span },
+                read_only_outside: false,
+                doc: None,
+                kind: ast::MemberKind::Field(ast::FieldDecl {
+                    name: ast::Ident { name: Symbol::intern("code"), span },
+                    ty: owner_type(ast::Ident { name: decl.name.name, span }, &[]),
+                    default: None,
+                    is_let: false,
+                }),
+                span,
+            };
+            let derive_copy = ast::Attribute {
+                id: ast::NodeId::DUMMY,
+                path: vec![ast::Ident { name: Symbol::intern("derive"), span }],
+                args: vec![ast::AttrArg::Expr(path(&[Symbol::intern("Copy")], span))],
+                span,
+            };
+            generated.push(ast::Item {
+                id: ast::NodeId::DUMMY,
+                attrs: vec![derive_copy],
+                vis: ast::Visibility { kind: item.vis.kind, span },
+                doc: Some(format!("The error of `{}`'s status codes: any but `{}` (`[FFI-16]`).", decl.name.name, status.ok.name)),
+                kind: ast::ItemKind::Struct(ast::StructDecl {
+                    name: status.error,
+                    generics: Vec::new(),
+                    implements: Vec::new(),
+                    where_clause: Vec::new(),
+                    members: vec![code],
+                }),
+                span,
+            });
+            let f = path(&[Symbol::intern("f")], span);
+            let read = expr(ast::ExprKind::Field { base: Box::new(self_expr(span)), name: ast::Ident { name: Symbol::intern("code"), span } }, span);
+            let body = ret(Some(call(path(&[Symbol::intern("std.fmt.implicit_fmt_debug")], span), vec![read, f], span)), span);
+            generated.push(extend_item(&[], owner_type(status.error, &[]), vec![named_type("std.core.Display", span)], vec![fmt_member(body, span)], span));
+            generated.push(extend_item(&[], owner_type(status.error, &[]), vec![named_type("std.core.Error", span)], Vec::new(), span));
+        }
+        loaded.module.items.extend(generated);
+    }
+    Some(out)
+}
+
 pub(crate) fn desugar_error_derives(modules: &[LoadedModule], sink: &mut Sink) -> Option<Vec<LoadedModule>> {
     let marked = |attrs: &[ast::Attribute]| {
         has_derive(attrs, "Error") || attrs.iter().any(|attr| error_attribute(attr).is_some())

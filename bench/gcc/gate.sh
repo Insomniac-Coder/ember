@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# In WSL: CI's gcc job — the conformance and run-pass suites through gcc with the C gate
+# In WSL: CI's gcc job — the workspace's tests through gcc, the conformance suite with the C gate
 # ([TST-27]), on a tree of its own (make_tree.sh's is deleted by the gcc sweep). Results in ~/gcc_gate.txt.
 set -u
 source ~/.cargo/env
@@ -15,6 +15,6 @@ for f in $(git ls-files -co --exclude-standard Cargo.toml Cargo.lock rust-toolch
 done
 cd "$DEST"
 export EMBER_CC=gcc
-cargo test --profile ci -p ember_driver --test milestones -- the_conformance_suite_runs run_pass_programs_pass > ~/gcc_gate.txt 2>&1
+cargo test --profile ci --workspace --no-fail-fast > ~/gcc_gate.txt 2>&1
 echo "exit $?" >> ~/gcc_gate.txt
 grep -E "differs|panicked|test result" ~/gcc_gate.txt | head -60

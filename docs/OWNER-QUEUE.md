@@ -262,6 +262,19 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-137 — C enums, `out` parameters and status results on hand declarations — **CLOSED**
+
+    ID:        ODR-137
+    Status:    CLOSED — ruled under the delegation 2026-10-19; incorporated in 0.9.10_Hardened_20
+    Category:  FFI
+    Location:  Ember_v0.9.10_Hardened_19.md [FFI-8], [FFI-11], [FFI-16], [ERR-6]
+
+**The question.** `[FFI-16]` and `[ERR-6]` describe a status enum from an overlay over an imported header; on a hand declaration (ODR-073) nothing says where `@ffi(status=…)` is written, how an `out` parameter is spelled, what `T` is for one output (`[FFI-16]`'s "tuple of its out parameters"), or what `@non_exhaustive`, `[FFI-8]`'s mapping of a C enum, means for `match`, `Option` and printing.
+
+**Ruling.** Ruled under the delegation: `@non_exhaustive` is written on a unit-only `@repr` enum and admits every value of its integer type (a `match` needs `_`, no niche, `Debug` `E(9)`, `Display` `9`), and only such an enum crosses the boundary; `param(p, out, one)` is written on `mut p: T`, C's `T*`, returned by the call (after C's own result, several as a tuple in C's order); `@ffi(status=E, ok=X, error=N)` is written on `E` itself, `N` takes the enum's visibility and is `Copy` with `Display` the code's `Debug`, and `T` is `void`, the one output's type, or the tuple. ADR-219.
+
+---
+
 ## ODR-136 — where reading padding or uninitialised bytes is recorded — **CLOSED**
 
     ID:        ODR-136

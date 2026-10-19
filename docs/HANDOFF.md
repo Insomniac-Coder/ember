@@ -10749,6 +10749,8 @@ formal 1/9 count or Phase 2's estimate.
 > Then ADR-218: stack overflow faults (`[RT-12]`), with D-714 (the C gate failed CI on clang-cl's
 > `/GL` and gcc's `-Wmaybe-uninitialized`). The local check runs MSVC only: before a push that touches
 > the C, run `bench/gcc/gate.sh` in WSL (the conformance and run-pass suites through gcc with the gate).
+> Then ADR-219: C enums (`@non_exhaustive`), `out` parameters and status results (`[FFI-16]`,
+> `[ERR-6]`; ODR-137, 0.9.10_Hardened_20).
 
 
 **2026-10-12 (autopilot), a Part V.5 class probe sweep: D-560..D-566, ODR-104 (0.9.10_Hardened_8).**

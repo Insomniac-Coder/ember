@@ -43,7 +43,7 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 | 2 | Ownership, borrowing, regions | 96% |
 | 3 | Classes, reference counting, exclusivity | 98% |
 | 4 | Effects, compile time, reflection, derives | 81% |
-| 5 | C interoperability | 49% |
+| 5 | C interoperability | 50% |
 | 6 | Concurrency and data-oriented design | 88% |
 | 7 | C++ interoperability and the interpreter | 0% |
 | 7a | Iteration, determinism, cost control | 79% |

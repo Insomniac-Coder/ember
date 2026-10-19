@@ -5017,6 +5017,34 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-219 — C enums, `out` parameters and status results (`[FFI-8]`, `[FFI-11]`, `[FFI-16]`, `[ERR-6]`)
+
+2026-10-19, toward 90% (solo). Ruled under the delegation as ODR-137 (0.9.10_Hardened_20).
+* **C enums.** `@non_exhaustive` (`[FFI-8]`'s mapping of a C `enum`) is written on a unit-only enum
+  with its `@repr`; anywhere else it is `E0104`. Any value of the integer type is a value of the
+  enum (`EnumDef::open`): a `match` needs `_` (`E2090` lists `_`), `Option[E]` keeps a tag (no
+  unused value is a niche), `Debug` shows a value no variant names as `E(9)` and `Display` as `9`
+  (the runtime's `int_text`/`uint_text`, a thread's buffer). Such an enum has a foreign
+  representation, its integer; an exhaustive enum still has none (`E5050`, D-691's code), since C
+  may hand back a value no variant names.
+* **`out`.** `param(p, out, one)` on a `safe fn`'s `mut p: T`, `T` a value C lays out: C gets a
+  `T*` to a zeroed local, `p` leaves the callable signature and the call returns what C wrote.
+  Several outputs are a tuple in C's order; C's own result, when it has one, comes first
+  (`[FFI-11b]`'s rule for the count). `param(p, out)` with no count is `E5012`.
+* **Status.** `@ffi(status=E, ok=X, error=N)` is written on the C enum `E` itself (`@repr`,
+  `@non_exhaustive`, unit-only), `X` one of its variants; anything else is `E0104`. Before
+  checking, the compiler writes `@derive(Copy) struct N: pub code: E` with the enum's visibility,
+  `Display` (the code's `Debug`) and `Error` (`errors::desugar_status_errors`). A `safe fn`
+  contracted `result(status)` whose declared result is `E` returns `Result[T, N]`, `T` its outputs
+  (`void`, the one, or the tuple): `Ok` when C returned `X`, else `Err(N(code))`, the outputs then
+  unread. `result(status)` on another result, and `out` or `status` on a declaration that is not a
+  `safe fn`, are `E0104`. Not built: `inout_count` beside `out` or a status (`E0900`).
+* The C wrapper (`emit_ffi_outputs`) is the counted wrappers' (`FfiCounted.outputs`,
+  `FfiAbiParam::Out`).
+* Tests: `FFI-16/accept_a_status_result_is_a_result` (with `?` through `[ERR-6]`, a code no variant
+  names, two outputs), `FFI-16/reject_status_contract_misuse`, `FFI-11/accept_out_parameters_are_returned`,
+  `FFI-8/accept_a_c_enum_holds_any_value`, `FFI-8/reject_a_c_enum_match_without_a_wildcard`.
+
 ## ADR-218 — Stack overflow faults (`[RT-12]`)
 
 2026-10-19, toward 90% (solo).

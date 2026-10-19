@@ -9394,6 +9394,16 @@ void ember_fmt_u64(ember_vec* out, uint64_t value) {
     ember_vec_extend(out, text, decimal_u64(text, value));
 }
 
+ember_str ember_int_text(int64_t value) {
+    static _Thread_local char text[21];
+    return ember_str_lit(text, decimal_i64(text, value));
+}
+
+ember_str ember_uint_text(uint64_t value) {
+    static _Thread_local char text[20];
+    return ember_str_lit(text, decimal_u64(text, value));
+}
+
 void ember_fmt_f64(ember_vec* out, double value) {
     char buffer[32];
     write_shortest_f64(value, buffer, sizeof buffer);

@@ -233,6 +233,8 @@ fn ctor_fields(types: &TypeTable, ty: Ty, ctor: &Ctor) -> Vec<Ty> {
 /// through a wildcard.
 fn all_ctors(types: &TypeTable, ty: Ty) -> Option<Vec<Ctor>> {
     match types.kind(ty) {
+        // `[FFI-8]` — a C enum may hold a value no variant names: only `_` covers it.
+        TyKind::Enum(id) if types.enum_def(*id).open => None,
         TyKind::Enum(id) => {
             Some((0..types.enum_def(*id).variants.len()).map(Ctor::Variant).collect())
         }

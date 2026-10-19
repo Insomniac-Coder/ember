@@ -379,6 +379,9 @@ pub struct EnumDef {
     /// `[ENM-4]` — a payload enum is `Copy` only via `@derive(Copy)`.
     pub derives_copy: bool,
     pub has_drop: bool,
+    /// `[FFI-8]` — `@non_exhaustive`, a C enum: a unit-only `@repr` enum any value of whose
+    /// integer type is a value of the enum (ODR-137).
+    pub open: bool,
 }
 
 impl EnumDef {
@@ -1717,7 +1720,8 @@ impl TypeTable {
     /// At most one more candidate than there are variants is needed.
     pub fn enum_unused_discriminant(&self, id: EnumId) -> Option<i128> {
         let def = self.enum_def(id);
-        if !def.is_unit_only() {
+        // `[FFI-8]` — an open enum has no unused value: C may send any.
+        if !def.is_unit_only() || def.open {
             return None;
         }
         let used = def.variants.iter().map(|variant| variant.discriminant).collect::<HashSet<_>>();
@@ -2296,6 +2300,9 @@ impl TypeTable {
             | TyKind::Ptr { .. } => true,
             TyKind::CStr => true,
             TyKind::Fn { abi: Some(_), .. } => true,
+            // `[FFI-8]` — a C enum is its `@repr` integer; an exhaustive enum has none, as C may
+            // hand back a value no variant names (ODR-137).
+            TyKind::Enum(id) if self.enum_def(*id).open => true,
             TyKind::Enum(id) => self.option_niche(*id).is_some_and(|niche| {
                 matches!(self.kind(niche.payload), TyKind::Fn { abi: Some(_), .. } | TyKind::CStr)
             }),
@@ -3109,6 +3116,7 @@ mod tests {
             repr_is_explicit: true,
             derives_copy: false,
             has_drop: false,
+            open: false,
         });
         assert_eq!(table.enum_unused_discriminant(signed_id), Some(-1));
 
@@ -3122,6 +3130,7 @@ mod tests {
             repr_is_explicit: true,
             derives_copy: false,
             has_drop: false,
+            open: false,
         });
         assert_eq!(table.enum_unused_discriminant(unsigned_id), None);
     }
