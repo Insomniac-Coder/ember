@@ -48,3 +48,16 @@ ForeignOuter nested_pair = {{4}, 6};
 const ForeignOuter frozen_nested = {{2}, 3};
 int32_t read_nested_total(void) { return nested_pair.inner.value + nested_pair.other; }
 int32_t bump_nested_other(void) { return ++nested_pair.other; }
+
+typedef struct { int32_t id; int64_t balance; } Account;
+Account account = {3, 50};
+int64_t account_sum(void) { return account.id + account.balance; }
+typedef struct { int32_t values[3]; int32_t total; } Table;
+Table table = {{1, 2, 3}, 10};
+int32_t table_sum(void) { return table.values[0] + table.values[1] + table.values[2] + table.total; }
+int32_t bump_table_total(void) { return ++table.total; }
+int32_t samples[4] = {1, 2, 3, 4};
+int32_t samples_sum(void) { return samples[0] + samples[1] + samples[2] + samples[3]; }
+const int32_t frozen_samples[4] = {5, 6, 7, 8};
+static int32_t triple(int32_t value) { return value * 3; }
+int32_t (*scale)(int32_t) = triple;

@@ -5,7 +5,7 @@
 ## function cannot be a generator.
 
 unsafe extern "C":
-    gen fn ticks() -> i32    #$ error[E5050]: cannot be generic or a generator
+    gen fn ticks() -> i32    #$ error[E0104]: cannot be generic or a generator
 
 fn main():
     pass

@@ -355,6 +355,7 @@ codes! {
     E5063 = (Error, 5063, Ffi, "[TXT-2]", "foreign bytes reach `str` without validation");
     E5064 = (Error, 5064, Ffi, "[TXT-3]", "interior null in a value converted to `CStr`");
     E5065 = (Error, 5065, Ffi, "[SEL-2]", "`Shared`/`Weak` and `CppShared`/`CppWeak` do not interconvert");
+    E5067 = (Error, 5067, Ffi, "[GRM-35], [TIER-1]", "an overlay that states facts is not declared `unsafe overlay`");
 
     // --- comptime -------------------------------------------------------------
     E6001 = (Error, 6001, Comptime, "[CT-3]", "comptime evaluation exceeded its limits, or a constant's value depends on itself");

@@ -259,10 +259,13 @@ impl Parser<'_> {
                 self.at_fn_at(1)
                     || self.at_kw_at(1, Kw::Extern)
                     || matches!(self.peek_at(1), TokenKind::Ident(s) if s.is("extend"))
+                    || self.at_overlay_decl(1)
             }
             TokenKind::Ident(s) if s.is("abstract") => self.at_kw_at(1, Kw::Class),
             TokenKind::Ident(s) if s.is("safe") => self.at_fn_at(1),
-            TokenKind::Ident(_) => self.at_gen_fn() || self.at_extend_decl() || self.at_union_decl(),
+            TokenKind::Ident(_) => {
+                self.at_gen_fn() || self.at_extend_decl() || self.at_union_decl() || self.at_overlay_decl(0)
+            }
             _ => false,
         }
     }
@@ -349,6 +352,15 @@ impl Parser<'_> {
         // writes both.
         if self.at_kw(Kw::Extern) && self.at_kw_at(1, Kw::Class) {
             return Some(ItemKind::ExternClass(self.parse_extern_class()));
+        }
+        // `[GRM-35]` — `[unsafe] overlay c "header":`; `overlay` is a keyword only
+        // at the start of an item (`[LEX-15]`).
+        if self.at_overlay_decl(0) {
+            return Some(ItemKind::Overlay(self.parse_overlay(false)));
+        }
+        if self.at_kw(Kw::Unsafe) && self.at_overlay_decl(1) {
+            self.bump();
+            return Some(ItemKind::Overlay(self.parse_overlay(true)));
         }
         // ODR-111 — `unsafe extend T implements Send:`, a marker interface written by hand.
         if self.at_kw(Kw::Unsafe) && matches!(self.peek_at(1), TokenKind::Ident(s) if s.is("extend")) {
@@ -609,6 +621,164 @@ impl Parser<'_> {
         }
         self.in_extern_block = outer_extern;
         ExternBlock { is_unsafe, abi, items }
+    }
+
+    /// `overlay c "header"` begins at token `n`.
+    fn at_overlay_decl(&self, n: usize) -> bool {
+        matches!(self.peek_at(n), TokenKind::Ident(word) if word.is("overlay"))
+            && matches!(self.peek_at(n + 1), TokenKind::Ident(language) if language.is("c") || language.is("cpp"))
+            && matches!(self.peek_at(n + 2), TokenKind::Lit(Lit::Str(_)))
+    }
+
+    /// `[GRM-35]` — `overlay ("c" | "cpp") STRING ":" NEWLINE INDENT {overlay_item} DEDENT`,
+    /// after any `unsafe`.
+    fn parse_overlay(&mut self, is_unsafe: bool) -> OverlayDecl {
+        let start = self.span();
+        self.bump(); // `overlay`
+        let language = match self.peek() {
+            TokenKind::Ident(language) if language.is("cpp") => ForeignLanguage::Cpp,
+            _ => ForeignLanguage::C,
+        };
+        self.bump();
+        let TokenKind::Lit(Lit::Str(header)) = self.peek().clone() else { unreachable!("checked by at_overlay_decl") };
+        self.bump();
+        self.expect_punct(Punct::Colon);
+        let span = start.to(self.prev_span());
+        let mut items = Vec::new();
+        if self.at_newline() {
+            self.bump();
+            if self.eat_indent() {
+                while !self.at_dedent() && !self.at_eof() {
+                    self.eat_newlines();
+                    if self.at_dedent() || self.at_eof() {
+                        break;
+                    }
+                    let before = self.pos;
+                    match self.parse_overlay_item() {
+                        Some(item) => items.push(item),
+                        None => {
+                            if self.pos == before {
+                                self.bump();
+                            }
+                            self.recover_to_line_end();
+                        }
+                    }
+                }
+                self.eat_dedent();
+            }
+        } else {
+            self.expect_newline();
+        }
+        OverlayDecl { span, is_unsafe, language, header, items }
+    }
+
+    /// `overlay_item := {attribute} (overlay_fn | "type" IDENT NEWLINE | "enum" IDENT NEWLINE
+    /// | "rename" IDENT "as" IDENT NEWLINE | "hide" IDENT NEWLINE | extend_decl)`; `rename` and
+    /// `hide` are keywords only here (`[LEX-15]`).
+    fn parse_overlay_item(&mut self) -> Option<OverlayItem> {
+        let attrs = self.parse_attributes();
+        let start = self.span();
+        let kind = match self.peek().clone() {
+            TokenKind::Keyword(Kw::Fn) => {
+                self.bump();
+                let name = self.expect_ident();
+                self.expect_punct(Punct::LParen);
+                let mut params = Vec::new();
+                while !self.at_punct(Punct::RParen) && !self.at_eof() && !self.at_newline() {
+                    let name = self.expect_ident();
+                    let contract = if self.eat_punct(Punct::Colon) { self.parse_contract_words() } else { Vec::new() };
+                    params.push(OverlayParam { name, contract });
+                    if !self.eat_punct(Punct::Comma) {
+                        break;
+                    }
+                    self.eat_newlines();
+                }
+                self.expect_punct(Punct::RParen);
+                let result = if self.eat_punct(Punct::Arrow) { self.parse_contract_words() } else { Vec::new() };
+                self.expect_newline();
+                OverlayItemKind::Fn { name, params, result }
+            }
+            TokenKind::Keyword(Kw::Type) => {
+                self.bump();
+                let name = self.expect_ident();
+                self.expect_newline();
+                OverlayItemKind::Type(name)
+            }
+            TokenKind::Keyword(Kw::Enum) => {
+                self.bump();
+                let name = self.expect_ident();
+                self.expect_newline();
+                OverlayItemKind::Enum(name)
+            }
+            TokenKind::Ident(word) if word.is("rename") => {
+                self.bump();
+                let from = self.expect_ident();
+                self.expect_kw(Kw::As);
+                let to = self.expect_ident();
+                self.expect_newline();
+                OverlayItemKind::Rename { from, to }
+            }
+            TokenKind::Ident(word) if word.is("hide") => {
+                self.bump();
+                let name = self.expect_ident();
+                self.expect_newline();
+                OverlayItemKind::Hide(name)
+            }
+            TokenKind::Ident(_) if self.at_extend_decl() => OverlayItemKind::Extend(self.parse_extend()),
+            other => {
+                let found = other.to_string();
+                let span = self.span();
+                self.report(
+                    Diagnostic::error(codes::E0100, span, "expected an overlay item")
+                        .primary_label(format!("found {found}"))
+                        .help("an overlay holds `fn`, `type`, `enum`, `rename`, `hide` and `extend` items [GRM-35]"),
+                );
+                return None;
+            }
+        };
+        Some(OverlayItem { attrs, kind, span: start.to(self.prev_span()) })
+    }
+
+    /// `contract {contract}`, `contract := IDENT ["(" [attr_arg {"," attr_arg}] ")"]`: words
+    /// separated by spaces, until a `,`, a `)` or the end of the line. `unsafe` is a word here
+    /// (`[FFI-11]`: leave the call unsafe).
+    fn parse_contract_words(&mut self) -> Vec<Contract> {
+        let mut words = Vec::new();
+        loop {
+            let word = match self.peek() {
+                TokenKind::Ident(_) | TokenKind::RawIdent(_) => self.expect_ident(),
+                TokenKind::Keyword(Kw::Unsafe) => {
+                    let span = self.span();
+                    self.bump();
+                    Ident { name: "unsafe".into(), span }
+                }
+                _ => break,
+            };
+            let args = if self.eat_punct(Punct::LParen) {
+                let outer_ffi = std::mem::replace(&mut self.in_ffi_attribute, true);
+                let mut args = Vec::new();
+                while !self.at_punct(Punct::RParen) && !self.at_eof() {
+                    match self.parse_attr_arg() {
+                        Some(arg) => args.push(arg),
+                        None => break,
+                    }
+                    if !self.eat_punct(Punct::Comma) {
+                        break;
+                    }
+                }
+                self.expect_punct(Punct::RParen);
+                self.in_ffi_attribute = outer_ffi;
+                Some(args)
+            } else {
+                None
+            };
+            words.push(Contract { word, args, span: word.span.to(self.prev_span()) });
+        }
+        if words.is_empty() {
+            let span = self.span();
+            self.report_code(codes::E0100, span, "expected a contract word, as `borrowed one`");
+        }
+        words
     }
 
     /// True where a `gen fn` begins. `[LEX-15b]` makes `gen` contextual — a

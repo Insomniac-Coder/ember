@@ -104,6 +104,10 @@ def ember() -> Path:
 # page's programs are run, and the fixed one must run without reporting it.
 RUNTIME_CODES = {"L3017"}
 
+# A code only `ember test --instrument-ffi` reports (`[FFI-37]`): its page's
+# programs are the entry of a package whose tests are run instrumented.
+INSTRUMENTED_CODES = {"E5053", "W5054"}
+
 
 def run(source: str, work: Path, manifest: str | None = None, command: str = "check") -> tuple[int, str]:
     path = work / "page.em"
@@ -120,13 +124,21 @@ def run(source: str, work: Path, manifest: str | None = None, command: str = "ch
     )
     path.write_bytes(raw)
     arguments = [str(ember()), command, str(path)]
+    cwd = ROOT
     if command == "run":
         arguments += ["--out-dir", str(work / "out")]
+    elif command == "test":
+        package = work / "package"
+        (package / "src").mkdir(parents=True, exist_ok=True)
+        (package / "ember.toml").write_text('[package]\nname = "page"\nkind = "bin"\n', encoding="utf-8", newline="\n")
+        (package / "src" / "main.em").write_bytes(raw)
+        arguments = [str(ember()), "test", "--instrument-ffi", "--out-dir", str(work / "out")]
+        cwd = package
     result = subprocess.run(
         arguments,
         capture_output=True,
         text=True,
-        cwd=ROOT,
+        cwd=cwd,
     )
     return result.returncode, (result.stdout + result.stderr).replace("\r\n", "\n")
 
@@ -156,7 +168,7 @@ def check_page(path: Path, work: Path) -> list[str]:
     # guard held across a call) was the first lint page; `W2111` is the first
     # compiler warning page.
     is_non_error = code.startswith(("L", "W"))
-    command = "run" if code in RUNTIME_CODES else "check"
+    command = "run" if code in RUNTIME_CODES else "test" if code in INSTRUMENTED_CODES else "check"
 
     if "fails" not in blocks:
         problems.append(f"{code}: no ```ember,fails block — [DOC-1] wants the program that triggers it")

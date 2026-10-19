@@ -34,6 +34,7 @@ const RERUNS: usize = 2;
 pub(crate) fn command(args: &[String]) -> Result<ExitCode, String> {
     let mut filter = None;
     let mut doc = false;
+    let mut instrument_ffi = false;
     let mut rest = Vec::new();
     let mut skip_value = false;
     for arg in args {
@@ -42,6 +43,8 @@ pub(crate) fn command(args: &[String]) -> Result<ExitCode, String> {
             skip_value = false;
         } else if arg == "--doc" {
             doc = true;
+        } else if arg == "--instrument-ffi" {
+            instrument_ffi = true;
         } else if arg.starts_with('-') {
             skip_value = matches!(arg.as_str(), "--profile" | "--emit" | "--cc" | "--out-dir" | "--backend" | "-D");
             rest.push(arg.clone());
@@ -76,6 +79,18 @@ pub(crate) fn command(args: &[String]) -> Result<ExitCode, String> {
     ))?;
     let root = manifest.parent().unwrap_or(&cwd);
     let (entry, _) = package_entry_from_manifest(root, &manifest, "test")?;
+    // `[FFI-37]`, `[TCB-1]` — the evidence record goes where `[ffi] evidence` says, by default
+    // `.ember/ffi-evidence` in the package.
+    if instrument_ffi {
+        // An empty intercepted set would grade every fact without observing anything.
+        if !cfg!(any(windows, target_os = "linux")) {
+            return Err("error[E0900]: `--instrument-ffi` intercepts entry points on Windows and Linux only".to_string());
+        }
+        let text = std::fs::read_to_string(&manifest).map_err(|error| error.to_string())?;
+        let dir = crate::manifest_string(&text, "ffi", "evidence")
+            .unwrap_or_else(crate::foreign::default_evidence_dir);
+        options.ffi_evidence = Some(root.join(dir));
+    }
     compile(&entry, "test", &options)
 }
 
@@ -241,8 +256,17 @@ fn selected(name: &str, options: &Options) -> bool {
 
 /// `[TST-3]` — run the test binary `exe` once per selected test, the test's
 /// number as its argument.
-pub(crate) fn run_tests(exe: &Path, tests: &[&ember_hir::TestFn], options: &Options) -> Result<ExitCode, String> {
+pub(crate) fn run_tests(
+    exe: &Path,
+    tests: &[&ember_hir::TestFn],
+    options: &Options,
+    instrumented: Option<&crate::foreign::InstrumentedRun>,
+    map: &ember_span::SourceMap,
+) -> Result<ExitCode, String> {
     let mut cases: Vec<(String, Box<dyn FnMut() -> Result<Attempt, String>>)> = Vec::new();
+    // `[FFI-37]` — each test's counts, in a file of its own beside the binary.
+    let evidence = |index: usize| exe.with_file_name(format!("ffi-evidence-{index}.txt"));
+    let mut evidence_files = Vec::new();
     for (index, test) in tests.iter().enumerate() {
         let name = test.name.as_str().to_string();
         if !selected(&name, options) {
@@ -250,14 +274,29 @@ pub(crate) fn run_tests(exe: &Path, tests: &[&ember_hir::TestFn], options: &Opti
         }
         let should_panic = test.should_panic;
         let exe = exe.to_path_buf();
-        cases.push((name, Box::new(move || run_test(&exe, index, should_panic))));
+        let file = instrumented.map(|_| evidence(index));
+        if let Some(file) = &file {
+            let _ = std::fs::remove_file(file);
+            evidence_files.push(file.clone());
+        }
+        cases.push((name, Box::new(move || run_test(&exe, index, should_panic, file.as_deref()))));
     }
     let filtered_out = tests.len() - cases.len();
-    run_cases("test", cases, filtered_out, options.json)
+    let status = run_cases("test", cases, filtered_out, options.json)?;
+    let Some(run) = instrumented else { return Ok(status) };
+    let contradicted = crate::foreign::instrument_report(run, &evidence_files, map, options)?;
+    for file in &evidence_files {
+        let _ = std::fs::remove_file(file);
+    }
+    Ok(if contradicted { ExitCode::FAILURE } else { status })
 }
 
-fn run_test(exe: &Path, index: usize, should_panic: bool) -> Result<Attempt, String> {
-    let output = Command::new(exe)
+fn run_test(exe: &Path, index: usize, should_panic: bool, evidence: Option<&Path>) -> Result<Attempt, String> {
+    let mut command = Command::new(exe);
+    if let Some(file) = evidence {
+        command.env(crate::foreign::evidence_variable(), file);
+    }
+    let output = command
         .arg(index.to_string())
         .stdin(Stdio::null())
         .output()

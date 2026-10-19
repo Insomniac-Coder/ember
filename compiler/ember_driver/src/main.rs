@@ -5,6 +5,7 @@
 //! each command something to do.
 
 mod comptime;
+mod foreign;
 mod reload;
 mod test_runner;
 
@@ -29,19 +30,25 @@ ember — the Ember compiler
 usage (`[CLI-15]`: every command and flag of the specification's XVII.1; \"not built yet\" marks those
 this compiler does not have yet):
     ember new <name> [--lib | --bin | --cdylib]    create a package (not built yet)
-    ember run [file.em] [args…] [--hot | --interp] build and run; a single file needs no manifest
-                                                   (--hot and --interp are not built yet)
+    ember run [file.em] [args…] [--hot | --interp] build and run; a single file needs no manifest;
+                                                   --hot reloads edited sources at std.hot.checkpoint()
+                                                   (--interp is not built yet)
     ember build [file.em|package-dir] [--profile <name>] [--target <triple>] [--backend c|llvm]
                 [--emit tokens|ast|hir|mir|c|obj|header] [--out-dir <dir>]
                 [--emit-optimization-report] [--report=engine|instantiations] [--timings[=json]]
                 [--build-id] [--reload [--explain]] [-D warnings]
-                                                   compile a bin or staticlib package (--target,
-                                                   --backend llvm, --report, --build-id and
-                                                   --reload are not built yet)
+                                                   compile a bin or staticlib package; --reload
+                                                   builds the next image of a running program and
+                                                   --explain predicts that reload (--target,
+                                                   --backend llvm, --report and --build-id are
+                                                   not built yet)
     ember check [file.em] [--syntax-only] [--timings]
                                                    type, borrow and effect checks without code generation
-    ember test [filter] [--doc] [--no-leak-check]  run the package's @test functions, each in a process
-                                                   of its own; --doc runs the documentation examples
+    ember test [filter] [--doc] [--no-leak-check] [--instrument-ffi]
+                                                   run the package's @test functions, each in a process
+                                                   of its own; --doc runs the documentation examples;
+                                                   --instrument-ffi grades foreign effect facts by
+                                                   what the tests observe
     ember bench [filter] [--compare]               benchmarks; --compare runs the paired C programs
                                                    (not built yet)
     ember fmt <file.em> [--check | --write | --migrate] [--json]
@@ -62,7 +69,6 @@ this compiler does not have yet):
     ember why --alloc|--block|--io|--lock|--sync|--unsafe|--ffi <item>
                                                    the call chain to that effect (not built yet)
     ember calls --foreign <item>                   every foreign function the item can reach
-                                                   (not built yet)
     ember bind <header> [--init [--merge] | --report [--baseline <file> | --write-baseline]
                          | --check <overlay> | --explain <fn> | --emit-embind]
                                                    C header bindings (not built yet)
@@ -410,6 +416,18 @@ struct Options {
     explain: bool,
     /// `[HR-33]` — `ember run --hot`: run, watch the sources, rebuild and reload.
     hot: bool,
+    /// `[CLI-13]` — `ember calls --foreign <item>`: check the program, then list the foreign
+    /// functions the item can reach.
+    foreign_calls: Option<ForeignCalls>,
+    /// `[FFI-37]` — `ember test --instrument-ffi`: the directory its evidence record goes to
+    /// (`[TCB-1]`'s `[ffi] evidence`).
+    ffi_evidence: Option<PathBuf>,
+}
+
+/// What `ember calls --foreign` prints: JSON or text, for one item.
+struct ForeignCalls {
+    json: bool,
+    item: String,
 }
 
 /// What `ember tcb` prints: JSON or text, one module or all.
@@ -475,6 +493,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         }
         "inspect" => inspect(&args[1..]),
         "tcb" => tcb(&args[1..]),
+        "calls" => calls(&args[1..]),
         "test" => test_runner::command(&args[1..]),
         "build" | "run" | "check" => {
             // The source file may sit before or after the flags. Requiring it
@@ -1249,6 +1268,79 @@ fn tcb(args: &[String]) -> Result<ExitCode, String> {
     compile(&path, "check", &options)
 }
 
+/// `[CLI-13]` — `ember calls --foreign <item> [--json] <file.em>`.
+fn calls(args: &[String]) -> Result<ExitCode, String> {
+    let mut item = None;
+    let mut json = false;
+    let mut path = None;
+    let mut rest = args.iter();
+    while let Some(argument) = rest.next() {
+        match argument.as_str() {
+            "--json" => json = true,
+            "--foreign" => item = Some(rest.next().ok_or("`--foreign` needs an item: a function the program names")?.clone()),
+            flag if flag.starts_with('-') => return Err(format!("unknown `ember calls` option `{flag}`")),
+            file if path.is_none() => path = Some(PathBuf::from(file)),
+            extra => return Err(format!("unexpected `ember calls` argument `{extra}`")),
+        }
+    }
+    let item = item.ok_or("`ember calls` needs `--foreign <item>`")?;
+    let path = path.ok_or("`ember calls` needs a source file")?;
+    let options = Options { foreign_calls: Some(ForeignCalls { json, item }), ..Options::default() };
+    compile(&path, "check", &options)
+}
+
+/// `[CLI-13]` — each foreign function `request.item` can reach, with the chain to it and the
+/// contract its declaration states (each fact with its grade, `[TCB-1]`).
+fn print_foreign_calls(
+    input: &Path,
+    bodies: &[ember_mir::Body],
+    types: &TypeTable,
+    modules: &[ember_typeck::LoadedModule],
+    map: &SourceMap,
+    request: &ForeignCalls,
+) -> Result<(), String> {
+    let reach = ember_analysis::effects::foreign_reach(bodies, types, &request.item)
+        .ok_or_else(|| format!("no function named `{}` in {}", request.item, input.display()))?;
+    let module_name = |loaded: &ember_typeck::LoadedModule| {
+        if loaded.path.is_empty() {
+            input.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default()
+        } else {
+            loaded.path.join(".")
+        }
+    };
+    let declarations = foreign::declarations(modules, map, &module_name);
+    let declaration = |index: usize| declarations.iter().find(|decl| decl.qualified == bodies[index].name);
+    if request.json {
+        let reached: Vec<serde_json::Value> = reach.reached.iter().map(|(index, chain)| {
+            serde_json::json!({
+                "function": bodies[*index].name,
+                "symbol": bodies[*index].symbol,
+                "chain": chain,
+                "declaration": declaration(*index).map(|decl| foreign::json(decl, map)),
+            })
+        }).collect();
+        println!("{}", serde_json::json!({
+            "schema": 1,
+            "item": request.item,
+            "foreign": reached,
+            "unknown_callees": reach.unknown_callees,
+        }));
+        return Ok(());
+    }
+    println!("Foreign functions `{}` can reach ({}):", request.item, reach.reached.len());
+    for (index, chain) in &reach.reached {
+        println!("  {}", chain.join(" -> "));
+        match declaration(*index) {
+            Some(decl) => foreign::print(decl, map, "    ", None),
+            None => println!("    `{}` (C symbol {})", bodies[*index].name, bodies[*index].symbol),
+        }
+    }
+    for function in &reach.unknown_callees {
+        println!("  and what `{function}` calls through a function or `dyn` value, which nothing here names");
+    }
+    Ok(())
+}
+
 /// `[UNS-8]` — one `unsafe:` block or `unsafe fn` of the program: where, which function, its
 /// safety note (`[LEX-23]`), and what its body may reach only through `unsafe`.
 struct UnsafeEntry {
@@ -1456,6 +1548,14 @@ fn print_tcb_report(
         }
     }
     entries.sort_by_key(|entry| (entry.module.clone(), entry.site.file, entry.site.start));
+    // `[FFI-10]`, `[TCB-1]`, `[TCB-3]` — every fact the program's foreign declarations assert.
+    let mut foreign: Vec<foreign::ForeignDecl> = foreign::declarations(modules, map, &module_name)
+        .into_iter()
+        .filter(|decl| request.module.as_ref().is_none_or(|wanted| *wanted == decl.module))
+        .collect();
+    foreign.sort_by(|a, b| a.module.cmp(&b.module));
+    // `[FFI-37c]`, `[TCB-5]`, `[TCB-6]` — what an instrumented test run recorded of the effect facts.
+    let evidence = foreign::load_evidence(input);
     if request.json {
         let unsafe_json: Vec<serde_json::Value> = entries
             .iter()
@@ -1471,10 +1571,26 @@ fn print_tcb_report(
                 })
             })
             .collect();
-        println!("{}", serde_json::json!({ "schema": 1, "unsafe": unsafe_json }));
+        let foreign_json: Vec<serde_json::Value> = foreign.iter().map(|decl| {
+            let mut value = foreign::json(decl, map);
+            if let Some(lines) = evidence.as_ref().and_then(|evidence| foreign::evidence_lines(decl, evidence, map)) {
+                value["evidence"] = serde_json::json!(lines);
+            }
+            value
+        }).collect();
+        println!("{}", serde_json::json!({
+            "schema": 1,
+            "guaranteed": LANGUAGE_GUARANTEES,
+            "unsafe": unsafe_json,
+            "foreign": foreign_json,
+        }));
         return Ok(());
     }
+    // `[TCB-2]` — what the language guarantees, apart from what the program's own `unsafe` and
+    // the foreign code it declares supply; each of those with its source and grade (`[TCB-3]`).
     println!("Trusted base: {}", input.display());
+    println!("Guaranteed by the language, checked by the compiler: {LANGUAGE_GUARANTEES}");
+    println!("Supplied from outside the language, each fact with its grade:");
     println!("Unsafe ({}):", entries.len());
     let mut module = None;
     for entry in &entries {
@@ -1488,7 +1604,7 @@ fn print_tcb_report(
             Some((None, reason)) => format!("SAFETY: {reason}"),
             None => "no safety note (W3012)".to_string(),
         };
-        println!("    {}  {what}  {note}", map.location(entry.site));
+        println!("    {}  {what}  {note}  [asserted]", map.location(entry.site));
         for (name, obligation) in &entry.calls {
             match obligation {
                 Some(obligation) => println!("      calls `{name}`: {obligation}"),
@@ -1496,8 +1612,21 @@ fn print_tcb_report(
             }
         }
     }
+    println!("C FFI ({} declarations):", foreign.len());
+    let mut module = None;
+    for decl in &foreign {
+        if module != Some(&decl.module) {
+            println!("  module {}", decl.module);
+            module = Some(&decl.module);
+        }
+        foreign::print(decl, map, "    ", evidence.as_ref());
+    }
     Ok(())
 }
+
+/// `[TCB-2]` — what the language guarantees of a program's safe code (`[TIER-1]`'s Safe tier).
+const LANGUAGE_GUARANTEES: &str =
+    "memory, null, bounds and lifetime safety, data-race freedom and deterministic destruction of the safe code";
 
 /// `[EFF-16]` — each function of the program with the two facts that together say it has no panic
 /// the effect model knows of: whether it is `@nopanic(explicit)`
@@ -3404,6 +3533,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         print_tcb_report(input, &bodies, &types, &modules, &map, request)?;
         return Ok(ExitCode::SUCCESS);
     }
+    // `[CLI-13]` — the call graph the effects were computed on, before inlining folds it.
+    if let Some(request) = &options.foreign_calls {
+        report(&sink, &map, options);
+        print_foreign_calls(input, &bodies, &types, &modules, &map, request)?;
+        return Ok(ExitCode::SUCCESS);
+    }
     // A function called from one place is inlined there, so the analyses
     // below see what its caller knows. For clang and gcc, only a function
     // holding a check the caller's facts could remove: they inline the rest
@@ -3625,6 +3760,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         c_for_msvc(&options),
         (command == "test").then(|| tests.iter().map(|test| test.symbol.clone()).collect()),
         reload_image.as_ref(),
+        command == "test" && options.ffi_evidence.is_some(),
     );
     mark("C generation", "all modules");
     // `[DSP-5]` — on standard error, so it never mixes with `--emit c`.
@@ -3840,6 +3976,13 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     .map_err(|e| e.to_string())?
     .unwrap_or(runtime_source);
     let mut sources = vec![c_path.clone(), runtime_input];
+    // `[FFI-37]` — the instrumentation is a unit of its own (it defines the C library's entry
+    // points it intercepts off Windows).
+    if let Some(instrument) = &emitted.ffi_instrument {
+        let unit = layout.c.join(format!("{module_name}.ffi.c"));
+        std::fs::write(&unit, &instrument.source).map_err(|e| e.to_string())?;
+        sources.push(unit);
+    }
     // `[CG-C-11]` — each relaxed unit compiled with its own flags.
     let object_ext = if matches!(&toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
     for (mode, source) in &emitted.relaxed_units {
@@ -3868,6 +4011,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             && !body.is_extern_declaration && !body.is_abstract)
         .map(|body| body.symbol.clone())
         .collect();
+    if emitted.ffi_instrument.is_some() && !cfg!(windows) {
+        retained_symbols.extend(ember_codegen_c::FFI_INTERPOSED.iter().map(|name| name.to_string()));
+    }
     retained_symbols.sort();
     retained_symbols.dedup();
     ember_build::compile_and_link_executable_with_roots(
@@ -3887,7 +4033,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     report(&sink, &map, options);
 
     if command == "test" {
-        return test_runner::run_tests(&exe, &tests, options);
+        // `[FFI-37]` — what the instrumented binary counts, with what the program declares of it.
+        let instrumented = emitted.ffi_instrument.as_ref().zip(options.ffi_evidence.as_ref()).map(|(instrument, dir)| {
+            let package = input.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
+            foreign::InstrumentedRun::new(instrument, &bodies, dir.clone(), &package, &exe, toolchain.identity())
+        });
+        return test_runner::run_tests(&exe, &tests, options, instrumented.as_ref(), &map);
     }
     if command == "run" {
         return run_program(&exe, options);

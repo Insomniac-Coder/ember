@@ -51,6 +51,57 @@ pub struct Output {
     /// elided-check entries are added when an elision pass provides the
     /// required proof and reason; unsupported cases remain emitted checks.
     pub safety_json: String,
+    /// `[FFI-37]` — for `ember test --instrument-ffi`: the instrumentation's own C unit, each
+    /// foreign function (its name) and each call site the program makes to one (the function's
+    /// index and the place).
+    pub ffi_instrument: Option<FfiInstrumentOutput>,
+}
+
+/// `[FFI-37]`, `[FFI-37b]` — what an instrumented test binary counts.
+pub struct FfiInstrumentOutput {
+    pub source: String,
+    pub functions: Vec<String>,
+    pub sites: Vec<(u32, String)>,
+}
+
+/// `[FFI-37]` — the foreign functions of an instrumented program: each callee symbol's index, each
+/// function's name and the C symbol whose address names its library, and the call sites so far.
+struct FfiInstrument {
+    index: BTreeMap<String, u32>,
+    functions: Vec<(String, String)>,
+    sites: std::cell::RefCell<Vec<(u32, String)>>,
+}
+
+impl FfiInstrument {
+    fn new(bodies: &[Body]) -> FfiInstrument {
+        let mut index = BTreeMap::new();
+        let mut functions = Vec::new();
+        for body in bodies.iter().filter(|body| body.contracts.foreign.is_some()) {
+            let address = match &body.ffi_counted {
+                Some(counted) => counted.foreign_symbol.clone(),
+                None => body.symbol.clone(),
+            };
+            index.insert(body.symbol.clone(), functions.len() as u32);
+            functions.push((body.name.clone(), address));
+        }
+        FfiInstrument { index, functions, sites: Default::default() }
+    }
+}
+
+/// `[FFI-37a]` — the C library's entry points the instrumentation defines off Windows, which the
+/// link keeps (a section collector would drop one the program itself never calls).
+pub const FFI_INTERPOSED: &[&str] = &[
+    "malloc", "calloc", "realloc", "aligned_alloc", "posix_memalign", "pthread_mutex_lock",
+    "pthread_rwlock_rdlock", "pthread_rwlock_wrlock", "pthread_cond_wait", "pthread_cond_timedwait",
+    "pthread_join", "nanosleep", "usleep", "sleep", "poll", "read", "write", "fopen", "fread", "fwrite",
+    "fputs", "puts", "fflush",
+];
+
+/// `[FFI-37]` — the instrumentation unit, for this build's runtime prefix.
+fn ffi_instrument_source() -> String {
+    include_str!("ffi_instrument.c")
+        .replace("@RT@", RT)
+        .replace("@PREFIX@", &ember_branding::SYMBOL_PREFIX.to_uppercase())
 }
 
 pub struct HeaderOutput {
@@ -260,7 +311,7 @@ pub struct ComptimeRoot {
 /// and prints its value (`ComptimeRoot`), within the step and heap limits its
 /// second and third arguments give.
 pub fn emit_comptime(mir: VerifiedMir<'_>, map: &SourceMap, roots: Vec<ComptimeRoot>, for_msvc: bool) -> Output {
-    emit_with(mir, map, "comptime", "comptime", false, false, false, for_msvc, Some(roots), None, None)
+    emit_with(mir, map, "comptime", "comptime", false, false, false, for_msvc, Some(roots), None, None, false)
 }
 
 /// `[TST-3]` — the line a test binary writes to standard error when its test
@@ -289,8 +340,9 @@ pub fn emit(
     for_msvc: bool,
     tests: Option<Vec<String>>,
     reload: Option<&ReloadImage>,
+    instrument_ffi: bool,
 ) -> Output {
-    emit_with(mir, map, module_name, package_name, has_main, leak_check, library_mode, for_msvc, None, tests, reload)
+    emit_with(mir, map, module_name, package_name, has_main, leak_check, library_mode, for_msvc, None, tests, reload, instrument_ffi)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -306,6 +358,7 @@ fn emit_with(
     comptime: Option<Vec<ComptimeRoot>>,
     tests: Option<Vec<String>>,
     reload: Option<&ReloadImage>,
+    instrument_ffi: bool,
 ) -> Output {
     let bodies = mir.bodies();
     let types = mir.types();
@@ -419,6 +472,7 @@ fn emit_with(
         job_closures: BTreeSet::new(),
         comptime: None,
         tests: None,
+        ffi_instrument: None,
         statement_span: std::cell::Cell::new(ember_span::Span::DUMMY),
         gives_values_to_c: false,
         foreign_statics: std::cell::RefCell::new(BTreeMap::new()),
@@ -460,9 +514,17 @@ fn emit_with(
     let write = |emitter: &mut Emitter<'_>| {
         emitter.collect_native_fn_values(bodies);
         emitter.emit_module(bodies, module_name, has_main, leak_check);
+        // ODR-082 — `@ffi(immutable)` declares the object itself `const`: after
+        // a pointer type the qualifier has to follow it (`const char* const`).
         let mut foreign_declarations = emitter.foreign_statics.borrow().iter()
-            .map(|(symbol, (ty, immutable))| format!("extern {}{} {symbol};\n",
-                if *immutable { "const " } else { "" }, emitter.c_type(*ty)))
+            .map(|(symbol, (ty, immutable))| {
+                let c_ty = emitter.c_type(*ty);
+                match (*immutable, c_ty.ends_with('*')) {
+                    (false, _) => format!("extern {c_ty} {symbol};\n"),
+                    (true, false) => format!("extern const {c_ty} {symbol};\n"),
+                    (true, true) => format!("extern {c_ty} const {symbol};\n"),
+                }
+            })
             .collect::<String>();
         for (init, (ty, _)) in &lazy_statics {
             foreign_declarations.push_str(&format!("{}* {init}_static(void);\n", emitter.c_type(*ty)));
@@ -476,6 +538,9 @@ fn emit_with(
     let mut emitter = make(None);
     emitter.comptime = comptime.clone();
     emitter.tests = tests;
+    if instrument_ffi {
+        emitter.ffi_instrument = Some(FfiInstrument::new(bodies));
+    }
     write(&mut emitter);
     check_split_views(&emitter.split_views, &emitter.out);
     let header_source = header::render(&emitter, bodies, package_name);
@@ -488,12 +553,34 @@ fn emit_with(
         direct_calls.append(&mut unit.direct_calls.take());
         relaxed_units.push((mode, unit.out));
     }
+    // `[FFI-37]` — the program's table of foreign functions (the address of each one it calls,
+    // which names its library) and how many call sites it counts.
+    let ffi_instrument = emitter.ffi_instrument.take().map(|instrument| {
+        let sites = instrument.sites.take();
+        let called: BTreeSet<u32> = sites.iter().map(|(function, _)| *function).collect();
+        let entries: Vec<String> = instrument.functions.iter().enumerate().map(|(index, (name, address))| {
+            let address = if called.contains(&(index as u32)) { format!("(const void*)&{address}") } else { "0".to_string() };
+            format!("    {{ {}, {address} }},", c_string_literal(name))
+        }).collect();
+        emitter.out.push_str(&format!(
+            "\n/* [FFI-37] the foreign functions an instrumented test counts */\ntypedef struct {RT}ffi_function {{ const char* name; const void* address; }} {RT}ffi_function;\nconst {RT}ffi_function {RT}ffi_functions[] = {{\n{}\n}};\nconst uint32_t {RT}ffi_function_count = {}u;\nconst uint32_t {RT}ffi_site_count = {}u;\n",
+            if entries.is_empty() { "    { 0, 0 },".to_string() } else { entries.join("\n") },
+            instrument.functions.len(),
+            sites.len(),
+        ));
+        FfiInstrumentOutput {
+            source: ffi_instrument_source(),
+            functions: instrument.functions.into_iter().map(|(name, _)| name).collect(),
+            sites,
+        }
+    });
     Output {
         c_source: emitter.out,
         relaxed_units,
         optimization_report: direct_calls.into_iter().map(|(_, _, line)| line).collect(),
         header_source,
         safety_json: safety_json(bodies, map),
+        ffi_instrument,
     }
 }
 
@@ -611,6 +698,8 @@ struct Emitter<'a> {
     /// `[TST-3]` — the symbols of the `@test` functions, in the runner's
     /// order, when this is a test binary.
     tests: Option<Vec<String>>,
+    /// `[FFI-37]` — when the test binary is instrumented: its foreign functions and call sites.
+    ffi_instrument: Option<FfiInstrument>,
     types: &'a TypeTable,
     map: &'a SourceMap,
     out: String,
@@ -864,9 +953,59 @@ enum Definition {
     Struct(Vec<String>),
     Alias(String),
     /// `typedef R (*name)(A, B);` — a function pointer, whose declarator wraps
-    /// the name rather than preceding it.
-    FnPointer { ret: String, args: String },
+    /// the name rather than preceding it. `convention` is `[FFI-9]`'s calling
+    /// convention macro, written inside the parentheses (`R (CC *name)(A)`).
+    FnPointer { ret: String, convention: &'static str, args: String },
 }
+
+/// `[FFI-36a]` — the thunk that calls foreign destructor `symbol` and drops its result.
+fn foreign_destructor_thunk(symbol: &str) -> String {
+    format!("{RT}ffi_destroy_{symbol}")
+}
+
+/// `[FFI-9]` — the macro naming a declaration's C calling convention, with a
+/// trailing space, or nothing for `extern "C"` (`calling_convention_macros`
+/// defines them).
+fn calling_convention(abi: Option<&str>) -> &'static str {
+    match abi {
+        Some("system") => "EMBER_CC_SYSTEM ",
+        Some("fastcall") => "EMBER_CC_FASTCALL ",
+        Some("vectorcall") => "EMBER_CC_VECTORCALL ",
+        _ => "",
+    }
+}
+
+/// `[FFI-9]` — `extern "system"` is `stdcall` on 32-bit Windows and C
+/// elsewhere; `"fastcall"` and `"vectorcall"` exist on x86 (on x86-64 the
+/// compilers take `fastcall` as the one convention there). A target or C
+/// compiler without the convention stops the C build, naming it, rather than
+/// calling with another.
+const CALLING_CONVENTION_MACROS: &str = r#"/* [FFI-9] foreign calling conventions */
+#if defined(_M_IX86) || defined(__i386__) || defined(_M_X64) || defined(__x86_64__)
+#define EMBER_CC_X86 1
+#endif
+#if defined(_WIN32) && (defined(_M_IX86) || defined(__i386__))
+#define EMBER_CC_SYSTEM __stdcall
+#else
+#define EMBER_CC_SYSTEM
+#endif
+#if (defined(_M_IX86) || defined(__i386__)) && defined(_MSC_VER)
+#define EMBER_CC_FASTCALL __fastcall
+#elif defined(_M_IX86) || defined(__i386__)
+#define EMBER_CC_FASTCALL __attribute__((fastcall))
+#elif defined(EMBER_CC_X86)
+#define EMBER_CC_FASTCALL
+#else
+#define EMBER_CC_FASTCALL EMBER_CC_FASTCALL_exists_only_on_x86
+#endif
+#if defined(EMBER_CC_X86) && defined(_MSC_VER)
+#define EMBER_CC_VECTORCALL __vectorcall
+#elif defined(EMBER_CC_X86) && defined(__clang__)
+#define EMBER_CC_VECTORCALL __attribute__((vectorcall))
+#else
+#define EMBER_CC_VECTORCALL EMBER_CC_VECTORCALL_needs_x86_and_MSVC_or_Clang
+#endif
+"#;
 
 /// A C type definition: either a named Ember struct or a generated struct
 /// standing in for a tuple or a fixed array.
@@ -935,9 +1074,7 @@ impl Emitter<'_> {
             for block in &body.blocks {
                 if let Terminator::Call { func: FuncRef::Builtin { which, .. }, .. } = &block.terminator {
                     let foreign = match which {
-                        Builtin::ForeignStaticRead { symbol, .. }
-                        | Builtin::ForeignStaticWrite { symbol }
-                        | Builtin::ForeignStaticFieldWrite { symbol, .. } => Some(symbol),
+                        Builtin::ForeignStatic { symbol, .. } => Some(symbol),
                         _ => None,
                     };
                     if let Some(symbol) = foreign { used.insert(symbol.to_string()); }
@@ -1082,6 +1219,12 @@ impl Emitter<'_> {
         self.line("");
         if self.comptime.is_some() {
             self.line(COMPTIME_PRELUDE);
+        }
+        let foreign_convention = |abi: Option<&str>| !calling_convention(abi).is_empty();
+        if bodies.iter().any(|body| foreign_convention(body.abi.as_deref()))
+            || self.types.all().any(|(_, kind)| matches!(kind, TyKind::Fn { abi, .. } if foreign_convention(abi.as_ref().map(|abi| abi.as_str()))))
+        {
+            self.out.push_str(CALLING_CONVENTION_MACROS);
         }
 
         self.plan_reload_slots(bodies);
@@ -2316,8 +2459,8 @@ impl Emitter<'_> {
                 Definition::Alias(underlying) => {
                     self.line(&format!("typedef {underlying} {name};"));
                 }
-                Definition::FnPointer { ret, args } => {
-                    self.line(&format!("typedef {ret} (*{name})({args});"));
+                Definition::FnPointer { ret, convention, args } => {
+                    self.line(&format!("typedef {ret} ({convention}*{name})({args});"));
                 }
                 Definition::Struct(members) => {
                     self.line(&format!("struct {name} {{"));
@@ -4304,7 +4447,8 @@ impl Emitter<'_> {
                     .map(|param| self.callable_param_c_type(*param, abi.is_some()))
                     .collect();
                 let args = if rendered.is_empty() { "void".to_string() } else { rendered.join(", ") };
-                Definition::FnPointer { ret: self.c_type(*ret), args }
+                let convention = calling_convention(abi.as_ref().map(|abi| abi.as_str()));
+                Definition::FnPointer { ret: self.c_type(*ret), convention, args }
             }
             TypeNode::Structural(ty) => Definition::Struct(match self.types.kind(ty) {
                 TyKind::Tuple(items) => items
@@ -4865,6 +5009,13 @@ impl Emitter<'_> {
             return;
         }
         self.line("/* prototypes */");
+        // `[FFI-37]` — the instrumentation unit's entry points.
+        if self.ffi_instrument.is_some() {
+            self.line(&format!("uint32_t {RT}ffi_enter(uint32_t function, uint32_t site);"));
+            self.line(&format!("void {RT}ffi_leave(uint32_t previous);"));
+            self.line(&format!("void {RT}ffi_instrument_begin(void);"));
+            self.line(&format!("void {RT}ffi_instrument_end(void);"));
+        }
         for body in bodies {
             if body.ffi_counted.is_some() {
                 self.line(&format!("extern {};", self.ffi_counted_signature(body)));
@@ -4898,6 +5049,29 @@ impl Emitter<'_> {
             } else {
                 self.line(&format!("{signature};"));
             }
+        }
+        // `[FFI-36a]` — a foreign destructor that returns a value is called through a thunk
+        // that drops it, so the box's destructor is `void (*)(T*)` exactly.
+        let mut thunks = BTreeMap::new();
+        for block in bodies.iter().flat_map(|body| &body.blocks) {
+            if let Terminator::Call { func: FuncRef::Builtin { which: Builtin::ForeignDestructor { symbol, pointee, ret, .. }, .. }, .. } = &block.terminator
+                && !self.is_void(*ret)
+            {
+                thunks.insert(symbol.to_string(), (*pointee, *ret));
+            }
+        }
+        for owned in bodies.iter().filter_map(|body| body.ffi_counted.as_ref()?.result_owned.as_ref()) {
+            if !self.is_void(owned.destructor_ret) {
+                thunks.insert(owned.destructor.to_string(), (owned.pointee, owned.destructor_ret));
+            }
+        }
+        for (symbol, (pointee, ret)) in thunks {
+            let pointer = format!("{}*", self.c_type(pointee));
+            self.line(&format!(
+                "static EMBER_MAYBE_UNUSED void {}({pointer} object) {{ extern {} {symbol}({pointer}); (void){symbol}(object); }}",
+                foreign_destructor_thunk(&symbol),
+                self.c_type(ret),
+            ));
         }
         self.line("");
     }
@@ -5133,12 +5307,17 @@ impl Emitter<'_> {
             })
             .collect();
         let params = if params.is_empty() { "void".to_string() } else { params.join(", ") };
-        format!("{ret} {}({params})", body.symbol)
+        let convention = if body.is_extern_declaration { calling_convention(body.abi.as_deref()) } else { "" };
+        format!("{ret} {convention}{}({params})", body.symbol)
     }
 
     fn ffi_counted_signature(&self, body: &Body) -> String {
         let counted = body.ffi_counted.as_ref().expect("counted wrapper metadata");
-        let result = if let Some(span) = &counted.result_span {
+        // `[FFI-11b]` — C writes the count back through its pointer and returns nothing.
+        let inout = counted.abi_params.iter().any(|param| matches!(param, FfiAbiParam::Count { inout: true, .. }));
+        let result = if inout {
+            "void".to_string()
+        } else if let Some(span) = &counted.result_span {
             let elem = self.c_type(span.elem);
             if span.mutable { format!("{elem}*") } else { format!("const {elem}*") }
         } else if let Some(array) = &counted.result_array {
@@ -5163,12 +5342,57 @@ impl Emitter<'_> {
                     let elem = self.c_type(*elem);
                     if *mutable { format!("{elem}*") } else { format!("const {elem}*") }
                 }
+                FfiAbiParam::Count { ty, inout: true, .. } => format!("{}*", self.c_type(*ty)),
                 FfiAbiParam::Count { ty, .. } => self.c_type(*ty),
+                FfiAbiParam::Owned { public_index, nullable } => {
+                    let arg = body.args().nth(*public_index).expect("the owned parameter").1.ty;
+                    let boxed = self.foreign_box_type(arg, *nullable);
+                    self.c_type(self.foreign_box_fields(boxed)[0])
+                }
+                FfiAbiParam::Retained { .. } => "uint8_t*".to_string(),
             };
             format!("{ty} _ffi{index}")
         }).collect();
         let params = if params.is_empty() { "void".to_string() } else { params.join(", ") };
-        format!("{result} {}({params})", counted.foreign_symbol)
+        let result = match &counted.result_owned {
+            Some(owned) => format!("{}*", self.c_type(owned.pointee)),
+            None => result,
+        };
+        format!("{result} {}{}({params})", calling_convention(body.abi.as_deref()), counted.foreign_symbol)
+    }
+
+    /// `[FFI-23]` — the address of the object `value`, a class handle or a `Box`, holds: the
+    /// handle itself, the `Box`'s pointer (`T*`), or a `Box[dyn …]`'s data.
+    fn retained_address(&self, value: &str, ty: Ty) -> String {
+        let dyn_box = matches!(self.types.kind(ty), TyKind::Struct(id)
+            if self.box_inner_id(*id).is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. })));
+        if dyn_box { format!("((uint8_t*)({value}).data)") } else { format!("((uint8_t*)({value}))") }
+    }
+
+    /// An `Option` value `access` of type `ty` (with a tag): the test that it is `Some`, and its
+    /// payload.
+    fn option_some_parts(&self, ty: Ty, access: &str) -> (String, String) {
+        let TyKind::Enum(id) = *self.types.kind(ty) else { unreachable!("an `Option`") };
+        assert!(self.types.option_niche(id).is_none(), "an `Option[ForeignBox[T]]` has a tag");
+        let def = self.types.enum_def(id);
+        let some = &def.variants[1];
+        (format!("({access}).tag == {}", some.discriminant), format!("({access}).payload.{}.{}", some.name, some.fields[0].name))
+    }
+
+    /// `[FFI-36a]` — the `ForeignBox[T]` a value of `ty` is (or holds, as `Option`'s `Some`).
+    fn foreign_box_type(&self, ty: Ty, nullable: bool) -> Ty {
+        if !nullable {
+            return ty;
+        }
+        let TyKind::Enum(id) = *self.types.kind(ty) else { unreachable!("a nullable owned value is an `Option`") };
+        self.types.enum_def(id).variants[1].fields[0].ty
+    }
+
+    /// A `ForeignBox[T]`'s three field types: `*mut T`, the destructor's `extern "C" fn(*mut T)`,
+    /// the creator's `u32`.
+    fn foreign_box_fields(&self, boxed: Ty) -> Vec<Ty> {
+        let TyKind::Struct(id) = *self.types.kind(boxed) else { unreachable!("a `ForeignBox` is a struct") };
+        self.types.struct_def(id).fields.iter().map(|field| field.ty).collect()
     }
 
     fn ffi_count_limit(&self, ty: Ty) -> Option<&'static str> {
@@ -5236,7 +5460,7 @@ impl Emitter<'_> {
                         format!("({} ? {value} : NULL)", args[*public_index])
                     } else { value });
                 }
-                FfiAbiParam::Count { sources, ty } => {
+                FfiAbiParam::Count { sources, ty, inout } => {
                     let first = self.ffi_span_length(&args[sources[0].public_index], sources[0].nullable);
                     for other in sources.iter().skip(1) {
                         let location = self.location(body.span);
@@ -5253,12 +5477,88 @@ impl Emitter<'_> {
                         ));
                         self.line("#endif");
                     }
-                    foreign_args.push(format!("({}){first}", self.c_type(*ty)));
+                    if *inout {
+                        // `[FFI-11b]` — C reads the capacity and writes the count back here.
+                        self.line(&format!("    {ty} _ffi_count = ({ty}){first};", ty = self.c_type(*ty)));
+                        foreign_args.push("&_ffi_count".to_string());
+                    } else {
+                        foreign_args.push(format!("({}){first}", self.c_type(*ty)));
+                    }
+                }
+                // `[FFI-23]` — C keeps the address of the object the token holds.
+                FfiAbiParam::Retained { public_index } => {
+                    let ty = body.args().nth(*public_index).expect("the retained parameter").1.ty;
+                    let (token, ty) = match *self.types.kind(ty) {
+                        TyKind::Ref { inner, .. } => (format!("(*{})", args[*public_index]), inner),
+                        _ => (args[*public_index].clone(), ty),
+                    };
+                    let TyKind::Struct(id) = *self.types.kind(ty) else { unreachable!("a `Retained` token is a struct") };
+                    let held = self.types.struct_def(id).fields[0].ty;
+                    foreign_args.push(self.retained_address(&format!("({token}).value"), held));
+                }
+                // `[FFI-11]` — C takes the object: its box leaves the record and frees nothing.
+                FfiAbiParam::Owned { public_index, nullable } => {
+                    let arg = &args[*public_index];
+                    let ty = body.args().nth(*public_index).expect("the owned parameter").1.ty;
+                    let boxed = self.foreign_box_type(ty, *nullable);
+                    let pointer = self.c_type(self.foreign_box_fields(boxed)[0]);
+                    if *nullable {
+                        let (some_tag, payload) = self.option_some_parts(ty, arg);
+                        self.line(&format!("    {pointer} _ffi_owned{public_index} = NULL;"));
+                        self.line(&format!(
+                            "    if ({some_tag}) {{ _ffi_owned{public_index} = {payload}.pointer; {RT}ffi_release((void*){payload}.pointer, {payload}.creator); }}"
+                        ));
+                        foreign_args.push(format!("_ffi_owned{public_index}"));
+                    } else {
+                        self.line(&format!("    {RT}ffi_release((void*)({arg}).pointer, ({arg}).creator);"));
+                        foreign_args.push(format!("({arg}).pointer"));
+                    }
                 }
             }
         }
         let call = format!("{}({})", counted.foreign_symbol, foreign_args.join(", "));
-        if let Some(result) = &counted.result_span {
+        // `[FFI-36a]`, `[FFI-33b]` — a new object the caller owns: recorded, boxed with its
+        // destructor, and its creator when the contract says `threads(creator)`.
+        if let Some(owned) = &counted.result_owned {
+            let ret = body.return_ty();
+            let boxed = self.foreign_box_type(ret, owned.nullable);
+            let fields = self.foreign_box_fields(boxed);
+            let (pointer, destructor_ty, box_c) = (self.c_type(fields[0]), self.c_type(fields[1]), self.c_type(boxed));
+            self.line(&format!("    extern {} {}({pointer});", self.c_type(owned.destructor_ret), owned.destructor));
+            let destructor = if self.is_void(owned.destructor_ret) {
+                owned.destructor.to_string()
+            } else {
+                foreign_destructor_thunk(owned.destructor.as_str())
+            };
+            let creator = if owned.creator { format!("{RT}ffi_thread()") } else { "0".to_string() };
+            self.line(&format!("    {pointer} _ffi_result = {call};"));
+            let made = format!(
+                "({box_c}){{ ({pointer}){RT}ffi_adopt((void*)_ffi_result, {}), ({destructor_ty}){destructor}, {creator} }}",
+                self.location(body.span),
+            );
+            if owned.nullable {
+                let option = self.c_type(ret);
+                let TyKind::Enum(id) = *self.types.kind(ret) else { unreachable!("a nullable owned result is an `Option`") };
+                assert!(self.types.option_niche(id).is_none(), "an `Option[ForeignBox[T]]` has a tag");
+                let def = self.types.enum_def(id);
+                let (none, some) = (&def.variants[0], &def.variants[1]);
+                self.line(&format!("    {option} _ffi_option;"));
+                self.line("    memset(&_ffi_option, 0, sizeof _ffi_option);");
+                self.line(&format!("    if (_ffi_result == NULL) {{ _ffi_option.tag = {}; return _ffi_option; }}", none.discriminant));
+                self.line(&format!("    _ffi_option.payload.{}.{} = {made};", some.name, some.fields[0].name));
+                self.line(&format!("    _ffi_option.tag = {};", some.discriminant));
+                self.line("    return _ffi_option;");
+            } else {
+                self.line(&format!("    return {made};"));
+            }
+            self.line("}");
+            self.line("");
+            return;
+        }
+        if counted.abi_params.iter().any(|param| matches!(param, FfiAbiParam::Count { inout: true, .. })) {
+            self.line(&format!("    {call};"));
+            self.line("    return _ffi_count;");
+        } else if let Some(result) = &counted.result_span {
             let elem = self.c_type(result.elem);
             let pointer = if result.mutable { format!("{elem}*") } else { format!("const {elem}*") };
             self.line(&format!("    {pointer} _ffi_result = {call};"));
@@ -6778,6 +7078,21 @@ impl Emitter<'_> {
                 for line in retains {
                     self.line(&format!("    {line}"));
                 }
+                // `[FFI-37]`, `[FFI-37b]` — an instrumented test counts each call to a foreign
+                // function at its site, and what the call reaches while it runs.
+                let instrumented = match (func, &self.ffi_instrument) {
+                    (FuncRef::Direct { symbol, .. }, Some(instrument)) if self.unit.is_none() => {
+                        instrument.index.get(symbol.as_str()).map(|&function| {
+                            let mut sites = instrument.sites.borrow_mut();
+                            sites.push((function, self.map.location(body.blocks[index].terminator_span)));
+                            (function, sites.len() - 1)
+                        })
+                    }
+                    _ => None,
+                };
+                if let Some((function, site)) = instrumented {
+                    self.line(&format!("    {{ uint32_t {RT}ffi_previous = {RT}ffi_enter({function}u, {site}u);"));
+                }
                 // `[STD-10]` — `input` panics at end of input, at its own call.
                 let call = if matches!(func, FuncRef::Builtin { which: Builtin::Input, .. }) {
                     let location = self.location(body.blocks[index].terminator_span);
@@ -6797,6 +7112,9 @@ impl Emitter<'_> {
                     let dest_text = self.place_in(dest, body);
                     self.line(&format!("    {dest_text} = {call};"));
                     self.set_view_pointer(dest);
+                }
+                if instrumented.is_some() {
+                    self.line(&format!("    {RT}ffi_leave({RT}ffi_previous); }}"));
                 }
                 self.emit_next(next.0 as usize, index);
             }
@@ -7587,9 +7905,40 @@ impl Emitter<'_> {
                     Builtin::AssertDisjoint { .. } | Builtin::ViewsOverlap { .. } => {
                         unreachable!("`assert_disjoint` is lowered in MIR; its comparison is written above")
                     }
-                    Builtin::ForeignStaticRead { symbol, immutable } => {
-                        self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*arg_ty, *immutable));
-                        return symbol.to_string();
+                    // `[FFI-10]` — the C global's address, `const` dropped for an
+                    // `@ffi(immutable)` one (ODR-082), which Ember only reads.
+                    Builtin::ForeignStatic { symbol, ty, immutable } => {
+                        self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*ty, *immutable));
+                        return format!("(({}*)&{symbol})", self.c_type(*ty));
+                    }
+                    // `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — the runtime's record of foreign
+                    // objects Ember owns.
+                    Builtin::ForeignAdopt => {
+                        return format!("(({}){RT}ffi_adopt((void*)({}), {}))",
+                            self.c_type(*arg_ty), rendered[0], self.location(span));
+                    }
+                    Builtin::ForeignRelease => {
+                        return format!("{RT}ffi_release((void*)({}), {})", rendered[0], rendered[1]);
+                    }
+                    Builtin::ForeignThread => return format!("{RT}ffi_thread()"),
+                    // `[FFI-23]` — a class object is pinned in its header; a `Box`'s value is
+                    // its own, and needs nothing.
+                    Builtin::RetainedPin => {
+                        let boxed = matches!(self.types.kind(*arg_ty), TyKind::Struct(id) if self.box_inner_id(*id).is_some());
+                        return if boxed {
+                            "((void)0)".to_string()
+                        } else {
+                            format!("{RT}obj_pin(({RT}obj_header*)({}))", rendered[0])
+                        };
+                    }
+                    Builtin::RetainedAddress => return self.retained_address(&rendered[0], *arg_ty),
+                    Builtin::ForeignDestructor { symbol, ret, fn_ty, .. } => {
+                        let callee = if self.is_void(*ret) {
+                            rendered[0].clone()
+                        } else {
+                            foreign_destructor_thunk(symbol.as_str())
+                        };
+                        return format!("(({}){callee})", self.c_type(*fn_ty));
                     }
                     // `[STA-3]` — the accessor `lazy_static_definitions` writes.
                     Builtin::LazyStatic { init, .. } => return format!("{init}_static()"),
@@ -7760,14 +8109,6 @@ impl Emitter<'_> {
                             rendered[0],
                             self.location(span)
                         );
-                    }
-                    Builtin::ForeignStaticWrite { symbol } => {
-                        self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*arg_ty, false));
-                        return format!("({symbol} = {})", rendered[0]);
-                    }
-                    Builtin::ForeignStaticFieldWrite { symbol, record, path } => {
-                        self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*record, false));
-                        return format!("({symbol}.{path} = {})", rendered[0]);
                     }
                     // `[CELL-1]`, `[CELL-2]` — the cell operations are gone by
                     // now. Each is a move out of a field, a store into it, and
@@ -9913,12 +10254,18 @@ impl Emitter<'_> {
         if leak_check {
             self.emit_debug_edge_registrations();
         }
+        if self.ffi_instrument.is_some() {
+            self.line(&format!("    {RT}ffi_instrument_begin();"));
+        }
         self.line("    switch (which) {");
         for (index, symbol) in tests.iter().enumerate() {
             self.line(&format!("    case {index}: {symbol}(); break;"));
         }
         self.line("    default: break;");
         self.line("    }");
+        if self.ffi_instrument.is_some() {
+            self.line(&format!("    {RT}ffi_instrument_end();"));
+        }
         self.line("    fflush(stdout);");
         self.line(&format!("    fputs(\"{returned}\\n\", stderr);"));
         self.line(&format!("    {RT}rt_shutdown();"));
@@ -11896,6 +12243,7 @@ mod string_descriptor_view_parts_tests {
             job_closures: BTreeSet::new(),
             comptime: None,
             tests: None,
+            ffi_instrument: None,
             types,
             map,
             usize_ty,

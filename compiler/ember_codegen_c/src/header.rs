@@ -69,8 +69,8 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
         for (name, definition) in &plan {
             match definition {
                 Definition::Alias(underlying) => line(&mut out, &format!("typedef {underlying} {name};")),
-                Definition::FnPointer { ret, args } =>
-                    line(&mut out, &format!("typedef {ret} (*{name})({args});")),
+                Definition::FnPointer { ret, convention, args } =>
+                    line(&mut out, &format!("typedef {ret} ({convention}*{name})({args});")),
                 Definition::Struct(members) => {
                     line(&mut out, &format!("struct {name} {{"));
                     if members.is_empty() { line(&mut out, "    char _empty;"); }

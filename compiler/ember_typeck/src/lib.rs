@@ -1875,6 +1875,17 @@ struct BodySnapshot {
     reported_defaults: HashSet<Span>,
 }
 
+/// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — an opaque foreign type's `@ffi(destroys(f), adopt=…,
+/// threads(creator))`: the function that frees one of its objects (named in `module`), whether one
+/// may be adopted, and whether its boxes record the thread that made them.
+#[derive(Clone)]
+struct ForeignTypeContract {
+    module: usize,
+    destroys: Option<ast::Ident>,
+    adopt: bool,
+    creator: bool,
+}
+
 #[derive(Clone, Copy)]
 struct ForeignStatic {
     ty: Ty,
@@ -1898,6 +1909,14 @@ struct Checker<'a> {
     fn_ids: HashMap<Symbol, DefId>,
     /// A hand-written foreign declaration and whether it asserts a safe call.
     foreign_declarations: HashMap<DefId, bool>,
+    /// `[DIA-18]` — for a foreign declaration not asserted safe to call, each fact a safe call
+    /// still lacks and the declaration line that would supply it.
+    foreign_unknown_facts: HashMap<DefId, ForeignUnknownFacts>,
+    /// Each foreign function's C symbol (`@ffi(link_name=…)` or its name).
+    foreign_symbols: HashMap<DefId, Symbol>,
+    /// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — what an opaque foreign type's declaration says of
+    /// its objects, by the type's qualified name.
+    foreign_type_contracts: HashMap<Symbol, ForeignTypeContract>,
     signatures: Vec<Signature>,
     /// `[CLO-1]` — the functions a capture-free closure lowers to. They have
     /// no name in source, so they are collected here and appended to the
@@ -2572,6 +2591,9 @@ impl<'a> Checker<'a> {
             named_types: HashMap::new(),
             fn_ids: HashMap::new(),
             foreign_declarations: HashMap::new(),
+            foreign_unknown_facts: HashMap::new(),
+            foreign_symbols: HashMap::new(),
+            foreign_type_contracts: HashMap::new(),
             signatures: Vec::new(),
             methods: HashMap::new(),
             class_declared_methods: HashMap::new(),
@@ -3231,6 +3253,7 @@ impl<'a> Checker<'a> {
             }
             let ty = self.types.intern(TyKind::Opaque(name));
             self.named_types.insert(name, ty);
+            self.foreign_type_contracts.insert(name, foreign_type_contract(&item.attrs, self.current_module));
         }
     }
 
@@ -7751,13 +7774,19 @@ impl<'a> Checker<'a> {
                         continue;
                     }
                     if decl.is_foreign_decl {
-                        let supported = matches!(self.types.kind(ty),
-                            TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_)
-                                | TyKind::Float(_) | TyKind::Struct(_) | TyKind::Ptr { .. });
-                        if !supported || !self.types.is_ffi_safe(ty) || !self.types.is_copy(ty)
-                            || self.types.is_view(ty) {
-                            self.error(codes::E0900, decl.ty.span,
-                                "foreign static access requires a Copy C-compatible value without borrowed fields");
+                        // `[FFI-10]` — any value C can lay out is a global C may
+                        // hold. It is a place: a record need not be `Copy`, and
+                        // a `cstr` field is the static's own (`[FFI-8]`).
+                        if ty == self.common.void || !self.types.is_ffi_safe(ty) {
+                            if ty != self.common.error {
+                                let shown = self.types.display(ty);
+                                self.sink.emit(
+                                    Diagnostic::error(codes::E5050, decl.ty.span,
+                                        format!("`{shown}` has no foreign representation"))
+                                        .primary_label("the type of this foreign static")
+                                        .note("a foreign static holds a value C lays out: a scalar, a pointer, a `cstr`, an array or record of those [FFI-8]"),
+                                );
+                            }
                             continue;
                         }
                         let immutable = ffi_static_immutable(&item.attrs);
@@ -7883,6 +7912,14 @@ impl<'a> Checker<'a> {
                     } else {
                         HashSet::new()
                     };
+                    // `[FFI-11b]` — the two-call idiom returns the count C wrote back, in place
+                    // of C's `void` (`check_foreign_signature` refuses another result).
+                    let inout_count = if decl.is_foreign_decl && decl.is_safe && decl.ret.is_none() {
+                        ffi_inout_counts(&item.attrs).first().and_then(|(count, _)|
+                            params.iter().find(|(name, _, _, _)| name == count).map(|(_, ty, _, _)| *ty))
+                    } else {
+                        None
+                    };
                     params.retain(|(name, _, _, _)| !count_witnesses.contains(name));
                     let ret = decl
                         .ret
@@ -7893,6 +7930,7 @@ impl<'a> Checker<'a> {
                             self.in_return_type -= 1;
                             self.reject_unsized_by_value(resolved, t.span, "a return type")
                         })
+                        .or(inout_count)
                         .unwrap_or(self.common.void);
                     let explicit_borrows = self.check_borrows_attribute(&item.attrs, &params, ret);
                     let borrows = if decl.is_foreign_decl && decl.is_safe {
@@ -7929,6 +7967,10 @@ impl<'a> Checker<'a> {
                     self.fn_ids.insert(name, def);
                     if decl.is_foreign_decl {
                         self.foreign_declarations.insert(def, decl.is_safe);
+                        if !decl.is_safe {
+                            self.foreign_unknown_facts.insert(def, ffi_unknown_facts(decl, &item.attrs));
+                        }
+                        self.foreign_symbols.insert(def, Symbol::intern(ffi_link_name(&item.attrs).unwrap_or(decl.name.name.as_str())));
                     }
                     // `[PAR-2b]`, `[CG-C-3]` — kept for the parallel analysis to read through.
                     if !decl.is_foreign_decl
@@ -13300,6 +13342,104 @@ impl<'a> Checker<'a> {
         Some(result)
     }
 
+    /// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — `std.ffi.adopt[T](h)`: a `ForeignBox[T]` owning the
+    /// foreign object at `h`, freed by the destructor the declaration of `T` names
+    /// (`@ffi(destroys(f))`); one whose declaration says `adopt=false` is `E5052`. The box's
+    /// address is recorded at run time where the call is (a second owner of a live object panics
+    /// naming both places), and with `threads(creator)` it keeps the thread that made it.
+    fn synth_foreign_adopt(&mut self, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if !self.unsafe_context() {
+            self.sink.emit(Diagnostic::error(codes::E3100, span, "calling an `unsafe fn` requires an `unsafe` block")
+                .help("wrap the call in `unsafe:` and state its safety reason"));
+        }
+        if args.len() != 1 || explicit.len() > 1 {
+            self.error(codes::E2020, span, "`adopt` takes one type argument and one pointer, `adopt[T](h)`");
+            return error;
+        }
+        let pointer = match explicit.first() {
+            Some(&pointee) => {
+                let expected = self.types.intern(TyKind::Ptr { mutable: true, inner: pointee });
+                self.check_expr(&args[0].value, expected)
+            }
+            None => self.synth_committed(&args[0].value),
+        };
+        if pointer.ty == self.common.error {
+            return error;
+        }
+        let TyKind::Ptr { mutable: true, inner: pointee } = *self.types.kind(pointer.ty) else {
+            let shown = self.types.display(pointer.ty);
+            self.error(codes::E2020, args[0].value.span, format!("`adopt` takes a `*mut T`, found `{shown}`"));
+            return error;
+        };
+        let shown = self.types.display(pointee);
+        let contract = match *self.types.kind(pointee) {
+            TyKind::Opaque(name) => self.foreign_type_contracts.get(&name).cloned(),
+            _ => None,
+        };
+        let Some(contract) = contract else {
+            self.sink.emit(
+                Diagnostic::error(codes::E5002, span, format!("`{shown}` is not a foreign type, so nothing names what frees one"))
+                    .help("declare the type in an `unsafe extern` block, with `@ffi(destroys(f))` naming its destructor [FFI-36a]"),
+            );
+            return error;
+        };
+        if !contract.adopt {
+            self.sink.emit(
+                Diagnostic::error(codes::E5052, span, format!("a `{shown}` may not be adopted: its declaration says `adopt=false`"))
+                    .note("the foreign library keeps ownership of its objects; Ember borrows them [FFI-36b]"),
+            );
+            return error;
+        }
+        let Some(destroys) = contract.destroys else {
+            self.sink.emit(
+                Diagnostic::error(codes::E5002, span, format!("the declaration of `{shown}` names no destructor"))
+                    .help(format!("write `@ffi(destroys(f))` on `type {shown}`, naming the foreign function that frees one [FFI-36a]")),
+            );
+            return error;
+        };
+        let qualified = self.qualified_in_module(contract.module, destroys.name);
+        let destructor = self.fn_ids.get(&qualified).copied()
+            .and_then(|def| self.foreign_symbols.get(&def).map(|symbol| (def, *symbol)));
+        let Some((def, symbol)) = destructor else {
+            self.error(codes::E5002, destroys.span, format!("`{}` is not a foreign function of this module", destroys.name));
+            return error;
+        };
+        let signature = &self.signatures[def.0 as usize];
+        let frees = matches!(signature.params.as_slice(),
+            [(_, ty, _, _)] if matches!(*self.types.kind(*ty), TyKind::Ptr { inner, .. } if inner == pointee));
+        if !frees {
+            self.error(codes::E5002, destroys.span,
+                format!("`{}` frees a `{shown}`, so it takes one `*mut {shown}`", destroys.name));
+            return error;
+        }
+        let ret = signature.ret;
+        let destructor_value = self.fn_value_of(def, destroys.name, destroys.span);
+        let boxed = self.instantiate_named_generic("std.ffi.ForeignBox", &[pointee], span);
+        let TyKind::Struct(id) = *self.types.kind(boxed) else { return error };
+        let fields: Vec<Ty> = self.types.struct_def(id).fields.iter().map(|field| field.ty).collect();
+        let [pointer_ty, fn_ty, creator_ty] = fields[..] else { return error };
+        let adopted = Expr {
+            ty: pointer_ty,
+            kind: ExprKind::Builtin { which: Builtin::ForeignAdopt, args: vec![pointer] },
+            span,
+        };
+        let destructor = Expr {
+            ty: fn_ty,
+            kind: ExprKind::Builtin {
+                which: Builtin::ForeignDestructor { symbol, pointee, ret, fn_ty },
+                args: vec![destructor_value],
+            },
+            span,
+        };
+        let creator = if contract.creator {
+            Expr { ty: creator_ty, kind: ExprKind::Builtin { which: Builtin::ForeignThread, args: Vec::new() }, span }
+        } else {
+            Expr { ty: creator_ty, kind: ExprKind::Int(0), span }
+        };
+        Expr { ty: boxed, kind: ExprKind::StructLit { struct_id: id, fields: vec![adopted, destructor, creator] }, span }
+    }
+
     /// `[UNS-5]` — `std.mem`'s raw primitives: `alloc[T]`, `free[T]`,
     /// `read[T]`, `write[T]`, `size_of[T]`, and `align_of[T]`. The two layout
     /// queries need no `unsafe`; the raw-memory operations do (`[UNS-1]`).
@@ -13312,6 +13452,40 @@ impl<'a> Checker<'a> {
     ) -> Option<Expr> {
         if let Some(built) = self.synth_mem_ownership_builtin(name, args, explicit, span) {
             return Some(built);
+        }
+        // `[FFI-36a]` — `std.ffi`'s compiler-known operations on foreign objects.
+        let resolved = self.resolve_name(name);
+        if resolved.is("std.ffi.adopt") {
+            return Some(self.synth_foreign_adopt(args, explicit, span));
+        }
+        // `[FFI-23]` — what `Retained` pins: a class handle or a `Box`.
+        if (resolved.is("std.ffi.retained_pin") || resolved.is("std.ffi.retained_address")) && args.len() == 1 {
+            let value = self.synth_committed(&args[0].value);
+            let pinnable = matches!(self.types.kind(value.ty), TyKind::Class(_) | TyKind::Param { .. } | TyKind::Error)
+                || self.box_inner(value.ty).is_some();
+            if !pinnable {
+                let shown = self.types.display(value.ty);
+                self.sink.emit(
+                    Diagnostic::error(codes::E2020, span, format!("`Retained` pins a class handle or a `Box`, not a `{shown}`"))
+                        .note("foreign code keeps Ember memory only through a class object or a `Box`'s value [FFI-23]"),
+                );
+                return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+            }
+            let (which, ty) = if resolved.is("std.ffi.retained_pin") {
+                (Builtin::RetainedPin, self.common.void)
+            } else {
+                (Builtin::RetainedAddress, self.types.intern(TyKind::Ptr { mutable: true, inner: self.common.u8 }))
+            };
+            return Some(Expr { ty, kind: ExprKind::Builtin { which, args: vec![value] }, span });
+        }
+        if resolved.is("std.ffi.foreign_release") && args.len() == 2 {
+            let pointer = self.synth_committed(&args[0].value);
+            let creator = self.check_expr(&args[1].value, self.common.u32);
+            return Some(Expr {
+                ty: self.common.void,
+                kind: ExprKind::Builtin { which: Builtin::ForeignRelease, args: vec![pointer, creator] },
+                span,
+            });
         }
         if let Some(built) = self.synth_error_builtin(name, args, explicit, span) {
             return Some(built);
@@ -14713,6 +14887,20 @@ impl<'a> Checker<'a> {
         }
         // `[TYP-41]` — each const argument for a `const` parameter, fitting its type.
         if decl.generic_params.iter().zip(args).any(|(param, &arg)| arg != self.common.error && !self.const_argument_fits(&param.clone(), arg, span)) {
+            return self.common.error;
+        }
+        // `[FFI-23]` — a `Retained` token holds a class handle or a `Box`: what foreign code keeps
+        // is an object's address. Refused where the type is named (or inferred, at `pin`).
+        if name.is("std.ffi.Retained")
+            && let [held] = args
+            && !matches!(self.types.kind(*held), TyKind::Class(_) | TyKind::Param { .. } | TyKind::Error | TyKind::Infer(_))
+            && self.box_inner(*held).is_none()
+        {
+            let shown = self.types.display(*held);
+            self.sink.emit(
+                Diagnostic::error(codes::E2020, span, format!("`Retained` pins a class handle or a `Box`, not a `{shown}`"))
+                    .note("foreign code keeps Ember memory only through a class object or a `Box`'s value [FFI-23]"),
+            );
             return self.common.error;
         }
         // `[STD-11]`, `[TYP-15]` (ODR-069, SP-013) — a `Map`'s keys and
@@ -16401,7 +16589,10 @@ impl<'a> Checker<'a> {
                 fp,
                 inline: inline_hint(&item.attrs),
                 static_safe: has_attribute(&item.attrs, "static_safe"),
-                contracts: self.contracts_of(&item.attrs),
+                contracts: hir::Contracts {
+                    foreign: decl.is_foreign_decl.then(|| ffi_declared_effects(&item.attrs)),
+                    ..self.contracts_of(&item.attrs)
+                },
                 borrows: self.declared_borrows(def),
                 sources: self.declared_sources(def),
                 is_lambda: false,
@@ -16899,10 +17090,18 @@ impl<'a> Checker<'a> {
                 );
             }
         };
+        // `[FFI-36a]` — a `ForeignBox` (or an `Option` of one) crosses as the object's pointer;
+        // `check_foreign_ownership` checks the contract that moves it.
+        let carries_box = |this: &Self, ty: Ty| decl.is_foreign_decl && decl.is_safe
+            && (this.lock_inner(this.option_some_payload(ty).unwrap_or(ty), "std.ffi.ForeignBox").is_some()
+                || this.lock_inner(ty, "std.ffi.Retained").is_some());
         for &(name, ty, _, span) in &signature {
             if !decl.is_foreign_decl && self.exported_owner_reachable(ty, &mut HashSet::new()) {
                 self.error(codes::E5015, span,
                     format!("exported parameter `{name}` reaches an owning Ember value"));
+                continue;
+            }
+            if carries_box(self, ty) {
                 continue;
             }
             if decl.is_foreign_decl && decl.is_safe
@@ -16939,7 +17138,7 @@ impl<'a> Checker<'a> {
             self.error(codes::E5015, decl.name.span,
                 "exported result reaches an owning Ember value");
         }
-        if ret != self.common.void && !owning_result {
+        if ret != self.common.void && !owning_result && !carries_box(self, ret) {
             if decl.is_foreign_decl && decl.is_safe
                 && matches!(result_contract, Some(FfiResultContract::SharedCountStatic { .. }
                     | FfiResultContract::SharedCountFrom { .. }
@@ -16977,21 +17176,30 @@ impl<'a> Checker<'a> {
             }
         }
         if decl.is_foreign_decl {
+            let inout_counts = ffi_inout_counts(attrs);
+            if decl.is_safe {
+                self.check_inout_counts(decl, &inout_counts, &contracts);
+            }
             let mut checked_witnesses = HashSet::new();
             for &(_, kind) in &contracts {
                 if let FfiPointerContract::Count { witness, .. } = kind
                     && checked_witnesses.insert(witness) {
                     let source = decl.params.iter().find(|param| matches!(&param.kind,
                         ast::ParamKind::Named { name, .. } if name.name == witness));
+                    // `[FFI-11b]` — an `inout_count` witness is C's pointer to it, written `mut`.
+                    let mode = if inout_counts.iter().any(|(count, _)| *count == witness) { Mode::Mut } else { Mode::Borrow };
                     let integer = source.and_then(|param| match &param.kind {
                         ast::ParamKind::Named { ty, .. }
-                            if mode_of(param.mode) == Mode::Borrow && param.default.is_none() =>
+                            if mode_of(param.mode) == mode && param.default.is_none() =>
                                 ffi_integer_witness_type(ty),
                         _ => None,
                     });
                     if integer.is_none() {
-                        self.error(codes::E5002, decl.name.span,
-                            format!("`count({witness})` needs integer ABI witness `{witness}`"));
+                        // An `inout_count` witness's own check said what it needs.
+                        if mode == Mode::Borrow || !decl.is_safe {
+                            self.error(codes::E5002, decl.name.span,
+                                format!("`count({witness})` needs integer ABI witness `{witness}`"));
+                        }
                     } else if integer.is_some_and(|name| matches!(name.as_str(), "i128" | "u128")) {
                         self.error(codes::E0900, decl.name.span,
                             format!("`count({witness})` with a 128-bit integer witness is not implemented yet"));
@@ -17085,6 +17293,7 @@ impl<'a> Checker<'a> {
             }
         }
         if decl.is_foreign_decl && decl.is_safe {
+            self.check_foreign_ownership(decl, attrs, &signature, ret);
             for axis in &unknown_result {
                 self.error(codes::E5002, decl.name.span,
                     format!("`safe fn` has an unknown {axis} for its result"));
@@ -17286,6 +17495,141 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `Some`'s payload of an `Option`.
+    fn option_some_payload(&self, ty: Ty) -> Option<Ty> {
+        let TyKind::Enum(id) = *self.types.kind(ty) else { return None };
+        let def = self.types.enum_def(id);
+        (def.name.as_str().starts_with("Option_") && def.variants.len() == 2)
+            .then(|| def.variants[1].fields.first().map(|field| field.ty))
+            .flatten()
+    }
+
+    /// `[FFI-11b]` — the two-call enumeration idiom on a `safe fn`: `param(count, inout_count(items))`
+    /// over `mut count: <integer>` (C's pointer to the count, hidden from the callable signature as a
+    /// `count(n)` witness is), with `param(items, borrowed, count(count), nullable, exclusive)`, so
+    /// the function takes `Option[MutSpan[T]]` and returns the count C wrote back.
+    fn check_inout_counts(&mut self, decl: &ast::FnDecl, inout_counts: &[(Symbol, Symbol)], contracts: &[(Symbol, FfiPointerContract)]) {
+        if inout_counts.len() > 1 {
+            self.error(codes::E5002, decl.name.span,
+                "a function has one `inout_count`: its count is what the call returns [FFI-11b]");
+        }
+        for &(count, items) in inout_counts.iter().take(1) {
+            let witness = decl.params.iter().find(|param| matches!(&param.kind,
+                ast::ParamKind::Named { name, .. } if name.name == count));
+            let integer = witness.is_some_and(|param| mode_of(param.mode) == Mode::Mut && match &param.kind {
+                ast::ParamKind::Named { ty, .. } => ffi_integer_witness_type(ty).is_some(),
+                ast::ParamKind::Receiver { .. } => false,
+            });
+            if !integer {
+                self.sink.emit(
+                    Diagnostic::error(codes::E5002, decl.name.span,
+                        format!("`inout_count({items})` needs `mut {count}` of an integer type: C's pointer to the count"))
+                        .note("C reads the capacity through it and writes the count back [FFI-11b]"),
+                );
+            }
+            if !contracts.iter().any(|&(slot, contract)| slot == items && contract
+                == FfiPointerContract::Count { witness: count, exclusive: true, nullable: true }) {
+                self.sink.emit(
+                    Diagnostic::error(codes::E5002, decl.name.span,
+                        format!("`inout_count({items})` needs `param({items}, borrowed, count({count}), nullable, exclusive)`"))
+                        .note("the function takes `Option[MutSpan[T]]`: `None` asks for the count, `Some` is filled [FFI-11b]"),
+                );
+            }
+            if let Some(result) = &decl.ret {
+                self.sink.emit(
+                    Diagnostic::error(codes::E0900, result.span,
+                        "an `inout_count` function with a C result is not implemented yet")
+                        .note("the call returns the count; with a status result it would be `Result[count, <E>Error]` (`-> status`, [FFI-16]), which needs a status enum, an overlay's [FFI-11b]"),
+                );
+            }
+        }
+    }
+
+    /// `[FFI-11]`, `[FFI-36a]` — a `safe fn`'s ownership words: a `param(p, owned, one)` takes
+    /// `owned p: ForeignBox[T]` (an `Option` of one with `nullable`), a result
+    /// `returns_owned(destructor=f)` is a `ForeignBox[T]` (likewise) whose `f` takes one `*mut T`,
+    /// and a `ForeignBox` crosses no other way.
+    fn check_foreign_ownership(&mut self, decl: &ast::FnDecl, attrs: &[ast::Attribute], signature: &[(Symbol, Ty, Mode, Span)], ret: Ty) {
+        let foreign_box = |this: &Self, ty: Ty, nullable: bool| {
+            let ty = if nullable { this.option_some_payload(ty) } else { Some(ty) };
+            ty.and_then(|ty| this.lock_inner(ty, "std.ffi.ForeignBox"))
+        };
+        let owned = ffi_owned_params(attrs);
+        // `[FFI-23]`, `[FFI-22]` — a `retained` parameter takes a `Retained[T]` token; foreign code
+        // may use what it keeps on any thread, so `T` is `Send` unless the contract binds it.
+        let retained = ffi_retained_params(attrs);
+        for &(name, ty, mode, span) in signature {
+            let token = self.lock_inner(ty, "std.ffi.Retained");
+            match retained.iter().find(|(slot, _)| *slot == name) {
+                Some(&(_, bound)) => match token {
+                    Some(held) if mode == Mode::Borrow => {
+                        if !bound && !self.types.is_send(held) {
+                            let shown = self.types.display(held);
+                            self.sink.emit(
+                                Diagnostic::error(codes::E7004, span, format!("`{name}` hands foreign code a `{shown}` to keep, and a `{shown}` is not `Send`"))
+                                    .help(format!("say which thread C uses it on: `param({name}, retained, one, threads(creator))` or `threads(main)`"))
+                                    .note("C may call back from any thread, so what it keeps must be `Send` unless the contract says otherwise [FFI-22]"),
+                            );
+                        }
+                    }
+                    _ => self.error(codes::E5002, span, format!("`retained` contract for `{name}` needs `{name}: Retained[T]`")),
+                },
+                None if token.is_some() => {
+                    self.error(codes::E5002, span,
+                        format!("a `Retained` parameter crosses only as an address C keeps: `param({name}, retained, one)`"));
+                }
+                None => {}
+            }
+        }
+        for &(name, ty, mode, span) in signature {
+            match owned.iter().find(|(slot, _)| *slot == name) {
+                Some(&(_, nullable)) => {
+                    if mode != Mode::Owned || foreign_box(self, ty, nullable).is_none() {
+                        self.error(codes::E5002, span, format!(
+                            "`owned` contract for `{name}` needs `owned {name}: {}`",
+                            if nullable { "Option[ForeignBox[T]]" } else { "ForeignBox[T]" }));
+                    }
+                }
+                None if foreign_box(self, ty, false).or_else(|| foreign_box(self, ty, true)).is_some() => {
+                    self.error(codes::E5002, span,
+                        format!("a `ForeignBox` parameter crosses only as an object C takes: `param({name}, owned, one)`"));
+                }
+                None => {}
+            }
+        }
+        match ffi_owned_result(attrs) {
+            Some((destructor, nullable, _)) => {
+                let Some(pointee) = foreign_box(self, ret, nullable) else {
+                    self.error(codes::E5002, decl.name.span, format!(
+                        "`returns_owned` needs a `{}` result",
+                        if nullable { "Option[ForeignBox[T]]" } else { "ForeignBox[T]" }));
+                    return;
+                };
+                if self.foreign_destructor(destructor.name, pointee).is_none() {
+                    let shown = self.types.display(pointee);
+                    self.error(codes::E5002, destructor.span,
+                        format!("`{}` frees a `{shown}`, so it is a foreign function taking one `*mut {shown}`", destructor.name));
+                }
+            }
+            None if foreign_box(self, ret, false).or_else(|| foreign_box(self, ret, true)).is_some() => {
+                self.error(codes::E5002, decl.name.span,
+                    "a `ForeignBox` result needs `result(returns_owned(destructor=f), one)`");
+            }
+            None => {}
+        }
+    }
+
+    /// `[FFI-36a]` — the foreign function `name` of this module that frees a `pointee`: its
+    /// definition, C symbol and result type.
+    fn foreign_destructor(&self, name: Symbol, pointee: Ty) -> Option<(DefId, Symbol, Ty)> {
+        let def = *self.fn_ids.get(&self.qualified(name))?;
+        let symbol = *self.foreign_symbols.get(&def)?;
+        let signature = &self.signatures[def.0 as usize];
+        matches!(signature.params.as_slice(),
+            [(_, ty, _, _)] if matches!(*self.types.kind(*ty), TyKind::Ptr { inner, .. } if inner == pointee))
+            .then_some((def, symbol, signature.ret))
+    }
+
     fn foreign_pointer_contract_required(&self, ty: Ty) -> bool {
         match self.types.kind(ty) {
             TyKind::Ptr { .. } | TyKind::Fn { .. } => true,
@@ -17340,8 +17684,26 @@ impl<'a> Checker<'a> {
                     hir::FfiAbiParam::Value { public_index, ty, mode }).collect(),
                 result_array: None,
                 result_span: None,
+                result_owned: None,
             });
         }
+        // `[FFI-11]`, `[FFI-36a]` — the objects the call moves: a parameter C takes, a result the
+        // caller comes to own.
+        let owned_params = ffi_owned_params(attrs);
+        let retained_params = ffi_retained_params(attrs);
+        let result_owned = match ffi_owned_result(attrs) {
+            Some((destructor, nullable, creator)) => {
+                let boxed = if nullable { self.option_some_payload(result_ty)? } else { result_ty };
+                let pointee = self.lock_inner(boxed, "std.ffi.ForeignBox")?;
+                let (_, symbol, destructor_ret) = self.foreign_destructor(destructor.name, pointee)?;
+                let type_creator = match *self.types.kind(pointee) {
+                    TyKind::Opaque(name) => self.foreign_type_contracts.get(&name).is_some_and(|contract| contract.creator),
+                    _ => false,
+                };
+                Some(hir::FfiOwnedResult { destructor: symbol, destructor_ret, pointee, nullable, creator: creator || type_creator })
+            }
+            None => None,
+        };
         let result_fixed = match ffi_result_contract(attrs) {
             Some(FfiResultContract::SharedFixedStatic { len }
                 | FfiResultContract::SharedFixedFrom { len, .. }) => Some((len, false, false)),
@@ -17376,6 +17738,7 @@ impl<'a> Checker<'a> {
             Some(hir::FfiArrayResult { elem: *elem, mutable })
         } else { None };
         let contracts = ffi_param_contracts(attrs);
+        let inout_counts = ffi_inout_counts(attrs);
         let mut counted = HashMap::<Symbol, (usize, Ty, bool, bool)>::new();
         let mut fixed = HashMap::<Symbol, (usize, Ty, bool, bool)>::new();
         let mut witnesses = HashMap::<Symbol, Vec<hir::FfiCountSource>>::new();
@@ -17404,7 +17767,9 @@ impl<'a> Checker<'a> {
             if mutable != exclusive || !self.types.is_ffi_safe(elem) { return None; }
             let source = decl.params.iter().find(|param| matches!(&param.kind,
                 ast::ParamKind::Named { name, .. } if name.name == witness))?;
-            if mode_of(source.mode) != Mode::Borrow || source.default.is_some() { return None; }
+            // `[FFI-11b]` — an `inout_count` witness is C's `T*`, written `mut`.
+            let mode = if inout_counts.iter().any(|(count, _)| *count == witness) { Mode::Mut } else { Mode::Borrow };
+            if mode_of(source.mode) != mode || source.default.is_some() { return None; }
             let ast::ParamKind::Named { ty, .. } = &source.kind else { return None };
             let witness_name = ffi_integer_witness_type(ty)?;
             if matches!(witness_name.as_str(), "i128" | "u128") { return None; }
@@ -17425,7 +17790,8 @@ impl<'a> Checker<'a> {
                 source_nullable: source.nullable })
         } else { None };
         if counted.is_empty() && fixed.is_empty() && result_array.is_none()
-            && result_span.is_none() && !borrowed_aggregate { return None; }
+            && result_span.is_none() && !borrowed_aggregate
+            && owned_params.is_empty() && retained_params.is_empty() && result_owned.is_none() { return None; }
         let mut abi_params = Vec::new();
         for param in &decl.params {
             let ast::ParamKind::Named { name, .. } = &param.kind else { return None };
@@ -17434,11 +17800,18 @@ impl<'a> Checker<'a> {
                 let witness_ty = self.scalar_named(ffi_integer_witness_type(ty)?.as_str())?;
                 abi_params.push(hir::FfiAbiParam::Count {
                     sources: sources.clone(), ty: witness_ty,
+                    inout: inout_counts.iter().any(|(count, _)| *count == name.name),
                 });
             } else if let Some(&(public_index, elem, mutable, nullable)) = counted.get(&name.name) {
                 abi_params.push(hir::FfiAbiParam::SpanPointer { public_index, elem, mutable, nullable });
             } else if let Some(&(public_index, elem, mutable, nullable)) = fixed.get(&name.name) {
                 abi_params.push(hir::FfiAbiParam::ArrayPointer { public_index, elem, mutable, nullable });
+            } else if let Some(&(_, nullable)) = owned_params.iter().find(|(slot, _)| *slot == name.name) {
+                let public_index = visible.iter().position(|(slot, _, _, _)| *slot == name.name)?;
+                abi_params.push(hir::FfiAbiParam::Owned { public_index, nullable });
+            } else if retained_params.iter().any(|(slot, _)| *slot == name.name) {
+                let public_index = visible.iter().position(|(slot, _, _, _)| *slot == name.name)?;
+                abi_params.push(hir::FfiAbiParam::Retained { public_index });
             } else {
                 let public_index = visible.iter().position(|(slot, _, _, _)| *slot == name.name)?;
                 let (_, ty, mode, _) = visible[public_index];
@@ -17450,6 +17823,7 @@ impl<'a> Checker<'a> {
             abi_params,
             result_array,
             result_span,
+            result_owned,
         })
     }
 
@@ -17498,9 +17872,16 @@ impl<'a> Checker<'a> {
             return;
         }
         if self.foreign_declarations.contains_key(&def) {
-            self.sink.emit(Diagnostic::error(codes::E5002, span,
-                "a foreign call without a complete safe contract requires `unsafe`")
-                .help("wrap the call in `unsafe:` or declare a scalar-only `safe fn`"));
+            // `[DIA-18]` — each fact the call lacks, and the line that supplies it.
+            let mut diagnostic = Diagnostic::error(codes::E5002, span,
+                "a foreign call without a complete safe contract requires `unsafe`");
+            if let Some(unknown) = self.foreign_unknown_facts.get(&def) {
+                for fact in &unknown.facts {
+                    diagnostic = diagnostic.note(format!("unknown: {fact}"));
+                }
+                diagnostic = diagnostic.help(format!("state the facts on its declaration: {}", unknown.line));
+            }
+            self.sink.emit(diagnostic.help("or wrap the call in `unsafe:`, as its caller's own assertion"));
         } else {
             self.sink.emit(Diagnostic::error(codes::E3100, span,
                 "calling an `unsafe fn` requires an `unsafe` block")
@@ -19942,10 +20323,14 @@ impl<'a> Checker<'a> {
                     return;
                 }
 
-                // A foreign global is already a declared item. Treating its
-                // bare name as a fresh local would make an apparent write
-                // leave the C object untouched.
-                if let Some(binding) = self.foreign_static_assignment_target(target) {
+                // `[FFI-10]`, `[STA-1]` — a foreign global is a declared item
+                // and a place in C's storage: the global itself, a field of it,
+                // or an element of an array in it. Only a `static mut` is
+                // written, and only inside `unsafe`; the write then takes the
+                // ordinary path below, through the global's reference.
+                let foreign_target = self.foreign_static_assignment_target(target)
+                    .or_else(|| self.foreign_static_place_root(target));
+                if let Some(binding) = foreign_target {
                     if !binding.is_mut {
                         self.error(codes::E2140, target.span, "a foreign static without `mut` cannot be assigned");
                         return;
@@ -19954,167 +20339,6 @@ impl<'a> Checker<'a> {
                         self.error(codes::E5002, target.span, "writing a foreign static requires `unsafe`");
                         return;
                     }
-                    if let Some(bin) = op
-                        && !self.types.is_numeric(binding.ty)
-                        && !self.float_param(binding.ty)
-                        && binding.ty != self.common.error
-                    {
-                        let shown = self.types.display(binding.ty);
-                        self.error(codes::E2020, stmt.span,
-                            format!("`{}=` is not defined on `{shown}`", bin.as_str()));
-                        return;
-                    }
-                    let rhs = match op {
-                        Some(ast::BinOp::Pow) => {
-                            let exponent = self.synth(value);
-                            let exponent = self.read_through(exponent);
-                            self.commit(exponent)
-                        }
-                        Some(_) | None => self.check_expr(value, binding.ty),
-                    };
-                    let rhs = if op.is_some() {
-                        // `[EXP-2]` evaluates the operand before reading the
-                        // place. A C call on the right may itself change this
-                        // global, so the expression tree alone is insufficient.
-                        self.hold_value(rhs, out)
-                    } else {
-                        rhs
-                    };
-                    let rhs = if let Some(bin) = op {
-                        let lhs = Expr {
-                            ty: binding.ty,
-                            kind: ExprKind::Builtin {
-                                which: Builtin::ForeignStaticRead { symbol: binding.symbol, immutable: false },
-                                args: Vec::new(),
-                            },
-                            span: target.span,
-                        };
-                        if *bin == ast::BinOp::Pow {
-                            let raised = self.power(lhs, rhs, value, stmt.span);
-                            self.coerce(raised, binding.ty)
-                        } else {
-                            let Some(op) = convert_binop(*bin) else {
-                                self.error(codes::E1010, stmt.span, "this operator is not supported yet in this phase");
-                                return;
-                            };
-                            if self.reject_integer_true_division(op, binding.ty, stmt.span, (target.span, value.span), " //= ") {
-                                return;
-                            }
-                            Expr {
-                                ty: binding.ty,
-                                kind: ExprKind::Binary {
-                                    op,
-                                    lhs: Box::new(lhs),
-                                    rhs: Box::new(rhs),
-                                },
-                                span: stmt.span,
-                            }
-                        }
-                    } else {
-                        rhs
-                    };
-                    out.push(Stmt::Expr(Expr {
-                        ty: self.common.void,
-                        kind: ExprKind::Builtin {
-                            which: Builtin::ForeignStaticWrite { symbol: binding.symbol },
-                            args: vec![rhs],
-                        },
-                        span: stmt.span,
-                    }));
-                    return;
-                }
-
-                // D1 — an element of an array inside a foreign static is C
-                // storage too. Writing it went to a copy of the static and was
-                // lost; until it is written in place it is refused.
-                if let Some(binding) = self.foreign_static_element_assignment_root(target) {
-                    if !binding.is_mut {
-                        self.error(codes::E2140, target.span, "a foreign static without `mut` cannot be assigned");
-                    } else if !self.unsafe_context() {
-                        self.error(codes::E5002, target.span, "writing a foreign static requires `unsafe`");
-                    } else {
-                        self.error(
-                            codes::E0900,
-                            target.span,
-                            "writing an element of an array inside a foreign static is not implemented yet",
-                        );
-                    }
-                    return;
-                }
-
-                // A field of a foreign record is a place in C storage, even
-                // though an ordinary read of the record produces a value.
-                if let Some(binding) = self.foreign_static_field_assignment_root(target)
-                    && matches!(self.types.kind(binding.ty), TyKind::Struct(_))
-                {
-                    if !binding.is_mut {
-                        self.error(codes::E2140, target.span, "a foreign static without `mut` cannot be assigned");
-                        return;
-                    }
-                    if !self.unsafe_context() {
-                        self.error(codes::E5002, target.span, "writing a foreign static requires `unsafe`");
-                        return;
-                    }
-                    let previous_target = self.in_assignment_target;
-                    self.in_assignment_target = true;
-                    let field = self.synth(target);
-                    self.in_assignment_target = previous_target;
-                    let Some(path) = self.foreign_static_field_path(&field, binding.symbol) else { return };
-                    self.reject_readonly_write_in_assignment(&field, target.span);
-                    let field_ty = field.ty;
-                    if let Some(bin) = op
-                        && !self.types.is_numeric(field_ty)
-                        && !self.float_param(field_ty)
-                        && field_ty != self.common.error
-                    {
-                        let shown = self.types.display(field_ty);
-                        self.error(codes::E2020, stmt.span,
-                            format!("`{}=` is not defined on `{shown}`", bin.as_str()));
-                        return;
-                    }
-                    let rhs = match op {
-                        Some(ast::BinOp::Pow) => {
-                            let exponent = self.synth(value);
-                            let exponent = self.read_through(exponent);
-                            self.commit(exponent)
-                        }
-                        Some(_) | None => self.check_expr(value, field_ty),
-                    };
-                    let rhs = if op.is_some() { self.hold_value(rhs, out) } else { rhs };
-                    let rhs = if let Some(bin) = op {
-                        if *bin == ast::BinOp::Pow {
-                            let raised = self.power(field, rhs, value, stmt.span);
-                            self.coerce(raised, field_ty)
-                        } else {
-                            let Some(op) = convert_binop(*bin) else {
-                                self.error(codes::E1010, stmt.span, "this operator is not supported yet in this phase");
-                                return;
-                            };
-                            if self.reject_integer_true_division(op, field_ty, stmt.span, (target.span, value.span), " //= ") {
-                                return;
-                            }
-                            Expr {
-                                ty: field_ty,
-                                kind: ExprKind::Binary {
-                                    op,
-                                    lhs: Box::new(field),
-                                    rhs: Box::new(rhs),
-                                },
-                                span: stmt.span,
-                            }
-                        }
-                    } else {
-                        rhs
-                    };
-                    out.push(Stmt::Expr(Expr {
-                        ty: self.common.void,
-                        kind: ExprKind::Builtin {
-                            which: Builtin::ForeignStaticFieldWrite { symbol: binding.symbol, record: binding.ty, path },
-                            args: vec![rhs],
-                        },
-                        span: stmt.span,
-                    }));
-                    return;
                 }
 
                 // `[CLS-7]`, `[EXC-15]` (ODR-072) — in a class method `self`
@@ -20137,6 +20361,7 @@ impl<'a> Checker<'a> {
                 // `[GRM-4]` — a bare name that is not in scope declares.
                 if let ast::ExprKind::Path { segments } = &target.kind {
                     if segments.len() == 1
+                        && foreign_target.is_none()
                         && self.lookup(segments[0].name).is_none()
                         && !self.is_capture_candidate(segments[0].name)
                     {
@@ -34620,6 +34845,9 @@ impl<'a> Checker<'a> {
         literal_copy(&self.constants[&qualified], span)
     }
 
+    /// `[FFI-10]`, `[STA-1]` — a foreign static is the place C's global is: a
+    /// read copies out of it (a non-`Copy` record is read field by field), a
+    /// write changes C's storage. A `static mut` is reached through `ref mut`.
     fn foreign_static_use(&mut self, qualified: Symbol, span: Span) -> Expr {
         let binding = self.foreign_statics[&qualified];
         if !binding.immutable && !self.unsafe_context() {
@@ -34628,14 +34856,16 @@ impl<'a> Checker<'a> {
                 .help("wrap the read in `unsafe:` or assert `@ffi(immutable)` for a const C object"));
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        Expr {
-            ty: binding.ty,
+        let reference = self.types.intern(TyKind::Ref { mutable: binding.is_mut, inner: binding.ty });
+        let access = Expr {
+            ty: reference,
             kind: ExprKind::Builtin {
-                which: Builtin::ForeignStaticRead { symbol: binding.symbol, immutable: binding.immutable },
+                which: Builtin::ForeignStatic { symbol: binding.symbol, ty: binding.ty, immutable: binding.immutable },
                 args: Vec::new(),
             },
             span,
-        }
+        };
+        Expr { ty: binding.ty, kind: ExprKind::Deref(Box::new(access)), span }
     }
 
     fn foreign_static_assignment_target(&self, target: &ast::Expr) -> Option<ForeignStatic> {
@@ -34660,59 +34890,19 @@ impl<'a> Checker<'a> {
         self.foreign_statics.get(&qualified).copied()
     }
 
-    fn foreign_static_field_assignment_root(&self, target: &ast::Expr) -> Option<ForeignStatic> {
+    /// The foreign static a written place lies inside: a field of one, or an
+    /// element of an array in one (`table.values[i] = v`, `table.rows[i].x = v`).
+    fn foreign_static_place_root(&self, target: &ast::Expr) -> Option<ForeignStatic> {
         let mut current = target;
-        while let ast::ExprKind::Field { base, .. } = &current.kind {
-            if let Some(binding) = self.foreign_static_assignment_target(base) {
-                return Some(binding);
-            }
-            current = base;
-        }
-        None
-    }
-
-    /// A write to an element of an array inside a foreign static
-    /// (`table.values[i] = v`, `table.rows[i].x = v`): the static, when the
-    /// target's path reaches one through an index.
-    fn foreign_static_element_assignment_root(&self, target: &ast::Expr) -> Option<ForeignStatic> {
-        let mut current = target;
-        let mut indexed = false;
         loop {
-            match &current.kind {
-                ast::ExprKind::Field { base, .. } => current = base,
-                ast::ExprKind::IndexOrInstantiate { base, .. } => {
-                    indexed = true;
-                    current = base;
-                }
-                _ => break,
-            }
-            if indexed && let Some(binding) = self.foreign_static_assignment_target(current) {
-                return Some(binding);
-            }
-        }
-        None
-    }
-
-    /// A checked field expression supplies both the names and their order;
-    /// its innermost base must still be the foreign object we resolved.
-    fn foreign_static_field_path(&self, field: &Expr, symbol: Symbol) -> Option<Symbol> {
-        let mut current = field;
-        let mut names = Vec::new();
-        loop {
-            match &current.kind {
-                ExprKind::Field { base, index } => {
-                    let TyKind::Struct(id) = self.types.kind(base.ty) else { return None };
-                    names.push(self.types.struct_def(*id).fields.get(*index)?.name);
-                    current = base;
-                }
-                ExprKind::Builtin {
-                    which: Builtin::ForeignStaticRead { symbol: found, .. }, ..
-                } if *found == symbol => break,
+            current = match &current.kind {
+                ast::ExprKind::Field { base, .. } | ast::ExprKind::IndexOrInstantiate { base, .. } => base,
                 _ => return None,
+            };
+            if let Some(binding) = self.foreign_static_assignment_target(current) {
+                return Some(binding);
             }
         }
-        names.reverse();
-        Some(Symbol::intern(&names.iter().map(|name| name.as_str()).collect::<Vec<_>>().join(".")))
     }
 
     /// `[GRM-24]` (0.9.9) — `inner.Shape`: the qualified name of an item
@@ -34753,7 +34943,134 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[GRM-35]`, `[TIER-1]`, `[TCB-1]` — an overlay's own checks: one that states a fact about
+    /// foreign code is `unsafe overlay` (`E5067`), each contract word is the vocabulary's
+    /// (`[FFI-11]`), and a grade above asserted claimed with no evidence behind it is `W5050`.
+    /// Applying the overlay to its header is the importer's (`import c … with (overlay=…)`).
+    fn check_overlay(&mut self, overlay: &ast::OverlayDecl) {
+        let mut first_fact: Option<(Span, String)> = None;
+        let mut fact = |at: Span, what: String| {
+            first_fact.get_or_insert((at, what));
+        };
+        for item in &overlay.items {
+            for attr in &item.attrs {
+                let name = (attr.path.len() == 1).then(|| attr.path[0].name.as_str()).unwrap_or("");
+                match name {
+                    "ffi" => {
+                        fact(attr.span, "an `@ffi(…)` attribute".to_string());
+                        if matches!(item.kind, ast::OverlayItemKind::Rename { .. } | ast::OverlayItemKind::Hide(_)
+                            | ast::OverlayItemKind::Extend(_)) {
+                            self.error(codes::E0104, attr.span, "`@ffi` applies to an overlay's `fn`, `type` or `enum` entry");
+                        }
+                    }
+                    "grade" => self.check_grade(attr, &item.kind),
+                    _ => self.check_attribute_list(std::slice::from_ref(attr), "overlay item"),
+                }
+            }
+            let ast::OverlayItemKind::Fn { name, params, result } = &item.kind else { continue };
+            fact(name.span, format!("the entry for `{}`, which asserts it safe to call", name.name));
+            for contract in params.iter().flat_map(|param| &param.contract).chain(result) {
+                if !FFI_CONTRACT_WORDS.contains(&contract.word.name.as_str()) {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E0104, contract.span,
+                            format!("`{}` is not a contract word", contract.word.name))
+                            .help(format!("the contract words are {}", FFI_CONTRACT_WORDS.join(", ")))
+                            .note("a contract word takes the place of a type in an overlay entry [FFI-11]"),
+                    );
+                }
+            }
+        }
+        if !overlay.is_unsafe && let Some((at, what)) = first_fact {
+            self.sink.emit(
+                Diagnostic::error(codes::E5067, overlay.span, "an overlay that states facts about foreign code is not declared `unsafe overlay`")
+                    .secondary(at, format!("{what} states a fact"))
+                    .help("write `unsafe overlay`: the overlay asserts what the header cannot say")
+                    .note("an `unsafe overlay` is the third boundary safe code may rest on [TIER-1]; one of only `rename` and `hide` needs no `unsafe` [GRM-35]"),
+            );
+        }
+    }
+
+    /// `[TCB-1]` — `@grade(asserted | instrumented | checked | proven)` on an overlay entry. A grade
+    /// above asserted is a claim that evidence backs: none is recorded here (no evidence record
+    /// under `[ffi] evidence` holds one), so the claim is unbacked, `W5050`, and the fact stays
+    /// asserted (`[TCB-2]`).
+    fn check_grade(&mut self, attr: &ast::Attribute, kind: &ast::OverlayItemKind) {
+        if !matches!(kind, ast::OverlayItemKind::Fn { .. } | ast::OverlayItemKind::Type(_) | ast::OverlayItemKind::Enum(_)) {
+            self.error(codes::E0104, attr.span, "`@grade` applies to an overlay entry that states facts");
+            return;
+        }
+        let grade = match attr.args.as_slice() {
+            [ast::AttrArg::Expr(value)] => ffi_contract_word(value)
+                .filter(|grade| matches!(grade.as_str(), "asserted" | "instrumented" | "checked" | "proven")),
+            _ => None,
+        };
+        match grade {
+            None => {
+                self.sink.emit(
+                    Diagnostic::error(codes::E0104, attr.span, "`@grade` names one grade")
+                        .help("write `@grade(asserted)`, `@grade(instrumented)`, `@grade(checked)` or `@grade(proven)` [TCB-1]"),
+                );
+            }
+            Some(grade) if !grade.is("asserted") => {
+                let evidence = match grade.as_str() {
+                    "instrumented" => "a run of `ember test --instrument-ffi` that observed it",
+                    "checked" => "a check of the fact against the header",
+                    _ => "an analysis of the adapter",
+                };
+                self.sink.emit(
+                    Diagnostic::warning(codes::W5050, attr.span, format!("`{grade}` is claimed with no evidence: the fact stays asserted"))
+                        .note(format!("`{grade}` needs {evidence}, recorded under the manifest's `[ffi] evidence` (`.ember/ffi-evidence`) [TCB-1]"))
+                        .note("writing a grade never raises it [TCB-2]"),
+                );
+            }
+            Some(_) => {}
+        }
+    }
+
     fn check_item_attributes(&mut self, item: &ast::Item, in_extern: bool) {
+        if let ast::ItemKind::Overlay(overlay) = &item.kind {
+            self.check_attribute_list(&item.attrs, "overlay");
+            self.check_overlay(overlay);
+            return;
+        }
+        // `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — an opaque foreign type's contract: what frees one
+        // of its objects, whether one may be adopted, its thread rule, and `handle`.
+        if let ast::ItemKind::TypeAlias(alias) = &item.kind && alias.is_foreign_decl {
+            for attr in &item.attrs {
+                if attr.path.len() != 1 || !attr.path[0].name.is("ffi") {
+                    self.check_attribute_list(std::slice::from_ref(attr), "extern item");
+                    continue;
+                }
+                let mut seen = HashSet::new();
+                for arg in &attr.args {
+                    let word = match arg {
+                        ast::AttrArg::Named { name, value } if name.name.is("adopt")
+                            && matches!(value.kind, ast::ExprKind::Lit(ast::Literal::Bool(_))) => Some(name.name),
+                        ast::AttrArg::Expr(expr) => match &expr.kind {
+                            ast::ExprKind::Path { segments } if segments.len() == 1 && segments[0].name.is("handle") => Some(segments[0].name),
+                            ast::ExprKind::Call { callee, args } if args.len() == 1 => ffi_contract_word(callee).filter(|word| {
+                                let inner = ffi_contract_word(&args[0].value);
+                                (word.is("destroys") && inner.is_some())
+                                    || (word.is("threads") && inner.is_some_and(|thread| matches!(thread.as_str(), "any" | "main" | "creator")))
+                            }),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    match word {
+                        Some(word) if !seen.insert(word) => {
+                            self.error(codes::E0104, attr.span, format!("duplicate `{word}` in `@ffi`"));
+                        }
+                        Some(_) => {}
+                        None => self.sink.emit(
+                            Diagnostic::error(codes::E0104, attr.span, "this is not a foreign type's contract word")
+                                .help("a foreign type takes `handle`, `destroys(f)`, `adopt=false` and `threads(any | main | creator)` [FFI-36a]"),
+                        ),
+                    }
+                }
+            }
+            return;
+        }
         if let ast::ItemKind::Static(decl) = &item.kind && decl.is_foreign_decl {
             let mut saw_ffi = false;
             for attr in &item.attrs {
@@ -34874,9 +35191,40 @@ impl<'a> Checker<'a> {
                     saw_ffi = true;
                     let mut saw_link_name = false;
                     let mut saw_result = false;
+                    let mut saw_effects = false;
+                    let mut saw_deterministic = false;
                     let mut contracted = HashSet::new();
                     for arg in &attr.args {
                         match arg {
+                            // `[EFF-3]` — the effects the foreign function has.
+                            ast::AttrArg::Named { name, .. } if name.name.is("effects") => {
+                                if saw_effects {
+                                    self.error(codes::E0104, attr.span, "duplicate `effects` in `@ffi`");
+                                }
+                                saw_effects = true;
+                                for (span, effect) in ffi_effects_arg(arg).unwrap_or_default() {
+                                    if effect.is_none() {
+                                        let names: Vec<&str> = hir::Effects::NAMED.iter().map(|(_, name)| *name).collect();
+                                        self.sink.emit(
+                                            Diagnostic::error(codes::E0104, span, "`effects` lists effects by name")
+                                                .help(format!("write a list of {}", names.join(", ")))
+                                                .note("a foreign function's effects are those its contract states, plus `FFI` [EFF-3]"),
+                                        );
+                                    }
+                                }
+                            }
+                            // `[DET-2]` — the function's result is the same on every run.
+                            ast::AttrArg::Expr(value)
+                                if ffi_contract_word(value).is_some_and(|word| word.is("deterministic")) => {
+                                if saw_deterministic {
+                                    self.error(codes::E0104, attr.span, "duplicate `deterministic` in `@ffi`");
+                                }
+                                saw_deterministic = true;
+                                if attr.args.iter().filter_map(ffi_effects_arg).flatten()
+                                    .any(|(_, effect)| effect == Some(hir::Effects::NONDET)) {
+                                    self.error(codes::E0104, attr.span, "a `deterministic` foreign function has no `Nondet` effect");
+                                }
+                            }
                             ast::AttrArg::Named { name, .. } if name.name.is("link_name") => {
                                 if saw_link_name {
                                     self.error(codes::E0104, attr.span, "duplicate `link_name` in `@ffi`");
@@ -34892,12 +35240,16 @@ impl<'a> Checker<'a> {
                             }
                             _ => {
                                 if ffi_result_contract_arg(arg).is_some()
+                                    || ffi_owned_result_arg(arg).is_some()
                                     || ffi_unknown_result_fact_arg(arg).is_some() {
                                     if saw_result {
                                         self.error(codes::E0104, attr.span, "duplicate result contract in `@ffi`");
                                     }
                                     saw_result = true;
-                                } else if let Some((name, _)) = ffi_param_contract_arg(arg) {
+                                } else if let Some(name) = ffi_param_contract_arg(arg).map(|(name, _)| name)
+                                    .or_else(|| ffi_owned_param_arg(arg).map(|(name, _)| name))
+                                    .or_else(|| ffi_retained_param_arg(arg).map(|(name, _)| name))
+                                    .or_else(|| ffi_inout_count_arg(arg).map(|(name, _)| name)) {
                                     if !contracted.insert(name) {
                                         self.error(codes::E0104, attr.span, "duplicate pointer contract in `@ffi`");
                                     }
@@ -34955,6 +35307,7 @@ impl<'a> Checker<'a> {
             ast::ItemKind::ExternBlock(_) => "extern block",
             ast::ItemKind::ExternClass(_) => "extern item",
             ast::ItemKind::Comptime(_) => "comptime block",
+            ast::ItemKind::Overlay(_) => "overlay",
         };
         for attr in &item.attrs {
             if matches!(&item.kind, ast::ItemKind::Fn(decl) if !decl.is_foreign_decl)
@@ -48614,8 +48967,15 @@ fn expand_extern_blocks(modules: &[LoadedModule], sink: &mut Sink) -> Option<Vec
             if !block.is_unsafe {
                 sink.emit(Diagnostic::error(codes::E5002, item.span, "a foreign declaration block must be `unsafe extern`"));
             }
-            if block.abi != "C" {
-                sink.emit(Diagnostic::error(codes::E0900, item.span, "only `unsafe extern \"C\"` declaration blocks are implemented yet"));
+            // `[FFI-9]`, `[FFI-10]` — the platform C ABI and the three named
+            // conventions; C++ is Annex C's `import cpp`.
+            match block.abi.as_str() {
+                "C" | "system" | "fastcall" | "vectorcall" => {}
+                "C++" => sink.emit(Diagnostic::error(codes::E0900, item.span,
+                    "an `extern \"C++\"` declaration block is not implemented yet (Annex C)")),
+                other => sink.emit(Diagnostic::error(codes::E0104, item.span,
+                    format!("`extern \"{other}\"` is not a calling convention"))
+                    .help("write `extern \"C\"`, `\"system\"`, `\"fastcall\"` or `\"vectorcall\"` [FFI-9]")),
             }
             for inner in &block.items {
                 if let ast::ItemKind::Static(decl) = &inner.kind {
@@ -48647,7 +49007,7 @@ fn expand_extern_blocks(modules: &[LoadedModule], sink: &mut Sink) -> Option<Vec
                     sink.emit(Diagnostic::error(codes::E0100, inner.span, "a foreign function declaration has no body"));
                 }
                 if !decl.generics.is_empty() || decl.is_gen {
-                    sink.emit(Diagnostic::error(codes::E5050, inner.span, "a foreign function declaration cannot be generic or a generator"));
+                    sink.emit(Diagnostic::error(codes::E0104, inner.span, "a foreign function declaration cannot be generic or a generator"));
                 }
                 let mut declaration = inner.clone();
                 if let ast::ItemKind::Fn(function) = &mut declaration.kind {
@@ -49027,7 +49387,8 @@ fn item_name(item: &ast::Item) -> Option<Symbol> {
         ast::ItemKind::Extend(_)
         | ast::ItemKind::ExternBlock(_)
         | ast::ItemKind::ExternClass(_)
-        | ast::ItemKind::Comptime(_) => return None,
+        | ast::ItemKind::Comptime(_)
+        | ast::ItemKind::Overlay(_) => return None,
     })
 }
 
@@ -49471,7 +49832,9 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["deprecated", "allow"], &["item"], false),
     (&["export"], &["fn", "static"], false),
     (&["export_table"], &["struct"], false),
-    (&["ffi"], &["extern item"], false),
+    (&["ffi"], &["extern item", "overlay item"], false),
+    // `[TCB-1]` — checked on the entry it grades (`check_grade`).
+    (&["grade"], &["overlay item"], true),
     // `[TST-3]` — `ember test` runs them (`test_form`); `ember bench` is not built.
     (&["test", "should_panic"], &["fn"], true),
     (&["bench"], &["fn"], false),
@@ -49496,6 +49859,14 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     // `[HR-43]` — admitting a call that may end the process: C++ calls are not built.
     (&["allow_reload_terminate"], &["fn"], false),
     (&["prelude"], &["module"], false),
+];
+
+/// `[FFI-11]` — the contract vocabulary: the five axes' words and the others, and `TODO`
+/// (`[FFI-11c]`).
+const FFI_CONTRACT_WORDS: &[&str] = &[
+    "borrowed", "owned", "returns_owned", "retained", "one", "count", "nul_terminated", "fixed",
+    "inout_count", "nullable", "from", "exclusive", "aliased", "out", "status", "handle", "callback",
+    "threads", "destroys", "unsafe", "TODO",
 ];
 
 /// `[ATT-1]` — reserved, and rejected with `E0104` naming the version.
@@ -49586,6 +49957,182 @@ fn ffi_link_name(attrs: &[ast::Attribute]) -> Option<&str> {
     attrs.iter()
         .find(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
         .and_then(ffi_link_name_attr)
+}
+
+/// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — an opaque foreign type's `@ffi(…)`: `destroys(f)`,
+/// `adopt=false`, `threads(creator)` (the other words are checked where the attribute is).
+fn foreign_type_contract(attrs: &[ast::Attribute], module: usize) -> ForeignTypeContract {
+    let mut contract = ForeignTypeContract { module, destroys: None, adopt: true, creator: false };
+    for arg in attrs.iter().filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi")).flat_map(|attr| &attr.args) {
+        match arg {
+            ast::AttrArg::Named { name, value } if name.name.is("adopt") => {
+                contract.adopt = !matches!(value.kind, ast::ExprKind::Lit(ast::Literal::Bool(false)));
+            }
+            ast::AttrArg::Expr(expr) => {
+                let ast::ExprKind::Call { callee, args } = &expr.kind else { continue };
+                let (Some(word), [only]) = (ffi_contract_word(callee), args.as_slice()) else { continue };
+                if word.is("destroys")
+                    && let ast::ExprKind::Path { segments } = &only.value.kind
+                    && segments.len() == 1
+                {
+                    contract.destroys = Some(segments[0]);
+                } else if word.is("threads") {
+                    contract.creator = ffi_contract_word(&only.value).is_some_and(|thread| thread.is("creator"));
+                }
+            }
+            _ => {}
+        }
+    }
+    contract
+}
+
+/// `[DIA-18]` — what a call to a foreign declaration that is not `safe fn` lacks: each unknown
+/// fact, and the declaration line that states them, every one a `TODO(…)` word to replace
+/// (`[FFI-11c]`, which an unsafe declaration accepts as written).
+struct ForeignUnknownFacts {
+    facts: Vec<String>,
+    line: String,
+}
+
+fn ffi_unknown_facts(decl: &ast::FnDecl, attrs: &[ast::Attribute]) -> ForeignUnknownFacts {
+    let name = decl.name.name;
+    let mut facts = vec![format!("`{name}` is not asserted safe to call (`safe fn`)")];
+    let mut clauses = Vec::new();
+    let axes = |unknown: &[&str]| -> String {
+        let named: Vec<&str> = unknown.iter().map(|axis| if *axis == "nullable" { "nullability" } else { axis }).collect();
+        match named.as_slice() {
+            [] => String::new(),
+            [one] => one.to_string(),
+            [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        }
+    };
+    let written = ffi_unknown_fact_contracts(attrs);
+    let complete = ffi_param_contracts(attrs);
+    for param in &decl.params {
+        let ast::ParamKind::Named { name: slot, ty } = &param.kind else { continue };
+        let slot = slot.name;
+        match &ty.kind {
+            ast::TypeKind::Ptr { .. } if complete.iter().any(|(contracted, _)| *contracted == slot) => {
+                facts.push(format!("`{slot}`: none, but a raw pointer is not a safe parameter: declare the type its contract gives"));
+            }
+            ast::TypeKind::Ptr { .. } => {
+                let todo: Vec<&str> = written.iter().filter(|(contracted, _)| *contracted == slot)
+                    .map(|(_, axis)| axis.as_str()).collect();
+                if todo.is_empty() {
+                    let unknown = ["ownership", "count", "nullable"];
+                    facts.push(format!("`{slot}`: its {}", axes(&unknown)));
+                    let words: Vec<String> = unknown.iter().map(|axis| format!("TODO({axis})")).collect();
+                    clauses.push(format!("param({slot}, {})", words.join(", ")));
+                } else {
+                    // The clause as written: its known words stay, its `TODO`s are the unknowns.
+                    facts.push(format!("`{slot}`: its {}", axes(&todo)));
+                    let clause = attrs.iter()
+                        .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+                        .flat_map(|attr| &attr.args)
+                        .find_map(|arg| match arg {
+                            ast::AttrArg::Expr(expr) if ffi_unknown_fact_arg(arg).is_some_and(|(contracted, _)| contracted == slot) =>
+                                Some(contract_text(expr)),
+                            _ => None,
+                        });
+                    clauses.extend(clause);
+                }
+            }
+            ast::TypeKind::Fn { .. } => {
+                facts.push(format!("`{slot}`: its callback contract (`callback(borrowed | retained | once, user_data=p)`)"));
+            }
+            _ => {}
+        }
+    }
+    if decl.ret.as_ref().is_some_and(|ret| matches!(ret.kind, ast::TypeKind::Ptr { .. })) {
+        let todo = ffi_unknown_result_fact_contracts(attrs);
+        let written = attrs.iter()
+            .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+            .flat_map(|attr| &attr.args)
+            .find_map(|arg| match arg {
+                ast::AttrArg::Expr(expr) if ffi_unknown_result_fact_arg(arg).is_some() => Some(contract_text(expr)),
+                _ => None,
+            });
+        let unknown: Vec<&str> = if todo.is_empty() {
+            vec!["ownership", "count", "nullable", "lifetime"]
+        } else {
+            todo.iter().map(|axis| axis.as_str()).collect()
+        };
+        facts.push(format!("the result: its {}", axes(&unknown)));
+        let words: Vec<String> = unknown.iter().map(|axis| format!("TODO({axis})")).collect();
+        clauses.push(written.unwrap_or_else(|| format!("result({})", words.join(", "))));
+    }
+    let line = if clauses.is_empty() {
+        format!("`safe fn {name}`")
+    } else {
+        format!("`@ffi({})` over `safe fn {name}`, each `TODO(…)` replaced by its fact", clauses.join(", "))
+    };
+    ForeignUnknownFacts { facts, line }
+}
+
+/// A contract clause as it is written: words, and calls of words and numbers.
+fn contract_text(expr: &ast::Expr) -> String {
+    match &expr.kind {
+        ast::ExprKind::Path { segments } => segments.iter().map(|segment| segment.name.as_str()).collect::<Vec<_>>().join("."),
+        ast::ExprKind::Lit(ast::Literal::Int { value, .. }) => value.to_string(),
+        ast::ExprKind::Call { callee, args } => format!("{}({})", contract_text(callee),
+            args.iter().map(|arg| match &arg.name {
+                Some(name) => format!("{}={}", name.name, contract_text(&arg.value)),
+                None => contract_text(&arg.value),
+            }).collect::<Vec<_>>().join(", ")),
+        _ => "…".to_string(),
+    }
+}
+
+/// `[EFF-3]` — the effects `@ffi(effects=[…])` lists: `None` when the argument is not that, else
+/// each written name with the effect it names (`None` for a name that is no effect). The names are
+/// Part X.1's; `Panic` is `Panic(Explicit)`.
+fn ffi_effects_arg(arg: &ast::AttrArg) -> Option<Vec<(Span, Option<hir::Effects>)>> {
+    let ast::AttrArg::Named { name, value } = arg else { return None };
+    if !name.name.is("effects") {
+        return None;
+    }
+    let ast::ExprKind::ArrayLit(items) = &value.kind else { return Some(vec![(value.span, None)]) };
+    Some(items.iter().map(|item| {
+        let written = match &item.kind {
+            ast::ExprKind::Path { segments } if segments.len() == 1 => segments[0].name.to_string(),
+            ast::ExprKind::Call { callee, args } if args.len() == 1 && args[0].name.is_none() => {
+                match (&callee.kind, &args[0].value.kind) {
+                    (ast::ExprKind::Path { segments: head }, ast::ExprKind::Path { segments: kind })
+                        if head.len() == 1 && kind.len() == 1 => format!("{}({})", head[0].name, kind[0].name),
+                    _ => String::new(),
+                }
+            }
+            _ => String::new(),
+        };
+        let effect = if written == "Panic" {
+            Some(hir::Effects::PANIC)
+        } else {
+            hir::Effects::NAMED.iter().find(|(_, named)| *named == written).map(|(effect, _)| *effect)
+        };
+        (item.span, effect)
+    }).collect())
+}
+
+/// `[EFF-3]`, `[FFI-10]`, `[DET-2]` — a foreign declaration's effects: those its `@ffi(effects=[…])`
+/// states plus `FFI`, every effect when it states none; `Nondet` unless it says
+/// `@ffi(deterministic)`.
+fn ffi_declared_effects(attrs: &[ast::Attribute]) -> hir::Effects {
+    let args: Vec<&ast::AttrArg> = attrs.iter()
+        .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+        .flat_map(|attr| &attr.args)
+        .collect();
+    let stated = args.iter().find_map(|arg| ffi_effects_arg(arg)).map(|names| {
+        names.into_iter().filter_map(|(_, effect)| effect).fold(hir::Effects::NONE, |all, effect| all | effect)
+    });
+    let deterministic = args.iter().any(|arg| matches!(arg, ast::AttrArg::Expr(value)
+        if ffi_contract_word(value).is_some_and(|word| word.is("deterministic"))));
+    let mut effects = stated.unwrap_or(hir::Effects::ALL) | hir::Effects::FFI;
+    if deterministic {
+        effects = hir::Effects(effects.0 & !hir::Effects::NONDET.0);
+    } else {
+        effects |= hir::Effects::NONDET;
+    }
+    effects
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -49765,6 +50312,119 @@ fn ffi_result_contract_arg(arg: &ast::AttrArg) -> Option<FfiResultContract> {
     })
 }
 
+/// `[FFI-11]`, `[FFI-36a]` — `result(returns_owned(destructor=f), one[, nullable][,
+/// threads(creator)])`: the result is a new foreign object the caller owns, freed by `f`.
+/// Returns `f`, whether the result may be null, and whether its box records its creator.
+fn ffi_owned_result_arg(arg: &ast::AttrArg) -> Option<(ast::Ident, bool, bool)> {
+    let ast::AttrArg::Expr(expr) = arg else { return None };
+    let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    if !ffi_contract_word(callee).is_some_and(|word| word.is("result")) || args.len() < 2
+        || args.iter().any(|arg| arg.name.is_some()) {
+        return None;
+    }
+    let ast::ExprKind::Call { callee: owned, args: destructor } = &args[0].value.kind else { return None };
+    if !ffi_contract_word(owned).is_some_and(|word| word.is("returns_owned")) {
+        return None;
+    }
+    let [ast::Arg { name: Some(key), value, .. }] = destructor.as_slice() else { return None };
+    let ast::ExprKind::Path { segments } = &value.kind else { return None };
+    if !key.name.is("destructor") || segments.len() != 1 {
+        return None;
+    }
+    if !ffi_contract_word(&args[1].value).is_some_and(|word| word.is("one")) {
+        return None;
+    }
+    let (mut nullable, mut creator) = (false, false);
+    for word in &args[2..] {
+        if ffi_contract_word(&word.value).is_some_and(|word| word.is("nullable")) && !nullable {
+            nullable = true;
+        } else if let ast::ExprKind::Call { callee, args: thread } = &word.value.kind
+            && ffi_contract_word(callee).is_some_and(|word| word.is("threads"))
+            && thread.len() == 1
+            && ffi_contract_word(&thread[0].value).is_some_and(|thread| thread.is("creator"))
+            && !creator
+        {
+            creator = true;
+        } else {
+            return None;
+        }
+    }
+    Some((segments[0], nullable, creator))
+}
+
+/// `[FFI-11]` — `param(p, owned, one[, nullable])`: the callee takes the object; the caller gives
+/// up its `ForeignBox` (`Option` of one when nullable), which frees nothing.
+fn ffi_owned_param_arg(arg: &ast::AttrArg) -> Option<(Symbol, bool)> {
+    let ast::AttrArg::Expr(expr) = arg else { return None };
+    let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    if !ffi_contract_word(callee).is_some_and(|word| word.is("param")) || !(3..=4).contains(&args.len())
+        || args.iter().any(|arg| arg.name.is_some()) {
+        return None;
+    }
+    let name = ffi_contract_word(&args[0].value)?;
+    if !ffi_contract_word(&args[1].value).is_some_and(|word| word.is("owned"))
+        || !ffi_contract_word(&args[2].value).is_some_and(|word| word.is("one")) {
+        return None;
+    }
+    let nullable = match args.get(3) {
+        Some(word) if ffi_contract_word(&word.value).is_some_and(|word| word.is("nullable")) => true,
+        Some(_) => return None,
+        None => false,
+    };
+    Some((name, nullable))
+}
+
+/// `[FFI-11]`, `[FFI-23]`, `[FFI-22]` — `param(p, retained, one[, threads(main | creator)])`: the
+/// callee keeps the pointer past the call; the caller passes a `Retained[T]` token it keeps alive.
+/// Returns the parameter and whether its contract binds it to one thread (else `T` must be `Send`).
+fn ffi_retained_param_arg(arg: &ast::AttrArg) -> Option<(Symbol, bool)> {
+    let ast::AttrArg::Expr(expr) = arg else { return None };
+    let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    if !ffi_contract_word(callee).is_some_and(|word| word.is("param")) || !(3..=4).contains(&args.len())
+        || args.iter().any(|arg| arg.name.is_some()) {
+        return None;
+    }
+    let name = ffi_contract_word(&args[0].value)?;
+    if !ffi_contract_word(&args[1].value).is_some_and(|word| word.is("retained"))
+        || !ffi_contract_word(&args[2].value).is_some_and(|word| word.is("one")) {
+        return None;
+    }
+    let bound = match args.get(3).map(|word| &word.value.kind) {
+        None => false,
+        Some(ast::ExprKind::Call { callee, args: thread })
+            if ffi_contract_word(callee).is_some_and(|word| word.is("threads")) && thread.len() == 1 =>
+        {
+            match ffi_contract_word(&thread[0].value)?.as_str() {
+                "main" | "creator" => true,
+                "any" => false,
+                _ => return None,
+            }
+        }
+        Some(_) => return None,
+    };
+    Some((name, bound))
+}
+
+fn ffi_retained_params(attrs: &[ast::Attribute]) -> Vec<(Symbol, bool)> {
+    attrs.iter()
+        .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+        .flat_map(|attr| attr.args.iter().filter_map(ffi_retained_param_arg))
+        .collect()
+}
+
+fn ffi_owned_params(attrs: &[ast::Attribute]) -> Vec<(Symbol, bool)> {
+    attrs.iter()
+        .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+        .flat_map(|attr| attr.args.iter().filter_map(ffi_owned_param_arg))
+        .collect()
+}
+
+fn ffi_owned_result(attrs: &[ast::Attribute]) -> Option<(ast::Ident, bool, bool)> {
+    attrs.iter()
+        .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+        .find_map(|attr| attr.args.iter().find_map(ffi_owned_result_arg))
+}
+
 fn ffi_result_contract(attrs: &[ast::Attribute]) -> Option<FfiResultContract> {
     attrs.iter()
         .find(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
@@ -49848,6 +50508,31 @@ fn ffi_count_witnesses(attrs: &[ast::Attribute]) -> HashSet<Symbol> {
             None
         }
     }).collect()
+}
+
+/// `[FFI-11b]` — `param(count, inout_count(items))`: the two-call enumeration idiom's count, C's
+/// pointer to the capacity of `items` on the way in and to the number there on the way out.
+/// Returns the count parameter and the items parameter.
+fn ffi_inout_count_arg(arg: &ast::AttrArg) -> Option<(Symbol, Symbol)> {
+    let ast::AttrArg::Expr(expr) = arg else { return None };
+    let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    if !ffi_contract_word(callee).is_some_and(|word| word.is("param")) || args.len() != 2
+        || args.iter().any(|arg| arg.name.is_some()) {
+        return None;
+    }
+    let count = ffi_contract_word(&args[0].value)?;
+    let ast::ExprKind::Call { callee: word, args: items } = &args[1].value.kind else { return None };
+    if !ffi_contract_word(word).is_some_and(|word| word.is("inout_count")) || items.len() != 1 || items[0].name.is_some() {
+        return None;
+    }
+    Some((count, ffi_contract_word(&items[0].value)?))
+}
+
+fn ffi_inout_counts(attrs: &[ast::Attribute]) -> Vec<(Symbol, Symbol)> {
+    attrs.iter()
+        .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+        .flat_map(|attr| attr.args.iter().filter_map(ffi_inout_count_arg))
+        .collect()
 }
 
 fn ffi_integer_witness_type(ty: &ast::TypeExpr) -> Option<Symbol> {

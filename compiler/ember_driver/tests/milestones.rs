@@ -964,6 +964,169 @@ fn foreign_record_statics_exchange_values_with_c() {
     assert!(nested_readonly.stderr.contains("E1050"), "expected nested read-only field error: {}", nested_readonly.stderr);
 }
 
+/// `[FFI-10]`, `[STA-1]` — a foreign static is a place in C's storage: a
+/// record that is not `Copy` read and written field by field and assigned
+/// whole, an element of an array in a record and of an array static written in
+/// place (with `[EXP-2]`'s operand first), an immutable array, and a C function
+/// pointer global. C reads back every write.
+#[test]
+fn foreign_statics_are_places_in_c_storage() {
+    let root = workspace_root();
+    let source = root.join(format!("tests/conformance/FFI-10/accept_foreign_statics_as_places.{SOURCE_EXT}"));
+    let source_arg = source.to_string_lossy().into_owned();
+    let emitted = ember(&["build", &source_arg, "--emit", "c"], &root);
+    assert_eq!(emitted.exit, 0, "foreign static C emission failed: {}", emitted.stderr);
+    assert!(emitted.stdout.contains(" account;"), "the record global is declared: {}", emitted.stdout);
+
+    let directory = temporary_directory("foreign-static-places");
+    let generated = directory.join("program.c");
+    std::fs::write(&generated, emitted.stdout).expect("generated C is writable");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/foreign_statics.c");
+    let runtime = root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+    let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
+    let output = directory.join(if cfg!(windows) { "foreign_places.exe" } else { "foreign_places" });
+    let objects = directory.join("obj");
+    std::fs::create_dir_all(&objects).expect("object directory is creatable");
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
+    ember_build::compile_and_link(&toolchain, &LinkRequest {
+        sources: &[generated, fixture, runtime_source],
+        include_dirs: &[runtime.join("include")],
+        output: output.clone(),
+        profile: Profile::Debug,
+        obj_dir: objects,
+    }).expect("foreign static places and C fixture link together");
+    let run = ember_build::output_started(&mut Command::new(output)).expect("linked program runs");
+    assert!(run.status.success(), "foreign static places program failed: {}",
+        String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"),
+        "3\n253\n1009\n1001\n54\n66\n28\n23\n21\n13\n");
+}
+
+/// Build `source` (an Ember file) against `tests/fixtures/<fixture>` and the runtime in
+/// `profile`, returning the program's path.
+fn link_with_fixture(source: &Path, fixture: &str, profile: Profile, directory: &Path, label: &str) -> PathBuf {
+    let root = workspace_root();
+    let source_arg = source.to_string_lossy().into_owned();
+    let profile_name = match profile { Profile::Debug => "debug", Profile::Release => "release", Profile::Shipping => "shipping" };
+    let emitted = ember(&["build", &source_arg, "--emit", "c", "--profile", profile_name], &root);
+    assert_eq!(emitted.exit, 0, "{label}: C emission failed: {}", emitted.stderr);
+    let generated = directory.join(format!("{label}.c"));
+    std::fs::write(&generated, emitted.stdout).expect("generated C is writable");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(fixture);
+    let runtime = root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+    let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
+    let output = directory.join(if cfg!(windows) { format!("{label}.exe") } else { label.to_string() });
+    let objects = directory.join(format!("obj_{label}"));
+    std::fs::create_dir_all(&objects).expect("object directory is creatable");
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
+    ember_build::compile_and_link(&toolchain, &LinkRequest {
+        sources: &[generated, fixture, runtime_source],
+        include_dirs: &[runtime.join("include")],
+        output: output.clone(),
+        profile,
+        obj_dir: objects,
+    }).unwrap_or_else(|error| panic!("{label}: the program and its C fixture link: {error:?}"));
+    output
+}
+
+/// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — `adopt` makes a `ForeignBox` that frees its object
+/// once with the destructor its type's declaration names (a status-returning one too); adopting a
+/// live object a second time panics in every profile, naming both places; and a box of a
+/// `threads(creator)` type that ends on another thread panics in the debug profile.
+#[test]
+fn adopted_foreign_objects_are_freed_by_their_destructor() {
+    let root = workspace_root();
+    let directory = temporary_directory("foreign-objects");
+    let accepted = root.join(format!("tests/conformance/FFI-36a/accept_adopt_frees_with_the_declared_destructor.{SOURCE_EXT}"));
+    for profile in [Profile::Debug, Profile::Release] {
+        let program = link_with_fixture(&accepted, "foreign_objects.c", profile, &directory, &format!("adopt_{profile:?}"));
+        let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
+        assert!(run.status.success(), "{profile:?}: {}", String::from_utf8_lossy(&run.stderr));
+        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "3 1\n4 3\n4 2\n3\n7 1\n507 0\n", "{profile:?}");
+    }
+    // `[FFI-11]` — `returns_owned` results (one may be null) and `owned` parameters.
+    let transferred = root.join(format!("tests/conformance/FFI-36a/accept_returns_owned_and_owned_parameters.{SOURCE_EXT}"));
+    for profile in [Profile::Debug, Profile::Release] {
+        let program = link_with_fixture(&transferred, "foreign_objects.c", profile, &directory, &format!("owned_{profile:?}"));
+        let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
+        assert!(run.status.success(), "{profile:?}: {}", String::from_utf8_lossy(&run.stderr));
+        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "2 1\nnone\n3 2\n3 1\n23 0\n1063 0\n1\n", "{profile:?}");
+    }
+
+    let declarations = "from std.ffi import adopt, ForeignBox\nimport std.thread\n\nunsafe extern \"C\":\n    @ffi(destroys(widget_free))\n    type Widget\n    @ffi(destroys(gadget_close), threads(creator))\n    type Gadget\n    fn widget_new(id: i32) -> *mut Widget\n    fn widget_free(widget: *mut Widget)\n    fn gadget_new(id: i32) -> *mut Gadget\n    fn gadget_close(gadget: *mut Gadget) -> i32\n\n";
+    // `[FFI-36b]` — the second `adopt` of one live object, at line 23; the first is at 22.
+    let twice = root.join(format!("tests/conformance/FFI-36b/accept_a_second_owner_panics_naming_both_places.{SOURCE_EXT}"));
+    for profile in [Profile::Debug, Profile::Release] {
+        let program = link_with_fixture(&twice, "foreign_objects.c", profile, &directory, &format!("twice_{profile:?}"));
+        let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(!run.status.success(), "{profile:?}: adopting twice did not panic");
+        let second_at = stderr.find("is adopted at").expect("the second place is named");
+        let first_at = stderr.find("Ember already owns it since").expect("the first place is named");
+        assert!(stderr[second_at..first_at].contains(&format!("both_places.{SOURCE_EXT}:23:")), "{profile:?}: {stderr}");
+        assert!(stderr[first_at..].contains(&format!("both_places.{SOURCE_EXT}:22:")), "{profile:?}: {stderr}");
+        assert!(!String::from_utf8_lossy(&run.stdout).contains("unreachable"));
+    }
+
+    let elsewhere = directory.join(format!("elsewhere.{SOURCE_EXT}"));
+    std::fs::write(&elsewhere, format!("{declarations}fn make() -> ForeignBox[Gadget]:\n    unsafe:  # SAFETY(ffi): a fresh gadget\n        return adopt(gadget_new(2))\n\nfn main():\n    gadget = make()\n    worker = thread.spawn(owned fn() => gadget.as_ptr() == gadget.as_ptr())\n    println(worker.join())\n")).expect("program is writable");
+    let program = link_with_fixture(&elsewhere, "foreign_objects.c", Profile::Debug, &directory, "elsewhere_debug");
+    let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(!run.status.success(), "a creator box ended on another thread without a panic");
+    assert!(stderr.contains("made on thread 1 (main) ends on thread") && stderr.contains("`threads(creator)`"), "{stderr}");
+    let program = link_with_fixture(&elsewhere, "foreign_objects.c", Profile::Release, &directory, "elsewhere_release");
+    let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
+    assert!(run.status.success(), "release does not check the thread: {}", String::from_utf8_lossy(&run.stderr));
+}
+
+/// `[FFI-23]`, `[FFI-11]` — a `Retained` token lets C keep an Ember object's address: a class
+/// object outlives the handle it was pinned from until the token is dropped, its address is the
+/// one C keeps, and a pinned `Box`'s value is read by C through the kept address.
+#[test]
+fn retained_tokens_let_c_keep_ember_objects() {
+    let root = workspace_root();
+    let directory = temporary_directory("retained");
+    let source = root.join(format!("tests/conformance/FFI-23/accept_retained_lets_foreign_code_keep_ember_memory.{SOURCE_EXT}"));
+    for profile in [Profile::Debug, Profile::Release] {
+        let program = link_with_fixture(&source, "foreign_objects.c", profile, &directory, &format!("retained_{profile:?}"));
+        let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
+        assert!(run.status.success(), "{profile:?}: {}", String::from_utf8_lossy(&run.stderr));
+        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "still alive\n1\ndropped kept\nreleased\n7\n", "{profile:?}");
+    }
+}
+
+/// `[FFI-10]`, `[FFI-9]` — a function of an `extern "vectorcall"` block is
+/// declared and called with that convention: the C compiler takes the
+/// prototype (MSVC and Clang have it; GCC is told it has not).
+#[test]
+fn vectorcall_declarations_compile_with_the_convention() {
+    let root = workspace_root();
+    let directory = temporary_directory("vectorcall");
+    let source = directory.join(ember_branding::source_file("vectorcall"));
+    std::fs::write(&source, "unsafe extern \"vectorcall\":\n    safe fn scale_vector(x: f64, factor: f64) -> f64\n\nfn main():\n    println(scale_vector(2.0, 3.0))\n")
+        .expect("program is writable");
+    let source_arg = source.to_string_lossy().into_owned();
+    let emitted = ember(&["build", &source_arg, "--emit", "c"], &root);
+    assert_eq!(emitted.exit, 0, "vectorcall C emission failed: {}", emitted.stderr);
+    assert!(emitted.stdout.contains("extern double EMBER_CC_VECTORCALL scale_vector(double"), "{}", emitted.stdout);
+    let generated = directory.join("program.c");
+    std::fs::write(&generated, &emitted.stdout).expect("generated C is writable");
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
+    let runtime = root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+    let object = directory.join(if cfg!(windows) { "program.obj" } else { "program.o" });
+    let compiled = ember_build::compile_object(&toolchain, &generated, &[runtime.join("include")], &object, Profile::Debug);
+    if matches!(toolchain, Toolchain::Gcc(_)) {
+        let error = compiled.expect_err("GCC has no vectorcall convention");
+        assert!(format!("{error:?}").contains("EMBER_CC_VECTORCALL_needs_x86_and_MSVC_or_Clang"), "{error:?}");
+    } else {
+        compiled.expect("the vectorcall prototype and call compile");
+    }
+}
+
 /// `[FFI-9]`/`[FFI-10]` — C receives and returns a plain record by value.
 #[test]
 fn foreign_record_functions_exchange_values_with_c() {
@@ -2154,6 +2317,224 @@ fn tcb_lists_every_unsafe_with_its_note_and_obligations() {
     assert_eq!(json.exit, 0, "tcb --json failed:\n{}", json.stderr);
     assert!(json.stdout.contains("\"category\":\"performance\""), "{}", json.stdout);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `[FFI-10]`, `[TCB-1]`, `[TCB-2]`, `[TCB-3]` — `ember tcb` separates what the language guarantees
+/// from what the program supplies, and lists, grouped by module, every fact its foreign
+/// declarations assert (`safe fn` among them), each with its source and its grade: asserted, for
+/// nothing a declaration writes raises one.
+#[test]
+fn tcb_lists_every_foreign_fact_with_its_source_and_grade() {
+    let root = workspace_root();
+    let dir = temporary_directory("tcb-foreign");
+    let helper = dir.join(format!("clib.{SOURCE_EXT}"));
+    std::fs::write(
+        &helper,
+        "unsafe extern \"C\":\n    @ffi(effects=[], deterministic)\n    pub safe fn abs(x: i32) -> i32\n    pub fn rand() -> i32\n",
+    )
+    .expect("write the helper module");
+    let source = dir.join(format!("trusted.{SOURCE_EXT}"));
+    std::fs::write(
+        &source,
+        "import clib\n\n\
+         unsafe extern \"C\":\n\
+         \x20   @ffi(param(text, borrowed, nul_terminated), link_name=\"strlen\")\n\
+         \x20   safe fn length(text: cstr) -> usize\n\
+         \x20   @ffi(immutable)\n    static frozen: i32\n\n\
+         fn main():\n    println(clib.abs(-3), length(c\"abc\"))\n\
+         \x20   unsafe:  # SAFETY(ffi): rand has no precondition\n        println(clib.rand() >= 0)\n",
+    )
+    .expect("write the program");
+    let source_arg = source.to_string_lossy().into_owned();
+    let report = ember(&["tcb", &source_arg], &root);
+    assert_eq!(report.exit, 0, "tcb failed:\n{}\n{}", report.stdout, report.stderr);
+    let out = &report.stdout;
+    let guaranteed = out.find("Guaranteed by the language").expect("the language's guarantees are stated");
+    let supplied = out.find("Supplied from outside the language").expect("the supplied facts are a section of their own");
+    assert!(guaranteed < supplied, "{out}");
+    assert!(out.contains("C FFI (4 declarations):"), "{out}");
+    let clib = out.find("  module clib").expect("grouped by module");
+    let trusted = out.find("  module trusted\n    ").expect("grouped by module");
+    assert!(out[clib..].contains("fn `abs` safe"), "{out}");
+    assert!(out.contains("safe to call: a call within its contract cannot break memory safety (`safe fn`)  [asserted]  "), "{out}");
+    assert!(out.contains("its effects: `effects=[]`  [asserted]  "), "{out}");
+    assert!(out.contains(&format!("clib.{SOURCE_EXT}:2:10")), "{out}");
+    assert!(out.contains("the same result on every run: `deterministic`  [asserted]"), "{out}");
+    assert!(out.contains("fn `rand` unsafe to call"), "{out}");
+    assert!(out[trusted..].contains("its signature matches the C declaration (`unsafe extern \"C\"`, C symbol \"strlen\")  [asserted]  "), "{out}");
+    assert!(out.contains("its contract: `param(text, borrowed, nul_terminated)`  [asserted]  "), "{out}");
+    assert!(out.contains("a `const` C object that never changes: `immutable`  [asserted]"), "{out}");
+    assert!(!out.contains("[instrumented]") && !out.contains("[checked]") && !out.contains("[proven]"), "{out}");
+    assert!(out.contains("block in `main`  SAFETY(ffi): rand has no precondition  [asserted]"), "{out}");
+    let only = ember(&["tcb", "--module", "clib", &source_arg], &root);
+    assert!(only.stdout.contains("C FFI (2 declarations):") && !only.stdout.contains("`length`"), "{}", only.stdout);
+    let json = ember(&["tcb", "--json", &source_arg], &root);
+    assert_eq!(json.exit, 0, "tcb --json failed:\n{}", json.stderr);
+    let value: serde_json::Value = serde_json::from_str(json.stdout.trim()).expect("tcb --json is JSON");
+    let foreign = value["foreign"].as_array().expect("a foreign list");
+    assert_eq!(foreign.len(), 4, "{}", json.stdout);
+    assert!(foreign.iter().all(|decl| decl["facts"].as_array().is_some_and(|facts|
+        facts.iter().all(|fact| fact["grade"] == "asserted" && fact["source"].is_string()))), "{}", json.stdout);
+    assert!(value["guaranteed"].is_string(), "{}", json.stdout);
+}
+
+/// `[FFI-37]`, `[FFI-37a]`, `[FFI-37b]`, `[FFI-37c]`, `[FFI-37d]`, `[TCB-5]`, `[TCB-6]` —
+/// `ember test --instrument-ffi` runs the tests with the allocation, lock, wait and I/O entry
+/// points intercepted while a foreign function runs. A declared absence a run contradicts is
+/// `E5053` and fails the run; one whose function no test called is `W5054` and counts for
+/// nothing; the rest are graded `instrumented`, partial when a call site never ran, and the
+/// report says what stays unobservable and which facts stay asserted. The evidence record names
+/// its identity inputs (toolchain, test binary, each declaration's source and library) and its
+/// environment; `ember tcb` shows the grades by it, says the record is stale once an identity
+/// input changes, and only notes a record measured on another machine.
+#[test]
+fn instrumented_tests_grade_foreign_effect_facts() {
+    let package = test_package("measured", "bin", "\
+unsafe extern \"C\":
+    @ffi(effects=[])
+    safe fn abs(x: i32) -> i32
+    @ffi(effects=[])
+    safe fn llabs(x: i64) -> i64
+    @ffi(param(text, borrowed, nul_terminated), effects=[])
+    safe fn strlen(text: cstr) -> usize
+    @ffi(effects=[])
+    fn malloc(size: usize) -> *mut void
+    @ffi(effects=[Alloc])
+    fn free(block: *mut void)
+
+@test
+fn magnitudes():
+    assert(abs(-5) == 5)
+    assert(abs(7) == 7)
+
+@test
+fn lengths():
+    length = strlen(c\"four\")
+    if length > 10:
+        assert(strlen(c\"never\") == 5)
+    assert(length == 4)
+
+@test
+fn allocates():
+    unsafe:  # SAFETY(ffi): the block is freed once, by the allocator that made it
+        block = malloc(16)
+        free(block)
+
+fn main():
+    println(llabs(-3))
+");
+    let out_dir = package.join("target");
+    let out_arg = out_dir.to_string_lossy().into_owned();
+    let run = ember(&["test", "--instrument-ffi", "--out-dir", &out_arg], &package);
+    let text = format!("{}{}", run.stdout, run.stderr);
+    assert_ne!(run.exit, 0, "a contradicted fact passed the run:\n{text}");
+    assert!(run.stdout.contains("test result: ok. 3 passed"), "the tests themselves pass:\n{text}");
+    for line in [
+        "foreign effects, instrumented [FFI-37]:",
+        "is structurally unobservable, and counts for nothing [FFI-37a]",
+        "ownership, nullability, lifetime, aliasing and exception facts stay asserted [FFI-37d]",
+        "`abs`: 2 calls from 2 of 2 call sites; no Alloc: instrumented; no Lock: instrumented; no Block: instrumented; no Io: instrumented",
+        "`strlen`: 1 call from 1 of 2 call sites; no Alloc: instrumented, partial;",
+        "`malloc`: 1 call from 1 of 1 call site; no Alloc: contradicted (E5053)",
+        "`llabs`: 0 calls from 0 of 1 call site; no Alloc, no Lock, no Block, no Io: unexercised (W5054)",
+    ] {
+        assert!(run.stdout.contains(line), "missing `{line}`:\n{text}");
+    }
+    assert!(!run.stdout.contains("`free`: ") || run.stdout.contains("`free`: 1 call"), "{text}");
+    assert!(run.stderr.contains("error[E5053]: an instrumented run contradicted `malloc`'s effects: it reached Alloc"), "{text}");
+    assert!(run.stderr.contains("warning[W5054]: `llabs`'s effect facts were never exercised"), "{text}");
+    assert!(!run.stderr.contains("`abs`"), "nothing contradicted `abs`:\n{text}");
+
+    let record_path = package.join(format!(".{}/ffi-evidence/main.json", ember_branding::SYMBOL_PREFIX));
+    let record: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&record_path).expect("the evidence record is written"))
+        .expect("the evidence record is JSON");
+    assert!(record["identity"]["toolchain"].is_string() && record["identity"]["test_binary"]["hash"].is_string(), "{record}");
+    assert!(record["environment"]["machine"].is_string() && record["intercepted"].as_str().is_some_and(|text| text.contains("alloc:")), "{record}");
+    let functions = record["functions"].as_array().expect("a function list");
+    let abs = functions.iter().find(|function| function["name"] == "abs").expect("`abs` is recorded");
+    assert!(abs["source_hash"].is_string() && abs["library"]["path"].as_str().is_some_and(|path| !path.is_empty()), "{abs}");
+    assert_eq!(abs["facts"][0]["grade"], "instrumented", "{abs}");
+
+    // `[TCB-5]` — `ember tcb` grades the facts by the record.
+    let entry = package.join("src").join(ember_branding::source_file("main"));
+    let entry_arg = entry.to_string_lossy().into_owned();
+    let tcb = ember(&["tcb", &entry_arg], &package);
+    assert_eq!(tcb.exit, 0, "{}{}", tcb.stdout, tcb.stderr);
+    assert!(tcb.stdout.contains("no Alloc: instrumented, no Lock: instrumented, no Block: instrumented, no Io: instrumented [FFI-37c]"), "{}", tcb.stdout);
+    assert!(tcb.stdout.contains("no Alloc: instrumented, partial (1 of 2 call sites ran)"), "{}", tcb.stdout);
+    assert!(tcb.stdout.contains("instrumented: no counterexample was observed on the paths exercised, which is not that the fact holds"), "{}", tcb.stdout);
+    assert!(tcb.stdout.contains("no Alloc: contradicted") && tcb.stdout.contains("no Alloc: unexercised"), "{}", tcb.stdout);
+    assert!(!tcb.stdout.contains("not this machine"), "{}", tcb.stdout);
+
+    // `[TCB-6]` — an environment input is reported, never a reason the record is stale.
+    let elsewhere = std::fs::read_to_string(&record_path).expect("the record").replacen("\"machine\": \"", "\"machine\": \"elsewhere-", 1);
+    std::fs::write(&record_path, elsewhere).expect("the record is writable");
+    let moved = ember(&["tcb", &entry_arg], &package);
+    assert!(moved.stdout.contains("not this machine: an environment input, reported, not a reason the record is stale [TCB-6]"), "{}", moved.stdout);
+    assert!(moved.stdout.contains("no Io: instrumented [FFI-37c]") && !moved.stdout.contains("evidence stale"), "{}", moved.stdout);
+
+    // `[TCB-6]` — an identity input changed (the declaring source): the facts stay asserted.
+    let source = std::fs::read_to_string(&entry).expect("the source");
+    std::fs::write(&entry, source.replace("strlen(c\"never\") == 5", "strlen(c\"nevermore\") == 9")).expect("the source is writable");
+    let stale = ember(&["tcb", &entry_arg], &package);
+    assert!(stale.stdout.contains("evidence stale, so its effect facts stay asserted: its declaration in "), "{}", stale.stdout);
+    assert!(!stale.stdout.contains("[FFI-37c]"), "{}", stale.stdout);
+}
+
+/// `[CLI-13]` — `ember calls --foreign <item>` lists every foreign function the item can reach —
+/// through calls, a method, another module, a function value it takes — with the chain to it and
+/// the contract its declaration states; one it cannot reach is not listed, and a call through a
+/// `dyn` value, whose callee nothing names, is said to be beyond the list.
+#[test]
+fn calls_foreign_lists_what_an_item_reaches_with_each_contract() {
+    let root = workspace_root();
+    let dir = temporary_directory("calls-foreign");
+    std::fs::write(
+        dir.join(format!("clib.{SOURCE_EXT}")),
+        "unsafe extern \"C\":\n    @ffi(effects=[], deterministic)\n    pub safe fn abs(x: i32) -> i32\n    pub fn rand() -> i32\n",
+    )
+    .expect("write the helper module");
+    let source = dir.join(format!("reach.{SOURCE_EXT}"));
+    std::fs::write(
+        &source,
+        "import clib\n\n\
+         unsafe extern \"C\":\n\
+         \x20   @ffi(param(text, borrowed, nul_terminated), link_name=\"strlen\")\n\
+         \x20   safe fn length(text: cstr) -> usize\n\
+         \x20   @ffi(effects=[])\n    safe fn labs(x: i64) -> i64\n\
+         \x20   safe fn llabs(x: i64) -> i64\n\n\
+         interface Shape:\n    fn area(self) -> i64\n\n\
+         struct Square:\n    side: i64\n\n\
+         extend Square implements Shape:\n    fn area(self) -> i64:\n        return labs(self.side * self.side)\n\n\
+         class Counter:\n    count: i32\n\n    fn bump(mut self) -> i32:\n        self.count += clib.abs(-1)\n        return self.count\n\n\
+         fn noisy() -> i32:\n    unsafe:  # SAFETY(ffi): rand has no precondition\n        return clib.rand()\n\n\
+         fn measure(shape: ref dyn Shape) -> i64:\n    return shape.area()\n\n\
+         fn main():\n    counter = Counter(count = 0)\n    println(counter.bump(), length(c\"abc\"), noisy())\n\
+         \x20   pick = llabs\n    println(pick(-4))\n    square = Square(side = 2)\n    println(measure(ref square))\n",
+    )
+    .expect("write the program");
+    let source_arg = source.to_string_lossy().into_owned();
+    let report = ember(&["calls", "--foreign", "main", &source_arg], &root);
+    assert_eq!(report.exit, 0, "calls failed:\n{}\n{}", report.stdout, report.stderr);
+    let out = &report.stdout;
+    assert!(out.contains("Foreign functions `main` can reach (4):"), "{out}");
+    assert!(!out.contains("`labs`"), "`labs` is reached only through a `dyn` value: {out}");
+    assert!(out.contains("  main -> length\n"), "{out}");
+    assert!(out.contains("its contract: `param(text, borrowed, nul_terminated)`  [asserted]"), "{out}");
+    assert!(out.contains("  main -> Counter.bump -> clib.abs\n"), "{out}");
+    assert!(out.contains("its effects: `effects=[]`  [asserted]"), "{out}");
+    assert!(out.contains("  main -> noisy -> clib.rand\n"), "{out}");
+    assert!(out.contains("fn `rand` unsafe to call") && out.contains("its effects: none stated, so every effect"), "{out}");
+    assert!(out.contains("  main -> llabs\n"), "a function value taken is reachable: {out}");
+    assert!(out.contains("and what `measure` calls through a function or `dyn` value"), "{out}");
+    let helper = ember(&["calls", "--foreign", "Counter.bump", &source_arg], &root);
+    assert!(helper.stdout.contains("(1):") && helper.stdout.contains("Counter.bump -> clib.abs"), "{}", helper.stdout);
+    let json = ember(&["calls", "--foreign", "noisy", "--json", &source_arg], &root);
+    let value: serde_json::Value = serde_json::from_str(json.stdout.trim()).expect("calls --json is JSON");
+    assert_eq!(value["foreign"][0]["symbol"], "rand", "{}", json.stdout);
+    assert_eq!(value["foreign"][0]["declaration"]["safe"], false, "{}", json.stdout);
+    let missing = ember(&["calls", "--foreign", "absent", &source_arg], &root);
+    assert_ne!(missing.exit, 0);
 }
 
 /// `[EFF-16]` — `ember inspect --safety` reports each function's `@nopanic(explicit)` beside the

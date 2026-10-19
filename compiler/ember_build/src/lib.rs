@@ -56,6 +56,11 @@ pub enum Toolchain {
     Gcc(PathBuf),
 }
 
+/// `[TCB-5]` — a content hash, for an evidence record's identities.
+pub fn content_hash(bytes: &[u8]) -> String {
+    blake3::hash(bytes).to_hex().to_string()
+}
+
 impl Toolchain {
     pub fn name(&self) -> &'static str {
         match self {
@@ -63,6 +68,24 @@ impl Toolchain {
             Toolchain::Clang(_) => "clang",
             Toolchain::Gcc(_) => "gcc",
         }
+    }
+
+    /// `[TCB-5]` — the C compiler's identity: its kind, where it is, and its executable's hash
+    /// (a bare name is looked up on `PATH`).
+    pub fn identity(&self) -> String {
+        let path = match self {
+            Toolchain::Msvc { cl, .. } => cl.clone(),
+            Toolchain::Clang(path) | Toolchain::Gcc(path) => path.clone(),
+        };
+        let found = if path.is_file() {
+            Some(path.clone())
+        } else {
+            std::env::var_os("PATH").and_then(|paths| {
+                std::env::split_paths(&paths).map(|dir| dir.join(&path)).find(|candidate| candidate.is_file())
+            })
+        };
+        let hash = found.as_ref().and_then(|file| std::fs::read(file).ok()).map(|bytes| content_hash(&bytes));
+        format!("{} {} {}", self.name(), found.unwrap_or(path).display(), hash.unwrap_or_else(|| "unhashed".to_string()))
     }
 
     /// Find a usable C compiler, preferring `requested` when it is given.
@@ -2072,6 +2095,39 @@ int main(int argc, char** argv) {
             let output = run_fresh(Command::new(&program).arg(mode)).expect("the count-overflow oracle runs");
             assert!(output.status.success(), "[RT-7] {mode}: exit {:?}: {}", output.status.code(), String::from_utf8_lossy(&output.stderr));
             assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), message, "[RT-7] {mode}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `[FFI-33a]` — in the debug profile an object that is not Sync is its maker's: a foreign
+    /// thread that attaches and then retains, releases or weakly retains one panics naming the
+    /// class and both threads; a Sync object is any thread's, and the maker counts freely
+    /// (`templates/tests/object_creator_thread.c.in`). A release build does not check.
+    #[test]
+    fn an_object_that_is_not_sync_is_its_makers() {
+        let requested = std::env::var(ember_branding::cc_var()).ok();
+        let toolchain = Toolchain::detect(requested.as_deref()).expect("a C toolchain");
+        let runtime = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+        let dir = std::env::temp_dir().join(format!("creator-thread-{}", std::process::id()));
+        for profile in [Profile::Debug, Profile::Release] {
+            let program = dir.join(format!("creator_thread_{profile:?}{}", if cfg!(windows) { ".exe" } else { "" }));
+            std::fs::create_dir_all(dir.join(format!("obj_{profile:?}"))).expect("the test directory is creatable");
+            compile_and_link(&toolchain, &LinkRequest {
+                sources: &[runtime.join("tests/object_creator_thread.c"), runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX))],
+                include_dirs: &[runtime.join("include")], output: program.clone(),
+                profile, obj_dir: dir.join(format!("obj_{profile:?}")),
+            }).expect("the creator-thread oracle compiles");
+            for mode in ["retain", "release", "weak", "sync", "same"] {
+                let output = run_fresh(Command::new(&program).arg(mode)).expect("the creator-thread oracle runs");
+                assert!(output.status.success(), "[FFI-33a] {profile:?} {mode}: exit {:?}: {}", output.status.code(), String::from_utf8_lossy(&output.stderr));
+                let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if profile == Profile::Debug && matches!(mode, "retain" | "release" | "weak") {
+                    assert!(out.starts_with("a `Node` object made on thread 1 (main) is retained or released on thread 2:"), "[FFI-33a] {mode}: {out}");
+                } else {
+                    assert_eq!(out, "ok", "[FFI-33a] {profile:?} {mode}");
+                }
+            }
         }
         let _ = std::fs::remove_dir_all(&dir);
     }

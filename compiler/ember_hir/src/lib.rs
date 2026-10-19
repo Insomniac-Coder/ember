@@ -108,6 +108,21 @@ pub struct FfiCounted {
     pub result_array: Option<FfiArrayResult>,
     /// A counted result's length is supplied by this visible input span.
     pub result_span: Option<FfiSpanResult>,
+    /// `[FFI-36a]` — a result contracted `returns_owned(destructor=f)`: the C
+    /// pointer becomes a `ForeignBox` the runtime records.
+    pub result_owned: Option<FfiOwnedResult>,
+}
+
+/// `[FFI-36a]`, `[FFI-33b]` — a new foreign object the caller owns: freed by
+/// `destructor` (whose result, when it has one, is dropped), `None` for null
+/// when `nullable`, and its box records its creator thread when `creator`.
+#[derive(Debug, Clone)]
+pub struct FfiOwnedResult {
+    pub destructor: Symbol,
+    pub destructor_ret: Ty,
+    pub pointee: Ty,
+    pub nullable: bool,
+    pub creator: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -130,7 +145,17 @@ pub enum FfiAbiParam {
     Value { public_index: usize, ty: Ty, mode: Mode },
     SpanPointer { public_index: usize, elem: Ty, mutable: bool, nullable: bool },
     ArrayPointer { public_index: usize, elem: Ty, mutable: bool, nullable: bool },
-    Count { sources: Vec<FfiCountSource>, ty: Ty },
+    /// A count witness: the span lengths at its ABI position, or with `inout`
+    /// (`[FFI-11b]`'s `inout_count(p)`) the address of a local holding them,
+    /// which C writes back and the call returns.
+    Count { sources: Vec<FfiCountSource>, ty: Ty, inout: bool },
+    /// `[FFI-11]` — `param(p, owned, one)`: the `ForeignBox` (an `Option` of
+    /// one when `nullable`) gives C its pointer and leaves the runtime's
+    /// record, freeing nothing.
+    Owned { public_index: usize, nullable: bool },
+    /// `[FFI-11]`, `[FFI-23]` — `param(p, retained, one)`: C keeps the
+    /// address of the object a `Retained` token holds; the token stays.
+    Retained { public_index: usize },
 }
 
 #[derive(Debug, Clone)]
@@ -274,6 +299,11 @@ impl std::ops::BitAnd for Effects {
 pub struct Contracts {
     pub forbidden: Effects,
     pub realtime: Effects,
+    /// `[EFF-3]`, `[FFI-10]` — for a foreign declaration, the effects its
+    /// contract gives it: those `@ffi(effects=[…])` states and `FFI`, every
+    /// effect when it states none, and `Nondet` unless `@ffi(deterministic)`
+    /// (`[DET-2]`). `None` for a function with an Ember body.
+    pub foreign: Option<Effects>,
 }
 
 #[derive(Debug)]
@@ -1146,8 +1176,35 @@ pub enum Builtin {
     /// `[DSJ-1]`'s two comparisons: whether views of types `a` and `b`
     /// overlap. Empty views overlap nothing.
     ViewsOverlap { a: Ty, b: Ty },
-    /// `[FFI-10]` — read a hand-declared C global at its linker symbol.
-    ForeignStaticRead { symbol: Symbol, immutable: bool },
+    /// `[FFI-10]`, `[STA-1]` — a reference to a hand-declared C global at its
+    /// linker symbol: `ref T`, or `ref mut T` for a `static mut`. Every read
+    /// and write of the global goes through it, so the global is a place like
+    /// any other (a field, an element of an array in it, a whole non-`Copy`
+    /// record) and C's storage is what changes. `immutable` is
+    /// `@ffi(immutable)` (ODR-082): the C declaration is `extern const T`.
+    ForeignStatic { symbol: Symbol, ty: Ty, immutable: bool },
+    /// `[FFI-36a]`, `[FFI-36b]` — record the foreign object at the pointer
+    /// (the one argument, also the result) as one Ember owns, with where;
+    /// a second owner of a live one panics naming both places.
+    ForeignAdopt,
+    /// `[FFI-36b]`, `[FFI-33b]` — a `ForeignBox`'s end, or its object given
+    /// to C: out of the record. Arguments: the pointer, the creator thread
+    /// (0 for none), checked in the debug profile.
+    ForeignRelease,
+    /// `[FFI-33b]` — the number of the thread running it, recorded by a box
+    /// whose contract says `threads(creator)`.
+    ForeignThread,
+    /// `[FFI-36a]` — the foreign function `symbol` (the argument is its
+    /// value) as a box's destructor, of type `fn_ty` (`extern "C" fn(*mut
+    /// T)`): itself when it returns nothing (`ret` void), else a C thunk that
+    /// calls it and drops its result.
+    ForeignDestructor { symbol: Symbol, pointee: Ty, ret: Ty, fn_ty: Ty },
+    /// `[FFI-23]` — `Retained.pin`'s mark: a class object's header gets its
+    /// pinned flag; a `Box` needs none. The argument is the value pinned.
+    RetainedPin,
+    /// `[FFI-23]` — the address of the object a class handle or a `Box`
+    /// holds, as `*mut u8`.
+    RetainedAddress,
     /// `[STA-3]` — a reference to the one value of a `static` whose
     /// initialiser runs on first access: `init`, a function of no
     /// arguments, the first time any thread asks. `name` is the static's, for
@@ -1163,10 +1220,6 @@ pub enum Builtin {
     /// `[CT-2]` — `comptime.env(name)`: the build environment's variable, an
     /// `option` (`Option[String]`), read while compiling (`[name]`).
     ComptimeEnv { option: Ty },
-    /// `[STA-1]` — write a `static mut` C global inside `unsafe`.
-    ForeignStaticWrite { symbol: Symbol },
-    /// `[STA-1]` — update one field of a C record global in place.
-    ForeignStaticFieldWrite { symbol: Symbol, record: Ty, path: Symbol },
     /// `println(x)` for a scalar or `str`.
     Println,
     /// `[STD-9]` — `eprintln(x)` and `eprint(x)`: the same, to standard error.
@@ -1682,13 +1735,17 @@ impl Builtin {
 
     pub fn name(self) -> &'static str {
         match self {
-            Builtin::ForeignStaticRead { .. } => "foreign_static_read",
+            Builtin::ForeignStatic { .. } => "foreign_static",
+            Builtin::ForeignAdopt => "ffi_adopt",
+            Builtin::ForeignRelease => "ffi_release",
+            Builtin::ForeignThread => "ffi_thread",
+            Builtin::ForeignDestructor { .. } => "ffi_destructor",
+            Builtin::RetainedPin => "retained_pin",
+            Builtin::RetainedAddress => "retained_address",
             Builtin::LazyStatic { .. } => "lazy_static",
             Builtin::ConstStatic { .. } => "constant_static",
             Builtin::ComptimeReadFile => "read_file",
             Builtin::ComptimeEnv { .. } => "env",
-            Builtin::ForeignStaticWrite { .. } => "foreign_static_write",
-            Builtin::ForeignStaticFieldWrite { .. } => "foreign_static_field_write",
             Builtin::Println => "println",
             Builtin::Print => "print",
             Builtin::EPrintln => "eprintln",
