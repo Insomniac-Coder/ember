@@ -8,6 +8,7 @@ typedef struct Size { int w; int h; } Size;
 
 Widget* widget_new(int id);
 void widget_free(Widget* widget);
+void widget_take(Widget* widget);
 int widget_id(const Widget* widget);
 int widget_sum(const int* items, size_t n);
 void widget_fill(int* items, size_t n, int value);

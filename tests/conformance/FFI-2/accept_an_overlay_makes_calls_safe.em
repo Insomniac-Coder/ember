@@ -4,16 +4,16 @@
 #$ stdout: 7 10 3 3 3
 #$ stdout: positive 5 9 12
 #$ stdout: 6
-#$ stdout: 1
+#$ stdout: 2
 # `[FFI-2]` — an overlay supplies the facts the header cannot state, and each function it has an
 # entry for is safe to call: no `unsafe`. `widget_id`, with no entry, stays unsafe. `[FFI-2a]` —
 # a pointer's mutability is derived from `const`, never written: `const int*` with
 # `borrowed count(n)` is a `Span[i32]`, `int*` a `MutSpan[i32]`, `int*` with `borrowed one` a
 # `mut` parameter. `[FFI-13]` — the overlay's `extend` block adds a method to the header's struct.
 # `[FFI-30a]` — it renames a function (`add`) and hides one (`widget_free`), and changes no type:
-# `Size` is the header's struct.
+# `Size` is the header's struct. An `owned` parameter takes the box `returns_owned` gave.
 
-import c "./widgets.c" with (overlay = "widgets_overlay.em") as w
+import c "./widgets.c" with (overlay = "overlays/widgets.em") as w
 
 # The box frees its widget, with `widget_free`, when it is dropped here.
 fn id_of_new(n: i32) -> i32:
@@ -31,6 +31,7 @@ fn main():
     value: i32 = 6
     w.widget_double(value)
     println(w.widget_label(1).to_str().unwrap(), w.add(2, 3), w.widget_sum(items.as_span()), value)
+    w.widget_take(w.widget_new(9))
     size = w.Size(w=2, h=3)
     println(size.area())
     println(w.widget_freed())

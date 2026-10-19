@@ -8,7 +8,7 @@
 # `[FFI-12]` — an overlay entry whose name, parameter count or parameter names do not match the
 # header is `E5010`, so an overlay cannot drift from the header it describes.
 
-import c "tally.h" with (overlay = "drifted_overlay.em")
+import c "tally.h" with (overlay = "overlays/drifted.em")
 
 fn main():
     pass

@@ -7254,3 +7254,88 @@ fn main():
     assert_eq!(filtered.exit, 0, "{}{}", filtered.stdout, filtered.stderr);
     assert!(filtered.stdout.contains("2 passed; 0 failed; 0 quarantined; 9 filtered out"), "{}", filtered.stdout);
 }
+
+/// The header of the `ember bind` milestones: a pointer the header says nothing about, a scalar
+/// function, a `const` and a mutable pointer, and a variadic function the importer skips.
+const BIND_HEADER: &str = "\
+#include <stddef.h>
+static inline int bind_add(int a, int b) { return a + b; }
+static inline int bind_sum(const int* items, size_t n) { int t = 0; for (size_t i = 0; i < n; i++) t += items[i]; return t; }
+static inline void bind_zero(int* items, size_t n) { for (size_t i = 0; i < n; i++) items[i] = 0; }
+int bind_log(const char* format, ...);
+";
+
+/// `[CLI-5]` — `ember bind <header> --init` writes a starter overlay: each fact the header cannot
+/// state a `TODO(…)` word, each derived one a comment, each skipped declaration a comment with its
+/// reason. It compiles unchanged (every call still `unsafe`), is never written over, and `--merge`
+/// adds only what it lacks, keeping what was written by hand.
+#[test]
+fn bind_init_writes_a_starter_overlay_that_compiles_unchanged() {
+    let root = workspace_root();
+    let dir = temporary_directory("bind-init");
+    std::fs::write(dir.join("calc.h"), BIND_HEADER).unwrap();
+    let init = ember(&["bind", "calc.h", "--init"], &dir);
+    assert_eq!(init.exit, 0, "{}", init.stderr);
+    let overlay = dir.join(format!("calc.overlay.{SOURCE_EXT}"));
+    let written = std::fs::read_to_string(&overlay).expect("the starter overlay is written");
+    for line in [
+        "unsafe overlay c \"calc.h\":",
+        "    fn bind_add(a, b) -> unsafe",
+        "    # derived: `items` is a read-only borrow (`const`)",
+        "    fn bind_sum(items: TODO(ownership) TODO(count) TODO(nullable), n)",
+        "    # derived: `items` is a mutable borrow (no `const`)",
+        "    # skipped: `bind_log` (calc.h:5): variadic",
+    ] {
+        assert!(written.contains(line), "the starter overlay lacks {line:?}:\n{written}");
+    }
+    // It compiles unchanged: every call is still the caller's assertion.
+    std::fs::write(dir.join(ember_branding::source_file("main")), format!(
+        "import c \"calc.h\" with (overlay = \"calc.overlay.{SOURCE_EXT}\")\n\nfn main():\n    \
+         items: Array[i32] = [1, 2]\n    unsafe:  # SAFETY(ffi): two live items\n        \
+         println(c.bind_add(1, 2), c.bind_sum(ref_to_ptr(ref items[0]), 2))\n")).unwrap();
+    let checked = ember(&["check", &ember_branding::source_file("main")], &dir);
+    assert_eq!(checked.exit, 0, "the starter overlay does not compile:\n{}", checked.stderr);
+    // Never written over.
+    std::fs::write(&overlay, written.replace("    fn bind_add(a, b) -> unsafe\n", "    fn bind_add(a, b)\n    # mine\n")).unwrap();
+    let again = ember(&["bind", "calc.h", "--init"], &dir);
+    assert_ne!(again.exit, 0, "an existing overlay was written over");
+    // `--merge` adds the new function only.
+    std::fs::write(dir.join("calc.h"), format!("{BIND_HEADER}static inline int bind_neg(int a) {{ return -a; }}\n")).unwrap();
+    let merged = ember(&["bind", "calc.h", "--init", "--merge"], &dir);
+    assert_eq!(merged.exit, 0, "{}", merged.stderr);
+    let after = std::fs::read_to_string(&overlay).unwrap();
+    assert!(after.contains("    fn bind_add(a, b)\n    # mine\n"), "a hand-written entry was lost:\n{after}");
+    assert!(after.contains("    fn bind_neg(a) -> unsafe\n"), "the new function is missing:\n{after}");
+    assert_eq!(after.matches("fn bind_sum(").count(), 1, "an entry was added twice:\n{after}");
+    assert_eq!(after.matches("# skipped: `bind_log`").count(), 1, "a skip was noted twice:\n{after}");
+    let _ = root;
+}
+
+/// `[CLI-6]` — `ember bind --report` lists every skipped declaration and every declaration still
+/// `unsafe` with its unknown facts, and exits non-zero on a skip; `--baseline` limits that to skips
+/// the baseline does not list. `[CLI-7]` — `ember bind --check <overlay>` checks `[FFI-12]` and
+/// prints how many declarations are safe, still `unsafe`, and skipped.
+#[test]
+fn bind_report_and_check_count_what_is_safe_unsafe_and_skipped() {
+    let dir = temporary_directory("bind-report");
+    std::fs::write(dir.join("calc.h"), BIND_HEADER).unwrap();
+    std::fs::write(dir.join(format!("good.{SOURCE_EXT}")), "unsafe overlay c \"calc.h\":\n    fn bind_add(a, b)\n    fn bind_sum(items: borrowed count(n), n)\n    fn bind_zero(items: borrowed TODO(count), n)\n").unwrap();
+    let report = ember(&["bind", "calc.h", "--report", "--overlay", &format!("good.{SOURCE_EXT}")], &dir);
+    assert_ne!(report.exit, 0, "a skip did not fail the report:\n{}", report.stdout);
+    for line in ["skipped: `bind_log` (calc.h:5): variadic", "unsafe: `bind_zero`: `items`: TODO(count)", "1 skipped declaration(s)"] {
+        assert!(report.stdout.contains(line), "the report lacks {line:?}:\n{}", report.stdout);
+    }
+    assert!(!report.stdout.contains("unsafe: `bind_add`") && !report.stdout.contains("unsafe: `bind_sum`"), "{}", report.stdout);
+    let written = ember(&["bind", "calc.h", "--report", "--write-baseline", "skips.txt"], &dir);
+    assert!(written.stdout.contains("unsafe: `bind_add`: safe to call"), "{}", written.stdout);
+    let baselined = ember(&["bind", "calc.h", "--report", "--baseline", "skips.txt"], &dir);
+    assert_eq!(baselined.exit, 0, "a skip in the baseline failed the report:\n{}", baselined.stdout);
+
+    let check = ember(&["bind", "calc.h", "--check", &format!("good.{SOURCE_EXT}")], &dir);
+    assert_eq!(check.exit, 0, "{}", check.stderr);
+    assert!(check.stdout.contains("2 safe, 1 still unsafe, 1 skipped"), "{}", check.stdout);
+    std::fs::write(dir.join(format!("drifted.{SOURCE_EXT}")), "unsafe overlay c \"calc.h\":\n    fn bind_add(a)\n").unwrap();
+    let drifted = ember(&["bind", "calc.h", "--check", &format!("drifted.{SOURCE_EXT}")], &dir);
+    assert_ne!(drifted.exit, 0, "a drifted overlay passed the check");
+    assert!(drifted.stderr.contains("E5010") && drifted.stderr.contains("`bind_add` takes 2 parameters"), "{}", drifted.stderr);
+}

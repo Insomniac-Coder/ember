@@ -1,4 +1,4 @@
-# The overlay of reject_facts_an_overlay_does_not_state.em: one entry leaves a pointer without
+# The overlay of ../reject_facts_an_overlay_does_not_state.em: one entry leaves a pointer without
 # facts, another marks a fact still unknown.
 
 unsafe overlay c "widgets.h":

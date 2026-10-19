@@ -1575,10 +1575,11 @@ fn render_function(function: &Function, entry: Option<&Entry>, renamed: Option<&
         // `[FFI-11c]` — a `TODO(…)` or `unsafe` word leaves the call unsafe.
         safe = !words.into_iter().any(|written| matches!(word(written), "TODO" | "unsafe"));
         for ((param, ty), written) in function.params.iter().zip(&entry.params) {
-            if written.is_empty() {
+            // `[FFI-11]` — `unsafe` states no fact: it leaves the call unsafe.
+            let mut words: Vec<String> = written.iter().filter(|written| word(written) != "unsafe").cloned().collect();
+            if words.is_empty() {
                 continue;
             }
-            let mut words = written.clone();
             // `[FFI-2a]` — `T*` is a mutable borrow: Ember's is exclusive.
             if ty.pointee.as_ref().is_some_and(|(_, constant)| !constant)
                 && words.iter().any(|written| word(written) == "borrowed")
@@ -1588,8 +1589,9 @@ fn render_function(function: &Function, entry: Option<&Entry>, renamed: Option<&
             }
             arguments.push(format!("param({param}, {})", words.join(", ")));
         }
-        if !entry.result.is_empty() {
-            arguments.push(format!("result({})", entry.result.join(", ")));
+        let result_words: Vec<&str> = entry.result.iter().map(String::as_str).filter(|written| word(written) != "unsafe").collect();
+        if !result_words.is_empty() {
+            arguments.push(format!("result({})", result_words.join(", ")));
         }
         arguments.extend(entry.arguments.iter().cloned());
         if safe {
@@ -1666,6 +1668,197 @@ fn render(imported: &Imported, applied: &Applied) -> String {
     }
     let import = if body.contains("ForeignBox[") { "from std.ffi import ForeignBox\n\n" } else { "" };
     format!("# The declarations of `{header}`, written by `import c` ([FFI-6]).\n\n{import}{body}")
+}
+
+/// The overlay entry that states nothing yet for a function: each unknown fact a `TODO(…)` word
+/// (`[FFI-11c]`), and `-> unsafe` where every parameter and the result are scalars, since being safe
+/// to call is the one fact no header states (`[FFI-2]`).
+fn starter_entry(function: &Function) -> String {
+    let todo = |ty: &CType| ty.pointee.is_some() || ty.ember.starts_with("Option[");
+    let mut text = String::new();
+    for (name, ty) in &function.params {
+        if let Some((_, constant)) = &ty.pointee {
+            let borrow = if *constant { "a read-only borrow (`const`)" } else { "a mutable borrow (no `const`)" };
+            let _ = writeln!(text, "    # derived: `{name}` is {borrow}");
+        }
+    }
+    let params: Vec<String> = function
+        .params
+        .iter()
+        .map(|(name, ty)| if todo(ty) { format!("{name}: TODO(ownership) TODO(count) TODO(nullable)") } else { name.trim_start_matches("r#").to_string() })
+        .collect();
+    let result = match &function.result {
+        Some(ty) if todo(ty) => " -> TODO(ownership) TODO(count) TODO(nullable) TODO(lifetime)",
+        _ if function.params.iter().any(|(_, ty)| todo(ty)) => "",
+        _ => " -> unsafe",
+    };
+    let _ = writeln!(text, "    fn {}({}){result}", function.name, params.join(", "));
+    text
+}
+
+/// `[CLI-5]`, `[CLI-6]`, `[CLI-7]` — `ember bind <header> [-I dir] [-D name[=value]]
+/// (--init [--merge] | --report [--overlay <file>] [--baseline <file> | --write-baseline <file>]
+/// | --check <overlay>)`.
+pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
+    use std::process::ExitCode;
+    let mut header = None;
+    let (mut include_paths, mut defines) = (Vec::new(), Vec::new());
+    let (mut init, mut merge, mut report) = (false, false, false);
+    let (mut check, mut overlay, mut baseline, mut write_baseline) = (None, None, None, None);
+    let mut rest = args.iter();
+    while let Some(argument) = rest.next() {
+        let mut value = |flag: &str| rest.next().cloned().ok_or(format!("`{flag}` needs a value"));
+        match argument.as_str() {
+            "--init" => init = true,
+            "--merge" => merge = true,
+            "--report" => report = true,
+            "--check" => check = Some(value("--check")?),
+            "--overlay" => overlay = Some(value("--overlay")?),
+            "--baseline" => baseline = Some(value("--baseline")?),
+            "--write-baseline" => write_baseline = Some(value("--write-baseline")?),
+            "-I" => include_paths.push(PathBuf::from(value("-I")?)),
+            "-D" => defines.push(value("-D")?),
+            "--explain" | "--emit-embind" => return Err(format!("`ember bind {argument}` is not implemented yet (E0900)")),
+            flag if flag.starts_with('-') => return Err(format!("unknown `ember bind` option `{flag}`")),
+            file if header.is_none() => header = Some(PathBuf::from(file)),
+            extra => return Err(format!("unexpected `ember bind` argument `{extra}`")),
+        }
+    }
+    let header = header.ok_or("`ember bind` needs a header")?;
+    let file = header.file_name().ok_or("`ember bind` needs a header file")?.to_string_lossy().into_owned();
+    let dir = header.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf();
+    let config = Config { header: &file, from_dir: &dir, include_paths: &include_paths, defines: &defines, flags: &[], symbol_stem: "bind" };
+    let imported = import_header(&config)?;
+    let skipped: Vec<&Skipped> = imported.skipped.iter().chain(&imported.macros).collect();
+    let mut map = SourceMap::new();
+    let mut sink = Sink::new();
+    let mut load_overlay = |path: &str, sink: &mut Sink| -> Result<Applied, String> {
+        let id = map.load(path).map_err(|error| format!("cannot read `{path}`: {error}"))?;
+        let text = map.file(id).text.clone();
+        let lexed = ember_lexer::lex(id, &text, sink);
+        let parsed = ember_parser::parse(id, &text, lexed.tokens, sink);
+        let overlays: Vec<&ast::OverlayDecl> = parsed
+            .items
+            .iter()
+            .filter_map(|item| match &item.kind {
+                ast::ItemKind::Overlay(overlay) => Some(overlay),
+                _ => None,
+            })
+            .collect();
+        match overlays.as_slice() {
+            [overlay] => Ok(apply(overlay, &text, &file, &imported, sink)),
+            _ => Err(format!("`{path}` holds {} overlay declarations: it should hold one", overlays.len())),
+        }
+    };
+    if init {
+        // `[CLI-5]` — a starter overlay beside the header, never written over.
+        let path = dir.join(format!("{}.overlay.{}", header.file_stem().unwrap_or_default().to_string_lossy(), ember_branding::SOURCE_EXT));
+        let existing = std::fs::read_to_string(&path).ok();
+        if existing.is_some() && !merge {
+            return Err(format!("`{}` exists: `--merge` adds only the declarations it lacks", path.display()));
+        }
+        let have = match &existing {
+            Some(_) => load_overlay(&path.to_string_lossy(), &mut sink)?,
+            None => Applied::default(),
+        };
+        let mut entries = String::new();
+        for function in imported.functions.iter().filter(|function| !have.functions.contains_key(&function.name)) {
+            entries.push_str(&starter_entry(function));
+        }
+        let mentioned = existing.as_deref().unwrap_or("");
+        for skip in skipped.iter().filter(|skip| !mentioned.contains(&format!("# skipped: `{}`", skip.name))) {
+            let _ = writeln!(entries, "    # skipped: `{}` ({}): {}", skip.name, skip.at, skip.reason);
+        }
+        let text = match existing {
+            Some(mut text) => {
+                if !text.ends_with('\n') {
+                    text.push('\n');
+                }
+                text + &entries
+            }
+            None => format!(
+                "# A starter overlay for `{file}`, written by `ember bind --init` ([CLI-5]): replace each `TODO(…)` with\n\
+                 # its fact, and remove `-> unsafe` from a function you assert safe to call ([FFI-2]).\n\n\
+                 unsafe overlay c \"{file}\":\n{entries}"
+            ),
+        };
+        std::fs::write(&path, text).map_err(|error| format!("cannot write `{}`: {error}", path.display()))?;
+        println!("wrote {}", path.display());
+        return Ok(ExitCode::SUCCESS);
+    }
+    if let Some(path) = check {
+        // `[CLI-7]` — `[FFI-12]`, then how many declarations are safe, still unsafe, and skipped.
+        let applied = load_overlay(&path, &mut sink)?;
+        eprint!("{}", sink.render(&map));
+        let safe = imported
+            .functions
+            .iter()
+            .filter(|function| applied.functions.get(&function.name).is_some_and(|entry| {
+                !entry.params.iter().flatten().chain(&entry.result).any(|written| matches!(word(written), "TODO" | "unsafe"))
+            }))
+            .count();
+        println!("{safe} safe, {} still unsafe, {} skipped", imported.functions.len() - safe, skipped.len());
+        return Ok(if sink.has_errors() { ExitCode::FAILURE } else { ExitCode::SUCCESS });
+    }
+    if report {
+        // `[CLI-6]` — every skipped declaration, every one still unsafe with its unknown facts.
+        let applied = match &overlay {
+            Some(path) => load_overlay(path, &mut sink)?,
+            None => Applied::default(),
+        };
+        eprint!("{}", sink.render(&map));
+        for skip in &skipped {
+            println!("skipped: `{}` ({}): {}", skip.name, skip.at, skip.reason);
+        }
+        for opaque in &imported.opaque {
+            println!("opaque: `{}` ({}): usable only behind a pointer: {}", opaque.name, opaque.at, opaque.reason);
+        }
+        for function in &imported.functions {
+            let entry = applied.functions.get(&function.name);
+            let mut unknown = Vec::new();
+            match entry {
+                None => unknown.push("safe to call".to_string()),
+                Some(entry) => {
+                    for ((name, _), words) in function.params.iter().zip(&entry.params) {
+                        let todo: Vec<&str> = words.iter().filter(|written| word(written) == "TODO").map(String::as_str).collect();
+                        if !todo.is_empty() {
+                            unknown.push(format!("`{name}`: {}", todo.join(" ")));
+                        }
+                    }
+                    if entry.result.iter().any(|written| matches!(word(written), "TODO" | "unsafe")) {
+                        unknown.push(format!("the result: {}", entry.result.join(" ")));
+                    }
+                }
+            }
+            if entry.is_none() {
+                for (name, ty) in &function.params {
+                    if ty.pointee.is_some() {
+                        unknown.push(format!("`{name}`: its ownership, count and nullability"));
+                    }
+                }
+                if function.result.as_ref().is_some_and(|ty| ty.pointee.is_some()) {
+                    unknown.push("the result: its ownership, count, nullability and lifetime".to_string());
+                }
+            }
+            if !unknown.is_empty() {
+                println!("unsafe: `{}`: {}", function.name, unknown.join("; "));
+            }
+        }
+        let names: Vec<&str> = skipped.iter().map(|skip| skip.name.as_str()).collect();
+        if let Some(path) = write_baseline {
+            std::fs::write(&path, names.join("\n") + "\n").map_err(|error| format!("cannot write `{path}`: {error}"))?;
+        }
+        let known: Vec<String> = match &baseline {
+            Some(path) => std::fs::read_to_string(path).map_err(|error| format!("cannot read `{path}`: {error}"))?.lines().map(str::to_string).collect(),
+            None => Vec::new(),
+        };
+        let new = names.iter().filter(|name| !known.iter().any(|known| known == *name)).count();
+        if new > 0 {
+            println!("{new} skipped declaration(s){}", if baseline.is_some() { " not in the baseline" } else { "" });
+        }
+        return Ok(if new > 0 || sink.has_errors() { ExitCode::FAILURE } else { ExitCode::SUCCESS });
+    }
+    Err("`ember bind` needs `--init`, `--report` or `--check <overlay>`".to_string())
 }
 
 fn opaque_by_value(name: &str, why: Option<&str>) -> String {

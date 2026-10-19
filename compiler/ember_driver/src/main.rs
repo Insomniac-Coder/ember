@@ -72,9 +72,11 @@ this compiler does not have yet):
     ember why --alloc|--block|--io|--lock|--sync|--unsafe|--ffi <fn> <file>
                                                    the shortest call chain to that effect
     ember calls --foreign <item>                   every foreign function the item can reach
-    ember bind <header> [--init [--merge] | --report [--baseline <file> | --write-baseline]
-                         | --check <overlay> | --explain <fn> | --emit-embind]
-                                                   C header bindings (not built yet)
+    ember bind <header> [-I <dir>] [-D <name[=value]>] (--init [--merge] | --report [--overlay <file>]
+                         [--baseline <file> | --write-baseline <file>] | --check <overlay>)
+                                                   a starter overlay, what is skipped or still unsafe,
+                                                   an overlay checked against the header
+                                                   (--explain and --emit-embind are not built yet)
     ember shader-bind <reflection.json>            Annex D (not built yet)
     ember tcb [--module <m>] [--json] <file.em>    the trusted-base report (Annex C)
     ember toolchain list|install|default           manage installed C toolchains (not built yet)
@@ -567,6 +569,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "tcb" => tcb(&args[1..]),
         "audit" => audit(&args[1..]),
         "calls" => calls(&args[1..]),
+        "bind" => cimport::bind(&args[1..]),
         "why" => why(&args[1..]),
         "test" => test_runner::command(&args[1..]),
         "build" | "run" | "check" => {

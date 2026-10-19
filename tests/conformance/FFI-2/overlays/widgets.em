@@ -5,6 +5,7 @@ unsafe overlay c "widgets.h":
     type Widget
 
     fn widget_new(id) -> returns_owned(destructor=widget_free) one
+    fn widget_take(widget: owned one)
     fn widget_sum(items: borrowed count(n), n)
     fn widget_fill(items: borrowed count(n), n, value)
     fn widget_label(id) -> borrowed nul_terminated from(static)

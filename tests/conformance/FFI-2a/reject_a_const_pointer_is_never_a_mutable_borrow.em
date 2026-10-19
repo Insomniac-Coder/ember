@@ -3,7 +3,7 @@
 # `[FFI-2a]` — mutability comes from `const` alone: `int*` is a mutable borrow, so a shared view
 # does not pass, and `const int*` a shared one, so its result is not a mutable reference.
 
-import c "buffers.h" with (overlay = "buffers_overlay.em")
+import c "buffers.h" with (overlay = "overlays/buffers.em")
 
 fn main():
     items: Array[i32] = [4, 5, 6]

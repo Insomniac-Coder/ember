@@ -5,7 +5,7 @@
 # `[FFI-12]` — an overlay entry names a function of the header, with its parameters, in order, by
 # their names in the header: this one matches, and its calls are safe (`[FFI-2]`).
 
-import c "tally.h" with (overlay = "tally_overlay.em")
+import c "tally.h" with (overlay = "overlays/tally.em")
 
 fn main():
     items: Array[i32] = [1, 2, 3, 4]

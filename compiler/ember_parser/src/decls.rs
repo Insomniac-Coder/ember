@@ -751,10 +751,11 @@ impl Parser<'_> {
         loop {
             let word = match self.peek() {
                 TokenKind::Ident(_) | TokenKind::RawIdent(_) => self.expect_ident(),
-                TokenKind::Keyword(Kw::Unsafe) => {
+                // `unsafe` and `owned` are keywords elsewhere and contract words here (`[FFI-11]`).
+                &TokenKind::Keyword(keyword @ (Kw::Unsafe | Kw::Owned)) => {
                     let span = self.span();
                     self.bump();
-                    Ident { name: "unsafe".into(), span }
+                    Ident { name: keyword.as_str().into(), span }
                 }
                 _ => break,
             };

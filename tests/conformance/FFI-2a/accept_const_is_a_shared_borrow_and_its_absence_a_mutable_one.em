@@ -7,7 +7,7 @@
 # borrow (a `Span[i32]`), `int*` a mutable one (a `MutSpan[i32]`), so the overlay's entries say
 # only what C cannot: the count, and the result's lifetime, which is never derived.
 
-import c "buffers.h" with (overlay = "buffers_overlay.em")
+import c "buffers.h" with (overlay = "overlays/buffers.em")
 
 fn main():
     items: Array[i32] = [4, 5, 6]

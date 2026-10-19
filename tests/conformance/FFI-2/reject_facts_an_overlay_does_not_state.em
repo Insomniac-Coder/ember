@@ -5,7 +5,7 @@
 # entry stays unsafe to call; an entry that leaves a pointer without facts asserts something it
 # cannot (`E5002` at the entry's declaration); a `TODO(…)` word keeps the call unsafe (`[FFI-11c]`).
 
-import c "./widgets.c" with (overlay = "partial_overlay.em") as w
+import c "./widgets.c" with (overlay = "overlays/partial.em") as w
 
 fn main():
     items: [i32; 3] = [1, 2, 3]
