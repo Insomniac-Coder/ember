@@ -339,7 +339,7 @@ pub interface ParamOps:
     ## iterates the shortest such list and probes the rest (`None` requires nothing).
     fn driver(view: View) -> Option[Span[Entity]]
     ## Its item for `e`, read-only, or `None` where `e` does not match it.
-    fn get(view: View, e: Entity) -> Option[ReadItem]
+    fn get(view: ref View, e: Entity) -> Option[ReadItem]
     ## Its item for `e`, or `None` where `e` does not match it.
     fn get_mut(mut view: View, e: Entity) -> Option[Item]
     ## `[ECS-4]` — its accesses, at run time: each component it reads or writes.
@@ -397,7 +397,7 @@ extend[T: Component] Read[T] implements ParamOps:
     fn driver(view: Read[T]) -> Option[Span[Entity]]:
         return Some(view.set.entities)
 
-    fn get(view: Read[T], e: Entity) -> Option[ref T]:
+    fn get(view: ref Read[T], e: Entity) -> Option[ref T]:
         match view.set.slot(e):
             Some(at):
                 return Some(ref view.values[at])
@@ -436,7 +436,7 @@ extend[T: Component] Write[T] implements ParamOps:
     fn driver(view: Write[T]) -> Option[Span[Entity]]:
         return Some(view.set.entities)
 
-    fn get(view: Write[T], e: Entity) -> Option[ref T]:
+    fn get(view: ref Write[T], e: Entity) -> Option[ref T]:
         match view.set.slot(e):
             Some(at):
                 return Some(ref view.values[at])
@@ -486,7 +486,7 @@ extend[T: Component] ReadSoa[T] implements ParamOps:
     fn driver(view: ReadSoa[T]) -> Option[Span[Entity]]:
         return Some(view.set.entities)
 
-    fn get(view: ReadSoa[T], e: Entity) -> Option[SoARef[T]]:
+    fn get(view: ref ReadSoa[T], e: Entity) -> Option[SoARef[T]]:
         match view.set.slot(e):
             Some(at):
                 return Some(view.values[at])
@@ -526,7 +526,7 @@ extend[T: Component] WriteSoa[T] implements ParamOps:
     fn driver(view: WriteSoa[T]) -> Option[Span[Entity]]:
         return Some(view.set.entities)
 
-    fn get(view: WriteSoa[T], e: Entity) -> Option[SoARef[T]]:
+    fn get(view: ref WriteSoa[T], e: Entity) -> Option[SoARef[T]]:
         match view.set.slot(e):
             Some(at):
                 return Some(view.values[at])
@@ -565,8 +565,8 @@ extend[O: ParamOps] Maybe[O] implements ParamOps:
     fn driver(view: Maybe[O]) -> Option[Span[Entity]]:
         return None
 
-    fn get(view: Maybe[O], e: Entity) -> Option[Option[O.ReadItem]]:
-        return Some(O.get(view.inner, e))
+    fn get(view: ref Maybe[O], e: Entity) -> Option[Option[O.ReadItem]]:
+        return Some(O.get(ref view.inner, e))
 
     fn get_mut(mut view: Maybe[O], e: Entity) -> Option[Option[O.Item]]:
         return Some(O.get_mut(view.inner, e))
@@ -604,7 +604,7 @@ extend[T: Component] Without[T] implements ParamOps:
     fn driver(view: Without[T]) -> Option[Span[Entity]]:
         return None
 
-    fn get(view: Without[T], e: Entity) -> Option[()]:
+    fn get(view: ref Without[T], e: Entity) -> Option[()]:
         if view.set.slot(e).is_some():
             return None
         return Some(())
@@ -642,7 +642,7 @@ extend Entities implements ParamOps:
     fn driver(view: Entities) -> Option[Span[Entity]]:
         return None
 
-    fn get(view: Entities, e: Entity) -> Option[Entity]:
+    fn get(view: ref Entities, e: Entity) -> Option[Entity]:
         return Some(e)
 
     fn get_mut(mut view: Entities, e: Entity) -> Option[Entity]:
@@ -669,7 +669,7 @@ fn shorter(a: Option[Span[Entity]], b: Option[Span[Entity]]) -> Option[Span[Enti
             return b
 
 ## `[ECS-3]` — a tuple of parameters: an entity matches it where it matches each; it is driven by
-## the shortest list any of them requires.
+## the shortest list any of them requires. Tuples of two to eight parameters.
 extend[A: ParamOps, B: ParamOps] (A, B) implements ParamOps:
     type Item = (A.Item, B.Item)
     type ReadItem = (A.ReadItem, B.ReadItem)
@@ -687,15 +687,15 @@ extend[A: ParamOps, B: ParamOps] (A, B) implements ParamOps:
     fn driver(view: (A.View, B.View)) -> Option[Span[Entity]]:
         return shorter(A.driver(view.0), B.driver(view.1))
 
-    fn get(view: (A.View, B.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem)]:
-        a = A.get(view.0, e)?
-        b = B.get(view.1, e)?
-        return Some((a, b))
+    fn get(view: ref (A.View, B.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem)]:
+        got0 = A.get(ref view.0, e)?
+        got1 = B.get(ref view.1, e)?
+        return Some((got0, got1))
 
     fn get_mut(mut view: (A.View, B.View), e: Entity) -> Option[(A.Item, B.Item)]:
-        a = A.get_mut(view.0, e)?
-        b = B.get_mut(view.1, e)?
-        return Some((a, b))
+        got0 = A.get_mut(view.0, e)?
+        got1 = B.get_mut(view.1, e)?
+        return Some((got0, got1))
 
     fn accesses(mut out: Array[Access]):
         A.accesses(out)
@@ -721,17 +721,17 @@ extend[A: ParamOps, B: ParamOps, C: ParamOps] (A, B, C) implements ParamOps:
     fn driver(view: (A.View, B.View, C.View)) -> Option[Span[Entity]]:
         return shorter(shorter(A.driver(view.0), B.driver(view.1)), C.driver(view.2))
 
-    fn get(view: (A.View, B.View, C.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem, C.ReadItem)]:
-        a = A.get(view.0, e)?
-        b = B.get(view.1, e)?
-        c = C.get(view.2, e)?
-        return Some((a, b, c))
+    fn get(view: ref (A.View, B.View, C.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem, C.ReadItem)]:
+        got0 = A.get(ref view.0, e)?
+        got1 = B.get(ref view.1, e)?
+        got2 = C.get(ref view.2, e)?
+        return Some((got0, got1, got2))
 
     fn get_mut(mut view: (A.View, B.View, C.View), e: Entity) -> Option[(A.Item, B.Item, C.Item)]:
-        a = A.get_mut(view.0, e)?
-        b = B.get_mut(view.1, e)?
-        c = C.get_mut(view.2, e)?
-        return Some((a, b, c))
+        got0 = A.get_mut(view.0, e)?
+        got1 = B.get_mut(view.1, e)?
+        got2 = C.get_mut(view.2, e)?
+        return Some((got0, got1, got2))
 
     fn accesses(mut out: Array[Access]):
         A.accesses(out)
@@ -740,6 +740,236 @@ extend[A: ParamOps, B: ParamOps, C: ParamOps] (A, B, C) implements ParamOps:
 
 extend[A: QueryParam, B: QueryParam, C: QueryParam] (A, B, C) implements QueryParam:
     type Ops = (A.Ops, B.Ops, C.Ops)
+
+extend[A: ParamOps, B: ParamOps, C: ParamOps, D: ParamOps] (A, B, C, D) implements ParamOps:
+    type Item = (A.Item, B.Item, C.Item, D.Item)
+    type ReadItem = (A.ReadItem, B.ReadItem, C.ReadItem, D.ReadItem)
+    type Fetch = (A.Fetch, B.Fetch, C.Fetch, D.Fetch)
+    type View = (A.View, B.View, C.View, D.View)
+    type Reads = (A.Reads, B.Reads, C.Reads, D.Reads)
+    type Writes = (A.Writes, B.Writes, C.Writes, D.Writes)
+
+    fn fetch(world: World) -> (A.Fetch, B.Fetch, C.Fetch, D.Fetch):
+        return (A.fetch(world), B.fetch(world), C.fetch(world), D.fetch(world))
+
+    fn view(fetch: ref (A.Fetch, B.Fetch, C.Fetch, D.Fetch)) -> (A.View, B.View, C.View, D.View):
+        return (A.view(ref fetch.0), B.view(ref fetch.1), C.view(ref fetch.2), D.view(ref fetch.3))
+
+    fn driver(view: (A.View, B.View, C.View, D.View)) -> Option[Span[Entity]]:
+        return shorter(shorter(shorter(A.driver(view.0), B.driver(view.1)), C.driver(view.2)), D.driver(view.3))
+
+    fn get(view: ref (A.View, B.View, C.View, D.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem, C.ReadItem, D.ReadItem)]:
+        got0 = A.get(ref view.0, e)?
+        got1 = B.get(ref view.1, e)?
+        got2 = C.get(ref view.2, e)?
+        got3 = D.get(ref view.3, e)?
+        return Some((got0, got1, got2, got3))
+
+    fn get_mut(mut view: (A.View, B.View, C.View, D.View), e: Entity) -> Option[(A.Item, B.Item, C.Item, D.Item)]:
+        got0 = A.get_mut(view.0, e)?
+        got1 = B.get_mut(view.1, e)?
+        got2 = C.get_mut(view.2, e)?
+        got3 = D.get_mut(view.3, e)?
+        return Some((got0, got1, got2, got3))
+
+    fn accesses(mut out: Array[Access]):
+        A.accesses(out)
+        B.accesses(out)
+        C.accesses(out)
+        D.accesses(out)
+
+extend[A: QueryParam, B: QueryParam, C: QueryParam, D: QueryParam] (A, B, C, D) implements QueryParam:
+    type Ops = (A.Ops, B.Ops, C.Ops, D.Ops)
+
+extend[A: ParamOps, B: ParamOps, C: ParamOps, D: ParamOps, E: ParamOps] (A, B, C, D, E) implements ParamOps:
+    type Item = (A.Item, B.Item, C.Item, D.Item, E.Item)
+    type ReadItem = (A.ReadItem, B.ReadItem, C.ReadItem, D.ReadItem, E.ReadItem)
+    type Fetch = (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch)
+    type View = (A.View, B.View, C.View, D.View, E.View)
+    type Reads = (A.Reads, B.Reads, C.Reads, D.Reads, E.Reads)
+    type Writes = (A.Writes, B.Writes, C.Writes, D.Writes, E.Writes)
+
+    fn fetch(world: World) -> (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch):
+        return (A.fetch(world), B.fetch(world), C.fetch(world), D.fetch(world), E.fetch(world))
+
+    fn view(fetch: ref (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch)) -> (A.View, B.View, C.View, D.View, E.View):
+        return (A.view(ref fetch.0), B.view(ref fetch.1), C.view(ref fetch.2), D.view(ref fetch.3), E.view(ref fetch.4))
+
+    fn driver(view: (A.View, B.View, C.View, D.View, E.View)) -> Option[Span[Entity]]:
+        return shorter(shorter(shorter(shorter(A.driver(view.0), B.driver(view.1)), C.driver(view.2)), D.driver(view.3)), E.driver(view.4))
+
+    fn get(view: ref (A.View, B.View, C.View, D.View, E.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem, C.ReadItem, D.ReadItem, E.ReadItem)]:
+        got0 = A.get(ref view.0, e)?
+        got1 = B.get(ref view.1, e)?
+        got2 = C.get(ref view.2, e)?
+        got3 = D.get(ref view.3, e)?
+        got4 = E.get(ref view.4, e)?
+        return Some((got0, got1, got2, got3, got4))
+
+    fn get_mut(mut view: (A.View, B.View, C.View, D.View, E.View), e: Entity) -> Option[(A.Item, B.Item, C.Item, D.Item, E.Item)]:
+        got0 = A.get_mut(view.0, e)?
+        got1 = B.get_mut(view.1, e)?
+        got2 = C.get_mut(view.2, e)?
+        got3 = D.get_mut(view.3, e)?
+        got4 = E.get_mut(view.4, e)?
+        return Some((got0, got1, got2, got3, got4))
+
+    fn accesses(mut out: Array[Access]):
+        A.accesses(out)
+        B.accesses(out)
+        C.accesses(out)
+        D.accesses(out)
+        E.accesses(out)
+
+extend[A: QueryParam, B: QueryParam, C: QueryParam, D: QueryParam, E: QueryParam] (A, B, C, D, E) implements QueryParam:
+    type Ops = (A.Ops, B.Ops, C.Ops, D.Ops, E.Ops)
+
+extend[A: ParamOps, B: ParamOps, C: ParamOps, D: ParamOps, E: ParamOps, F: ParamOps] (A, B, C, D, E, F) implements ParamOps:
+    type Item = (A.Item, B.Item, C.Item, D.Item, E.Item, F.Item)
+    type ReadItem = (A.ReadItem, B.ReadItem, C.ReadItem, D.ReadItem, E.ReadItem, F.ReadItem)
+    type Fetch = (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch, F.Fetch)
+    type View = (A.View, B.View, C.View, D.View, E.View, F.View)
+    type Reads = (A.Reads, B.Reads, C.Reads, D.Reads, E.Reads, F.Reads)
+    type Writes = (A.Writes, B.Writes, C.Writes, D.Writes, E.Writes, F.Writes)
+
+    fn fetch(world: World) -> (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch, F.Fetch):
+        return (A.fetch(world), B.fetch(world), C.fetch(world), D.fetch(world), E.fetch(world), F.fetch(world))
+
+    fn view(fetch: ref (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch, F.Fetch)) -> (A.View, B.View, C.View, D.View, E.View, F.View):
+        return (A.view(ref fetch.0), B.view(ref fetch.1), C.view(ref fetch.2), D.view(ref fetch.3), E.view(ref fetch.4), F.view(ref fetch.5))
+
+    fn driver(view: (A.View, B.View, C.View, D.View, E.View, F.View)) -> Option[Span[Entity]]:
+        return shorter(shorter(shorter(shorter(shorter(A.driver(view.0), B.driver(view.1)), C.driver(view.2)), D.driver(view.3)), E.driver(view.4)), F.driver(view.5))
+
+    fn get(view: ref (A.View, B.View, C.View, D.View, E.View, F.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem, C.ReadItem, D.ReadItem, E.ReadItem, F.ReadItem)]:
+        got0 = A.get(ref view.0, e)?
+        got1 = B.get(ref view.1, e)?
+        got2 = C.get(ref view.2, e)?
+        got3 = D.get(ref view.3, e)?
+        got4 = E.get(ref view.4, e)?
+        got5 = F.get(ref view.5, e)?
+        return Some((got0, got1, got2, got3, got4, got5))
+
+    fn get_mut(mut view: (A.View, B.View, C.View, D.View, E.View, F.View), e: Entity) -> Option[(A.Item, B.Item, C.Item, D.Item, E.Item, F.Item)]:
+        got0 = A.get_mut(view.0, e)?
+        got1 = B.get_mut(view.1, e)?
+        got2 = C.get_mut(view.2, e)?
+        got3 = D.get_mut(view.3, e)?
+        got4 = E.get_mut(view.4, e)?
+        got5 = F.get_mut(view.5, e)?
+        return Some((got0, got1, got2, got3, got4, got5))
+
+    fn accesses(mut out: Array[Access]):
+        A.accesses(out)
+        B.accesses(out)
+        C.accesses(out)
+        D.accesses(out)
+        E.accesses(out)
+        F.accesses(out)
+
+extend[A: QueryParam, B: QueryParam, C: QueryParam, D: QueryParam, E: QueryParam, F: QueryParam] (A, B, C, D, E, F) implements QueryParam:
+    type Ops = (A.Ops, B.Ops, C.Ops, D.Ops, E.Ops, F.Ops)
+
+extend[A: ParamOps, B: ParamOps, C: ParamOps, D: ParamOps, E: ParamOps, F: ParamOps, G: ParamOps] (A, B, C, D, E, F, G) implements ParamOps:
+    type Item = (A.Item, B.Item, C.Item, D.Item, E.Item, F.Item, G.Item)
+    type ReadItem = (A.ReadItem, B.ReadItem, C.ReadItem, D.ReadItem, E.ReadItem, F.ReadItem, G.ReadItem)
+    type Fetch = (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch, F.Fetch, G.Fetch)
+    type View = (A.View, B.View, C.View, D.View, E.View, F.View, G.View)
+    type Reads = (A.Reads, B.Reads, C.Reads, D.Reads, E.Reads, F.Reads, G.Reads)
+    type Writes = (A.Writes, B.Writes, C.Writes, D.Writes, E.Writes, F.Writes, G.Writes)
+
+    fn fetch(world: World) -> (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch, F.Fetch, G.Fetch):
+        return (A.fetch(world), B.fetch(world), C.fetch(world), D.fetch(world), E.fetch(world), F.fetch(world), G.fetch(world))
+
+    fn view(fetch: ref (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch, F.Fetch, G.Fetch)) -> (A.View, B.View, C.View, D.View, E.View, F.View, G.View):
+        return (A.view(ref fetch.0), B.view(ref fetch.1), C.view(ref fetch.2), D.view(ref fetch.3), E.view(ref fetch.4), F.view(ref fetch.5), G.view(ref fetch.6))
+
+    fn driver(view: (A.View, B.View, C.View, D.View, E.View, F.View, G.View)) -> Option[Span[Entity]]:
+        return shorter(shorter(shorter(shorter(shorter(shorter(A.driver(view.0), B.driver(view.1)), C.driver(view.2)), D.driver(view.3)), E.driver(view.4)), F.driver(view.5)), G.driver(view.6))
+
+    fn get(view: ref (A.View, B.View, C.View, D.View, E.View, F.View, G.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem, C.ReadItem, D.ReadItem, E.ReadItem, F.ReadItem, G.ReadItem)]:
+        got0 = A.get(ref view.0, e)?
+        got1 = B.get(ref view.1, e)?
+        got2 = C.get(ref view.2, e)?
+        got3 = D.get(ref view.3, e)?
+        got4 = E.get(ref view.4, e)?
+        got5 = F.get(ref view.5, e)?
+        got6 = G.get(ref view.6, e)?
+        return Some((got0, got1, got2, got3, got4, got5, got6))
+
+    fn get_mut(mut view: (A.View, B.View, C.View, D.View, E.View, F.View, G.View), e: Entity) -> Option[(A.Item, B.Item, C.Item, D.Item, E.Item, F.Item, G.Item)]:
+        got0 = A.get_mut(view.0, e)?
+        got1 = B.get_mut(view.1, e)?
+        got2 = C.get_mut(view.2, e)?
+        got3 = D.get_mut(view.3, e)?
+        got4 = E.get_mut(view.4, e)?
+        got5 = F.get_mut(view.5, e)?
+        got6 = G.get_mut(view.6, e)?
+        return Some((got0, got1, got2, got3, got4, got5, got6))
+
+    fn accesses(mut out: Array[Access]):
+        A.accesses(out)
+        B.accesses(out)
+        C.accesses(out)
+        D.accesses(out)
+        E.accesses(out)
+        F.accesses(out)
+        G.accesses(out)
+
+extend[A: QueryParam, B: QueryParam, C: QueryParam, D: QueryParam, E: QueryParam, F: QueryParam, G: QueryParam] (A, B, C, D, E, F, G) implements QueryParam:
+    type Ops = (A.Ops, B.Ops, C.Ops, D.Ops, E.Ops, F.Ops, G.Ops)
+
+extend[A: ParamOps, B: ParamOps, C: ParamOps, D: ParamOps, E: ParamOps, F: ParamOps, G: ParamOps, H: ParamOps] (A, B, C, D, E, F, G, H) implements ParamOps:
+    type Item = (A.Item, B.Item, C.Item, D.Item, E.Item, F.Item, G.Item, H.Item)
+    type ReadItem = (A.ReadItem, B.ReadItem, C.ReadItem, D.ReadItem, E.ReadItem, F.ReadItem, G.ReadItem, H.ReadItem)
+    type Fetch = (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch, F.Fetch, G.Fetch, H.Fetch)
+    type View = (A.View, B.View, C.View, D.View, E.View, F.View, G.View, H.View)
+    type Reads = (A.Reads, B.Reads, C.Reads, D.Reads, E.Reads, F.Reads, G.Reads, H.Reads)
+    type Writes = (A.Writes, B.Writes, C.Writes, D.Writes, E.Writes, F.Writes, G.Writes, H.Writes)
+
+    fn fetch(world: World) -> (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch, F.Fetch, G.Fetch, H.Fetch):
+        return (A.fetch(world), B.fetch(world), C.fetch(world), D.fetch(world), E.fetch(world), F.fetch(world), G.fetch(world), H.fetch(world))
+
+    fn view(fetch: ref (A.Fetch, B.Fetch, C.Fetch, D.Fetch, E.Fetch, F.Fetch, G.Fetch, H.Fetch)) -> (A.View, B.View, C.View, D.View, E.View, F.View, G.View, H.View):
+        return (A.view(ref fetch.0), B.view(ref fetch.1), C.view(ref fetch.2), D.view(ref fetch.3), E.view(ref fetch.4), F.view(ref fetch.5), G.view(ref fetch.6), H.view(ref fetch.7))
+
+    fn driver(view: (A.View, B.View, C.View, D.View, E.View, F.View, G.View, H.View)) -> Option[Span[Entity]]:
+        return shorter(shorter(shorter(shorter(shorter(shorter(shorter(A.driver(view.0), B.driver(view.1)), C.driver(view.2)), D.driver(view.3)), E.driver(view.4)), F.driver(view.5)), G.driver(view.6)), H.driver(view.7))
+
+    fn get(view: ref (A.View, B.View, C.View, D.View, E.View, F.View, G.View, H.View), e: Entity) -> Option[(A.ReadItem, B.ReadItem, C.ReadItem, D.ReadItem, E.ReadItem, F.ReadItem, G.ReadItem, H.ReadItem)]:
+        got0 = A.get(ref view.0, e)?
+        got1 = B.get(ref view.1, e)?
+        got2 = C.get(ref view.2, e)?
+        got3 = D.get(ref view.3, e)?
+        got4 = E.get(ref view.4, e)?
+        got5 = F.get(ref view.5, e)?
+        got6 = G.get(ref view.6, e)?
+        got7 = H.get(ref view.7, e)?
+        return Some((got0, got1, got2, got3, got4, got5, got6, got7))
+
+    fn get_mut(mut view: (A.View, B.View, C.View, D.View, E.View, F.View, G.View, H.View), e: Entity) -> Option[(A.Item, B.Item, C.Item, D.Item, E.Item, F.Item, G.Item, H.Item)]:
+        got0 = A.get_mut(view.0, e)?
+        got1 = B.get_mut(view.1, e)?
+        got2 = C.get_mut(view.2, e)?
+        got3 = D.get_mut(view.3, e)?
+        got4 = E.get_mut(view.4, e)?
+        got5 = F.get_mut(view.5, e)?
+        got6 = G.get_mut(view.6, e)?
+        got7 = H.get_mut(view.7, e)?
+        return Some((got0, got1, got2, got3, got4, got5, got6, got7))
+
+    fn accesses(mut out: Array[Access]):
+        A.accesses(out)
+        B.accesses(out)
+        C.accesses(out)
+        D.accesses(out)
+        E.accesses(out)
+        F.accesses(out)
+        G.accesses(out)
+        H.accesses(out)
+
+extend[A: QueryParam, B: QueryParam, C: QueryParam, D: QueryParam, E: QueryParam, F: QueryParam, G: QueryParam, H: QueryParam] (A, B, C, D, E, F, G, H) implements QueryParam:
+    type Ops = (A.Ops, B.Ops, C.Ops, D.Ops, E.Ops, F.Ops, G.Ops, H.Ops)
 
 ## `[ECS-3]` — a view over a world's storages for one system's run: `iter` yields each matching
 ## entity's items read-only, `iter_mut` yields `ref mut` for `Mut` parameters (and needs `mut q`).
