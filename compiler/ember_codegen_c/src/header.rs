@@ -85,8 +85,20 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
                 Definition::Alias(underlying) => line(&mut out, &format!("typedef {underlying} {name};")),
                 Definition::FnPointer { ret, convention, args } =>
                     line(&mut out, &format!("typedef {ret} ({convention}*{name})({args});")),
+                // `[LAY-2]` — the layout check in C++'s spelling too, for a C++ host.
                 Definition::Struct(members) => {
-                    for text in emitter.struct_definition(name, members, *node) { line(&mut out, &text); }
+                    for text in emitter.struct_definition(name, members, *node) {
+                        match text.strip_prefix("_Static_assert(") {
+                            Some(check) => {
+                                line(&mut out, "#ifdef __cplusplus");
+                                line(&mut out, &format!("static_assert({}", check.replace("_Alignof(", "alignof(")));
+                                line(&mut out, "#else");
+                                line(&mut out, &text);
+                                line(&mut out, "#endif");
+                            }
+                            None => line(&mut out, &text),
+                        }
+                    }
                 }
             }
         }
