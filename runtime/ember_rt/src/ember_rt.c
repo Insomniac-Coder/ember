@@ -8673,6 +8673,8 @@ bool ember_env_var(ember_str name, ember_vec* out) {
 
 /* -- [STD-23] std.time --------------------------------------------------------- */
 
+#include <errno.h>
+
 int64_t ember_time_now(void) {
 #if defined(_WIN32)
     LARGE_INTEGER frequency;

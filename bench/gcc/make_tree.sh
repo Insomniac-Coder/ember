@@ -9,7 +9,7 @@ DEST=~/ember-bench-tree
 rm -rf "$DEST"
 mkdir -p "$DEST"
 cd "$REPO"
-for f in $(git ls-files -co --exclude-standard Cargo.toml Cargo.lock rust-toolchain.toml compiler std runtime); do
+for f in $(git ls-files -co --exclude-standard Cargo.toml Cargo.lock rust-toolchain.toml compiler std runtime docs/DEFECTS.md); do
   [ -f "$f" ] || continue
   mkdir -p "$DEST/$(dirname "$f")"
   tr -d '\r' < "$f" > "$DEST/$f"

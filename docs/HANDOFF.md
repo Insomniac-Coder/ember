@@ -10739,6 +10739,9 @@ formal 1/9 count or Phase 2's estimate.
 > `ember inspect --deterministic` (`[DET-9]`) on `effects::effect_sources`. Then ADR-214: `Pool`/`Handle`
 > (`[HND-1..3]`), `std.time` (`[STD-23]`), `[FMT-1]` complete, `--report=instantiations` and
 > `max_instantiations` (`[MONO-2]`, `[MONO-3]`, ODR-135, 0.9.10_Hardened_18), D-710, D-711.
+> Then ADR-215: `ember tcb` by category (`[TCB-4]`), `ember audit` (`[CLI-11]`), `ember inspect --cost`
+> (`[COST-4]`, `[COST-2]`, `[PHIL-15]`, `[STD-8a]`).
+> Then ADR-216: `[DET-2]` complete (ODR-136, 0.9.10_Hardened_19), D-712 (Linux runtime build).
 
 
 **2026-10-12 (autopilot), a Part V.5 class probe sweep: D-560..D-566, ODR-104 (0.9.10_Hardened_8).**

@@ -19,7 +19,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_hir::{Builtin, Effects, FloatLib, SimdOp};
-use ember_mir::{AggregateKind, AssertKind, Body, FuncRef, Operand, Rvalue, StmtKind, Terminator};
+use ember_mir::{AggregateKind, AssertKind, Body, CastKind, FuncRef, Operand, Rvalue, StmtKind, Terminator};
 use ember_span::Span;
 use ember_types::{ClassId, OverflowPolicy, Ty, TyKind, TypeTable};
 
@@ -888,6 +888,21 @@ impl SiteBuilder<'_> {
                 for operand in rvalue_operands(rvalue) {
                     self.sync_copy(body, operand, stmt.span, sites);
                 }
+                // `[DET-2]` (ODR-136) — an address observed as a number differs from run to run; a
+                // pointer to a type with padding bytes, reinterpreted, lets those bytes be read.
+                if let Rvalue::Cast { kind: CastKind::Numeric, operand: Operand::Copy(from) | Operand::Move(from), to } = rvalue
+                    && let TyKind::Ptr { inner, .. } = *self.types.kind(place_type(body, self.types, from))
+                {
+                    match *self.types.kind(*to) {
+                        TyKind::Int(_) | TyKind::Uint(_) => {
+                            own(Effects::NONDET, stmt.span, "observing a pointer as an integer", sites);
+                        }
+                        TyKind::Ptr { inner: target, .. } if target != inner && has_padding(self.types, inner) => {
+                            own(Effects::NONDET, stmt.span, "reading memory with padding bytes through another type", sites);
+                        }
+                        _ => {}
+                    }
+                }
                 // `[CLO-10]` — captured state larger than three pointer-sized words goes to
                 // the heap (the backend's own test is the same: D-620).
                 if let Rvalue::Aggregate { kind: AggregateKind::Callable, operands } = rvalue
@@ -1158,6 +1173,20 @@ impl SiteBuilder<'_> {
 }
 
 /// An operation of the body's own with these effects.
+/// `[DET-2]` — whether a value of `ty` has bytes no field holds: between fields, at the end, or in
+/// an enum (whose variants differ in size).
+fn has_padding(types: &TypeTable, ty: Ty) -> bool {
+    let fields: Vec<Ty> = match types.kind(ty) {
+        TyKind::Struct(id) => types.struct_def(*id).fields.iter().map(|field| field.ty).collect(),
+        TyKind::Tuple(items) => items.clone(),
+        TyKind::Array { elem, .. } => return has_padding(types, *elem),
+        TyKind::Enum(_) => return true,
+        _ => return false,
+    };
+    let held: u64 = fields.iter().map(|&field| types.layout(field).size).sum();
+    held < types.layout(ty).size || fields.iter().any(|&field| has_padding(types, field))
+}
+
 fn own(effects: Effects, span: Span, operation: &'static str, sites: &mut Vec<Site>) {
     if !effects.is_empty() {
         sites.push(Site { effects, span, origin: Origin::Operation(operation) });

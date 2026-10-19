@@ -142,9 +142,11 @@ compute the same bits, on one machine and across machines running the same binar
   reassociation or any `@fastmath` relaxation; a transcendental function from the platform library
   instead of `std.math.det`; observing a pointer or handle as an integer, or hashing one; making a
   `RandomState`, directly or as a `Map`'s or `Set`'s hasher; the wall clock, the monotonic clock, the system random source, thread and job
-  completion order; reading uninitialised or padding bytes; any `extern` function not declared
+  completion order; reading padding bytes, recorded where a pointer to a type with padding is
+  reinterpreted as a pointer to another type; any `extern` function not declared
   `@ffi(deterministic)`. Iterating a `Map` or `Set` is **not** `Nondet`: their order is insertion order
-  (`[STD-11]`).
+  (`[STD-11]`). Reading uninitialised memory is not `Nondet` but undefined, outside Safe Ember
+  (`[PHIL-10]`): an `unsafe` obligation (ODR-136).
 * `[DET-3]` A `@deterministic` function may call only `Nondet`-free functions; a callable parameter is
   checked per instantiation (`[EFF-2]`).
 * `[DET-4]` `std.math.det` provides `sin`, `cos`, `tan`, `exp`, `log`, `pow`, `atan2` and `sqrt` for

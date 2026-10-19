@@ -690,6 +690,109 @@ fn instantiations_are_reported_and_a_ceiling_warns() {
     assert!(refused.stderr.contains("error[E9034]") && refused.stderr.contains("is not a positive whole number"), "{}", refused.stderr);
 }
 
+/// `[TCB-4]` — `ember tcb` lists the trusted base by category: the compiler with its version and
+/// the defects its ledger lists as open, the runtime, the standard library, the C++ bridge, external
+/// libraries, the driver and the hardware, then each `unsafe` block and function with its note.
+/// `[CLI-11]` — `ember audit` prints a one-page summary first: the `unsafe` code, how many of the
+/// program's functions carry each effect, and the foreign boundary.
+#[test]
+fn tcb_lists_each_category_and_audit_summarises() {
+    let root = workspace_root();
+    let dir = temporary_directory("audit");
+    let source = dir.join(format!("audit.{SOURCE_EXT}"));
+    std::fs::write(
+        &source,
+        "unsafe extern \"C\":\n    @ffi(effects=[], deterministic)\n    safe fn abs(x: i32) -> i32\n    fn rand() -> i32\n\n\
+         fn grow(mut xs: Array[int]):\n    xs.push(1)\n\n\
+         fn noisy() -> i32:\n    unsafe:  # SAFETY(ffi): rand has no precondition\n        return rand()\n\n\
+         fn main():\n    xs: Array[int] = []\n    grow(xs)\n    println(abs(-2), noisy())\n",
+    )
+    .expect("write the program");
+    let source_arg = source.to_string_lossy().into_owned();
+    let tcb = ember(&["tcb", &source_arg], &root);
+    assert_eq!(tcb.exit, 0, "{}", tcb.stderr);
+    for category in ["Compiler: ember ", "Runtime: ", "Standard library: ", "C++ bridge: ", "External libraries: ", "Driver: ", "Hardware: "] {
+        assert!(tcb.stdout.contains(category), "[TCB-4] no `{category}` line:\n{}", tcb.stdout);
+    }
+    assert!(tcb.stdout.contains("known defects: D-"), "[TCB-4] the ledger's open defects:\n{}", tcb.stdout);
+    assert!(tcb.stdout.contains("block in `noisy`  SAFETY(ffi): rand has no precondition"), "{}", tcb.stdout);
+    let audit = ember(&["audit", &source_arg], &root);
+    assert_eq!(audit.exit, 0, "{}", audit.stderr);
+    let out = &audit.stdout;
+    assert!(out.starts_with("Audit: "), "{out}");
+    assert!(out.contains("  unsafe: 1 block(s) and 0 unsafe fn(s), 1 with a safety note"), "{out}");
+    assert!(out.contains("  effects (functions carrying each): Alloc "), "{out}");
+    assert!(out.contains("Io "), "{out}");
+    assert!(out.contains("  foreign boundary: 2 declaration(s), 1 safe to call"), "{out}");
+    assert!(out.contains("Trusted base: ") && out.contains("Compiler: ember "), "the trusted base follows:\n{out}");
+    let json = ember(&["audit", "--json", &source_arg], &root);
+    let value: serde_json::Value = serde_json::from_str(json.stdout.trim()).expect("audit --json is JSON");
+    assert!(value["effects"]["Alloc"].as_u64().is_some_and(|count| count >= 2), "{}", json.stdout);
+    assert!(value["categories"]["compiler"].as_str().is_some_and(|text| text.contains("known defects")), "{}", json.stdout);
+}
+
+/// `[COST-4]` — `ember inspect --cost` prints every row of the cost table that applies, each with
+/// its class (`[COST-2]`: conditionally elided or guaranteed present here) and its sites, and for a
+/// conditionally elided cost whether each site's was removed and by which proof. `[PHIL-15]` — the
+/// costs the language inserts unwritten are each reported by site: bounds and overflow checks, a
+/// count operation, a dynamic exclusivity check, an indirect call, an allocation. `[STD-8a]` — which
+/// `contains` an `x in c` selects: a scan of an `Array`, linear; a `Set`'s, constant.
+#[test]
+fn inspect_cost_reports_each_row_by_site() {
+    let root = workspace_root();
+    let dir = temporary_directory("inspect-cost");
+    let source = dir.join(format!("costs.{SOURCE_EXT}"));
+    std::fs::write(
+        &source,
+        "from std.collections import Set\n\n\
+         interface Shape:\n    fn area(self) -> int\n\n\
+         struct Square:\n    side: int\n\n\
+         extend Square implements Shape:\n    fn area(self) -> int:\n        return self.side * self.side\n\n\
+         class Counter:\n    n: int = 0\n\n    fn bump(mut self):\n        self.n += 1\n\n\
+         fn bump_all(counters: Array[Counter]):\n    for c in counters:\n        keep = c\n        keep.bump()\n\n\
+         fn measure(shape: ref dyn Shape) -> int:\n    return shape.area()\n\n\
+         fn get(xs: Array[int], i: int) -> int:\n    return xs[i]\n\n\
+         fn main():\n    xs = [1, 2, 3]\n    s = Set[int]()\n    s.add(2)\n    text = f\"value {xs[0]}\"\n\
+         \x20   square = Square(side = 2)\n    counters = [Counter(), Counter()]\n    bump_all(counters)\n\
+         \x20   println(get(xs, 1), 2 in xs, 2 in s, \"lu\" in text, measure(ref square), counters[0].n)\n",
+    )
+    .expect("write the program");
+    let out_dir = dir.join("out");
+    let build = ember(&["build", &source.to_string_lossy(), "--out-dir", &out_dir.to_string_lossy()], &root);
+    assert_eq!(build.exit, 0, "build failed:\n{}", build.stderr);
+    let table = out_dir.join("debug").join("inspect").join("costs.safety.json").to_string_lossy().into_owned();
+    let report = ember(&["inspect", &table, "--cost"], &root);
+    assert_eq!(report.exit, 0, "{}", report.stderr);
+    let out = &report.stdout;
+    for row in [
+        "  Bounds check on `a[i]` [conditionally elided]",
+        "  Overflow check on integer arithmetic [conditionally elided]",
+        "  Dynamic exclusivity check [conditionally elided]",
+        "  Allocation [guaranteed present]",
+        "  Interface call through `dyn` [guaranteed present]",
+        "  Retain / release, surviving [guaranteed present]",
+        "  `contains` [guaranteed present]",
+    ] {
+        assert!(out.contains(row), "no row `{row}`:\n{out}");
+    }
+    assert!(out.contains("  main  present: index test"), "{out}");
+    assert!(out.contains("removed: range facts (range_facts)"), "{out}");
+    assert!(out.contains("  bump_all  present: dynamic exclusivity") || out.contains("removed: static exclusivity"), "{out}");
+    assert!(out.contains("an f-string"), "{out}");
+    assert!(out.contains("  measure  one indirect call"), "{out}");
+    assert!(out.contains("  bump_all  a retain in a loop"), "{out}");
+    assert!(out.contains("a scan of the `Array[i64]`, element by element: linear in its length"), "{out}");
+    assert!(out.contains(".contains`: constant on average: one hash and its probe"), "{out}");
+    assert!(out.contains("`str.contains`: a search of the text: linear in the text's length"), "{out}");
+    assert!(!out.contains(&format!("collections.{SOURCE_EXT}")), "the standard library's own sites are its own:\n{out}");
+    let measure = ember(&["inspect", &table, "--cost", "--function", "measure"], &root);
+    assert!(measure.stdout.contains("Interface call through `dyn`") && !measure.stdout.contains("Allocation"), "{}", measure.stdout);
+    let json = ember(&["inspect", &table, "--cost", "--json"], &root);
+    let value: serde_json::Value = serde_json::from_str(json.stdout.trim()).expect("--cost --json is JSON");
+    let rows = value["costs"].as_array().expect("the rows");
+    assert!(rows.iter().any(|row| row["row"] == "Allocation" && row["class"] == "guaranteed present"), "{}", json.stdout);
+}
+
 /// `[CLI-15]` — `ember --help` lists every command and flag of XVII.1: each `ember <command>` and each
 /// `--flag` (and `-D`) of the specification's listing, read from the development target itself, is in it.
 #[test]

@@ -5017,6 +5017,38 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-216 — The rest of `[DET-2]`: pointers as integers, padding (ODR-136); D-712
+
+2026-10-19, toward 90% (solo).
+* The effect analysis records `Nondet` at a cast of a pointer to an integer ("observing a pointer as
+  an integer"; hashing one goes through that integer, since no pointer or handle implements `Hash`)
+  and at a cast of a pointer to a type with padding bytes (`has_padding`: a struct or tuple whose
+  fields hold fewer bytes than it, an enum) to a pointer to another type. ODR-136
+  (0.9.10_Hardened_19): that is where padding is recorded; reading uninitialised memory is undefined,
+  an `unsafe` obligation (`[PHIL-10]`), not `Nondet`. `[DET-2]`'s `unfinished` entry removed.
+* D-712: `ember_time_sleep` used `errno` before the runtime included `<errno.h>` (MSVC had it from
+  another header), so the runtime failed to compile on Linux and every Linux CI job of `20fe1193`
+  failed. The local gcc sweep had not run that check: the WSL build tree lacked `docs/DEFECTS.md`,
+  which `ember tcb`'s known-defect list reads at build time; `bench/gcc/make_tree.sh` copies it now.
+
+## ADR-215 — The trusted base by category, `ember audit`, and the cost report (`[TCB-4]`, `[CLI-11]`, `[COST-4]`)
+
+2026-10-19, toward 90% (solo).
+* `[TCB-4]` `ember tcb` lists the base by category after the language's guarantee: the compiler (its
+  version, the language, the backend, and its known defects: the rows `docs/DEFECTS.md` marks open,
+  read into the compiler when it is built), the runtime, the standard library, the C++ bridge (none),
+  external libraries, the driver (the C compiler and linker it resolves) and the hardware; `--json`
+  gives them as `categories`.
+* `[CLI-11]` `ember audit <file>`: a summary (the `unsafe` blocks and functions and how many carry a
+  note; per effect, how many of the program's functions carry it; the foreign declarations and how
+  many are safe to call), then the trusted base.
+* `[COST-4]`, `[COST-2]`, `[PHIL-15]`, `[STD-8a]` `ember inspect <table> --cost [--function f] [--json]`:
+  the side table now holds `costs` beside `checks` (allocations, interface, virtual, indirect and
+  foreign calls, the count operations left in loops, and each `x in c` with the `contains` it
+  selects, which the checker records); the report groups checks and costs by the cost table's rows,
+  each with its class, and says of each conditionally elided site whether it was removed and by
+  which proof. The standard library's own sites are left out.
+
 ## ADR-214 — `Pool` and `Handle`, `std.time`, the formatter's last items, instantiation reports; D-710, D-711
 
 2026-10-19, toward 90% (solo).

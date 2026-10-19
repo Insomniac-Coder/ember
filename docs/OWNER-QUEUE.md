@@ -262,6 +262,19 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-136 — where reading padding or uninitialised bytes is recorded — **CLOSED**
+
+    ID:        ODR-136
+    Status:    CLOSED — ruled under the delegation 2026-10-19; incorporated in 0.9.10_Hardened_19
+    Category:  DETERMINISM
+    Location:  Ember_v0.9.10_Hardened_18.md [DET-2]
+
+**The question.** `[DET-2]` lists reading uninitialised or padding bytes among `Nondet`'s sources without saying where the compiler records them: a read through a raw pointer cannot be followed back to what memory it reads, and reading uninitialised memory is already among what `[PHIL-10]` says only `unsafe` code can do.
+
+**Ruling.** Ruled under the delegation: padding is recorded where it becomes readable, the reinterpreting cast of a pointer to a type with padding bytes (a struct with gaps or a short last field, an enum); a pointer cast to an integer is recorded as observing it. Reading uninitialised memory is not `Nondet` but undefined: an `unsafe` obligation, as `[PHIL-10]` has it. ADR-216.
+
+---
+
 ## ODR-135 — whose generics `max_instantiations` budgets — **CLOSED**
 
     ID:        ODR-135

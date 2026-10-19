@@ -414,6 +414,7 @@ ODR-132, the type of `Retained.ptr()` (§H.20).
 | ODR-133 | ruled by the owner (2026-10-19, A1: the data is fixed at a checkpoint, so layout changes apply live too), built under the delegation: each function keeps a record of the call it is in and the image lists what the rest of it depends on; a change no frame below the checkpoint depends on applies (instances migrate, one a frame references in place), one a frame depends on is refused, naming it | `[HR-3]`, `[HR-3b]`, `[HR-33]` |
 | ODR-134 | ruled under the delegation by the owner's standing rule (2026-09-08, ERR-017: a reserved word that blocks a name the standard library must declare becomes contextual, never a rename or `r#`): `open` is a keyword only before `class`, so `File.open` (`[STD-22]`) can be declared; the reserved set has 47 words | `[LEX-15]`, `[STD-22]` |
 | ODR-135 | ruled under the delegation: `[build] max_instantiations` applies to the package's own generics; the standard library's instances are not the package's to budget, and counting them made any small ceiling warn on code the program never wrote | `[MONO-3]` |
+| ODR-136 | ruled under the delegation: `Nondet` for padding is recorded at the reinterpreting cast of a pointer to a type with padding; reading uninitialised memory is undefined (`[PHIL-10]` lists it among what Safe Ember cannot do), an `unsafe` obligation, not a nondeterministic result | `[DET-2]`, `[PHIL-10]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -944,3 +945,15 @@ Generated: every rule whose text differs from 0.9.10_Hardened_17.
 | Rule | 0.9.10_Hardened_17 → 0.9.10_Hardened_18 |
 |---|---|
 | `[MONO-3]` | changed |
+
+## H.24 Changes in 0.9.10_Hardened_19 (from 0.9.10_Hardened_18)
+
+**0.9.10_Hardened_19** records ODR-136, ruled under the delegation while the rest of `[DET-2]` was built (`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-216):
+
+* Reading padding bytes is `Nondet` where the compiler sees them become readable: a pointer to a type with padding reinterpreted as a pointer to another type. Reading uninitialised memory is not `Nondet` but undefined, outside Safe Ember, an `unsafe` obligation (`[DET-2]`, `[PHIL-10]`, ODR-136).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_18.
+
+| Rule | 0.9.10_Hardened_18 → 0.9.10_Hardened_19 |
+|---|---|
+| `[DET-2]` | changed |

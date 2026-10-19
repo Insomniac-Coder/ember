@@ -65,8 +65,9 @@ this compiler does not have yet):
     ember explain --cycle <path> <Class[.field]>   one cycle-capable class or field
     ember inspect <item> [--safety [--elided-only] | --alloc | --cost | --deterministic <fn> | --cycle
                           | --expand | --counts] [--function <name>]
-                                                   reports on a program (--cost and --expand are not
-                                                   built yet)
+                                                   reports on a program (--expand is not built yet)
+    ember audit <file> [--json]                    a one-page summary of the safety surface: unsafe code,
+                                                   effects, the foreign boundary, the trusted base
     ember why --alloc|--block|--io|--lock|--sync|--unsafe|--ffi <fn> <file>
                                                    the shortest call chain to that effect
     ember calls --foreign <item>                   every foreign function the item can reach
@@ -462,6 +463,8 @@ struct EffectReport {
 struct TcbReport {
     json: bool,
     module: Option<String>,
+    /// `[CLI-11]` — `ember audit`: the summary first, then the trusted base.
+    audit: bool,
 }
 
 /// What `ember inspect --alloc` prints: JSON or text, one function or all.
@@ -541,6 +544,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         }
         "inspect" => inspect(&args[1..]),
         "tcb" => tcb(&args[1..]),
+        "audit" => audit(&args[1..]),
         "calls" => calls(&args[1..]),
         "why" => why(&args[1..]),
         "test" => test_runner::command(&args[1..]),
@@ -747,6 +751,7 @@ fn inspect(args: &[String]) -> Result<ExitCode, String> {
     let mut cycle = false;
     let mut alloc = false;
     let mut deterministic: Option<String> = None;
+    let mut cost = false;
     let mut elided_only = false;
     let mut json = false;
     let mut function = None;
@@ -759,6 +764,7 @@ fn inspect(args: &[String]) -> Result<ExitCode, String> {
             "--counts" => counts = true,
             "--cycle" => cycle = true,
             "--alloc" => alloc = true,
+            "--cost" => cost = true,
             "--deterministic" => {
                 index += 1;
                 let item = args.get(index).filter(|item| !item.starts_with('-'));
@@ -787,11 +793,19 @@ fn inspect(args: &[String]) -> Result<ExitCode, String> {
         index += 1;
     }
 
-    if [safety, counts, cycle, alloc, deterministic.is_some()].iter().filter(|&&kind| kind).count() > 1 {
+    if [safety, counts, cycle, alloc, cost, deterministic.is_some()].iter().filter(|&&kind| kind).count() > 1 {
         return Err("`ember inspect` accepts only one report kind at a time".to_string());
     }
-    if !safety && !counts && !cycle && !alloc && deterministic.is_none() {
-        return Err("`ember inspect` requires `--safety`, `--counts`, `--cycle`, `--alloc` or `--deterministic <item>`".to_string());
+    if !safety && !counts && !cycle && !alloc && !cost && deterministic.is_none() {
+        return Err("`ember inspect` requires `--safety`, `--counts`, `--cycle`, `--alloc`, `--cost` or `--deterministic <item>`".to_string());
+    }
+    // `[COST-4]` — from the safety side table a build wrote, like `--safety`.
+    if cost {
+        if elided_only {
+            return Err("`--elided-only` applies only to `--safety`".to_string());
+        }
+        let path = path.ok_or("`ember inspect --cost` needs a side-table path")?;
+        return inspect_cost(&path, function.as_deref(), json);
     }
     // `[DET-9]` — checked as `ember check` does.
     if let Some(item) = deterministic {
@@ -1382,6 +1396,94 @@ fn inspect_safety(
     Ok(ExitCode::SUCCESS)
 }
 
+/// `[COST-3]` — a check's row of the cost table, by its kind.
+fn check_cost_row(kind: &str, mechanism: &str) -> &'static str {
+    match (kind, mechanism) {
+        ("Bounds", _) => "Bounds check on `a[i]`",
+        ("Overflow", _) => "Overflow check on integer arithmetic",
+        ("DivisionByZero" | "ShiftRange", _) => "Division-by-zero and shift-range checks",
+        ("Aliasing", "assert_disjoint") => "`assert_disjoint` comparison",
+        ("Aliasing", _) => "Dynamic exclusivity check",
+        ("Borrow", _) => "`RefCell` borrow",
+        ("Downcast", _) => "Downcast check",
+        _ => "Runtime check",
+    }
+}
+
+/// `[COST-4]` — `ember inspect <table> --cost [--function <f>] [--json]`: every row of the cost table
+/// (`[COST-3]`) that applies, with its class (`[COST-2]`), each site under it; for a conditionally
+/// elided cost, whether each was removed and by which proof.
+fn inspect_cost(path: &Path, function: Option<&str>, json: bool) -> Result<ExitCode, String> {
+    let resolved = resolve_side_table(path, "safety");
+    let text = std::fs::read_to_string(&resolved).map_err(|error| format!("cannot read safety side table `{}`: {error}", resolved.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&text).map_err(|error| format!("invalid safety side table `{}`: {error}", resolved.display()))?;
+    let field = |entry: &serde_json::Value, name: &str| entry.get(name).and_then(serde_json::Value::as_str).unwrap_or("").to_string();
+    // (row, class, source, function, what)
+    let mut rows: Vec<(String, String, String, String, String)> = Vec::new();
+    for check in value.get("checks").and_then(serde_json::Value::as_array).into_iter().flatten() {
+        let (kind, mechanism, status) = (field(check, "kind"), field(check, "mechanism"), field(check, "status"));
+        let row = check_cost_row(&kind, &mechanism);
+        let class = if row == "`assert_disjoint` comparison" { "guaranteed present" } else { "conditionally elided" };
+        let what = if status == "elided" || check.get("classification").and_then(serde_json::Value::as_str) == Some("DYNAMIC_HOISTED_LOOP") {
+            let proof = check.get("proof").and_then(serde_json::Value::as_str).map(str::to_string).unwrap_or_else(|| field(check, "reason"));
+            format!("removed: {mechanism} ({proof})")
+        } else {
+            format!("present: {mechanism}")
+        };
+        rows.push((row.to_string(), class.to_string(), field(check, "source"), field(check, "function"), what));
+    }
+    for entry in value.get("costs").and_then(serde_json::Value::as_array).into_iter().flatten() {
+        rows.push((field(entry, "row"), field(entry, "class"), field(entry, "source"), field(entry, "function"), field(entry, "detail")));
+    }
+    // The program's own sites: the standard library's are its own (`[COST-4]` reports an item's).
+    let normal = |path: &str| path.replace('\\', "/").to_lowercase();
+    let std_root = ember_branding::std_root().map(|root| normal(&root.display().to_string()));
+    rows.retain(|(_, _, source, owner, _)| {
+        std_root.as_ref().is_none_or(|root| !normal(source).starts_with(root.as_str()))
+            && function.is_none_or(|name| owner == name || owner.is_empty())
+    });
+    let mut order: Vec<String> = Vec::new();
+    for (row, ..) in &rows {
+        if !order.contains(row) {
+            order.push(row.clone());
+        }
+    }
+    if json {
+        let grouped: Vec<serde_json::Value> = order
+            .iter()
+            .map(|row| {
+                let sites: Vec<&(String, String, String, String, String)> = rows.iter().filter(|entry| &entry.0 == row).collect();
+                serde_json::json!({
+                    "row": row,
+                    "class": sites[0].1,
+                    "sites": sites.iter().map(|site| serde_json::json!({ "source": site.2, "function": site.3, "what": site.4 })).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::json!({ "schema": 1, "costs": grouped }));
+        return Ok(ExitCode::SUCCESS);
+    }
+    println!("Costs: {}", resolved.display());
+    if let Some(function) = function {
+        println!("Function: {function}");
+    }
+    if order.is_empty() {
+        println!("  none");
+    }
+    for row in &order {
+        let sites: Vec<&(String, String, String, String, String)> = rows.iter().filter(|entry| &entry.0 == row).collect();
+        println!("  {row} [{}]", sites[0].1);
+        for (_, _, source, owner, what) in sites {
+            if owner.is_empty() {
+                println!("    {source}  {what}");
+            } else {
+                println!("    {source}  {owner}  {what}");
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 /// `[UNS-8]` — `ember tcb [--module <m>] [--json] <file.em>`.
 fn tcb(args: &[String]) -> Result<ExitCode, String> {
     let mut request = TcbReport::default();
@@ -1399,6 +1501,61 @@ fn tcb(args: &[String]) -> Result<ExitCode, String> {
     let path = path.ok_or("`ember tcb` needs a source file")?;
     let options = Options { tcb_report: Some(request), ..Options::default() };
     compile(&path, "check", &options)
+}
+
+/// `[CLI-11]` — `ember audit [--json] <file.em>`: a one-page summary of a package's safety surface.
+fn audit(args: &[String]) -> Result<ExitCode, String> {
+    let mut request = TcbReport { audit: true, ..TcbReport::default() };
+    let mut path = None;
+    for argument in args {
+        match argument.as_str() {
+            "--json" => request.json = true,
+            flag if flag.starts_with('-') => return Err(format!("unknown `ember audit` option `{flag}`")),
+            file if path.is_none() => path = Some(PathBuf::from(file)),
+            extra => return Err(format!("unexpected `ember audit` argument `{extra}`")),
+        }
+    }
+    let path = path.ok_or("`ember audit` needs a source file")?;
+    let options = Options { tcb_report: Some(request), ..Options::default() };
+    compile(&path, "check", &options)
+}
+
+/// `[TCB-4]` — the defects the compiler's own ledger (`docs/DEFECTS.md`) lists as open, by number.
+fn known_defects() -> Vec<&'static str> {
+    const LEDGER: &str = include_str!("../../../docs/DEFECTS.md");
+    LEDGER
+        .lines()
+        .filter_map(|line| {
+            let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+            // `| D-NNN | what | rules | status | … |`
+            let (id, status) = (cells.get(1)?, cells.get(4)?);
+            (id.starts_with("D-") && status.starts_with("**open")).then_some(*id)
+        })
+        .collect()
+}
+
+/// `[TCB-4]` — the trusted base by category, the compiler first, with its version and known defects.
+fn trusted_base_categories() -> Vec<(&'static str, String)> {
+    let requested = std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty());
+    let driver = match Toolchain::detect(requested.as_deref()) {
+        Ok(toolchain) => format!("{} ({}) and {}", toolchain.name(), toolchain.compiler_path().display(), toolchain.linker()),
+        Err(error) => format!("no C compiler found: {error}"),
+    };
+    let defects = known_defects();
+    vec![
+        ("compiler", format!(
+            "ember {} (language {}, backend c); known defects: {}",
+            env!("CARGO_PKG_VERSION"),
+            ember_parser::LANGUAGE_VERSION,
+            if defects.is_empty() { "none".to_string() } else { defects.join(", ") },
+        )),
+        ("runtime", format!("{}_rt, the runtime built with this compiler", ember_branding::SYMBOL_PREFIX)),
+        ("standard library", format!("{}, as shipped with this compiler", ember_branding::STD_PACKAGE)),
+        ("C++ bridge", "none: C++ interoperability is not built".to_string()),
+        ("external libraries", "the foreign declarations below, each linked from its library".to_string()),
+        ("driver", driver),
+        ("hardware", format!("{} ({})", std::env::consts::ARCH, std::env::consts::OS)),
+    ]
 }
 
 /// `[CLI-13]` — `ember calls --foreign <item> [--json] <file.em>`.
@@ -1857,18 +2014,49 @@ fn print_tcb_report(
             }
             value
         }).collect();
-        println!("{}", serde_json::json!({
+        let categories: serde_json::Map<String, serde_json::Value> = trusted_base_categories()
+            .into_iter()
+            .map(|(name, text)| (name.to_string(), serde_json::json!(text)))
+            .collect();
+        let mut report = serde_json::json!({
             "schema": 1,
             "guaranteed": LANGUAGE_GUARANTEES,
+            "categories": categories,
             "unsafe": unsafe_json,
             "foreign": foreign_json,
-        }));
+        });
+        if request.audit {
+            report["effects"] = serde_json::json!(effect_totals(bodies, types, modules)
+                .into_iter()
+                .map(|(word, count)| (word.to_string(), serde_json::json!(count)))
+                .collect::<serde_json::Map<_, _>>());
+        }
+        println!("{report}");
         return Ok(());
+    }
+    // `[CLI-11]` — the summary: the unsafe code, the effects, the foreign boundary.
+    if request.audit {
+        let blocks = entries.iter().filter(|entry| entry.block).count();
+        let noted = entries.iter().filter(|entry| entry.note.is_some()).count();
+        println!("Audit: {}", input.display());
+        println!("  unsafe: {blocks} block(s) and {} unsafe fn(s), {noted} with a safety note", entries.len() - blocks);
+        let totals: Vec<String> = effect_totals(bodies, types, modules)
+            .into_iter()
+            .filter(|(_, count)| *count > 0)
+            .map(|(word, count)| format!("{word} {count}"))
+            .collect();
+        println!("  effects (functions carrying each): {}", if totals.is_empty() { "none".to_string() } else { totals.join(", ") });
+        println!("  foreign boundary: {} declaration(s), {} safe to call", foreign.len(), foreign.iter().filter(|decl| decl.safe).count());
+        println!();
     }
     // `[TCB-2]` — what the language guarantees, apart from what the program's own `unsafe` and
     // the foreign code it declares supply; each of those with its source and grade (`[TCB-3]`).
     println!("Trusted base: {}", input.display());
     println!("Guaranteed by the language, checked by the compiler: {LANGUAGE_GUARANTEES}");
+    // `[TCB-4]` — the rest of the base, by category.
+    for (name, text) in trusted_base_categories() {
+        println!("{}{}: {text}", name[..1].to_uppercase(), &name[1..]);
+    }
     println!("Supplied from outside the language, each fact with its grade:");
     println!("Unsafe ({}):", entries.len());
     let mut module = None;
@@ -1903,9 +2091,101 @@ fn print_tcb_report(
     Ok(())
 }
 
+/// `[CLI-11]` — for each effect, how many of the program's own functions carry it.
+fn effect_totals(
+    bodies: &[ember_mir::Body],
+    types: &TypeTable,
+    modules: &[ember_typeck::LoadedModule],
+) -> Vec<(&'static str, usize)> {
+    let standard_files: std::collections::BTreeSet<ember_span::FileId> = modules
+        .iter()
+        .filter(|loaded| loaded.path.first().is_some_and(|package| package == ember_branding::STD_PACKAGE))
+        .map(|loaded| loaded.module.span.file)
+        .collect();
+    let std_prefix = ember_branding::mangled(&format!("{}.", ember_branding::STD_PACKAGE));
+    let effects = ember_analysis::effect_sets(bodies, types);
+    ember_hir::Effects::NAMED
+        .iter()
+        .map(|&(effect, word)| {
+            let count = bodies
+                .iter()
+                .zip(&effects)
+                .filter(|(body, carried)| {
+                    !body.symbol.starts_with(&std_prefix) && !standard_files.contains(&body.span.file) && carried.contains(effect)
+                })
+                .count();
+            (word, count)
+        })
+        .collect()
+}
+
 /// `[TCB-2]` — what the language guarantees of a program's safe code (`[TIER-1]`'s Safe tier).
 const LANGUAGE_GUARANTEES: &str =
     "memory, null, bounds and lifetime safety, data-race freedom and deterministic destruction of the safe code";
+
+/// `[COST-4]`, `[PHIL-15]` — the implicit costs of the program's own functions that are not checks:
+/// allocations, calls through a value, a vtable or an interface, foreign calls, the count operations
+/// left in loops, and which `contains` each `x in c` selects (`[STD-8a]`). Each with its row of the
+/// cost table (`[COST-3]`) and its class (`[COST-2]`).
+fn safety_costs_json(
+    bodies: &[ember_mir::Body],
+    types: &TypeTable,
+    modules: &[ember_typeck::LoadedModule],
+    map: &SourceMap,
+    contains_uses: &[ember_typeck::ContainsUse],
+) -> String {
+    let standard_files: std::collections::BTreeSet<ember_span::FileId> = modules
+        .iter()
+        .filter(|loaded| loaded.path.first().is_some_and(|package| package == ember_branding::STD_PACKAGE))
+        .map(|loaded| loaded.module.span.file)
+        .collect();
+    let std_prefix = ember_branding::mangled(&format!("{}.", ember_branding::STD_PACKAGE));
+    let standard: Vec<bool> = bodies
+        .iter()
+        .map(|body| body.symbol.starts_with(&std_prefix) || standard_files.contains(&body.span.file))
+        .collect();
+    let by_symbol: std::collections::HashMap<&str, &ember_mir::Body> = bodies.iter().map(|body| (body.symbol.as_str(), body)).collect();
+    let mut costs: Vec<serde_json::Value> = Vec::new();
+    let mut add = |row: &str, class: &str, span: ember_span::Span, function: &str, detail: String| {
+        costs.push(serde_json::json!({
+            "row": row, "class": class, "source": map.location(span), "function": function, "detail": detail,
+        }));
+    };
+    for site in ember_analysis::allocation_sites(bodies, types, &standard, &|file| standard_files.contains(&file)) {
+        add("Allocation", "guaranteed present", site.span, &site.function, site.operations.join(", "));
+    }
+    for (index, body) in bodies.iter().enumerate() {
+        if standard[index] {
+            continue;
+        }
+        for block in &body.blocks {
+            let ember_mir::Terminator::Call { func, .. } = &block.terminator else { continue };
+            let span = block.terminator_span;
+            match func {
+                ember_mir::FuncRef::Interface { .. } => add("Interface call through `dyn`", "guaranteed present", span, &body.name, "one indirect call".to_string()),
+                ember_mir::FuncRef::Virtual { .. } => add("Virtual method call", "guaranteed present", span, &body.name, "one indirect call through the class's method table".to_string()),
+                ember_mir::FuncRef::Indirect { .. } => add("Owned callable value", "guaranteed present", span, &body.name, "one indirect call".to_string()),
+                ember_mir::FuncRef::Direct { symbol, .. } => {
+                    if let Some(callee) = by_symbol.get(symbol.as_str()) && callee.contracts.foreign.is_some() {
+                        add("FFI call", "guaranteed present", span, &body.name, format!("`{}`, one direct call", callee.name));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    for operation in ember_analysis::count_report::surviving_count_operations(bodies, types) {
+        let what = if operation.retain { "a retain" } else { "a release" };
+        add("Retain / release, surviving", "guaranteed present", operation.span, &operation.function, format!("{what} in a loop: {}", operation.reason));
+    }
+    for use_ in contains_uses {
+        if standard_files.contains(&use_.span.file) {
+            continue;
+        }
+        add("`contains`", "guaranteed present", use_.span, "", format!("{}: {}", use_.selects, use_.cost));
+    }
+    serde_json::Value::Array(costs).to_string()
+}
 
 /// `[EFF-16]` — each function of the program with the two facts that together say it has no panic
 /// the effect model knows of: whether it is `@nopanic(explicit)`
@@ -3979,6 +4259,8 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[EFF-16]` — what the safety side table says of each function, read where the contracts
     // were checked: inlining below folds a small function into its callers.
     let safety_functions = safety_functions_json(&bodies, &types, &modules, reload_image.as_ref().map(|image| &image.reloadable));
+    // `[COST-4]` — the costs the checks do not show, read before inlining folds functions together.
+    let safety_costs = safety_costs_json(&bodies, &types, &modules, &map, &checked.contains_uses);
     // `[THR-5]` — a `Scope` binding stays where its `with` put it.
     if ember_analysis::check_scope_moves_all(&bodies, &types, &mut sink) > 0 {
         return Ok(finish(&sink, &map, options));
@@ -4345,7 +4627,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let safety_json = {
         let table = emitted.safety_json.trim_end();
         let table = table.strip_suffix('}').unwrap_or(table);
-        format!("{table},\"functions\":{safety_functions}}}\n")
+        format!("{table},\"functions\":{safety_functions},\"costs\":{safety_costs}}}\n")
     };
     std::fs::write(&safety_path, safety_json).map_err(|e| e.to_string())?;
     // `[RC-6]` — the count operations left inside loops, read from the same

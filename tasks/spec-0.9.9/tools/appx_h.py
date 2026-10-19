@@ -477,6 +477,8 @@ ODRS = [
      "`[LEX-15]`, `[STD-22]`"),
     ('ODR-135', "ruled under the delegation: `[build] max_instantiations` applies to the package's own generics; the standard library's instances are not the package's to budget, and counting them made any small ceiling warn on code the program never wrote",
      "`[MONO-3]`"),
+    ('ODR-136', "ruled under the delegation: `Nondet` for padding is recorded at the reinterpreting cast of a pointer to a type with padding; reading uninitialised memory is undefined (`[PHIL-10]` lists it among what Safe Ember cannot do), an `unsafe` obligation, not a nondeterministic result",
+     "`[DET-2]`, `[PHIL-10]`"),
 ]
 
 H5_HEAD = """
@@ -545,7 +547,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.10', 18)
+CURRENT = ('0.9.10', 19)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -564,6 +566,7 @@ V010_H14_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h14')
 V010_H15_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h15')
 V010_H16_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h16')
 V010_H17_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h17')
+V010_H18_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h18')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -1022,8 +1025,26 @@ Generated: every rule whose text differs from 0.9.10_Hardened_17.
 """
 
 
-def v010_h17_to_now():
-    return H23_HEAD + rule_diff(V010_H17_PARTS, os.path.join(HERE, '..', 'parts'))
+def v010_h17_to_h18():
+    return H23_HEAD + rule_diff(V010_H17_PARTS, V010_H18_PARTS)
+
+
+H24_HEAD = """
+## H.24 Changes in 0.9.10_Hardened_19 (from 0.9.10_Hardened_18)
+
+**0.9.10_Hardened_19** records ODR-136, ruled under the delegation while the rest of `[DET-2]` was built (`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-216):
+
+* Reading padding bytes is `Nondet` where the compiler sees them become readable: a pointer to a type with padding reinterpreted as a pointer to another type. Reading uninitialised memory is not `Nondet` but undefined, outside Safe Ember, an `unsafe` obligation (`[DET-2]`, `[PHIL-10]`, ODR-136).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_18.
+
+| Rule | 0.9.10_Hardened_18 → 0.9.10_Hardened_19 |
+|---|---|
+"""
+
+
+def v010_h18_to_now():
+    return H24_HEAD + rule_diff(V010_H18_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -1094,7 +1115,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_now() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_now() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

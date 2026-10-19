@@ -121,9 +121,19 @@ pub struct Instantiation {
     pub elapsed: std::time::Duration,
 }
 
+/// `[STD-8a]` — the `contains` an `x in c` selects, and its cost.
+#[derive(Clone, Debug)]
+pub struct ContainsUse {
+    pub span: Span,
+    pub selects: String,
+    pub cost: &'static str,
+}
+
 pub struct CheckOutput {
     /// `[MONO-2]`, `[MONO-3]` — each generic instantiated, in the order first instantiated.
     pub instantiations: Vec<Instantiation>,
+    /// `[STD-8a]` — each `x in c`, with the `contains` it selects.
+    pub contains_uses: Vec<ContainsUse>,
     pub program: Program,
     pub callable_declarations: Vec<CallableDeclaration>,
     /// `[COST-1]` — the bodies instantiated from a declaration in `std`, kept
@@ -407,6 +417,7 @@ pub fn check(
     }
     CheckOutput {
         instantiations: std::mem::take(&mut checker.instantiations),
+        contains_uses: std::mem::take(&mut checker.contains_uses),
         program: Program { functions, main, tests, assume_noalloc: std::mem::take(&mut checker.assume_noalloc) },
         callable_declarations,
         std_instances: std::mem::take(&mut checker.std_instances),
@@ -2323,6 +2334,8 @@ struct Checker<'a> {
     std_instances: HashSet<String>,
     /// `[MONO-2]` — `CheckOutput::instantiations`.
     instantiations: Vec<Instantiation>,
+    /// `[STD-8a]` — `CheckOutput::contains_uses`.
+    contains_uses: Vec<ContainsUse>,
     /// `[STD-1]` — the functions of `std` whose documentation says they allocate, by span.
     allocation_documented: HashSet<Span>,
     /// `[STD-1]` — the methods of `std`'s generic declarations (a generic type's, a generic
@@ -2802,6 +2815,7 @@ impl<'a> Checker<'a> {
             deferred_methods: HashMap::new(),
             std_instances: HashSet::new(),
             instantiations: Vec::new(),
+            contains_uses: Vec::new(),
             allocation_documented: HashSet::new(),
             std_generic_members: HashSet::new(),
             bound_calls: HashMap::new(),
@@ -27126,6 +27140,7 @@ impl<'a> Checker<'a> {
                 span,
             };
             let both = Expr { ty: bool_ty, kind: ExprKind::Binary { op: BinOp::And, lhs: Box::new(above), rhs: Box::new(below) }, span };
+            self.contains_uses.push(ContainsUse { span, selects: "a range written in place: two comparisons".to_string(), cost: "constant" });
             return negated(Expr {
                 ty: bool_ty,
                 kind: ExprKind::Block {
@@ -27142,6 +27157,7 @@ impl<'a> Checker<'a> {
         }
         if let Some(parts) = self.range_parts(haystack.ty) {
             let value = self.check_expr(needle, parts.1);
+            self.contains_uses.push(ContainsUse { span, selects: "a range: two comparisons".to_string(), cost: "constant" });
             return negated(self.range_contains(haystack, parts, value, true, span));
         }
         // Text: a `str` or a `char` needle.
@@ -27164,12 +27180,17 @@ impl<'a> Checker<'a> {
                 }
                 return error;
             };
+            self.contains_uses.push(ContainsUse { span, selects: "`str.contains`: a search of the text".to_string(), cost: "linear in the text's length" });
             return negated(Expr { ty: bool_ty, kind: ExprKind::Builtin { which, args: vec![text, value] }, span });
         }
         let elem = match *self.types.kind(haystack.ty) {
             TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Span { elem, .. } => elem,
             // `[STD-8]` — a type with a `contains` method: `k in m`.
             _ if self.lookup_method(haystack.ty, Symbol::intern("contains")).is_some() => {
+                let shown = self.types.display(haystack.ty);
+                let hashed = ["std.collections.Set[", "std.collections.Map[", "Set[", "Map["].iter().any(|prefix| shown.starts_with(prefix));
+                let cost = if hashed { "constant on average: one hash and its probe" } else { "the method's own" };
+                self.contains_uses.push(ContainsUse { span, selects: format!("`{shown}.contains`"), cost });
                 let name = ast::Ident { name: Symbol::intern("contains"), span };
                 let arg = ast::Arg { name: None, value: needle.clone(), span: needle.span };
                 let found = self.synth_registered_method(haystack, container.span, name, &[arg], Vec::new(), span);
@@ -27185,6 +27206,8 @@ impl<'a> Checker<'a> {
             }
         };
         let value = self.check_expr(needle, elem);
+        let shown = self.types.display(haystack.ty);
+        self.contains_uses.push(ContainsUse { span, selects: format!("a scan of the `{shown}`, element by element"), cost: "linear in its length" });
         match self.scan(haystack, elem, value, true, span) {
             Some(found) => negated(found),
             None => error,
