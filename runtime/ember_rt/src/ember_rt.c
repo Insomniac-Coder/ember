@@ -3562,17 +3562,21 @@ void ember_vec_extend(ember_vec* v, const void* bytes, size_t count) {
     v->len += count;
 }
 
-void ember_vec_free(ember_vec* v, size_t elem_size) {
-    ember_vec_free_aligned(v, elem_size, EMBER_VEC_ALIGN);
-}
-
-void ember_vec_free_aligned(ember_vec* v, size_t elem_size, size_t align) {
+static void vec_free_at(ember_vec* v, size_t elem_size, size_t align) {
     if (v->ptr != NULL) {
         ember_free(v->ptr, v->cap * elem_size, align);
     }
     v->ptr = NULL;
     v->len = 0;
     v->cap = 0;
+}
+
+void ember_vec_free(ember_vec* v, size_t elem_size) {
+    vec_free_at(v, elem_size, EMBER_VEC_ALIGN);
+}
+
+void ember_vec_free_aligned(ember_vec* v, size_t elem_size, size_t align) {
+    vec_free_at(v, elem_size, align);
 }
 
 ember_str ember_vec_as_str(const ember_vec* v) {
