@@ -40,9 +40,9 @@ this compiler does not have yet):
                 [--build-id] [--reload [--explain]] [-D warnings]
                                                    compile a bin, staticlib or cdylib package; --reload
                                                    builds the next image of a running program and
-                                                   --explain predicts that reload (--target,
-                                                   --backend llvm, --report=engine and --build-id
-                                                   are not built yet)
+                                                   --explain predicts that reload; --build-id prints
+                                                   the hash of the build's inputs (--target, --backend
+                                                   llvm and --report=engine are not built yet)
     ember check [file.em] [--syntax-only] [--timings]
                                                    type, borrow and effect checks without code generation
     ember test [filter] [--doc] [--no-leak-check] [--instrument-ffi]
@@ -438,6 +438,8 @@ struct Options {
     effect_report: Option<EffectReport>,
     /// `[MONO-2]` — `--report=instantiations`.
     instantiation_report: bool,
+    /// `[DET-7]` — `--build-id`: print the hash of the build's inputs.
+    build_id: bool,
     /// `[FFI-37]` — `ember test --instrument-ffi`: the directory its evidence record goes to
     /// (`[TCB-1]`'s `[ffi] evidence`).
     ffi_evidence: Option<PathBuf>,
@@ -2815,6 +2817,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             // `[MONO-2]` — the instances each generic produced and the time they took.
             "--report=instantiations" => options.instantiation_report = true,
             "--report=engine" => return Err("`--report=engine` is not built yet".to_string()),
+            "--build-id" => options.build_id = true,
             "--cc" => options.cc = Some(value(&mut index, arg)?),
             "--out-dir" => options.out_dir = Some(PathBuf::from(value(&mut index, arg)?)),
             "--backend" => {
@@ -3907,8 +3910,44 @@ fn nearest_manifest_text(input: &Path) -> Result<Option<String>, String> {
         format!("cannot read package manifest `{}`: {error}", path.display()))).transpose()
 }
 
+/// `[DET-7]`, `[BLD-13]` — `--build-id`: the hash of a build's inputs, the same wherever the same
+/// program is built the same way: this compiler (its own bytes), the profile, the target, the C
+/// compiler by its version, the runtime's sources, and every source the build read (the manifest
+/// among them) by its path in its package (`SourceMap::artefact_path`) and its text.
+fn build_id(map: &SourceMap, profile: Profile, toolchain: &Toolchain, runtime: &Path) -> Result<String, String> {
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut part = |data: &[u8]| {
+        bytes.extend_from_slice(&(data.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(data);
+    };
+    part(b"ember build id v1");
+    let compiler = std::env::current_exe().and_then(std::fs::read).map_err(|error| format!("cannot read the compiler: {error}"))?;
+    part(ember_build::content_hash(&compiler).as_bytes());
+    part(profile.name().as_bytes());
+    part(format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS).as_bytes());
+    part(toolchain.version().as_bytes());
+    let mut runtime_files: Vec<PathBuf> = ["include", "src"].iter()
+        .filter_map(|dir| std::fs::read_dir(runtime.join(dir)).ok())
+        .flat_map(|entries| entries.filter_map(|entry| entry.ok().map(|entry| entry.path())))
+        .filter(|path| path.is_file())
+        .collect();
+    runtime_files.sort();
+    for file in runtime_files {
+        part(file.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default().as_bytes());
+        part(&std::fs::read(&file).map_err(|error| format!("cannot read `{}`: {error}", file.display()))?);
+    }
+    let mut sources: Vec<(String, &str)> = map.files().map(|file| (map.artefact_path(file.id), file.text.as_str())).collect();
+    sources.sort();
+    for (path, text) in sources {
+        part(path.as_bytes());
+        part(text.as_bytes());
+    }
+    Ok(ember_build::content_hash(&bytes))
+}
+
 fn package_source_root(input: &Path) -> PathBuf {
-    let fallback = input.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+    // A bare file name's parent is the empty path: its folder is the working one.
+    let fallback = input.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or_else(|| Path::new(".")).to_path_buf();
     let Some(manifest) = nearest_manifest_path(input) else { return fallback };
     let Some(package_root) = manifest.parent() else { return fallback };
     let source_root = package_root.join("src");
@@ -3973,6 +4012,15 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let packages = packages::resolve(&root_dir)?;
     packages::settle_lock(&packages, options.locked)?;
     let mut modules = load_package_modules(module, &root_dir, &packages, &mut map, &mut sink);
+    // `[BLD-13]` — what the program's source locations are written relative to: its package's
+    // directory, each dependency's (by its name), the standard library's (`std`).
+    let mut roots: Vec<(PathBuf, String)> = packages.list.iter().enumerate()
+        .map(|(index, package)| (package.dir.clone(), if index == 0 { String::new() } else { package.name.clone() }))
+        .collect();
+    if let Some(std_root) = ember_branding::std_root() {
+        roots.push((std_root, ember_branding::STD_PACKAGE.to_string()));
+    }
+    map.set_artefact_roots(roots);
     // Annex B — what a reloadable program's reload needs written into it before it is checked: its
     // fields' defaults as functions, `Old<Name>` from the previous build's schema.
     let reload_bin = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target")).join(options.profile.name()).join("bin");
@@ -4654,6 +4702,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         .clone()
         .or_else(|| std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty()));
     let toolchain = Toolchain::detect(requested.as_deref()).map_err(|e| e.to_string())?;
+    if options.build_id {
+        println!("{}", build_id(&map, options.profile, &toolchain, &runtime)?);
+    }
     let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
     let includes = vec![runtime.join("include")];
     // Annex B — a reloadable program: the shared runtime, an image and the host that runs it.

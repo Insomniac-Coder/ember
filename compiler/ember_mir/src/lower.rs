@@ -2331,7 +2331,8 @@ impl<'a> Builder<'a> {
         let Some(file) = self.map.get(span.file) else {
             return (String::new(), 0);
         };
-        let path = file.path.display().to_string().replace('\\', "/");
+        // `[BLD-13]` — relative to the package, as every location the program holds.
+        let path = self.map.artefact_path(span.file);
         let line = file.line_col(span.start).line;
         (path, line)
     }

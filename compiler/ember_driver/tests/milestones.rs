@@ -996,6 +996,61 @@ fn temporary_test_outputs_are_removed_when_the_case_panics() {
     assert!(removed, "a failing test must not retain its compiled programs");
 }
 
+/// `[BLD-13]`, `[DET-7]` — the same program built in two folders, each from its own, is the same
+/// bytes in every profile and holds no absolute path of either folder or of the repository (the
+/// standard library and the runtime); `ember build --build-id` prints the same hash of the inputs
+/// for both, and another once the source changes. The global program cache is off, so each build
+/// is compiled and linked.
+#[test]
+fn a_build_is_reproducible_and_named_by_its_inputs() {
+    let directory = temporary_directory("reproducible");
+    let source = "fn pick(xs: Array[int], i: int) -> int:\n    return xs[i]\n\nfn main():\n    xs: Array[int] = [1, 2, 3]\n    println(pick(xs, 1), f\"{xs}\")\n";
+    let folders = [directory.join("alpha"), directory.join("beta").join("nested")];
+    let input = ember_branding::source_file("main");
+    for folder in &folders {
+        std::fs::create_dir_all(folder).expect("a build folder is writable");
+        std::fs::write(folder.join(&input), source).expect("the program is writable");
+    }
+    // `compiler/ember_driver`'s grandparent, as the build spells it (not `canonicalize`'s `\\?\` form).
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).parent().and_then(Path::parent).expect("the repository").to_path_buf();
+    let holds = |bytes: &[u8], text: &str| bytes.windows(text.len()).any(|window| window == text.as_bytes());
+    let no_cache = ember_branding::no_compile_cache_var();
+    let mut first_id = String::new();
+    for profile in [Profile::Debug, Profile::Development, Profile::Release] {
+        let mut ids = Vec::new();
+        let mut programs = Vec::new();
+        for folder in &folders {
+            let built = ember_with_env(
+                &["build", &input, "--profile", profile.name(), "--out-dir", "out", "--build-id"],
+                folder, &no_cache, "1",
+            );
+            assert_eq!(built.exit, 0, "{}: {}", profile.name(), built.stderr);
+            let id = built.stdout.lines().next().unwrap_or_default().to_string();
+            assert!(id.len() == 64 && id.bytes().all(|byte| byte.is_ascii_hexdigit()), "{}: build id `{id}`", profile.name());
+            ids.push(id);
+            let program = folder.join("out").join(profile.name()).join("bin")
+                .join(format!("main{}", std::env::consts::EXE_SUFFIX));
+            let bytes = std::fs::read(&program).expect("the program was built");
+            for place in [folder.as_path(), repository.as_path()] {
+                let shown = place.display().to_string();
+                for spelling in [shown.clone(), shown.replace('\\', "/")] {
+                    assert!(!holds(&bytes, &spelling), "{}: the program holds the absolute path `{spelling}`", profile.name());
+                }
+            }
+            programs.push(bytes);
+        }
+        assert_eq!(ids[0], ids[1], "{}: the same inputs give another build id", profile.name());
+        assert!(programs[0] == programs[1], "{}: the same inputs built in two folders differ", profile.name());
+        if profile == Profile::Debug {
+            first_id = ids[0].clone();
+        }
+    }
+    std::fs::write(folders[0].join(&input), source.replace("[1, 2, 3]", "[1, 2, 4]")).expect("the program is writable");
+    let changed = ember_with_env(&["build", &input, "--out-dir", "out", "--build-id"], &folders[0], &no_cache, "1");
+    assert_eq!(changed.exit, 0, "{}", changed.stderr);
+    assert_ne!(changed.stdout.lines().next().unwrap_or_default(), first_id, "a changed source keeps its build id");
+}
+
 /// A managed executable may discard unreachable implementation code, but a
 /// defined C entry point remains callable even without an Ember caller. Its
 /// selected symbol, including imported and relaxed-FP definitions, is a root;

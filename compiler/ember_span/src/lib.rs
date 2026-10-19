@@ -166,6 +166,9 @@ impl SourceFile {
 pub struct SourceMap {
     files: Vec<SourceFile>,
     by_path: HashMap<PathBuf, FileId>,
+    /// `[BLD-13]` — the directories a build's output names files relative to, each with the name
+    /// that stands for it there (`""` for the package's own); longest first.
+    artefact_roots: Vec<(PathBuf, String)>,
 }
 
 impl SourceMap {
@@ -207,6 +210,38 @@ impl SourceMap {
 
     pub fn files(&self) -> impl Iterator<Item = &SourceFile> {
         self.files.iter()
+    }
+
+    /// `[BLD-13]` — the directories `artefact_path` writes a file relative to: the package's own
+    /// (named `""`), each dependency's (by its name), the standard library's (`std`).
+    pub fn set_artefact_roots(&mut self, roots: Vec<(PathBuf, String)>) {
+        let mut roots: Vec<(PathBuf, String)> = roots
+            .into_iter()
+            // An empty folder (a bare file name's parent) is the working one.
+            .map(|(dir, name)| if dir.as_os_str().is_empty() { (PathBuf::from("."), name) } else { (dir, name) })
+            .map(|(dir, name)| (std::path::absolute(&dir).unwrap_or(dir), name))
+            .collect();
+        roots.sort_by_key(|(dir, _)| std::cmp::Reverse(dir.components().count()));
+        self.artefact_roots = roots;
+    }
+
+    /// `[BLD-13]` — a file's path as a build writes it into what it produces (`#line`, a panic's
+    /// location, a backtrace): relative to the root holding it, `/`-separated and prefixed with
+    /// the root's name, so no absolute path of the machine that built it reaches the program; a
+    /// file under no root by its name alone. With no roots set, the path as given.
+    pub fn artefact_path(&self, id: FileId) -> String {
+        let file = self.file(id);
+        if self.artefact_roots.is_empty() {
+            return file.path.display().to_string().replace('\\', "/");
+        }
+        let absolute = std::path::absolute(&file.path).unwrap_or_else(|_| file.path.clone());
+        for (root, name) in &self.artefact_roots {
+            if let Ok(rest) = absolute.strip_prefix(root) {
+                let rest: Vec<String> = rest.components().map(|part| part.as_os_str().to_string_lossy().into_owned()).collect();
+                return if name.is_empty() { rest.join("/") } else { format!("{name}/{}", rest.join("/")) };
+            }
+        }
+        file.path.file_name().map_or_else(|| file.path.display().to_string(), |name| name.to_string_lossy().into_owned())
     }
 
     /// The source text a span covers.

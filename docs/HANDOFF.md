@@ -10754,6 +10754,7 @@ formal 1/9 count or Phase 2's estimate.
 > Then ADR-220: helper L's layout attributes (`[LAY-2]`, still unfinished: SIMD in `@packed`,
 > `@align` on unit enums), D-716..D-720. **Owner questions open:** `tasks/90/L-notes.md` §4 (Q1
 > `@packed` with `@align`, Q2 `@repr` on a struct, Q3 a reference to a one-byte packed field).
+> Then ADR-221: reproducible builds and `--build-id` (`[BLD-13]`, `[DET-7]`).
 > Helper M is building the ECS queries (`[ECS-3]`..`[ECS-6]`) in `.claude/worktrees/helper-M`
 > (branch `helper-M`, job sheet in the session scratchpad `jobs/job_M.md`, notes to `tasks/90/M-notes.md`).
 > **Before a push that touches C or the runtime:** `bench/gcc/gate.sh` in WSL (the workspace through

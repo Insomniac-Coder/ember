@@ -78,9 +78,12 @@ pub fn link_cdylib(
             }
             command.arg(format!("/Fe{}", library.display())).arg("/link")
                 .arg(format!("/DEF:{}", definitions.display()))
-                .arg(format!("/IMPLIB:{}", import.display()));
+                .arg(format!("/IMPLIB:{}", import.display()))
+                // `[BLD-13]` — no time stamp, no incremental link (`lib.rs`'s program link).
+                .args(["/Brepro", "/INCREMENTAL:NO"]);
             if profile != Profile::Release {
-                command.arg("/DEBUG").arg(format!("/PDB:{}", library.with_extension("pdb").display()));
+                command.arg("/DEBUG").arg(format!("/PDB:{}", library.with_extension("pdb").display()))
+                    .arg("/PDBALTPATH:%_PDB%");
             }
             for library in libraries {
                 command.arg(windows_library(library));

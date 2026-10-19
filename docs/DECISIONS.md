@@ -5017,6 +5017,34 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-221 — Reproducible builds and the build id (`[BLD-13]`, `[DET-7]`)
+
+2026-10-19, toward 90% (solo).
+* **No absolute path.** Every source location a program holds (`#line`, a panic's location, the
+  backtrace and overflow tables, a cell's conflicting-borrow file) is `SourceMap::artefact_path`:
+  relative to the package's directory, a dependency's files prefixed with its name and the
+  standard library's with `std/`, `/`-separated; a file under no root is its file name. The driver
+  sets the roots after loading the modules. A bare file name's parent (the empty path) is the
+  working folder, in the driver and in the roots.
+* **No time stamp, no incremental link.** MSVC and clang-cl link with `/Brepro`, `/INCREMENTAL:NO`
+  (an incremental link depends on the previous output) and, with debug information,
+  `/PDBALTPATH:%_PDB%` (the program database by its file name); the same for a shared library, and
+  for clang on Windows through `-Wl,`. gcc and clang name the working folder and each source's
+  folder `.` and each include folder by its name in debug information (`-ffile-prefix-map`, each
+  folder as given and as an absolute path). clang-cl too (through `/clang:`), with `/Brepro`, no
+  command line in its CodeView and a relative compilation folder (`-fdebug-compilation-dir=.`, so
+  the object names itself relatively); and it links with `lld-link` (`-fuse-ld=lld`,
+  `/pdbsourcepath:.`): Microsoft's linker writes a clang-cl object's relative paths into the
+  program database as absolute ones and hashes them into `/Brepro`'s time stamp (measured: 20 bytes
+  differed between two folders in `debug`).
+* **`ember build --build-id`** prints, before building, the BLAKE3 of the inputs: this compiler's
+  own bytes, the profile, the target, the C compiler by the version it states (`Toolchain::version`:
+  `cl`'s banner, `--version`'s first line), the runtime's sources, and every source the build read
+  (the manifest among them) by its artefact path and text.
+* Checked: one program built in two folders is the same bytes with MSVC, clang-cl and gcc in
+  `debug`, `development` and `release`, and holds neither folder's path nor the repository's. Test:
+  `ember_driver/tests/milestones.rs` `a_build_is_reproducible_and_named_by_its_inputs`.
+
 ## ADR-220 — Layout attributes (`[LAY-2]`), helper L
 
 2026-10-19, toward 90%: built by helper L on branch `helper-L` (its notes: `tasks/90/L-notes.md`),

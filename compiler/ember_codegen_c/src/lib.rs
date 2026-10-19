@@ -20,7 +20,6 @@ use ember_mir::{
     ParameterMode, Projection, RETURN_LOCAL, Rvalue, Stmt, StmtKind, Terminator,
 };
 use ember_mir::verify::VerifiedMir;
-use std::path::MAIN_SEPARATOR;
 
 use ember_span::{SourceMap, Symbol};
 use ember_types::{ClassId, EnumId, FloatTy, FnParam, FnParamMode, FpMode, IntTy, LayoutAttrs, Niche, StructId, Ty, TyKind, TypeTable, UintTy};
@@ -7491,8 +7490,9 @@ impl Emitter<'_> {
         }
         let file = self.map.file(span.file);
         let line = file.line_of(span.start);
-        // Forward slashes: a backslash in a `#line` path is an escape.
-        let path = file.path.display().to_string().replace(MAIN_SEPARATOR, "/");
+        // Forward slashes: a backslash in a `#line` path is an escape. `[BLD-13]` — relative to
+        // the package.
+        let path = self.map.artefact_path(span.file);
         let _ = writeln!(self.out, "#line {line} \"{path}\"");
     }
 
@@ -8032,7 +8032,7 @@ impl Emitter<'_> {
         }
         let file = self.map.file(span.file);
         let lc = file.line_col(span.start);
-        let path = file.path.display().to_string().replace('\\', "/");
+        let path = self.map.artefact_path(span.file);
         format!("{RT}loc_at({}, {}, {})", c_string_literal(&path), lc.line, lc.col)
     }
 
@@ -11017,7 +11017,7 @@ impl Emitter<'_> {
             }
             let Some(file) = self.map.get(body.span.file) else { continue };
             let line = file.line_col(body.span.start).line;
-            let path = file.path.display().to_string().replace('\\', "/");
+            let path = self.map.artefact_path(body.span.file);
             let name = if body.is_lambda { "a lambda".to_string() } else { body.name.clone() };
             // The C entry point is `main`'s frame when the C compiler inlines `main` into it.
             if entry_runs_main && body.symbol == ember_branding::mangled("main") {

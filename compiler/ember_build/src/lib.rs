@@ -118,6 +118,19 @@ impl Toolchain {
     }
 
     /// Find a usable C compiler, preferring `requested` when it is given.
+    /// `[DET-7]` — the C compiler's own statement of its version, the first line it prints, which
+    /// names it on any machine where its path does not: `cl` prints it unasked (on standard error),
+    /// gcc and clang for `--version`.
+    pub fn version(&self) -> String {
+        let mut command = compiler_command(self);
+        if !matches!(self, Toolchain::Msvc { cl, .. } if !is_clang_cl(cl)) {
+            command.arg("--version");
+        }
+        let Ok(output) = command.output() else { return self.name().to_string() };
+        let text = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+        text.lines().map(str::trim).find(|line| !line.is_empty()).unwrap_or(self.name()).to_string()
+    }
+
     pub fn detect(requested: Option<&str>) -> Result<Toolchain, BuildError> {
         match requested {
             Some("msvc") => Self::find_msvc().ok_or(BuildError::NoToolchain("msvc")),
@@ -650,6 +663,14 @@ fn compile_and_link_impl(
             if warnings_as_errors() {
                 command.arg("/WX");
             }
+            // `[BLD-13]` — clang-cl's debug information names folders as gcc's does, and its objects
+            // carry no time stamp: the linker's `/Brepro` hashes them into the program.
+            if clang_cl {
+                command.arg("/Brepro").arg("/clang:-gno-codeview-command-line").arg("/clang:-fdebug-compilation-dir=.");
+                // The object's own folder too: CodeView names the object file.
+                let sources: Vec<PathBuf> = request.sources.iter().cloned().chain([request.obj_dir.join("object")]).collect();
+                command.args(folder_name_flags(&sources, request.include_dirs).into_iter().map(|flag| format!("/clang:{flag}")));
+            }
             for dir in request.include_dirs {
                 command.arg(format!("/I{}", dir.display()));
             }
@@ -665,6 +686,7 @@ fn compile_and_link_impl(
             if warnings_as_errors() {
                 command.arg("-Werror");
             }
+            folder_names(&mut command, request.sources, request.include_dirs);
             let section_flags = executable_section_flags(toolchain, retained_symbols.is_some());
             command.args(section_flags);
             for dir in request.include_dirs {
@@ -698,28 +720,49 @@ fn compile_and_link_impl(
         command.arg(if matches!(toolchain, Toolchain::Msvc { .. }) { "/showIncludes" } else { "-H" });
     }
     match toolchain {
-        Toolchain::Msvc { .. } => {
+        Toolchain::Msvc { cl, .. } => {
             // Object files land in obj/, keeping the C directory readable.
             command.arg(format!("/Fo{}\\", request.obj_dir.display()));
             command.arg(format!("/Fe{}", request.output.display()));
             if request.profile != Profile::Release {
                 command.arg(format!("/Fd{}\\", request.obj_dir.display()));
             }
+            // `[BLD-13]` — the same inputs link to the same bytes: no time stamp (`/Brepro`), no
+            // incremental link (whose output depends on the one before it; `[BLD-FFI-3]` too: it
+            // keeps what it resolved before, so libraries listed in another order would not change
+            // which one defines a symbol), and the program database named without its folder.
+            // `[BLD-13]` — clang-cl links with LLVM's `lld-link`: Microsoft's linker writes each
+            // relative source path of a clang-cl object into the program database as an absolute
+            // one, from its own working folder, and hashes that into `/Brepro`'s time stamp;
+            // `lld-link` writes them relative to a stated folder (`/pdbsourcepath`).
+            if is_clang_cl(cl) {
+                command.arg("-fuse-ld=lld");
+            }
+            command.args(["/link", "/Brepro", "/INCREMENTAL:NO"]);
+            if request.profile != Profile::Release {
+                command.arg("/PDBALTPATH:%_PDB%");
+                if is_clang_cl(cl) {
+                    command.arg("/pdbsourcepath:.");
+                }
+            }
             // `[RT-4]` — symbols for a development build's backtrace, and its link as it was: `/Zi`
             // makes `cl` link with `/DEBUG`, which would turn these off.
             if request.profile == Profile::Development {
-                command.args(["/link", "/OPT:REF", "/OPT:ICF", "/INCREMENTAL:NO"]);
-            } else if !libraries.is_empty() {
-                // `[BLD-FFI-3]` — an incremental link keeps what it resolved before: libraries
-                // listed in another order would not change which one defines a symbol.
-                command.args(["/link", "/INCREMENTAL:NO"]);
+                command.args(["/OPT:REF", "/OPT:ICF"]);
             }
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.arg("-o").arg(&request.output);
+            // `[BLD-13]` — clang on Windows links with Microsoft's linker: as for MSVC.
+            if cfg!(windows) {
+                command.args(["-Wl,/Brepro", "-Wl,/INCREMENTAL:NO"]);
+                if request.profile != Profile::Release {
+                    command.arg("-Wl,/PDBALTPATH:%_PDB%");
+                }
+            }
             // `[RT-4]` — as for MSVC: `-g` links with `/DEBUG`, which turns these off.
             if cfg!(windows) && request.profile == Profile::Development {
-                command.args(["-Wl,/OPT:REF", "-Wl,/OPT:ICF", "-Wl,/INCREMENTAL:NO"]);
+                command.args(["-Wl,/OPT:REF", "-Wl,/OPT:ICF"]);
             }
         }
     }
@@ -1070,6 +1113,7 @@ fn compile_relaxed_object_impl(
             if shared_library && !cfg!(windows) {
                 command.arg("-fPIC");
             }
+            folder_names(&mut command, &[source.to_path_buf()], include_dirs);
             for dir in include_dirs { command.arg("-I").arg(dir); }
             command.arg(source).arg("-o").arg(output);
         }
@@ -1203,6 +1247,7 @@ pub fn compile_object(
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile)).arg("-c");
+            folder_names(&mut command, &[source.to_path_buf()], include_dirs);
             for dir in include_dirs { command.arg("-I").arg(dir); }
             command.arg(source).arg("-o").arg(output);
         }
@@ -1336,6 +1381,41 @@ pub fn archive_objects(
 
 fn tool_on_path(name: &str) -> bool {
     Command::new(name).arg("--version").output().is_ok_and(|output| output.status.success())
+}
+
+/// `[BLD-13]` — gcc's and clang's debug information names each file by its path and the folder the
+/// compiler ran in: the working folder and each source's folder are written `.`, and each include
+/// folder by its own name, so a program holds no absolute path of the machine that built it.
+fn folder_names(command: &mut Command, sources: &[PathBuf], include_dirs: &[PathBuf]) {
+    command.args(folder_name_flags(sources, include_dirs));
+}
+
+fn folder_name_flags(sources: &[PathBuf], include_dirs: &[PathBuf]) -> Vec<String> {
+    let mut folders: Vec<(PathBuf, String)> = Vec::new();
+    if let Ok(current) = std::env::current_dir() {
+        folders.push((current, ".".to_string()));
+    }
+    for source in sources {
+        if let Some(parent) = source.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+            folders.push((parent.to_path_buf(), ".".to_string()));
+        }
+    }
+    for dir in include_dirs {
+        let name = dir.file_name().map_or_else(|| ".".to_string(), |name| name.to_string_lossy().into_owned());
+        folders.push((dir.clone(), name));
+    }
+    // Each folder as given and as an absolute path: the compiler records the one or the other.
+    let mut flags: Vec<String> = Vec::new();
+    for (folder, name) in folders {
+        let absolute = std::path::absolute(&folder).unwrap_or_else(|_| folder.clone());
+        for spelling in [folder, absolute] {
+            let flag = format!("-ffile-prefix-map={}={name}", spelling.display());
+            if !flags.contains(&flag) {
+                flags.push(flag);
+            }
+        }
+    }
+    flags
 }
 
 /// The C compiler, with MSVC's environment over the inherited one.
@@ -1517,6 +1597,7 @@ fn runtime_object_impl(
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile))
                 .args(executable_section_flags(toolchain, managed_executable)).arg("-c");
+            folder_names(&mut command, &[source.to_path_buf()], include_dirs);
             for dir in include_dirs {
                 command.arg("-I").arg(dir);
             }
