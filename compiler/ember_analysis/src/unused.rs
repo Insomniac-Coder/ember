@@ -71,7 +71,7 @@ fn check(body: &Body, types: &ember_types::TypeTable, sink: &mut Sink, reported:
                 StmtKind::BeginAccess { place, .. }
                 | StmtKind::BeginAccessTransfer { place, .. }
                 | StmtKind::EndAccess { place, .. }
-                | StmtKind::EndAccessTransfer { place, .. } => {
+                | StmtKind::EndAccessTransfer { place, .. } | StmtKind::LendAccess { place, .. } => {
                     mark_place_indices(place, &mut read);
                 }
                 StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}

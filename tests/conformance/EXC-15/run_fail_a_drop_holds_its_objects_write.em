@@ -1,12 +1,14 @@
 #$ test: run-fail
 #$ rules: EXC-15, DRP-1, EXC-1
 #$ profiles: debug, development
-#$ panics: exclusivity violation: write access to Bag.items while a write access to Bag.items is active
+#$ panics: exclusivity violation: write access to Bag.items while a read access to Bag.items is active
 # `[DRP-1]` declares `fn drop(mut self)`, and `[EXC-15]` gives a `mut self`
 # method a write access to every field from entry to return. The runtime is
 # what calls `drop`, so it begins that write: a write to a field through
 # another path while `drop` runs panics, where it would otherwise free what a
-# view `drop` holds points into (D-453).
+# view `drop` holds points into (D-453). The call to `reset` borrows the object
+# from `drop`, which lends it its write as a read for the call (`[EXC-5]`,
+# D-690): `reset`'s write conflicts with that read.
 
 class Bag:
     items: Array[int]

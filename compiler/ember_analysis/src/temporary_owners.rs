@@ -175,7 +175,7 @@ fn uses(body: &Body) -> Vec<Uses> {
                     place(&mut result, target, point, false);
                 }
                 StmtKind::BeginAccess { place: target, .. } | StmtKind::EndAccess { place: target, .. }
-                | StmtKind::BeginAccessTransfer { place: target, .. } | StmtKind::EndAccessTransfer { place: target, .. } => {
+                | StmtKind::BeginAccessTransfer { place: target, .. } | StmtKind::EndAccessTransfer { place: target, .. } | StmtKind::LendAccess { place: target, .. } => {
                     place(&mut result, target, point, false);
                 }
                 StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}

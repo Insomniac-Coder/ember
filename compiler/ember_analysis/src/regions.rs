@@ -736,7 +736,7 @@ impl Regions {
                 }
             }
             StmtKind::BeginAccess { .. } | StmtKind::BeginAccessTransfer { .. }
-            | StmtKind::EndAccess { .. } | StmtKind::EndAccessTransfer { .. }
+            | StmtKind::EndAccess { .. } | StmtKind::EndAccessTransfer { .. } | StmtKind::LendAccess { .. }
             | StmtKind::Drop { .. } | StmtKind::Nop => {}
         }
     }
@@ -1695,7 +1695,7 @@ impl Regions {
                     | StmtKind::BeginAccess { .. }
                     | StmtKind::BeginAccessTransfer { .. }
                     | StmtKind::EndAccess { .. }
-                    | StmtKind::EndAccessTransfer { .. }
+                    | StmtKind::EndAccessTransfer { .. } | StmtKind::LendAccess { .. }
                     | StmtKind::Nop => {}
                 }
             }
@@ -2070,7 +2070,7 @@ impl Regions {
                 }
             }
             StmtKind::BeginAccess { .. } | StmtKind::BeginAccessTransfer { .. }
-            | StmtKind::EndAccess { .. } | StmtKind::EndAccessTransfer { .. }
+            | StmtKind::EndAccess { .. } | StmtKind::EndAccessTransfer { .. } | StmtKind::LendAccess { .. }
             | StmtKind::Nop => {}
             StmtKind::StorageLive(local) | StmtKind::StorageDead(local) => {
                 for slot in &self.local_regions[local.0 as usize] {

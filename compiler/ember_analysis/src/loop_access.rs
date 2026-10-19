@@ -579,7 +579,7 @@ fn statement_mentions_local(statement: &Stmt, local: LocalId) -> bool {
         StmtKind::BeginAccess { place, .. }
         | StmtKind::BeginAccessTransfer { place, .. }
         | StmtKind::EndAccess { place, .. }
-        | StmtKind::EndAccessTransfer { place, .. }
+        | StmtKind::EndAccessTransfer { place, .. } | StmtKind::LendAccess { place, .. }
         | StmtKind::Drop { place, .. } => place_mentions_local(place, local),
         StmtKind::CheckedBinaryOp {
             dest,

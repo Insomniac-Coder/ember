@@ -5017,6 +5017,29 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-224 — ECS queries, systems and commands (`[ECS-3]`..`[ECS-6]`), helper M
+
+2026-10-20, toward 90%: built by helper M on branch `helper-M` (its notes: `tasks/90/M-notes.md`),
+verified and merged by the coordinator.
+* `Mut[T]` and `Not[T]` are marker structs with a phantom parameter. `QueryParam` (the parameter
+  as written) names a library type doing the work (`ParamOps`), whose associated types give the
+  items and the read and write sets; tuples of two to eight parameters through generic tuple
+  extensions. `@derive(Component)` also writes `type Ops = std.ecs.Read[T]` and the `Mut[T]` types.
+* `World.run(system, arg)` borrows each storage's arrays once per run (no per-item exclusivity
+  check); a query drives from its smallest required storage and probes the others; `SoA`
+  components yield `SoARef`/`SoAMut`; `Commands` are applied after the system returns.
+* The compiler's ECS-specific piece: a function over a `Query` written where a `std.ecs.System` is
+  wanted becomes `std.ecs.system(f, "f")`, and `run_parallel`'s own array literal is checked for
+  `E7020` with the library's read/write sets; systems passed as values are checked at run time.
+* `[ECS-4]` stays unfinished: `run_parallel` runs its systems in turn (a world's storages are
+  classes and a system value cannot cross threads, ODR-102), and `run` takes one argument after the
+  system (a tuple for several, `()` for none).
+* Type-checker fixes on the way (D-722..D-727) and D-690 (a `mut self` method lends its write to a
+  shared call on `self` as a read: reads work, writes still panic; `EXC-15`'s drop test now says
+  "while a read access"). Programs importing `std.ecs` check about 50% slower (325 → 480 ms for the
+  `ECS-2` test); others are unchanged.
+* Owner questions: `tasks/90/owner-questions.md`.
+
 ## ADR-223 — `ember explain --borrow` (`[DIA-8]`) and `ember build --report=engine` (`[CLI-10]`)
 
 2026-10-20, toward 90% (solo).

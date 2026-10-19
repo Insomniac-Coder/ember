@@ -667,7 +667,7 @@ fn block_writes(
             StmtKind::BeginAccess { .. }
             | StmtKind::BeginAccessTransfer { .. }
             | StmtKind::EndAccess { .. }
-            | StmtKind::EndAccessTransfer { .. }
+            | StmtKind::EndAccessTransfer { .. } | StmtKind::LendAccess { .. }
             | StmtKind::Nop => {}
         }
     }
@@ -1585,7 +1585,7 @@ pub(crate) fn rewrite_places(block: &mut BasicBlock, f: &impl Fn(&mut Place)) {
             | StmtKind::BeginAccess { place, .. }
             | StmtKind::BeginAccessTransfer { place, .. }
             | StmtKind::EndAccess { place, .. }
-            | StmtKind::EndAccessTransfer { place, .. } => f(place),
+            | StmtKind::EndAccessTransfer { place, .. } | StmtKind::LendAccess { place, .. } => f(place),
             StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
         }
     }
@@ -2151,7 +2151,7 @@ fn vectorisable(
                         fails.push(remaining_check(2, memory, at));
                     }
                 }
-                StmtKind::BeginAccessTransfer { .. } | StmtKind::EndAccessTransfer { .. } => fails.push(fail(2, memory, at)),
+                StmtKind::BeginAccessTransfer { .. } | StmtKind::EndAccessTransfer { .. } | StmtKind::LendAccess { .. } => fails.push(fail(2, memory, at)),
             }
         }
         // Every memory access: a local, or a view held in a local at the
@@ -2405,7 +2405,7 @@ fn visit_stmt(stmt: &Stmt, f: &mut dyn FnMut(&Place, bool, bool)) {
         StmtKind::BeginAccess { place, .. }
         | StmtKind::BeginAccessTransfer { place, .. }
         | StmtKind::EndAccess { place, .. }
-        | StmtKind::EndAccessTransfer { place, .. } => f(place, false, true),
+        | StmtKind::EndAccessTransfer { place, .. } | StmtKind::LendAccess { place, .. } => f(place, false, true),
         StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
     }
 }
@@ -3932,7 +3932,7 @@ fn carried_locals(body: &Body, shape: &CountedLoop) -> HashSet<LocalId> {
                     StmtKind::BeginAccess { place, .. }
                     | StmtKind::BeginAccessTransfer { place, .. }
                     | StmtKind::EndAccess { place, .. }
-                    | StmtKind::EndAccessTransfer { place, .. } => place_uses(place, &mut uses),
+                    | StmtKind::EndAccessTransfer { place, .. } | StmtKind::LendAccess { place, .. } => place_uses(place, &mut uses),
                     StmtKind::StorageDead(_) | StmtKind::Nop => {}
                 }
                 step(&mut live, uses, defs);

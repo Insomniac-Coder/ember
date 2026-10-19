@@ -10757,8 +10757,8 @@ formal 1/9 count or Phase 2's estimate.
 > Then ADR-221: reproducible builds and `--build-id` (`[BLD-13]`, `[DET-7]`).
 > Then ADR-222: the code registry synced with the development target (`[DIA-6a]`, D-721) and `[EFF-4]`'s test.
 > Then ADR-223: `ember explain --borrow` (`[DIA-8]`) and `--report=engine` (`[CLI-10]`).
-> Helper M is building the ECS queries (`[ECS-3]`..`[ECS-6]`) in `.claude/worktrees/helper-M`
-> (branch `helper-M`, job sheet in the session scratchpad `jobs/job_M.md`, notes to `tasks/90/M-notes.md`).
+> Then ADR-224: helper M's ECS queries merged (`[ECS-3]`, `[ECS-5]`, `[ECS-6]`; `[ECS-4]` unfinished),
+> D-690 and D-722..D-727 fixed, D-728..D-730 open. **All owner questions: `tasks/90/owner-questions.md`.**
 > **Before a push that touches C or the runtime:** `bench/gcc/gate.sh` in WSL (the workspace through
 > gcc) and `EMBER_CC=clang-cl cargo test --profile ci --workspace` on Windows, besides the full check.
 

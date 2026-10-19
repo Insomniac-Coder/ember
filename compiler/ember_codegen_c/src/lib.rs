@@ -3019,6 +3019,12 @@ impl Emitter<'_> {
             let count = fields.len().max(1);
             // Layout.
             self.line(&format!("static inline EMBER_MAYBE_UNUSED size_t {name}_layout(size_t cap, size_t* at) {{"));
+            // A struct with no fields has no columns: an `SoA` of it is a count (`[SOA-1]`), and
+            // its helpers name parameters they do not use (gcc's `-Wextra` under the C gate).
+            let columnless = fields.is_empty();
+            if columnless {
+                self.line("    (void)cap; (void)at;");
+            }
             self.line("    size_t end = 0;");
             for (k, (_, ty)) in fields.iter().enumerate() {
                 let c = self.c_type(*ty);
@@ -3030,9 +3036,11 @@ impl Emitter<'_> {
             self.line(&format!("static inline EMBER_MAYBE_UNUSED void {name}_grow({soa_c}* s, size_t need) {{"));
             self.line("    size_t cap = s->cap ? s->cap : 8;");
             self.line("    while (cap < need) { cap *= 2; }");
-            self.line(&format!("    size_t at[{count}];"));
-            self.line(&format!("    size_t size = {name}_layout(cap, at);"));
-            self.line(&format!("    unsigned char* block = (unsigned char*){RT}alloc(size ? size : 1, 64);"));
+            if !columnless {
+                self.line(&format!("    size_t at[{count}];"));
+                self.line(&format!("    size_t size = {name}_layout(cap, at);"));
+                self.line(&format!("    unsigned char* block = (unsigned char*){RT}alloc(size ? size : 1, 64);"));
+            }
             for (k, (field, ty)) in fields.iter().enumerate() {
                 let c = self.c_type(*ty);
                 self.line(&format!("    if (s->len) {{ memcpy(block + at[{k}], s->col_{field}, s->len * sizeof({c})); }}"));
@@ -3062,6 +3070,9 @@ impl Emitter<'_> {
                 self.line(&format!("    size_t at[{count}];"));
                 self.line(&format!("    size_t size = {name}_layout(cap, at);"));
                 self.line(&format!("    unsigned char* block = (unsigned char*){RT}arena_alloc_uninit(arena->state, 1, size ? size : 1, 64);"));
+                if columnless {
+                    self.line("    (void)block;");
+                }
                 for (k, (field, ty)) in fields.iter().enumerate() {
                     let c = self.c_type(*ty);
                     self.line(&format!("    s.col_{field} = ({c}*)(block + at[{k}]);"));
@@ -3070,6 +3081,9 @@ impl Emitter<'_> {
                 self.line("    return s;");
                 self.line("}");
                 self.line(&format!("static inline EMBER_MAYBE_UNUSED bool {name}_try_push({soa_c}* s, {element_c} v) {{"));
+                if columnless {
+                    self.line("    (void)v;");
+                }
                 self.line("    if (s->len == s->cap) { return true; }");
                 for (field, _) in &fields {
                     self.line(&format!("    s->col_{field}[s->len] = v{};", access[field]));
@@ -3087,6 +3101,9 @@ impl Emitter<'_> {
             self.line("}");
             // push
             self.line(&format!("static inline EMBER_MAYBE_UNUSED void {name}_push({soa_c}* s, {element_c} v) {{"));
+            if columnless {
+                self.line("    (void)v;");
+            }
             self.line(&format!("    if (s->len == s->cap) {{ {name}_grow(s, s->len + 1); }}"));
             for (field, _) in &fields {
                 self.line(&format!("    s->col_{field}[s->len] = v{};", access[field]));
@@ -3097,6 +3114,9 @@ impl Emitter<'_> {
             self.line(&format!("static inline EMBER_MAYBE_UNUSED {element_c} {name}_take_last({soa_c}* s) {{"));
             self.line("    s->len -= 1;");
             self.line(&format!("    {element_c} v;"));
+            if columnless {
+                self.line("    memset(&v, 0, sizeof v);");
+            }
             for (field, _) in &fields {
                 self.line(&format!("    v{} = s->col_{field}[s->len];", access[field]));
             }
@@ -3121,6 +3141,9 @@ impl Emitter<'_> {
             self.line("}");
             // swap (std's, in range): each column's two elements change places
             self.line(&format!("static inline EMBER_MAYBE_UNUSED void {name}_swap({soa_c}* s, int64_t i, int64_t j) {{"));
+            if columnless {
+                self.line("    (void)s; (void)i; (void)j;");
+            }
             for (field, ty) in &fields {
                 let c = self.c_type(*ty);
                 self.line(&format!("    {{ {c} t = s->col_{field}[i]; s->col_{field}[i] = s->col_{field}[j]; s->col_{field}[j] = t; }}"));
@@ -3128,6 +3151,9 @@ impl Emitter<'_> {
             self.line("}");
             // move_slot and drop_at (std's, for retain)
             self.line(&format!("static inline EMBER_MAYBE_UNUSED void {name}_move_slot({soa_c}* s, int64_t from, int64_t to) {{"));
+            if columnless {
+                self.line("    (void)s; (void)from; (void)to;");
+            }
             for (field, _) in &fields {
                 self.line(&format!("    s->col_{field}[to] = s->col_{field}[from];"));
             }
@@ -3173,6 +3199,9 @@ impl Emitter<'_> {
             self.line(&format!("static inline EMBER_MAYBE_UNUSED {element_c} {name}_swap_remove({soa_c}* s, int64_t i, {RT}loc loc) {{"));
             self.line(&format!("    if (i < 0 || (size_t)i >= s->len) {{ {RT}panic_bounds((size_t)i, s->len, loc); }}"));
             self.line(&format!("    {element_c} v;"));
+            if columnless {
+                self.line("    memset(&v, 0, sizeof v);");
+            }
             for (field, _) in &fields {
                 self.line(&format!("    v{} = s->col_{field}[i];", access[field]));
             }
@@ -7017,6 +7046,14 @@ impl Emitter<'_> {
                 self.line(&format!(
                     "    {RT}access_{operation}({object}, {what}, {location});"
                 ));
+            }
+            // `[EXC-5]` (D-690) — a `mut self` method lends its object for a call: its whole-object
+            // write becomes a read for the call, and a write again after.
+            StmtKind::LendAccess { place, lend } => {
+                self.emit_line_directive(stmt.span);
+                let (end, begin) = if *lend { ("end_write", "begin_read") } else { ("end_read", "begin_write") };
+                self.line(&format!("    {};", self.access_call(place, end, stmt.span, body)));
+                self.line(&format!("    {};", self.access_call(place, begin, stmt.span, body)));
             }
             StmtKind::CheckedBinaryOp { dest, overflow, op, lhs, rhs } => {
                 // `bool ember_ck_add_i32(a, b, &dest)` returns whether the
@@ -12094,7 +12131,7 @@ fn stmt_c_reads(stmt: &Stmt, read: &mut [bool], void_place: &dyn Fn(&Place) -> b
         StmtKind::BeginAccess { place, .. }
         | StmtKind::BeginAccessTransfer { place, .. }
         | StmtKind::EndAccess { place, .. }
-        | StmtKind::EndAccessTransfer { place, .. } => c_read_place(place, read),
+        | StmtKind::EndAccessTransfer { place, .. } | StmtKind::LendAccess { place, .. } => c_read_place(place, read),
         StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
     }
 }
@@ -12768,7 +12805,7 @@ fn stmt_places<'b>(stmt: &'b Stmt, out: &mut Vec<&'b Place>) {
         | StmtKind::BeginAccess { place, .. }
         | StmtKind::BeginAccessTransfer { place, .. }
         | StmtKind::EndAccess { place, .. }
-        | StmtKind::EndAccessTransfer { place, .. } => out.push(place),
+        | StmtKind::EndAccessTransfer { place, .. } | StmtKind::LendAccess { place, .. } => out.push(place),
         StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
     }
 }

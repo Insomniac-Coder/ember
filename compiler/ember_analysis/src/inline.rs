@@ -874,7 +874,7 @@ fn renumber_stmt(stmt: &mut Stmt, local: &impl Fn(LocalId) -> LocalId) {
         StmtKind::BeginAccess { place, .. }
         | StmtKind::BeginAccessTransfer { place, .. }
         | StmtKind::EndAccess { place, .. }
-        | StmtKind::EndAccessTransfer { place, .. } => renumber_place(place, local),
+        | StmtKind::EndAccessTransfer { place, .. } | StmtKind::LendAccess { place, .. } => renumber_place(place, local),
         StmtKind::StorageLive(id) | StmtKind::StorageDead(id) => *id = local(*id),
         StmtKind::Nop => {}
     }

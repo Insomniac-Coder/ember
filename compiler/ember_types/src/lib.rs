@@ -772,30 +772,36 @@ impl TypeTable {
                 params.iter().any(|param| self.is_generic_in(param.ty, seen))
                     || self.is_generic_in(*ret, seen)
             }
+            // An instance over a parameter is generic whether or not a field holds it: a phantom
+            // argument (`Not[T]`, `[TYP-35]`) and `SoA[T]`'s element (its columns are known only
+            // per instance) are arguments no field shows.
             TyKind::Struct(id) => {
                 seen.insert(ty)
-                    && self
+                    && (self
                         .struct_def(*id)
                         .fields
                         .iter()
                         .any(|field| self.is_generic_in(field.ty, seen))
+                        || self.struct_def(*id).origin.as_ref().is_some_and(|(_, args)| args.iter().any(|&arg| self.is_generic_in(arg, seen))))
             }
             TyKind::Class(id) => {
                 seen.insert(ty)
-                    && self
+                    && (self
                         .class_def(*id)
                         .fields
                         .iter()
                         .any(|field| self.is_generic_in(field.ty, seen))
+                        || self.class_def(*id).origin.as_ref().is_some_and(|(_, args)| args.iter().any(|&arg| self.is_generic_in(arg, seen))))
             }
             // `Option[U]`, `Result[T, F]`: a payload may hold a parameter.
             TyKind::Enum(id) => {
                 seen.insert(ty)
-                    && self
+                    && (self
                         .enum_def(*id)
                         .variants
                         .iter()
                         .any(|variant| variant.fields.iter().any(|field| self.is_generic_in(field.ty, seen)))
+                        || self.enum_def(*id).origin.as_ref().is_some_and(|(_, args)| args.iter().any(|&arg| self.is_generic_in(arg, seen))))
             }
             _ => false,
         }
