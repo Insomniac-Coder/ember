@@ -743,6 +743,8 @@ pub enum ExprKind {
     Yield(Option<Box<Expr>>),
     /// `[CT-6]` — `comptime(e)`: `e` evaluated while compiling.
     Comptime(Box<Expr>),
+    /// `[EFF-7]` — `@assume_noalloc(call)`: the call, taken to carry no `Alloc`.
+    AssumeNoalloc(Box<Expr>),
     /// A node the parser could not build. Keeps later stages from cascading.
     Error,
 }

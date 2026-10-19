@@ -552,6 +552,7 @@ mod tests {
             borrows: None,
             sources: Vec::new(),
             is_lambda: false,
+            assume_noalloc: Vec::new(),
             emit_if_used: false,
             borrowed_params: Vec::new(),
             for_iterators: Vec::new(),

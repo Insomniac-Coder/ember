@@ -540,7 +540,7 @@ mod tests {
             fp: ember_types::FpMode::Strict, inline: ember_mir::InlineHint::default(), static_safe: false, contracts: Default::default(),
             export_thread_policy: ember_mir::ExportThreadPolicy::Any,
             locals, blocks: Vec::new(), arg_count: 0, param_modes: Vec::new(),
-            span: Span::DUMMY, borrows: None, sources: Vec::new(), is_lambda: false,
+            span: Span::DUMMY, borrows: None, sources: Vec::new(), is_lambda: false, assume_noalloc: Vec::new(),
             emit_if_used: false, borrowed_params: Vec::new(), for_iterators: Vec::new(),
             call_argument_bindings: Vec::new(), callable_regions: None,
             closure_environment: None, closure_captures_by_move: false,

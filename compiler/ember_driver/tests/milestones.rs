@@ -2256,6 +2256,42 @@ fn dynamic_access_safety_side_table_is_written() {
     );
 }
 
+/// `[EFF-10]` — the effect set says only which kinds of check a function has; the safety side table
+/// lists each one: every check left in with its kind, location, mechanism and reason, and every one
+/// removed with the proof that removed it (the loop's index is in range, `[RNG-4]`).
+#[test]
+fn the_safety_table_lists_every_check_by_site() {
+    let root = workspace_root();
+    let dir = temporary_directory("checks-by-site");
+    let source = dir.join(format!("sites.{SOURCE_EXT}"));
+    std::fs::write(
+        &source,
+        "fn get(xs: Array[int], i: int) -> int:\n    return xs[i]\n\n\
+         fn total(xs: Array[int]) -> int:\n    t = 0\n    for i in 0..xs.len():\n        t += xs[i]\n    return t\n\n\
+         fn main():\n    xs = [1, 2, 3]\n    println(get(xs, 1) + total(xs))\n",
+    )
+    .expect("write the program");
+    let out_dir = dir.join("out");
+    let build = ember(&["build", &source.to_string_lossy(), "--out-dir", &out_dir.to_string_lossy()], &root);
+    assert_eq!(build.exit, 0, "build failed:\n{}", build.stderr);
+    let table = out_dir.join("debug").join("inspect").join("sites.safety.json");
+    let json = std::fs::read_to_string(&table).expect("the side table");
+    let _ = std::fs::remove_dir_all(&dir);
+    // By where it is written: `get` and `total` may be inlined into `main`.
+    let entry = |at: &str, kind: &str, mechanism: &str, status: &str, reason: &str| {
+        json.split("},{").any(|entry| {
+            entry.contains(&format!("sites.{SOURCE_EXT}:{at}\""))
+                && entry.contains(&format!("\"kind\":\"{kind}\""))
+                && entry.contains(&format!("\"mechanism\":\"{mechanism}\""))
+                && entry.contains(&format!("\"status\":\"{status}\""))
+                && entry.contains(&format!("\"reason\":\"{reason}\""))
+        })
+    };
+    assert!(entry("2:12", "Bounds", "index test", "emitted", "not_proven_by_analysis"), "{json}");
+    assert!(entry("7:9", "Overflow", "overflow test", "emitted", "not_proven_by_analysis"), "{json}");
+    assert!(entry("7:17", "Bounds", "range facts", "elided", "range_facts"), "{json}");
+}
+
 /// `[DSJ-5]` — each `assert_disjoint` comparison is a `RuntimeCheck(Aliasing)` whose reason is
 /// `establishes_static_fact` in the safety side table, unless the compiler already knows the views
 /// apart (views of two different lists here), when no comparison is emitted and the table says so.

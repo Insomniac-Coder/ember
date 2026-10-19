@@ -225,6 +225,8 @@ struct Builder<'a> {
     /// from, with the copy, to store back after the call.
     write_backs: Vec<(Place, LocalId)>,
     call_argument_bindings: Vec<CallArgumentBinding>,
+    /// `[EFF-7]` — the block the latest call terminated (`lower_value_into`).
+    last_call: Option<usize>,
     /// ODR-065 — the `mut` parameters, `self` among them: each points at a
     /// caller's local or at the retained copy a caller made of a stored handle
     /// (`lower_mut_argument_with_access`), never into an object, so a borrow
@@ -379,6 +381,7 @@ impl<'a> Builder<'a> {
             place_overrides: Vec::new(),
             write_backs: Vec::new(),
             call_argument_bindings: Vec::new(),
+            last_call: None,
             mut_param_locals: function
                 .params
                 .iter()
@@ -451,6 +454,15 @@ impl<'a> Builder<'a> {
             borrows: self.function.borrows.clone(),
             sources: self.function.sources.clone(),
             is_lambda: self.function.is_lambda,
+            assume_noalloc: {
+                let within = self.function.span;
+                self.program
+                    .assume_noalloc
+                    .iter()
+                    .copied()
+                    .filter(|call| call.file == within.file && within.start <= call.start && call.end <= within.end)
+                    .collect()
+            },
             emit_if_used: self.function.emit_if_used,
             borrowed_params,
             call_argument_bindings: self.call_argument_bindings,
@@ -503,6 +515,9 @@ impl<'a> Builder<'a> {
     fn terminate(&mut self, terminator: Terminator) {
         let index = self.current.0 as usize;
         self.blocks[index].terminator_span = self.current_span;
+        if matches!(terminator, Terminator::Call { .. }) {
+            self.last_call = Some(index);
+        }
         self.blocks[index].terminator = terminator;
     }
 
@@ -2333,6 +2348,21 @@ impl<'a> Builder<'a> {
     }
 
     fn lower_value_into(&mut self, place: Place, expr: &'a hir::Expr) {
+        // `[EFF-7]` — a call written `@assume_noalloc(call)`: its own terminator, the last call its
+        // lowering made (its arguments' come first), carries the call's span, which the effect
+        // analysis matches against `Body::assume_noalloc`.
+        if !self.program.assume_noalloc.is_empty() && self.program.assume_noalloc.contains(&expr.span) {
+            let before = self.last_call;
+            self.lower_expr_value_into(place, expr);
+            if let Some(index) = self.last_call.filter(|_| self.last_call != before) {
+                self.blocks[index].terminator_span = expr.span;
+            }
+            return;
+        }
+        self.lower_expr_value_into(place, expr);
+    }
+
+    fn lower_expr_value_into(&mut self, place: Place, expr: &'a hir::Expr) {
         self.at(expr.span);
         match &expr.kind {
             hir::ExprKind::OverflowScope { policy, expr: inner } => {

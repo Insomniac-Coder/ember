@@ -623,6 +623,58 @@ fn enum_values_migrate_by_variant_name() {
     assert!(run.stdout.ends_with("60\n"), "the old code did not run on: {}", run.stdout);
 }
 
+/// `[HR-11]` — every type in a reloadable package has a schema: its kind, base and layout facts, and
+/// its fields in order (name, type schema hash, offset, size) or its variants (name, discriminant,
+/// payload). A field's type schema hash is its type's own: `pair`'s is `Pair`'s.
+#[test]
+fn every_type_has_a_schema() {
+    let root = workspace_root();
+    let source = "open class Base:\n    id: int = 0\n\nstruct Pair:\n    a: u8 = 0\n    b: u32 = 0\n\n\
+                  class Mote(Base):\n    x: f64 = 0.0\n    pair: Pair = Pair()\n\n\
+                  enum Shape:\n    Dot\n    Circle(f64)\n\nenum Mode:\n    Slow\n    Fast\n\n\
+                  fn main():\n    m = Mote()\n    _s = Shape.Circle(m.x)\n    _k = Mode.Fast\n    println(m.pair.b)\n";
+    let (package, file) = package("reload-schema", RELOAD_ALL, source);
+    let out = package.join("target");
+    let built = ember(&["build", &file.to_string_lossy(), "--out-dir", &out.to_string_lossy()], &root);
+    assert_eq!(built.exit, 0, "{}", built.stderr);
+    let c = std::fs::read_to_string(out.join("debug").join("c").join("main.c")).expect("the generated C");
+    // A type's row: name, kind, base, layout, size, align, schema hash, …
+    let row = |name: &str| -> Vec<String> {
+        let line = c.lines().find(|line| line.trim_start().starts_with(&format!("{{ \"{name}\", EMBER_RL_TYPE_")))
+            .unwrap_or_else(|| panic!("[HR-11] no schema for `{name}`:\n{c}"));
+        line.trim_start().trim_start_matches("{ ").split(", ").map(str::to_string).collect()
+    };
+    let (base, mote, pair, shape, mode) = (row("Base"), row("Mote"), row("Pair"), row("Shape"), row("Mode"));
+    assert_eq!((base[1].as_str(), base[2].as_str()), ("EMBER_RL_TYPE_CLASS", "NULL"), "{base:?}");
+    assert_eq!((mote[1].as_str(), mote[2].as_str()), ("EMBER_RL_TYPE_CLASS", "\"Base\""), "{mote:?}");
+    assert_eq!(pair[1], "EMBER_RL_TYPE_STRUCT", "{pair:?}");
+    assert_eq!((shape[1].as_str(), shape[3].as_str()), ("EMBER_RL_TYPE_ENUM", "0"), "{shape:?}");
+    assert_eq!((mode[1].as_str(), mode[3].as_str()), ("EMBER_RL_TYPE_ENUM", "EMBER_RL_LAYOUT_UNIT"), "{mode:?}");
+    for row in [&base, &mote, &pair, &shape, &mode] {
+        assert!(row[4].contains("sizeof") && row[5].contains("_Alignof") && row[6].starts_with("UINT64_C(0x"), "{row:?}");
+    }
+    // A field: name, renamed from, type name, type schema hash, offset, size — in declaration order,
+    // the base's first.
+    let fields: Vec<Vec<String>> = c.lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with("{ \"") && line.contains("_Mote*)0)->"))
+        .map(|line| line.trim_start_matches("{ ").split(", ").map(str::to_string).collect())
+        .collect();
+    let names: Vec<&str> = fields.iter().map(|field| field[0].as_str()).collect();
+    assert_eq!(names, ["\"id\"", "\"x\"", "\"pair\""], "{fields:?}");
+    for field in &fields {
+        // `offsetof(struct …, name)` is two of the pieces.
+        assert!(field[4].contains("offsetof(") && field[6].contains("sizeof("), "{field:?}");
+    }
+    assert_eq!(fields[2][3], pair[6], "[HR-11] `pair`'s type schema hash is not `Pair`'s");
+    // A variant: name, renamed from, discriminant, payload schema hash, payload fields.
+    let variant = |name: &str| c.lines().map(str::trim_start).find(|line| line.starts_with(&format!("{{ \"{name}\", NULL, UINT64_C(")))
+        .unwrap_or_else(|| panic!("[HR-11] no variant `{name}`:\n{c}")).to_string();
+    assert!(variant("Dot").starts_with("{ \"Dot\", NULL, UINT64_C(0), ") && variant("Dot").ends_with("0u, NULL },"), "{}", variant("Dot"));
+    assert!(variant("Circle").starts_with("{ \"Circle\", NULL, UINT64_C(1), ") && variant("Circle").contains("1u, "), "{}", variant("Circle"));
+    assert!(variant("Fast").starts_with("{ \"Fast\", NULL, UINT64_C(1), "), "{}", variant("Fast"));
+}
+
 /// `[HR-17]`, `[HR-11a]` — a static of a unit enum whose variants were reordered keeps its variant,
 /// its discriminant rewritten, alone or inside a struct; one holding a removed variant is refused.
 #[test]

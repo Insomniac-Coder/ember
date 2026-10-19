@@ -107,6 +107,9 @@ pub struct Body {
     pub sources: Vec<usize>,
     /// Whether this is a lambda's body, which cannot carry `@borrows`.
     pub is_lambda: bool,
+    /// `[EFF-7]` — the calls in this body written `@assume_noalloc(call)`, by span: the effect
+    /// analysis takes each to carry no `Alloc`.
+    pub assume_noalloc: Vec<Span>,
     /// An implicit derive, removed by `prune_unused_implicit` when nothing
     /// kept reaches it.
     pub emit_if_used: bool,

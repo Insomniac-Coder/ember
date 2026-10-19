@@ -759,6 +759,7 @@ impl Rewriter<'_> {
             | ast::ExprKind::Paren(base)
             | ast::ExprKind::Owned(base)
             | ast::ExprKind::Comptime(base)
+            | ast::ExprKind::AssumeNoalloc(base)
             | ast::ExprKind::Unary { operand: base, .. }
             | ast::ExprKind::RefOf { place: base, .. } => self.expr(base, Place::Operand),
             ast::ExprKind::IndexOrInstantiate { base, args } => {

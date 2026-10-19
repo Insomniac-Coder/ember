@@ -151,6 +151,7 @@ fn fixture() -> (TypeTable, CommonTypes, Body) {
         borrows: None,
         sources: vec![],
         is_lambda: false,
+        assume_noalloc: Vec::new(),
         emit_if_used: false,
         borrowed_params: vec![LocalId(1), LocalId(2)],
         call_argument_bindings: vec![],

@@ -651,6 +651,25 @@ fn safety_json(bodies: &[Body], map: &SourceMap) -> String {
                 ));
             }
         }
+        // `[EFF-10]` — each runtime check left in, with its kind, location and mechanism. An
+        // explicit `panic` or `assert` is the program's own, not a check.
+        for block in &body.blocks {
+            let Terminator::Assert { msg, span, .. } = &block.terminator else { continue };
+            let (kind, mechanism) = match msg {
+                AssertKind::Bounds { .. } => ("Bounds", "index test"),
+                AssertKind::Overflow(_) | AssertKind::SignedDivisionOverflow => ("Overflow", "overflow test"),
+                AssertKind::DivisionByZero => ("DivisionByZero", "zero divisor test"),
+                AssertKind::ShiftTooLarge => ("ShiftRange", "shift amount test"),
+                AssertKind::RefCellBorrow { .. } => ("Borrow", "borrow flag test"),
+                AssertKind::Downcast => ("Downcast", "class chain test"),
+                AssertKind::Panic { .. } => continue,
+            };
+            entries.push(format!(
+                "{{\"kind\":\"{kind}\",\"source\":{},\"function\":{},\"mechanism\":\"{mechanism}\",\"classification\":\"DYNAMIC_PER_ACCESS\",\"reason\":\"not_proven_by_analysis\",\"status\":\"emitted\"}}",
+                json_string(&map.location(*span)),
+                json_string(&body.name),
+            ));
+        }
         // `[DSJ-5]` — each `assert_disjoint` comparison left in establishes a static fact.
         for block in &body.blocks {
             if let Terminator::Call { func: FuncRef::Builtin { which: Builtin::ViewsOverlap { .. }, .. }, .. } = &block.terminator {
@@ -12818,6 +12837,7 @@ mod string_descriptor_view_parts_tests {
             borrows: None,
             sources: Vec::new(),
             is_lambda: false,
+            assume_noalloc: Vec::new(),
             emit_if_used: false,
             borrowed_params: vec![LocalId(1)],
             call_argument_bindings: Vec::new(),

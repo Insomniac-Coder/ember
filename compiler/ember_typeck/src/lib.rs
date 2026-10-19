@@ -391,7 +391,7 @@ pub fn check(
         functions.extend(std::mem::take(&mut checker.comptime_functions));
     }
     CheckOutput {
-        program: Program { functions, main, tests },
+        program: Program { functions, main, tests, assume_noalloc: std::mem::take(&mut checker.assume_noalloc) },
         callable_declarations,
         std_instances: std::mem::take(&mut checker.std_instances),
         comptime,
@@ -2616,6 +2616,8 @@ struct Checker<'a> {
     /// `[UNS-3]` — each statement of an `unsafe:` block, by span, and whether any check of it (its
     /// generic's or an instance's) needed `unsafe`; reported once checking is done.
     unsafe_statements: HashMap<Span, bool>,
+    /// `[EFF-7]` — the calls written `@assume_noalloc(call)` (`Program::assume_noalloc`).
+    assume_noalloc: Vec<Span>,
     /// `[UNS-10b]` — `UnsafeCell` delegates an invariant to unsafe code and
     /// therefore cannot occur in a function that promises `@static_safe`.
     in_static_safe: bool,
@@ -2876,6 +2878,7 @@ impl<'a> Checker<'a> {
             unsafe_used: false,
             unsafe_blocks: HashMap::new(),
             unsafe_statements: HashMap::new(),
+            assume_noalloc: Vec::new(),
             in_static_safe: false,
             in_generic_template: false,
             static_safe_unsafe_cell_reported: false,
@@ -16813,7 +16816,7 @@ impl<'a> Checker<'a> {
         }
 
         functions.extend(self.check_method_bodies(module));
-        Program { functions, main, tests }
+        Program { functions, main, tests, assume_noalloc: Vec::new() }
     }
 
     /// `[TYP-16]` — one real body per instantiation. Each is the generic body
@@ -18177,6 +18180,31 @@ impl<'a> Checker<'a> {
         self.in_unsafe
     }
 
+    /// `[EFF-7]` — `@assume_noalloc(call)`: the call's type and value, which the effect analysis
+    /// takes to carry no `Alloc` (`Program::assume_noalloc`); the programmer answers for it as for
+    /// any `unsafe` obligation. Admitted only inside `unsafe` (`E0104` elsewhere), and only around a
+    /// call.
+    fn synth_assume_noalloc(&mut self, inner: &ast::Expr, expected: Option<Ty>, span: Span) -> Expr {
+        if !self.unsafe_context() {
+            self.sink.emit(
+                Diagnostic::error(codes::E0104, span, "`@assume_noalloc` is admitted only inside `unsafe`")
+                    .help("put it in an `unsafe:` block whose safety note says why the call does not allocate [EFF-7]"),
+            );
+        }
+        let call = unparenthesized(inner);
+        if matches!(call.kind, ast::ExprKind::Call { .. } | ast::ExprKind::MethodCall { .. }) {
+            if !self.assume_noalloc.contains(&call.span) {
+                self.assume_noalloc.push(call.span);
+            }
+        } else {
+            self.sink.emit(
+                Diagnostic::error(codes::E0104, inner.span, "`@assume_noalloc` takes a call")
+                    .help("it overrides the effect analysis for one call it cannot see into [EFF-7]"),
+            );
+        }
+        self.synth_with_expectation(inner, expected)
+    }
+
     /// `[UNS-3]` — `L3010` for each `unsafe:` block holding a statement no check of which needed
     /// `unsafe`. Not after an error: a statement rejected before its `unsafe` check would look unneeded.
     fn report_unneeded_unsafe(&mut self) {
@@ -19434,6 +19462,7 @@ impl<'a> Checker<'a> {
             },
             ast::ExprKind::Yield(value) => value.as_deref().is_some_and(Self::class_init_uses_whole_self),
             ast::ExprKind::Comptime(_) => false,
+            ast::ExprKind::AssumeNoalloc(inner) => Self::class_init_uses_whole_self(inner),
         }
     }
 
@@ -31741,6 +31770,7 @@ impl<'a> Checker<'a> {
 
 
             ast::ExprKind::Comptime(inner) => self.comptime_expr(inner, expected, span),
+            ast::ExprKind::AssumeNoalloc(inner) => self.synth_assume_noalloc(inner, expected, span),
 
             ast::ExprKind::Logical { op, lhs, rhs } => {
                 let bool_ty = self.common.bool_;

@@ -849,7 +849,14 @@ impl SiteBuilder<'_> {
                 for operand in args {
                     self.sync_copy(body, operand, span, sites);
                 }
+                let first = sites.len();
                 self.call_sites(func, span, sites);
+                // `[EFF-7]` — a call written `@assume_noalloc(call)` is taken to carry no `Alloc`.
+                if body.assume_noalloc.contains(&span) {
+                    for site in &mut sites[first..] {
+                        site.effects = Effects(site.effects.0 & !Effects::ALLOC.0);
+                    }
+                }
                 // `[PAR-4]` — a `@parallel` loop runs its chunk closure and its combiner here.
                 if let FuncRef::Builtin { which: Builtin::ParallelFor { .. }, .. } = func {
                     for operand in args {

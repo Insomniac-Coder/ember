@@ -36,6 +36,11 @@ const BP_POW: u8 = bp(15);
 const BP_POSTFIX: u8 = bp(16);
 
 impl Parser<'_> {
+    /// `[EFF-7]` — at `@assume_noalloc`.
+    fn at_assume_noalloc(&self) -> bool {
+        self.at_punct(Punct::At) && matches!(self.peek_at(1), TokenKind::Ident(name) if name.is("assume_noalloc"))
+    }
+
     /// `[LEX-21]` (0.9.9) — `::` is not a token of the language: `E0100`
     /// with the help `use '.' for paths`, consuming it.
     fn report_path_colons(&mut self) {
@@ -130,7 +135,8 @@ impl Parser<'_> {
         // `[ATT-3]` — a statement attribute attaches to the next compound
         // statement. Parsed before the label so `@parallel` may precede
         // `outer: for …`.
-        let attrs = self.parse_attributes();
+        // `[EFF-7]` — `@assume_noalloc(…)` begins an expression, not an attribute.
+        let attrs = if self.at_assume_noalloc() { Vec::new() } else { self.parse_attributes() };
 
         let start = self.span();
         let id = self.next_id();
@@ -1001,6 +1007,15 @@ impl Parser<'_> {
             TokenKind::Keyword(Kw::SelfValue) => {
                 self.bump();
                 ExprKind::SelfExpr
+            }
+            // `[EFF-7]` — `@assume_noalloc(call)`, a primary expression in the grammar.
+            TokenKind::Punct(Punct::At) if self.at_assume_noalloc() => {
+                self.bump();
+                self.bump();
+                self.expect_punct(Punct::LParen);
+                let inner = self.parse_expr();
+                self.expect_punct(Punct::RParen);
+                ExprKind::AssumeNoalloc(Box::new(inner))
             }
             // `[CT-6]` — `comptime(e)`; `comptime.read_file(…)` and
             // `comptime.env(…)` name the compile-time inputs (`[CT-2]`).

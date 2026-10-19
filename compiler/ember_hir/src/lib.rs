@@ -34,6 +34,9 @@ pub struct Program {
     /// `[TST-3]` — the `@test` functions, in declaration order, module by
     /// module: what `ember test` runs, each in a process of its own.
     pub tests: Vec<TestFn>,
+    /// `[EFF-7]` — the calls written `@assume_noalloc(call)`, by span: the effect analysis takes
+    /// each to carry no `Alloc`.
+    pub assume_noalloc: Vec<Span>,
 }
 
 /// `[TST-3]` — one `@test` function: a free function with no parameters
