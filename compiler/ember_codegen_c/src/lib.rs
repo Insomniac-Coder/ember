@@ -458,7 +458,7 @@ fn emit_with(
         },
         ffi_export_value_params: bodies
             .iter()
-            .filter(|body| body.abi.as_deref() == Some("C") && !body.is_extern_declaration)
+            .filter(|body| body.abi.is_some() && !body.is_extern_declaration)
             .filter_map(|body| {
                 let by_value = body.args().enumerate().map(|(index, (_, decl))|
                     body.param_modes.get(index) == Some(&ParameterMode::Borrow)
@@ -5240,7 +5240,7 @@ impl Emitter<'_> {
             if self.inline_bodies.contains_key(&body.symbol) || body.inline != ember_mir::InlineHint::default() {
                 let linkage = self.linkage(body);
                 self.line(&format!("{linkage}{signature};"));
-            } else if self.library_mode && body.abi.as_deref() != Some("C") {
+            } else if self.library_mode && body.abi.is_none() {
                 self.emit_internal_prototype(&signature);
             } else {
                 self.line(&format!("{signature};"));
@@ -5503,7 +5503,7 @@ impl Emitter<'_> {
             })
             .collect();
         let params = if params.is_empty() { "void".to_string() } else { params.join(", ") };
-        let convention = if body.is_extern_declaration { calling_convention(body.abi.as_deref()) } else { "" };
+        let convention = calling_convention(body.abi.as_deref());
         format!("{ret} {convention}{}({params})", body.symbol)
     }
 
@@ -5824,7 +5824,7 @@ impl Emitter<'_> {
         out.push_str(match self.inline_bodies.get(&body.symbol) {
             Some(true) => "EMBER_INLINED EMBER_MAYBE_UNUSED ",
             Some(false) => "static inline EMBER_MAYBE_UNUSED ",
-            None if self.library_mode && body.abi.as_deref() != Some("C") => "static EMBER_MAYBE_UNUSED ",
+            None if self.library_mode && body.abi.is_none() => "static EMBER_MAYBE_UNUSED ",
             None => "",
         });
         out
@@ -5841,7 +5841,7 @@ impl Emitter<'_> {
         if self.comptime.is_some() {
             self.line(&format!("    EMBER_CT_ENTER({});", c_string_literal(&body.name)));
         }
-        if body.abi.as_deref() == Some("C") {
+        if body.abi.is_some() {
             // `[FFI-22]` — the host may call this export on a thread that has
             // never run Ember. Attach before the body touches runtime state.
             self.line(&format!("    {RT}rt_thread_attach();"));
@@ -7175,7 +7175,7 @@ impl Emitter<'_> {
                     self.line("    EMBER_CT_LEAVE();");
                 }
                 // `[HR-42]` — leaving Ember code for the foreign caller of an export.
-                if self.reload.is_some() && body.abi.as_deref() == Some("C") {
+                if self.reload.is_some() && body.abi.is_some() {
                     self.line(&format!("    {RT}reload_leave();"));
                 }
                 if self.is_void(body.return_ty()) {

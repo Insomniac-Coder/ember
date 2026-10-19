@@ -4086,7 +4086,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // The C header and executable expose the same definitions. Root selected
     // ABI symbols, including renamed/imported exports, never declarations.
     let mut retained_symbols: Vec<String> = bodies.iter()
-        .filter(|body| body.abi.as_deref() == Some("C")
+        .filter(|body| body.abi.is_some()
             && !body.is_extern_declaration && !body.is_abstract)
         .map(|body| body.symbol.clone())
         .collect();

@@ -342,12 +342,12 @@ pub fn check(
         if function.is_extern_declaration {
             continue;
         }
-        if main.is_some() && function.abi.as_deref() == Some("C") && function.symbol == "main" {
+        if main.is_some() && function.abi.is_some() && function.symbol == "main" {
             checker.error(codes::E0104, function.span,
                 "C export `main` conflicts with the generated program entry point");
         }
         if let Some(previous) = emitted_symbols.insert(&function.symbol, function)
-            && (function.abi.as_deref() == Some("C") || previous.abi.as_deref() == Some("C")) {
+            && (function.abi.is_some() || previous.abi.is_some()) {
             checker.sink.emit(Diagnostic::error(codes::E0104, function.span,
                 format!("C symbol `{}` is defined by more than one Ember function", function.symbol))
                 .secondary(previous.span, "first definition is here"));
@@ -11807,12 +11807,9 @@ impl<'a> Checker<'a> {
                     );
                     return self.common.error;
                 }
-                if abi.as_deref().is_some_and(|abi| abi != "C") {
-                    self.error(
-                        codes::E1010,
-                        ty.span,
-                        "only the `extern \"C\"` function-pointer ABI is supported in this phase",
-                    );
+                if let Some(abi) = abi.as_deref()
+                    && !self.check_calling_convention(abi, ty.span)
+                {
                     return self.common.error;
                 }
                 let params: Vec<FnParam> = params
@@ -11831,10 +11828,16 @@ impl<'a> Checker<'a> {
                     self.error(codes::E5050, ty.span, "an `extern \"C\" fn` pointer needs FFI-safe parameters and result");
                     return self.common.error;
                 }
+                // `[FFI-31b]` — a foreign function pointer is a boundary C code may call, or be
+                // called through: a value with drop glue may not cross it (C cannot run the drop).
                 if abi.is_some() && (self.types.needs_drop(ret)
                     || params.iter().any(|param| self.types.needs_drop(param.ty))) {
-                    self.error(codes::E0900, ty.span,
-                        "`extern \"C\" fn` pointers with drop-bearing values are not implemented yet");
+                    self.sink.emit(
+                        Diagnostic::error(codes::E5015, ty.span,
+                            "a value with drop glue may not cross an `extern` function pointer's boundary")
+                            .note("no owning Ember value crosses a foreign boundary: C cannot run its `drop` [FFI-31b]")
+                            .help("pass a `@layout(c)` value with no `drop`, a pointer, or an opaque handle"),
+                    );
                     return self.common.error;
                 }
                 // ODR-102 — written outside a parameter, `fn(A) -> R` is an
@@ -16732,7 +16735,7 @@ impl<'a> Checker<'a> {
                     decl.abi.clone().or_else(|| has_attribute(&item.attrs, "export").then(|| "C".to_string()))
                 },
                 export_thread_policy: if !decl.is_foreign_decl
-                    && (decl.abi.as_deref() == Some("C") || has_attribute(&item.attrs, "export"))
+                    && (decl.abi.is_some() || has_attribute(&item.attrs, "export"))
                     { export_thread_policy(&item.attrs, &module.directives) }
                     else { hir::ExportThreadPolicy::Any },
                 params,
@@ -17171,16 +17174,35 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[FFI-9]` — `extern "C"`, `"system"`, `"fastcall"` and `"vectorcall"` are the calling
+    /// conventions of a definition and a function pointer; `"C++"` is Annex C's. Whether `abi` is one.
+    fn check_calling_convention(&mut self, abi: &str, span: Span) -> bool {
+        match abi {
+            "C" | "system" | "fastcall" | "vectorcall" => true,
+            "C++" => {
+                self.error(codes::E0900, span, "the `extern \"C++\"` convention is not implemented yet (Annex C)");
+                false
+            }
+            other => {
+                self.sink.emit(
+                    Diagnostic::error(codes::E0104, span, format!("`extern \"{other}\"` is not a calling convention"))
+                        .help("write `extern \"C\"`, `\"system\"`, `\"fastcall\"` or `\"vectorcall\"` [FFI-9]"),
+                );
+                false
+            }
+        }
+    }
+
     /// `[FFI-5]`, `[RNG-10b]` — a C boundary needs an FFI-safe representation;
     /// a range value must instead enter through its checked constructor.
     fn check_foreign_signature(&mut self, decl: &ast::FnDecl, def: DefId, attrs: &[ast::Attribute]) {
         if decl.abi.is_none() && !has_attribute(attrs, "export") {
             return;
         }
+        // `[FFI-9]` — an Ember function may be defined with any of the four conventions.
         if !decl.is_foreign_decl
-            && decl.abi.as_deref().is_some_and(|abi| abi != "C") {
-            self.error(codes::E0900, decl.name.span,
-                "only the `extern \"C\"` function ABI is implemented yet");
+            && let Some(abi) = decl.abi.as_deref() {
+            self.check_calling_convention(abi, decl.name.span);
         }
         if decl.dispatch != ast::Dispatch::Static {
             self.error(
@@ -18130,7 +18152,7 @@ impl<'a> Checker<'a> {
             symbol: format!("{}__{}", ember_branding::mangled(name.as_str()), def.0),
             is_unsafe: decl.is_unsafe,
             abi: decl.abi.clone(),
-            export_thread_policy: if decl.abi.as_deref() == Some("C") {
+            export_thread_policy: if decl.abi.is_some() {
                 export_thread_policy(attrs, directives)
             } else { hir::ExportThreadPolicy::Any },
             params,

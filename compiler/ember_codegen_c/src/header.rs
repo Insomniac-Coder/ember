@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 
 pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str) -> Result<HeaderOutput, String> {
     let exports: Vec<&Body> = bodies.iter()
-        .filter(|body| body.abi.as_deref() == Some("C")
+        .filter(|body| body.abi.is_some()
             && !body.is_extern_declaration && !body.is_abstract)
         .collect();
     let mut reachable = Reachable::new(emitter);
@@ -48,6 +48,17 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
             ember_branding::SYMBOL_PREFIX, ember_branding::runtime_header()));
     }
     line(&mut out, "");
+    // `[FFI-9]` — an export or a function pointer type with another convention names its macro.
+    let plan: Vec<_> = emitter.order.iter().copied()
+        .filter(|node| reachable.nodes.contains(node))
+        .map(|node| (emitter.node_name(node), emitter.definition(node)))
+        .collect();
+    if exports.iter().any(|body| !super::calling_convention(body.abi.as_deref()).is_empty())
+        || plan.iter().any(|(_, definition)| matches!(definition, Definition::FnPointer { convention, .. } if !convention.is_empty()))
+    {
+        out.push_str(super::CALLING_CONVENTION_MACROS);
+        line(&mut out, "");
+    }
     line(&mut out, "#ifdef __cplusplus");
     line(&mut out, "extern \"C\" {");
     line(&mut out, "#endif");
@@ -55,10 +66,6 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
     for opaque in &reachable.opaque {
         line(&mut out, &format!("struct {opaque};"));
     }
-    let plan: Vec<_> = emitter.order.iter().copied()
-        .filter(|node| reachable.nodes.contains(node))
-        .map(|node| (emitter.node_name(node), emitter.definition(node)))
-        .collect();
     if !plan.is_empty() {
         line(&mut out, "");
         for (name, definition) in &plan {
@@ -137,7 +144,7 @@ impl<'a, 'b> Reachable<'a, 'b> {
                 for field in fields { self.visit(field)?; }
             }
             TyKind::Fn { params, ret, abi, .. } => {
-                if !abi.as_ref().is_some_and(|name| name.is("C")) {
+                if abi.is_none() {
                     return Err(self.unsupported(ty));
                 }
                 self.nodes.insert(TypeNode::Structural(ty));
