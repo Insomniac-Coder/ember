@@ -37,7 +37,7 @@ this compiler does not have yet):
                 [--emit tokens|ast|hir|mir|c|obj|header] [--out-dir <dir>]
                 [--emit-optimization-report] [--report=engine|instantiations] [--timings[=json]]
                 [--build-id] [--reload [--explain]] [-D warnings]
-                                                   compile a bin or staticlib package; --reload
+                                                   compile a bin, staticlib or cdylib package; --reload
                                                    builds the next image of a running program and
                                                    --explain predicts that reload (--target,
                                                    --backend llvm, --report and --build-id are
@@ -88,7 +88,7 @@ options:
     --syntax-only                     lex and parse only; report E00xx/E01xx
     --backend c                       the only backend in v1
     --cc msvc|clang|gcc|clang-cl      override C compiler detection
-    --out-dir <dir>                   default: target/; staticlib archives and headers in <profile>/lib/
+    --out-dir <dir>                   default: target/; libraries and headers in <profile>/lib/
     --leak-check                      `run` and `test`: report leaked ownership cycles at exit
                                       (the default for both in the debug profile)
     --no-leak-check                   `run` and `test`: no leak report in the debug profile
@@ -923,6 +923,25 @@ fn manifest_string(manifest: &str, wanted_section: &str, wanted_key: &str) -> Op
             .strip_prefix('"')
             .and_then(|value| value.strip_suffix('"'))
             .map(str::to_owned);
+    }
+    None
+}
+
+/// A manifest list of quoted strings, written on one line (`libs = ["m", "vulkan-1"]`).
+fn manifest_list(manifest: &str, wanted_section: &str, wanted_key: &str) -> Option<Vec<String>> {
+    let mut section = "";
+    for line in manifest.lines() {
+        let line = line.split_once('#').map_or(line, |(before, _)| before).trim();
+        if let Some(name) = line.strip_prefix('[').and_then(|line| line.strip_suffix(']')) {
+            section = name.trim();
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else { continue };
+        if section != wanted_section || key.trim() != wanted_key {
+            continue;
+        }
+        let items = value.trim().strip_prefix('[')?.strip_suffix(']')?;
+        return Some(items.split(',').map(|item| item.trim().trim_matches('"').to_string()).filter(|item| !item.is_empty()).collect());
     }
     None
 }
@@ -3758,10 +3777,13 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let runtime_mode = manifest.as_deref().and_then(|text| manifest_string(text, "build", "runtime"))
         .unwrap_or_else(|| "static".to_string());
     let staticlib = command == "build" && package_kind == "staticlib";
+    // `[FFI-28]` — a shared library: built as a library, with the module's entry points.
+    let cdylib = command == "build" && package_kind == "cdylib";
+    let library = staticlib || cdylib;
     // At the end of a program's `main` the process ends: a drop there that
     // only frees memory changes nothing observable (`[PHIL-5]`). Debug
     // builds keep every drop, which their leak check counts.
-    if program.main.is_some() && !staticlib && command != "test" && options.profile != Profile::Debug && !options.leak_check {
+    if program.main.is_some() && !library && command != "test" && options.profile != Profile::Debug && !options.leak_check {
         ember_analysis::skip_exit_drops_all(&mut bodies, &types, &ember_branding::mangled("main"));
     }
     // Run after all body pruning and mutation. Retain the complete immutable
@@ -3813,28 +3835,35 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         if command == "run" && package_kind != "bin" {
             return Err(format!("cannot run a `{package_kind}` package; use `ember build`"));
         }
-        if command == "build" && !matches!(package_kind.as_str(), "bin" | "staticlib") {
+        if command == "build" && !matches!(package_kind.as_str(), "bin" | "staticlib" | "cdylib") {
             return Err(format!("package kind `{package_kind}` is not implemented for `ember build`"));
         }
-        if matches!(command, "build" | "run" | "test") && runtime_mode != "static" && reload_image.is_none() {
+        if !matches!(runtime_mode.as_str(), "static" | "shared") {
+            return Err(format!("`[build] runtime` is \"static\" or \"shared\", not `{runtime_mode}`"));
+        }
+        // `[FFI-31c]` — a shared runtime serves shared libraries (and hot reload); a program or a
+        // static library links its own.
+        if matches!(command, "build" | "run" | "test") && runtime_mode != "static" && reload_image.is_none() && !cdylib {
             return Err(format!("runtime mode `{runtime_mode}` is not implemented for this build artifact"));
         }
-        if reload_image.is_some() && staticlib {
-            return Err("a `staticlib` package is not reloadable: hot reload builds a program".to_string());
+        if reload_image.is_some() && library {
+            return Err(format!("a `{package_kind}` package is not reloadable: hot reload builds a program"));
         }
     }
     let header_requested = options.emit_header || options.emit.as_deref() == Some("header") ||
-        (staticlib && options.emit.is_none());
-    let package_name = if header_requested || staticlib { export_package_name(input)? } else { module_name.clone() };
+        (library && options.emit.is_none());
+    let package_name = if header_requested || library { export_package_name(input)? } else { module_name.clone() };
     mark("analyses and passes", "all modules");
     let emitted = ember_codegen_c::emit(
         verified_mir,
         &map,
         &module_name,
         &package_name,
-        program.main.is_some() && !staticlib && command != "test",
-        options.leak_check,
-        staticlib,
+        program.main.is_some() && !library && command != "test",
+        // `[FFI-31]` — a shared library reports its leaks at shutdown in `debug`.
+        options.leak_check || (cdylib && options.profile == Profile::Debug),
+        library,
+        cdylib,
         c_for_msvc(&options),
         (command == "test").then(|| tests.iter().map(|test| test.symbol.clone()).collect()),
         reload_image.as_ref(),
@@ -3852,7 +3881,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             eprintln!("  {line}");
         }
     }
-    if header_requested && !(staticlib && options.emit.is_none()) {
+    if header_requested && !(library && options.emit.is_none()) {
         let target_dir = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target"));
         let layout = Layout::new(&target_dir, options.profile).map_err(|e| e.to_string())?;
         let header_path = layout.lib.join(format!("{package_name}.h"));
@@ -3921,7 +3950,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         return Err(format!("unknown `--emit` stage `{other}`"));
     }
 
-    if program.main.is_none() && !staticlib && command != "test" {
+    if program.main.is_none() && !library && command != "test" {
         return Err("this file declares no `main`, so there is nothing to run".to_string());
     }
 
@@ -4006,8 +4035,47 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     }
     // `[CG-C-11]` — a relaxed unit calls the package's other functions,
     // which a library keeps internal to its own unit.
-    if staticlib && !emitted.relaxed_units.is_empty() {
-        return Err("error[E0900]: `@fastmath` and `@fp(contract)` in a static library are not built yet".to_string());
+    if library && !emitted.relaxed_units.is_empty() {
+        let what = if cdylib { "shared" } else { "static" };
+        return Err(format!("error[E0900]: `@fastmath` and `@fp(contract)` in a {what} library are not built yet"));
+    }
+    // `[BLD-FFI-3]` — `[link] libs`, in the order written.
+    // A path is the package's: relative to the directory of its manifest.
+    let package_dir = nearest_manifest_path(input).and_then(|path| path.parent().map(Path::to_path_buf));
+    let libraries: Vec<String> = manifest.as_deref().and_then(|text| manifest_list(text, "link", "libs")).unwrap_or_default()
+        .into_iter()
+        .map(|library| match &package_dir {
+            Some(dir) if ember_build::cdylib::is_library_path(&library) && Path::new(&library).is_relative() =>
+                dir.join(&library).to_string_lossy().into_owned(),
+            _ => library,
+        })
+        .collect();
+    // `[FFI-28]`, `[FFI-31]` — a shared library exporting only its exports and the module's entry
+    // points; `[FFI-31c]` with `runtime = "shared"` it imports the runtime its process shares.
+    if cdylib {
+        let header = emitted.header_source.as_ref().map_err(|error| error.clone())?;
+        let mut exports: Vec<String> = bodies.iter()
+            .filter(|body| body.abi.is_some() && !body.is_extern_declaration && !body.is_abstract)
+            .map(|body| body.symbol.clone())
+            .collect();
+        exports.extend([ember_branding::runtime("module_init"), ember_branding::runtime("module_shutdown")]);
+        exports.sort();
+        exports.dedup();
+        let shared = if runtime_mode == "shared" {
+            Some(ember_build::reload::shared_runtime(&toolchain, &runtime_source, &includes, options.profile, None,
+                &ember_build::cache_root(), &layout.lib).map_err(|e| e.to_string())?)
+        } else {
+            None
+        };
+        let package_header = layout.lib.join(format!("{package_name}.h"));
+        let built = ember_build::cdylib::link_cdylib(&toolchain, &package_name, &c_path, &runtime_source, &includes,
+            options.profile, shared.as_ref(), &exports, &libraries, &layout.obj, &layout.lib)
+            .map_err(|e| e.to_string())?;
+        copy_runtime_header(&layout.lib)?;
+        std::fs::write(&package_header, &header.source).map_err(|e| e.to_string())?;
+        report(&sink, &map, options);
+        eprintln!("built {}", built.library.display());
+        return Ok(ExitCode::SUCCESS);
     }
     if staticlib {
         let header = emitted.header_source.as_ref().map_err(|error| error.clone())?;
@@ -4095,7 +4163,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     }
     retained_symbols.sort();
     retained_symbols.dedup();
-    ember_build::compile_and_link_executable_with_roots(
+    ember_build::compile_and_link_program(
         &toolchain,
         &LinkRequest {
             sources: &sources,
@@ -4105,6 +4173,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             obj_dir: layout.obj.clone(),
         },
         &retained_symbols,
+        &libraries,
     )
     .map_err(|e| e.to_string())?;
     mark("C compile and link", "all modules");

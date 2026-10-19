@@ -311,7 +311,7 @@ pub struct ComptimeRoot {
 /// and prints its value (`ComptimeRoot`), within the step and heap limits its
 /// second and third arguments give.
 pub fn emit_comptime(mir: VerifiedMir<'_>, map: &SourceMap, roots: Vec<ComptimeRoot>, for_msvc: bool) -> Output {
-    emit_with(mir, map, "comptime", "comptime", false, false, false, for_msvc, Some(roots), None, None, false)
+    emit_with(mir, map, "comptime", "comptime", false, false, false, false, for_msvc, Some(roots), None, None, false)
 }
 
 /// `[TST-3]` — the line a test binary writes to standard error when its test
@@ -337,12 +337,13 @@ pub fn emit(
     has_main: bool,
     leak_check: bool,
     library_mode: bool,
+    module: bool,
     for_msvc: bool,
     tests: Option<Vec<String>>,
     reload: Option<&ReloadImage>,
     instrument_ffi: bool,
 ) -> Output {
-    emit_with(mir, map, module_name, package_name, has_main, leak_check, library_mode, for_msvc, None, tests, reload, instrument_ffi)
+    emit_with(mir, map, module_name, package_name, has_main, leak_check, library_mode, module, for_msvc, None, tests, reload, instrument_ffi)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -354,6 +355,7 @@ fn emit_with(
     has_main: bool,
     leak_check: bool,
     library_mode: bool,
+    module: bool,
     for_msvc: bool,
     comptime: Option<Vec<ComptimeRoot>>,
     tests: Option<Vec<String>>,
@@ -399,6 +401,7 @@ fn emit_with(
         payload_zeros: BTreeMap::new(),
         deep_bindings: Vec::new(),
         library_mode,
+        module,
         type_namespace,
         line_directives: true,
         order,
@@ -720,6 +723,9 @@ struct Emitter<'a> {
     /// (`bind_deep_places`); `place_in` reads through it.
     deep_bindings: Vec<(Place, String)>,
     library_mode: bool,
+    /// `[FFI-28]`, `[FFI-31]` — a `cdylib`: its exports check the module's own creator thread,
+    /// and it defines `ember_module_init` and `ember_module_shutdown`.
+    module: bool,
     type_namespace: String,
     line_directives: bool,
     /// Every type definition to emit, in an order where a type is defined
@@ -1251,6 +1257,12 @@ impl Emitter<'_> {
             self.out.push_str(CALLING_CONVENTION_MACROS);
         }
 
+        // `[FFI-33]` — a shared library's creator: the thread of its successful
+        // `ember_module_init`, 0 before it and after `ember_module_shutdown`.
+        // (A library has no relaxed units: `[CG-C-11]`'s are refused there.)
+        if self.module {
+            self.line(&format!("static uint32_t {}module_creator;", ember_branding::mangle_prefix()));
+        }
         self.plan_reload_slots(bodies);
         self.emit_type_declarations();
         self.line(FOREIGN_STATIC_DECLARATIONS);
@@ -1311,6 +1323,11 @@ impl Emitter<'_> {
             let entry = bodies.iter().any(|body| body.symbol == ember_branding::mangled("main_entry"));
             let named = self.emit_frame_names(bodies, true);
             self.emit_entry_point(leak_check, entry, named);
+        }
+        // ponytail: a module names no backtrace frames: the runtime keeps one table, which a
+        // module sharing it would leave dangling when it unloads. Per-module tables if wanted.
+        if self.module && self.unit.is_none() {
+            self.emit_module_entry(leak_check);
         }
         self.emit_reload_manifest(bodies, has_main);
         if let Some(roots) = self.comptime.clone()
@@ -5849,7 +5866,13 @@ impl Emitter<'_> {
             // uses this module's initialization thread under the private
             // runtime, the same guard as `main` in the current backend.
             if body.export_thread_policy != ember_mir::ExportThreadPolicy::Any {
-                self.line(&format!("    {RT}rt_check_main_thread();"));
+                if self.module {
+                    // `[FFI-33]` — a shared library's contract is its own: the thread of its
+                    // successful `ember_module_init`, even in a runtime other modules share.
+                    self.line(&format!("    {RT}rt_check_module_thread({}module_creator);", ember_branding::mangle_prefix()));
+                } else {
+                    self.line(&format!("    {RT}rt_check_main_thread();"));
+                }
             }
             // `[HR-42]` — entering Ember code from a foreign caller: this thread's depth counter.
             if self.reload.is_some() {
@@ -10558,6 +10581,50 @@ impl Emitter<'_> {
         self.line("}");
     }
 
+    /// `[FFI-28]`, `[FFI-31]` — a shared library's two entry points. `ember_module_init` checks the
+    /// runtime's ABI version before anything else (`[ABI-3]`), then initialises this module in its
+    /// runtime (its own copy, or the one modules share, `[FFI-31c]`) and records its creator thread
+    /// (`[FFI-33]`); a second call while initialised changes nothing. `ember_module_shutdown` runs
+    /// the runtime's shutdown when this is its last module: the at-exit hooks, the debug leak report
+    /// and every thread's detachment by the epoch (`[FFI-31a]`).
+    fn emit_module_entry(&mut self, leak_check: bool) {
+        let creator = format!("{}module_creator", ember_branding::mangle_prefix());
+        let init = ember_branding::runtime("module_init");
+        let shutdown = ember_branding::runtime("module_shutdown");
+        self.line(&format!("int {init}(const {RT}rt_config* cfg) {{"));
+        self.line(&format!("    if ({RT}rt_abi_version() != EMBER_RUNTIME_ABI) {{"));
+        self.line("        return EMBER_MODULE_INIT_ABI_MISMATCH;");
+        self.line("    }");
+        self.line(&format!("    if ({creator} != 0) {{"));
+        self.line("        return 0;");
+        self.line("    }");
+        self.line(&format!("    {RT}rt_config config = {RT}rt_config_default();"));
+        self.line("    if (cfg != NULL) {");
+        self.line("        memcpy(&config, cfg, cfg->size < sizeof config ? cfg->size : sizeof config);");
+        self.line("        config.size = sizeof config;");
+        self.line("    }");
+        if leak_check {
+            self.line("    config.flags |= EMBER_RT_DEBUG_OBJECTS;");
+        }
+        self.line(&format!("    int status = {RT}rt_module_init(&config);"));
+        self.line("    if (status != 0) {");
+        self.line("        return status;");
+        self.line("    }");
+        if leak_check {
+            self.emit_debug_edge_registrations();
+        }
+        self.line(&format!("    {creator} = {RT}rt_thread_id();"));
+        self.line("    return 0;");
+        self.line("}");
+        self.line(&format!("void {shutdown}(void) {{"));
+        self.line(&format!("    if ({creator} == 0) {{"));
+        self.line("        return;");
+        self.line("    }");
+        self.line(&format!("    {creator} = 0;"));
+        self.line(&format!("    {RT}rt_module_shutdown();"));
+        self.line("}");
+    }
+
     /// `[TST-3]` — a test binary's entry point: run the test `argv[1]`
     /// numbers, alone in this process, as `main` would run (the runtime set
     /// up and shut down the same way, `[WK-15]`'s leak report included).
@@ -12615,6 +12682,7 @@ mod string_descriptor_view_parts_tests {
             payload_zeros: BTreeMap::new(),
             deep_bindings: Vec::new(),
             library_mode: false,
+            module: false,
             type_namespace: String::new(),
             line_directives: false,
             order: Vec::new(),

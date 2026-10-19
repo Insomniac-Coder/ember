@@ -43,7 +43,8 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
     line(&mut out, "#include <stdbool.h>");
     line(&mut out, "#include <stddef.h>");
     line(&mut out, "#include <stdint.h>");
-    if reachable.runtime_integer_carrier {
+    // `[FFI-31]` — a shared library's host fills an `ember_rt_config` for `ember_module_init`.
+    if reachable.runtime_integer_carrier || emitter.module {
         line(&mut out, &format!("#include \"{}_runtime/{}\"",
             ember_branding::SYMBOL_PREFIX, ember_branding::runtime_header()));
     }
@@ -92,12 +93,22 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
         line(&mut out, &format!("/* threads: {} */", body.export_thread_policy.as_str()));
         line(&mut out, &format!("{};", emitter.signature(body)));
     }
+    if emitter.module {
+        let rt = ember_branding::runtime("");
+        line(&mut out, "");
+        line(&mut out, "/* [FFI-31] Call before using this library, on the thread that becomes its creator; returns 0,");
+        line(&mut out, " * or EMBER_MODULE_INIT_ABI_MISMATCH for a runtime of another ABI version ([ABI-3]). */");
+        line(&mut out, &format!("int {rt}module_init(const {rt}rt_config* cfg);"));
+        line(&mut out, "/* [FFI-31] Call before unloading this library: runs the runtime's shutdown when it is its");
+        line(&mut out, " * last module (at-exit hooks, the debug leak report, every thread detached). */");
+        line(&mut out, &format!("void {rt}module_shutdown(void);"));
+    }
     line(&mut out, "");
     line(&mut out, "#ifdef __cplusplus");
     line(&mut out, "}");
     line(&mut out, "#endif");
     line(&mut out, &format!("#endif /* {guard} */"));
-    Ok(HeaderOutput { source: out, needs_runtime_header: reachable.runtime_integer_carrier })
+    Ok(HeaderOutput { source: out, needs_runtime_header: reachable.runtime_integer_carrier || emitter.module })
 }
 
 fn line(out: &mut String, value: &str) {

@@ -39,6 +39,8 @@
 
 static ember_rt_config g_config;
 static bool g_initialised = false;
+/* [FFI-31] Whether the host called ember_rt_init itself, rather than a module. */
+static bool g_host_initialised = false;
 
 /* `[FFI-22]`/`[FFI-31a]` — an exported body calls attach on every entry.
  * The fast path compares one thread-local epoch with the module's current
@@ -184,8 +186,61 @@ static EMBER_NORETURN void runtime_abort(void) {
     abort();
 }
 
+/* [FFI-27] Text the runtime writes on its own account: straight to a file, or
+ * gathered into one message for the host's `log`. */
+typedef struct rt_text {
+    FILE* file;
+    char* text;
+    size_t len;
+    size_t cap;
+    bool failed;
+} rt_text;
+
+static void rt_textf(rt_text* out, const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    if (out->file != NULL) {
+        vfprintf(out->file, format, args);
+        va_end(args);
+        return;
+    }
+    va_list again;
+    va_copy(again, args);
+    int need = vsnprintf(NULL, 0, format, args);
+    va_end(args);
+    size_t want = need < 0 ? 0 : out->len + (size_t)need + 1;
+    if (!out->failed && need >= 0 && want > out->cap) {
+        size_t cap = out->cap != 0 ? out->cap : 256;
+        while (cap < want) {
+            cap *= 2;
+        }
+        char* grown = (char*)realloc(out->text, cap);
+        if (grown == NULL) {
+            out->failed = true;
+        } else {
+            out->text = grown;
+            out->cap = cap;
+        }
+    }
+    if (!out->failed && need >= 0) {
+        (void)vsnprintf(out->text + out->len, out->cap - out->len, format, again);
+        out->len += (size_t)need;
+    }
+    va_end(again);
+}
+
+/* [FFI-27] One message on the runtime's own account: to the host's `log`, else standard error. */
+static void rt_log(int level, const char* text, size_t len) {
+    if (g_config.log != NULL) {
+        g_config.log(level, text, len);
+        return;
+    }
+    (void)fwrite(text, 1, len, stderr);
+}
+
 static void debug_allocation_failure(void) {
-    fputs("ember runtime: unable to allocate leak-check metadata\n", stderr);
+    static const char message[] = "ember runtime: unable to allocate leak-check metadata\n";
+    rt_log(EMBER_RT_LOG_ERROR, message, sizeof message - 1);
     runtime_abort();
 }
 
@@ -580,7 +635,7 @@ static char* debug_shortest_cycle(
 }
 
 static void debug_print_shortest_cycles(
-    FILE* out,
+    rt_text* out,
     ember_obj_header* const* objects,
     const debug_edges* edges,
     const size_t* first,
@@ -617,30 +672,30 @@ static void debug_print_shortest_cycles(
         }
         shapes[s].count += 1;
     }
-    fputs("  shortest cycles:\n", out);
+    rt_textf(out, "%s", "  shortest cycles:\n");
     for (size_t s = 0; s < shape_count; ++s) {
-        fprintf(out, "    %s:", shapes[s].path);
+        rt_textf(out, "    %s:", shapes[s].path);
         for (size_t k = 0; k < shapes[s].count && k < 3; ++k) {
-            fprintf(out, "%s %s@%p", k == 0 ? "" : ",", debug_object_name(shapes[s].sample[k]),
+            rt_textf(out, "%s %s@%p", k == 0 ? "" : ",", debug_object_name(shapes[s].sample[k]),
                 (void*)shapes[s].sample[k]);
         }
         if (shapes[s].count > 3) {
-            fprintf(out, " and %zu more", shapes[s].count - 3);
+            rt_textf(out, " and %zu more", shapes[s].count - 3);
         }
-        fputc('\n', out);
+        rt_textf(out, "\n");
         free(shapes[s].path);
     }
     if (too_long > 0) {
-        fprintf(out, "    (%zu objects on cycles longer than the search follows)\n", too_long);
+        rt_textf(out, "    (%zu objects on cycles longer than the search follows)\n", too_long);
     }
     if (member_count > traced) {
-        fprintf(out, "    (%zu more objects not traced)\n", member_count - traced);
+        rt_textf(out, "    (%zu more objects not traced)\n", member_count - traced);
     }
     free(shapes);
 }
 
 static void debug_print_component(
-    FILE* out,
+    rt_text* out,
     ember_obj_header* const* objects,
     const debug_edges* edges,
     const size_t* first,
@@ -672,32 +727,31 @@ static void debug_print_component(
         }
     }
     /* `[WK-4]`: the report names its lint. */
-    fputs("warning[L3017]: reference cycle detected\n", out);
-    fprintf(out, "runtime ownership cycle:\n");
-    fputs("  objects:", out);
+    rt_textf(out, "%s", "warning[L3017]: reference cycle detected\n");
+    rt_textf(out, "runtime ownership cycle:\n");
+    rt_textf(out, "%s", "  objects:");
     for (size_t k = 0; k < member_count && k < DEBUG_LIST_LIMIT; ++k) {
-        fprintf(out, " %s@%p", debug_object_name(objects[members[k]]), (void*)objects[members[k]]);
+        rt_textf(out, " %s@%p", debug_object_name(objects[members[k]]), (void*)objects[members[k]]);
     }
     if (member_count > DEBUG_LIST_LIMIT) {
-        fprintf(out, " and %zu more", member_count - DEBUG_LIST_LIMIT);
+        rt_textf(out, " and %zu more", member_count - DEBUG_LIST_LIMIT);
     }
-    fputc('\n', out);
-    fprintf(out, "  strong edges: %zu\n", strong_count);
-    fprintf(out, "  statically predicted: %s\n", statically_predicted ? "yes" : "no");
+    rt_textf(out, "\n");
+    rt_textf(out, "  strong edges: %zu\n", strong_count);
+    rt_textf(out, "  statically predicted: %s\n", statically_predicted ? "yes" : "no");
     if (suggestion != NULL) {
-        fprintf(
-            out,
+        rt_textf(out,
             "  suggested weak edge: %s (replace with %s)\n",
             suggestion->field,
             suggestion->weak_replacement);
     } else if (named != NULL) {
         /* `[WK-4]` names the edge to weaken; `[WK-10]` offers no rewrite of a
          * type that is not a plain handle (an `Option`, a collection). */
-        fprintf(out, "  suggested weak edge: %s (no automatic rewrite: its type is not a plain handle)\n", named->field);
+        rt_textf(out, "  suggested weak edge: %s (no automatic rewrite: its type is not a plain handle)\n", named->field);
     } else {
-        fputs("  suggested weak edge: none\n", out);
+        rt_textf(out, "%s", "  suggested weak edge: none\n");
     }
-    fputs("  edges:\n", out);
+    rt_textf(out, "%s", "  edges:\n");
     size_t listed = 0;
     for (size_t k = 0; k < member_count; ++k) {
         size_t m = members[k];
@@ -712,8 +766,7 @@ static void debug_print_component(
                 continue;
             }
             if (edge->to == SIZE_MAX) {
-                fprintf(
-                    out,
+                rt_textf(out,
                     "    %s %s: %s@%p -> <unknown>\n",
                     debug_edge_kind_name(edge->kind),
                     edge->field,
@@ -721,8 +774,7 @@ static void debug_print_component(
                     (void*)objects[edge->from]);
                 continue;
             }
-            fprintf(
-                out,
+            rt_textf(out,
                 "    %s %s: %s@%p -> %s@%p\n",
                 debug_edge_kind_name(edge->kind),
                 edge->field,
@@ -733,7 +785,7 @@ static void debug_print_component(
         }
     }
     if (listed > DEBUG_LIST_LIMIT) {
-        fprintf(out, "    and %zu more\n", listed - DEBUG_LIST_LIMIT);
+        rt_textf(out, "    and %zu more\n", listed - DEBUG_LIST_LIMIT);
     }
     debug_print_shortest_cycles(
         out, objects, edges, first, order, component_of, component, members, member_count, trace);
@@ -745,13 +797,7 @@ static int debug_newest_first(const void* a, const void* b) {
     return left < right ? 1 : left > right ? -1 : 0;
 }
 
-void ember_debug_leak_report(FILE* out) {
-    if (!debug_objects_enabled()) {
-        return;
-    }
-    if (out == NULL) {
-        out = stderr;
-    }
+static void debug_leak_report(rt_text* out) {
     /* The live objects, newest first as the list kept them. */
     debug_lock();
     size_t count = 0;
@@ -906,6 +952,14 @@ void ember_debug_leak_report(FILE* out) {
     free(objects);
 }
 
+void ember_debug_leak_report(FILE* out) {
+    if (!debug_objects_enabled()) {
+        return;
+    }
+    rt_text text = { out != NULL ? out : stderr, NULL, 0, 0, false };
+    debug_leak_report(&text);
+}
+
 int ember_rt_init_v2(const ember_rt_config* cfg, uint32_t caller_abi) {
     /* [VER-4] A caller compiled against another runtime ABI is refused,
      * naming both versions, before anything is touched. */
@@ -928,34 +982,138 @@ int ember_rt_init_v2(const ember_rt_config* cfg, uint32_t caller_abi) {
     g_main_generation = object_load_u32(&g_thread_generation);
     g_main_thread_number = thread_number();
     g_initialised = true;
+    g_host_initialised = true;
     ember_rt_thread_attach();
     return 0;
+}
+
+/* [FFI-27] The at-exit hooks, newest first. Registration may come from any thread. */
+typedef struct rt_exit_hook {
+    void (*hook)(void* data);
+    void* data;
+    struct rt_exit_hook* next;
+} rt_exit_hook;
+static rt_exit_hook* g_exit_hooks;
+static uint32_t g_exit_hooks_lock;
+
+static void rt_spin_lock(uint32_t* word) {
+    uint32_t expected = 0;
+    while (!object_compare_exchange_u32(word, &expected, 1)) {
+        expected = 0;
+    }
+}
+
+static void rt_spin_unlock(uint32_t* word) {
+    (void)object_fetch_sub_u32(word, 1);
+}
+
+int ember_rt_at_exit(void (*hook)(void* data), void* data) {
+    rt_exit_hook* entry = (rt_exit_hook*)malloc(sizeof *entry);
+    if (entry == NULL || hook == NULL) {
+        free(entry);
+        return 1;
+    }
+    entry->hook = hook;
+    entry->data = data;
+    rt_spin_lock(&g_exit_hooks_lock);
+    entry->next = g_exit_hooks;
+    g_exit_hooks = entry;
+    rt_spin_unlock(&g_exit_hooks_lock);
+    return 0;
+}
+
+/* Each hook once, the last registered first; one a hook registers runs too. */
+static void rt_run_exit_hooks(void) {
+    for (;;) {
+        rt_spin_lock(&g_exit_hooks_lock);
+        rt_exit_hook* entry = g_exit_hooks;
+        if (entry != NULL) {
+            g_exit_hooks = entry->next;
+        }
+        rt_spin_unlock(&g_exit_hooks_lock);
+        if (entry == NULL) {
+            return;
+        }
+        entry->hook(entry->data);
+        free(entry);
+    }
 }
 
 void ember_rt_shutdown(void) {
     if (!g_initialised) {
         return;
     }
+    rt_run_exit_hooks();
     if (debug_objects_enabled()) {
         /* [THR-16] Another thread still running may still own, change or free objects: say so
          * rather than report its objects as leaks or free the table under it. */
         uint32_t running = object_load_u32(&g_threads_running);
         if (running == 0) {
-            ember_debug_leak_report(stderr);
+            /* [FFI-27] The report is one message to the host's log, when it has one. */
+            rt_text text = { g_config.log != NULL ? NULL : stderr, NULL, 0, 0, false };
+            debug_leak_report(&text);
+            if (text.len != 0) {
+                rt_log(EMBER_RT_LOG_WARNING, text.text, text.len);
+            }
+            free(text.text);
             debug_clear_live_objects();
             debug_clear_type_edges();
         } else {
-            fprintf(stderr, "ember runtime: no leak report: %u other thread%s still running [THR-16]\n",
-                    (unsigned)running, running == 1 ? " is" : "s are");
+            char message[128];
+            int length = snprintf(message, sizeof message,
+                "ember runtime: no leak report: %u other thread%s still running [THR-16]\n",
+                (unsigned)running, running == 1 ? " is" : "s are");
+            rt_log(EMBER_RT_LOG_WARNING, message, length > 0 ? (size_t)length : 0);
         }
     }
     fflush(stdout);
     fflush(stderr);
     ember_rt_thread_detach();
+    /* [FFI-31], [FFI-31a] Every other thread is detached by the epoch moving on: nothing waits
+     * for a TLS destructor in code the host may unload next. A thread's state is thread-local
+     * storage, which the system frees with the thread or the library, and a debug access stack
+     * that outgrew its inline records is freed when the thread's last access ends. */
     if (object_fetch_add_u32(&g_thread_generation, 1) == UINT32_MAX) {
         runtime_abort();
     }
     g_initialised = false;
+    g_host_initialised = false;
+}
+
+/* [FFI-31], [FFI-31c] The modules initialised in this runtime, and whether the host
+ * initialised it itself (then the host shuts it down). */
+static uint32_t g_modules;
+static uint32_t g_modules_lock;
+
+int ember_rt_module_init_v2(const ember_rt_config* cfg, uint32_t caller_abi) {
+    /* [ABI-3] The ABI version first: a module built against another runtime touches nothing. */
+    if (caller_abi != EMBER_RUNTIME_ABI) {
+        return EMBER_MODULE_INIT_ABI_MISMATCH;
+    }
+    rt_spin_lock(&g_modules_lock);
+    int status = 0;
+    if (!g_initialised) {
+        status = ember_rt_init_v2(cfg, caller_abi);
+        g_host_initialised = false;
+    } else {
+        ember_rt_thread_attach();
+    }
+    if (status == 0) {
+        g_modules += 1;
+    }
+    rt_spin_unlock(&g_modules_lock);
+    return status;
+}
+
+void ember_rt_module_shutdown(void) {
+    rt_spin_lock(&g_modules_lock);
+    if (g_modules > 0) {
+        g_modules -= 1;
+        if (g_modules == 0 && !g_host_initialised) {
+            ember_rt_shutdown();
+        }
+    }
+    rt_spin_unlock(&g_modules_lock);
 }
 
 uint32_t ember_rt_abi_version(void) { return EMBER_RUNTIME_ABI; }
@@ -2015,6 +2173,22 @@ void ember_rt_check_main_thread(void) {
     if (g_main_generation != object_load_u32(&g_thread_generation)) {
         static const char message[] = "export requires the module initialization thread";
         ember_loc loc = { "<export>", 0, 0 };
+        ember_panic(message, sizeof(message) - 1, loc);
+    }
+}
+
+uint32_t ember_rt_thread_id(void) {
+    return thread_number();
+}
+
+void ember_rt_check_module_thread(uint32_t creator) {
+    ember_loc loc = { "<export>", 0, 0 };
+    if (creator == 0) {
+        static const char message[] = "export called before ember_module_init or after ember_module_shutdown";
+        ember_panic(message, sizeof(message) - 1, loc);
+    }
+    if (creator != thread_number()) {
+        static const char message[] = "export requires the module initialization thread";
         ember_panic(message, sizeof(message) - 1, loc);
     }
 }

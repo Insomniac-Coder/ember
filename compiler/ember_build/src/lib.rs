@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+pub mod cdylib;
 pub mod interface;
 pub mod reload;
 
@@ -448,7 +449,7 @@ pub struct LinkRequest<'a> {
 /// linked before from the same inputs is copied from the global cache instead
 /// (ADR-136, [`CachedProgram`]).
 pub fn compile_and_link(toolchain: &Toolchain, request: &LinkRequest) -> Result<(), BuildError> {
-    compile_and_link_impl(toolchain, request, None, program_cache().as_deref())
+    compile_and_link_impl(toolchain, request, None, &[], program_cache().as_deref())
 }
 
 /// Link a driver-owned executable whose externally callable C definitions are
@@ -461,7 +462,22 @@ pub fn compile_and_link_executable_with_roots(
     request: &LinkRequest,
     retained_symbols: &[String],
 ) -> Result<(), BuildError> {
-    compile_and_link_impl(toolchain, request, Some(retained_symbols), program_cache().as_deref())
+    compile_and_link_impl(toolchain, request, Some(retained_symbols), &[], program_cache().as_deref())
+}
+
+/// `[BLD-FFI-3]` — as [`compile_and_link_executable_with_roots`], linking `libraries` after the
+/// program's own objects, in order: each a name the linker searches for (`m`, `vulkan-1`) or a
+/// path to a library file.
+pub fn compile_and_link_program(
+    toolchain: &Toolchain,
+    request: &LinkRequest,
+    retained_symbols: &[String],
+    libraries: &[String],
+) -> Result<(), BuildError> {
+    // ponytail: a program linking libraries is not kept in the program cache, whose key would
+    // need each library's contents; key them by their files if the relink cost shows.
+    let cache = if libraries.is_empty() { program_cache() } else { None };
+    compile_and_link_impl(toolchain, request, Some(retained_symbols), libraries, cache.as_deref())
 }
 
 fn executable_section_flags(toolchain: &Toolchain, managed_executable: bool) -> &'static [&'static str] {
@@ -588,6 +604,7 @@ fn compile_and_link_impl(
     toolchain: &Toolchain,
     request: &LinkRequest,
     retained_symbols: Option<&[String]>,
+    libraries: &[String],
     cache: Option<&Path>,
 ) -> Result<(), BuildError> {
     let mut command = compiler_command(toolchain);
@@ -600,6 +617,9 @@ fn compile_and_link_impl(
             for source in request.sources {
                 command.arg(source);
             }
+            for library in libraries {
+                command.arg(cdylib::windows_library(library));
+            }
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.args(gnu_flags(request.profile)).args(gcc_flags(toolchain, request.profile));
@@ -610,6 +630,9 @@ fn compile_and_link_impl(
             }
             for source in request.sources {
                 command.arg(source);
+            }
+            for library in libraries {
+                command.arg(cdylib::gnu_library(library));
             }
             if !cfg!(windows) {
                 // `[THR-10]` — the runtime starts threads with pthreads.
@@ -644,6 +667,10 @@ fn compile_and_link_impl(
             // makes `cl` link with `/DEBUG`, which would turn these off.
             if request.profile == Profile::Release {
                 command.args(["/link", "/OPT:REF", "/OPT:ICF", "/INCREMENTAL:NO"]);
+            } else if !libraries.is_empty() {
+                // `[BLD-FFI-3]` — an incremental link keeps what it resolved before: libraries
+                // listed in another order would not change which one defines a symbol.
+                command.args(["/link", "/INCREMENTAL:NO"]);
             }
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
@@ -1617,7 +1644,7 @@ mod tests {
             compile_and_link_impl(&toolchain, &LinkRequest {
                 sources: &[source.clone()], include_dirs: &[], output: program(name),
                 profile: Profile::Debug, obj_dir: dir.join("obj"),
-            }, None, Some(&cache)).expect("the program builds");
+            }, None, &[], Some(&cache)).expect("the program builds");
             let output = run_fresh(&mut Command::new(program(name))).expect("the program runs");
             String::from_utf8_lossy(&output.stdout).trim().to_string()
         };
@@ -2305,6 +2332,34 @@ int main(int argc, char** argv) {
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("ABI version 2, and its caller was compiled against version 3"), "{stderr}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `[FFI-27]` — a C host routes allocation and logging to its own functions; shutdown runs the
+    /// at-exit hooks, newest first, before the debug leak report, which reaches the host's log as
+    /// one warning and nothing of it standard error. `[FFI-31]`, `[FFI-31c]`: the modules of one
+    /// runtime are counted, and the last one's shutdown ends a runtime the host did not start.
+    /// `[ABI-3]`: a module of another runtime ABI is refused with its own code
+    /// (`templates/tests/embedding.c.in` says each step).
+    #[test]
+    fn a_host_routes_logging_and_shutdown_runs_at_exit_hooks() {
+        let requested = std::env::var(ember_branding::cc_var()).ok();
+        let toolchain = Toolchain::detect(requested.as_deref()).expect("a C toolchain");
+        let runtime = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+        let dir = std::env::temp_dir().join(format!("embedding-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("obj")).expect("the test directory is creatable");
+        let program = dir.join(if cfg!(windows) { "embedding.exe" } else { "embedding" });
+        compile_and_link(&toolchain, &LinkRequest {
+            sources: &[runtime.join("tests/embedding.c"), runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX))],
+            include_dirs: &[runtime.join("include")], output: program.clone(),
+            profile: Profile::Debug, obj_dir: dir.join("obj"),
+        }).expect("the embedding oracle compiles");
+        let output = run_fresh(&mut Command::new(program)).expect("the embedding oracle runs");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "the embedding oracle failed ({:?}): {stderr}", output.status.code());
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
+        assert!(!stderr.contains("reference cycle"), "the leak report reached standard error: {stderr}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

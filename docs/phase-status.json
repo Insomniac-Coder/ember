@@ -33,7 +33,6 @@
     "CG-C-11": "`@fastmath`/`@fp(contract)` in a static library is refused: docs/NOT-IMPLEMENTED.md N6",
     "FN-5": "a parameter default doing float work that the caller's mode cannot keep is refused: docs/NOT-IMPLEMENTED.md N7",
     "GRM-38": "a generator expression with a second `for` is refused as a value (E0900): its `flat_map` over inner generators that borrow both their source and the outer clause's names gets no single source relation from the region analysis (`FlatMap.next`, E3065)",
-    "ABI-3": "`ember_module_init` does not check the runtime ABI version (ADR-171)",
     "STD-14": "nothing checks that a standard function failing on a caller's bug has a non-panicking twin, or that every allocating one is documented as allocating",
     "DET-2": "observing a pointer or handle as an integer, hashing one, and reading uninitialised or padding bytes are not recorded as `Nondet` (`ember_analysis::effects`)",
     "DOC-2": "`ember test --doc` runs every sample under docs/book/ (ADR-192, milestone ember_test_doc_runs_the_documentation_examples), but the user guide itself, with its \"coming from Python\" chapter, does not exist and is not published with a release",
@@ -45,6 +44,7 @@
     "FFI-33c": "`@export_table` is not built (ATTRIBUTE_TABLE in ember_typeck)",
     "CLO-6a": "a `once fn` is built as a parameter's bound only: as a value (a local, a field, a `Box` or a collection element), whose call empties its place, it is refused (E0900)",
     "HR-2a": "reclaim drops a `migrate_from`'s old instance field by field without its class's own `drop`: that method's thunk now reaches the new image's body, built for the new layout (owner question in tasks/85/A-notes.md)",
-    "HR-14": "four rows are not built and are refused instead: a field added whose type is a user `Default` type (the built-in ones start at zero), a field changed to a range type (`T.checked`), an enum whose variants' payloads changed, and a changed layout attribute, which the schema does not record (tasks/85/A-notes.md)"
+    "HR-14": "four rows are not built and are refused instead: a field added whose type is a user `Default` type (the built-in ones start at zero), a field changed to a range type (`T.checked`), an enum whose variants' payloads changed, and a changed layout attribute, which the schema does not record (tasks/85/A-notes.md)",
+    "BLD-FFI-3": "the manifest's `[link] libs` links by name or path in the order written (ember_driver/tests/cdylib.rs); the `link = [...]` of an `import c` waits on the C header importer, which is not built (tasks/85/C-notes.md)"
   }
 }
