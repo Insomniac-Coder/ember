@@ -10721,7 +10721,8 @@ formal 1/9 count or Phase 2's estimate.
 > the list: B3, then A1 (the owner did not ask to see their designs first). Helper C was merged the
 > same day (ADR-206); the owner answered its questions and they are built (0.9.10_Hardened_14,
 > ADR-207). B3 built (0.9.10_Hardened_15, ADR-208). The owner then set the goal: solo and
-> autonomous, 85% and then 90%.
+> autonomous, 85% and then 90%. A1 built (0.9.10_Hardened_16, ADR-209): layout changes apply at a
+> checkpoint unless a frame below it still uses the old layout. Every owner decision is now done.
 
 
 **2026-10-12 (autopilot), a Part V.5 class probe sweep: D-560..D-566, ODR-104 (0.9.10_Hardened_8).**

@@ -5017,6 +5017,32 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-209 — Layout changes at a checkpoint (A1, ODR-133, 0.9.10_Hardened_16)
+
+2026-10-19. The owner's A1: at `std.hot.checkpoint()` the data is fixed up so layout changes apply live
+too (replacing helper A's "bodies only" reading). The frames below a checkpoint run their old code on
+after the swap, so the change is built as far as that old code allows (`[HR-3b]`, new):
+* **Frame records** (`compiler/ember_codegen_c/src/frames.rs`): in a reloadable image with instances
+  every function pushes `{prev, info, site}` on entry (`ember_reload_frames()`, the thread's list in the
+  runtime) and pops it on return; before each call it writes the call's site number.
+* **What the rest of a function depends on**, per call (`continuation_layouts`): every type whose fields
+  its old code projects (a class's through a handle, a value's by value), every value it builds, holds,
+  passes or gets back by value, every element it indexes, every class it allocates, and the closed
+  dependencies of the bodies it calls directly (not reloadable, so old code too); a call through a
+  function value adds what every old body depends on. A reloadable call (its thunk, the new code)
+  depends on nothing but its by-value arguments and result.
+* **The plan at a checkpoint**: a type whose schema changed is refused when a frame on the thread's list
+  depends on it at its current site ("`main`, live below this checkpoint, still uses its old layout
+  after the call on line 23 returns"); otherwise it migrates as at a poll. An instance a frame
+  references keeps its address when its new size fits; one that must move is refused by `[HR-15a]`'s
+  count, since a frame's references are not counted (the compiler elides retain/release pairs, so a
+  local may hold a handle without a count of its own).
+* **Left open (ODR-133):** moving an instance a frame references; a static's change at a checkpoint;
+  continuing a frame in the new code (on-stack replacement).
+* Test: `reload::a_layout_change_applies_at_a_checkpoint_the_old_frames_do_not_depend_on` (applies when
+  `main` only hands the array to `tick`; refused, naming `main` and line 23, when `main` reads a field
+  after the checkpoint).
+
 ## ADR-208 — `Retained.ptr()` typed: `ObjectPtr[C]`, `*mut U` (B3, 0.9.10_Hardened_15)
 
 2026-10-19. The owner's B3 (a typed pointer), built under the delegation as ODR-132: `token.ptr()` is

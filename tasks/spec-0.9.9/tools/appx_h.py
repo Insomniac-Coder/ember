@@ -471,6 +471,8 @@ ODRS = [
      '`[FFI-23]`'),
     ('ODR-131', 'ruled by the owner (2026-10-19): a `cdylib` exports the marker `ember_module_protocol_vN`, which its host looks up before calling into it; `[FFI-28]` and `[ABI-1]` disagreed',
      '`[FFI-28]`, `[FFI-31]`, `[ABI-1]`'),
+    ('ODR-133', "ruled by the owner (2026-10-19, A1: the data is fixed at a checkpoint, so layout changes apply live too), built under the delegation: each function keeps a record of the call it is in and the image lists what the rest of it depends on; a change no frame below the checkpoint depends on applies (instances migrate, one a frame references in place), one a frame depends on is refused, naming it",
+     "`[HR-3]`, `[HR-3b]`, `[HR-33]`"),
 ]
 
 H5_HEAD = """
@@ -539,7 +541,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.10', 15)
+CURRENT = ('0.9.10', 16)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -555,6 +557,7 @@ V010_H11_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h11')
 V010_H12_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h12')
 V010_H13_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h13')
 V010_H14_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h14')
+V010_H15_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h15')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -959,8 +962,26 @@ Generated: every rule whose text differs from 0.9.10_Hardened_14.
 """
 
 
-def v010_h14_to_now():
-    return H20_HEAD + rule_diff(V010_H14_PARTS, os.path.join(HERE, '..', 'parts'))
+def v010_h14_to_h15():
+    return H20_HEAD + rule_diff(V010_H14_PARTS, V010_H15_PARTS)
+
+
+H21_HEAD = """
+## H.21 Changes in 0.9.10_Hardened_16 (from 0.9.10_Hardened_15)
+
+**0.9.10_Hardened_16** records ODR-133, the owner's A1 ("fix data at checkpoint"), built under the delegation with the constraint the old code below a checkpoint sets (`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-209):
+
+* At `std.hot.checkpoint()` a layout change applies when no frame below it depends on the changed type after its call returns; one a frame depends on is refused, naming the function and the line (`[HR-3]`, `[HR-3b]` new, ODR-133).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_15.
+
+| Rule | 0.9.10_Hardened_15 → 0.9.10_Hardened_16 |
+|---|---|
+"""
+
+
+def v010_h15_to_now():
+    return H21_HEAD + rule_diff(V010_H15_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -1031,7 +1052,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_now() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_now() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

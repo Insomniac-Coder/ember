@@ -2997,6 +2997,35 @@ typedef struct ember_rl_type {
     void (*drop_field)(void* object, uint32_t index);
 } ember_rl_type;
 
+/* [HR-3b] (A1, ODR-133) What a checkpoint's frames still use. A function of a reloadable image with
+ * instances keeps a frame record while it runs: which function it is and which of its calls it is
+ * in. Each call is a site, with the package types whose layout the rest of the function depends on
+ * once that call returns: what its old code projects, builds or holds by value, and what the
+ * functions it calls directly (old code too) depend on. At a checkpoint the runtime refuses a layout
+ * change a live frame's site depends on, and applies any other. An instance a frame references keeps
+ * its address (it migrates in place, [HR-15]); one that must move is refused by [HR-15a]'s count,
+ * since a frame's references are not counted exactly. */
+typedef struct ember_rl_site {
+    uint32_t line;
+    uint32_t type_count;
+    const char* const* types;
+} ember_rl_site;
+
+typedef struct ember_rl_frame_info {
+    const char* function;
+    uint32_t site_count;
+    const ember_rl_site* sites;
+} ember_rl_frame_info;
+
+typedef struct ember_rl_frame {
+    struct ember_rl_frame* prev;
+    const ember_rl_frame_info* info;
+    uint32_t site;
+} ember_rl_frame;
+
+/* This thread's innermost frame record: a function pushes its own on entry and pops it on return. */
+ember_rl_frame** ember_reload_frames(void);
+
 /* EMBER_RL_LAYOUT_* — a type's layout facts. */
 #define EMBER_RL_LAYOUT_CONTAINED UINT32_C(1) /* a value of it sits in a container somewhere ([HR-13]) */
 #define EMBER_RL_LAYOUT_UNIT UINT32_C(2)      /* an enum with no payload */

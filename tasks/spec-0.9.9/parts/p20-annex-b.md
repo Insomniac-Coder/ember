@@ -31,12 +31,25 @@ old image owned).
   type information, applies the map and repoints the thunks. Reclaim frees each migrated instance's
   old version field by field without the type's own `drop`, since the instance lives on in its new
   form, and drops removed fields, running their user `drop` code.
-* `[HR-3]` A reload is applied only inside `ember_reload_poll()`, and only when no registered thread is
-  executing Ember code (each thread's Ember-depth counter is zero); otherwise the poll returns
-  `EMBER_RELOAD_UNSAFE_POINT` and does nothing.
+* `[HR-3]` *(changed in 0.9.10)* A reload is applied only inside `ember_reload_poll()`, and only when no
+  registered thread is executing Ember code (each thread's Ember-depth counter is zero); otherwise the
+  poll returns `EMBER_RELOAD_UNSAFE_POINT` and does nothing. The exception is `std.hot.checkpoint()`
+  (`[HR-33]`), a poll the program makes itself, where its own thread's frames below the checkpoint stay
+  live (`[HR-3b]`).
 * `[HR-3a]` Every thread that can run Ember code is registered: host threads on attach (`[FFI-22]`),
   `thread.spawn` threads, and job workers. `debug` builds assert on entry to Ember code from an
   unregistered thread.
+* `[HR-3b]` *(new in 0.9.10)* At a checkpoint the frames below it run their old code on after the swap.
+  Each function of a reloadable image keeps a record of which of its calls it is in, and the image lists,
+  for each call, the types whose layout the rest of the function depends on once the call returns: those
+  its old code reads or writes fields of, builds, holds, passes or gets back by value, indexes or
+  allocates, and those the functions it calls directly depend on (they run old code too; a call through
+  a function value may reach any). A layout change applies at the checkpoint when no frame below it
+  depends on the changed type: the instances migrate as at a poll (`[HR-14]`), and one a frame
+  references keeps its address, which `[HR-15]` allows when its new size fits; one that must move is
+  refused, since a frame's references are not counted (`[HR-15a]`). A change a frame depends on is
+  refused, naming the function and the line of its call. A static's change still waits for a poll from
+  the host.
 * `[HR-42]` **Publication.** Entering Ember code increments the thread's depth counter with acquire
   ordering and leaving decrements it with release. Commit reads every counter with acquire, writes the
   new thunk targets and type information, and publishes them with one release store to a reload

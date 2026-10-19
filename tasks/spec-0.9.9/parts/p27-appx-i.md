@@ -722,8 +722,9 @@ Every rule of this document, by family, with the Part that defines it.
 | `[HR-1]` | Annex B | An edit to one function body in a 50k-line reloadable package MUST be … |
 | `[HR-2]` | Annex B | Reload is transactional. A failure in plan or prepare leaves the … |
 | `[HR-2a]` | Annex B | Plan reads schemas and the registered set and runs no user code. … |
-| `[HR-3]` | Annex B | A reload is applied only inside `ember_reload_poll()`, and only when … |
+| `[HR-3]` | Annex B | *(changed in 0.9.10)* A reload is applied only inside … |
 | `[HR-3a]` | Annex B | Every thread that can run Ember code is registered: host threads on … |
+| `[HR-3b]` | Annex B | *(new in 0.9.10)* At a checkpoint the frames below it run their old … |
 | `[HR-4]` | Annex B | Old images are never unloaded, so a stale return address or retired … |
 | `[HR-4a]` | Annex B | Statics live in a runtime-owned table, never in image memory. |
 | `[HR-5]` | Annex B | A call to a reloadable function goes through its thunk. |

@@ -262,6 +262,19 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-133 — layout changes at `std.hot.checkpoint()` — **CLOSED**
+
+    ID:        ODR-133
+    Status:    CLOSED — ruled by the owner (A1), built under the delegation 2026-10-19 with the limits listed; incorporated in 0.9.10_Hardened_16
+    Category:  HOT RELOAD
+    Location:  Ember_v0.9.10_Hardened_15.md [HR-3], [HR-33]
+
+**The question.** The owner's A1 (`tasks/85/owner-answers.md`): at `std.hot.checkpoint()` the live values of the frames below are fixed up, so layout changes apply live too, replacing helper A's reading (bodies only). The frames below a checkpoint run their old code on after the swap, which reads a changed type with its old offsets.
+
+**Ruling.** Built under the delegation: each function of a reloadable image keeps a frame record (which function, which call), and the image lists for each call the types whose layout the rest of the function depends on (what its old code reads, builds, holds or passes by value, and what the functions it calls directly depend on). A layout change no frame below the checkpoint depends on applies live: its instances migrate as at a poll, one a frame references keeping its address when its new size fits. A change a frame depends on is refused, naming the function and its line. **Left open (not built):** an instance a frame references that must move (a frame's references cannot be counted exactly, since retains are elided, so `[HR-15a]` refuses it); a static's change at a checkpoint (still waits for a host poll); continuing a frame in the new code (on-stack replacement), which would let a change a frame depends on apply too. ADR-209.
+
+---
+
 ## ODR-132 — the type of `Retained.ptr()` — **CLOSED**
 
     ID:        ODR-132

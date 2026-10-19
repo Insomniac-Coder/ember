@@ -9023,6 +9023,12 @@ typedef struct rl_thread {
 } rl_thread;
 
 static EMBER_RT_THREAD_LOCAL rl_thread* g_rl_self;
+/* [HR-3b] (A1) This thread's frame records, innermost first. */
+static EMBER_RT_THREAD_LOCAL ember_rl_frame* g_rl_frames;
+
+ember_rl_frame** ember_reload_frames(void) {
+    return &g_rl_frames;
+}
 static rl_thread* g_rl_threads;
 static uint32_t g_rl_threads_lock;
 /* [HR-42] Bumped with one release store when a commit publishes; a thread entering Ember code
@@ -10236,10 +10242,26 @@ static bool rl_plan_instances(const ember_rl_manifest* next, bool checkpoint, ch
         if (kept == NULL || kept->schema == NULL || kept->schema->schema == to->schema) {
             continue;
         }
+        /* [HR-3b] (A1) At a checkpoint the frames below it run their old code on: a change one of
+         * them still depends on after its call returns is refused; any other applies live. */
         if (checkpoint) {
-            rl_report(report, cap, "refused: the layout of `%s` changed, and instances do not migrate while frames of the old code are live at a checkpoint; poll from the host [HR-3]\n", to->name);
-            fine = false;
-            continue;
+            const ember_rl_frame* user = NULL;
+            const ember_rl_site* at = NULL;
+            for (const ember_rl_frame* frame = g_rl_frames; frame != NULL && user == NULL; frame = frame->prev) {
+                const ember_rl_site* site = frame->site < frame->info->site_count ? &frame->info->sites[frame->site] : NULL;
+                for (uint32_t type = 0; site != NULL && type < site->type_count && user == NULL; ++type) {
+                    if (strcmp(site->types[type], to->name) == 0) {
+                        user = frame;
+                        at = site;
+                    }
+                }
+            }
+            if (user != NULL) {
+                rl_report(report, cap, "refused: the layout of `%s` changed, and `%s`, live below this checkpoint, still uses its old layout after the call on line %u returns; poll from the host, or move that use into a function the reload replaces [HR-3b]\n",
+                          to->name, user->info->function, at->line);
+                fine = false;
+                continue;
+            }
         }
         if (!rl_plan_type(next, kept->schema, to, report, cap, 0)) {
             fine = false;

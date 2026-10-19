@@ -26,6 +26,7 @@ use ember_span::{SourceMap, Symbol};
 use ember_types::{ClassId, EnumId, FloatTy, FnParam, FnParamMode, FpMode, IntTy, Niche, StructId, Ty, TyKind, TypeTable, UintTy};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod frames;
 mod header;
 mod integer_reduction;
 mod reload;
@@ -492,6 +493,10 @@ fn emit_with(
         reload_interface_ids: std::cell::RefCell::new(BTreeSet::new()),
         reload_shapes: BTreeMap::new(),
         reload_shapes_open: BTreeSet::new(),
+        reload_frame_layouts: BTreeMap::new(),
+        reload_old_layouts: BTreeSet::new(),
+        rl_sites: BTreeMap::new(),
+        rl_frame_active: false,
         lazy_statics: lazy_statics.clone(),
         reload_bodies: if reload.is_some() {
             bodies.iter().map(|body| (body.name.clone(), body.symbol.clone(), body.return_ty())).collect()
@@ -870,6 +875,13 @@ struct Emitter<'a> {
     /// themselves.
     reload_shapes: BTreeMap<(Ty, bool), String>,
     reload_shapes_open: BTreeSet<Ty>,
+    /// `[HR-3b]` (A1) — what each body depends on with its direct callees, what any old body may
+    /// (a call through a function value), the current body's call sites by block, and whether the
+    /// body being emitted keeps a frame record (`frames.rs`).
+    reload_frame_layouts: BTreeMap<String, BTreeSet<String>>,
+    reload_old_layouts: BTreeSet<String>,
+    rl_sites: BTreeMap<usize, u32>,
+    rl_frame_active: bool,
     /// `[STA-3]` — the statics initialised on first access, by initialiser symbol.
     lazy_statics: BTreeMap<String, (Ty, String)>,
     /// Annex B — every body's name, symbol and return type, for the functions the driver wrote.
@@ -1299,6 +1311,7 @@ impl Emitter<'_> {
             self.line(&format!("static uint32_t {}module_creator;", ember_branding::mangle_prefix()));
         }
         self.plan_reload_slots(bodies);
+        self.plan_frame_layouts(bodies);
         self.emit_type_declarations();
         self.line(FOREIGN_STATIC_DECLARATIONS);
         self.collect_virtual_methods(bodies);
@@ -5927,6 +5940,9 @@ impl Emitter<'_> {
         }
         let signature = if reloadable { self.reload_body_signature(body) } else { self.signature(body) };
         let linkage = if reloadable { String::new() } else { self.linkage(body) };
+        // `[HR-3b]` (A1) — what a checkpoint's frames of this body still use, described beside it.
+        let frame_info = if self.frames_on() { Some(self.emit_frame_info(body)) } else { None };
+        self.rl_frame_active = false;
         self.line(&format!("{linkage}{signature} {{"));
         if self.comptime.is_some() {
             self.line(&format!("    EMBER_CT_ENTER({});", c_string_literal(&body.name)));
@@ -6135,6 +6151,13 @@ impl Emitter<'_> {
         // inline with no labels.
         let in_loops: BTreeSet<usize> = for_loops.values().flat_map(|l| l.chain.iter().copied()).collect();
         let referenced = referenced_labels(body, &for_loops, &in_loops);
+        // `[HR-3b]` (A1) — this body's frame record, innermost on its thread until it returns.
+        if let Some(info) = &frame_info {
+            self.line(&format!("    {RT}rl_frame** _rlh = {RT}reload_frames();"));
+            self.line(&format!("    {RT}rl_frame _rlf = {{ *_rlh, &{info}, 0u }};"));
+            self.line("    *_rlh = &_rlf;");
+            self.rl_frame_active = true;
+        }
         for (index, block) in body.blocks.iter().enumerate() {
             if in_loops.contains(&index) {
                 continue;
@@ -6159,6 +6182,7 @@ impl Emitter<'_> {
         self.line("}");
         self.line("");
         self.interface_caches.clear();
+        self.rl_frame_active = false;
     }
 
     fn emit_block_stmts(&mut self, stmts: &[Stmt], body: &Body) {
@@ -7167,6 +7191,12 @@ impl Emitter<'_> {
     }
 
     fn emit_terminator(&mut self, terminator: &Terminator, body: &Body, index: usize) {
+        // `[HR-3b]` (A1) — the call this frame is in, for a checkpoint reached below it.
+        if self.rl_frame_active
+            && let Some(site) = self.frame_site(terminator, body)
+        {
+            self.line(&format!("    _rlf.site = {site}u;"));
+        }
         let mut places = Vec::new();
         terminator_places(terminator, &mut places);
         let bound = self.bind_deep_places(&places, body);
@@ -7275,6 +7305,9 @@ impl Emitter<'_> {
                 // `[HR-42]` — leaving Ember code for the foreign caller of an export.
                 if self.reload.is_some() && body.abi.is_some() {
                     self.line(&format!("    {RT}reload_leave();"));
+                }
+                if self.rl_frame_active {
+                    self.line("    *_rlh = _rlf.prev;");
                 }
                 if self.is_void(body.return_ty()) {
                     self.line("    return;");
@@ -12818,6 +12851,10 @@ mod string_descriptor_view_parts_tests {
             reload_interface_ids: Default::default(),
             reload_shapes: BTreeMap::new(),
             reload_shapes_open: BTreeSet::new(),
+            reload_frame_layouts: BTreeMap::new(),
+            reload_old_layouts: BTreeSet::new(),
+            rl_sites: BTreeMap::new(),
+            rl_frame_active: false,
             lazy_statics: BTreeMap::new(),
             reload_bodies: Vec::new(),
         }

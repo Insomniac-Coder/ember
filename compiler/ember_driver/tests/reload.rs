@@ -234,6 +234,35 @@ fn a_closure_holding_an_instance_follows_it_when_it_moves() {
     assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
 }
 
+/// `[HR-3b]` (A1, ODR-133) — a layout change applies at `std.hot.checkpoint()` when the old code
+/// still running below it no longer depends on that layout: `Particle` loses a field, its instances
+/// migrate in place, and `main`'s loop, which only hands the array to `tick` (reached through its
+/// thunk, so the new code) and prints numbers, runs on with them. When `main` itself reads a
+/// `Particle`'s field after the checkpoint returns, its old code would read the new layout with the
+/// old offsets: the change is refused, naming `main` and the line of the call it is in.
+#[test]
+fn a_layout_change_applies_at_a_checkpoint_the_old_frames_do_not_depend_on() {
+    let v1 = "import std.hot\n\nclass Particle:\n    x: int = 0\n    spare: int = 7\n    step: int = 1\n\n    \
+              fn bump(mut self) -> int:\n        self.x = self.x + self.step\n        return self.x\n\n\
+              fn tick(ps: Array[Particle]) -> int:\n    total = 0\n    for p in ps:\n        q = p\n        total += q.bump()\n    return total\n\n\
+              fn main():\n    ps = [Particle(), Particle(), Particle()]\n    for i in 0..3:\n        println(tick(ps))\n        hot.checkpoint()\n";
+    let v2 = v1.replace("    spare: int = 7\n", "").replace("self.x = self.x + self.step", "self.x = self.x + self.step * 10");
+    let (run, reloads) = reload_run("reload-checkpoint-layout", RELOAD_ALL, v1, &[&v2]);
+    assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
+    assert_eq!(run.exit, 0, "{}", run.stderr);
+    assert_eq!(run.stdout, "3\n33\n63\n", "{}", run.stderr);
+    assert!(!run.stderr.contains("refused"), "{}", run.stderr);
+
+    let reads = v1.replace("        hot.checkpoint()\n", "        hot.checkpoint()\n        println(ps[0].step)\n");
+    let reads_v2 = reads.replace("    spare: int = 7\n", "");
+    let (run, reloads) = reload_run("reload-checkpoint-layout-used", RELOAD_ALL, &reads, &[&reads_v2]);
+    assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
+    assert_eq!(run.exit, 0, "{}", run.stderr);
+    assert_eq!(run.stdout, "3\n1\n6\n1\n9\n1\n", "the old code did not run on: {}", run.stderr);
+    assert!(run.stderr.contains("the layout of `Particle` changed, and `main`, live below this checkpoint, still uses its old layout after the call on line 23 returns"),
+        "{}", run.stderr);
+}
+
 /// `[HR-12]`, `[HR-14]` — a reloadable build registers every instance in the live-instance list, so
 /// a reload that removes a class while instances of it live is refused, naming the class and how
 /// many there are; the old code runs on with its instances.

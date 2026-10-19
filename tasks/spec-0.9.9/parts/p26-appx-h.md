@@ -411,6 +411,7 @@ ODR-132, the type of `Retained.ptr()` (§H.20).
 | ODR-130 | ruled by the owner (2026-10-19): a field of an `@export_table` takes the thread contract of the function it holds | `[FFI-33c]` |
 | ODR-132 | ruled under the delegation (2026-10-19, autopilot), the owner having chosen a typed pointer: `tok.ptr()` is a `std.ffi.ObjectPtr[C]` for a class `C`, a `*mut U` for a `Box[U]`, a `*mut u8` for a `Box[dyn I]`; an `ObjectPtr` is a class object's address with no count of its own, one pointer to C | `[FFI-23]` |
 | ODR-131 | ruled by the owner (2026-10-19): a `cdylib` exports the marker `ember_module_protocol_vN`, which its host looks up before calling into it; `[FFI-28]` and `[ABI-1]` disagreed | `[FFI-28]`, `[FFI-31]`, `[ABI-1]` |
+| ODR-133 | ruled by the owner (2026-10-19, A1: the data is fixed at a checkpoint, so layout changes apply live too), built under the delegation: each function keeps a record of the call it is in and the image lists what the rest of it depends on; a change no frame below the checkpoint depends on applies (instances migrate, one a frame references in place), one a frame depends on is refused, naming it | `[HR-3]`, `[HR-3b]`, `[HR-33]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -904,3 +905,16 @@ Generated: every rule whose text differs from 0.9.10_Hardened_14.
 | Rule | 0.9.10_Hardened_14 → 0.9.10_Hardened_15 |
 |---|---|
 | `[FFI-23]` | changed |
+
+## H.21 Changes in 0.9.10_Hardened_16 (from 0.9.10_Hardened_15)
+
+**0.9.10_Hardened_16** records ODR-133, the owner's A1 ("fix data at checkpoint"), built under the delegation with the constraint the old code below a checkpoint sets (`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-209):
+
+* At `std.hot.checkpoint()` a layout change applies when no frame below it depends on the changed type after its call returns; one a frame depends on is refused, naming the function and the line (`[HR-3]`, `[HR-3b]` new, ODR-133).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_15.
+
+| Rule | 0.9.10_Hardened_15 → 0.9.10_Hardened_16 |
+|---|---|
+| `[HR-3]` | changed |
+| `[HR-3b]` | added |
