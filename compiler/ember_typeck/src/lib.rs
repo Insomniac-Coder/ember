@@ -291,8 +291,11 @@ pub fn check(
     }
     // An instance a signature made before the implementations were collected
     // may have missed an extension whose bound they meet (`Map[String, V]`'s
-    // `K: Hash` needs `String`'s); it is offered each one again.
+    // `K: Hash` needs `String`'s); it is offered each one again. One whose
+    // hidden arguments those implementations answer is filled in then.
+    checker.implementations_known = true;
     checker.extend_early_instances();
+    checker.complete_early_instances();
     checker.class_methods_recorded = true;
     checker.check_deferred_overrides();
     checker.resolve_derived_clones();
@@ -2352,6 +2355,20 @@ struct Checker<'a> {
     /// instantiated before then (by a signature or an extension's associated type) has its
     /// `override`s checked once they are (`deferred_override_checks`).
     class_methods_recorded: bool,
+    /// D-407 — the hidden arguments of each generic struct instance that has them (`Q.State`
+    /// of `Query[Q]`), after its written ones in `StructDef::origin`: substituting an instance
+    /// substitutes them too.
+    struct_hidden: HashMap<StructId, Vec<Ty>>,
+    /// D-407 — a generic struct's concrete instance by its written arguments: its hidden ones are
+    /// what those arguments' types say, so it is one instance however it was reached.
+    concrete_instances: HashMap<(Symbol, Vec<Ty>), Ty>,
+    /// Whether every implementation's associated types are known (`collect_methods` is done):
+    /// before then, a concrete instance whose hidden arguments cannot be read yet (a tuple's
+    /// from a generic tuple extension over its elements' implementations) is named, and filled
+    /// in once they can (`complete_early_instances`).
+    implementations_known: bool,
+    /// Those instances: the instance, its generic struct, its written arguments, where.
+    early_instances: Vec<(Ty, Symbol, Vec<Ty>, Span)>,
     /// `[CLS-4]` — an early generic class instance's `override`s: the instance, the method's
     /// name, its source and span.
     deferred_override_checks: Vec<(ClassId, Symbol, (usize, usize, usize), Span)>,
@@ -2832,6 +2849,10 @@ impl<'a> Checker<'a> {
             generically_checked: HashSet::new(),
             reported_generic_override_errors: HashSet::new(),
             class_methods_recorded: false,
+            struct_hidden: HashMap::new(),
+            concrete_instances: HashMap::new(),
+            implementations_known: false,
+            early_instances: Vec::new(),
             deferred_override_checks: Vec::new(),
             cells: HashMap::new(),
             boxes: HashMap::new(),
@@ -7145,6 +7166,10 @@ impl<'a> Checker<'a> {
             .collect();
         for (kind, name, args) in instances {
             let ty = self.types.intern(kind);
+            // One still to be filled in takes them then (`fill_struct_instance`).
+            if self.early_instances.iter().any(|&(early, ..)| early == ty) {
+                continue;
+            }
             self.apply_generic_extensions(ty, name, &args);
         }
     }
@@ -14279,11 +14304,20 @@ impl<'a> Checker<'a> {
                     .iter()
                     .map(|&arg| map(self, arg))
                     .collect::<Vec<_>>();
-                if concrete == generic_args {
+                // D-407 — and its hidden arguments: `make[Q]() -> Query[Q]` is `Query[Q, Q.State]`
+                // over `make`'s own `Q.State`, which a call substitutes with its caller's.
+                let hidden = self.struct_hidden.get(&id).cloned().unwrap_or_default();
+                let mapped = hidden.iter().map(|&arg| map(self, arg)).collect::<Vec<_>>();
+                if concrete == generic_args && mapped == hidden {
                     return ty;
                 }
                 let Some(decl) = self.generic_structs.get(&name).cloned() else { return ty };
-                self.instantiate_struct(name, &decl, &concrete, Span::DUMMY)
+                // Hidden arguments the map left alone are recomputed from the new written ones.
+                let full = match mapped != hidden {
+                    true => concrete.into_iter().chain(mapped).collect(),
+                    false => concrete,
+                };
+                self.instantiate_struct(name, &decl, &full, Span::DUMMY)
             }
             TyKind::Class(id) => {
                 let origin = self.types.class_def(id).origin.clone();
@@ -15246,16 +15280,26 @@ impl<'a> Checker<'a> {
         // an opaque `Each[U]` means a different `U.Iter` in each generic body
         // that makes one (a struct's own, an extension's), and a concrete
         // one's are fixed by its arguments.
+        // A concrete instance's hidden arguments are what its written ones' types say, so it is
+        // one instance however it is reached, whatever hidden values a substitution carries.
+        let hidden_params = decl.generic_params.len() > written;
+        let concrete = hidden_params && !args.iter().any(|&arg| self.types.is_generic(arg) || self.mentions_assoc(arg));
+        if concrete && let Some(&ty) = self.concrete_instances.get(&(name, args.to_vec())) {
+            return ty;
+        }
         let full: Vec<Ty> = match hidden_given {
-            Some(hidden) => args.iter().copied().chain(hidden).collect(),
-            None if decl.generic_params.len() > written => self.with_projections(&decl.generic_params, args),
-            None => args.to_vec(),
+            Some(ref hidden) if !concrete => args.iter().copied().chain(hidden.iter().copied()).collect(),
+            _ if hidden_params => self.with_projections(&decl.generic_params, args),
+            _ => args.to_vec(),
         };
-        let instance = match decl.generic_params.len() > written {
+        let instance = match hidden_params {
             true => self.generic_instance_name(name, &full),
             false => self.generic_instance_name(name, args),
         };
         if let Some(&ty) = self.named_types.get(&instance) {
+            if concrete {
+                self.concrete_instances.insert((name, args.to_vec()), ty);
+            }
             return ty;
         }
 
@@ -15275,6 +15319,29 @@ impl<'a> Checker<'a> {
         self.struct_ids.insert(instance, id);
         self.named_types.insert(instance, ty);
         self.struct_default_exprs.insert(id, decl.defaults.clone());
+        if concrete {
+            self.concrete_instances.insert((name, args.to_vec()), ty);
+            // A signature read before the implementations are names it (`fn f(q: Query[(Mut[A],
+            // B)])`, whose `State` comes from `extend[A: P, B: P] (A, B) implements P` over
+            // `A`'s and `B`'s implementations): it is filled in once they are known.
+            if !self.implementations_known && full[written..].contains(&self.common.error) {
+                self.early_instances.push((ty, name, args.to_vec(), span));
+                return ty;
+            }
+        }
+        self.fill_struct_instance(ty, name, decl, args, &full, span);
+        ty
+    }
+
+    /// The rest of `instantiate_struct`, for the instance `ty` of `name[args]` whose arguments
+    /// with the hidden ones after them are `full`: its fields, methods, implementations and
+    /// extensions.
+    fn fill_struct_instance(&mut self, ty: Ty, name: Symbol, decl: &GenericStruct, args: &[Ty], full: &[Ty], span: Span) {
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return };
+        let full = full.to_vec();
+        if full.len() > args.len() {
+            self.struct_hidden.insert(id, full[args.len()..].to_vec());
+        }
         // `[MONO-2]` — a new concrete instance of the generic type.
         if !self.is_opaque_instance(ty) {
             self.note_instantiation(name.to_string(), span, id.0, self.types.display(ty), std::time::Duration::ZERO);
@@ -15359,7 +15426,30 @@ impl<'a> Checker<'a> {
         }
         self.type_params = saved_interface_params;
         self.apply_generic_extensions(ty, name, args);
-        ty
+    }
+
+    /// The instances `instantiate_struct` named before the implementations were known, filled in
+    /// now that they are: each takes the name its hidden arguments give it beside the one it had.
+    fn complete_early_instances(&mut self) {
+        while let Some(&(ty, ..)) = self.early_instances.first() {
+            self.complete_early_instance(ty);
+        }
+    }
+
+    /// One of `complete_early_instances`'s, if `ty` is still waiting: reached first from another's
+    /// hidden arguments (`Query[(Wrap[A], B)]` reading `Wrap[A].State`), it is filled in then.
+    fn complete_early_instance(&mut self, ty: Ty) {
+        let Some(at) = self.early_instances.iter().position(|&(early, ..)| early == ty) else { return };
+        let (ty, name, args, span) = self.early_instances.remove(at);
+        let Some(decl) = self.generic_structs.get(&name).cloned() else { return };
+        let full = self.with_projections(&decl.generic_params, &args);
+        let instance = self.generic_instance_name(name, &full);
+        if let TyKind::Struct(id) = *self.types.kind(ty) {
+            self.types.struct_def_mut(id).name = instance;
+            self.struct_ids.insert(instance, id);
+        }
+        self.named_types.insert(instance, ty);
+        self.fill_struct_instance(ty, name, &decl, &args, &full, span);
     }
 
     /// D-407 — `args` and after them the hidden parameters of `params`, each
@@ -35188,6 +35278,29 @@ impl<'a> Checker<'a> {
     /// What `ty.name` is: the implementation's `type name = …`, or for a type
     /// parameter the hidden parameter standing for it.
     fn project(&mut self, ty: Ty, name: Symbol) -> Option<Ty> {
+        let found = self.project_now(ty, name);
+        if found.is_some() || self.types.is_generic(ty) {
+            return found;
+        }
+        // A concrete instance of a generic type (a tuple, `Mut[Pos]`) that has not taken the
+        // extension saying it yet: one made before its arguments' implementations were collected
+        // was refused it then, and a built-in one takes them only at a first method call.
+        let origin = self.builtin_generic_origin(ty).or_else(|| match *self.types.kind(ty) {
+            TyKind::Struct(id) => self.types.struct_def(id).origin.clone(),
+            TyKind::Enum(id) => self.types.enum_def(id).origin.clone(),
+            TyKind::Class(id) => self.types.class_def(id).origin.clone(),
+            _ => None,
+        });
+        let (origin, args) = origin?;
+        if !self.implementations_known || !self.generic_extensions.contains_key(&origin) {
+            return None;
+        }
+        self.complete_early_instance(ty);
+        self.apply_generic_extensions(ty, origin, &args);
+        self.project_now(ty, name)
+    }
+
+    fn project_now(&mut self, ty: Ty, name: Symbol) -> Option<Ty> {
         if let Some(instance) = self.assoc_instance
             && let Some(&value) = self.instance_assoc.get(&(ty, instance, name))
         {
