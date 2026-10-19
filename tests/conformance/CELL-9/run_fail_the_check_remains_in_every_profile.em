@@ -1,5 +1,5 @@
 #$ test: run-fail
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ rules: CELL-9, CELL-5, PRF-1
 # `[CELL-9]` keeps runtime borrow checks in every profile. The package-level
 # `exclusivity = "unchecked"` switch applies only to classes and is not yet a

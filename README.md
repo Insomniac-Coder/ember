@@ -43,10 +43,10 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 | 2 | Ownership, borrowing, regions | 93% |
 | 3 | Classes, reference counting, exclusivity | 98% |
 | 4 | Effects, compile time, reflection, derives | 70% |
-| 5 | C interoperability | 38% |
+| 5 | C interoperability | 39% |
 | 6 | Concurrency and data-oriented design | 88% |
 | 7 | C++ interoperability and the interpreter | 0% |
-| 7a | Iteration, determinism, cost control | 66% |
+| 7a | Iteration, determinism, cost control | 69% |
 | 8 | Hardening and 1.0 | 31% |
 | | Overall (1.0) | 82% |
 | | After 1.0: the LLVM backend (v2), the GPU host model (v0.6) | 0% |
@@ -124,7 +124,7 @@ Each compiler's columns compare Ember with the hand-written C built by that comp
 marked ¹ or ², MSVC rearranges the hand-written C's loops, which changes that C's time a lot; on the
 row marked ³, gcc does something to Ember's program that it does not do to the hand-written C; the
 notes under the tables say how. With gcc, both programs are built with
-`-O2 -fvect-cost-model=cheap -funroll-loops`, the flags of Ember's release build with gcc.
+`-O2 -fvect-cost-model=cheap -funroll-loops`, the flags of Ember's development build with gcc.
 
 ### As fast as C or faster
 
@@ -254,7 +254,7 @@ The `ember` command:
 
 ```text
 ember run   <file.em>        compile and run
-ember build <file.em>        compile to an executable (--profile debug|release|shipping)
+ember build <file.em>        compile to an executable (--profile debug|development|release)
 ember check <file.em>        type-check without generating code
 ember build <file.em> --emit c|mir|hir|ast|tokens
 ember explain E3060          describe a diagnostic code
@@ -318,7 +318,7 @@ cl /MD /std:c11 /I target\debug\lib host.c target\debug\lib\demo_api.lib target\
 host.exe
 ```
 
-Use matching profile flags when linking; shipping builds retain their LTO
+Use matching profile flags when linking; release builds retain their LTO
 settings. The same archives can be linked from C++; use the C++ driver
 (`c++`/`clang++` or `cl`) for a C++ host. `ember build --emit c` emits C, and
 `ember build --emit header` emits only the header without invoking a C

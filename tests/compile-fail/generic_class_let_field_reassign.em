@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: CLS-9, TYP-16
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 # The mistake is in the generic method, so it is reported once, against
 # `Version[T]` ([TYP-17], D-248), not per instance.
 

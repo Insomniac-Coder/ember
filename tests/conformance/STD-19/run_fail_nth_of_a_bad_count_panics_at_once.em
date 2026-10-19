@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: STD-19, STD-14
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: before
 #$ panics: nth(-1): an index cannot be negative
 # `[STD-19]` (ODR-089) — a bad count is the caller's bug and panics when

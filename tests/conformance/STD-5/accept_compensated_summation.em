@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 2.0 0.0
 #$ 1.0 0.9999999999999999 true
 #$ 0.0 0.0 1e+100

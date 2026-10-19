@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: ERR-8, ERR-9, ERR-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: load failed
 #$ AnyError(Load.Io(Disk(code=-3)))
 #$ true false

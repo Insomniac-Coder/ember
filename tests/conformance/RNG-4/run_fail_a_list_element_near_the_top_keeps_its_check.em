@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: RNG-4, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow in `+`
 # `[RNG-4]` — the list's elements hold what was stored in them, and one
 # stored value is near `int`'s top: adding it to the total keeps its check.

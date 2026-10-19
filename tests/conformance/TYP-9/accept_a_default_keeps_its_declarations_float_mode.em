@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-9, CG-C-11, FN-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c-order: "1.0e-3" then "its `fastmath` functions"
 #$ assert-c-order: "4.375e-1" then "its `fastmath` functions"
 #$ assert-c-order: "6.25e-2" then "its `fastmath` functions"

@@ -1,5 +1,5 @@
 #$ test: compile-fail
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ rules: TYP-16, TYP-22, CLO-6a
 
 interface Consume[T]:

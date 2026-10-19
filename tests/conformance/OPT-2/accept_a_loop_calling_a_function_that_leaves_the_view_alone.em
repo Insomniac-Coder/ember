@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: OPT-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 12
 #$ assert-c-count: contains("ember_panic_bounds(") == 1
 #$ assert-c-count: contains("ember_ck_add_i64(") == 2

@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: RNG-4, TYP-8
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 4611686018427387904
 #$ panics: integer overflow in `*`
 # `[RNG-4]` — widening tries the constants the loop holds (here around 2 and

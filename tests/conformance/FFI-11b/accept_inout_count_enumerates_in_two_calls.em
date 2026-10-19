@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-11b, FFI-11, FFI-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 4
 #$ 2 1 4
 #$ 4 1 4 9 16

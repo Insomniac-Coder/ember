@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SOA-2, SOA-1, SOA-6, BRW-5, BRW-4
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 1 1.984 0.016
 #$ 1.984 1.0
 # Part XII.1's example: `integrate(ps.pos, ps.vel, 0.016)` borrows two columns at once, the first

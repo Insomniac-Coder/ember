@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: EXC-2, EXC-15, EXC-19
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: exclusivity violation: read access to Bag.items while a write access to Bag.items is active
 # `[EXC-2]`, `[EXC-15]` — a `mut self` call writes every field of its object
 # until it returns; reading one of them through another handle to that object

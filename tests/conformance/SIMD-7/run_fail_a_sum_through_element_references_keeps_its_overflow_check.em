@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: SIMD-5, SIMD-7
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow in `+`
 #$ assert-c: contains(" >> 56ULL;")
 # The second block fails its element-range proof and runs checked. Reading

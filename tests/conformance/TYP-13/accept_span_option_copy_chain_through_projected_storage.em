@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-13, TYP-14, TYP-15, SPN-1, SPN-2, LT-20
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 20 30 2
 #$ stdout: 3 10
 #$ stdout: 0

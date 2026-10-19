@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: ERR-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: no such file
 # `[ERR-4]` — `unwrap` on an `Err` panics with the error's text.
 

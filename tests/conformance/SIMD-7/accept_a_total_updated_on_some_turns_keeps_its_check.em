@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-7, SIMD-5, OPT-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout:
 #$ 12000 2000
 #$ 2139

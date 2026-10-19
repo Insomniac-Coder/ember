@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SOA-1, SOA-2, SOA-6
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 2
 #$ 1.0 0.5 3.0
 #$ 1.016 0.5 2.984

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-20, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: -128 127
 
 @overflow(wrap)

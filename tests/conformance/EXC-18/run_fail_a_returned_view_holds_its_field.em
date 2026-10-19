@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: EXC-18, EXC-1, EXC-15
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: exclusivity violation: write access to Person.name while a read access to Person.name is active
 # `[EXC-18]` (D-218) — a view of a field returned from a method, here through a
 # second method, holds the field's read access in the caller until its last use.

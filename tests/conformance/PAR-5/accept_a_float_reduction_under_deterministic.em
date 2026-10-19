@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: PAR-5, PAR-3
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: true
 #$ stdout: true
 # `[PAR-5]` — a `@parallel` loop's chunks are a function of the trip count and `chunk` only, and

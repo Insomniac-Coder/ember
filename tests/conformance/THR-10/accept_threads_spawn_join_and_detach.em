@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: THR-10, THR-8, HEAP-10, THR-14, THR-3
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 40000 12007
 #$ 4
 #$ 10

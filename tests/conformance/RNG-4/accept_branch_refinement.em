@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-4, RNG-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 
 type Percent = i32 in 0 ..= 100

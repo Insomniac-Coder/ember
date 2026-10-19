@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-16, TYP-22, IFC-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 20
 #$ stdout: 22
 #$ assert-c: contains(static const struct em_vt_dyn_multi__Left__Right em_vt_dyn_multi__Left__Right_Pair)

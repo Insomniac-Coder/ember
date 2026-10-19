@@ -1,5 +1,5 @@
 #$ test: run-pass
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 2998 102 6 13 1001
 # D-571: a call through a callable value that is a known function, set once
 # and never changed, calls that function directly (and it may be inlined and

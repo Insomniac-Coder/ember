@@ -4,7 +4,7 @@
 
 Hot reload turns a source edit into running behaviour in a live process, keeping existing objects,
 statics and open resources. It is part of the Ember Dynamic conformance profile (`[CONF-5]`), is
-available in `debug` and `release` builds, and is forbidden in `shipping`.
+available in `debug` and `development` builds; a `release` build ignores `[build] reload` (`[MAN-7]`).
 
 * `[HR-1]` An edit to one function body in a 50k-line reloadable package MUST be running in the process
   within one second on the reference machine (`[BUD-1]`), with all live object state preserved: budget
@@ -28,8 +28,9 @@ old image owned).
 * `[HR-2a]` Plan reads schemas and the registered set and runs no user code. Prepare allocates every new
   instance in the transaction arena (`[HR-37]`), runs every `migrate_from` against a read-only view of
   the old instance, and computes the old-to-new address map. Commit publishes the instances, patches
-  type information, applies the map and repoints the thunks. Reclaim drops the old instances and
-  removed fields, running user `drop` code.
+  type information, applies the map and repoints the thunks. Reclaim frees each migrated instance's
+  old version field by field without the type's own `drop`, since the instance lives on in its new
+  form, and drops removed fields, running their user `drop` code.
 * `[HR-3]` A reload is applied only inside `ember_reload_poll()`, and only when no registered thread is
   executing Ember code (each thread's Ember-depth counter is zero); otherwise the poll returns
   `EMBER_RELOAD_UNSAFE_POINT` and does nothing.
@@ -62,8 +63,9 @@ old image owned).
   leave such a thunk reachable is refused.
 * `[HR-9]` A call through a thunk costs one load and one indirect jump; the measured overhead on the
   performance suite with reload enabled is reported with its configuration and must not exceed 3 %.
-* `[HR-9a]` A reloadable function is never inlined, devirtualised or placed in the inline header of
-  `[CG-C-3]`, since an inlined body cannot be swapped.
+* `[HR-9a]` *(changed in 0.9.10)* A reloadable function is never inlined, devirtualised or placed in
+  the inline header of `[CG-C-3]`, since an inlined body cannot be swapped; this holds over `@inline`
+  (`[CG-C-3a]`). A `@noreload` function may be inlined (`[HR-10]`).
 * `[HR-28]` `ember inspect --safety` reports the thunk indirection of each function beside its safety
   checks.
 * `[HR-10]` `@noreload fn` is called directly and may be inlined; changing its body requires a restart
@@ -115,9 +117,10 @@ old image owned).
   | layout attributes changed on a type used across FFI | refused |
   | static's initialiser changed | refused unless the static is `@reinit_on_reload` (`[HR-17a]`) |
 
-* `[HR-15]` Migration keeps an instance's address where the new size fits; otherwise commit rewrites
-  every reference to it that the runtime can enumerate: strong handles in live instances and
-  registered containers, `Weak` handles, and interior references in registered containers.
+* `[HR-15]` *(changed in 0.9.10)* Migration keeps an instance's address where the new size fits;
+  otherwise commit rewrites every reference to it that the runtime can enumerate: strong handles in
+  live instances and registered containers, `Weak` handles, interior references in registered
+  containers, and handles inside tuples, `Box` contents and closure captures held by any of these.
 * `[HR-15a]` A reference the runtime cannot enumerate — in foreign memory, behind a raw pointer — cannot
   be rewritten, and the reload is refused unless `[HR-20]` covers it.
 * `[HR-15b]` Every refusal is decided in plan, before prepare runs.
@@ -129,7 +132,7 @@ old image owned).
 * `[HR-35]` *(changed in 0.9.9)* `migrate_from` cannot abort the process. It may not contain an
   explicit panic (`panic`, `unwrap`, `expect`, `assert`: `E2225`, whose help names the fallible form);
   and every run-time check inside it — overflow, bounds, stale handle — returns
-  `Err(ReloadError.Migration(type, instance, message))` instead of panicking.
+  `Err(ReloadError.Migration(type_name, instance, message))` instead of panicking.
 * `[HR-39]` A foreign call inside `migrate_from` returns its failure as `ReloadError.Foreign`; a call to
   a C++ function asserted `noexcept`, which could terminate the process, is rejected at compile time.
 * `[HR-43]` `@allow_reload_terminate` on a `migrate_from` admits such calls and states that this
@@ -138,8 +141,9 @@ old image owned).
   with `ReloadError.Allocation`, so construction inside `migrate_from` needs no special spelling.
 * `[HR-37]` The transaction arena holds everything prepare allocates and is released whole if the
   reload fails.
-* `[HR-38]` `std.hot.ReloadError` is `SchemaRefused(type, reason)`, `Migration(type, instance, message)`,
-  `Allocation`, `Foreign(error)` or `Timeout`.
+* `[HR-38]` *(changed in 0.9.10)* `std.hot.ReloadError` is `SchemaRefused(type_name: String, reason:
+  String)`, `Migration(type_name: String, instance: u64, message: String)`, `Allocation`,
+  `Foreign(error: String)` or `Timeout`; `instance` counts the type's live instances from 0.
 * `[HR-17]` A static whose type and initialiser are unchanged keeps its value; one whose type changed
   migrates by `[HR-14]`; a new static is initialised normally.
 * `[HR-17a]` *(changed in 0.9.9)* Editing a static's initialiser changes its schema: the reload is
@@ -182,7 +186,7 @@ old image owned).
   previous thunks are reused.
 * `[HR-24]` An object in use by an in-flight GPU frame is migrated in place when it fits; otherwise the
   reload waits at most `frames_in_flight + 1` polls and is then refused, naming the resource.
-* `[HR-27]` A `shipping` build is bit-identical whether or not the source uses any reload attribute.
+* `[HR-27]` A `release` build is bit-identical whether or not the source uses any reload attribute.
 * `[HR-29]` With reload enabled, one shared runtime serves every image in the process
   (`[build] runtime = "shared"`); a reloadable package that links its own runtime copy is `E9036`.
 * `[HR-30]` **Host contract:** `ember_reload_init(&config)` once; `ember_reload_poll()` at a point where

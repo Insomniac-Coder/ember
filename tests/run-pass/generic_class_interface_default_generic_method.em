@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: IFC-1, TYP-16
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ stdout: 42
 #$ stdout: 42

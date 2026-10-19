@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: PHIL-9, TYP-11
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 3 3
 #$ assert-c: contains(struct em_Point {)
 #$ assert-c-order: "struct em_Point {" then "    int32_t x;"

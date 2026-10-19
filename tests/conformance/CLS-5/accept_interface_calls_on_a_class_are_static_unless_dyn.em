@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLS-5
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 3 3 40
 #$ assert-c: contains(= em_Dog_speak()
 #$ assert-c: !contains(em_vt_dyn_Speak_Dog)

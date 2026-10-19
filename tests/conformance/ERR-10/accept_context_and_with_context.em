@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: ERR-10, ERR-8, ERR-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: loading app.cfg: reading the disk: disk -2
 #$ AnyError(Disk(code=-2), context=['reading the disk', 'loading app.cfg'])
 #$ true

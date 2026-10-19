@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-33, FFI-33c, GRM-37
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c: contains("ember_rt_check_main_thread();")
 #$ stdout: 45
 

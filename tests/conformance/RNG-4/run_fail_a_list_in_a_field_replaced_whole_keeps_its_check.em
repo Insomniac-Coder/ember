@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: RNG-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow
 # `[RNG-4]` (ADR-142) — a field given a whole list holds that list's elements:
 # a call's result carries no fact.

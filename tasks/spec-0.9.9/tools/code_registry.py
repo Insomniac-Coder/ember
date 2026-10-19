@@ -120,6 +120,7 @@ RETIRED = {
     'L3019': 'an object is never deinitialised before its last owner ends (`[RC-3]`, ODR-063)',
     'E9032': 'reserved',
     'W0001': 'a dangling doc comment is discarded in silence (`[LEX-11]`)',
+    'E9033': 'a `release` build ignores `reload` with a note (`[MAN-7]`, ODR-118)',
 }
 RETIRED.pop('E0105')
 OVERRIDE.pop('W0001')
@@ -172,6 +173,7 @@ NEW = {
     'E2182': ('a function that returns a value can reach the end of its body', ['FN-10']),
     'E2183': ('`main` has none of the forms `[FN-8]` allows', ['FN-8']),
     'E5067': ('an overlay that states facts is not declared `unsafe overlay`', ['GRM-35', 'TIER-1']),
+    'E5068': ('one live foreign object adopted twice', ['FFI-36b']),
     'W1003': ('a package module shadows the standard module of the same name', ['MOD-3']),
     'L4003': ('large `Array[int]`/`Array[float]` in a hot loop whose values fit 32 bits', ['LNT-6']),
 }

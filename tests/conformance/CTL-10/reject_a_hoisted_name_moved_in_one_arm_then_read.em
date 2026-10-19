@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: CTL-10, EXP-6
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 # D-490: a hoisted name an arm moved is moved after the branch on that path;
 # reading it there is E3040 at the read, as for any variable.
 

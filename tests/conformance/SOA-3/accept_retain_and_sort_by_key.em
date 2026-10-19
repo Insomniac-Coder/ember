@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SOA-3, SOA-6
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: n0 0
 #$ n4 6
 #$ n5 4

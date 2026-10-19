@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: CELL-5
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ panics: RefCell already mutably borrowed (borrowed at
 # `[CELL-5]` — in a class field, a `RefCell`'s own counter still refuses a
 # `borrow_mut` while a shared guard lives, through another handle too: the

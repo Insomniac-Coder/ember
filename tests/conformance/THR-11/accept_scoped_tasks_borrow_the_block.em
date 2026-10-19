@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: THR-11, THR-5, THR-12, THR-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 8 words
 #$ 3 tags
 #$ 55

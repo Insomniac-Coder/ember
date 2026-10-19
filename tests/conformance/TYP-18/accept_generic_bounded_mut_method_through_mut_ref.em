@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-14, TYP-17, TYP-18, BRW-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 
 # The `ref mut T` receiver reads through to T for bound lookup while preserving

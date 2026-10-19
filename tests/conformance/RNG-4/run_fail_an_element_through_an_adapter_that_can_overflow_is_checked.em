@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: RNG-4, CTL-3b
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout:
 #$ 5
 #$ 11

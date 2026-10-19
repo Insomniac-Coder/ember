@@ -1,5 +1,5 @@
 #$ test: compile-fail
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ rules: MOD-2, TXT-10
 # Neither iterator lets a caller forge a continuation-byte cursor or pass the end.
 fn main():

@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: TYP-8, TYP-28
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: division by zero
 
 @overflow(saturate)

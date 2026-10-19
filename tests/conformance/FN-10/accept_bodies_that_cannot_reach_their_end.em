@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FN-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1
 #$ -1
 #$ 7

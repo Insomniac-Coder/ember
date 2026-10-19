@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: HR-12, HR-12a
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 3 6
 #$ assert-c: contains("ember_obj_header_v40, ember_reload_protocol_v1")
 #$ assert-c: contains("(uint32_t)sizeof(ember_obj_header)")

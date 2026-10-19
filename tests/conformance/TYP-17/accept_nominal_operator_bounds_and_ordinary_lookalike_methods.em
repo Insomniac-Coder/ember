@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-17, TYP-21, TYP-40, IFC-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 5 9 13 17
 # Operator bounds and ordinary method bounds both work when called with
 # concrete values. A lookalike is callable by its method name, not as `+`.

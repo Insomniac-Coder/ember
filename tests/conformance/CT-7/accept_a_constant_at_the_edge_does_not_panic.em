@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CT-7, CT-1, TYP-8, TYP-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 2147483647 -9223372036854775808 2147483648 0 -128 0 -1
 # `[CT-7]`'s other side: each of these reaches its type's edge and stays in
 # it, so each is a value. `MIN % -1` is 0, not an overflow; a shift by one

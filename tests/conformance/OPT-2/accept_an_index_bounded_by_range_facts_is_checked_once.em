@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: OPT-2, RNG-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 130
 #$ stdout: 10
 #$ stdout: 96

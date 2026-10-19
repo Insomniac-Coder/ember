@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-3
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 6 5 5 5
 #$ stdout: 100 49 12
 #$ stdout: 0 1 5 0

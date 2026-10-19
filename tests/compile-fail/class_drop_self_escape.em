@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: CLS-7a, OBJ-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 
 # A destructor must not publish its own counted handle into an owning
 # container. The container could outlive the in-progress deinitialisation and

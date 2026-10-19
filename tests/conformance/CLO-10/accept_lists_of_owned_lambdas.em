@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLO-10, CLO-3, TYP-23
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 3 1 21 2
 
 # `[CLO-10]` (D-556) — owned callable values in a typed list, a list whose

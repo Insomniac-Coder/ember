@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: GRM-24, MOD-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 12
 #$ 12
 #$ 2

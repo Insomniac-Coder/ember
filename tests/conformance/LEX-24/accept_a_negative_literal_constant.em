@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: LEX-24, CT-1, RNG-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: -5 -10 -1.5 -3.0 -128 -0.25
 #$ 0.5 -20 true
 # D-327 — `const N: i64 = -5` and `const F = -1.5` are literal constants,

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: HEAP-9
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 16 0 0 0
 # `[HEAP-9]` — a list's storage is aligned to its element type's alignment: a `u128` is aligned to
 # 16 bytes, and so is every buffer an `Array[u128]` holds, from its first push through each growth

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-9, FN-6
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 
 pub extern "C" fn increase(value: i32) -> i32:

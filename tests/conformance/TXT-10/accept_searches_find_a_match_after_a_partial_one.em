@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TXT-10, STD-8b
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: Some(1) Some(3) None Some(0) Some(3)
 #$ 2 1 3 4
 #$ xZZ héllo! true false true

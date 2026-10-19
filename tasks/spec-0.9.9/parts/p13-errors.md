@@ -114,9 +114,9 @@ fn main() -> Result[void]:
   panicking accessor has a non-panicking twin, and the panic message names it
   (`index 7 out of range for length 3; use .get(i) for an Option`). The one exception is console input,
   which panics at end of input (`[STD-10]`), as Python's `input` raises.
-* `[ERR-6]` A foreign function's status code becomes a `Result` at the binding (Part XVI): an
-  `@ffi(status=VkResult, ok=VK_SUCCESS)` overlay turns a `VkResult` return into
-  `Result[void, VkError]`.
+* `[ERR-6]` *(changed in 0.9.10)* A foreign function's status code becomes a `Result` at the binding
+  (Part XVI): an `@ffi(status=VkResult, ok=VK_SUCCESS, error=VkError)` overlay turns a `VkResult`
+  return into `Result[void, VkError]`.
 
 Python's `try`, `except`, `raise` and `finally` are not Ember syntax; each is diagnosed with the Ember
 form (`[DIA-21]`): `raise e` → `return Err(e)`, a `try` body → `?` on each fallible call, `except E`

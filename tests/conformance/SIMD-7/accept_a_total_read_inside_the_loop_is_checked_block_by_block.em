@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-7, SIMD-5, OPT-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 591 594
 #$ assert-c: contains(" >> 56ULL;")
 # The loop reads the running total as well as adding to it, so the block adds

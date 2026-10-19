@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: RNG-4, TXT-10, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: seen 0
 #$ panics: integer overflow in `+`
 

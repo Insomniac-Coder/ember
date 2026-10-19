@@ -207,7 +207,7 @@ pub fn link_image(
             command.args(["/nologo", "/LD", "/MD"]).arg(&object).arg(&runtime.link_with)
                 .arg(format!("/Fe{}", output.display()))
                 .arg("/link").arg(format!("/INCLUDE:{manifest_symbol}"));
-            if profile != Profile::Shipping {
+            if profile != Profile::Release {
                 command.arg("/DEBUG").arg(format!("/PDB:{}", output.with_extension("pdb").display()));
             }
         }

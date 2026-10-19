@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-43, THR-8, TYP-17
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 7
 #$ 1 3 4
 # ODR-111 — a raw pointer is not `Send`, so neither is a struct holding one; the program may say it

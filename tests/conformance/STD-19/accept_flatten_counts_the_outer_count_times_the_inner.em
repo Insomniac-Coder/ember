@@ -2,7 +2,7 @@
 #$ rules: STD-19
 #$ stdout: 6 3 6 6
 #$ stdout: [(-1, 0), (0, 0), (1, 1), (2, 0), (3, 1), (4, 2)]
-#$ profiles: debug, release
+#$ profiles: debug, development
 # G8-4 (the owner's design, 0.9.10) — `flat_map` and `flatten` count every inner iterator's items
 # together, stepping up by need: in the level that holds the outer count times the inner one. Stored
 # items by stored items stay an `int`; an `int` by a `u64` (an array of ranges of 64-bit numbers)

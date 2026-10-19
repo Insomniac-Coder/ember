@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EFF-12
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 6 2
 
 # `[EFF-12]` — `@static_safe` permits bounds and arithmetic checks: indexing a

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: GRM-25
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: in
 #$ true
 #$ false

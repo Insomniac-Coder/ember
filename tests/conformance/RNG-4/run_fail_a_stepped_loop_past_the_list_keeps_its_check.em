@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: RNG-4, CTL-3b
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: index 12 is out of bounds for a length of 10
 # `[RNG-4]` — the loop runs to 13, past the list's length, so indexing it
 # keeps its check and panics at the first value past the end.

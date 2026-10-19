@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: EXC-8, EXC-19, PHIL-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: before
 #$ panics: exclusivity violation: write access to Bag.items while a read access to Bag.items is active
 # `[EXC-8]` — the loop's one check, run before it, fails as the first turn's

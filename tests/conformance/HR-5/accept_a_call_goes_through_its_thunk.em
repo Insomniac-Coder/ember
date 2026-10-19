@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: HR-5, HR-6, HR-8, HR-9a
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 12
 #$ 21
 #$ 7

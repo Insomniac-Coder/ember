@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: MOD-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: ok
 #$ 5 0
 # The prelude's assertion functions, its `mem` module, and standard error.

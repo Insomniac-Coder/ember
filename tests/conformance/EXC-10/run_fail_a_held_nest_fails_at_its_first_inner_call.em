@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: EXC-1, EXC-9, EXC-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: exclusivity violation: write access to Counter.log while a write access to Counter.log is active
 
 # `[EXC-10]`, `[EXC-9]` — `run` holds `self` for writing, and `other` is the same

@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: TYP-8, TYP-30
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: `**` with a negative exponent
 
 @overflow(saturate)

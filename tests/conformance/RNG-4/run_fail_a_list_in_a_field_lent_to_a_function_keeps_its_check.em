@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: RNG-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow
 # `[RNG-4]` (ADR-142) — a field's list lent mutably to a function may get any
 # value there: its elements carry no fact, and the sum keeps its check.

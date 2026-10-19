@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: THR-15, THR-10, THR-8
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 10000 100000
 #$ true true
 #$ full, kept 3 false

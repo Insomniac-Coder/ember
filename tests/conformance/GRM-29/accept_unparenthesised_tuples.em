@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: GRM-29, GRM-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 2
 #$ 1
 #$ -4

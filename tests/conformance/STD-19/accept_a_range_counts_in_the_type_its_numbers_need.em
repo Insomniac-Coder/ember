@@ -4,7 +4,7 @@
 #$ stdout: 18446744073709551615 18446744073709551616
 #$ stdout: 340282366920938463463374607431768211455 340282366920938463463374607431768211456
 #$ stdout: 0 0 1
-#$ profiles: debug, release
+#$ profiles: debug, development
 # G8-4 (the owner's design, 0.9.10) — a range's `len()` is in the smallest type that holds every
 # count a range of its kind can have: `int` for numbers of 8, 16 or 32 bits; `u64` for a `..`
 # range of 64-bit numbers and `u128` for a `..=` one; `u128` for a `..` range of 128-bit numbers

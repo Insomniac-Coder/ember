@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-4, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 6765
 #$ stdout: 55
 #$ assert-c-count: contains("ember_ck_sub_i64(") == 0

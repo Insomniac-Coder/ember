@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLO-1, CLO-2, CLO-3, CLO-4, CLO-15, TYP-15
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 7
 #$ stdout: 9
 # `[CLO-4]`, `[CLO-15]` (ODR-100) — an ordinary closure may be passed to an

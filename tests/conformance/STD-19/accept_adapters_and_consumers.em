@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-19, STD-26
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout:
 #$ [1, 2, 3] [3, 4, 5] [1, 4, 7, 10]
 #$ [(0, 1), (1, 2), (2, 3)] [(1, 11), (2, 12), (3, 13)]

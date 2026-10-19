@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: THR-14, THR-9, THR-1, STA-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 3 3
 #$ 7 9
 #$ 250 4

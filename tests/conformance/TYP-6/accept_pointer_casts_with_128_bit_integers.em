@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-6, TYP-7, UNS-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42 42 true true
 #$ 42 0
 # `[TYP-6]` — a raw pointer converts to and from a 128-bit integer as to any other: a pointer

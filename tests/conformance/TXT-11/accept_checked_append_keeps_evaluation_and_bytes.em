@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TXT-11, EXP-1, BCK-5, HEAP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c: contains("vec_extend_inline(")
 #$ stdout: receiver
 #$ stdout: piece

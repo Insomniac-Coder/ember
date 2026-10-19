@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLO-10, PHIL-2
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 340282366920938463463374607431768211455 -170141183460469231731687303715884105728
 #$ assert-c: !contains("_Alignof(void*)")
 # `[CLO-10]` (D-620) — up to three pointer-sized words of captured state are held inline, whatever

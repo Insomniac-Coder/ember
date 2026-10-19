@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: BRW-9, LT-1, LT-5, DIA-7
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ error[E3060]: does not live long enough
 
 # A `ref` is safe only while its source place is alive. Returning this borrow

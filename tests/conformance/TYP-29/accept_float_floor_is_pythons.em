@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-29
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 9.0
 #$ 0.09999999999999995
 #$ -4.0

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: ATT-1, STR-5, TYP-34, LT-1a
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 3 2
 #$ 1
 #$ 3

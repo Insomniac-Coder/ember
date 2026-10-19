@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: DSP-3, OBJ-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ assert-c-count: contains(ember_itable_lookup) == 1
 

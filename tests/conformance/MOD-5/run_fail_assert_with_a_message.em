@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: MOD-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: the list is empty
 
 fn main():

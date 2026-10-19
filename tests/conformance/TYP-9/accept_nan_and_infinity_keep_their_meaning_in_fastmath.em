@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-9, TYP-6, RNG-3, RNG-3a, RNG-6, PHIL-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: (true, false, false) (false, false, true) (false, true, false)
 #$ stdout: 0.0 1.0 0.0 false true false
 #$ stdout: 0 9223372036854775807 -9223372036854775808 2

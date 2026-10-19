@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-5
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 16777216.0 16777218.0
 #$ stdout: 0.0
 # `[STD-5]` — `sum` adds in the element type, and `sum_f64()` adds an

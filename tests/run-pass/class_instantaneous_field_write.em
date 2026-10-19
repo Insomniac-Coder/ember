@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLS-1, EXC-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 7
 
 class Slot:

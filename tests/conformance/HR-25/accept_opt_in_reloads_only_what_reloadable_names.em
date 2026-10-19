@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: HR-25, MAN-7
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 21
 #$ assert-c: contains("int64_t em_tuned__rl(int64_t _1) {")
 #$ assert-c: !contains("em_helper__rl")

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-15
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: false true true false
 #$ 1 -1
 #$ 3 5 4 none none

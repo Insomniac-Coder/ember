@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CT-7, CT-1, TYP-8, LEX-24
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: -128 true
 
 const LOW: i8 = -128i8 + 0i8

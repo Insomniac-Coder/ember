@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FN-6, FFI-9, FFI-21
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ stdout: 42
 #$ stdout: native-only

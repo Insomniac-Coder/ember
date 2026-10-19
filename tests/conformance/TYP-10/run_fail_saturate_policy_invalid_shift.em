@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: TYP-10, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow in `shift`
 
 @overflow(saturate)

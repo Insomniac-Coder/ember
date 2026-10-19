@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RT-10, WK-12
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 2 4
 #$ alive 1
 #$ gone

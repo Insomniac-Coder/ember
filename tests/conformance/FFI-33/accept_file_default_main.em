@@ -1,7 +1,7 @@
 #! threads main
 #$ test: run-pass
 #$ rules: FFI-33, FFI-33c, GRM-37
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ assert-c: contains("ember_rt_thread_attach();")
 #$ assert-c: contains("ember_rt_check_main_thread();")
 #$ stdout: 42

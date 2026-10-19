@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SPN-1, SPN-2, BRW-2, EXP-1, TYP-13, LT-20, CG-C-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: true true
 #$ stdout: Aé🌶 7
 #$ stdout: Aé🌶 7

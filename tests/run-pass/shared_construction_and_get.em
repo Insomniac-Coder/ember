@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: HEAP-3, HEAP-4, HEAP-6, OBJ-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 7
 #$ stdout: 7
 #$ assert-c: contains(ember_obj_new_copy)

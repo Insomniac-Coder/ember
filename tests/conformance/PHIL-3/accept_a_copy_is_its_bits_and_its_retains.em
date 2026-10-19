@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: PHIL-3, OWN-7
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 3 2 2
 #$ drop 2
 #$ assert-c: !contains(em_Pair_clone)

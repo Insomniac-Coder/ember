@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: WK-5, WK-6, WK-7, WK-11, WK-12, WK-14, OBJ-3, TST-14, TST-26
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 
 # A class weak handle is a non-owning edge, so it does not add a strong edge

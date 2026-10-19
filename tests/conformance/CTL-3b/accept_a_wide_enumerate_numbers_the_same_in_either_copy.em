@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-3b, STD-19
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout:
 #$ -2:5 -1:6 0:7 1:8
 #$ 9223372036854775806:5 9223372036854775807:6 9223372036854775808:7 9223372036854775809:8

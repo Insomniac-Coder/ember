@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: SIMD-8, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: [3, 4, 5, 6]
 #$ panics: integer overflow in `+`
 # `[SIMD-8]` — integer lanes panic on overflow (`[TYP-8]`), in every profile, as scalar arithmetic

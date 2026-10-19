@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-4, RNG-10, TYP-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 63
 
 type Positive = i32 in 0 ..= 100

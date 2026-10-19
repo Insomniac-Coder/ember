@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-7, UNS-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 7
 
 fn main():

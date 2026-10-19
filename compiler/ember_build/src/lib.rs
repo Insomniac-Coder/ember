@@ -18,24 +18,26 @@ pub mod reload;
 pub enum Profile {
     #[default]
     Debug,
+    /// Optimised and still debuggable: line information, symbols, thin LTO (`[PRF-3]`).
+    Development,
+    /// The build users get: optimisation 3, stripped, full LTO (`[PRF-3]`, ODR-117).
     Release,
-    Shipping,
 }
 
 impl Profile {
     pub fn name(self) -> &'static str {
         match self {
             Profile::Debug => "debug",
+            Profile::Development => "development",
             Profile::Release => "release",
-            Profile::Shipping => "shipping",
         }
     }
 
     pub fn from_name(name: &str) -> Option<Profile> {
         Some(match name {
             "debug" => Profile::Debug,
+            "development" => Profile::Development,
             "release" => Profile::Release,
-            "shipping" => Profile::Shipping,
             _ => return None,
         })
     }
@@ -165,7 +167,7 @@ impl Toolchain {
     }
 
     /// clang's MSVC-compatible driver: MSVC's environment and flags, clang's
-    /// front end. It ignores `/GL`, so `shipping` gets no link-time code
+    /// front end. It ignores `/GL`, so `release` gets no link-time code
     /// generation from it.
     fn find_clang_cl() -> Option<Toolchain> {
         let Toolchain::Msvc { env, .. } = Self::find_msvc()? else {
@@ -637,19 +639,19 @@ fn compile_and_link_impl(
             // Object files land in obj/, keeping the C directory readable.
             command.arg(format!("/Fo{}\\", request.obj_dir.display()));
             command.arg(format!("/Fe{}", request.output.display()));
-            if request.profile != Profile::Shipping {
+            if request.profile != Profile::Release {
                 command.arg(format!("/Fd{}\\", request.obj_dir.display()));
             }
-            // `[RT-4]` — symbols for a release's backtrace, and the release link as it was: `/Zi`
+            // `[RT-4]` — symbols for a development build's backtrace, and its link as it was: `/Zi`
             // makes `cl` link with `/DEBUG`, which would turn these off.
-            if request.profile == Profile::Release {
+            if request.profile == Profile::Development {
                 command.args(["/link", "/OPT:REF", "/OPT:ICF", "/INCREMENTAL:NO"]);
             }
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.arg("-o").arg(&request.output);
             // `[RT-4]` — as for MSVC: `-g` links with `/DEBUG`, which turns these off.
-            if cfg!(windows) && request.profile == Profile::Release {
+            if cfg!(windows) && request.profile == Profile::Development {
                 command.args(["-Wl,/OPT:REF", "-Wl,/OPT:ICF", "-Wl,/INCREMENTAL:NO"]);
             }
         }
@@ -1098,7 +1100,7 @@ fn relaxed_gnu_flags(profile: Profile, fast: bool) -> Vec<&'static str> {
 /// Compile one C translation unit for a distributable library. MSVC keeps
 /// debug data inside the object: an archive must not depend on a build-local
 /// PDB beside it (`[FFI-28]`). Profile optimisation and safety flags match
-/// ordinary executable compilation, including shipping's `/GL` on MSVC.
+/// ordinary executable compilation, including release's `/GL` on MSVC.
 pub fn compile_object(
     toolchain: &Toolchain,
     source: &Path,
@@ -1280,10 +1282,10 @@ fn compiler_command(toolchain: &Toolchain) -> Command {
 fn msvc_flags(profile: Profile) -> Vec<&'static str> {
     let optimisation: &[&str] = match profile {
         Profile::Debug => &["/Od", "/Zi", "/MD", "/DEMBER_RT_DEBUG_ACCESS"],
-        // `[RT-4]` — release keeps its symbols in a PDB beside the program, for a panic's
+        // `[RT-4]` — development keeps its symbols in a PDB beside the program, for a panic's
         // backtrace; the code is the same (the link keeps `/OPT:REF,ICF`).
-        Profile::Release => &["/O2", "/Zi", "/MD"],
-        Profile::Shipping => &["/O2", "/GL", "/MD", "/DEMBER_SHIPPING"],
+        Profile::Development => &["/O2", "/Zi", "/MD"],
+        Profile::Release => &["/O2", "/GL", "/MD", "/DEMBER_RELEASE"],
     };
     ["/nologo", "/std:c11", "/W3", "/fp:precise"].iter().chain(optimisation).copied().collect()
 }
@@ -1295,11 +1297,11 @@ fn msvc_flags(profile: Profile) -> Vec<&'static str> {
 fn gnu_flags(profile: Profile) -> Vec<&'static str> {
     let optimisation: &[&str] = match profile {
         Profile::Debug => &["-O0", "-g", "-DEMBER_RT_DEBUG_ACCESS"],
-        // `[RT-4]` — on Windows a release keeps its symbols in a PDB, for a panic's backtrace;
+        // `[RT-4]` — on Windows a development build keeps its symbols in a PDB, for a panic's backtrace;
         // elsewhere the program's own symbol table names its functions.
-        Profile::Release if cfg!(windows) => &["-O2", "-g"],
-        Profile::Release => &["-O2"],
-        Profile::Shipping => &["-O3", "-DEMBER_SHIPPING"],
+        Profile::Development if cfg!(windows) => &["-O2", "-g"],
+        Profile::Development => &["-O2"],
+        Profile::Release => &["-O3", "-DEMBER_RELEASE"],
     };
     // `[THR-14]` — x64's 16-byte compare-exchange inline, for `Atomic[i128]`: without it GCC calls
     // libatomic, which a program does not link.
@@ -1320,7 +1322,7 @@ fn gnu_flags(profile: Profile) -> Vec<&'static str> {
 /// rolled (`mut self` calls: 1.98x the C++ built alike, 0.98x unrolled).
 fn gcc_flags(toolchain: &Toolchain, profile: Profile) -> &'static [&'static str] {
     match (toolchain, profile) {
-        (Toolchain::Gcc(_), Profile::Release) => &["-fvect-cost-model=cheap", "-funroll-loops"],
+        (Toolchain::Gcc(_), Profile::Development) => &["-fvect-cost-model=cheap", "-funroll-loops"],
         _ => &[],
     }
 }
@@ -1380,7 +1382,7 @@ pub fn cache_root() -> PathBuf {
 /// alongside sees the whole object or none.
 ///
 /// `None` means: compile `source` with the program. That is MSVC's
-/// `shipping` path (`/GL` compiles for link-time code generation, which wants
+/// `release` path (`/GL` compiles for link-time code generation, which wants
 /// the program and the runtime compiled together), and the fallback when
 /// `cache` cannot be created.
 pub fn runtime_object(
@@ -1415,7 +1417,7 @@ fn runtime_object_impl(
 ) -> Result<Option<PathBuf>, BuildError> {
     let mut command = compiler_command(toolchain);
     let extension = match toolchain {
-        Toolchain::Msvc { .. } if profile == Profile::Shipping => return Ok(None),
+        Toolchain::Msvc { .. } if profile == Profile::Release => return Ok(None),
         Toolchain::Msvc { .. } => {
             // `/Z7` keeps the debug information inside the object; `/Zi`
             // would tie a shared object to a PDB file beside it.
@@ -1576,17 +1578,17 @@ mod tests {
         }
     }
 
-    /// ADR-098 — gcc's release build asks for the vectoriser cost model that
+    /// ADR-098 — gcc's development build asks for the vectoriser cost model that
     /// takes a loop with a scalar tail; clang (which does by default), the
     /// other profiles and MSVC get nothing extra.
     #[test]
     fn gcc_release_asks_for_the_cheap_vectoriser_model_and_unrolling() {
         let gcc = Toolchain::Gcc(PathBuf::from("gcc"));
         let clang = Toolchain::Clang(PathBuf::from("clang"));
-        assert_eq!(gcc_flags(&gcc, Profile::Release), ["-fvect-cost-model=cheap", "-funroll-loops"]);
+        assert_eq!(gcc_flags(&gcc, Profile::Development), ["-fvect-cost-model=cheap", "-funroll-loops"]);
         assert!(gcc_flags(&gcc, Profile::Debug).is_empty());
-        assert!(gcc_flags(&gcc, Profile::Shipping).is_empty());
-        assert!(gcc_flags(&clang, Profile::Release).is_empty());
+        assert!(gcc_flags(&gcc, Profile::Release).is_empty());
+        assert!(gcc_flags(&clang, Profile::Development).is_empty());
     }
 
     /// ADR-136 — a second identical build is the kept program, copied; a
@@ -1694,7 +1696,7 @@ mod tests {
 
     #[test]
     fn profile_names_round_trip() {
-        for profile in [Profile::Debug, Profile::Release, Profile::Shipping] {
+        for profile in [Profile::Debug, Profile::Development, Profile::Release] {
             assert_eq!(Profile::from_name(profile.name()), Some(profile));
         }
         assert_eq!(Profile::from_name("fast"), None);
@@ -1771,7 +1773,7 @@ int main(int argc, char** argv) {
         let includes = [runtime.join("include")];
         let runtime_source = runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX));
         let roots = ["retained_c_root".to_string()];
-        for profile in [Profile::Debug, Profile::Release, Profile::Shipping] {
+        for profile in [Profile::Debug, Profile::Development, Profile::Release] {
             let ordinary = runtime_object(&toolchain, &runtime_source, &includes, profile, &dir.join("cache"))
                 .unwrap().expect("ordinary runtime object");
             let managed = runtime_object_for_executable(&toolchain, &runtime_source, &includes, profile, &dir.join("cache"))
@@ -1857,7 +1859,7 @@ int main(int argc, char** argv) {
         let executable = dir.join("host");
         compile_and_link_executable_with_roots(&simulated, &LinkRequest {
             sources: &[source], include_dirs: &[], output: executable.clone(),
-            profile: Profile::Release, obj_dir: dir.join("obj"),
+            profile: Profile::Development, obj_dir: dir.join("obj"),
         }, &["retained_c_root".to_string()]).expect("ordinary fallback links");
         assert!(Command::new(&executable).status().unwrap().success());
         let listed = Command::new("nm").arg("--defined-only").arg(executable).output().unwrap();
@@ -2013,7 +2015,7 @@ int main(int argc, char** argv) {
         compile_and_link(&toolchain, &LinkRequest {
             sources: &[runtime.join("tests/byte_sums.c")],
             include_dirs: &[runtime.join("include")], output: program.clone(),
-            profile: Profile::Release, obj_dir: dir.join("obj"),
+            profile: Profile::Development, obj_dir: dir.join("obj"),
         }).expect("the guarded byte-sum oracle compiles");
         let output = run_fresh(&mut Command::new(program)).expect("the guarded oracle runs");
         assert!(output.status.success(), "guarded oracle failed: {}", String::from_utf8_lossy(&output.stderr));
@@ -2035,7 +2037,7 @@ int main(int argc, char** argv) {
         compile_and_link(&toolchain, &LinkRequest {
             sources: &[runtime.join("tests/text_char_steps.c")],
             include_dirs: &[runtime.join("include")], output: program.clone(),
-            profile: Profile::Release, obj_dir: dir.join("obj"),
+            profile: Profile::Development, obj_dir: dir.join("obj"),
         }).expect("the guarded scalar-decoder oracle compiles");
         let output = run_fresh(&mut Command::new(program)).expect("the guarded oracle runs");
         assert!(output.status.success(), "guarded decoder oracle failed: {}", String::from_utf8_lossy(&output.stderr));
@@ -2061,7 +2063,7 @@ int main(int argc, char** argv) {
             // D-377: the included runtime's native int128 helpers need clang's
             // compiler runtime on Windows, just as the int128 oracle below.
             let mut command = compiler_command(&toolchain);
-            command.args(gnu_flags(Profile::Release))
+            command.args(gnu_flags(Profile::Development))
                 .arg("-I").arg(runtime.join("include"))
                 .arg(&fixture).arg("-o").arg(&program)
                 .arg("-rtlib=compiler-rt");
@@ -2069,7 +2071,7 @@ int main(int argc, char** argv) {
         } else {
             compile_and_link(&toolchain, &LinkRequest {
                 sources: &[fixture], include_dirs: &[runtime.join("include")],
-                output: program.clone(), profile: Profile::Release, obj_dir: dir.join("obj"),
+                output: program.clone(), profile: Profile::Development, obj_dir: dir.join("obj"),
             }).expect("the allocator-rounding oracle compiles");
         }
         for mode in ["default-controls", "custom", "overflow-default"] {
@@ -2106,7 +2108,7 @@ int main(int argc, char** argv) {
         compile_and_link(&toolchain, &LinkRequest {
             sources: &[runtime.join("tests/sync_counts.c"), runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX))],
             include_dirs: &[runtime.join("include")], output: program.clone(),
-            profile: Profile::Release, obj_dir: dir.join("obj"),
+            profile: Profile::Development, obj_dir: dir.join("obj"),
         }).expect("the Sync-count oracle compiles");
         let output = run_fresh(&mut Command::new(program)).expect("the Sync-count oracle runs");
         assert!(output.status.success(), "Sync counts failed: {}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
@@ -2147,7 +2149,7 @@ int main(int argc, char** argv) {
         compile_and_link(&toolchain, &LinkRequest {
             sources: &[runtime.join("tests/count_overflow.c"), runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX))],
             include_dirs: &[runtime.join("include")], output: program.clone(),
-            profile: Profile::Release, obj_dir: dir.join("obj"),
+            profile: Profile::Development, obj_dir: dir.join("obj"),
         }).expect("the count-overflow oracle compiles");
         for (mode, message) in [
             ("plain", "reference count overflow on Node"),
@@ -2164,7 +2166,7 @@ int main(int argc, char** argv) {
     /// `[FFI-33a]` — in the debug profile an object that is not Sync is its maker's: a foreign
     /// thread that attaches and then retains, releases or weakly retains one panics naming the
     /// class and both threads; a Sync object is any thread's, and the maker counts freely
-    /// (`templates/tests/object_creator_thread.c.in`). A release build does not check.
+    /// (`templates/tests/object_creator_thread.c.in`). A development or release build does not check.
     #[test]
     fn an_object_that_is_not_sync_is_its_makers() {
         let requested = std::env::var(ember_branding::cc_var()).ok();
@@ -2172,7 +2174,7 @@ int main(int argc, char** argv) {
         let runtime = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
         let dir = std::env::temp_dir().join(format!("creator-thread-{}", std::process::id()));
-        for profile in [Profile::Debug, Profile::Release] {
+        for profile in [Profile::Debug, Profile::Development] {
             let program = dir.join(format!("creator_thread_{profile:?}{}", if cfg!(windows) { ".exe" } else { "" }));
             std::fs::create_dir_all(dir.join(format!("obj_{profile:?}"))).expect("the test directory is creatable");
             compile_and_link(&toolchain, &LinkRequest {
@@ -2208,7 +2210,7 @@ int main(int argc, char** argv) {
         compile_and_link(&toolchain, &LinkRequest {
             sources: &[runtime.join("tests/mutex_threads.c"), runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX))],
             include_dirs: &[runtime.join("include")], output: program.clone(),
-            profile: Profile::Release, obj_dir: dir.join("obj"),
+            profile: Profile::Development, obj_dir: dir.join("obj"),
         }).expect("the mutex oracle compiles");
         let output = run_fresh(&mut Command::new(program)).expect("the mutex oracle runs");
         assert!(output.status.success(), "the mutex oracle failed ({:?}): {}", output.status.code(), String::from_utf8_lossy(&output.stderr));
@@ -2231,7 +2233,7 @@ int main(int argc, char** argv) {
         compile_and_link(&toolchain, &LinkRequest {
             sources: &[runtime.join("tests/job_pool.c"), runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX))],
             include_dirs: &[runtime.join("include")], output: program.clone(),
-            profile: Profile::Release, obj_dir: dir.join("obj"),
+            profile: Profile::Development, obj_dir: dir.join("obj"),
         }).expect("the job-pool oracle compiles");
         let output = run_fresh(&mut Command::new(program)).expect("the job-pool oracle runs");
         assert!(output.status.success(), "the job-pool oracle failed ({:?}): {}{}", output.status.code(), String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
@@ -2253,7 +2255,7 @@ int main(int argc, char** argv) {
         compile_and_link(&toolchain, &LinkRequest {
             sources: &[runtime.join("tests/rwlock_threads.c"), runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX))],
             include_dirs: &[runtime.join("include")], output: program.clone(),
-            profile: Profile::Release, obj_dir: dir.join("obj"),
+            profile: Profile::Development, obj_dir: dir.join("obj"),
         }).expect("the rwlock oracle compiles");
         let output = run_fresh(&mut Command::new(program)).expect("the rwlock oracle runs");
         assert!(output.status.success(), "the rwlock oracle failed ({:?}): {}", output.status.code(), String::from_utf8_lossy(&output.stderr));
@@ -2275,7 +2277,7 @@ int main(int argc, char** argv) {
         compile_and_link(&toolchain, &LinkRequest {
             sources: &[runtime.join("tests/lazy_static_threads.c"), runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX))],
             include_dirs: &[runtime.join("include")], output: program.clone(),
-            profile: Profile::Release, obj_dir: dir.join("obj"),
+            profile: Profile::Development, obj_dir: dir.join("obj"),
         }).expect("the lazy-static oracle compiles");
         let output = run_fresh(&mut Command::new(program)).expect("the lazy-static oracle runs");
         assert!(output.status.success(), "the lazy-static oracle failed ({:?}): {}", output.status.code(), String::from_utf8_lossy(&output.stderr));
@@ -2298,7 +2300,7 @@ int main(int argc, char** argv) {
         compile_and_link(&toolchain, &LinkRequest {
             sources: &[runtime.join("tests/abi_version.c"), runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX))],
             include_dirs: &[runtime.join("include")], output: program.clone(),
-            profile: Profile::Release, obj_dir: dir.join("obj"),
+            profile: Profile::Development, obj_dir: dir.join("obj"),
         }).expect("the ABI-version oracle compiles");
         let output = run_fresh(&mut Command::new(program)).expect("the ABI-version oracle runs");
         assert!(output.status.success(), "the ABI-version oracle failed: {}", String::from_utf8_lossy(&output.stderr));
@@ -2322,7 +2324,7 @@ int main(int argc, char** argv) {
         compile_and_link(&toolchain, &LinkRequest {
             sources: &[runtime.join("tests/thread_alloc_stats.c"), runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX))],
             include_dirs: &[runtime.join("include")], output: program.clone(),
-            profile: Profile::Release, obj_dir: dir.join("obj"),
+            profile: Profile::Development, obj_dir: dir.join("obj"),
         }).expect("the allocation-statistics oracle compiles");
         let output = Command::new(program).output().expect("the allocation-statistics oracle runs");
         assert!(output.status.success(), "thread-local statistics failed: {}", String::from_utf8_lossy(&output.stderr));
@@ -2348,7 +2350,7 @@ int main(int argc, char** argv) {
         let program = dir.join("int128_halves");
         let mut command = Command::new(cc);
         command
-            .args(gnu_flags(Profile::Release))
+            .args(gnu_flags(Profile::Development))
             .arg(format!("-D{}_SOFT_INT128", ember_branding::SYMBOL_PREFIX.to_uppercase()))
             .arg("-I")
             .arg(runtime.join("include"))
@@ -2392,7 +2394,7 @@ int main(int argc, char** argv) {
         let assembly = |extra: &[&str]| {
             let output = dir.join("fused.s");
             let mut command = Command::new(cc);
-            command.args(gnu_flags(Profile::Shipping)).args(extra).arg("-mfma").arg("-S").arg(&source).arg("-o").arg(&output);
+            command.args(gnu_flags(Profile::Release)).args(extra).arg("-mfma").arg("-S").arg(&source).arg("-o").arg(&output);
             run(command).expect("the source compiles");
             std::fs::read_to_string(&output).expect("the assembly is readable")
         };
@@ -2409,19 +2411,19 @@ int main(int argc, char** argv) {
     #[test]
     fn a_relaxed_unit_is_compiled_to_fuse() {
         for fast in [false, true] {
-            let gnu = relaxed_gnu_flags(Profile::Shipping, fast);
+            let gnu = relaxed_gnu_flags(Profile::Release, fast);
             assert!(gnu.contains(&"-ffp-contract=fast") && !gnu.contains(&"-ffp-contract=off"), "{gnu:?}");
             assert_eq!(gnu.contains(&"-funsafe-math-optimizations"), fast, "{gnu:?}");
             assert_eq!(gnu.contains(&"-fno-fast-math"), !fast, "{gnu:?}");
             // Never the finite-only assumption: a NaN must stay a value.
             assert!(!gnu.iter().any(|flag| *flag == "-ffast-math" || flag.contains("finite-math")), "{gnu:?}");
-            assert_eq!(gnu.len(), gnu_flags(Profile::Shipping).len() + usize::from(fast), "{gnu:?}");
-            let msvc = relaxed_msvc_flags(Profile::Shipping, fast);
+            assert_eq!(gnu.len(), gnu_flags(Profile::Release).len() + usize::from(fast), "{gnu:?}");
+            let msvc = relaxed_msvc_flags(Profile::Release, fast);
             assert_eq!(msvc.contains(&"/fp:fast"), fast, "{msvc:?}");
             assert_eq!(msvc.contains(&"/fp:contract"), !fast, "{msvc:?}");
             assert_eq!(msvc.contains(&"/fp:precise"), !fast, "{msvc:?}");
             assert!(!msvc.contains(&"/GL"), "{msvc:?}");
-            let clang_cl = relaxed_clang_cl_flags(Profile::Shipping, fast);
+            let clang_cl = relaxed_clang_cl_flags(Profile::Release, fast);
             assert!(!clang_cl.contains(&"/fp:fast") && clang_cl.contains(&"/clang:-ffp-contract=fast"), "{clang_cl:?}");
             assert_eq!(clang_cl.contains(&"/clang:-funsafe-math-optimizations"), fast, "{clang_cl:?}");
         }
@@ -2438,7 +2440,7 @@ int main(int argc, char** argv) {
             .expect("the source is writable");
         let output = dir.join("fused.s");
         let mut command = Command::new(cc);
-        command.args(relaxed_gnu_flags(Profile::Shipping, false)).arg("-mfma").arg("-S").arg(&source).arg("-o").arg(&output);
+        command.args(relaxed_gnu_flags(Profile::Release, false)).arg("-mfma").arg("-S").arg(&source).arg("-o").arg(&output);
         run(command).expect("the source compiles");
         let assembly = std::fs::read_to_string(&output).expect("the assembly is readable");
         let _ = std::fs::remove_dir_all(&dir);

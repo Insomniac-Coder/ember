@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CG-C-3a, ATT-6
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 15 4 -1 7
 # `[CG-C-3a]` — `@inline` is binding and `@noinline`, `@cold` and `@hot` are
 # hints to the C compiler; none changes what the program computes.

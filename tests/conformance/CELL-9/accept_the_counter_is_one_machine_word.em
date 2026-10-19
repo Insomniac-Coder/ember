@@ -1,5 +1,5 @@
 #$ test: run-pass
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ rules: CELL-9, CELL-5
 #$ assert-c: contains("ptrdiff_t borrow;")
 # `[CELL-9]` requires the borrow-state counter itself to occupy one machine

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TXT-9, TYP-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: Ada
 #$ Rex
 #$ hello

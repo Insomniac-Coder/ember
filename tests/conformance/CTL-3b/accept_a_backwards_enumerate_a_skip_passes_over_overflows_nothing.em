@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-3b, STD-19
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: finished
 # `[CTL-3b]`, `[STD-19]` (ODR-091; the owner's ruling of 2026-10-06) — a backwards `enumerate`
 # numbers its greatest item first, and `skip(3)` leaves out all three items here: the loop gets no

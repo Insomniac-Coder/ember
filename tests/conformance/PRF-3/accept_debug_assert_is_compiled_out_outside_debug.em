@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: PRF-3
-#$ profiles: release, shipping
+#$ profiles: development, release
 #$ stdout: 0
 # `debug_assert` is checked only in `debug`: elsewhere its arguments are
 # type-checked and not evaluated.

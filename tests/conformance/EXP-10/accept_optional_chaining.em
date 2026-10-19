@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXP-10, GRM-13, ERR-8
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: Some(3) None Some(6) None
 #$ Some(5) None None
 #$ Some('pat') Some(3) None

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: IFC-4, TYP-17, TYP-18
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 7 true
 #$ stdout: owner 9 2.5
 # D-540: introducing S.Item must not reuse U's later written slot. A generic

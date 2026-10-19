@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXP-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: big big
 #$ then
 #$ 1

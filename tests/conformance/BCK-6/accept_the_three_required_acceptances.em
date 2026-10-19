@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: BCK-6, BCK-2, BRW-2
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: [3, 5, 100, 9] [100, 7]
 #$ 4
 #$ 1

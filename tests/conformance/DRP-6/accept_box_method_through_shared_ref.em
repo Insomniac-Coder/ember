@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: DRP-6, TYP-14
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 7
 
 # Method lookup first reads through `ref Box[Token]`, then applies Box's

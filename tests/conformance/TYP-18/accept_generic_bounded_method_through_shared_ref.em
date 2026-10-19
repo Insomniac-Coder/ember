@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-14, TYP-17, TYP-18
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 47
 
 # A bound supplies the method, while the caller supplies a shared reference.

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-19
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout:
 #$ Some(5) Some(1) None
 #$ Some(2) Some(5)

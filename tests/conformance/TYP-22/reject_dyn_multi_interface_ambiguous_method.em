@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: TYP-22, TYP-24, IFC-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ error[E2070]: `describe` is offered by both `Left` and `Right`
 
 interface Left:

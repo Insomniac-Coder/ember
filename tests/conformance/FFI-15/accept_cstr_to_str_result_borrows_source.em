@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-15, TXT-2, LT-1, LT-1a
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: borrowed
 
 fn checked(text: cstr) -> str:

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-9, TYP-29, STD-20
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 3.75 -0.75 3.375 0.6665 0.0 1.5 -1.5 2.25
 #$ true false true
 #$ 65500.0 inf 0.0 6e-08 2e-07

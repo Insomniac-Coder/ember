@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-16, OBJ-2, DSP-3, IFC-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ assert-c: contains(ember_itable_lookup)
 

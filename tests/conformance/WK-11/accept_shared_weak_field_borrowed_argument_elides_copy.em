@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FN-1, HEAP-3, HEAP-4, HEAP-6, HEAP-7, WK-11, WK-12, WK-13, TST-26
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 7
 #$ assert-c-count: contains("ember_weak_retain(") == 1
 #$ assert-c-count: contains("ember_weak_release(") == 1

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-16, IFC-1, TYP-22
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ assert-c: contains(static const struct em_vt_dyn_Measure em_vt_dyn_Measure_Holder_bool)
 

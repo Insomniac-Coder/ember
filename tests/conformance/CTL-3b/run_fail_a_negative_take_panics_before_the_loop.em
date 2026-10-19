@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: CTL-3b, STD-19
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: before
 #$ panics: take(-1): a count cannot be negative
 # `[CTL-3b]` (ODR-089) — each count in a chain is checked once, before the

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: ARN-11, DRV-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 3 true true
 # `[ARN-11]` — `@derive(Zeroable)` on an enum is proved: zero bytes are its variant whose
 # discriminant is zero, here `Idle` with its zero `count`, so `alloc_zeroed` may make them.

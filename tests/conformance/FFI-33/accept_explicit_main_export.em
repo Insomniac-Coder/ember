@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-33, FFI-33c, FFI-25
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ assert-c: contains("ember_rt_thread_attach();")
 #$ assert-c: contains("ember_rt_check_main_thread();")
 #$ assert-c: contains("int32_t policy_score(")

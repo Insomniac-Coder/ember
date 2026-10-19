@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-15, PHIL-5, CTL-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c-count: contains("vec_reserve_hint(") == 8
 #$ assert-c: contains(" + 1u, 1u)")
 #$ assert-c: contains(", 2u)")

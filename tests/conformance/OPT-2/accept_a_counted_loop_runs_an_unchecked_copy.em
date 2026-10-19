@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: OPT-2, OPT-3, RNG-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 4950
 #$ stdout: 9801
 #$ stdout: 5050

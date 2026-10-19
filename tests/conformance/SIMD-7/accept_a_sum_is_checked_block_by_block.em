@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-7, SIMD-5, OPT-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 5994000
 #$ assert-c: contains(" >> 56ULL;")
 # A running total of `int`s that the widths cannot prove safe (ODR-086): in

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CORO-3, CORO-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: none before the end: true
 #$ 1 2 3
 #$ total 6

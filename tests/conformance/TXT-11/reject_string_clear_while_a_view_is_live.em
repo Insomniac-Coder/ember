@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: TXT-11, BRW-1, SPN-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 
 fn main():
     s = String.from("abc")

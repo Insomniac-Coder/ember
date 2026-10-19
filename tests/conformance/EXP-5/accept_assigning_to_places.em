@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXP-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 9 [7, 2] 5 (1, 8)
 # `[EXP-5]` — a local, an element, a field and a tuple field are places, and
 # each can be assigned.

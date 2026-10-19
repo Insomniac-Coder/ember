@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: OWN-8, TYP-17
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ stdout: 42
 

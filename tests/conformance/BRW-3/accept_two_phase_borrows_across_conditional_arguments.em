@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: BRW-3, BCK-5, EXP-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 7 1 2
 #$ stdout: aλé
 

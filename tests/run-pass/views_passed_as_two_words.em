@@ -1,5 +1,5 @@
 #$ test: run-pass
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 6 3 [2, 4, 6] 21 5
 # D-569: on Windows a function only ever called directly takes a `str` or a
 # span parameter as its pointer and length; one used as a value keeps the

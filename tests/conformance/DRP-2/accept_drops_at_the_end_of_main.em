@@ -1,11 +1,11 @@
 #$ test: run-pass
 #$ rules: DRP-2, PHIL-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout:
 #$ 3 1
 #$ loud 2 dropped
 #$ loud 7 dropped
-# `[PHIL-5]` — at the end of `main` the process ends. In release and shipping
+# `[PHIL-5]` — at the end of `main` the process ends. In development and release
 # builds the list of `Quiet` objects is not freed one by one: freeing memory
 # the operating system takes back changes nothing a program can observe. A
 # `Loud`, whose `drop` prints, is dropped as ever, alone or held through an

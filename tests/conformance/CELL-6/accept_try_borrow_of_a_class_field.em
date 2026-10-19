@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CELL-6, EXC-18
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: true
 #$ stdout: [1, 2, 3, 4]
 # `[CELL-6]` — `try_borrow` of a `RefCell` held in a class field returns

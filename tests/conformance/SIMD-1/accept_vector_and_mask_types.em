@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 24.0, 26.0, 28.0, 30.0]
 #$ 8 4 2 16 32 64
 #$ 4 2 16 8

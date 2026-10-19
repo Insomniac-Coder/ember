@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SOA-3, SOA-6, SOA-7, DSJ-4, CTL-3b
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: bob 8 16
 #$ Some(Named(name='bea', score=5))
 #$ 4 ann 3

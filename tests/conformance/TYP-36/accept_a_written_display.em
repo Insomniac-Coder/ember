@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-36, TYP-39, LEX-19, STD-9, TYP-17
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: thing 3
 #$ a thing 3 b Thing(v=3)
 #$ <thing 3> <5>

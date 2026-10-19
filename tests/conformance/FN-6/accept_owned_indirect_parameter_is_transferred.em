@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FN-1, FN-6, FN-6a, OWN-2, OWN-3, TST-19
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 7
 
 # An indirect callable keeps the declared ownership mode of each parameter.

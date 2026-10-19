@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-15
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c-count: contains("EMBER_SORT_STABLE(") == 1
 #$ assert-c-count: contains("EMBER_SORT_UNSTABLE(") == 1
 #$ stdout:

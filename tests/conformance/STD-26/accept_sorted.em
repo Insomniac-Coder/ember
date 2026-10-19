@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-26
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1 3 3 7 9 -2.0
 # `sorted(xs)` returns a new sorted array and leaves `xs` as it was.
 

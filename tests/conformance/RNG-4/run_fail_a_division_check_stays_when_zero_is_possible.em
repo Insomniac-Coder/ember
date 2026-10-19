@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: RNG-4, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 3
 #$ panics: division by zero
 # `[RNG-4]` — `parts >= 0` leaves zero possible: the division keeps its check.

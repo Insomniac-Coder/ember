@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-22, IFC-1, HEAP-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ assert-c: contains(static const struct em_vt_dyn_Truth em_vt_dyn_Truth_bool)
 #$ assert-c: contains(em_vt_dyn_Truth_bool_drop)

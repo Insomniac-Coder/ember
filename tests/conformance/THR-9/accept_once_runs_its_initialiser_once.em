@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: THR-9, THR-3, STA-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: false
 #$ setting up for a
 #$ true

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLO-10, CLO-3, CLO-1, FN-6
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 11 14 true false
 #$ assert-c: contains("ember_fn_value")
 

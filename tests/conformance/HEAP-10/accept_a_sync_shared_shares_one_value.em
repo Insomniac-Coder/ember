@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: HEAP-10, THR-8, THR-9, HEAP-7, WK-11
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: ['a', 'b']
 #$ 2
 #$ true

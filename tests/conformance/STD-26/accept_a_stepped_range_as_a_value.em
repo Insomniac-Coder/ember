@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-26
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: [10, 7, 4, 1] [0, 4, 8] [] [-3, -1, 1]
 #$ [9223372036854775800, 9223372036854775803, 9223372036854775806] [-9223372036854775800, -9223372036854775805]
 # `[STD-26]` — `range(start, stop, step)` counts as Python's does, including a negative step, as a

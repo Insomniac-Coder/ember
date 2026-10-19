@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-4a, RNG-4, RNG-3, RNG-3a, RNG-6
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 0.5 0.0 0.0
 #$ stdout: true false false
 # `[RNG-4a]` — the true arm of a comparison gives a float a fact, and both

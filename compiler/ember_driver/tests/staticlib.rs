@@ -111,7 +111,7 @@ fn staticlib_archives_and_headers_link_from_separate_c_and_cpp_hosts() {
             "C-only output and package header disagree on public type {name}");
     }
 
-    for profile in [Profile::Debug, Profile::Release, Profile::Shipping] {
+    for profile in [Profile::Debug, Profile::Development, Profile::Release] {
         let profile_name = profile.name();
         let mut args = vec!["build", "--profile", profile_name, "--out-dir", out_arg.as_str()];
         if profile != Profile::Debug { args.push(package_arg.as_str()); }

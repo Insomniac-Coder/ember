@@ -6,7 +6,7 @@
 #$ stdout: Some(9223372036854775807)
 #$ stdout: [(18446744073709551613, 18446744073709551608), (18446744073709551614, 18446744073709551609)]
 #$ stdout: [(1, 9223372036854775805), (0, 9223372036854775806)]
-#$ profiles: debug, release
+#$ profiles: debug, development
 # G8-4 (the owner's design, 0.9.10) — no adapter passes a gigantic run of items one at a time:
 # leaving items out (`skip_front`, `skip_back`) is done at once by a range and passed down by
 # `rev`, `take`, `skip`, `zip`, `copied`, `chain`, and `enumerate` from the back, so `take`,

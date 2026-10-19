@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-15, PHIL-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c: !contains("vec_reserve_hint(")
 #$ stdout:
 #$ 8 16

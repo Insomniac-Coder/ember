@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXC-15, DRP-1, CLS-6
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 4
 #$ stdout: bag [1, 2, 3, 4, 4] [1, 8]
 #$ stdout: base [1, 8, 9]

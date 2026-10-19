@@ -2,7 +2,7 @@
 #$ rules: STD-21, STD-28, PAN-1
 #$ panics: inverse of a singular matrix; use try_inverse
 #$ stdout: true
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 # ODR-043 — a matrix whose determinant is zero has no inverse: `inverse`
 # panics as `normalize` of a zero vector does, and `try_inverse` is `None`.
 

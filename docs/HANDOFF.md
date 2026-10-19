@@ -10711,9 +10711,15 @@ formal 1/9 count or Phase 2's estimate.
 
 > **FIRST (2026-10-19): the owner's decisions on the 85% helpers' questions.** They are in
 > `tasks/85/owner-answers.md` (status table and order of work at its top) and ADR-204. Apply them as
-> written and never re-decide them; show each specification change to the owner in its new wording
-> before building it. Helper C (shared libraries, packages: `job_C`) starts only after helpers A, B
+> written and never re-decide them. Helper C (shared libraries, packages: `job_C`) starts only after helpers A, B
 > and D are merged (done 2026-10-19, ADR-203).
+>
+> **2026-10-19, later: specification 0.9.10_Hardened_13 cut and built (ADR-205).** The profiles are
+> now `debug`, `development` and `release` (the old `release` is `development`, the old `shipping`
+> is `release`, the build users get; records before this date keep the old names). Built: A2, A3,
+> B2 (`E5068`), B7, A6; A4, A5, B1 are specification text; B6 waits for C header import. Next from
+> the list: B3, then A1 (the owner did not ask to see their designs first). Helper C runs in a worktree
+> (launched 2026-10-19); at its merge, map its tests' `#$ profiles:` lines to the new names.
 
 
 **2026-10-12 (autopilot), a Part V.5 class probe sweep: D-560..D-566, ODR-104 (0.9.10_Hardened_8).**

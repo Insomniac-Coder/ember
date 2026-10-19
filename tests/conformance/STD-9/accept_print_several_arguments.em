@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-9
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1 2.5 true x
 #$ 1, 2, 3
 #$ a-b!

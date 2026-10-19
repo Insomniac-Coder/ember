@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-16, TYP-22, IFC-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 
 interface Parent:

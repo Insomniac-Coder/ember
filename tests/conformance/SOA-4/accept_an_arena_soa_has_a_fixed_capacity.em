@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SOA-4, ARN-5
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 0 3 true
 #$ true true true false
 #$ 3 3

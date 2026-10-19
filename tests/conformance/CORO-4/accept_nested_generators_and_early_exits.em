@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CORO-4, CORO-3, ERR-2
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 0 1 0 1 2
 #$ deferred
 #$ 2 3

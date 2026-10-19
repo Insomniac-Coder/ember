@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: OBJ-2, DSP-3, BRW-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ error[E3023]: cannot mutate borrowed parameter `value`
 
 # An interface-handle parameter without `mut` is borrowed just like an

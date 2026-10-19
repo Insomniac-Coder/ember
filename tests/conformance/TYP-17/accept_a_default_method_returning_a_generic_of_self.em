@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-17, TYP-16
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 4 8 5
 # D-379 — an interface's default method may return a generic type holding
 # `Self` (`doubled` gives `Doubled[Self]`), and that generic may implement the

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-7, OPT-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 4950
 #$ assert-c: contains("<= 2147483648ULL)")
 #$ assert-c: contains("<= 4611686018427387903LL)")

@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: EXC-18, EXC-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ panics: exclusivity violation: write access to Bag.items while a read access to Bag.items is active
 # `[EXC-18]` — when the branch that made a view of a class field ran, the view
 # holds the field's read access past the join until its last use: a write

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: ERR-11, ERR-2, EFF-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: true
 #$ false
 # `[ERR-11]` — a concrete error type moves through `?` without allocating, so

@@ -1,8 +1,8 @@
 #$ test: run-pass
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ rules: CELL-6a, CELL-6, PRF-1
 # `[CELL-6a]` is quantified over every profile. Both fallible operations must
-# retain their `None` contention path in debug, release, and shipping; neither
+# retain their `None` contention path in debug, development, and release; neither
 # profile optimization nor unchecked-overflow policy may make them infallible.
 
 fn main():

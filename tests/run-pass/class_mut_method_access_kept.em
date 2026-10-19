@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLS-1, CLS-7, EXC-1, EXC-15
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c: contains(ember_object_begin_write)
 #$ assert-c: contains(ember_object_end_write)
 #$ stdout: 7

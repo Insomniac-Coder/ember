@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-8, TYP-30
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 127 -128 -128 81 127 -128 1
 
 @overflow(saturate)

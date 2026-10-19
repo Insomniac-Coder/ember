@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-16, TYP-22, IFC-1, DRP-6, HEAP-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ stdout: 42
 #$ assert-c: contains(static const struct em_vt_dyn_Answer em_vt_dyn_Answer_Payload_i64)

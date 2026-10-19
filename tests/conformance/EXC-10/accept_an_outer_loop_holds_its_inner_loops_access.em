@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXC-8, EXC-9, EXC-10, EXC-11, EXC-12
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 12
 #$ 15
 #$ 39

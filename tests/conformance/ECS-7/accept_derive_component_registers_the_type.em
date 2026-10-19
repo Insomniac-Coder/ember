@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: ECS-7, DRV-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 3
 #$ Position false true
 #$ Velocity true true

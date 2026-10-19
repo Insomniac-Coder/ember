@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CORO-4, CT-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 55 55
 # `[CORO-4]` — the state machine is ordinary code, so it runs while compiling as well
 # (`[CT-1]`): a compile-time value computed by a generator equals the one computed at run time.

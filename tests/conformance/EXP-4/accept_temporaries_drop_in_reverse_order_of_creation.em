@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXP-4, DRP-3
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 10
 #$ still live
 # `[EXP-4]` (D-673) — a statement's temporaries drop "in reverse order of creation", and a temporary

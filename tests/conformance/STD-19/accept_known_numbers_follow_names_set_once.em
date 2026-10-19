@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-19, STD-26, CTL-3b, HEAP-8
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout:
 #$ 999999 1000005
 #$ 3999994000002 3999998000000 15999980000008

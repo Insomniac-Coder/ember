@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-17, STD-17, STD-12
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1 3
 #$ {'a': 1, 'z': 7}
 #$ 1.5 1.5 2.5

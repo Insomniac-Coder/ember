@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: EXC-1, EXC-19
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: exclusivity violation: write access to Bag.items while a read access to Bag.items is active
 # `[EXC-1]` — iterating a field reads it for the whole loop; growing it through
 # an aliasing handle inside the loop panics.

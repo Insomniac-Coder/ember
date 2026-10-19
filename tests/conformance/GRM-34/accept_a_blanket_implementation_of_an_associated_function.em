@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: GRM-34, TYP-17
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 5
 #$ 91
 #$ 2

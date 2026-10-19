@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FN-5, TYP-18
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 7
 #$ 9
 #$ 12

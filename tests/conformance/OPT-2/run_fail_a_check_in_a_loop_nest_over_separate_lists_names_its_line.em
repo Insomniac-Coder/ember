@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: OPT-2, TYP-8, PHIL-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 3
 #$ panics: division by zero
 # For MSVC the nest below runs in a function of its own (ADR-079); a check

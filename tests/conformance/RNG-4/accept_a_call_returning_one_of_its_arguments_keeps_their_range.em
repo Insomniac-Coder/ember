@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-4, TYP-8
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout:
 #$ 100002 19999272958
 #$ 4

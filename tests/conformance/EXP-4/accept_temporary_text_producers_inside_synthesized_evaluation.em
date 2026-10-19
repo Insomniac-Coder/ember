@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXP-1, EXP-4, DRP-3, TXT-10, SPN-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: separator
 #$ stdout: Some(('old', 'text')) changed
 #$ stdout: Some(('é', 'left')) ('é', ':', 'left') Some('é')

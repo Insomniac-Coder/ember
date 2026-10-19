@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: OBJ-2, DSP-3, IFC-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ assert-c: contains(em_vt_dyn_Child_Pixel)
 #$ assert-c-count: contains(ember_itable_lookup) == 1

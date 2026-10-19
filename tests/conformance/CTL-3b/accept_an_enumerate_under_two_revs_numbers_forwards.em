@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-3b, STD-19
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: [(9223372036854775806, 1), (9223372036854775807, 2)]
 #$ stdout: [(9223372036854775806, 1)]
 # `[CTL-3b]` — a `for` over adapters gives the items std's adapters give.

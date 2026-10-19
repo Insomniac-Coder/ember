@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-9, TYP-9a, CG-C-11, STD-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c: contains("#pragma STDC FP_CONTRACT OFF")
 #$ assert-c: contains("#pragma fp_contract(off)")
 #$ stdout: 0.0 5.9604645e-08 5.9604645e-08

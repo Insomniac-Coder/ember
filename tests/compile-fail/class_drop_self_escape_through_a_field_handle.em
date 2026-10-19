@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: CLS-7a, OBJ-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 
 # D-562: a store through a class handle held in a field of `self` lands in
 # that other object, which outlives the drop, even wrapped in a value.

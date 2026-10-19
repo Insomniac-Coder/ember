@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RC-6, RC-1, RC-2d
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 9 3 2
 # `[RC-6]` — `ember inspect --counts` lists the retains and releases left
 # inside loops, with the reason each could not be removed (the milestone

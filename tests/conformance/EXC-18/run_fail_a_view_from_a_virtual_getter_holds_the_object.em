@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: EXC-18, EXC-15, DSP-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: exclusivity violation: write access to Person.name while a read access to Person.name is active
 # `[EXC-18]` — through a virtual call the caller cannot know which override
 # runs, so its view holds every field the reachable overrides borrow (here

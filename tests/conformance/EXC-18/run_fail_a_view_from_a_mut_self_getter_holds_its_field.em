@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: EXC-18, EXC-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ panics: exclusivity violation: write access to Bag.items while a read access to Bag.items is active
 # `[EXC-18]` — a view a `mut self` method returns holds its field's read access
 # from the end of the call to the view's last use: a write through another

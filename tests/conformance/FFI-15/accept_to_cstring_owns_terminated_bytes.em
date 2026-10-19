@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-15, TXT-3, TXT-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 5
 #$ stdout: 0
 

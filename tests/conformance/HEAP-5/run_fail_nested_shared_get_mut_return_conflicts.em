@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: HEAP-3, HEAP-5, HEAP-6, EXC-1, RC-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: exclusivity violation: overlapping access
 
 struct Counter:

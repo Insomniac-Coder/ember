@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CORO-6, LT-43
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 2 4
 #$ ab cd
 #$ 30

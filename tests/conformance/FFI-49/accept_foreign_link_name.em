@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-49, FFI-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ assert-c: contains("extern int32_t abs(")
 

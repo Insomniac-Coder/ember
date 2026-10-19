@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-21, IFC-4, STD-27
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 3.0 4.0 1.4142135623730951 1.4142135 1.4142135623730951 2.0
 #$ 1024.0 5.0 0.0 10.0 0.5 0.5
 #$ 1.4142135 3.1415927 nan

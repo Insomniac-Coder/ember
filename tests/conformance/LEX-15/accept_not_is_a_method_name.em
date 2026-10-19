@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: LEX-15, TYP-21
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: -6 250 false true
 # ODR-040 — `not` is `Not`'s method: a method name after `fn` and after `.`,
 # and the logical operator everywhere else.

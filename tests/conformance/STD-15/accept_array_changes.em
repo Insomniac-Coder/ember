@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-15, TYP-37
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1 3 3 5 7 9
 #$ 9 7 5 3 3 1
 #$ 1 4 7 3

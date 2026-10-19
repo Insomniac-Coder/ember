@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: LT-7
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ 1
 # `[LT-7]`'s example: a callee lends a callback a view of its own local, and a

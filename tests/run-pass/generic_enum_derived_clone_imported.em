@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: MOD-1, MOD-2, MOD-3, OWN-8, TYP-16, ENM-1, MONO-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 9
 #$ assert-c: contains(em_generic_enum_derived_clone_imported_support_model_Entry_i32_clone)
 

@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: OPT-2, RNG-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: index 3 is out of bounds for a length of 3
 # `[OPT-2]` — `i % 4` reaches 3 and the list has 3 elements: the entry test
 # fails, the checked loop runs, and it panics where it always did.

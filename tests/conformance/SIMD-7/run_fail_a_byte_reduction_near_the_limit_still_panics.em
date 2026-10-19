@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: SIMD-5, SIMD-7, OPT-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow in `+`
 #$ assert-c: contains("ember_sum_bytes(")
 #$ assert-c: contains("ember_ck_add_i64(")

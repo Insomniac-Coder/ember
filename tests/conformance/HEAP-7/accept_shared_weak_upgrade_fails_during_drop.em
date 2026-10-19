@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: HEAP-3, HEAP-5, HEAP-6, HEAP-7, WK-11, WK-12, WK-13, TST-26, OBJ-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1
 #$ assert-c: contains(ember_obj_header* value)
 #$ assert-c: contains(ember_weak_upgrade)

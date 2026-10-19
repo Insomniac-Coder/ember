@@ -36,6 +36,8 @@ pub struct ReloadImage {
 }
 
 /// What a field holds, for the runtime's migration and reference walk ([HR-14], [HR-15]).
+/// `layout` and `inner` are C expressions, `NULL` or the address of a table this image describes
+/// a tuple's fields or an element's or pointee's value with.
 struct FieldShape {
     kind: &'static str,
     flags: Vec<&'static str>,
@@ -43,6 +45,29 @@ struct FieldShape {
     element_kind: &'static str,
     element_size: String,
     element_type: String,
+    layout: String,
+    inner: String,
+}
+
+impl FieldShape {
+    fn plain(type_name: String) -> FieldShape {
+        FieldShape {
+            kind: "EMBER_RL_KIND_PLAIN",
+            flags: Vec::new(),
+            type_name,
+            element_kind: "EMBER_RL_KIND_PLAIN",
+            element_size: "0".to_string(),
+            element_type: String::new(),
+            layout: "NULL".to_string(),
+            inner: "NULL".to_string(),
+        }
+    }
+
+    /// The row's members after `flags`: what it holds, its elements', and its own tables.
+    fn tail(&self) -> String {
+        let element_type = if self.element_type.is_empty() { "NULL".to_string() } else { c_string_literal(&self.element_type) };
+        format!("{}, {}, {}, {element_type}, {}, {}", self.kind, self.element_kind, self.element_size, self.layout, self.inner)
+    }
 }
 
 /// The suffix of a reloadable body's own symbol; the function's symbol is its thunk's.
@@ -290,6 +315,17 @@ impl Emitter<'_> {
                 }
                 fnv(&parts.iter().map(String::as_str).collect::<Vec<_>>())
             }
+            TyKind::Tuple(items) => {
+                let mut parts = vec!["tuple".to_string()];
+                for item in items.clone() {
+                    parts.push(self.type_schema(item, seen).to_string());
+                }
+                fnv(&parts.iter().map(String::as_str).collect::<Vec<_>>())
+            }
+            TyKind::Ptr { inner, .. } => {
+                let inner = *inner;
+                fnv(&["pointer", &self.types.display(ty), &self.type_schema(inner, seen).to_string()])
+            }
             _ => fnv(&[&self.types.display(ty)]),
         };
         seen.pop();
@@ -389,16 +425,13 @@ impl Emitter<'_> {
             let shape = self.field_shape(*ty, &reload);
             let symbol = table(&format!("shape_{index}"));
             let flags = if shape.flags.is_empty() { "0".to_string() } else { shape.flags.join(" | ") };
-            let element_type = if shape.element_type.is_empty() { "NULL".to_string() } else { c_string_literal(&shape.element_type) };
             self.line(&format!(
-                "static const {RT}rl_field {symbol} = {{ {}, NULL, {}, UINT64_C(0x{:016x}), 0, (uint32_t)sizeof({}), {flags}, {}, {}, {}, {element_type} }};",
+                "static const {RT}rl_field {symbol} = {{ {}, NULL, {}, UINT64_C(0x{:016x}), 0, (uint32_t)sizeof({}), {flags}, {} }};",
                 c_string_literal(name),
                 c_string_literal(&shape.type_name),
                 self.type_schema(*ty, &mut Vec::new()),
                 self.c_type(*ty),
-                shape.kind,
-                shape.element_kind,
-                shape.element_size,
+                shape.tail(),
             ));
             shapes.push(format!("&{symbol}"));
         }
@@ -501,6 +534,7 @@ impl Emitter<'_> {
             TyKind::Struct(id) => {
                 self.shared_inner_id(*id).is_some()
                     || self.weak_inner_id(*id).is_some()
+                    || self.box_inner_id(*id).is_some_and(|inner| self.holds_objects(inner, seen))
                     || self.types.struct_def(*id).fields.iter().map(|field| field.ty).collect::<Vec<_>>().into_iter().any(|field| self.holds_objects(field, seen))
             }
             TyKind::Enum(id) => self
@@ -629,15 +663,13 @@ impl Emitter<'_> {
 
     /// What a field of type `ty` holds: its kind, its flags, its type's name, and for an `Array`
     /// its elements'.
-    fn field_shape(&self, ty: Ty, reload: &ReloadImage) -> FieldShape {
-        let mut shape = FieldShape {
-            kind: "EMBER_RL_KIND_PLAIN",
-            flags: Vec::new(),
-            type_name: self.types.display(ty),
-            element_kind: "EMBER_RL_KIND_PLAIN",
-            element_size: "0".to_string(),
-            element_type: String::new(),
-        };
+    fn field_shape(&mut self, ty: Ty, reload: &ReloadImage) -> FieldShape {
+        let mut shape = FieldShape::plain(self.types.display(ty));
+        // `[HR-15]` — a tuple, a `Box` and a callable value are described by this image's own
+        // tables (ODR-126); as an `Array`'s element too, through `inner`.
+        if let Some(own) = self.described_shape(ty, reload) {
+            return own;
+        }
         let element = |this: &Self, elem: Ty| -> (&'static str, String) {
             match this.types.kind(elem) {
                 TyKind::Class(_) => ("EMBER_RL_KIND_HANDLE", String::new()),
@@ -664,12 +696,23 @@ impl Emitter<'_> {
             TyKind::Class(_) => shape.kind = "EMBER_RL_KIND_HANDLE",
             TyKind::Vec { text: true, .. } => shape.flags.push("EMBER_RL_FIELD_ZERO"),
             TyKind::Vec { elem, text: false } => {
-                let (kind, name) = element(self, *elem);
+                let elem = *elem;
                 shape.kind = "EMBER_RL_KIND_ARRAY";
                 shape.flags.push("EMBER_RL_FIELD_ZERO");
-                shape.element_kind = kind;
-                shape.element_size = format!("(uint32_t)sizeof({})", self.c_type(*elem));
-                shape.element_type = name;
+                shape.element_size = format!("(uint32_t)sizeof({})", self.c_type(elem));
+                let nested = matches!(self.types.kind(elem), TyKind::Vec { text: false, .. }) && self.holds_objects(elem, &mut Vec::new());
+                if let Some(own) = self.described_shape(elem, reload) {
+                    shape.element_kind = own.kind;
+                    shape.inner = self.reload_shape_table(elem, reload);
+                } else if nested {
+                    // An `Array` of `Array`s: each element described by this image's own table.
+                    shape.inner = self.reload_shape_table(elem, reload);
+                    shape.element_kind = "EMBER_RL_KIND_ARRAY";
+                } else {
+                    let (kind, name) = element(self, elem);
+                    shape.element_kind = kind;
+                    shape.element_type = name;
+                }
             }
             TyKind::Enum(id) => {
                 if self.types.option_niche(*id).is_some_and(|niche| matches!(self.types.kind(niche.payload), TyKind::Class(_))) {
@@ -697,6 +740,202 @@ impl Emitter<'_> {
             _ => {}
         }
         shape
+    }
+
+    /// `[HR-15]` — what a tuple, a `Box` or a callable value holds, when it holds objects: `None`
+    /// for every other type, which `field_shape` describes by its schema's name.
+    fn described_shape(&mut self, ty: Ty, reload: &ReloadImage) -> Option<FieldShape> {
+        if !self.holds_objects(ty, &mut Vec::new()) {
+            return None;
+        }
+        let boxed = |this: &Self, ty: Ty| match this.types.kind(ty) {
+            TyKind::Struct(id) => this.box_inner_id(*id).filter(|inner| !matches!(this.types.kind(*inner), TyKind::Dyn { .. })),
+            _ => None,
+        };
+        let pointee = match self.types.kind(ty) {
+            TyKind::Struct(_) => boxed(self, ty),
+            TyKind::Enum(id) => self.types.option_niche(*id).and_then(|niche| boxed(self, niche.payload)),
+            _ => None,
+        };
+        let mut shape = FieldShape::plain(self.types.display(ty));
+        match (self.types.kind(ty).clone(), pointee) {
+            (_, Some(pointee)) => {
+                shape.kind = "EMBER_RL_KIND_BOX";
+                shape.inner = self.reload_shape_table(pointee, reload);
+            }
+            (TyKind::Tuple(_), None) => {
+                shape.kind = "EMBER_RL_KIND_TUPLE";
+                shape.layout = self.reload_layout_table(ty, reload);
+            }
+            (TyKind::Fn { abi: None, .. }, None) => shape.kind = "EMBER_RL_KIND_CALLABLE",
+            _ => return None,
+        }
+        Some(shape)
+    }
+
+    /// `[HR-15]` — a value's description that names no type, for what a tuple, a `Box` or a
+    /// closure's captured state holds (ODR-126): a struct is described by its fields here too, so
+    /// the runtime reads the value by the layout of the image that made it, and an enum's variants
+    /// are listed with their payloads. A type met again inside itself is `OPAQUE`: a reload that
+    /// must move what it holds refuses ([HR-15a]).
+    fn contained_shape(&mut self, ty: Ty, reload: &ReloadImage) -> FieldShape {
+        let mut shape = FieldShape::plain(self.types.display(ty));
+        if !self.holds_objects(ty, &mut Vec::new()) {
+            return shape;
+        }
+        shape.kind = "EMBER_RL_KIND_OPAQUE";
+        if self.reload_shapes_open.contains(&ty) {
+            return shape;
+        }
+        if let Some(own) = self.described_shape(ty, reload) {
+            return own;
+        }
+        match self.types.kind(ty).clone() {
+            TyKind::Class(_) => shape.kind = "EMBER_RL_KIND_HANDLE",
+            // A niche `Option` is its payload's bits, null for `None`, which a handle's or a `Box`'s
+            // walk passes over.
+            TyKind::Enum(id) => match self.types.option_niche(id) {
+                Some(niche) => {
+                    let own = self.contained_shape(niche.payload, reload);
+                    if matches!(own.kind, "EMBER_RL_KIND_HANDLE" | "EMBER_RL_KIND_WEAK" | "EMBER_RL_KIND_BOX" | "EMBER_RL_KIND_OPTION_HANDLE") {
+                        return FieldShape { type_name: shape.type_name, ..own };
+                    }
+                }
+                None => {
+                    shape.kind = "EMBER_RL_KIND_PAYLOAD";
+                    shape.layout = self.reload_layout_table(ty, reload);
+                }
+            },
+            TyKind::Struct(id) if self.weak_inner_id(id).is_some() => shape.kind = "EMBER_RL_KIND_WEAK",
+            TyKind::Struct(id) if self.shared_inner_id(id).is_some() => shape.kind = "EMBER_RL_KIND_HANDLE",
+            TyKind::Struct(id) if self.box_inner_id(id).is_none() => {
+                shape.kind = "EMBER_RL_KIND_TUPLE";
+                shape.layout = self.reload_layout_table(ty, reload);
+            }
+            TyKind::Vec { elem, text: false } => {
+                let own = self.contained_shape(elem, reload);
+                if own.kind != "EMBER_RL_KIND_PLAIN" && own.kind != "EMBER_RL_KIND_OPAQUE" {
+                    shape.kind = "EMBER_RL_KIND_ARRAY";
+                    shape.element_kind = own.kind;
+                    shape.element_size = format!("(uint32_t)sizeof({})", self.c_type(elem));
+                    shape.inner = self.reload_shape_table(elem, reload);
+                }
+            }
+            _ => {}
+        }
+        shape
+    }
+
+    /// The address of a table describing one value of `ty` (`contained_shape`), emitted once.
+    fn reload_shape_table(&mut self, ty: Ty, reload: &ReloadImage) -> String {
+        if let Some(symbol) = self.reload_shapes.get(&(ty, false)) {
+            return symbol.clone();
+        }
+        let shape = self.contained_shape(ty, reload);
+        let symbol = table(&format!("value_{}", self.reload_shapes.len()));
+        self.line(&format!(
+            "static const {RT}rl_field {symbol} = {{ \"\", NULL, {}, UINT64_C(0x{:016x}), 0, (uint32_t)sizeof({}), 0, {} }};",
+            c_string_literal(&shape.type_name),
+            self.type_schema(ty, &mut Vec::new()),
+            self.c_type(ty),
+            shape.tail(),
+        ));
+        let address = format!("&{symbol}");
+        self.reload_shapes.insert((ty, false), address.clone());
+        address
+    }
+
+    /// The address of a table listing the fields of a tuple or a struct that hold objects, each
+    /// described by `contained_shape`, emitted once: what a `TUPLE` value's walk reads.
+    fn reload_layout_table(&mut self, ty: Ty, reload: &ReloadImage) -> String {
+        if let Some(symbol) = self.reload_shapes.get(&(ty, true)) {
+            return symbol.clone();
+        }
+        // A struct's or a tuple's members; an enum's, by variant: its discriminant, and each payload
+        // field's name and its C member, `payload.<variant>.<field>`.
+        let mut groups: Vec<(Option<(String, u64)>, Vec<(String, String, Ty)>)> = Vec::new();
+        match self.types.kind(ty).clone() {
+            TyKind::Tuple(items) => groups.push((None, items.into_iter().enumerate()
+                .map(|(index, item)| (format!("_{index}"), format!("_{index}"), item)).collect())),
+            TyKind::Struct(id) => groups.push((None, self.types.struct_def(id).fields.iter()
+                .map(|field| (field.name.to_string(), field.name.to_string(), field.ty)).collect())),
+            TyKind::Enum(id) => {
+                for variant in self.types.enum_def(id).variants.clone() {
+                    let members = variant.fields.iter()
+                        .map(|field| (field.name.to_string(), format!("payload.{}.{}", variant.name, field.name), field.ty))
+                        .collect();
+                    groups.push((Some((variant.name.to_string(), variant.discriminant as u64)), members));
+                }
+            }
+            _ => {}
+        }
+        self.reload_shapes_open.insert(ty);
+        let c_type = self.c_type(ty);
+        let symbol = table(&format!("layout_{}", self.reload_shapes.len()));
+        let mut tables = Vec::new();
+        for (index, (variant, members)) in groups.into_iter().enumerate() {
+            let mut rows = Vec::new();
+            for (name, member, item) in members {
+                if self.is_void(item) || !self.holds_objects(item, &mut Vec::new()) {
+                    continue;
+                }
+                let shape = self.contained_shape(item, reload);
+                rows.push(format!(
+                    "    {{ {}, NULL, {}, UINT64_C(0x{:016x}), (uint32_t)offsetof({c_type}, {member}), (uint32_t)sizeof((({c_type}*)0)->{member}), 0, {} }},",
+                    c_string_literal(&name),
+                    c_string_literal(&shape.type_name),
+                    self.type_schema(item, &mut Vec::new()),
+                    shape.tail(),
+                ));
+            }
+            tables.push((variant, format!("{symbol}_fields_{index}"), rows));
+        }
+        self.reload_shapes_open.remove(&ty);
+        for (_, name, rows) in &tables {
+            if !rows.is_empty() {
+                self.line(&format!("static const {RT}rl_field {name}[{}] = {{", rows.len()));
+                for row in rows {
+                    self.line(row);
+                }
+                self.line("};");
+            }
+        }
+        let reference = |name: &String, rows: &Vec<String>| if rows.is_empty() { "NULL".to_string() } else { name.clone() };
+        let (fields, variants) = if tables.iter().any(|(variant, _, _)| variant.is_some()) {
+            // `[HR-15]` — an enum with payloads: its tag as its one field, and each variant's payload,
+            // which the walk reads for the variant the tag names.
+            self.line(&format!(
+                "static const {RT}rl_field {symbol}_tag[1] = {{ {{ \"tag\", NULL, \"tag\", 0, (uint32_t)offsetof({c_type}, tag), (uint32_t)sizeof((({c_type}*)0)->tag), 0, EMBER_RL_KIND_PLAIN, EMBER_RL_KIND_PLAIN, 0, NULL, NULL, NULL }} }};"
+            ));
+            self.line(&format!("static const {RT}rl_variant {symbol}_variants[{}] = {{", tables.len()));
+            for (variant, name, rows) in &tables {
+                let (variant, discriminant) = variant.clone().expect("every group of an enum is a variant");
+                self.line(&format!("    {{ {}, NULL, UINT64_C({discriminant}), 0, {}u, {} }},", c_string_literal(&variant), rows.len(), reference(name, rows)));
+            }
+            self.line("};");
+            (format!("1u, {symbol}_tag"), format!("{}u, {symbol}_variants", tables.len()))
+        } else {
+            let (_, name, rows) = &tables[0];
+            (format!("{}u, {}", rows.len(), reference(name, rows)), "0, NULL".to_string())
+        };
+        self.line(&format!(
+            "static const {RT}rl_type {symbol} = {{ {}, EMBER_RL_TYPE_STRUCT, NULL, 0, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{:016x}), 0, NULL, NULL, {fields}, {variants}, NULL, NULL, NULL, NULL }};",
+            c_string_literal(&self.types.display(ty)),
+            self.type_schema(ty, &mut Vec::new()),
+        ));
+        let address = format!("&{symbol}");
+        self.reload_shapes.insert((ty, true), address.clone());
+        address
+    }
+
+    /// `[CLO-10]`, `[HR-15]` — in a reloadable image, what a closure's descriptor says its
+    /// captured state holds: `NULL` when it holds no object.
+    pub(crate) fn reload_captures(&mut self, env: Ty) -> String {
+        let Some(reload) = self.reload.clone() else { return "NULL".to_string() };
+        if !self.holds_objects(env, &mut Vec::new()) {
+            return "NULL".to_string();
+        }
+        self.reload_shape_table(env, &reload)
     }
 
     /// `[HR-11]` — every package type's schema: a class's and a struct's fields (name, renamed-from
@@ -754,15 +993,12 @@ impl Emitter<'_> {
                 }
                 let renamed = reload.renamed.get(&(name.clone(), field.clone())).map_or("NULL".to_string(), |old| c_string_literal(old));
                 let flags = if flags.is_empty() { "0".to_string() } else { flags.join(" | ") };
-                let element_type = if shape.element_type.is_empty() { "NULL".to_string() } else { c_string_literal(&shape.element_type) };
                 rows.push(format!(
-                    "    {{ {}, {renamed}, {}, UINT64_C(0x{:016x}), (uint32_t)offsetof({c_type}, {field}), (uint32_t)sizeof((({c_type}*)0)->{field}), {flags}, {}, {}, {}, {element_type} }},",
+                    "    {{ {}, {renamed}, {}, UINT64_C(0x{:016x}), (uint32_t)offsetof({c_type}, {field}), (uint32_t)sizeof((({c_type}*)0)->{field}), {flags}, {} }},",
                     c_string_literal(field),
                     c_string_literal(&shape.type_name),
                     self.type_schema(*ty, &mut Vec::new()),
-                    shape.kind,
-                    shape.element_kind,
-                    shape.element_size,
+                    shape.tail(),
                 ));
             }
             if !rows.is_empty() {
@@ -855,7 +1091,7 @@ impl Emitter<'_> {
         let enums: Vec<(EnumId, String)> = self.types.enums().map(|(id, def)| (id, def.name.to_string())).collect();
         for (id, name) in enums {
             let Some(ty) = self.types.find(&TyKind::Enum(id)) else { continue };
-            let def = self.types.enum_def(id);
+            let def = self.types.enum_def(id).clone();
             if !reload.files.contains(&def.span.file) && !self.has_schema(ty, reload) {
                 continue;
             }
@@ -866,7 +1102,7 @@ impl Emitter<'_> {
             let tag_name = table(&format!("tag_{}", c_name(&name)));
             if payloads {
                 self.line(&format!(
-                    "static const {RT}rl_field {tag_name}[1] = {{ {{ \"tag\", NULL, \"tag\", 0, (uint32_t)offsetof({c_type}, tag), (uint32_t)sizeof((({c_type}*)0)->tag), 0, EMBER_RL_KIND_PLAIN, EMBER_RL_KIND_PLAIN, 0, NULL }} }};"
+                    "static const {RT}rl_field {tag_name}[1] = {{ {{ \"tag\", NULL, \"tag\", 0, (uint32_t)offsetof({c_type}, tag), (uint32_t)sizeof((({c_type}*)0)->tag), 0, EMBER_RL_KIND_PLAIN, EMBER_RL_KIND_PLAIN, 0, NULL, NULL, NULL }} }};"
                 ));
             }
             let mut rows = Vec::new();
@@ -874,18 +1110,16 @@ impl Emitter<'_> {
                 let renamed = reload.renamed.get(&(name.clone(), variant.name.to_string())).map_or("NULL".to_string(), |old| c_string_literal(old));
                 let payload: Vec<String> = variant.fields.iter().map(|field| self.type_schema(field.ty, &mut Vec::new()).to_string()).collect();
                 let mut fields = Vec::new();
-                for field in variant.fields.iter().filter(|field| payloads && !self.is_void(field.ty)) {
+                let held: Vec<_> = variant.fields.iter().filter(|field| payloads && !self.is_void(field.ty)).cloned().collect();
+                for field in &held {
                     let shape = self.field_shape(field.ty, reload);
                     let member = format!("payload.{}.{}", variant.name, field.name);
-                    let element_type = if shape.element_type.is_empty() { "NULL".to_string() } else { c_string_literal(&shape.element_type) };
                     fields.push(format!(
-                        "    {{ {}, NULL, {}, UINT64_C(0x{:016x}), (uint32_t)offsetof({c_type}, {member}), (uint32_t)sizeof((({c_type}*)0)->{member}), 0, {}, {}, {}, {element_type} }},",
+                        "    {{ {}, NULL, {}, UINT64_C(0x{:016x}), (uint32_t)offsetof({c_type}, {member}), (uint32_t)sizeof((({c_type}*)0)->{member}), 0, {} }},",
                         c_string_literal(&field.name.to_string()),
                         c_string_literal(&shape.type_name),
                         self.type_schema(field.ty, &mut Vec::new()),
-                        shape.kind,
-                        shape.element_kind,
-                        shape.element_size,
+                        shape.tail(),
                     ));
                 }
                 let payload_table = table(&format!("payload_{}_{}", c_name(&name), c_name(&variant.name.to_string())));

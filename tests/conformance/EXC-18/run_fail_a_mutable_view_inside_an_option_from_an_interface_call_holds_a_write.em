@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: EXC-18, EXC-2
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ panics: exclusivity violation: read access to Bag.items while a write access to Bag.items is active
 # `[EXC-18]` — a `ref mut` of a field carried out of an interface call is a
 # write access until its last use, wherever it sits in the result: inside an

@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: RT-4, DIA-23
-#$ profiles: release
+#$ profiles: development
 #$ stdout: 3
 #$ panics: index 5 is out of bounds for a length of 2
 #$ stderr: index 5 is out of bounds for a length of 2

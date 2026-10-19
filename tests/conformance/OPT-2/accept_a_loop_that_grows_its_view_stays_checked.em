@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: OPT-2, RNG-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 0 1 2 0 1 2
 #$ stdout: 6
 #$ assert-c-count: contains("ember_vec_push_i64(") == 3

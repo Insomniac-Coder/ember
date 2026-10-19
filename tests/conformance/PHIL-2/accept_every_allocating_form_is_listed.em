@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: PHIL-2, CLO-10, TXT-9
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 1 4 5 1 2 2 5 6 3 2 6 1 2 10 20
 # `[PHIL-2]` — every allocating form the source can show, each listed by `ember inspect --alloc`
 # (the milestone `inspect_alloc_lists_every_allocating_form` reads this program's report, by

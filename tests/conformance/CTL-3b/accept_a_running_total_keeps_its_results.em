@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-3b, CTL-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 6.0 12 3.0 21
 # `[CTL-3b]` — a counted loop is an induction-variable loop whatever the host
 # C compiler's optimiser. For MSVC, which does not unroll a loop setting a

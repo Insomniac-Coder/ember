@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLS-4, CLS-7, EXC-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c: contains(em_Base_bump)
 #$ assert-c: !contains(ember_retain)
 #$ stdout: 7

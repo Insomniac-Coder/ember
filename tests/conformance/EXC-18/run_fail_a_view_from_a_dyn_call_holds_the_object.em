@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: EXC-18, EXC-15, TYP-22
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: ann
 #$ panics: exclusivity violation: write access to Person.label while a read access to Person.label is active
 # `[EXC-18]` — through a `dyn` box the caller cannot know the concrete type; the

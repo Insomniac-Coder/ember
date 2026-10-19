@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLI-19, GRM-25
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: true
 # The form the `E0900` help names compiles.
 

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: ERR-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: first
 #$ fallback
 #$ third

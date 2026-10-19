@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-3b, STD-19, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout:
 #$ 9223372036854775801
 #$ 9223372036854775804

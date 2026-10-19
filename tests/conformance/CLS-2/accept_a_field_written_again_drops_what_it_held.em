@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLS-2, OWN-5, CLS-6
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: dropped first
 #$ stdout: dropped draft
 #$ stdout: second final 42

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: THR-14, STA-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 18446744073709551615 18446744073709551616
 #$ stdout: 340282366920938463463374607431768211455 0 None
 #$ stdout: Err(5) Ok(5) 6

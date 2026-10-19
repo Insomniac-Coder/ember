@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLO-2, CLO-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 2
 #$ 42
 # D-185 — a callable local of the enclosing function, called inside a closure,

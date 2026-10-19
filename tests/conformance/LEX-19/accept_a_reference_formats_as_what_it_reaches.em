@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: LEX-19, SPN-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c-count: contains("const int64_t*") == 0
 #$ stdout:
 #$ 1 (0, 1)

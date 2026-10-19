@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: LEX-15, EXP-9, EXP-10
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: true false true
 #$ Some(true) None
 #$ 7

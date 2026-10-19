@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TXT-11, TXT-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 3 2 2 Some(2)
 #$ ab
 #$ ababab 6

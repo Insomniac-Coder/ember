@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: IFC-4, CLO-6
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: [6, 8] | 3 | ok
 # D-381 — a default method names its interface's associated type by its bare
 # name, as the declaration does: in a callable parameter's type

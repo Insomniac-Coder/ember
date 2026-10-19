@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: IFC-4, TYP-17, GRM-34
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1 2 3 | Some(1) None
 # D-380 — a generic extension names its parameter's associated type,
 # `type Item = I.Item` and `Option[I.Item]`, as a generic function's

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXC-9, EXC-10, EXC-19
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: [2, 4, 6]
 
 # `[EXC-10]`, `[EXC-9]` — the outer loop writes the counter's `log` between its

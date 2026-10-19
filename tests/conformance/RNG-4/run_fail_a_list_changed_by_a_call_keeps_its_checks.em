@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: RNG-4, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow in `+`
 # `[RNG-4]` — the list is lent to a function that writes an element the
 # caller cannot see, so what its elements hold is not known and the sum keeps

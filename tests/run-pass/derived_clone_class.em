@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: OWN-8, DRP-6
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ assert-c: contains(ember_retain)
 

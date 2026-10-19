@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: IFC-3, TYP-17
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 9 square
 # `[IFC-3]` (D-532) — an associated type's bound brings its parents, as a parameter's does:
 # `Thing: Named` is a `Shape` too, so `h.get().area()` needs no bound of its own.

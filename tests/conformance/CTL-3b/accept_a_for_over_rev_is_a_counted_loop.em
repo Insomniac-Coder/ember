@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-3b, STD-19
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c-count: contains("next_back") == 0
 #$ stdout: [70, 60, 50, 40, 30, 20, 10]
 #$ stdout: [4, 3, 2, 1, 0] [3, 2, 1, 0] [1, 2, 3, 4]

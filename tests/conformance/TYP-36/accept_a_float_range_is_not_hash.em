@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-36, RNG-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: true true
 # D-318 — a range type hashes as its representation does, so a float range
 # does not (`[TYP-36]`). It counted as `Hash`, so `Result[R, RangeError]`

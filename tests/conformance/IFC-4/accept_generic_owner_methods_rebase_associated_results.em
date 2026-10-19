@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: IFC-4, TYP-17, TYP-18
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 17
 # A method's hidden projection is rebased when its owner's type parameter is
 # substituted. This case contains no positional projection bound.

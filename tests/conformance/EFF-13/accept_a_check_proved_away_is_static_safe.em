@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EFF-13, EXC-3, EXC-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 3
 
 # `[EFF-13]` — what counts is the check left after the proofs: one handle

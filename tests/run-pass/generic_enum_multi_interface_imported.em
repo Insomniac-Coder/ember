@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: MOD-1, MOD-2, MOD-3, TYP-16, TYP-22, IFC-1, ENM-1, HEAP-1, MONO-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 20
 #$ stdout: 22
 #$ assert-c: contains(em_vt_dyn_generic_enum_multi_interface_imported_support_traits_Read_generic_enum_multi_interface_imported_support_model_Signal_i32)

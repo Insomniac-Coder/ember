@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-3a, RNG-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 0.25 0.5 0.75 0.9995
 #$ true true
 # D-316 — an `f16` range clamps between `f16` endpoints; a half-open one's

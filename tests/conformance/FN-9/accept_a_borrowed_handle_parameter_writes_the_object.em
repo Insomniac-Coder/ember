@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FN-9, BCK-7
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 6 [7]
 # `[FN-9]` — a mode on a class-handle parameter governs the handle, not the object: a borrowed
 # handle parameter may write the object's fields, call its `mut self` methods and change what its

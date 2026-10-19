@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: SIMD-7
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow in `-`
 # The `-` overflows at iteration 5 and the first `+` at iteration 9, in the
 # same group: the panic is the `-`, the first overflow, as it always was.

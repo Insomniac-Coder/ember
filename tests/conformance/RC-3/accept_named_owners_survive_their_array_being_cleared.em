@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RC-3, RC-1, DRP-2, WK-2, WK-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: before
 #$ stdout: live 7
 #$ stdout: after

@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: STD-15, ERR-13
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: remove index out of range
 
 fn main():

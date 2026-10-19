@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: TYP-8, TYP-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow in `-`
 # D-272 — `u128` subtraction below zero overflows and panics.
 

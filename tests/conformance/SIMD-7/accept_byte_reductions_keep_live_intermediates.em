@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-5, SIMD-7, OPT-2, TYP-8, CG-C-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 260 4 0 7
 #$ assert-c: !contains("ember_sum_bytes(")
 # The last byte survives the loop. A helper that only updates the total would

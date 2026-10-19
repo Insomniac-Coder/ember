@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXP-4, CTL-3b, TXT-10, LT-1, DRP-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: a
 #$ stdout: b
 #$ stdout: drop 9

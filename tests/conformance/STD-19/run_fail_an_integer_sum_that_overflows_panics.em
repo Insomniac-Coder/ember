@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: STD-19, STD-5, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow in `+`
 # `[STD-5]` — an integer sum panics on overflow, as `+` does.
 

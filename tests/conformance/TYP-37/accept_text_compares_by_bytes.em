@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-37
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: true true false
 #$ true true true
 #$ true false true

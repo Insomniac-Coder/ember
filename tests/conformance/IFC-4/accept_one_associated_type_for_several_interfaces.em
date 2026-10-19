@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: IFC-4, TYP-17, TYP-21
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 5 -1 6
 #$ {1, 2, 3} {2} {1}
 # ODR-040 — an `extend` block that implements several interfaces states an

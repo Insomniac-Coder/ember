@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-21, STD-28, EXP-9
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: -2.0 Vec2(x=3.0, y=7.0) Vec2(x=1.0, y=2.0) Vec2(x=3.0, y=4.0) Vec2(x=1.0, y=3.0)
 #$ Mat2(x_axis=Vec2(x=1.0, y=0.0), y_axis=Vec2(x=0.0, y=1.0)) Mat2(x_axis=Vec2(x=-1.0, y=-3.0), y_axis=Vec2(x=-2.0, y=-4.0)) true true true true
 #$ 24.0 Vec3(x=3.0, y=3.0, z=4.0) true 6.0 true Vec3(x=2.0, y=0.0, z=1.0)

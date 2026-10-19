@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SOA-1, SOA-2
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 3 2.5 hello true
 # `[SOA-1]` — any struct gives an `SoA`, with no derive: one column per field, whatever its type
 # (an integer, a float, a `String`, a struct, a `bool`).

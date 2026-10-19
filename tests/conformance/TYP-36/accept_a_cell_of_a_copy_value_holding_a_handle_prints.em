@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-36, CELL-2, TYP-39
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: Holder(held=Pin(left))
 #$ stdout: Holder(held=Pin(right))
 #$ stdout: right

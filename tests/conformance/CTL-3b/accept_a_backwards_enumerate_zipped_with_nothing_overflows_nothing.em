@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-3b, STD-19
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: no turn
 # `[CTL-3b]` — `zip` asks its first side for an item before the second, so a backwards
 # `enumerate` zipped with an empty list is still pulled, and numbers its greatest item, though the

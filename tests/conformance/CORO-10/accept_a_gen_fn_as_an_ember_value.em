@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CORO-10, FN-6
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 6
 # `[CORO-10]` — within Ember a `gen fn` is a function like any other: a value that, called,
 # builds the frame.

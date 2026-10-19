@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-22, IFC-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ assert-c: contains(static const struct em_vt_dyn_Render em_vt_dyn_Render_Signal)
 #$ assert-c: contains(return em_Signal_render(*(em_Signal*)_0);)

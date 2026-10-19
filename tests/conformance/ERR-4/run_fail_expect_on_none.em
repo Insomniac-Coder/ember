@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: ERR-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: the config had no port
 
 fn main():

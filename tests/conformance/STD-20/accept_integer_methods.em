@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-20, TYP-8, TYP-10, TYP-28, TYP-30
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: None Some(2147483646) Some(255) None
 #$ -2147483648 4 2147483647 255
 #$ (-2147483648, true) (255, true) 0

@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: EXC-5, EXC-15, EXC-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: exclusivity violation: write access to Counter.log while a write access to Counter.log is active
 # `[EXC-5]` — only a call on `self` itself is a reborrow. The same object reached
 # through another handle is a second write access to every field, and panics.

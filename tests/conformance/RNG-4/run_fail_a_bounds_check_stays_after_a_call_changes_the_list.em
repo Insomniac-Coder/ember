@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: RNG-4, FN-9
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: index 1 is out of bounds for a length of 0
 # `[RNG-4]` — `k < xs.len()` held before the call, but `shrink` is lent the
 # list and empties it: the length is forgotten at the call.

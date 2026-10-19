@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: EXC-15, EXC-19, EXC-1, OBJ-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: exclusivity violation: write access to Record.items while a read access to Record.items is active
 # `[EXC-15]` — the dynamic adapter's whole-object write checks every field of
 # the object; a live view of one through another handle is a conflict.

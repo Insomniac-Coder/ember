@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: ERR-2, ERR-7
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 7
 #$ low -4
 #$ same -1

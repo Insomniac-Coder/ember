@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: IFC-4, TYP-17, TYP-18
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 11 word
 #$ stdout: 13 pair
 # D-540: positional bound arguments find projections below constructors and

@@ -4,7 +4,7 @@
 #$ stdout: 20 190 [(-3, 0), (-2, 1)]
 #$ stdout: 18446744073709551615 [(0, 5)]
 #$ stdout: -3
-#$ profiles: debug, release
+#$ profiles: debug, development
 # G8-4 (the owner's design B, 0.9.10), widened by the owner's rulings of 2026-10-06: the
 # known-numbers rule. `enumerate` numbers, and `len` and `count` measure, in the smallest type
 # that holds every value they can give, from the numbers the compiler knows: numbers written as

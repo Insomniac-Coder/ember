@@ -40,8 +40,9 @@ fn text_hash(map: &SourceMap, span: Span) -> u64 {
 /// `[HR-25]` — what a reloadable build reaches through thunks: with `reload = "all"` or
 /// `"bodies"`, every function of the package but those `@noreload` names; with `"opt-in"`, only
 /// those `@reloadable` names. Either applies to a module (`#! module noreload`) or an item, the
-/// item winning, and a method takes its type's. The standard library is not the package. A function
-/// written `@inline` is inlined, so it is never reloadable (`[HR-9a]`).
+/// item winning, and a method takes its type's. The standard library is not the package. `@inline`
+/// does not change this: a reloadable function is never inlined, whatever `@inline` says (`[HR-9a]`,
+/// `[CG-C-3a]`, ODR-119).
 pub fn plan(
     mode: ReloadMode,
     package: &str,
@@ -65,7 +66,7 @@ pub fn plan(
         });
         let fallback = module_default.unwrap_or(mode != ReloadMode::OptIn);
         let decide = |attrs: &[ember_ast::Attribute], owner: Option<bool>| {
-            !has_attribute(attrs, "inline") && written(attrs).or(owner).unwrap_or(fallback)
+            written(attrs).or(owner).unwrap_or(fallback)
         };
         for item in &loaded.module.items {
             // What the driver wrote for the reload is called directly by its own image.

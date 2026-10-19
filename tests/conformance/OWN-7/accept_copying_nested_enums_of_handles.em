@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: OWN-7, RC-2
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 7
 #$ done
 # `[OWN-7]` (D-680) — copying a `Copy` value that holds class handles retains each one; an enum payload

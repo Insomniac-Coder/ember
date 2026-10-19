@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: STD-20, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow in `next_power_of_two`
 
 @overflow(wrap)

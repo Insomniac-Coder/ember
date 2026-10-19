@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: CTL-3b, STD-19
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: before
 #$ panics: step_by(0): the step must be positive
 # `[CTL-3b]` (ODR-089) — a step that is not positive is checked once, before

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: GRM-39, ENM-3, STR-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1 2
 #$ stdout: 3 4
 #$ stdout: 7 8 9

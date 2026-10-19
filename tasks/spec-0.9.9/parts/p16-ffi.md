@@ -190,7 +190,7 @@ unsafe overlay c "vulkan/vulkan.h":
     type VkBuffer
     @ffi(handle)
     type VkDevice
-    @ffi(status, ok=VK_SUCCESS)
+    @ffi(status=VkResult, ok=VK_SUCCESS, error=VkError)
     enum VkResult
 
     @ffi(effects=[FFI, Alloc])
@@ -234,16 +234,18 @@ unsafe overlay c "vulkan/vulkan.h":
   | lifetime (results) | `from(self)`, `from(p)`, `from(static)` | the region of the receiver, of `p`, or static (`[LT-1a]`) |
   | aliasing | `exclusive`, `aliased` | `ref mut` and `MutSpan[T]` results allowed only with `exclusive`; a result is `aliased` unless stated |
 
-  Other contract words: `out` (an out-parameter, returned instead); `status` (with `@ffi(status,
-  ok=X)` on the enum, `[FFI-16]`); `handle`; `callback(borrowed | retained | once, user_data=p)`
+  Other contract words: `out` (an out-parameter, returned instead); `status` (with `@ffi(status=E,
+  ok=X, error=N)` on the enum, `[FFI-16]`); `handle`; `callback(borrowed | retained | once, user_data=p)`
   (`[FFI-21]`); `threads(any | main | creator)`; `destroys(f)`; `unsafe` (leave the call unsafe).
   `@ffi(effects=[…])` states effects.
 * `[FFI-11a]` A pointer contract with no count word is `E5012`, which lists the five count words and
   names any sibling parameter that looks like a length (an unsigned integer, or a name ending `Count`,
   `Len`, `Size` or `N`).
-* `[FFI-11b]` The two-call enumeration idiom (call once for the count, again to fill) is `pCount:
-  inout_count(pItems)` with `pItems: nullable count(pCount)`; the Ember function takes
-  `Option[MutSpan[T]]` and returns the count.
+* `[FFI-11b]` *(changed in 0.9.10)* The two-call enumeration idiom (call once for the count, again to
+  fill) is `pCount: inout_count(pItems)` with `pItems: nullable count(pCount)`; the Ember function
+  takes `Option[MutSpan[T]]` and returns the count. When the C function has a result of its own, the
+  Ember function returns a tuple: that result first, then each pointer output (`out`, the count) in
+  the C declaration's order; a status result follows `[FFI-16]` instead.
 * `[FFI-11c]` `TODO(count)`, `TODO(nullable)`, `TODO(ownership)` and `TODO(lifetime)` are contract words
   that mark a fact as still unknown: the declaration stays uncontracted and its calls stay `unsafe`.
   A header can be adopted on the first day with everything behind `unsafe:`, and made safe one
@@ -274,16 +276,18 @@ unsafe overlay c "vulkan/vulkan.h":
   A null result becomes `None`; a non-null result becomes `Some` and retains the contract's
   `from(p)` or `from(static)` region. The nullable word changes neither the NUL-termination
   obligation nor the result's lifetime obligation.
-* `[FFI-16]` An enum marked `@ffi(status, ok=X)` generates `struct <E>Error(code: E)` implementing
-  `Error`; every function contracted `-> status` returns `Result[T, <E>Error]`, where `T` is the tuple
-  of its `out` parameters (or `void`).
+* `[FFI-16]` *(changed in 0.9.10)* An enum `E` marked `@ffi(status=E, ok=X, error=N)` (its success
+  value `X`, its error type's name `N`) generates `struct N(code: E)` implementing `Error`; every
+  function contracted `-> status` returns `Result[T, N]`, where `T` is the tuple of its `out`
+  parameters (or `void`).
 * `[FFI-36a]` `std.ffi.adopt[T](h) -> ForeignBox[T]` is an `unsafe fn` that takes ownership of a foreign
-  object, reading its destructor from the contract of `T`'s declaration. Where the contract already
+  object, reading its destructor from the contract of `T`'s declaration, `@ffi(destroys(f))` on
+  `type T`. Where the contract already
   records the transfer (`returns_owned(destructor=f)`), the import returns a `ForeignBox[T]` directly and
   no `adopt` is written.
 * `[FFI-36b]` Adopting a type whose overlay says `adopt = false` is `E5052`. Adopting one live object
   twice is caught at run time in every profile (a panic naming both sites) and, when both calls are on
-  one local in one function, at compile time.
+  one local in one function, at compile time (`E5068`).
 
 ## XVI.6 Callbacks and foreign retention
 

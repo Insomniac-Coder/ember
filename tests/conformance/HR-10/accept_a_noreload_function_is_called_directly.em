@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: HR-10, HR-10a
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 12
 #$ assert-c: !contains("em_total__rl")
 #$ assert-c: contains("int64_t em_weigh__rl(int64_t _1) {")

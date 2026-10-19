@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLS-4, CLS-6, DRP-1, OWN-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c: contains(em_Derived_drop_adapter)
 #$ assert-c: contains(em_Base_drop(&)
 #$ stdout: base

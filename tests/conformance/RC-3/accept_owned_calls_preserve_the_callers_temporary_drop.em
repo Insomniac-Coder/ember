@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RC-3, RC-1, FN-1, DRP-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 1
 #$ stdout: inside
 #$ stdout: after callee drop

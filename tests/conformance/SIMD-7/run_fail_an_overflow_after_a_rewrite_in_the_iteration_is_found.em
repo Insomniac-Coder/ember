@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: SIMD-7
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow in `-`
 #$ assert-c-count: contains("; ++_") == 3
 # At iteration 20 the `+` makes `xs[i]` the least `int`, and the `-` that reads

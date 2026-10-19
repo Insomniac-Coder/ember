@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: LT-20, LT-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: Some('a') Some('b')
 #$ stdout: Some('c') 3 Some('b')
 # `[LT-20]`, `[LT-1]` — an iterator that is a `Copy` view gives views of the

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: DSJ-4, DSJ-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: apart 0 3
 
 # `[DSJ-4]` — `Span` and `MutSpan` have address ranges; an empty view has no

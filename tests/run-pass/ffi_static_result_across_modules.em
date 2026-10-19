@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-10, FFI-11, MOD-2, LT-1a
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 
 from modules.ffi_static_result import static_result

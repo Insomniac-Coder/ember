@@ -439,6 +439,26 @@ ODRS = [
      '`[FN-6]`, `[UNS-1]`, grammar `fn_type`'),
     ('ODR-116', 'ruled by the owner (2026-10-16): a `MutSpan[T]` converts to `Span[T]` where one is expected, a shared reborrow; `[TYP-5]`\'s complete list lacked it, and Part XII.1\'s `integrate(ps.pos, ps.vel, …)` passes a mutable column to a `Span` parameter',
      '`[TYP-5]` rule 6, `[SPN-3]`, `[SOA-2]`'),
+    ('ODR-117', 'ruled by the owner (2026-10-19): the profiles are `debug`, `development` and `release`; `release` is the build users get (formerly `shipping`), `development` the optimised build still debuggable (formerly `release`)',
+     '`[PRF-1]`, `[PRF-2]`, `[PRF-3]`, `[MAN-7]`, `[PAN-1]`, `[RT-4]`, `[HR-27]`, `[BUD-2]`'),
+    ('ODR-118', 'ruled by the owner (2026-10-19): a `release` build ignores `[build] reload` and prints the note `hot reload is off in release builds`; `E9033` is retired',
+     '`[MAN-7]`, `[PRF-2]`, Annex B'),
+    ('ODR-119', 'ruled by the owner (2026-10-19): in a hot-reload build a reloadable function is never inlined, whatever `@inline` says; builds without hot reload inline it',
+     '`[CG-C-3a]`, `[HR-9a]`'),
+    ('ODR-120', 'ruled by the owner (2026-10-19): a migrated instance\'s old version is freed field by field without the type\'s own `drop`, since the instance lives on in its new form',
+     '`[HR-2a]`'),
+    ('ODR-121', 'ruled by the owner (2026-10-19): `ReloadError`\'s parts are `type_name: String`, `reason: String`, `instance: u64`, `message: String`, `error: String`',
+     '`[HR-38]`, `[HR-35]`'),
+    ('ODR-122', 'ruled by the owner (2026-10-19): a foreign type names its destructor with `@ffi(destroys(f))` on its declaration',
+     '`[FFI-36a]`'),
+    ('ODR-123', 'ruled by the owner (2026-10-19): one live object adopted twice through one local in one function is `E5068` at compile time',
+     '`[FFI-36b]`'),
+    ('ODR-124', 'ruled by the owner (2026-10-19): a status enum is marked `@ffi(status=E, ok=X, error=N)`, naming its error type; `[ERR-6]` and `[FFI-16]` disagreed on the spelling and the name',
+     '`[ERR-6]`, `[FFI-16]`, `[FFI-11]`'),
+    ('ODR-125', 'ruled by the owner (2026-10-19): an `inout_count` function with a result of its own returns a tuple, that result first, then each pointer output in the C declaration\'s order',
+     '`[FFI-11b]`'),
+    ('ODR-126', 'ruled by the owner (2026-10-19): when an instance moves, handles inside tuples, `Box` contents and closure captures are rewritten too',
+     '`[HR-15]`'),
 ]
 
 H5_HEAD = """
@@ -488,7 +508,8 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 0.9.10_Hardened_10 adds ODR-106 to ODR-112, the owner's `is` and `?.` and the agents' open
 questions (§H.15); 0.9.10_Hardened_11 adds ODR-113 to ODR-115, the owner's rulings on what printing,
 a use after a move and an `unsafe fn` value are (§H.16); 0.9.10_Hardened_12 adds ODR-116, a
-`MutSpan` where a `Span` is expected (§H.17).
+`MutSpan` where a `Span` is expected (§H.17); 0.9.10_Hardened_13 adds ODR-117 to ODR-126, the
+owner's answers to the 85% push's questions and the profiles' new names (§H.18).
 
 | ODR | Ruling | Rules |
 |---|---|---|
@@ -504,7 +525,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.10', 12)
+CURRENT = ('0.9.10', 13)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -517,6 +538,7 @@ V010_H8_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h8')
 V010_H9_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h9')
 V010_H10_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h10')
 V010_H11_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h11')
+V010_H12_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h12')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -836,8 +858,46 @@ Generated: every rule whose text differs from 0.9.10_Hardened_11.
 """
 
 
-def v010_h11_to_now():
-    return H17_HEAD + rule_diff(V010_H11_PARTS, os.path.join(HERE, '..', 'parts'))
+def v010_h11_to_h12():
+    return H17_HEAD + rule_diff(V010_H11_PARTS, V010_H12_PARTS)
+
+
+H18_HEAD = """
+## H.18 Changes in 0.9.10_Hardened_13 (from 0.9.10_Hardened_12)
+
+**0.9.10_Hardened_13** records ODR-117 to ODR-126, ruled by the owner on 2026-10-19 (`docs/OWNER-QUEUE.md`,
+`docs/DECISIONS.md` ADR-204, `tasks/85/owner-answers.md`):
+
+* The profiles are `debug`, `development` and `release`. `release` is the build users get (formerly
+  `shipping`: optimisation 3, stripped, full LTO, no backtrace); `development` is optimised and still
+  debuggable (formerly `release`: optimisation 2, line information, symbols, thin LTO). Every rule,
+  table and example names them so (`[PRF-3]`, ODR-117).
+* A `release` build ignores `[build] reload` with a note, and `E9033` is retired; hot reload is a mode of
+  `debug` and `development` (`[MAN-7]`, `[PRF-2]`, ODR-118).
+* In a hot-reload build a reloadable function is never inlined, whatever `@inline` says (`[CG-C-3a]`,
+  `[HR-9a]`, ODR-119).
+* A migrated instance's old version runs no user `drop`: the instance lives on in its new form
+  (`[HR-2a]`, ODR-120).
+* `ReloadError`'s parts have types: `type_name: String` (the name `type` is reserved), `reason`,
+  `message` and `error` are `String`, `instance` is `u64` (`[HR-38]`, ODR-121).
+* A foreign type names its destructor with `@ffi(destroys(f))` (`[FFI-36a]`, ODR-122).
+* One live object adopted twice through one local is `E5068` at compile time (`[FFI-36b]`, ODR-123).
+* A status enum is marked `@ffi(status=E, ok=X, error=N)`, which names its error type (`[ERR-6]`,
+  `[FFI-16]` agreed, ODR-124).
+* An `inout_count` function with a result of its own returns that result first, then each pointer
+  output (`[FFI-11b]`, ODR-125).
+* Handles inside tuples, `Box` contents and closure captures are rewritten when an instance moves
+  (`[HR-15]`, ODR-126).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_12.
+
+| Rule | 0.9.10_Hardened_12 → 0.9.10_Hardened_13 |
+|---|---|
+"""
+
+
+def v010_h12_to_now():
+    return H18_HEAD + rule_diff(V010_H12_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -908,7 +968,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_now() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_now() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-19, IFC-3, TYP-17
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 18 10
 #$ stdout: true true
 # `[STD-19]` (D-532) — a function written for any iterator numbers the one it is given:

@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: EXC-18, EXC-1, DSP-2
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ panics: exclusivity violation: write access to Person.alias while a read access to Person.alias is active
 # `[EXC-18]` — the caller of a virtual getter cannot know which override runs,
 # so its view holds every field an override reachable from the static class

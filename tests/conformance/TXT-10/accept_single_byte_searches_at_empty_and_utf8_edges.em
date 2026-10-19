@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TXT-10, TXT-11, TXT-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: None None Some(0) None Some(2) Some(5)
 #$ 2 0 é!é! !x!
 #$ |é|||

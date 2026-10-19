@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-5, SIMD-7, OPT-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1 3 6
 #$ assert-c: !contains("ember_sum_bytes(")
 # Reading the running total each turn is observable, so replacing the whole

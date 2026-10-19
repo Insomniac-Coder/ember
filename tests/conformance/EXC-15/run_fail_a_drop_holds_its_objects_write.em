@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: EXC-15, DRP-1, EXC-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ panics: exclusivity violation: write access to Bag.items while a write access to Bag.items is active
 # `[DRP-1]` declares `fn drop(mut self)`, and `[EXC-15]` gives a `mut self`
 # method a write access to every field from entry to return. The runtime is

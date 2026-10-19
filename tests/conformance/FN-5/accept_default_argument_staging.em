@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FN-5, EXP-1, FN-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 23 2
 #$ 12
 #$ true 3

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-5, SIMD-7, RNG-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 16661667
 #$ assert-c-count: contains("EMBER_OVERFLOW_SHIFT") == 0
 #$ assert-c-count: contains(">= 32ULL") == 0

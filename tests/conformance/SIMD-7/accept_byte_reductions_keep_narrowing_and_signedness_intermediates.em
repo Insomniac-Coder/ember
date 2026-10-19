@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-5, SIMD-7, OPT-2, TYP-6, TYP-8, CG-C-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 510 -2 510
 #$ assert-c: !contains("ember_sum_bytes(")
 # Changing sign at byte width or narrowing a widened byte changes its numeric

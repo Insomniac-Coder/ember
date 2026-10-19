@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-25, EXP-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 12
 #$ 1
 #$ 32

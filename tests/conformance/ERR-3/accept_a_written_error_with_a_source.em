@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: ERR-3, TYP-22
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: load failed / Load(cause=Disk(code=7))
 #$ load failed
 #$ caused by: disk 7

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-7, TYP-16
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: true
 
 fn empty[T]() -> *mut T:

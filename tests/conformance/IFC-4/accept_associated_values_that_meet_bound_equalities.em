@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: IFC-4, TYP-17
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 7 Some(11) 1
 # The matching controls exercise explicit, nested and default associated
 # values through concrete owners and through generic calls.

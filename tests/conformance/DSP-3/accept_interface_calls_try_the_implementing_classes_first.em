@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: DSP-3, DSP-2, TYP-22
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c-count: contains("->ti == &em_ti_") == 6
 #$ stdout:
 #$ 12 1009 6 1027

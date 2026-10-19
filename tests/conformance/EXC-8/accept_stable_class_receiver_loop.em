@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXC-8, EXC-9, EXC-11, EXC-12, EXC-13, EXC-14, TST-15
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 3
 
 # `[EXC-8]` — `counter` has a stable class-handle identity throughout the

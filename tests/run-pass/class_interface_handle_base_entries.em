@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: DSP-3, DSP-2, OBJ-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1
 #$ stdout: 2
 #$ assert-c: contains(em_itables_Base)

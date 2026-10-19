@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-19, STD-26, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout:
 #$ 9223372036854775806
 #$ 9223372036854775807

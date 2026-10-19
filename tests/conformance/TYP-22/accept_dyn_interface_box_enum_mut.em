@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-22, IFC-1, HEAP-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ assert-c: contains(em_vt_dyn_Bump_Signal_slot0)
 

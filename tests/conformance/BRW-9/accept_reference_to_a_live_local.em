@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: BRW-9
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 
 fn borrowed_value(value: ref i32) -> i32:

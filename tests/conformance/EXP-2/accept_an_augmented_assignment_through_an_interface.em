@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXP-2, TYP-21
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: value index add_assign value index 3 4
 # `[EXP-2]` — `a[i] += x` evaluates `x`, then the place once, then operates
 # and writes: through `AddAssign.add_assign`, and through `a = a + x` where

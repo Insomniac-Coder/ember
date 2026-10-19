@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: WK-5, WK-6, WK-10, OBJ-3, WK-11, WK-12, TST-14
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 6
 
 # The direct self-edge shape is accepted when its back-reference is weak. It

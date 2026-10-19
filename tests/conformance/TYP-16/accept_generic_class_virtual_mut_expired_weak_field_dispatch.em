@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-16, CLS-2, CLS-4, DSP-1, BRW-1, EXC-1, HEAP-3, HEAP-4, HEAP-5, HEAP-6, HEAP-7, WK-11, WK-12, WK-13, TST-26
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 2
 #$ assert-c: contains("static int32_t em_vt_Derived_bool_slot0")
 #$ assert-c: contains("->slot0")

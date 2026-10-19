@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-4, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 8991000
 #$ assert-c-count: contains("ember_ck_") == 0
 # `[RNG-4]` (ADR-142) — the lists in a field change only through the whole

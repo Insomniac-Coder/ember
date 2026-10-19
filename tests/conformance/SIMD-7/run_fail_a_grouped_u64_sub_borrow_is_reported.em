@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: SIMD-7
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow in `-`
 #$ assert-c-count: contains(" >> 63ULL;") == 2
 # A `u64` `-` below zero at iteration 10, in the first group: the group reports it.

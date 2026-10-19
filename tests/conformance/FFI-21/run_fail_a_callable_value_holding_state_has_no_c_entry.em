@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: FN-6, FFI-21, CLO-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 2
 #$ panics: a callable value holding captured state has no C entry
 

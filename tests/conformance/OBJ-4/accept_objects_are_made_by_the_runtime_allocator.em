@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: OBJ-4, RT-1, OBJ-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c: contains("ember_obj_new(&em_ti_Point)")
 #$ assert-c: !contains("malloc(")
 #$ assert-c: !contains("calloc(")

@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: RNG-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow
 # `[RNG-4]` (D-530) — a running total changed inside an inner loop changes on
 # every inner turn: one outer turn adds 1,000,000, not 1. The outer loop's

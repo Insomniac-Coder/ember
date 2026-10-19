@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-5, SIMD-7
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 49995000 4 7
 #$ assert-c-count: contains(">= 32ULL") == 1
 # `[SIMD-5]` (ODR-088) — a 32-bit division by a constant becomes a vector

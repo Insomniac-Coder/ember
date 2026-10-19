@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: DRV-1, STR-5
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: true false true
 #$ stdout: Less Greater Equal
 #$ stdout: true true false

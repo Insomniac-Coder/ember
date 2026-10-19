@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-5, SIMD-7, OPT-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 2997 2997 0
 #$ assert-c-count: contains(" >> 56ULL;") == 2
 # Ordinary Array and Span iteration lends each element by reference. Reading

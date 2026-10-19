@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: ERR-9, ERR-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 6
 #$ disk 2
 #$ -1

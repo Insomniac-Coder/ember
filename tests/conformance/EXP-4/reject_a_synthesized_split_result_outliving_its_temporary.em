@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: EXP-4, TXT-10, BRW-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 # D-488 (the other agent's case). Extending internal evaluation bindings must not
 # extend a temporary source beyond the actual source statement.
 

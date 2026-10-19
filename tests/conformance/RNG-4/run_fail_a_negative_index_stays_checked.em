@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: RNG-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 6
 #$ panics: index -1 is out of bounds for a length of 4
 # `[RNG-4]` — `k < xs.len()` bounds `k` above but not below: a negative index

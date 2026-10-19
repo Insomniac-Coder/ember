@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: ARN-1, ARN-4, ARN-6, TYP-36
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: ok
 #$ ok
 #$ ok

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXC-18, LT-1, BRW-8, TYP-22, OBJ-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: ann
 #$ stdout: ann
 #$ stdout: bob

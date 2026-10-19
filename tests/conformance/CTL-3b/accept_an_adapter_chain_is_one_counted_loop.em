@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-3b, STD-19, STD-26
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c-count: contains("_next(") == 0
 #$ stdout:
 #$ 0:10 1:20 2:30 3:40 4:50 5:60 6:70

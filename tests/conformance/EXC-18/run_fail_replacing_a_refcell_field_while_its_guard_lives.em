@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: EXC-18, EXC-1, CELL-5
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ panics: exclusivity violation: write access to Holder.cell while a read access to Holder.cell is active
 # `[EXC-18]` — a guard from a `RefCell` class field holds the field's read
 # access while it lives: replacing the whole cell through another handle

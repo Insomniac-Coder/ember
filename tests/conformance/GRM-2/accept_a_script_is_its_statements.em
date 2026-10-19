@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: GRM-2, FN-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 14
 #$ big
 # The entry file's statements at file scope form, in source order, the body of

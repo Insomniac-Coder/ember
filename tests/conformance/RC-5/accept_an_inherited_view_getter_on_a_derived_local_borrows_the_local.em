@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RC-5, LT-1, CLS-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: [1, 2]
 #$ stdout: 2 3
 #$ assert-c: contains("_up = (struct em_obj_Base*)(*(")

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: OWN-6, SPN-1, SPN-2, CG-C-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 10 20 3
 #$ stdout: 20 30 2
 # The old Span returned directly by mem.replace is

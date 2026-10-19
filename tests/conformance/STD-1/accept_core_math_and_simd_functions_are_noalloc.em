@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-1, EFF-5
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 3.0 4.0
 #$ 5.0
 #$ 2.0

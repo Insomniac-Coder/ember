@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: RNG-4, EXC-15
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: index 2 is out of bounds for a length of 0
 # `[RNG-4]` — a list held by an object can change through any handle to it,
 # so its length carries no fact: `k < bag.items.len()` removes nothing.

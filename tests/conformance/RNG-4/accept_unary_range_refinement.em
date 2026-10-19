@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-4, RNG-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 2
 
 type Signed = i32 in -8 ..= 8

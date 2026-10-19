@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SPN-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: [20, 30] [10, 20] [30, 40] [10, 20, 30, 40] [20, 30]
 #$ 90
 #$ [20]

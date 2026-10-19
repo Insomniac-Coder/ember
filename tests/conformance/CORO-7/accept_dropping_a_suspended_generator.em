@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CORO-7, CORO-4
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: got 1
 #$ drop second
 #$ drop first

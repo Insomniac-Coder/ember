@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: SIMD-7
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow in `+`
 #$ assert-c-count: contains(" >> 63ULL;") == 2
 # A `u8` `+` past 255 at iteration 40, in the second group: the group reports it.

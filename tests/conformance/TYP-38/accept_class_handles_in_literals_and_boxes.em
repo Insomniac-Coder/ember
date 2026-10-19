@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-38, HEAP-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1 2 2
 #$ true
 #$ 1

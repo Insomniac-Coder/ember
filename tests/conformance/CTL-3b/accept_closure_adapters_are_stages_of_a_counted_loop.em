@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-3b, STD-19, CLO-14
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c-count: contains("_next(") == 0
 #$ stdout: [11, 12, 13, 14, 15, 16, 17, 18]
 #$ stdout: [2, 4, 6, 8]

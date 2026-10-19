@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: OPT-2, PHIL-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout:
 #$ 5 [0, 1, 2, 3, 4] stopped
 #$ 7 [10, 11, 12, 13, 14, 15, 16] done

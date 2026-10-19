@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: MOD-1, MOD-2, MOD-3, OWN-8, TYP-16, ENM-1, MONO-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 7
 #$ stdout: 7
 

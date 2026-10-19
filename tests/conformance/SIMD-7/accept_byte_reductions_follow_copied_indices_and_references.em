@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-5, SIMD-7, OPT-2, TYP-8, BRW-2, CG-C-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: copied byte sum ok
 #$ assert-c: contains("ember_sum_bytes(")
 # An explicit index copy, element reference, reference copy and widening all

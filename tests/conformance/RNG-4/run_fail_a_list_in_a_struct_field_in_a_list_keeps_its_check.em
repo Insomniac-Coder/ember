@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: RNG-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow
 # `[RNG-4]` (ADR-142) — a struct's field reached through a list of structs is
 # the same field: `grow`'s push counts.

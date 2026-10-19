@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLS-1, CLS-2, CLS-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c: contains(ember_obj_new(&em_ti_Derived))
 #$ assert-c: contains(em_Derived_init)
 #$ assert-c: contains(em_Base_init)

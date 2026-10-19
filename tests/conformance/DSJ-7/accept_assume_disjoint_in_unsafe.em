@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: DSJ-7, UNS-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 5
 
 # `[DSJ-7]` — `assume_disjoint` gives the pair without comparing; the caller

@@ -1,5 +1,5 @@
 #$ test: compile-fail
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ error[E2020]: cannot downcast `A` to unrelated class `B`
 
 class A:

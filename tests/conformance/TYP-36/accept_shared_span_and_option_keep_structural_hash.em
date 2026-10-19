@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: HASH-1, TYP-36, TYP-13, SPN-1, SPN-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: true true
 #$ stdout: true true
 # Shared spans retain Hash when their element type does. The generic bound

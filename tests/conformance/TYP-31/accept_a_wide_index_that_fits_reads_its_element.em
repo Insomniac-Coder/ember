@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-31, TYP-1, STD-19
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout:
 #$ 30 20 30 10
 #$ [10, 9, 20, 30]

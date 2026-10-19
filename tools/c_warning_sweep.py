@@ -77,7 +77,7 @@ def sweep_one(cc, program, work, env):
     if wanted is not None and cc not in wanted:
         return program, None
     c_file = work / (program.relative_to(ROOT).as_posix().replace('/', '__') + '.c')
-    emitted = subprocess.run([str(EMBER), 'build', str(program), '--emit', 'c', '--profile', 'release', '--cc', cc],
+    emitted = subprocess.run([str(EMBER), 'build', str(program), '--emit', 'c', '--profile', 'development', '--cc', cc],
                              capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=ROOT, env=env)
     if emitted.returncode != 0 or not emitted.stdout.strip():
         return program, None

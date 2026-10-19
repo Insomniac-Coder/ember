@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXC-8, EXC-9, EXC-12, EXC-13, EXC-14, TST-15
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 3
 
 # `[EXC-13](2)` — the receiver is an invariant local. Copies made before the

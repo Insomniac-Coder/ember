@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-38, TXT-9
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 4 10
 #$ 2 bob
 #$ 0

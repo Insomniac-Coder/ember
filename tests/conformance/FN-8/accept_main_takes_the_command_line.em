@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FN-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ args: héllo
 #$ args: two words
 #$ args: --dash

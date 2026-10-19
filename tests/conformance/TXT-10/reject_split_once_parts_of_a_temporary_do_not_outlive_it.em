@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: TXT-10, BRW-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 
 fn text() -> String:
     return "left:right"

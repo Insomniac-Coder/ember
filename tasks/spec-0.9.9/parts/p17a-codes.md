@@ -182,6 +182,7 @@ reused; retired codes are listed with the reason.
 | `E5065` | `Shared`/`Weak` and `CppShared`/`CppWeak` do not interconvert | `[WK-14]` |
 | `E5066` | an overlay marks a C++ function both `noexcept` and throwing | `[FFI-43]` |
 | `E5067` | an overlay that states facts is not declared `unsafe overlay` | `[GRM-35]`, `[TIER-1]` |
+| `E5068` | one live foreign object adopted twice | `[FFI-36b]` |
 | `E5090` | inline assembly is not supported by the C backend | `[UNS-6]` |
 | `E6001` | comptime evaluation exceeded its limits, or a constant's value depends on itself | `[CT-3]` |
 | `E6004` | panic during compile-time evaluation | `[CT-7]` |
@@ -207,7 +208,6 @@ reused; retired codes are listed with the reason.
 | `E9021` | C++ standard library and CRT heap could not be determined | `[BLD-FFI-1b]` |
 | `E9030` | hot reload refused | `[HR-18]` |
 | `E9031` | invalid `reload` value | `[MAN-7]` |
-| `E9033` | `reload` is forbidden in `shipping` | `[PRF-2]` |
 | `E9034` | invalid `max_instantiations` value | `[MONO-3]` |
 | `E9035` | packages in one process disagree about the object-header layout | `[HR-12a]` |
 | `E9036` | a reloadable package may not link the runtime statically | `[HR-29]` |
@@ -268,6 +268,7 @@ reused; retired codes are listed with the reason.
 | `E6002` | compile-time evaluation is deterministic by construction (`[CT-4]`) |
 | `E9012` | reserved |
 | `E9032` | reserved |
+| `E9033` | a `release` build ignores `reload` with a note (`[MAN-7]`, ODR-118) |
 | `L3018` | the reason category is part of the `# SAFETY(…):` note and optional (`[UNS-8]`) |
 | `L3019` | an object is never deinitialised before its last owner ends (`[RC-3]`, ODR-063) |
 | `W0001` | a dangling doc comment is discarded in silence (`[LEX-11]`) |

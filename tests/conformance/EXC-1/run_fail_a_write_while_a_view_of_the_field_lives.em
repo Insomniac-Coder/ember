@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: EXC-1, EXC-18, EXC-19
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: exclusivity violation: write access to Bag.items while a read access to Bag.items is active
 # `[EXC-1]` (D-202) — a view of a class field is a long-term read access to the
 # field until its last use. A push through an aliasing handle would reallocate

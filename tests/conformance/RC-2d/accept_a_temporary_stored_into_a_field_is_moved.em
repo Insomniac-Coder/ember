@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RC-2d, RC-2, OWN-5, RC-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 0
 #$ assert-c-count: contains("ember_retain((ember_obj_header*)") == 0
 #$ stdout: drop 5

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXP-9, TYP-23
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: true false false true
 #$ true false false true
 #$ false true

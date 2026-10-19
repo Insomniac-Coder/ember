@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-10, LEX-16
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 512 1099511627776 2 -1 8 12
 # `[TYP-10]` — a shift's amount may be any integer type and does not choose
 # the shifted value's: an untyped literal on the left takes its type from

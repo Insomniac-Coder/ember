@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: RNG-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow
 # `[RNG-4]` (ADR-142) — every function's stores into a field's lists count:
 # `top_up` pushes a value near `i32`'s top, so the sum keeps its check.

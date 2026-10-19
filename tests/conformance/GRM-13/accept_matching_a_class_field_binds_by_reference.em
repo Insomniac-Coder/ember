@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: GRM-13, EXC-18
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: ann
 #$ stdout: Some('ann') 3
 # `[GRM-13]` — matching a place that is not consumed binds its non-`Copy`

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: IFC-1, TYP-16
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c: contains(em_Payload_i32_project__)
 
 interface Project:

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-3b, TYP-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout:
 #$ 9 49 121 225 361 529 729 961 1225 1521
 #$ 15:25 22:144 29:361 36:676

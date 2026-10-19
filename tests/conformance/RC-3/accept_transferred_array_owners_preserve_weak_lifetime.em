@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RC-3, RC-1, DRP-2, WK-11, WK-12, WK-14
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: live 7
 #$ stdout: drop 7
 #$ stdout: cleared

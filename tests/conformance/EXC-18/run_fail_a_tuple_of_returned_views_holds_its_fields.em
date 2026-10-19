@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: EXC-18, EXC-1, EXC-15
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: ann lee
 #$ panics: exclusivity violation: write access to Person.first while a read access to Person.first is active
 # `[EXC-18]` — views returned together (a tuple of them) carry their fields'

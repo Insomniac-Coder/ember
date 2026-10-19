@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-19, TYP-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout:
 #$ 8 18 -5 5
 #$ -6 0 42 -42

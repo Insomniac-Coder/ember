@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-10, FFI-9
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 42
 #$ stdout: 9000000000
 #$ stdout: 17

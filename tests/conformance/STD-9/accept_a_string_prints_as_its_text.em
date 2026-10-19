@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-9, TXT-9
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: abc
 #$ built
 # D-191 — a `String` argument prints its text, alone as among several.

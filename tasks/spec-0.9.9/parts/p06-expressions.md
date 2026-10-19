@@ -347,7 +347,7 @@ class Door:
   result (`W2016` if its argument calls a function with effects other than `Panic`).
 * `panic(msg)`, `todo()`, `unreachable()` have type `Never`.
 * `[PAN-1]` A panic prints `panic at <file>:<line>:<col>: <message>` (and a backtrace outside
-  `shipping`) to standard error and calls `abort()`. There is no unwinding in this version; `defer`
+  `release`) to standard error and calls `abort()`. There is no unwinding in this version; `defer`
   blocks and destructors do not run on panic.
 * `[PAN-2]` Formatting a panic message allocates only for an f-string; `panic("literal")` and
   `panic(some_str)` are `@noalloc`.

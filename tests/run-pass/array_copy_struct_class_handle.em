@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: OWN-7, RC-1, RC-2, EXC-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c-count: contains("ember_retain_plain((ember_obj_header*)") == 1
 #$ assert-c-count: contains("ember_retain((ember_obj_header*)") == 0
 #$ stdout: 7

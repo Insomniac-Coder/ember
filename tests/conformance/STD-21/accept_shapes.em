@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-21, STD-28, EXP-9
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: Vec3(x=1.0, y=1.0, z=1.0) Vec3(x=1.0, y=1.0, z=1.0) true true false true false
 #$ Aabb(min=Vec3(x=-1.0, y=0.0, z=0.0), max=Vec3(x=2.0, y=2.0, z=4.0)) Aabb(min=Vec3(x=0.0, y=0.0, z=0.0), max=Vec3(x=4.0, y=4.0, z=4.0)) true
 #$ true false true false true

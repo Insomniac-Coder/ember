@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXC-5, EXC-15, CLS-7
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 3 [1, 2, 3]
 # `[EXC-5]` — a `mut self` method calling another `mut self` method on `self`
 # reborrows the write access its caller holds and checks nothing again. It

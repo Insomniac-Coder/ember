@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-15, TXT-2, TXT-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: Ember
 #$ stdout: invalid
 

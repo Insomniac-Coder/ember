@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: GRM-13, EXC-18, EXC-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ panics: exclusivity violation: write access to Bag.name while a read access to Bag.name is active
 # `[EXC-18]` — a `match` binding into a class field holds the field's read
 # access while it lives: clearing the field through another handle meanwhile

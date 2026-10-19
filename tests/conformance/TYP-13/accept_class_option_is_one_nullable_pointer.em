@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-13, OBJ-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 8 16
 #$ stdout: 7
 #$ stdout: none

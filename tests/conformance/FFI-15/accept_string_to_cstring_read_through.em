@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-15, TXT-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 6
 
 import std.ffi

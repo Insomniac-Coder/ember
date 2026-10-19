@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-16, IFC-1, CLS-4, DSP-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ assert-c: contains(em_Child_bool_value)
 #$ assert-c: contains(->slot0)

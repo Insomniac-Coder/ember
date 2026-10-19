@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: BRW-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ 43
 #$ assert-c: contains(int32_t em_add_by_value(int32_t _1, int32_t _2))

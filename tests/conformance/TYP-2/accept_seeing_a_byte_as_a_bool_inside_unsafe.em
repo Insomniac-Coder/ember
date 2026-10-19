@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-2
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: true false
 # `[TYP-2]` — inside `unsafe` a byte may be seen as a `bool`, and the programmer answers for its
 # being 0 or 1: these two are.

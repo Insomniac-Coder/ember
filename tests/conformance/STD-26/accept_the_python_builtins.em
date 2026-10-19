@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-26, MOD-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 5 14 24
 #$ true false false true
 #$ 3 7 -2 9

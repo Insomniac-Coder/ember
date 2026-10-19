@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: OPT-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: index 1 is out of bounds for a length of 0
 # Dropping `e` at the end of each pass runs `Emptier.drop`, which clears
 # `bag.items`: the loop keeps every check and panics on the second pass.

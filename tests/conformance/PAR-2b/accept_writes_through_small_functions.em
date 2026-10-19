@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: PAR-2b, PAR-2
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: [0, 3, 6, 9, 12, 15, 18, 21]
 #$ stdout: [0, 4, 7, 10, 13, 16, 19, 22]
 # `[PAR-2b]` — the analysis reads through a call to a function the inline header holds as if it

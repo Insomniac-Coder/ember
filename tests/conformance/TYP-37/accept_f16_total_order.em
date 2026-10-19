@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-37
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: [-inf, -1.0, -0.0, 0.0, 2.5, 3.0, nan]
 #$ -2.25 1.5 2.25 1.0
 #$ true false true

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-1, TXT-10, TYP-31
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: [0, 1, 2, 4, 7, 11] [0, 1, 2, 4, 7, 11]
 #$ stdout: [97, 0, 233, 19990, 128512, 1114111]
 #$ stdout: 2 0

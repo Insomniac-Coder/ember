@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: TYP-28
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: division by zero
 # A zero divisor panics for `//` as for `%`.
 

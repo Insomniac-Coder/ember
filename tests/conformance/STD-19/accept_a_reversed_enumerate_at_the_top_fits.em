@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-19, CTL-3b
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 9223372036854775807 2
 #$ stdout: 9223372036854775806 1
 #$ stdout: [(9223372036854775807, 2), (9223372036854775806, 1)]

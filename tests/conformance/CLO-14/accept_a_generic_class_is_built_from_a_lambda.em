@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLO-14, CLS-10, CLO-2
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 10
 #$ stdout: 7
 # `[CLO-14]` (D-546) — a generic class whose type argument is a closure's type

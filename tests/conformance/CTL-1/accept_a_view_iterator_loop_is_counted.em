@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-1, CTL-3, CTL-4, SPN-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c-count: contains(".index = _") == 1
 #$ stdout:
 #$ 510

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: DSJ-9
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: apart [1, 2] [3, 4] [5, 6]
 #$ overlap [1, 2] [3, 4] [4, 5, 6]
 

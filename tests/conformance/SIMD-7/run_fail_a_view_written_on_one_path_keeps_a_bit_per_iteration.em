@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: SIMD-7
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow in `-`
 #$ assert-c: contains(" << ")
 # `xs[i]` is written in the first `if` and read in the second: not every

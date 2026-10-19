@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-21, TYP-40, IFC-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: add_assign
 #$ 1.5 2.5 -2.5 -3.5
 #$ 3.0 5.0

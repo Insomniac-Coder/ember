@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLS-1, OBJ-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1
 #$ stdout: 0
 #$ stdout: 1

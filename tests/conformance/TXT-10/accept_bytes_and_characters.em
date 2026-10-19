@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TXT-10, TXT-11
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 6 5 false
 #$ 6 5 false true
 # `len()` counts bytes and `char_count()` characters (Python's `len`); a

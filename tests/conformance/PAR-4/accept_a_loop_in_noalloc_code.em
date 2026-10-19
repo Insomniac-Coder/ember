@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: PAR-4, PAR-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 20000
 # `[PAR-4]` — a `@parallel` loop allocates nothing: its record is in the caller's frame, its helper
 # jobs fit their slots, and its reductions' window is the caller's too; so it is `@noalloc`-clean.

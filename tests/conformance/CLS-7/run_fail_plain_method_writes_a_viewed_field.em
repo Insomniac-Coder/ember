@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: CLS-7, EXC-1, EXC-16, EXC-19
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: exclusivity violation: write access to Bag.items while a read access to Bag.items is active
 # A plain method may write a field, but it must meet the field's live read access.
 class Bag:

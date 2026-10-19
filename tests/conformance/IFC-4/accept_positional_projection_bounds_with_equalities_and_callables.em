@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: IFC-4, TYP-17, TYP-18, CLO-14, GRM-8c
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 12
 # D-540: the positional argument introduces a projection before equality and
 # callable payloads are resolved. All three references must name the same type.

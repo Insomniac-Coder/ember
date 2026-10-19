@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-22, IFC-1, HEAP-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 41
 #$ stdout: 41
 #$ stdout: 42

@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: TYP-16, IFC-1, CLS-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ error[E2110]: override of a method that is not virtual
 
 open class Base[T]:

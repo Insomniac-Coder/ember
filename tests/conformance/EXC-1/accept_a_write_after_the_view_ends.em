@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXC-1, EXC-18, EXC-19
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: [2, 3]
 #$ stdout: [1, 2, 3, 4]
 # `[EXC-18]` — a view's access to its field ends at the view's last use, so a

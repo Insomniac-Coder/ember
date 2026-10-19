@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: CLS-7, EXC-16, EXC-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ panics: exclusivity violation: write access to Bag.items while a read access to Bag.items is active
 # `[EXC-16]` — assigning a class field through another handle is a write
 # access to it: while a view of the field lives, it panics, where it would

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: ECS-2, SOA-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: true true
 #$ true false
 #$ [Entity(bits=0), Entity(bits=2), Entity(bits=1)]

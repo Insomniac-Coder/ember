@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: GRM-25, EXP-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: true abcd
 #$ false ab
 #$ true m

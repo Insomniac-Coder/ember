@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FN-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: hello, ann!
 #$ hi, bo!
 #$ hello, cy?

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-9, TYP-9b, CG-C-11, ATT-6
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c: contains("/* module: accept_a_relaxed_function_is_built_in_its_own_unit, its `contract` functions ([CG-C-11]) */")
 #$ assert-c: contains("/* module: accept_a_relaxed_function_is_built_in_its_own_unit, its `fastmath` functions ([CG-C-11]) */")
 #$ assert-c: contains("#pragma STDC FP_CONTRACT ON")

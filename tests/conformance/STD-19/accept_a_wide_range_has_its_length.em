@@ -4,7 +4,7 @@
 #$ stdout: 18446744073709551615
 #$ stdout: 18446744073709551616
 #$ stdout: 340282366920938463463374607431768211456
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 # G8-4 (the owner's design, 0.9.10) — every range has its length: a `..` range of 64-bit numbers
 # counts in `u64`, a `..=` one in `u128`, and a `..=` range of 128-bit numbers in `i256`, the
 # 256-bit count. It panicked before, "a range of more than int.MAX values has no length".

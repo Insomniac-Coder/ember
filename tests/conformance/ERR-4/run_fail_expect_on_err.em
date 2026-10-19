@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: ERR-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: reading the answer: `x` is not a number
 # `[ERR-4]` — `expect` on an `Err` panics with its message and the error's
 # text.

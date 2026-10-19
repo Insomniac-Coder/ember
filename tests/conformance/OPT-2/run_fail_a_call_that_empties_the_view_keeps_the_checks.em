@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: OPT-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: index 1 is out of bounds for a length of 0
 # `empty` clears `bag.items` through its handle, which its summary shows, so
 # the loop keeps every check and panics on the second pass, as it always did.

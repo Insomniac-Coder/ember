@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-19, CTL-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: [30, 20, 10] [70, 60, 50] [70, 40, 10]
 #$ stdout: [(30, 3), (20, 2), (10, 1)]
 #$ stdout: [3, 2, 1, 20, 10]

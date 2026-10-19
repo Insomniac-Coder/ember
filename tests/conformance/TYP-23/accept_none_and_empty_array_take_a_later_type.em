@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-23
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 9 true
 #$ 4 6
 #$ 9 ann

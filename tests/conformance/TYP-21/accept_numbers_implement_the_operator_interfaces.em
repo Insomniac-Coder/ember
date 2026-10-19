@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-21, TYP-17
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 7 5.0 -7 -6 3 1 4 12 5 2.5
 #$ 16 12 7 0.75
 # ODR-040 — each number type implements the interface of each operator it

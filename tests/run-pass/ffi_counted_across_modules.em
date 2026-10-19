@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-10, FFI-11, MOD-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 5
 
 from modules.ffi_counted import counted

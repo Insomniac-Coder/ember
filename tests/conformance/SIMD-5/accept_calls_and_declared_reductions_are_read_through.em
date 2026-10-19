@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-5, SIMD-2, PAR-2b
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: [4, 8, 12, 16]
 #$ 1.5
 #$ [3, 7]

@@ -5017,6 +5017,46 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-205 — The owner's rulings built: the profiles renamed, reload in `release`, `@inline`, `E5068`, `inout_count`'s tuple, references in tuples, `Box`es and closures
+
+2026-10-19. Specification 0.9.10_Hardened_13 records ODR-117 to ODR-126 (ADR-204's list, as the
+owner ruled it; `tasks/85/owner-answers.md`). Built:
+* **ODR-117, the profiles** are `debug`, `development` and `release`: the old `release` (optimisation
+  2, line information, symbols, thin LTO) is `development`, the old `shipping` (optimisation 3,
+  stripped, full LTO) is `release`, the build users get. `Profile::{Debug, Development, Release}`,
+  `--profile debug|development|release`, the C define `EMBER_RELEASE` (was `EMBER_SHIPPING`), the
+  inspect directories, and every test's `#$ profiles:` line (the old names mapped in one pass). The
+  benchmarks and the C warning sweep keep the settings they had: `--profile development`. Records
+  written before today keep the old names.
+* **ODR-118:** a `release` build ignores `[build] reload` and `--reload` and prints
+  `note: hot reload is off in release builds [MAN-7]`, building the ordinary program; `ember run
+  --hot --profile release` runs it as `ember run` does. `E9033` is retired (its page says so).
+* **ODR-119:** `@inline` no longer keeps a function out of the reload plan: in a hot-reload build a
+  reloadable function is never inlined (the backend already left reloadable bodies out of the
+  inline set); `HR-5/accept_an_inline_function_is_still_reloadable`.
+* **ODR-123, `E5068`:** a forward pass over each body's MIR finds an `adopt` of a local that an
+  earlier `adopt` of the same local reaches with no write to it between (two distinct calls; one
+  call met again round a loop is left to the run-time check). The run-time test now adopts two
+  locals holding one pointer, which the compile-time check does not follow.
+* **ODR-125:** an `inout_count` function with a plain C result returns `(result, count)`; one whose
+  result has an ownership or length contract is still `E0900`.
+* **ODR-126:** the image describes what a tuple, a `Box` (and a niche `Option` of one) and a
+  closure's captured state hold with tables of its own (`ember_rl_field` gained `layout` and
+  `inner`; kinds `TUPLE`, `BOX`, `CALLABLE`; a reloadable image's closure descriptors carry a
+  `captures` shape), and the runtime's reference walk follows them; structs and payload enums met
+  inside them are described by layout too, so the walk never reads a value by another image's
+  schema of the same name. A tuple's and a pointer's schema hash now include what they hold. An
+  `Array` of `Array`s is followed the same way. Still not followed: `dyn` values (the test refuses
+  through a `Box[dyn Speak]`). The reload protocol's number is unchanged: the field layout changed
+  within protocol 1, before any release.
+* **Found on the way and fixed:** D-696 (a closure bound to a local and then stored did not retain
+  what it captured), D-697 (a class with a `Box[dyn I]` field did not compile in debug), D-698 (a
+  field write through a moved class handle was accepted, and the object released twice). Open:
+  D-699 (`fn drop(self)` on a non-`@sync` class compiles and panics; refusing it needs a code).
+* **Still to do from ADR-204:** B3 (`Retained.ptr()` typed, with a pointer type for class objects),
+  then A1 (checkpoint stack maps). The owner did not ask to see either design first (ADR-204's
+  heading below said so; that was Claude's step, not the owner's).
+
 ## ADR-204 — The owner's answers to the helpers' questions (applied after the merge)
 
 2026-10-18/19. The helpers' questions were put to the owner one at a time; the record is
@@ -5025,7 +5065,7 @@ unbuilt work was recorded as waiting, and only real choices went to the owner (t
 B's question 5, which was a dependency on C header import raised as a question). To do, in order:
 * **Bugs:** D-692 (a `static` of function type called by name), D-690 (`mut self` calling a shared
   method on `self`).
-* **Specification changes, shown to the owner before building:** `E5059` for one object adopted twice
+* **Specification changes:** `E5059` for one object adopted twice
   (`[FFI-36b]`); `Retained.ptr()` a typed pointer, with a pointer type for class objects
   (`[FFI-23]`); `[ERR-6]`'s spelling `@ffi(status=E, ok=X, error=Name)` with the error named in the
   label (FFI-16 aligned, applied when the status feature is built); an `inout_count` call gives back

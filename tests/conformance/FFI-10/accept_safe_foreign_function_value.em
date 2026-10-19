@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-10, FFI-9, FN-6
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 
 unsafe extern "C":

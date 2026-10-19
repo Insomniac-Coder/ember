@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 8 50 144 1267650600228229401496703205376 -64
 #$ -9223372036854775808 2 8
 # D-308 — `[TYP-10]`: `a << n` and `a >> n` take an `n` of any integer type,

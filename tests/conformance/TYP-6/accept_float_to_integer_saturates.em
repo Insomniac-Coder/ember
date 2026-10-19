@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-6
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 2147483647
 #$ -2147483648
 #$ 0

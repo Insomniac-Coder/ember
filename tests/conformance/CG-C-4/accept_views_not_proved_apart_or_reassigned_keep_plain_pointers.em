@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CG-C-4, SIMD-3
-#$ profiles: release
+#$ profiles: development
 #$ stdout: 1.0 3.0 5.0
 #$ 3.0
 #$ assert-c: !contains("* restrict ")

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: IFC-4, TYP-17, TYP-18
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 7 text
 # D-540: an interface's positional argument may be the associated type of an
 # earlier parameter. Its hidden projection must exist before the bound is read.

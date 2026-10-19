@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CT-1, CT-4, STR-7, TYP-8, TYP-10, TYP-29
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 0 640 480 2 10000 10.0
 #$ (-4, 1) 131 -16 0.33333334 0.3333333333333333 0.3333 -9223372036854775807
 #$ true true 3 -4.0 Size(w=640, h=480)

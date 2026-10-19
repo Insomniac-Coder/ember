@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CORO-1, CORO-3, MOD-2
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 1 2
 #$ counted 2
 #$ 3

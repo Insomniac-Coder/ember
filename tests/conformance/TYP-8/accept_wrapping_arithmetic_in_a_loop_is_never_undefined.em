@@ -1,13 +1,13 @@
 #$ test: run-pass
 #$ rules: TYP-8, CG-C-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 200000 59999700000
 #$ stdout: -2147483648 -9223372036854775808 24464 -32768
 # D-446 — wrapping arithmetic is two's-complement and never undefined
 # behaviour in the generated C (`[TYP-8]`, `[CG-C-1]`). A wrapping signed
 # `*` reached C as a signed multiply: gcc -O2 took `key(i)` in a loop as never
 # overflowing and computed other keys than the same call elsewhere, so the
-# lookups below missed (an overflow panic in release, a hang in shipping).
+# lookups below missed (an overflow panic in development, a hang in release).
 
 @overflow(wrap)
 fn key(i: int) -> int:

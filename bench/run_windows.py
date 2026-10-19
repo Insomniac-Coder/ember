@@ -57,11 +57,11 @@ def programs(only=''):
 
 def build_ember(program, cc, out):
     target = out / 'ember' / program.stem
-    result = subprocess.run([str(EMBER), 'build', str(program), '--profile', 'release', '--cc', cc,
+    result = subprocess.run([str(EMBER), 'build', str(program), '--profile', 'development', '--cc', cc,
                              '--out-dir', str(target)], capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
         sys.exit(f'ember build failed: {program.name}\n{result.stdout}{result.stderr}')
-    return target / 'release' / 'bin' / f'{program.stem}.exe'
+    return target / 'development' / 'bin' / f'{program.stem}.exe'
 
 
 def build_twin(source, cc, out):

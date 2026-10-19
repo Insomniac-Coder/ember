@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXC-18, LT-1, BRW-8, EXC-19
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: ann [1] ann ann
 #$ stdout: bob
 # `[LT-1]` rule 1 — a method returning a view borrows its receiver, a class handle

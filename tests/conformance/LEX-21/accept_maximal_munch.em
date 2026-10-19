@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: LEX-21, TYP-28
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 3 3 3.5
 # Tokenisation is maximal munch: `//=` before `//` before `/`.
 

@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: TYP-25
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ error[E2020]: no parameter `missing`
 #$ error[E1030]: parameter `left` is given twice
 #$ error[E2020]: positional arguments must come before named ones

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-19
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout:
 #$ [(0, 4), (1, 9), (2, 2), (3, 9)]
 #$ 24 Some(9) 4 3 true

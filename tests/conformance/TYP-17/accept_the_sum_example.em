@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-17, TYP-21, IFC-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 6 0.75 V(x=4, y=6)
 #$ -5 2.5 V(x=-1, y=-2)
 # `[TYP-17]`'s own example: a bound that binds an associated type. The numbers

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLS-1, CLS-2, CLS-3, CLS-6, OWN-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c: contains(ember_obj_new(&em_ti_Defaults))
 #$ assert-c: contains(em_Defaults_init)
 #$ stdout: true

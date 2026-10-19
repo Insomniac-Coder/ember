@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: PAN-1, FN-10, MOD-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1
 #$ positive
 #$ 4

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: LEX-19, TYP-39
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: [    [1, 2]] [[1, 2]   |] [[1, ] [[1, 2]]
 #$ [ Some('hi') ]
 # `[LEX-19]` follows Python: `!r` or `!s` makes a collection text, and the

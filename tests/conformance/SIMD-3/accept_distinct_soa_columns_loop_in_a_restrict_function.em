@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-3, SOA-2, DSJ-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: [1.5, 2.5, 3.5, 4.5]
 # `[SIMD-3]` (c) — distinct `SoA` columns are apart: the loop over `ps.x` and `ps.v` runs in a
 # function of its own whose two column pointers are `restrict`, for every C compiler (the milestone

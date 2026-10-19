@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-17, TYP-24, IFC-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: [2, 1, 0]
 #$ [2, 1, 0] [9, 2]
 # D-473 — a type that implements `Iterator` with the `next` of its own

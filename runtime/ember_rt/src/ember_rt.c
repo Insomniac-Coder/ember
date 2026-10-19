@@ -2010,7 +2010,7 @@ uint32_t ember_ffi_thread(void) {
 }
 
 void ember_rt_check_main_thread(void) {
-    /* [FFI-33c] This is mandatory even in shipping builds. Shutdown revokes
+    /* [FFI-33c] This is mandatory even in release builds. Shutdown revokes
      * all prior main identities before a later init can establish a new one. */
     if (g_main_generation != object_load_u32(&g_thread_generation)) {
         static const char message[] = "export requires the module initialization thread";
@@ -9865,6 +9865,22 @@ static bool rl_note_reference(ember_obj_header** slot, bool strong, int mode) {
 
 static bool rl_walk_value(const ember_rl_field* shape, unsigned char* at, int mode, bool old_image, const ember_rl_manifest* next, int depth);
 
+/* An owned callable value and its descriptor as a reloadable image lays them out ([CLO-10]): the
+ * descriptor's `captures` describes the captured state, held in the value's three words when it
+ * fits them and otherwise in an allocation the first word points at. */
+typedef struct rl_fn_descriptor {
+    void (*native)(void);
+    void (*c)(void);
+    void (*drop)(void*);
+    const ember_rl_field* captures;
+} rl_fn_descriptor;
+
+typedef struct rl_fn_value {
+    void (*native)(void);
+    const rl_fn_descriptor* d;
+    void* w[3];
+} rl_fn_value;
+
 /* Every reference a value of `type` holds at `value`, by its schema. */
 static bool rl_walk_fields(const ember_rl_type* type, unsigned char* value, int mode, bool old_image, const ember_rl_manifest* next, int depth) {
     if (type == NULL || depth > 32) {
@@ -9889,8 +9905,9 @@ static bool rl_walk_value(const ember_rl_field* shape, unsigned char* at, int mo
     case EMBER_RL_KIND_STRUCT:
         return rl_walk_fields(old_image ? rl_old_schema(shape->type_name) : rl_new_schema(next, shape->type_name), at, mode, old_image, next, depth + 1);
     case EMBER_RL_KIND_PAYLOAD: {
-        /* The payload of the variant the tag names. */
-        const ember_rl_type* type = old_image ? rl_old_schema(shape->type_name) : rl_new_schema(next, shape->type_name);
+        /* The payload of the variant the tag names, by the image's own description when it gave one. */
+        const ember_rl_type* type = shape->layout != NULL ? shape->layout
+            : old_image ? rl_old_schema(shape->type_name) : rl_new_schema(next, shape->type_name);
         if (type == NULL || type->field_count == 0 || depth > 32) {
             return true;
         }
@@ -9910,15 +9927,34 @@ static bool rl_walk_value(const ember_rl_field* shape, unsigned char* at, int mo
         if (shape->element_kind == EMBER_RL_KIND_PLAIN || shape->element_kind == EMBER_RL_KIND_OPAQUE || vec->ptr == NULL) {
             return true;
         }
-        ember_rl_field element = *shape;
-        element.kind = shape->element_kind;
-        element.type_name = shape->element_type != NULL ? shape->element_type : "";
+        ember_rl_field element = shape->inner != NULL ? *shape->inner : *shape;
+        if (shape->inner == NULL) {
+            element.kind = shape->element_kind;
+            element.type_name = shape->element_type != NULL ? shape->element_type : "";
+        }
         for (size_t index = 0; index < vec->len; ++index) {
             if (!rl_walk_value(&element, (unsigned char*)vec->ptr + index * shape->element_size, mode, old_image, next, depth + 1)) {
                 return false;
             }
         }
         return true;
+    }
+    case EMBER_RL_KIND_TUPLE:
+        return shape->layout == NULL || rl_walk_fields(shape->layout, at, mode, old_image, next, depth + 1);
+    case EMBER_RL_KIND_BOX: {
+        void* pointee;
+        memcpy(&pointee, at, sizeof pointee);
+        return pointee == NULL || shape->inner == NULL || depth > 32
+            || rl_walk_value(shape->inner, (unsigned char*)pointee, mode, old_image, next, depth + 1);
+    }
+    case EMBER_RL_KIND_CALLABLE: {
+        rl_fn_value value;
+        memcpy(&value, at, sizeof value);
+        if (value.d == NULL || value.d->captures == NULL || depth > 32) {
+            return true;
+        }
+        unsigned char* state = value.d->captures->size <= sizeof value.w ? at + offsetof(rl_fn_value, w) : (unsigned char*)value.w[0];
+        return rl_walk_value(value.d->captures, state, mode, old_image, next, depth + 1);
     }
     default:
         return true;

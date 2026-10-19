@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: IFC-3, TYP-17
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 2.5 [1.5, 3.5]
 # ODR-042 — a bound brings its parents: `C: IndexMut[int]` reads through
 # `Index[int]` too, and `Output = f32` names the parent's `Output`.

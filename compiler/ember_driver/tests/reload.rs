@@ -58,27 +58,32 @@ fn reload_takes_four_values() {
     assert!(checked.stderr.contains(MANIFEST), "the error does not point at the manifest:\n{}", checked.stderr);
 }
 
-/// `[PRF-2]`, `[MAN-7]` — hot reload is a build mode admitted in `debug` and `release`: a package
-/// asking for it is checked in both, and `shipping` refuses it with `E9033`, whether the manifest or
-/// `ember build --reload` asks.
+/// `[PRF-2]`, `[MAN-7]` — hot reload is a build mode of `debug` and `development`: a package asking
+/// for it is checked in both. A `release` build ignores it and says so (ODR-118), whether the manifest
+/// or `ember build --reload` asks, and builds the ordinary program.
 #[test]
-fn reload_is_forbidden_in_shipping() {
+fn a_release_build_ignores_reload_with_a_note() {
     let root = workspace_root();
-    let (_package, file) = package("reload-shipping", "[build]\nreload = \"all\"\n", "fn main():\n    pass\n");
+    let (_package, file) = package("reload-release", "[build]\nreload = \"all\"\n", "fn main():\n    pass\n");
     let file = file.to_string_lossy().into_owned();
-    for profile in ["debug", "release"] {
+    for profile in ["debug", "development"] {
         let checked = ember(&["check", "--profile", profile, &file], &root);
         assert_eq!(checked.exit, 0, "[PRF-2] reload was refused in `{profile}`:\n{}", checked.stderr);
+        assert!(!checked.stderr.contains("hot reload is off"), "{profile}: {}", checked.stderr);
     }
-    let checked = ember(&["check", "--profile", "shipping", &file], &root);
-    assert_ne!(checked.exit, 0, "[PRF-2] reload was accepted in `shipping`");
-    assert!(checked.stderr.contains("error[E9033]") && checked.stderr.contains("`shipping` does not admit"), "{}", checked.stderr);
-    assert!(checked.stderr.contains(MANIFEST), "the error does not point at the manifest:\n{}", checked.stderr);
+    let checked = ember(&["check", "--profile", "release", &file], &root);
+    assert_eq!(checked.exit, 0, "[MAN-7] a release build refused `reload`:\n{}", checked.stderr);
+    assert!(checked.stderr.contains("note: hot reload is off in release builds"), "{}", checked.stderr);
 
-    let (_plain, plain) = package("reload-flag-shipping", "[package]\nname = \"p\"\n", "fn main():\n    pass\n");
-    let built = ember(&["build", "--reload", "--profile", "shipping", &plain.to_string_lossy()], &root);
-    assert_ne!(built.exit, 0, "[PRF-2] `ember build --reload` was accepted in `shipping`");
-    assert!(built.stderr.contains("error[E9033]"), "{}", built.stderr);
+    let (plain_package, plain) = package("reload-flag-release", "[package]\nname = \"p\"\n", "fn main():\n    pass\n");
+    let out = plain_package.join("out");
+    let built = ember(&["build", "--reload", "--profile", "release", &plain.to_string_lossy(), "--out-dir", &out.to_string_lossy()], &root);
+    assert_eq!(built.exit, 0, "[MAN-7] `ember build --reload` failed in release:\n{}", built.stderr);
+    assert!(built.stderr.contains("note: hot reload is off in release builds"), "{}", built.stderr);
+    let bin = out.join("release").join("bin");
+    let names: Vec<String> = std::fs::read_dir(&bin).map(|entries| entries.filter_map(|entry| entry.ok()).map(|entry| entry.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+    // A reloadable build puts the shared runtime and the image, both shared libraries, beside the host.
+    assert!(!names.is_empty() && names.iter().all(|name| !name.ends_with(".dll") && !name.ends_with(".so")), "a release build made a reloadable program: {names:?}");
 }
 
 /// A reloadable program's build directory: `<out>/debug/bin`, holding the host, the shared runtime
@@ -198,6 +203,37 @@ fn a_noreload_body_change_is_refused_whole() {
     assert!(run.stderr.contains("refused") && run.stderr.contains(&named), "{}", run.stderr);
 }
 
+/// `[HR-15]` — a closure's captured state is followed (ODR-126). A `Mote`'s only reference is the
+/// one a closure captured, held in a `Ticker`'s field (the `Mote` keeps the `Ticker`, so the two
+/// outlive the frame that made them). An edit that grows `Mote` moves the instance, and the runtime
+/// finds and rewrites the reference through the closure's descriptor, which says what its captured
+/// state holds. `[HR-15a]` — held in a `Box[dyn Speak]`, whose value's type the image does not know,
+/// the reference cannot be found: plan refuses, saying how many it could not follow, and the old
+/// code runs on.
+#[test]
+fn a_closure_holding_an_instance_follows_it_when_it_moves() {
+    let tied = PARTICLES
+        .replace("@export(\"game_frame\")", "class Mote:\n    n: int = 0\n    keep: Option[Ticker] = None\n\n\
+                  class Ticker:\n    f: fn() -> int\n\n\
+                  fn tie():\n    m = Mote()\n    step = owned fn() -> int:\n        m.n = m.n + 1\n        return m.n\n    \
+                  m.keep = Some(Ticker(step))\n\n@export(\"game_frame\")")
+        .replace("            for k in 0..3:\n", "            tie()\n            for k in 0..3:\n");
+    let grow = |source: &str| source.replace("    n: int = 0\n", "    n: int = 0\n    more: int = 8\n");
+    let run = host_run("reload-closure-moves", &tied, &[&grow(&tied)], 3);
+    assert_eq!(run.stdout, "3\napplied, 1 migrated\n6\n9\n", "{}", run.stderr);
+
+    let boxed = PARTICLES
+        .replace("@export(\"game_frame\")", "interface Speak:\n    fn speak(self) -> int\n\n\
+                  class Mote implements Speak:\n    n: int = 0\n    keep: Option[Holder] = None\n\n    \
+                  fn speak(self) -> int:\n        return self.n\n\n\
+                  class Holder:\n    s: Box[dyn Speak]\n\n\
+                  fn tie():\n    m = Mote()\n    keeper = m\n    boxed: Box[dyn Speak] = Box(m)\n    keeper.keep = Some(Holder(boxed))\n\n@export(\"game_frame\")")
+        .replace("            for k in 0..3:\n", "            tie()\n            for k in 0..3:\n");
+    let run = host_run("reload-dyn-cannot-move", &boxed, &[&grow(&boxed)], 2);
+    assert!(run.stdout.contains("an instance of `Mote` must move (its new size does not fit), but 1 of its 1 references are held where the runtime cannot follow them"), "{}{}", run.stdout, run.stderr);
+    assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
+}
+
 /// `[HR-12]`, `[HR-14]` — a reloadable build registers every instance in the live-instance list, so
 /// a reload that removes a class while instances of it live is refused, naming the class and how
 /// many there are; the old code runs on with its instances.
@@ -284,10 +320,10 @@ fn a_running_thread_holds_the_reload_back() {
     assert_eq!(run.stdout, "1\n2\ntrue\n", "{}", run.stderr);
 }
 
-/// `[HR-27]` — a `shipping` build is the same whether or not the source uses any reload attribute:
+/// `[HR-27]` — a `release` build is the same whether or not the source uses any reload attribute:
 /// with each attribute in place of a comment, so no line moves, the C is byte for byte the same.
 #[test]
-fn shipping_is_the_same_with_reload_attributes() {
+fn release_is_the_same_with_reload_attributes() {
     let root = workspace_root();
     let plain = "# the module's reload default would go here\n\n# an attribute would go here\nfn tuned(x: int) -> int:\n    return x * 3\n\n\
                  # an attribute would go here\nfn fixed(x: int) -> int:\n    return x + 1\n\n\
@@ -297,16 +333,16 @@ fn shipping_is_the_same_with_reload_attributes() {
         .replacen("# an attribute would go here", "@reloadable", 1)
         .replacen("# an attribute would go here", "@noreload", 1)
         .replacen("# an attribute would go here", "@reinit_on_reload", 1);
-    let (package, file) = package("reload-shipping-identical", "[package]\nname = \"p\"\n", plain);
+    let (package, file) = package("reload-release-identical", "[package]\nname = \"p\"\n", plain);
     let file_arg = file.to_string_lossy().into_owned();
-    let without = ember(&["build", &file_arg, "--emit", "c", "--profile", "shipping"], &root);
+    let without = ember(&["build", &file_arg, "--emit", "c", "--profile", "release"], &root);
     assert_eq!(without.exit, 0, "{}", without.stderr);
     std::fs::write(&file, &attributed).expect("the source is writable");
-    let with = ember(&["build", &file_arg, "--emit", "c", "--profile", "shipping"], &root);
+    let with = ember(&["build", &file_arg, "--emit", "c", "--profile", "release"], &root);
     assert_eq!(with.exit, 0, "{}", with.stderr);
     drop(package);
     assert!(without.stdout.len() > 1000, "no C was emitted");
-    assert!(without.stdout == with.stdout, "[HR-27] the reload attributes changed a shipping build's C");
+    assert!(without.stdout == with.stdout, "[HR-27] the reload attributes changed a release build's C");
 }
 
 /// `[HR-28]` — `ember inspect --safety` reports, beside each function's checks, whether a call
@@ -566,12 +602,14 @@ fn an_enum_static_keeps_its_variant() {
     assert!(run.stdout.ends_with("1010\n"), "the old code did not run on: {}", run.stdout);
 }
 
-/// `[HR-15]`, `[HR-15a]`, `[HR-15b]` — an instance keeps its address where its new size fits: held
-/// in tuples, which the runtime cannot follow yet, a `Particle` that loses a field migrates in
-/// place; one that gains a field must move, its references cannot all be found, and plan refuses
-/// before prepare runs, saying how many it could not follow. `[HR-13a]` — held in a `Map`, whose
-/// entries are payload enums (`Option[MapSlot[int, Particle]]`) the package gives schemas, every
-/// reference is found and rewritten, and the instances move.
+/// `[HR-15]`, `[HR-15a]`, `[HR-15b]` — an instance keeps its address where its new size fits: a
+/// `Particle` that loses a field migrates in place. One that gains a field must move, and every
+/// reference to it is rewritten: held in tuples, in `Box`es and in closures' captured state, which
+/// the image describes to the runtime by its own layouts (ODR-126). Held as an interface value,
+/// which the runtime cannot follow, a reference is not found, and plan refuses before prepare runs,
+/// saying how many it could not follow. `[HR-13a]` — held in a `Map`, whose entries are payload
+/// enums (`Option[MapSlot[int, Particle]]`) the package gives schemas, every reference is found and
+/// rewritten, and the instances move.
 #[test]
 fn an_instance_moves_only_where_its_references_are_found() {
     let paired = PARTICLES
@@ -582,10 +620,26 @@ fn an_instance_moves_only_where_its_references_are_found() {
     let smaller = paired.replace("    spare: int = 7\n", "");
     let run = host_run("reload-in-place", &paired, &[&smaller], 3);
     assert_eq!(run.stdout, "3\napplied, 3 migrated\n6\n9\n", "{}", run.stderr);
+    let grow = |source: &str| source.replace("    step: int = 1\n", "    step: int = 1\n    more: int = 8\n");
     let larger = paired.replace("    spare: int = 7\n", "    spare: int = 7\n    more: int = 8\n");
-    let run = host_run("reload-cannot-move", &paired, &[&larger], 2);
-    assert!(run.stdout.contains("an instance of `Particle` must move (its new size does not fit), but 1 of its 1 references are held where the runtime cannot follow them"), "{}", run.stdout);
-    assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
+    let run = host_run("reload-tuple-moves", &paired, &[&larger], 3);
+    assert_eq!(run.stdout, "3\napplied, 3 migrated\n6\n9\n", "{}", run.stderr);
+
+    let boxed = PARTICLES
+        .replace("static WORLD: Mutex[Array[Particle]] = Mutex([])", "static WORLD: Mutex[Array[(int, Box[Particle])]] = Mutex([])")
+        .replace("                world.push(Particle())", "                world.push((k, Box(Particle())))")
+        .replace("        for p in world:\n            p.x.fetch_add(p.step)\n            total += p.x.load()",
+                 "        for pair in world:\n            pair.1.x.fetch_add(pair.1.step)\n            total += pair.1.x.load()");
+    let run = host_run("reload-box-moves", &boxed, &[&grow(&boxed)], 3);
+    assert_eq!(run.stdout, "3\napplied, 3 migrated\n6\n9\n", "{}", run.stderr);
+
+    let rows = PARTICLES
+        .replace("static WORLD: Mutex[Array[Particle]] = Mutex([])", "static WORLD: Mutex[Array[Array[Particle]]] = Mutex([])")
+        .replace("                world.push(Particle())", "                world.push([Particle()])")
+        .replace("        for p in world:\n            p.x.fetch_add(p.step)\n            total += p.x.load()",
+                 "        for row in world:\n            for p in row:\n                p.x.fetch_add(p.step)\n                total += p.x.load()");
+    let run = host_run("reload-rows-move", &rows, &[&grow(&rows)], 3);
+    assert_eq!(run.stdout, "3\napplied, 3 migrated\n6\n9\n", "{}", run.stderr);
 
     let mapped = PARTICLES
         .replace("static WORLD: Mutex[Array[Particle]] = Mutex([])", "static WORLD: Mutex[Map[int, Particle]] = Mutex({})")

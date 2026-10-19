@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: SIMD-5, SIMD-7, TYP-9
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow in `-`
 #$ assert-c-count: contains(">> EMBER_OVERFLOW_SHIFT;") == 2
 # A `@fastmath` loop keeping a float total is in vectorisable form, so its

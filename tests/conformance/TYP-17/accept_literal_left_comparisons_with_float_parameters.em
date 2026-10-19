@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-17, STD-27, TYP-37, TYP-9, IFC-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: false true true true false false
 #$ false true false false false false
 #$ true false false true false true

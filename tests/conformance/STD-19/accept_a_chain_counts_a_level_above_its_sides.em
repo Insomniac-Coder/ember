@@ -6,7 +6,7 @@
 #$ stdout: [1, 0]
 #$ stdout: [(36893488147419103229, 18446744073709551614)]
 #$ stdout: [4, 5, 0, 1, 2]
-#$ profiles: debug, release
+#$ profiles: debug, development
 # G8-4 (the owner's design, 0.9.10) — a chain counts the two sides' items together, stepping up
 # by need: two `int` counts stay an `int` (stored items and small ranges cannot come near its
 # top); otherwise the count is one level above the wider side's, `u64` -> `u128` -> `u256`, and

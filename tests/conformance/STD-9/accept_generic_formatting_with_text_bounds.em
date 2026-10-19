@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-9, LEX-19, TXT-9, TYP-17, IFC-4, TYP-39
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: [   hello] 7
 #$ [2, 3] Some(4) (5, 6) Wrapper(item=7)
 #$ [8, 9] Some([10, 11])

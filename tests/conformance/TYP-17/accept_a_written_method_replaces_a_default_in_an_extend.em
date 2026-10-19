@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-17, TYP-24
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 2 3 4 1
 # D-603 — a method written in an `extend T implements I` block replaces I's
 # default body for `T`, as one written in `T`'s own body does; the default is

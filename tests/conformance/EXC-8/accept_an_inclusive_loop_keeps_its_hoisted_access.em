@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXC-8, CTL-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 4 3
 
 # `[EXC-8]` (D-525) — an inclusive loop whose end is not known to be below

@@ -292,7 +292,8 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 0.9.10_Hardened_10 adds ODR-106 to ODR-112, the owner's `is` and `?.` and the agents' open
 questions (§H.15); 0.9.10_Hardened_11 adds ODR-113 to ODR-115, the owner's rulings on what printing,
 a use after a move and an `unsafe fn` value are (§H.16); 0.9.10_Hardened_12 adds ODR-116, a
-`MutSpan` where a `Span` is expected (§H.17).
+`MutSpan` where a `Span` is expected (§H.17); 0.9.10_Hardened_13 adds ODR-117 to ODR-126, the
+owner's answers to the 85% push's questions and the profiles' new names (§H.18).
 
 | ODR | Ruling | Rules |
 |---|---|---|
@@ -392,6 +393,16 @@ a use after a move and an `unsafe fn` value are (§H.16); 0.9.10_Hardened_12 add
 | ODR-114 | ruled by the owner (2026-10-16): a moved-from place, read, moved again or borrowed, is `E3040` with `[OWN-3]`'s help; `E3050` is a place uninitialised on some path, one never assigned there | `[OWN-3]`, `[BRW-7]` |
 | ODR-115 | ruled by the owner (2026-10-16): `unsafe fn(…) -> R` is a callable type whose call is an `unsafe` operation; an `unsafe fn` coerces only to one, any function to one; as a bound it is met by any function | `[FN-6]`, `[UNS-1]`, grammar `fn_type` |
 | ODR-116 | ruled by the owner (2026-10-16): a `MutSpan[T]` converts to `Span[T]` where one is expected, a shared reborrow; `[TYP-5]`'s complete list lacked it, and Part XII.1's `integrate(ps.pos, ps.vel, …)` passes a mutable column to a `Span` parameter | `[TYP-5]` rule 6, `[SPN-3]`, `[SOA-2]` |
+| ODR-117 | ruled by the owner (2026-10-19): the profiles are `debug`, `development` and `release`; `release` is the build users get (formerly `shipping`), `development` the optimised build still debuggable (formerly `release`) | `[PRF-1]`, `[PRF-2]`, `[PRF-3]`, `[MAN-7]`, `[PAN-1]`, `[RT-4]`, `[HR-27]`, `[BUD-2]` |
+| ODR-118 | ruled by the owner (2026-10-19): a `release` build ignores `[build] reload` and prints the note `hot reload is off in release builds`; `E9033` is retired | `[MAN-7]`, `[PRF-2]`, Annex B |
+| ODR-119 | ruled by the owner (2026-10-19): in a hot-reload build a reloadable function is never inlined, whatever `@inline` says; builds without hot reload inline it | `[CG-C-3a]`, `[HR-9a]` |
+| ODR-120 | ruled by the owner (2026-10-19): a migrated instance's old version is freed field by field without the type's own `drop`, since the instance lives on in its new form | `[HR-2a]` |
+| ODR-121 | ruled by the owner (2026-10-19): `ReloadError`'s parts are `type_name: String`, `reason: String`, `instance: u64`, `message: String`, `error: String` | `[HR-38]`, `[HR-35]` |
+| ODR-122 | ruled by the owner (2026-10-19): a foreign type names its destructor with `@ffi(destroys(f))` on its declaration | `[FFI-36a]` |
+| ODR-123 | ruled by the owner (2026-10-19): one live object adopted twice through one local in one function is `E5068` at compile time | `[FFI-36b]` |
+| ODR-124 | ruled by the owner (2026-10-19): a status enum is marked `@ffi(status=E, ok=X, error=N)`, naming its error type; `[ERR-6]` and `[FFI-16]` disagreed on the spelling and the name | `[ERR-6]`, `[FFI-16]`, `[FFI-11]` |
+| ODR-125 | ruled by the owner (2026-10-19): an `inout_count` function with a result of its own returns a tuple, that result first, then each pointer output in the C declaration's order | `[FFI-11b]` |
+| ODR-126 | ruled by the owner (2026-10-19): when an instance moves, handles inside tuples, `Box` contents and closure captures are rewritten too | `[HR-15]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -797,3 +808,50 @@ Generated: every rule whose text differs from 0.9.10_Hardened_11.
 | `[SOA-2]` | changed |
 | `[SPN-3]` | changed |
 | `[TYP-5]` | changed |
+
+## H.18 Changes in 0.9.10_Hardened_13 (from 0.9.10_Hardened_12)
+
+**0.9.10_Hardened_13** records ODR-117 to ODR-126, ruled by the owner on 2026-10-19 (`docs/OWNER-QUEUE.md`,
+`docs/DECISIONS.md` ADR-204, `tasks/85/owner-answers.md`):
+
+* The profiles are `debug`, `development` and `release`. `release` is the build users get (formerly
+  `shipping`: optimisation 3, stripped, full LTO, no backtrace); `development` is optimised and still
+  debuggable (formerly `release`: optimisation 2, line information, symbols, thin LTO). Every rule,
+  table and example names them so (`[PRF-3]`, ODR-117).
+* A `release` build ignores `[build] reload` with a note, and `E9033` is retired; hot reload is a mode of
+  `debug` and `development` (`[MAN-7]`, `[PRF-2]`, ODR-118).
+* In a hot-reload build a reloadable function is never inlined, whatever `@inline` says (`[CG-C-3a]`,
+  `[HR-9a]`, ODR-119).
+* A migrated instance's old version runs no user `drop`: the instance lives on in its new form
+  (`[HR-2a]`, ODR-120).
+* `ReloadError`'s parts have types: `type_name: String` (the name `type` is reserved), `reason`,
+  `message` and `error` are `String`, `instance` is `u64` (`[HR-38]`, ODR-121).
+* A foreign type names its destructor with `@ffi(destroys(f))` (`[FFI-36a]`, ODR-122).
+* One live object adopted twice through one local is `E5068` at compile time (`[FFI-36b]`, ODR-123).
+* A status enum is marked `@ffi(status=E, ok=X, error=N)`, which names its error type (`[ERR-6]`,
+  `[FFI-16]` agreed, ODR-124).
+* An `inout_count` function with a result of its own returns that result first, then each pointer
+  output (`[FFI-11b]`, ODR-125).
+* Handles inside tuples, `Box` contents and closure captures are rewritten when an instance moves
+  (`[HR-15]`, ODR-126).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_12.
+
+| Rule | 0.9.10_Hardened_12 → 0.9.10_Hardened_13 |
+|---|---|
+| `[CG-C-3a]` | changed |
+| `[ERR-6]` | changed |
+| `[FFI-11b]` | changed |
+| `[FFI-16]` | changed |
+| `[FFI-36a]` | changed |
+| `[FFI-36b]` | changed |
+| `[HR-2a]` | changed |
+| `[HR-9a]` | changed |
+| `[HR-15]` | changed |
+| `[HR-27]` | changed |
+| `[HR-35]` | changed |
+| `[HR-38]` | changed |
+| `[MAN-7]` | changed |
+| `[PAN-1]` | changed |
+| `[PRF-2]` | changed |
+| `[RT-4]` | changed |

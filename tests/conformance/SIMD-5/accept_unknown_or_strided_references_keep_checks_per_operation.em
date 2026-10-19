@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-5, SIMD-7
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 240 90
 #$ assert-c: !contains(" >> 56ULL;")
 # A reference passed into the function is not a unit-stride element access,

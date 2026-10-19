@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: OBJ-2, DSP-3, RC-1, IFC-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ assert-c: contains(static const ember_itable_entry em_itables_Pixel[])
 #$ assert-c: contains(ember_itable_lookup)

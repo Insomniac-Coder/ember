@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: TYP-28, TYP-8, TYP-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ panics: integer overflow in `//`
 # D-272 — `i128`'s least value floor-divided by -1 is not representable and
 # panics, naming the operator written.

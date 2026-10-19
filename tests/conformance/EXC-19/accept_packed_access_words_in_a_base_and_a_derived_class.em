@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXC-19, OBJ-1, CLS-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1 2 10 20 dd 2
 # `[EXC-19]` — each class level's access words stand side by side before that
 # level's own fields, with a zero word after an odd count, and a base class's

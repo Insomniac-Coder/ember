@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: GRM-34, TYP-19
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: <5> <x>
 #$ <7>
 # `[GRM-34]` (ADR-191) — an extension over a type parameter standing alone may have a parameter

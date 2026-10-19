@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-20
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1.0 0.30000000000000004 1e+300 1e+16 1000000000000000.0
 #$ 0.0001 1e-05 -0.0 1.5e+16 100.0 2.5
 #$ 0.1 inf -inf nan

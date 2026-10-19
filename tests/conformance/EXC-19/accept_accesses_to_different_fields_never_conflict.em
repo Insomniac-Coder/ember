@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXC-19, EXC-1, EXC-15
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: [1, 2, 3] [1, 2, 3, 1, 2, 3]
 # `[EXC-19]` — access state is per field: reading `items` while writing `log`,
 # through one handle or two, and inside a `mut self` method, never conflicts.

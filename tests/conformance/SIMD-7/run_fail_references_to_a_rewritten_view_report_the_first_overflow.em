@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: SIMD-5, SIMD-7
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow in `-`
 #$ assert-c: !contains(" << ")
 #$ assert-c-count: contains("; ++_") == 3

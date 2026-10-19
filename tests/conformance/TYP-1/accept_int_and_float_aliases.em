@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-1, LEX-16, LEX-17
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 5000000000
 #$ 5000000000
 #$ 5.0

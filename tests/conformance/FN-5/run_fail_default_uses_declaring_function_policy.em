@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: FN-5, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow
 
 @overflow(panic)

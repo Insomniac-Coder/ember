@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-9, OPT-2
-#$ profiles: release
+#$ profiles: development
 #$ stdout: 2256.0
 #$ assert-c-count: contains("_load(") == 2
 #$ assert-c-count: contains("ember_panic_bounds(") == 2

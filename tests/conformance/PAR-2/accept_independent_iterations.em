@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: PAR-2, SOA-2
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: [2.5, 3.5, 4.5, 5.5]
 #$ stdout: [0, 2, 4, 6, 8]
 #$ stdout: [1, 3, 3, 0]

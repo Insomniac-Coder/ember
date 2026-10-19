@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: RNG-4, TYP-8, TYP-28
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 3
 #$ panics: integer overflow in `//`
 # `[RNG-4]` — a negative divisor can be `-1` and the dividend `int.MIN`: the

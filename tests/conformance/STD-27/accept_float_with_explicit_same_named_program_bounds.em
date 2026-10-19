@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-27, TYP-17, TYP-40, IFC-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 7 11 7 11 true
 # A program can explicitly add its own interfaces to a float. Their bounds
 # remain usable beside Float's standard capabilities, with no name confusion.

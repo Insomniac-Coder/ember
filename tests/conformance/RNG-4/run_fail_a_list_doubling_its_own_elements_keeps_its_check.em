@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: RNG-4, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow in `*`
 # `[RNG-4]` — each element is stored as twice what it held, so no bound
 # holds what the list can contain: the multiplication keeps its check and

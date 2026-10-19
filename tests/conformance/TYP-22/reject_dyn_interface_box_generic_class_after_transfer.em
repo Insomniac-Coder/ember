@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: TYP-16, TYP-22, OWN-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 
 interface Render:
     fn render(self) -> i32

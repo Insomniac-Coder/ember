@@ -1,7 +1,7 @@
 #$ test: run-pass
 #$ assert-c: contains("vec_reserve_more_inline(")
 #$ rules: TXT-11, TXT-4, TYP-31, HEAP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: é a
 #$ stdout: λ🌶
 #$ stdout: true true

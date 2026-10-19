@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: EXC-19, EXC-15, EXC-1, OBJ-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: exclusivity violation: write access to Derived.a while a read access to Derived.a is active
 # `[EXC-19]` — with each class level's words packed, a `mut self` call on a
 # derived object still checks the base class's words: a loop reading the base

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-39, TYP-36, ERR-3
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: [Fail.Disk, Fail.Net(host='example.org')]
 #$ Holder(e=Fail.Disk, tries=3)
 #$ Some(Fail.Net(host='x'))

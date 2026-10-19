@@ -29,7 +29,7 @@
 | **panic** | a failure that means the program is wrong; it prints a message and aborts the process (`[PAN-1]`) |
 | **permanent thunk** | the fixed address standing for a reloadable function; a reload changes its target, never its address (`[HR-6]`) |
 | **place** | an expression denoting a storage location: a local, field, element or dereferenced reference |
-| **profile** | `debug`, `release` or `shipping`: optimisation and diagnostic settings that never change meaning (`[PRF-1]`) |
+| **profile** | `debug`, `development` or `release`: optimisation and diagnostic settings that never change meaning (`[PRF-1]`) |
 | **proof-carrying value** | a value returned by a verifying operation (`assert_disjoint`) that carries the fact it established |
 | **reason code** | why a run-time check exists (`[EFF-11]`) |
 | **region** | the stretch of a program during which a borrow is live; never written in source |

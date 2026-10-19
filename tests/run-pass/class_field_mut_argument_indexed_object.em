@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLS-1, EXC-1, FN-2a
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c: !contains(ember_field_begin_write)
 #$ assert-c: !contains(ember_field_end_write)
 #$ stdout: 1

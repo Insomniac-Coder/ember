@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXC-18, EXC-19, DSP-2
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: ann [1, 2]
 #$ stdout: zed [1, 2, 3]
 # `[EXC-19]` — reading one field while writing another never conflicts. A view

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: PAR-3, PAR-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 49995000 9999 0 true
 #$ stdout: 0.30000000000000004
 # `[PAR-3]` — each reduction has a copy per chunk, starting at its operator's identity, and the

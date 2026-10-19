@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-1, CT-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: true false true false
 #$ true false
 # `[RNG-1]` — an endpoint is a constant of the representation type: a

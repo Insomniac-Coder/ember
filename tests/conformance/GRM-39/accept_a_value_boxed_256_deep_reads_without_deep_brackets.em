@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: GRM-39, CG-C-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: true 1
 #$ assert-c: !contains("(*(*(*(*(*(*(*(*(*(*(*(*(*(*(*(*(*(*(*(*")
 #$ assert-c: contains("[0][0][0][0]")

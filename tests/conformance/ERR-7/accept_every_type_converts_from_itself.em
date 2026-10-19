@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: ERR-7, TYP-19
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 9
 #$ 5
 #$ 7 abc

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXC-9, EXC-12, EXC-13, EXC-14, TST-15
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 6
 
 # `[EXC-13](5)` — two receiver identities in one loop must not be merged into

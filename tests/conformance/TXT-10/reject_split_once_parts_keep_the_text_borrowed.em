@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: TXT-10, BRW-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 
 fn main():
     text = String.from("left:right")

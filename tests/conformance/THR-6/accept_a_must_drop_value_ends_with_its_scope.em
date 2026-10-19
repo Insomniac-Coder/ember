@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: THR-6
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1
 #$ 2 4 true
 #$ released 5

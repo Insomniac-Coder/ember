@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXC-18, EXC-15, LT-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: [1, 2, 3, 0]
 #$ stdout: [7, 2, 3, 0]
 # `[LT-1]` lets a `mut self` method return a view of its receiver, and

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CORO-9, UNS-8
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 1
 #$ 7
 # `[CORO-9]` — `unsafe` code may build a frame that points into itself, and states why it is

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-8, GRM-37, ATT-6
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: -128
 # A module attribute gives a function its lexical overflow policy.
 

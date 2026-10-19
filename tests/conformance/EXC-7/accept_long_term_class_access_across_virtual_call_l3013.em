@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXC-7, MAN-3, TST-11
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ warning[L3013]: long-term access to `self` is live across this call
 #$ stdout: 7
 

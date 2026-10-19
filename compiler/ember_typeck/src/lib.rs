@@ -8035,9 +8035,12 @@ impl<'a> Checker<'a> {
                     } else {
                         HashSet::new()
                     };
-                    // `[FFI-11b]` — the two-call idiom returns the count C wrote back, in place
-                    // of C's `void` (`check_foreign_signature` refuses another result).
-                    let inout_count = if decl.is_foreign_decl && decl.is_safe && decl.ret.is_none() {
+                    // `[FFI-11b]` — the two-call idiom returns the count C wrote back: in place of
+                    // C's `void`, or after C's own result in a tuple (ODR-125); `check_inout_counts`
+                    // refuses a result with an ownership or length contract.
+                    let inout_count = if decl.is_foreign_decl && decl.is_safe
+                        && (decl.ret.is_none() || (ffi_result_contract(&item.attrs).is_none() && ffi_owned_result(&item.attrs).is_none()))
+                    {
                         ffi_inout_counts(&item.attrs).first().and_then(|(count, _)|
                             params.iter().find(|(name, _, _, _)| name == count).map(|(_, ty, _, _)| *ty))
                     } else {
@@ -8052,6 +8055,10 @@ impl<'a> Checker<'a> {
                             let resolved = self.resolve_type(t);
                             self.in_return_type -= 1;
                             self.reject_unsized_by_value(resolved, t.span, "a return type")
+                        })
+                        .map(|result| match inout_count {
+                            Some(count) => self.types.intern(TyKind::Tuple(vec![result, count])),
+                            None => result,
                         })
                         .or(inout_count)
                         .unwrap_or(self.common.void);
@@ -17195,6 +17202,11 @@ impl<'a> Checker<'a> {
             .map(|(n, t, m, s)| (*n, *t, *m, *s))
             .collect();
         let ret = self.signatures[def.0 as usize].ret;
+        // `[FFI-11b]` — an `inout_count` function's tuple: C returns its first part (ODR-125).
+        let ret = match self.types.kind(ret) {
+            TyKind::Tuple(items) if decl.is_foreign_decl && !ffi_inout_counts(attrs).is_empty() => items[0],
+            _ => ret,
+        };
         let contracts = ffi_param_contracts(attrs);
         let result_contract = ffi_result_contract(attrs);
         let unknown_result = ffi_unknown_result_fact_contracts(attrs);
@@ -17335,7 +17347,7 @@ impl<'a> Checker<'a> {
         if decl.is_foreign_decl {
             let inout_counts = ffi_inout_counts(attrs);
             if decl.is_safe {
-                self.check_inout_counts(decl, &inout_counts, &contracts);
+                self.check_inout_counts(decl, attrs, &inout_counts, &contracts);
             }
             let mut checked_witnesses = HashSet::new();
             for &(_, kind) in &contracts {
@@ -17664,8 +17676,11 @@ impl<'a> Checker<'a> {
     /// `[FFI-11b]` — the two-call enumeration idiom on a `safe fn`: `param(count, inout_count(items))`
     /// over `mut count: <integer>` (C's pointer to the count, hidden from the callable signature as a
     /// `count(n)` witness is), with `param(items, borrowed, count(count), nullable, exclusive)`, so
-    /// the function takes `Option[MutSpan[T]]` and returns the count C wrote back.
-    fn check_inout_counts(&mut self, decl: &ast::FnDecl, inout_counts: &[(Symbol, Symbol)], contracts: &[(Symbol, FfiPointerContract)]) {
+    /// the function takes `Option[MutSpan[T]]` and returns the count C wrote back; with a C result of
+    /// its own, a tuple of that result and the count (ODR-125).
+    fn check_inout_counts(&mut self, decl: &ast::FnDecl, attrs: &[ast::Attribute], inout_counts: &[(Symbol, Symbol)],
+        contracts: &[(Symbol, FfiPointerContract)])
+    {
         if inout_counts.len() > 1 {
             self.error(codes::E5002, decl.name.span,
                 "a function has one `inout_count`: its count is what the call returns [FFI-11b]");
@@ -17692,11 +17707,13 @@ impl<'a> Checker<'a> {
                         .note("the function takes `Option[MutSpan[T]]`: `None` asks for the count, `Some` is filled [FFI-11b]"),
                 );
             }
-            if let Some(result) = &decl.ret {
+            if let Some(result) = &decl.ret
+                && (ffi_result_contract(attrs).is_some() || ffi_owned_result(attrs).is_some())
+            {
                 self.sink.emit(
                     Diagnostic::error(codes::E0900, result.span,
-                        "an `inout_count` function with a C result is not implemented yet")
-                        .note("the call returns the count; with a status result it would be `Result[count, <E>Error]` (`-> status`, [FFI-16]), which needs a status enum, an overlay's [FFI-11b]"),
+                        "an `inout_count` function whose C result has a contract is not implemented yet")
+                        .note("a plain C result is returned first in a tuple, then the count [FFI-11b]"),
                 );
             }
         }

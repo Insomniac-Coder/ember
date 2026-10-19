@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: DSJ-3, SIMD-3, DSJ-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: apart [2.0, 4.0, 6.0, 8.0]
 #$ stdout: split [10, 20, 3, 4]
 #$ stdout: unproved [3.0, 6.0, 9.0, 12.0]

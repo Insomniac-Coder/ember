@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-4, TYP-8
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 100002 19999272958
 #$ assert-c-count: contains("ember_ck_") == 0
 # `[RNG-4]` — a value the loop only raises (`best`) towards a limit the loop

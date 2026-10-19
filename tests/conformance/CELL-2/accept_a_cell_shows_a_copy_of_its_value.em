@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CELL-2, TYP-39
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 20C Temp<20> [Temp<20>, Temp<20>]
 # ODR-109 — a `Cell` shows the value it holds (`[TYP-39]`) by a copy, as `get` reads it, when the
 # value writes its own `Display` or `Debug`: that code may `set` the cell, and a `Cell` lends its

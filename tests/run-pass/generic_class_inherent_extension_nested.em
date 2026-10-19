@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-16, IFC-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 2
 
 class Envelope[Payload]:

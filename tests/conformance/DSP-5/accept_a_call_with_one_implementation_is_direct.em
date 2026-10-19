@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: DSP-5, DSP-2, CLS-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1 0
 #$ stdout: 4 0
 #$ stdout: 4 4

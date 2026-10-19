@@ -8,7 +8,7 @@
 #$ stderr: 0: inner at
 #$ stderr: 1: outer at
 #$ stderr: 2: main at
-# `[RT-4]`, `[DIA-23]` — a panic prints where it happened and, outside `shipping`, the program's
+# `[RT-4]`, `[DIA-23]` — a panic prints where it happened and, outside `release`, the program's
 # functions from there back to `main`, each by its Ember name and where it is declared, never by a
 # C symbol.
 

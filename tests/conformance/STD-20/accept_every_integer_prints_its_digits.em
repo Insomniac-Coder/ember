@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-20
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: -9223372036854775808 9223372036854775807 0 -1 7
 #$ stdout: 18446744073709551615 0 4294967295 -2147483648
 #$ stdout: -9223372036854775808 18446744073709551615 -10 100

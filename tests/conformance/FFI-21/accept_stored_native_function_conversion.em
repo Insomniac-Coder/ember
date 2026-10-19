@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FN-6, CLO-3, FFI-21
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ stdout: 42
 #$ stdout: 41

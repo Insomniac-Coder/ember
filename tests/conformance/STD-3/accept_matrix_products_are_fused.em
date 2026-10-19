@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-3, STD-21
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: Vec2(x=5.9604645e-08, y=0.0) Vec3(x=5.9604645e-08, y=0.0, z=0.0) Vec4(x=5.9604645e-08, y=0.0, z=0.0, w=0.0)
 #$ Vec3(x=5.9604645e-08, y=1.0002441, z=0.0) Vec2(x=5.9604645e-08, y=0.0)
 #$ 0.0 5.9604645e-08

@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: OPT-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: index 3 is out of bounds for a length of 3
 # The entry test fails (the last index, 4, is past the length), so the checked
 # loop runs and panics where it always did: at the first bad index.

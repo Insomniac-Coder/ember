@@ -262,6 +262,136 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-126 — a moving instance and handles in tuples, `Box` contents and closures — **CLOSED**
+
+    ID:        ODR-126
+    Status:    CLOSED — ruled by the owner, 2026-10-19; incorporated in 0.9.10_Hardened_13
+    Category:  HOT RELOAD
+    Location:  Ember_v0.9.10_Hardened_12.md [HR-15]
+
+**The question.** A6: references inside tuples, `Box` contents and closure captures were not walked, so a reload that moved an instance they hold was refused. Put to the owner one at a time (`tasks/85/owner-answers.md`).
+
+**Ruling.** Commit rewrites them too: the compiler describes those types to the runtime as it does classes. ADR-204.
+
+---
+
+## ODR-125 — an `inout_count` function with a result of its own — **CLOSED**
+
+    ID:        ODR-125
+    Status:    CLOSED — ruled by the owner, 2026-10-19; incorporated in 0.9.10_Hardened_13
+    Category:  C INTEROP
+    Location:  Ember_v0.9.10_Hardened_12.md [FFI-11b]
+
+**The question.** B7: `[FFI-11b]` returns the count; a C function that also returns a value (Windows' `GetLogicalProcessorInformation` returns a `BOOL`) had no rule. Put to the owner one at a time (`tasks/85/owner-answers.md`).
+
+**Ruling.** The Ember function returns a tuple: C's own result first, then each pointer output (`out`, the count) in the C declaration's order; a status result follows `[FFI-16]`. ADR-204.
+
+---
+
+## ODR-124 — the status label's spelling and the error type's name — **CLOSED**
+
+    ID:        ODR-124
+    Status:    CLOSED — ruled by the owner, 2026-10-19; incorporated in 0.9.10_Hardened_13
+    Category:  C INTEROP
+    Location:  Ember_v0.9.10_Hardened_12.md [ERR-6], [FFI-16], [FFI-11]
+
+**The question.** B6: `[ERR-6]` wrote `@ffi(status=VkResult, ok=VK_SUCCESS)` and `VkError`; `[FFI-16]` wrote `@ffi(status, ok=X)` on the enum and `<E>Error`. Put to the owner one at a time (`tasks/85/owner-answers.md`).
+
+**Ruling.** `[ERR-6]`'s spelling, with the error type named in the label: `@ffi(status=E, ok=X, error=N)`; the overlay example follows it. The feature itself waits for C header import. ADR-204.
+
+---
+
+## ODR-123 — one object adopted twice, at compile time — **CLOSED**
+
+    ID:        ODR-123
+    Status:    CLOSED — ruled by the owner, 2026-10-19; incorporated in 0.9.10_Hardened_13
+    Category:  C INTEROP
+    Location:  Ember_v0.9.10_Hardened_12.md [FFI-36b]
+
+**The question.** B2: `[FFI-36b]` asks for a compile-time error and the code table had no code for it. Put to the owner one at a time (`tasks/85/owner-answers.md`).
+
+**Ruling.** `E5068` "one live foreign object adopted twice", when both `adopt` calls are on one local in one function. ADR-204.
+
+---
+
+## ODR-122 — how a foreign type names its destructor — **CLOSED**
+
+    ID:        ODR-122
+    Status:    CLOSED — ruled by the owner, 2026-10-19; incorporated in 0.9.10_Hardened_13
+    Category:  C INTEROP
+    Location:  Ember_v0.9.10_Hardened_12.md [FFI-36a]
+
+**The question.** B1: `[FFI-36a]` reads the destructor "from the contract of `T`'s declaration" without a spelling. Put to the owner one at a time (`tasks/85/owner-answers.md`).
+
+**Ruling.** `@ffi(destroys(f))` on `type T`, as helper B built it. ADR-204.
+
+---
+
+## ODR-121 — `ReloadError`'s parts — **CLOSED**
+
+    ID:        ODR-121
+    Status:    CLOSED — ruled by the owner, 2026-10-19; incorporated in 0.9.10_Hardened_13
+    Category:  HOT RELOAD
+    Location:  Ember_v0.9.10_Hardened_12.md [HR-38], [HR-35]
+
+**The question.** A5: `[HR-38]` named the parts without types, and one of them `type`, a reserved word. Put to the owner one at a time (`tasks/85/owner-answers.md`).
+
+**Ruling.** `SchemaRefused(type_name: String, reason: String)`, `Migration(type_name: String, instance: u64, message: String)`, `Foreign(error: String)`, as helper A built them. ADR-204.
+
+---
+
+## ODR-120 — the old version of a migrated instance — **CLOSED**
+
+    ID:        ODR-120
+    Status:    CLOSED — ruled by the owner, 2026-10-19; incorporated in 0.9.10_Hardened_13
+    Category:  HOT RELOAD
+    Location:  Ember_v0.9.10_Hardened_12.md [HR-2a]
+
+**The question.** A4: reclaim was to run user `drop` code on old instances, but after commit the type's `drop` is the new image's, for the new layout. Put to the owner one at a time (`tasks/85/owner-answers.md`).
+
+**Ruling.** A migrated instance lives on in its new form: its old version is freed field by field without the type's own `drop`; removed fields still run theirs. ADR-204.
+
+---
+
+## ODR-119 — `@inline` on a reloadable function — **CLOSED**
+
+    ID:        ODR-119
+    Status:    CLOSED — ruled by the owner, 2026-10-19; incorporated in 0.9.10_Hardened_13
+    Category:  HOT RELOAD
+    Location:  Ember_v0.9.10_Hardened_12.md [CG-C-3a], [HR-9a]
+
+**The question.** A3: `@inline` is binding and a reloadable function is never inlined; the two clashed. Put to the owner one at a time (`tasks/85/owner-answers.md`).
+
+**Ruling.** In a hot-reload build a reloadable function is never inlined, whatever `@inline` says; builds without hot reload inline it. ADR-204.
+
+---
+
+## ODR-118 — `reload` in the final build — **CLOSED**
+
+    ID:        ODR-118
+    Status:    CLOSED — ruled by the owner, 2026-10-19; incorporated in 0.9.10_Hardened_13
+    Category:  BUILD
+    Location:  Ember_v0.9.10_Hardened_12.md [MAN-7], [PRF-2]
+
+**The question.** A2: `[build] reload` was `E9033` in the final build, so a package had to edit its manifest before each such build. Put to the owner one at a time (`tasks/85/owner-answers.md`).
+
+**Ruling.** A `release` build (the final one, ODR-117) ignores `[build] reload` and prints `note: hot reload is off in release builds`; `E9033` is retired. ADR-204.
+
+---
+
+## ODR-117 — the profiles' names — **CLOSED**
+
+    ID:        ODR-117
+    Status:    CLOSED — ruled by the owner, 2026-10-19; incorporated in 0.9.10_Hardened_13
+    Category:  BUILD
+    Location:  Ember_v0.9.10_Hardened_12.md [PRF-1], [PRF-2], [PRF-3]
+
+**The question.** The owner: "usually release is considered as the final build that is distributed to end user", while Ember's `release` was the middle profile and `shipping` the final one. Put to the owner one at a time (`tasks/85/owner-answers.md`).
+
+**Ruling.** The profiles are `debug`, `development` and `release`: `development` is the former `release` (optimisation 2, line information, symbols, thin LTO), `release` the former `shipping` (optimisation 3, stripped, full LTO), the build users get. ADR-204.
+
+---
+
 ## ODR-116 — a `MutSpan` where a `Span` is expected — **CLOSED**
 
     ID:        ODR-116

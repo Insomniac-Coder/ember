@@ -160,7 +160,7 @@ fn parse_expectations(source: &str) -> Expectations {
                 .collect();
             for profile in &expectations.profiles {
                 assert!(
-                    matches!(profile.as_str(), "debug" | "release" | "shipping"),
+                    matches!(profile.as_str(), "debug" | "development" | "release"),
                     "unknown test profile {profile:?}"
                 );
             }
@@ -793,7 +793,7 @@ fn gcc_executables_keep_c_exports_and_discard_unreachable_native_bodies() {
     let unavailable_cache = directory.join("unavailable-cache");
     std::fs::write(&unavailable_cache, "not a directory").unwrap();
     let cache_var = ember_branding::cache_dir_var();
-    for profile in [Profile::Debug, Profile::Release, Profile::Shipping] {
+    for profile in [Profile::Debug, Profile::Development, Profile::Release] {
         for cached in [true, false] {
             let output_dir = directory.join(format!("{}-{cached}", profile.name()));
             let output_arg = output_dir.to_string_lossy().into_owned();
@@ -1021,7 +1021,7 @@ fn foreign_statics_are_places_in_c_storage() {
 fn link_with_fixture(source: &Path, fixture: &str, profile: Profile, directory: &Path, label: &str) -> PathBuf {
     let root = workspace_root();
     let source_arg = source.to_string_lossy().into_owned();
-    let profile_name = match profile { Profile::Debug => "debug", Profile::Release => "release", Profile::Shipping => "shipping" };
+    let profile_name = match profile { Profile::Debug => "debug", Profile::Development => "development", Profile::Release => "release" };
     let emitted = ember(&["build", &source_arg, "--emit", "c", "--profile", profile_name], &root);
     assert_eq!(emitted.exit, 0, "{label}: C emission failed: {}", emitted.stderr);
     let generated = directory.join(format!("{label}.c"));
@@ -1053,7 +1053,7 @@ fn adopted_foreign_objects_are_freed_by_their_destructor() {
     let root = workspace_root();
     let directory = temporary_directory("foreign-objects");
     let accepted = root.join(format!("tests/conformance/FFI-36a/accept_adopt_frees_with_the_declared_destructor.{SOURCE_EXT}"));
-    for profile in [Profile::Debug, Profile::Release] {
+    for profile in [Profile::Debug, Profile::Development] {
         let program = link_with_fixture(&accepted, "foreign_objects.c", profile, &directory, &format!("adopt_{profile:?}"));
         let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
         assert!(run.status.success(), "{profile:?}: {}", String::from_utf8_lossy(&run.stderr));
@@ -1061,7 +1061,7 @@ fn adopted_foreign_objects_are_freed_by_their_destructor() {
     }
     // `[FFI-11]` — `returns_owned` results (one may be null) and `owned` parameters.
     let transferred = root.join(format!("tests/conformance/FFI-36a/accept_returns_owned_and_owned_parameters.{SOURCE_EXT}"));
-    for profile in [Profile::Debug, Profile::Release] {
+    for profile in [Profile::Debug, Profile::Development] {
         let program = link_with_fixture(&transferred, "foreign_objects.c", profile, &directory, &format!("owned_{profile:?}"));
         let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
         assert!(run.status.success(), "{profile:?}: {}", String::from_utf8_lossy(&run.stderr));
@@ -1071,7 +1071,7 @@ fn adopted_foreign_objects_are_freed_by_their_destructor() {
     let declarations = "from std.ffi import adopt, ForeignBox\nimport std.thread\n\nunsafe extern \"C\":\n    @ffi(destroys(widget_free))\n    type Widget\n    @ffi(destroys(gadget_close), threads(creator))\n    type Gadget\n    fn widget_new(id: i32) -> *mut Widget\n    fn widget_free(widget: *mut Widget)\n    fn gadget_new(id: i32) -> *mut Gadget\n    fn gadget_close(gadget: *mut Gadget) -> i32\n\n";
     // `[FFI-36b]` — the second `adopt` of one live object, at line 23; the first is at 22.
     let twice = root.join(format!("tests/conformance/FFI-36b/accept_a_second_owner_panics_naming_both_places.{SOURCE_EXT}"));
-    for profile in [Profile::Debug, Profile::Release] {
+    for profile in [Profile::Debug, Profile::Development] {
         let program = link_with_fixture(&twice, "foreign_objects.c", profile, &directory, &format!("twice_{profile:?}"));
         let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
         let stderr = String::from_utf8_lossy(&run.stderr);
@@ -1090,9 +1090,9 @@ fn adopted_foreign_objects_are_freed_by_their_destructor() {
     let stderr = String::from_utf8_lossy(&run.stderr);
     assert!(!run.status.success(), "a creator box ended on another thread without a panic");
     assert!(stderr.contains("made on thread 1 (main) ends on thread") && stderr.contains("`threads(creator)`"), "{stderr}");
-    let program = link_with_fixture(&elsewhere, "foreign_objects.c", Profile::Release, &directory, "elsewhere_release");
+    let program = link_with_fixture(&elsewhere, "foreign_objects.c", Profile::Development, &directory, "elsewhere_development");
     let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
-    assert!(run.status.success(), "release does not check the thread: {}", String::from_utf8_lossy(&run.stderr));
+    assert!(run.status.success(), "development does not check the thread: {}", String::from_utf8_lossy(&run.stderr));
 }
 
 /// `[FFI-23]`, `[FFI-11]` — a `Retained` token lets C keep an Ember object's address: a class
@@ -1103,7 +1103,7 @@ fn retained_tokens_let_c_keep_ember_objects() {
     let root = workspace_root();
     let directory = temporary_directory("retained");
     let source = root.join(format!("tests/conformance/FFI-23/accept_retained_lets_foreign_code_keep_ember_memory.{SOURCE_EXT}"));
-    for profile in [Profile::Debug, Profile::Release] {
+    for profile in [Profile::Debug, Profile::Development] {
         let program = link_with_fixture(&source, "foreign_objects.c", profile, &directory, &format!("retained_{profile:?}"));
         let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
         assert!(run.status.success(), "{profile:?}: {}", String::from_utf8_lossy(&run.stderr));
@@ -1401,7 +1401,7 @@ fn exported_thread_contracts_hold_in_every_profile() {
     let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
     let requested = std::env::var(ember_branding::cc_var()).ok();
     let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
-    for profile in [Profile::Debug, Profile::Release, Profile::Shipping] {
+    for profile in [Profile::Debug, Profile::Development, Profile::Release] {
         let emitted = ember(&["build", &entry_arg, "--emit", "c", "--profile", profile.name()], &root);
         assert_eq!(emitted.exit, 0, "thread contract C emission failed: {}", emitted.stderr);
         let build = directory.join(profile.name());
@@ -1710,7 +1710,7 @@ fn native_callback_adapters_preserve_abi_and_attach_host_threads() {
     let runtime = root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
     let requested = std::env::var(ember_branding::cc_var()).ok();
     let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
-    for profile in [Profile::Debug, Profile::Release, Profile::Shipping] {
+    for profile in [Profile::Debug, Profile::Development, Profile::Release] {
         let emitted = ember(&["build", &source_arg, "--emit", "c", "--profile", profile.name()], &root);
         assert_eq!(emitted.exit, 0, "callback adapter C emission failed: {}", emitted.stderr);
         let build = directory.join(profile.name());
@@ -1832,10 +1832,10 @@ fn known_manifest_lints_are_accepted() {
 fn removed_safety_switches_and_unknown_profile_keys_are_rejected() {
     let root = workspace_root();
     for (name, manifest, key) in [
-        ("unchecked-profile", "[profiles.shipping]\nexclusivity = \"unchecked\"\n", "exclusivity"),
+        ("unchecked-profile", "[profiles.release]\nexclusivity = \"unchecked\"\n", "exclusivity"),
         ("unchecked-build", "[build]\nexclusivity = \"unchecked\"\n", "exclusivity"),
-        ("overflow", "[profiles.shipping]\noverflow = \"unchecked\"\n", "overflow"),
-        ("bounds", "[profiles.shipping]\nbounds_checks = false\n", "bounds_checks"),
+        ("overflow", "[profiles.release]\noverflow = \"unchecked\"\n", "overflow"),
+        ("bounds", "[profiles.release]\nbounds_checks = false\n", "bounds_checks"),
         ("gpu-validation", "[gpu]\nvalidate = false\n", "gpu.validate"),
         ("gpu-validation-dotted", "[build]\ngpu.validate = false\n", "gpu.validate"),
         ("unknown-profile-key", "[profiles.debug]\nbakcend = \"c\"\n", "bakcend"),
@@ -1891,7 +1891,7 @@ fn unknown_manifest_keys_name_the_keys_their_section_accepts() {
         "[package]\nname = \"p\"\nversion = \"0.1.0\"\nlanguage = \"0.9.9\"\nkind = \"bin\"\nlayers = [\"core\"]\nedition_lints = \"strict\"\n\
          [dependencies]\ngeometry = { path = \"../geometry\" }\n[dependencies.parser]\ngit = \"https://example.org/p.git\"\nrev = \"4f2a9c1\"\n\
          [build]\ntarget = \"native\"\nbackend = \"c\"\nc_compiler = \"auto\"\nruntime = \"static\"\nmax_instantiations = 200\n\
-         [profiles.release]\nlto = \"thin\"\n[c]\ncompiler = \"auto\"\nflags = []\n[link]\nlibs = []\n[jobs]\nworkers = \"auto\"\n\
+         [profiles.development]\nlto = \"thin\"\n[c]\ncompiler = \"auto\"\nflags = []\n[link]\nlibs = []\n[jobs]\nworkers = \"auto\"\n\
          [realtime]\ncontracts = [\"noalloc\"]\n[comptime]\nmax_steps = 100000000\nmax_heap_mb = 256\n[lints]\nunused = \"warn\"\n\
          [cpp.engine]\ncompiler = \"clang\"\nstandard = \"c++20\"\ndefines = []\ninclude_paths = []\nflags = []\n[ffi]\nevidence = \".ember/ffi-evidence\"\n",
     )
@@ -2287,7 +2287,7 @@ fn assert_disjoint_records_its_comparison_or_leaves_it_out() {
 fn atomics_of_128_bits_run_under_clang() {
     let root = workspace_root();
     let source = format!("tests/conformance/THR-14/accept_128_bit_atomics.{SOURCE_EXT}");
-    for profile in ["debug", "release"] {
+    for profile in ["debug", "development"] {
         let run = ember(&["run", &source, "--profile", profile, "--cc", "clang"], &root);
         if run.exit != 0 && run.stderr.contains("clang") && run.stderr.contains("not found") {
             return;
@@ -2597,7 +2597,7 @@ fn stable_class_loop_access_is_reported_as_hoisted() {
     let source = format!(
         "tests/conformance/EXC-8/accept_stable_class_receiver_loop.{SOURCE_EXT}"
     );
-    for profile in ["debug", "release", "shipping"] {
+    for profile in ["debug", "development", "release"] {
         let out_dir = temporary_directory(&format!("hoisted-loop-safety-{profile}"));
         let run = ember(
             &[
@@ -2682,7 +2682,7 @@ fn an_outer_loop_reports_the_inner_access_it_holds() {
     let root = workspace_root();
     let name = "accept_an_outer_loop_holds_its_inner_loops_access";
     let source = format!("tests/conformance/EXC-10/{name}.{SOURCE_EXT}");
-    for profile in ["debug", "release", "shipping"] {
+    for profile in ["debug", "development", "release"] {
         let out_dir = temporary_directory(&format!("outer-loop-safety-{profile}"));
         let run = ember(&["build", &source, "--profile", profile, "--out-dir", &out_dir.to_string_lossy()], &root);
         assert_eq!(run.exit, 0, "{profile} build failed:\n{}", run.stderr);
@@ -2707,7 +2707,7 @@ fn loop_nests_over_separate_lists_get_restrict_functions_for_msvc() {
     let root = workspace_root();
     let source = format!("tests/conformance/OPT-2/accept_a_loop_nest_over_separate_lists_keeps_its_results.{SOURCE_EXT}");
     let main_loop = format!("{}_loop0(", ember_branding::mangled("main"));
-    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
+    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "msvc C failed:
 {}", msvc.stderr);
     assert!(msvc.stdout.contains(&format!("EMBER_NOINLINE void {main_loop}")), "no loop function for MSVC:
@@ -2715,7 +2715,7 @@ fn loop_nests_over_separate_lists_get_restrict_functions_for_msvc() {
     assert!(msvc.stdout.contains("* restrict _1_ptr"), "the loop function's lists are not restrict:
 {}", msvc.stdout);
     assert_eq!(msvc.stdout.matches("EMBER_NOINLINE void").count(), 4, "two nests move (prototype and definition each)");
-    let clang = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    let clang = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(clang.exit, 0, "clang C failed:
 {}", clang.stderr);
     assert!(!clang.stdout.contains(&main_loop), "clang keeps the nest in place:
@@ -2731,7 +2731,7 @@ fn a_known_callable_value_is_called_directly() {
     let root = workspace_root();
     let source = format!("bench/programs/a08_closures.{SOURCE_EXT}");
     for cc in ["msvc", "clang", "gcc"] {
-        let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", cc], &root);
+        let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc}: C failed:\n{}", c.stderr);
         let main = c_definition(&c.stdout, &ember_branding::mangled("main"));
         assert!(!main.contains(".native))("), "{cc}: the loop calls through the value:\n{main}");
@@ -2748,7 +2748,7 @@ fn view_parameters_go_as_two_words_on_windows() {
     let root = workspace_root();
     let source = format!("tests/run-pass/views_passed_as_two_words.{SOURCE_EXT}");
     for cc in if cfg!(windows) { &["msvc", "clang"][..] } else { &["clang"][..] } {
-        let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", cc], &root);
+        let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc}: C failed:\n{}", c.stderr);
         let count = ember_branding::mangled("count_spaces");
         let first = ember_branding::mangled("first_len");
@@ -2768,7 +2768,7 @@ fn views_proved_apart_get_restrict_functions_and_nothing_else_does() {
     let root = workspace_root();
     let source = format!("tests/conformance/DSJ-3/accept_views_proved_apart_loop_in_a_restrict_function.{SOURCE_EXT}");
     for cc in ["msvc", "clang", "gcc"] {
-        let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", cc], &root);
+        let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc} C failed:\n{}", c.stderr);
         // A kernel's name as code uses it, followed by its call or parameter list: the backtrace's
         // table of names (`[RT-4]`) writes it as a string too, which is no use.
@@ -2847,7 +2847,7 @@ fn distinct_soa_columns_get_restrict_functions() {
     let root = workspace_root();
     let source = format!("tests/conformance/SIMD-3/accept_distinct_soa_columns_loop_in_a_restrict_function.{SOURCE_EXT}");
     for cc in ["msvc", "clang", "gcc"] {
-        let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", cc], &root);
+        let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc} C failed:
 {}", c.stderr);
         let kernel = format!("{}_loop", ember_branding::mangled("step"));
@@ -2876,10 +2876,10 @@ fn a_list_a_loop_only_pushes_onto_is_kept_in_a_local() {
         let after = after.find("\n}\n").map_or("", |end| &after[end..]);
         before.contains("->items = _") || after.contains("->items = _")
     };
-    let gcc = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "gcc"], &root);
+    let gcc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "gcc"], &root);
     assert_eq!(gcc.exit, 0, "C failed:\n{}", gcc.stderr);
     assert!(written_back(&gcc.stdout), "no list is written back from a local:\n{}", gcc.stdout);
-    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
+    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "C failed:\n{}", msvc.stderr);
     assert!(!written_back(&msvc.stdout), "a list is kept in a local for MSVC:\n{}", msvc.stdout);
 }
@@ -2891,7 +2891,7 @@ fn a_list_a_loop_only_pushes_onto_is_kept_in_a_local() {
 fn a_devirtualised_interface_call_searches_out_of_line() {
     let root = workspace_root();
     let source = format!("tests/run-pass/class_interface_handle.{SOURCE_EXT}");
-    let c = ember(&["build", &source, "--emit", "c", "--profile", "release"], &root);
+    let c = ember(&["build", &source, "--emit", "c", "--profile", "development"], &root);
     assert_eq!(c.exit, 0, "C failed:\n{}", c.stderr);
     let out_of_line = format!("{}(", ember_branding::runtime("itable_lookup_slow"));
     let inline = format!("{}(", ember_branding::runtime("itable_lookup"));
@@ -2961,7 +2961,7 @@ fn input_panics_on_a_line_that_is_not_utf8() {
 fn wrapping_arithmetic_is_unsigned_in_c() {
     let root = workspace_root();
     let source = format!("tests/conformance/TYP-8/accept_wrapping_arithmetic_in_a_loop_is_never_undefined.{SOURCE_EXT}");
-    let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "gcc"], &root);
+    let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "gcc"], &root);
     assert_eq!(c.exit, 0, "C failed:\n{}", c.stderr);
     for wrapped in [
         "(int64_t)((uint64_t)(_1) * (uint64_t)(6364136223846793005LL))",
@@ -3000,7 +3000,7 @@ fn printing_a_class_handle_passes_a_pointer_c_accepts() {
 fn loops_over_separate_lists_get_restrict_functions_for_gcc() {
     let root = workspace_root();
     let separate = format!("tests/conformance/OPT-2/accept_a_loop_nest_over_separate_lists_keeps_its_results.{SOURCE_EXT}");
-    let gcc = ember(&["build", &separate, "--emit", "c", "--profile", "release", "--cc", "gcc"], &root);
+    let gcc = ember(&["build", &separate, "--emit", "c", "--profile", "development", "--cc", "gcc"], &root);
     assert_eq!(gcc.exit, 0, "gcc C failed:
 {}", gcc.stderr);
     assert_eq!(gcc.stdout.matches("EMBER_NOINLINE void").count(), 6, "three loops move (prototype and definition each):
@@ -3008,12 +3008,12 @@ fn loops_over_separate_lists_get_restrict_functions_for_gcc() {
     assert!(gcc.stdout.contains("* restrict _1_ptr"), "the loop function's lists are not restrict:
 {}", gcc.stdout);
     let reading_back = format!("tests/conformance/OPT-2/accept_a_loop_nest_adding_the_same_each_round_keeps_its_results.{SOURCE_EXT}");
-    let gcc = ember(&["build", &reading_back, "--emit", "c", "--profile", "release", "--cc", "gcc"], &root);
+    let gcc = ember(&["build", &reading_back, "--emit", "c", "--profile", "development", "--cc", "gcc"], &root);
     assert_eq!(gcc.exit, 0, "gcc C failed:
 {}", gcc.stderr);
     assert_eq!(gcc.stdout.matches("EMBER_NOINLINE void").count(), 6, "three nests move for gcc:
 {}", gcc.stdout);
-    let msvc = ember(&["build", &reading_back, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
+    let msvc = ember(&["build", &reading_back, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.stdout.matches("EMBER_NOINLINE void").count(), 2, "one nest moves for MSVC");
 }
 
@@ -3027,7 +3027,7 @@ fn loops_over_separate_lists_get_restrict_functions_for_gcc() {
 fn msvc_writes_small_checked_loops_several_turns_a_pass() {
     let root = workspace_root();
     let source = format!("tests/conformance/CTL-3/accept_a_counted_loop_runs_every_turn_in_any_pass.{SOURCE_EXT}");
-    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
+    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "msvc C failed:\n{}", msvc.stderr);
     assert!(msvc.stdout.contains(" > 7u; ) {"), "no loop runs eight turns to a pass:\n{}", msvc.stdout);
     assert!(msvc.stdout.contains("_bump(&_"), "the call does not take the object's address directly:\n{}", msvc.stdout);
@@ -3040,7 +3040,7 @@ fn msvc_writes_small_checked_loops_several_turns_a_pass() {
         .expect("total_of is defined");
     let end = start + msvc.stdout[start..].find("\n}\n").expect("total_of ends");
     assert!(!msvc.stdout[start..end].contains("u; ) {"), "the running total's loop was unrolled:\n{}", &msvc.stdout[start..end]);
-    let clang = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    let clang = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(clang.exit, 0, "clang C failed:\n{}", clang.stderr);
     assert!(!clang.stdout.contains("u; ) {"), "clang's C was unrolled:\n{}", clang.stdout);
 }
@@ -3055,7 +3055,7 @@ fn loop_nests_adding_the_same_each_round_get_restrict_functions_for_msvc() {
     let root = workspace_root();
     let source = format!("tests/conformance/OPT-2/accept_a_loop_nest_adding_the_same_each_round_keeps_its_results.{SOURCE_EXT}");
     let main_loop = format!("{}_loop0(", ember_branding::mangled("main"));
-    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
+    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "msvc C failed:
 {}", msvc.stderr);
     assert_eq!(msvc.stdout.matches("EMBER_NOINLINE void").count(), 2, "one nest moves (prototype and definition):
@@ -3066,7 +3066,7 @@ fn loop_nests_adding_the_same_each_round_get_restrict_functions_for_msvc() {
 ").expect("the loop function ends")];
     assert!(kernel.contains("& 1023LL") && !kernel.contains(" ^ ") && !kernel.contains("& 1000LL"), "the wrong nest moved:
 {kernel}");
-    let clang = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    let clang = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(clang.exit, 0, "clang C failed:
 {}", clang.stderr);
     assert!(!clang.stdout.contains(&main_loop), "clang keeps the nest in place:
@@ -3083,12 +3083,12 @@ fn loop_nests_carrying_a_running_value_get_their_own_function_for_msvc() {
     let root = workspace_root();
     let source = format!("tests/conformance/OPT-2/accept_a_loop_carrying_a_running_value_keeps_its_results.{SOURCE_EXT}");
     let main_loop = format!("{}_loop", ember_branding::mangled("main"));
-    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
+    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "msvc C failed:\n{}", msvc.stderr);
     assert_eq!(msvc.stdout.matches(&format!("EMBER_NOINLINE int64_t {main_loop}")).count(), 4, "two whole-number nests move (prototype and definition each):\n{}", msvc.stdout);
     assert_eq!(msvc.stdout.matches(&format!("EMBER_NOINLINE double {main_loop}")).count(), 2, "the decimal nest moves:\n{}", msvc.stdout);
     assert_eq!(msvc.stdout.matches("EMBER_NOINLINE ").count(), 6, "nothing else moves:\n{}", msvc.stdout);
-    let clang = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    let clang = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(clang.exit, 0, "clang C failed:\n{}", clang.stderr);
     assert!(!clang.stdout.contains(&main_loop), "clang keeps every loop in place:\n{}", clang.stdout);
 }
@@ -3102,19 +3102,19 @@ fn loop_nests_carrying_a_running_value_get_their_own_function_for_msvc() {
 fn loop_totals_are_block_local_copies_for_msvc() {
     let root = workspace_root();
     let source = format!("tests/conformance/CTL-3b/accept_a_running_total_keeps_its_results.{SOURCE_EXT}");
-    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
+    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "msvc C failed:
 {}", msvc.stderr);
     assert_eq!(msvc.stdout.lines().filter(|line| line.ends_with("_in;")).count(), 10, "five totals copied in and back:
 {}", msvc.stdout);
-    let clang = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    let clang = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(clang.exit, 0, "clang C failed:
 {}", clang.stderr);
     assert!(!clang.stdout.lines().any(|line| line.ends_with("_in;")), "clang keeps the totals in place:
 {}", clang.stdout);
 }
 
-/// `[PHIL-5]` — at the end of `main` the process ends: release and shipping
+/// `[PHIL-5]` — at the end of `main` the process ends: development and release
 /// builds leave the list of objects with no `drop` to the operating system
 /// (one `free` fewer in `main`), and keep every drop that runs a `drop`
 /// method; debug builds free everything, for their leak check.
@@ -3125,7 +3125,7 @@ fn exit_drops_that_only_free_memory_go_in_release() {
     let main_symbol = ember_branding::mangled("main");
     let vec_free = format!("{}(", ember_branding::runtime("vec_free"));
     let mut frees = Vec::new();
-    for profile in ["debug", "release", "shipping"] {
+    for profile in ["debug", "development", "release"] {
         let out_dir = temporary_directory(&format!("exit-drops-{profile}"));
         let run = ember(&["build", &source, "--profile", profile, "--out-dir", &out_dir.to_string_lossy()], &root);
         assert_eq!(run.exit, 0, "{profile} build failed:
@@ -3142,8 +3142,8 @@ fn exit_drops_that_only_free_memory_go_in_release() {
         frees.push(main_c.matches(&vec_free).count());
         let _ = std::fs::remove_dir_all(&out_dir);
     }
-    assert_eq!(frees[1] + 1, frees[0], "release frees one list fewer than debug: {frees:?}");
-    assert_eq!(frees[2], frees[1], "shipping drops what release drops: {frees:?}");
+    assert_eq!(frees[1] + 1, frees[0], "development frees one list fewer than debug: {frees:?}");
+    assert_eq!(frees[2], frees[1], "release drops what development drops: {frees:?}");
 }
 
 /// `[EXC-9]` / `[EXC-13]` / `[TST-15]` — the two proved loop forms hoist
@@ -3888,7 +3888,7 @@ fn the_optimization_report_gives_each_simd_loop_its_verdict_then_the_host_compil
     let at = |needle: &str| text.lines().position(|line| line.contains(needle)).expect("the loop is in the program") + 1;
     let out_dir = temporary_directory("simd_report");
     let out = out_dir.to_string_lossy().into_owned();
-    let built = ember(&["build", &source, "--profile", "release", "--out-dir", &out, "--emit-optimization-report"], &root);
+    let built = ember(&["build", &source, "--profile", "development", "--out-dir", &out, "--emit-optimization-report"], &root);
     assert_eq!(built.exit, 0, "build failed:\n{}", built.stderr);
     for (header, says) in [
         ("for i in 0..xs.len():", "is in vectorisable form"),
@@ -4123,7 +4123,7 @@ fn debug_runs_report_leaks_unless_turned_off() {
     assert!(default.exit == 0 && default.stderr.contains("warning[L3017]"), "no default report:\n{}", default.stderr);
     let off = run(&["--no-leak-check"]);
     assert!(off.exit == 0 && !off.stderr.contains("runtime ownership cycle"), "--no-leak-check reported:\n{}", off.stderr);
-    for profile in ["release", "shipping"] {
+    for profile in ["development", "release"] {
         let quiet = run(&["--profile", profile]);
         assert!(quiet.exit == 0 && !quiet.stderr.contains("runtime ownership cycle"), "{profile} reported unasked:\n{}", quiet.stderr);
         let asked = run(&["--profile", profile, "--leak-check"]);
@@ -5603,7 +5603,7 @@ fn parse_expectations_reads_the_annotation_forms() {
     let source = format!(
         "\
 #$ test: run-pass
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 struct S:
     x: i32
 #$ stdout: 5
@@ -5618,7 +5618,7 @@ struct S:
     assert_eq!(parsed.kind.as_deref(), Some("run-pass"));
     assert_eq!(parsed.stdout.as_deref(), Some("5"));
     assert_eq!(parsed.exit, Some(0));
-    assert_eq!(parsed.profiles, ["debug", "release", "shipping"]);
+    assert_eq!(parsed.profiles, ["debug", "development", "release"]);
     assert_eq!(parsed.assert_c, vec![(false, alloc)]);
     assert_eq!(parsed.assert_c_count, vec![(arena_alloc, 1)]);
     assert_eq!(parsed.helps, ["keep one owner"]);
@@ -5791,7 +5791,7 @@ fn text_iterator_loops_are_counted_loops_without_the_iterator() {
     let root = workspace_root();
     let source = format!("tests/conformance/TXT-10/accept_text_iterators_in_loops_and_through_next.{SOURCE_EXT}");
     for cc in ["msvc", "clang"] {
-        let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", cc], &root);
+        let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc} C failed:\n{}", c.stderr);
         let main = c_definition(&c.stdout, &ember_branding::mangled("main"));
         // ADR-155: MSVC's native step behind the ASCII test takes the lead byte.
@@ -5820,7 +5820,7 @@ fn aggregates_and_views_are_written_field_by_field() {
     let source = format!("tests/conformance/TXT-10/accept_text_iterators_in_loops_and_through_next.{SOURCE_EXT}");
     // clang's C: with MSVC these steps are copied into their loops (ADR-107);
     // the writes by fields are every compiler's.
-    let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
     let next = c_definition(&c.stdout, &format!("{}_CharIndices_next", ember_branding::mangled("std_string")));
     // ADR-135 (G7-2): the item's tuple is a literal written in place, its own
@@ -5835,12 +5835,12 @@ fn aggregates_and_views_are_written_field_by_field() {
     assert!(lines.contains("(_0).ptr = NULL;") && !lines.contains("{ .ptr = NULL"), "`None` of a view is a literal:\n{lines}");
     assert!(lines.contains("(_2).ptr = ((*_1).rest).ptr;"), "the rest, written by fields, is copied whole:\n{lines}");
     let counted = format!("tests/conformance/CTL-1/accept_a_view_iterator_loop_is_counted.{SOURCE_EXT}");
-    let c = ember(&["build", &counted, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    let c = ember(&["build", &counted, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
     assert!(c.stdout.contains(".source;") && !c.stdout.contains(".source).ptr;"), "an iterator's view, written whole, is copied by its fields:\n{}", c.stdout);
     // D-501 — only a source read from memory is copied by its fields: a local
     // whose address is never taken lives in registers and is copied whole.
-    let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
     let words = c_definition(&c.stdout, &format!("{}_SplitWhitespace_next", ember_branding::mangled("std_string")));
     assert!(words.contains("(_2).ptr = ((*_1).rest).ptr;"), "the rest, read from memory, is copied whole:\n{words}");
@@ -5880,7 +5880,7 @@ fn split_once_view_fields_stay_field_copies_through_niche_options() {
     let root = workspace_root();
     let source = format!("tests/conformance/TXT-10/accept_split_once_view_copy_chains.{SOURCE_EXT}");
     for cc in ["msvc", "clang"] {
-        let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", cc], &root);
+        let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc} C failed:\n{}", c.stderr);
         let first = c_definition(&c.stdout, &ember_branding::mangled("first_view"));
         assert!(first.contains(").tag = 0;") && !first.contains("{ .tag = 0 }"), "split None is not tag-only:\n{first}");
@@ -5900,14 +5900,14 @@ fn inline_header_functions_and_inline_attributes_reach_the_c() {
     let iterators = format!("tests/conformance/TXT-10/accept_text_iterators_in_loops_and_through_next.{SOURCE_EXT}");
     // clang's C keeps `Chars.next` a function (with MSVC it is copied into
     // its loops, ADR-107); how it is marked is every compiler's.
-    let c = ember(&["build", &iterators, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    let c = ember(&["build", &iterators, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
     let std_string = ember_branding::mangled("std_string");
     assert!(c.stdout.contains(&format!("EMBER_INLINED EMBER_MAYBE_UNUSED {} {std_string}_Chars_next(", ember_branding::mangled("Option_char"))), "`Chars.next` is not forced inline:\n{}", c.stdout);
     assert!(c.stdout.contains(&format!("static inline EMBER_MAYBE_UNUSED {std_string}_Chars {}(", ember_branding::mangled("str_chars"))), "`str.chars` is not static inline:\n{}", c.stdout);
     let attributes = format!("tests/conformance/CG-C-3a/accept_inline_noinline_cold_and_hot.{SOURCE_EXT}");
     for cc in ["msvc", "clang"] {
-        let c = ember(&["build", &attributes, "--emit", "c", "--profile", "release", "--cc", cc], &root);
+        let c = ember(&["build", &attributes, "--emit", "c", "--profile", "development", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc} C failed:\n{}", c.stderr);
         let header = |name: &str| {
             let call = format!("{}(", ember_branding::mangled(name));
@@ -5928,7 +5928,7 @@ fn inline_header_functions_and_inline_attributes_reach_the_c() {
 fn a_loop_pushing_a_literal_reserves_its_text() {
     let root = workspace_root();
     let source = format!("tests/conformance/TXT-11/accept_a_string_has_every_str_method.{SOURCE_EXT}");
-    let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
     let main = c_definition(&c.stdout, &ember_branding::mangled("main"));
     assert!(main.contains("vec_reserve_hint(") && main.contains(", 2u)"), "no room is reserved for the pushes:\n{main}");
@@ -5940,7 +5940,7 @@ fn a_loop_pushing_a_literal_reserves_its_text() {
 fn an_iterator_loop_without_else_has_no_flag() {
     let root = workspace_root();
     let source = format!("tests/conformance/TYP-17/accept_an_inherent_next_is_the_iterators_for_a_bound_call.{SOURCE_EXT}");
-    let c = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
+    let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(c.exit, 0, "msvc C failed:\n{}", c.stderr);
     let main = c_definition(&c.stdout, &ember_branding::mangled("main"));
     assert!(main.contains("Countdown_next(") && !main.contains("__done"), "the loop keeps a flag:\n{main}");
@@ -5954,7 +5954,7 @@ fn an_iterator_loop_without_else_has_no_flag() {
 fn msvc_loops_copy_a_standard_step_and_skip_its_answer() {
     let root = workspace_root();
     let source = format!("tests/conformance/TXT-10/accept_text_iterators_in_loops_and_through_next.{SOURCE_EXT}");
-    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "msvc"], &root);
+    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "msvc C failed:\n{}", msvc.stderr);
     let main = c_definition(&msvc.stdout, &ember_branding::mangled("main"));
     for step in ["Lines_next(", "Split_next(", "SplitWhitespace_next("] {
@@ -5966,7 +5966,7 @@ fn msvc_loops_copy_a_standard_step_and_skip_its_answer() {
         pair[0].starts_with("bb") && pair[0].ends_with(": ;") && pair[1].contains(".ptr == NULL && (") && pair[1].contains(".len == SIZE_MAX ? 0 : 1);")
     });
     assert!(!entered_test, "a loop still tests what its step gave back:\n{main}");
-    let clang = ember(&["build", &source, "--emit", "c", "--profile", "release", "--cc", "clang"], &root);
+    let clang = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(clang.exit, 0, "clang C failed:\n{}", clang.stderr);
     assert!(c_definition(&clang.stdout, &ember_branding::mangled("main")).contains("Split_next("), "clang's loop lost its call");
 }
@@ -5987,13 +5987,13 @@ fn std_instances_nothing_reaches_are_not_kept() {
         format!("fn {}_Enumerate_std_string_Lines_next:", ember_branding::mangled("std_core")),
     ];
     let plain = format!("tests/milestones/m1_value_code_has_no_runtime_cost.{SOURCE_EXT}");
-    let mir = ember(&["build", &plain, "--emit", "mir", "--profile", "release"], &root);
+    let mir = ember(&["build", &plain, "--emit", "mir", "--profile", "development"], &root);
     assert_eq!(mir.exit, 0, "MIR failed:\n{}", mir.stderr);
     for body in &unused {
         assert!(!mir.stdout.contains(body.as_str()), "`{body}` is kept though nothing reaches it");
     }
     let iterators = format!("tests/conformance/TXT-10/accept_text_iterators_in_loops_and_through_next.{SOURCE_EXT}");
-    let mir = ember(&["build", &iterators, "--emit", "mir", "--profile", "release"], &root);
+    let mir = ember(&["build", &iterators, "--emit", "mir", "--profile", "development"], &root);
     assert_eq!(mir.exit, 0, "MIR failed:\n{}", mir.stderr);
     assert!(mir.stdout.contains(unused[0].as_str()), "`count`, which the program calls, was dropped");
 }
@@ -6037,7 +6037,7 @@ fn assert_memreplace_span_result_pointer_is_refreshed(c: &str) {
 fn memreplace_span_results_refresh_their_index_pointer() {
     let root = workspace_root();
     let source = format!("tests/conformance/OWN-6/accept_span_replace_result_refreshes_index_pointer.{SOURCE_EXT}");
-    for profile in ["debug", "release", "shipping"] {
+    for profile in ["debug", "development", "release"] {
         for cc in ["msvc", "clang"] {
             let c = ember(&["build", &source, "--emit", "c", "--profile", profile, "--cc", cc], &root);
             assert_eq!(c.exit, 0, "{cc}/{profile} C generation failed:\n{}", c.stderr);
@@ -6068,7 +6068,7 @@ fn progress_reduction_emits_a_fast_loop_and_preserves_checked_fallback() {
                 "--emit",
                 "c",
                 "--profile",
-                "release",
+                "development",
                 "--cc",
                 cc,
             ],
@@ -6130,7 +6130,7 @@ fn progress_reduction_emits_a_fast_loop_and_preserves_checked_fallback() {
                 "--emit",
                 "c",
                 "--profile",
-                "release",
+                "development",
                 "--cc",
                 cc,
             ],
@@ -6213,7 +6213,7 @@ fn string_descriptor_fields_keep_their_source_and_projected_copy_route() {
     }
     let root = workspace_root();
     let source = format!("tests/conformance/SPN-1/accept_string_descriptor_fields.{SOURCE_EXT}");
-    for profile in ["debug", "release", "shipping"] {
+    for profile in ["debug", "development", "release"] {
         for cc in ["msvc", "clang", "gcc"] {
             let c = ember(
                 &[
@@ -6497,7 +6497,7 @@ fn flaky():
 
 /// `[WK-15]` — `ember test` in the debug profile reports the objects a test
 /// leaked, and their cycles, when it ends; `--no-leak-check` turns that off,
-/// and the release profile has it only when asked.
+/// and the development profile has it only when asked.
 #[test]
 fn ember_test_reports_leaks_unless_turned_off() {
     let package = test_package("leaky", "lib", "\
@@ -6520,9 +6520,9 @@ fn builds_a_cycle():
     );
     let off = ember(&["test", "--no-leak-check"], &package);
     assert!(off.exit == 0 && !off.stderr.contains("runtime ownership cycle"), "--no-leak-check reported:\n{}", off.stderr);
-    let release = ember(&["test", "--profile", "release"], &package);
+    let release = ember(&["test", "--profile", "development"], &package);
     assert!(release.exit == 0 && !release.stderr.contains("runtime ownership cycle"), "release reported unasked:\n{}", release.stderr);
-    let asked = ember(&["test", "--profile", "release", "--leak-check"], &package);
+    let asked = ember(&["test", "--profile", "development", "--leak-check"], &package);
     assert!(asked.exit == 0 && asked.stderr.contains("runtime ownership cycle"), "release --leak-check silent:\n{}", asked.stderr);
     let both = ember(&["test", "--leak-check", "--no-leak-check"], &package);
     assert!(both.exit != 0 && both.stderr.contains("contradict"), "{}", both.stderr);

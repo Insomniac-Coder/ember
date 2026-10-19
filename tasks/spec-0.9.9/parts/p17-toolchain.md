@@ -115,11 +115,11 @@ c_compiler = "auto"               # auto | bundled | msvc | clang | gcc
 runtime = "static"                # static | shared (shared is required by hot reload)
 max_instantiations = 200
 
-[profiles.release]
+[profiles.development]
 lto = "thin"
 
 [profiles.profiling]
-inherits = "release"
+inherits = "development"
 debug_info = "full"
 
 [comptime]
@@ -157,8 +157,8 @@ large_copy = { level = "warn", threshold = 256 }
   and `[ffi]` (`evidence`, Annex C). A key a section does not take, or a section not listed, is
   `E9001`, naming what is accepted (ODR-110). **No manifest key turns off a
   safety check or changes what a program means** (`[PRF-1]`).
-* `[MAN-7]` `[build] reload` is `"opt-in"`, `"all"`, `"bodies"` or `"none"`; it is forbidden in
-  `shipping` (Annex B).
+* `[MAN-7]` *(changed in 0.9.10)* `[build] reload` is `"opt-in"`, `"all"`, `"bodies"` or `"none"`; a
+  `release` build ignores it and prints the note `hot reload is off in release builds` (Annex B).
 * `[VER-5]` Package versions are semantic; a requirement `"1.2"` means `>= 1.2.0, < 2.0.0`; resolution
   picks the highest version satisfying every requirement, and `ember update [package]` recomputes it.
   Two majors of one package may coexist, distinguished in symbol names.
@@ -197,7 +197,7 @@ large_copy = { level = "warn", threshold = 256 }
   | B4 | `ember build` after a signature change in a leaf module | ≤ 2.5 s |
   | B5 | `ember build` after a change to a widely imported type | ≤ 8 s |
   | B6 | clean `debug` build, cold cache | ≤ 40 s |
-  | B7 | clean `release` build | ≤ 90 s |
+  | B7 | clean `development` build | ≤ 90 s |
   | B8 | `.embind` regeneration for a Vulkan-sized header | ≤ 3 s |
   | B9 | compiler peak memory, clean build | ≤ 3 GB |
 
@@ -224,7 +224,7 @@ large_copy = { level = "warn", threshold = 256 }
   profile. Only the following differ between profiles.
 * `[PRF-3]` *(new in 0.9.9)* **What a profile may set.**
 
-  | Setting (key) | `debug` | `release` | `shipping` |
+  | Setting (key) | `debug` | `development` | `release` |
   |---|---|---|---|
   | optimisation (`opt`) | 0 | 2 | 3 |
   | debug information (`debug_info`: `full`, `lines`, `none`) | full | lines | none |
@@ -238,7 +238,8 @@ large_copy = { level = "warn", threshold = 256 }
 
   A package may define more profiles, each `inherits` one of these and overrides keys of this table.
   A key outside the table is `E9001`.
-* `[PRF-2]` Hot reload is a build mode admitted in `debug` and `release`, not a profile (Annex B).
+* `[PRF-2]` *(changed in 0.9.10)* Hot reload is a build mode of `debug` and `development`, not a
+  profile; a `release` build is never reloadable (Annex B).
 
 ## XVII.5 Tests, gates and conformance
 

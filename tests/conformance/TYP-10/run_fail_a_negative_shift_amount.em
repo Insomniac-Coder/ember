@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: TYP-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow in `shift`
 # D-309 — `[TYP-10]`: a negative shift amount panics in every profile, as an
 # amount at or past the width does. It was C's undefined shift by a negative

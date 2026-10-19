@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: GRM-38, CTL-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 60 20 3 3
 #$ [4, 9, 16]
 # `[GRM-38]` — a parenthesised comprehension is a generator expression: a lazy iterator, usable as

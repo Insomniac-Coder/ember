@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: EXC-19, EXC-15, EXC-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: exclusivity violation: write access to Counter.items while a read access to Counter.items is active
 # `[EXC-19]` — a method is quiet when everything it calls is quiet too, like
 # `bump` calling `step`. Its `mut self` call is only checked, and the check

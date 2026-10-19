@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-21, TYP-23, IFC-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 500 500 750 1250
 #$ 6.0 6.0
 # `[TYP-21]` — `k * m` with a number on the left is the number type's

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-5, SIMD-7, TYP-9
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 0 51 117 30.0
 #$ stdout: 0 51 117 30.0
 #$ assert-c-count: contains("((uint64_t)_") == 2

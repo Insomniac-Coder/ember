@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TXT-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: Ok(1.0) Ok(1.001) Ok(1.0) Ok(1.002)
 #$ Ok(65500.0) Ok(inf) Ok(0.0) Ok(6e-08)
 #$ Ok(0.1) Ok(-0.0) Ok(inf) Err(ParseError.Invalid) Err(ParseError.Empty)

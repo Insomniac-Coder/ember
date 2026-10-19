@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-38, SPN-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 6
 #$ 15
 #$ assert-c: !contains("ember_vec_from_elems")

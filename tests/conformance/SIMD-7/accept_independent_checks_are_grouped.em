@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-7, SIMD-5, OPT-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 0 51 117
 #$ assert-c-count: contains("((uint64_t)_") == 2
 # `out[i] = a[i] + b[i]` is in vectorisable form: its overflow checks are

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-16, CLS-4, DSP-4, OBJ-2, DRP-6
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1
 #$ stdout: 7
 #$ stdout: 0

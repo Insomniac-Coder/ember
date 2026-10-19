@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TXT-10, TXT-4, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: (2, 4) (0, 0) (0, 3) (-1, -1) (1, 1) (0, 0)
 #$ stdout: (4, 2) (1, 0) (1, 3)
 #$ assert-c: contains("ember_str_search(")

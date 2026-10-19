@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-27, STD-21
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1.4142135 6.0 2.5
 # ODR-041 — `f16` is a `Number` whose answers come back as `f32`, which
 # holds every `f16` exactly: `math.sqrt` of an `f16` is an `f32`.

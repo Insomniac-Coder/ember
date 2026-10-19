@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-4, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 5994000
 #$ assert-c-count: contains("ember_ck_") == 0
 # `[RNG-4]` (D-530) — a running total changed in an inner loop changes on

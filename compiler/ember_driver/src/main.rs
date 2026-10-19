@@ -79,7 +79,7 @@ this compiler does not have yet):
     ember --help | --version [--matrix]            (--matrix is not built yet)
 
 options:
-    --profile debug|release|shipping   default: debug
+    --profile debug|development|release   default: debug
     --emit tokens|ast|hir|mir|c|obj|header
                                       emit a stage and stop; obj and header write files
     --emit-header                     write <package>.h alongside a build or C emit
@@ -605,7 +605,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 PathBuf::from(input)
             };
             // `[HR-33]` — the toolchain's own host: build, run, watch, rebuild, reload.
-            if command == "run" && options.hot {
+            if command == "run" && options.hot && options.profile != Profile::Release {
                 return run_hot(&source, &options);
             }
             compile(&source, command, &options)
@@ -1824,7 +1824,7 @@ fn resolve_side_table(path: &Path, kind: &str) -> PathBuf {
     if path.is_file() {
         return path.to_path_buf();
     }
-    for directory in ["target/debug/inspect", "target/release/inspect", "target/shipping/inspect"] {
+    for directory in ["target/debug/inspect", "target/development/inspect", "target/release/inspect"] {
         let candidate = PathBuf::from(directory).join(format!("{}.{kind}.json", path.display()));
         if candidate.is_file() {
             return candidate;
@@ -1839,8 +1839,8 @@ fn resolve_safety_path(path: &Path) -> PathBuf {
     }
     let candidates = [
         PathBuf::from("target/debug/inspect"),
+        PathBuf::from("target/development/inspect"),
         PathBuf::from("target/release/inspect"),
-        PathBuf::from("target/shipping/inspect"),
     ];
     for directory in candidates {
         let candidate = directory.join(format!("{}.safety.json", path.display()));
@@ -2257,7 +2257,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         match arg {
             "--profile" => {
                 options.profile = Profile::from_name(&value(&mut index, arg)?)
-                    .ok_or("profile must be debug, release or shipping")?
+                    .ok_or("profile must be debug, development or release")?
             }
             "--emit" => options.emit = Some(value(&mut index, arg)?),
             "--emit-header" => options.emit_header = true,
@@ -3506,6 +3506,8 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[FFI-21a]` — a function C may call returns no pointer into a
     // parameter C passes as a copy.
     ember_analysis::check_c_entry_returns_all(&bodies, &types, &mut sink);
+    // `[FFI-36b]` — one foreign object adopted twice through one local (`E5068`).
+    ember_analysis::check_adoptions_all(&bodies, &mut sink);
     // Part XVIII §4.7 — the NLL borrow checker runs on MIR after drop
     // elaboration, so the drops it sees are the ones that will exist.
     ember_analysis::check_all_with_installed_callable_regions(&bodies, &types, &mut sink);
@@ -4569,7 +4571,8 @@ fn manifest_lint_settings(
 
 /// Annex B — the build's reload mode: the manifest's `[build] reload`, or `all` when `--reload` or
 /// `--hot` asks for reload and the manifest writes none. `[PRF-2]`, `[MAN-7]`: reload is a build mode
-/// of `debug` and `release`, forbidden in `shipping` (`E9033`). `[HR-29]`: a reloadable package
+/// of `debug` and `development`; a `release` build ignores it with a note (ODR-118, which retired
+/// `E9033`). `[HR-29]`: a reloadable package
 /// shares the one runtime of its process, so a manifest asking for a static runtime is `E9036`.
 fn reload_mode(settings: &ManifestLintSettings, options: &Options, sink: &mut Sink) -> Result<ReloadMode, String> {
     let (written, location) = settings.reload.unwrap_or((ReloadMode::None, Span::DUMMY));
@@ -4581,13 +4584,10 @@ fn reload_mode(settings: &ManifestLintSettings, options: &Options, sink: &mut Si
     if mode == ReloadMode::None {
         return Ok(mode);
     }
-    if options.profile == Profile::Shipping {
-        let how = if settings.reload.is_some() { "this package's manifest asks for hot reload" } else { "hot reload was asked for" };
-        sink.emit(
-            Diagnostic::error(codes::E9033, location, format!("{how}, which `shipping` does not admit"))
-                .note("hot reload is a build mode of `debug` and `release`, never of `shipping` [PRF-2]")
-                .help("build with `--profile debug` or `--profile release`, or set `[build] reload = \"none\"`"),
-        );
+    if options.profile == Profile::Release {
+        let _ = location;
+        eprintln!("note: hot reload is off in release builds [MAN-7]");
+        return Ok(ReloadMode::None);
     }
     if let Some(at) = settings.static_runtime {
         sink.emit(
@@ -4726,7 +4726,7 @@ fn copy_runtime_header(lib: &Path) -> Result<PathBuf, String> {
 /// `wrapping_*` methods ask for.
 fn overflow_policy(profile: Profile) -> ember_types::OverflowPolicy {
     match profile {
-        Profile::Debug | Profile::Release | Profile::Shipping => ember_types::OverflowPolicy::Panic,
+        Profile::Debug | Profile::Development | Profile::Release => ember_types::OverflowPolicy::Panic,
     }
 }
 

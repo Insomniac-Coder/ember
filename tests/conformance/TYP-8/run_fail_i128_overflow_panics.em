@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: TYP-8, TYP-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow in `*`
 # D-272 — `i128` arithmetic overflows and panics like any other integer's,
 # in every profile, with the same message on every compiler.

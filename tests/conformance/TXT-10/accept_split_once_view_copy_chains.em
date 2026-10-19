@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TXT-10, LT-20, LT-22, CG-C-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: Some('left') Some('') None
 #$ stdout: Some('a') Some('') Some('b') Some('') None
 # A split's nested descriptors flow through ordinary local copies, a niche

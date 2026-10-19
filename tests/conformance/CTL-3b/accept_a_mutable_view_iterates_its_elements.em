@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-3b, CTL-1, SPN-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c-count: contains(".index = (") == 0
 #$ stdout: 2 20 | 10
 # `[CTL-1]`, `[CTL-3b]` — `for x in view` over a `MutSpan` gives each element

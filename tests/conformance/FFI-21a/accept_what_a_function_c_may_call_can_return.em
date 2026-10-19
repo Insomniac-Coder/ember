@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-21a, FN-6, FN-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1 true true true
 # `[FFI-21a]` — a function whose value becomes an `extern "C" fn` may return a
 # pointer C passed (taken as a pointer), a value read through a parameter C

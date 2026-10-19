@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: RNG-4, RNG-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 
 type Small = i32 in 0 ..= 15
 

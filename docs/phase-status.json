@@ -40,12 +40,10 @@
     "DOC-2": "`ember test --doc` runs every sample under docs/book/ (ADR-192, milestone ember_test_doc_runs_the_documentation_examples), but the user guide itself, with its \"coming from Python\" chapter, does not exist and is not published with a release",
     "FMT-1": "classes, `extern` blocks, extern classes and item-level `comptime:` are copied through as written: not re-indented to four spaces nor kept to 100 columns (the printer has no arm for them; `ember_fmt`'s item catch-all)",
     "FFI-1": "a foreign declaration's contract has no effects or thread rule yet; contracts beyond link names are E0900 (see FFI-11)",
-    "FFI-36b": "`adopt=false` (`E5052`) and the run-time second-owner panic are built; the compile-time report of two `adopt`s of one local in one function is not: the registry has no code for it (owner question in tasks/85/B-notes.md)",
     "FFI-33b": "a `ForeignBox` of a `threads(creator)` type or result records its creator and panics in debug when it ends elsewhere, and a `retained` parameter carries `threads(creator)`; callbacks carrying it are not built (no `callback(…)` contracts)",
     "FFI-2": "an overlay file parses and is checked (`[GRM-35]`, `E5067`), but nothing applies one: overlays reach a program only through `import c … with (overlay=…)`, and the C header importer is not built, so a call's missing facts cannot be supplied by one",
     "FFI-33c": "`@export_table` is not built (ATTRIBUTE_TABLE in ember_typeck)",
     "CLO-6a": "a `once fn` is built as a parameter's bound only: as a value (a local, a field, a `Box` or a collection element), whose call empties its place, it is refused (E0900)",
-    "HR-2a": "reclaim drops a `migrate_from`'s old instance field by field without its class's own `drop`: that method's thunk now reaches the new image's body, built for the new layout (owner question in tasks/85/A-notes.md)",
     "HR-14": "four rows are not built and are refused instead: a field added whose type is a user `Default` type (the built-in ones start at zero), a field changed to a range type (`T.checked`), an enum whose variants' payloads changed, and a changed layout attribute, which the schema does not record (tasks/85/A-notes.md)"
   }
 }

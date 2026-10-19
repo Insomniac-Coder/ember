@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-39
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: [1, 2, 3]
 #$ ['a', "it's"] ['x']
 #$ [[1], []] [1.5, 2.0]

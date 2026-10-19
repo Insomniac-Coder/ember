@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-13, STD-15, CTL-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: None None None None
 #$ stdout: 2 1 1
 # `[TYP-13]` — an `Option` with a niche stores `None` as the niche value (`2` for a

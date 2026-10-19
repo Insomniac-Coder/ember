@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLO-10, CLO-3, CLO-2, CLO-11
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1 2 3
 #$ 10
 #$ 9

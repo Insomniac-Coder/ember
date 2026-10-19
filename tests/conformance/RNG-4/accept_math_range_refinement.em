@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-4, RNG-10, RNG-5a
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 # `[RNG-4]` — the prelude's `min`, `max` and `clamp` carry what is known of
 # their operands' ranges (D-142; they replaced `std.math`'s per-type copies):

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CT-4, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 255
 
 #! module overflow(wrap)

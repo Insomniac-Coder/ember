@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLO-15, CLO-2, CLO-4, STD-19
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 3 [1, 2, 3] 9
 #$ stdout: [4, 5, 6]
 #$ stdout: 3 7

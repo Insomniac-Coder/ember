@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: ERR-12, FN-8
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ args: x
 #$ stderr: error: 2
 #$ exit: 1

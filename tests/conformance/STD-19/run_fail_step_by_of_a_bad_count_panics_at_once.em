@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: STD-19, STD-14
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: before
 #$ panics: step_by(0): the step must be positive
 # `[STD-19]` (ODR-089) — a bad count is the caller's bug and panics when

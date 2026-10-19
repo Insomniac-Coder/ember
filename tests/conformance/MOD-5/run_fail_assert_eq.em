@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: MOD-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: assertion failed: the two values are not equal
 
 fn main():

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-3b, STD-19
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c-count: contains("ember_range_count_i64(") == 3
 #$ stdout: 22 | [5] | [9223372036854775800, 9223372036854775803, 9223372036854775806]
 # `[CTL-3b]` — `(a..b).step_by(k)` in a `for` header is a counted loop: the

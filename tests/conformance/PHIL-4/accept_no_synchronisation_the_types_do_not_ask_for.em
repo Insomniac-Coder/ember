@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: PHIL-4, RC-4
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 6
 #$ assert-c: contains(ember_retain_plain()
 #$ assert-c: !contains(ember_retain_sync)

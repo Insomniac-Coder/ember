@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLS-4, DSP-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c: contains(static int32_t em_vt_Square_slot0)
 #$ assert-c: contains(->slot0)
 #$ stdout: 42

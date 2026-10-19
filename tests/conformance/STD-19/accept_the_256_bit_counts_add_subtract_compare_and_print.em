@@ -8,7 +8,7 @@
 #$ stdout: whole half
 #$ stdout: -2 -340282366920938463463374607431768211458 true 3
 #$ stdout: -680564733841876926926749214863536422913 115792089237316195423570985008687907852589419931798687112530834793049593217023
-#$ profiles: debug, release
+#$ profiles: debug, development
 # G8-4 (the owner's design, 0.9.10) — the 256-bit counts: `u256`, what `len()` gives for a `..=`
 # range of 128-bit numbers, and `i256`, signed, what `enumerate` numbers a 128-bit range with (a
 # start may be negative). Each adds, subtracts, compares, prints, hashes, and converts to and from

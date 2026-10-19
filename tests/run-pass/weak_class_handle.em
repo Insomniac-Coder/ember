@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: OBJ-3, WK-2, WK-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ stdout: 42
 #$ stdout: 7

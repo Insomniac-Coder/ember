@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-11, HASH-3
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 28655 28672 399980000
 # A `Map` puts a key at the remainder of its hash by the table's length, a
 # prime, so keys close together get neighbouring places (`spread`: its table

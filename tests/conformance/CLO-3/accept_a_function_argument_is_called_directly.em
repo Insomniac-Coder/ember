@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLO-3, FN-6
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 31 8
 #$ stdout: 34 9
 #$ assert-c-count: contains("__via_0_em_triple(") == 4

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: OBJ-2, DSP-3, EXC-1, IFC-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ assert-c-count: contains("ember_itable_lookup") == 1
 #$ assert-c-count: contains("ember_object_begin_write(((ember_obj_header*)receiver)") == 1

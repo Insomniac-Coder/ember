@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-4, OPT-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 26 26 7 -1 -1
 #$ stdout: 82
 #$ assert-c-count: contains("ember_panic_bounds(") == 0

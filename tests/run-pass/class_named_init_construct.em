@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLS-1, CLS-2, CLS-3, TYP-25, EXP-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ 32
 

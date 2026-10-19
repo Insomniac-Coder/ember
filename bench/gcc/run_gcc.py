@@ -24,11 +24,11 @@ FLAGS = ['-O2', '-fvect-cost-model=cheap', '-funroll-loops', '-ffp-contract=off'
 
 def build_ember(program, out):
     target = out / 'ember' / program.stem
-    result = subprocess.run([str(EMBER), 'build', str(program), '--profile', 'release', '--cc', 'gcc',
+    result = subprocess.run([str(EMBER), 'build', str(program), '--profile', 'development', '--cc', 'gcc',
                              '--out-dir', str(target)], capture_output=True, text=True, timeout=600)
     if result.returncode != 0:
         sys.exit(f'ember build failed: {program.name}\n{result.stdout}{result.stderr}')
-    return target / 'release' / 'bin' / program.stem
+    return target / 'development' / 'bin' / program.stem
 
 
 def build_twin(source, out):

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-11, STD-12, STD-16, STD-17
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 60 Some(20) None true
 #$ stdout: 62 3
 #$ stdout: None false

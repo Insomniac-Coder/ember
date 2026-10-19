@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-16, LEX-15a
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: (1, 2) ('a', 'b') 3
 #$ stdout: [1, 2, 3] 6
 #$ stdout: 2

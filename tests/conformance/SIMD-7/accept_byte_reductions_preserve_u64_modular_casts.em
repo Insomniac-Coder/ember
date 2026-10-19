@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-5, SIMD-7, OPT-2, TYP-6, TYP-8, CG-C-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: unsigned byte sums ok
 #$ assert-c-count: contains("ember_sum_bytes(") == 4
 #$ assert-c: contains(", true)")

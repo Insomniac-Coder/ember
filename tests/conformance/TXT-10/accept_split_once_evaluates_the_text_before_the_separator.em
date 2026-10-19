@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TXT-10, EXP-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: separator
 #$ stdout: Some(('old', 'text')) changed
 # The separator may repoint the source descriptor. The receiver's evaluated

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-22, IFC-1, BRW-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ assert-c: contains(static const struct em_vt_dyn_Render em_vt_dyn_Render_Pixel)
 #$ assert-c: contains(return em_Pixel_render((em_Pixel*)_0);)

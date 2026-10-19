@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-21, STD-17
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 3.0
 #$ [1.0, 9.5, 3.0, 4.5]
 #$ set 3

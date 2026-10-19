@@ -5,7 +5,7 @@
 #$ stdout: Some(0) None
 #$ stdout: Some(30) Some(20)
 #$ stdout: Some(1) None
-#$ profiles: debug, release
+#$ profiles: debug, development
 # G8-4 (the owner's design, 0.9.10) — `nth_back(n)` leaves out `n` items from the back and gives
 # the one before them, in the iterator's count type: a range moves its end past them at once (the
 # whole of `0 as u64 ..= u64.MAX` but its first value in one step), any other iterator steps back

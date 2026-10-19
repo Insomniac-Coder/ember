@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CELL-1, CELL-2, TYP-14
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 7
 
 # A compiler-known Cell operation must still be found through an ordinary

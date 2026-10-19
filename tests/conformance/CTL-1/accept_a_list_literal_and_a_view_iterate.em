@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1
 #$ 2
 #$ 7

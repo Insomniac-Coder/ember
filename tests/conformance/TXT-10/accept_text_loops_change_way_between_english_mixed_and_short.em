@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TXT-10, TXT-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 945763144 254 0 -1 255
 #$ stdout: 318657419 255 0 -1 256
 #$ stdout: 458003899 400 -1 -1 400

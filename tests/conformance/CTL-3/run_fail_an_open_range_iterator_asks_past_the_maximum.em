@@ -2,7 +2,7 @@
 #$ rules: CTL-3, TYP-8, STD-19
 #$ panics: integer overflow in `+`
 #$ stdout: Some(254) Some(255)
-#$ profiles: debug, release
+#$ profiles: debug, development
 # `[CTL-3]` (D-526) — `a..`'s iterator gives its type's maximum, as the `for`
 # over it does, and panics when the value after it is asked for.
 

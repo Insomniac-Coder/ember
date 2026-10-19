@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: DSJ-1, DSJ-2, DSJ-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: apart [1.0, 2.0, 3.0]
 #$ overlap [1, 2] [2, 3]
 #$ apart [1, 2] [3, 4]

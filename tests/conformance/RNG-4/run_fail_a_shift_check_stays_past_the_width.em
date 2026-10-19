@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: RNG-4, TYP-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 8
 #$ panics: integer overflow in `shift`
 # `[RNG-4]` — `k % 64` is below 64, but the shifted value is an `i32`: an

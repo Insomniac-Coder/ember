@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: WK-11, WK-12, WK-14, HEAP-7, TST-26, OBJ-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ stdout: end
 #$ assert-c: contains(ember_weak_retain)

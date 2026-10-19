@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: OPT-2, PHIL-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout:
 #$ 503760
 #$ 511040

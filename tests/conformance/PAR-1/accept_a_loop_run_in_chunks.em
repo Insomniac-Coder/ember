@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: PAR-1, PAR-2
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 99990000
 #$ stdout: 30
 # `[PAR-1]` — a `@parallel` loop's body runs over chunks of its range on the job system's

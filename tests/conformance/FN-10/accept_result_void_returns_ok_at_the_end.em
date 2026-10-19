@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FN-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: ok
 #$ negative
 # A function returning `Result[void, E]` returns `Ok(())` when control reaches

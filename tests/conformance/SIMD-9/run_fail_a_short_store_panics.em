@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: SIMD-9
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: lane 3: index 3 is out of bounds for a length of 3
 # `[SIMD-9]` — `v.store(s)` requires `s.len() >= V.LANES`: with three elements the fourth lane has
 # nowhere to go, and the store panics naming it before writing anything.

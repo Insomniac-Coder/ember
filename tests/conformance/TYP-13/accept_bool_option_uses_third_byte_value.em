@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-13, TYP-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1 1
 #$ stdout: false true none
 # bool has only two valid values, leaving byte value 2 for None.

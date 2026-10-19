@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STR-5, TYP-39
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: Secret(***)
 #$ Secret(***) [Secret(***), Secret(***)] Some(Secret(***))
 #$ Holder(secret=Secret(***), n=2)

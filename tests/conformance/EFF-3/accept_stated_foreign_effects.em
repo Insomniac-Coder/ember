@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EFF-3, FFI-10, DET-2
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 5 7
 #$ stdout: 9
 # `[EFF-3]` — a foreign function carries the effects its contract states,

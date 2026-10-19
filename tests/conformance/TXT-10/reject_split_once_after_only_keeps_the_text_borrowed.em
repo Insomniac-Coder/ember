@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: TXT-10, BRW-1, LT-20, LT-36
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 # Keep only the second field. The discarded first field cannot supply the
 # source loan that this case requires, so a missing second-field contract is
 # caught independently of the first-field contract.

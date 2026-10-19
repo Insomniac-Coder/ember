@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TXT-10, CTL-1, CTL-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: ['a', 'é', '😀', 'b'] ['a', 'é', '😀', 'b'] 4 Some('b')
 #$ [0, 1, 3, 7] [(0, 'a'), (1, 'é'), (3, '😀'), (7, 'b')]
 #$ 1238 8 [97, 195, 169, 240, 159, 152, 128, 98]

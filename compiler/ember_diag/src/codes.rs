@@ -356,6 +356,7 @@ codes! {
     E5064 = (Error, 5064, Ffi, "[TXT-3]", "interior null in a value converted to `CStr`");
     E5065 = (Error, 5065, Ffi, "[SEL-2]", "`Shared`/`Weak` and `CppShared`/`CppWeak` do not interconvert");
     E5067 = (Error, 5067, Ffi, "[GRM-35], [TIER-1]", "an overlay that states facts is not declared `unsafe overlay`");
+    E5068 = (Error, 5068, Ffi, "[FFI-36b]", "one live foreign object adopted twice");
 
     // --- comptime -------------------------------------------------------------
     E6001 = (Error, 6001, Comptime, "[CT-3]", "comptime evaluation exceeded its limits, or a constant's value depends on itself");
@@ -394,7 +395,7 @@ codes! {
     // Registered and never emitted: `[HR-6]`'s permanent thunks make a
     // reloadable function's address stable, so it cannot be stranded.
     E9032 = (Error, 9032, Build, "[HR-6]", "reserved: a reloadable function's address escaping to foreign code");
-    E9033 = (Error, 9033, Build, "[PRF-2]", "`reload` is forbidden in `shipping`");
+    E9033 = (Error, 9033, Build, "[MAN-7]", "retired: a `release` build ignores `reload` with a note (ODR-118)");
     E9034 = (Error, 9034, Build, "[MONO-3]", "invalid `max_instantiations` value");
     E9035 = (Error, 9035, Build, "[HR-12a]", "packages in one process disagree about the object-header layout");
     E9036 = (Error, 9036, Build, "[HR-29]", "a reloadable package may not link the runtime statically");

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: MOD-1, MOD-3, TYP-16, IFC-1, TYP-22
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 
 from generic_class_interface_extension_support.model import Holder

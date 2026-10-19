@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXC-15, EXC-19, OBJ-2, TYP-22
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: [1, 2, 3]
 # `[EXC-15]` — a `mut self` call writes every field of the object once. Through
 # an interface-typed handle or a `dyn` box the caller does not know the class,

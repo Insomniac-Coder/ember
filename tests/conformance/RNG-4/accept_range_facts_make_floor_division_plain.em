@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-4, TYP-28, COST-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: -1999 1007 -2000
 #$ stdout: 3002
 #$ stdout: -3997 3002 -3000

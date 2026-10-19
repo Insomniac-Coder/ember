@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TXT-10, LT-20, LT-22, LT-36, LT-38, BRW-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: left right
 #$ stdout: 0
 #$ stdout: some 0

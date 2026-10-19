@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: GRM-34, TYP-17
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: n=5 n=x n=1.5
 #$ n=5
 # ODR-042 — an `extend` parameter that only the implemented interface names

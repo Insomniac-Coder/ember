@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EFF-15, PHIL-13
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 6
 # `[EFF-15]` — and every profile accepts this: its bounds and overflow checks are `RuntimeCheck`s,
 # which `@nopanic(explicit)` allows, whether or not a profile's code keeps them.

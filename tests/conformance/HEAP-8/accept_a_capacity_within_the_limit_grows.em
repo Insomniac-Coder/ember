@@ -1,7 +1,7 @@
 #$ test: run-pass
 #$ assert-c: contains("vec_reserve_more_inline(")
 #$ rules: HEAP-8, HEAP-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: true
 #$ stdout: 5 8
 # `[HEAP-8]` — a capacity whose bytes fit is granted as asked: `reserve(n)`

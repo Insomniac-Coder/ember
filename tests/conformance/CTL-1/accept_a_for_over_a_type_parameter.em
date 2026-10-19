@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-1, TYP-17, IFC-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 3 15 | 2 6
 # D-382 — `for x in it` where `it`'s type is a parameter bounded by `Iterator`
 # takes `next` from the bound, as `it.next()` does; `x` is that parameter's

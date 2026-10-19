@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-36, STD-9
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: <Token at <Token at
 #$ <Dog at
 #$ <Token at

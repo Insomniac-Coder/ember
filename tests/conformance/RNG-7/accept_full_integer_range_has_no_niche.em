@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-7, TYP-13
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 2 1
 #$ stdout: some none
 # A range covering every u8 value has no spare value for None.

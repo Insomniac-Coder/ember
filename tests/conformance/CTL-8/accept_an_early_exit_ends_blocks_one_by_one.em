@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-8, CTL-7, OWN-2
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: drop 1
 #$ defer f
 #$ 2

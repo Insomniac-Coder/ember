@@ -6,7 +6,7 @@
 #$ stdout: [(340282366920938463463374607431768211455, 340282366920938463463374607431768211455)]
 #$ stdout: [(7, 30), (6, 20), (5, 10)]
 #$ stdout: [(9223372036854775806, 0), (9223372036854775807, 1), (9223372036854775808, 2)]
-#$ profiles: debug, release
+#$ profiles: debug, development
 # G8-4 (the owner's design, 0.9.10) — `enumerate` numbers a range of 64-bit numbers in `i128` and
 # one of 128-bit numbers in `i256`, so every item has its number, from a start that may be
 # negative. The owner's example: the whole `int` range numbered from -3 and walked backwards,

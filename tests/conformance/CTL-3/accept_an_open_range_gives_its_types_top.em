@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-3, STD-19
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout:
 #$ 250 251 252 253 254 255 | 250 251 252 253 254 255 |
 #$ 0 Some(253) Some(254) Some(255)

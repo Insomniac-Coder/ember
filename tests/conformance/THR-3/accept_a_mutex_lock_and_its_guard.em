@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: THR-3, CELL-8, DRP-6
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: true
 #$ 15
 #$ 2 b

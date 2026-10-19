@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-4, CTL-3b
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 14
 #$ assert-c-count: contains("ember_ck_") == 0
 # `[RNG-4]` — what a list's elements can hold reaches an element read through

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FN-8, FN-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ args: a
 #$ stdout: 3
 #$ extra

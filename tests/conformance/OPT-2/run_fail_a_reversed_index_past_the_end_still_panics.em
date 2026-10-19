@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: OPT-2, RNG-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 10
 #$ panics: index 4 is out of bounds for a length of 4
 # `[OPT-2]` — `n - 1 - i` is at most `n - 1`; with `n` past the length the

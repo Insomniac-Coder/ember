@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: HEAP-8, ALC-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 0
 #$ panics: capacity overflow
 # `[HEAP-8]` — 2^62 more `int`s is 2^65 bytes, past what `usize` holds: the

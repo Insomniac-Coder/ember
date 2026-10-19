@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: CLS-9
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 
 class Version:
     let value: i32

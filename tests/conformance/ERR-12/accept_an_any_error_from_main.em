@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: ERR-12, ERR-8, ERR-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stderr: error: starting: load failed
 #$ stderr: caused by: disk 3
 #$ exit: 1

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-4, TXT-10, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 129027
 #$ stdout: -9223372036854646781
 #$ stdout: 0

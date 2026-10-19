@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: EXC-3, EXC-2, EXC-19
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: exclusivity violation: read access to Player.items while a write access to Player.items is active
 # `[EXC-3]` — a check is removed only when nothing held anywhere could make it
 # fail. Passing `p.items` to a `mut` parameter holds a write to it for the

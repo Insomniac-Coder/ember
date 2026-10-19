@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-22, IFC-1, FN-2, FN-2a
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ assert-c: contains(int32_t (*slot0)(void*, int32_t, int32_t*))
 #$ assert-c: contains(return em_Adjuster_adjust((struct em_obj_Adjuster*)_0, _1, _2);)

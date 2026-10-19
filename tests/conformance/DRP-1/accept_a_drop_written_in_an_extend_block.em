@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: DRP-1, STR-3, DRP-2
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: first second
 #$ drop second
 #$ drop first

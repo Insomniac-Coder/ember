@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: WK-5, WK-6, WK-7, WK-10, OBJ-3, WK-11, WK-12, TST-14
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 7
 
 # `Holder[Child]` remains a strong instantiated edge, while the closing

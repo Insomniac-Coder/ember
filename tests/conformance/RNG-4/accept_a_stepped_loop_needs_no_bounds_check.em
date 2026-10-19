@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-4, CTL-3b, STD-26
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c-count: contains("ember_panic_bounds(") == 0
 #$ stdout: 22 30 15
 # `[RNG-4]` — in a stepped loop over `start..stop` by a positive `step`, each

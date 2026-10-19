@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-4, TYP-8, TYP-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 14 0 0
 #$ stdout: 8 9223372036854775808
 #$ assert-c-count: contains("ember_panic_div_zero(") == 0

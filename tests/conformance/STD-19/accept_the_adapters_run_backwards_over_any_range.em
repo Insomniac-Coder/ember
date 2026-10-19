@@ -10,7 +10,7 @@
 #$ stdout: 3f 18446744073709551614
 #$ stdout: [340282366920938463463374607431768211455, 340282366920938463463374607431768211454]
 #$ stdout: [-9223372036854775807, -9223372036854775808]
-#$ profiles: debug, release
+#$ profiles: debug, development
 # G8-4 (the owner's design, 0.9.10) — the six cases of question 8 on a range too long for an `int`
 # to count, `0 as u64 .. u64.MAX`: `take`, `skip`, `step_by`, `enumerate` and `zip` run backwards
 # and `len()` answers, step by step through std's adapters and as `for` loops. Each panicked

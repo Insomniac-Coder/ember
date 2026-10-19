@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TXT-10, TXT-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c: contains("< 128U")
 #$ stdout: 0 0 -1
 #$ stdout: 97 1 -1

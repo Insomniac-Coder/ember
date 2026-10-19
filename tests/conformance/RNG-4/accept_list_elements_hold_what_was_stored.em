@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-4, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 56372 1022 49500
 #$ assert-c-count: contains("ember_ck_") == 0
 # `[RNG-4]` — a list this function makes empty and changes only by `push`

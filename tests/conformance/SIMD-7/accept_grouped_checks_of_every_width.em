@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-7, SIMD-5, OPT-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 2147483500 2147483599 155 254 1000 901 -32600 -32699
 #$ assert-c-count: contains(" >> 63ULL;") == 8
 # Grouped checks on `i32`, `u8`, `u64` and `i16` lists, close to each type's

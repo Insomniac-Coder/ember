@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXC-3, EXC-3a, EXC-19
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 6
 # `[EXC-3]` — nothing in this program ever holds a player's list while other
 # code runs, so no check on it can fail: the compiler removes them, and

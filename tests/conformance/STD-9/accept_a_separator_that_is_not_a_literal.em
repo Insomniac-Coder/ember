@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-9, EXP-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: a, b, c
 #$ stdout: 1 -> 2 -> 3 -> 4!
 #$ stdout: [first] 1 [second] 2

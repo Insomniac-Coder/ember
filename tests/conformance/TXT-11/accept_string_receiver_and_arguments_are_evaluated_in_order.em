@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TXT-11, EXP-1, BCK-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: receiver
 #$ stdout: offset
 #$ stdout: character

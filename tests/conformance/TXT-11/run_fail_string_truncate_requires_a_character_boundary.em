@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: TXT-11, TXT-4, TYP-31, HEAP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: String byte offset is not on a character boundary
 
 fn main():

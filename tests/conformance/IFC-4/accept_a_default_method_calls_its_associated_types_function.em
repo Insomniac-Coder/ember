@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: IFC-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 7 0
 # D-381 — a default method calls an associated function through its
 # interface's associated type by its bare name (`Item.default()`), as it names

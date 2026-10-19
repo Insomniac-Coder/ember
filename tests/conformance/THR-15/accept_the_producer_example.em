@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: THR-15, THR-10
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 285
 # `[THR-15]` — Part XI.2's example: a producer thread sends the squares of 0..10 through a bounded
 # channel; the receiving loop ends at `None`, once the only `Sender` has been dropped with the thread's

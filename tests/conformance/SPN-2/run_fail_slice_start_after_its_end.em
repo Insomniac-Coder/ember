@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: SPN-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: index 2 is out of bounds for a length of 1
 # A slice that starts after it ends panics: the start is checked against the
 # end.

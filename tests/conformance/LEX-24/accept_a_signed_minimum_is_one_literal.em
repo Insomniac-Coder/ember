@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: LEX-24, TYP-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: -128 -32768 -2147483648 -9223372036854775808
 #$ -170141183460469231731687303715884105728 -5 0
 # D-311 — `[LEX-24]`: a minus directly before an untyped integer literal

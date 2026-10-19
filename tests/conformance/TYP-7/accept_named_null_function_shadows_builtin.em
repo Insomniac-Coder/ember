@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-7, MOD-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 5
 
 fn null[T](x: i32) -> i32:

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CORO-13, THR-6
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 2
 #$ 1
 # `[CORO-13]` — a scope that closes before the next `yield` is unaffected.

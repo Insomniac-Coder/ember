@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: HEAP-5, HEAP-6, EXC-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: exclusivity violation: overlapping access
 # D-374 — a `Shared[T]` stored in a class field is checked like one in a
 # local: reading its value through the field while a mutable borrow is taken

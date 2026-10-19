@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STR-6, CLS-2
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: P(x=1, label='one', tags=['a'], scale=2)
 #$ stdout: P(x=-4, label='negative', tags=[], scale=2)
 #$ stdout: dropped first

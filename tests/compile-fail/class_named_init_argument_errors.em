@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: CLS-1, CLS-2, CLS-3, TYP-25
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ error[E2020]: has no parameter `missing`
 #$ error[E1030]: parameter `x` is given twice
 #$ error[E2020]: positional arguments must come before named ones

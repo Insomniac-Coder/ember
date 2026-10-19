@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TXT-11, TXT-4, TYP-31, HEAP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: o
 
 fn main():

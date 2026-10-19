@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-4, TYP-3, TYP-6, TYP-8, FFI-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1 66 1114112 4294967295 1
 #$ assert-c-count: contains("ember_ck_add_u32(") == 2
 # Every valid char is at most 0x10FFFF, so widening it to u32 then

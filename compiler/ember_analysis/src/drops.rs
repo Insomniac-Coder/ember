@@ -85,6 +85,9 @@ struct MovePaths {
     places: Vec<Place>,
     parents: Vec<Option<usize>>,
     children: Vec<Vec<usize>>,
+    /// Whether a path is a class handle: a write to a field behind it goes through the handle,
+    /// which it reads and leaves as it was (D-698).
+    handles: Vec<bool>,
 }
 
 impl MovePaths {
@@ -93,6 +96,7 @@ impl MovePaths {
             places: Vec::new(),
             parents: Vec::new(),
             children: Vec::new(),
+            handles: Vec::new(),
         };
         for (index, local) in body.locals.iter().enumerate() {
             paths.add(Place::local(LocalId(index as u32)), local.ty, None, types);
@@ -111,6 +115,7 @@ impl MovePaths {
         self.places.push(place.clone());
         self.parents.push(parent);
         self.children.push(Vec::new());
+        self.handles.push(matches!(types.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_)));
 
         let fields: Vec<Ty> = match types.kind(ty) {
             TyKind::Struct(id)
@@ -150,11 +155,23 @@ impl MovePaths {
             .expect("every MIR local has a move-path root")
     }
 
+    /// The class handle a write to `place` goes through, when `place` is a field of the object
+    /// a handle names: `p.x = 1` reads `p` and gives it no value.
+    fn through_handle(&self, place: &Place) -> Option<&Place> {
+        let node = self.node(place);
+        (self.handles[node] && self.places[node].projection.len() < place.projection.len()).then(|| &self.places[node])
+    }
+
     fn state(&self, place: &Place, state: &[Owned]) -> Owned {
         state[self.node(place)]
     }
 
     fn move_out(&self, place: &Place, state: &mut [Owned]) {
+        // A field behind a class handle is the object's, never the handle's: dropping the old
+        // value of `p.next` before a write leaves `p` as it was (D-698).
+        if self.through_handle(place).is_some() {
+            return;
+        }
         let node = self.node(place);
         self.set_subtree(node, Owned::MOVED, state);
         self.recompute_ancestors(node, state);
@@ -162,6 +179,9 @@ impl MovePaths {
 
     fn initialise(&self, place: &Place, state: &mut [Owned]) {
         let node = self.node(place);
+        if self.through_handle(place).is_some() {
+            return;
+        }
         self.set_subtree(node, Owned::LIVE, state);
         self.recompute_ancestors(node, state);
     }
@@ -1300,7 +1320,8 @@ fn step_terminator(
         ember_mir::FuncRef::Indirect { operand, .. } => Some(operand),
         _ => None,
     };
-    consume_in_order(callee.into_iter().chain(args), state, reporter, span, body, paths);
+    let handle = paths.through_handle(dest).map(|handle| Operand::Copy(handle.clone()));
+    consume_in_order(callee.into_iter().chain(args).chain(handle.as_ref()), state, reporter, span, body, paths);
     paths.initialise(dest, state);
 }
 
@@ -1367,8 +1388,10 @@ fn step(
                     reporter.report_borrow(place, owned, stmt.span, body);
                 }
             }
-            // `[OWN-3]` — reading a moved value is `E3040`.
-            consume_in_order(operands_of(rvalue), state, reporter, stmt.span, body, paths);
+            // `[OWN-3]` — reading a moved value is `E3040`; so is writing a field through a moved
+            // class handle (D-698).
+            let handle = paths.through_handle(place).map(|handle| Operand::Copy(handle.clone()));
+            consume_in_order(operands_of(rvalue).into_iter().chain(handle.as_ref()), state, reporter, stmt.span, body, paths);
             paths.initialise(place, state);
         }
         // `[TYP-8]` — checked arithmetic writes its result through its own
@@ -1377,7 +1400,9 @@ fn step(
         // reported as a use after move. Every integer `a * b` bound to a
         // local went through here.
         StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
-            consume_in_order([lhs, rhs], state, reporter, stmt.span, body, paths);
+            let handles: Vec<Operand> = [dest, overflow].into_iter().filter_map(|place| paths.through_handle(place))
+                .map(|handle| Operand::Copy(handle.clone())).collect();
+            consume_in_order([lhs, rhs].into_iter().chain(&handles), state, reporter, stmt.span, body, paths);
             for place in [dest, overflow] {
                 paths.initialise(place, state);
             }

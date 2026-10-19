@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TXT-11, RNG-8, TYP-31
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: é ok
 
 type Size = i128 in 0 ..= 64

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-6, TYP-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout:
 #$ 99999996802856924650656260769173209088
 #$ 1.7014118e+38 -1.7014118346046923e+38 true inf

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-20, STD-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1.4142135623730951 1.4142135 1024.0 2.5
 #$ 2.0 4.0 3.0 -2.0 2.0 -1.0 -0.75
 #$ 1.0 0.0 3.0 3.0 3.141592653589793

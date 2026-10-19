@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-26, TYP-37
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: true true false true
 # `min` and `max` order floats by IEEE totalOrder (`[TYP-37]`): `-0.0` is less
 # than `+0.0`, and `abs` clears the sign of `-0.0`.

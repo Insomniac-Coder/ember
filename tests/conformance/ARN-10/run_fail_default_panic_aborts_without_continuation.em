@@ -2,7 +2,7 @@
 #$ rules: ARN-3, ARN-10, PAN-1, TST-23
 #$ panics: division by zero
 #$ stdout: before default panic
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 
 from std.core import Default
 

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: GRM-38, STD-26
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 55 true false
 #$ 30 true
 # As the only argument of a call a generator expression needs no parentheses

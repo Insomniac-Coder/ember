@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-22, DRP-6, HEAP-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ assert-c: contains(static const struct em_vt_dyn_Render em_vt_dyn_Render_Payload)
 #$ assert-c: contains(em_Payload_bump((em_Payload*)_0);)

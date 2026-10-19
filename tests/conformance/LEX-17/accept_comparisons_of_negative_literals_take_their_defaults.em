@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: LEX-16, LEX-17, TYP-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: true false true
 #$ stdout: true false
 #$ stdout: false true

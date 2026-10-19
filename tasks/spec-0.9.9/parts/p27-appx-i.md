@@ -154,7 +154,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[CG-C-1]` | XVIII | The emitted C has no undefined behaviour. Checked signed arithmetic … |
 | `[CG-C-2]` | XVIII | Accepted programs compile. A program Ember accepts never produces C … |
 | `[CG-C-3]` | XVIII | Cross-module inlining. Because each module is one translation unit, … |
-| `[CG-C-3a]` | XVIII | `@inline` is binding: the function is emitted with `__forceinline` or … |
+| `[CG-C-3a]` | XVIII | *(changed in 0.9.10)* `@inline` is binding: the function is emitted … |
 | `[CG-C-3b]` | XVIII | The bodies it exports are part of the interface hash (`[BLD-2]`). |
 | `[CG-C-4]` | XVIII | Aliasing facts. For each loop, the base pointer of every view whose … |
 | `[CG-C-5]` | XVIII | Every panic function is `_Noreturn` and cold, and each check branches … |
@@ -458,7 +458,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[ERR-3]` | XIII | `Error` is the interface of error types: `Display + Debug` with … |
 | `[ERR-4]` | XIII | `Option` and `Result` provide `is_some`/`is_none`, `is_ok`/`is_err`, … |
 | `[ERR-5]` | XIII | `Result` is `@must_use`: discarding one is `W2190` (an error under … |
-| `[ERR-6]` | XIII | A foreign function's status code becomes a `Result` at the binding … |
+| `[ERR-6]` | XIII | *(changed in 0.9.10)* A foreign function's status code becomes a … |
 | `[ERR-7]` | XIII | Identity conversion. The prelude provides `From[T]` for every `T` … |
 | `[ERR-8]` | XIII | `AnyError` is the prelude's "any error" type: an owned, boxed `dyn … |
 | `[ERR-9]` | XIII | The error parameter defaults to `AnyError` (§XIII.2), so `fn … |
@@ -525,14 +525,14 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-10]` | XVI | An `unsafe extern "C":` block declares foreign functions, statics and … |
 | `[FFI-11]` | XVI | Contract vocabulary. A pointer contract has five axes; mutability … |
 | `[FFI-11a]` | XVI | A pointer contract with no count word is `E5012`, which lists the … |
-| `[FFI-11b]` | XVI | The two-call enumeration idiom (call once for the count, again to … |
+| `[FFI-11b]` | XVI | *(changed in 0.9.10)* The two-call enumeration idiom (call once for … |
 | `[FFI-11c]` | XVI | `TODO(count)`, `TODO(nullable)`, `TODO(ownership)` and … |
 | `[FFI-11f]` | Annex C | A result lifetime derived from `[[clang::lifetimebound]]` imports as … |
 | `[FFI-12]` | XVI | An overlay entry whose name, parameter count or parameter names do … |
 | `[FFI-13]` | XVI | An overlay may contain `extend` blocks with ordinary Ember wrapper … |
 | `[FFI-14]` | XVI | The importer's result is a `.embind` file (versioned CBOR: header … |
 | `[FFI-15]` | XVI | `cstr` is a borrowed, NUL-terminated C string (`c"…"` literals are … |
-| `[FFI-16]` | XVI | An enum marked `@ffi(status, ok=X)` generates `struct <E>Error(code: … |
+| `[FFI-16]` | XVI | *(changed in 0.9.10)* An enum `E` marked `@ffi(status=E, ok=X, … |
 | `[FFI-17]` | Annex C | `import cpp "Header.hpp" with (project="engine", overlay="…", … |
 | `[FFI-17a]` | Annex C |  |
 | `[FFI-17b]` | Annex C | Templates are available only as explicit instantiations listed in … |
@@ -732,7 +732,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[HR-7]` | Annex B | Call-table slots are identified by mangled name (`[MNG-1]`), never by … |
 | `[HR-8]` | Annex B | Each image carries a reload manifest section listing every reloadable … |
 | `[HR-9]` | Annex B | A call through a thunk costs one load and one indirect jump; the … |
-| `[HR-9a]` | Annex B | A reloadable function is never inlined, devirtualised or placed in … |
+| `[HR-9a]` | Annex B | *(changed in 0.9.10)* A reloadable function is never inlined, … |
 | `[HR-10]` | Annex B | `@noreload fn` is called directly and may be inlined; changing its … |
 | `[HR-10a]` | Annex B | A `@noreload` function may call reloadable functions, through their … |
 | `[HR-11]` | Annex B | Every type in a reloadable package has a schema: its kind, base, … |
@@ -743,7 +743,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[HR-13a]` | Annex B | Standard-library containers of a type from a reloadable package … |
 | `[HR-13b]` | Annex B | Value data reachable only through raw pointers or foreign memory … |
 | `[HR-14]` | Annex B | Migration is by name, and this table is exhaustive: |
-| `[HR-15]` | Annex B | Migration keeps an instance's address where the new size fits; … |
+| `[HR-15]` | Annex B | *(changed in 0.9.10)* Migration keeps an instance's address where the … |
 | `[HR-15a]` | Annex B | A reference the runtime cannot enumerate — in foreign memory, behind … |
 | `[HR-15b]` | Annex B | Every refusal is decided in plan, before prepare runs. |
 | `[HR-16]` | Annex B | `fn migrate_from(old: ref OldSelf) -> Result[Self, ReloadError]` … |
@@ -759,7 +759,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[HR-23]` | Annex B | A changed C++ header refuses the reload and names it (the host must … |
 | `[HR-24]` | Annex B | An object in use by an in-flight GPU frame is migrated in place when … |
 | `[HR-25]` | Annex B | `reload` is `"all"`, `"opt-in"`, `"bodies"` or `"none"` (`[MAN-7]`); … |
-| `[HR-27]` | Annex B | A `shipping` build is bit-identical whether or not the source uses … |
+| `[HR-27]` | Annex B | A `release` build is bit-identical whether or not the source uses any … |
 | `[HR-28]` | Annex B | `ember inspect --safety` reports the thunk indirection of each … |
 | `[HR-29]` | Annex B | With reload enabled, one shared runtime serves every image in the … |
 | `[HR-30]` | Annex B | Host contract: `ember_reload_init(&config)` once; … |
@@ -770,7 +770,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[HR-35]` | Annex B | `migrate_from` cannot abort the process. It may not contain an … |
 | `[HR-36]` | Annex B | Allocation during prepare comes from the transaction arena; … |
 | `[HR-37]` | Annex B | The transaction arena holds everything prepare allocates and is … |
-| `[HR-38]` | Annex B | `std.hot.ReloadError` is `SchemaRefused(type, reason)`, … |
+| `[HR-38]` | Annex B | *(changed in 0.9.10)* `std.hot.ReloadError` is … |
 | `[HR-39]` | Annex B | A foreign call inside `migrate_from` returns its failure as … |
 | `[HR-41]` | Annex B | Failure matrix. |
 | `[HR-42]` | Annex B | Publication. Entering Ember code increments the thread's depth … |
@@ -900,7 +900,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[MAN-1]` | XVII | An invalid manifest, including one with an unknown key, is `E9001`, … |
 | `[MAN-2]` | XVII | `ember.lock` records the resolved dependencies with content hashes; … |
 | `[MAN-3]` | XVII | Every key in `[lints]` names a lint the compiler defines (`E9010` … |
-| `[MAN-7]` | XVII | `[build] reload` is `"opt-in"`, `"all"`, `"bodies"` or `"none"`; it … |
+| `[MAN-7]` | XVII | *(changed in 0.9.10)* `[build] reload` is `"opt-in"`, `"all"`, … |
 | `[MAN-8]` | XVII | *(changed in 0.9.10)* The sections are: `[package]` (`name`, … |
 
 ## MNG
@@ -1014,7 +1014,7 @@ Every rule of this document, by family, with the Part that defines it.
 | Rule | Part | Begins |
 |---|---|---|
 | `[PRF-1]` | XVII | A profile never changes what a program means. Every profile accepts … |
-| `[PRF-2]` | XVII | Hot reload is a build mode admitted in `debug` and `release`, not a … |
+| `[PRF-2]` | XVII | *(changed in 0.9.10)* Hot reload is a build mode of `debug` and … |
 | `[PRF-3]` | XVII | What a profile may set. |
 
 ## RC

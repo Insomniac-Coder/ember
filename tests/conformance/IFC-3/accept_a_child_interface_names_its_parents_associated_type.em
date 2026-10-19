@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: IFC-3, IFC-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 3 2 1
 #$ stdout: 30
 # `[IFC-3]` — "a bound brings its parents", and so does an interface's own

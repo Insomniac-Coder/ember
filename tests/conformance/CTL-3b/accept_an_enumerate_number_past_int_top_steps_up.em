@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-3b, STD-19, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c-count: contains("ember_ck_add_i64(") == 0
 #$ assert-c: !contains("integer overflow in")
 #$ stdout:

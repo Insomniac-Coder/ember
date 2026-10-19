@@ -34,9 +34,10 @@ The reference implementation compiles Ember to C11 and hands it to the platform'
   that makes no foreign call. So the C compiler inlines across modules without LTO. A function emitted
   there is not also emitted with external linkage unless it is exported or its address is taken.
 * `[CG-C-3b]` The bodies it exports are part of the interface hash (`[BLD-2]`).
-* `[CG-C-3a]` `@inline` is binding: the function is emitted with `__forceinline` or
-  `__attribute__((always_inline))`. `@noinline`, `@cold` and `@hot` are passed to the C compiler as
-  hints.
+* `[CG-C-3a]` *(changed in 0.9.10)* `@inline` is binding: the function is emitted with `__forceinline`
+  or `__attribute__((always_inline))`, except a reloadable function in a hot-reload build, which is never
+  inlined (`[HR-9a]`): there its `@inline` has no effect, and builds without hot reload inline it.
+  `@noinline`, `@cold` and `@hot` are passed to the C compiler as hints.
 * `[CG-C-4]` *(changed in 0.9.9)* **Aliasing facts.** For each loop, the base pointer of every view whose base and length
   are invariant in the loop is hoisted into a local declared `T *restrict` exactly when `[SIMD-3]`
   (including its condition for views reached through a class handle) proves it disjoint from every other view the loop writes or reads; its length is hoisted into a local
@@ -146,7 +147,7 @@ expression broken into single operations (reads, writes, moves, borrows, calls, 
 * `[RT-3]` `TypeInfo` holds size, alignment, flags, name, base, drop functions, method tables and, for
   `@reflect` types, field descriptors.
 * `[RT-4]` A panic prints `panic at <file>:<line>:<col>: <message>` naming Ember entities (`[DIA-23]`),
-  a backtrace outside `shipping`, calls the host's panic hook if set, and aborts.
+  a backtrace outside `release`, calls the host's panic hook if set, and aborts.
 * `[RT-6]` The runtime ABI version is `EMBER_RUNTIME_ABI`.
 * `[RT-5]` Every runtime symbol, macro and header name derives from one constant,
   `EMBER_SYMBOL_PREFIX` (default `ember`); `ember_rt.h` is generated with the literal names so C

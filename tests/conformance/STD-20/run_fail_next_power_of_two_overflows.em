@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: STD-20, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow in `next_power_of_two`
 # ODR-039 — `next_power_of_two` past the type's `MAX` overflows, and overflow
 # panics in every profile: 128 fits a `u8`, 256 does not.

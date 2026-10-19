@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CTL-3b, STD-19, RNG-4, HEAP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 4 8 12 16
 #$ assert-c: !contains("integer overflow in")
 # `[CTL-3b]` — the numbers `enumerate(start=round)` gives fit in `int` when

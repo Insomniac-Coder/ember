@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLO-13, CLO-3, CLO-10
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 6 30
 
 # `[CLO-13]` (D-554) — where an owned callable value is wanted, a lambda that

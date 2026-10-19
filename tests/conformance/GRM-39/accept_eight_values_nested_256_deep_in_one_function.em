@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: GRM-39
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: true true true true true true true true
 # `[GRM-39]` (G7-2) — eight values nested 256 deep in one function. Each level
 # was a temporary of its own, each larger than the one inside it, all in one

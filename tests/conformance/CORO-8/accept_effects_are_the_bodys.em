@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CORO-8, EFF-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 1
 #$ 2
 # `[CORO-8]` — a generator carries the effects of its body: one that prints is not `@noio`, and

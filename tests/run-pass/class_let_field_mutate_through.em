@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLS-9, CLS-9a, EXC-1, EXC-4, EXC-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ assert-c-count: contains("ember_object_begin_write") == 1
 #$ assert-c-count: contains("ember_object_end_write") == 1

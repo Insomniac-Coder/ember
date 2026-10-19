@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-7, TYP-13
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 1 1
 #$ stdout: 40
 #$ stdout: none

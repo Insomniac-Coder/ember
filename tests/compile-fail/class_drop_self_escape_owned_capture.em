@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: CLS-7a, OBJ-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 
 # An `owned fn` owns its captured class handle and can outlive the destructor.
 fn keep(token: Token):

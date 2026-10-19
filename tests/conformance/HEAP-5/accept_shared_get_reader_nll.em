@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: HEAP-4, HEAP-5, HEAP-6, RC-5, EXC-1, EXC-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ assert-c: contains(ember_access_begin_read)
 #$ assert-c: contains(ember_access_end_read)

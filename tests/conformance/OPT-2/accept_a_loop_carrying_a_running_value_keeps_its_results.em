@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: OPT-2, CTL-3b
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout:
 #$ 28
 #$ 247503

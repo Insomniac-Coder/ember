@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXP-1, EXP-4, DRP-2, DRP-3, STR-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 0 2
 #$ stdout: drop 2
 #$ stdout: drop 1

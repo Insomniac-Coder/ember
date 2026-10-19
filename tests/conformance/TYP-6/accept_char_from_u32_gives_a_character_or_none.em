@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-6
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: Some('A') 233 128512
 #$ stdout: None None None
 # `[TYP-6]` — `char → u32` and `u8 → char` are casts; any other integer

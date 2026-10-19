@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CORO-2, CORO-3
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 10 20 30
 #$ 7
 # `[CORO-2]` — `yield e` suspends the generator and produces `e`, converted to the yielded

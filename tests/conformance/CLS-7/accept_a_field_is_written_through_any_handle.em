@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLS-7, EXC-16, EXC-18
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 1
 #$ stdout: [7, 8, 9]
 #$ stdout: [8, 9, 10]

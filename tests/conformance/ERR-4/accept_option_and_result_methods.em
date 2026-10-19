@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: ERR-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: true false false true
 #$ 3 0
 #$ true false false true

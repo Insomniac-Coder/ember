@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLS-1, CLS-2, CLS-3, CLS-6
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c: contains(em_default_value())
 #$ stdout: 3
 #$ stdout: 7

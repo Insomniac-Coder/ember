@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: DSJ-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 4
 
 # `[DSJ-5]` — `assert_disjoint_or_panic` gives the two views back as a pair.

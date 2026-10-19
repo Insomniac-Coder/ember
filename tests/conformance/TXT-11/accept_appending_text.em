@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TXT-11
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: abc
 #$ abcdef
 #$ x!

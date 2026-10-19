@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: RNG-4, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 6
 #$ panics: integer overflow in `+`
 # `[RNG-4]` — `x > 0` bounds `x` below only: `x + 1` can still overflow and

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-21, STD-28
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: true true true true true
 #$ true true true true
 #$ Vec3(x=1.0, y=2.0, z=3.0) true Quat(x=0.0, y=0.0, z=0.0, w=1.0) Quat(x=-1.0, y=-2.0, z=-3.0, w=4.0) 5.477226

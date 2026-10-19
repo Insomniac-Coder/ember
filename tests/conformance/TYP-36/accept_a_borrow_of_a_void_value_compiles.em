@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-36, TYP-1, CG-C-2
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 1 1 true
 #$ stdout: 1 true false
 #$ stdout: 1 true 7

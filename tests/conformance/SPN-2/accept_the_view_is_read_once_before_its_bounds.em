@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SPN-2, EXP-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 8 [1, 2, 3, 4, 5, 6, 7, 8]
 #$ [4, 5, 6, 7, 8]
 #$ he

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-4, HEAP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 48
 #$ stdout: 32
 #$ assert-c-count: contains("ember_ck_mul_i64(") == 1

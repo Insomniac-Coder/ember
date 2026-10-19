@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: SIMD-9
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: [11, 13, 10, 12]
 #$ panics: lane 2: index 4 is out of bounds for a length of 4
 # `[SIMD-9]` — a gather checks every lane's index against the view's length, and a failure is a

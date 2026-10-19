@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RT-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: ready
 #$ assert-c: contains(ember_rt_init(&cfg);)
 #$ assert-c: !contains(__attribute__((constructor)))

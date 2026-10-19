@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: MOD-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 2 4 9 0
 
 # `[MOD-5]` (D-560) — a program's own functions named `read`, `write`, `alloc`

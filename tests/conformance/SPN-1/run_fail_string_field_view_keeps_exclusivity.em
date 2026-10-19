@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: SPN-1, EXC-19, EXC-15, EXC-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: exclusivity violation: write access to TextBox.text while a read access to TextBox.text is active
 # Root must verify exact diagnostic wording. No unsafe buffer access.
 

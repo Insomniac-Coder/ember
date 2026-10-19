@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: ERR-3, ERR-2, STR-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: line 4: expected `key = value` | ConfigError.Syntax(line=4) | no cause
 #$ line 5: `depth` is not a number (5, {braces}) | ConfigError.NotNumber(line=5, key='depth') | no cause
 #$ empty | ConfigError.Empty | no cause

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CELL-1, CELL-2, TYP-14
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 44
 #$ assert-c: contains("(*((em_Cell_i32*)_1)).value = ")
 #$ assert-c: !contains("ember_cell")

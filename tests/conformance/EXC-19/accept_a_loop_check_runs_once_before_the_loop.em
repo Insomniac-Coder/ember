@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXC-8, EXC-19, PHIL-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 0 3000 7
 # `[EXC-8]` — each `push` checks that no access to `sink.items` is active.
 # The loop changes no access and runs no Ember code, and `sink` stays the

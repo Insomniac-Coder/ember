@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CG-C-4, SIMD-3
-#$ profiles: release
+#$ profiles: development
 #$ stdout: 20.0
 #$ 14.0
 #$ assert-c: contains("double* restrict _")

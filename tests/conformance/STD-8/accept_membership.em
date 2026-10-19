@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-8, STD-8b
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: true false true
 #$ true false
 #$ true true false true

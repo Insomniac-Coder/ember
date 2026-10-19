@@ -1,6 +1,6 @@
 #$ test: compile-pass
 #$ rules: WK-5, WK-6, WK-7, TST-14
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ warning[L3001]: potential reference cycle
 
 # Two declared strong field edges form a visible ownership cycle. The warning is

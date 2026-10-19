@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: STD-15, PHIL-5, PHIL-11
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ assert-c-count: contains("vec_reserve_hint(") == 3
 #$ stdout:
 #$ 10 45

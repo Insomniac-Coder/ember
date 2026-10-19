@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: EXC-19, EXC-15, EXC-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: exclusivity violation: write access to Counter.items while a read access to Counter.items is active
 # `[EXC-19]` — a `mut self` call to a method that runs no other code and
 # touches no other object is only checked, not held. The check still sees a

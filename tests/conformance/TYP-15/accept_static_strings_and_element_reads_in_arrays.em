@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-15
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: ['zed', 'al', 'bob', 'cy']
 #$ ['bo', 'cy'] ['ann', 'bo'] ['bo', 'cy']
 # `[TYP-15]` — `names = ["ann", "bob"]` is an `Array[str]` of static strings.

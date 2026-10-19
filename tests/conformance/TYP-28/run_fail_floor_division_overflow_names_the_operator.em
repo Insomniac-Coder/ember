@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: TYP-28, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow in `//`
 # `MIN // -1` overflows in every profile, and the panic names the operator
 # that was written.

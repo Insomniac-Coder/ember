@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: LEX-19
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: [   1234567] [**1234567**] [1,234,567] [1_234_567] [0,001,234,567]
 #$ [ff] [0XFF] [101] [0o10] [-42] [-0007]
 #$ [3.14] [     3.142] [3.141590e+00] [314.16%] [1,234.5] [1e+02]

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-4, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 2998
 #$ assert-c-count: contains("em_scale") == 0
 #$ assert-c-count: contains("ember_ck_") == 0

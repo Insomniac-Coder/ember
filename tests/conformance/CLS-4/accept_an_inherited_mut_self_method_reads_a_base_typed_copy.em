@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLS-4, OBJ-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 3
 #$ assert-c: contains("_up = (struct em_obj_Base*)(*(")
 #$ assert-c: !contains("((struct em_obj_Base**)")

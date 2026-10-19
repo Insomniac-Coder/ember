@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: [11, 22, 33, 44] [-9, -18, -27, -36] [10, 40, 90, 160] [-1, -2, -3, -4]
 #$ [0, 4, 0, 4] [1, 6, 3, 6] [1, 2, 3, 2]
 #$ [-294967296, 5, 5, 5] [-294967296, 5, 5, 5]

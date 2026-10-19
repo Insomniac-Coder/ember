@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: ECS-1
-#$ profiles: debug, release
+#$ profiles: debug, development
 #$ stdout: 0 0 true
 #$ 1048575 4095 4294967295 true
 #$ 5 3 3145733

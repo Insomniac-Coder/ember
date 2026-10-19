@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: TYP-21, TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: integer overflow
 # ODR-040 — a number's operator method is its operator, so `x.add(1)` at
 # `i32.MAX` overflows and panics as `x + 1` does.

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TXT-10, LT-22, BRW-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: left right
 #$ stdout: 0 0
 # Both sides borrow the searched text. A scoped separator may be destroyed,

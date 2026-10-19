@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: RNG-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 207
 #$ assert-c: !contains("a path no run takes")
 # `[RNG-4]` — a `u8` widened to `int` is below 1000, so the `if` always

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TYP-22, IFC-1, CLS-4, CLS-7, DRP-6, HEAP-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 #$ assert-c: contains(em_vt_dyn_Render_Pixel_slot1)
 #$ assert-c: !contains(ember_box_new_copy)

@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: DSJ-5, DSJ-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: assert_disjoint_or_panic: the views overlap
 
 # `[DSJ-5]`, `[DSJ-8]` — overlapping views panic, in every profile.

@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: DRP-6, CLS-1, HEAP-3, HEAP-4, OBJ-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: shared
 #$ stdout: handle
 #$ assert-c: contains(ember_obj_new(&em_ti_Handle))

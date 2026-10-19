@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: TYP-8
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 0
 #$ panics: integer overflow
 # D-314 — negating an unsigned value overflows unless it is zero, and

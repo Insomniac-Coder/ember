@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXC-2, EXC-19
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: [1, 2] [2, 3] 3 3
 # `[EXC-2]` — reads do not conflict with each other: two views of one field and
 # a read of it through another handle are all live at once.

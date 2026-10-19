@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: OBJ-3, WK-1, WK-2, WK-3, WK-11, WK-12, WK-14
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 7
 #$ assert-c: contains(ember_weak_upgrade)
 #$ assert-c: contains(ember_weak_release)

@@ -1,6 +1,6 @@
 #$ test: run-fail
 #$ rules: TYP-31, TYP-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ panics: index 18446744073709551617 is out of bounds
 # `[TYP-31]` (D-527) — an index of any integer type: one wider than `usize`
 # that `usize` does not hold is past every length. `as` kept its low bits, so

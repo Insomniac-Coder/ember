@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: UNS-1, TIER-1
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 42
 
 unsafe fn increase(x: i32) -> i32:  # SAFETY: this test sets up what the operation requires

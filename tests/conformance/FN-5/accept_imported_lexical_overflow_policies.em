@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: FN-5, TYP-8, TYP-18, CLO-1, MOD-3
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: -128 -128 -128 127
 
 from support.overflow_policy import defaulted, generic, callback

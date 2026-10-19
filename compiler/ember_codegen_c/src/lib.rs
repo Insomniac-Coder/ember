@@ -487,6 +487,8 @@ fn emit_with(
         reload: reload.cloned(),
         reload_slots: BTreeMap::new(),
         reload_interface_ids: std::cell::RefCell::new(BTreeSet::new()),
+        reload_shapes: BTreeMap::new(),
+        reload_shapes_open: BTreeSet::new(),
         lazy_statics: lazy_statics.clone(),
         reload_bodies: if reload.is_some() {
             bodies.iter().map(|body| (body.name.clone(), body.symbol.clone(), body.return_ty())).collect()
@@ -857,6 +859,11 @@ struct Emitter<'a> {
     reload_slots: BTreeMap<String, usize>,
     /// The interface identities a reloadable image defines.
     reload_interface_ids: std::cell::RefCell<BTreeSet<String>>,
+    /// `[HR-15]` — the tables describing a value no schema names, by type and whether the table
+    /// lists the type's fields (`reload.rs`); and the types being described, met again inside
+    /// themselves.
+    reload_shapes: BTreeMap<(Ty, bool), String>,
+    reload_shapes_open: BTreeSet<Ty>,
     /// `[STA-3]` — the statics initialised on first access, by initialiser symbol.
     lazy_statics: BTreeMap<String, (Ty, String)>,
     /// Annex B — every body's name, symbol and return type, for the functions the driver wrote.
@@ -2416,6 +2423,11 @@ impl Emitter<'_> {
             self.line("    void (*native)(void);");
             self.line("    void (*c)(void);");
             self.line("    void (*drop)(void*);");
+            // `[HR-15]` — in a reloadable image, what the captured state holds, for a reload to
+            // follow (ODR-126).
+            if self.reload.is_some() {
+                self.line(&format!("    const {RT}rl_field* captures;"));
+            }
             self.line("};");
             self.line(&format!("struct {RT}fn_value {{"));
             self.line("    void (*native)(void);");
@@ -4268,6 +4280,14 @@ impl Emitter<'_> {
                     ));
                     return;
                 }
+                // A `Box[dyn I]` is its value's address and its table (D-697): what it holds is
+                // the dynamic type's, so the edge is unknown.
+                if self.box_inner_id(*id).is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. })) {
+                    out.push(format!("if (({access}).data != NULL) {{"));
+                    out.push(format!("visitor(context, NULL, {field_c}, EMBER_OWNERSHIP_EDGE_UNKNOWN, NULL, false);"));
+                    out.push("}".to_string());
+                    return;
+                }
                 if let Some(inner) = self.box_inner_id(*id) {
                     out.push(format!("if (({access}) != NULL) {{"));
                     self.debug_edge_lines(
@@ -5385,7 +5405,8 @@ impl Emitter<'_> {
             let c_entry = adapter.map_or_else(|| "NULL".to_string(),
                 |adapter| format!("(void (*)(void)){adapter}"));
             self.line(&format!("{linkage}const struct {RT}native_fn_descriptor {descriptor} = {{"));
-            self.line(&format!("    (void (*)(void)){thunk}, {c_entry}, NULL"));
+            let captures = if self.reload.is_some() { ", NULL" } else { "" };
+            self.line(&format!("    (void (*)(void)){thunk}, {c_entry}, NULL{captures}"));
             self.line("};");
         }
         if !self.native_fn_values.is_empty() { self.line(""); }
@@ -5455,8 +5476,9 @@ impl Emitter<'_> {
             }
             self.line(&format!("    if ({boxed}) {{ {RT}free(_e, sizeof({env_c}), _Alignof({env_c})); }}"));
             self.line("}");
+            let captures = if self.reload.is_some() { format!(", {}", self.reload_captures(env)) } else { String::new() };
             self.line(&format!("{linkage}const struct {RT}native_fn_descriptor {descriptor} = {{"));
-            self.line(&format!("    (void (*)(void)){descriptor}_native, NULL, {descriptor}_drop"));
+            self.line(&format!("    (void (*)(void)){descriptor}_native, NULL, {descriptor}_drop{captures}"));
             self.line("};");
             // `[JOB-1]` — the job's entry and drop, on the state its slot holds as it is.
             if self.job_closures.contains(&closure) {
@@ -5525,10 +5547,14 @@ impl Emitter<'_> {
 
     fn ffi_counted_signature(&self, body: &Body) -> String {
         let counted = body.ffi_counted.as_ref().expect("counted wrapper metadata");
-        // `[FFI-11b]` — C writes the count back through its pointer and returns nothing.
+        // `[FFI-11b]` — C writes the count back through its pointer, and returns nothing or the
+        // first of the Ember function's tuple (ODR-125).
         let inout = counted.abi_params.iter().any(|param| matches!(param, FfiAbiParam::Count { inout: true, .. }));
         let result = if inout {
-            "void".to_string()
+            match self.types.kind(body.return_ty()) {
+                TyKind::Tuple(items) => self.c_type(items[0]),
+                _ => "void".to_string(),
+            }
         } else if let Some(span) = &counted.result_span {
             let elem = self.c_type(span.elem);
             if span.mutable { format!("{elem}*") } else { format!("const {elem}*") }
@@ -5768,8 +5794,13 @@ impl Emitter<'_> {
             return;
         }
         if counted.abi_params.iter().any(|param| matches!(param, FfiAbiParam::Count { inout: true, .. })) {
-            self.line(&format!("    {call};"));
-            self.line("    return _ffi_count;");
+            if let TyKind::Tuple(items) = self.types.kind(body.return_ty()).clone() {
+                self.line(&format!("    {} _ffi_result = {call};", self.c_type(items[0])));
+                self.line(&format!("    return ({}){{ _ffi_result, _ffi_count }};", self.c_type(body.return_ty())));
+            } else {
+                self.line(&format!("    {call};"));
+                self.line("    return _ffi_count;");
+            }
         } else if let Some(result) = &counted.result_span {
             let elem = self.c_type(result.elem);
             let pointer = if result.mutable { format!("{elem}*") } else { format!("const {elem}*") };
@@ -7005,7 +7036,9 @@ impl Emitter<'_> {
                 // aggregate shape so nested class handles are retained before
                 // the C initializer duplicates their pointer bits.
                 let operand_types: Vec<Ty> = match kind {
-                    AggregateKind::Callable => Vec::new(),
+                    // `[CLO-10]` — a callable value copies the captured state it is made from, so
+                    // the handles it holds are retained like any other copy's (D-696).
+                    AggregateKind::Callable => operands.iter().map(|operand| self.operand_type(operand, body).unwrap_or(target)).collect(),
                     AggregateKind::Struct(id) => self
                         .types
                         .struct_def(*id)
@@ -10495,7 +10528,7 @@ impl Emitter<'_> {
         }
     }
 
-    /// `[RT-4]`, `[DIA-23]` — outside `shipping`, each function's C symbol with the Ember entity it
+    /// `[RT-4]`, `[DIA-23]` — outside `release`, each function's C symbol with the Ember entity it
     /// is and where it is declared, sorted by symbol: a panic's backtrace names the program's
     /// functions by it, never by a C symbol. Strings only: no function is kept alive by it. How
     /// many there are (none: no table).
@@ -10520,7 +10553,7 @@ impl Emitter<'_> {
         if entries.is_empty() {
             return 0;
         }
-        self.line("#if !defined(EMBER_SHIPPING)");
+        self.line("#if !defined(EMBER_RELEASE)");
         self.line(&format!("static const {RT}frame_name {}frame_names[] = {{", ember_branding::mangle_prefix()));
         for (symbol, name, path, line) in &entries {
             self.line(&format!(
@@ -10555,7 +10588,7 @@ impl Emitter<'_> {
         self.line(&format!("    {RT}rt_set_args(argc, argv);"));
         self.line(&format!("    {RT}rt_init(&cfg);"));
         if named > 0 {
-            self.line("#if !defined(EMBER_SHIPPING)");
+            self.line("#if !defined(EMBER_RELEASE)");
             self.line(&format!("    {RT}backtrace_names({}frame_names, {named}u);", ember_branding::mangle_prefix()));
             self.line("#endif");
         }
@@ -10617,7 +10650,7 @@ impl Emitter<'_> {
         self.line(&format!("    {RT}rt_set_args(1, argv);"));
         self.line(&format!("    {RT}rt_init(&cfg);"));
         if named > 0 {
-            self.line("#if !defined(EMBER_SHIPPING)");
+            self.line("#if !defined(EMBER_RELEASE)");
             self.line(&format!("    {RT}backtrace_names({}frame_names, {named}u);", ember_branding::mangle_prefix()));
             self.line("#endif");
         }
@@ -12675,6 +12708,8 @@ mod string_descriptor_view_parts_tests {
             reload: None,
             reload_slots: BTreeMap::new(),
             reload_interface_ids: Default::default(),
+            reload_shapes: BTreeMap::new(),
+            reload_shapes_open: BTreeSet::new(),
             lazy_statics: BTreeMap::new(),
             reload_bodies: Vec::new(),
         }

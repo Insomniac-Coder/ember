@@ -5,6 +5,7 @@
 //! analysis (§4.10) join them; they all walk the same CFG and want the same
 //! helpers.
 
+pub mod adoptions;
 pub mod borrows;
 pub mod c_entries;
 pub mod callable_arguments;
@@ -45,6 +46,7 @@ pub use borrows::{
 };
 pub use access::{elide_static_accesses_all, remove_never_firing_checks_all};
 pub use kernels::{elide_known_disjoint_comparisons_all, restrict_views};
+pub use adoptions::check_adoptions_all;
 pub use c_entries::{callable_types_given_to_c, check_c_entry_returns_all};
 pub use loop_access::hoist_loop_accesses_all;
 pub use static_safe::check_static_safe_all;

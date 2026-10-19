@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: TXT-2, TXT-5
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: Ok('Aéह😀') Err(Utf8Error.Invalid)
 #$ stdout: Err(Utf8Error.Invalid) Err(Utf8Error.Invalid) Err(Utf8Error.Invalid)
 #$ stdout: Ok('a\x00b')

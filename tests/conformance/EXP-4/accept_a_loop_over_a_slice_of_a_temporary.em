@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: EXP-4
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 3
 #$ 4
 #$ b

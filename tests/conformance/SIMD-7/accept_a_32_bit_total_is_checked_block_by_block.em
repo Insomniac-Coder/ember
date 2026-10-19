@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: SIMD-7, SIMD-5, OPT-2
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: 299700
 #$ assert-c: contains(" >> 24ULL;")
 # An `i32` total of `i32` values: the widths prove nothing, so the run-time

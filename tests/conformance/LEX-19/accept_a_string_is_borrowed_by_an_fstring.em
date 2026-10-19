@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: LEX-19, STD-9
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 #$ stdout: ab ab
 #$ ab
 # D-194 — an f-string reads a `String` it writes; it does not consume it.

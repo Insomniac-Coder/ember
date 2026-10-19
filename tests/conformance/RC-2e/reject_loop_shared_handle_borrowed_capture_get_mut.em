@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: HEAP-3, HEAP-5, RC-2e, CLO-1, CLO-2, CTL-1, CTL-2, TYP-14
-#$ profiles: debug, release, shipping
+#$ profiles: debug, development, release
 
 # A normal closure preserves the loop yield as `ref Shared[Token]`. Receiver
 # auto-dereference finds `get_mut`, but the inherited shared reference must
