@@ -2374,6 +2374,9 @@ struct Checker<'a> {
     interfaces_collected: bool,
     /// Those instances: the instance, its generic struct, its written arguments, where.
     early_instances: Vec<(Ty, Symbol, Vec<Ty>, Span)>,
+    /// `[ECS-4]` — each function made a `std.ecs.System` where one was wanted, by where it is
+    /// written: its name and its query's parameter, for `E7020` (`check_system_conflicts`).
+    ecs_systems: HashMap<Span, (Symbol, Ty)>,
     /// `[CLS-4]` — an early generic class instance's `override`s: the instance, the method's
     /// name, its source and span.
     deferred_override_checks: Vec<(ClassId, Symbol, (usize, usize, usize), Span)>,
@@ -2859,6 +2862,7 @@ impl<'a> Checker<'a> {
             implementations_known: false,
             interfaces_collected: false,
             early_instances: Vec::new(),
+            ecs_systems: HashMap::new(),
             deferred_override_checks: Vec::new(),
             cells: HashMap::new(),
             boxes: HashMap::new(),
@@ -30229,6 +30233,9 @@ impl<'a> Checker<'a> {
 
     /// Checking mode: an expected type flows downward (`[TYP-23]` rule 3).
     fn check_expr(&mut self, expr: &ast::Expr, expected: Ty) -> Expr {
+        if let Some(system) = self.ecs_system_of(expr, expected) {
+            return system;
+        }
         let found = self.synth_with_expectation(expr, Some(expected));
         let coerced = self.coerce(found, expected);
         self.warn_if_literal_loses_precision(expr, coerced.ty);
@@ -37966,7 +37973,122 @@ impl<'a> Checker<'a> {
         self.method_receivers.push((recv.clone(), generic_args.to_vec()));
         let call = self.synth_method_call_on(recv, name, generic_args, args, span);
         self.method_receivers.pop();
+        if name.name.is("run_parallel")
+            && let [arg] = args
+            && let ast::ExprKind::ArrayLit(items) = &arg.value.kind
+            && let ExprKind::Call { args: checked, .. } = &call.kind
+            && checked.first().is_some_and(|receiver| self.is_ecs_world(receiver.ty))
+        {
+            self.check_system_conflicts(items);
+        }
         self.visible_numbers(call, name.name)
+    }
+
+    /// `[ECS-4]` — whether `ty` is `std.ecs.World` (or a reference to it).
+    fn is_ecs_world(&self, ty: Ty) -> bool {
+        let ty = match self.types.kind(ty) {
+            TyKind::Ref { inner, .. } => *inner,
+            _ => ty,
+        };
+        self.named_types.get(&Symbol::intern("std.ecs.World")) == Some(&ty)
+    }
+
+    /// `[ECS-4]` — a function over a query, named where a `std.ecs.System` is wanted (an element
+    /// of `world.run_parallel([s1, s2])`'s literal): it is the system value `std.ecs.system(s1,
+    /// "s1")`, named as written, and its query is noted for `check_system_conflicts`.
+    fn ecs_system_of(&mut self, expr: &ast::Expr, expected: Ty) -> Option<Expr> {
+        let ast::ExprKind::Path { segments } = &expr.kind else { return None };
+        if self.named_types.get(&Symbol::intern("std.ecs.System")) != Some(&expected) {
+            return None;
+        }
+        if segments.len() == 1 && self.lookup(segments[0].name).is_some() {
+            return None;
+        }
+        let function = self.synth(expr);
+        let TyKind::Fn { params, .. } = self.types.kind(function.ty).clone() else { return None };
+        let query = params.first().map(|param| param.ty)?;
+        let TyKind::Struct(id) = *self.types.kind(query) else { return None };
+        let (origin, query_args) = self.types.struct_def(id).origin.clone()?;
+        if !origin.is("std.ecs.Query") {
+            return None;
+        }
+        let param = *query_args.first()?;
+        let name = Symbol::intern(&segments.iter().map(|segment| segment.name.as_str()).collect::<Vec<_>>().join("."));
+        let span = expr.span;
+        let callee = ast::Expr {
+            id: ast::NodeId::DUMMY,
+            kind: ast::ExprKind::Path { segments: vec![ast::Ident { name: Symbol::intern("std.ecs.system"), span }] },
+            span,
+        };
+        let text = ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Lit(ast::Literal::Str(name.to_string())), span };
+        let call = ast::Expr {
+            id: ast::NodeId::DUMMY,
+            kind: ast::ExprKind::Call {
+                callee: Box::new(callee),
+                args: vec![ast::Arg { name: None, value: expr.clone(), span }, ast::Arg { name: None, value: text, span }],
+            },
+            span,
+        };
+        self.ecs_systems.insert(span, (name, param));
+        Some(self.synth(&call))
+    }
+
+    /// `[ECS-4]` — `E7020`: two systems of one `run_parallel` literal whose sets conflict, one
+    /// writing a component the other reads or writes. The sets are the library's: each query
+    /// parameter's `Ops.Reads` and `Ops.Writes`, a component or a tuple of them.
+    fn check_system_conflicts(&mut self, items: &[ast::Expr]) {
+        let noted: Vec<(Span, Symbol, Ty)> = items
+            .iter()
+            .filter_map(|item| self.ecs_systems.get(&item.span).copied().map(|(name, param)| (item.span, name, param)))
+            .collect();
+        let mut systems: Vec<(Span, Symbol, Vec<Ty>, Vec<Ty>)> = Vec::new();
+        for (span, name, param) in noted {
+            let reads = self.ecs_access_set(param, "Reads");
+            let writes = self.ecs_access_set(param, "Writes");
+            systems.push((span, name, reads, writes));
+        }
+        for (later, (span, name, reads, writes)) in systems.iter().enumerate() {
+            for (first_span, first, first_reads, first_writes) in &systems[..later] {
+                // The first component one writes and the other uses, as the run-time check finds it.
+                let conflict = first_writes
+                    .iter()
+                    .find(|component| reads.contains(component) || writes.contains(component))
+                    .map(|&component| (*first, component))
+                    .or_else(|| writes.iter().find(|component| first_reads.contains(component)).map(|&component| (*name, component)));
+                let Some((writer, component)) = conflict else { continue };
+                let shown = self.types.display(component);
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E7020,
+                        *span,
+                        format!("systems `{first}` and `{name}` cannot run at once: `{writer}` writes `{shown}`, which the other uses"),
+                    )
+                    .secondary(*first_span, format!("`{first}` is here"))
+                    .help("run them one after the other (`world.run_parallel` once for each), or split the component")
+                    .note("systems in one parallel run may share a component only to read it [ECS-4]"),
+                );
+            }
+        }
+    }
+
+    /// `[ECS-4]` — the components of a query parameter's `Ops.Reads` or `Ops.Writes`.
+    fn ecs_access_set(&mut self, param: Ty, set: &str) -> Vec<Ty> {
+        let saved = self.assoc_instance.replace(Symbol::intern("std.ecs.QueryParam"));
+        let ops = self.project(param, Symbol::intern("Ops"));
+        self.assoc_instance = Some(Symbol::intern("std.ecs.ParamOps"));
+        let value = ops.and_then(|ops| self.project(ops, Symbol::intern(set)));
+        self.assoc_instance = saved;
+        let mut out = Vec::new();
+        let mut pending: Vec<Ty> = value.into_iter().collect();
+        while let Some(ty) = pending.pop() {
+            match self.types.kind(ty) {
+                TyKind::Tuple(items) => pending.extend(items.iter().rev().copied()),
+                TyKind::Error => {}
+                _ if ty == self.common.void || out.contains(&ty) => {}
+                _ => out.push(ty),
+            }
+        }
+        out
     }
 
     /// G8-4, `[STD-19]` — the known-numbers rule (the owner's B, widened by

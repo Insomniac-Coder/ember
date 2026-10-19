@@ -293,6 +293,32 @@ pub class World:
         system(q, args)
         self.apply(q.cmds)
 
+    ## `[ECS-4]` — runs `systems`, each over its own query, once no two of them conflict: two
+    ## systems conflict when one writes a component the other reads or writes. Their sets are
+    ## checked against each other before any of them starts, and a conflict panics, naming both
+    ## systems and the component. (A conflict between systems written in the call's own array
+    ## literal is `E7020` at compile time.)
+    pub fn run_parallel(self, owned systems: Array[System]):
+        sets: Array[Array[Access]] = []
+        for system in systems.iter_mut():
+            sets.push(system.accesses())
+        for i in 0..systems.len():
+            for j in i + 1..systems.len():
+                for a in sets[i]:
+                    for b in sets[j]:
+                        if a.hash == b.hash and (a.write or b.write):
+                            writer = systems[i].name if a.write else systems[j].name
+                            panic(f"systems `{systems[i].name}` and `{systems[j].name}` cannot run at once: `{writer}` writes `{a.name}`, which the other uses")
+        for system in systems.iter_mut():
+            system.run_on(self)
+
+    ## Runs `system` over this world's `Query[Q]`: `run`'s, for a system taking only its query.
+    fn run_query[Q: QueryParam](self, system: fn(mut Query[Q])):
+        fetched = Q.Ops.fetch(self)
+        q = Query[Q](view=Q.Ops.view(ref fetched), cmds=Commands())
+        system(q)
+        self.apply(q.cmds)
+
     ## `[ECS-5]` — the changes `commands` holds, in the order they were asked for.
     pub fn apply(self, commands: Commands):
         for command in commands.queued:
@@ -1106,3 +1132,27 @@ pub class Commands:
     ## How many changes are waiting.
     pub fn len(self) -> int:
         return self.queued.len()
+
+## `[ECS-4]` — a system as a value: its name, and its query's accesses and its run, each an owned
+## callable value (`[CLO-3]`), so systems over different queries are one type. A function over a
+## `Query` written in `run_parallel`'s array literal is made one by the compiler (as
+## `system(f, "f")`), which checks the literal's systems against each other (`E7020`).
+pub struct System:
+    pub name: str
+    accesses_of: fn(mut Array[Access])
+    run_on: fn(World)
+
+    ## `[ECS-4]` — the components it reads and writes.
+    pub fn accesses(mut self) -> Array[Access]:
+        out: Array[Access] = []
+        self.accesses_of(out)
+        return out
+
+## `[ECS-4]` — the system `body`, named `name` (what a conflict reports).
+pub fn system[Q: QueryParam](body: fn(mut Query[Q]), name: str) -> System:
+    return System(name=name, accesses_of=owned fn(mut out: Array[Access]) => accesses_of[Q](out), run_on=owned fn(world: World) => world.run_query[Q](body))
+
+## `Q`'s accesses. (A lambda calling `Q.Ops.accesses` itself stopped the compiler: see
+## tasks/90/M-notes.md.)
+fn accesses_of[Q: QueryParam](mut out: Array[Access]):
+    Q.Ops.accesses(out)
