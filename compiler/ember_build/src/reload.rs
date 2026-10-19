@@ -56,6 +56,21 @@ fn compile_reload_object(
     instances: bool,
     hidden: bool,
 ) -> Result<(), BuildError> {
+    compile_library_object(toolchain, source, include_dirs, output, profile, &reload_defines(instances), hidden)
+}
+
+/// Compile one C file of a shared library to an object: the profile's flags, `defines`, and
+/// position-independent code where shared libraries need it; `hidden` gives its symbols hidden
+/// visibility off Windows.
+pub(crate) fn compile_library_object(
+    toolchain: &Toolchain,
+    source: &Path,
+    include_dirs: &[PathBuf],
+    output: &Path,
+    profile: Profile,
+    defines: &[String],
+    hidden: bool,
+) -> Result<(), BuildError> {
     if let Some(parent) = output.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -64,7 +79,7 @@ fn compile_reload_object(
         Toolchain::Msvc { .. } => {
             // `/Z7` keeps the debug information in the object: no PDB shared between builds.
             command.args(msvc_flags(profile).into_iter().map(|flag| if flag == "/Zi" { "/Z7" } else { flag }));
-            for define in reload_defines(instances) {
+            for define in defines {
                 command.arg(format!("/D{define}"));
             }
             command.arg("/c");
@@ -82,7 +97,7 @@ fn compile_reload_object(
             if hidden && !cfg!(windows) {
                 command.arg("-fvisibility=hidden");
             }
-            for define in reload_defines(instances) {
+            for define in defines {
                 command.arg(format!("-D{define}"));
             }
             command.arg("-c");
@@ -100,27 +115,29 @@ fn compile_reload_object(
 }
 
 /// The shared runtime for `profile`, built once per toolchain, profile and header and kept in the
-/// global cache, then copied beside the program when it differs from what is there.
+/// global cache, then copied beside the program when it differs from what is there. `reload` is
+/// `Some(instances)` for a reloadable program's runtime, `None` for the plain one shared libraries
+/// share (`[FFI-31c]`).
 pub fn shared_runtime(
     toolchain: &Toolchain,
     runtime_source: &Path,
     include_dirs: &[PathBuf],
     profile: Profile,
-    instances: bool,
+    reload: Option<bool>,
     cache: &Path,
     bin: &Path,
 ) -> Result<SharedRuntime, BuildError> {
     if cfg!(windows) && matches!(toolchain, Toolchain::Gcc(_)) {
         return Err(BuildError::CompilerFailed {
             command: "gcc".to_string(),
-            output: "hot reload on Windows needs MSVC, clang-cl or clang\n".to_string(),
+            output: "a shared runtime on Windows needs MSVC, clang-cl or clang\n".to_string(),
         });
     }
     let mut key = Key::new();
     key.part(b"reload runtime v1");
     key.part(toolchain.name().as_bytes());
     key.part(profile.name().as_bytes());
-    key.part(&[u8::from(instances)]);
+    key.part(&[match reload { None => 2, Some(instances) => u8::from(instances) }]);
     key.part(&std::fs::read(runtime_source)?);
     for dir in include_dirs {
         let mut headers: Vec<PathBuf> = std::fs::read_dir(dir)?
@@ -142,7 +159,8 @@ pub fn shared_runtime(
         let _ = std::fs::remove_dir_all(&staging);
         std::fs::create_dir_all(&staging)?;
         let object = staging.join(if matches!(toolchain, Toolchain::Msvc { .. }) { "rt.obj" } else { "rt.o" });
-        compile_reload_object(toolchain, runtime_source, include_dirs, &object, profile, instances, false)?;
+        let defines = reload.map(reload_defines).unwrap_or_default();
+        compile_library_object(toolchain, runtime_source, include_dirs, &object, profile, &defines, false)?;
         let library = staging.join(shared_library_name(&stem));
         let mut command = compiler_command(toolchain);
         match toolchain {
@@ -364,7 +382,7 @@ mod tests {
         let source = runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX));
         let obj = dir.join("obj");
         std::fs::create_dir_all(&obj).expect("the test directory is creatable");
-        let shared = shared_runtime(&toolchain, &source, &includes, Profile::Debug, true, &crate::cache_root(), dir)
+        let shared = shared_runtime(&toolchain, &source, &includes, Profile::Debug, Some(true), &crate::cache_root(), dir)
             .expect("the shared runtime builds");
         let manifest = format!("{}test_manifest", ember_branding::RUNTIME_PREFIX);
         for (index, image) in ["a", "b", "c"].iter().enumerate() {

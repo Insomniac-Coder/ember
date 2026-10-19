@@ -44,6 +44,21 @@ shown one by one. The owner never asked to see B3's or A1's design before buildi
    Follow-up: more than two values: C's own result first, then every pointer output (`out`, the inout count) in C declaration order, e.g. `(ok, spc, bps, free_clusters, total_clusters) = GetDiskFreeSpaceA(c"C:\\")`. Owner: "got it".
 
 
+## Helper C (shared libraries, packages) — waiting for the owner
+
+Merged 2026-10-19 (ADR-206). Its questions, in `C-notes.md` §11, triaged by the owner's rule (bugs
+fixed, waiting recorded, real choices asked one at a time with real code):
+* **Q1 — where a version requirement such as `geometry = "1.2"` resolves from** (a registry, git tags,
+  a local directory): a real choice. Built meanwhile: `E0900`.
+* **Q3 — `@export_table`'s shape** (fields bound by name or by explicit defaults; the protocol in a
+  second symbol or in the table's name; `threads` on the field or on its function): a real choice.
+  Built meanwhile: by name, `Name_protocol_N`, the function's own `threads`.
+* **Q4 — `[ABI-1]`'s versioned module symbol against `[FFI-28]`'s export list**: a contradiction in
+  the specification. Built meanwhile: nothing extra exported (the runtime ABI check only).
+* Q2 (`[build] global_allocator` missing from `[MAN-8]`'s keys) is not raised now: `[ALC-3]` waits on
+  the `Allocator` interface, and the key with it.
+
+
 ## Helper A (hot reload)
 
 A1. HR-3 vs HR-33 (checkpoint inside Ember code): option 2, FIX UP DATA AT THE CHECKPOINT. At std.hot.checkpoint() the compiler records where each live value of the frames below the checkpoint lives (a stack map), and the swap rebuilds those values in the new shape (defaults / migrate_from), so layout changes apply live too. Owner REJECTED A's body-only reading. Needs: spec wording for HR-3/HR-33 (show the owner), then implementation (stack maps at checkpoints).

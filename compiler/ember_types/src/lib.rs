@@ -522,6 +522,27 @@ pub struct TypeTable {
     /// evaluator computed, placed in the image as constant data: each name,
     /// type and value (in the evaluator's text).
     constant_statics: Vec<(Symbol, Ty, String)>,
+    /// `[FFI-26]` — each `@export_table` of the program.
+    export_tables: Vec<ExportTable>,
+}
+
+/// `[FFI-26]` — an `@export_table("Name", protocol=N)`: the struct exported as a constant table of
+/// function pointers under the C symbol `name`, its protocol version, and the C symbol of the
+/// function each field holds, in field order.
+#[derive(Clone, Debug)]
+pub struct ExportTable {
+    pub ty: Ty,
+    pub name: String,
+    pub protocol: u32,
+    pub entries: Vec<String>,
+}
+
+impl ExportTable {
+    /// `[ABI-1]` — the table's protocol version as a linked symbol whose name carries the number
+    /// (`Name_protocol_3`, holding 3): a host built for another version does not find it.
+    pub fn protocol_symbol(name: &str, protocol: u32) -> String {
+        format!("{name}_protocol_{protocol}")
+    }
 }
 
 /// `[CORO-1]`, `[CORO-6]` — how a `gen fn`'s parameter was passed, which says
@@ -603,6 +624,15 @@ impl TypeTable {
         &self.constant_statics
     }
 
+    /// `[FFI-26]` — an exported table of function pointers.
+    pub fn add_export_table(&mut self, table: ExportTable) {
+        self.export_tables.push(table);
+    }
+
+    pub fn export_tables(&self) -> &[ExportTable] {
+        &self.export_tables
+    }
+
     pub fn new() -> (TypeTable, CommonTypes) {
         let mut table = TypeTable {
             kinds: Vec::new(),
@@ -621,6 +651,7 @@ impl TypeTable {
             coroutine_frames: HashMap::new(),
             next_infer: 0,
             constant_statics: Vec::new(),
+            export_tables: Vec::new(),
             pointer_size: 8,
         };
         let u8_ty = table.intern(TyKind::Uint(UintTy::U8));

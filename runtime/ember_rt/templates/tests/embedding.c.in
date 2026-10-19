@@ -1,0 +1,101 @@
+/* [FFI-27]: a C host routes the runtime's allocation and its logging to its own functions, and
+ * ember_rt_shutdown runs the at-exit hooks (the last registered first, each once) before the debug
+ * leak report, which goes to the host's log as one warning, not to standard error.
+ * [FFI-31], [FFI-31c]: modules initialised in one runtime are counted; the last module's shutdown
+ * shuts the runtime down, unless the host initialised it, which then shuts it down itself.
+ * Prints "ok"; each failed check returns its own status. */
+#include "ember_rt.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static char g_events[256];
+static char g_log[4096];
+static int g_log_level;
+static int g_log_calls;
+static int g_allocs;
+static int g_frees;
+
+static void event(const char* what) {
+    strncat(g_events, what, sizeof g_events - strlen(g_events) - 1);
+}
+
+static void host_log(int level, const char* msg, size_t len) {
+    event("log;");
+    g_log_level = level;
+    g_log_calls += 1;
+    size_t used = strlen(g_log);
+    size_t room = sizeof g_log - used - 1;
+    memcpy(g_log + used, msg, len < room ? len : room);
+    g_log[used + (len < room ? len : room)] = '\0';
+}
+
+static void* host_alloc(size_t size, size_t align) {
+    g_allocs += 1;
+    (void)align;
+    return malloc(size);
+}
+
+static void host_free(void* p, size_t size, size_t align) {
+    g_frees += 1;
+    (void)size;
+    (void)align;
+    free(p);
+}
+
+static void hook(void* data) {
+    event((const char*)data);
+}
+
+/* An object holding a strong reference to itself: a cycle the leak report names. */
+static const ember_type_info node_ti = {
+    sizeof(ember_obj_header), _Alignof(ember_obj_header), 0, "Node", NULL, NULL, NULL, NULL, NULL, 0, NULL, 0,
+};
+
+static void node_edges(ember_obj_header* object, ember_debug_edge_visitor visit, void* context) {
+    visit(context, object, "Node.next", EMBER_OWNERSHIP_EDGE_STRONG, NULL, false);
+}
+
+int main(void) {
+    ember_rt_config cfg = ember_rt_config_default();
+    cfg.flags |= EMBER_RT_DEBUG_OBJECTS;
+    cfg.log = host_log;
+    cfg.alloc = host_alloc;
+    cfg.free = host_free;
+    if (ember_rt_init(&cfg) != 0) return 1;
+    ember_debug_register_type_edges(&node_ti, node_edges);
+    ember_obj_header* node = ember_obj_new(&node_ti);
+    if (node == NULL) return 2;
+    void* block = ember_alloc(32, 8);
+    ember_free(block, 32, 8);
+    if (g_allocs == 0 || g_frees == 0) return 3;
+    if (ember_rt_at_exit(hook, "first;") != 0 || ember_rt_at_exit(hook, "second;") != 0) return 4;
+    ember_rt_shutdown();
+    /* The hooks ran newest first, then the report reached the log as one warning. */
+    if (strcmp(g_events, "second;first;log;") != 0) return 5;
+    if (g_log_level != EMBER_RT_LOG_WARNING || g_log_calls != 1) return 6;
+    if (strstr(g_log, "reference cycle detected") == NULL || strstr(g_log, "Node.next") == NULL) return 7;
+
+    /* A second life: the hooks of the first are gone; a module's shutdown waits for the last. */
+    g_events[0] = '\0';
+    cfg = ember_rt_config_default();
+    if (ember_rt_module_init(&cfg) != 0 || ember_rt_module_init(&cfg) != 0) return 8;
+    if (ember_rt_at_exit(hook, "modules;") != 0) return 9;
+    ember_rt_module_shutdown();
+    if (g_events[0] != '\0') return 10;
+    ember_rt_module_shutdown();
+    if (strcmp(g_events, "modules;") != 0) return 11;
+
+    /* A runtime the host initialised outlives its modules. */
+    g_events[0] = '\0';
+    if (ember_rt_init(&cfg) != 0 || ember_rt_module_init(&cfg) != 0) return 12;
+    if (ember_rt_at_exit(hook, "host;") != 0) return 13;
+    ember_rt_module_shutdown();
+    if (g_events[0] != '\0') return 14;
+    ember_rt_shutdown();
+    if (strcmp(g_events, "host;") != 0) return 15;
+    /* [ABI-3] A module built against another runtime ABI is refused before anything else. */
+    if (ember_rt_module_init_v2(&cfg, EMBER_RUNTIME_ABI + 1) != EMBER_MODULE_INIT_ABI_MISMATCH) return 16;
+    printf("ok\n");
+    return 0;
+}

@@ -238,10 +238,10 @@ fn requested_unsupported_package_modes_fail_before_linking() {
     assert!(String::from_utf8_lossy(&shared.stderr).contains("runtime mode `shared`"));
 
     std::fs::write(&manifest,
-        "[package]\nname = \"mode_check\"\nkind = \"cdylib\"\n[build]\nruntime = \"static\"\n").unwrap();
-    let cdylib = build(&["build"], &dir);
-    assert!(!cdylib.status.success());
-    assert!(String::from_utf8_lossy(&cdylib.stderr).contains("package kind `cdylib`"));
+        "[package]\nname = \"mode_check\"\nkind = \"lib\"\n[build]\nruntime = \"static\"\n").unwrap();
+    let lib = build(&["build"], &dir);
+    assert!(!lib.status.success());
+    assert!(String::from_utf8_lossy(&lib.stderr).contains("package kind `lib`"));
 
     std::fs::write(&manifest,
         "[package]\nname = \"mode_check\"\nkind = \"bin\"\n[build]\nruntime = \"shared\"\n").unwrap();

@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 
 pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str) -> Result<HeaderOutput, String> {
     let exports: Vec<&Body> = bodies.iter()
-        .filter(|body| body.abi.as_deref() == Some("C")
+        .filter(|body| body.abi.is_some()
             && !body.is_extern_declaration && !body.is_abstract)
         .collect();
     let mut reachable = Reachable::new(emitter);
@@ -18,6 +18,9 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
         for (_, parameter) in body.args() {
             reachable.visit(parameter.ty)?;
         }
+    }
+    for table in emitter.types.export_tables() {
+        reachable.visit(table.ty)?;
     }
 
     // Hex of the exact UTF-8 bytes is injective: e.g. foo-bar, foo_bar and
@@ -43,11 +46,23 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
     line(&mut out, "#include <stdbool.h>");
     line(&mut out, "#include <stddef.h>");
     line(&mut out, "#include <stdint.h>");
-    if reachable.runtime_integer_carrier {
+    // `[FFI-31]` — a shared library's host fills an `ember_rt_config` for `ember_module_init`.
+    if reachable.runtime_integer_carrier || emitter.module {
         line(&mut out, &format!("#include \"{}_runtime/{}\"",
             ember_branding::SYMBOL_PREFIX, ember_branding::runtime_header()));
     }
     line(&mut out, "");
+    // `[FFI-9]` — an export or a function pointer type with another convention names its macro.
+    let plan: Vec<_> = emitter.order.iter().copied()
+        .filter(|node| reachable.nodes.contains(node))
+        .map(|node| (emitter.node_name(node), emitter.definition(node)))
+        .collect();
+    if exports.iter().any(|body| !super::calling_convention(body.abi.as_deref()).is_empty())
+        || plan.iter().any(|(_, definition)| matches!(definition, Definition::FnPointer { convention, .. } if !convention.is_empty()))
+    {
+        out.push_str(super::CALLING_CONVENTION_MACROS);
+        line(&mut out, "");
+    }
     line(&mut out, "#ifdef __cplusplus");
     line(&mut out, "extern \"C\" {");
     line(&mut out, "#endif");
@@ -55,10 +70,6 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
     for opaque in &reachable.opaque {
         line(&mut out, &format!("struct {opaque};"));
     }
-    let plan: Vec<_> = emitter.order.iter().copied()
-        .filter(|node| reachable.nodes.contains(node))
-        .map(|node| (emitter.node_name(node), emitter.definition(node)))
-        .collect();
     if !plan.is_empty() {
         line(&mut out, "");
         for (name, definition) in &plan {
@@ -83,14 +94,46 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
     if !exports.is_empty() { line(&mut out, ""); }
     for body in exports {
         line(&mut out, &format!("/* threads: {} */", body.export_thread_policy.as_str()));
-        line(&mut out, &format!("{};", emitter.signature(body)));
+        match ember_branding::export_alias_symbol(&body.symbol) {
+            // `[MNG-2]` — its symbol, which C cannot spell, under its C name.
+            Some(exact) => {
+                line(&mut out, &format!("/* symbol: {exact} */"));
+                line(&mut out, &super::exact_symbol_prototype(&emitter.signature(body), &body.symbol, &exact));
+            }
+            None => line(&mut out, &format!("{};", emitter.signature(body))),
+        }
+    }
+    // `[FFI-26]` — each export table, its protocol version, and each entry's thread contract.
+    for table in emitter.types.export_tables() {
+        let TyKind::Struct(id) = emitter.types.kind(table.ty) else { continue };
+        let fields = emitter.types.struct_def(*id).fields.iter().map(|field| field.name).collect::<Vec<_>>();
+        line(&mut out, "");
+        line(&mut out, &format!("/* export table `{}`, protocol {}; each entry's threads: */", table.name, table.protocol));
+        for (field, symbol) in fields.iter().zip(&table.entries) {
+            let policy = bodies.iter().find(|body| &body.symbol == symbol)
+                .map_or("any", |body| body.export_thread_policy.as_str());
+            line(&mut out, &format!("/*   {field}: {policy} */"));
+        }
+        line(&mut out, &format!("#define {}_PROTOCOL {}u", table.name, table.protocol));
+        line(&mut out, &format!("extern const {} {};", emitter.c_type(table.ty), table.name));
+        line(&mut out, &format!("extern const uint32_t {};", ember_types::ExportTable::protocol_symbol(&table.name, table.protocol)));
+    }
+    if emitter.module {
+        let rt = ember_branding::runtime("");
+        line(&mut out, "");
+        line(&mut out, "/* [FFI-31] Call before using this library, on the thread that becomes its creator; returns 0,");
+        line(&mut out, " * or EMBER_MODULE_INIT_ABI_MISMATCH for a runtime of another ABI version ([ABI-3]). */");
+        line(&mut out, &format!("int {rt}module_init(const {rt}rt_config* cfg);"));
+        line(&mut out, "/* [FFI-31] Call before unloading this library: runs the runtime's shutdown when it is its");
+        line(&mut out, " * last module (at-exit hooks, the debug leak report, every thread detached). */");
+        line(&mut out, &format!("void {rt}module_shutdown(void);"));
     }
     line(&mut out, "");
     line(&mut out, "#ifdef __cplusplus");
     line(&mut out, "}");
     line(&mut out, "#endif");
     line(&mut out, &format!("#endif /* {guard} */"));
-    Ok(HeaderOutput { source: out, needs_runtime_header: reachable.runtime_integer_carrier })
+    Ok(HeaderOutput { source: out, needs_runtime_header: reachable.runtime_integer_carrier || emitter.module })
 }
 
 fn line(out: &mut String, value: &str) {
@@ -137,7 +180,7 @@ impl<'a, 'b> Reachable<'a, 'b> {
                 for field in fields { self.visit(field)?; }
             }
             TyKind::Fn { params, ret, abi, .. } => {
-                if !abi.as_ref().is_some_and(|name| name.is("C")) {
+                if abi.is_none() {
                     return Err(self.unsupported(ty));
                 }
                 self.nodes.insert(TypeNode::Structural(ty));

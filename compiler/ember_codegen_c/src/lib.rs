@@ -311,7 +311,7 @@ pub struct ComptimeRoot {
 /// and prints its value (`ComptimeRoot`), within the step and heap limits its
 /// second and third arguments give.
 pub fn emit_comptime(mir: VerifiedMir<'_>, map: &SourceMap, roots: Vec<ComptimeRoot>, for_msvc: bool) -> Output {
-    emit_with(mir, map, "comptime", "comptime", false, false, false, for_msvc, Some(roots), None, None, false)
+    emit_with(mir, map, "comptime", "comptime", false, false, false, false, for_msvc, Some(roots), None, None, false)
 }
 
 /// `[TST-3]` — the line a test binary writes to standard error when its test
@@ -337,12 +337,13 @@ pub fn emit(
     has_main: bool,
     leak_check: bool,
     library_mode: bool,
+    module: bool,
     for_msvc: bool,
     tests: Option<Vec<String>>,
     reload: Option<&ReloadImage>,
     instrument_ffi: bool,
 ) -> Output {
-    emit_with(mir, map, module_name, package_name, has_main, leak_check, library_mode, for_msvc, None, tests, reload, instrument_ffi)
+    emit_with(mir, map, module_name, package_name, has_main, leak_check, library_mode, module, for_msvc, None, tests, reload, instrument_ffi)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -354,6 +355,7 @@ fn emit_with(
     has_main: bool,
     leak_check: bool,
     library_mode: bool,
+    module: bool,
     for_msvc: bool,
     comptime: Option<Vec<ComptimeRoot>>,
     tests: Option<Vec<String>>,
@@ -399,6 +401,7 @@ fn emit_with(
         payload_zeros: BTreeMap::new(),
         deep_bindings: Vec::new(),
         library_mode,
+        module,
         type_namespace,
         line_directives: true,
         order,
@@ -458,7 +461,7 @@ fn emit_with(
         },
         ffi_export_value_params: bodies
             .iter()
-            .filter(|body| body.abi.as_deref() == Some("C") && !body.is_extern_declaration)
+            .filter(|body| body.abi.is_some() && !body.is_extern_declaration)
             .filter_map(|body| {
                 let by_value = body.args().enumerate().map(|(index, (_, decl))|
                     body.param_modes.get(index) == Some(&ParameterMode::Borrow)
@@ -722,6 +725,9 @@ struct Emitter<'a> {
     /// (`bind_deep_places`); `place_in` reads through it.
     deep_bindings: Vec<(Place, String)>,
     library_mode: bool,
+    /// `[FFI-28]`, `[FFI-31]` — a `cdylib`: its exports check the module's own creator thread,
+    /// and it defines `ember_module_init` and `ember_module_shutdown`.
+    module: bool,
     type_namespace: String,
     line_directives: bool,
     /// Every type definition to emit, in an order where a type is defined
@@ -968,6 +974,18 @@ enum Definition {
     /// the name rather than preceding it. `convention` is `[FFI-9]`'s calling
     /// convention macro, written inside the parentheses (`R (CC *name)(A)`).
     FnPointer { ret: String, convention: &'static str, args: String },
+}
+
+/// `[MNG-2]` — the prototype of a function whose `@export` symbol `exact` is not a C identifier,
+/// named `alias` in C: GCC and Clang give the object-file symbol with an assembler label (after
+/// the platform's user label prefix; GCC writes its label into the assembly as it is, so there it
+/// is quoted for the assembler, as Clang quotes on its own); MSVC, which has none, defines `alias`
+/// and makes `exact` its linker alias, which a reference to `exact` resolves to (a shared library
+/// exports it as `exact` through its module-definition file).
+pub(crate) fn exact_symbol_prototype(signature: &str, alias: &str, exact: &str) -> String {
+    format!(
+        "#if defined(_MSC_VER) && !defined(__clang__)\n#pragma comment(linker, \"/ALTERNATENAME:{exact}={alias}\")\n{signature};\n#else\n#define EMBER_LABEL_TEXT(x) #x\n#define EMBER_LABEL_PREFIX(x) EMBER_LABEL_TEXT(x)\n#if defined(__clang__)\n{signature} __asm__(EMBER_LABEL_PREFIX(__USER_LABEL_PREFIX__) \"{exact}\");\n#else\n{signature} __asm__(\"\\\"\" EMBER_LABEL_PREFIX(__USER_LABEL_PREFIX__) \"{exact}\\\"\");\n#endif\n#undef EMBER_LABEL_PREFIX\n#undef EMBER_LABEL_TEXT\n#endif"
+    )
 }
 
 /// `[FFI-36a]` — the thunk that calls foreign destructor `symbol` and drops its result.
@@ -1274,6 +1292,12 @@ impl Emitter<'_> {
             }
         }
 
+        // `[FFI-33]` — a shared library's creator: the thread of its successful
+        // `ember_module_init`, 0 before it and after `ember_module_shutdown`.
+        // (A library has no relaxed units: `[CG-C-11]`'s are refused there.)
+        if self.module {
+            self.line(&format!("static uint32_t {}module_creator;", ember_branding::mangle_prefix()));
+        }
         self.plan_reload_slots(bodies);
         self.emit_type_declarations();
         self.line(FOREIGN_STATIC_DECLARATIONS);
@@ -1334,6 +1358,21 @@ impl Emitter<'_> {
             let entry = bodies.iter().any(|body| body.symbol == ember_branding::mangled("main_entry"));
             let named = self.emit_frame_names(bodies, true);
             self.emit_entry_point(leak_check, entry, named);
+        }
+        // `[FFI-26]` — each export table: a constant of its struct holding each field's function,
+        // and its protocol version beside it.
+        if self.unit.is_none() {
+            for table in self.types.export_tables().to_vec() {
+                let c_ty = self.c_type(table.ty);
+                let entries = if table.entries.is_empty() { "0".to_string() } else { table.entries.join(", ") };
+                self.line(&format!("const {c_ty} {} = {{ {entries} }};", table.name));
+                self.line(&format!("const uint32_t {} = {}u;", ember_types::ExportTable::protocol_symbol(&table.name, table.protocol), table.protocol));
+            }
+        }
+        // ponytail: a module names no backtrace frames: the runtime keeps one table, which a
+        // module sharing it would leave dangling when it unloads. Per-module tables if wanted.
+        if self.module && self.unit.is_none() {
+            self.emit_module_entry(leak_check);
         }
         self.emit_reload_manifest(bodies, has_main);
         if let Some(roots) = self.comptime.clone()
@@ -5273,10 +5312,15 @@ impl Emitter<'_> {
                 self.line(&format!("{own};"));
                 continue;
             }
+            // `[MNG-2]` — an `@export` symbol C cannot spell: the function keeps its alias in C.
+            if let Some(exact) = ember_branding::export_alias_symbol(&body.symbol) {
+                self.line(&exact_symbol_prototype(&signature, &body.symbol, &exact));
+                continue;
+            }
             if self.inline_bodies.contains_key(&body.symbol) || body.inline != ember_mir::InlineHint::default() {
                 let linkage = self.linkage(body);
                 self.line(&format!("{linkage}{signature};"));
-            } else if self.library_mode && body.abi.as_deref() != Some("C") {
+            } else if self.library_mode && body.abi.is_none() {
                 self.emit_internal_prototype(&signature);
             } else {
                 self.line(&format!("{signature};"));
@@ -5541,7 +5585,7 @@ impl Emitter<'_> {
             })
             .collect();
         let params = if params.is_empty() { "void".to_string() } else { params.join(", ") };
-        let convention = if body.is_extern_declaration { calling_convention(body.abi.as_deref()) } else { "" };
+        let convention = calling_convention(body.abi.as_deref());
         format!("{ret} {convention}{}({params})", body.symbol)
     }
 
@@ -5871,7 +5915,7 @@ impl Emitter<'_> {
         out.push_str(match self.inline_bodies.get(&body.symbol) {
             Some(true) => "EMBER_INLINED EMBER_MAYBE_UNUSED ",
             Some(false) => "static inline EMBER_MAYBE_UNUSED ",
-            None if self.library_mode && body.abi.as_deref() != Some("C") => "static EMBER_MAYBE_UNUSED ",
+            None if self.library_mode && body.abi.is_none() => "static EMBER_MAYBE_UNUSED ",
             None => "",
         });
         out
@@ -5888,7 +5932,7 @@ impl Emitter<'_> {
         if self.comptime.is_some() {
             self.line(&format!("    EMBER_CT_ENTER({});", c_string_literal(&body.name)));
         }
-        if body.abi.as_deref() == Some("C") {
+        if body.abi.is_some() {
             // `[FFI-22]` — the host may call this export on a thread that has
             // never run Ember. Attach before the body touches runtime state.
             self.line(&format!("    {RT}rt_thread_attach();"));
@@ -5896,7 +5940,13 @@ impl Emitter<'_> {
             // uses this module's initialization thread under the private
             // runtime, the same guard as `main` in the current backend.
             if body.export_thread_policy != ember_mir::ExportThreadPolicy::Any {
-                self.line(&format!("    {RT}rt_check_main_thread();"));
+                if self.module {
+                    // `[FFI-33]` — a shared library's contract is its own: the thread of its
+                    // successful `ember_module_init`, even in a runtime other modules share.
+                    self.line(&format!("    {RT}rt_check_module_thread({}module_creator);", ember_branding::mangle_prefix()));
+                } else {
+                    self.line(&format!("    {RT}rt_check_main_thread();"));
+                }
             }
             // `[HR-42]` — entering Ember code from a foreign caller: this thread's depth counter.
             if self.reload.is_some() {
@@ -7224,7 +7274,7 @@ impl Emitter<'_> {
                     self.line("    EMBER_CT_LEAVE();");
                 }
                 // `[HR-42]` — leaving Ember code for the foreign caller of an export.
-                if self.reload.is_some() && body.abi.as_deref() == Some("C") {
+                if self.reload.is_some() && body.abi.is_some() {
                     self.line(&format!("    {RT}reload_leave();"));
                 }
                 if self.is_void(body.return_ty()) {
@@ -10607,6 +10657,50 @@ impl Emitter<'_> {
         self.line("}");
     }
 
+    /// `[FFI-28]`, `[FFI-31]` — a shared library's two entry points. `ember_module_init` checks the
+    /// runtime's ABI version before anything else (`[ABI-3]`), then initialises this module in its
+    /// runtime (its own copy, or the one modules share, `[FFI-31c]`) and records its creator thread
+    /// (`[FFI-33]`); a second call while initialised changes nothing. `ember_module_shutdown` runs
+    /// the runtime's shutdown when this is its last module: the at-exit hooks, the debug leak report
+    /// and every thread's detachment by the epoch (`[FFI-31a]`).
+    fn emit_module_entry(&mut self, leak_check: bool) {
+        let creator = format!("{}module_creator", ember_branding::mangle_prefix());
+        let init = ember_branding::runtime("module_init");
+        let shutdown = ember_branding::runtime("module_shutdown");
+        self.line(&format!("int {init}(const {RT}rt_config* cfg) {{"));
+        self.line(&format!("    if ({RT}rt_abi_version() != EMBER_RUNTIME_ABI) {{"));
+        self.line("        return EMBER_MODULE_INIT_ABI_MISMATCH;");
+        self.line("    }");
+        self.line(&format!("    if ({creator} != 0) {{"));
+        self.line("        return 0;");
+        self.line("    }");
+        self.line(&format!("    {RT}rt_config config = {RT}rt_config_default();"));
+        self.line("    if (cfg != NULL) {");
+        self.line("        memcpy(&config, cfg, cfg->size < sizeof config ? cfg->size : sizeof config);");
+        self.line("        config.size = sizeof config;");
+        self.line("    }");
+        if leak_check {
+            self.line("    config.flags |= EMBER_RT_DEBUG_OBJECTS;");
+        }
+        self.line(&format!("    int status = {RT}rt_module_init(&config);"));
+        self.line("    if (status != 0) {");
+        self.line("        return status;");
+        self.line("    }");
+        if leak_check {
+            self.emit_debug_edge_registrations();
+        }
+        self.line(&format!("    {creator} = {RT}rt_thread_id();"));
+        self.line("    return 0;");
+        self.line("}");
+        self.line(&format!("void {shutdown}(void) {{"));
+        self.line(&format!("    if ({creator} == 0) {{"));
+        self.line("        return;");
+        self.line("    }");
+        self.line(&format!("    {creator} = 0;"));
+        self.line(&format!("    {RT}rt_module_shutdown();"));
+        self.line("}");
+    }
+
     /// `[TST-3]` — a test binary's entry point: run the test `argv[1]`
     /// numbers, alone in this process, as `main` would run (the runtime set
     /// up and shut down the same way, `[WK-15]`'s leak report included).
@@ -12664,6 +12758,7 @@ mod string_descriptor_view_parts_tests {
             payload_zeros: BTreeMap::new(),
             deep_bindings: Vec::new(),
             library_mode: false,
+            module: false,
             type_namespace: String::new(),
             line_directives: false,
             order: Vec::new(),

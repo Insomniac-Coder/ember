@@ -381,11 +381,11 @@ impl Emitter<'_> {
             }
             let reloadable = true;
             let mut flags = if reloadable { "EMBER_RL_FN_RELOADABLE" } else { "EMBER_RL_FN_NORELOAD" }.to_string();
-            if address_taken.contains(body.symbol.as_str()) || body.abi.as_deref() == Some("C") {
+            if address_taken.contains(body.symbol.as_str()) || body.abi.is_some() {
                 flags.push_str(" | EMBER_RL_FN_ADDRESS");
             }
             // `[HR-21]` — a host reaches an export through its permanent thunk.
-            if body.abi.as_deref() == Some("C") {
+            if body.abi.is_some() {
                 flags.push_str(" | EMBER_RL_FN_EXPORT");
             }
             let (code, thunk) = if reloadable {

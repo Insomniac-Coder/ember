@@ -153,7 +153,7 @@ impl CallableSignature {
         }
         if let Some(borrows) = &self.borrows {
             if borrows.is_empty()
-                && !(self.abi.as_deref() == Some("C")
+                && !(self.abi.is_some()
                     && (self.result.starts_with("ref ") || self.result.starts_with("Option[ref ")))
             {
                 return Err("`@borrows` must name at least one parameter");

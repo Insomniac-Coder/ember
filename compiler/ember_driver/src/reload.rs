@@ -284,7 +284,7 @@ pub fn build(
         runtime_source,
         includes,
         profile,
-        image.instances,
+        Some(image.instances),
         &ember_build::cache_root(),
         &layout.bin,
     )

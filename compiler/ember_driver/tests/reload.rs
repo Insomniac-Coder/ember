@@ -474,7 +474,7 @@ fn link_host(package: &Path, out: &Path, host: &str) -> PathBuf {
         &runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX)),
         &includes,
         ember_build::Profile::Debug,
-        true,
+        Some(true),
         &ember_build::cache_root(),
         &bin(out),
     )

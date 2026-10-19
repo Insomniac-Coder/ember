@@ -5017,6 +5017,32 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-206 — Helper C merged: shared libraries, packages, layers
+
+2026-10-19. Helper C (shared libraries, packages: `job_C`, ADR-202) worked in a worktree from
+`4f41d2a9`; its notes, rule by rule with tests, are `tasks/85/C-notes.md`. Merged after
+0.9.10_Hardened_13; one conflict (`docs/phase-status.json`: C's waiting entries kept, `HR-2a`'s
+removed as ADR-205 finished it). Its tests and code were mapped to the renamed profiles (ODR-117):
+`cdylib.rs`'s `Profile::Shipping` is `Profile::Release`, a test's `debug, release` is
+`debug, development`.
+* **Done:** `[ABI-3]` (`ember_module_init` checks the runtime ABI first), `[FFI-9]` (definitions and
+  pointer types in every convention; a drop-bearing value through an extern pointer is `E5015`),
+  `[FFI-27]` (the host's `log`, `ember_rt_at_exit`), `[FFI-28]`/`[FFI-31]`/`[FFI-31a]` (`kind =
+  "cdylib"` exports only its exports and the two module entry points), `[FFI-31c]` (one shared
+  runtime counting its modules), `[FFI-26]`/`[FFI-33c]` (`@export_table`, the protocol symbol
+  `Name_protocol_N`, per-entry thread contracts), `[MNG-2]` (exact `@export` symbols; a generic
+  export is `E2060`), `[MAN-2]` (path and git dependencies, `ember.lock`, `--locked`, `ember
+  update`), `[MOD-4]` (`E1041` for package cycles), `[STD-6]`/`[BLD-11]` (`[package] layers`,
+  `E1021`), `[VER-2]` (the manifest's `language`).
+* **Waiting:** `[VER-5]` (a version requirement needs a registry: question 1), `[TOOL-4]` (the
+  installer), `[BLD-FFI-3]`'s `import c` link list, `[BLD-FFI-1]`, `[BLD-FFI-1a]`, `[FFI-30c]` (the C
+  header importer), `[ALC-3]` (the `Allocator` interface).
+* **Defects:** D-700 to D-702 fixed by C; D-703 to D-707 open (C's recorded limits).
+* **For the owner** (`tasks/85/owner-answers.md`, "Helper C"): Q1 where a version requirement
+  resolves from; Q3 `@export_table`'s shape; Q4 `[ABI-1]`'s versioned module symbol against
+  `[FFI-28]`'s export list. Q2 (`global_allocator` missing from `[MAN-8]`'s keys) waits with
+  `[ALC-3]` on the `Allocator` interface.
+
 ## ADR-205 — The owner's rulings built: the profiles renamed, reload in `release`, `@inline`, `E5068`, `inout_count`'s tuple, references in tuples, `Box`es and closures
 
 2026-10-19. Specification 0.9.10_Hardened_13 records ODR-117 to ODR-126 (ADR-204's list, as the

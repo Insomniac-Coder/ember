@@ -45,6 +45,9 @@ pub const CLI_NAME: &str = "ember";
 /// `[MAN-1]` — a package is a directory tree with this at its root.
 pub const MANIFEST: &str = "ember.toml";
 
+/// `[MAN-2]` — the resolved dependencies with content hashes, beside the manifest.
+pub const LOCK_FILE: &str = "ember.lock";
+
 /// `[LEX-3]` — the source extension, without the dot. No other extension is a
 /// compilation unit.
 pub const SOURCE_EXT: &str = "em";
@@ -72,6 +75,26 @@ pub fn mangle_prefix() -> String {
 /// `[MNG-3]` — the caller has already transliterated the name to ASCII.
 pub fn mangled(name: &str) -> String {
     format!("{}{}", mangle_prefix(), name.replace('.', "_"))
+}
+
+/// `[MNG-2]` — the C name of a function whose `@export` symbol is not a C identifier
+/// (`@export("game-update")`): `em_0x` and the symbol's bytes in hex (no mangled name has a digit
+/// after the prefix: an identifier does not start with one). The C names the function so, and
+/// gives its object-file symbol exactly as written (an assembler label, or a linker alias with
+/// MSVC).
+pub fn export_alias(symbol: &str) -> String {
+    let hex: String = symbol.bytes().map(|byte| format!("{byte:02x}")).collect();
+    format!("{}0x{hex}", mangle_prefix())
+}
+
+/// The `@export` symbol an [`export_alias`] stands for, if `name` is one.
+pub fn export_alias_symbol(name: &str) -> Option<String> {
+    let hex = name.strip_prefix(&format!("{}0x", mangle_prefix()))?;
+    if hex.is_empty() || hex.len() % 2 != 0 {
+        return None;
+    }
+    let bytes: Option<Vec<u8>> = (0..hex.len()).step_by(2).map(|at| u8::from_str_radix(&hex[at..at + 2], 16).ok()).collect();
+    String::from_utf8(bytes?).ok()
 }
 
 /// A type's user-written `drop` function: `drop_function("Noisy")` is

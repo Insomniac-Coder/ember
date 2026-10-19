@@ -6,6 +6,7 @@
 
 mod comptime;
 mod foreign;
+mod packages;
 mod reload;
 mod test_runner;
 
@@ -29,7 +30,7 @@ ember — the Ember compiler
 
 usage (`[CLI-15]`: every command and flag of the specification's XVII.1; \"not built yet\" marks those
 this compiler does not have yet):
-    ember new <name> [--lib | --bin | --cdylib]    create a package (not built yet)
+    ember new <name> [--lib | --bin | --cdylib]    create a package
     ember run [file.em] [args…] [--hot | --interp] build and run; a single file needs no manifest;
                                                    --hot reloads edited sources at std.hot.checkpoint()
                                                    (--interp is not built yet)
@@ -37,7 +38,7 @@ this compiler does not have yet):
                 [--emit tokens|ast|hir|mir|c|obj|header] [--out-dir <dir>]
                 [--emit-optimization-report] [--report=engine|instantiations] [--timings[=json]]
                 [--build-id] [--reload [--explain]] [-D warnings]
-                                                   compile a bin or staticlib package; --reload
+                                                   compile a bin, staticlib or cdylib package; --reload
                                                    builds the next image of a running program and
                                                    --explain predicts that reload (--target,
                                                    --backend llvm, --report and --build-id are
@@ -88,7 +89,7 @@ options:
     --syntax-only                     lex and parse only; report E00xx/E01xx
     --backend c                       the only backend in v1
     --cc msvc|clang|gcc|clang-cl      override C compiler detection
-    --out-dir <dir>                   default: target/; staticlib archives and headers in <profile>/lib/
+    --out-dir <dir>                   default: target/; libraries and headers in <profile>/lib/
     --leak-check                      `run` and `test`: report leaked ownership cycles at exit
                                       (the default for both in the debug profile)
     --no-leak-check                   `run` and `test`: no leak report in the debug profile
@@ -427,6 +428,8 @@ struct Options {
     explain: bool,
     /// `[HR-33]` — `ember run --hot`: run, watch the sources, rebuild and reload.
     hot: bool,
+    /// `[MAN-2]` — `--locked`: a build that would change `ember.lock` fails.
+    locked: bool,
     /// `[CLI-13]` — `ember calls --foreign <item>`: check the program, then list the foreign
     /// functions the item can reach.
     foreign_calls: Option<ForeignCalls>,
@@ -472,13 +475,34 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         "--version" | "-V" => {
+            if args.iter().any(|argument| argument == "--matrix") {
+                return Err("error[E0900]: `ember --version --matrix` is not implemented yet".to_string());
+            }
+            // `[TOOL-4]` — the compiler, the language, the backend, and the C compiler and linker
+            // this build resolves (`--cc`'s variable steers it, as for a build), so a bug report
+            // carries its environment.
+            let requested = std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty());
+            let toolchain = Toolchain::detect(requested.as_deref());
+            let (compiler, linker) = match &toolchain {
+                Ok(toolchain) => (format!("{} ({})", toolchain.name(), toolchain.compiler_path().display()), toolchain.linker()),
+                Err(error) => (format!("none found: {error}"), "none".to_string()),
+            };
             if json {
-                println!("{}", serde_json::json!({ "schema": 1, "version": env!("CARGO_PKG_VERSION") }));
+                println!("{}", serde_json::json!({
+                    "schema": 1, "version": env!("CARGO_PKG_VERSION"), "language": ember_parser::LANGUAGE_VERSION,
+                    "backend": "c", "c_compiler": compiler, "linker": linker,
+                }));
             } else {
                 println!("ember {}", env!("CARGO_PKG_VERSION"));
+                println!("language: {}", ember_parser::LANGUAGE_VERSION);
+                println!("backend: c");
+                println!("C compiler: {compiler}");
+                println!("linker: {linker}");
             }
             Ok(ExitCode::SUCCESS)
         }
+        "new" => new_package(&args[1..]),
+        "update" => packages::update(&args[1..]),
         "explain" if args.get(1).is_some_and(|argument| argument == "--cycle") => {
             let rest: Vec<&String> = args[2..].iter().filter(|argument| *argument != "--json").collect();
             let input = rest
@@ -544,19 +568,20 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             }
             let input = match input {
                 Some(input) => input,
-                None if command == "build" => {
+                // `[TOOL-4]` — in a package, `ember run` (and `build`, `check`) needs no file: the
+                // manifest's entry is the program.
+                None => {
                     let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
                     let mut candidate = Some(cwd.as_path());
                     let root = loop {
                         let Some(dir) = candidate else {
-                            return Err("`ember build` needs a source file or a package manifest in this directory or an ancestor".to_string());
+                            return Err(format!("`ember {command}` needs a source file or a package manifest in this directory or an ancestor"));
                         };
                         if dir.join(ember_branding::MANIFEST).is_file() { break dir.to_path_buf(); }
                         candidate = dir.parent();
                     };
                     root.to_string_lossy().into_owned()
                 }
-                None => return Err(format!("`ember {command}` needs a source file")),
             };
             let mut options = parse_options(&rest)?;
             options.program_args = program_args;
@@ -594,13 +619,13 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 !matches!(stage, "c" | "header")) {
                 return Err("`--emit-header` requires a normal build, `--emit c`, or `--emit header`".to_string());
             }
-            let source = if command == "build" && Path::new(&input).is_dir() {
+            let source = if Path::new(&input).is_dir() {
                 let root = Path::new(&input);
                 let manifest = root.join(ember_branding::MANIFEST);
                 if !manifest.is_file() {
                     return Err(format!("package directory `{}` has no {}", root.display(), ember_branding::MANIFEST));
                 }
-                package_entry_from_manifest(root, &manifest, "build")?.0
+                package_entry_from_manifest(root, &manifest, command)?.0
             } else {
                 PathBuf::from(input)
             };
@@ -635,6 +660,54 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         }
         other => Err(format!("unknown command `{other}`; try `ember --help`")),
     }
+}
+
+/// `[TOOL-4]` — `ember new <name> [--lib | --bin | --cdylib]`: a package directory with its
+/// manifest (the current language, `[VER-2]`) and a first source: a program printing
+/// `hello, world` (a first program needs no `main`, `[CLI-4]`), or a library with one function.
+/// An existing directory that is not empty is left alone.
+fn new_package(args: &[String]) -> Result<ExitCode, String> {
+    let mut name = None;
+    let mut kind = "bin";
+    for argument in args {
+        match argument.as_str() {
+            "--bin" => kind = "bin",
+            "--lib" => kind = "lib",
+            "--cdylib" => kind = "cdylib",
+            "--json" => {}
+            option if option.starts_with('-') => return Err(format!("unknown `ember new` option `{option}`")),
+            word if name.is_none() => name = Some(word),
+            extra => return Err(format!("unexpected `ember new` argument `{extra}`")),
+        }
+    }
+    let path = Path::new(name.ok_or("`ember new` needs a package name, e.g. `ember new hello`")?);
+    let package = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+    let mut chars = package.chars();
+    if !chars.next().is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        || !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        return Err(format!("`{package}` is not a package name: a letter or `_`, then letters, digits, `_` or `-`"));
+    }
+    if path.read_dir().is_ok_and(|mut entries| entries.next().is_some()) {
+        return Err(format!("`{}` already exists and is not empty", path.display()));
+    }
+    let (file, source) = match kind {
+        "bin" => ("main", "println(\"hello, world\")\n".to_string()),
+        "lib" => ("lib", "pub fn answer() -> i32:\n    return 42\n".to_string()),
+        _ => ("lib", format!("@export(\"{}_answer\")\nfn answer() -> i32:\n    return 42\n", package.replace('-', "_"))),
+    };
+    let manifest = format!(
+        "[package]\nname = \"{package}\"\nversion = \"0.1.0\"\nlanguage = \"{}\"\nkind = \"{kind}\"\n",
+        ember_parser::LANGUAGE_VERSION
+    );
+    let write = || -> std::io::Result<()> {
+        std::fs::create_dir_all(path.join("src"))?;
+        std::fs::write(path.join(ember_branding::MANIFEST), manifest)?;
+        std::fs::write(path.join("src").join(ember_branding::source_file(file)), source)
+    };
+    write().map_err(|error| format!("cannot create `{}`: {error}", path.display()))?;
+    eprintln!("created {} package `{package}`", if kind == "bin" { "binary" } else { kind });
+    Ok(ExitCode::SUCCESS)
 }
 
 /// `[RC-6]` — the side table `ember inspect --counts` reads.
@@ -923,6 +996,25 @@ fn manifest_string(manifest: &str, wanted_section: &str, wanted_key: &str) -> Op
             .strip_prefix('"')
             .and_then(|value| value.strip_suffix('"'))
             .map(str::to_owned);
+    }
+    None
+}
+
+/// A manifest list of quoted strings, written on one line (`libs = ["m", "vulkan-1"]`).
+fn manifest_list(manifest: &str, wanted_section: &str, wanted_key: &str) -> Option<Vec<String>> {
+    let mut section = "";
+    for line in manifest.lines() {
+        let line = line.split_once('#').map_or(line, |(before, _)| before).trim();
+        if let Some(name) = line.strip_prefix('[').and_then(|line| line.strip_suffix(']')) {
+            section = name.trim();
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else { continue };
+        if section != wanted_section || key.trim() != wanted_key {
+            continue;
+        }
+        let items = value.trim().strip_prefix('[')?.strip_suffix(']')?;
+        return Some(items.split(',').map(|item| item.trim().trim_matches('"').to_string()).filter(|item| !item.is_empty()).collect());
     }
     None
 }
@@ -2279,6 +2371,8 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--reload" => options.reload = true,
             "--explain" => options.explain = true,
             "--hot" => options.hot = true,
+            // `[MAN-2]` — fail rather than change `ember.lock`.
+            "--locked" => options.locked = true,
             "-Dwarnings" | "-D" => {
                 if arg == "-D" {
                     let what = value(&mut index, arg)?;
@@ -2401,15 +2495,60 @@ const SPECIFIED_STD_MODULES: &[&str] = &[
     "ser", "simd", "string", "testing", "thread", "time",
 ];
 
+/// `[MOD-1]` — the module an import inside package `package` names, with the import rewritten to
+/// the module's path in the build when that differs from what is written (a dependency's second
+/// major, `[VER-5]`; a package's own module inside a dependency), binding the same name. `None`
+/// when no package has it: the caller tries the standard library.
+fn resolve_package_import(
+    packages: &packages::Packages,
+    package: usize,
+    import: &mut ember_ast::Import,
+) -> Option<(usize, Vec<String>, PathBuf)> {
+    let (segments, alias) = match &mut import.kind {
+        ember_ast::ImportKind::Module { path, alias } => (path, Some(alias)),
+        ember_ast::ImportKind::Items { path, .. } => (path, None),
+        ember_ast::ImportKind::Foreign { .. } => return None,
+    };
+    let names: Vec<String> = segments.iter().map(|segment| segment.name.to_string()).collect();
+    if names.first().is_some_and(|first| first == ember_branding::STD_PACKAGE) {
+        return None;
+    }
+    let (found, path, file) = packages.resolve_import(package, &names)?;
+    if path != names {
+        let span = segments.first().map_or(import.span, |segment| segment.span);
+        let last = segments.last().cloned();
+        if let (Some(alias), Some(last)) = (alias, last)
+            && alias.is_none()
+            && path.last() != names.last()
+        {
+            *alias = Some(last);
+        }
+        *segments = path.iter().map(|name| ember_ast::Ident { name: ember_span::Symbol::intern(name), span }).collect();
+    }
+    Some((found, path, file))
+}
+
 fn load_modules(
     root: ember_ast::Module,
     root_dir: &Path,
     map: &mut SourceMap,
     sink: &mut Sink,
 ) -> Vec<ember_typeck::LoadedModule> {
+    // Without a resolution (an error the build reports itself), the root package alone.
+    let packages = packages::resolve(root_dir).unwrap_or_else(|_| packages::Packages::alone(root_dir));
+    load_package_modules(root, root_dir, &packages, map, sink)
+}
+
+fn load_package_modules(
+    root: ember_ast::Module,
+    root_dir: &Path,
+    packages: &packages::Packages,
+    map: &mut SourceMap,
+    sink: &mut Sink,
+) -> Vec<ember_typeck::LoadedModule> {
     let mut loaded: Vec<ember_typeck::LoadedModule> = Vec::new();
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut queue: Vec<(Vec<String>, ember_ast::Module)> = Vec::new();
+    let mut queue: Vec<(usize, Vec<String>, ember_ast::Module)> = Vec::new();
 
     // `[MOD-5]` — source-backed prelude interfaces must exist even when the
     // user did not write an import. Loading a module does not make all of its
@@ -2434,14 +2573,16 @@ fn load_modules(
         let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
         mark("read and parse", &key);
         seen.insert(key);
-        queue.push((names, parsed));
+        queue.push((usize::MAX, names, parsed));
     }
-    queue.push((Vec::new(), root));
+    queue.push((0, Vec::new(), root));
 
-    while let Some((path, module)) = queue.pop() {
-        // Every import this module names, before it is moved into the list.
-        let mut wanted: Vec<(Vec<String>, ember_span::Span, bool)> = Vec::new();
-        for import in &module.imports {
+    while let Some((package, path, mut module)) = queue.pop() {
+        // Every import this module names, before it is moved into the list: one of a package
+        // (`[MOD-1]`) is already resolved, its path rewritten to the module's in the build.
+        let mut wanted: Vec<(Vec<String>, ember_span::Span, bool, Option<(usize, PathBuf)>)> = Vec::new();
+        for import in &mut module.imports {
+            let resolved = if package == usize::MAX { None } else { resolve_package_import(packages, package, import) };
             let segments = match &import.kind {
                 ember_ast::ImportKind::Module { path, .. } => path,
                 ember_ast::ImportKind::Items { path, .. } => path,
@@ -2452,13 +2593,12 @@ fn load_modules(
             // `[CLI-20]` — an import of nothing but 0.9.8's `with_views*`, which 0.9.9 removed.
             let removed = matches!(&import.kind, ember_ast::ImportKind::Items { items, glob: false, .. }
                 if items.iter().all(|item| item.name.name.as_str().starts_with("with_views")));
-            wanted.push((names, import.span, removed));
+            wanted.push((names, import.span, removed, resolved.map(|(found, _, file)| (found, file))));
         }
 
         // `[GRM-2]` (0.9.9) — only the entry file (the root, with an empty
         // path) may hold statements at file scope; elsewhere they are
         // `E0100`, and the implicit `main` built from them is dropped.
-        let mut module = module;
         if !path.is_empty() {
             if let Some(script) = module.script.take() {
                 sink.emit(
@@ -2476,28 +2616,50 @@ fn load_modules(
         loaded.push(ember_typeck::LoadedModule {
             path: path.clone(),
             module,
+            package: if package == usize::MAX { None } else { Some(package) },
         });
 
-        for (names, span, removed) in wanted {
+        for (names, span, removed, resolved) in wanted {
             let key = names.join(".");
             if seen.contains(&key) {
                 continue;
             }
             seen.insert(key.clone());
+            // `[MOD-1]` — a module of a package (this one's, or a dependency's): `names` is already
+            // its path in the build.
+            if let Some((found, file_path)) = resolved {
+                let file = match map.load(&file_path) {
+                    Ok(file) => file,
+                    Err(error) => {
+                        sink.emit(load_diagnostic(&error, span));
+                        continue;
+                    }
+                };
+                let text = map.file(file).text.clone();
+                let lexed = ember_lexer::lex(file, &text, sink);
+                let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
+                check_safety_notes(&parsed, &lexed.comments, map, sink);
+                mark("read and parse", &key);
+                queue.push((found, names, parsed));
+                continue;
+            }
             // `[MOD-3]` — a standard module may be named without `std.`
-            // (`import math`), unless the package has a module of that name.
+            // (`import math`), unless the package has a module of that name (found above).
+            let in_standard = |names: &[String]| {
+                names.first().is_some_and(|first| first == ember_branding::STD_PACKAGE).then(|| resolve_module(root_dir, names)).flatten()
+            };
             let mut names = names;
-            if resolve_module(root_dir, &names).is_none() {
+            if in_standard(&names).is_none() {
                 let mut in_std = vec![ember_branding::STD_PACKAGE.to_string()];
                 in_std.extend(names.iter().cloned());
-                if resolve_module(root_dir, &in_std).is_some() {
+                if in_standard(&in_std).is_some() {
                     if !seen.insert(in_std.join(".")) {
                         continue;
                     }
                     names = in_std;
                 }
             }
-            let Some(file_path) = resolve_module(root_dir, &names) else {
+            let Some(file_path) = in_standard(&names) else {
                 // `[MOD-3]` — a module path that names no module is `E1060` at
                 // the import, never accepted silently (F-004). A `std` module
                 // the specification lists (Part XV) that this compiler has not
@@ -2541,11 +2703,8 @@ fn load_modules(
             let text = map.file(file).text.clone();
             let lexed = ember_lexer::lex(file, &text, sink);
             let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
-            if names.first().map(String::as_str) != Some(ember_branding::STD_PACKAGE) {
-                check_safety_notes(&parsed, &lexed.comments, map, sink);
-            }
             mark("read and parse", &names.join("."));
-            queue.push((names, parsed));
+            queue.push((usize::MAX, names, parsed));
         }
     }
     loaded
@@ -3348,7 +3507,10 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let reload = reload_mode(&lint_settings, options, &mut sink)?;
     // `ember test` builds the package's tests as a program of their own, without reload.
     let reload = if command == "test" { ReloadMode::None } else { reload };
-    let mut modules = load_modules(module, &root_dir, &mut map, &mut sink);
+    // `[MOD-1]`, `[MAN-2]` — the package's dependencies, and its lock.
+    let packages = packages::resolve(&root_dir)?;
+    packages::settle_lock(&packages, options.locked)?;
+    let mut modules = load_package_modules(module, &root_dir, &packages, &mut map, &mut sink);
     // Annex B — what a reloadable program's reload needs written into it before it is checked: its
     // fields' defaults as functions, `Old<Name>` from the previous build's schema.
     let reload_bin = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target")).join(options.profile.name()).join("bin");
@@ -3586,6 +3748,26 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if ember_analysis::check_effects_all(&bodies, &types, &mut sink) > 0 {
         return Ok(finish(&sink, &map, options));
     }
+    // `[STD-6]`, `[BLD-11]` — a package's functions use only the layers it declares: the effects
+    // of a layer it leaves out need what is not linked in this build.
+    let file_packages: std::collections::HashMap<ember_span::FileId, usize> = modules.iter()
+        .filter_map(|loaded| loaded.package.map(|package| (loaded.module.span.file, package)))
+        .collect();
+    let omitted = |body: &ember_mir::Body| -> Option<(ember_hir::Effects, String)> {
+        let package = &packages.list[*file_packages.get(&body.span.file)?];
+        let declared = package.layers.as_ref()?;
+        let mut left_out = ember_hir::Effects::NONE;
+        for (layer, effects) in ember_analysis::effects::LAYERS {
+            if !package.uses(layer) {
+                left_out |= effects;
+            }
+        }
+        let declared: Vec<String> = declared.iter().map(|layer| format!("\"{layer}\"")).collect();
+        Some((left_out, declared.join(", ")))
+    };
+    if ember_analysis::effects::check_layers_all(&bodies, &types, &omitted, &mut sink) > 0 {
+        return Ok(finish(&sink, &map, options));
+    }
     // `[EFF-16]` — what the safety side table says of each function, read where the contracts
     // were checked: inlining below folds a small function into its callers.
     let safety_functions = safety_functions_json(&bodies, &types, &modules, reload_image.as_ref().map(|image| &image.reloadable));
@@ -3760,10 +3942,13 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let runtime_mode = manifest.as_deref().and_then(|text| manifest_string(text, "build", "runtime"))
         .unwrap_or_else(|| "static".to_string());
     let staticlib = command == "build" && package_kind == "staticlib";
+    // `[FFI-28]` — a shared library: built as a library, with the module's entry points.
+    let cdylib = command == "build" && package_kind == "cdylib";
+    let library = staticlib || cdylib;
     // At the end of a program's `main` the process ends: a drop there that
     // only frees memory changes nothing observable (`[PHIL-5]`). Debug
     // builds keep every drop, which their leak check counts.
-    if program.main.is_some() && !staticlib && command != "test" && options.profile != Profile::Debug && !options.leak_check {
+    if program.main.is_some() && !library && command != "test" && options.profile != Profile::Debug && !options.leak_check {
         ember_analysis::skip_exit_drops_all(&mut bodies, &types, &ember_branding::mangled("main"));
     }
     // Run after all body pruning and mutation. Retain the complete immutable
@@ -3815,28 +4000,35 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         if command == "run" && package_kind != "bin" {
             return Err(format!("cannot run a `{package_kind}` package; use `ember build`"));
         }
-        if command == "build" && !matches!(package_kind.as_str(), "bin" | "staticlib") {
+        if command == "build" && !matches!(package_kind.as_str(), "bin" | "staticlib" | "cdylib") {
             return Err(format!("package kind `{package_kind}` is not implemented for `ember build`"));
         }
-        if matches!(command, "build" | "run" | "test") && runtime_mode != "static" && reload_image.is_none() {
+        if !matches!(runtime_mode.as_str(), "static" | "shared") {
+            return Err(format!("`[build] runtime` is \"static\" or \"shared\", not `{runtime_mode}`"));
+        }
+        // `[FFI-31c]` — a shared runtime serves shared libraries (and hot reload); a program or a
+        // static library links its own.
+        if matches!(command, "build" | "run" | "test") && runtime_mode != "static" && reload_image.is_none() && !cdylib {
             return Err(format!("runtime mode `{runtime_mode}` is not implemented for this build artifact"));
         }
-        if reload_image.is_some() && staticlib {
-            return Err("a `staticlib` package is not reloadable: hot reload builds a program".to_string());
+        if reload_image.is_some() && library {
+            return Err(format!("a `{package_kind}` package is not reloadable: hot reload builds a program"));
         }
     }
     let header_requested = options.emit_header || options.emit.as_deref() == Some("header") ||
-        (staticlib && options.emit.is_none());
-    let package_name = if header_requested || staticlib { export_package_name(input)? } else { module_name.clone() };
+        (library && options.emit.is_none());
+    let package_name = if header_requested || library { export_package_name(input)? } else { module_name.clone() };
     mark("analyses and passes", "all modules");
     let emitted = ember_codegen_c::emit(
         verified_mir,
         &map,
         &module_name,
         &package_name,
-        program.main.is_some() && !staticlib && command != "test",
-        options.leak_check,
-        staticlib,
+        program.main.is_some() && !library && command != "test",
+        // `[FFI-31]` — a shared library reports its leaks at shutdown in `debug`.
+        options.leak_check || (cdylib && options.profile == Profile::Debug),
+        library,
+        cdylib,
         c_for_msvc(&options),
         (command == "test").then(|| tests.iter().map(|test| test.symbol.clone()).collect()),
         reload_image.as_ref(),
@@ -3854,7 +4046,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             eprintln!("  {line}");
         }
     }
-    if header_requested && !(staticlib && options.emit.is_none()) {
+    if header_requested && !(library && options.emit.is_none()) {
         let target_dir = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target"));
         let layout = Layout::new(&target_dir, options.profile).map_err(|e| e.to_string())?;
         let header_path = layout.lib.join(format!("{package_name}.h"));
@@ -3923,7 +4115,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         return Err(format!("unknown `--emit` stage `{other}`"));
     }
 
-    if program.main.is_none() && !staticlib && command != "test" {
+    if program.main.is_none() && !library && command != "test" {
         return Err("this file declares no `main`, so there is nothing to run".to_string());
     }
 
@@ -4008,8 +4200,52 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     }
     // `[CG-C-11]` — a relaxed unit calls the package's other functions,
     // which a library keeps internal to its own unit.
-    if staticlib && !emitted.relaxed_units.is_empty() {
-        return Err("error[E0900]: `@fastmath` and `@fp(contract)` in a static library are not built yet".to_string());
+    if library && !emitted.relaxed_units.is_empty() {
+        let what = if cdylib { "shared" } else { "static" };
+        return Err(format!("error[E0900]: `@fastmath` and `@fp(contract)` in a {what} library are not built yet"));
+    }
+    // `[BLD-FFI-3]` — `[link] libs`, in the order written.
+    // A path is the package's: relative to the directory of its manifest.
+    let package_dir = nearest_manifest_path(input).and_then(|path| path.parent().map(Path::to_path_buf));
+    let libraries: Vec<String> = manifest.as_deref().and_then(|text| manifest_list(text, "link", "libs")).unwrap_or_default()
+        .into_iter()
+        .map(|library| match &package_dir {
+            Some(dir) if ember_build::cdylib::is_library_path(&library) && Path::new(&library).is_relative() =>
+                dir.join(&library).to_string_lossy().into_owned(),
+            _ => library,
+        })
+        .collect();
+    // `[FFI-28]`, `[FFI-31]` — a shared library exporting only its exports and the module's entry
+    // points; `[FFI-31c]` with `runtime = "shared"` it imports the runtime its process shares.
+    if cdylib {
+        let header = emitted.header_source.as_ref().map_err(|error| error.clone())?;
+        let mut exports: Vec<String> = bodies.iter()
+            .filter(|body| body.abi.is_some() && !body.is_extern_declaration && !body.is_abstract)
+            .map(|body| body.symbol.clone())
+            .collect();
+        exports.extend([ember_branding::runtime("module_init"), ember_branding::runtime("module_shutdown")]);
+        // `[FFI-26]` — each export table and its protocol version, as data.
+        for table in types.export_tables() {
+            exports.push(format!("{} DATA", table.name));
+            exports.push(format!("{} DATA", ember_types::ExportTable::protocol_symbol(&table.name, table.protocol)));
+        }
+        exports.sort();
+        exports.dedup();
+        let shared = if runtime_mode == "shared" {
+            Some(ember_build::reload::shared_runtime(&toolchain, &runtime_source, &includes, options.profile, None,
+                &ember_build::cache_root(), &layout.lib).map_err(|e| e.to_string())?)
+        } else {
+            None
+        };
+        let package_header = layout.lib.join(format!("{package_name}.h"));
+        let built = ember_build::cdylib::link_cdylib(&toolchain, &package_name, &c_path, &runtime_source, &includes,
+            options.profile, shared.as_ref(), &exports, &libraries, &layout.obj, &layout.lib)
+            .map_err(|e| e.to_string())?;
+        copy_runtime_header(&layout.lib)?;
+        std::fs::write(&package_header, &header.source).map_err(|e| e.to_string())?;
+        report(&sink, &map, options);
+        eprintln!("built {}", built.library.display());
+        return Ok(ExitCode::SUCCESS);
     }
     if staticlib {
         let header = emitted.header_source.as_ref().map_err(|error| error.clone())?;
@@ -4087,17 +4323,21 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     }
     // The C header and executable expose the same definitions. Root selected
     // ABI symbols, including renamed/imported exports, never declarations.
+    // `[MNG-2]` — an export's object-file symbol, which is its alias's exact one.
     let mut retained_symbols: Vec<String> = bodies.iter()
-        .filter(|body| body.abi.as_deref() == Some("C")
+        .filter(|body| body.abi.is_some()
             && !body.is_extern_declaration && !body.is_abstract)
-        .map(|body| body.symbol.clone())
+        .map(|body| ember_branding::export_alias_symbol(&body.symbol).unwrap_or_else(|| body.symbol.clone()))
         .collect();
     if emitted.ffi_instrument.is_some() && !cfg!(windows) {
         retained_symbols.extend(ember_codegen_c::FFI_INTERPOSED.iter().map(|name| name.to_string()));
     }
+    for table in types.export_tables() {
+        retained_symbols.extend([table.name.clone(), ember_types::ExportTable::protocol_symbol(&table.name, table.protocol)]);
+    }
     retained_symbols.sort();
     retained_symbols.dedup();
-    ember_build::compile_and_link_executable_with_roots(
+    ember_build::compile_and_link_program(
         &toolchain,
         &LinkRequest {
             sources: &sources,
@@ -4107,6 +4347,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             obj_dir: layout.obj.clone(),
         },
         &retained_symbols,
+        &libraries,
     )
     .map_err(|e| e.to_string())?;
     mark("C compile and link", "all modules");
@@ -4530,6 +4771,25 @@ fn manifest_lint_settings(
                         sink.emit(
                             Diagnostic::error(codes::E9001, location, format!("unknown key `{key}` in {section}")).help(help),
                         );
+                    } else if section == "package" && key == "version"
+                        && packages::Version::parse(value.trim().trim_matches('"')).is_none()
+                    {
+                        // `[VER-5]` — package versions are semantic.
+                        sink.emit(
+                            Diagnostic::error(codes::E9001, location, format!("`{}` is not a semantic version", value.trim()))
+                                .help("write `version = \"MAJOR.MINOR.PATCH\"`, such as \"0.1.0\" [VER-5]"),
+                        );
+                    } else if section == "package" && key == "language" {
+                        // `[VER-2]` — the language version a package opts into; before 1.0 there is
+                        // one, the current one (`[VER-8]`).
+                        let written = value.trim().trim_matches('"');
+                        if written != ember_parser::LANGUAGE_VERSION {
+                            sink.emit(
+                                Diagnostic::error(codes::E9001, location, format!("`language = \"{written}\"` is not the current language"))
+                                    .note(format!("before 1.0 there is one language, the current one ({}) [VER-8]; a package opts into a later major version with this key [VER-2]", ember_parser::LANGUAGE_VERSION))
+                                    .help(format!("write `language = \"{}\"`", ember_parser::LANGUAGE_VERSION)),
+                            );
+                        }
                     } else if section == "realtime" && key == "contracts" {
                         settings.realtime = Some(realtime_contracts(value, location, sink));
                     } else if section == "build" && key == "reload" {

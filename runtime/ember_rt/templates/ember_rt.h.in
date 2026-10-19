@@ -2730,6 +2730,33 @@ int ember_rt_init_v2(const ember_rt_config* cfg, uint32_t caller_abi);
 void ember_rt_shutdown(void);
 uint32_t ember_rt_abi_version(void);
 
+/* [FFI-27] What the runtime says on its own account (the debug leak report, a
+ * note that it could not be made) goes to the host's `log` when the config
+ * names one, one message per call with its level, and to standard error
+ * otherwise. A panic goes to `on_panic`. */
+#define EMBER_RT_LOG_ERROR 1
+#define EMBER_RT_LOG_WARNING 2
+#define EMBER_RT_LOG_INFO 3
+
+/* [FFI-27] An at-exit hook: `ember_rt_shutdown` (and `ember_module_shutdown`,
+ * [FFI-31]) calls each one registered since initialisation, the last
+ * registered first, before the leak report; it then forgets them. Nonzero when
+ * the hook could not be recorded. */
+int ember_rt_at_exit(void (*hook)(void* data), void* data);
+
+/* [FFI-31], [FFI-31c] A shared library's `ember_module_init` and
+ * `ember_module_shutdown` go through these. The runtime counts the modules
+ * initialised in it: the first initialises the runtime with its config (a
+ * runtime the host initialised itself keeps the host's), and the last one's
+ * shutdown shuts the runtime down unless the host initialised it, so modules
+ * sharing one runtime ([build] runtime = "shared") come and go independently.
+ * [ABI-3] A module refuses a runtime of another ABI version with
+ * EMBER_MODULE_INIT_ABI_MISMATCH, before anything else. */
+#define EMBER_MODULE_INIT_ABI_MISMATCH 4
+int ember_rt_module_init_v2(const ember_rt_config* cfg, uint32_t caller_abi);
+#define ember_rt_module_init(cfg) ember_rt_module_init_v2((cfg), EMBER_RUNTIME_ABI)
+void ember_rt_module_shutdown(void);
+
 /* [STA-3] A static initialised on first access. The generated accessor calls
  * begin with the static's state word (zero until then): 1 means this thread
  * runs the initialiser now and calls end after it; 0 means the value is
@@ -2744,6 +2771,11 @@ void ember_rt_thread_attach(void);
 void ember_rt_thread_detach(void);
 /* [FFI-33c] Panic unless called on the current module initialization thread. */
 void ember_rt_check_main_thread(void);
+/* [FFI-33] This thread's number in the runtime (1 for the first that asks, then in order). A
+ * shared library records its creator's at ember_module_init; its `main` and `creator` exports
+ * check against it, and panic when it is 0 (before initialisation or after shutdown). */
+uint32_t ember_rt_thread_id(void);
+void ember_rt_check_module_thread(uint32_t creator);
 
 /* -- hot reload (Annex B) -----------------------------------------------------
  *
