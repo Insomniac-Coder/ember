@@ -63,7 +63,10 @@ fn quiet_errors() {
 fn quiet_errors() {}
 
 /// The C host's common part: loading a library and finding a symbol, on both systems.
-const HOST_PRELUDE: &str = r#"#include "ember_runtime/ember_rt.h"
+const HOST_PRELUDE: &str = r#"#if !defined(_WIN32)
+#define _DEFAULT_SOURCE /* usleep under -std=c11 */
+#endif
+#include "ember_runtime/ember_rt.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
