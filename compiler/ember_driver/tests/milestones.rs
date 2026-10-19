@@ -6340,7 +6340,8 @@ fn the_three_versions_are_separate() {
 
     let run = ember(&["--version"], &root);
     assert_eq!(run.exit, 0);
-    assert_eq!(run.stdout.trim(), format!("{} {}", ember_branding::CLI_NAME, env!("CARGO_PKG_VERSION")));
+    assert_eq!(run.stdout.lines().next().unwrap_or(""), format!("{} {}", ember_branding::CLI_NAME, env!("CARGO_PKG_VERSION")));
+    assert!(run.stdout.contains(&format!("language: {language}")), "{}", run.stdout);
 
     let header = std::fs::read_to_string(
         root.join("runtime").join(ember_branding::runtime("rt")).join("templates").join(format!("{}.in", ember_branding::runtime_header())),

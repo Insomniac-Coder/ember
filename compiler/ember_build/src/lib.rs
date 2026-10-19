@@ -89,6 +89,32 @@ impl Toolchain {
         format!("{} {} {}", self.name(), found.unwrap_or(path).display(), hash.unwrap_or_else(|| "unhashed".to_string()))
     }
 
+    /// `[TOOL-4]` — the C compiler's file, as found (a bare name looked up on `PATH`).
+    pub fn compiler_path(&self) -> PathBuf {
+        let path = match self {
+            Toolchain::Msvc { cl, .. } => cl.clone(),
+            Toolchain::Clang(path) | Toolchain::Gcc(path) => path.clone(),
+        };
+        compiler_file(self).unwrap_or(path)
+    }
+
+    /// `[TOOL-4]` — the linker the C compiler runs: MSVC's `link.exe` beside `cl.exe`; for GCC and
+    /// Clang, the one the driver names.
+    pub fn linker(&self) -> String {
+        match self {
+            Toolchain::Msvc { .. } => self.compiler_path().parent().map(|dir| dir.join("link.exe"))
+                .filter(|path| path.is_file())
+                .map_or_else(|| "link.exe".to_string(), |path| path.display().to_string()),
+            Toolchain::Clang(_) | Toolchain::Gcc(_) => {
+                let named = output_started(compiler_command(self).arg("-print-prog-name=ld")).ok()
+                    .filter(|output| output.status.success())
+                    .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+                    .filter(|name| !name.is_empty());
+                named.unwrap_or_else(|| "ld".to_string())
+            }
+        }
+    }
+
     /// Find a usable C compiler, preferring `requested` when it is given.
     pub fn detect(requested: Option<&str>) -> Result<Toolchain, BuildError> {
         match requested {

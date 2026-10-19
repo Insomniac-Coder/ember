@@ -29,7 +29,7 @@ ember — the Ember compiler
 
 usage (`[CLI-15]`: every command and flag of the specification's XVII.1; \"not built yet\" marks those
 this compiler does not have yet):
-    ember new <name> [--lib | --bin | --cdylib]    create a package (not built yet)
+    ember new <name> [--lib | --bin | --cdylib]    create a package
     ember run [file.em] [args…] [--hot | --interp] build and run; a single file needs no manifest;
                                                    --hot reloads edited sources at std.hot.checkpoint()
                                                    (--interp is not built yet)
@@ -472,13 +472,33 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         "--version" | "-V" => {
+            if args.iter().any(|argument| argument == "--matrix") {
+                return Err("error[E0900]: `ember --version --matrix` is not implemented yet".to_string());
+            }
+            // `[TOOL-4]` — the compiler, the language, the backend, and the C compiler and linker
+            // this build resolves (`--cc`'s variable steers it, as for a build), so a bug report
+            // carries its environment.
+            let requested = std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty());
+            let toolchain = Toolchain::detect(requested.as_deref());
+            let (compiler, linker) = match &toolchain {
+                Ok(toolchain) => (format!("{} ({})", toolchain.name(), toolchain.compiler_path().display()), toolchain.linker()),
+                Err(error) => (format!("none found: {error}"), "none".to_string()),
+            };
             if json {
-                println!("{}", serde_json::json!({ "schema": 1, "version": env!("CARGO_PKG_VERSION") }));
+                println!("{}", serde_json::json!({
+                    "schema": 1, "version": env!("CARGO_PKG_VERSION"), "language": ember_parser::LANGUAGE_VERSION,
+                    "backend": "c", "c_compiler": compiler, "linker": linker,
+                }));
             } else {
                 println!("ember {}", env!("CARGO_PKG_VERSION"));
+                println!("language: {}", ember_parser::LANGUAGE_VERSION);
+                println!("backend: c");
+                println!("C compiler: {compiler}");
+                println!("linker: {linker}");
             }
             Ok(ExitCode::SUCCESS)
         }
+        "new" => new_package(&args[1..]),
         "explain" if args.get(1).is_some_and(|argument| argument == "--cycle") => {
             let rest: Vec<&String> = args[2..].iter().filter(|argument| *argument != "--json").collect();
             let input = rest
@@ -544,19 +564,20 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             }
             let input = match input {
                 Some(input) => input,
-                None if command == "build" => {
+                // `[TOOL-4]` — in a package, `ember run` (and `build`, `check`) needs no file: the
+                // manifest's entry is the program.
+                None => {
                     let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
                     let mut candidate = Some(cwd.as_path());
                     let root = loop {
                         let Some(dir) = candidate else {
-                            return Err("`ember build` needs a source file or a package manifest in this directory or an ancestor".to_string());
+                            return Err(format!("`ember {command}` needs a source file or a package manifest in this directory or an ancestor"));
                         };
                         if dir.join(ember_branding::MANIFEST).is_file() { break dir.to_path_buf(); }
                         candidate = dir.parent();
                     };
                     root.to_string_lossy().into_owned()
                 }
-                None => return Err(format!("`ember {command}` needs a source file")),
             };
             let mut options = parse_options(&rest)?;
             options.program_args = program_args;
@@ -594,13 +615,13 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 !matches!(stage, "c" | "header")) {
                 return Err("`--emit-header` requires a normal build, `--emit c`, or `--emit header`".to_string());
             }
-            let source = if command == "build" && Path::new(&input).is_dir() {
+            let source = if Path::new(&input).is_dir() {
                 let root = Path::new(&input);
                 let manifest = root.join(ember_branding::MANIFEST);
                 if !manifest.is_file() {
                     return Err(format!("package directory `{}` has no {}", root.display(), ember_branding::MANIFEST));
                 }
-                package_entry_from_manifest(root, &manifest, "build")?.0
+                package_entry_from_manifest(root, &manifest, command)?.0
             } else {
                 PathBuf::from(input)
             };
@@ -635,6 +656,54 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         }
         other => Err(format!("unknown command `{other}`; try `ember --help`")),
     }
+}
+
+/// `[TOOL-4]` — `ember new <name> [--lib | --bin | --cdylib]`: a package directory with its
+/// manifest (the current language, `[VER-2]`) and a first source: a program printing
+/// `hello, world` (a first program needs no `main`, `[CLI-4]`), or a library with one function.
+/// An existing directory that is not empty is left alone.
+fn new_package(args: &[String]) -> Result<ExitCode, String> {
+    let mut name = None;
+    let mut kind = "bin";
+    for argument in args {
+        match argument.as_str() {
+            "--bin" => kind = "bin",
+            "--lib" => kind = "lib",
+            "--cdylib" => kind = "cdylib",
+            "--json" => {}
+            option if option.starts_with('-') => return Err(format!("unknown `ember new` option `{option}`")),
+            word if name.is_none() => name = Some(word),
+            extra => return Err(format!("unexpected `ember new` argument `{extra}`")),
+        }
+    }
+    let path = Path::new(name.ok_or("`ember new` needs a package name, e.g. `ember new hello`")?);
+    let package = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+    let mut chars = package.chars();
+    if !chars.next().is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        || !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        return Err(format!("`{package}` is not a package name: a letter or `_`, then letters, digits, `_` or `-`"));
+    }
+    if path.read_dir().is_ok_and(|mut entries| entries.next().is_some()) {
+        return Err(format!("`{}` already exists and is not empty", path.display()));
+    }
+    let (file, source) = match kind {
+        "bin" => ("main", "println(\"hello, world\")\n".to_string()),
+        "lib" => ("lib", "pub fn answer() -> i32:\n    return 42\n".to_string()),
+        _ => ("lib", format!("@export(\"{}_answer\")\nfn answer() -> i32:\n    return 42\n", package.replace('-', "_"))),
+    };
+    let manifest = format!(
+        "[package]\nname = \"{package}\"\nversion = \"0.1.0\"\nlanguage = \"{}\"\nkind = \"{kind}\"\n",
+        ember_parser::LANGUAGE_VERSION
+    );
+    let write = || -> std::io::Result<()> {
+        std::fs::create_dir_all(path.join("src"))?;
+        std::fs::write(path.join(ember_branding::MANIFEST), manifest)?;
+        std::fs::write(path.join("src").join(ember_branding::source_file(file)), source)
+    };
+    write().map_err(|error| format!("cannot create `{}`: {error}", path.display()))?;
+    eprintln!("created {} package `{package}`", if kind == "bin" { "binary" } else { kind });
+    Ok(ExitCode::SUCCESS)
 }
 
 /// `[RC-6]` — the side table `ember inspect --counts` reads.
@@ -4606,6 +4675,17 @@ fn manifest_lint_settings(
                         sink.emit(
                             Diagnostic::error(codes::E9001, location, format!("unknown key `{key}` in {section}")).help(help),
                         );
+                    } else if section == "package" && key == "language" {
+                        // `[VER-2]` — the language version a package opts into; before 1.0 there is
+                        // one, the current one (`[VER-8]`).
+                        let written = value.trim().trim_matches('"');
+                        if written != ember_parser::LANGUAGE_VERSION {
+                            sink.emit(
+                                Diagnostic::error(codes::E9001, location, format!("`language = \"{written}\"` is not the current language"))
+                                    .note(format!("before 1.0 there is one language, the current one ({}) [VER-8]; a package opts into a later major version with this key [VER-2]", ember_parser::LANGUAGE_VERSION))
+                                    .help(format!("write `language = \"{}\"`", ember_parser::LANGUAGE_VERSION)),
+                            );
+                        }
                     } else if section == "realtime" && key == "contracts" {
                         settings.realtime = Some(realtime_contracts(value, location, sink));
                     } else if section == "build" && key == "reload" {
