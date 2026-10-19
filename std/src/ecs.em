@@ -616,13 +616,9 @@ extend[T: Component] Without[T] implements ParamOps:
     type Writes = ()
 
     fn fetch(world: World) -> AnyStorage:
-        key = T.component_hash()
-        if not world.storages.contains_key(key):
-            if T.component_soa():
-                _none = world.storages.insert(key, SoaStorage[T]())
-            else:
-                _none = world.storages.insert(key, AosStorage[T]())
-        return world.storages[key]
+        # `T`'s storage, made in its own layout if no entity has had a `T` yet.
+        _made = T.Read.fetch(world)
+        return world.storages[T.component_hash()]
 
     fn view(fetch: ref AnyStorage) -> Without[T]:
         return Without[T](set=SetView(entities=fetch.entities.as_span(), sparse=fetch.sparse.as_span()))
