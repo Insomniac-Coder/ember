@@ -5,7 +5,7 @@
 //! byte is never unaligned and may be borrowed.
 
 use ember_diag::{Diagnostic, Sink, codes};
-use ember_mir::{Body, Rvalue, StmtKind, unaligned_place};
+use ember_mir::{Body, Rvalue, StmtKind, unaligned_field};
 use ember_types::TypeTable;
 use std::collections::HashSet;
 
@@ -15,12 +15,12 @@ pub fn check_packed_references_all(bodies: &[Body], types: &TypeTable, sink: &mu
     for body in bodies {
         for stmt in body.blocks.iter().flat_map(|block| &block.stmts) {
             if let StmtKind::Assign { rvalue: Rvalue::Ref { place, .. }, .. } = &stmt.kind
-                && unaligned_place(types, body, place)
+                && let Some(field) = unaligned_field(types, body, place)
                 && reported.insert(stmt.span)
             {
                 sink.emit(
                     Diagnostic::error(codes::E2170, stmt.span, "reference to a field of a packed struct")
-                        .primary_label("this borrows a field that may be unaligned")
+                        .primary_label(format!("this borrows `{field}`, which may be unaligned"))
                         .help("read the field into a local first, and borrow the local")
                         .note("a `@packed` type has no padding, so its fields are read and written by value [LAY-2]"),
                 );

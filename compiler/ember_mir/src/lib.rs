@@ -415,10 +415,15 @@ impl Place {
 /// aligned again), and its type is aligned to more than one byte. Such a place is read and
 /// written by value; its address is never taken.
 pub fn unaligned_place(types: &ember_types::TypeTable, body: &Body, place: &Place) -> bool {
+    unaligned_field(types, body, place).is_some()
+}
+
+/// `[LAY-2]` — for a place `unaligned_place` admits, the field of the `@packed` value it lies in.
+pub fn unaligned_field(types: &ember_types::TypeTable, body: &Body, place: &Place) -> Option<Symbol> {
     use ember_types::TyKind;
     let mut ty = body.local(place.local).ty;
     let mut variant = None;
-    let mut packed = false;
+    let mut packed: Option<Symbol> = None;
     for projection in &place.projection {
         ty = match (projection, types.kind(ty)) {
             (Projection::Downcast(v), TyKind::Enum(_)) => {
@@ -426,13 +431,18 @@ pub fn unaligned_place(types: &ember_types::TypeTable, body: &Body, place: &Plac
                 ty
             }
             (Projection::Field(i), TyKind::Enum(id)) => {
-                packed |= types.layout_attrs(ty).packed;
                 let field = variant.take().and_then(|v| types.enum_def(*id).variants[v].fields.get(*i));
+                if packed.is_none() && types.layout_attrs(ty).packed {
+                    packed = field.map(|field| field.name);
+                }
                 field.map_or(ty, |field| field.ty)
             }
             (Projection::Field(i), TyKind::Struct(id)) => {
-                packed |= types.layout_attrs(ty).packed;
-                types.struct_def(*id).fields.get(*i).map_or(ty, |field| field.ty)
+                let field = types.struct_def(*id).fields.get(*i);
+                if packed.is_none() && types.layout_attrs(ty).packed {
+                    packed = field.map(|field| field.name);
+                }
+                field.map_or(ty, |field| field.ty)
             }
             (Projection::Field(i), TyKind::Tuple(items)) => items.get(*i).copied().unwrap_or(ty),
             // A list's or a view's header word (`ptr`, `len`, `cap`): a word wherever it is.
@@ -440,20 +450,20 @@ pub fn unaligned_place(types: &ember_types::TypeTable, body: &Body, place: &Plac
             (Projection::Index(_) | Projection::ConstIndex(_), TyKind::Array { elem, .. }) => *elem,
             // Behind a pointer, in a heap buffer or in a class object: aligned again.
             (Projection::Deref, TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }) => {
-                packed = false;
+                packed = None;
                 *inner
             }
             (Projection::Index(_) | Projection::ConstIndex(_), TyKind::Vec { elem, .. } | TyKind::Span { elem, .. }) => {
-                packed = false;
+                packed = None;
                 *elem
             }
             _ => {
-                packed = false;
+                packed = None;
                 ty
             }
         };
     }
-    packed && types.layout(ty).align > 1
+    packed.filter(|_| types.layout(ty).align > 1)
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
