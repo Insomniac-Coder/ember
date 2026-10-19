@@ -293,7 +293,8 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 questions (§H.15); 0.9.10_Hardened_11 adds ODR-113 to ODR-115, the owner's rulings on what printing,
 a use after a move and an `unsafe fn` value are (§H.16); 0.9.10_Hardened_12 adds ODR-116, a
 `MutSpan` where a `Span` is expected (§H.17); 0.9.10_Hardened_13 adds ODR-117 to ODR-126, the
-owner's answers to the 85% push's questions and the profiles' new names (§H.18).
+owner's answers to the 85% push's questions and the profiles' new names (§H.18); 0.9.10_Hardened_14
+adds ODR-127 to ODR-131, the owner's answers to helper C's questions (§H.19).
 
 | ODR | Ruling | Rules |
 |---|---|---|
@@ -403,6 +404,11 @@ owner's answers to the 85% push's questions and the profiles' new names (§H.18)
 | ODR-124 | ruled by the owner (2026-10-19): a status enum is marked `@ffi(status=E, ok=X, error=N)`, naming its error type; `[ERR-6]` and `[FFI-16]` disagreed on the spelling and the name | `[ERR-6]`, `[FFI-16]`, `[FFI-11]` |
 | ODR-125 | ruled by the owner (2026-10-19): an `inout_count` function with a result of its own returns a tuple, that result first, then each pointer output in the C declaration's order | `[FFI-11b]` |
 | ODR-126 | ruled by the owner (2026-10-19): when an instance moves, handles inside tuples, `Box` contents and closure captures are rewritten too | `[HR-15]` |
+| ODR-127 | ruled by the owner (2026-10-19): a dependency `{ git, version }` resolves against the versions its repository has tagged `vMAJOR.MINOR.PATCH`; a requirement with no source is for a registry this version does not have (`E0900`) | `[VER-5]`, `[MAN-8]` |
+| ODR-128 | ruled by the owner (2026-10-19): a field of an `@export_table` holds the function its default names (`= door_created`), else the module's function of its own name | `[FFI-26]` |
+| ODR-129 | ruled by the owner (2026-10-19): an `@export_table`'s symbol carries its protocol version, `Name_vN`, with no separate marker | `[FFI-26]`, `[ABI-1]` |
+| ODR-130 | ruled by the owner (2026-10-19): a field of an `@export_table` takes the thread contract of the function it holds | `[FFI-33c]` |
+| ODR-131 | ruled by the owner (2026-10-19): a `cdylib` exports the marker `ember_module_protocol_vN`, which its host looks up before calling into it; `[FFI-28]` and `[ABI-1]` disagreed | `[FFI-28]`, `[FFI-31]`, `[ABI-1]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -855,3 +861,30 @@ Generated: every rule whose text differs from 0.9.10_Hardened_12.
 | `[PAN-1]` | changed |
 | `[PRF-2]` | changed |
 | `[RT-4]` | changed |
+
+## H.19 Changes in 0.9.10_Hardened_14 (from 0.9.10_Hardened_13)
+
+**0.9.10_Hardened_14** records ODR-127 to ODR-131, ruled by the owner on 2026-10-19 on helper C's
+questions (`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-207, `tasks/85/owner-answers.md`):
+
+* A dependency `{ git, version }` resolves against its repository's version tags; a requirement with
+  no source waits for a registry (`[VER-5]`, `[MAN-8]`, ODR-127).
+* A field of an `@export_table` holds the function its default names, else the function of its own
+  name (`[FFI-26]`, ODR-128).
+* An `@export_table` is exported as `Name_vN`, its protocol version in its own name (`[FFI-26]`,
+  `[ABI-1]`, ODR-129).
+* A table's field takes its function's thread contract (`[FFI-33c]`, ODR-130).
+* A `cdylib` exports the marker `ember_module_protocol_vN`, which its host looks up before calling into
+  it (`[FFI-28]`, `[FFI-31]`, `[ABI-1]`, ODR-131).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_13.
+
+| Rule | 0.9.10_Hardened_13 → 0.9.10_Hardened_14 |
+|---|---|
+| `[ABI-1]` | changed |
+| `[FFI-26]` | changed |
+| `[FFI-28]` | changed |
+| `[FFI-31]` | changed |
+| `[FFI-33c]` | changed |
+| `[MAN-8]` | changed |
+| `[VER-5]` | changed |

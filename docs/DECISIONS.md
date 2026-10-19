@@ -5017,6 +5017,26 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-207 — Helper C's questions answered and built (0.9.10_Hardened_14)
+
+2026-10-19. The owner answered helper C's questions (ODR-127 to ODR-131, `tasks/85/owner-answers.md`):
+* **ODR-127:** a dependency `{ git = "…", version = "1.2" }` takes the highest of its repository's
+  `vMAJOR.MINOR.PATCH` tags the requirement admits (`git ls-remote --tags`, an annotated tag's own
+  commit); `ember.lock` keeps that commit while it still meets the requirement, and `ember update
+  [package]` meets it anew; a tag whose package states another version is `E9001`; a requirement no
+  tag meets is `E9001` listing the tags. A bare requirement stays `E0900` (a registry).
+  `package::a_git_dependency_resolves_its_version_from_the_tags`.
+* **ODR-128:** a table field's default names its function (`on_destroy: extern "C" fn(u64) -> i32 =
+  door_destroyed`); a field without one takes the function of its own name.
+* **ODR-129:** an export table is the one symbol `Name_vN` (`ExportTable::symbol`); the separate
+  `Name_protocol_N` is gone. The header keeps `#define Name_PROTOCOL N`.
+* **ODR-130:** a table field takes its function's `@export(threads=…)`, as built; the spec now says so.
+* **ODR-131:** a `cdylib` exports `ember_module_protocol_v1`, holding `EMBER_MODULE_PROTOCOL` (the
+  runtime header's new constant, with an `#error` guard like the other protocols); the header
+  declares it, and the test host looks it up before anything else.
+* Also: D-708 (one package directory written two ways), and the job-worker test counting threads
+  until the system drops joined ones (CI after helper C's merge).
+
 ## ADR-206 — Helper C merged: shared libraries, packages, layers
 
 2026-10-19. Helper C (shared libraries, packages: `job_C`, ADR-202) worked in a worktree from

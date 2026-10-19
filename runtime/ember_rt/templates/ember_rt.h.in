@@ -2753,6 +2753,13 @@ int ember_rt_at_exit(void (*hook)(void* data), void* data);
  * [ABI-3] A module refuses a runtime of another ABI version with
  * EMBER_MODULE_INIT_ABI_MISMATCH, before anything else. */
 #define EMBER_MODULE_INIT_ABI_MISMATCH 4
+/* [ABI-1], [FFI-28] (ODR-131) The module protocol's version: how a host starts and stops a module.
+ * A module exports the marker ember_module_protocol_v<N>, which a host looks up before calling into
+ * it; a setting appended to ember_rt_config is no new version (its `size` covers that). */
+#define EMBER_MODULE_PROTOCOL 1
+#if EMBER_MODULE_PROTOCOL != 1
+#error "rename the marker ember_module_protocol_v1 with the module protocol version"
+#endif
 int ember_rt_module_init_v2(const ember_rt_config* cfg, uint32_t caller_abi);
 #define ember_rt_module_init(cfg) ember_rt_module_init_v2((cfg), EMBER_RUNTIME_ABI)
 void ember_rt_module_shutdown(void);

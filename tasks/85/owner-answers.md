@@ -44,7 +44,7 @@ shown one by one. The owner never asked to see B3's or A1's design before buildi
    Follow-up: more than two values: C's own result first, then every pointer output (`out`, the inout count) in C declaration order, e.g. `(ok, spc, bps, free_clusters, total_clusters) = GetDiskFreeSpaceA(c"C:\\")`. Owner: "got it".
 
 
-## Helper C (shared libraries, packages) — waiting for the owner
+## Helper C (shared libraries, packages) — answered, built 2026-10-19 (0.9.10_Hardened_14, ADR-207)
 
 Merged 2026-10-19 (ADR-206). Its questions, in `C-notes.md` §11, triaged by the owner's rule (bugs
 fixed, waiting recorded, real choices asked one at a time with real code):
@@ -67,8 +67,17 @@ fixed, waiting recorded, real choices asked one at a time with real code):
     function** ("A is more readable"): `@export(threads=main) pub extern "C" fn on_draw()`, as built;
     the table field has no attribute of its own. `[FFI-33c]`'s "may set `threads` per field" to be
     reworded to say a field takes its function's rule.
-* **Q4 — `[ABI-1]`'s versioned module symbol against `[FFI-28]`'s export list**: a contradiction in
-  the specification. Built meanwhile: nothing extra exported (the runtime ABI check only).
+* **Q4 — how a host notices a module built for other start-up rules: ANSWERED (owner, 2026-10-19):
+  (a) a version marker name.** A `cdylib` exports its own `@export`s, `ember_module_init`,
+  `ember_module_shutdown`, and the marker `ember_module_protocol_v1` (the number is the module
+  protocol's version, raised by any change other than a setting appended to the settings, which the
+  settings' `size` already handles). A host looks the marker up before calling anything and refuses a
+  module without the one it was built for. Needs: `[FFI-28]`'s export list and `[ABI-1]`'s wording;
+  the code (the export, the `.def`/export list, the header's `EMBER_MODULE_PROTOCOL` and its
+  declaration); the tests (the export-table checks of `cdylib.rs`). (Explained very badly first; the
+  explanation that worked: RageV includes Ember's instructions file `ember_rt.h`, so both sides carry
+  their own built-in copy of the start-up rules, and the question is how they notice the copies
+  differ.)
 * Q2 (`[build] global_allocator` missing from `[MAN-8]`'s keys) is not raised now: `[ALC-3]` waits on
   the `Allocator` interface, and the key with it.
 

@@ -156,8 +156,9 @@ fn odd() -> i32:
     return 9
 "#;
 
-/// `[FFI-28]` — a `cdylib` exports its `@export` symbols, `ember_module_init` and
-/// `ember_module_shutdown`, and nothing else: not its own functions, not its runtime's.
+/// `[FFI-28]` — a `cdylib` exports its `@export` symbols, `ember_module_init`,
+/// `ember_module_shutdown` and the marker `ember_module_protocol_v1` (`[ABI-1]`, ODR-131), and
+/// nothing else: not its own functions, not its runtime's. The host looks the marker up first.
 /// `[FFI-31]` — the host initialises the module, calls it from two threads, and shuts it down,
 /// which runs the debug leak report (to the host's log) and detaches every thread; `[FFI-31a]`
 /// a thread the module attached ends after the library is unloaded, which a TLS destructor in
@@ -174,7 +175,7 @@ fn a_cdylib_is_loaded_initialised_and_unloaded_by_a_c_host() {
     let library = library_file(&lib, "plugin");
     assert!(library.is_file(), "no library at {}", library.display());
     let header = std::fs::read_to_string(lib.join("plugin.h")).unwrap();
-    for declaration in ["int32_t plugin_double(int32_t", "int @RT@module_init(const @RT@rt_config* cfg);",
+    for declaration in ["int32_t plugin_double(int32_t", "extern const uint32_t @RT@module_protocol_v1;", "int @RT@module_init(const @RT@rt_config* cfg);",
         "void @RT@module_shutdown(void);", "/* threads: main */"] {
         let declaration = branded(declaration);
         assert!(header.contains(&declaration), "the header lacks `{declaration}`:\n{header}");
@@ -213,6 +214,9 @@ int main(int argc, char** argv) {{
     cfg.on_panic = host_panic;
     g_lib = load("{path}");
     if (!g_lib) return 2;
+    /* [ABI-1] The marker of the start-up rules this host was built for, before anything else. */
+    const uint32_t* protocol = (const uint32_t*)find(g_lib, "@RT@module_protocol_v1");
+    if (!protocol || *protocol != EMBER_MODULE_PROTOCOL) return 6;
     module_init_fn init = (module_init_fn)find(g_lib, "@RT@module_init");
     module_shutdown_fn shutdown = (module_shutdown_fn)find(g_lib, "@RT@module_shutdown");
     value_fn on_main = (value_fn)find(g_lib, "plugin_on_main");
@@ -301,7 +305,7 @@ int main(int argc, char** argv) {{
         String::from_utf8_lossy(&listed.stdout).lines().filter_map(|line| line.split_whitespace().nth(2).map(str::to_string)).collect()
     };
     exports.sort();
-    let expected = ["@RT@module_init", "@RT@module_shutdown", "plugin-odd", "plugin_double", "plugin_leak", "plugin_on_main"].map(branded);
+    let expected = ["@RT@module_init", "@RT@module_protocol_v1", "@RT@module_shutdown", "plugin-odd", "plugin_double", "plugin_leak", "plugin_on_main"].map(branded);
     assert_eq!(exports, expected);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -451,14 +455,14 @@ fn an_export_table_is_found_by_name_with_threads_per_entry() {
         assert_success(&built, "the cdylib with a table");
         let lib = dir.join("game/target").join(profile).join("lib");
         let header = std::fs::read_to_string(lib.join("game.h")).unwrap();
-        for text in ["/*   on_draw: main */", "/*   on_tick: any */", "#define GameApi_PROTOCOL 3u", "extern const uint32_t GameApi_protocol_3;"] {
+        for text in ["/*   on_draw: main */", "/*   on_tick: any */", "#define GameApi_PROTOCOL 3u"] {
             assert!(header.contains(text), "the header lacks `{text}`:\n{header}");
         }
         let path = library_file(&lib, "game").to_string_lossy().replace('\\', "\\\\");
         // A library's types are named in C under its package's namespace.
         let package_bytes = "game".bytes().map(|byte| format!("{byte:02x}")).collect::<String>();
         let table_type = format!("{}pkg_{package_bytes}_{}", ember_branding::mangle_prefix(), ember_branding::mangled("GameApi"));
-        assert!(header.contains(&format!("extern const {table_type} GameApi;")), "{header}");
+        assert!(header.contains(&format!("extern const {table_type} GameApi_v3;")) && !header.contains("GameApi_protocol"), "{header}");
         let host = format!(r#"{HOST_PRELUDE}
 #include "game.h"
 static const {table_type}* g_api;
@@ -483,9 +487,8 @@ int main(int argc, char** argv) {{
     library l = load("{path}");
     if (!l) return 2;
     module_init_fn init = (module_init_fn)find(l, "@RT@module_init");
-    g_api = (const {table_type}*)find(l, "GameApi");
-    const uint32_t* protocol = (const uint32_t*)find(l, "GameApi_protocol_3");
-    if (!init || !g_api || !protocol || *protocol != GameApi_PROTOCOL) return 3;
+    g_api = (const {table_type}*)find(l, "GameApi_v3");    /* [FFI-26] the version is in the name */
+    if (!init || !g_api || find(l, "GameApi") || find(l, "GameApi_v2")) return 3;
     if (init(&cfg) != 0) return 4;
     if (g_api->on_draw() != 5 || g_api->on_tick(1) != 2) return 5;
 #if defined(_WIN32)

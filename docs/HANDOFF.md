@@ -10719,7 +10719,8 @@ formal 1/9 count or Phase 2's estimate.
 > is `release`, the build users get; records before this date keep the old names). Built: A2, A3,
 > B2 (`E5068`), B7, A6; A4, A5, B1 are specification text; B6 waits for C header import. Next from
 > the list: B3, then A1 (the owner did not ask to see their designs first). Helper C was merged the
-> same day (ADR-206); its three questions for the owner are in `tasks/85/owner-answers.md`.
+> same day (ADR-206); the owner answered its questions and they are built (0.9.10_Hardened_14,
+> ADR-207).
 
 
 **2026-10-12 (autopilot), a Part V.5 class probe sweep: D-560..D-566, ODR-104 (0.9.10_Hardened_8).**

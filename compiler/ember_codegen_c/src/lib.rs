@@ -1360,13 +1360,12 @@ impl Emitter<'_> {
             self.emit_entry_point(leak_check, entry, named);
         }
         // `[FFI-26]` — each export table: a constant of its struct holding each field's function,
-        // and its protocol version beside it.
+        // under a symbol carrying its protocol version (ODR-129).
         if self.unit.is_none() {
             for table in self.types.export_tables().to_vec() {
                 let c_ty = self.c_type(table.ty);
                 let entries = if table.entries.is_empty() { "0".to_string() } else { table.entries.join(", ") };
-                self.line(&format!("const {c_ty} {} = {{ {entries} }};", table.name));
-                self.line(&format!("const uint32_t {} = {}u;", ember_types::ExportTable::protocol_symbol(&table.name, table.protocol), table.protocol));
+                self.line(&format!("const {c_ty} {} = {{ {entries} }};", table.symbol()));
             }
         }
         // ponytail: a module names no backtrace frames: the runtime keeps one table, which a
@@ -10667,6 +10666,9 @@ impl Emitter<'_> {
         let creator = format!("{}module_creator", ember_branding::mangle_prefix());
         let init = ember_branding::runtime("module_init");
         let shutdown = ember_branding::runtime("module_shutdown");
+        // `[FFI-28]`, `[ABI-1]` (ODR-131) — the marker of the module protocol this module follows,
+        // which a host looks up before calling into it.
+        self.line(&format!("const uint32_t {} = EMBER_MODULE_PROTOCOL;", ember_branding::runtime("module_protocol_v1")));
         self.line(&format!("int {init}(const {RT}rt_config* cfg) {{"));
         self.line(&format!("    if ({RT}rt_abi_version() != EMBER_RUNTIME_ABI) {{"));
         self.line("        return EMBER_MODULE_INIT_ABI_MISMATCH;");

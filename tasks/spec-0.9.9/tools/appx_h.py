@@ -459,6 +459,16 @@ ODRS = [
      '`[FFI-11b]`'),
     ('ODR-126', 'ruled by the owner (2026-10-19): when an instance moves, handles inside tuples, `Box` contents and closure captures are rewritten too',
      '`[HR-15]`'),
+    ('ODR-127', 'ruled by the owner (2026-10-19): a dependency `{ git, version }` resolves against the versions its repository has tagged `vMAJOR.MINOR.PATCH`; a requirement with no source is for a registry this version does not have (`E0900`)',
+     '`[VER-5]`, `[MAN-8]`'),
+    ('ODR-128', 'ruled by the owner (2026-10-19): a field of an `@export_table` holds the function its default names (`= door_created`), else the module\'s function of its own name',
+     '`[FFI-26]`'),
+    ('ODR-129', 'ruled by the owner (2026-10-19): an `@export_table`\'s symbol carries its protocol version, `Name_vN`, with no separate marker',
+     '`[FFI-26]`, `[ABI-1]`'),
+    ('ODR-130', 'ruled by the owner (2026-10-19): a field of an `@export_table` takes the thread contract of the function it holds',
+     '`[FFI-33c]`'),
+    ('ODR-131', 'ruled by the owner (2026-10-19): a `cdylib` exports the marker `ember_module_protocol_vN`, which its host looks up before calling into it; `[FFI-28]` and `[ABI-1]` disagreed',
+     '`[FFI-28]`, `[FFI-31]`, `[ABI-1]`'),
 ]
 
 H5_HEAD = """
@@ -509,7 +519,8 @@ ODR-098, the byte offsets, UTF-8 checks and capacity contracts of `String` mutat
 questions (§H.15); 0.9.10_Hardened_11 adds ODR-113 to ODR-115, the owner's rulings on what printing,
 a use after a move and an `unsafe fn` value are (§H.16); 0.9.10_Hardened_12 adds ODR-116, a
 `MutSpan` where a `Span` is expected (§H.17); 0.9.10_Hardened_13 adds ODR-117 to ODR-126, the
-owner's answers to the 85% push's questions and the profiles' new names (§H.18).
+owner's answers to the 85% push's questions and the profiles' new names (§H.18); 0.9.10_Hardened_14
+adds ODR-127 to ODR-131, the owner's answers to helper C's questions (§H.19).
 
 | ODR | Ruling | Rules |
 |---|---|---|
@@ -525,7 +536,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.10', 13)
+CURRENT = ('0.9.10', 14)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -539,6 +550,7 @@ V010_H9_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h9')
 V010_H10_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h10')
 V010_H11_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h11')
 V010_H12_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h12')
+V010_H13_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h13')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -896,8 +908,35 @@ Generated: every rule whose text differs from 0.9.10_Hardened_12.
 """
 
 
-def v010_h12_to_now():
-    return H18_HEAD + rule_diff(V010_H12_PARTS, os.path.join(HERE, '..', 'parts'))
+def v010_h12_to_h13():
+    return H18_HEAD + rule_diff(V010_H12_PARTS, V010_H13_PARTS)
+
+
+H19_HEAD = """
+## H.19 Changes in 0.9.10_Hardened_14 (from 0.9.10_Hardened_13)
+
+**0.9.10_Hardened_14** records ODR-127 to ODR-131, ruled by the owner on 2026-10-19 on helper C's
+questions (`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-207, `tasks/85/owner-answers.md`):
+
+* A dependency `{ git, version }` resolves against its repository's version tags; a requirement with
+  no source waits for a registry (`[VER-5]`, `[MAN-8]`, ODR-127).
+* A field of an `@export_table` holds the function its default names, else the function of its own
+  name (`[FFI-26]`, ODR-128).
+* An `@export_table` is exported as `Name_vN`, its protocol version in its own name (`[FFI-26]`,
+  `[ABI-1]`, ODR-129).
+* A table's field takes its function's thread contract (`[FFI-33c]`, ODR-130).
+* A `cdylib` exports the marker `ember_module_protocol_vN`, which its host looks up before calling into
+  it (`[FFI-28]`, `[FFI-31]`, `[ABI-1]`, ODR-131).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_13.
+
+| Rule | 0.9.10_Hardened_13 → 0.9.10_Hardened_14 |
+|---|---|
+"""
+
+
+def v010_h13_to_now():
+    return H19_HEAD + rule_diff(V010_H13_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -968,7 +1007,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_now() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_now() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

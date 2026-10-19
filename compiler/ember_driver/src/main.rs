@@ -4223,11 +4223,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             .filter(|body| body.abi.is_some() && !body.is_extern_declaration && !body.is_abstract)
             .map(|body| body.symbol.clone())
             .collect();
-        exports.extend([ember_branding::runtime("module_init"), ember_branding::runtime("module_shutdown")]);
-        // `[FFI-26]` — each export table and its protocol version, as data.
+        // `[FFI-28]`, `[ABI-1]` (ODR-131) — the entry points and the module protocol's marker.
+        exports.extend([ember_branding::runtime("module_init"), ember_branding::runtime("module_shutdown"),
+            format!("{} DATA", ember_branding::runtime(MODULE_PROTOCOL_MARKER))]);
+        // `[FFI-26]` — each export table, its protocol version in its symbol, as data.
         for table in types.export_tables() {
-            exports.push(format!("{} DATA", table.name));
-            exports.push(format!("{} DATA", ember_types::ExportTable::protocol_symbol(&table.name, table.protocol)));
+            exports.push(format!("{} DATA", table.symbol()));
         }
         exports.sort();
         exports.dedup();
@@ -4333,7 +4334,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         retained_symbols.extend(ember_codegen_c::FFI_INTERPOSED.iter().map(|name| name.to_string()));
     }
     for table in types.export_tables() {
-        retained_symbols.extend([table.name.clone(), ember_types::ExportTable::protocol_symbol(&table.name, table.protocol)]);
+        retained_symbols.push(table.symbol());
     }
     retained_symbols.sort();
     retained_symbols.dedup();
@@ -4834,6 +4835,10 @@ fn manifest_lint_settings(
 /// of `debug` and `development`; a `release` build ignores it with a note (ODR-118, which retired
 /// `E9033`). `[HR-29]`: a reloadable package
 /// shares the one runtime of its process, so a manifest asking for a static runtime is `E9036`.
+/// `[ABI-1]`, `[FFI-28]` (ODR-131) — the marker a host looks up before calling into a module: its
+/// name carries the module protocol's version, `EMBER_MODULE_PROTOCOL` in the runtime's header.
+const MODULE_PROTOCOL_MARKER: &str = "module_protocol_v1";
+
 fn reload_mode(settings: &ManifestLintSettings, options: &Options, sink: &mut Sink) -> Result<ReloadMode, String> {
     let (written, location) = settings.reload.unwrap_or((ReloadMode::None, Span::DUMMY));
     let asked = options.reload || options.hot;

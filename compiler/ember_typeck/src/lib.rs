@@ -346,13 +346,15 @@ pub fn check(
     // Diagnose collisions while both source locations are still available,
     // before a backend reports only a duplicate C definition.
     // `[FFI-26]` — each export table, with the C symbol of the function each field holds; its
-    // two symbols are as asserted a linker identity as an `@export`'s.
+    // symbol, `Name_vN` (ODR-129), is as asserted a linker identity as an `@export`'s.
     let mut table_symbols = HashMap::<String, Span>::new();
     for (name, protocol, ty, defs, span) in std::mem::take(&mut checker.export_tables) {
         let entries: Vec<String> = defs.iter()
             .map(|def| functions.iter().find(|function| function.def == *def).map(|function| function.symbol.clone()).unwrap_or_default())
             .collect();
-        for symbol in [name.clone(), ember_types::ExportTable::protocol_symbol(&name, protocol)] {
+        let table = ember_types::ExportTable { ty, name, protocol, entries };
+        {
+            let symbol = table.symbol();
             let clash = functions.iter().find(|function| !function.is_extern_declaration && function.symbol == symbol)
                 .map(|function| function.span).or_else(|| table_symbols.get(&symbol).copied());
             if let Some(previous) = clash {
@@ -362,7 +364,7 @@ pub fn check(
             }
             table_symbols.insert(symbol, span);
         }
-        checker.types.add_export_table(ember_types::ExportTable { ty, name, protocol, entries });
+        checker.types.add_export_table(table);
     }
     let mut emitted_symbols = HashMap::<&str, &Function>::new();
     for function in &functions {
@@ -17217,8 +17219,9 @@ impl<'a> Checker<'a> {
     }
 
     /// `[FFI-26]` — `@export_table("Name", protocol=N)` on a struct of `extern` function pointer
-    /// fields: each field holds the function of its own name, which must have exactly the field's
-    /// type (an `extern` function, so a host calls it with the field's convention). Each entry's
+    /// fields: each field holds the function its default names (`on_create: … = door_created`,
+    /// ODR-128), else the function of its own name, which must have exactly the field's type (an
+    /// `extern` function, so a host calls it with the field's convention). Each entry's
     /// thread contract is its function's (`[FFI-33c]`: `@export(threads=…)` on it, else the
     /// file's `#! threads`), so a table sets `threads` field by field.
     fn collect_export_tables(&mut self, module: &ast::Module) {
@@ -17275,10 +17278,32 @@ impl<'a> Checker<'a> {
                     );
                     continue;
                 }
-                let Some(value) = self.function_value(field, span) else {
+                // ODR-128 — a default names the field's function; without one, the field's name does.
+                let written = decl.members.iter().find_map(|member| match &member.kind {
+                    ast::MemberKind::Field(declared) if declared.name.name == field => declared.default.as_ref(),
+                    _ => None,
+                });
+                let (function, at) = match written.map(|default| &default.kind) {
+                    None => (field, span),
+                    Some(ast::ExprKind::Path { segments }) if segments.len() == 1 => (segments[0].name, segments[0].span),
+                    Some(_) => {
+                        self.sink.emit(
+                            Diagnostic::error(codes::E0104, written.map_or(span, |default| default.span),
+                                format!("the default of table field `{field}` is not a function's name"))
+                                .help(format!("write `{field}: … = some_function`, or leave the default out to use `fn {field}`")),
+                        );
+                        continue;
+                    }
+                };
+                let Some(value) = self.function_value(function, at) else {
+                    let help = if function == field {
+                        format!("a field without a default holds the function of its own name: define `pub extern \"C\" fn {field}(…)`, or name one with `= function`")
+                    } else {
+                        format!("define `pub extern \"C\" fn {function}(…)`, or name another function")
+                    };
                     self.sink.emit(
-                        Diagnostic::error(codes::E1010, span, format!("no function `{field}` for the exported table's field"))
-                            .help(format!("each field holds the function of its own name: define `pub extern \"C\" fn {field}(…)`")),
+                        Diagnostic::error(codes::E1010, at, format!("no function `{function}` for the exported table's field `{field}`"))
+                            .help(help),
                     );
                     continue;
                 };
@@ -17288,9 +17313,9 @@ impl<'a> Checker<'a> {
                 if value.ty != field_ty {
                     let (expected, found) = (self.types.display(field_ty), self.types.display(value.ty));
                     self.sink.emit(
-                        Diagnostic::error(codes::E2020, span, format!("expected `{expected}`, found `{found}`"))
-                            .primary_label(format!("function `{field}` is `{found}`"))
-                            .note("a table's field holds the function of its own name, with exactly the field's type"),
+                        Diagnostic::error(codes::E2020, at, format!("expected `{expected}`, found `{found}`"))
+                            .primary_label(format!("function `{function}` is `{found}`"))
+                            .note("a table's field holds a function with exactly the field's type"),
                     );
                     continue;
                 }

@@ -149,7 +149,7 @@ large_copy = { level = "warn", threshold = 256 }
   otherwise); its value is a level (`allow`, `warn`, `error`) or a table with `level` and the lint's
   parameters.
 * `[MAN-8]` *(new in 0.9.9)* *(changed in 0.9.10)* The sections are: `[package]` (`name`, `version`, `language`, `kind`,
-  `layers`, `edition_lints`); `[dependencies]` (a version requirement, `{ path }`, or `{ git, rev }`);
+  `layers`, `edition_lints`); `[dependencies]` (`{ path }`, `{ git, rev }`, or `{ git, version }`, `[VER-5]`);
   `[build]` (`entry`, `target`, `backend`, `c_compiler`, `runtime`, `max_instantiations` `[MONO-3]`,
   `reload` `[MAN-7]`); `[profiles.<name>]` (`[PRF-3]`); `[c]` (`compiler`, `flags`, `[BLD-FFI-1]`);
   `[link]` (`libs`); `[jobs]` (`workers`, `[JOB-1]`); `[realtime]` (`contracts`, `[EFF-19]`);
@@ -159,9 +159,13 @@ large_copy = { level = "warn", threshold = 256 }
   safety check or changes what a program means** (`[PRF-1]`).
 * `[MAN-7]` *(changed in 0.9.10)* `[build] reload` is `"opt-in"`, `"all"`, `"bodies"` or `"none"`; a
   `release` build ignores it and prints the note `hot reload is off in release builds` (Annex B).
-* `[VER-5]` Package versions are semantic; a requirement `"1.2"` means `>= 1.2.0, < 2.0.0`; resolution
-  picks the highest version satisfying every requirement, and `ember update [package]` recomputes it.
-  Two majors of one package may coexist, distinguished in symbol names.
+* `[VER-5]` *(changed in 0.9.10)* Package versions are semantic. A dependency
+  `{ git = "<url>", version = "1.2" }` names the versions its repository has tagged
+  `vMAJOR.MINOR.PATCH`; the requirement `"1.2"` means `>= 1.2.0, < 2.0.0`, and resolution picks the
+  highest tagged version satisfying every requirement, recorded with its commit in `ember.lock`;
+  `ember update [package]` recomputes it. A requirement with no source (`geometry = "1.2"`) is for a
+  package registry, which this version does not have (`E0900`). Two majors of one package may coexist,
+  distinguished in symbol names.
 
 ## XVII.3 Builds
 
@@ -525,9 +529,13 @@ fn main():
 * `[CONF-3]` **Ember Systems**: adds Parts VIII, IX, XI, XII and XIV.
 * `[CONF-4]` **Ember Native**: adds Part XVI. Annex C (C++) is a separate, optional claim.
 * `[CONF-5]` **Ember Dynamic**: adds Annex B (hot reload).
-* `[ABI-1]` The runtime ABI, the hot-reload protocol, the module protocol and the export-table protocol
-  are versioned independently of the language; each version is a linked symbol whose name encodes the
-  number, so a mismatch fails at link time, and `ember_module_init` checks the runtime ABI first.
+* `[ABI-1]` *(changed in 0.9.10)* The runtime ABI, the hot-reload protocol, the module protocol and the
+  export-table protocol are versioned independently of the language; each version is a symbol whose
+  name encodes the number (`ember_rt_init_vN`, `ember_reload_protocol_vN`, a module's marker
+  `ember_module_protocol_vN` `[FFI-28]`, a table's `Name_vN` `[FFI-26]`), so a mismatch fails at link
+  time or, for a module loaded at run time, when the host looks the name up; `ember_module_init`
+  checks the runtime ABI first. A setting appended to the end of `ember_rt_config` is no new module
+  protocol: the settings' `size` lets each side read only what both know.
 * `[ABI-2]` A protocol that cannot be checked at link time (hot-reload images, loaded at run time) is
   checked on load and refused with `E9037`.
 * `[ABI-3]` `ember_module_init` checks the runtime ABI version before anything else and returns a

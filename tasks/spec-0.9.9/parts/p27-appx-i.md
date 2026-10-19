@@ -8,7 +8,7 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[ABI-1]` | XVII | The runtime ABI, the hot-reload protocol, the module protocol and the … |
+| `[ABI-1]` | XVII | *(changed in 0.9.10)* The runtime ABI, the hot-reload protocol, the … |
 | `[ABI-2]` | XVII | A protocol that cannot be checked at link time (hot-reload images, … |
 | `[ABI-3]` | XVII | `ember_module_init` checks the runtime ABI version before anything … |
 | `[ABI-4]` | XVII | A release notes every protocol whose version changed, and why. |
@@ -550,9 +550,9 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-24c]` | Annex C | `ember inspect` reports each C++ call's mode (`noexcept (derived)`, … |
 | `[FFI-24d]` | Annex C | A header that adds or removes `noexcept` changes the Ember signature; … |
 | `[FFI-25]` | XVI | A panic in an exported function, or anywhere below it, aborts the … |
-| `[FFI-26]` | XVI | `@export("symbol")` gives a function a stable C symbol with the C … |
+| `[FFI-26]` | XVI | *(changed in 0.9.10)* `@export("symbol")` gives a function a stable C … |
 | `[FFI-27]` | XVI | The runtime `ember_rt` is a C11 static library with no global … |
-| `[FFI-28]` | XVI | A package built as `kind = "staticlib"` produces a library and header … |
+| `[FFI-28]` | XVI | *(changed in 0.9.10)* A package built as `kind = "staticlib"` … |
 | `[FFI-29]` | XVI | For every `import c` the importer emits a shim C file, compiled with … |
 | `[FFI-29a]` | XVI | A binding never names a symbol with internal linkage. |
 | `[FFI-29b]` | XVI | `implementation = ["MINIAUDIO_IMPLEMENTATION"]` compiles a … |
@@ -561,7 +561,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-30a]` | XVI | An overlay changes the signatures, safety and names of *functions* … |
 | `[FFI-30b]` | XVI | `pub import c "…" as vk` re-exports the module under the ordinary … |
 | `[FFI-30c]` | XVI | A package may distribute an overlay for a foreign module, and several … |
-| `[FFI-31]` | XVI | A `cdylib` links its own copy of the runtime. The host calls … |
+| `[FFI-31]` | XVI | *(changed in 0.9.10)* A `cdylib` links its own copy of the runtime. … |
 | `[FFI-31a]` | XVI | Its thread detachment never relies on a TLS destructor in the … |
 | `[FFI-31b]` | XVI | No owning Ember value crosses a module boundary: class handles, … |
 | `[FFI-31c]` | XVI | With `[build] runtime = "shared"`, several Ember modules in one … |
@@ -1343,7 +1343,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[VER-2]` | 0 | From 1.0: source compatibility within a major language version; a … |
 | `[VER-3]` | 0 | From 1.0: deprecation through `@deprecated(since, note)`, removal no … |
 | `[VER-4]` | 0 | The runtime ABI (object header, `ember_type_info`, every entry point … |
-| `[VER-5]` | XVII | Package versions are semantic; a requirement `"1.2"` means `>= 1.2.0, … |
+| `[VER-5]` | XVII | *(changed in 0.9.10)* Package versions are semantic. A dependency `{ … |
 | `[VER-8]` | 0 | Before 1.0 there is exactly one language: the current one. A source … |
 | `[VER-9]` | 0 | A language revision that changes the set of accepted programs or … |
 

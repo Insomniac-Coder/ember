@@ -335,9 +335,13 @@ pub extern "C" fn on_update(entity: u64, dt: f32) -> i32:
     return 0
 ```
 
-* `[FFI-26]` `@export("symbol")` gives a function a stable C symbol with the C ABI.
-  `@export_table("Name", protocol=N)` on a struct of `extern "C" fn` fields exports a table of function
-  pointers under that name and protocol version, for hosts that load a module through one entry point. `ember build
+* `[FFI-26]` *(changed in 0.9.10)* `@export("symbol")` gives a function a stable C symbol with the C ABI.
+  `@export_table("Name", protocol=N)` on a struct of `extern "C" fn` fields exports a constant of that
+  struct, a table of function pointers, under the C symbol `Name_vN` (`[ABI-1]`), for hosts that load a
+  module through one entry point. A field written with a default, `on_create: extern "C" fn(u64) -> i32
+  = door_created`, holds the function its default names; a field without one holds the module's
+  function of the field's own name. Either way the function's type is the field's (`E2020`), and a
+  field naming no function is `E1010`. `ember build
   --emit-header` writes `<package>.h` with a prototype for each export, a typedef for each
   `@layout(c)` type they use, and each export's thread contract as a comment.
 * `[FFI-25]` *(changed in 0.9.9)* A panic in an exported function, or anywhere below it, aborts the
@@ -369,16 +373,20 @@ pub extern "C" fn on_update(entity: u64, dt: f32) -> i32:
   callback creation contracts remain distinct.
 * `[FFI-33c]` *(new in 0.9.9)* Under `threads = main`, the exported wrapper checks, in every profile, that
   the calling thread is the one that initialised the module, and panics otherwise; in exchange the body
-  may use thread-confined state. An `@export_table` may set `threads` per field.
+  may use thread-confined state. *(changed in 0.9.10)* A field of an `@export_table` takes the thread
+  contract of the function it holds (`[FFI-33]`); the field itself carries none.
 * `[FFI-27]` The runtime `ember_rt` is a C11 static library with no global constructors. A C host calls
   `ember_rt_init(&cfg)` once (optionally routing allocation and logging to its own functions),
   `ember_rt_thread_attach()` on each thread that calls Ember, and `ember_rt_shutdown()` at the end,
   which runs at-exit hooks and, in `debug`, prints the leak report (`[WK-15]`).
-* `[FFI-28]` A package built as `kind = "staticlib"` produces a library and header to link into a C or
-  C++ program; `kind = "cdylib"` a shared library exporting only its `@export` symbols plus
-  `ember_module_init` and `ember_module_shutdown`.
-* `[FFI-31]` A `cdylib` links its own copy of the runtime. The host calls `ember_module_init` before
-  using it and `ember_module_shutdown` before unloading it; shutdown runs at-exit hooks, detaches
+* `[FFI-28]` *(changed in 0.9.10)* A package built as `kind = "staticlib"` produces a library and
+  header to link into a C or C++ program; `kind = "cdylib"` a shared library exporting only its
+  `@export` symbols, its `@export_table`s, `ember_module_init`, `ember_module_shutdown`, and the
+  marker `ember_module_protocol_vN`, `N` the module protocol's version (`[ABI-1]`).
+* `[FFI-31]` *(changed in 0.9.10)* A `cdylib` links its own copy of the runtime. Before calling into it
+  the host looks up the marker of the module protocol version it was built for and refuses a module
+  without it; it calls `ember_module_init` before using the module and `ember_module_shutdown` before
+  unloading it; shutdown runs at-exit hooks, detaches
   every thread the module attached, releases its thread-local state and reports leaks in `debug`.
 * `[FFI-31a]` Its thread detachment never relies on a TLS destructor in the module's code.
 

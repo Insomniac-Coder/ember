@@ -115,12 +115,14 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
             line(&mut out, &format!("/*   {field}: {policy} */"));
         }
         line(&mut out, &format!("#define {}_PROTOCOL {}u", table.name, table.protocol));
-        line(&mut out, &format!("extern const {} {};", emitter.c_type(table.ty), table.name));
-        line(&mut out, &format!("extern const uint32_t {};", ember_types::ExportTable::protocol_symbol(&table.name, table.protocol)));
+        line(&mut out, &format!("extern const {} {};", emitter.c_type(table.ty), table.symbol()));
     }
     if emitter.module {
         let rt = ember_branding::runtime("");
         line(&mut out, "");
+        line(&mut out, "/* [FFI-31], [ABI-1] Look this up before calling into the library: a library built for");
+        line(&mut out, " * other start-up rules does not have it. */");
+        line(&mut out, &format!("extern const uint32_t {rt}module_protocol_v1;"));
         line(&mut out, "/* [FFI-31] Call before using this library, on the thread that becomes its creator; returns 0,");
         line(&mut out, " * or EMBER_MODULE_INIT_ABI_MISMATCH for a runtime of another ABI version ([ABI-3]). */");
         line(&mut out, &format!("int {rt}module_init(const {rt}rt_config* cfg);"));

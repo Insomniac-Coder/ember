@@ -527,8 +527,8 @@ pub struct TypeTable {
 }
 
 /// `[FFI-26]` — an `@export_table("Name", protocol=N)`: the struct exported as a constant table of
-/// function pointers under the C symbol `name`, its protocol version, and the C symbol of the
-/// function each field holds, in field order.
+/// function pointers under the C symbol `name_vN` (`symbol`), its protocol version `N`, and the C
+/// symbol of the function each field holds, in field order.
 #[derive(Clone, Debug)]
 pub struct ExportTable {
     pub ty: Ty,
@@ -538,10 +538,10 @@ pub struct ExportTable {
 }
 
 impl ExportTable {
-    /// `[ABI-1]` — the table's protocol version as a linked symbol whose name carries the number
-    /// (`Name_protocol_3`, holding 3): a host built for another version does not find it.
-    pub fn protocol_symbol(name: &str, protocol: u32) -> String {
-        format!("{name}_protocol_{protocol}")
+    /// `[ABI-1]`, `[FFI-26]` (ODR-129) — the table's C symbol, its protocol version in its name
+    /// (`RvScriptApi_v3`): a host built for another version does not find it.
+    pub fn symbol(&self) -> String {
+        format!("{}_v{}", self.name, self.protocol)
     }
 }
 

@@ -262,6 +262,71 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-131 — how a host notices a module built for other start-up rules — **CLOSED**
+
+    ID:        ODR-131
+    Status:    CLOSED — ruled by the owner, 2026-10-19; incorporated in 0.9.10_Hardened_14
+    Category:  C INTEROP
+    Location:  Ember_v0.9.10_Hardened_13.md [FFI-28], [FFI-31], [ABI-1]
+
+**The question.** Helper C's Q4: `[ABI-1]` wants each protocol version in a symbol's name; `[FFI-28]` lets a `cdylib` export only its `@export`s, `ember_module_init` and `ember_module_shutdown`, so the module protocol had no versioned name and a host could not tell a module built for other start-up rules. Put to the owner one at a time (`tasks/85/owner-answers.md`).
+
+**Ruling.** (a) a version marker: a `cdylib` also exports `ember_module_protocol_vN`, which the host looks up before calling into the module, refusing one without the marker it was built for. A setting appended to `ember_rt_config` is no new version: its `size` covers it. ADR-207.
+
+---
+
+## ODR-130 — where a table entry's thread rule is written — **CLOSED**
+
+    ID:        ODR-130
+    Status:    CLOSED — ruled by the owner, 2026-10-19; incorporated in 0.9.10_Hardened_14
+    Category:  C INTEROP
+    Location:  Ember_v0.9.10_Hardened_13.md [FFI-33c]
+
+**The question.** Helper C's Q3c: `[FFI-33c]` says "an `@export_table` may set `threads` per field" without a spelling; built, a field takes its function's `@export(threads=…)`. Put to the owner one at a time (`tasks/85/owner-answers.md`).
+
+**Ruling.** (a) on the function, as built ("A is more readable"); the field carries none. ADR-207.
+
+---
+
+## ODR-129 — where an export table's protocol version lives — **CLOSED**
+
+    ID:        ODR-129
+    Status:    CLOSED — ruled by the owner, 2026-10-19; incorporated in 0.9.10_Hardened_14
+    Category:  C INTEROP
+    Location:  Ember_v0.9.10_Hardened_13.md [FFI-26], [ABI-1]
+
+**The question.** Helper C's Q3b: built as two symbols, the table `Name` and a marker `Name_protocol_N`. Put to the owner one at a time (`tasks/85/owner-answers.md`).
+
+**Ruling.** (b) in the table's own name: one symbol, `Name_vN`. ADR-207.
+
+---
+
+## ODR-128 — which function fills an export table's field — **CLOSED**
+
+    ID:        ODR-128
+    Status:    CLOSED — ruled by the owner, 2026-10-19; incorporated in 0.9.10_Hardened_14
+    Category:  C INTEROP
+    Location:  Ember_v0.9.10_Hardened_13.md [FFI-26]
+
+**The question.** Helper C's Q3a: `[FFI-26]` says a table holds function pointers, not which function fills each field; built, the function of the field's name. Put to the owner one at a time (`tasks/85/owner-answers.md`).
+
+**Ruling.** (c) both: a field's default names its function (`on_create: extern "C" fn(u64) -> i32 = door_created`); a field without one takes the function of its own name. ADR-207.
+
+---
+
+## ODR-127 — where a version requirement resolves from — **CLOSED**
+
+    ID:        ODR-127
+    Status:    CLOSED — ruled by the owner, 2026-10-19; incorporated in 0.9.10_Hardened_14
+    Category:  BUILD
+    Location:  Ember_v0.9.10_Hardened_13.md [VER-5], [MAN-8]
+
+**The question.** Helper C's Q1: `[VER-5]` resolves `"1.2"` to the highest satisfying version, and nothing named where the versions come from. Put to the owner one at a time (`tasks/85/owner-answers.md`).
+
+**Ruling.** (b) the dependency's git tags, "since there is no central repo yet": `{ git = "<url>", version = "1.2" }`; a requirement with no source waits for a registry (`E0900`). ADR-207.
+
+---
+
 ## ODR-126 — a moving instance and handles in tuples, `Box` contents and closures — **CLOSED**
 
     ID:        ODR-126

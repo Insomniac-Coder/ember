@@ -1,9 +1,10 @@
 //! Packages and their dependencies (`[MOD-1]`, `[MOD-4]`, `[MAN-2]`, `[VER-5]`).
 //!
 //! A build's packages are its root and every package its `[dependencies]` reach, each read from its
-//! own `ember.toml`. A dependency is `{ path = "…" }` (relative to the manifest naming it) or
-//! `{ git = "…", rev = "…" }` (checked out into the build cache); a bare version requirement needs a
-//! registry, which this compiler does not have (`E0900`).
+//! own `ember.toml`. A dependency is `{ path = "…" }` (relative to the manifest naming it),
+//! `{ git = "…", rev = "…" }` (checked out into the build cache) or `{ git = "…", version = "1.2" }`
+//! (the highest of the repository's `vMAJOR.MINOR.PATCH` tags the requirement admits, ODR-127); a
+//! bare version requirement needs a registry, which this compiler does not have (`E0900`).
 //!
 //! A package is identified by its name and its major version: two majors of one package coexist
 //! (`[VER-5]`), each with modules of its own. Module paths are a package's name followed by the
@@ -47,11 +48,49 @@ impl std::fmt::Display for Version {
 }
 
 /// `[VER-5]` — whether `text` is a version requirement: one to three numbers, `"1.2"`.
-// ponytail: only the syntax; what it matches and the highest-satisfying resolution come with
-// the registry a requirement resolves against (none exists; a requirement is E0900).
 fn is_requirement(text: &str) -> bool {
     let parts: Vec<&str> = text.split('.').collect();
     parts.len() <= 3 && parts.iter().all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+/// `[VER-5]` — whether `version` meets the requirement `"1.2"`: `>= 1.2.0, < 2.0.0`.
+fn satisfies(version: Version, requirement: &str) -> bool {
+    let parts: Vec<u64> = requirement.split('.').filter_map(|part| part.parse().ok()).collect();
+    let low = Version { major: parts[0], minor: parts.get(1).copied().unwrap_or(0), patch: parts.get(2).copied().unwrap_or(0) };
+    version >= low && version.major == low.major
+}
+
+/// ODR-127 — a repository's version tags, `vMAJOR.MINOR.PATCH`, each with the commit it names
+/// (an annotated tag's own commit, not the tag object).
+fn git_version_tags(url: &str) -> Result<Vec<(Version, String)>, String> {
+    let output = std::process::Command::new("git").args(["ls-remote", "--tags", url]).output()
+        .map_err(|error| format!("cannot run git for `{url}`: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("error[E9001]: git could not list the tags of `{url}`: {}", String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    let mut tags: BTreeMap<Version, String> = BTreeMap::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Some((commit, reference)) = line.split_once('\t') else { continue };
+        let Some(tag) = reference.strip_prefix("refs/tags/v") else { continue };
+        let (tag, peeled) = match tag.strip_suffix("^{}") { Some(tag) => (tag, true), None => (tag, false) };
+        let Some(version) = Version::parse(tag) else { continue };
+        // The peeled line of an annotated tag names its commit; it wins over the tag object's.
+        if peeled || !tags.contains_key(&version) {
+            tags.insert(version, commit.to_string());
+        }
+    }
+    Ok(tags.into_iter().collect())
+}
+
+/// `[MAN-2]` — the commit `ember.lock` records for a version dependency: kept while it still meets
+/// the requirement, so a build resolves the same until `ember update`.
+fn locked_commit(lock: Option<&str>, name: &str, url: &str, requirement: &str) -> Option<String> {
+    let prefix = format!("git+{url}#");
+    lock?.split("\n[[package]]\n").skip(1).find_map(|entry| {
+        let field = |key: &str| entry.lines().find_map(|line| unquote(line.strip_prefix(&format!("{key} = "))?));
+        let commit = field("source")?.strip_prefix(&prefix)?.to_string();
+        (field("name")? == name && satisfies(Version::parse(&field("version")?)?, requirement)).then_some(commit)
+    })
 }
 
 /// Where a package came from.
@@ -140,6 +179,8 @@ pub fn manifest_dir(root_dir: &Path) -> Option<PathBuf> {
 enum Spec {
     Path(String),
     Git { url: String, rev: String },
+    /// ODR-127 — a requirement met by one of the repository's version tags.
+    GitVersion { url: String, requirement: String },
     Version(String),
 }
 
@@ -171,14 +212,17 @@ fn inline_table(value: &str) -> Option<Vec<(String, String)>> {
 fn spec_from_pairs(name: &str, pairs: &[(String, String)], file: &Path) -> Result<Spec, String> {
     let get = |key: &str| pairs.iter().find(|(written, _)| written == key).map(|(_, value)| value.clone());
     for (key, _) in pairs {
-        if !matches!(key.as_str(), "path" | "git" | "rev") {
-            return Err(format!("error[E9001]: `{key}` is not a key of a dependency (`{name}` in {})\n  = help: a dependency is `{{ path = \"…\" }}` or `{{ git = \"…\", rev = \"…\" }}`", file.display()));
+        if !matches!(key.as_str(), "path" | "git" | "rev" | "version") {
+            return Err(format!("error[E9001]: `{key}` is not a key of a dependency (`{name}` in {})\n  = help: a dependency is `{{ path = \"…\" }}`, `{{ git = \"…\", rev = \"…\" }}` or `{{ git = \"…\", version = \"…\" }}`", file.display()));
         }
     }
-    match (get("path"), get("git"), get("rev")) {
-        (Some(path), None, None) => Ok(Spec::Path(path)),
-        (None, Some(url), Some(rev)) => Ok(Spec::Git { url, rev }),
-        _ => Err(format!("error[E9001]: dependency `{name}` in {} is neither `{{ path }}` nor `{{ git, rev }}`", file.display())),
+    match (get("path"), get("git"), get("rev"), get("version")) {
+        (Some(path), None, None, None) => Ok(Spec::Path(path)),
+        (None, Some(url), Some(rev), None) => Ok(Spec::Git { url, rev }),
+        (None, Some(url), None, Some(requirement)) if is_requirement(&requirement) => Ok(Spec::GitVersion { url, requirement }),
+        (None, Some(_), None, Some(requirement)) => Err(format!(
+            "error[E9001]: dependency `{name}`'s `version = \"{requirement}\"` is not a version requirement such as \"1.2\" [VER-5]")),
+        _ => Err(format!("error[E9001]: dependency `{name}` in {} is neither `{{ path }}`, `{{ git, rev }}` nor `{{ git, version }}`", file.display())),
     }
 }
 
@@ -219,7 +263,7 @@ fn read_manifest(file: &Path) -> Result<Manifest, String> {
                     (Some(requirement), _) => Spec::Version(requirement),
                     (None, Some(pairs)) => spec_from_pairs(&key, &pairs, file)?,
                     (None, None) => {
-                        return Err(format!("error[E9001]: dependency `{key}` in {} is not a version requirement, `{{ path }}` or `{{ git, rev }}`", file.display()));
+                        return Err(format!("error[E9001]: dependency `{key}` in {} is not a version requirement, `{{ path }}`, `{{ git, rev }}` or `{{ git, version }}`", file.display()));
                     }
                 };
                 manifest.deps.push((key, spec));
@@ -288,10 +332,17 @@ impl Packages {
 /// Every package the root package's dependencies reach. `root_dir` is the build's source root;
 /// with no manifest above it the root has no dependencies.
 pub fn resolve(root_dir: &Path) -> Result<Packages, String> {
+    resolve_afresh(root_dir, None)
+}
+
+/// `resolve`, with `fresh` naming the version dependency (`*`: every one) whose `ember.lock` entry is
+/// set aside, so its requirement is met anew from its tags (`ember update`).
+fn resolve_afresh(root_dir: &Path, fresh: Option<&str>) -> Result<Packages, String> {
     let Some(root) = manifest_dir(root_dir) else {
         return Ok(Packages::alone(root_dir));
     };
     let manifest = read_manifest(&root.join(ember_branding::MANIFEST))?;
+    let lock = std::fs::read_to_string(root.join(ember_branding::LOCK_FILE)).ok().map(|text| text.replace("\r\n", "\n"));
     let mut packages = Packages { list: vec![Package {
         name: manifest.name.clone().unwrap_or_default(),
         version: manifest.version.as_deref().and_then(Version::parse).unwrap_or(Version { major: 0, minor: 0, patch: 0 }),
@@ -305,6 +356,7 @@ pub fn resolve(root_dir: &Path) -> Result<Packages, String> {
     let mut pending = vec![(0usize, manifest.deps, root.clone())];
     while let Some((from, deps, from_dir)) = pending.pop() {
         for (name, spec) in deps {
+            let mut wanted: Option<String> = None;
             let (dir, source) = match spec {
                 Spec::Path(path) => {
                     let dir = from_dir.join(&path);
@@ -313,12 +365,33 @@ pub fn resolve(root_dir: &Path) -> Result<Packages, String> {
                     (dunce(dir), Source::Path(path))
                 }
                 Spec::Git { url, rev } => (git_checkout(&url, &rev)?, Source::Git { url, rev }),
+                // ODR-127 — the highest version tag the requirement admits, or the commit the lock
+                // keeps for it until `ember update`.
+                Spec::GitVersion { url, requirement } => {
+                    let afresh = fresh.is_some_and(|fresh| fresh == "*" || fresh == name);
+                    let pinned = if afresh { None } else { locked_commit(lock.as_deref(), &name, &url, &requirement) };
+                    let commit = match pinned {
+                        Some(commit) => commit,
+                        None => {
+                            let tags = git_version_tags(&url)?;
+                            let Some((_, commit)) = tags.iter().rev().find(|(version, _)| satisfies(*version, &requirement)) else {
+                                let listed: Vec<String> = tags.iter().map(|(version, _)| format!("v{version}")).collect();
+                                return Err(format!(
+                                    "error[E9001]: no version tag of `{url}` meets `{name}`'s `version = \"{requirement}\"` [VER-5]\n  = note: its version tags: {}",
+                                    if listed.is_empty() { "none".to_string() } else { listed.join(", ") }));
+                            };
+                            commit.clone()
+                        }
+                    };
+                    wanted = Some(requirement);
+                    (git_checkout(&url, &commit)?, Source::Git { url, rev: commit })
+                }
                 Spec::Version(requirement) if !is_requirement(&requirement) => {
                     return Err(format!("error[E9001]: dependency `{name} = \"{requirement}\"` is not a version requirement such as \"1.2\" [VER-5]"));
                 }
                 Spec::Version(requirement) => {
                     return Err(format!(
-                        "error[E0900]: dependency `{name} = \"{requirement}\"` needs a package registry, which is not implemented yet\n  = help: name it by `{{ path = \"…\" }}` or `{{ git = \"…\", rev = \"…\" }}`"));
+                        "error[E0900]: dependency `{name} = \"{requirement}\"` needs a package registry, which is not implemented yet\n  = help: name its repository, `{{ git = \"…\", version = \"{requirement}\" }}`, or a directory, `{{ path = \"…\" }}`"));
                 }
             };
             let manifest = read_manifest(&dir.join(ember_branding::MANIFEST))?;
@@ -331,6 +404,12 @@ pub fn resolve(root_dir: &Path) -> Result<Packages, String> {
                 Some(text) => Version::parse(text).ok_or_else(|| format!(
                     "error[E9001]: package `{name}`'s version `{text}` is not a semantic version `MAJOR.MINOR.PATCH` [VER-5]"))?,
             };
+            // A tag whose package states another version is the repository's mistake, not a choice.
+            if let Some(requirement) = &wanted
+                && !satisfies(version, requirement)
+            {
+                return Err(format!("error[E9001]: the tag chosen for `{name}`'s `version = \"{requirement}\"` holds version {version} ({})", dir.display()));
+            }
             // One package per name and major: the same directory is one package; two sources of
             // one major are a conflict, never a silent choice.
             let existing = packages.list.iter().position(|package| package.name == name && package.version.major == version.major);
@@ -536,7 +615,7 @@ pub fn update(args: &[String]) -> Result<std::process::ExitCode, String> {
     }
     let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
     let dir = manifest_dir(&cwd).ok_or("`ember update` needs a package manifest in this directory or an ancestor")?;
-    let packages = resolve(&dir.join("src"))?;
+    let packages = resolve_afresh(&dir.join("src"), Some(named.first().map_or("*", |name| name.as_str())))?;
     let file = dir.join(ember_branding::LOCK_FILE);
     let fresh = packages.lock_text()?;
     let text = match named.first() {
@@ -588,6 +667,10 @@ mod tests {
             assert_eq!(Version::parse(bad), None, "{bad}");
         }
         assert!(is_requirement("1.2") && is_requirement("1") && !is_requirement("1.x") && !is_requirement("^1.2"));
+        let v = |text: &str| Version::parse(text).unwrap();
+        assert!(satisfies(v("1.2.0"), "1.2") && satisfies(v("1.9.3"), "1.2") && satisfies(v("1.2.5"), "1.2.5"));
+        assert!(!satisfies(v("1.1.9"), "1.2") && !satisfies(v("2.0.0"), "1.2") && !satisfies(v("1.2.4"), "1.2.5"));
+        assert!(satisfies(v("2.3.0"), "2") && !satisfies(v("1.9.0"), "2"));
     }
 
     /// `[MAN-2]` — `ember update geometry` takes geometry's entry from the new resolution and keeps

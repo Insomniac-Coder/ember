@@ -198,6 +198,69 @@ fn a_git_dependency_is_checked_out_at_its_revision() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `[VER-5]` (ODR-127) — `{ git, version }` takes the highest of the repository's `vMAJOR.MINOR.PATCH`
+/// tags the requirement admits; `ember.lock` keeps that commit, so a newer tag changes nothing until
+/// `ember update` meets the requirement anew; a requirement no tag meets is `E9001`, listing the tags.
+#[test]
+fn a_git_dependency_resolves_its_version_from_the_tags() {
+    let dir = scratch();
+    let repo = dir.join("repo");
+    let release = |version: &str, word: i32| {
+        package(&repo, &format!("[package]\nname = \"greet\"\nversion = \"{version}\"\nkind = \"lib\"\n"),
+            &[("lib", &format!("pub fn word() -> i32:\n    return {word}\n"))]);
+    };
+    let git = |args: &[&str]| {
+        let output = Command::new("git").args(["-c", "user.name=ember", "-c", "user.email=ember@example.org", "-c", "core.autocrlf=false"])
+            .args(args).current_dir(&repo).output().expect("git runs");
+        assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+    };
+    release("1.2.0", 120);
+    git(&["init", "--quiet"]);
+    let tag = |version: &str, annotated: bool| {
+        git(&["add", "-A"]);
+        git(&["commit", "--quiet", "-m", version]);
+        if annotated {
+            git(&["tag", "-a", &format!("v{version}"), "-m", version]);
+        } else {
+            git(&["tag", &format!("v{version}")]);
+        }
+    };
+    tag("1.2.0", false);
+    release("1.3.1", 131);
+    tag("1.3.1", true);
+    release("2.0.0", 200);
+    tag("2.0.0", false);
+    let url = repo.to_string_lossy().replace('\\', "/");
+    let app = |requirement: &str| {
+        package(&dir.join("app"), &format!("[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ngreet = {{ git = \"{url}\", version = \"{requirement}\" }}\n"),
+            &[("main", "import greet\n\nfn main():\n    println(greet.word())\n")]);
+    };
+    app("1.2");
+    let ran = ember(&["run"], &dir.join("app"));
+    assert!(ran.ok && ran.stdout == "131\n", "the highest 1.x tag was not taken: {}{}", ran.stdout, ran.stderr);
+    let lock = std::fs::read_to_string(dir.join("app").join(ember_branding::LOCK_FILE)).unwrap();
+    assert!(lock.contains("version = \"1.3.1\"") && lock.contains(&format!("source = \"git+{url}#")), "{lock}");
+
+    // A newer 1.x tag: the lock keeps 1.3.1 until `ember update`.
+    release("1.4.0", 140);
+    tag("1.4.0", false);
+    let kept = ember(&["run"], &dir.join("app"));
+    assert!(kept.ok && kept.stdout == "131\n", "the lock did not keep its commit: {}{}", kept.stdout, kept.stderr);
+    let updated = ember(&["update"], &dir.join("app"));
+    assert!(updated.ok, "{}", updated.stderr);
+    let moved = ember(&["run"], &dir.join("app"));
+    assert!(moved.ok && moved.stdout == "140\n", "`ember update` did not meet the requirement anew: {}{}", moved.stdout, moved.stderr);
+
+    app("2");
+    let major = ember(&["run"], &dir.join("app"));
+    assert!(major.ok && major.stdout == "200\n", "{}{}", major.stdout, major.stderr);
+    app("3.1");
+    let none = ember(&["check"], &dir.join("app"));
+    assert!(!none.ok && none.stderr.contains("error[E9001]: no version tag of")
+        && none.stderr.contains("v1.2.0, v1.3.1, v1.4.0, v2.0.0"), "{}", none.stderr);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `[MOD-4]` — packages that depend on each other in a cycle are `E1041`; `[VER-5]` a version that
 /// is not `MAJOR.MINOR.PATCH` is `E9001`; a bare version requirement needs a registry (`E0900`).
 #[test]
