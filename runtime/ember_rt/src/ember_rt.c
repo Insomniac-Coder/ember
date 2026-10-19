@@ -1105,11 +1105,14 @@ int ember_rt_module_init_v2(const ember_rt_config* cfg, uint32_t caller_abi) {
     return status;
 }
 
+static void jobs_stop(void);
+
 void ember_rt_module_shutdown(void) {
     rt_spin_lock(&g_modules_lock);
     if (g_modules > 0) {
         g_modules -= 1;
         if (g_modules == 0 && !g_host_initialised) {
+            jobs_stop();
             ember_rt_shutdown();
         }
     }
@@ -1503,6 +1506,15 @@ static uint32_t g_jobs_started;
 static uint32_t g_job_workers_wanted;
 static uint32_t g_job_workers;
 static uint32_t g_jobs_init_lock;
+/* [FFI-31] Each worker's thread, for a shared library's shutdown to join; and whether one is
+ * stopping them. */
+static uint32_t g_jobs_stopping;
+static uint32_t g_job_thread_count;
+#if defined(_WIN32)
+static HANDLE g_job_threads[1024];
+#else
+static pthread_t g_job_threads[1024];
+#endif
 
 void ember_jobs_set_workers(int64_t count) {
     g_job_workers_wanted = count > 0 ? (uint32_t)(count > 1024 ? 1024 : count) : 0;
@@ -1646,10 +1658,15 @@ static void* job_worker(void* unused) {
     ember_rt_thread_attach();
     for (;;) {
         uint32_t seen = object_load_u32(&g_job_signal);
+        /* [FFI-31] A shared library's shutdown ends the workers it started. */
+        if (object_load_u32(&g_jobs_stopping) != 0) {
+            break;
+        }
         if (!job_help()) {
             word_wait(&g_job_signal, seen);
         }
     }
+    ember_rt_thread_detach();
 #if defined(_WIN32)
     return 0;
 #else
@@ -1687,6 +1704,9 @@ static void jobs_start(ember_loc loc) {
             uint32_t cores = jobs_logical_cores();
             workers = cores > 1 ? cores - 1 : 1;
         }
+        if (workers > sizeof g_job_threads / sizeof g_job_threads[0]) {
+            workers = (uint32_t)(sizeof g_job_threads / sizeof g_job_threads[0]);
+        }
         threads_have_started();
         (void)object_fetch_add_u32(&g_job_workers, workers);
         for (uint32_t i = 0; i < workers; ++i) {
@@ -1696,18 +1716,43 @@ static void jobs_start(ember_loc loc) {
             if (handle == NULL) {
                 ember_panic(message, sizeof message - 1, loc);
             }
-            (void)CloseHandle(handle);
+            g_job_threads[i] = handle;
 #else
             pthread_t id;
             if (pthread_create(&id, NULL, job_worker, NULL) != 0) {
                 ember_panic(message, sizeof message - 1, loc);
             }
-            (void)pthread_detach(id);
+            g_job_threads[i] = id;
 #endif
+            g_job_thread_count = i + 1;
         }
         (void)object_fetch_add_u32(&g_jobs_started, 1);
     }
     (void)object_fetch_sub_u32(&g_jobs_init_lock, 1);
+}
+
+/* [FFI-31] The last module's shutdown ends the job workers before the library can be unloaded:
+ * each finishes the job it runs, and is joined, so none runs the module's code afterwards. A
+ * program's own exit does not wait for them ([THR-16]). A later submission starts them again. */
+static void jobs_stop(void) {
+    if (object_load_u32(&g_jobs_started) == 0) {
+        return;
+    }
+    (void)object_fetch_add_u32(&g_jobs_stopping, 1);
+    (void)object_fetch_add_u32(&g_job_signal, 1);
+    word_wake_all(&g_job_signal);
+    for (uint32_t i = 0; i < g_job_thread_count; ++i) {
+#if defined(_WIN32)
+        (void)WaitForSingleObject(g_job_threads[i], INFINITE);
+        (void)CloseHandle(g_job_threads[i]);
+#else
+        (void)pthread_join(g_job_threads[i], NULL);
+#endif
+    }
+    g_job_thread_count = 0;
+    (void)object_fetch_sub_u32(&g_job_workers, object_load_u32(&g_job_workers));
+    (void)object_fetch_sub_u32(&g_jobs_started, 1);
+    (void)object_fetch_sub_u32(&g_jobs_stopping, 1);
 }
 
 uint64_t ember_job_submit(uint32_t* scope, void (*run)(void*), void (*drop)(void*), const void* state, size_t size,

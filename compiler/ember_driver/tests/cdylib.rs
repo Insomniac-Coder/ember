@@ -510,6 +510,71 @@ int main(int argc, char** argv) {{
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `[FFI-31]` — shutting a module down ends the threads it started for jobs (each finishes and is
+/// joined), so none runs the library's code once the host unloads it: the process has as many
+/// threads after `ember_module_shutdown` as before `ember_module_init`.
+#[test]
+fn shutdown_ends_the_job_workers_a_module_started() {
+    let dir = scratch();
+    let toolchain = toolchain();
+    package(&dir.join("worker"), "[package]\nname = \"worker\"\nkind = \"cdylib\"\n",
+        "import std.jobs\nfrom std.sync import Atomic\n\nstatic TOTAL: Atomic[int] = Atomic(0)\n\n\
+         @export(\"busy\")\nfn busy() -> i32:\n    jobs.wait(jobs.submit(owned fn() => TOTAL.fetch_add(1)))\n    return TOTAL.load() as i32\n");
+    let built = ember(&["build"], &dir.join("worker"));
+    assert_success(&built, "the cdylib running jobs");
+    let lib = dir.join("worker/target/debug/lib");
+    let path = library_file(&lib, "worker").to_string_lossy().replace('\\', "\\\\");
+    let host = format!(r#"{HOST_PRELUDE}
+#if defined(_WIN32)
+#include <tlhelp32.h>
+static int threads(void) {{
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    THREADENTRY32 entry;
+    entry.dwSize = sizeof entry;
+    int count = 0;
+    for (BOOL more = Thread32First(snapshot, &entry); more; more = Thread32Next(snapshot, &entry)) {{
+        count += entry.th32OwnerProcessID == GetCurrentProcessId();
+    }}
+    CloseHandle(snapshot);
+    return count;
+}}
+#else
+#include <dirent.h>
+static int threads(void) {{
+    DIR* dir = opendir("/proc/self/task");
+    int count = 0;
+    for (struct dirent* entry = readdir(dir); entry; entry = readdir(dir)) {{
+        count += entry->d_name[0] != '.';
+    }}
+    closedir(dir);
+    return count;
+}}
+#endif
+int main(void) {{
+    ember_rt_config cfg = ember_rt_config_default();
+    library l = load("{path}");
+    if (!l) return 2;
+    module_init_fn init = (module_init_fn)find(l, "@RT@module_init");
+    module_shutdown_fn shutdown = (module_shutdown_fn)find(l, "@RT@module_shutdown");
+    value_fn busy = (value_fn)find(l, "busy");
+    if (!init || !shutdown || !busy) return 3;
+    int before = threads();
+    if (init(&cfg) != 0 || busy() != 1) return 4;
+    int working = threads();
+    shutdown();
+    int after = threads();
+    unload(l);
+    printf("%d %d %d\n", before, working > before, after);
+    return after == before && working > before ? 0 : 5;
+}}
+"#);
+    let exe = link_host(&toolchain, &dir, &lib, "host", &host);
+    let ran = run_host(&exe, &[], &dir);
+    assert!(ran.status.success(), "the workers outlived the shutdown ({:?}): {}{}", ran.status.code(),
+        String::from_utf8_lossy(&ran.stdout), String::from_utf8_lossy(&ran.stderr));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `[BLD-FFI-3]` — `[link] libs` links existing libraries by path and by name, in the order
 /// written: two archives both define `which_lib`, and the linker takes it from the first one the
 /// list names, so swapping them swaps the answer. A name is searched for where the C toolchain
