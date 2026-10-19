@@ -33025,7 +33025,7 @@ impl<'a> Checker<'a> {
         };
 
         // `Vec3(1, 2, 3)` — the synthesised memberwise constructor (`[STR-1]`).
-        if let Some(&id) = self.struct_ids.get(&self.resolve_name(name)) {
+        if let Some(id) = self.struct_through_alias(self.resolve_name(name)) {
             return self.synth_struct_literal(id, name, args, span);
         }
 
@@ -36895,7 +36895,7 @@ impl<'a> Checker<'a> {
         }
         // `[MOD-3]`, `[STR-1]` — `m.Point(3, 4)`: a type's constructor, reached
         // through its module as a function is.
-        if let Some(&id) = self.struct_ids.get(&qualified) {
+        if let Some(id) = self.struct_through_alias(qualified) {
             return self.synth_struct_literal(id, qualified, args, span);
         }
         if let Some(&id) = self.class_ids.get(&qualified) {
@@ -36952,7 +36952,7 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Path { segments } if segments.len() == 1 => segments[0].name,
             ast::ExprKind::Field { .. } => {
                 let qualified = self.item_through_module(expr)?;
-                return self.enum_ids.get(&qualified).copied();
+                return self.enum_through_alias(qualified);
             }
             ast::ExprKind::IndexOrInstantiate { base, .. } => {
                 let ast::ExprKind::Path { segments } = &base.kind else { return None };
@@ -36976,7 +36976,23 @@ impl<'a> Checker<'a> {
         if self.lookup(name).is_some() {
             return None;
         }
-        self.enum_ids.get(&self.resolve_name(name)).copied()
+        self.enum_through_alias(self.resolve_name(name))
+    }
+
+    /// `[RNG-1]` — a `type` alias with no `in` clause is transparent: the struct an alias names is
+    /// constructed through it (`Alias(x=1)`), and the enum one names gives its variants (`Alias.A`).
+    fn struct_through_alias(&self, qualified: Symbol) -> Option<StructId> {
+        self.struct_ids.get(&qualified).copied().or_else(|| match self.types.kind(*self.named_types.get(&qualified)?) {
+            TyKind::Struct(id) => Some(*id),
+            _ => None,
+        })
+    }
+
+    fn enum_through_alias(&self, qualified: Symbol) -> Option<EnumId> {
+        self.enum_ids.get(&qualified).copied().or_else(|| match self.types.kind(*self.named_types.get(&qualified)?) {
+            TyKind::Enum(id) => Some(*id),
+            _ => None,
+        })
     }
 
     /// A path naming a range type, for `Roughness.checked(x)`.

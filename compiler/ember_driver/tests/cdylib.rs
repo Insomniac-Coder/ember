@@ -702,7 +702,8 @@ fn pe_exports(image: &[u8]) -> Vec<String> {
 /// `[BLD-FFI-1]`, `[BLD-FFI-1a]`, `[BLD-FFI-3]` — `import c "./bridge.c"` compiles `bridge.c` and
 /// imports `bridge.h`, both with the manifest's `[c] flags` (the header's macro and the source's
 /// function see the same definition), and the import's `link = […]` links its libraries in the
-/// order written: the first that defines `which_lib` is the one called.
+/// order written: the first that defines `which_lib` is the one called. The `[c] compiler` is the
+/// one the import's C goes to.
 #[test]
 fn import_c_compiles_its_source_with_the_c_section_and_links_in_order() {
     let dir = scratch();
@@ -739,6 +740,12 @@ fn import_c_compiles_its_source_with_the_c_section_and_links_in_order() {
         outputs.push(String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n"));
     }
     assert_eq!(outputs, ["42 40 1\n", "42 40 2\n"]);
+    // The `[c] compiler` is the one the import's C goes to.
+    std::fs::write(app.join(ember_branding::MANIFEST),
+        "[package]\nname = \"app\"\nkind = \"bin\"\n\n[c]\ncompiler = \"no-such-cc\"\nflags = [\"-DBRIDGE_VALUE=40\"]\n").unwrap();
+    let refused = ember(&["build"], &app);
+    assert!(!refused.status.success() && String::from_utf8_lossy(&refused.stderr).contains("no-such-cc"),
+        "the [c] compiler was not used: {}", String::from_utf8_lossy(&refused.stderr));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

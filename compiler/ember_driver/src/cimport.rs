@@ -33,6 +33,23 @@ pub struct Config<'a> {
     pub flags: &'a [String],
     /// The module's path joined with `_`: the shim's symbols are named with it.
     pub symbol_stem: &'a str,
+    /// `[FFI-30]` — the declarations earlier imports of the build wrote, by Clang's USR.
+    pub shared: &'a HashMap<String, Shared>,
+    /// The name the import binds (`c`, or its `as` name).
+    pub binding: &'a str,
+}
+
+/// `[FFI-30]` — a C declaration (by Clang's USR) an import of the build wrote: one Ember entity
+/// for every import of it with the same layout.
+#[derive(Clone, Debug)]
+pub struct Shared {
+    /// The module that wrote it, and its name there.
+    pub module: Vec<String>,
+    pub name: String,
+    /// Its layout: size, alignment and offsets of a struct, representation and values of an enum.
+    pub layout: String,
+    pub binding: String,
+    pub header: String,
 }
 
 /// A declaration not imported, with the construct that defeated it and a workaround.
@@ -114,6 +131,11 @@ pub struct Imported {
     /// `[FFI-29]` — the shim's C, which includes the header by its path.
     pub shim: String,
     pub functions: Vec<Function>,
+    /// `[FFI-30]` — the modules whose entities this one names, each declaration it wrote (its USR,
+    /// name and layout), and each one an earlier import wrote with another layout.
+    pub uses: Vec<Vec<String>>,
+    pub entities: Vec<(String, String, String)>,
+    pub conflicts: Vec<(String, String)>,
 }
 
 fn text(string: CXString) -> String {
@@ -325,7 +347,13 @@ pub fn import_header(config: &Config) -> Result<Imported, String> {
     }
     let header = unit.included_directly().into_iter().next().ok_or_else(|| format!("`{}` was not found", config.header))?;
     let header_path = std::path::absolute(from_dir.join(&header)).unwrap_or_else(|_| PathBuf::from(&header));
-    let mut writer = Writer { header: header.clone(), stem: config.symbol_stem.to_string(), ..Writer::default() };
+    let mut writer = Writer {
+        header: header.clone(),
+        stem: config.symbol_stem.to_string(),
+        shared: config.shared.clone(),
+        binding: config.binding.to_string(),
+        ..Writer::default()
+    };
     for cursor in children(unit.cursor()) {
         let (file, _, system) = location(cursor);
         if file != header && (system || file.is_empty() || Path::new(&file) == main) {
@@ -394,6 +422,11 @@ enum Record {
 struct Writer {
     header: String,
     stem: String,
+    shared: HashMap<String, Shared>,
+    binding: String,
+    uses: Vec<Vec<String>>,
+    entities: Vec<(String, String, String)>,
+    conflicts: Vec<(String, String)>,
     items: Vec<Item>,
     shim: String,
     skipped: Vec<Skipped>,
@@ -748,11 +781,15 @@ impl Writer {
             if fields.is_empty() {
                 return self.opaque(cursor, &key, &named, Some("a struct with no fields (a GNU C extension)".to_string()));
             }
+            let size = clang_Type_getSizeOf(ty).max(0) as u64;
+            let align = clang_Type_getAlignOf(ty).max(1) as u64;
+            let fingerprint = format!("struct {size} {align} {:?}", layout.iter().map(|(_, offset)| offset).collect::<Vec<_>>());
+            if let Some(adopted) = self.adopt(&key, &named, &fingerprint, false) {
+                return adopted;
+            }
             if !self.claim(&named) {
                 return self.opaque_unclaimed(cursor, &key, &named);
             }
-            let size = clang_Type_getSizeOf(ty).max(0) as u64;
-            let align = clang_Type_getAlignOf(ty).max(1) as u64;
             packed |= align == 1 && natural > 1;
             let mut attributes = String::from("@layout(c)\n@derive(Copy)\n");
             if packed {
@@ -773,19 +810,54 @@ impl Writer {
                 let _ = writeln!(self.shim, "_Static_assert(offsetof({c_name}, {c_field}) == {offset}, \"{named}.{c_field}: offset\");");
             }
             self.layouts.push(RecordLayout { name: name.clone(), size, align, fields: layout });
+            self.entities.push((key.clone(), name.clone(), fingerprint));
             self.records.insert(key, Record::Full(name.clone()));
             Record::Full(name)
         }
     }
 
+    /// `[FFI-30]` — a declaration an earlier import of the build wrote with this layout is that
+    /// import's entity: here an alias of it. With another layout it is a distinct entity, `E5011`
+    /// unless this import binds a name of its own. `any`: an incomplete struct takes any layout.
+    fn adopt(&mut self, key: &str, named: &str, layout: &str, any: bool) -> Option<Record> {
+        let shared = self.shared.get(key)?.clone();
+        if !any && shared.layout != layout {
+            if shared.binding == self.binding && shared.layout != "opaque" {
+                self.conflicts.push((named.to_string(), shared.header.clone()));
+            }
+            return None;
+        }
+        if !self.claim(named) {
+            return None;
+        }
+        if !self.uses.contains(&shared.module) {
+            self.uses.push(shared.module.clone());
+        }
+        let alias = format!("{}_{}.{}", ember_branding::SYMBOL_PREFIX, shared.module.join("_"), shared.name);
+        let name = ident(named);
+        self.push(named, Kind::Type, format!("type {name} = {alias}"));
+        let record = if shared.layout == "opaque" { Record::Opaque(name, None) } else { Record::Full(name) };
+        self.records.insert(key.to_string(), record.clone());
+        Some(record)
+    }
+
     /// An `extern type`: used only behind pointers. A definition it could not represent is
     /// `W5002`; an incomplete struct is represented exactly.
     fn opaque(&mut self, cursor: CXCursor, key: &str, named: &str, why: Option<String>) -> Record {
+        // An incomplete struct is the entity another import wrote, whatever its layout there.
+        if why.is_none()
+            && let Some(adopted) = self.adopt(key, named, "", true)
+        {
+            return adopted;
+        }
         if !self.claim(named) {
             return self.opaque_unclaimed(cursor, key, named);
         }
         let name = ident(named);
         self.push(named, Kind::Opaque, format!("type {name}"));
+        if why.is_none() {
+            self.entities.push((key.to_string(), name.clone(), "opaque".to_string()));
+        }
         if let Some(why) = &why {
             let at = self.at(cursor);
             self.opaque.push(Skipped { name: named.to_string(), reason: why.clone(), at });
@@ -814,6 +886,22 @@ impl Writer {
         let name = ident(&named);
         // SAFETY(ffi): a live enum cursor.
         let repr = self.ty(unsafe { clang_getEnumDeclIntegerType(cursor) }, false);
+        let layout = |repr: &str| {
+            let values: Vec<i64> = children(cursor)
+                .into_iter()
+                .filter(|child| kind(*child) == CXCursor_EnumConstantDecl)
+                // SAFETY(ffi): a live enum constant.
+                .map(|child| unsafe { clang_getEnumConstantDeclValue(child) })
+                .collect();
+            format!("enum {repr} {values:?}")
+        };
+        // `[FFI-30]` — the enum an earlier import wrote, with these values, is that one.
+        if let Ok(repr) = &repr
+            && self.adopt(&key, &named, &layout(repr), false).is_some()
+        {
+            self.enums.insert(key, Ok(name.clone()));
+            return Ok(name);
+        }
         let outcome = match repr {
             Err(reason) => Err(reason),
             Ok(_) if !self.claim(&named) => Err("its name is taken by another declaration of the header".to_string()),
@@ -840,6 +928,7 @@ impl Writer {
                     variants.push_str("    pass\n");
                 }
                 self.push(&named, Kind::Type, format!("@repr({repr})\n@non_exhaustive\nenum {name}:\n{variants}"));
+                self.entities.push((key.clone(), name.clone(), layout(&repr)));
                 for (alias, text) in aliases {
                     if self.claim(&alias) {
                         self.push(&alias, Kind::Const, text);
@@ -1079,6 +1168,9 @@ impl Writer {
             layouts: self.layouts,
             shim,
             functions: self.functions,
+            uses: self.uses,
+            entities: self.entities,
+            conflicts: self.conflicts,
         }
     }
 }
@@ -1157,6 +1249,8 @@ pub struct Known {
     modules: HashMap<String, Vec<String>>,
     /// `[FFI-29b]` — each header's implementation macros compiled, with the import that asked.
     implementations: HashMap<(PathBuf, String), Span>,
+    /// `[FFI-30]` — each C declaration an import wrote, by Clang's USR.
+    shared: HashMap<String, Shared>,
 }
 
 /// A module `import c` wrote: its path, its declarations, and what else the import found.
@@ -1233,6 +1327,8 @@ pub fn load(
         defines: &options.defines,
         flags,
         symbol_stem: &path.join("_"),
+        shared: &known.shared,
+        binding: bound.as_str(),
     };
     let imported = match import_header(&config) {
         Ok(imported) => imported,
@@ -1246,6 +1342,23 @@ pub fn load(
         }
     };
     let shown = imported.header.file_name().map_or(header.clone(), |name| name.to_string_lossy().into_owned());
+    // `[FFI-30]` — one C declaration, two layouts, one name: which is meant cannot be told.
+    for (name, other) in &imported.conflicts {
+        sink.emit(
+            Diagnostic::error(codes::E5011, span, format!("`{name}` is imported from `{shown}` with a layout other than the one `{other}` gave it"))
+                .help("give one import its own alias (`as name`), making its entities distinct")
+                .note("two imports of one C declaration with one layout are one Ember entity [FFI-30]"),
+        );
+    }
+    for (usr, name, layout) in &imported.entities {
+        known.shared.entry(usr.clone()).or_insert_with(|| Shared {
+            module: path.clone(),
+            name: name.clone(),
+            layout: layout.clone(),
+            binding: bound.to_string(),
+            header: shown.clone(),
+        });
+    }
     for skipped in &imported.skipped {
         sink.emit(
             Diagnostic::warning(codes::W5002, span, format!("`{}` is not imported from `{shown}`: {}", skipped.name, skipped.reason))
@@ -1298,7 +1411,9 @@ pub fn load(
             }
         }
     }
-    let file = map.add(PathBuf::from(format!("<import c \"{header}\">")), render(&imported, &applied));
+    // Named for its module: the source map keeps one file per name, and one header imported twice
+    // is two modules.
+    let file = map.add(PathBuf::from(format!("<import c \"{header}\" as {}>", path.join("."))), render(&imported, &applied));
     let text = map.file(file).text.clone();
     let lexed = ember_lexer::lex(file, &text, sink);
     let module = ember_parser::parse(file, &text, lexed.tokens, sink);
@@ -1675,8 +1790,17 @@ fn render(imported: &Imported, applied: &Applied) -> String {
     for extend in &applied.extends {
         let _ = write!(body, "{extend}\n\n");
     }
-    let import = if body.contains("ForeignBox[") { "from std.ffi import ForeignBox\n\n" } else { "" };
-    format!("# The declarations of `{header}`, written by `import c` ([FFI-6]).\n\n{import}{body}")
+    let mut imports = String::new();
+    for module in &imported.uses {
+        let _ = writeln!(imports, "import {} as {}_{}", module.join("."), ember_branding::SYMBOL_PREFIX, module.join("_"));
+    }
+    if body.contains("ForeignBox[") {
+        imports.push_str("from std.ffi import ForeignBox\n");
+    }
+    if !imports.is_empty() {
+        imports.push('\n');
+    }
+    format!("# The declarations of `{header}`, written by `import c` ([FFI-6]).\n\n{imports}{body}")
 }
 
 /// The overlay entry that states nothing yet for a function: each unknown fact a `TODO(…)` word
@@ -1736,7 +1860,17 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
     let header = header.ok_or("`ember bind` needs a header")?;
     let file = header.file_name().ok_or("`ember bind` needs a header file")?.to_string_lossy().into_owned();
     let dir = header.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf();
-    let config = Config { header: &file, from_dir: &dir, include_paths: &include_paths, defines: &defines, flags: &[], symbol_stem: "bind" };
+    let shared = HashMap::new();
+    let config = Config {
+        header: &file,
+        from_dir: &dir,
+        include_paths: &include_paths,
+        defines: &defines,
+        flags: &[],
+        symbol_stem: "bind",
+        shared: &shared,
+        binding: "c",
+    };
     let imported = import_header(&config)?;
     let skipped: Vec<&Skipped> = imported.skipped.iter().chain(&imported.macros).collect();
     let mut map = SourceMap::new();
