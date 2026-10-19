@@ -119,7 +119,7 @@ fn two_majors_of_a_dependency_coexist() {
     // (Their small functions are inlined into `main`; the types and the unused functions remain.)
     let symbols = ["geometry.shapes.Square ", "geometry__1.shapes.Square ", "geometry.inner(", "geometry__1.inner("];
     for symbol in symbols.map(ember_branding::mangled) {
-        assert!(c.contains(symbol), "no `{symbol}` in the C");
+        assert!(c.contains(&symbol), "no `{symbol}` in the C");
     }
     std::fs::write(app.join("src").join(ember_branding::source_file("main")),
         "import geometry\n\nfn main():\n    println(geometry.inner())\n").unwrap();

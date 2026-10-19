@@ -1881,17 +1881,28 @@ fn unknown_manifest_keys_name_the_keys_their_section_accepts() {
         assert!(checked.stderr.contains(help), "[MAN-1] {name} did not name the accepted keys {help:?}:\n{}", checked.stderr);
         assert!(checked.stderr.contains(MANIFEST), "[MAN-1] {name} did not point to the manifest:\n{}", checked.stderr);
     }
-    // Every key `[MAN-8]` names is accepted.
+    // Every key `[MAN-8]` names is accepted. The values are real ones (a dependency is resolved,
+    // the language is the current one); a `{ git, rev }` dependency, which needs a repository, is
+    // the package tests' (`a_git_dependency_is_checked_out_at_its_revision`).
     let package = temporary_directory("manifest-every-key");
     let source = package.join(ember_branding::source_file("main"));
+    for dependency in ["geometry", "parser"] {
+        let dir = package.join("deps").join(dependency);
+        std::fs::create_dir_all(dir.join("src")).expect("the dependency is writable");
+        std::fs::write(dir.join(MANIFEST), format!("[package]\nname = \"{dependency}\"\nversion = \"1.0.0\"\nkind = \"lib\"\nlayers = [\"core\"]\n"))
+            .expect("the dependency's manifest is writable");
+        std::fs::write(dir.join("src").join(ember_branding::source_file("lib")), "pub fn one() -> i32:\n    return 1\n")
+            .expect("the dependency's source is writable");
+    }
     std::fs::write(
         package.join(MANIFEST),
-        "[package]\nname = \"p\"\nversion = \"0.1.0\"\nlanguage = \"0.9.9\"\nkind = \"bin\"\nlayers = [\"core\"]\nedition_lints = \"strict\"\n\
-         [dependencies]\ngeometry = { path = \"../geometry\" }\n[dependencies.parser]\ngit = \"https://example.org/p.git\"\nrev = \"4f2a9c1\"\n\
+        format!("[package]\nname = \"p\"\nversion = \"0.1.0\"\nlanguage = \"{}\"\nkind = \"bin\"\nlayers = [\"core\"]\nedition_lints = \"strict\"\n\
+         [dependencies]\ngeometry = {{ path = \"deps/geometry\" }}\n[dependencies.parser]\npath = \"deps/parser\"\n\
          [build]\ntarget = \"native\"\nbackend = \"c\"\nc_compiler = \"auto\"\nruntime = \"static\"\nmax_instantiations = 200\n\
          [profiles.release]\nlto = \"thin\"\n[c]\ncompiler = \"auto\"\nflags = []\n[link]\nlibs = []\n[jobs]\nworkers = \"auto\"\n\
          [realtime]\ncontracts = [\"noalloc\"]\n[comptime]\nmax_steps = 100000000\nmax_heap_mb = 256\n[lints]\nunused = \"warn\"\n\
          [cpp.engine]\ncompiler = \"clang\"\nstandard = \"c++20\"\ndefines = []\ninclude_paths = []\nflags = []\n[ffi]\nevidence = \".ember/ffi-evidence\"\n",
+        ember_parser::LANGUAGE_VERSION),
     )
     .expect("manifest is writable");
     std::fs::write(&source, "fn main():\n    pass\n").expect("source is writable");
