@@ -409,6 +409,33 @@ fn assert_exact_diagnostics(
 }
 
 /// `ember` with `input` piped to its standard input (`#$ stdin:`).
+/// `[TST-27]` — `ember` with the program's C compiled with warnings as errors, and `input` on its
+/// standard input when given.
+fn ember_gated(args: &[&str], root: &Path, input: Option<&[u8]>) -> Run {
+    use std::io::Write;
+    let (mut command, _output_directory) = test_command(args, root);
+    command.env(ember_branding::c_warnings_as_errors_var(), "1");
+    let mut child = command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("the ember binary runs");
+    let stdin = child.stdin.take().expect("piped stdin");
+    if let Some(input) = input {
+        let mut stdin = stdin;
+        stdin.write_all(input).expect("stdin is written");
+    } else {
+        drop(stdin);
+    }
+    let output = child.wait_with_output().expect("the ember binary finishes");
+    Run {
+        stdout: String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        stderr: String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+        exit: output.status.code().unwrap_or(-1),
+    }
+}
+
 fn ember_with_input(args: &[&str], root: &Path, input: &[u8]) -> Run {
     use std::io::Write;
     let (mut command, _output_directory) = test_command(args, root);
@@ -791,6 +818,22 @@ fn inspect_cost_reports_each_row_by_site() {
     let value: serde_json::Value = serde_json::from_str(json.stdout.trim()).expect("--cost --json is JSON");
     let rows = value["costs"].as_array().expect("the rows");
     assert!(rows.iter().any(|row| row["row"] == "Allocation" && row["class"] == "guaranteed present"), "{}", json.stdout);
+}
+
+/// `[DOC-1]` — error pages ship with their errors: `ember explain <code>` prints the page from the
+/// compiler itself, wherever it runs, not from a repository it may not be in.
+#[test]
+fn explain_prints_the_page_built_into_the_compiler() {
+    let root = workspace_root();
+    let elsewhere = temporary_directory("explain-elsewhere");
+    let shown = ember(&["explain", "E9034"], &elsewhere);
+    assert_eq!(shown.exit, 0, "{}", shown.stderr);
+    let page = std::fs::read_to_string(root.join("docs").join("errors").join("E9034.md")).expect("the page");
+    assert!(shown.stdout.contains(page.lines().next().expect("a title")), "{}", shown.stdout);
+    assert!(shown.stdout.contains("## The fix"), "{}", shown.stdout);
+    let json = ember(&["explain", "E9034", "--json"], &elsewhere);
+    let value: serde_json::Value = serde_json::from_str(json.stdout.trim()).expect("explain --json is JSON");
+    assert!(value["page"].as_str().is_some_and(|text| text.contains("## Why")), "{}", json.stdout);
 }
 
 /// `[CLI-15]` — `ember --help` lists every command and flag of XVII.1: each `ember <command>` and each
@@ -4782,10 +4825,9 @@ fn check_file(path: &Path, root: &Path) {
             arguments.push("--");
             arguments.extend(expectations.args.iter().map(String::as_str));
         }
-        let run = match &expectations.stdin {
-            Some(input) => ember_with_input(&arguments, root, input.as_bytes()),
-            None => ember(&arguments, root),
-        };
+        // `[TST-27]` — the C gate: an accepted program's C compiles with warnings as errors, on each
+        // C compiler CI runs the suite with; a C compiler error on one is a compiler defect.
+        let run = ember_gated(&arguments, root, expectations.stdin.as_ref().map(|input| input.as_bytes()));
         for needle in &expectations.stderr {
             assert!(
                 run.stderr.contains(needle.as_str()),
@@ -6022,6 +6064,8 @@ fn the_128_bit_programs_run_with_the_halves() {
 /// `[TST-4]`/`[TST-4a]` — every rule directory under `tests/conformance/` is
 /// run, and every file in one carries its expectations. A directory that
 /// exists but is never executed is what `[TST-4a]` calls "not coverage".
+/// `[TST-27]` — each accepted program's C is compiled with warnings as errors (`ember_gated`), on
+/// each C compiler CI runs this suite with.
 #[test]
 fn the_conformance_suite_runs() {
     let root = workspace_root();

@@ -13674,6 +13674,14 @@ impl<'a> Checker<'a> {
         if let Some(built) = self.synth_mem_ownership_builtin(name, args, explicit, span) {
             return Some(built);
         }
+        // `[UNS-6]` — `unsafe asm("…", …)`: inline assembly, which the C backend does not support.
+        if name.is("asm") && self.lookup(name).is_none() && !self.fn_ids.contains_key(&self.resolve_name(name)) {
+            self.sink.emit(
+                Diagnostic::error(codes::E5090, span, "inline assembly is not supported by the C backend")
+                    .help("write the instructions in a C or assembly file and declare the function `extern \"C\"` [UNS-6]"),
+            );
+            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        }
         // `[FFI-36a]` — `std.ffi`'s compiler-known operations on foreign objects.
         let resolved = self.resolve_name(name);
         // `[STD-22]`, `[STD-24]`, `[STD-25]` — a standard function whose body is the runtime's: its

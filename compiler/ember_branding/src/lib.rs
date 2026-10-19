@@ -72,9 +72,22 @@ pub fn mangle_prefix() -> String {
 }
 
 /// A mangled symbol for an Ember item: `em_std_math_Vec3_length`.
-/// `[MNG-3]` — the caller has already transliterated the name to ASCII.
 pub fn mangled(name: &str) -> String {
-    format!("{}{}", mangle_prefix(), name.replace('.', "_"))
+    format!("{}{}", mangle_prefix(), c_identifier(name))
+}
+
+/// `[MNG-3]` — an Ember name as C spells it: each `.` an `_`, and each character beyond ASCII as
+/// `_uXXXX_`, its code point in hex (four digits or more), so `café` is `caf_u00E9_`.
+pub fn c_identifier(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in name.chars() {
+        match c {
+            '.' => out.push('_'),
+            c if c.is_ascii() => out.push(c),
+            c => out.push_str(&format!("_u{:04X}_", c as u32)),
+        }
+    }
+    out
 }
 
 /// `[MNG-2]` — the C name of a function whose `@export` symbol is not a C identifier
@@ -112,15 +125,15 @@ pub fn runtime(symbol: &str) -> String {
 
 /// `[MNG-4]` — class object structs, vtables and type infos.
 pub fn object_struct(class: &str) -> String {
-    format!("{}obj_{}", mangle_prefix(), class.replace('.', "_"))
+    format!("{}obj_{}", mangle_prefix(), c_identifier(class))
 }
 
 pub fn vtable(name: &str) -> String {
-    format!("{}vt_{}", mangle_prefix(), name.replace('.', "_"))
+    format!("{}vt_{}", mangle_prefix(), c_identifier(name))
 }
 
 pub fn type_info(name: &str) -> String {
-    format!("{}ti_{}", mangle_prefix(), name.replace('.', "_"))
+    format!("{}ti_{}", mangle_prefix(), c_identifier(name))
 }
 
 /// `hello.em`, for a message that names a file the user should create.
@@ -152,6 +165,12 @@ pub fn no_compile_cache_var() -> String {
 
 /// The environment variable that chooses the C compiler when `--cc` does not:
 /// `msvc`, `clang-cl`, `clang`, `gcc` or `auto`. CI's compiler matrix sets it.
+/// `[TST-27]` — set to `1`, the program's own C is compiled with warnings as errors (`/WX`,
+/// `-Werror`): the C gate the conformance suite runs every accepted program through.
+pub fn c_warnings_as_errors_var() -> String {
+    format!("{}_C_WARNINGS_AS_ERRORS", SYMBOL_PREFIX.to_uppercase())
+}
+
 pub fn cc_var() -> String {
     format!("{}_CC", SYMBOL_PREFIX.to_uppercase())
 }

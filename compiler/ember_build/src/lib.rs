@@ -628,6 +628,11 @@ fn write_atomically(file: &Path, text: &str) {
     }
 }
 
+/// `[TST-27]` — whether the program's own C is compiled with warnings as errors.
+fn warnings_as_errors() -> bool {
+    std::env::var(ember_branding::c_warnings_as_errors_var()).is_ok_and(|value| value == "1")
+}
+
 fn compile_and_link_impl(
     toolchain: &Toolchain,
     request: &LinkRequest,
@@ -639,6 +644,9 @@ fn compile_and_link_impl(
     match toolchain {
         Toolchain::Msvc { .. } => {
             command.args(msvc_flags(request.profile));
+            if warnings_as_errors() {
+                command.arg("/WX");
+            }
             for dir in request.include_dirs {
                 command.arg(format!("/I{}", dir.display()));
             }
@@ -651,6 +659,9 @@ fn compile_and_link_impl(
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.args(gnu_flags(request.profile)).args(gcc_flags(toolchain, request.profile));
+            if warnings_as_errors() {
+                command.arg("-Werror");
+            }
             let section_flags = executable_section_flags(toolchain, retained_symbols.is_some());
             command.args(section_flags);
             for dir in request.include_dirs {
@@ -2183,6 +2194,22 @@ int main(int argc, char** argv) {
         assert!(output.status.success(), "Sync counts failed: {}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `[TXT-6]` — across the C ABI a `str` is `{const uint8_t *ptr; size_t len}`: the runtime header
+    /// every program and every exported header includes defines it so.
+    #[test]
+    fn a_str_is_a_byte_pointer_and_a_length() {
+        let runtime = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+        let header = std::fs::read_to_string(runtime.join("include").join(ember_branding::runtime_header()))
+            .expect("the runtime header is readable");
+        let name = format!("{}_str", ember_branding::SYMBOL_PREFIX);
+        let definition = format!("typedef struct {name} {{
+    const uint8_t* ptr;
+    size_t len;
+}} {name};");
+        assert!(header.contains(&definition), "[TXT-6] `{name}` is not {{const uint8_t *ptr; size_t len}}");
     }
 
     /// `[CG-C-5]` — every panic function the runtime declares is `noreturn` and cold (gcc and

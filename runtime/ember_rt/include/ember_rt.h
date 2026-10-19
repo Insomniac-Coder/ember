@@ -249,8 +249,9 @@ static inline bool ember_f64_is_finite(double value) {
 
 /* [LEX-20] A string literal has type `str`: a view over UTF-8 bytes with the
  * static region. Pointer plus length, never NUL-terminated by construction. */
+/* `[TXT-6]` — across the C ABI a `str` is `{const uint8_t *ptr; size_t len}`. */
 typedef struct ember_str {
-    const unsigned char* ptr;
+    const uint8_t* ptr;
     size_t len;
 } ember_str;
 
@@ -573,6 +574,12 @@ EMBER_CHECKED_OPS_U64(usize, size_t)
  * only thing left to report is T.MIN / -1, whose true result is not
  * representable ([TYP-8]). Unsigned division cannot overflow and never gets
  * here. */
+/* [TST-27] (D-713) The divisor is checked before these run (`[TYP-8]`); MSVC's whole-program
+ * optimisation, seeing a constant zero on the path that has already panicked, warns of a
+ * remainder by zero (C4724). */
+#if defined(_MSC_VER) && !defined(__clang__)
+#pragma warning(disable: 4724)
+#endif
 #define EMBER_CHECKED_DIV(SUFFIX, TYPE, MINVAL)                              \
     EMBER_INLINED bool ember_ck_div_##SUFFIX(TYPE a, TYPE b, TYPE* out) {    \
         if (a == (TYPE)(MINVAL) && b == (TYPE)-1) { *out = a; return true; } \

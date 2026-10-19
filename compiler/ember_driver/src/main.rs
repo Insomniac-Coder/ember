@@ -2877,11 +2877,14 @@ fn write_unclassified_log(sink: &ember_diag::Sink, options: &Options) {
     );
 }
 
+include!(concat!(env!("OUT_DIR"), "/error_pages.rs"));
+
 fn explain(code: &str, json: bool) -> Result<ExitCode, String> {
     let Some(found) = ember_diag::codes::lookup(code) else {
         return Err(format!("`{code}` is not a diagnostic code"));
     };
-    let page = std::fs::read_to_string(Path::new("docs/errors").join(format!("{found}.md"))).ok();
+    // `[DOC-1]` — the page built into the compiler.
+    let page = ERROR_PAGES.iter().find(|(page, _)| *page == found.to_string()).map(|(_, text)| text.to_string());
     if json {
         println!(
             "{}",

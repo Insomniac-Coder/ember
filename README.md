@@ -47,7 +47,7 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 | 6 | Concurrency and data-oriented design | 88% |
 | 7 | C++ interoperability and the interpreter | 0% |
 | 7a | Iteration, determinism, cost control | 79% |
-| 8 | Hardening and 1.0 | 35% |
+| 8 | Hardening and 1.0 | 39% |
 | | Overall (1.0) | 86% |
 | | After 1.0: the LLVM backend (v2), the GPU host model (v0.6) | 0% |
 

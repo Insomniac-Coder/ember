@@ -1283,6 +1283,11 @@ impl Emitter<'_> {
             }
             Some(FpMode::Fast) => self.line("/* [CG-C-11] @fastmath: compiled with the relaxed flags ([TYP-9]). */"),
         }
+        // `[FFI-10]`, `[TST-27]` (D-713) — a foreign function the program declares by hand may be one a C
+        // library header already declares, and MSVC's headers mark theirs `dllimport` under `/MD`.
+        self.line("#if defined(_MSC_VER) && !defined(__clang__)");
+        self.line("#pragma warning(disable: 4273)");
+        self.line("#endif");
         // `[CG-C-1]` — every division by zero is defined in Ember: a float one
         // is IEEE's (`[TYP-29]`), an integer one is checked before it divides.
         // MSVC's "potential divide by 0" (C4723), which it reports after
@@ -13287,5 +13292,5 @@ static void ember_ct_print_128(uint64_t lo, uint64_t hi, int is_signed) {
 
 /// `[CT-5]` — the C name of a constant static's data.
 fn constant_static_symbol(name: &str) -> String {
-    format!("{}cs_{}", ember_branding::mangle_prefix(), name.replace(['.', ':'], "_"))
+    format!("{}cs_{}", ember_branding::mangle_prefix(), ember_branding::c_identifier(&name.replace(':', "_")))
 }

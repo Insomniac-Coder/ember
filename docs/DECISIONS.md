@@ -5017,6 +5017,26 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-217 — Names beyond ASCII, `asm`, error pages built in, `str` at the C ABI, the C gate
+
+2026-10-19, toward 90% (solo).
+* `[MNG-3]` `ember_branding::c_identifier`: each `.` an `_`, each character beyond ASCII `_uXXXX_` (its
+  code point, four hex digits or more). `mangled`, `object_struct`, `vtable`, `type_info` and the
+  call-site names go through it, so `café` is `em_caf_u00E9_` and `Maß` `em_Ma_u00DF_` (they went to
+  C as written, which only some C compilers accept).
+* `[UNS-6]` a call to `asm(…)` that names nothing of the program's is `E5090`: the C backend has no
+  inline assembly. `asm` stays an ordinary name.
+* `[DOC-1]` `ember_driver/build.rs` builds every `docs/errors/*.md` into the compiler; `ember explain`
+  printed a page only when run from the repository root. The WSL gcc tree copies `docs/errors`.
+* `[TXT-6]` the runtime's `str` is `{const uint8_t* ptr; size_t len}` as the rule spells it (it was
+  `unsigned char`, the same type on every supported target).
+* `[TST-27]` the C gate: with `EMBER_C_WARNINGS_AS_ERRORS=1` (`ember_branding::c_warnings_as_errors_var`)
+  the program's own C unit is compiled with `/WX` or `-Werror`; the conformance runner sets it for
+  every program it builds and runs, so every accepted program goes through each C compiler CI runs
+  the suite with (MSVC, clang-cl, gcc, clang) with warnings as errors. The relaxed floating-point
+  units are left out: their refused-flag check (`[TYP-9c]`) reads the compiler's warnings.
+  Its first run found D-713 (two MSVC warnings the local sweep could not see).
+
 ## ADR-216 — The rest of `[DET-2]`: pointers as integers, padding (ODR-136); D-712
 
 2026-10-19, toward 90% (solo).

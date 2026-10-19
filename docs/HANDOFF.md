@@ -10742,6 +10742,10 @@ formal 1/9 count or Phase 2's estimate.
 > Then ADR-215: `ember tcb` by category (`[TCB-4]`), `ember audit` (`[CLI-11]`), `ember inspect --cost`
 > (`[COST-4]`, `[COST-2]`, `[PHIL-15]`, `[STD-8a]`).
 > Then ADR-216: `[DET-2]` complete (ODR-136, 0.9.10_Hardened_19), D-712 (Linux runtime build).
+> Then ADR-217: `[MNG-3]` transliteration, `[UNS-6]` `asm` is `E5090`, error pages built into the
+> compiler (`[DOC-1]`), `[TXT-6]`, the C gate (`[TST-27]`). The owner then allowed one helper agent:
+> helper L builds `[LAY-2]` in the worktree `.claude/worktrees/helper-L` (branch `helper-L`; job sheet
+> in the session scratchpad `jobs/job_L.md`, notes to `tasks/90/L-notes.md`); merge it when it reports.
 
 
 **2026-10-12 (autopilot), a Part V.5 class probe sweep: D-560..D-566, ODR-104 (0.9.10_Hardened_8).**
