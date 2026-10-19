@@ -1107,7 +1107,7 @@ fn retained_tokens_let_c_keep_ember_objects() {
         let program = link_with_fixture(&source, "foreign_objects.c", profile, &directory, &format!("retained_{profile:?}"));
         let run = ember_build::output_started(&mut Command::new(program)).expect("the program runs");
         assert!(run.status.success(), "{profile:?}: {}", String::from_utf8_lossy(&run.stderr));
-        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "still alive\n1\ndropped kept\nreleased\n7\n", "{profile:?}");
+        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "still alive\n1\ndropped kept\nreleased\n3\n7\n", "{profile:?}");
     }
 }
 

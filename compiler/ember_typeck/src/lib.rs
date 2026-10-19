@@ -13638,7 +13638,7 @@ impl<'a> Checker<'a> {
             return Some(self.synth_foreign_adopt(args, explicit, span));
         }
         // `[FFI-23]` — what `Retained` pins: a class handle or a `Box`.
-        if (resolved.is("std.ffi.retained_pin") || resolved.is("std.ffi.retained_address")) && args.len() == 1 {
+        if resolved.is("std.ffi.retained_pin") && args.len() == 1 {
             let value = self.synth_committed(&args[0].value);
             let pinnable = matches!(self.types.kind(value.ty), TyKind::Class(_) | TyKind::Param { .. } | TyKind::Error)
                 || self.box_inner(value.ty).is_some();
@@ -13650,12 +13650,7 @@ impl<'a> Checker<'a> {
                 );
                 return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
             }
-            let (which, ty) = if resolved.is("std.ffi.retained_pin") {
-                (Builtin::RetainedPin, self.common.void)
-            } else {
-                (Builtin::RetainedAddress, self.types.intern(TyKind::Ptr { mutable: true, inner: self.common.u8 }))
-            };
-            return Some(Expr { ty, kind: ExprKind::Builtin { which, args: vec![value] }, span });
+            return Some(Expr { ty: self.common.void, kind: ExprKind::Builtin { which: Builtin::RetainedPin, args: vec![value] }, span });
         }
         if resolved.is("std.ffi.foreign_release") && args.len() == 2 {
             let pointer = self.synth_committed(&args[0].value);
@@ -38106,6 +38101,24 @@ impl<'a> Checker<'a> {
         self.synth_method_on(receiver, recv.span, name, generic_args, args, expected, span)
     }
 
+    /// `[FFI-23]` (ODR-132) — `token.ptr()`: an `ObjectPtr[C]` for a class `C`, a `*mut U` for a
+    /// `Box[U]`, a `*mut u8` for a `Box[dyn I]` (and for a token over an opaque parameter, which a
+    /// concrete instance types). The object's address, read from the token's value.
+    fn synth_retained_ptr(&mut self, token: Expr, held: Ty, span: Span) -> Expr {
+        let bytes = self.types.intern(TyKind::Ptr { mutable: true, inner: self.common.u8 });
+        let ty = match *self.types.kind(held) {
+            TyKind::Class(_) => self.instantiate_named_generic("std.ffi.ObjectPtr", &[held], span),
+            _ => match self.box_inner(held) {
+                Some(inner) if !matches!(self.types.kind(inner), TyKind::Dyn { .. }) => {
+                    self.types.intern(TyKind::Ptr { mutable: true, inner })
+                }
+                _ => bytes,
+            },
+        };
+        let value = Expr { ty: held, kind: ExprKind::Field { base: Box::new(token), index: 0 }, span };
+        Expr { ty, kind: ExprKind::Builtin { which: Builtin::RetainedAddress, args: vec![value] }, span }
+    }
+
     /// The rest of a method call, once its receiver is checked: what `recv.name(args)` means for
     /// a receiver of this type. A desugaring that has a receiver in hand comes here directly.
     #[allow(clippy::too_many_arguments)]
@@ -38141,6 +38154,13 @@ impl<'a> Checker<'a> {
                 break;
             }
             receiver = self.read_through(receiver);
+        }
+        // `[FFI-23]` (ODR-132) — `token.ptr()`: the address foreign code keeps, typed by what the
+        // token holds.
+        if name.name.is("ptr") && args.is_empty() && generic_args.is_empty()
+            && let Some(held) = self.lock_inner(receiver.ty, "std.ffi.Retained")
+        {
+            return self.synth_retained_ptr(receiver, held, span);
         }
         // `[SIMD-4]`, `[SIMD-8]`, `[SIMD-9]` — what a `std.simd` vector or mask does.
         if generic_args.is_empty() && self.simd_shape(receiver.ty).is_some() {

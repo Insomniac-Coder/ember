@@ -10720,7 +10720,8 @@ formal 1/9 count or Phase 2's estimate.
 > B2 (`E5068`), B7, A6; A4, A5, B1 are specification text; B6 waits for C header import. Next from
 > the list: B3, then A1 (the owner did not ask to see their designs first). Helper C was merged the
 > same day (ADR-206); the owner answered its questions and they are built (0.9.10_Hardened_14,
-> ADR-207).
+> ADR-207). B3 built (0.9.10_Hardened_15, ADR-208). The owner then set the goal: solo and
+> autonomous, 85% and then 90%.
 
 
 **2026-10-12 (autopilot), a Part V.5 class probe sweep: D-560..D-566, ODR-104 (0.9.10_Hardened_8).**

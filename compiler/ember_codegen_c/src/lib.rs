@@ -7432,6 +7432,17 @@ impl Emitter<'_> {
                     self.call_expression(func, args, body, body.blocks[index].terminator_span)
                 };
                 let dest_ty = self.place_ty(dest, body);
+                // `[FFI-23]` (ODR-132) — the object's address as the type `ptr()` gives it: an
+                // `ObjectPtr[C]` holds it, a `*mut U` is it.
+                let call = match (func, self.types.kind(dest_ty)) {
+                    (FuncRef::Builtin { which: Builtin::RetainedAddress, .. }, TyKind::Struct(_)) => {
+                        format!("(({}){{ {call} }})", self.c_type(dest_ty))
+                    }
+                    (FuncRef::Builtin { which: Builtin::RetainedAddress, .. }, TyKind::Ptr { .. }) => {
+                        format!("(({}){call})", self.c_type(dest_ty))
+                    }
+                    _ => call,
+                };
                 if let Some((ptr, len)) = self.view_parts(func, args, dest_ty, body) {
                     let dest_text = self.place_in(dest, body);
                     self.line(&format!("    ({dest_text}).ptr = {ptr};"));

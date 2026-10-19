@@ -5017,6 +5017,17 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-208 — `Retained.ptr()` typed: `ObjectPtr[C]`, `*mut U` (B3, 0.9.10_Hardened_15)
+
+2026-10-19. The owner's B3 (a typed pointer), built under the delegation as ODR-132: `token.ptr()` is
+compiler-known (`synth_retained_ptr`): a `std.ffi.ObjectPtr[C]` for a class `C`, a `*mut U` for a
+`Box[U]`, a `*mut u8` for a `Box[dyn I]` and for a token over an opaque parameter. `ObjectPtr[C]` is a
+standard-library struct of one `*mut u8` (`@derive(Copy)`, equality derived): typed in Ember, one
+pointer to C. The code generator writes the builtin's address as the destination's type (a compound
+literal for `ObjectPtr`, a cast for a pointer). The std `ptr` method and `retained_address` are gone.
+`FFI-23/accept_retained_lets_foreign_code_keep_ember_memory` passes an `ObjectPtr[Noisy]` to C and reads
+a boxed `Point` through its `*mut Point`; `reject_retained_misuse` refuses mixing them.
+
 ## ADR-207 — Helper C's questions answered and built (0.9.10_Hardened_14)
 
 2026-10-19. The owner answered helper C's questions (ODR-127 to ODR-131, `tasks/85/owner-answers.md`):

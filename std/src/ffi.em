@@ -65,9 +65,11 @@ pub unsafe fn adopt[T](h: *mut T) -> ForeignBox[T]:  # SAFETY: the declaration s
 ## `Retained.pin(v)` takes `v`, a class handle or a `Box`: for a class handle the token holds a
 ## strong count of the object (it is retained) and the object's header gets its pinned flag, which
 ## stays (`[HR-20]`: an object foreign code may hold is never moved); for a `Box` the token owns it.
-## `tok.ptr()` is the object's address, which C keeps; dropping the token releases the object (the
-## class handle's count, or the box and its value). A parameter contracted `retained` takes a
-## token and gives C its address (`[FFI-11]`).
+## `tok.ptr()` is the object's address, which C keeps, typed by what the token holds (ODR-132): an
+## `ObjectPtr[C]` for a class `C`, a `*mut U` for a `Box[U]`, a `*mut u8` for a `Box[dyn I]`, whose
+## value's type is not known. Compiler-known. Dropping the token releases the object (the class
+## handle's count, or the box and its value). A parameter contracted `retained` takes a token and
+## gives C its address (`[FFI-11]`).
 pub struct Retained[T]:
     value: T
 
@@ -75,18 +77,19 @@ pub struct Retained[T]:
         retained_pin(value)
         return Retained(value)
 
-    ## The object's address: the class object's, or the `Box`'s value's.
-    pub fn ptr(self) -> *mut u8:
-        return retained_address(self.value)
+## `[FFI-23]` (ODR-132) — the address of a class object, for foreign code to keep or to be handed
+## back: no count of its own, so it says nothing about how long the object lives (a `Retained`
+## token keeps it alive). To C it is one pointer to the object. Two are equal when they are the
+## address of one object.
+@derive(Copy)
+pub struct ObjectPtr[C]:
+    address: *mut u8
 
 ## `[FFI-23]` — compiler-known: a class object's pinned flag is set, a `Box` needs nothing, and any
 ## other value is refused.
 fn retained_pin[T](value: T):
     pass
 
-## `[FFI-23]` — compiler-known: the address of the object a class handle or a `Box` holds.
-fn retained_address[T](value: T) -> *mut u8:
-    return null[*mut u8]()
 
 ## `[FFI-36b]`, `[FFI-33b]` — a box's end: the address leaves the runtime's record, and a box
 ## that records its creator is checked to end on that thread (debug). Compiler-known.

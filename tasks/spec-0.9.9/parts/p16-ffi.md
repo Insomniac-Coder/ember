@@ -316,10 +316,13 @@ unsafe overlay c "vulkan/vulkan.h":
   callback's captures, and a handle passed to foreign code as `retained`, MUST be `Send` (`[THR-8]`, `E7004`)
   unless the contract says `threads(main)` or `threads(creator)`: the compiler cannot see which thread C
   will call from, so the contract is the only evidence, and it is an asserted fact (`[TCB-1]`).
-* `[FFI-23]` `Retained.pin(v)` hands an Ember-owned object to C for keeping: for a class handle it
-  retains the object and sets the header's pinned flag; for a `Box` it takes ownership. `tok.ptr()`
-  is the raw pointer and dropping the token releases it. It is the only way to let foreign code keep
-  Ember memory.
+* `[FFI-23]` *(changed in 0.9.10)* `Retained.pin(v)` hands an Ember-owned object to C for keeping: for
+  a class handle it retains the object and sets the header's pinned flag; for a `Box` it takes
+  ownership. `tok.ptr()` is the object's address, typed by what the token holds: a
+  `std.ffi.ObjectPtr[C]` for a class `C`, a `*mut U` for a `Box[U]`, a `*mut u8` for a `Box[dyn I]`.
+  An `ObjectPtr[C]` is the address of a class object with no count of its own (to C, one pointer):
+  `Copy`, equal when it is the address of the same object. Dropping the token releases the object.
+  It is the only way to let foreign code keep Ember memory.
 * `[FFI-33b]` `returns_owned`, `Retained` and callbacks may carry `threads(creator)`: a `ForeignBox`
   records its creating thread and, in `debug`, panics when dropped on another — the rule that makes
   GPU, GL-context and COM handles safe to hold in ordinary values.

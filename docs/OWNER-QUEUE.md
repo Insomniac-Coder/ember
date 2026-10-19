@@ -262,6 +262,27 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-132 — the type of `Retained.ptr()` — **CLOSED**
+
+    ID:        ODR-132
+    Status:    CLOSED — ruled under the delegation (2026-10-19, autopilot), after the owner chose a typed pointer; incorporated in 0.9.10_Hardened_15
+    Category:  C INTEROP
+    Location:  Ember_v0.9.10_Hardened_14.md [FFI-23]
+
+**The question.** The owner chose (B3, `tasks/85/owner-answers.md`) that `tok.ptr()` be a typed pointer, which needs
+a pointer type for class objects: `*mut C` of a class `C` is the address of a handle, not of the object.
+
+**Options.** (a) A new kind of type in the compiler for an object's address: every pass that matches
+on types learns it. (b) A standard-library struct `std.ffi.ObjectPtr[C]` holding the address: typed in
+Ember, one pointer-sized value to C (a struct of one pointer is passed exactly as the pointer on every
+ABI Ember targets), with `Copy` and equality derived like any struct's.
+
+**Ruling.** (b): `tok.ptr()` is a `std.ffi.ObjectPtr[C]` for a class `C`, a `*mut U` for a `Box[U]` (Ember
+can read the value through it), and a `*mut u8` for a `Box[dyn I]`, whose value's type is not known. An
+`ObjectPtr` has no count of its own: the token keeps the object alive. ADR-208.
+
+---
+
 ## ODR-131 — how a host notices a module built for other start-up rules — **CLOSED**
 
     ID:        ODR-131

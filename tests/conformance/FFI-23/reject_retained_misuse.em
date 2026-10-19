@@ -2,12 +2,23 @@
 #$ rules: FFI-23, FFI-22, FFI-11
 # `[FFI-23]` — `Retained` pins a class handle or a `Box`, and a token crosses
 # to C only through a `retained` contract. `[FFI-22]` — what foreign code
-# keeps is `Send`, unless the contract says which thread uses it.
+# keeps is `Send`, unless the contract says which thread uses it. `tok.ptr()`
+# is typed by what the token holds (ODR-132): one class's address is not
+# another's, and a box's value is not a raw byte.
 
-from std.ffi import Retained
+from std.ffi import Retained, ObjectPtr
 
 class Noisy:
     name: str
+
+class Quiet:
+    name: str
+
+fn address_of_another(token: Retained[Noisy]) -> ObjectPtr[Quiet]:
+    return token.ptr()    #$ error[E2020]: expected `std.ffi.ObjectPtr[Quiet]`, found `std.ffi.ObjectPtr[Noisy]`
+
+fn bytes_of_a_box(token: Retained[Box[i64]]) -> *mut u8:
+    return token.ptr()    #$ error[E2020]: expected `*mut u8`, found `*mut i64`
 
 unsafe extern "C":
     @ffi(param(object, retained, one))

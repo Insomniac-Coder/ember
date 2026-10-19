@@ -544,7 +544,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-21]` | XVI | A C function-pointer parameter accepts a capture-free Ember function … |
 | `[FFI-21a]` | XVI | *(new in 0.9.10)* A parameter C passes as a copy. C passes a … |
 | `[FFI-22]` | XVI | Every exported function and trampoline first attaches the calling … |
-| `[FFI-23]` | XVI | `Retained.pin(v)` hands an Ember-owned object to C for keeping: for a … |
+| `[FFI-23]` | XVI | *(changed in 0.9.10)* `Retained.pin(v)` hands an Ember-owned object … |
 | `[FFI-24]` | Annex C | Every imported C++ function has an exception policy, with a default. … |
 | `[FFI-24b]` | Annex C | An overlay may assert `@ffi(noexcept)` for a function the header … |
 | `[FFI-24c]` | Annex C | `ember inspect` reports each C++ call's mode (`noexcept (derived)`, … |

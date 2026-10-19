@@ -294,7 +294,8 @@ questions (§H.15); 0.9.10_Hardened_11 adds ODR-113 to ODR-115, the owner's ruli
 a use after a move and an `unsafe fn` value are (§H.16); 0.9.10_Hardened_12 adds ODR-116, a
 `MutSpan` where a `Span` is expected (§H.17); 0.9.10_Hardened_13 adds ODR-117 to ODR-126, the
 owner's answers to the 85% push's questions and the profiles' new names (§H.18); 0.9.10_Hardened_14
-adds ODR-127 to ODR-131, the owner's answers to helper C's questions (§H.19).
+adds ODR-127 to ODR-131, the owner's answers to helper C's questions (§H.19); 0.9.10_Hardened_15 adds
+ODR-132, the type of `Retained.ptr()` (§H.20).
 
 | ODR | Ruling | Rules |
 |---|---|---|
@@ -408,6 +409,7 @@ adds ODR-127 to ODR-131, the owner's answers to helper C's questions (§H.19).
 | ODR-128 | ruled by the owner (2026-10-19): a field of an `@export_table` holds the function its default names (`= door_created`), else the module's function of its own name | `[FFI-26]` |
 | ODR-129 | ruled by the owner (2026-10-19): an `@export_table`'s symbol carries its protocol version, `Name_vN`, with no separate marker | `[FFI-26]`, `[ABI-1]` |
 | ODR-130 | ruled by the owner (2026-10-19): a field of an `@export_table` takes the thread contract of the function it holds | `[FFI-33c]` |
+| ODR-132 | ruled under the delegation (2026-10-19, autopilot), the owner having chosen a typed pointer: `tok.ptr()` is a `std.ffi.ObjectPtr[C]` for a class `C`, a `*mut U` for a `Box[U]`, a `*mut u8` for a `Box[dyn I]`; an `ObjectPtr` is a class object's address with no count of its own, one pointer to C | `[FFI-23]` |
 | ODR-131 | ruled by the owner (2026-10-19): a `cdylib` exports the marker `ember_module_protocol_vN`, which its host looks up before calling into it; `[FFI-28]` and `[ABI-1]` disagreed | `[FFI-28]`, `[FFI-31]`, `[ABI-1]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
@@ -888,3 +890,17 @@ Generated: every rule whose text differs from 0.9.10_Hardened_13.
 | `[FFI-33c]` | changed |
 | `[MAN-8]` | changed |
 | `[VER-5]` | changed |
+
+## H.20 Changes in 0.9.10_Hardened_15 (from 0.9.10_Hardened_14)
+
+**0.9.10_Hardened_15** records ODR-132, ruled under the delegation on 2026-10-19 after the owner chose a
+typed pointer (`docs/OWNER-QUEUE.md`, `docs/DECISIONS.md` ADR-208):
+
+* `tok.ptr()` is typed by what the token holds: a `std.ffi.ObjectPtr[C]` for a class `C`, a `*mut U` for
+  a `Box[U]`, a `*mut u8` for a `Box[dyn I]` (`[FFI-23]`, ODR-132).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_14.
+
+| Rule | 0.9.10_Hardened_14 → 0.9.10_Hardened_15 |
+|---|---|
+| `[FFI-23]` | changed |
