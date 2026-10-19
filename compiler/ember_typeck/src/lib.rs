@@ -45,6 +45,9 @@ use ember_types::{FpMode,
 pub struct LoadedModule {
     pub path: Vec<String>,
     pub module: ast::Module,
+    /// `[MOD-2]` — the package it belongs to among the build's (0 is the root); `None` for the
+    /// standard library's.
+    pub package: Option<usize>,
 }
 
 /// The semantically resolved declaration surface a build artifact may expose
@@ -160,6 +163,7 @@ pub fn check(
     checker.derive_requests = derive_requests;
     checker.realtime_contracts = realtime.unwrap_or(hir::Effects::REALTIME_DEFAULT);
     checker.prefixes = modules.iter().map(|m| m.path.join(".")).collect();
+    checker.module_packages = modules.iter().map(|m| m.package).collect();
     checker.visible = vec![HashMap::new(); modules.len()];
     checker.ambiguous_globs = vec![HashMap::new(); modules.len()];
     checker.namespaces = vec![HashMap::new(); modules.len()];
@@ -2105,6 +2109,8 @@ struct Checker<'a> {
     /// modules may each declare `helper` without colliding.
     /// The dotted prefix of each module; the root module's is empty.
     prefixes: Vec<String>,
+    /// `[MOD-2]` — the package of each module (`LoadedModule::package`).
+    module_packages: Vec<Option<usize>>,
     /// Per module: the names it can write, mapped to the qualified name each
     /// one means. Its own items plus whatever it imported.
     visible: Vec<HashMap<Symbol, Symbol>>,
@@ -2687,6 +2693,7 @@ impl<'a> Checker<'a> {
             constants: HashMap::new(),
             foreign_statics: HashMap::new(),
             prefixes: vec![String::new()],
+            module_packages: Vec::new(),
             visible: vec![HashMap::new()],
             ambiguous_globs: vec![HashMap::new()],
             item_spans: HashMap::new(),
@@ -20098,10 +20105,11 @@ impl<'a> Checker<'a> {
         name_suggestions::rank(written.as_str(), use_span, item_candidates)
     }
 
-    /// The current loader admits the root package and the separate `std`
-    /// package. Keep package visibility aligned with those existing roots.
+    /// `[MOD-2]` — two modules of one package: the standard library's, the root's, or one
+    /// dependency's.
     fn same_package(&self, left: usize, right: usize) -> bool {
         self.is_std_module(left) == self.is_std_module(right)
+            && self.module_packages.get(left) == self.module_packages.get(right)
     }
 
     /// `[BRW-10]` — a call to a struct's or enum's method borrows only the
@@ -20113,7 +20121,13 @@ impl<'a> Checker<'a> {
         matches!(self.types.kind(owner), TyKind::Struct(_) | TyKind::Enum(_))
             && decl.params.first().is_some_and(|param| matches!(param.kind, ast::ParamKind::Receiver { .. }))
             && self.method_vis.get(&def).is_none_or(|(vis, module)| {
-                !self.is_std_module(*module) || *vis != ast::VisKind::Public
+                // The root package's methods are seen by no other package; a dependency's and
+                // `std`'s `pub` ones are seen by their dependants.
+                let root = match self.module_packages.get(*module).copied().flatten() {
+                    Some(package) => package == 0,
+                    None => !self.is_std_module(*module),
+                };
+                root || *vis != ast::VisKind::Public
             })
     }
 

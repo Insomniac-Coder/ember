@@ -45,6 +45,9 @@ pub const CLI_NAME: &str = "ember";
 /// `[MAN-1]` — a package is a directory tree with this at its root.
 pub const MANIFEST: &str = "ember.toml";
 
+/// `[MAN-2]` — the resolved dependencies with content hashes, beside the manifest.
+pub const LOCK_FILE: &str = "ember.lock";
+
 /// `[LEX-3]` — the source extension, without the dot. No other extension is a
 /// compilation unit.
 pub const SOURCE_EXT: &str = "em";

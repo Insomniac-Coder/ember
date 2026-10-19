@@ -6,6 +6,7 @@
 
 mod comptime;
 mod foreign;
+mod packages;
 mod reload;
 mod test_runner;
 
@@ -427,6 +428,8 @@ struct Options {
     explain: bool,
     /// `[HR-33]` — `ember run --hot`: run, watch the sources, rebuild and reload.
     hot: bool,
+    /// `[MAN-2]` — `--locked`: a build that would change `ember.lock` fails.
+    locked: bool,
     /// `[CLI-13]` — `ember calls --foreign <item>`: check the program, then list the foreign
     /// functions the item can reach.
     foreign_calls: Option<ForeignCalls>,
@@ -499,6 +502,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         "new" => new_package(&args[1..]),
+        "update" => packages::update(&args[1..]),
         "explain" if args.get(1).is_some_and(|argument| argument == "--cycle") => {
             let rest: Vec<&String> = args[2..].iter().filter(|argument| *argument != "--json").collect();
             let input = rest
@@ -2367,6 +2371,8 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--reload" => options.reload = true,
             "--explain" => options.explain = true,
             "--hot" => options.hot = true,
+            // `[MAN-2]` — fail rather than change `ember.lock`.
+            "--locked" => options.locked = true,
             "-Dwarnings" | "-D" => {
                 if arg == "-D" {
                     let what = value(&mut index, arg)?;
@@ -2489,15 +2495,60 @@ const SPECIFIED_STD_MODULES: &[&str] = &[
     "ser", "simd", "string", "testing", "thread", "time",
 ];
 
+/// `[MOD-1]` — the module an import inside package `package` names, with the import rewritten to
+/// the module's path in the build when that differs from what is written (a dependency's second
+/// major, `[VER-5]`; a package's own module inside a dependency), binding the same name. `None`
+/// when no package has it: the caller tries the standard library.
+fn resolve_package_import(
+    packages: &packages::Packages,
+    package: usize,
+    import: &mut ember_ast::Import,
+) -> Option<(usize, Vec<String>, PathBuf)> {
+    let (segments, alias) = match &mut import.kind {
+        ember_ast::ImportKind::Module { path, alias } => (path, Some(alias)),
+        ember_ast::ImportKind::Items { path, .. } => (path, None),
+        ember_ast::ImportKind::Foreign { .. } => return None,
+    };
+    let names: Vec<String> = segments.iter().map(|segment| segment.name.to_string()).collect();
+    if names.first().is_some_and(|first| first == ember_branding::STD_PACKAGE) {
+        return None;
+    }
+    let (found, path, file) = packages.resolve_import(package, &names)?;
+    if path != names {
+        let span = segments.first().map_or(import.span, |segment| segment.span);
+        let last = segments.last().cloned();
+        if let (Some(alias), Some(last)) = (alias, last)
+            && alias.is_none()
+            && path.last() != names.last()
+        {
+            *alias = Some(last);
+        }
+        *segments = path.iter().map(|name| ember_ast::Ident { name: ember_span::Symbol::intern(name), span }).collect();
+    }
+    Some((found, path, file))
+}
+
 fn load_modules(
     root: ember_ast::Module,
     root_dir: &Path,
     map: &mut SourceMap,
     sink: &mut Sink,
 ) -> Vec<ember_typeck::LoadedModule> {
+    // Without a resolution (an error the build reports itself), the root package alone.
+    let packages = packages::resolve(root_dir).unwrap_or_else(|_| packages::Packages::alone(root_dir));
+    load_package_modules(root, root_dir, &packages, map, sink)
+}
+
+fn load_package_modules(
+    root: ember_ast::Module,
+    root_dir: &Path,
+    packages: &packages::Packages,
+    map: &mut SourceMap,
+    sink: &mut Sink,
+) -> Vec<ember_typeck::LoadedModule> {
     let mut loaded: Vec<ember_typeck::LoadedModule> = Vec::new();
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut queue: Vec<(Vec<String>, ember_ast::Module)> = Vec::new();
+    let mut queue: Vec<(usize, Vec<String>, ember_ast::Module)> = Vec::new();
 
     // `[MOD-5]` — source-backed prelude interfaces must exist even when the
     // user did not write an import. Loading a module does not make all of its
@@ -2522,14 +2573,16 @@ fn load_modules(
         let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
         mark("read and parse", &key);
         seen.insert(key);
-        queue.push((names, parsed));
+        queue.push((usize::MAX, names, parsed));
     }
-    queue.push((Vec::new(), root));
+    queue.push((0, Vec::new(), root));
 
-    while let Some((path, module)) = queue.pop() {
-        // Every import this module names, before it is moved into the list.
-        let mut wanted: Vec<(Vec<String>, ember_span::Span, bool)> = Vec::new();
-        for import in &module.imports {
+    while let Some((package, path, mut module)) = queue.pop() {
+        // Every import this module names, before it is moved into the list: one of a package
+        // (`[MOD-1]`) is already resolved, its path rewritten to the module's in the build.
+        let mut wanted: Vec<(Vec<String>, ember_span::Span, bool, Option<(usize, PathBuf)>)> = Vec::new();
+        for import in &mut module.imports {
+            let resolved = if package == usize::MAX { None } else { resolve_package_import(packages, package, import) };
             let segments = match &import.kind {
                 ember_ast::ImportKind::Module { path, .. } => path,
                 ember_ast::ImportKind::Items { path, .. } => path,
@@ -2540,13 +2593,12 @@ fn load_modules(
             // `[CLI-20]` — an import of nothing but 0.9.8's `with_views*`, which 0.9.9 removed.
             let removed = matches!(&import.kind, ember_ast::ImportKind::Items { items, glob: false, .. }
                 if items.iter().all(|item| item.name.name.as_str().starts_with("with_views")));
-            wanted.push((names, import.span, removed));
+            wanted.push((names, import.span, removed, resolved.map(|(found, _, file)| (found, file))));
         }
 
         // `[GRM-2]` (0.9.9) — only the entry file (the root, with an empty
         // path) may hold statements at file scope; elsewhere they are
         // `E0100`, and the implicit `main` built from them is dropped.
-        let mut module = module;
         if !path.is_empty() {
             if let Some(script) = module.script.take() {
                 sink.emit(
@@ -2564,28 +2616,50 @@ fn load_modules(
         loaded.push(ember_typeck::LoadedModule {
             path: path.clone(),
             module,
+            package: if package == usize::MAX { None } else { Some(package) },
         });
 
-        for (names, span, removed) in wanted {
+        for (names, span, removed, resolved) in wanted {
             let key = names.join(".");
             if seen.contains(&key) {
                 continue;
             }
             seen.insert(key.clone());
+            // `[MOD-1]` — a module of a package (this one's, or a dependency's): `names` is already
+            // its path in the build.
+            if let Some((found, file_path)) = resolved {
+                let file = match map.load(&file_path) {
+                    Ok(file) => file,
+                    Err(error) => {
+                        sink.emit(load_diagnostic(&error, span));
+                        continue;
+                    }
+                };
+                let text = map.file(file).text.clone();
+                let lexed = ember_lexer::lex(file, &text, sink);
+                let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
+                check_safety_notes(&parsed, &lexed.comments, map, sink);
+                mark("read and parse", &key);
+                queue.push((found, names, parsed));
+                continue;
+            }
             // `[MOD-3]` — a standard module may be named without `std.`
-            // (`import math`), unless the package has a module of that name.
+            // (`import math`), unless the package has a module of that name (found above).
+            let in_standard = |names: &[String]| {
+                names.first().is_some_and(|first| first == ember_branding::STD_PACKAGE).then(|| resolve_module(root_dir, names)).flatten()
+            };
             let mut names = names;
-            if resolve_module(root_dir, &names).is_none() {
+            if in_standard(&names).is_none() {
                 let mut in_std = vec![ember_branding::STD_PACKAGE.to_string()];
                 in_std.extend(names.iter().cloned());
-                if resolve_module(root_dir, &in_std).is_some() {
+                if in_standard(&in_std).is_some() {
                     if !seen.insert(in_std.join(".")) {
                         continue;
                     }
                     names = in_std;
                 }
             }
-            let Some(file_path) = resolve_module(root_dir, &names) else {
+            let Some(file_path) = in_standard(&names) else {
                 // `[MOD-3]` — a module path that names no module is `E1060` at
                 // the import, never accepted silently (F-004). A `std` module
                 // the specification lists (Part XV) that this compiler has not
@@ -2629,11 +2703,8 @@ fn load_modules(
             let text = map.file(file).text.clone();
             let lexed = ember_lexer::lex(file, &text, sink);
             let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
-            if names.first().map(String::as_str) != Some(ember_branding::STD_PACKAGE) {
-                check_safety_notes(&parsed, &lexed.comments, map, sink);
-            }
             mark("read and parse", &names.join("."));
-            queue.push((names, parsed));
+            queue.push((usize::MAX, names, parsed));
         }
     }
     loaded
@@ -3436,7 +3507,10 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let reload = reload_mode(&lint_settings, options, &mut sink)?;
     // `ember test` builds the package's tests as a program of their own, without reload.
     let reload = if command == "test" { ReloadMode::None } else { reload };
-    let mut modules = load_modules(module, &root_dir, &mut map, &mut sink);
+    // `[MOD-1]`, `[MAN-2]` — the package's dependencies, and its lock.
+    let packages = packages::resolve(&root_dir)?;
+    packages::settle_lock(&packages, options.locked)?;
+    let mut modules = load_package_modules(module, &root_dir, &packages, &mut map, &mut sink);
     // Annex B — what a reloadable program's reload needs written into it before it is checked: its
     // fields' defaults as functions, `Old<Name>` from the previous build's schema.
     let reload_bin = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target")).join(options.profile.name()).join("bin");
@@ -4674,6 +4748,14 @@ fn manifest_lint_settings(
                         };
                         sink.emit(
                             Diagnostic::error(codes::E9001, location, format!("unknown key `{key}` in {section}")).help(help),
+                        );
+                    } else if section == "package" && key == "version"
+                        && packages::Version::parse(value.trim().trim_matches('"')).is_none()
+                    {
+                        // `[VER-5]` — package versions are semantic.
+                        sink.emit(
+                            Diagnostic::error(codes::E9001, location, format!("`{}` is not a semantic version", value.trim()))
+                                .help("write `version = \"MAJOR.MINOR.PATCH\"`, such as \"0.1.0\" [VER-5]"),
                         );
                     } else if section == "package" && key == "language" {
                         // `[VER-2]` — the language version a package opts into; before 1.0 there is

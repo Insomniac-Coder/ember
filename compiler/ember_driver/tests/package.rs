@@ -74,6 +74,149 @@ fn the_first_hour_is_new_cd_and_run() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A package in `dir`: its manifest and its sources, each `(path under src, text)`.
+fn package(dir: &Path, manifest: &str, sources: &[(&str, &str)]) {
+    for (file, text) in sources {
+        let path = dir.join("src").join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+    std::fs::write(dir.join(ember_branding::MANIFEST), manifest).unwrap();
+}
+
+/// The packages of the dependency tests: `app` depends on `geometry` 2.1.0 and on `mesh`, which
+/// depends on `geometry` 1.4.0; each `geometry` has a `shapes` module and a private helper of the
+/// same name, and a `pub(package)` function.
+fn dependency_tree(dir: &Path) {
+    for (folder, version, answer) in [("geometry1", "1.4.0", 1), ("geometry2", "2.1.0", 2)] {
+        package(&dir.join(folder), &format!("[package]\nname = \"geometry\"\nversion = \"{version}\"\nkind = \"lib\"\n"), &[
+            ("lib.em", &format!("pub fn major() -> i32:\n    return {answer}\n\npub(package) fn inner() -> i32:\n    return {answer}\n")),
+            ("shapes.em", &format!("pub struct Square:\n    pub side: i32\n\npub fn area(s: Square) -> i32:\n    return s.side * s.side * {answer}\n")),
+        ]);
+    }
+    package(&dir.join("mesh"), "[package]\nname = \"mesh\"\nversion = \"0.3.0\"\nkind = \"lib\"\n\n[dependencies]\ngeometry = { path = \"../geometry1\" }\n", &[
+        ("lib.em", "import geometry\nimport geometry.shapes\nimport util\n\npub fn geometry_major() -> i32:\n    return geometry.major() + util.zero()\n\npub fn area() -> i32:\n    return shapes.area(shapes.Square(3))\n"),
+        ("util.em", "pub fn zero() -> i32:\n    return 0\n"),
+    ]);
+    package(&dir.join("app"), "[package]\nname = \"app\"\nversion = \"0.1.0\"\nkind = \"bin\"\n\n[dependencies]\ngeometry = { path = \"../geometry2\" }\n\n[dependencies.mesh]\npath = \"../mesh\"\n", &[
+        ("main.em", "import geometry\nimport geometry.shapes\nimport mesh\n\nfn main():\n    println(geometry.major())\n    println(mesh.geometry_major())\n    println(shapes.area(shapes.Square(3)))\n    println(mesh.area())\n"),
+    ]);
+}
+
+/// `[MOD-1]`, `[VER-5]` — a dependency's modules are its name followed by their path; two majors of
+/// one package coexist in one build, each package seeing the one it depends on, and their symbols
+/// differ in the C. `[MOD-2]`: a dependency's `pub(package)` function is not visible to its
+/// dependant (`E1052`).
+#[test]
+fn two_majors_of_a_dependency_coexist() {
+    let dir = scratch();
+    dependency_tree(&dir);
+    let app = dir.join("app");
+    let ran = ember(&["run"], &app);
+    assert!(ran.ok, "{}", ran.stderr);
+    assert_eq!(ran.stdout, "2\n1\n18\n9\n");
+    let c = std::fs::read_to_string(app.join("target/debug/c/main.c")).unwrap();
+    // (Their small functions are inlined into `main`; the types and the unused functions remain.)
+    for symbol in ["em_geometry_shapes_Square ", "em_geometry__1_shapes_Square ", "em_geometry_inner(", "em_geometry__1_inner("] {
+        assert!(c.contains(symbol), "no `{symbol}` in the C");
+    }
+    std::fs::write(app.join("src").join(ember_branding::source_file("main")),
+        "import geometry\n\nfn main():\n    println(geometry.inner())\n").unwrap();
+    let hidden = ember(&["check"], &app);
+    assert!(!hidden.ok && hidden.stderr.contains("error[E1052]"), "{}", hidden.stderr);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `[MAN-2]` — a build with dependencies writes `ember.lock`: each dependency's name, version,
+/// source and a hash of its contents. `--locked` fails when the lock would change (none yet, or a
+/// dependency's contents changed) and passes when it would not; `ember update` rewrites it, and
+/// `ember update <package>` takes only that package's entry anew.
+#[test]
+fn the_lock_records_dependencies_with_content_hashes() {
+    let dir = scratch();
+    dependency_tree(&dir);
+    let app = dir.join("app");
+    let lock = app.join(ember_branding::LOCK_FILE);
+    let none_yet = ember(&["check", "--locked"], &app);
+    assert!(!none_yet.ok && none_yet.stderr.contains("would change (there is none)"), "{}", none_yet.stderr);
+    assert!(!lock.exists());
+    let checked = ember(&["check"], &app);
+    assert!(checked.ok, "{}", checked.stderr);
+    let text = std::fs::read_to_string(&lock).unwrap();
+    for entry in ["name = \"geometry\"\nversion = \"1.4.0\"\nsource = \"path+../geometry1\"\nhash = \"blake3:",
+        "name = \"geometry\"\nversion = \"2.1.0\"\nsource = \"path+../geometry2\"\nhash = \"blake3:",
+        "name = \"mesh\"\nversion = \"0.3.0\"", "dependencies = [\"geometry 1.4.0\"]"] {
+        assert!(text.contains(entry), "the lock lacks `{entry}`:\n{text}");
+    }
+    assert!(ember(&["check", "--locked"], &app).ok);
+
+    // A dependency's contents change: the lock would change.
+    std::fs::write(dir.join("mesh/src").join(ember_branding::source_file("util")), "pub fn zero() -> i32:\n    return 0 * 1\n").unwrap();
+    let changed = ember(&["check", "--locked"], &app);
+    assert!(!changed.ok && changed.stderr.contains("the dependencies changed since it was written"), "{}", changed.stderr);
+    assert_eq!(std::fs::read_to_string(&lock).unwrap(), text, "--locked wrote the lock");
+    let geometry = ember(&["update", "geometry"], &app);
+    assert!(geometry.ok, "{}", geometry.stderr);
+    assert_eq!(std::fs::read_to_string(&lock).unwrap(), text, "updating geometry changed mesh's entry");
+    let updated = ember(&["update"], &app);
+    assert!(updated.ok, "{}", updated.stderr);
+    assert_ne!(std::fs::read_to_string(&lock).unwrap(), text);
+    assert!(ember(&["check", "--locked"], &app).ok);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `[MAN-2]` — a `{ git, rev }` dependency is checked out at its revision; the lock records the
+/// repository and the revision with the contents' hash, and a later commit on the repository
+/// changes nothing until the manifest names it.
+#[test]
+fn a_git_dependency_is_checked_out_at_its_revision() {
+    let dir = scratch();
+    let repo = dir.join("repo");
+    package(&repo, "[package]\nname = \"greet\"\nversion = \"1.0.0\"\nkind = \"lib\"\n",
+        &[("lib.em", "pub fn word() -> i32:\n    return 1\n")]);
+    let git = |args: &[&str]| {
+        let output = Command::new("git").args(["-c", "user.name=ember", "-c", "user.email=ember@example.org", "-c", "core.autocrlf=false"])
+            .args(args).current_dir(&repo).output().expect("git runs");
+        assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    };
+    git(&["init", "--quiet"]);
+    git(&["add", "-A"]);
+    git(&["commit", "--quiet", "-m", "first"]);
+    let first = git(&["rev-parse", "HEAD"]);
+    std::fs::write(repo.join("src").join(ember_branding::source_file("lib")), "pub fn word() -> i32:\n    return 2\n").unwrap();
+    git(&["commit", "--quiet", "-am", "second"]);
+    let url = repo.to_string_lossy().replace('\\', "/");
+    package(&dir.join("app"), &format!("[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ngreet = {{ git = \"{url}\", rev = \"{first}\" }}\n"),
+        &[("main.em", "import greet\n\nfn main():\n    println(greet.word())\n")]);
+    let ran = ember(&["run"], &dir.join("app"));
+    assert!(ran.ok, "{}", ran.stderr);
+    assert_eq!(ran.stdout, "1\n", "the dependency was not checked out at its revision");
+    let lock = std::fs::read_to_string(dir.join("app").join(ember_branding::LOCK_FILE)).unwrap();
+    assert!(lock.contains(&format!("source = \"git+{url}#{first}\"\nhash = \"blake3:")), "{lock}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `[MOD-4]` — packages that depend on each other in a cycle are `E1041`; `[VER-5]` a version that
+/// is not `MAJOR.MINOR.PATCH` is `E9001`; a bare version requirement needs a registry (`E0900`).
+#[test]
+fn dependency_errors() {
+    let dir = scratch();
+    package(&dir.join("a"), "[package]\nname = \"a\"\nversion = \"1.0.0\"\n\n[dependencies]\nb = { path = \"../b\" }\n", &[("main.em", "println(1)\n")]);
+    package(&dir.join("b"), "[package]\nname = \"b\"\nversion = \"1.0.0\"\nkind = \"lib\"\n\n[dependencies]\na = { path = \"../a\" }\n", &[("lib.em", "pub fn f() -> i32:\n    return 1\n")]);
+    let cycle = ember(&["check"], &dir.join("a"));
+    assert!(!cycle.ok && cycle.stderr.contains("error[E1041]") && cycle.stderr.contains("a -> b -> a"), "{}", cycle.stderr);
+
+    package(&dir.join("b"), "[package]\nname = \"b\"\nversion = \"1.0\"\nkind = \"lib\"\n", &[]);
+    let version = ember(&["check"], &dir.join("a"));
+    assert!(!version.ok && version.stderr.contains("error[E9001]: package `b`'s version `1.0` is not a semantic version"), "{}", version.stderr);
+
+    package(&dir.join("a"), "[package]\nname = \"a\"\nversion = \"1.0.0\"\n\n[dependencies]\nb = \"1.2\"\n", &[]);
+    let registry = ember(&["check"], &dir.join("a"));
+    assert!(!registry.ok && registry.stderr.contains("error[E0900]: dependency `b = \"1.2\"` needs a package registry"), "{}", registry.stderr);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `[VER-2]` — a package opts into its language with the manifest's `language` key; before 1.0
 /// there is one language (`[VER-8]`), so the key names the current version or the manifest is
 /// invalid (`E9001`, naming the current one).
