@@ -562,7 +562,17 @@ int main(void) {{
     if (init(&cfg) != 0 || busy() != 1) return 4;
     int working = threads();
     shutdown();
+    /* A joined thread can still be listed for a moment while the system removes it (Linux's
+       /proc/self/task): count again for up to two seconds before deciding. */
     int after = threads();
+    for (int tries = 0; after != before && tries < 200; ++tries) {{
+#if defined(_WIN32)
+        Sleep(10);
+#else
+        usleep(10000);
+#endif
+        after = threads();
+    }}
     unload(l);
     printf("%d %d %d\n", before, working > before, after);
     return after == before && working > before ? 0 : 5;

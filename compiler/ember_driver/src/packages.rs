@@ -334,8 +334,11 @@ pub fn resolve(root_dir: &Path) -> Result<Packages, String> {
             // One package per name and major: the same directory is one package; two sources of
             // one major are a conflict, never a silent choice.
             let existing = packages.list.iter().position(|package| package.name == name && package.version.major == version.major);
+            // The same directory may be written two ways (Windows' short `RUNNER~1` and long
+            // `runneradmin`, `a/../b`): compared as the file system resolves them.
+            let same = |a: &Path, b: &Path| a == b || matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(a), Ok(b)) if a == b);
             let index = match existing {
-                Some(index) if packages.list[index].dir == dir => index,
+                Some(index) if same(&packages.list[index].dir, &dir) => index,
                 Some(index) => {
                     return Err(format!("error[E9001]: two sources of package `{name}` {}.x: {} and {}",
                         version.major, packages.list[index].dir.display(), dir.display()));

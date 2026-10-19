@@ -48,11 +48,25 @@ shown one by one. The owner never asked to see B3's or A1's design before buildi
 
 Merged 2026-10-19 (ADR-206). Its questions, in `C-notes.md` §11, triaged by the owner's rule (bugs
 fixed, waiting recorded, real choices asked one at a time with real code):
-* **Q1 — where a version requirement such as `geometry = "1.2"` resolves from** (a registry, git tags,
-  a local directory): a real choice. Built meanwhile: `E0900`.
-* **Q3 — `@export_table`'s shape** (fields bound by name or by explicit defaults; the protocol in a
-  second symbol or in the table's name; `threads` on the field or on its function): a real choice.
-  Built meanwhile: by name, `Name_protocol_N`, the function's own `threads`.
+* **Q1 — where a version requirement resolves from: ANSWERED (owner, 2026-10-19): (b) git tags,
+  "since there is no central repo yet".** `geometry = { git = "https://github.com/someone/geometry",
+  version = "1.2" }`: Ember reads the repository's version tags (`v1.2.0`, `v1.3.1`, …) and picks the
+  highest that satisfies the requirement. Needs: `version` added to `[MAN-8]`'s dependency keys and
+  `[VER-5]`'s resolution wording; then the code (today `E0900`).
+* **Q3 — `@export_table`'s shape** (three parts, asked one at a time):
+  * **Q3a, which function fills a field: ANSWERED (owner, 2026-10-19): (c) both.** A field may name
+    its function after `=` (`on_create: extern "C" fn(u64) -> i32 = door_created`); a field without
+    one takes the module's function of the field's name (as built). Needs: `[FFI-26]` wording and the
+    `= function` form in the grammar for an `@export_table` struct's fields; then the code.
+  * **Q3b, where the protocol number lives: ANSWERED (owner, 2026-10-19): (b) in the table's own
+    name.** `@export_table("RvScriptApi", protocol=3)` exports one symbol, `RvScriptApi_v3`, and no
+    separate marker; a host looks that name up, and a plugin of another version lacks it. Replaces the
+    built `RvScriptApi` + `RvScriptApi_protocol_3`. Needs: `[FFI-26]`/`[ABI-1]` wording, the code, the
+    header, the tests.
+  * **Q3c, where a table entry's `threads` rule is written: ANSWERED (owner, 2026-10-19): (a) on the
+    function** ("A is more readable"): `@export(threads=main) pub extern "C" fn on_draw()`, as built;
+    the table field has no attribute of its own. `[FFI-33c]`'s "may set `threads` per field" to be
+    reworded to say a field takes its function's rule.
 * **Q4 — `[ABI-1]`'s versioned module symbol against `[FFI-28]`'s export list**: a contradiction in
   the specification. Built meanwhile: nothing extra exported (the runtime ABI check only).
 * Q2 (`[build] global_allocator` missing from `[MAN-8]`'s keys) is not raised now: `[ALC-3]` waits on
