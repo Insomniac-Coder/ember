@@ -52,7 +52,7 @@ Test: `tests/run-pass/a_tuple_instance_takes_its_hidden_parameters_from_a_tuple_
 ## 3. The query (`[ECS-3]`)
 
 **Design.** `std/src/ecs.em`. Everything is ordinary Ember; the only compiler pieces are the
-derive (which already existed for `[ECS-7]`) and §6.
+derive (which already existed for `[ECS-7]`) and §5's `System` conversion and `E7020`.
 
 - `Mut[T]` and `Not[T]` are `@derive(Copy)` structs with a phantom parameter (`[TYP-35]`).
 - **Two interfaces.** `QueryParam` is what a query's parameter *is* as written; its one associated
@@ -71,8 +71,7 @@ derive (which already existed for `[ECS-7]`) and §6.
   matches, `Option` of `P`'s item. `Not[T]`: `Without[T]`, entities with a `T` do not match, item
   `()`. `Entity`: the entity itself, matching every entity (needed to name an entity to
   `q.commands().destroy(e)`; not in the rule's list, an addition of the library). Tuples of two to
-  eight parameters (generic tuple extensions, written by a generator kept in the session scratchpad;
-  one block per arity).
+  eight parameters (generic tuple extensions, one block per arity, written out alike).
 - **Not's item is `()`.** "the library maps each parameter to its item type (`ref T`, `ref mut T`,
   `Option[ref T]`, nothing)": an associated type per parameter cannot remove a tuple slot, so
   "nothing" is the unit type and `for a, b, c, _ in q.iter()` names it. Owner question 3.
@@ -91,7 +90,7 @@ derive (which already existed for `[ECS-7]`) and §6.
   check each per run and none per item (`[EXC-14]`). `view` takes the handle by `ref`: a class
   handle passed borrowed is "passed as a copy", and a view of its fields could not be returned.
 - **Parameter passing in `ParamOps`.** `get` takes its view by `ref` (by value, an `Option`
-  parameter's item borrowed the copy of its view: defect 4 below); `driver` by value and `get_mut`
+  parameter's item borrowed the copy of its view: defect 3 below); `driver` by value and `get_mut`
   by `mut` place (by `ref` they tied the driving list, and `mut` refs needed a place).
 - **Systems take `mut q`.** `run`'s parameter is `fn(mut Query[Q], A)`, and a callable's parameter
   modes are part of its type (`[FN-6a]`), so a read-only system is written `mut q` too, as the
@@ -178,7 +177,12 @@ begin and end there), and run the bodies as jobs of one `jobs.scope()` borrowing
 which are `Send` when the components are; this needs the literal's systems kept unerased (the
 compiler would call a generic `run_parallel_N[Q1, …, QN](f1, …, fN)`), `Commands` made `Send`
 (a `@sync` buffer behind a `Mutex`), and for systems passed as values either nested scopes (each
-system's frame opening a scope around the next) or running them in turn.
+system's frame opening a scope around the next) or running them in turn. Probed: in a generic
+body, a scoped job capturing a callable parameter is `E7005` ("the job borrows `f`, a `ref
+Callable2`, which is not Sync"), and no bound can make a callable parameter `Sync`; so even the
+literal path needs the language to say when a function value is `Send`/`Sync` (a function item is
+stateless), or bounds on callable parameters. And components would have to be `Send` (written) or
+`Sync` (read) for their views to cross threads, which `[ECS-2]` does not require today.
 
 ## 6. Commands (`[ECS-5]`)
 
