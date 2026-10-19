@@ -32065,6 +32065,26 @@ impl<'a> Checker<'a> {
         {
             return self.synth_local_fn_self_call(own, args, span);
         }
+        // D-692, `[FN-6]` — a `static` holding a function value (`static HOOK: extern "C" fn(i32) ->
+        // i32 = f`) is called through that value, as a local of function type is: `HOOK(7)`. A local
+        // of the name shadows it, and a function of the name is called as a function.
+        if let ast::ExprKind::Path { segments } = &callee.kind
+            && let [name] = segments.as_slice()
+            && self.lookup(name.name).is_none()
+        {
+            let resolved = self.resolve_name(name.name);
+            if !self.fn_ids.contains_key(&resolved)
+                && (self.const_statics.contains_key(&resolved)
+                    || self.lazy_statics.contains_key(&resolved)
+                    || self.foreign_statics.contains_key(&resolved))
+            {
+                let value = self.synth(callee);
+                let value = self.through_callable_ref(value);
+                if matches!(self.types.kind(value.ty), TyKind::Fn { .. }) {
+                    return self.synth_indirect_call(value, args, span, false, false);
+                }
+            }
+        }
         // `[CLO-3]` — "Calling: `f(args)`". A local of function type is
         // called through its value rather than by name. Checked before the
         // path lookup, because a local shadows an item of the same name.

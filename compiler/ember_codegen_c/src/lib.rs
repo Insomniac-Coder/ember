@@ -1001,16 +1001,23 @@ const CALLING_CONVENTION_MACROS: &str = r#"/* [FFI-9] foreign calling convention
 #elif defined(EMBER_CC_X86)
 #define EMBER_CC_FASTCALL
 #else
-#define EMBER_CC_FASTCALL EMBER_CC_FASTCALL_exists_only_on_x86
+#define EMBER_CC_FASTCALL_UNAVAILABLE 1
 #endif
 #if defined(EMBER_CC_X86) && defined(_MSC_VER)
 #define EMBER_CC_VECTORCALL __vectorcall
 #elif defined(EMBER_CC_X86) && defined(__clang__)
 #define EMBER_CC_VECTORCALL __attribute__((vectorcall))
 #else
-#define EMBER_CC_VECTORCALL EMBER_CC_VECTORCALL_needs_x86_and_MSVC_or_Clang
+#define EMBER_CC_VECTORCALL_UNAVAILABLE 1
 #endif
 "#;
+
+/// `[FFI-9]` — what stops the C build, by name, when the program declares a convention this C
+/// compiler or target lacks: a message on every compiler, never a call with another convention.
+const CALLING_CONVENTION_CHECKS: [(&str, &str); 2] = [
+    ("fastcall", "#if defined(EMBER_CC_FASTCALL_UNAVAILABLE)\n#error \"extern \\\"fastcall\\\" exists only on x86\"\n#endif\n"),
+    ("vectorcall", "#if defined(EMBER_CC_VECTORCALL_UNAVAILABLE)\n#error \"extern \\\"vectorcall\\\" needs x86 and MSVC or Clang\"\n#endif\n"),
+];
 
 /// A C type definition: either a named Ember struct or a generated struct
 /// standing in for a tuple or a fixed array.
@@ -1245,10 +1252,19 @@ impl Emitter<'_> {
             self.line(COMPTIME_PRELUDE);
         }
         let foreign_convention = |abi: Option<&str>| !calling_convention(abi).is_empty();
+        let uses = |wanted: &str| {
+            bodies.iter().any(|body| body.abi.as_deref() == Some(wanted))
+                || self.types.all().any(|(_, kind)| matches!(kind, TyKind::Fn { abi: Some(abi), .. } if abi.as_str() == wanted))
+        };
         if bodies.iter().any(|body| foreign_convention(body.abi.as_deref()))
             || self.types.all().any(|(_, kind)| matches!(kind, TyKind::Fn { abi, .. } if foreign_convention(abi.as_ref().map(|abi| abi.as_str()))))
         {
             self.out.push_str(CALLING_CONVENTION_MACROS);
+            for (convention, check) in CALLING_CONVENTION_CHECKS {
+                if uses(convention) {
+                    self.out.push_str(check);
+                }
+            }
         }
 
         self.plan_reload_slots(bodies);

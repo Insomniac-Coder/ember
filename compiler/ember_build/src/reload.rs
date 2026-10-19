@@ -268,7 +268,12 @@ pub fn link_host_source(
             for dir in include_dirs {
                 command.arg(format!("/I{}", dir.display()));
             }
-            command.arg(source).arg(format!("/Fo{}", object.display())).arg(format!("/Fe{}", output.display()))
+            // `/Fo` as a directory: clang-cl refuses an object file name when the command also
+            // has the runtime's library to link (it counts two inputs); the object is `<stem>.obj`
+            // there either way.
+            let _ = &object;
+            command.arg(source).arg(format!("/Fo{}{}", obj_dir.display(), std::path::MAIN_SEPARATOR))
+                .arg(format!("/Fe{}", output.display()))
                 .arg(&runtime.link_with);
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {

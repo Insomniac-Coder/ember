@@ -50,6 +50,8 @@ fn workspace_root() -> PathBuf {
 #[derive(Default, Debug)]
 struct Expectations {
     kind: Option<String>,
+    /// `#$ c-compilers: msvc, clang` — the C compilers this test's C is for; empty means every one.
+    c_compilers: Vec<String>,
     stdout: Option<String>,
     /// `#$ stdin:` — one line of standard input per annotation.
     stdin: Option<String>,
@@ -247,10 +249,10 @@ fn parse_expectations(source: &str) -> Expectations {
             }
         } else if collecting_stdout {
             stdout_lines.push(rest.to_string());
-        } else if rest.starts_with("c-compilers:") {
-            // The C compilers this test's C is for (`extern "vectorcall"`, `[FFI-9]`): the C
-            // warning sweep skips the others. This suite compiles no C for a `compile-pass` or
-            // `compile-fail` test, the only kinds that may name them (checked below).
+        } else if let Some(value) = rest.strip_prefix("c-compilers:") {
+            // The C compilers this test's C is for (`extern "vectorcall"`, `[FFI-9]`): with any
+            // other, the suite and the C warning sweep skip the test.
+            expectations.c_compilers = value.split(',').map(str::trim).filter(|name| !name.is_empty()).map(str::to_string).collect();
             names_c_compilers = true;
             collecting_stdout = false;
         } else if !rest.is_empty() && !rest.starts_with("rules:") && !rest.starts_with("note") {
@@ -269,7 +271,7 @@ fn parse_expectations(source: &str) -> Expectations {
     }
     assert!(
         !names_c_compilers || matches!(expectations.kind.as_deref(), Some("compile-pass" | "compile-fail")),
-        "`#$ c-compilers:` is for a test whose C only the C warning sweep compiles (compile-pass, compile-fail)"
+        "`#$ c-compilers:` is for a `compile-pass` or `compile-fail` test"
     );
     if !stdin_lines.is_empty() {
         expectations.stdin = Some(stdin_lines.iter().map(|line| format!("{line}\n")).collect());
@@ -1132,7 +1134,7 @@ fn vectorcall_declarations_compile_with_the_convention() {
     let compiled = ember_build::compile_object(&toolchain, &generated, &[runtime.join("include")], &object, Profile::Debug);
     if matches!(toolchain, Toolchain::Gcc(_)) {
         let error = compiled.expect_err("GCC has no vectorcall convention");
-        assert!(format!("{error:?}").contains("EMBER_CC_VECTORCALL_needs_x86_and_MSVC_or_Clang"), "{error:?}");
+        assert!(format!("{error:?}").contains("needs x86 and MSVC or Clang"), "{error:?}");
     } else {
         compiled.expect("the vectorcall prototype and call compile");
     }
@@ -4259,9 +4261,23 @@ fn assert_diagnostic_helps(relative: &str, stderr: &str, expectations: &Expectat
     }
 }
 
+/// The C compiler this run uses, as a test's `#$ c-compilers:` line names it: `msvc`, `clang`
+/// (`clang-cl` too) or `gcc`.
+fn c_compiler_name() -> &'static str {
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    match Toolchain::detect(requested.as_deref()) {
+        Ok(Toolchain::Msvc { .. }) => "msvc",
+        Ok(Toolchain::Gcc(_)) => "gcc",
+        _ => "clang",
+    }
+}
+
 fn check_file(path: &Path, root: &Path) {
     let source = std::fs::read_to_string(path).expect("the test file is readable");
     let expectations = parse_expectations(&source);
+    if !expectations.c_compilers.is_empty() && !expectations.c_compilers.iter().any(|name| name == c_compiler_name()) {
+        return;
+    }
     let relative = path
         .strip_prefix(root)
         .unwrap_or(path)
