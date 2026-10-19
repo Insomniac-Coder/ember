@@ -282,6 +282,7 @@ fn collect_body_function_symbols(
                 | ember_mir::StmtKind::BeginAccessTransfer { .. }
                 | ember_mir::StmtKind::EndAccess { .. }
                 | ember_mir::StmtKind::EndAccessTransfer { .. }
+                | ember_mir::StmtKind::LendAccess { .. }
                 | ember_mir::StmtKind::Nop => {}
             }
         }

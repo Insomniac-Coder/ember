@@ -152,7 +152,7 @@ fn stmt_uses(stmt: &StmtKind) -> Vec<(&Place, Use)> {
         StmtKind::BeginAccess { place, .. }
         | StmtKind::BeginAccessTransfer { place, .. }
         | StmtKind::EndAccess { place, .. }
-        | StmtKind::EndAccessTransfer { place, .. } => out.push((place, Use::Other)),
+        | StmtKind::EndAccessTransfer { place, .. } | StmtKind::LendAccess { place, .. } => out.push((place, Use::Other)),
         StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
     }
     out

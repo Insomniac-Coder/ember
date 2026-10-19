@@ -126,7 +126,7 @@ fn plan_for(
                 }
                 StmtKind::EndAccess { .. }
                 | StmtKind::BeginAccessTransfer { .. }
-                | StmtKind::EndAccessTransfer { .. }
+                | StmtKind::EndAccessTransfer { .. } | StmtKind::LendAccess { .. }
                 | StmtKind::Drop { .. } => return None,
                 StmtKind::Assign { place, .. } => {
                     written.insert(place.local);

@@ -77,7 +77,7 @@ fn candidates(body: &Body, types: &TypeTable) -> Vec<(LocalId, Vec<(usize, usize
                 | StmtKind::BeginAccess { place, .. }
                 | StmtKind::BeginAccessTransfer { place, .. }
                 | StmtKind::EndAccess { place, .. }
-                | StmtKind::EndAccessTransfer { place, .. } => other[place.local.0 as usize] = true,
+                | StmtKind::EndAccessTransfer { place, .. } | StmtKind::LendAccess { place, .. } => other[place.local.0 as usize] = true,
                 StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
             }
         }

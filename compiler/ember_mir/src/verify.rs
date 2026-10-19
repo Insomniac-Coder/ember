@@ -490,6 +490,13 @@ pub fn verify(body: &Body) -> Vec<Violation> {
                 | StmtKind::EndAccessTransfer { place, .. } => {
                     v.place(place, &at);
                 }
+                // `[EXC-5]` (D-690) — only a `mut self` method lends, and only its own object.
+                StmtKind::LendAccess { place, .. } => {
+                    v.place(place, &at);
+                    if !body.mut_self || place.local != LocalId(1) || place.projection != [Projection::Deref] {
+                        v.fail(format!("{at}: a lend of the write access outside a `mut self` method's own object"));
+                    }
+                }
                 StmtKind::CheckedBinaryOp {
                     dest,
                     overflow,

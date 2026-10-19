@@ -2128,7 +2128,7 @@ fn receiver_field_uses(body: &Body, eligible: &HashSet<&str>) -> Option<(BTreeSe
                 StmtKind::BeginAccess { place, .. }
                 | StmtKind::BeginAccessTransfer { place, .. }
                 | StmtKind::EndAccess { place, .. }
-                | StmtKind::EndAccessTransfer { place, .. }
+                | StmtKind::EndAccessTransfer { place, .. } | StmtKind::LendAccess { place, .. }
                 | StmtKind::Drop { place, .. } => field(place, &mut fields)?,
                 StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
             }
@@ -3446,7 +3446,7 @@ fn check_body(
                 StmtKind::BeginAccess { .. }
                 | StmtKind::BeginAccessTransfer { .. }
                 | StmtKind::EndAccess { .. }
-                | StmtKind::EndAccessTransfer { .. }
+                | StmtKind::EndAccessTransfer { .. } | StmtKind::LendAccess { .. }
                 | StmtKind::StorageLive(_)
                 | StmtKind::Nop => {}
             }

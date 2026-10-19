@@ -341,7 +341,7 @@ fn only_pushed(
                 StmtKind::BeginAccess { .. }
                 | StmtKind::EndAccess { .. }
                 | StmtKind::BeginAccessTransfer { .. }
-                | StmtKind::EndAccessTransfer { .. } => true,
+                | StmtKind::EndAccessTransfer { .. } | StmtKind::LendAccess { .. } => true,
                 StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
                     !reaches(dest) && !reaches(overflow) && !operand_reaches(lhs) && !operand_reaches(rhs)
                 }

@@ -215,22 +215,49 @@ a bound now counts as D-257's "instance that is a signature only" (`skipped_inst
 lambda is opaque and each instance of the body makes its own. Test:
 `tests/run-pass/a_lambda_in_a_generic_function_calls_through_a_projection.em`.
 
-## 9. D-690 (a `mut self` method calling a shared method on `self`): not attempted
+## 9. D-690 fixed: a `mut self` method lends `self` to a shared call (`[EXC-5]`)
 
-The job sheet asked for it if queries needed it; they did not (`World.run` is a shared method,
-and `std.ecs`'s `mut self` methods read through free functions). What I found looking at it, for
-whoever builds it: the runtime already has `ember_object_end_write`/`ember_object_begin_read` and
-the reverse, so a call that lends `self` (as a shared receiver or a borrowed argument) from a
-`mut self` method can turn the whole-object write into a whole-object read for the call and back.
-That is sound (the callee may read every field; any write, through any handle, panics as a
-conflict with the read) and simple, but it needs a MIR statement pair the verifier accepts as
-balanced in a `mut self` body (the caller did not begin the write it lends), and the access passes
-(`access.rs`, `check_hoisting.rs`, `loop_access.rs`, the quiet-function rule of `[EXC-19]`) taught
-it. A "covered variant" of shared methods (no checks on `self`) is unsound when the shared
-method also writes through `self` (a class allows that): an iteration in the `mut self` method
-over a field the callee grows would not be caught. A shared callee that writes `self` would
-still panic under the read; whether `[EXC-5]` means such writes are covered too is a question
-for the owner, not this job.
+**Before.** `fn add(mut self, x): if not self.has(x): …` panicked "exclusivity violation: read
+access to Bag.items while a write access …": the method's whole-object write (`[EXC-15]`, begun by
+its caller) covers its own accesses, but a shared method it calls on `self`, or a function it
+gives `self` to borrowed, checks its reads against that write. Queries did not need the fix
+(`World.run` is shared), but the owner asked for it.
+
+**Built.** A call that borrows the method's own object (a shared receiver or a borrowed argument
+that is `self`, through a dereference, a reference or a class upcast) runs with the method's write
+*lent as a read*: a new MIR statement `StmtKind::LendAccess { place: *self, lend }` before the call
+(`ember_object_end_write`, then `ember_object_begin_read`) and after it (the reverse), emitted by
+`lower.rs` (`lends_own_object`). The verifier admits it only in a `mut self` body, on its own
+`*self`; it balances itself, so the rule that a body balances the accesses it begins stands (the
+earlier attempt, ending the write the caller began, broke that rule). A body with a lend is not
+quiet (`[EXC-19]`), so its caller's write is always counted and there is a write to lend. The
+other passes treat it as the other access statements (it names its place; hoisting and
+vectorisation stop at it).
+
+**Why a read, not "not checked".** The callee may read every field, so the reads of the D-690
+probe work. A write to the object during the call, through any handle, conflicts with the read
+and panics. Not checking the callee at all would be unsound: `walk(mut self): for x in
+self.items: self.grow()`, with `grow(self)` pushing to `self.items`, would move the buffer the
+loop reads, and no check would see it (the loop's own access is covered by the write). So a shared
+method that writes a field of `self` still panics when a `mut self` method calls it (owner
+question 7). Interface calls with `self` as the receiver are not lent (rare; unchanged).
+
+**Tests.** `tests/conformance/EXC-5/accept_a_mut_self_method_lends_self_to_a_shared_call.em`
+(the D-690 probe, and `self` to a free function), `EXC-5/run_fail_a_shared_call_from_a_mut_self_method_grows_a_field_it_iterates.em`.
+`EXC-15/run_fail_a_drop_holds_its_objects_write.em` (D-453's `drop` calling a shared method that
+writes) still panics, now "while a read access", its text updated.
+
+## 10. An `SoA` of a struct with no fields under the gcc C gate (fixed)
+
+`Not[T]`'s `fetch` made `T`'s storage by asking `T.component_soa()` at run time, so every program
+using `Not[T]` instantiated an `SoaStorage[T]` too, and with a marker component (`struct Frozen:
+pass`) an `SoA` of a struct with no fields. Its C helpers (`_layout`, `_push`, `_swap`,
+`_move_slot`…) named parameters they did not use, and `_grow` allocated a block it stored nowhere
+(a leak at each growth): gcc's `-Wextra` under the C gate (`[TST-27]`) refused the program. The
+codegen now writes them for no columns (`(void)` the unused, no block), and `Not[T]` makes the
+storage through `T.Read.fetch`, in the component's own layout only. Test:
+`tests/run-pass/an_soa_of_a_struct_with_no_fields_is_a_count.em`. Every ECS test's C was compiled
+with gcc and the C gate's flags in WSL, in each profile.
 
 ## Rules now done (each with its test)
 
@@ -246,9 +273,10 @@ for the owner, not this job.
 
 ## Defects found (not numbered; the coordinator numbers them)
 
-Fixed (sections 1, 2, 4, 8): the three D-407 causes; the chained projection in a generic struct;
-`is_generic` ignoring an instance's arguments (phantom parameters, `SoA[T]`); `std.ecs`'s
-interface-cache key; a lambda calling through a bound in a generic body.
+Fixed (sections 1, 2, 4, 8, 9, 10): the three D-407 causes; the chained projection in a generic
+struct; `is_generic` ignoring an instance's arguments (phantom parameters, `SoA[T]`); `std.ecs`'s
+interface-cache key; a lambda calling through a bound in a generic body; D-690; an `SoA` of a
+struct with no fields under the gcc C gate.
 
 Not fixed (outside the job; each has a probe):
 
@@ -306,3 +334,11 @@ Not fixed (outside the job; each has a probe):
 6. **`Entity` as a query parameter** (yields the entity; not in `[ECS-3]`'s list) and **`Option[P]`
    over any parameter** (`Option[Mut[T]]` yields `Option[ref mut T]`): additions the library makes
    so that `q.commands().destroy(e)` has an `e`. Confirm, or name another way to get the entity.
+7. **What a `mut self` method lends to a shared call on `self`** (§9). `[EXC-5]`: "Accesses
+   nested inside the same `mut self` method are reborrows and are not checked again." Built: the
+   method's write is lent to the call as a read, so a shared callee's reads are allowed and its
+   writes to the object still panic. Options: (a) that; (b) the callee's writes are reborrows too
+   (no check), which loses the check in `for x in self.items: self.grow()` above (a moved buffer
+   read by the loop); (c) lend exactly the accesses the method holds at the call (its live loans
+   of `self`'s fields, from the borrow checker), so a callee may write a field the method is not
+   using. (c) is the precise one and needs the borrow checker's loans in MIR lowering.

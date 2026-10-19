@@ -1686,7 +1686,7 @@ impl<'a> Analysis<'a> {
             StmtKind::BeginAccess { .. }
             | StmtKind::BeginAccessTransfer { .. }
             | StmtKind::EndAccess { .. }
-            | StmtKind::EndAccessTransfer { .. }
+            | StmtKind::EndAccessTransfer { .. } | StmtKind::LendAccess { .. }
             | StmtKind::Nop => {}
         }
     }

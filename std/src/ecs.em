@@ -75,9 +75,7 @@ pub struct ComponentInfo:
 pub fn components() -> Array[ComponentInfo]:
     return []
 
-## The dense slot of `e` in a sparse set, if it has one. (A `mut self` method reads it through this,
-## not through a shared method on `self`: such a call panics as an access conflict, a defect noted
-## in tasks/85/D-notes.md.)
+## The dense slot of `e` in a sparse set, if it has one.
 fn slot_in(entities: Span[Entity], sparse: Span[u32], e: Entity) -> Option[int]:
     i = e.index() as int
     if i >= sparse.len():

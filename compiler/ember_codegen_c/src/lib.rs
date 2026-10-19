@@ -6899,6 +6899,14 @@ impl Emitter<'_> {
                     "    {RT}access_{operation}({object}, {what}, {location});"
                 ));
             }
+            // `[EXC-5]` (D-690) — a `mut self` method lends its object for a call: its whole-object
+            // write becomes a read for the call, and a write again after.
+            StmtKind::LendAccess { place, lend } => {
+                self.emit_line_directive(stmt.span);
+                let (end, begin) = if *lend { ("end_write", "begin_read") } else { ("end_read", "begin_write") };
+                self.line(&format!("    {};", self.access_call(place, end, stmt.span, body)));
+                self.line(&format!("    {};", self.access_call(place, begin, stmt.span, body)));
+            }
             StmtKind::CheckedBinaryOp { dest, overflow, op, lhs, rhs } => {
                 // `bool ember_ck_add_i32(a, b, &dest)` returns whether the
                 // operation overflowed and writes the wrapped result either
@@ -11917,7 +11925,7 @@ fn stmt_c_reads(stmt: &Stmt, read: &mut [bool], void_place: &dyn Fn(&Place) -> b
         StmtKind::BeginAccess { place, .. }
         | StmtKind::BeginAccessTransfer { place, .. }
         | StmtKind::EndAccess { place, .. }
-        | StmtKind::EndAccessTransfer { place, .. } => c_read_place(place, read),
+        | StmtKind::EndAccessTransfer { place, .. } | StmtKind::LendAccess { place, .. } => c_read_place(place, read),
         StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
     }
 }
@@ -12591,7 +12599,7 @@ fn stmt_places<'b>(stmt: &'b Stmt, out: &mut Vec<&'b Place>) {
         | StmtKind::BeginAccess { place, .. }
         | StmtKind::BeginAccessTransfer { place, .. }
         | StmtKind::EndAccess { place, .. }
-        | StmtKind::EndAccessTransfer { place, .. } => out.push(place),
+        | StmtKind::EndAccessTransfer { place, .. } | StmtKind::LendAccess { place, .. } => out.push(place),
         StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
     }
 }

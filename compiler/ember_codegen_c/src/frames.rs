@@ -126,7 +126,7 @@ impl Emitter<'_> {
                 StmtKind::BeginAccess { place, .. }
                 | StmtKind::BeginAccessTransfer { place, .. }
                 | StmtKind::EndAccess { place, .. }
-                | StmtKind::EndAccessTransfer { place, .. } => {
+                | StmtKind::EndAccessTransfer { place, .. } | StmtKind::LendAccess { place, .. } => {
                     self.place_layouts(place, body, out);
                     if let TyKind::Class(id) = self.types.kind(body.locals[place.local.0 as usize].ty) {
                         out.insert(self.types.class_def(*id).name.to_string());

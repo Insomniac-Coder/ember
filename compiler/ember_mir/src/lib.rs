@@ -1219,6 +1219,18 @@ pub enum StmtKind {
         place: Place,
         mutable: bool,
     },
+    /// `[EXC-5]` (D-690) — a `mut self` method lends its own object to a call
+    /// that takes it shared (a shared method on `self`, or `self` as a
+    /// borrowed argument): the whole-object write its caller holds for it
+    /// becomes a whole-object read for the call (`lend: true`, before the
+    /// call) and a write again after it (`lend: false`). The callee may read
+    /// every field; a write, through any handle, conflicts with the read. The
+    /// place is the method's `*self`, whose write its caller began, so the two
+    /// statements balance each other and nothing else.
+    LendAccess {
+        place: Place,
+        lend: bool,
+    },
     /// Arithmetic that reports whether it overflowed.
     ///
     /// Rust MIR models this as an rvalue producing a `(T, bool)` tuple. Here
@@ -1271,6 +1283,7 @@ impl StmtKind {
             StmtKind::BeginAccessTransfer { .. } => "a transferred begin-access operation",
             StmtKind::EndAccess { .. } => "an end-access operation",
             StmtKind::EndAccessTransfer { .. } => "a transferred end-access operation",
+            StmtKind::LendAccess { .. } => "a lend of the object's write access",
             StmtKind::CheckedBinaryOp { .. } => "a checked arithmetic statement",
             StmtKind::StorageLive(_) => "a storage-live marker",
             StmtKind::StorageDead(_) => "a storage-dead marker",
@@ -1682,6 +1695,10 @@ fn dump_stmt(stmt: &Stmt, types: &ember_types::TypeTable) -> String {
         StmtKind::EndAccessTransfer { place, mutable } => {
             let mode = if *mutable { "write" } else { "read" };
             format!("end_access_{mode}_transfer({})", dump_place(place))
+        }
+        StmtKind::LendAccess { place, lend } => {
+            let mode = if *lend { "lend" } else { "take_back" };
+            format!("{mode}_access({})", dump_place(place))
         }
         StmtKind::CheckedBinaryOp {
             dest,

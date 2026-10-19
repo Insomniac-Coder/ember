@@ -687,6 +687,28 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// `[EXC-5]` (D-690) — whether `expr`, given to a call that borrows it, is this `mut self`
+    /// method's own object (`self`, through the dereference, a reference or a class upcast that
+    /// reach a shared receiver or a borrowed parameter). Such a call runs with the method's
+    /// whole-object write lent as a read (`StmtKind::LendAccess`): the callee's reads of the
+    /// object's fields are the method's own, nested in it, and would otherwise conflict with it.
+    fn lends_own_object(&self, expr: &hir::Expr) -> bool {
+        if self.class_access.is_none() {
+            return false;
+        }
+        let mut expr = expr;
+        loop {
+            match &expr.kind {
+                hir::ExprKind::OverflowScope { expr: inner, .. }
+                | hir::ExprKind::Cast { expr: inner, .. }
+                | hir::ExprKind::Deref(inner)
+                | hir::ExprKind::Ref { place: inner, mutable: false } => expr = inner,
+                hir::ExprKind::Local(local) => return self.local_map[local.0 as usize] == LocalId(1),
+                _ => return false,
+            }
+        }
+    }
+
     /// `[EXC-5]` — a `mut self` call on this method's own `self` is a
     /// reborrow of the write access its caller holds for it, and opens none.
     fn unless_reborrow(&self, access: Option<Place>) -> Option<Place> {
@@ -2431,6 +2453,8 @@ impl<'a> Builder<'a> {
                 // `[DSP-1]`, `[DSP-5]` — read before the arguments are lowered.
                 let receiver_class = args.first().filter(|_| takes_self).and_then(|receiver| self.receiver_class(receiver));
                 let mut class_accesses = Vec::new();
+                // `[EXC-5]` (D-690) — whether the call borrows this `mut self` method's own object.
+                let mut lends = false;
                 let eval_order = arg_eval_order
                     .clone()
                     .unwrap_or_else(|| (0..args.len()).collect::<Vec<_>>());
@@ -2448,7 +2472,10 @@ impl<'a> Builder<'a> {
                     } else {
                         match modes.get(index) {
                             Some(hir::Mode::Owned) => self.lower_operand(a),
-                            _ => self.lower_operand_borrowed(a),
+                            _ => {
+                                lends |= self.lends_own_object(a);
+                                self.lower_operand_borrowed(a)
+                            }
                         }
                     };
                     if let Some(binding) = default_arg_locals.as_ref().and_then(|locals| locals.get(index)) {
@@ -2497,8 +2524,12 @@ impl<'a> Builder<'a> {
                 // at this expression's span.
                 // The call's whole-object writes are the call's too (`[EXC-6]`
                 // names the access, `E4030` the check), not its last argument's.
-                if default_arg_locals.is_some() || !class_accesses.is_empty() {
+                if default_arg_locals.is_some() || !class_accesses.is_empty() || lends {
                     self.at(expr.span);
+                }
+                let lent = self.class_access.clone().filter(|_| lends);
+                if let Some(place) = &lent {
+                    self.push(StmtKind::LendAccess { place: place.clone(), lend: true });
                 }
                 for place in &class_accesses {
                     self.push(StmtKind::BeginAccess { place: place.clone(), mutable: true });
@@ -2530,6 +2561,9 @@ impl<'a> Builder<'a> {
                 self.current = next;
                 for place in class_accesses.into_iter().rev() {
                     self.push(StmtKind::EndAccess { place, mutable: true });
+                }
+                if let Some(place) = lent {
+                    self.push(StmtKind::LendAccess { place, lend: false });
                 }
                 self.emit_write_backs(write_back_mark);
                 if let Some(resumed) = suspension {

@@ -262,7 +262,7 @@ fn live_in(body: &Body) -> Vec<Locals> {
                     StmtKind::BeginAccess { place, .. }
                     | StmtKind::BeginAccessTransfer { place, .. }
                     | StmtKind::EndAccess { place, .. }
-                    | StmtKind::EndAccessTransfer { place, .. } => use_place(place, &mut live),
+                    | StmtKind::EndAccessTransfer { place, .. } | StmtKind::LendAccess { place, .. } => use_place(place, &mut live),
                     StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => {}
                 }
             }
@@ -1049,6 +1049,7 @@ impl<'a> Builder<'a> {
             StmtKind::EndAccessTransfer { place, mutable } => {
                 StmtKind::EndAccessTransfer { place: self.place(place, span, &mut pre), mutable: *mutable }
             }
+            StmtKind::LendAccess { place, lend } => StmtKind::LendAccess { place: self.place(place, span, &mut pre), lend: *lend },
             StmtKind::CheckedBinaryOp { dest, overflow, op, lhs, rhs } => {
                 let lhs = self.operand(lhs, span, &mut pre);
                 let rhs = self.operand(rhs, span, &mut pre);
@@ -1400,7 +1401,7 @@ fn visit_locals(body: &mut Body, f: &mut dyn FnMut(&mut LocalId, bool)) {
                 StmtKind::BeginAccess { place: p, .. }
                 | StmtKind::BeginAccessTransfer { place: p, .. }
                 | StmtKind::EndAccess { place: p, .. }
-                | StmtKind::EndAccessTransfer { place: p, .. } => place(p, f),
+                | StmtKind::EndAccessTransfer { place: p, .. } | StmtKind::LendAccess { place: p, .. } => place(p, f),
                 StmtKind::CheckedBinaryOp { dest, overflow, lhs, rhs, .. } => {
                     place(dest, f);
                     place(overflow, f);
