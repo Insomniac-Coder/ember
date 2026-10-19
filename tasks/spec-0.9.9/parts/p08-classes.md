@@ -171,6 +171,8 @@ accesses to the same field conflict (`[EXC-19]`).
 * `[EXC-4]` A `let` field is subject to the same rules: `let` fixes the binding, not the value
   (`[CLS-9a]`).
 * `[EXC-5]` Accesses nested inside the same `mut self` method are reborrows and are not checked again.
+  A shared method it calls on `self` is lent the method's access as a read: its reads are not checked
+  again, and a write to the object under it is (ODR-143).
 * `[EXC-6]` *(changed in 0.9.9)* A panic from `[EXC-1]`/`[EXC-2]` names both the offending access and
   the active one it conflicts with (file, line, column, field). The `debug` runtime keeps a per-thread
   stack of active accesses for this; other profiles always name the offending access and its field,

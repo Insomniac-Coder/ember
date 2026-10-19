@@ -10759,6 +10759,8 @@ formal 1/9 count or Phase 2's estimate.
 > Then ADR-223: `ember explain --borrow` (`[DIA-8]`) and `--report=engine` (`[CLI-10]`).
 > Then ADR-224: helper M's ECS queries merged (`[ECS-3]`, `[ECS-5]`, `[ECS-6]`; `[ECS-4]` unfinished),
 > D-690 and D-722..D-727 fixed, D-728..D-730 open. **All owner questions: `tasks/90/owner-questions.md`.**
+> Then ADR-225: L's and M's questions ruled as ODR-138..ODR-143 (0.9.10_Hardened_21) but M's question 1
+> (parallel systems), which stays open; ODR-142 built (a query with no required component).
 > **Before a push that touches C or the runtime:** `bench/gcc/gate.sh` in WSL (the workspace through
 > gcc) and `EMBER_CC=clang-cl cargo test --profile ci --workspace` on Windows, besides the full check.
 

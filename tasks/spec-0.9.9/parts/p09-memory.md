@@ -200,7 +200,12 @@ fn parse(data: Span[u8]) -> Option[u32]:
     to one is `E2170`;
   * `@align(N)` — raises the type's alignment to `N` (a power of two up to 4096); `size_of` becomes a
     multiple of `N`, and every place and heap buffer holding the type honours it (`[HEAP-9]`);
-  * `@repr(u8|u16|u32|u64|i8|i16|i32|i64)` — an enum's discriminant type.
+  * `@repr(u8|u16|u32|u64|i8|i16|i32|i64)` — an enum's discriminant type; it is not written on a
+    struct (`E0104`, ODR-139).
+
+  `@packed` and `@align(N)` are not written on one type, and a `@packed` type holds no field whose
+  type states an alignment with `@align`: no padding and a size that is a multiple of `N` cannot
+  both hold, so either is `E0104` (ODR-138).
 * `size_of[T]()`, `align_of[T]()` and `offset_of[T](field)` are compile-time functions.
 
 ## IX.6 Handles and pools

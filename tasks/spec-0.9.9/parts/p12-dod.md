@@ -136,7 +136,9 @@ fn scale(xs: Span[f32], out: MutSpan[f32], k: f32):
 ## XII.3 ECS (`std.ecs`)
 
 The entity-component system is an ordinary library built on `SoA`, generational handles and
-compile-time reflection. It has no compiler support of its own.
+compile-time reflection. Its compiler support is two things (ODR-141): a function over a `Query`
+written where a `std.ecs.System` is expected becomes one, and `run_parallel`'s own list literal is
+checked at compile time (`[ECS-4]`'s `E7020`).
 
 ```ember
 from std.ecs import World, Query, Mut, Component
@@ -173,13 +175,15 @@ fn main():
 * `[ECS-3]` *(changed in 0.9.9)* `Query[(A, Mut[B], Option[C], Not[D])]` is a view over a world's
   storages. `Mut[T]`, `Not[T]` and `Option[T]` in a query are **ordinary types**: `Mut` and `Not` are
   marker structs with a phantom parameter (`[TYP-35]`), and the library maps each parameter to its
-  item type (`ref T`, `ref mut T`, `Option[ref T]`, nothing) through an interface with an associated
-  type. A query iterates the smallest required storage and probes the others; `iter` borrows `q`
-  shared and yields read-only items; `iter_mut` yields `ref mut` for `Mut` parameters and requires
-  `mut q`. There is no access-mode generic kind in the
-  language.
+  item type (`ref T`, `ref mut T`, `Option[ref T]`, nothing: `()`) through an interface with an
+  associated type. `Entity` as a parameter yields the entity, and `Option[P]` applies to any
+  parameter `P` (ODR-141). A query iterates the smallest required storage and probes the others; one
+  with no required storage iterates every live entity, in the world's order (ODR-142). `iter`
+  borrows `q` shared and yields read-only items; `iter_mut` yields `ref mut` for `Mut` parameters and
+  requires `mut q`. There is no access-mode generic kind in the language.
 * `[ECS-4]` *(changed in 0.9.9)* A query's read and write sets are compile-time constants computed from
-  its type. `world.run(system, args…)` borrows exactly those storages. `world.run_parallel([s1, s2, …])`
+  its type. `world.run(system, arg)` borrows exactly those storages, and passes the system its query and
+  one argument: a tuple for several, `()` for none (ODR-141). `world.run_parallel([s1, s2, …])`
   runs systems at once when their sets do not conflict; a conflict between two systems known at
   compile time is `E7020`, naming both systems and the component. Systems passed as values, whose sets
   are not known at compile time, are checked against each other before any of them starts, and a

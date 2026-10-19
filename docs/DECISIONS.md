@@ -5017,6 +5017,28 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-225 — Helpers L's and M's questions ruled (ODR-138..ODR-143, 0.9.10_Hardened_21)
+
+2026-10-20, under the delegation (the owner, 2026-10-19: issues a helper reports are mine to
+settle). Each records what was built or the narrowest change, and is the owner's to overturn.
+* ODR-138 `[LAY-2]`: `@packed` beside `@align(N)`, on one type or through a field whose type states
+  an alignment, is `E0104` (was `E0901`, "not specified"). ODR-139: `@repr(T)` is an enum's only; the
+  attribute table's row is split, so a struct's is the table's own `E0104` ("does not apply to a
+  struct"). ODR-140: `E2170` is a reference to an *unaligned* packed field (built so). Nothing emits
+  `E0901` now: its page is gone and `rule_index`'s baseline holds it with no page or test.
+* ODR-141 `[ECS-3]`/`[ECS-4]`: `run(system, arg)` with one argument (a tuple for several, `()` for
+  none); `Not[D]`'s item is `()`; `Entity` is a parameter and `Option[P]` applies to any parameter;
+  Part XII.3 names the ECS's two pieces of compiler support (all as built).
+* ODR-142: a query with no required component iterates every live entity: `World` keeps `live`
+  (creation order with swap-remove holes, `live_slot` by index), and the query iterators read it
+  one entity at a time through the world (`entity_at`), since a view of a class object's field
+  cannot leave a function through a borrowed handle (`E3060`). Test:
+  `ECS-3/accept_a_query_with_no_required_component_visits_every_live_entity.em`.
+* ODR-143 `[EXC-5]`: a shared call on `self` inside a `mut self` method is lent the method's access as
+  a read (D-690's fix, as built).
+* Still the owner's: helper M's question 1, whether `run_parallel` runs systems truly at once (and so
+  when a function value is `Send`); `[ECS-4]` stays unfinished on it alone.
+
 ## ADR-224 — ECS queries, systems and commands (`[ECS-3]`..`[ECS-6]`), helper M
 
 2026-10-20, toward 90%: built by helper M on branch `helper-M` (its notes: `tasks/90/M-notes.md`),

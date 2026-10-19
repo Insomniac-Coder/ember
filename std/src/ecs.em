@@ -190,22 +190,35 @@ pub class World:
     free: Array[u32]
     alive: int
     storages: Map[u64, AnyStorage]
+    ## ODR-142 — every live entity, in creation order with swap-remove holes, as a storage keeps
+    ## its entities (`live_slot`: an entity's slot plus one, by index): what a query with no
+    ## required component iterates.
+    live: Array[Entity]
+    live_slot: Array[u32]
 
     fn init(mut self):
         self.generations = []
         self.free = []
         self.alive = 0
         self.storages = Map[u64, AnyStorage]()
+        self.live = []
+        self.live_slot = []
 
     ## A new entity: a freed index at its next generation, else a new index.
     pub fn create(mut self) -> Entity:
         self.alive += 1
         if self.free.len() > 0:
             index = self.free.pop().unwrap()
-            return Entity.new(index, self.generations[index as int])
+            reused = Entity.new(index, self.generations[index as int])
+            self.live_slot[index as int] = (self.live.len() + 1) as u32
+            self.live.push(reused)
+            return reused
         index = self.generations.len() as u32
         self.generations.push(0u32)
-        return Entity.new(index, 0u32)
+        made = Entity.new(index, 0u32)
+        self.live_slot.push((self.live.len() + 1) as u32)
+        self.live.push(made)
+        return made
 
     pub fn is_alive(self, e: Entity) -> bool:
         return alive_in(self.generations, e)
@@ -220,6 +233,15 @@ pub class World:
         self.generations[i] = (self.generations[i] + 1u32) & 4095u32
         self.free.push(e.index())
         self.alive -= 1
+        match slot_in(self.live, self.live_slot, e):
+            Some(at):
+                _gone = self.live.swap_remove(at)
+                self.live_slot[i] = 0u32
+                if at < self.live.len():
+                    moved = self.live[at]
+                    self.live_slot[moved.index() as int] = (at + 1) as u32
+            None:
+                pass
         return true
 
     ## How many entities are alive.
@@ -287,7 +309,7 @@ pub class World:
     ## other; the `Commands` it queued are applied once it returns (`[ECS-5]`).
     pub fn run[Q: QueryParam, A](self, system: fn(mut Query[Q], A), owned args: A):
         fetched = Q.Ops.fetch(self)
-        q = Query[Q](view=Q.Ops.view(ref fetched), cmds=Commands())
+        q = Query[Q](view=Q.Ops.view(ref fetched), cmds=Commands(), world=self)
         system(q, args)
         self.apply(q.cmds)
 
@@ -316,7 +338,7 @@ pub class World:
     ## Runs `system` over this world's `Query[Q]`: `run`'s, for a system taking only its query.
     fn run_query[Q: QueryParam](self, system: fn(mut Query[Q])):
         fetched = Q.Ops.fetch(self)
-        q = Query[Q](view=Q.Ops.view(ref fetched), cmds=Commands())
+        q = Query[Q](view=Q.Ops.view(ref fetched), cmds=Commands(), world=self)
         system(q)
         self.apply(q.cmds)
 
@@ -1005,47 +1027,59 @@ extend[A: QueryParam, B: QueryParam, C: QueryParam, D: QueryParam, E: QueryParam
 
 ## `[ECS-3]` — a view over a world's storages for one system's run: `iter` yields each matching
 ## entity's items read-only, `iter_mut` yields `ref mut` for `Mut` parameters (and needs `mut q`).
-## Entities come in the order of the shortest storage the query requires (`[ECS-6]`).
+## Entities come in the order of the shortest storage the query requires (`[ECS-6]`); with none
+## required, every live entity in the world's order (ODR-142).
 pub struct Query[Q: QueryParam]:
     view: Q.Ops.View
     cmds: Commands
+    ## The world the query runs over: its live entities drive a query that requires no component.
+    world: World
 
     pub fn iter(self) -> QueryIter[Q]:
-        driver = driving(Q.Ops.driver(self.view))
-        return QueryIter[Q](view=ref self.view, driver=driver, at=0)
+        driver = Q.Ops.driver(self.view)
+        return QueryIter[Q](view=ref self.view, driver=driver, world=self.world, at=0)
 
     pub fn iter_mut(mut self) -> QueryIterMut[Q]:
-        driver = driving(Q.Ops.driver(self.view))
-        return QueryIterMut[Q](view=ref mut self.view, driver=driver, at=0)
+        driver = Q.Ops.driver(self.view)
+        return QueryIterMut[Q](view=ref mut self.view, driver=driver, world=self.world, at=0)
 
     ## `[ECS-5]` — the buffer for adding, removing and destroying while iterating: applied after
     ## the system returns.
     pub fn commands(self) -> Commands:
         return self.cmds
 
-## A query's driving list: one of its parameters must require a component.
-fn driving(list: Option[Span[Entity]]) -> Span[Entity]:
-    match list:
-        Some(found):
-            return found
+## The `at`-th entity a query visits: from the shortest storage it requires, else from every live
+## entity, read one at a time from the world (ODR-142).
+fn entity_at(driver: Option[Span[Entity]], world: World, at: int) -> Option[Entity]:
+    match driver:
+        Some(list):
+            if at < list.len():
+                return Some(list[at])
+            return None
         None:
-            panic("a query requires at least one component (a parameter that is not `Option`, `Not` or `Entity`)")
+            if at < world.live.len():
+                return Some(world.live[at])
+            return None
 
 ## `q.iter()`.
 pub struct QueryIter[Q: QueryParam]:
     view: ref Q.Ops.View
-    driver: Span[Entity]
+    driver: Option[Span[Entity]]
+    world: World
     at: int
 
     pub fn next(mut self) -> Option[Q.Ops.ReadItem]:
-        while self.at < self.driver.len():
-            e = self.driver[self.at]
-            self.at += 1
-            match Q.Ops.get(self.view, e):
-                Some(item):
-                    return Some(item)
+        while true:
+            match entity_at(self.driver, self.world, self.at):
+                Some(e):
+                    self.at += 1
+                    match Q.Ops.get(self.view, e):
+                        Some(item):
+                            return Some(item)
+                        None:
+                            pass
                 None:
-                    pass
+                    return None
         return None
 
 extend[Q: QueryParam] QueryIter[Q] implements Iterator:
@@ -1054,18 +1088,22 @@ extend[Q: QueryParam] QueryIter[Q] implements Iterator:
 ## `q.iter_mut()`.
 pub struct QueryIterMut[Q: QueryParam]:
     view: ref mut Q.Ops.View
-    driver: Span[Entity]
+    driver: Option[Span[Entity]]
+    world: World
     at: int
 
     pub fn next(mut self) -> Option[Q.Ops.Item]:
-        while self.at < self.driver.len():
-            e = self.driver[self.at]
-            self.at += 1
-            match Q.Ops.get_mut(self.view, e):
-                Some(item):
-                    return Some(item)
+        while true:
+            match entity_at(self.driver, self.world, self.at):
+                Some(e):
+                    self.at += 1
+                    match Q.Ops.get_mut(self.view, e):
+                        Some(item):
+                            return Some(item)
+                        None:
+                            pass
                 None:
-                    pass
+                    return None
         return None
 
 extend[Q: QueryParam] QueryIterMut[Q] implements Iterator:

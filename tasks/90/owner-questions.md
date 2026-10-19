@@ -1,33 +1,34 @@
 # Owner questions from the 90% push (2026-10-19/20)
 
-Real choices the specification leaves open, raised by the helpers and kept here for the owner. What
-was built meanwhile is in force until the owner decides. Each question is written out in full, with
+Real choices the specification leaves open, raised by the helpers. On 2026-10-20 all but one were
+ruled under the delegation (ODR-138..ODR-143, 0.9.10_Hardened_21, ADR-225), each the owner's to
+overturn; **ECS question 1 is still open.** Each question is written out in full, with
 the specification quoted, a real example and the options, in the helper's notes.
 
 ## Layout attributes (`[LAY-2]`), helper L — `tasks/90/L-notes.md` §4
 
 1. `@packed` together with `@align(N)`, on one type or a packed type holding an aligned one: packed
-   wins, `@align` wins, or both refused. Built meanwhile: `E0901` for both.
+   wins, `@align` wins, or both refused. **Ruled ODR-138: both refused, `E0104`.**
 2. `@repr` on a struct: does not apply (`E0104`, the attribute table's row split), or a meaning to
-   give it. Built meanwhile: `E0901`.
+   give it. **Ruled ODR-139: does not apply, `E0104`; the table row split.**
 3. A reference to a one-byte-aligned field of a `@packed` type: the code table says `E2170` covers any
    field of a packed struct, the rule's text only unaligned ones. Built meanwhile: allowed (the
-   rule's text).
+   rule's text). **Ruled ODR-140: the rule's text; the code table follows it.**
 
 ## ECS (`[ECS-3]`..`[ECS-6]`), helper M — `tasks/90/M-notes.md` "Owner questions"
 
 1. `run_parallel` runs its systems one after another: build real parallel runs (and decide when a
    function value or callable parameter is `Send`/`Sync`, and whether components must be), rule
    that running in turn meets "at once", or parallel for literals only. `[ECS-4]` stays unfinished
-   until this is settled.
+   until this is settled. **OPEN.**
 2. `run(system, args…)` without variadic parameters: one argument (a tuple for several, `()` for
-   none, built), a separate no-argument form, or a language feature.
-3. `Not[D]`'s item: `()` (built, a `()` slot in the item tuple) — confirm.
+   none, built), a separate no-argument form, or a language feature. **Ruled ODR-141: one argument.**
+3. `Not[D]`'s item: `()` (built, a `()` slot in the item tuple) — confirm. **Ruled ODR-141: `()`.**
 4. A query with no required parameter: panics when iterated (built), iterates every live entity, or
-   a compile-time error.
+   a compile-time error. **Ruled ODR-142: every live entity (built 2026-10-20).**
 5. Part XII.3 "no compiler support of its own" against `[ECS-4]`'s compile-time `E7020`: keep the
-   narrow support built and say so, a general mechanism, or drop the literal form.
+   narrow support built and say so, a general mechanism, or drop the literal form. **Ruled ODR-141: keep it, Part XII.3 says so.**
 6. `Entity` as a query parameter and `Option[P]` over any parameter (built, so that
-   `q.commands().destroy(e)` has an `e`) — confirm.
+   `q.commands().destroy(e)` has an `e`) — confirm. **Ruled ODR-141: confirmed.**
 7. D-690: lend `self` to a shared call as a read (built), let the callee's writes through, or lend
-   exactly the method's live loans.
+   exactly the method's live loans. **Ruled ODR-143: lent as a read.**

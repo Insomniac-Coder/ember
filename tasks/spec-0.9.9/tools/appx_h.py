@@ -481,6 +481,18 @@ ODRS = [
      "`[DET-2]`, `[PHIL-10]`"),
     ('ODR-137', "ruled under the delegation: `@non_exhaustive` is a C enum's (unit-only, with `@repr`), holding any value of its integer type (`match` needs `_`, no niche, `E(9)`/`9` for an unnamed value) and crossing the boundary as that integer; on a hand declaration `param(p, out, one)` is `mut p: T` returned by the call; `@ffi(status=E, ok=X, error=N)` is written on `E` itself, and `T` in `Result[T, N]` is `void`, the one output's type, or the tuple of several",
      "`[FFI-8]`, `[FFI-11]`, `[FFI-11b]`, `[FFI-16]`, `[ERR-6]`"),
+    ('ODR-138', "ruled under the delegation: `@packed` beside `@align(N)` on one type, or a `@packed` type holding a field whose type states an alignment with `@align`, is `E0104`; no padding and a size that is a multiple of `N` cannot both hold",
+     "`[LAY-2]`"),
+    ('ODR-139', "ruled under the delegation: `@repr(T)` applies to enums only (`E0104` on a struct); the attribute table's row is split",
+     "`[LAY-2]`, `[ATT-1]`"),
+    ('ODR-140', "ruled under the delegation: `E2170` is a reference to an unaligned field of a packed type (alignment above one byte), as `[LAY-2]`'s text says; the code table's wording follows it",
+     "`[LAY-2]`"),
+    ('ODR-141', "ruled under the delegation: `run(system, arg)` takes one argument after the system (a tuple for several, `()` for none); `Not[D]`'s item is `()`; `Entity` is a query parameter and `Option[P]` applies to any parameter; the ECS's compiler support is the conversion of a function to a `System` and the compile-time check of `run_parallel`'s literal",
+     "`[ECS-3]`, `[ECS-4]`"),
+    ('ODR-142', "ruled under the delegation: a query none of whose parameters requires a component iterates every live entity, in the world's order (creation order with swap-remove holes)",
+     "`[ECS-3]`, `[ECS-6]`"),
+    ('ODR-143', "ruled under the delegation: a shared method called on `self` inside a `mut self` method is lent the method's access as a read: its reads are not checked again, and a write to the object under it is",
+     "`[EXC-5]`"),
 ]
 
 H5_HEAD = """
@@ -549,7 +561,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.10', 20)
+CURRENT = ('0.9.10', 21)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -570,6 +582,7 @@ V010_H16_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h16')
 V010_H17_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h17')
 V010_H18_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h18')
 V010_H19_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h19')
+V010_H20_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h20')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -1066,8 +1079,31 @@ Generated: every rule whose text differs from 0.9.10_Hardened_19.
 """
 
 
-def v010_h19_to_now():
-    return H25_HEAD + rule_diff(V010_H19_PARTS, os.path.join(HERE, '..', 'parts'))
+def v010_h19_to_h20():
+    return H25_HEAD + rule_diff(V010_H19_PARTS, V010_H20_PARTS)
+
+
+H26_HEAD = """
+## H.26 Changes in 0.9.10_Hardened_21 (from 0.9.10_Hardened_20)
+
+**0.9.10_Hardened_21** records ODR-138..ODR-143, ruled under the delegation on questions helpers L (layout attributes) and M (the ECS) raised (`tasks/90/owner-questions.md`, `docs/DECISIONS.md` ADR-225):
+
+* `@packed` and `@align(N)` are not written on one type, and a `@packed` type holds no field whose type states an alignment with `@align`: `E0104` (ODR-138).
+* `@repr(T)` is an enum's discriminant type only; on a struct it is `E0104`, and the attribute table gives it its own row (ODR-139).
+* `E2170` is a reference to an *unaligned* field of a packed type, as `[LAY-2]`'s text says; the code table now says so (ODR-140).
+* The ECS library's shape: `run(system, arg)` passes one argument (a tuple for several, `()` for none); `Not[D]`'s item is `()`; `Entity` is a query parameter yielding the entity and `Option[P]` applies to any parameter; and Part XII.3 names its two pieces of compiler support (the conversion of a function to a `System`, `run_parallel`'s literal checked for `E7020`) (ODR-141).
+* A query with no required component iterates every live entity, in the world's order (ODR-142).
+* Under `[EXC-5]`, a shared method called on `self` inside a `mut self` method is lent the method's access as a read: its reads are not checked again, a write to the object under it is (ODR-143).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_20.
+
+| Rule | 0.9.10_Hardened_20 → 0.9.10_Hardened_21 |
+|---|---|
+"""
+
+
+def v010_h20_to_now():
+    return H26_HEAD + rule_diff(V010_H20_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -1138,7 +1174,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_now() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_now() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

@@ -8410,8 +8410,8 @@ impl<'a> Checker<'a> {
 
     /// `[LAY-2]` — a struct's or an enum's `@packed` and `@align(N)`, recorded for its layout.
     /// `N` is a constant power of two up to 4096 (`E0104` otherwise). The two together are
-    /// `E0901`: `@packed` leaves no padding and `@align(N)` makes the size a multiple of `N`,
-    /// which needs padding, and the specification does not say which wins.
+    /// `E0104` (ODR-138): `@packed` leaves no padding and `@align(N)` makes the size a multiple of
+    /// `N`, which needs padding.
     fn declare_layout_attributes(&mut self, name: Symbol, attrs: &[ast::Attribute]) {
         let packed = has_attribute(attrs, "packed");
         let mut align = 1;
@@ -8430,8 +8430,8 @@ impl<'a> Checker<'a> {
             }
             if packed {
                 self.sink.emit(
-                    Diagnostic::error(codes::E0901, attr.span, "`@align` beside `@packed` is not specified")
-                        .note("`@packed` leaves no padding, and `@align(N)` makes the size a multiple of `N` [LAY-2]"),
+                    Diagnostic::error(codes::E0104, attr.span, "`@align` is not written beside `@packed`")
+                        .note("`@packed` leaves no padding, and `@align(N)` makes the size a multiple of `N` [LAY-2], ODR-138"),
                 );
             }
         }
@@ -8440,8 +8440,8 @@ impl<'a> Checker<'a> {
 
     /// `[LAY-2]` — the layouts the attributes ask for that are refused, checked on every struct
     /// and enum made, generic instances included:
-    /// * a `@packed` type holding a type declared `@align(N)` is `E0901`: that type's places
-    ///   honour `N`, which a field with no padding before it cannot;
+    /// * a `@packed` type holding a type declared `@align(N)` is `E0104` (ODR-138): that type's
+    ///   places honour `N`, which a field with no padding before it cannot;
     /// * a `@packed` type holding a SIMD vector is `E0900`: the C compilers disagree on packing
     ///   a type whose alignment is stated (MSVC keeps it, GCC and Clang pack it);
     /// * `@align(N)` on an enum without payloads is `E0900`: such an enum is its integer in C.
@@ -8465,8 +8465,8 @@ impl<'a> Checker<'a> {
                     if (aligned || simd) && reported.insert(span) {
                         let shown = self.types.display(field);
                         self.sink.emit(if aligned {
-                            Diagnostic::error(codes::E0901, span, format!("field `{name}` of a `@packed` type holds `{shown}`, whose alignment `@align` states"))
-                                .note("`@packed` leaves no padding, and every place holding an `@align(N)` type honours `N` [LAY-2]")
+                            Diagnostic::error(codes::E0104, span, format!("field `{name}` of a `@packed` type holds `{shown}`, whose alignment `@align` states"))
+                                .note("`@packed` leaves no padding, and every place holding an `@align(N)` type honours `N` [LAY-2], ODR-138")
                         } else {
                             Diagnostic::error(codes::E0900, span, format!("field `{name}` of a `@packed` type holds a SIMD vector (`{shown}`), which is not implemented yet"))
                                 .note("a vector is aligned to its size [SIMD-1]; packing one is not built [ATT-6]")
@@ -36622,21 +36622,14 @@ impl<'a> Checker<'a> {
             if name == "ffi" && site == "enum" {
                 continue;
             }
-            // `[LAY-2]` — `@layout` names `c` and `@packed` nothing; `@repr` is an enum's
-            // discriminant type, and the specification gives it no meaning on a struct.
+            // `[LAY-2]` — `@layout` names `c` and `@packed` nothing; `@repr` is an enum's discriminant
+            // type, not a struct's (the attribute table's, ODR-139).
             if name == "layout" && !attribute_names(attr, "c") {
                 self.error(codes::E0104, attr.span, "`@layout` takes `c`: `@layout(c)`");
                 continue;
             }
             if name == "packed" && !attr.args.is_empty() {
                 self.error(codes::E0104, attr.span, "`@packed` takes no arguments");
-                continue;
-            }
-            if name == "repr" && site == "struct" {
-                self.sink.emit(
-                    Diagnostic::error(codes::E0901, attr.span, "`@repr` on a struct is not specified")
-                        .note("`@repr(T)` gives an enum's discriminant type [LAY-2]; a struct's layout is `@layout(c)`, `@packed` and `@align(N)`"),
-                );
                 continue;
             }
             // `[TYP-9]` — `@fastmath` takes no arguments and `@fp` names
@@ -51815,7 +51808,7 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     // `declare_layout_attributes`, `@repr(T)` by `enum_repr`.
     (&["layout"], &["struct", "enum"], true),
     (&["packed", "align"], &["struct", "enum"], true),
-    (&["repr"], &["struct", "enum"], true),
+    (&["repr"], &["enum"], true),
     (&["gpu_layout"], &["struct"], false),
     (&["static_safe"], &["fn"], true),
     // `[EFF-5]` — checked over the call graph (`ember_analysis::check_effects_all`).

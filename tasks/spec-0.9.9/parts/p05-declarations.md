@@ -342,7 +342,8 @@ static REGISTRY: Mutex[Map[String, int]] = Mutex({})
 | Attribute | Applies to | Rule |
 |---|---|---|
 | `@derive(A, …)`, `@no_derive(A, …)` | struct, enum, class | `[STR-5]`, `[DRV-1]` |
-| `@layout(c)`, `@packed`, `@align(N)`, `@repr(T)` | struct, enum | `[LAY-2]` |
+| `@layout(c)`, `@packed`, `@align(N)` | struct, enum | `[LAY-2]` |
+| `@repr(T)` | enum | `[LAY-2]` |
 | `@gpu_layout(std140\|std430\|scalar)` | struct | Annex D |
 | `@noalloc`, `@nosync`, `@noblock`, `@noio`, `@nolock`, `@nopanic(explicit)`, `@static_safe`, `@deterministic`, `@realtime` | fn, interface method; `@deterministic` also module and fn type | Part X |
 | `@overflow(panic\|wrap\|saturate)` | fn, module | `[TYP-8]` |

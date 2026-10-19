@@ -416,6 +416,12 @@ ODR-132, the type of `Retained.ptr()` (§H.20).
 | ODR-135 | ruled under the delegation: `[build] max_instantiations` applies to the package's own generics; the standard library's instances are not the package's to budget, and counting them made any small ceiling warn on code the program never wrote | `[MONO-3]` |
 | ODR-136 | ruled under the delegation: `Nondet` for padding is recorded at the reinterpreting cast of a pointer to a type with padding; reading uninitialised memory is undefined (`[PHIL-10]` lists it among what Safe Ember cannot do), an `unsafe` obligation, not a nondeterministic result | `[DET-2]`, `[PHIL-10]` |
 | ODR-137 | ruled under the delegation: `@non_exhaustive` is a C enum's (unit-only, with `@repr`), holding any value of its integer type (`match` needs `_`, no niche, `E(9)`/`9` for an unnamed value) and crossing the boundary as that integer; on a hand declaration `param(p, out, one)` is `mut p: T` returned by the call; `@ffi(status=E, ok=X, error=N)` is written on `E` itself, and `T` in `Result[T, N]` is `void`, the one output's type, or the tuple of several | `[FFI-8]`, `[FFI-11]`, `[FFI-11b]`, `[FFI-16]`, `[ERR-6]` |
+| ODR-138 | ruled under the delegation: `@packed` beside `@align(N)` on one type, or a `@packed` type holding a field whose type states an alignment with `@align`, is `E0104`; no padding and a size that is a multiple of `N` cannot both hold | `[LAY-2]` |
+| ODR-139 | ruled under the delegation: `@repr(T)` applies to enums only (`E0104` on a struct); the attribute table's row is split | `[LAY-2]`, `[ATT-1]` |
+| ODR-140 | ruled under the delegation: `E2170` is a reference to an unaligned field of a packed type (alignment above one byte), as `[LAY-2]`'s text says; the code table's wording follows it | `[LAY-2]` |
+| ODR-141 | ruled under the delegation: `run(system, arg)` takes one argument after the system (a tuple for several, `()` for none); `Not[D]`'s item is `()`; `Entity` is a query parameter and `Option[P]` applies to any parameter; the ECS's compiler support is the conversion of a function to a `System` and the compile-time check of `run_parallel`'s literal | `[ECS-3]`, `[ECS-4]` |
+| ODR-142 | ruled under the delegation: a query none of whose parameters requires a component iterates every live entity, in the world's order (creation order with swap-remove holes) | `[ECS-3]`, `[ECS-6]` |
+| ODR-143 | ruled under the delegation: a shared method called on `self` inside a `mut self` method is lent the method's access as a read: its reads are not checked again, and a write to the object under it is | `[EXC-5]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -972,3 +978,23 @@ Generated: every rule whose text differs from 0.9.10_Hardened_19.
 | Rule | 0.9.10_Hardened_19 → 0.9.10_Hardened_20 |
 |---|---|
 
+
+## H.26 Changes in 0.9.10_Hardened_21 (from 0.9.10_Hardened_20)
+
+**0.9.10_Hardened_21** records ODR-138..ODR-143, ruled under the delegation on questions helpers L (layout attributes) and M (the ECS) raised (`tasks/90/owner-questions.md`, `docs/DECISIONS.md` ADR-225):
+
+* `@packed` and `@align(N)` are not written on one type, and a `@packed` type holds no field whose type states an alignment with `@align`: `E0104` (ODR-138).
+* `@repr(T)` is an enum's discriminant type only; on a struct it is `E0104`, and the attribute table gives it its own row (ODR-139).
+* `E2170` is a reference to an *unaligned* field of a packed type, as `[LAY-2]`'s text says; the code table now says so (ODR-140).
+* The ECS library's shape: `run(system, arg)` passes one argument (a tuple for several, `()` for none); `Not[D]`'s item is `()`; `Entity` is a query parameter yielding the entity and `Option[P]` applies to any parameter; and Part XII.3 names its two pieces of compiler support (the conversion of a function to a `System`, `run_parallel`'s literal checked for `E7020`) (ODR-141).
+* A query with no required component iterates every live entity, in the world's order (ODR-142).
+* Under `[EXC-5]`, a shared method called on `self` inside a `mut self` method is lent the method's access as a read: its reads are not checked again, a write to the object under it is (ODR-143).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_20.
+
+| Rule | 0.9.10_Hardened_20 → 0.9.10_Hardened_21 |
+|---|---|
+| `[ECS-3]` | changed |
+| `[ECS-4]` | changed |
+| `[EXC-5]` | changed |
+| `[LAY-2]` | changed |

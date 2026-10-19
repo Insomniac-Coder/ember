@@ -1,16 +1,15 @@
 #$ test: compile-fail
-#$ rules: LAY-2, PHIL-12
+#$ rules: LAY-2
 #$ profiles: debug
 #$ error[E0104]: `@layout` takes `c`
 #$ error[E0104]: `@packed` takes no arguments
 #$ error[E0104]: `@repr` names the discriminant's integer type
 #$ error[E0104]: `@repr` names the discriminant's integer type
 #$ error[E0104]: `@repr` names the discriminant's integer type
-#$ error[E0901]: `@repr` on a struct is not specified
+#$ error[E0104]: `@repr` does not apply to a struct
 # `[LAY-2]` — `@layout` names `c`, `@packed` takes nothing, and `@repr` names one of the eight
 # integer types `u8`…`u64`, `i8`…`i64` (`int` is `i64`); anything else is `E0104`. `@repr` gives
-# an enum's discriminant type and nothing else, so on a struct it is a construct the
-# specification does not define (`E0901`, `[PHIL-12]`).
+# an enum's discriminant type and nothing else: on a struct it is `E0104` (ODR-139).
 
 @layout(rust)
 struct Reordered:

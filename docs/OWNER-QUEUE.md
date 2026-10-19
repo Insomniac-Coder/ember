@@ -262,6 +262,84 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-138 — `@packed` together with `@align` — **CLOSED**
+
+    ID:        ODR-138
+    Status:    CLOSED — ruled under the delegation 2026-10-20; incorporated in 0.9.10_Hardened_21
+    Category:  LAYOUT
+    Location:  Ember_v0.9.10_Hardened_20.md [LAY-2]
+
+**The question.** `@packed` leaves no padding; `@align(N)` makes the size a multiple of `N` and every place holding the type honours `N`. On one type, or a packed type holding an aligned one, both cannot hold, and the rule did not say which wins (helper L's question 1).
+
+**Ruling.** Ruled under the delegation: both forms are refused with `E0104`, as Rust refuses them (E0587, E0588); neither layout is chosen silently. ADR-225.
+
+---
+
+## ODR-139 — `@repr` on a struct — **CLOSED**
+
+    ID:        ODR-139
+    Status:    CLOSED — ruled under the delegation 2026-10-20; incorporated in 0.9.10_Hardened_21
+    Category:  LAYOUT
+    Location:  Ember_v0.9.10_Hardened_20.md [LAY-2], [ATT-1]
+
+**The question.** The attribute table listed `@repr(T)` for "struct, enum" while `[LAY-2]` gives it a meaning only as an enum's discriminant type (helper L's question 2).
+
+**Ruling.** Ruled under the delegation: `@repr(T)` applies to enums; the table's row is split and a struct's is `E0104` ("does not apply to a struct"). ADR-225.
+
+---
+
+## ODR-140 — `E2170` and a one-byte-aligned packed field — **CLOSED**
+
+    ID:        ODR-140
+    Status:    CLOSED — ruled under the delegation 2026-10-20; incorporated in 0.9.10_Hardened_21
+    Category:  LAYOUT
+    Location:  Ember_v0.9.10_Hardened_20.md [LAY-2]
+
+**The question.** The code table said `E2170` is "reference to a field of a packed struct"; `[LAY-2]` says a reference to an *unaligned* field is (helper L's question 3). A `u8` field is never unaligned.
+
+**Ruling.** Ruled under the delegation: the rule's text governs; the code table now reads "reference to an unaligned field of a packed type". ADR-225.
+
+---
+
+## ODR-141 — The ECS library's shape and its compiler support — **CLOSED**
+
+    ID:        ODR-141
+    Status:    CLOSED — ruled under the delegation 2026-10-20; incorporated in 0.9.10_Hardened_21
+    Category:  LIBRARY
+    Location:  Ember_v0.9.10_Hardened_20.md [ECS-3], [ECS-4]
+
+**The question.** Ember has no variadic parameters for `run(system, args…)`; `[ECS-3]` maps `Not[D]` to "nothing"; the commands example needs an entity in the items; and Part XII.3 says the ECS has no compiler support of its own while `[ECS-4]`'s `E7020` needs some (helper M's questions 2, 3, 5, 6).
+
+**Ruling.** Ruled under the delegation: one argument after the system (a tuple for several, `()` for none); `Not[D]`'s item is `()`; `Entity` is a parameter and `Option[P]` applies to any parameter; Part XII.3 names the two pieces of compiler support. ADR-225.
+
+---
+
+## ODR-142 — A query with no required component — **CLOSED**
+
+    ID:        ODR-142
+    Status:    CLOSED — ruled under the delegation 2026-10-20; incorporated in 0.9.10_Hardened_21
+    Category:  LIBRARY
+    Location:  Ember_v0.9.10_Hardened_20.md [ECS-3], [ECS-6]
+
+**The question.** A query drives from the smallest required storage; `Query[(Entity, Option[A])]` has none (helper M's question 4).
+
+**Ruling.** Ruled under the delegation: it iterates every live entity, in the world's order (creation order with swap-remove holes), which the world keeps as its storages keep theirs. ADR-225.
+
+---
+
+## ODR-143 — A shared call on `self` inside a `mut self` method — **CLOSED**
+
+    ID:        ODR-143
+    Status:    CLOSED — ruled under the delegation 2026-10-20; incorporated in 0.9.10_Hardened_21
+    Category:  EXCLUSIVITY
+    Location:  Ember_v0.9.10_Hardened_20.md [EXC-5]
+
+**The question.** `[EXC-5]` makes accesses nested inside a `mut self` method reborrows; D-690 was a shared callee's reads panicking against the method's write. How much the callee inherits was open (helper M's question 7).
+
+**Ruling.** Ruled under the delegation: the method's access is lent to the call as a read; the callee's reads are not checked again and a write to the object under it is. ADR-225.
+
+---
+
 ## ODR-137 — C enums, `out` parameters and status results on hand declarations — **CLOSED**
 
     ID:        ODR-137
