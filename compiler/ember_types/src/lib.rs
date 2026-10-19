@@ -2577,21 +2577,25 @@ impl TypeTable {
                     return self.render_named(def.name, def.origin.as_ref(), user);
                 }
                 let name = def.name.as_str();
+                // D-732 — the payloads are rendered only for `Option` and `Result`: rendering
+                // every enum's never ended for one that holds itself (`Node(Box[Tree])`).
                 let payload = |index: usize| {
                     def.variants.get(index).and_then(|v| v.fields.first()).map(|f| self.render(f.ty, user))
                 };
                 let named = |a: &str, b: &str| {
                     def.variants.len() == 2 && def.variants[0].name.is(a) && def.variants[1].name.is(b)
                 };
-                match (payload(0), payload(1)) {
-                    (None, Some(inner)) if name.starts_with("Option_") && named("None", "Some") => {
-                        format!("Option[{inner}]")
-                    }
-                    (Some(ok), Some(err)) if name.starts_with("Result_") && named("Ok", "Err") => {
-                        format!("Result[{ok}, {err}]")
-                    }
-                    _ => self.render_named(def.name, None, user),
+                if name.starts_with("Option_") && named("None", "Some") && def.variants[0].fields.is_empty()
+                    && let Some(inner) = payload(1)
+                {
+                    return format!("Option[{inner}]");
                 }
+                if name.starts_with("Result_") && named("Ok", "Err")
+                    && let (Some(ok), Some(err)) = (payload(0), payload(1))
+                {
+                    return format!("Result[{ok}, {err}]");
+                }
+                self.render_named(def.name, None, user)
             }
             TyKind::Range(id) => self.range_def(*id).name.to_string(),
             // D-306 — an instance name holds the slot too: `Option[U]` over

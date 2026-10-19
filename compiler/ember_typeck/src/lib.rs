@@ -2659,6 +2659,9 @@ struct Checker<'a> {
     /// Each generic class not yet collected, as `pending_generic_structs`: a generic struct's
     /// field may name one declared after it (or a class collected later in module order).
     pending_generic_classes: HashMap<Symbol, (usize, usize, ast::Item)>,
+    /// D-729, D-731 — the generic types being collected, each with the instances named meanwhile
+    /// (`Box[Node[T]]` in `Node`'s own field): registered empty, filled once the recipe is whole.
+    generic_forward: HashMap<Symbol, Vec<(Ty, Vec<Ty>, Span)>>,
     /// D-407 — each interface's associated types by name, and its parents'
     /// names, read before any generic type is collected: a generic type's
     /// field or an interface's method may name `U.Iter` of an interface
@@ -2950,6 +2953,7 @@ impl<'a> Checker<'a> {
             collecting_generic: None,
             pending_generic_structs: HashMap::new(),
             pending_generic_classes: HashMap::new(),
+            generic_forward: HashMap::new(),
             noted_assoc: HashMap::new(),
             method_call_expected: None,
             loop_labels: Vec::new(),
@@ -5193,6 +5197,32 @@ impl<'a> Checker<'a> {
             let name = self.qualified(decl.name.name);
             let mut generic_params = self.declare_generics(&decl.generics);
             let params: Vec<Symbol> = generic_params.iter().map(|g| g.name).collect();
+            // D-729, D-731 — registered before its fields, which may name it or name a generic type
+            // collected on demand meanwhile that names it; completed below.
+            self.generic_forward.insert(name, Vec::new());
+            self.generic_structs.insert(
+                name,
+                GenericStruct {
+                    declaring_module: self.current_module,
+                    defaults: decl
+                        .members
+                        .iter()
+                        .filter_map(|member| match &member.kind {
+                            ast::MemberKind::Field(field) => Some(field.default.clone()),
+                            _ => None,
+                        })
+                        .collect(),
+                    params: params.clone(),
+                    generic_params: generic_params.clone(),
+                    fields: Vec::new(),
+                    derives_copy: has_derive(&item.attrs, "Copy"),
+                    clone_request: clone_request(&item.attrs, false),
+                    opted_out: (has_attribute_argument(&item.attrs, "no_derive", "Eq"), has_attribute_argument(&item.attrs, "no_derive", "Debug")),
+                    decl_span: item.span,
+                    implements: decl.implements.clone(),
+                    methods: Vec::new(),
+                },
+            );
             // D-407 — `U.Iter` in a field or a method's signature is one
             // hidden parameter after the written ones, bounded as `Iter` is
             // declared and filled from the arguments at instantiation (as
@@ -5215,6 +5245,9 @@ impl<'a> Checker<'a> {
                 }
             }
             self.declare_projections(&mentioned, &mut generic_params, 0);
+            if let Some(recipe) = self.generic_structs.get_mut(&name) {
+                recipe.generic_params = generic_params.clone();
+            }
             let fields = decl
                 .members
                 .iter()
@@ -5285,29 +5318,11 @@ impl<'a> Checker<'a> {
                 self.types.declare_must_drop(name);
             }
             self.declare_layout_attributes(name, &item.attrs);
-            self.generic_structs.insert(
-                name,
-                GenericStruct {
-                    declaring_module: self.current_module,
-                    defaults: decl
-                        .members
-                        .iter()
-                        .filter_map(|member| match &member.kind {
-                            ast::MemberKind::Field(field) => Some(field.default.clone()),
-                            _ => None,
-                        })
-                        .collect(),
-                    params,
-                    generic_params,
-                    fields,
-                    derives_copy: has_derive(&item.attrs, "Copy"),
-                    clone_request: clone_request(&item.attrs, false),
-                    opted_out: (has_attribute_argument(&item.attrs, "no_derive", "Eq"), has_attribute_argument(&item.attrs, "no_derive", "Debug")),
-                    decl_span: item.span,
-                    implements: decl.implements.clone(),
-                    methods,
-                },
-            );
+            if let Some(recipe) = self.generic_structs.get_mut(&name) {
+                recipe.fields = fields;
+                recipe.methods = methods;
+            }
+            self.fill_forward_instances(name);
         }
     }
 
@@ -5323,6 +5338,26 @@ impl<'a> Checker<'a> {
             let name = self.qualified(decl.name.name);
             let generic_params = self.declare_generics(&decl.generics);
             let params: Vec<Symbol> = generic_params.iter().map(|param| param.name).collect();
+            // D-731 — registered before its payloads, which may name it (`Cons(T, Box[List[T]])`).
+            let (repr, repr_is_explicit) = self.enum_repr(&item.attrs, decl);
+            self.generic_forward.insert(name, Vec::new());
+            self.generic_enums.insert(
+                name,
+                GenericEnum {
+                    params: params.clone(),
+                    generic_params: generic_params.clone(),
+                    variants: Vec::new(),
+                    repr,
+                    repr_is_explicit,
+                    derives_copy: has_derive(&item.attrs, "Copy"),
+                    clone_request: clone_request(&item.attrs, false),
+                    opted_out: (has_attribute_argument(&item.attrs, "no_derive", "Eq"), has_attribute_argument(&item.attrs, "no_derive", "Debug")),
+                    decl_span: item.span,
+                    declaring_module: self.current_module,
+                    implements: decl.implements.clone(),
+                    methods: Vec::new(),
+                },
+            );
             let variants = self.collect_variants(decl);
             // D-278 — `E[T]` in the type's own method signatures is `Self`.
             let own: Vec<Ty> = params.iter().filter_map(|param| self.type_params.get(param).copied()).collect();
@@ -5361,7 +5396,6 @@ impl<'a> Checker<'a> {
             }
             self.collecting_generic = None;
             self.type_params.clear();
-            let (repr, repr_is_explicit) = self.enum_repr(&item.attrs, decl);
             if repr_is_explicit {
                 self.check_discriminants_fit(repr, &variants);
             }
@@ -5372,23 +5406,11 @@ impl<'a> Checker<'a> {
                 self.types.derive_zeroable(name);
             }
             self.declare_layout_attributes(name, &item.attrs);
-            self.generic_enums.insert(
-                name,
-                GenericEnum {
-                    params,
-                    generic_params,
-                    variants,
-                    repr,
-                    repr_is_explicit,
-                    derives_copy: has_derive(&item.attrs, "Copy"),
-                    clone_request: clone_request(&item.attrs, false),
-                    opted_out: (has_attribute_argument(&item.attrs, "no_derive", "Eq"), has_attribute_argument(&item.attrs, "no_derive", "Debug")),
-                    decl_span: item.span,
-                    declaring_module: self.current_module,
-                    implements: decl.implements.clone(),
-                    methods,
-                },
-            );
+            if let Some(recipe) = self.generic_enums.get_mut(&name) {
+                recipe.variants = variants;
+                recipe.methods = methods;
+            }
+            self.fill_forward_instances(name);
         }
     }
 
@@ -5417,6 +5439,34 @@ impl<'a> Checker<'a> {
             let generic_params = self.declare_generics(&decl.generics);
             let params: Vec<Symbol> = generic_params.iter().map(|param| param.name).collect();
             let base = decl.base.clone();
+            // D-731 — registered before its fields, which may name it (`Array[Tree[T]]`).
+            let defaults = decl
+                .members
+                .iter()
+                .filter_map(|member| match &member.kind {
+                    ast::MemberKind::Field(field) => Some(field.default.clone()),
+                    _ => None,
+                })
+                .collect();
+            self.generic_forward.insert(name, Vec::new());
+            self.generic_classes.insert(
+                name,
+                GenericClass {
+                    params: params.clone(),
+                    generic_params: generic_params.clone(),
+                    fields: Vec::new(),
+                    defaults,
+                    clone_request: clone_request(&item.attrs, true),
+                    opted_out: (has_attribute_argument(&item.attrs, "no_derive", "Eq"), has_attribute_argument(&item.attrs, "no_derive", "Debug")),
+                    decl_span: item.span,
+                    base: base.clone(),
+                    implements: decl.implements.clone(),
+                    methods: Vec::new(),
+                    openness: class_openness(decl.openness),
+                    is_sync: has_attribute(&item.attrs, "sync"),
+                    declaring_module: self.current_module,
+                },
+            );
             let fields = decl
                 .members
                 .iter()
@@ -5470,34 +5520,33 @@ impl<'a> Checker<'a> {
                     span: member.span,
                 });
             }
-            let defaults = decl
-                .members
-                .iter()
-                .filter_map(|member| match &member.kind {
-                    ast::MemberKind::Field(field) => Some(field.default.clone()),
-                    _ => None,
-                })
-                .collect();
             self.collecting_generic = None;
             self.type_params.clear();
-            self.generic_classes.insert(
-                name,
-                GenericClass {
-                    params,
-                    generic_params: generic_params.clone(),
-                    fields,
-                    defaults,
-                    clone_request: clone_request(&item.attrs, true),
-                    opted_out: (has_attribute_argument(&item.attrs, "no_derive", "Eq"), has_attribute_argument(&item.attrs, "no_derive", "Debug")),
-                    decl_span: item.span,
-                    base,
-                    implements: decl.implements.clone(),
-                    methods,
-                    openness: class_openness(decl.openness),
-                    is_sync: has_attribute(&item.attrs, "sync"),
-                    declaring_module: self.current_module,
-                },
-            );
+            if let Some(recipe) = self.generic_classes.get_mut(&name) {
+                recipe.fields = fields;
+                recipe.methods = methods;
+            }
+            self.fill_forward_instances(name);
+        }
+    }
+
+    /// D-729, D-731 — fill the instances of the generic type `name` named while it was collected,
+    /// now that its recipe is whole.
+    // ponytail: an instance named before a struct's hidden parameters (`U.Iter`) were known is
+    // named by its written arguments only; give it the full name if such a type ever names itself.
+    fn fill_forward_instances(&mut self, name: Symbol) {
+        for (ty, args, span) in self.generic_forward.remove(&name).unwrap_or_default() {
+            if let Some(decl) = self.generic_structs.get(&name).cloned() {
+                let full = match decl.generic_params.len() > decl.params.len() {
+                    true => self.with_projections(&decl.generic_params, &args),
+                    false => args.clone(),
+                };
+                self.fill_struct_instance(ty, name, &decl, &args, &full, span);
+            } else if let Some(decl) = self.generic_enums.get(&name).cloned() {
+                self.fill_enum_instance(ty, name, &decl, &args, span);
+            } else if let Some(decl) = self.generic_classes.get(&name).cloned() {
+                self.fill_class_instance(ty, name, &decl, &args, span);
+            }
         }
     }
 
@@ -15496,6 +15545,10 @@ impl<'a> Checker<'a> {
                 return ty;
             }
         }
+        if let Some(forward) = self.generic_forward.get_mut(&name) {
+            forward.push((ty, args.to_vec(), span));
+            return ty;
+        }
         self.fill_struct_instance(ty, name, decl, args, &full, span);
         ty
     }
@@ -15693,6 +15746,18 @@ impl<'a> Checker<'a> {
         let ty = self.types.intern(TyKind::Enum(id));
         self.enum_ids.insert(instance, id);
         self.named_types.insert(instance, ty);
+        if let Some(forward) = self.generic_forward.get_mut(&name) {
+            forward.push((ty, args.to_vec(), span));
+            return ty;
+        }
+        self.fill_enum_instance(ty, name, decl, args, span);
+        ty
+    }
+
+    /// The rest of `instantiate_enum`, for the instance `ty` of `name[args]`: its variants,
+    /// methods, implementations and extensions.
+    fn fill_enum_instance(&mut self, ty: Ty, name: Symbol, decl: &GenericEnum, args: &[Ty], span: Span) {
+        let TyKind::Enum(id) = *self.types.kind(ty) else { return };
 
         let variants = decl
             .variants
@@ -15783,7 +15848,6 @@ impl<'a> Checker<'a> {
         }
         self.type_params = saved_interface_params;
         self.apply_generic_extensions(ty, name, args);
-        ty
     }
 
     /// Instantiate a direct generic class as an ordinary concrete class. This
@@ -15866,6 +15930,19 @@ impl<'a> Checker<'a> {
         let ty = self.types.intern(TyKind::Class(id));
         self.class_ids.insert(instance, id);
         self.named_types.insert(instance, ty);
+        if let Some(forward) = self.generic_forward.get_mut(&name) {
+            forward.push((ty, args.to_vec(), span));
+            return ty;
+        }
+        self.fill_class_instance(ty, name, decl, args, span);
+        ty
+    }
+
+    /// The rest of `instantiate_class`, for the instance `ty` of `name[args]`: its fields,
+    /// methods, implementations and extensions.
+    fn fill_class_instance(&mut self, ty: Ty, name: Symbol, decl: &GenericClass, args: &[Ty], span: Span) {
+        let TyKind::Class(id) = *self.types.kind(ty) else { return };
+        let base = self.types.class_def(id).base;
         let fields = decl
             .fields
             .iter()
@@ -16026,7 +16103,6 @@ impl<'a> Checker<'a> {
             });
         }
         self.type_params = saved_interface_params;
-        ty
     }
 
     /// `Option[T]`, as a two-variant enum built once per `T`.
@@ -30393,10 +30469,20 @@ impl<'a> Checker<'a> {
 
     /// Checking mode: an expected type flows downward (`[TYP-23]` rule 3).
     fn check_expr(&mut self, expr: &ast::Expr, expected: Ty) -> Expr {
+        self.check_expr_through(expr, expected, false)
+    }
+
+    /// `check_expr`, and with `borrowed` an argument to a borrowed parameter, where a `Box[T]`
+    /// given for a `T` is read through (`[TYP-14]`): the callee borrows the boxed value, as a
+    /// recursive enum's `Box[Tree]` payload is traversed by a function taking `Tree`.
+    fn check_expr_through(&mut self, expr: &ast::Expr, expected: Ty, borrowed: bool) -> Expr {
         if let Some(system) = self.ecs_system_of(expr, expected) {
             return system;
         }
-        let found = self.synth_with_expectation(expr, Some(expected));
+        let mut found = self.synth_with_expectation(expr, Some(expected));
+        while borrowed && found.ty != expected && self.box_inner(found.ty).is_some() {
+            found = self.read_box_through(found);
+        }
         let coerced = self.coerce(found, expected);
         self.warn_if_literal_loses_precision(expr, coerced.ty);
         coerced
@@ -48836,11 +48922,11 @@ impl<'a> Checker<'a> {
             return Expr { ty, kind: ExprKind::Ref { place: Box::new(value), mutable: true }, span };
         }
         if mode == Mode::Borrow && by_address {
-            let value = self.check_expr(arg, param_ty);
+            let value = self.check_expr_through(arg, param_ty, true);
             return self.borrow_argument(value, param_ty);
         }
         if mode != Mode::Mut {
-            return self.check_expr(arg, param_ty);
+            return self.check_expr_through(arg, param_ty, mode == Mode::Borrow);
         }
         // `[SPN-1]`/`[SPN-3]` — a `MutSpan[T]` **is** the mutable access: it
         // carries the pointer, and `[SPN-3]` makes it move-only so there is

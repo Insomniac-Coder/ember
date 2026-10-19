@@ -5017,6 +5017,27 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-226 — Generic types that name themselves; `Box` arguments read through (D-729, D-731..D-733)
+
+2026-10-20. Four defects from one probe, each fixed where every caller routes through:
+* D-729, D-731 (`[TYP-16]`): a generic struct, enum or class is registered as soon as its parameters
+  are known, with its fields and methods empty, and completed when they are resolved. An instance
+  named meanwhile (`Box[Node[T]]` in `Node`'s own field, or `A[T]` in a `B[T]` collected on demand
+  from `A`'s signature) is registered empty and filled once the declaration is whole
+  (`generic_forward`, `fill_forward_instances`; the enum and class instantiations split into
+  register and fill, as the struct one already was). A struct with hidden parameters (`U.Iter`,
+  D-407) named before they are worked out is named by its written arguments only — a known
+  ceiling, marked in the code; no program reaches it yet.
+* D-732: the type printer renders an enum's payloads only for an `Option` or `Result` instance.
+* D-733 (`[TYP-14]`): an argument to a borrowed parameter reads a `Box` through to the parameter's
+  type, so the rule's own example (a recursive enum's `Box[Tree]` payload passed to a function taking
+  `Tree`) compiles. Only a borrowed parameter: a `Box[T]` where a `T` is moved (`t: Tree = b`, an
+  owned parameter) stays `E2020`, since that would take the value out of its box.
+* Not a defect, an owner question (`tasks/90/owner-questions.md`, "Box"): a struct with a `Box` field
+  derives neither `Eq` nor `Clone`, as IX.1 gives `Box[T]` neither (it is "move-only"; `b.clone()`
+  and `b == c` reach the payload by auto-deref). A recursive type compared or cloned would also need
+  its `eq` as a function, not the inline comparison `synth_eq_of` builds.
+
 ## ADR-225 — Helpers L's and M's questions ruled (ODR-138..ODR-143, 0.9.10_Hardened_21)
 
 2026-10-20, under the delegation (the owner, 2026-10-19: issues a helper reports are mine to

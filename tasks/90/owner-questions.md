@@ -2,8 +2,19 @@
 
 Real choices the specification leaves open, raised by the helpers. On 2026-10-20 all but one were
 ruled under the delegation (ODR-138..ODR-143, 0.9.10_Hardened_21, ADR-225), each the owner's to
-overturn; **ECS question 1 is still open.** Each question is written out in full, with
+overturn; **ECS question 1 and the Box question are open.** Each question is written out in full, with
 the specification quoted, a real example and the options, in the helper's notes.
+
+## Box (`[STR-5]`, IX.1), found 2026-10-20 (ADR-226)
+
+1. Is `Box[T]` `Clone` and `Eq` when `T` is? IX.1 gives `Box[T]` "one owner; `Box(v)`, auto-deref,
+   `b.get()` … Move-only" and no `Clone` or `Eq`, so by `[STR-5]` a struct or enum with a `Box` field
+   derives neither: `struct P: b: Box[int]` has no `p == q` (`E2040`) and no `p.clone()` (`E1010`),
+   and a recursive enum (`Node(Box[Tree])`) can be neither compared nor cloned. (`b.clone()` and
+   `b == c` on a `Box` itself compile, by auto-deref, and act on the payloads.) Options: (a) as
+   built, neither; (b) `Box[T]` is `Clone` (a new box holding a clone) and `Eq` (payloads equal)
+   when `T` is, so derives see through it — a recursive type's derived `eq` then has to be a
+   function, not the inline comparison built today; (c) `Clone` only. **OPEN.**
 
 ## Layout attributes (`[LAY-2]`), helper L — `tasks/90/L-notes.md` §4
 
