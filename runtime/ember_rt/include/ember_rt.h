@@ -2022,12 +2022,18 @@ void ember_vec_reserve_more(ember_vec* v, size_t elem_size, size_t additional);
 /* Best-effort room for a counted loop's pushes; never fails (see the C). */
 void ember_vec_reserve_hint(ember_vec* v, size_t elem_size, uint64_t turns, size_t per_turn);
 /* The alignment a growable buffer allocates at. The compiler passes an element
- * size but not an alignment, so the buffer uses the strictest alignment any
- * Ember type has, 16 (`u128`, `i128`, `i256`, `u256`), on every target
+ * size but not an alignment, so the buffer uses the strictest natural alignment
+ * any Ember type has, 16 (`u128`, `i128`, `i256`, `u256`), on every target
  * (`[HEAP-9]`); over-aligning is always sound and costs at most a few bytes per
- * buffer. A type aligned beyond 16 (`@align`, SIMD vectors, not built) needs
- * its alignment passed here. */
+ * buffer. A list whose elements are aligned beyond 16 (`@align(N)`, a SIMD
+ * vector wider than 16 bytes) uses the `_aligned` twin of each operation that
+ * allocates or frees, which takes the alignment after the element size
+ * (`[LAY-2]`); every other list keeps these calls and their allocator path. */
 #define EMBER_VEC_ALIGN ((size_t)16)
+/* A scratch buffer of `T`s, as a list's own buffer is aligned. */
+#define EMBER_VEC_ALIGN_OF(T) (_Alignof(T) > EMBER_VEC_ALIGN ? (size_t)_Alignof(T) : EMBER_VEC_ALIGN)
+void ember_vec_reserve_aligned(ember_vec* v, size_t elem_size, size_t align, size_t want);
+void ember_vec_reserve_hint_aligned(ember_vec* v, size_t elem_size, size_t align, uint64_t turns, size_t per_turn);
 
 /* [STD-15] — a sort specialised to its element type, with the comparison
  * inline and elements moved as values, not bytes. `LESS(a, b)` is a strict
@@ -2129,7 +2135,7 @@ void ember_vec_reserve_hint(ember_vec* v, size_t elem_size, uint64_t turns, size
             NAME##_insertion(a + lo, n - lo < 32 ? n - lo : 32);                   \
         }                                                                          \
         if (n <= 32) return;                                                       \
-        tmp = (T*)ember_alloc(n * sizeof(T), EMBER_VEC_ALIGN);                     \
+        tmp = (T*)ember_alloc(n * sizeof(T), EMBER_VEC_ALIGN_OF(T));               \
         src = a;                                                                   \
         dst = tmp;                                                                 \
         for (size_t width = 32; width < n; width *= 2) {                           \
@@ -2146,7 +2152,7 @@ void ember_vec_reserve_hint(ember_vec* v, size_t elem_size, uint64_t turns, size
             { T* t = src; src = dst; dst = t; }                                    \
         }                                                                          \
         if (src != a) memcpy(a, src, n * sizeof(T));                               \
-        ember_free(tmp, n * sizeof(T), EMBER_VEC_ALIGN);                           \
+        ember_free(tmp, n * sizeof(T), EMBER_VEC_ALIGN_OF(T));                     \
     }
 
 /* Append one element, copied from `value`. With room left it is a copy and a
@@ -2159,6 +2165,13 @@ EMBER_COLD ember_vec ember_vec_grown(ember_vec v, size_t elem_size);
 EMBER_INLINED void ember_vec_push(ember_vec* v, size_t elem_size, const void* value) {
     if (v->len == v->cap) {
         *v = ember_vec_grown(*v, elem_size);
+    }
+    memcpy((unsigned char*)v->ptr + v->len * elem_size, value, elem_size);
+    v->len += 1;
+}
+EMBER_INLINED void ember_vec_push_aligned(ember_vec* v, size_t elem_size, size_t align, const void* value) {
+    if (v->len == v->cap) {
+        ember_vec_reserve_aligned(v, elem_size, align, v->len + 1);
     }
     memcpy((unsigned char*)v->ptr + v->len * elem_size, value, elem_size);
     v->len += 1;
@@ -2193,13 +2206,16 @@ EMBER_VEC_PUSH_VALUE(ptr, void*)
  * exactly `count` elements, copied bitwise from `elems`; the caller has moved
  * them out of their fixed array, so they now belong to the result. */
 ember_vec ember_vec_from_elems(size_t elem_size, const void* elems, size_t count);
+ember_vec ember_vec_from_elems_aligned(size_t elem_size, size_t align, const void* elems, size_t count);
 void ember_vec_free(ember_vec* v, size_t elem_size);
+void ember_vec_free_aligned(ember_vec* v, size_t elem_size, size_t align);
 /* `[STD-15]`: reversing in place, and inserting a copy of `*value` at
  * `index` (the caller has checked `index <= len` and moved the value out, so
  * it now belongs to the array). Sorting is EMBER_SORT_*, per element type. */
 void ember_vec_reverse(ember_vec* v, size_t elem_size);
 void ember_vec_swap(ember_vec* v, size_t elem_size, size_t i, size_t j);
 void ember_vec_insert(ember_vec* v, size_t elem_size, size_t index, const void* value);
+void ember_vec_insert_aligned(ember_vec* v, size_t elem_size, size_t align, size_t index, const void* value);
 /* Append `count` bytes. Used for `String`, whose element size is one. */
 void ember_vec_extend(ember_vec* v, const void* bytes, size_t count);
 
@@ -3183,6 +3199,14 @@ EMBER_INLINED void ember_vec_reserve_more_inline(ember_vec* v, size_t elem_size,
     }
     size_t want = v->len + additional;
     if (want > v->cap) ember_vec_reserve(v, elem_size, want);
+}
+EMBER_INLINED void ember_vec_reserve_more_aligned(ember_vec* v, size_t elem_size, size_t align, size_t additional) {
+    size_t limit = elem_size == 0 ? (size_t)PTRDIFF_MAX : (size_t)PTRDIFF_MAX / elem_size;
+    if (v->len > limit || additional > limit - v->len) {
+        ember_panic("capacity overflow", 17, ember_loc_at("<array>", 0, 0));
+    }
+    size_t want = v->len + additional;
+    if (want > v->cap) ember_vec_reserve_aligned(v, elem_size, align, want);
 }
 
 /* `[TXT-11]`, `[HEAP-8]`: MSVC benefits from seeing a small append's copy

@@ -4129,6 +4129,8 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // before drop elaboration transforms the CFG.
     ember_analysis::verify_initialization_facts_all(&bodies, &initialization_facts);
     ember_analysis::check_definite_init_all_with_facts(&bodies, &initialization_facts, &mut sink);
+    // `[LAY-2]` — a reference to a field of a `@packed` value is `E2170`.
+    ember_analysis::check_packed_references_all(&bodies, &types, &mut sink);
     // `[OWN-3]`, Part XVIII §4.9 — moves are tracked, a use after a move is
     // `E3040`, and the drops lowering inserted are removed where the value was
     // moved away or made conditional on a drop flag where it may have been.

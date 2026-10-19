@@ -23,7 +23,7 @@ use ember_mir::verify::VerifiedMir;
 use std::path::MAIN_SEPARATOR;
 
 use ember_span::{SourceMap, Symbol};
-use ember_types::{ClassId, EnumId, FloatTy, FnParam, FnParamMode, FpMode, IntTy, Niche, StructId, Ty, TyKind, TypeTable, UintTy};
+use ember_types::{ClassId, EnumId, FloatTy, FnParam, FnParamMode, FpMode, IntTy, LayoutAttrs, Niche, StructId, Ty, TyKind, TypeTable, UintTy};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod frames;
@@ -1058,6 +1058,9 @@ fn calling_convention(abi: Option<&str>) -> &'static str {
 /// compilers take `fastcall` as the one convention there). A target or C
 /// compiler without the convention stops the C build, naming it, rather than
 /// calling with another.
+/// `[LAY-2]` — `@align(N)`: the C compilers' spelling of a struct's raised alignment.
+const ALIGNED_MACRO: &str = "/* [LAY-2] `@align(N)` */\n#ifndef EMBER_ALIGNED\n#if defined(_MSC_VER) && !defined(__clang__)\n#define EMBER_ALIGNED(n) __declspec(align(n))\n#else\n#define EMBER_ALIGNED(n) __attribute__((aligned(n)))\n#endif\n#endif\n";
+
 const CALLING_CONVENTION_MACROS: &str = r#"/* [FFI-9] foreign calling conventions */
 #if defined(_M_IX86) || defined(__i386__) || defined(_M_X64) || defined(__x86_64__)
 #define EMBER_CC_X86 1
@@ -1723,7 +1726,10 @@ impl Emitter<'_> {
                             vec![
                                 format!("if (lo == hi) {{ return {RT}vec_empty(); }}"),
                                 format!("unsigned char* at = (unsigned char*)v->ptr + lo * {c_size};", c_size = c_size(&c)),
-                                format!("{RT}vec r = {RT}vec_from_elems({c_size}, at, hi - lo);", c_size = c_size(&c)),
+                                {
+                                    let (call, size) = self.vec_call("from_elems", ty);
+                                    format!("{RT}vec r = {call}({size}, at, hi - lo);")
+                                },
                                 format!("memmove(at, at + (hi - lo) * {c_size}, (v->len - hi) * {c_size});", c_size = c_size(&c)),
                                 "v->len -= hi - lo;".to_string(),
                                 "return r;".to_string(),
@@ -1766,7 +1772,10 @@ impl Emitter<'_> {
                     ArrayHelper::Extend => {
                         let c = self.c_type(ty);
                         let mut body = vec![
-                            format!("{RT}vec_reserve_more_inline(v, {c_size}, count);", c_size = c_size(&c)),
+                            {
+                                let (call, size) = self.vec_call("reserve_more", ty);
+                                format!("{call}(v, {size}, count);")
+                            },
                             format!("{c}* to = ({c}*)v->ptr + v->len;"),
                             format!("memcpy(to, elems, count * {c_size});", c_size = c_size(&c)),
                         ];
@@ -1802,7 +1811,8 @@ impl Emitter<'_> {
                     }
                     ArrayHelper::Clone => {
                         let c = self.c_type(ty);
-                        let mut body = vec![format!("{RT}vec r = {RT}vec_from_elems({c_size}, elems, count);", c_size = c_size(&c))];
+                        let (call, size) = self.vec_call("from_elems", ty);
+                        let mut body = vec![format!("{RT}vec r = {call}({size}, elems, count);")];
                         let copy = format!("(({c}*)r.ptr)[_ci]");
                         let source = format!("(({c}*)elems)[_ci]");
                         let per_element = if self.types.is_copy(ty) {
@@ -1823,12 +1833,14 @@ impl Emitter<'_> {
                         (format!("static {RT}vec {symbol}(const void* elems, size_t count)"), body)
                     }
                     ArrayHelper::Sorted => {
-                        let c = self.c_type(ty);
                         let sort = self.array_helper(ArrayHelper::Sort, ty);
                         (
                             format!("static {RT}vec {symbol}(const void* elems, size_t count)"),
                             vec![
-                                format!("{RT}vec r = {RT}vec_from_elems({c_size}, elems, count);", c_size = c_size(&c)),
+                                {
+                                    let (call, size) = self.vec_call("from_elems", ty);
+                                    format!("{RT}vec r = {call}({size}, elems, count);")
+                                },
                                 format!("{sort}(&r);"),
                                 "return r;".to_string(),
                             ],
@@ -2575,22 +2587,25 @@ impl Emitter<'_> {
         for name in opaque {
             self.line(&format!("struct {name};"));
         }
-        let plan: Vec<(String, Definition)> = self
+        let plan: Vec<(String, Definition, TypeNode)> = self
             .order
             .clone()
             .into_iter()
-            .map(|node| (self.node_name(node), self.definition(node)))
+            .map(|node| (self.node_name(node), self.definition(node), node))
             .collect();
 
         if plan.is_empty() {
             return;
         }
         self.line("/* types */");
+        if plan.iter().any(|(_, _, node)| self.node_layout_attrs(*node).align > 1) {
+            self.out.push_str(ALIGNED_MACRO);
+        }
         // Every struct is forward-declared, so one may hold a pointer to
         // another defined later. An alias is complete where it stands; an
         // owned callable type's is complete already (`[CLO-10]`).
         let callable = format!("struct {RT}fn_value");
-        for (name, definition) in &plan {
+        for (name, definition, _) in &plan {
             match definition {
                 Definition::Struct(_) => self.line(&format!("typedef struct {name} {name};")),
                 Definition::Alias(underlying) if *underlying == callable => {
@@ -2599,7 +2614,7 @@ impl Emitter<'_> {
                 _ => {}
             }
         }
-        for (name, definition) in &plan {
+        for (name, definition, node) in &plan {
             match definition {
                 Definition::Alias(underlying) if *underlying == callable => {}
                 Definition::Alias(underlying) => {
@@ -2608,22 +2623,84 @@ impl Emitter<'_> {
                 Definition::FnPointer { ret, convention, args } => {
                     self.line(&format!("typedef {ret} ({convention}*{name})({args});"));
                 }
+                // `[STR-4]` — a zero-sized struct is legal in Ember but not in
+                // C, so it gets a padding byte. Its size is never observed
+                // through the C type.
                 Definition::Struct(members) => {
-                    self.line(&format!("struct {name} {{"));
-                    if members.is_empty() {
-                        // `[STR-4]` — a zero-sized struct is legal in Ember but
-                        // not in C, so it gets a padding byte. Its size is
-                        // never observed through the C type.
-                        self.line("    char _empty;");
+                    for line in self.struct_definition(name, members, *node) {
+                        self.line(&line);
                     }
-                    for member in members {
-                        self.line(&format!("    {member};"));
-                    }
-                    self.line("};");
                 }
             }
         }
         self.line("");
+    }
+
+    /// `[HEAP-9]`, `[LAY-2]` — a list operation that may allocate or free, for elements of type
+    /// `elem`, and its size arguments: `ember_vec_<operation>` with `sizeof(T)`, whose buffers
+    /// are aligned to `EMBER_VEC_ALIGN` (16), or for an element aligned beyond that (an
+    /// `@align(N)` type, a SIMD vector wider than 16 bytes) its `_aligned` twin, with
+    /// `_Alignof(T)` after the size. Every other list keeps its call and its allocator path.
+    fn vec_call(&self, operation: &str, elem: Ty) -> (String, String) {
+        let c = self.c_type(elem);
+        if self.types.layout(elem).align > 16 {
+            return (format!("{RT}vec_{operation}_aligned"), format!("{}, {}", c_size(&c), c_align(&c)));
+        }
+        let operation = if operation == "reserve_more" { "reserve_more_inline" } else { operation };
+        (format!("{RT}vec_{operation}"), c_size(&c))
+    }
+
+    /// `[LAY-2]` — a struct's or an enum's layout attributes.
+    fn node_layout_attrs(&self, node: TypeNode) -> LayoutAttrs {
+        let kind = match node {
+            TypeNode::Struct(id) => TyKind::Struct(id),
+            TypeNode::Enum(id) => TyKind::Enum(id),
+            _ => return LayoutAttrs::NONE,
+        };
+        self.types.find(&kind).map_or(LayoutAttrs::NONE, |ty| self.types.layout_attrs(ty))
+    }
+
+    /// One struct's C definition. `[LAY-2]` — under `@packed` inside `#pragma pack(push, 1)`
+    /// (which MSVC, GCC and Clang take, and which packs the anonymous variant structs of a
+    /// payload enum too); under `@align(N)` with the struct's alignment raised; and then a
+    /// `_Static_assert` that the C compiler laid it out as the compiler's layout says, so a
+    /// disagreement stops the build rather than a program.
+    fn struct_definition(&self, name: &str, members: &[String], node: TypeNode) -> Vec<String> {
+        let attrs = self.node_layout_attrs(node);
+        let mut out = Vec::new();
+        if attrs.packed {
+            out.push("#pragma pack(push, 1)".to_string());
+        }
+        let aligned = if attrs.align > 1 { format!("EMBER_ALIGNED({}) ", attrs.align) } else { String::new() };
+        out.push(format!("struct {aligned}{name} {{"));
+        if members.is_empty() {
+            out.push("    char _empty;".to_string());
+        }
+        out.extend(members.iter().map(|member| format!("    {member};")));
+        out.push("};".to_string());
+        if attrs.packed {
+            out.push("#pragma pack(pop)".to_string());
+        }
+        if attrs.is_none() {
+            return out;
+        }
+        let (ty, fields): (Ty, Vec<String>) = match node {
+            TypeNode::Struct(id) => (
+                self.types.find(&TyKind::Struct(id)).expect("a defined struct is interned"),
+                self.types.struct_def(id).fields.iter().map(|field| field.name.to_string()).collect(),
+            ),
+            TypeNode::Enum(id) => (self.types.find(&TyKind::Enum(id)).expect("a defined enum is interned"), vec!["tag".to_string(), "payload".to_string()]),
+            _ => return out,
+        };
+        let layout = self.types.layout(ty);
+        let mut facts = Vec::new();
+        if !members.is_empty() {
+            facts.push(format!("sizeof({name}) == {}", layout.size));
+        }
+        facts.push(format!("_Alignof({name}) == {}", layout.align));
+        facts.extend(fields.iter().zip(&layout.field_offsets).map(|(field, offset)| format!("offsetof({name}, {field}) == {offset}")));
+        out.push(format!("_Static_assert({}, \"[LAY-2] the layout of {name}\");", facts.join(" && ")));
+        out
     }
 
     /// Adapt a source class's `drop(mut self)` method to the runtime's
@@ -4833,6 +4910,20 @@ impl Emitter<'_> {
     /// `[DRP-2]` — a struct's fields drop after the struct's own `drop`, in
     /// reverse declaration order; an enum drops the active variant's payload;
     /// a tuple drops in reverse; an array drops its elements in index order.
+    /// `[LAY-2]` — a field of a `@packed` value is dropped from an aligned copy: drop glue
+    /// takes its value's address, and the field's own may be unaligned.
+    fn packed_drop_lines(&self, access: &str, ty: Ty, out: &mut Vec<String>) {
+        if self.types.layout(ty).align <= 1 {
+            return self.drop_lines(access, ty, out);
+        }
+        let copy = format!("_pk{}", access.matches("_pk").count());
+        let mut inner = Vec::new();
+        self.drop_lines(&copy, ty, &mut inner);
+        if !inner.is_empty() {
+            out.push(format!("{{ {} {copy} = {access}; {} }}", self.c_type(ty), inner.join(" ")));
+        }
+    }
+
     fn drop_lines(&self, access: &str, ty: Ty, out: &mut Vec<String>) {
         match self.types.kind(ty) {
             // `[CLO-10]` — an owned callable value ends its captured state.
@@ -4872,7 +4963,8 @@ impl Emitter<'_> {
                         ));
                     }
                 }
-                out.push(format!("{RT}vec_free(&{access}, {});", c_size(&self.c_type(*elem))));
+                let (call, size) = self.vec_call("free", *elem);
+                out.push(format!("{call}(&{access}, {size});"));
             }
             TyKind::Struct(id) => {
                 let def = self.types.struct_def(*id);
@@ -5026,10 +5118,16 @@ impl Emitter<'_> {
                     out.push(format!("{}(&{access});", drop_symbol(&owner)));
                 }
                 if def.drops_fields {
+                    let packed = self.types.layout_attrs(ty).packed;
                     let fields = def.fields.clone();
                     for field in fields.iter().rev() {
                         if self.types.needs_drop(field.ty) {
-                            self.drop_lines(&format!("{access}.{}", field.name), field.ty, out);
+                            let member = format!("{access}.{}", field.name);
+                            if packed {
+                                self.packed_drop_lines(&member, field.ty, out);
+                            } else {
+                                self.drop_lines(&member, field.ty, out);
+                            }
                         }
                     }
                 }
@@ -5064,11 +5162,16 @@ impl Emitter<'_> {
                     return;
                 }
                 let mut arms = Vec::new();
+                let packed = self.types.layout_attrs(ty).packed;
                 for (variant_index, variant) in def.variants.iter().enumerate() {
                     let mut inner = Vec::new();
                     for (field_index, field) in variant.fields.iter().enumerate().rev() {
                         if self.types.needs_drop(field.ty) {
                             let member = self.enum_member(*id, access, variant_index, field_index);
+                            if packed {
+                                self.packed_drop_lines(&member, field.ty, &mut inner);
+                                continue;
+                            }
                             match self.drop_glue_call(&member, field.ty) {
                                 Some(call) => inner.push(call),
                                 None => self.drop_lines(&member, field.ty, &mut inner),
@@ -6774,6 +6877,19 @@ impl Emitter<'_> {
                 let ty = self.place_ty(dest, body);
                 let helper = format!("{RT}ck_{}_{}", checked_name(*op), self.checked_suffix(ty));
                 self.emit_line_directive(stmt.span);
+                // `[LAY-2]` — a field of a `@packed` value is written by value, never through
+                // its address: the result goes to an aligned temporary first.
+                if ember_mir::unaligned_place(self.types, body, dest) {
+                    self.line(&format!(
+                        "    {{ {} _pk; {} = {helper}({}, {}, &_pk); {} = _pk; }}",
+                        self.c_type(ty),
+                        self.place_in(overflow, body),
+                        self.operand(lhs, body),
+                        self.operand(rhs, body),
+                        self.place_in(dest, body)
+                    ));
+                    return;
+                }
                 self.line(&format!(
                     "    {} = {helper}({}, {}, &{});",
                     self.place_in(overflow, body),
@@ -6789,7 +6905,11 @@ impl Emitter<'_> {
                 }
                 let ty = self.place_ty(place, body);
                 let mut lines = Vec::new();
-                self.drop_lines(&self.place_in(place, body), ty, &mut lines);
+                if ember_mir::unaligned_place(self.types, body, place) {
+                    self.packed_drop_lines(&self.place_in(place, body), ty, &mut lines);
+                } else {
+                    self.drop_lines(&self.place_in(place, body), ty, &mut lines);
+                }
                 if lines.is_empty() {
                     return;
                 }
@@ -9032,22 +9152,20 @@ impl Emitter<'_> {
                     Builtin::ArrayReserve => {
                         let elem = self.element_of(*arg_ty);
                         // `[HEAP-8]` — `len + n` is checked, never formed to wrap.
-                        return format!(
-                            "{RT}vec_reserve_more_inline({}, {}, {})",
-                            rendered[0],
-                            c_size(&self.c_type(elem)),
-                            rendered[1]
-                        );
+                        let (call, size) = self.vec_call("reserve_more", elem);
+                        return format!("{call}({}, {size}, {})", rendered[0], rendered[1]);
                     }
                     Builtin::ArrayReserveHint { per_turn, inclusive } => {
                         let elem = self.element_of(*arg_ty);
                         let (list, counter, limit) = (&rendered[0], &rendered[1], &rendered[2]);
                         let (test, more) = if *inclusive { ("<=", " + 1u") } else { ("<", "") };
+                        let hint = self.vec_call("reserve_hint", elem);
                         // No turn when the counter starts past the limit; the
                         // difference of the two as `uint64_t` is exact below it.
                         return format!(
-                            "(({counter}) {test} ({limit}) ? {RT}vec_reserve_hint({list}, {}, (uint64_t)({limit}) - (uint64_t)({counter}){more}, {per_turn}u) : (void)0)",
-                            c_size(&self.c_type(elem)),
+                            "(({counter}) {test} ({limit}) ? {call}({list}, {size}, (uint64_t)({limit}) - (uint64_t)({counter}){more}, {per_turn}u) : (void)0)",
+                            call = hint.0,
+                            size = hint.1,
                         );
                     }
                     Builtin::ArraySwap => {
@@ -9062,10 +9180,10 @@ impl Emitter<'_> {
                     }
                     Builtin::ArrayInsert => {
                         let elem = self.element_of(*arg_ty);
+                        let (call, size) = self.vec_call("insert", elem);
                         return format!(
-                            "{RT}vec_insert({}, {}, {}, {})",
+                            "{call}({}, {size}, {}, {})",
                             rendered[0],
-                            c_size(&self.c_type(elem)),
                             rendered[2],
                             self.value_address(&rendered[1], elem)
                         );
@@ -9180,11 +9298,8 @@ impl Emitter<'_> {
                         let TyKind::Array { elem, len } = *self.types.kind(*arg_ty) else {
                             unreachable!("[TYP-38] an Array literal is built from a fixed array")
                         };
-                        let elem_c = self.c_type(elem);
-                        return format!(
-                            "{RT}vec_from_elems({elem_c_size}, ({})._0, {len})",
-                            rendered[0], elem_c_size = c_size(&elem_c)
-                        );
+                        let (call, size) = self.vec_call("from_elems", elem);
+                        return format!("{call}({size}, ({})._0, {len})", rendered[0]);
                     }
                     Builtin::BoxNew { elem, boxed } => {
                         let elem_c = self.c_type(*elem);
@@ -9257,10 +9372,10 @@ impl Emitter<'_> {
                         if let Some(suffix) = by_value {
                             return format!("{RT}vec_push_{suffix}({}, {})", rendered[0], rendered[1]);
                         }
+                        let (call, size) = self.vec_call("push", elem);
                         return format!(
-                            "{RT}vec_push({}, {}, {})",
+                            "{call}({}, {size}, {})",
                             rendered[0],
-                            c_size(&self.c_type(elem)),
                             self.value_address(&rendered[1], elem)
                         );
                     }

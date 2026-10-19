@@ -28,6 +28,7 @@ pub mod loop_access;
 pub mod loop_version;
 pub mod progress_reduction;
 pub mod long_access_lint;
+pub mod packed;
 pub mod range_facts;
 pub mod regions;
 pub mod stack_lists;
@@ -47,6 +48,7 @@ pub use borrows::{
 pub use access::{elide_static_accesses_all, remove_never_firing_checks_all};
 pub use kernels::{elide_known_disjoint_comparisons_all, restrict_views};
 pub use adoptions::check_adoptions_all;
+pub use packed::check_packed_references_all;
 pub use c_entries::{callable_types_given_to_c, check_c_entry_returns_all};
 pub use loop_access::hoist_loop_accesses_all;
 pub use static_safe::check_static_safe_all;

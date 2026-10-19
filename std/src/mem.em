@@ -66,3 +66,9 @@ pub fn size_of[T]() -> usize:
 
 pub fn align_of[T]() -> usize:
     return 0
+
+## `[LAY-2]` — the byte offset of a field of struct `T`, named as written:
+## `offset_of[Header](length)`. The compiler reads the name; this declaration
+## makes the path real.
+pub fn offset_of[T](field: str) -> usize:
+    return 0

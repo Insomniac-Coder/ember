@@ -2,7 +2,7 @@
 //! declarators come from the same emitter and type plan as the C translation
 //! unit, while the dependency walk limits this header to exported types.
 
-use super::{Definition, Emitter, HeaderOutput, TypeNode};
+use super::{Definition, Emitter, HeaderOutput, TypeNode, ALIGNED_MACRO};
 use ember_mir::Body;
 use ember_types::{Ty, TyKind, IntTy, UintTy};
 use std::collections::BTreeSet;
@@ -55,10 +55,10 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
     // `[FFI-9]` — an export or a function pointer type with another convention names its macro.
     let plan: Vec<_> = emitter.order.iter().copied()
         .filter(|node| reachable.nodes.contains(node))
-        .map(|node| (emitter.node_name(node), emitter.definition(node)))
+        .map(|node| (emitter.node_name(node), emitter.definition(node), node))
         .collect();
     if exports.iter().any(|body| !super::calling_convention(body.abi.as_deref()).is_empty())
-        || plan.iter().any(|(_, definition)| matches!(definition, Definition::FnPointer { convention, .. } if !convention.is_empty()))
+        || plan.iter().any(|(_, definition, _)| matches!(definition, Definition::FnPointer { convention, .. } if !convention.is_empty()))
     {
         out.push_str(super::CALLING_CONVENTION_MACROS);
         line(&mut out, "");
@@ -70,23 +70,23 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
     for opaque in &reachable.opaque {
         line(&mut out, &format!("struct {opaque};"));
     }
+    if plan.iter().any(|(_, _, node)| emitter.node_layout_attrs(*node).align > 1) {
+        out.push_str(ALIGNED_MACRO);
+    }
     if !plan.is_empty() {
         line(&mut out, "");
-        for (name, definition) in &plan {
+        for (name, definition, _) in &plan {
             if matches!(definition, Definition::Struct(_)) {
                 line(&mut out, &format!("typedef struct {name} {name};"));
             }
         }
-        for (name, definition) in &plan {
+        for (name, definition, node) in &plan {
             match definition {
                 Definition::Alias(underlying) => line(&mut out, &format!("typedef {underlying} {name};")),
                 Definition::FnPointer { ret, convention, args } =>
                     line(&mut out, &format!("typedef {ret} ({convention}*{name})({args});")),
                 Definition::Struct(members) => {
-                    line(&mut out, &format!("struct {name} {{"));
-                    if members.is_empty() { line(&mut out, "    char _empty;"); }
-                    for member in members { line(&mut out, &format!("    {member};")); }
-                    line(&mut out, "};");
+                    for text in emitter.struct_definition(name, members, *node) { line(&mut out, &text); }
                 }
             }
         }

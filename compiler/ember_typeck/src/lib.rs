@@ -36,7 +36,7 @@ use ember_span::{Span, Symbol};
 use ember_types::{FpMode, 
     Bound, ClassDef, ClassId, ClassOpenness, CommonTypes, EnumDef, EnumId, FieldDef, FieldVis,
     OverflowPolicy, RangeDef, StructDef, StructId, Ty, TyKind, TypeTable, UintTy, VariantDef,
-    FnParam, FnParamMode, int_max, ConstError, ConstNorm, ConstOp,
+    FnParam, FnParamMode, int_max, ConstError, ConstNorm, ConstOp, LayoutAttrs,
 };
 
 /// One parsed module and where it sits in the package (`[MOD-1]`). The root
@@ -360,6 +360,7 @@ pub fn check(
         functions.extend(checker.check_instantiations(modules));
     }
     checker.publish_debug_writers(&functions);
+    checker.check_declared_layouts();
     // `[CLO-1]` — the functions capture-free closures lowered to. They have no
     // name in source, so they are gathered as they are checked and appended
     // here rather than found by walking the modules again.
@@ -5227,6 +5228,7 @@ impl<'a> Checker<'a> {
             if has_attribute(&item.attrs, "must_drop") {
                 self.types.declare_must_drop(name);
             }
+            self.declare_layout_attributes(name, &item.attrs);
             self.generic_structs.insert(
                 name,
                 GenericStruct {
@@ -5310,6 +5312,7 @@ impl<'a> Checker<'a> {
             if has_derive(&item.attrs, "Zeroable") {
                 self.types.derive_zeroable(name);
             }
+            self.declare_layout_attributes(name, &item.attrs);
             self.generic_enums.insert(
                 name,
                 GenericEnum {
@@ -7704,6 +7707,7 @@ impl<'a> Checker<'a> {
             match &item.kind {
                 ast::ItemKind::Struct(decl) => {
                     let Some(&id) = self.struct_ids.get(&self.qualified(decl.name.name)) else { continue };
+                    self.declare_layout_attributes(self.qualified(decl.name.name), &item.attrs);
                     let mut fields = Vec::new();
                     let mut has_drop = false;
                     for member in &decl.members {
@@ -7892,6 +7896,7 @@ impl<'a> Checker<'a> {
                 }
                 ast::ItemKind::Enum(decl) => {
                     let Some(&id) = self.enum_ids.get(&self.qualified(decl.name.name)) else { continue };
+                    self.declare_layout_attributes(self.qualified(decl.name.name), &item.attrs);
                     let variants = self.collect_variants(decl);
                     let has_drop = decl.members.iter().any(|m| {
                         matches!(&m.kind, ast::MemberKind::Fn(f) if f.name.name.is("drop"))
@@ -8210,16 +8215,18 @@ impl<'a> Checker<'a> {
     /// every discriminant, which is what the spec's "`i32`-sized-or-smaller,
     /// chosen by the compiler" means.
     fn enum_repr(&mut self, attrs: &[ast::Attribute], decl: &ast::EnumDecl) -> (Ty, bool) {
-        if let Some(name) = attr_argument(attrs, "repr") {
-            if let Some(ty) = self.scalar_named(name.as_str()) {
-                if self.types.is_integral(ty) {
-                    return (ty, true);
-                }
+        // `[LAY-2]` — the discriminant type is one of the eight fixed-width integers.
+        if let Some(attr) = attrs.iter().find(|attr| attr.path.len() == 1 && attr.path[0].name.is("repr")) {
+            let c = self.common;
+            let named = attr_argument(attrs, "repr").and_then(|name| self.scalar_named(name.as_str()));
+            if let Some(ty) = named.filter(|ty| [c.u8, c.u16, c.u32, c.u64, c.i8, c.i16, c.i32, c.i64].contains(ty))
+                && attr.args.len() == 1
+            {
+                return (ty, true);
             }
-            self.error(
-                codes::E2020,
-                decl.name.span,
-                format!("`@repr({name})` is not an integer type"),
+            self.sink.emit(
+                Diagnostic::error(codes::E0104, attr.span, "`@repr` names the discriminant's integer type")
+                    .help("write one of `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`, `i64` [LAY-2]"),
             );
         }
 
@@ -8255,6 +8262,81 @@ impl<'a> Checker<'a> {
             c.i32
         };
         (ty, false)
+    }
+
+    /// `[LAY-2]` — a struct's or an enum's `@packed` and `@align(N)`, recorded for its layout.
+    /// `N` is a constant power of two up to 4096 (`E0104` otherwise). The two together are
+    /// `E0901`: `@packed` leaves no padding and `@align(N)` makes the size a multiple of `N`,
+    /// which needs padding, and the specification does not say which wins.
+    fn declare_layout_attributes(&mut self, name: Symbol, attrs: &[ast::Attribute]) {
+        let packed = has_attribute(attrs, "packed");
+        let mut align = 1;
+        for attr in attrs.iter().filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("align")) {
+            let [ast::AttrArg::Expr(expr)] = attr.args.as_slice() else {
+                self.error(codes::E0104, attr.span, "`@align` takes one alignment: `@align(64)`");
+                continue;
+            };
+            let Some(value) = self.const_arg(expr) else { continue };
+            match value.as_constant().and_then(|n| u64::try_from(n).ok()) {
+                Some(n) if n.is_power_of_two() && n <= 4096 => align = align.max(n),
+                _ => self.sink.emit(
+                    Diagnostic::error(codes::E0104, expr.span, "`@align` takes a power of two up to 4096")
+                        .primary_label(format!("`{value}` is not one")),
+                ),
+            }
+            if packed {
+                self.sink.emit(
+                    Diagnostic::error(codes::E0901, attr.span, "`@align` beside `@packed` is not specified")
+                        .note("`@packed` leaves no padding, and `@align(N)` makes the size a multiple of `N` [LAY-2]"),
+                );
+            }
+        }
+        self.types.declare_layout(name, LayoutAttrs { packed, align });
+    }
+
+    /// `[LAY-2]` — the layouts the attributes ask for that are refused, checked on every struct
+    /// and enum made, generic instances included:
+    /// * a `@packed` type holding a type declared `@align(N)` is `E0901`: that type's places
+    ///   honour `N`, which a field with no padding before it cannot;
+    /// * a `@packed` type holding a SIMD vector is `E0900`: the C compilers disagree on packing
+    ///   a type whose alignment is stated (MSVC keeps it, GCC and Clang pack it);
+    /// * `@align(N)` on an enum without payloads is `E0900`: such an enum is its integer in C.
+    fn check_declared_layouts(&mut self) {
+        let mut reported = HashSet::new();
+        let mut holders: Vec<(Ty, Vec<(Symbol, Ty, Span)>, Option<Span>)> = Vec::new();
+        for (id, def) in self.types.structs() {
+            let Some(ty) = self.types.find(&TyKind::Struct(id)) else { continue };
+            holders.push((ty, def.fields.iter().map(|field| (field.name, field.ty, field.span)).collect(), None));
+        }
+        for (id, def) in self.types.enums() {
+            let Some(ty) = self.types.find(&TyKind::Enum(id)) else { continue };
+            let fields = def.variants.iter().flat_map(|variant| variant.fields.iter().map(|field| (field.name, field.ty, field.span))).collect();
+            holders.push((ty, fields, def.is_unit_only().then_some(def.span)));
+        }
+        for (ty, fields, unit_only) in holders {
+            let attrs = self.types.layout_attrs(ty);
+            if attrs.packed {
+                for (name, field, span) in fields {
+                    let (aligned, simd) = self.types.stated_alignment(field);
+                    if (aligned || simd) && reported.insert(span) {
+                        let shown = self.types.display(field);
+                        self.sink.emit(if aligned {
+                            Diagnostic::error(codes::E0901, span, format!("field `{name}` of a `@packed` type holds `{shown}`, whose alignment `@align` states"))
+                                .note("`@packed` leaves no padding, and every place holding an `@align(N)` type honours `N` [LAY-2]")
+                        } else {
+                            Diagnostic::error(codes::E0900, span, format!("field `{name}` of a `@packed` type holds a SIMD vector (`{shown}`), which is not implemented yet"))
+                                .note("a vector is aligned to its size [SIMD-1]; packing one is not built [ATT-6]")
+                        });
+                    }
+                }
+            }
+            if attrs.align > 1 && let Some(span) = unit_only && reported.insert(span) {
+                self.sink.emit(
+                    Diagnostic::error(codes::E0900, span, "`@align` on an enum without payloads is not implemented yet")
+                        .note("such an enum is its discriminant integer in C [TYP-12]; an alignment beyond it is not built [ATT-6]"),
+                );
+            }
+        }
     }
 
     /// `[ENM-1]` — variants with their payloads. A payload field may be named;
@@ -13777,6 +13859,9 @@ impl<'a> Checker<'a> {
         {
             return None;
         }
+        if name.is("offset_of") || resolved.is("std.mem.offset_of") {
+            return Some(self.synth_offset_of(args, explicit, span));
+        }
         let (which, arity, needs_unsafe) = if name.is("alloc") {
             (Builtin::MemAlloc, 1, true)
         } else if name.is("free") {
@@ -13875,6 +13960,39 @@ impl<'a> Checker<'a> {
             checked.push(Expr { ty: elem, kind: ExprKind::Error, span });
         }
         Some(Expr { ty: ret, kind: ExprKind::Builtin { which, args: checked }, span })
+    }
+
+    /// `[LAY-2]` — `offset_of[T](field)`: the byte offset of struct `T`'s field, a compile-time
+    /// constant from the same layout `size_of` and `align_of` report. A generic body checked with
+    /// its parameters open has no layout yet; each instance computes its own.
+    fn synth_offset_of(&mut self, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let field = match args {
+            [ast::Arg { name: None, value: ast::Expr { kind: ast::ExprKind::Path { segments }, .. }, .. }]
+                if segments.len() == 1 => segments[0],
+            _ => {
+                self.error(codes::E2020, span, "`offset_of` takes one field name: `offset_of[T](field)`");
+                return error;
+            }
+        };
+        let Some(&ty) = explicit.first().filter(|_| explicit.len() == 1) else {
+            self.error(codes::E2060, span, "write the type: `offset_of[T](field)`");
+            return error;
+        };
+        let TyKind::Struct(id) = *self.types.kind(ty) else {
+            if ty != self.common.error {
+                let shown = self.types.display(ty);
+                self.error(codes::E2020, span, format!("`offset_of` takes a struct, not `{shown}`"));
+            }
+            return error;
+        };
+        let Some((index, def)) = self.types.struct_def(id).field(field.name).map(|(index, def)| (index, def.clone())) else {
+            self.sink.emit(self.missing_field_diagnostic(ty, field.name, field.span));
+            return error;
+        };
+        self.check_field_visible(id, def.vis, def.name, field.span);
+        let offset = if self.in_generic_template { 0 } else { self.types.layout(ty).field_offsets[index] };
+        Expr { ty: self.common.usize, kind: ExprKind::Int(u128::from(offset)), span }
     }
 
     /// ODR-075/076 — construction is safe; the resulting raw pointer has no
@@ -36118,7 +36236,23 @@ impl<'a> Checker<'a> {
                 );
                 continue;
             }
-            let built = built && !(name == "repr" && site == "struct");
+            // `[LAY-2]` — `@layout` names `c` and `@packed` nothing; `@repr` is an enum's
+            // discriminant type, and the specification gives it no meaning on a struct.
+            if name == "layout" && !attribute_names(attr, "c") {
+                self.error(codes::E0104, attr.span, "`@layout` takes `c`: `@layout(c)`");
+                continue;
+            }
+            if name == "packed" && !attr.args.is_empty() {
+                self.error(codes::E0104, attr.span, "`@packed` takes no arguments");
+                continue;
+            }
+            if name == "repr" && site == "struct" {
+                self.sink.emit(
+                    Diagnostic::error(codes::E0901, attr.span, "`@repr` on a struct is not specified")
+                        .note("`@repr(T)` gives an enum's discriminant type [LAY-2]; a struct's layout is `@layout(c)`, `@packed` and `@align(N)`"),
+                );
+                continue;
+            }
             // `[TYP-9]` — `@fastmath` takes no arguments and `@fp` names
             // `contract`, checked once where the attribute is written.
             if name == "fastmath" && !attr.args.is_empty() {
@@ -51147,10 +51281,10 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     // `[STR-5]` — built for `Clone`; its other arguments are refused below.
     (&["no_derive"], &["struct", "enum", "class"], true),
     // `[LAY-2]` — `@layout(c)` is the C ABI layout, every struct's default,
-    // which the C backend always emits.
+    // which the C backend always emits; `@packed` and `@align(N)` are read by
+    // `declare_layout_attributes`, `@repr(T)` by `enum_repr`.
     (&["layout"], &["struct", "enum"], true),
-    (&["packed", "align"], &["struct", "enum"], false),
-    // `@repr(T)` is built for enums; a struct's is rejected where it is read.
+    (&["packed", "align"], &["struct", "enum"], true),
     (&["repr"], &["struct", "enum"], true),
     (&["gpu_layout"], &["struct"], false),
     (&["static_safe"], &["fn"], true),

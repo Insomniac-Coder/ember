@@ -3371,7 +3371,9 @@ static void vec_capacity_overflow(void) {
     ember_panic("capacity overflow", 17, loc);
 }
 
-void ember_vec_reserve(ember_vec* v, size_t elem_size, size_t want) {
+/* The buffer is allocated at `align`: EMBER_VEC_ALIGN for every list but one whose elements are
+ * aligned beyond it, whose `_aligned` operations pass their own ([HEAP-9], [LAY-2]). */
+static void vec_reserve_at(ember_vec* v, size_t elem_size, size_t want, size_t align) {
     if (want <= v->cap) {
         return;
     }
@@ -3392,8 +3394,16 @@ void ember_vec_reserve(ember_vec* v, size_t elem_size, size_t want) {
     if (cap < want) {
         cap = want;
     }
-    v->ptr = ember_realloc(v->ptr, v->cap * elem_size, cap * elem_size, EMBER_VEC_ALIGN);
+    v->ptr = ember_realloc(v->ptr, v->cap * elem_size, cap * elem_size, align);
     v->cap = cap;
+}
+
+void ember_vec_reserve(ember_vec* v, size_t elem_size, size_t want) {
+    vec_reserve_at(v, elem_size, want, EMBER_VEC_ALIGN);
+}
+
+void ember_vec_reserve_aligned(ember_vec* v, size_t elem_size, size_t align, size_t want) {
+    vec_reserve_at(v, elem_size, want, align);
 }
 
 /* A hint from a counted loop that pushes at least `per_turn` elements on
@@ -3434,7 +3444,7 @@ static void* try_realloc(void* p, size_t old_size, size_t new_size, size_t align
     return fresh;
 }
 
-void ember_vec_reserve_hint(ember_vec* v, size_t elem_size, uint64_t turns, size_t per_turn) {
+static void vec_reserve_hint_at(ember_vec* v, size_t elem_size, uint64_t turns, size_t per_turn, size_t align) {
     size_t limit = vec_max_elems(elem_size);
     if (per_turn == 0 || turns > (uint64_t)(limit / per_turn)) {
         return;
@@ -3451,12 +3461,20 @@ void ember_vec_reserve_hint(ember_vec* v, size_t elem_size, uint64_t turns, size
     if (want <= next) {
         return;
     }
-    void* grown = try_realloc(v->ptr, v->cap * elem_size, want * elem_size, EMBER_VEC_ALIGN);
+    void* grown = try_realloc(v->ptr, v->cap * elem_size, want * elem_size, align);
     if (grown == NULL) {
         return;
     }
     v->ptr = grown;
     v->cap = want;
+}
+
+void ember_vec_reserve_hint(ember_vec* v, size_t elem_size, uint64_t turns, size_t per_turn) {
+    vec_reserve_hint_at(v, elem_size, turns, per_turn, EMBER_VEC_ALIGN);
+}
+
+void ember_vec_reserve_hint_aligned(ember_vec* v, size_t elem_size, size_t align, uint64_t turns, size_t per_turn) {
+    vec_reserve_hint_at(v, elem_size, turns, per_turn, align);
 }
 
 void ember_vec_reserve_more(ember_vec* v, size_t elem_size, size_t additional) {
@@ -3494,27 +3512,43 @@ void ember_vec_swap(ember_vec* v, size_t elem_size, size_t i, size_t j) {
     }
 }
 
-void ember_vec_insert(ember_vec* v, size_t elem_size, size_t index, const void* value) {
-    ember_vec_reserve(v, elem_size, v->len + 1);
+static void vec_insert_at(ember_vec* v, size_t elem_size, size_t index, const void* value, size_t align) {
+    vec_reserve_at(v, elem_size, v->len + 1, align);
     unsigned char* a = (unsigned char*)v->ptr;
     memmove(a + (index + 1) * elem_size, a + index * elem_size, (v->len - index) * elem_size);
     memcpy(a + index * elem_size, value, elem_size);
     v->len += 1;
 }
 
-ember_vec ember_vec_from_elems(size_t elem_size, const void* elems, size_t count) {
+void ember_vec_insert(ember_vec* v, size_t elem_size, size_t index, const void* value) {
+    vec_insert_at(v, elem_size, index, value, EMBER_VEC_ALIGN);
+}
+
+void ember_vec_insert_aligned(ember_vec* v, size_t elem_size, size_t align, size_t index, const void* value) {
+    vec_insert_at(v, elem_size, index, value, align);
+}
+
+static ember_vec vec_from_elems_at(size_t elem_size, const void* elems, size_t count, size_t align) {
     ember_vec v = ember_vec_empty();
     if (count == 0) {
         return v;
     }
-    ember_vec_reserve(&v, elem_size, count);
+    vec_reserve_at(&v, elem_size, count, align);
     memcpy(v.ptr, elems, elem_size * count);
     v.len = count;
     return v;
 }
 
+ember_vec ember_vec_from_elems(size_t elem_size, const void* elems, size_t count) {
+    return vec_from_elems_at(elem_size, elems, count, EMBER_VEC_ALIGN);
+}
+
+ember_vec ember_vec_from_elems_aligned(size_t elem_size, size_t align, const void* elems, size_t count) {
+    return vec_from_elems_at(elem_size, elems, count, align);
+}
+
 ember_vec ember_vec_grown(ember_vec v, size_t elem_size) {
-    ember_vec_reserve(&v, elem_size, v.len + 1);
+    vec_reserve_at(&v, elem_size, v.len + 1, EMBER_VEC_ALIGN);
     return v;
 }
 
@@ -3528,8 +3562,12 @@ void ember_vec_extend(ember_vec* v, const void* bytes, size_t count) {
 }
 
 void ember_vec_free(ember_vec* v, size_t elem_size) {
+    ember_vec_free_aligned(v, elem_size, EMBER_VEC_ALIGN);
+}
+
+void ember_vec_free_aligned(ember_vec* v, size_t elem_size, size_t align) {
     if (v->ptr != NULL) {
-        ember_free(v->ptr, v->cap * elem_size, EMBER_VEC_ALIGN);
+        ember_free(v->ptr, v->cap * elem_size, align);
     }
     v->ptr = NULL;
     v->len = 0;

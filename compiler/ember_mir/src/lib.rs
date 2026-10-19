@@ -410,6 +410,52 @@ impl Place {
     }
 }
 
+/// `[LAY-2]` — whether `place` may be unaligned: it is a field of a `@packed` value, or lies
+/// inside one through fields and fixed-array elements (a dereference or a list's element is
+/// aligned again), and its type is aligned to more than one byte. Such a place is read and
+/// written by value; its address is never taken.
+pub fn unaligned_place(types: &ember_types::TypeTable, body: &Body, place: &Place) -> bool {
+    use ember_types::TyKind;
+    let mut ty = body.local(place.local).ty;
+    let mut variant = None;
+    let mut packed = false;
+    for projection in &place.projection {
+        ty = match (projection, types.kind(ty)) {
+            (Projection::Downcast(v), TyKind::Enum(_)) => {
+                variant = Some(*v);
+                ty
+            }
+            (Projection::Field(i), TyKind::Enum(id)) => {
+                packed |= types.layout_attrs(ty).packed;
+                let field = variant.take().and_then(|v| types.enum_def(*id).variants[v].fields.get(*i));
+                field.map_or(ty, |field| field.ty)
+            }
+            (Projection::Field(i), TyKind::Struct(id)) => {
+                packed |= types.layout_attrs(ty).packed;
+                types.struct_def(*id).fields.get(*i).map_or(ty, |field| field.ty)
+            }
+            (Projection::Field(i), TyKind::Tuple(items)) => items.get(*i).copied().unwrap_or(ty),
+            // A list's or a view's header word (`ptr`, `len`, `cap`): a word wherever it is.
+            (Projection::Field(_), TyKind::Vec { .. } | TyKind::Span { .. } | TyKind::Str) => return packed,
+            (Projection::Index(_) | Projection::ConstIndex(_), TyKind::Array { elem, .. }) => *elem,
+            // Behind a pointer, in a heap buffer or in a class object: aligned again.
+            (Projection::Deref, TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }) => {
+                packed = false;
+                *inner
+            }
+            (Projection::Index(_) | Projection::ConstIndex(_), TyKind::Vec { elem, .. } | TyKind::Span { elem, .. }) => {
+                packed = false;
+                *elem
+            }
+            _ => {
+                packed = false;
+                ty
+            }
+        };
+    }
+    packed && types.layout(ty).align > 1
+}
+
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Projection {
     Field(usize),

@@ -237,6 +237,23 @@ pub struct Layout {
 /// cannot drift onto a parallel descriptor.
 pub type LayoutDescriptor = Layout;
 
+/// `[LAY-2]` — a struct's or an enum's layout attributes: `@packed` (no padding) and
+/// `@align(N)` (the alignment raised to `N`, so the size is a multiple of it). `align` is 1
+/// when none is written.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct LayoutAttrs {
+    pub packed: bool,
+    pub align: u64,
+}
+
+impl LayoutAttrs {
+    pub const NONE: LayoutAttrs = LayoutAttrs { packed: false, align: 1 };
+
+    pub fn is_none(self) -> bool {
+        self == LayoutAttrs::NONE
+    }
+}
+
 impl Layout {
     pub fn scalar(size: u64) -> Layout {
         Layout { size, align: size.max(1), field_offsets: Vec::new() }
@@ -501,6 +518,9 @@ pub struct TypeTable {
     zeroable_derived: HashSet<Symbol>,
     /// `[SOA-1]` — the fields marked `@soa(flatten)`: (declared struct name, field name).
     soa_flattened: HashSet<(Symbol, Symbol)>,
+    /// `[LAY-2]` — each struct's and enum's written layout attributes, by declared name (a
+    /// generic one's instances share it as their origin).
+    layout_attrs: HashMap<Symbol, LayoutAttrs>,
     /// `[THR-6]` — the structs and classes declared `@must_drop`, by declared
     /// name (a generic one's instances share it as their origin).
     must_drop_declared: HashSet<Symbol>,
@@ -645,6 +665,7 @@ impl TypeTable {
             phantoms: HashMap::new(),
             zeroable_derived: HashSet::new(),
             soa_flattened: HashSet::new(),
+            layout_attrs: HashMap::new(),
             must_drop_declared: HashSet::new(),
             debug_writers: HashMap::new(),
             manual_markers: Vec::new(),
@@ -1386,7 +1407,7 @@ impl TypeTable {
                 let inner = self.layout(*elem);
                 Layout { size: inner.size * len, align: inner.align, field_offsets: Vec::new() }
             }
-            TyKind::Tuple(items) => self.aggregate_layout(items.iter().copied()),
+            TyKind::Tuple(items) => self.aggregate_layout(items.iter().copied(), LayoutAttrs::NONE),
             TyKind::Struct(id) => {
                 let def = self.struct_def(*id);
                 // `[SIMD-1]` — a vector or mask is aligned to its size.
@@ -1394,13 +1415,13 @@ impl TypeTable {
                     let size = shape.bytes().into();
                     return Layout { size, align: size, field_offsets: vec![0] };
                 }
-                self.aggregate_layout(def.fields.iter().map(|f| f.ty))
+                self.aggregate_layout(def.fields.iter().map(|f| f.ty), self.layout_attrs(ty))
             }
             // A class expression is a non-null handle. The heap object's
             // header and fields are described by `ClassDef`, not by the
             // source-level handle layout.
             TyKind::Class(_) | TyKind::ClassInterface(_) => Layout::scalar(self.pointer_size),
-            TyKind::Enum(id) => self.enum_layout(*id),
+            TyKind::Enum(id) => self.enum_layout(*id, self.layout_attrs(ty)),
             // `[RNG-8]` — a range type erases to its representation, so
             // it is laid out as one and crosses an FFI boundary as one.
             TyKind::Range(id) => self.layout(self.range_def(*id).repr),
@@ -1422,42 +1443,52 @@ impl TypeTable {
     /// `[TYP-12]` — a unit-only enum is its discriminant. A payload enum is
     /// `{tag, union of variants}`, tag first. A niche `Option[T]` has the
     /// same layout as `T` and keeps `None` in a value unavailable to `T`.
-    fn enum_layout(&self, id: EnumId) -> Layout {
+    /// `[LAY-2]` — `@packed` puts the union straight after the tag and packs
+    /// each variant; `@align(N)` raises the alignment, rounding the size up.
+    fn enum_layout(&self, id: EnumId, attrs: LayoutAttrs) -> Layout {
         if let Some(niche) = self.option_niche(id) {
             return self.layout(niche.payload);
         }
         let def = self.enum_def(id);
         let tag = self.layout(def.repr);
-        if def.is_unit_only() {
-            return tag;
-        }
-        let mut payload_size = 0u64;
-        let mut payload_align = 1u64;
-        for variant in &def.variants {
-            let inner = self.aggregate_layout(variant.fields.iter().map(|f| f.ty));
-            payload_size = payload_size.max(inner.size);
-            payload_align = payload_align.max(inner.align);
-        }
-        let align = tag.align.max(payload_align);
-        let offset = align_to(tag.size, payload_align);
-        Layout {
-            size: align_to(offset + payload_size, align),
-            align,
-            field_offsets: vec![0, offset],
-        }
+        let (offset, size, align) = if def.is_unit_only() {
+            (tag.size, 0, tag.align)
+        } else {
+            let variant = LayoutAttrs { packed: attrs.packed, align: 1 };
+            let mut payload_size = 0u64;
+            let mut payload_align = 1u64;
+            for variant_def in &def.variants {
+                let inner = self.aggregate_layout(variant_def.fields.iter().map(|f| f.ty), variant);
+                payload_size = payload_size.max(inner.size);
+                payload_align = payload_align.max(inner.align);
+            }
+            if attrs.packed {
+                (tag.size, payload_size, 1)
+            } else {
+                (align_to(tag.size, payload_align), payload_size, tag.align.max(payload_align))
+            }
+        };
+        let align = align.max(attrs.align);
+        let field_offsets = if def.is_unit_only() { Vec::new() } else { vec![0, offset] };
+        Layout { size: align_to(offset + size, align), align, field_offsets }
     }
 
-    fn aggregate_layout(&self, fields: impl Iterator<Item = Ty>) -> Layout {
+    /// `[TYP-11]` — fields in order, each at its natural alignment, then trailing padding;
+    /// `[LAY-2]` — under `@packed` no padding at all, and `@align(N)` raises the alignment.
+    fn aggregate_layout(&self, fields: impl Iterator<Item = Ty>, attrs: LayoutAttrs) -> Layout {
         let mut offset = 0u64;
         let mut align = 1u64;
         let mut field_offsets = Vec::new();
         for field in fields {
             let inner = self.layout(field);
-            offset = align_to(offset, inner.align);
+            if !attrs.packed {
+                offset = align_to(offset, inner.align);
+                align = align.max(inner.align);
+            }
             field_offsets.push(offset);
             offset += inner.size;
-            align = align.max(inner.align);
         }
+        let align = align.max(attrs.align);
         Layout { size: align_to(offset, align), align, field_offsets }
     }
 
@@ -2062,6 +2093,60 @@ impl TypeTable {
             }
         }
         out
+    }
+
+    /// `[LAY-2]` — record a struct's or an enum's `@packed` and `@align(N)`.
+    pub fn declare_layout(&mut self, name: Symbol, attrs: LayoutAttrs) {
+        if !attrs.is_none() {
+            self.layout_attrs.insert(name, attrs);
+        }
+    }
+
+    /// `[LAY-2]` — the layout attributes a struct or an enum was declared with.
+    pub fn layout_attrs(&self, ty: Ty) -> LayoutAttrs {
+        let declared = match self.kind(ty) {
+            TyKind::Struct(id) => {
+                let def = self.struct_def(*id);
+                def.origin.as_ref().map_or(def.name, |(origin, _)| *origin)
+            }
+            TyKind::Enum(id) => {
+                let def = self.enum_def(*id);
+                def.origin.as_ref().map_or(def.name, |(origin, _)| *origin)
+            }
+            _ => return LayoutAttrs::NONE,
+        };
+        self.layout_attrs.get(&declared).copied().unwrap_or(LayoutAttrs::NONE)
+    }
+
+    /// `[LAY-2]` — what the inline storage of `ty` holds whose alignment is stated rather than
+    /// natural: whether a type declared `@align(N)`, and whether a SIMD vector (`[SIMD-1]`).
+    /// A pointer, a reference or a heap buffer holds its target elsewhere.
+    pub fn stated_alignment(&self, ty: Ty) -> (bool, bool) {
+        let (mut aligned, mut simd) = (false, false);
+        let mut fields: Vec<Ty> = Vec::new();
+        match self.kind(ty) {
+            TyKind::Struct(id) => {
+                let def = self.struct_def(*id);
+                if SimdShape::of(def.name.as_str()).is_some() {
+                    return (false, true);
+                }
+                aligned = self.layout_attrs(ty).align > 1;
+                fields.extend(def.fields.iter().map(|field| field.ty));
+            }
+            TyKind::Enum(id) => {
+                aligned = self.layout_attrs(ty).align > 1;
+                fields.extend(self.enum_def(*id).variants.iter().flat_map(|variant| variant.fields.iter().map(|field| field.ty)));
+            }
+            TyKind::Tuple(items) => fields.extend(items.iter().copied()),
+            TyKind::Array { elem, .. } => fields.push(*elem),
+            _ => {}
+        }
+        for field in fields {
+            let (a, v) = self.stated_alignment(field);
+            aligned |= a;
+            simd |= v;
+        }
+        (aligned, simd)
     }
 
     /// `[SOA-1]` — record a field's `@soa(flatten)`.

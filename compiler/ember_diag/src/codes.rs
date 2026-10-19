@@ -159,6 +159,9 @@ codes! {
     // 0.9.9 `[CLI-19]`: a construct the specification defines and this
     // compiler does not implement yet is rejected by name, never silently.
     E0900 = (Error, 900, Support, "[CLI-19]", "construct not implemented by this compiler");
+    // `[PHIL-12]`: where the specification is silent, or two of its rules
+    // disagree, the construct is rejected and the gap raised with the owner.
+    E0901 = (Error, 901, Support, "[PHIL-12]", "construct this specification leaves unspecified");
 
     // --- name resolution, modules, visibility -------------------------------
     E1010 = (Error, 1010, Resolve, "[MOD-3]", "cannot find name in this scope");
@@ -215,7 +218,7 @@ codes! {
     E2150 = (Error, 2150, Types, "[VI.3]", "`is` requires a type with identity");
     E2151 = (Error, 2151, Types, "[VI.3]", "integer `**` with a negative exponent");
     E2160 = (Error, 2160, Types, "[CTL-7]", "control flow cannot leave a `defer` block");
-    E2170 = (Error, 2170, Types, "[IX.5]", "cannot take a reference to a field of a packed struct");
+    E2170 = (Error, 2170, Types, "[LAY-2]", "reference to a field of a packed struct");
     E2180 = (Error, 2180, Types, "[ERR-2]", "`?` outside a function returning `Option` or `Result`");
     E2181 = (Error, 2181, Types, "[ERR-2]", "`?` on an `Option` in a `Result` function, or the reverse");
     // 0.9.9 `[FN-10]`, ODR-023: only `void` and `Result[void, E]` have an
