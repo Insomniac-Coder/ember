@@ -41,8 +41,9 @@ this compiler does not have yet):
                                                    compile a bin, staticlib or cdylib package; --reload
                                                    builds the next image of a running program and
                                                    --explain predicts that reload; --build-id prints
-                                                   the hash of the build's inputs (--target, --backend
-                                                   llvm and --report=engine are not built yet)
+                                                   the hash of the build's inputs; --report=engine
+                                                   what the build did to the program (--target and
+                                                   --backend llvm are not built yet)
     ember check [file.em] [--syntax-only] [--timings]
                                                    type, borrow and effect checks without code generation
     ember test [filter] [--doc] [--no-leak-check] [--instrument-ffi]
@@ -61,7 +62,6 @@ this compiler does not have yet):
                                                    (not built yet)
     ember explain <E-code | rule-id> [--json]      the error page or rule text
     ember explain --borrow <file>:<line>           why each borrow live at that line is still live
-                                                   (not built yet)
     ember explain --cycle <path> <Class[.field]>   one cycle-capable class or field
     ember inspect <item> [--safety [--elided-only] | --alloc | --cost | --deterministic <fn> | --cycle
                           | --expand | --counts] [--function <name>]
@@ -438,8 +438,12 @@ struct Options {
     effect_report: Option<EffectReport>,
     /// `[MONO-2]` — `--report=instantiations`.
     instantiation_report: bool,
+    /// `[DIA-8]` — `ember explain --borrow <file>:<line>`: the loans live at that line.
+    borrow_report: Option<u32>,
     /// `[DET-7]` — `--build-id`: print the hash of the build's inputs.
     build_id: bool,
+    /// `[CLI-10]` — `--report=engine`: what the build did to the program, changing nothing.
+    engine_report: bool,
     /// `[FFI-37]` — `ember test --instrument-ffi`: the directory its evidence record goes to
     /// (`[TCB-1]`'s `[ffi] evidence`).
     ffi_evidence: Option<PathBuf>,
@@ -521,6 +525,19 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         }
         "new" => new_package(&args[1..]),
         "update" => packages::update(&args[1..]),
+        // `[DIA-8]` — each loan live at a line, from the borrow checker's own loans.
+        "explain" if args.get(1).is_some_and(|argument| argument == "--borrow") => {
+            let target = args.get(2).ok_or("`ember explain --borrow` needs a place: <file>:<line>")?;
+            if let Some(extra) = args.get(3) {
+                return Err(format!("unexpected `ember explain --borrow` argument `{extra}`"));
+            }
+            let (file, line) = target
+                .rsplit_once(':')
+                .and_then(|(file, line)| Some((file, line.parse::<u32>().ok().filter(|line| *line > 0)?)))
+                .ok_or_else(|| format!("`{target}` is not <file>:<line>"))?;
+            let options = Options { borrow_report: Some(line), ..Options::default() };
+            compile(Path::new(file), "check", &options)
+        }
         "explain" if args.get(1).is_some_and(|argument| argument == "--cycle") => {
             let rest: Vec<&String> = args[2..].iter().filter(|argument| *argument != "--json").collect();
             let input = rest
@@ -1618,6 +1635,191 @@ fn why(args: &[String]) -> Result<ExitCode, String> {
     let path = path.ok_or("`ember why` needs a source file")?;
     let options = Options { effect_report: Some(EffectReport { effect, item, json, deterministic: false }), ..Options::default() };
     compile(&path, "check", &options)
+}
+
+/// The bodies of the standard library, and its files: what a report about the program leaves out.
+fn standard_parts(bodies: &[ember_mir::Body], modules: &[ember_typeck::LoadedModule]) -> (Vec<bool>, std::collections::BTreeSet<ember_span::FileId>) {
+    let standard_files: std::collections::BTreeSet<ember_span::FileId> = modules
+        .iter()
+        .filter(|loaded| loaded.path.first().is_some_and(|package| package == ember_branding::STD_PACKAGE))
+        .map(|loaded| loaded.module.span.file)
+        .collect();
+    let std_prefix = ember_branding::mangled(&format!("{}.", ember_branding::STD_PACKAGE));
+    let standard = bodies
+        .iter()
+        .map(|body| body.symbol.starts_with(&std_prefix) || standard_files.contains(&body.span.file))
+        .collect();
+    (standard, standard_files)
+}
+
+/// `[CLI-10]` — `ember build --report=engine`: a report, not a profile. It changes nothing about
+/// the program; it summarises, for the program's own code (not the standard library's), the
+/// allocations, the count operations that survive in loops and why, the runtime checks kept and
+/// why, the loops the C compiler vectorised and why it did not others, what each foreign
+/// function's wrapper does, the inlining decisions, and the classes that could be structs
+/// (advisory, never applied).
+#[derive(Default)]
+struct EngineReport {
+    allocations: Vec<String>,
+    inlined: Vec<(String, String, String)>,
+    counts: Vec<String>,
+    checks: Vec<String>,
+    removed_checks: usize,
+    loops: Vec<String>,
+    wrappers: Vec<String>,
+    hints: Vec<String>,
+    classes: Vec<String>,
+    standard_symbols: std::collections::HashSet<String>,
+}
+
+impl EngineReport {
+    fn gather_final(&mut self, bodies: &[ember_mir::Body], types: &TypeTable, modules: &[ember_typeck::LoadedModule], map: &SourceMap) {
+        let (standard, _) = standard_parts(bodies, modules);
+        self.standard_symbols.extend(bodies.iter().zip(&standard).filter(|(_, standard)| **standard).map(|(body, _)| body.symbol.clone()));
+        let own: std::collections::HashSet<&str> = bodies.iter().zip(&standard).filter(|(_, standard)| !**standard).map(|(body, _)| body.name.as_str()).collect();
+        for operation in ember_analysis::count_report::surviving_count_operations(bodies, types) {
+            if own.contains(operation.function.as_str()) {
+                let what = if operation.retain { "a retain" } else { "a release" };
+                self.counts.push(format!("{} in {}: {what} ({})", map.location(operation.span), operation.function, operation.reason));
+            }
+        }
+        for (body, standard) in bodies.iter().zip(&standard) {
+            if *standard {
+                continue;
+            }
+            if let Some(counted) = &body.ffi_counted {
+                let mut work: Vec<String> = Vec::new();
+                for param in &counted.abi_params {
+                    work.push(match param {
+                        ember_mir::FfiAbiParam::Value { .. } => continue,
+                        ember_mir::FfiAbiParam::SpanPointer { nullable, .. } =>
+                            format!("a view as its pointer{}", if *nullable { ", `None` as null" } else { "" }),
+                        ember_mir::FfiAbiParam::ArrayPointer { .. } => "a fixed array as its pointer".to_string(),
+                        ember_mir::FfiAbiParam::Count { sources, inout, .. } => format!(
+                            "a length checked to fit{}{}",
+                            if sources.len() > 1 { ", the views' lengths compared" } else { "" },
+                            if *inout { ", passed by address and returned" } else { "" },
+                        ),
+                        ember_mir::FfiAbiParam::Owned { .. } => "a foreign box handed over".to_string(),
+                        ember_mir::FfiAbiParam::Retained { .. } => "a retained object's address".to_string(),
+                        ember_mir::FfiAbiParam::Out { .. } => "an `out` local zeroed and returned".to_string(),
+                    });
+                }
+                if counted.result_span.is_some() {
+                    work.push("the result as a view".to_string());
+                }
+                if counted.result_owned.is_some() {
+                    work.push("the result adopted into a foreign box".to_string());
+                }
+                if let Some(outputs) = &counted.outputs {
+                    work.push(if outputs.status_ok.is_some() { "the status as a `Result`".to_string() } else { "the outputs as the result".to_string() });
+                }
+                self.wrappers.push(format!("{} (`{}`): one call, plus {}", body.name, counted.foreign_symbol, work.join("; ")));
+            } else if body.contracts.foreign.is_some() && body.is_extern_declaration {
+                self.wrappers.push(format!("{}: a direct call, no wrapper", body.name));
+            }
+            let hint = &body.inline;
+            for (set, word) in [(hint.always, "`@inline`: always inlined"), (hint.never, "`@noinline`: never inlined"), (hint.cold, "`@cold`: a hint to the C compiler"), (hint.hot, "`@hot`: a hint to the C compiler")] {
+                if set {
+                    self.hints.push(format!("{}: {word}", body.name));
+                }
+            }
+        }
+        // A final class with no base, no virtual method, and no handle of it ever retained: each
+        // object has one owner for its whole life, as a struct value does.
+        let retained = ember_analysis::count_report::retained_classes(bodies, types);
+        let bases: std::collections::HashSet<ember_types::ClassId> = types.classes().filter_map(|(_, def)| def.base).collect();
+        let virtual_owners: std::collections::HashSet<ember_types::ClassId> =
+            bodies.iter().filter(|body| body.class_virtual_slot.is_some()).filter_map(|body| body.class_owner).collect();
+        let standard_files: std::collections::BTreeSet<ember_span::FileId> = standard_parts(bodies, modules).1;
+        for (id, def) in types.classes() {
+            if def.origin.is_some() || standard_files.contains(&def.span.file) || def.span.is_dummy() {
+                continue;
+            }
+            if def.openness == ember_types::ClassOpenness::Final && def.base.is_none() && !bases.contains(&id)
+                && !virtual_owners.contains(&id) && !retained.contains(&id)
+            {
+                self.classes.push(format!("{} ({}): final, with no base and no virtual method, and no handle of it is ever copied", def.name, map.location(def.span)));
+            }
+        }
+    }
+
+    fn gather_checks(&mut self, safety_json: &str) {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(safety_json) else { return };
+        let entries = match value {
+            serde_json::Value::Array(entries) => entries,
+            mut table => table["checks"].as_array_mut().map(std::mem::take).unwrap_or_default(),
+        };
+        let std_files = format!("{}/", ember_branding::STD_PACKAGE);
+        for entry in entries {
+            let text = |key: &str| entry[key].as_str().unwrap_or("").to_string();
+            // `[BLD-13]` — the standard library's files are `std/…` wherever it is.
+            if text("source").starts_with(&std_files) {
+                continue;
+            }
+            if text("status") == "emitted" {
+                self.checks.push(format!("{} in {}: {} ({}): {}", text("source"), text("function"), text("kind"), text("mechanism"), text("reason")));
+            } else {
+                self.removed_checks += 1;
+            }
+        }
+    }
+
+    fn print(&self, toolchain: &Toolchain) {
+        println!("engine report (a report: nothing in it changes the program)");
+        let section = |title: String, lines: &[String]| {
+            println!("{title}");
+            if lines.is_empty() {
+                println!("  none");
+            }
+            for line in lines {
+                println!("  {line}");
+            }
+        };
+        section(format!("allocations ({}):", self.allocations.len()), &self.allocations);
+        section(format!("count operations surviving in loops ({}):", self.counts.len()), &self.counts);
+        section(format!("runtime checks kept ({}; {} removed by a proof):", self.checks.len(), self.removed_checks), &self.checks);
+        section(format!("loops (the C compiler's vectorisation remarks, {}):", toolchain.name()), &self.loops);
+        section(format!("foreign function wrappers ({}):", self.wrappers.len()), &self.wrappers);
+        let inlining: Vec<String> = self
+            .inlined
+            .iter()
+            .filter(|(_, _, caller)| !self.standard_symbols.contains(caller))
+            .map(|(callee, caller, _)| format!("{callee} inlined into {caller}: called from that one place"))
+            .chain(self.hints.iter().cloned())
+            .collect();
+        section("inlining decisions:".to_string(), &inlining);
+        section(format!("classes that could be structs (advisory, never applied; {}):", self.classes.len()), &self.classes);
+    }
+}
+
+/// `[DIA-8]` — `ember explain --borrow <file>:<line>`: for each loan live at a point of that line of
+/// `file`, where it was created, the last line its region covers and the later use that keeps it
+/// alive: `borrow of v created at 12:9, live through 19, because s is used at 19:14`.
+fn print_borrow_report(map: &SourceMap, file: ember_span::FileId, line: u32, bodies: &[ember_mir::Body], types: &TypeTable) {
+    let on_line = |span: &Span| span.file == file && map.line_col(*span).line == line;
+    let mut printed = Vec::new();
+    for loan in ember_analysis::explain_loans(bodies, types) {
+        // Live at the line: its region covers a point there, or it is created there to be used later.
+        if loan.created.file != file || !(loan.live.iter().any(on_line) || (on_line(&loan.created) && !loan.live.is_empty())) {
+            continue;
+        }
+        let created = map.line_col(loan.created);
+        let through = loan.live.iter().filter(|span| span.file == file).map(|span| map.line_col(*span).line).max().unwrap_or(created.line);
+        let kind = if loan.mutable { "mutable borrow" } else { "borrow" };
+        let mut text = format!("{kind} of {} created at {}:{}, live through {through}", loan.place, created.line, created.col);
+        if let Some((name, span)) = &loan.keeper {
+            let used = map.line_col(*span);
+            text.push_str(&format!(", because {name} is used at {}:{}", used.line, used.col));
+        }
+        if !printed.contains(&text) {
+            println!("{text}");
+            printed.push(text);
+        }
+    }
+    if printed.is_empty() {
+        println!("no borrow is live at line {line}");
+    }
 }
 
 /// `[CLI-12]`, `[DET-9]` — the chains `request` asks for. For `--unsafe`, the obligation of every
@@ -2816,7 +3018,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--timings=json" => options.timings = Some(true),
             // `[MONO-2]` — the instances each generic produced and the time they took.
             "--report=instantiations" => options.instantiation_report = true,
-            "--report=engine" => return Err("`--report=engine` is not built yet".to_string()),
+            "--report=engine" => options.engine_report = true,
             "--build-id" => options.build_id = true,
             "--cc" => options.cc = Some(value(&mut index, arg)?),
             "--out-dir" => options.out_dir = Some(PathBuf::from(value(&mut index, arg)?)),
@@ -4214,6 +4416,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // Part XVIII §4.7 — the NLL borrow checker runs on MIR after drop
     // elaboration, so the drops it sees are the ones that will exist.
     ember_analysis::check_all_with_installed_callable_regions(&bodies, &types, &mut sink);
+    // `[DIA-8]` — read the loans where the checker read them.
+    if let Some(line) = options.borrow_report {
+        report(&sink, &map, options);
+        print_borrow_report(&map, file, line, &bodies, &types);
+        return Ok(ExitCode::SUCCESS);
+    }
     // `[CORO-6]`, `[CORO-12]`, `[CORO-13]` — what a generator holds across a `yield`.
     ember_analysis::coroutines::check_all(&bodies, &types, &mut sink);
     // `[EXC-7]` — this advisory lint is opt-in. It consumes the explicit
@@ -4318,6 +4526,17 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if ember_analysis::check_scope_moves_all(&bodies, &types, &mut sink) > 0 {
         return Ok(finish(&sink, &map, options));
     }
+    // `[CLI-10]` — the engine report, gathered as the build goes: the allocation sites here,
+    // before inlining moves one function's operations into another.
+    let mut engine = options.engine_report.then(EngineReport::default);
+    if let Some(engine) = engine.as_mut() {
+        let (standard, standard_files) = standard_parts(&bodies, &modules);
+        // Before inlining folds some of them away: a caller the report leaves out.
+        engine.standard_symbols = bodies.iter().zip(&standard).filter(|(_, standard)| **standard).map(|(body, _)| body.symbol.clone()).collect();
+        for site in ember_analysis::allocation_sites(&bodies, &types, &standard, &|file| standard_files.contains(&file)) {
+            engine.allocations.push(format!("{} in {}: {}", map.location(site.span), site.function, site.operations.join(", ")));
+        }
+    }
     // `[PHIL-2]`, `[CLO-10]` — the allocation sites, read where the effects
     // were: before inlining moves one function's operations into another.
     if let Some(request) = &options.alloc_report {
@@ -4349,11 +4568,17 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // themselves, and given a generic `larger` already inlined, clang picks
     // the slower unsigned `max` (`cmovbe`) for values it proves non-negative
     // (ADR-081). MSVC's inliner is weaker, so for it every such function.
-    ember_analysis::inline_single_calls_all(&mut bodies, &types, !c_for_msvc(&options));
+    let inlined = ember_analysis::inline_single_calls_all(&mut bodies, &types, !c_for_msvc(&options));
+    if let Some(engine) = engine.as_mut() {
+        engine.inlined.extend(inlined);
+    }
     // D-571 — a call through a value that is a known function calls it, and
     // that function, now called from one place, is inlined there too.
     if ember_analysis::call_known_callables_all(&mut bodies, &types) > 0 {
-        ember_analysis::inline_single_calls_all(&mut bodies, &types, !c_for_msvc(&options));
+        let inlined = ember_analysis::inline_single_calls_all(&mut bodies, &types, !c_for_msvc(&options));
+        if let Some(engine) = engine.as_mut() {
+            engine.inlined.extend(inlined);
+        }
         ember_analysis::install_callable_regions_all(&mut bodies, &types);
     }
     // ADR-107 — MSVC keeps a struct whose address goes to a function in
@@ -4568,6 +4793,11 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         (library && options.emit.is_none());
     let package_name = if header_requested || library { export_package_name(input)? } else { module_name.clone() };
     mark("analyses and passes", "all modules");
+    // `[CLI-10]` — what the final MIR holds: count operations left in loops, foreign wrappers,
+    // inlining hints, and the classes no handle copy ever shares.
+    if let Some(engine) = engine.as_mut() {
+        engine.gather_final(&bodies, &types, &modules, &map);
+    }
     let emitted = ember_codegen_c::emit(
         verified_mir,
         &map,
@@ -4921,6 +5151,14 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     )
     .map_err(|e| e.to_string())?;
     mark("C compile and link", "all modules");
+    // `[CLI-10]` — the checks the program keeps and why, and the C compiler's word on its loops.
+    if let Some(engine) = engine.as_mut() {
+        engine.gather_checks(&emitted.safety_json);
+        engine.loops = match ember_build::vectorisation_report(&toolchain, &c_path, &includes, &layout.obj.join("report"), options.profile) {
+            Ok(remarks) => remarks,
+            Err(error) => vec![format!("not available: {error}")],
+        };
+    }
     // `[SIMD-6]` — after Ember's verdicts, the host C compiler's own report on
     // the program's unit, labelled as its opinion: its absence or a
     // disagreement is never an error.
@@ -4938,6 +5176,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     }
 
     report(&sink, &map, options);
+    if let Some(engine) = &engine {
+        engine.print(&toolchain);
+    }
 
     if command == "test" {
         // `[FFI-37]` — what the instrumented binary counts, with what the program declares of it.

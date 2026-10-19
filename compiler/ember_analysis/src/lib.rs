@@ -42,7 +42,7 @@ pub mod unused;
 
 pub use borrows::{
     convert_quiet_calls_all,
-    check_all as check_borrows_all, check_all_with_installed_callable_regions,
+    check_all as check_borrows_all, check_all_with_installed_callable_regions, explain_loans, LoanReport,
     insert_shared_accesses_all, install_callable_regions_all, verify_callable_regions_all,
 };
 pub use access::{elide_static_accesses_all, remove_never_firing_checks_all};

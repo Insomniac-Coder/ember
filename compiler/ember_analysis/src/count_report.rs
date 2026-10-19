@@ -9,11 +9,11 @@
 //! element, an upcast's copy, a copy passed to an `owned` parameter), unless
 //! it lands in an uncounted handle (`[RC-3]`); dropping one releases.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ember_mir::{Body, Builtin, CastKind, FuncRef, Operand, ParameterMode, Place, Rvalue, StmtKind, Terminator};
 use ember_span::Span;
-use ember_types::{FnParamMode, Ty, TyKind, TypeTable};
+use ember_types::{ClassId, FnParamMode, Ty, TyKind, TypeTable};
 
 use crate::range_facts::{loop_headers, natural_loops, reverse_postorder};
 use crate::regions::place_type;
@@ -107,6 +107,68 @@ pub fn surviving_count_operations(bodies: &[Body], types: &TypeTable) -> Vec<Cou
         }
     }
     found
+}
+
+/// `[CLI-10]` — the classes a handle of is retained anywhere in `bodies` (copied into a second
+/// place, pushed into a list, passed to an `owned` parameter), loops or not. A class absent from it
+/// has one handle per object for the object's whole life, as a struct value would be.
+pub fn retained_classes(bodies: &[Body], types: &TypeTable) -> HashSet<ClassId> {
+    let modes: HashMap<&str, &[ParameterMode]> =
+        bodies.iter().map(|body| (body.symbol.as_str(), body.param_modes.as_slice())).collect();
+    let mut found = HashSet::new();
+    for body in bodies {
+        for data in &body.blocks {
+            for (at, stmt) in data.stmts.iter().enumerate() {
+                if let StmtKind::Assign { place, rvalue } = &stmt.kind
+                    && !retains(body, types, place, rvalue, &data.stmts[at + 1..]).is_empty()
+                {
+                    classes_in(types, place_type(body, types, place), &mut found, &mut HashSet::new());
+                }
+            }
+            if let Terminator::Call { func, args, .. } = &data.terminator {
+                for (index, argument) in args.iter().enumerate() {
+                    let Operand::Copy(place) = argument else { continue };
+                    let ty = place_type(body, types, place);
+                    let pushed = index == 1 && matches!(func, FuncRef::Builtin { which: Builtin::ArrayPush, .. });
+                    if counted(types, ty) && (pushed || owned_argument(types, body, &modes, func, index)) {
+                        classes_in(types, ty, &mut found, &mut HashSet::new());
+                    }
+                }
+            }
+        }
+    }
+    found
+}
+
+/// Every class whose handle a value of `ty` holds.
+fn classes_in(types: &TypeTable, ty: Ty, found: &mut HashSet<ClassId>, seen: &mut HashSet<Ty>) {
+    if !seen.insert(ty) {
+        return;
+    }
+    match types.kind(ty) {
+        TyKind::Class(id) => {
+            found.insert(*id);
+        }
+        TyKind::Tuple(items) => {
+            for &item in items {
+                classes_in(types, item, found, seen);
+            }
+        }
+        TyKind::Struct(id) => {
+            for field in &types.struct_def(*id).fields {
+                classes_in(types, field.ty, found, seen);
+            }
+        }
+        TyKind::Enum(id) => {
+            for variant in &types.enum_def(*id).variants {
+                for field in &variant.fields {
+                    classes_in(types, field.ty, found, seen);
+                }
+            }
+        }
+        TyKind::Array { elem, .. } => classes_in(types, *elem, found, seen),
+        _ => {}
+    }
 }
 
 /// A value whose copy is a count operation: `Copy`, yet with a drop.

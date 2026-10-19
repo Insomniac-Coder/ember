@@ -820,6 +820,79 @@ fn inspect_cost_reports_each_row_by_site() {
     assert!(rows.iter().any(|row| row["row"] == "Allocation" && row["class"] == "guaranteed present"), "{}", json.stdout);
 }
 
+/// `[CLI-10]` — `ember build --report=engine` is a report, not a profile: the program's C is the
+/// same with it as without, and it summarises the program's own allocations, the count operations
+/// surviving in loops, the runtime checks kept with their reasons (and how many a proof removed),
+/// the C compiler's vectorisation remarks, each foreign function's wrapper, the inlining decisions,
+/// and the classes that could be structs (advisory).
+#[test]
+fn the_engine_report_summarises_the_build_and_changes_nothing() {
+    let root = workspace_root();
+    let directory = temporary_directory("engine-report");
+    let file = directory.join(ember_branding::source_file("engine"));
+    std::fs::write(&file, "class Counter:\n    count: int\n\n    fn init(mut self):\n        self.count = 0\n\n    fn bump(mut self):\n        self.count += 1\n\nunsafe extern \"C\":\n    @ffi(param(xs, borrowed, count(n)), link_name=\"sum_c\")\n    safe fn sum(xs: Span[i32], n: usize) -> i32\n\npub extern \"C\" fn sum_c(xs: *i32, n: usize) -> i32:\n    total: i32 = 0\n    i: usize = 0\n    while i < n:\n        unsafe:  # SAFETY(ffi): C's contract: `xs` holds `n` elements\n            total += read(xs, i)\n        i += 1\n    return total\n\nfn pick(xs: Array[int], i: int) -> int:\n    return xs[i]\n\n@noinline\nfn twice(x: int) -> int:\n    return x * 2\n\nfn main():\n    xs: Array[int] = [1, 2, 3]\n    ys: Array[i32] = [4, 5, 6]\n    c = Counter()\n    for _x in xs:\n        c.bump()\n    println(pick(xs, 1), twice(c.count), sum(ys.as_span()))\n").expect("the program is writable");
+    let file = file.to_string_lossy().into_owned();
+    let out = directory.join("out").to_string_lossy().into_owned();
+    let built = ember(&["build", &file, "--report=engine", "--out-dir", &out], &root);
+    assert_eq!(built.exit, 0, "{}", built.stderr);
+    let report = &built.stdout;
+    for line in [
+        "engine report (a report: nothing in it changes the program)",
+        "allocations (3):",
+        "in main: a new class instance",
+        "count operations surviving in loops (0):",
+        "in main: Bounds (index test): not_proven_by_analysis",
+        "in twice: Overflow (overflow test): not_proven_by_analysis",
+        "loops (the C compiler's vectorisation remarks,",
+        "sum (`sum_c`): one call, plus a view as its pointer; a length checked to fit",
+        "pick inlined into main: called from that one place",
+        "twice: `@noinline`: never inlined",
+        "Counter (",
+        "final, with no base and no virtual method, and no handle of it is ever copied",
+    ] {
+        assert!(report.contains(line), "the engine report lacks `{line}`:\n{report}");
+    }
+    assert!(!report.contains("std."), "the report names the standard library's code:\n{report}");
+    let c = |report: bool| {
+        let mut args = vec!["build", file.as_str(), "--emit", "c", "--out-dir", out.as_str()];
+        if report {
+            args.push("--report=engine");
+        }
+        let emitted = ember(&args, &root);
+        assert_eq!(emitted.exit, 0, "{}", emitted.stderr);
+        std::fs::read_to_string(directory.join("out").join("debug").join("c").join("engine.c")).expect("the C was written")
+    };
+    assert_eq!(c(false), c(true), "`--report=engine` changed the program's C");
+}
+
+/// `[DIA-8]` — `ember explain --borrow <file>:<line>` prints, for each loan live at that line, where
+/// it was created, the last line its region covers and the later use that keeps it alive, from the
+/// borrow checker's own loans (`[BCK-1]`): a shared borrow kept by a later call, a mutable one kept
+/// by a later argument, a loan created on the line asked about, and a line with none.
+#[test]
+fn explain_borrow_names_each_live_loan_and_the_use_that_keeps_it() {
+    let root = workspace_root();
+    let directory = temporary_directory("explain-borrow");
+    let shared = directory.join(ember_branding::source_file("shared"));
+    std::fs::write(&shared, "fn total(xs: Span[int]) -> int:\n    sum = 0\n    for x in xs:\n        sum += x\n    return sum\n\nfn main():\n    v: Array[int] = [1, 2, 3]\n    s = v.as_span()\n    n = v.len()\n    w = total(s)\n    println(w, n)\n")
+        .expect("the program is writable");
+    let exclusive = directory.join(ember_branding::source_file("exclusive"));
+    std::fs::write(&exclusive, "fn bump(mut xs: Array[int]):\n    xs.push(4)\n\nfn main():\n    v: Array[int] = [1, 2, 3]\n    r = ref mut v\n    r.push(9)\n    bump(r)\n    println(v.len())\n")
+        .expect("the program is writable");
+    let explain = |file: &Path, line: u32| {
+        let run = ember(&["explain", "--borrow", &format!("{}:{line}", file.display())], &root);
+        assert_eq!(run.exit, 0, "{}", run.stderr);
+        run.stdout
+    };
+    let kept = "borrow of v created at 9:9, live through 11, because s is used at 11:15\n";
+    assert_eq!(explain(&shared, 10), kept);
+    assert_eq!(explain(&shared, 9), kept, "a loan created on the line is live there");
+    assert_eq!(explain(&shared, 12), "no borrow is live at line 12\n");
+    let mutable = explain(&exclusive, 6);
+    assert_eq!(mutable, "mutable borrow of v created at 6:9, live through 8, because r is used at 8:5\n");
+    assert!(explain(&exclusive, 8).starts_with("mutable borrow of v created at 6:9, live through 8, because r is used at 8:5\n"));
+}
+
 /// `[DOC-1]` — error pages ship with their errors: `ember explain <code>` prints the page from the
 /// compiler itself, wherever it runs, not from a repository it may not be in.
 #[test]

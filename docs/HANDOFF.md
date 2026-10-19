@@ -10756,6 +10756,7 @@ formal 1/9 count or Phase 2's estimate.
 > `@packed` with `@align`, Q2 `@repr` on a struct, Q3 a reference to a one-byte packed field).
 > Then ADR-221: reproducible builds and `--build-id` (`[BLD-13]`, `[DET-7]`).
 > Then ADR-222: the code registry synced with the development target (`[DIA-6a]`, D-721) and `[EFF-4]`'s test.
+> Then ADR-223: `ember explain --borrow` (`[DIA-8]`) and `--report=engine` (`[CLI-10]`).
 > Helper M is building the ECS queries (`[ECS-3]`..`[ECS-6]`) in `.claude/worktrees/helper-M`
 > (branch `helper-M`, job sheet in the session scratchpad `jobs/job_M.md`, notes to `tasks/90/M-notes.md`).
 > **Before a push that touches C or the runtime:** `bench/gcc/gate.sh` in WSL (the workspace through

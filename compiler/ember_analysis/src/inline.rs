@@ -29,14 +29,15 @@ use ember_mir::{
 };
 
 /// Inline every function called from exactly one place into that place;
-/// returns how many calls were inlined. With `only_checked`, only a function
+/// returns each call inlined: the callee's and the caller's source names and
+/// the caller's symbol (`[CLI-10]`'s inlining decisions). With `only_checked`, only a function
 /// holding a check (a runtime assertion or a checked operation): the reason
 /// to inline one before the C compiler does is that the caller's facts can
 /// remove its checks (ADR-081). A function with none is left to a C compiler
 /// that inlines as well itself (clang, gcc): given an inlined generic
 /// `larger`, clang picks the slower unsigned `max`.
-pub fn inline_single_calls_all(bodies: &mut Vec<Body>, types: &TypeTable, only_checked: bool) -> usize {
-    let mut inlined = 0;
+pub fn inline_single_calls_all(bodies: &mut Vec<Body>, types: &TypeTable, only_checked: bool) -> Vec<(String, String, String)> {
+    let mut inlined = Vec::new();
     let mut folded: HashSet<String> = HashSet::new();
     // Bottom-up, in a fixed order: a function is inlined only once nothing
     // it calls is still waiting to be, so its body is final when copied (a
@@ -93,8 +94,8 @@ pub fn inline_single_calls_all(bodies: &mut Vec<Body>, types: &TypeTable, only_c
         for (caller, block, callee) in ready {
             let callee_body = bodies[callee].clone();
             inline_call(&mut bodies[caller], block, &callee_body);
+            inlined.push((callee_body.name.clone(), bodies[caller].name.clone(), bodies[caller].symbol.clone()));
             folded.insert(callee_body.symbol);
-            inlined += 1;
         }
     }
     // An inlined function nothing else names is not emitted: no call, no

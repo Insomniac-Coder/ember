@@ -126,6 +126,36 @@ pub fn check_all_with_installed_callable_regions(
     types: &TypeTable,
     sink: &mut Sink,
 ) {
+    run_checks(bodies, types, sink, None);
+}
+
+/// `[DIA-8]` — one loan as the checker holds it (`[BCK-1]`): the place it borrows, whether mutably,
+/// where it was created, the span of each point its region covers, and the later use that keeps
+/// it alive (the last read, inside the region, of a named local holding it).
+#[derive(Clone, Debug)]
+pub struct LoanReport {
+    pub place: String,
+    pub mutable: bool,
+    pub created: Span,
+    pub live: Vec<Span>,
+    pub keeper: Option<(String, Span)>,
+}
+
+/// `[DIA-8]` — every loan of every body, from the borrow checker's own analysis (its loans and
+/// regions, not a second inference), for `ember explain --borrow`. Its diagnostics are dropped:
+/// the program was checked already.
+pub fn explain_loans(bodies: &[Body], types: &TypeTable) -> Vec<LoanReport> {
+    let mut reports = Vec::new();
+    run_checks(bodies, types, &mut Sink::new(), Some(&mut reports));
+    reports
+}
+
+fn run_checks(
+    bodies: &[Body],
+    types: &TypeTable,
+    sink: &mut Sink,
+    mut reports: Option<&mut Vec<LoanReport>>,
+) {
     let signatures: HashMap<String, Elision> = bodies
         .iter()
         .map(|body| (body.symbol.clone(), elision_of(body, types)))
@@ -218,6 +248,7 @@ pub fn check_all_with_installed_callable_regions(
             dynamic.contains(&body.symbol),
             &names,
             sink,
+            reports.as_deref_mut(),
         );
     }
 }
@@ -3261,6 +3292,7 @@ pub fn check(body: &Body, types: &TypeTable, sink: &mut Sink) {
         false,
         &HashMap::new(),
         sink,
+        None,
     );
 }
 
@@ -3275,6 +3307,7 @@ fn check_body(
     dynamic: bool,
     names: &HashMap<String, String>,
     sink: &mut Sink,
+    reports: Option<&mut Vec<LoanReport>>,
 ) {
     let regions = Regions::infer_with_capture_borrow_paths(
         body,
@@ -3293,6 +3326,9 @@ fn check_body(
     // parameter's own slot is not a question of which parameter the result
     // borrows: it is `E3060` (`[BRW-8]`), and `check_escapes` reports it.
     let loans = collect_loans(body, types, &regions, call_contract);
+    if let Some(reports) = reports {
+        report_loans(body, types, &regions, &loans, reports);
+    }
     let own_slot = own_slot_returns(body, types, &loans, &regions);
     check_return_regions(body, types, &regions, &own_slot, sink);
     check_multi_result_summary(
@@ -4727,6 +4763,45 @@ fn loan_held_by_for_iterator(body: &Body, regions: &Regions, loan: &Loan) -> boo
 /// programmer wrote whose next read comes after the conflicting access, because
 /// that read is the reason the borrow has not ended. A compiler temporary is
 /// never named (`[DIA-2]`): the help talks about the expression instead.
+/// `[DIA-8]` — each loan of `body`: the points of its region, and the last read inside it of a named
+/// local the region reaches, which is the use that keeps it alive.
+fn report_loans(body: &Body, types: &TypeTable, regions: &Regions, loans: &[Loan], reports: &mut Vec<LoanReport>) {
+    let reads = collect_reads(body);
+    for loan in loans {
+        let Some(place) = loan.capability.source_place() else { continue };
+        if loan.span.is_dummy() {
+            continue;
+        }
+        let region = loan.capability.validity_interval.0;
+        let mut live = Vec::new();
+        for (block_index, block) in body.blocks.iter().enumerate() {
+            for index in 0..=block.stmts.len() {
+                if regions.contains(region, Point { block: block_index, index }) {
+                    let span = block.stmts.get(index).map_or(block.terminator_span, |stmt| stmt.span);
+                    if !span.is_dummy() {
+                        live.push(span);
+                    }
+                }
+            }
+        }
+        let keeper = regions
+            .holders(region)
+            .iter()
+            .filter(|holder| body.local(**holder).name.is_some())
+            .flat_map(|holder| reads.get(holder).into_iter().flatten().map(move |span| (*holder, *span)))
+            .filter(|(_, span)| live.contains(span) && *span != loan.span)
+            .max_by_key(|(_, span)| span.start)
+            .and_then(|(holder, span)| body.local(holder).name.clone().map(|name| (name, span)));
+        reports.push(LoanReport {
+            place: place_name(body, types, place),
+            mutable: loan.capability.access.permission.is_mut(),
+            created: loan.span,
+            live,
+            keeper,
+        });
+    }
+}
+
 fn keeper(
     body: &Body,
     regions: &Regions,

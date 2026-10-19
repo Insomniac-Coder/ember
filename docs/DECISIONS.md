@@ -5017,6 +5017,28 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-223 — `ember explain --borrow` (`[DIA-8]`) and `ember build --report=engine` (`[CLI-10]`)
+
+2026-10-20, toward 90% (solo).
+* `[DIA-8]`: the borrow checker's run can hand back its loans (`ember_analysis::explain_loans`, the
+  same `run_checks` the checker uses, its diagnostics dropped): each loan's borrowed place, whether
+  mutable, where it was created, the span of each point its region covers, and the last read inside
+  that region of a named local the region reaches. `ember explain --borrow <file>:<line>` reads them
+  right after borrow checking and prints each loan live at the line (its region covers a point
+  there, or it is created there and used later): `borrow of v created at 9:9, live through 11,
+  because s is used at 11:15`; `no borrow is live at line N` otherwise.
+* `[CLI-10]`: `--report=engine` gathers as the build goes and prints after it, for the program's
+  own code (the standard library's left out: its bodies before inlining folds them, and its
+  `std/…` sources): allocation sites (before inlining), count operations surviving in loops with
+  their reasons, the runtime checks the safety table keeps with their mechanism and reason (and how
+  many a proof removed), the C compiler's vectorisation remarks (`[SIMD-6]`'s, its opinion), what
+  each foreign function's wrapper does, the inlining decisions (the MIR inliner now returns each call
+  it inlined; the `@inline`/`@noinline`/`@cold`/`@hot` hints), and, advisory, the classes that could
+  be structs: final, no base, no virtual method, and no handle of them ever retained anywhere
+  (`count_report::retained_classes`). The program's C is the same with the report and without.
+* Tests: `explain_borrow_names_each_live_loan_and_the_use_that_keeps_it`,
+  `the_engine_report_summarises_the_build_and_changes_nothing`.
+
 ## ADR-222 — The code registry against the development target (`[DIA-6a]`); `[EFF-4]`
 
 2026-10-19, toward 90% (solo).
