@@ -11,6 +11,11 @@ use ember_build::{LinkRequest, Profile, Toolchain};
 const EMBER: &str = env!("CARGO_BIN_EXE_ember");
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
+/// `text` with the runtime's prefix where it says `ember_` (the C below names runtime symbols).
+fn branded(text: &str) -> String {
+    text.replace("@RT@", &ember_branding::runtime(""))
+}
+
 fn scratch() -> PathBuf {
     let path = std::env::temp_dir().join(format!("{}-cdylib-{}-{}",
         ember_branding::CLI_NAME, std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
@@ -66,7 +71,7 @@ fn quiet_errors() {}
 const HOST_PRELUDE: &str = r#"#if !defined(_WIN32)
 #define _DEFAULT_SOURCE /* usleep under -std=c11 */
 #endif
-#include "ember_runtime/ember_rt.h"
+#include "@RT@runtime/@RT@rt.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -86,7 +91,7 @@ static library load(const char* path) { return dlopen(path, RTLD_NOW | RTLD_LOCA
 static void* find(library l, const char* name) { return dlsym(l, name); }
 static void unload(library l) { dlclose(l); }
 #endif
-typedef int (*module_init_fn)(const ember_rt_config*);
+typedef int (*module_init_fn)(const @RT@rt_config*);
 typedef void (*module_shutdown_fn)(void);
 typedef int32_t (*value_fn)(void);
 typedef int32_t (*unary_fn)(int32_t);
@@ -108,7 +113,7 @@ static void host_panic(const char* msg, size_t len) {
 /// Compile `source` (a C host) into an executable in `dir` against the runtime header in `lib`.
 fn link_host(toolchain: &Toolchain, dir: &Path, lib: &Path, name: &str, source: &str) -> PathBuf {
     let file = dir.join(format!("{name}.c"));
-    std::fs::write(&file, source).unwrap();
+    std::fs::write(&file, branded(source)).unwrap();
     let exe = dir.join(if cfg!(windows) { format!("{name}.exe") } else { name.to_string() });
     let obj = dir.join(format!("{name}-obj"));
     std::fs::create_dir_all(&obj).unwrap();
@@ -169,9 +174,10 @@ fn a_cdylib_is_loaded_initialised_and_unloaded_by_a_c_host() {
     let library = library_file(&lib, "plugin");
     assert!(library.is_file(), "no library at {}", library.display());
     let header = std::fs::read_to_string(lib.join("plugin.h")).unwrap();
-    for declaration in ["int32_t plugin_double(int32_t", "int ember_module_init(const ember_rt_config* cfg);",
-        "void ember_module_shutdown(void);", "/* threads: main */"] {
-        assert!(header.contains(declaration), "the header lacks `{declaration}`:\n{header}");
+    for declaration in ["int32_t plugin_double(int32_t", "int @RT@module_init(const @RT@rt_config* cfg);",
+        "void @RT@module_shutdown(void);", "/* threads: main */"] {
+        let declaration = branded(declaration);
+        assert!(header.contains(&declaration), "the header lacks `{declaration}`:\n{header}");
     }
 
     let path = library.to_string_lossy().replace('\\', "\\\\");
@@ -202,20 +208,20 @@ static void* worker(void* unused) {{
 
 int main(int argc, char** argv) {{
     const char* mode = argc > 1 ? argv[1] : "flow";
-    ember_rt_config cfg = ember_rt_config_default();
+    @RT@rt_config cfg = @RT@rt_config_default();
     cfg.log = host_log;
     cfg.on_panic = host_panic;
     g_lib = load("{path}");
     if (!g_lib) return 2;
-    module_init_fn init = (module_init_fn)find(g_lib, "ember_module_init");
-    module_shutdown_fn shutdown = (module_shutdown_fn)find(g_lib, "ember_module_shutdown");
+    module_init_fn init = (module_init_fn)find(g_lib, "@RT@module_init");
+    module_shutdown_fn shutdown = (module_shutdown_fn)find(g_lib, "@RT@module_shutdown");
     value_fn on_main = (value_fn)find(g_lib, "plugin_on_main");
     value_fn leak = (value_fn)find(g_lib, "plugin_leak");
     unary_fn twice = (unary_fn)find(g_lib, "plugin_double");
     value_fn odd = (value_fn)find(g_lib, "plugin-odd"); /* [MNG-2]: exactly the symbol written */
     if (!init || !shutdown || !on_main || !leak || !twice || !odd) return 3;
     /* Nothing but the exports and the entry points: no runtime symbol, no private function. */
-    if (find(g_lib, "ember_rt_init_v2") || find(g_lib, "ember_alloc") || find(g_lib, "ember_rt_shutdown")) return 4;
+    if (find(g_lib, "@RT@rt_init_v2") || find(g_lib, "@RT@alloc") || find(g_lib, "@RT@rt_shutdown")) return 4;
     if (strcmp(mode, "before") == 0) {{ on_main(); return 5; }}
     if (init(&cfg) != 0) return 6;
     if (strcmp(mode, "other") == 0) {{
@@ -257,8 +263,8 @@ int main(int argc, char** argv) {{
     pthread_join(thread, NULL);
 #endif
     g_lib = load("{path}");
-    init = (module_init_fn)find(g_lib, "ember_module_init");
-    shutdown = (module_shutdown_fn)find(g_lib, "ember_module_shutdown");
+    init = (module_init_fn)find(g_lib, "@RT@module_init");
+    shutdown = (module_shutdown_fn)find(g_lib, "@RT@module_shutdown");
     on_main = (value_fn)find(g_lib, "plugin_on_main");
     if (init(&cfg) != 0 || on_main() != 7) return 13;
     shutdown();
@@ -276,7 +282,7 @@ int main(int argc, char** argv) {{
     // Before `ember_module_init` the host's `on_panic` is not known yet: the panic is on stderr.
     let before = run_host(&exe, &["before"], &dir);
     assert!(!before.status.success());
-    assert!(String::from_utf8_lossy(&before.stderr).contains("export called before ember_module_init"),
+    assert!(String::from_utf8_lossy(&before.stderr).contains(&branded("export called before @RT@module_init")),
         "{}", String::from_utf8_lossy(&before.stderr));
     let other = run_host(&exe, &["other"], &dir);
     assert!(String::from_utf8_lossy(&other.stdout).contains("panic: export requires the module initialization thread"),
@@ -295,7 +301,8 @@ int main(int argc, char** argv) {{
         String::from_utf8_lossy(&listed.stdout).lines().filter_map(|line| line.split_whitespace().nth(2).map(str::to_string)).collect()
     };
     exports.sort();
-    assert_eq!(exports, ["ember_module_init", "ember_module_shutdown", "plugin-odd", "plugin_double", "plugin_leak", "plugin_on_main"]);
+    let expected = ["@RT@module_init", "@RT@module_shutdown", "plugin-odd", "plugin_double", "plugin_leak", "plugin_on_main"].map(branded);
+    assert_eq!(exports, expected);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -330,7 +337,7 @@ static int g_hooked;
 static void hook(void* data) {{ (void)data; g_hooked += 1; }}
 typedef int (*at_exit_fn)(void (*)(void*), void*);
 int main(void) {{
-    ember_rt_config cfg = ember_rt_config_default();
+    @RT@rt_config cfg = @RT@rt_config_default();
     cfg.on_panic = host_panic;
     library a = load("{first}");
     library b = load("{second}");
@@ -341,11 +348,11 @@ int main(void) {{
     library rt = dlopen("{runtime_name}", RTLD_NOW | RTLD_NOLOAD);
 #endif
     if (!rt) return 3; /* one runtime, loaded with the modules */
-    at_exit_fn at_exit = (at_exit_fn)find(rt, "ember_rt_at_exit");
-    module_init_fn init_a = (module_init_fn)find(a, "ember_module_init");
-    module_init_fn init_b = (module_init_fn)find(b, "ember_module_init");
-    module_shutdown_fn shutdown_a = (module_shutdown_fn)find(a, "ember_module_shutdown");
-    module_shutdown_fn shutdown_b = (module_shutdown_fn)find(b, "ember_module_shutdown");
+    at_exit_fn at_exit = (at_exit_fn)find(rt, "@RT@rt_at_exit");
+    module_init_fn init_a = (module_init_fn)find(a, "@RT@module_init");
+    module_init_fn init_b = (module_init_fn)find(b, "@RT@module_init");
+    module_shutdown_fn shutdown_a = (module_shutdown_fn)find(a, "@RT@module_shutdown");
+    module_shutdown_fn shutdown_b = (module_shutdown_fn)find(b, "@RT@module_shutdown");
     value_fn first = (value_fn)find(a, "first_value");
     value_fn second = (value_fn)find(b, "second_value");
     if (!at_exit || !init_a || !init_b || !shutdown_a || !shutdown_b || !first || !second) return 4;
@@ -414,7 +421,7 @@ fn a_module_built_for_another_runtime_abi_is_refused_first() {
     ember_build::compile_object(&toolchain, &module_c, &[next_include], &module_object, Profile::Debug)
         .expect("the module compiles against the next header");
     let host = dir.join("host.c");
-    std::fs::write(&host, format!("#include \"{header_name}\"\n#include <stdio.h>\nint ember_module_init(const ember_rt_config* cfg);\nstatic int g_hooked;\nstatic void hook(void* data) {{ (void)data; g_hooked = 1; }}\nint main(void) {{\n    ember_rt_config cfg = ember_rt_config_default();\n    if (ember_rt_at_exit(hook, NULL) != 0) return 2;\n    if (ember_module_init(&cfg) != EMBER_MODULE_INIT_ABI_MISMATCH) return 3;\n    ember_rt_shutdown();\n    if (g_hooked) return 4;\n    printf(\"ok\\n\");\n    return 0;\n}}\n")).unwrap();
+    std::fs::write(&host, branded(&format!("#include \"{header_name}\"\n#include <stdio.h>\nint @RT@module_init(const @RT@rt_config* cfg);\nstatic int g_hooked;\nstatic void hook(void* data) {{ (void)data; g_hooked = 1; }}\nint main(void) {{\n    @RT@rt_config cfg = @RT@rt_config_default();\n    if (@RT@rt_at_exit(hook, NULL) != 0) return 2;\n    if (@RT@module_init(&cfg) != EMBER_MODULE_INIT_ABI_MISMATCH) return 3;\n    @RT@rt_shutdown();\n    if (g_hooked) return 4;\n    printf(\"ok\\n\");\n    return 0;\n}}\n"))).unwrap();
     let exe = dir.join(if cfg!(windows) { "host.exe" } else { "host" });
     std::fs::create_dir_all(dir.join("obj")).unwrap();
     ember_build::compile_and_link(&toolchain, &LinkRequest {
@@ -471,11 +478,11 @@ static void* other(void* unused) {{
 }}
 int main(int argc, char** argv) {{
     g_mode = argc > 1 ? argv[1] : "any";
-    ember_rt_config cfg = ember_rt_config_default();
+    @RT@rt_config cfg = @RT@rt_config_default();
     cfg.on_panic = host_panic;
     library l = load("{path}");
     if (!l) return 2;
-    module_init_fn init = (module_init_fn)find(l, "ember_module_init");
+    module_init_fn init = (module_init_fn)find(l, "@RT@module_init");
     g_api = (const {table_type}*)find(l, "GameApi");
     const uint32_t* protocol = (const uint32_t*)find(l, "GameApi_protocol");
     if (!init || !g_api || !protocol || *protocol != GameApi_PROTOCOL) return 3;

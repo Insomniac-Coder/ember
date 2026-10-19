@@ -74,10 +74,10 @@ fn the_first_hour_is_new_cd_and_run() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A package in `dir`: its manifest and its sources, each `(path under src, text)`.
+/// A package in `dir`: its manifest and its sources, each `(module name under src, text)`.
 fn package(dir: &Path, manifest: &str, sources: &[(&str, &str)]) {
-    for (file, text) in sources {
-        let path = dir.join("src").join(file);
+    for (module, text) in sources {
+        let path = dir.join("src").join(ember_branding::source_file(module));
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, text).unwrap();
     }
@@ -90,16 +90,16 @@ fn package(dir: &Path, manifest: &str, sources: &[(&str, &str)]) {
 fn dependency_tree(dir: &Path) {
     for (folder, version, answer) in [("geometry1", "1.4.0", 1), ("geometry2", "2.1.0", 2)] {
         package(&dir.join(folder), &format!("[package]\nname = \"geometry\"\nversion = \"{version}\"\nkind = \"lib\"\n"), &[
-            ("lib.em", &format!("pub fn major() -> i32:\n    return {answer}\n\npub(package) fn inner() -> i32:\n    return {answer}\n")),
-            ("shapes.em", &format!("pub struct Square:\n    pub side: i32\n\npub fn area(s: Square) -> i32:\n    return s.side * s.side * {answer}\n")),
+            ("lib", &format!("pub fn major() -> i32:\n    return {answer}\n\npub(package) fn inner() -> i32:\n    return {answer}\n")),
+            ("shapes", &format!("pub struct Square:\n    pub side: i32\n\npub fn area(s: Square) -> i32:\n    return s.side * s.side * {answer}\n")),
         ]);
     }
     package(&dir.join("mesh"), "[package]\nname = \"mesh\"\nversion = \"0.3.0\"\nkind = \"lib\"\n\n[dependencies]\ngeometry = { path = \"../geometry1\" }\n", &[
-        ("lib.em", "import geometry\nimport geometry.shapes\nimport util\n\npub fn geometry_major() -> i32:\n    return geometry.major() + util.zero()\n\npub fn area() -> i32:\n    return shapes.area(shapes.Square(3))\n"),
-        ("util.em", "pub fn zero() -> i32:\n    return 0\n"),
+        ("lib", "import geometry\nimport geometry.shapes\nimport util\n\npub fn geometry_major() -> i32:\n    return geometry.major() + util.zero()\n\npub fn area() -> i32:\n    return shapes.area(shapes.Square(3))\n"),
+        ("util", "pub fn zero() -> i32:\n    return 0\n"),
     ]);
     package(&dir.join("app"), "[package]\nname = \"app\"\nversion = \"0.1.0\"\nkind = \"bin\"\n\n[dependencies]\ngeometry = { path = \"../geometry2\" }\n\n[dependencies.mesh]\npath = \"../mesh\"\n", &[
-        ("main.em", "import geometry\nimport geometry.shapes\nimport mesh\n\nfn main():\n    println(geometry.major())\n    println(mesh.geometry_major())\n    println(shapes.area(shapes.Square(3)))\n    println(mesh.area())\n"),
+        ("main", "import geometry\nimport geometry.shapes\nimport mesh\n\nfn main():\n    println(geometry.major())\n    println(mesh.geometry_major())\n    println(shapes.area(shapes.Square(3)))\n    println(mesh.area())\n"),
     ]);
 }
 
@@ -117,7 +117,8 @@ fn two_majors_of_a_dependency_coexist() {
     assert_eq!(ran.stdout, "2\n1\n18\n9\n");
     let c = std::fs::read_to_string(app.join("target/debug/c/main.c")).unwrap();
     // (Their small functions are inlined into `main`; the types and the unused functions remain.)
-    for symbol in ["em_geometry_shapes_Square ", "em_geometry__1_shapes_Square ", "em_geometry_inner(", "em_geometry__1_inner("] {
+    let symbols = ["geometry.shapes.Square ", "geometry__1.shapes.Square ", "geometry.inner(", "geometry__1.inner("];
+    for symbol in symbols.map(ember_branding::mangled) {
         assert!(c.contains(symbol), "no `{symbol}` in the C");
     }
     std::fs::write(app.join("src").join(ember_branding::source_file("main")),
@@ -173,7 +174,7 @@ fn a_git_dependency_is_checked_out_at_its_revision() {
     let dir = scratch();
     let repo = dir.join("repo");
     package(&repo, "[package]\nname = \"greet\"\nversion = \"1.0.0\"\nkind = \"lib\"\n",
-        &[("lib.em", "pub fn word() -> i32:\n    return 1\n")]);
+        &[("lib", "pub fn word() -> i32:\n    return 1\n")]);
     let git = |args: &[&str]| {
         let output = Command::new("git").args(["-c", "user.name=ember", "-c", "user.email=ember@example.org", "-c", "core.autocrlf=false"])
             .args(args).current_dir(&repo).output().expect("git runs");
@@ -188,7 +189,7 @@ fn a_git_dependency_is_checked_out_at_its_revision() {
     git(&["commit", "--quiet", "-am", "second"]);
     let url = repo.to_string_lossy().replace('\\', "/");
     package(&dir.join("app"), &format!("[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ngreet = {{ git = \"{url}\", rev = \"{first}\" }}\n"),
-        &[("main.em", "import greet\n\nfn main():\n    println(greet.word())\n")]);
+        &[("main", "import greet\n\nfn main():\n    println(greet.word())\n")]);
     let ran = ember(&["run"], &dir.join("app"));
     assert!(ran.ok, "{}", ran.stderr);
     assert_eq!(ran.stdout, "1\n", "the dependency was not checked out at its revision");
@@ -202,8 +203,8 @@ fn a_git_dependency_is_checked_out_at_its_revision() {
 #[test]
 fn dependency_errors() {
     let dir = scratch();
-    package(&dir.join("a"), "[package]\nname = \"a\"\nversion = \"1.0.0\"\n\n[dependencies]\nb = { path = \"../b\" }\n", &[("main.em", "println(1)\n")]);
-    package(&dir.join("b"), "[package]\nname = \"b\"\nversion = \"1.0.0\"\nkind = \"lib\"\n\n[dependencies]\na = { path = \"../a\" }\n", &[("lib.em", "pub fn f() -> i32:\n    return 1\n")]);
+    package(&dir.join("a"), "[package]\nname = \"a\"\nversion = \"1.0.0\"\n\n[dependencies]\nb = { path = \"../b\" }\n", &[("main", "println(1)\n")]);
+    package(&dir.join("b"), "[package]\nname = \"b\"\nversion = \"1.0.0\"\nkind = \"lib\"\n\n[dependencies]\na = { path = \"../a\" }\n", &[("lib", "pub fn f() -> i32:\n    return 1\n")]);
     let cycle = ember(&["check"], &dir.join("a"));
     assert!(!cycle.ok && cycle.stderr.contains("error[E1041]") && cycle.stderr.contains("a -> b -> a"), "{}", cycle.stderr);
 
@@ -228,24 +229,24 @@ fn a_package_uses_only_its_layers() {
     let dir = scratch();
     let core_only = "[package]\nname = \"firmware\"\nversion = \"1.0.0\"\nkind = \"lib\"\nlayers = [\"core\"]\n";
     let fits = "pub fn checksum(data: ref [u8; 4]) -> Option[u32]:\n    total: u32 = 0\n    for byte in data:\n        total = total * 31 + byte as u32\n    if total == 0:\n        return None\n    return Some(max(total, 7))\n\npub fn clamp_to(x: i32, hi: i32) -> Result[i32, i32]:\n    if x > hi:\n        return Err(x - hi)\n    return Ok(x)\n";
-    package(&dir.join("firmware"), core_only, &[("lib.em", fits)]);
+    package(&dir.join("firmware"), core_only, &[("lib", fits)]);
     let checked = ember(&["check"], &dir.join("firmware"));
     assert!(checked.ok, "core-only code was refused: {}", checked.stderr);
 
-    package(&dir.join("firmware"), core_only, &[("lib.em", &format!("{fits}\npub fn readings() -> i32:\n    values = [1, 2, 3]\n    values.push(4)\n    return values.len() as i32\n"))]);
+    package(&dir.join("firmware"), core_only, &[("lib", &format!("{fits}\npub fn readings() -> i32:\n    values = [1, 2, 3]\n    values.push(4)\n    return values.len() as i32\n"))]);
     let alloc = ember(&["check"], &dir.join("firmware"));
     assert!(!alloc.ok && alloc.stderr.contains("error[E1021]: `readings` needs the `alloc` layer, which is not linked in this build"), "{}", alloc.stderr);
     assert!(alloc.stderr.contains("this package declares `[package] layers = [\"core\"]`"), "{}", alloc.stderr);
 
     let with_alloc = "[package]\nname = \"firmware\"\nversion = \"1.0.0\"\nkind = \"lib\"\nlayers = [\"core\", \"alloc\"]\n";
-    package(&dir.join("firmware"), with_alloc, &[("lib.em", "pub fn report(x: i32) -> i32:\n    values = [x]\n    println(values.len())\n    return x\n")]);
+    package(&dir.join("firmware"), with_alloc, &[("lib", "pub fn report(x: i32) -> i32:\n    values = [x]\n    println(values.len())\n    return x\n")]);
     let io = ember(&["check"], &dir.join("firmware"));
     assert!(!io.ok && io.stderr.contains("error[E1021]: `report` needs the `io` layer"), "{}", io.stderr);
     assert!(!io.stderr.contains("needs the `alloc` layer"), "{}", io.stderr);
 
     // A dependency that uses every layer (it declares none) cannot serve a core-only package.
-    package(&dir.join("helpers"), "[package]\nname = \"helpers\"\nversion = \"1.0.0\"\nkind = \"lib\"\n", &[("lib.em", "pub fn one() -> i32:\n    return 1\n")]);
-    package(&dir.join("firmware"), &format!("{core_only}\n[dependencies]\nhelpers = {{ path = \"../helpers\" }}\n"), &[("lib.em", fits)]);
+    package(&dir.join("helpers"), "[package]\nname = \"helpers\"\nversion = \"1.0.0\"\nkind = \"lib\"\n", &[("lib", "pub fn one() -> i32:\n    return 1\n")]);
+    package(&dir.join("firmware"), &format!("{core_only}\n[dependencies]\nhelpers = {{ path = \"../helpers\" }}\n"), &[("lib", fits)]);
     let dependency = ember(&["check"], &dir.join("firmware"));
     assert!(!dependency.ok && dependency.stderr.contains("error[E1021]: `firmware` leaves out the `alloc` layer, which its dependency `helpers` uses"), "{}", dependency.stderr);
     package(&dir.join("helpers"), "[package]\nname = \"helpers\"\nversion = \"1.0.0\"\nkind = \"lib\"\nlayers = [\"core\"]\n", &[]);
