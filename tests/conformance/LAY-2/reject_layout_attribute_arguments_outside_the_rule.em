@@ -1,0 +1,44 @@
+#$ test: compile-fail
+#$ rules: LAY-2, PHIL-12
+#$ profiles: debug
+#$ error[E0104]: `@layout` takes `c`
+#$ error[E0104]: `@packed` takes no arguments
+#$ error[E0104]: `@repr` names the discriminant's integer type
+#$ error[E0104]: `@repr` names the discriminant's integer type
+#$ error[E0104]: `@repr` names the discriminant's integer type
+#$ error[E0901]: `@repr` on a struct is not specified
+# `[LAY-2]` — `@layout` names `c`, `@packed` takes nothing, and `@repr` names one of the eight
+# integer types `u8`…`u64`, `i8`…`i64` (`int` is `i64`); anything else is `E0104`. `@repr` gives
+# an enum's discriminant type and nothing else, so on a struct it is a construct the
+# specification does not define (`E0901`, `[PHIL-12]`).
+
+@layout(rust)
+struct Reordered:
+    a: u8
+
+@packed(1)
+struct One:
+    a: u8
+
+@repr(usize)
+enum Pointer:
+    A
+
+@repr(u128)
+enum Wide:
+    A
+
+@repr(f32)
+enum Float:
+    A
+
+@repr(u8)
+struct Bytes:
+    a: u8
+
+@repr(int)
+enum Plain:
+    A
+
+fn main():
+    println(size_of[Plain]())

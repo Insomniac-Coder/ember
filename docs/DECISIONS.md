@@ -5017,6 +5017,35 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-220 — Layout attributes (`[LAY-2]`), helper L
+
+2026-10-19, toward 90%: built by helper L on branch `helper-L` (its notes: `tasks/90/L-notes.md`),
+verified and merged by the coordinator.
+* `@packed` (no padding, alignment 1; structs, payload enums, generic instances) and `@align(N)`
+  (alignment raised, size rounded up) live in a side table of the type table (`LayoutAttrs`,
+  `declare_layout`), not on `StructDef`/`EnumDef`; `TypeTable::layout` applies them. The C is
+  `#pragma pack(push, 1)` and `EMBER_ALIGNED(A)`, `A` the type's own alignment (`N`, or its fields'
+  when more: MSVC warns of a smaller specifier, C4359, which the C gate makes an error; fixed on
+  merge), and every such type gets `_Static_assert`s of its
+  size, alignment and field offsets (a `static_assert` twin in exported headers for C++).
+* A packed field is read and written by value: checked arithmetic, drop glue, the generated
+  equality and `Debug`, and derived `hash` go through aligned copies. A reference MIR forms to a
+  field aligned to more than one byte is `E2170` (`ember_analysis/src/packed.rs`), naming it.
+* `offset_of[T](field)` (`std.mem`) is folded to a constant by the checker. `@repr` takes only the
+  eight fixed-width integers (`E0104`); a discriminant that does not fit is `E2010`.
+* `[HEAP-9]`: a list whose element is aligned beyond 16 uses `_aligned` twins of the runtime's
+  allocating list operations; every other list keeps its calls.
+* Hot reload: `@packed`/`@align` are part of a type's schema (`[HR-14]`).
+* `E0901` (`[PHIL-12]`, a construct the specification leaves unspecified) for `@packed` beside
+  `@align` (on one type, or a packed type holding an aligned one) and for `@repr` on a struct:
+  owner questions (L-notes §4, Q1–Q3).
+* Not built, so `[LAY-2]` stays unfinished: a SIMD vector inside a `@packed` type (MSVC keeps an
+  over-aligned member aligned under `#pragma pack`; it needs byte storage and `memcpy` access), and
+  `@align(N)` on an enum without payloads (such an enum is its integer in C at about 50 places).
+* Defects D-716..D-719 fixed (L's D-L1..D-L4); D-720 (L's D-L5) half fixed by the coordinator: a
+  default discriminant type beyond 32 bits is now 64 bits wide (it truncated); its signedness
+  (`[TYP-12]`: the smallest *signed* type) is open.
+
 ## ADR-219 — C enums, `out` parameters and status results (`[FFI-8]`, `[FFI-11]`, `[FFI-16]`, `[ERR-6]`)
 
 2026-10-19, toward 90% (solo). Ruled under the delegation as ODR-137 (0.9.10_Hardened_20).

@@ -272,7 +272,9 @@ impl Emitter<'_> {
 
     /// A type's schema hash ([HR-11]): its kind, name, layout and each field's or variant's name
     /// and schema, so equal hashes mean nothing to migrate. A type met again inside itself (behind
-    /// a pointer) counts by its name.
+    /// a pointer) counts by its name. `[LAY-2]` — its layout attributes too, when it has any: a
+    /// change to them is a schema change, which migrates by name, or is refused for a type a raw
+    /// pointer can reach (`[HR-14]`'s last row, through `[HR-13b]`).
     pub(crate) fn type_schema(&self, ty: Ty, seen: &mut Vec<Ty>) -> u64 {
         if seen.contains(&ty) {
             return fnv(&["again", &self.types.display(ty)]);
@@ -282,6 +284,7 @@ impl Emitter<'_> {
             TyKind::Struct(id) => {
                 let def = self.types.struct_def(*id);
                 let mut parts = vec!["struct".to_string(), def.name.to_string()];
+                parts.extend(self.layout_schema(ty));
                 for field in &def.fields {
                     parts.push(field.name.to_string());
                     parts.push(self.type_schema(field.ty, seen).to_string());
@@ -291,6 +294,7 @@ impl Emitter<'_> {
             TyKind::Enum(id) => {
                 let def = self.types.enum_def(*id);
                 let mut parts = vec!["enum".to_string(), def.name.to_string(), self.types.display(def.repr)];
+                parts.extend(self.layout_schema(ty));
                 for variant in &def.variants {
                     parts.push(variant.name.to_string());
                     for field in &variant.fields {
@@ -330,6 +334,13 @@ impl Emitter<'_> {
         };
         seen.pop();
         hash
+    }
+
+    /// `[LAY-2]` — a type's layout attributes in its schema; nothing for a type without them, so
+    /// every other schema hash is as it was.
+    fn layout_schema(&self, ty: Ty) -> Option<String> {
+        let attrs = self.types.layout_attrs(ty);
+        (!attrs.is_none()).then(|| format!("layout packed={} align={}", attrs.packed, attrs.align))
     }
 
     /// A class's method tables' layout: each slot's method and its C type, and the interfaces it

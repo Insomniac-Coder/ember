@@ -10751,6 +10751,11 @@ formal 1/9 count or Phase 2's estimate.
 > the C, run `bench/gcc/gate.sh` in WSL (the conformance and run-pass suites through gcc with the gate).
 > Then ADR-219: C enums (`@non_exhaustive`), `out` parameters and status results (`[FFI-16]`,
 > `[ERR-6]`; ODR-137, 0.9.10_Hardened_20), with D-715 (CI failed on clang-cl and a Linux unit test).
+> Then ADR-220: helper L's layout attributes (`[LAY-2]`, still unfinished: SIMD in `@packed`,
+> `@align` on unit enums), D-716..D-720. **Owner questions open:** `tasks/90/L-notes.md` §4 (Q1
+> `@packed` with `@align`, Q2 `@repr` on a struct, Q3 a reference to a one-byte packed field).
+> Helper M is building the ECS queries (`[ECS-3]`..`[ECS-6]`) in `.claude/worktrees/helper-M`
+> (branch `helper-M`, job sheet in the session scratchpad `jobs/job_M.md`, notes to `tasks/90/M-notes.md`).
 > **Before a push that touches C or the runtime:** `bench/gcc/gate.sh` in WSL (the workspace through
 > gcc) and `EMBER_CC=clang-cl cargo test --profile ci --workspace` on Windows, besides the full check.
 
