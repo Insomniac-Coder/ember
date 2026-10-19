@@ -23,17 +23,6 @@ followed.
 | **Can a program notice** | yes, as a rejection |
 | **Plan** | Phase 7, with the importer. ERR-037 |
 
-## N6 — `@fastmath` and `@fp(contract)` in a static library
-
-| | |
-|---|---|
-| **Rule** | `[CG-C-11]`: "A `@fastmath` or `@fp(contract)` function is emitted in a separate translation unit compiled with the relaxed flags" |
-| **The feature** | a static library whose package has a relaxed function |
-| **Requires** | library builds of more than one C unit: a library keeps its functions internal to its one unit (`static`), so two Ember libraries linked into one host cannot clash, and a relaxed unit could not call them. Package-private external names are the missing piece; the owner deferred further FFI work (`docs/AUTOPILOT.md` §2) |
-| **Meanwhile** | such a library is `E0900` (`staticlib.rs`'s `a_static_library_with_a_relaxed_function_is_refused`); the attribute is never dropped. Programs build as `[CG-C-11]` says |
-| **Can a program notice** | yes: the library does not build |
-| **Plan** | name a library's functions with its package prefix (as its public types are, `package_type_namespace`) and give the ones a relaxed unit shares external linkage; then build the relaxed objects into the archive |
-
 ## N7 — a default doing float work that its mode's closure cannot hold
 
 | | |

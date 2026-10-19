@@ -234,6 +234,20 @@ fn a_closure_holding_an_instance_follows_it_when_it_moves() {
     assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
 }
 
+/// `[CG-C-11]` — a reloadable build with a `@fastmath` function builds its relaxed unit into the
+/// image, the function's thunk staying in the main unit beside the image's tables; an edit to the
+/// relaxed body is reloaded like any other.
+#[test]
+fn a_relaxed_function_is_reloaded() {
+    let v1 = "import std.hot\n\n@fastmath\nfn scaled(i: int) -> f64:\n    return i as f64 * 1.5\n\n\
+              fn main():\n    for i in 0..3:\n        println(scaled(i))\n        hot.checkpoint()\n";
+    let v2 = v1.replace("* 1.5", "* 10.0");
+    let (run, reloads) = reload_run("reload-relaxed", RELOAD_ALL, v1, &[&v2]);
+    assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
+    assert_eq!(run.exit, 0, "{}", run.stderr);
+    assert_eq!(run.stdout, "0.0\n10.0\n20.0\n", "{}", run.stderr);
+}
+
 /// `[HR-3b]` (A1, ODR-133) — a layout change applies at `std.hot.checkpoint()` when the old code
 /// still running below it no longer depends on that layout: `Particle` loses a field, its instances
 /// migrate in place, and `main`'s loop, which only hands the array to `tick` (reached through its

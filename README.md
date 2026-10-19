@@ -39,7 +39,7 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 
 | Phase | Scope | Done |
 |---|---|---:|
-| 1 | Core language (Parts II–VI) | 92% |
+| 1 | Core language (Parts II–VI) | 93% |
 | 2 | Ownership, borrowing, regions | 93% |
 | 3 | Classes, reference counting, exclusivity | 98% |
 | 4 | Effects, compile time, reflection, derives | 70% |

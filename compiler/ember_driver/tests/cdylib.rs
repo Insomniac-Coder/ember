@@ -513,6 +513,42 @@ int main(int argc, char** argv) {{
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `[CG-C-11]` (N6) — a shared library with a `@fastmath` function builds: the relaxed function is a
+/// unit of its own, compiled with the relaxed flags into the library; its export is reached as any.
+#[test]
+fn a_cdylib_with_a_relaxed_function_is_built_and_called() {
+    let dir = scratch();
+    let toolchain = toolchain();
+    package(&dir.join("fastdll"), "[package]\nname = \"fastdll\"\nkind = \"cdylib\"\n",
+        "@fastmath\nfn scaled(x: f64) -> f64:\n    return x * 2.0\n\n@export(\"fast_value\")\npub extern \"C\" fn fast_value(x: f64) -> f64:\n    return scaled(x) + 1.0\n");
+    let built = ember(&["build"], &dir.join("fastdll"));
+    assert_success(&built, "the cdylib with a relaxed function");
+    let lib = dir.join("fastdll/target/debug/lib");
+    assert!(dir.join("fastdll/target/debug/c/lib.fastmath.c").is_file(), "no relaxed unit was written");
+    let path = library_file(&lib, "fastdll").to_string_lossy().replace('\\', "\\\\");
+    let host = format!(r#"{HOST_PRELUDE}
+typedef double (*fast_fn)(double);
+int main(void) {{
+    @RT@rt_config cfg = @RT@rt_config_default();
+    library l = load("{path}");
+    if (!l) return 2;
+    module_init_fn init = (module_init_fn)find(l, "@RT@module_init");
+    module_shutdown_fn shutdown = (module_shutdown_fn)find(l, "@RT@module_shutdown");
+    fast_fn fast = (fast_fn)find(l, "fast_value");
+    if (!init || !shutdown || !fast || init(&cfg) != 0) return 3;
+    int ok = fast(2.0) == 5.0;
+    shutdown();
+    unload(l);
+    return ok ? 0 : 4;
+}}
+"#);
+    let exe = link_host(&toolchain, &dir, &lib, "fast_host", &host);
+    let ran = run_host(&exe, &[], &dir);
+    assert!(ran.status.success(), "the relaxed export ({:?}): {}{}", ran.status.code(),
+        String::from_utf8_lossy(&ran.stdout), String::from_utf8_lossy(&ran.stderr));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `[FFI-31]` — shutting a module down ends the threads it started for jobs (each finishes and is
 /// joined), so none runs the library's code once the host unloads it: the process has as many
 /// threads after `ember_module_shutdown` as before `ember_module_init`.

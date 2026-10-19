@@ -267,6 +267,7 @@ pub fn build(
     includes: &[PathBuf],
     profile: Profile,
     image: &ReloadImage,
+    relaxed_units: &[(ember_types::FpMode, String)],
     next: bool,
     explain: bool,
     started: std::time::Instant,
@@ -320,6 +321,18 @@ pub fn build(
     } else {
         image_path(&layout.bin, module, number)
     };
+    // `[CG-C-11]` — each relaxed unit compiled with its own flags into the image.
+    let mut relaxed = Vec::new();
+    let object_ext = if matches!(toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
+    let stem = output.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_else(|| module.to_string());
+    for (mode, source) in relaxed_units {
+        let unit = layout.c.join(format!("{stem}.{}.c", mode.name()));
+        std::fs::write(&unit, source).map_err(|error| error.to_string())?;
+        let object = layout.obj.join(format!("{stem}.{}.{object_ext}", mode.name()));
+        ember_build::compile_relaxed_library_object(toolchain, &unit, includes, &object, profile, *mode == ember_types::FpMode::Fast)
+            .map_err(|error| error.to_string())?;
+        relaxed.push(object);
+    }
     ember_build::reload::link_image(
         toolchain,
         c_path,
@@ -328,6 +341,7 @@ pub fn build(
         image.instances,
         &runtime,
         &ember_codegen_c::manifest_symbol(),
+        &relaxed,
         &layout.obj,
         &output,
     )

@@ -38,6 +38,7 @@ pub fn link_cdylib(
     shared: Option<&SharedRuntime>,
     exports: &[String],
     libraries: &[String],
+    relaxed: &[PathBuf],
     obj_dir: &Path,
     lib: &Path,
 ) -> Result<Cdylib, BuildError> {
@@ -52,6 +53,8 @@ pub fn link_cdylib(
     let ext = if matches!(toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
     let mut objects = vec![obj_dir.join(format!("{name}.{ext}"))];
     compile_library_object(toolchain, source, include_dirs, &objects[0], profile, &[], false)?;
+    // `[CG-C-11]` — each relaxed unit, compiled by the caller with its own flags.
+    objects.extend(relaxed.iter().cloned());
     if shared.is_none() {
         let runtime = obj_dir.join(format!("{}_rt.module.{ext}", ember_branding::SYMBOL_PREFIX));
         compile_library_object(toolchain, runtime_source, include_dirs, &runtime, profile, &[], false)?;

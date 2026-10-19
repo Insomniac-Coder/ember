@@ -5017,6 +5017,25 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-210 — `@fastmath` and `@fp(contract)` in libraries and reloadable builds (N6, `[CG-C-11]`)
+
+2026-10-19. A relaxed function is a C unit of its own compiled with the relaxed flags (`[CG-C-11]`).
+Libraries refused one (`E0900`, N6), since a library kept its functions internal to one unit so two
+Ember libraries in one host could not clash; reloadable builds refused one too.
+* **Libraries:** split into units, a library's functions get external linkage (`internal_linkage()`
+  is a one-unit library only) and every identifier of its own (the mangling prefix's, not an export's
+  C name) is moved into the package's namespace in every unit and the header (`library_namespaced`,
+  the `em_pkg_<hex>_` of its public types). The relaxed objects go into the archive
+  (`archive_objects`) or the shared library (`link_cdylib`'s new `relaxed`, compiled
+  position-independent by `compile_relaxed_library_object`). Tests:
+  `staticlib::static_libraries_with_relaxed_functions_link_side_by_side` (two libraries, each with a
+  relaxed `scaled` and a strict `bias`, link into one C host), `cdylib::a_cdylib_with_a_relaxed_function_is_built_and_called`.
+* **Reloadable builds:** the relaxed units link into the image (`link_image`'s `relaxed`); a reloadable
+  relaxed function's thunk is the main unit's, beside the image's tables. Test:
+  `reload::a_relaxed_function_is_reloaded`.
+* `docs/NOT-IMPLEMENTED.md` N6 removed; `[CG-C-11]`'s `unfinished` entry removed; `[TYP-9]` waits only
+  on N7.
+
 ## ADR-209 — Layout changes at a checkpoint (A1, ODR-133, 0.9.10_Hardened_16)
 
 2026-10-19. The owner's A1: at `std.hot.checkpoint()` the data is fixed up so layout changes apply live

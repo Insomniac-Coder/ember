@@ -585,8 +585,25 @@ fn emit_with(
             sites,
         }
     });
+    // `[CG-C-11]` — a library split into relaxed units names its functions, statics and private
+    // types under its package's namespace, since they are external to link the units together.
+    let (c_source, relaxed_units, header_source) = if library_mode && !relaxed_units.is_empty() {
+        let exports: BTreeSet<String> = bodies.iter()
+            .filter(|body| body.abi.is_some() && !body.is_extern_declaration)
+            .map(|body| body.symbol.clone())
+            .collect();
+        let namespace = package_type_namespace(package_name);
+        let rename = |text: &str| library_namespaced(text, &namespace, &exports);
+        (
+            rename(&emitter.out),
+            relaxed_units.into_iter().map(|(mode, unit)| (mode, rename(&unit))).collect(),
+            header_source.map(|mut header| { header.source = rename(&header.source); header }),
+        )
+    } else {
+        (emitter.out, relaxed_units, header_source)
+    };
     Output {
-        c_source: emitter.out,
+        c_source,
         relaxed_units,
         optimization_report: direct_calls.into_iter().map(|(_, _, line)| line).collect(),
         header_source,
@@ -1356,8 +1373,12 @@ impl Emitter<'_> {
                 continue;
             }
             // `[CG-C-11]` — each body in the unit of its floating point; the
-            // others are declared here.
+            // others are declared here. A reloadable one's thunk is the main unit's, beside the
+            // image's tables, wherever its body is (`[HR-6]`).
             if body.fp != self.unit.unwrap_or(FpMode::Strict) {
+                if self.unit.is_none() && self.is_reloadable(&body.symbol) {
+                    self.emit_thunk(body);
+                }
                 continue;
             }
             if body.ffi_counted.is_some() {
@@ -5303,7 +5324,7 @@ impl Emitter<'_> {
             if body.ffi_counted.is_some() {
                 self.line(&format!("extern {};", self.ffi_counted_signature(body)));
                 let signature = self.signature(body);
-                if self.library_mode { self.emit_internal_prototype(&signature); }
+                if self.internal_linkage() { self.emit_internal_prototype(&signature); }
                 else { self.line(&format!("{signature};")); }
                 continue;
             }
@@ -5332,7 +5353,7 @@ impl Emitter<'_> {
             if self.inline_bodies.contains_key(&body.symbol) || body.inline != ember_mir::InlineHint::default() {
                 let linkage = self.linkage(body);
                 self.line(&format!("{linkage}{signature};"));
-            } else if self.library_mode && body.abi.is_none() {
+            } else if self.internal_linkage() && body.abi.is_none() {
                 self.emit_internal_prototype(&signature);
             } else {
                 self.line(&format!("{signature};"));
@@ -5376,6 +5397,14 @@ impl Emitter<'_> {
             (None, true) => Some(""),
             (None, false) => Some("static EMBER_MAYBE_UNUSED "),
         }
+    }
+
+    /// Whether this package's private functions have internal linkage: a library emitted as one C
+    /// unit. A library with relaxed units (`[CG-C-11]`) needs its functions across units, so they
+    /// are external and named under the package's namespace instead (`library_namespaced`), and two
+    /// libraries in one host still cannot clash.
+    fn internal_linkage(&self) -> bool {
+        self.library_mode && !self.split
     }
 
     fn emit_internal_prototype(&mut self, signature: &str) {
@@ -5716,7 +5745,7 @@ impl Emitter<'_> {
     fn emit_ffi_counted_wrapper(&mut self, body: &Body) {
         let counted = body.ffi_counted.as_ref().expect("counted wrapper metadata");
         let args: Vec<_> = body.args().map(|(id, _)| format!("_{}", id.0)).collect();
-        let linkage = if self.library_mode { "static " } else { "" };
+        let linkage = if self.internal_linkage() { "static " } else { "" };
         self.line(&format!("{linkage}{} {{", self.signature(body)));
         let mut foreign_args = Vec::new();
         for param in &counted.abi_params {
@@ -5927,7 +5956,7 @@ impl Emitter<'_> {
         out.push_str(match self.inline_bodies.get(&body.symbol) {
             Some(true) => "EMBER_INLINED EMBER_MAYBE_UNUSED ",
             Some(false) => "static inline EMBER_MAYBE_UNUSED ",
-            None if self.library_mode && body.abi.is_none() => "static EMBER_MAYBE_UNUSED ",
+            None if self.internal_linkage() && body.abi.is_none() => "static EMBER_MAYBE_UNUSED ",
             None => "",
         });
         out
@@ -11493,6 +11522,34 @@ fn without_outer_parens(text: &str) -> &str {
         }
     }
     if depth == 0 { inner } else { text }
+}
+
+/// `[CG-C-11]` — `text` with every identifier of the package's own (the mangling prefix's, not yet
+/// in the namespace, and not an export's C name) moved into `namespace`.
+fn library_namespaced(text: &str, namespace: &str, exports: &BTreeSet<String>) -> String {
+    let prefix = ember_branding::mangle_prefix();
+    let mut out = String::with_capacity(text.len() + text.len() / 16);
+    let bytes = text.as_bytes();
+    let mut at = 0;
+    while at < bytes.len() {
+        let byte = bytes[at];
+        if byte.is_ascii_alphabetic() || byte == b'_' {
+            let start = at;
+            while at < bytes.len() && (bytes[at].is_ascii_alphanumeric() || bytes[at] == b'_') {
+                at += 1;
+            }
+            let word = &text[start..at];
+            if word.starts_with(&prefix) && !word.starts_with(namespace) && !exports.contains(word) {
+                out.push_str(namespace);
+            }
+            out.push_str(word);
+        } else {
+            let length = text[at..].chars().next().map_or(1, char::len_utf8);
+            out.push_str(&text[at..at + length]);
+            at += length;
+        }
+    }
+    out
 }
 
 fn package_type_namespace(package_name: &str) -> String {

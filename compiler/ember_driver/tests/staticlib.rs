@@ -200,28 +200,70 @@ fn staticlib_archives_and_headers_link_from_separate_c_and_cpp_hosts() {
 /// function is refused rather than built with the attribute lost: its
 /// relaxed unit would call functions the library keeps internal to its main
 /// unit (`docs/NOT-IMPLEMENTED.md`).
+/// `[CG-C-11]` (N6) — a static library with a `@fastmath` function builds: the relaxed function is
+/// compiled in a unit of its own with the relaxed flags, into the same archive. Its functions are
+/// then external, to link the units, and named under the package's namespace, so two such libraries
+/// with functions of the same names (`scaled`, `bias`) link into one host side by side.
 #[test]
-fn a_static_library_with_a_relaxed_function_is_refused() {
-    let dir = scratch();
-    std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::fs::write(dir.join("src").join(ember_branding::source_file("lib")),
-        "@fastmath
+fn static_libraries_with_relaxed_functions_link_side_by_side() {
+    let scratch = scratch();
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let toolchain = Toolchain::detect(requested.as_deref()).expect("C toolchain available");
+    let out = scratch.join("out");
+    let out_arg = out.to_string_lossy().into_owned();
+    for (name, factor, offset) in [("fast_a", "2.0", "1.0"), ("fast_b", "3.0", "2.0")] {
+        let dir = scratch.join(name);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src").join(ember_branding::source_file("lib")), format!(
+            "@fastmath
 fn scaled(x: f64) -> f64:
-    return x * 2.0
+    return x * {factor}
 
-pub extern \"C\" fn relaxed_value(x: f64) -> f64:
-    return scaled(x)
-").unwrap();
-    std::fs::write(dir.join(ember_branding::MANIFEST),
-        "[package]
-name = \"relaxed_api\"
+fn bias(x: f64) -> f64:
+    return x + {offset}
+
+pub extern \"C\" fn {name}_value(x: f64) -> f64:
+    return bias(scaled(x))
+")).unwrap();
+        std::fs::write(dir.join(ember_branding::MANIFEST), format!("[package]
+name = \"{name}\"
 kind = \"staticlib\"
-").unwrap();
-    let output = build(&["build"], &dir);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!output.status.success(), "a static library with a relaxed function was built:
-{stderr}");
-    assert!(stderr.contains("error[E0900]: `@fastmath` and `@fp(contract)` in a static library are not built yet"), "{stderr}");
+")).unwrap();
+        let built = build(&["build", "--out-dir", out_arg.as_str()], &dir);
+        assert_success(&built, name);
+        let c = std::fs::read_to_string(out.join("debug/c/lib.fastmath.c")).unwrap();
+        assert!(!c.contains(&format!(" {}scaled(", ember_branding::mangle_prefix())), "{name}: `scaled` kept a bare symbol:
+{c}");
+    }
+    let lib = out.join("debug/lib");
+    let runtime_stem = format!("{}_rt", ember_branding::SYMBOL_PREFIX);
+    let runtime_archive = lib.join(format!("{}_runtime", ember_branding::SYMBOL_PREFIX)).join(ember_build::archive_name(&toolchain, &runtime_stem));
+    let host = scratch.join("host.c");
+    let rt_init = ember_branding::runtime("rt_init");
+    let rt_shutdown = ember_branding::runtime("rt_shutdown");
+    let runtime_header = format!("{}_runtime/{}", ember_branding::SYMBOL_PREFIX, ember_branding::runtime_header());
+    std::fs::write(&host, format!(
+        "#include \"{runtime_header}\"
+#include \"fast_a.h\"
+#include \"fast_b.h\"
+int main(void) {{
+    {rt_init}(NULL);
+    int ok = fast_a_value(2.0) == 5.0 && fast_b_value(2.0) == 8.0;
+    {rt_shutdown}();
+    return ok ? 0 : 1;
+}}
+"
+    )).unwrap();
+    let executable = scratch.join(if cfg!(windows) { "host.exe" } else { "host" });
+    let objects = scratch.join("host-objects");
+    std::fs::create_dir_all(&objects).unwrap();
+    ember_build::compile_and_link(&toolchain, &LinkRequest {
+        sources: &[host, lib.join(ember_build::archive_name(&toolchain, "fast_a")), lib.join(ember_build::archive_name(&toolchain, "fast_b")), runtime_archive],
+        include_dirs: &[lib.clone()], output: executable.clone(), profile: Profile::Debug,
+        obj_dir: objects,
+    }).expect("both libraries and the runtime link into one host");
+    assert_success(&ember_build::output_started(&mut Command::new(&executable)).expect("the host runs"), "the host");
+    let _ = std::fs::remove_dir_all(&scratch);
 }
 
 #[test]

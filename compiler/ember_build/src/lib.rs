@@ -992,7 +992,19 @@ pub fn compile_relaxed_object(
     profile: Profile,
     fast: bool,
 ) -> Result<(), BuildError> {
-    compile_relaxed_object_impl(toolchain, source, include_dirs, output, profile, fast, false)
+    compile_relaxed_object_impl(toolchain, source, include_dirs, output, profile, fast, false, false)
+}
+
+/// A relaxed-FP unit of a shared library: position-independent off Windows.
+pub fn compile_relaxed_library_object(
+    toolchain: &Toolchain,
+    source: &Path,
+    include_dirs: &[PathBuf],
+    output: &Path,
+    profile: Profile,
+    fast: bool,
+) -> Result<(), BuildError> {
+    compile_relaxed_object_impl(toolchain, source, include_dirs, output, profile, fast, false, true)
 }
 
 /// A relaxed-FP unit for a managed executable. Sections permit the same
@@ -1005,7 +1017,7 @@ pub fn compile_relaxed_object_for_executable(
     profile: Profile,
     fast: bool,
 ) -> Result<(), BuildError> {
-    compile_relaxed_object_impl(toolchain, source, include_dirs, output, profile, fast, true)
+    compile_relaxed_object_impl(toolchain, source, include_dirs, output, profile, fast, true, false)
 }
 
 fn compile_relaxed_object_impl(
@@ -1016,6 +1028,7 @@ fn compile_relaxed_object_impl(
     profile: Profile,
     fast: bool,
     managed_executable: bool,
+    shared_library: bool,
 ) -> Result<(), BuildError> {
     if let Some(parent) = output.parent() { std::fs::create_dir_all(parent)?; }
     let mut command = compiler_command(toolchain);
@@ -1040,6 +1053,9 @@ fn compile_relaxed_object_impl(
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.args(relaxed_gnu_flags(profile, fast)).args(gcc_flags(toolchain, profile))
                 .args(executable_section_flags(toolchain, managed_executable)).arg("-c");
+            if shared_library && !cfg!(windows) {
+                command.arg("-fPIC");
+            }
             for dir in include_dirs { command.arg("-I").arg(dir); }
             command.arg(source).arg("-o").arg(output);
         }

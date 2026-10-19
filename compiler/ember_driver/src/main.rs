@@ -4157,11 +4157,8 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let includes = vec![runtime.join("include")];
     // Annex B — a reloadable program: the shared runtime, an image and the host that runs it.
     if let Some(image) = &reload_image {
-        if !emitted.relaxed_units.is_empty() {
-            return Err("error[E0900]: `@fastmath` and `@fp(contract)` in a reloadable build are not built yet".to_string());
-        }
         let built = match reload::build(&toolchain, &layout, &module_name, &c_path, &runtime_source, &includes,
-            options.profile, image, options.reload, options.explain, started)
+            options.profile, image, &emitted.relaxed_units, options.reload, options.explain, started)
         {
             Ok(built) => built,
             Err(reload::Failure::Other(message)) => return Err(message),
@@ -4198,11 +4195,29 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         eprintln!("built {}", if options.reload { built.image.display() } else { built.host.display() });
         return Ok(ExitCode::SUCCESS);
     }
-    // `[CG-C-11]` — a relaxed unit calls the package's other functions,
-    // which a library keeps internal to its own unit.
-    if library && !emitted.relaxed_units.is_empty() {
-        let what = if cdylib { "shared" } else { "static" };
-        return Err(format!("error[E0900]: `@fastmath` and `@fp(contract)` in a {what} library are not built yet"));
+    // `[CG-C-11]` — a library's relaxed units, each compiled with its own flags into an object of its
+    // own: the archive or the shared library takes them beside the package's main unit.
+    let mut library_relaxed = Vec::new();
+    if library {
+        let object_ext = if matches!(&toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
+        for (mode, source) in &emitted.relaxed_units {
+            let unit = layout.c.join(format!("{module_name}.{}.c", mode.name()));
+            std::fs::write(&unit, source).map_err(|e| e.to_string())?;
+            let object = layout.obj.join(format!("{module_name}.{}.{object_ext}", mode.name()));
+            let fast = *mode == ember_types::FpMode::Fast;
+            let compiled = if cdylib {
+                ember_build::compile_relaxed_library_object(&toolchain, &unit, &includes, &object, options.profile, fast)
+            } else {
+                ember_build::compile_relaxed_object(&toolchain, &unit, &includes, &object, options.profile, fast)
+            };
+            if let Err(error) = compiled {
+                if report_float_mode_refused(&mut sink, &bodies, &error) {
+                    return Ok(finish(&sink, &map, options));
+                }
+                return Err(error.to_string());
+            }
+            library_relaxed.push(object);
+        }
     }
     // `[BLD-FFI-3]` — `[link] libs`, in the order written.
     // A path is the package's: relative to the directory of its manifest.
@@ -4240,7 +4255,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         };
         let package_header = layout.lib.join(format!("{package_name}.h"));
         let built = ember_build::cdylib::link_cdylib(&toolchain, &package_name, &c_path, &runtime_source, &includes,
-            options.profile, shared.as_ref(), &exports, &libraries, &layout.obj, &layout.lib)
+            options.profile, shared.as_ref(), &exports, &libraries, &library_relaxed, &layout.obj, &layout.lib)
             .map_err(|e| e.to_string())?;
         copy_runtime_header(&layout.lib)?;
         std::fs::write(&package_header, &header.source).map_err(|e| e.to_string())?;
@@ -4266,7 +4281,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
                 .map_err(|e| e.to_string())?;
             ember_build::compile_object(&toolchain, &runtime_source, &includes, &runtime_object, options.profile)
                 .map_err(|e| e.to_string())?;
-            ember_build::archive_objects(&toolchain, &[package_object], &package_archive)
+            let mut package_objects = vec![package_object];
+            package_objects.extend(library_relaxed.iter().cloned());
+            ember_build::archive_objects(&toolchain, &package_objects, &package_archive)
                 .map_err(|e| e.to_string())?;
             ember_build::archive_objects(&toolchain, &[runtime_object], &runtime_archive)
                 .map_err(|e| e.to_string())?;

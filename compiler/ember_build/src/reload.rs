@@ -213,6 +213,7 @@ pub fn link_image(
     instances: bool,
     runtime: &SharedRuntime,
     manifest_symbol: &str,
+    relaxed: &[PathBuf],
     obj_dir: &Path,
     output: &Path,
 ) -> Result<(), BuildError> {
@@ -222,7 +223,7 @@ pub fn link_image(
     let mut command = compiler_command(toolchain);
     match toolchain {
         Toolchain::Msvc { .. } => {
-            command.args(["/nologo", "/LD", "/MD"]).arg(&object).arg(&runtime.link_with)
+            command.args(["/nologo", "/LD", "/MD"]).arg(&object).args(relaxed).arg(&runtime.link_with)
                 .arg(format!("/Fe{}", output.display()))
                 .arg("/link").arg(format!("/INCLUDE:{manifest_symbol}"));
             if profile != Profile::Release {
@@ -230,11 +231,11 @@ pub fn link_image(
             }
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) if cfg!(windows) => {
-            command.arg("-shared").arg(&object).arg(&runtime.link_with).arg("-o").arg(output)
+            command.arg("-shared").arg(&object).args(relaxed).arg(&runtime.link_with).arg("-o").arg(output)
                 .arg(format!("-Wl,/INCLUDE:{manifest_symbol}"));
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
-            command.arg("-shared").arg(&object).arg(&runtime.link_with).arg("-o").arg(output)
+            command.arg("-shared").arg(&object).args(relaxed).arg(&runtime.link_with).arg("-o").arg(output)
                 .args(["-lm", "-pthread"]);
         }
     }
@@ -394,6 +395,7 @@ mod tests {
                 true,
                 &shared,
                 &manifest,
+                &[],
                 &obj,
                 &dir.join(format!("t.image.{index}.{}", image_extension())),
             )
