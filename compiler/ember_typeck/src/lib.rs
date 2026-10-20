@@ -3366,7 +3366,7 @@ impl<'a> Checker<'a> {
         }
         if matches!(self.types.kind(ty), TyKind::Opaque(_)) {
             let shown = self.types.display(ty);
-            self.error(codes::E5050, span,
+            self.error(codes::E5015, span,
                 format!("`{shown}` is incomplete and cannot cross the C boundary by value"));
             return self.common.error;
         }
@@ -8810,7 +8810,7 @@ impl<'a> Checker<'a> {
                             if ty != self.common.error {
                                 let shown = self.types.display(ty);
                                 self.sink.emit(
-                                    Diagnostic::error(codes::E5050, decl.ty.span,
+                                    Diagnostic::error(codes::E5015, decl.ty.span,
                                         format!("`{shown}` has no foreign representation"))
                                         .primary_label("the type of this foreign static")
                                         .note("a foreign static holds a value C lays out: a scalar, a pointer, a `cstr`, an array or record of those [FFI-8]"),
@@ -12995,7 +12995,7 @@ impl<'a> Checker<'a> {
                     .unwrap_or(self.common.void);
                 if abi.is_some() && (!self.types.is_ffi_safe(ret)
                     || params.iter().any(|param: &FnParam| !self.types.is_ffi_safe(param.ty))) {
-                    self.error(codes::E5050, ty.span, "an `extern \"C\" fn` pointer needs FFI-safe parameters and result");
+                    self.error(codes::E5015, ty.span, "an `extern \"C\" fn` pointer needs FFI-safe parameters and result");
                     return self.common.error;
                 }
                 // `[FFI-31b]` — a foreign function pointer is a boundary C code may call, or be
@@ -14965,7 +14965,7 @@ impl<'a> Checker<'a> {
 
         if self.types.has_unsized_by_value(elem) {
             let shown = self.types.display(elem);
-            self.error(codes::E5050, span,
+            self.error(codes::E5015, span,
                 format!("`{shown}` is incomplete and has no size or alignment"));
             return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
         }
@@ -18723,7 +18723,7 @@ impl<'a> Checker<'a> {
                     .is_some_and(|param| param.callable.is_some())
             {
                 this.sink.emit(
-                    Diagnostic::error(codes::E5050, span,
+                    Diagnostic::error(codes::E5015, span,
                         "a native `fn` callable parameter has no foreign representation")
                         .primary_label(what)
                         .help("write `extern \"C\" fn(…)` for a C function pointer"),
@@ -18753,7 +18753,7 @@ impl<'a> Checker<'a> {
                 let shown = this.types.display(ty);
                 this.sink.emit(
                     Diagnostic::error(
-                        codes::E5050,
+                        codes::E5015,
                         span,
                         format!("`{shown}` has no foreign representation"),
                     )
@@ -18779,25 +18779,25 @@ impl<'a> Checker<'a> {
             if decl.is_foreign_decl && decl.is_safe
                 && let Some((inner, _)) = self.foreign_nullable_ref_inner(ty) {
                 if !self.types.is_ffi_safe(inner) {
-                    self.error(codes::E5050, span,
+                    self.error(codes::E5015, span,
                         format!("`{name}` refers to a type with no foreign representation"));
                 }
             } else if decl.is_foreign_decl && decl.is_safe
                 && let Some((elem, _)) = self.foreign_nullable_span_elem(ty) {
                 if !self.types.is_ffi_safe(elem) {
-                    self.error(codes::E5050, span,
+                    self.error(codes::E5015, span,
                         format!("`{name}` contains a type with no foreign representation"));
                 }
             } else if decl.is_foreign_decl && decl.is_safe
                 && let TyKind::Span { elem, .. } = self.types.kind(ty) {
                 if !self.types.is_ffi_safe(*elem) {
-                    self.error(codes::E5050, span,
+                    self.error(codes::E5015, span,
                         format!("`{name}` contains a type with no foreign representation"));
                 }
             } else if decl.is_foreign_decl && decl.is_safe
                 && let TyKind::Ref { inner, .. } = self.types.kind(ty) {
                 if !self.types.is_ffi_safe(*inner) {
-                    self.error(codes::E5050, span,
+                    self.error(codes::E5015, span,
                         format!("`{name}` refers to a type with no foreign representation"));
                 }
             } else {
@@ -18818,7 +18818,7 @@ impl<'a> Checker<'a> {
                     | FfiResultContract::ExclusiveCountFrom { .. }))
                 && let TyKind::Span { elem, .. } = self.types.kind(ret) {
                 if !self.types.is_ffi_safe(*elem) {
-                    self.error(codes::E5050, decl.name.span,
+                    self.error(codes::E5015, decl.name.span,
                         "the counted result contains a type with no foreign representation");
                 }
             } else if decl.is_foreign_decl && decl.is_safe
@@ -18828,19 +18828,19 @@ impl<'a> Checker<'a> {
                     | FfiResultContract::NullableExclusiveCountFrom { .. }))
                 && let Some((elem, _)) = self.foreign_nullable_span_elem(ret) {
                 if !self.types.is_ffi_safe(elem) {
-                    self.error(codes::E5050, decl.name.span,
+                    self.error(codes::E5015, decl.name.span,
                         "the nullable counted result contains a type with no foreign representation");
                 }
             } else if decl.is_foreign_decl && decl.is_safe
                 && let Some((inner, _)) = self.foreign_nullable_ref_inner(ret) {
                 if !self.types.is_ffi_safe(inner) {
-                    self.error(codes::E5050, decl.name.span,
+                    self.error(codes::E5015, decl.name.span,
                         "the nullable reference result refers to a type with no foreign representation");
                 }
             } else if decl.is_foreign_decl && decl.is_safe
                 && let TyKind::Ref { inner, .. } = self.types.kind(ret) {
                 if !self.types.is_ffi_safe(*inner) {
-                    self.error(codes::E5050, decl.name.span,
+                    self.error(codes::E5015, decl.name.span,
                         "the reference result refers to a type with no foreign representation");
                 }
             } else {
