@@ -846,13 +846,32 @@ impl Writer {
             let mut layout = Vec::new();
             let mut natural = 1u64;
             let mut packed = false;
+            let mut plain = Vec::new();
+            let mut bits = Vec::new();
             for child in children(definition) {
                 match kind(child) {
                     CXCursor_PackedAttr => packed = true,
                     CXCursor_FieldDecl => {
                         let field = spelling(child);
                         if clang_Cursor_isBitField(child) != 0 {
-                            return self.opaque(cursor, &key, &named, Some(format!("bit-field `{field}` (its `get_`/`set_` methods are not built yet)")));
+                            // `[FFI-8]` — read and written by `get_<f>`/`set_<f>`; an unnamed one is padding.
+                            let width = clang_getFieldDeclBitWidth(child).max(0) as u64;
+                            if field.is_empty() || width == 0 {
+                                continue;
+                            }
+                            let field_ty = clang_getCursorType(child);
+                            let canonical = clang_getCanonicalType(field_ty).kind;
+                            let boolean = canonical == CXType_Bool;
+                            let integer = matches!(canonical, CXType_Char_S | CXType_SChar | CXType_Short | CXType_Int | CXType_Long | CXType_LongLong
+                                | CXType_Char_U | CXType_UChar | CXType_UShort | CXType_UInt | CXType_ULong | CXType_ULongLong);
+                            let mapped = match self.ty(field_ty, false) {
+                                Ok(mapped) if boolean || integer => mapped,
+                                _ => return self.opaque(cursor, &key, &named, Some(format!("bit-field `{field}` of type `{}` (only integer and `bool` bit-fields have accessors)", type_spelling(field_ty)))),
+                            };
+                            let signed = matches!(canonical, CXType_Char_S | CXType_SChar | CXType_Short | CXType_Int | CXType_Long | CXType_LongLong);
+                            let offset = clang_Cursor_getOffsetOfField(child).max(0) as u64;
+                            bits.push(BitField { name: ident(&field), offset, width, ty: mapped, signed, boolean });
+                            continue;
                         }
                         if field.is_empty() || clang_Cursor_isAnonymousRecordDecl(clang_getTypeDeclaration(clang_getCursorType(child))) != 0 {
                             return self.opaque(cursor, &key, &named, Some("an anonymous member (its generated `<Parent>_anon<N>` type is not built yet)".to_string()));
@@ -862,18 +881,33 @@ impl Writer {
                             Ok(mapped) => mapped,
                             Err(reason) => return self.opaque(cursor, &key, &named, Some(format!("field `{field}`: {reason}"))),
                         };
-                        natural = natural.max(clang_Type_getAlignOf(field_ty).max(1) as u64);
-                        layout.push((ident(&field), (clang_Cursor_getOffsetOfField(child).max(0) as u64) / 8));
-                        fields.push(format!("    pub {}: {mapped}\n", ident(&field)));
+                        let field_align = clang_Type_getAlignOf(field_ty).max(1) as u64;
+                        natural = natural.max(field_align);
+                        let offset = (clang_Cursor_getOffsetOfField(child).max(0) as u64) / 8;
+                        let line = format!("    pub {}: {mapped}\n", ident(&field));
+                        layout.push((ident(&field), offset));
+                        fields.push(line.clone());
+                        let size = clang_Type_getSizeOf(field_ty).max(0) as u64;
+                        plain.push(Plain { name: ident(&field), offset, size, align: field_align, line });
                     }
                     _ => {}
+                }
+            }
+            let size = clang_Type_getSizeOf(ty).max(0) as u64;
+            let align = clang_Type_getAlignOf(ty).max(1) as u64;
+            // The fields C has, whose offsets the shim checks; with bit-fields, the members Ember
+            // lays out beside them and the accessors.
+            let c_fields = layout.clone();
+            let mut accessors = String::new();
+            if !bits.is_empty() {
+                match bit_field_members(&name, &plain, &bits, size, align, packed) {
+                    Ok((lines, members, methods)) => (fields, layout, accessors) = (lines, members, methods),
+                    Err(why) => return self.opaque(cursor, &key, &named, Some(why)),
                 }
             }
             if fields.is_empty() {
                 return self.opaque(cursor, &key, &named, Some("a struct with no fields (a GNU C extension)".to_string()));
             }
-            let size = clang_Type_getSizeOf(ty).max(0) as u64;
-            let align = clang_Type_getAlignOf(ty).max(1) as u64;
             let fingerprint = format!("struct {size} {align} {:?}", layout.iter().map(|(_, offset)| offset).collect::<Vec<_>>());
             if let Some(adopted) = self.adopt(cursor, &key, &named, &fingerprint, false) {
                 return adopted;
@@ -889,7 +923,7 @@ impl Writer {
             if align > if packed { 1 } else { natural } {
                 let _ = writeln!(attributes, "@align({align})");
             }
-            self.push(&named, Kind::Type, format!("{attributes}struct {name}:\n{}", fields.concat()));
+            self.push(&named, Kind::Type, format!("{attributes}struct {name}:\n{}{accessors}", fields.concat()));
             self.spelled(cursor, &named);
             // `[FFI-5a]` — the project's C compiler checks the layout on every build.
             // `struct Point`, or the typedef name of a struct with no tag of its own.
@@ -897,7 +931,7 @@ impl Writer {
             let c_name = if spelled.contains('(') { named.clone() } else { spelled };
             let _ = writeln!(self.shim, "_Static_assert(sizeof({c_name}) == {size}, \"{named}: size\");");
             let _ = writeln!(self.shim, "_Static_assert(_Alignof({c_name}) == {align}, \"{named}: alignment\");");
-            for (field, offset) in &layout {
+            for (field, offset) in &c_fields {
                 let c_field = field.trim_start_matches("r#");
                 let _ = writeln!(self.shim, "_Static_assert(offsetof({c_name}, {c_field}) == {offset}, \"{named}.{c_field}: offset\");");
             }
@@ -1293,6 +1327,133 @@ impl Writer {
             c_types: self.c_types,
         }
     }
+}
+
+/// A field of a struct with bit-fields that is not one: where C puts it, and its line.
+struct Plain {
+    name: String,
+    offset: u64,
+    size: u64,
+    align: u64,
+    line: String,
+}
+
+/// `[FFI-8]` — a bit-field: its Ember name, its offset and width in bits, and its type.
+struct BitField {
+    name: String,
+    offset: u64,
+    width: u64,
+    ty: String,
+    signed: bool,
+    boolean: bool,
+}
+
+/// `[FFI-8]` — a struct with bit-fields, laid out as C lays it out: its plain fields, each run of
+/// bytes its bit-fields share as a byte array `_bits<k>` (and `_pad<k>` where C leaves a gap Ember
+/// would not), each public with a zero default so the struct can be made; and `get_<f>`/`set_<f>`
+/// for each bit-field, reading and writing its bits there (little-endian, as C's bit numbering is
+/// on the targets Ember builds for). Returns the field lines, every member's offset and the
+/// `extend` block.
+fn bit_field_members(name: &str, plain: &[Plain], bits: &[BitField], size: u64, align: u64, packed: bool) -> Result<(Vec<String>, Vec<(String, u64)>, String), String> {
+    if cfg!(target_endian = "big") {
+        return Err("bit-fields on a big-endian target (their accessors are written for little-endian bit numbering)".to_string());
+    }
+    // Each bit-field's bytes; bit-fields that share a byte share one array.
+    let mut sorted: Vec<&BitField> = bits.iter().collect();
+    sorted.sort_by_key(|field| field.offset);
+    let mut runs: Vec<(u64, u64)> = Vec::new();
+    for field in &sorted {
+        let (first, end) = (field.offset / 8, (field.offset + field.width).div_ceil(8));
+        match runs.last_mut() {
+            Some((_, last)) if first < *last => *last = (*last).max(end),
+            _ => runs.push((first, end)),
+        }
+    }
+    let mut members: Vec<(u64, Option<&Plain>, usize)> = plain.iter().map(|field| (field.offset, Some(field), 0)).collect();
+    members.extend(runs.iter().enumerate().map(|(run, (start, _))| (*start, None, run)));
+    members.sort_by_key(|(offset, ..)| *offset);
+    let (mut lines, mut layout, mut cursor, mut pads) = (Vec::new(), Vec::new(), 0u64, 0);
+    let mut pad = |lines: &mut Vec<String>, layout: &mut Vec<(String, u64)>, from: u64, to: u64| {
+        let length = to - from;
+        lines.push(format!("    pub _pad{pads}: [u8; {length}] = [{}]\n", vec!["0"; length as usize].join(", ")));
+        layout.push((format!("_pad{pads}"), from));
+        pads += 1;
+    };
+    for (offset, field, run) in members {
+        if offset < cursor {
+            return Err("bit-fields laid out over another field".to_string());
+        }
+        let natural = match field {
+            Some(field) if !packed => cursor.next_multiple_of(field.align),
+            _ => cursor,
+        };
+        if natural != offset {
+            pad(&mut lines, &mut layout, cursor, offset);
+        }
+        match field {
+            Some(field) => {
+                lines.push(field.line.clone());
+                layout.push((field.name.clone(), offset));
+                cursor = offset + field.size;
+            }
+            None => {
+                let (start, end) = runs[run];
+                let length = end - start;
+                lines.push(format!("    pub _bits{run}: [u8; {length}] = [{}]\n", vec!["0"; length as usize].join(", ")));
+                layout.push((format!("_bits{run}"), start));
+                cursor = end;
+            }
+        }
+    }
+    // Ember rounds the size up to the alignment, as C does; padding only where C's goes further.
+    if cursor.next_multiple_of(align) != size && cursor < size {
+        pad(&mut lines, &mut layout, cursor, size);
+    }
+    let mut methods = format!("\nextend {name}:\n");
+    for field in bits {
+        let (first, last) = (field.offset / 8, (field.offset + field.width - 1) / 8);
+        if last - first >= 8 {
+            return Err(format!("bit-field `{}` spans more than 8 bytes", field.name));
+        }
+        let run = runs.iter().position(|(start, end)| first >= *start && first < *end).expect("a bit-field is in its run");
+        let start = runs[run].0;
+        let shift = field.offset - first * 8;
+        let mask: u64 = if field.width >= 64 { u64::MAX } else { (1 << field.width) - 1 };
+        let read: Vec<String> = (first..=last)
+            .map(|byte| match byte - first {
+                0 => format!("(self._bits{run}[{}] as u64)", byte - start),
+                j => format!("((self._bits{run}[{}] as u64) << {})", byte - start, 8 * j),
+            })
+            .collect();
+        let (f, ty, width) = (&field.name, &field.ty, field.width);
+        let value = if field.boolean {
+            "value != 0".to_string()
+        } else if field.signed {
+            format!("(((value << {0}) as i64) >> {0}) as {ty}", 64 - width)
+        } else {
+            format!("value as {ty}")
+        };
+        let _ = write!(
+            methods,
+            "    ## The {width}-bit field `{f}`.\n    pub fn get_{f}(self) -> {ty}:\n        bits: u64 = {}\n        value = (bits >> {shift}) & {mask:#x}\n        return {value}\n\n",
+            read.join(" | ")
+        );
+        let input = if field.boolean { "bits: u64 = 0\n        if value:\n            bits = 1".to_string() } else { "bits: u64 = value as u64".to_string() };
+        let _ = write!(methods, "    ## Writes the {width}-bit field `{f}`: its low {width} bits.\n    pub fn set_{f}(mut self, value: {ty}):\n        {input}\n        bits = (bits & {mask:#x}) << {shift}\n");
+        for byte in first..=last {
+            let j = byte - first;
+            let part = ((mask << shift) >> (8 * j)) & 0xff;
+            let keep = !part & 0xff;
+            let _ = writeln!(
+                methods,
+                "        self._bits{run}[{0}] = (((self._bits{run}[{0}] as u64) & {keep:#x}) | ((bits >> {1}) & {part:#x})) as u8",
+                byte - start,
+                8 * j
+            );
+        }
+        methods.push('\n');
+    }
+    Ok((lines, layout, methods.trim_end().to_string() + "\n"))
 }
 
 /// The options an `import c` takes (`[FFI-6]`).
