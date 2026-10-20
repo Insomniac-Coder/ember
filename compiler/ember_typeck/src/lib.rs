@@ -61,6 +61,9 @@ pub struct ForeignImport {
     /// `[TCB-5]` — the files a declaration's facts rest on: the header (`header`) and the overlay
     /// (`overlay`), by path.
     pub identities: Vec<(String, std::path::PathBuf)>,
+    /// `[TCB-1]` — for the overlay module of an import: the function entries whose
+    /// `@grade(instrumented)` an evidence record that still holds backs.
+    pub backed: Vec<String>,
     /// `[FFI-20a]` — each declaration not imported, with the construct that defeated it.
     pub skipped: Vec<(String, String)>,
     /// `[FFI-5]` — Clang's layout of each imported struct: its name, size, alignment, and each
@@ -218,6 +221,10 @@ pub fn check(
     checker.module_packages = modules.iter().map(|m| m.package).collect();
     checker.visible = vec![HashMap::new(); modules.len()];
     checker.ambiguous_globs = vec![HashMap::new(); modules.len()];
+    checker.foreign_backed = modules
+        .iter()
+        .map(|m| m.foreign.iter().flat_map(|foreign| foreign.backed.iter().map(|name| Symbol::intern(name))).collect())
+        .collect();
     checker.foreign_skipped = modules
         .iter()
         .map(|m| m.foreign.as_ref().map(|foreign| (foreign.header.clone(), foreign.skipped.iter().map(|(name, why)| (Symbol::intern(name), why.clone())).collect())))
@@ -2194,6 +2201,8 @@ struct Checker<'a> {
     /// `[FFI-20a]` — per module `import c` wrote: its header, and each declaration it could not
     /// represent with why.
     foreign_skipped: Vec<Option<(String, HashMap<Symbol, String>)>>,
+    /// `[TCB-1]` — per module: the overlay entries whose `instrumented` grade evidence backs.
+    foreign_backed: Vec<HashSet<Symbol>>,
     /// Declaration spans for module items, keyed by their canonical names.
     /// N1 uses each span's file identity before considering its offset, so
     /// imported aliases never compare unrelated source coordinates.
@@ -2810,6 +2819,7 @@ impl<'a> Checker<'a> {
             visible: vec![HashMap::new()],
             ambiguous_globs: vec![HashMap::new()],
             foreign_skipped: Vec::new(),
+            foreign_backed: Vec::new(),
             item_spans: HashMap::new(),
             item_visibility: HashMap::new(),
             namespaces: vec![HashMap::new()],
@@ -36135,9 +36145,10 @@ impl<'a> Checker<'a> {
     }
 
     /// `[TCB-1]` — `@grade(asserted | instrumented | checked | proven)` on an overlay entry. A grade
-    /// above asserted is a claim that evidence backs: none is recorded here (no evidence record
-    /// under `[ffi] evidence` holds one), so the claim is unbacked, `W5050`, and the fact stays
-    /// asserted (`[TCB-2]`).
+    /// above asserted is a claim that evidence backs: `instrumented` on a function entry an
+    /// evidence record under `[ffi] evidence` backs, still holding (`[TCB-6]`), is met; any other
+    /// claim is unbacked, `W5050` (`E5050` under `--require-evidence`), and the fact stays asserted
+    /// (`[TCB-2]`).
     fn check_grade(&mut self, attr: &ast::Attribute, kind: &ast::OverlayItemKind) {
         if !matches!(kind, ast::OverlayItemKind::Fn { .. } | ast::OverlayItemKind::Type(_) | ast::OverlayItemKind::Enum(_)) {
             self.error(codes::E0104, attr.span, "`@grade` applies to an overlay entry that states facts");
@@ -36155,6 +36166,9 @@ impl<'a> Checker<'a> {
                         .help("write `@grade(asserted)`, `@grade(instrumented)`, `@grade(checked)` or `@grade(proven)` [TCB-1]"),
                 );
             }
+            Some(grade) if grade.is("instrumented")
+                && matches!(kind, ast::OverlayItemKind::Fn { name, .. }
+                    if self.foreign_backed.get(self.current_module).is_some_and(|backed| backed.contains(&name.name))) => {}
             Some(grade) if !grade.is("asserted") => {
                 let evidence = match grade.as_str() {
                     "instrumented" => "a run of `ember test --instrument-ffi` that observed it",

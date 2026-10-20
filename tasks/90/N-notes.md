@@ -197,6 +197,19 @@ each build (it is cheap and its diagnostics must be repeated).
 header or overlay makes the record stale ("its header …"), and the facts go back to asserted
 (`[TCB-6]`).
 
+### N8d. Grades backed by evidence (`[TCB-1]`)
+
+`@grade(instrumented)` on an overlay's function entry is met when the package's evidence record
+(`ember test --instrument-ffi`, `[ffi] evidence`) still holds for that function — same test binary
+and toolchain, the same declaration (the generated module's text hash), an unchanged library, header
+and overlay — and graded each of its effect facts `instrumented` (`foreign::backs_instrumented`,
+computed while the import loads, passed to the type checker as `ForeignImport::backed` of the
+overlay's module). Any other grade above `asserted` is `W5050`; `ember build --require-evidence` and
+`ember tcb --require` make it `E5050` (the warnings are raised after checking). `checked` and
+`proven` have no evidence mechanism, so they are always unmet. `E5050` keeps its other, older use
+(a type with no foreign representation, helper B's noted defect); moving that to `E5015` churns
+B's tests and page and is left to the coordinator.
+
 ### N8a. Wrapped calls in the cost report (`[FFI-29c]`)
 
 `ember inspect --cost`'s "FFI call" row says `wrapped (static inline)` for a call that goes through
@@ -241,6 +254,7 @@ the shim's wrapper (its symbol is the wrapper's), and "one direct call" otherwis
 | `CLI-5` | milestone `bind_init_writes_a_starter_overlay_that_compiles_unchanged` |
 | `CLI-6`, `CLI-7`, `FFI-35a` | milestone `bind_report_and_check_count_what_is_safe_unsafe_and_skipped` |
 | `FFI-29c` | milestone `inspect_reports_a_wrapped_static_inline_call` |
+| `TCB-1` | milestone `a_grade_on_an_overlay_entry_is_met_only_by_evidence_that_holds` |
 | `TCB-5` | milestone `evidence_for_an_imported_declaration_rests_on_its_header_and_overlay` |
 | `FFI-7`, `FFI-14` | milestone `import_c_parses_a_header_again_only_when_it_changes`; the codec's unit test `cbor::tests::values_round_trip` |
 

@@ -1268,8 +1268,8 @@ pub struct Loaded {
     pub module: ast::Module,
     pub foreign: ember_typeck::ForeignImport,
     /// The import's overlay file, a module of its own whose entries are checked as any overlay's
-    /// (`[GRM-35]`).
-    pub overlay: Option<(Vec<String>, ast::Module)>,
+    /// (`[GRM-35]`), with the function entries whose `instrumented` grade evidence backs (`[TCB-1]`).
+    pub overlay: Option<(Vec<String>, ast::Module, Vec<String>)>,
 }
 
 /// `[FFI-6]` — the module an `import c` names, written from its header, and the import rewritten
@@ -1423,14 +1423,37 @@ pub fn load(
                 }
                 let mut overlay_path = path.clone();
                 overlay_path[1].push_str("_overlay");
-                overlay_module = Some((overlay_path, parsed));
+                overlay_module = Some((overlay_path, parsed, Vec::new()));
             }
         }
     }
     // Named for its module: the source map keeps one file per name, and one header imported twice
     // is two modules.
     // No quotes: the name reaches the C as `#line`'s file name ([CG-C-8]).
-    let file = map.add(PathBuf::from(format!("<import c {header} as {}>", path.join("."))), render(&imported, &applied));
+    let rendered = render(&imported, &applied);
+    // `[TCB-1]` — each `@grade(instrumented)` entry an evidence record of this package backs.
+    if let Some((_, overlay, backed)) = &mut overlay_module
+        && let Some(evidence) = crate::foreign::load_evidence(importer)
+    {
+        let source_hash = ember_build::content_hash(rendered.as_bytes());
+        for item in overlay.items.iter().filter_map(|item| match &item.kind {
+            ast::ItemKind::Overlay(overlay) => Some(overlay),
+            _ => None,
+        }).flat_map(|overlay| &overlay.items) {
+            let ast::OverlayItemKind::Fn { name, .. } = &item.kind else { continue };
+            let graded = item.attrs.iter().any(|attr| {
+                attr.path.len() == 1 && attr.path[0].name.is("grade")
+                    && matches!(attr.args.as_slice(), [AttrArg::Expr(Expr { kind: ExprKind::Path { segments }, .. })]
+                        if segments.len() == 1 && segments[0].name.is("instrumented"))
+            });
+            let ember_name = applied.renamed.get(name.name.as_str()).map_or(name.name.as_str(), String::as_str);
+            let qualified = format!("{}.{ember_name}", path.join("."));
+            if graded && crate::foreign::backs_instrumented(&evidence, &qualified, &source_hash) {
+                backed.push(name.name.to_string());
+            }
+        }
+    }
+    let file = map.add(PathBuf::from(format!("<import c {header} as {}>", path.join("."))), rendered);
     let text = map.file(file).text.clone();
     let lexed = ember_lexer::lex(file, &text, sink);
     let module = ember_parser::parse(file, &text, lexed.tokens, sink);
@@ -1458,6 +1481,7 @@ pub fn load(
     let mut identities = vec![("header".to_string(), imported.header.clone())];
     identities.extend(options.overlay.as_ref().map(|(written, _)| ("overlay".to_string(), base.join(written))));
     let foreign = ember_typeck::ForeignImport {
+        backed: Vec::new(),
         header: shown,
         identities,
         skipped: imported
@@ -1495,6 +1519,10 @@ pub fn build_objects(
     let mut libraries = Vec::new();
     for module in modules {
         let Some(foreign) = &module.foreign else { continue };
+        // An overlay's module has no C of its own.
+        if foreign.shim.is_empty() {
+            continue;
+        }
         let stem = module.path.join("_");
         let shim = c_dir.join(format!("{stem}.shim.c"));
         std::fs::write(&shim, &foreign.shim).map_err(|e| e.to_string())?;

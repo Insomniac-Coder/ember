@@ -7500,3 +7500,46 @@ fn main():
     let stale = ember(&["tcb", &entry], &package);
     assert!(stale.stdout.contains("evidence stale") && stale.stdout.contains("its header"), "{}{}", stale.stdout, stale.stderr);
 }
+
+/// `[TCB-1]` — a grade written on an overlay entry is a claim. `@grade(instrumented)` with no
+/// evidence record is `W5050`, and `E5050` under `ember tcb --require` or `ember build
+/// --require-evidence`; once `ember test --instrument-ffi` has recorded the function's effect facts
+/// the claim is met; a changed header makes the record stale (`[TCB-6]`) and the claim unmet again.
+#[test]
+fn a_grade_on_an_overlay_entry_is_met_only_by_evidence_that_holds() {
+    let package = test_package("graded", "bin", "\
+import c \"grade.h\" with (overlay = \"overlays/grade.em\")
+
+@test
+fn doubles():
+    assert(c.grade_twice(2) == 4)
+
+fn main():
+    println(c.grade_twice(1))
+");
+    std::fs::write(package.join("src").join("grade.h"), "static inline int grade_twice(int x) { return 2 * x; }\n").unwrap();
+    std::fs::create_dir_all(package.join("overlays")).unwrap();
+    std::fs::write(package.join("overlays").join(format!("grade.{SOURCE_EXT}")),
+        "unsafe overlay c \"grade.h\":\n    @grade(instrumented)\n    @ffi(effects=[])\n    fn grade_twice(x)\n").unwrap();
+    let entry = package.join("src").join(ember_branding::source_file("main")).to_string_lossy().into_owned();
+    let out_arg = package.join("target").to_string_lossy().into_owned();
+    let claimed = "`instrumented` is claimed with no evidence";
+
+    let unbacked = ember(&["check", &entry], &package);
+    assert!(unbacked.exit == 0 && unbacked.stderr.contains("warning[W5050]") && unbacked.stderr.contains(claimed), "{}", unbacked.stderr);
+    let required = ember(&["tcb", "--require", &entry], &package);
+    assert!(required.exit != 0 && required.stderr.contains("error[E5050]"), "{}{}", required.stdout, required.stderr);
+    let build = ember(&["build", &entry, "--require-evidence", "--out-dir", &out_arg], &package);
+    assert!(build.exit != 0 && build.stderr.contains("error[E5050]"), "{}", build.stderr);
+
+    let run = ember(&["test", "--instrument-ffi", "--out-dir", &out_arg], &package);
+    assert_eq!(run.exit, 0, "{}{}", run.stdout, run.stderr);
+    let backed = ember(&["check", &entry], &package);
+    assert!(backed.exit == 0 && !backed.stderr.contains("W5050"), "{}", backed.stderr);
+    let met = ember(&["tcb", "--require", &entry], &package);
+    assert_eq!(met.exit, 0, "{}{}", met.stdout, met.stderr);
+
+    std::fs::write(package.join("src").join("grade.h"), "static inline int grade_twice(int x) { return x + x; }\n").unwrap();
+    let stale = ember(&["check", &entry], &package);
+    assert!(stale.stderr.contains("warning[W5050]"), "a stale record still met the claim:\n{}", stale.stderr);
+}

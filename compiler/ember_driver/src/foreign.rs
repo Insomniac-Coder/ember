@@ -404,6 +404,28 @@ pub fn load_evidence(input: &std::path::Path) -> Option<Evidence> {
     Some(Evidence { path, record, stale, elsewhere })
 }
 
+/// `[TCB-1]` — whether `evidence` backs an `instrumented` grade for the foreign function `name`,
+/// declared in a file whose text hashes to `source_hash`: the record is for this test binary and
+/// toolchain, names the function from that same declaration, every file it rests on (its library,
+/// header and overlay) is unchanged, and every effect fact it graded is `instrumented`.
+pub fn backs_instrumented(evidence: &Evidence, name: &str, source_hash: &str) -> bool {
+    let file_hash = |path: &str| std::fs::read(path).ok().map(|bytes| ember_build::content_hash(&bytes));
+    let Some(function) = evidence.record["functions"].as_array().into_iter().flatten().find(|function| function["name"] == name) else {
+        return false;
+    };
+    let unchanged = |identity: &serde_json::Value| {
+        let path = identity["path"].as_str().unwrap_or("");
+        path.is_empty() || file_hash(path).as_deref() == identity["hash"].as_str()
+    };
+    let facts = function["facts"].as_array().map(|facts| facts.as_slice()).unwrap_or(&[]);
+    evidence.stale.is_empty()
+        && function["source_hash"].as_str() == Some(source_hash)
+        && unchanged(&function["library"])
+        && function["imported_from"].as_array().into_iter().flatten().all(unchanged)
+        && !facts.is_empty()
+        && facts.iter().all(|fact| fact["grade"] == "instrumented")
+}
+
 /// `[FFI-37c]`, `[TCB-5]`, `[TCB-6]` — what the evidence says of the effect facts of `decl`: each
 /// graded fact (instrumented, partial when not every call site ran; contradicted; unexercised),
 /// or why the record no longer counts. `None` when the record holds nothing of `decl`.

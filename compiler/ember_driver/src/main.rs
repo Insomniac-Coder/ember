@@ -451,6 +451,9 @@ struct Options {
     /// `[FFI-37]` — `ember test --instrument-ffi`: the directory its evidence record goes to
     /// (`[TCB-1]`'s `[ffi] evidence`).
     ffi_evidence: Option<PathBuf>,
+    /// `[TCB-1]` — `ember build --require-evidence`, `ember tcb --require`: a claimed grade whose
+    /// evidence is missing or stale is `E5050`, not `W5050`.
+    require_evidence: bool,
 }
 
 /// What `ember calls --foreign` prints: JSON or text, for one item.
@@ -1511,19 +1514,21 @@ fn inspect_cost(path: &Path, function: Option<&str>, json: bool) -> Result<ExitC
 /// `[UNS-8]` — `ember tcb [--module <m>] [--json] <file.em>`.
 fn tcb(args: &[String]) -> Result<ExitCode, String> {
     let mut request = TcbReport::default();
+    let mut require = false;
     let mut path = None;
     let mut rest = args.iter();
     while let Some(argument) = rest.next() {
         match argument.as_str() {
             "--json" => request.json = true,
             "--module" => request.module = Some(rest.next().ok_or("`--module` needs a module name")?.clone()),
+            "--require" => require = true,
             flag if flag.starts_with('-') => return Err(format!("unknown `ember tcb` option `{flag}`")),
             file if path.is_none() => path = Some(PathBuf::from(file)),
             extra => return Err(format!("unexpected `ember tcb` argument `{extra}`")),
         }
     }
     let path = path.ok_or("`ember tcb` needs a source file")?;
-    let options = Options { tcb_report: Some(request), ..Options::default() };
+    let options = Options { tcb_report: Some(request), require_evidence: require, ..Options::default() };
     compile(&path, "check", &options)
 }
 
@@ -3032,6 +3037,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--report=instantiations" => options.instantiation_report = true,
             "--report=engine" => options.engine_report = true,
             "--build-id" => options.build_id = true,
+            "--require-evidence" => options.require_evidence = true,
             "--cc" => options.cc = Some(value(&mut index, arg)?),
             "--out-dir" => options.out_dir = Some(PathBuf::from(value(&mut index, arg)?)),
             "--backend" => {
@@ -3273,9 +3279,10 @@ fn load_package_modules(
                 let base = package_dir.unwrap_or_else(|| importer.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf());
                 if let Some(written) = cimport::load(import, &importer, &base, &flags, &mut foreign_known, map, sink) {
                     seen.insert(written.path.join("."));
-                    if let Some((overlay_path, overlay)) = written.overlay {
+                    if let Some((overlay_path, overlay, backed)) = written.overlay {
                         seen.insert(overlay_path.join("."));
-                        queue.push((package, overlay_path, overlay, None));
+                        let graded = ember_typeck::ForeignImport { backed, ..Default::default() };
+                        queue.push((package, overlay_path, overlay, Some(graded)));
                     }
                     queue.push((package, written.path, written.module, Some(written.foreign)));
                 }
@@ -4306,6 +4313,17 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             lint_settings.realtime,
         );
         if checked.comptime.is_empty() {
+            // `[TCB-1]` — under `--require-evidence` a grade claimed without evidence is an error.
+            if options.require_evidence {
+                for mut diagnostic in sink.take() {
+                    if diagnostic.code == Some(codes::W5050) {
+                        diagnostic.severity = ember_diag::Severity::Error;
+                        diagnostic.code = Some(codes::E5050);
+                        diagnostic.notes.push("a claimed grade needs its evidence under `--require-evidence` [TCB-1]".to_string());
+                    }
+                    sink.emit(diagnostic);
+                }
+            }
             break (types, common, checked);
         }
         sink.rollback(mark);
