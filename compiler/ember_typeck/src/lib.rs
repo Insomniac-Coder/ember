@@ -34046,8 +34046,10 @@ impl<'a> Checker<'a> {
                 return self.synth_generic_class_constructor(resolved_name, &decl, args, &explicit, expected, span);
             }
         }
-        if !self.declared_by_program(name, resolved_name)
-            && !self.fn_ids.contains_key(&resolved_name) {
+        // ODR-075/076 — `null[P]()` and `ref_to_ptr(r)` in every module, unless a function of that
+        // name shadows them: outside the root, an undeclared name resolves to the module's own form,
+        // so that it is no program declaration is what `fn_ids` says.
+        if !self.fn_ids.contains_key(&resolved_name) {
             if let Some(built) = self.synth_raw_pointer_constructor(name, args, &explicit, span) {
                 return built;
             }
