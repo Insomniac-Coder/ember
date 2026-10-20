@@ -549,7 +549,9 @@ impl Writer {
                 }
                 CXType_Record => {
                     let declaration = clang_getTypeDeclaration(ty);
-                    if clang_Cursor_isAnonymous(declaration) != 0 {
+                    // A struct with no tag is known by its typedef's name once that is written
+                    // (`typedef struct {…} Rect`, seen through a canonical type).
+                    if clang_Cursor_isAnonymous(declaration) != 0 && !self.records.contains_key(&usr(declaration)) {
                         return Err("an anonymous struct or union member (its generated `<Parent>_anon<N>` type is not built yet)".to_string());
                     }
                     match self.record(declaration, None) {
