@@ -6,7 +6,7 @@ run-pass test and every shim compiled with gcc 15 in WSL with `-Wall -Wextra -We
 there: WSL has no libclang, so the importer itself has not run on Linux), and committed on the branch.
 
 **Effect on the computed table** (`tools/phase_progress.py`, before → after on this branch): Phase 5
-51% → 65% (42 → 63 of 116 rules), Phase 4 82% → 89% (`TCB-1`, `TCB-5`), Phase 1 96% → 97%
+51% → 66% (42 → 63 of 116 rules), Phase 4 82% → 88% (`TCB-1`, `TCB-5`), Phase 1 96% → 97%
 (`CLI-5`..`CLI-7`), Overall 87.9% → 90.0% (90.02). README.md is not edited here, so `phase_progress.py
 --check` reports the table out of date until it is rewritten on merge.
 
