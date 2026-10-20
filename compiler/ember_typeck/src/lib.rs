@@ -54788,7 +54788,9 @@ fn target_c_alias(name: &str, pointer_size: u64) -> Option<TyKind> {
     use ember_types::{IntTy, UintTy};
     let windows = cfg!(windows);
     let long32 = windows || pointer_size == 4;
-    let signed_char = cfg!(any(target_arch = "x86", target_arch = "x86_64")) || cfg!(target_vendor = "apple") || windows;
+    let signed_char = !cfg!(any(target_arch = "aarch64", target_arch = "arm", target_arch = "powerpc", target_arch = "powerpc64",
+        target_arch = "s390x", target_arch = "riscv32", target_arch = "riscv64"))
+        || cfg!(target_vendor = "apple") || windows;
     Some(match name {
         "std.ffi.c_char" if signed_char => TyKind::Int(IntTy::I8),
         "std.ffi.c_char" => TyKind::Uint(UintTy::U8),

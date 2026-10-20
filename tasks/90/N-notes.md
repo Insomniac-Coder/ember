@@ -381,3 +381,231 @@ in a rule folder for a test.
 * **Noted, not a defect of this job:** a `const A: i32` binds to a `u32` local without a cast
   (`x: u32 = A`): typed constants coerce like literals. The `[FFI-6a]` test checks types through
   `size_of` and wrapping arithmetic instead.
+
+
+---
+
+# Part 2 — Job N2: the importer's rulings and open defects (2026-10-20)
+
+Same branch, after `git merge main` (fast-forward, then a second merge for main's 8f7d8ab2: D-747..D-751,
+0.9.10_Hardened_24; the one conflict, `docs/phase-status.json`, kept main's `TST-7` entry, since
+removed here). Development target: `docs/spec-source/Ember_v0.9.10_Hardened_24.md`. Everything below is
+tested on Windows under the C gate with MSVC and clang-cl (the full conformance sweep, both shards,
+each compiler), the Rust suites of the crates changed and every milestone; the emitted C of every new
+run-pass test and its shim compiled with gcc in WSL (`-Wall -Wextra -Werror`), and the D-743/D-744 tests
+also linked there against the runtime (never run).
+
+**Effect on the computed table** (`tools/phase_progress.py`, main 8f7d8ab2 → this branch): Phase 5
+63 → 67 of 116 rules (64.5% → 70.3% of words: `FFI-6a`, `FFI-6b`, `FFI-29`, `FFI-30c`), Phase 8
+19 → 20 of 42 (`TST-7`, whose baseline is now empty). Overall stays at 90% (rounded).
+
+## 1. The rulings, built
+
+### ODR-145 — a pointer made from an integer is a compile-time value (`[CT-2]`, `[FFI-6a]`)
+
+`const NULL_HANDLE: *mut void = 0 as *mut void` folds: the constant evaluator (`const_eval.rs`) has an
+`Address` value — the integer's low bits at the pointer's width, as the cast makes them at run time —
+written back into the program as `<n>usize as *T`. A pointer the evaluator made (into its own heap) still
+may not leave it (`E6010`). The importer evaluates a macro whose value is a data pointer (`((void*)0)`,
+`((Handle*)-1)`) in a third Clang parse, as `(unsigned long long)(MACRO)`, and writes
+`const NAME: *mut T = <address>usize as *mut T`; a function pointer stays `W5001`.
+
+*Decision (question Q1):* `[UNS-1]`/`[TYP-7]` make an integer-to-pointer cast need `unsafe`, and a `const`
+initialiser has no `unsafe` context to be in. A cast from an integer to a pointer inside a `const`
+initialiser therefore needs none: the address is read by nothing until code dereferences it, which needs
+`unsafe` anyway. Any other pointer cast there is unchanged.
+
+Tests: `CT-2/accept_a_pointer_made_from_an_integer_is_a_constant.em`,
+`CT-2/reject_a_pointer_the_evaluator_made_stays_there.em`, `FFI-6a/accept_constant_macros_are_constants.em`
+(null and pointer-cast macros). ODR-146 (an empty macro is not reported) is named by
+`FFI-6a/accept_other_macros_are_skipped_with_clangs_reason.em`.
+
+### ODR-147 — `@ffi(macro_fn)` entries, their wrappers and bindings (`[FFI-6b]`, `[FFI-29]`, `[GRM-35]`)
+
+* **Grammar** (`ember_parser/src/decls.rs`, `OverlayItemKind::MacroFn`): in an entry whose attributes
+  hold `@ffi(macro_fn)`, `fn NAME(x: type, …) [-> type]` — one Ember type per parameter and result.
+* **Matching** (`cimport::apply`): the importer records each function-like macro with its parameter
+  names (from Clang's tokens; `...` for a variadic one); an entry matches one by name, parameter count
+  and parameter names (`E5010` otherwise, as `[FFI-12]` for functions). A name the header declares as a
+  function too (a `getc` macro over a `getc` function) takes an ordinary entry: `E5010` names that.
+* **Wrapper** (`[FFI-29]`'s missing part): the shim gets `int32_t ember_cshim_<module>_SQUARE(int32_t a0)
+  { return SQUARE(a0); }`, its C types spelled from the entry's Ember types: the scalars (`int32_t`,
+  `double`, `_Bool`, `size_t`, `ptrdiff_t`), `std.ffi`'s C aliases (`int`, `long`, `char`…), `cstr`,
+  the header's own types by their C spelling (recorded per type at import: `struct Pair`, a typedef's
+  name), and raw pointers to those. A type with no C spelling (`String`, an opaque struct by value) is
+  `E5015` "type may not cross the boundary" (see Q4). `<stdint.h>` is included for them.
+* **Binding**: a function of the module's `unsafe extern "C"` block, bound to the wrapper by
+  `link_name`, safe to call — the entry asserts it, as any overlay function entry does (`[FFI-2]`) —
+  unless a parameter or the result is a raw pointer: a macro entry has no contract words, so nothing
+  makes such a call safe. Other `@ffi(…)` arguments of the entry (`effects=[…]`) are kept; `rename`
+  and `hide` reach macros as functions. A declared macro is no longer `W5001`.
+* `.embind` version 2 records the macros and the C spellings.
+* *Not built:* folding a call whose arguments are all constants ("the importer **may**", optional).
+
+Tests: `FFI-6b/accept_a_declared_macro_is_called_through_its_wrapper.em` (scalars, a struct by value, a
+raw pointer under `unsafe`, `bool`), `FFI-6b/reject_a_macro_entry_that_does_not_match_its_header.em`,
+`GRM-35/accept_overlay_grammar.em`, `GRM-35/reject_fact_without_unsafe_overlay.em` (a macro entry is a
+fact: `E5067` without `unsafe overlay`).
+
+### ODR-148 — `<stem>.overlay.em` beside the header (`[CLI-5]`)
+
+As built in Part 1; the milestone `bind_init_writes_a_starter_overlay_that_compiles_unchanged` now
+names ODR-148 and checks `calc.overlay.em` for `calc.h`.
+
+### ODR-149 — several overlays, in order, with `override` (`[FFI-30c]`, `[GRM-35]`)
+
+* `overlay` takes a string or a list of strings (`E0104` otherwise); the files are applied first to last
+  into one `Applied`, which remembers which file gave each entry. Entries are keyed per kind: functions
+  and macro entries, `type`/`enum` facts, `rename`, `hide`. A second entry for a key is `E5010` unless
+  it begins with `override` and comes from a later file, when it replaces the earlier entry (a `type`
+  entry's facts are replaced, not added to). `extend` blocks compose. `override` may stand before or
+  after the attributes.
+* *Decision (question Q3):* an `override` with no earlier entry to replace is `E5010` ("`override`
+  replaces an earlier overlay's entry, and none has one for `f`") — a list in the wrong order, or a
+  dependency whose overlay dropped the entry, shows up rather than passing silently. A second `override`
+  for one name in one file is `E5010` too.
+* Each file is a module of its own (`c.h_x_overlay`, `c.h_x_overlay_2`, …) checked as any overlay
+  (`E5067`, grades); each has its own `[TCB-1]` backing; every file is an `overlay` identity of the
+  import for `[TCB-5]`'s evidence; the import's cache key and `.embind` overlay hash cover all of them.
+* "No overlay may change a foreign type's identity or layout": a `rename` of a struct is an alias (the
+  value one overlay names `Extent` is the header's `Size`), and a `type` or `enum` entry for a struct is
+  `E5010`.
+
+Tests: `FFI-30c/accept_overlays_compose_in_order.em`, `FFI-30c/reject_overlays_that_clash.em`,
+`FFI-6/reject_an_unknown_import_option.em` (an `overlay` list of non-strings).
+
+## 2. The defects
+
+### D-742 — `std.ffi`'s C aliases (`[FFI-8]`, `[TST-7]`)
+
+`std/src/ffi.em` declares `c_char`, `c_schar`, `c_uchar`, `c_short`, `c_ushort`, `c_int`, `c_uint`,
+`c_long`, `c_ulong`, `c_longlong`, `c_ulonglong`, `c_float`, `c_double` and `c_wchar` (Part XV's "the
+other C aliases": every C scalar type `[FFI-8]` names; `c_longdouble` belongs with `long double`, below).
+The four that differ between targets are written there as one target's, and the type checker gives
+each the type of the target the compiler builds for (`target_c_alias` in `ember_typeck`, by the
+compiler's own `cfg` — the C backend compiles with this machine's compiler, and `--target` is not
+built): `c_char` is unsigned on ARM, PowerPC, RISC-V and s390x but on Apple's and Windows' ABIs;
+`c_long`/`c_ulong` are 32 bits on Windows and 32-bit targets; `c_wchar` is `u16` on Windows. The
+importer writes `char`, `int`, `unsigned`, `long`, `unsigned long` and `wchar_t` as those aliases (the
+fixed-width forms stay `i8`, `i16`, `i64`…), imports the ones the module uses from `std.ffi`, and keeps
+`@repr` of an enum fixed-width. Part XVI's example now checks: `[TST-7]`'s baseline is empty and its
+unfinished entry is gone.
+
+Found on the way and fixed (D-N9 below): a type alias of another module named in a signature was
+`E1010` when that module's items were collected after the signature's — aliases were collected inside
+each module's `collect`. They now have a pass of their own, every module's, dependencies first, before
+any signature.
+
+Test: `FFI-8/accept_std_ffi_c_aliases_are_the_targets_c_types.em` — each target-dependent alias agrees
+with what this target's C compiler makes of `long`, `char` and `wchar_t` (sizes and signedness, read
+through a header), so it is checked on every CI target.
+
+### D-743 and D-744 — one C function, several declarations (`[FFI-6]`, `[FFI-30]`, `[FFI-30a]`)
+
+The two have one cause, as does a third case found while fixing them (D-N11): every foreign function
+declaration was emitted as a C prototype under the function's own name, so any other prototype of it in
+the one C file — `<stdio.h>`'s `puts` (D-743), another module's declaration of it with contracts of its
+own (two overlays of one header, `[FFI-30a]`: `int*` against `const int*`), the program's own
+definition (D-744) — met it, and the interface records keyed by symbol refused the second.
+
+*Fix, general:* each foreign function declaration is declared in the C under a private name of its own,
+`ember_branding::foreign_alias` = the `[MNG-2]` alias of its symbol (`em_0x<hex>`) followed by the
+declaration's qualified name, and bound to the symbol by the mechanism `[FFI-49]` already uses for link
+names C cannot spell (an assembler label with gcc and Clang, `/ALTERNATENAME` with MSVC). No two
+prototypes of one C function can meet any more, whatever Ember's spellings of its types; calls cost
+nothing more (the object file names the real symbol). The coordinator's two suggestions did not reach
+every case: a prototype "in its declaration's C spellings" is unknown for a hand declaration (`*c_char`
+is `*i8` once checked), and "through the shim" costs every such call a wrapper.
+
+Since the C compiler no longer compares the declarations, the type checker does: every declaration of
+one C function, and the program's definition of it (`extern "C" fn`, `@export`), must pass and return
+what the others do — each parameter and the result as the C ABI sees it (a pointer, an integer or float
+of its size, a C-like enum as its representation, a type by value) — else `E0104` naming both shapes
+(question Q2 on the code). A declaration that agrees binds the definition, as a header the package
+implements would.
+
+`ponytail:` a `vectorcall` declaration keeps its exact name — MSVC decorates both names (`f@@16`), which
+the alias would have to spell — so two `vectorcall` declarations of one function still meet in C. A
+counted declaration (`count(n)`, an adapter) is not in the signature comparison: its C prototype is the
+adapter's ABI list, not its signature.
+
+Also found and fixed on the way (D-N10): a header that re-declares a C library builtin (`size_t
+strlen(const char*)`) had the function skipped, "its result: the C type `__size_t`": Clang types a
+builtin with its own `__size_t` sugar, which libclang does not expose. The importer now reads such a
+type by its name (`standard_typedef`), else as its canonical type.
+
+Tests: `FFI-6/accept_functions_the_runtime_header_also_declares.em` (an imported `puts` and `strlen`
+and a hand-declared `strlen(*c_char)`, beside `<stdio.h>`/`<string.h>`),
+`FFI-30/accept_a_declaration_of_a_function_the_program_defines.em`,
+`FFI-30/reject_declarations_of_one_function_that_disagree.em`,
+`FFI-30/accept_two_declarations_of_one_function_keep_their_contracts.em`. The `#$ assert-c:` needles
+of eleven tests that named a foreign prototype by its symbol now name its alias.
+
+### D-746 — `@ffi(ownership=…)`'s stale message (`[FFI-11]`)
+
+The fallback for an `@ffi` argument no form matched said "only `@ffi` link names and borrowed-one pointer
+contracts are implemented yet". Now: a word the vocabulary does not have (`ownership="transfer"`, a
+misspelt word inside `param(…)`/`result(…)`) is `E0104` listing what `@ffi` takes; `exclusive` with
+`aliased` is `E0104`; a form of the vocabulary this compiler has not built (`threads(…)`,
+`destroys(f)`, `callback(…)`) is `E0900` naming it. Tests: `FFI-49/reject_unimplemented_ffi_contract.em`
+(now claims `FFI-11`), `FFI-11/reject_exclusive_and_aliased_result.em`.
+
+### D-745 — `E5050`'s two meanings (`[TCB-1]`)
+
+The spec's code table gives `E5050` one meaning, `[TCB-1]`'s (a claimed grade whose evidence is absent
+or stale). The older use — a type with no foreign representation in an `extern` signature or foreign
+static, fourteen sites — moved to `E5015`, "type may not cross the boundary", which already named an
+owning value in an exported signature (question Q4 on whether that is the code the owner wants).
+`docs/errors/E5015.md` covers both; `docs/errors/E5050.md` is now `[TCB-1]`'s page, whose example is
+checked with `--require-evidence` (`tools/error_pages.py` and `ember test --doc` both know that code);
+`W5050.md` no longer says the two flags are unbuilt. Ten tests' expected codes changed.
+
+## 3. Rules now done, with their tests
+
+| Rule | Test |
+|---|---|
+| `[FFI-6a]` (ODR-145, ODR-146) | `FFI-6a/accept_constant_macros_are_constants.em`, `FFI-6a/accept_other_macros_are_skipped_with_clangs_reason.em`; `CT-2/accept_a_pointer_made_from_an_integer_is_a_constant.em`, `CT-2/reject_a_pointer_the_evaluator_made_stays_there.em` |
+| `[FFI-6b]` (ODR-147) | `FFI-6b/accept_a_declared_macro_is_called_through_its_wrapper.em`, `FFI-6b/reject_a_macro_entry_that_does_not_match_its_header.em` |
+| `[FFI-29]` | the same run-pass test (the wrappers of `[FFI-6b]`), with Part 1's static-inline wrapper tests |
+| `[CLI-5]` (ODR-148) | milestone `bind_init_writes_a_starter_overlay_that_compiles_unchanged` |
+| `[FFI-30c]` (ODR-149) | `FFI-30c/accept_overlays_compose_in_order.em`, `FFI-30c/reject_overlays_that_clash.em` |
+| `[GRM-35]` (ODR-147, ODR-149) | `GRM-35/accept_overlay_grammar.em`, `GRM-35/reject_fact_without_unsafe_overlay.em` |
+| `[TST-7]` | milestone `every_example_of_the_specification_checks`, baseline empty |
+| `[FFI-8]`'s C aliases (D-742) | `FFI-8/accept_std_ffi_c_aliases_are_the_targets_c_types.em` |
+
+`docs/phase-status.json`: the unfinished entries of `FFI-6a`, `FFI-29`, `FFI-30c` and `TST-7` are gone;
+`FFI-8`'s no longer lists the C aliases.
+
+## 4. Owner questions (real choices only)
+
+* **Q1 (ODR-145).** A `const` initialiser's integer-to-pointer cast needs no `unsafe`; at run time the
+  same cast does (`[UNS-1]`). (a) As built: a `const`'s address is read by nothing until a dereference,
+  which needs `unsafe`. (b) Ask for an `unsafe` form of `const` initialiser.
+* **Q2 (D-744).** Two declarations of one C function (or a declaration and the program's definition)
+  that pass or return different things are `E0104`, the code of a C symbol defined twice. (a) Keep
+  `E0104`. (b) `E5011` ("one C identity imported with two different layouts"), widened to functions.
+  (c) A new code.
+* **Q3 (ODR-149).** An `override` entry with no earlier entry to replace is `E5010`. (a) As built. (b)
+  Allow it: it is then an ordinary entry.
+* **Q4 (D-745).** `E5015` ("type may not cross the boundary") now also names a type with no foreign
+  representation (`str` in an `extern` signature, an incomplete type by value). (a) Keep it, and cite
+  `[FFI-5]`/`[FFI-31b]` in its row. (b) A code of its own. — Either way the row's citation needs a look:
+  it cites `[FFI-31]`, which in 0.9.10 is the `cdylib` runtime rule; the boundary rule is `[FFI-31b]`.
+
+## 5. Defects found in this job (for the coordinator to number)
+
+* **D-N9 (fixed): another module's type alias in a signature was `E1010`.** `from std.ffi import c_int`
+  then `unsafe extern "C": safe fn abs(x: c_int) -> c_int` in the root: "cannot find type `c_int`"
+  (a local `x: c_int` worked). Type aliases were collected inside each module's `collect`, so a module
+  collected before the alias's own module could not name it in a signature or field. Probe: the D-742
+  test above, with the alias pass moved back into `collect`.
+* **D-N10 (fixed): a header re-declaring a C library builtin lost the function.** `size_t
+  strlen(const char*);` in a user header: `W5002` "its result: the C type `__size_t`" (Clang's builtin
+  types use their own sugar, which libclang does not expose). Probe:
+  `FFI-6/accept_functions_the_runtime_header_also_declares.em` before this branch's importer change.
+* **D-N11 (fixed): two imports of one header with different overlays was an internal compiler error.**
+  One overlay makes `answer_value` safe, the other import has none: "[BLD-2] import-visible callable
+  `answer_value` has more than one declaration contract"; and with a pointer parameter the two C
+  prototypes (`int*`, `const int*`) conflict under gcc. Fixed with D-743/D-744. Probe:
+  `FFI-30/accept_two_declarations_of_one_function_keep_their_contracts.em`.
+* **Noted (spec):** `E5015`'s row cites `[FFI-31]`, now the `cdylib` runtime rule (see Q4).
