@@ -3295,7 +3295,7 @@ fn load_package_modules(
                 let manifest = package_dir.as_ref().and_then(|dir| std::fs::read_to_string(dir.join(ember_branding::MANIFEST)).ok());
                 let flags = manifest.as_deref().and_then(|text| manifest_list(text, "c", "flags")).unwrap_or_default();
                 let base = package_dir.unwrap_or_else(|| importer.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf());
-                if let Some(written) = cimport::load(import, &importer, &base, &flags, &mut foreign_known, map, sink) {
+                if let Some(written) = cimport::load(import, &importer, &base, &flags, manifest.as_deref(), &mut foreign_known, map, sink) {
                     seen.insert(written.path.join("."));
                     for (overlay_path, overlay, backed) in written.overlays {
                         seen.insert(overlay_path.join("."));

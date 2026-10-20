@@ -75,6 +75,9 @@ pub struct ForeignImport {
     pub sources: Vec<std::path::PathBuf>,
     pub flags: Vec<String>,
     pub link: Vec<String>,
+    /// `[FFI-3]` — for `import cpp`: the shim is the C++ thunks, compiled with this standard, and
+    /// the compiler the project names, if it names one (`[FFI-50]`).
+    pub cpp: Option<(String, Option<String>)>,
 }
 
 /// The semantically resolved declaration surface a build artifact may expose
@@ -4623,8 +4626,15 @@ impl<'a> Checker<'a> {
     fn report_skipped_foreign(&mut self, module: usize, name: Symbol, span: Span) -> bool {
         let Some(Some((header, skipped))) = self.foreign_skipped.get(module) else { return false };
         let Some(why) = skipped.get(&name) else { return false };
-        let diagnostic = Diagnostic::error(codes::E1010, span, format!("`{name}` was not imported from `{header}`: {why}"))
-            .note("`import c` skipped it, and said so at the import (W5002, W5001) [FFI-20a]");
+        // `[FFI-17]`, `[FFI-24]` — a C++ function whose parameter maps to nothing is `E5031`, one
+        // whose exception policy is neither derived nor declared `E5061`.
+        let (code, why) = match why.split_once("] ") {
+            Some(("[E5031", rest)) => (codes::E5031, rest),
+            Some(("[E5061", rest)) => (codes::E5061, rest),
+            _ => (codes::E1010, why.as_str()),
+        };
+        let diagnostic = Diagnostic::error(code, span, format!("`{name}` was not imported from `{header}`: {why}"))
+            .note("the import skipped it, and said so at the import (W5002, W5001) [FFI-20a]");
         self.sink.emit(diagnostic);
         true
     }

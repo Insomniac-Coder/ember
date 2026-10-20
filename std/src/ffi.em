@@ -108,6 +108,12 @@ pub type c_float = f32
 pub type c_double = f64
 pub type c_wchar = i32
 
+## `[FFI-24]` — a C++ exception, caught by the thunk of the C++ function that threw it: the name
+## of its type, and what its `what()` said (empty for an exception that is no `std::exception`).
+pub struct CppError:
+    pub type_name: String
+    pub what: String
+
 ## `[FFI-36a]` — `ForeignBox[T]` owns a foreign object: its address, and the foreign function
 ## that frees it, which the box's end calls once. A box is made by `adopt[T](h)` (the destructor
 ## is the one the declaration of `T` names, `@ffi(destroys(f))`) or by a foreign function whose

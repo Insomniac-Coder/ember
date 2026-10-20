@@ -1316,6 +1316,49 @@ pub fn compile_object_with_flags(
     Ok(())
 }
 
+/// `[FFI-3]` — an `import cpp`'s thunk file, compiled as C++ by the build's own compiler
+/// (`[BLD-FFI-4]`: cl or clang-cl with `/TP /EHsc`, g++ for gcc, clang++ for clang) with the
+/// profile's flags but the C standard, the given C++ standard, and the project's flags.
+pub fn compile_cpp_object(
+    toolchain: &Toolchain,
+    source: &Path,
+    flags: &[String],
+    output: &Path,
+    profile: Profile,
+    standard: &str,
+) -> Result<(), BuildError> {
+    if let Some(parent) = output.parent() { std::fs::create_dir_all(parent)?; }
+    let mut command = match toolchain {
+        Toolchain::Msvc { .. } => compiler_command(toolchain),
+        Toolchain::Clang(path) | Toolchain::Gcc(path) => {
+            let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+            let cpp = if name.contains("clang") { name.replacen("clang", "clang++", 1) } else { name.replacen("gcc", "g++", 1) };
+            let mut command = Command::new(path.with_file_name(cpp));
+            // `[THR-14]`, as for the C.
+            if cfg!(target_arch = "x86_64") { command.arg("-mcx16"); }
+            command
+        }
+    };
+    match toolchain {
+        Toolchain::Msvc { .. } => {
+            // cl's oldest C++ standard switch is C++14.
+            let standard = if standard == "c++11" { "c++14" } else { standard };
+            command.args(msvc_flags(profile).into_iter().filter(|flag| *flag != "/std:c11").map(|flag| if flag == "/Zi" { "/Z7" } else { flag }));
+            command.args(["/TP", "/EHsc", &format!("/std:{standard}")]).arg("/c").args(flags);
+            command.arg(source).arg(format!("/Fo{}", output.display()));
+        }
+        Toolchain::Clang(_) | Toolchain::Gcc(_) => {
+            command.args(gnu_flags(profile).into_iter().filter(|flag| *flag != "-std=c11" && *flag != "-mcx16")).arg(format!("-std={standard}")).arg("-c").args(flags);
+            command.arg(source).arg("-o").arg(output);
+        }
+    }
+    if let Err(error) = run(command) {
+        let _ = std::fs::remove_file(output);
+        return Err(error);
+    }
+    Ok(())
+}
+
 /// `[SIMD-6]` — the host C compiler's own vectorisation remarks on one
 /// unit, as corroborating evidence only: the unit is compiled again, with the
 /// build's flags, to an object nothing uses, adding the compiler's report

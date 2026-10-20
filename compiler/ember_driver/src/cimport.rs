@@ -37,6 +37,8 @@ pub struct Config<'a> {
     pub shared: &'a HashMap<String, Shared>,
     /// The name the import binds (`c`, or its `as` name).
     pub binding: &'a str,
+    /// `[FFI-17]` — for `import cpp`: the C++ standard the header is parsed with (`c++17`).
+    pub cpp: Option<&'a str>,
 }
 
 /// `[FFI-30]` — a C declaration (by Clang's USR) an import of the build wrote: one Ember entity
@@ -78,10 +80,27 @@ pub struct Function {
     /// Each parameter's Ember name and C type.
     pub params: Vec<(String, CType)>,
     pub result: Option<CType>,
-    /// The symbol it binds when that is not its name: a shim wrapper (`[FFI-29a]`).
+    /// The symbol it binds when that is not its name: a shim wrapper (`[FFI-29a]`), or a C++
+    /// function's thunk (`[FFI-3]`).
     pub link_name: Option<String>,
     pub abi: &'static str,
+    /// `[FFI-24]` — a C++ function's exception policy; `Direct` for every C function.
+    pub policy: Policy,
 }
+
+/// `[FFI-24]` — how a C++ function is called: directly when its declaration is non-throwing,
+/// else through a thunk that catches (its Ember function returns `Result[T, CppError]`); an
+/// overlay's `@ffi(noexcept)` keeps the catching thunk and panics on a throw (`[FFI-24b]`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Policy {
+    Direct,
+    Catching,
+    Asserted,
+    /// Neither derived nor declared: `E5061` where it is used.
+    Unknown,
+}
+
+const POLICIES: [Policy; 4] = [Policy::Direct, Policy::Catching, Policy::Asserted, Policy::Unknown];
 
 /// `[FFI-6b]` — a function-like macro: its name and parameters, for an overlay's
 /// `@ffi(macro_fn)` entry to state its signature.
@@ -102,6 +121,8 @@ pub struct CType {
     pub char_pointer: bool,
     /// The C type as the header writes it.
     pub c: String,
+    /// `[FFI-40]` — the parameter's mode: `mut ` for a C++ `T&`, `owned ` for a `T&&`, else none.
+    pub mode: String,
 }
 
 /// What a declaration of the header became: an overlay finds it by its C name.
@@ -151,6 +172,8 @@ pub struct Imported {
     /// `[FFI-6b]` — each type the module declares, by its Ember name, as C spells it: a macro's
     /// wrapper is written with it.
     pub c_types: Vec<(String, String)>,
+    /// `[FFI-41]` — `W5034`: each entity of an anonymous namespace.
+    pub anonymous_namespace: Vec<Skipped>,
 }
 
 fn text(string: CXString) -> String {
@@ -340,7 +363,10 @@ fn load_libclang() -> Result<(), String> {
 
 /// The arguments libclang parses with: C11, as the generated C is compiled, for the host target.
 fn arguments(config: &Config) -> Vec<String> {
-    let mut args = vec!["-x".to_string(), "c".to_string(), "-std=c11".to_string()];
+    let mut args = match config.cpp {
+        Some(standard) => vec!["-x".to_string(), "c++".to_string(), format!("-std={standard}")],
+        None => vec!["-x".to_string(), "c".to_string(), "-std=c11".to_string()],
+    };
     args.extend(config.include_paths.iter().map(|dir| format!("-I{}", dir.display())));
     args.extend(config.defines.iter().map(|define| format!("-D{define}")));
     args.extend(config.flags.iter().cloned());
@@ -353,7 +379,7 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
     load_libclang()?;
     // An absolute folder: Clang then names every file it finds by its absolute path.
     let from_dir = std::path::absolute(config.from_dir).map_err(|e| e.to_string())?;
-    let main = from_dir.join(format!("{}_import_c.c", ember_branding::SYMBOL_PREFIX));
+    let main = from_dir.join(format!("{}_import_c.{}", ember_branding::SYMBOL_PREFIX, if config.cpp.is_some() { "cpp" } else { "c" }));
     let args = arguments(config);
     let include = format!("#include \"{}\"\n", config.header.replace('\\', "/"));
     let unit = Unit::parse(&main, &include, &args)?;
@@ -376,14 +402,26 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
         stem: config.symbol_stem.to_string(),
         shared: config.shared.clone(),
         binding: config.binding.to_string(),
+        cpp: config.cpp.is_some(),
         ..Writer::default()
     };
-    for cursor in children(unit.cursor()) {
+    let in_header = |cursor: CXCursor| {
         let (file, _, system) = location(cursor);
-        if file != header && (system || file.is_empty() || Path::new(&file) == main) {
-            continue;
+        file == header || !(system || file.is_empty() || Path::new(&file) == main)
+    };
+    if writer.cpp {
+        // `[FFI-32]`, `[FFI-24]` — what only C++'s own rules answer, asked of Clang in one more parse.
+        let probe_args = {
+            let mut probe_args = args.clone();
+            probe_args.push("-ferror-limit=0".to_string());
+            probe_args
+        };
+        (writer.by_value, writer.nothrow) = cpp_facts(&unit, &main, &include, &probe_args, &in_header)?;
+    }
+    for cursor in children(unit.cursor()) {
+        if in_header(cursor) {
+            writer.declaration(cursor);
         }
-        writer.declaration(cursor);
     }
     // `[FFI-6a]` — the object-like macros, evaluated by Clang in a second parse.
     let macros = writer.macro_names.clone();
@@ -391,7 +429,8 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
         let mut probe = include.clone();
         for (index, (name, _)) in macros.iter().enumerate() {
             // Unparenthesised: Clang evaluates a string only as the literal itself.
-            let _ = writeln!(probe, "static const __auto_type {}_macro_{index} = {name};", ember_branding::SYMBOL_PREFIX);
+            let deduced = if writer.cpp { "auto" } else { "__auto_type" };
+            let _ = writeln!(probe, "static const {deduced} {}_macro_{index} = {name};", ember_branding::SYMBOL_PREFIX);
         }
         // Every macro's error reported, however many: each names its own line.
         let mut probe_args = args.clone();
@@ -526,6 +565,15 @@ struct Writer {
     /// `[FFI-8]` — the generated `<Parent>_anon<N>` types of anonymous members: C has no name for
     /// them, so the shim checks their bytes through the parent.
     anonymous: HashSet<String>,
+    /// `[FFI-17]` — the header is C++: its functions are reached through thunks.
+    cpp: bool,
+    /// `[FFI-32]` — each C++ class, by USR, that is standard-layout and trivially copyable.
+    by_value: HashMap<String, bool>,
+    /// `[FFI-24]` — each C++ function, by USR, whose `noexcept(expr)` holds.
+    nothrow: HashMap<String, bool>,
+    /// The thunks written, for their names.
+    thunks: usize,
+    anonymous_namespace: Vec<Skipped>,
 }
 
 impl Writer {
@@ -564,6 +612,44 @@ impl Writer {
     fn declaration(&mut self, cursor: CXCursor) {
         match kind(cursor) {
             CXCursor_FunctionDecl => self.function(cursor),
+            // `extern "C" { … }` in a C++ header.
+            CXCursor_LinkageSpec => {
+                for child in children(cursor) {
+                    self.declaration(child);
+                }
+            }
+            // `[FFI-41]` — an anonymous namespace's entities have internal linkage: `W5034`.
+            // ponytail: a named namespace's entities are skipped until namespaces become module paths.
+            CXCursor_Namespace => {
+                // SAFETY(ffi): a live cursor.
+                let anonymous = unsafe { clang_Cursor_isAnonymous(cursor) } != 0 || spelling(cursor).is_empty();
+                for child in children(cursor) {
+                    let name = spelling(child);
+                    if name.is_empty() {
+                        continue;
+                    }
+                    if anonymous {
+                        let at = self.at(child);
+                        self.anonymous_namespace.push(Skipped { name, reason: "it is in an anonymous namespace, so each C++ file has its own".to_string(), at });
+                    } else {
+                        let reason = format!("it is in namespace `{}` (namespaces as module paths, `[FFI-41]`, are not built yet)", spelling(cursor));
+                        self.skip(child, &name, reason);
+                    }
+                }
+            }
+            CXCursor_ClassTemplate | CXCursor_FunctionTemplate | CXCursor_ClassTemplatePartialSpecialization => {
+                let name = spelling(cursor);
+                self.skip(cursor, &name, "a template: only the explicit instantiations `instantiate=[…]` lists are imported ([FFI-17b])");
+            }
+            CXCursor_ClassDecl => {
+                // SAFETY(ffi): a live cursor.
+                if unsafe { clang_Cursor_isAnonymous(cursor) } == 0 {
+                    let _ = self.record(cursor, None);
+                }
+            }
+            CXCursor_TypeAliasDecl => {
+                let _ = self.typedef(cursor);
+            }
             CXCursor_StructDecl | CXCursor_UnionDecl => {
                 // SAFETY(ffi): a live cursor.
                 if unsafe { clang_Cursor_isAnonymous(cursor) } == 0 {
@@ -738,14 +824,14 @@ impl Writer {
             }
         };
         let c = type_spelling(ty);
-        let Some(pointee) = pointee else { return Ok(CType { ember, pointee: None, char_pointer: false, c }) };
+        let Some(pointee) = pointee else { return Ok(CType { ember, pointee: None, char_pointer: false, c, mode: String::new() }) };
         // SAFETY(ffi): as above.
         let (constant, character) = unsafe {
             let kind = clang_getCanonicalType(pointee).kind;
             (clang_isConstQualifiedType(pointee) != 0, matches!(kind, CXType_Char_S | CXType_Char_U))
         };
         let inner = self.ty(pointee, true)?;
-        Ok(CType { ember, pointee: Some((inner, constant)), char_pointer: character, c })
+        Ok(CType { ember, pointee: Some((inner, constant)), char_pointer: character, c, mode: String::new() })
     }
 
     fn typedef(&mut self, cursor: CXCursor) -> Result<String, String> {
@@ -845,6 +931,11 @@ impl Writer {
             }
             if kind(definition) == CXCursor_UnionDecl {
                 return self.opaque(cursor, &key, &named, Some("a C union (Ember's `union` is reserved for a later version)".to_string()));
+            }
+            // `[FFI-32]` — a C++ class is a struct only when it is standard-layout and trivially
+            // copyable; any other is opaque behind a pointer, made only by its constructors.
+            if self.cpp && !self.by_value.get(&key).copied().unwrap_or(false) {
+                return self.opaque(cursor, &key, &named, None);
             }
             self.records.insert(key.clone(), Record::Pending(name.clone()));
             let ty = clang_getCursorType(definition);
@@ -1143,10 +1234,21 @@ impl Writer {
 
     fn function(&mut self, cursor: CXCursor) {
         let name = spelling(cursor);
-        if !self.seen.insert(format!("fn {name}")) {
+        // A C++ function is known by its USR: an overload is another function of one name.
+        let key = if self.cpp { usr(cursor) } else { name.clone() };
+        if !self.seen.insert(format!("fn {key}")) {
             return;
         }
-        match self.function_parts(cursor, &name) {
+        if self.cpp && self.functions.iter().any(|function| function.name == name) {
+            self.skip(cursor, &name, "an overload: Ember has no overloading, and the first declaration of the name is the one imported");
+            return;
+        }
+        // `[FFI-3]` — a C++ function, never its mangled symbol: an `extern "C"` thunk, unless the
+        // header declares it `extern "C"` itself (`[FFI-44]`: Part XVI's).
+        // SAFETY(ffi): a live function cursor.
+        let c_linkage = unsafe { text(clang_Cursor_getMangling(cursor)) } == name;
+        let parts = if self.cpp && !c_linkage { self.cpp_function(cursor, &name) } else { self.function_parts(cursor, &name) };
+        match parts {
             Ok(function) => {
                 if !self.claim(&name) {
                     self.skip(cursor, &name, "its name is taken by another declaration of the header");
@@ -1180,13 +1282,133 @@ impl Writer {
             }
             let result = clang_getResultType(ty);
             let result = if result.kind == CXType_Void { None } else { Some(self.c_type(result, false).map_err(|reason| format!("its result: {reason}"))?) };
-            // `[FFI-29a]` — a function with internal linkage is reached through the shim's wrapper.
-            let link_name = (clang_getCursorLinkage(cursor) == CXLinkage_Internal).then(|| {
+            // `[FFI-29a]` — a function with internal linkage is reached through the shim's wrapper, as
+            // is a C++ header's `extern "C"` inline one, whose symbol only a C++ file that uses it has.
+            let inline_cpp = self.cpp && clang_Cursor_isFunctionInlined(cursor) != 0;
+            let link_name = (clang_getCursorLinkage(cursor) == CXLinkage_Internal || inline_cpp).then(|| {
                 let wrapper = format!("{}_cshim_{}_{name}", ember_branding::SYMBOL_PREFIX, self.stem);
                 self.wrapper(cursor, &wrapper, name);
                 wrapper
             });
-            Ok(Function { name: name.to_string(), params, result, link_name, abi })
+            Ok(Function { name: name.to_string(), params, result, link_name, abi, policy: Policy::Direct })
+        }
+    }
+
+    /// `[FFI-17]`, `[FFI-3]`, `[FFI-24]`, `[FFI-40]` — a C++ function: an `extern "C"` thunk in the
+    /// shim calls it, by its qualified name. Its exception policy is derived (`policy`); a thunk of a
+    /// function that may throw catches every exception, sets its last argument, and keeps the
+    /// exception's type name and `what()` for the Ember side's `CppError`. A `T&` parameter is
+    /// passed by address (`mut T`, or `ref mut T` for an opaque class); a `const T&` as a borrowed
+    /// value (`T`, or `ref T`); a `T&&` as an owned value, moved in; a `T&` result as a raw pointer.
+    fn cpp_function(&mut self, cursor: CXCursor, name: &str) -> Result<Function, String> {
+        // SAFETY(ffi): a live function cursor and its types.
+        unsafe {
+            let ty = clang_getCursorType(cursor);
+            if clang_isFunctionTypeVariadic(ty) != 0 {
+                return Err("variadic (`...`): Ember's variadic foreign calls are not built yet".to_string());
+            }
+            let mut params = Vec::new();
+            let mut declared = Vec::new();
+            let mut passed = Vec::new();
+            for index in 0..clang_Cursor_getNumArguments(cursor).max(0) as u32 {
+                let argument = clang_Cursor_getArgument(cursor, index);
+                let written = spelling(argument);
+                let param = if written.is_empty() { format!("_{index}") } else { ident(&written) };
+                let (c_type, declaration, pass) = self
+                    .cpp_parameter(clang_getCursorType(argument), &format!("a{index}"))
+                    .map_err(|reason| format!("[E5031] parameter `{param}`: {reason}"))?;
+                params.push((param, c_type));
+                declared.push(declaration);
+                passed.push(pass);
+            }
+            let policy = self.policy(cursor);
+            let result_ty = clang_getResultType(ty);
+            let call = format!("{}({})", qualified_name(cursor), passed.join(", "));
+            let (result, returned, call) = match result_ty.kind {
+                CXType_Void => (None, None, call),
+                CXType_LValueReference => {
+                    let pointee = clang_getPointeeType(result_ty);
+                    let constant = clang_isConstQualifiedType(pointee) != 0;
+                    let inner = self.ty(pointee, true).map_err(|reason| format!("its result: {reason}"))?;
+                    let pointer = format!("*{}{inner}", if constant { "" } else { "mut " });
+                    let c = type_spelling(result_ty);
+                    let ember = CType { ember: pointer, pointee: Some((inner, constant)), char_pointer: false, c, mode: String::new() };
+                    (Some(ember), Some(format!("{}*", cpp_spelling(pointee))), format!("&{call}"))
+                }
+                _ => {
+                    let mapped = self.c_type(result_ty, false).map_err(|reason| format!("its result: {reason}"))?;
+                    (Some(mapped), Some(cpp_spelling(result_ty)), call)
+                }
+            };
+            let thunk = format!("{}_cpp_{}_{}", ember_branding::SYMBOL_PREFIX, self.stem, self.thunks);
+            self.thunks += 1;
+            let catching = policy != Policy::Direct;
+            if catching {
+                declared.push("int* failed".to_string());
+            }
+            let declared = if declared.is_empty() { "void".to_string() } else { declared.join(", ") };
+            let body = match (&returned, catching) {
+                (None, false) => format!("{call};"),
+                (Some(_), false) => format!("return {call};"),
+                (None, true) => format!("try {{ *failed = 0; {call}; }} catch (...) {{ *failed = 1; caught(); }}"),
+                (Some(returned), true) => format!("try {{ *failed = 0; return {call}; }} catch (...) {{ *failed = 1; caught(); return zero<{returned}>(); }}"),
+            };
+            let returned = returned.unwrap_or_else(|| "void".to_string());
+            let _ = writeln!(self.shim, "extern \"C\" {returned} {thunk}({declared}) noexcept {{ {body} }}");
+            Ok(Function { name: name.to_string(), params, result, link_name: Some(thunk), abi: "C", policy })
+        }
+    }
+
+    /// `[FFI-40]` — a C++ parameter: its Ember type and mode, the thunk's declaration of it, and the
+    /// expression the thunk passes on.
+    fn cpp_parameter(&mut self, ty: CXType, name: &str) -> Result<(CType, String, String), String> {
+        // SAFETY(ffi): types of a live translation unit.
+        unsafe {
+            let c = type_spelling(ty);
+            let plain = |ember: String, mode: &str| CType { ember, pointee: None, char_pointer: false, c: c.clone(), mode: mode.to_string() };
+            match ty.kind {
+                CXType_LValueReference => {
+                    let pointee = clang_getPointeeType(ty);
+                    let constant = clang_isConstQualifiedType(pointee) != 0;
+                    let by_value = self.ty(pointee, false);
+                    let spelled = cpp_spelling(pointee);
+                    Ok(match (constant, by_value) {
+                        (true, Ok(mapped)) => (plain(mapped, ""), format!("{spelled} {name}"), name.to_string()),
+                        (true, Err(_)) => (plain(format!("ref {}", self.ty(pointee, true)?), ""), format!("{spelled}* {name}"), format!("*{name}")),
+                        (false, Ok(mapped)) => (plain(mapped, "mut "), format!("{spelled}* {name}"), format!("*{name}")),
+                        (false, Err(_)) => (plain(format!("ref mut {}", self.ty(pointee, true)?), ""), format!("{spelled}* {name}"), format!("*{name}")),
+                    })
+                }
+                CXType_RValueReference => {
+                    let pointee = clang_getPointeeType(ty);
+                    let mapped = self.ty(pointee, false).map_err(|reason| format!("an rvalue reference to a type that does not map by value: {reason}"))?;
+                    Ok((plain(mapped, "owned "), format!("{} {name}", cpp_spelling(pointee)), format!("std::move({name})")))
+                }
+                _ => {
+                    let mapped = self.c_type(ty, true)?;
+                    Ok((mapped, c_declaration(clang_getCanonicalType(ty), name), name.to_string()))
+                }
+            }
+        }
+    }
+
+    /// `[FFI-24]` — a C++ function's exception policy, derived from its declaration: a
+    /// `noexcept`, a `throw()`, a `noexcept(expr)` whose `expr` holds, and a destructor are
+    /// non-throwing; a declaration with no exception specification may throw; a specification
+    /// Clang has not evaluated (a template's) derives nothing.
+    fn policy(&self, cursor: CXCursor) -> Policy {
+        // SAFETY(ffi): a live cursor.
+        let specification = unsafe { clang_getCursorExceptionSpecificationType(cursor) };
+        match specification {
+            _ if kind(cursor) == CXCursor_Destructor => Policy::Direct,
+            CXCursor_ExceptionSpecificationKind_BasicNoexcept | CXCursor_ExceptionSpecificationKind_DynamicNone | CXCursor_ExceptionSpecificationKind_NoThrow => Policy::Direct,
+            CXCursor_ExceptionSpecificationKind_ComputedNoexcept => match self.nothrow.get(&usr(cursor)) {
+                Some(true) => Policy::Direct,
+                Some(false) => Policy::Catching,
+                None => Policy::Unknown,
+            },
+            CXCursor_ExceptionSpecificationKind_None | CXCursor_ExceptionSpecificationKind_Dynamic | CXCursor_ExceptionSpecificationKind_MSAny => Policy::Catching,
+            _ => Policy::Unknown,
         }
     }
 
@@ -1203,7 +1425,8 @@ impl Writer {
             let result = clang_getResultType(ty);
             let call = format!("{name}({})", arguments.join(", "));
             let body = if result.kind == CXType_Void { format!("{call};") } else { format!("return {call};") };
-            let _ = writeln!(self.shim, "{} {{ {body} }}", c_declaration(result, &format!("{wrapper}({params})")));
+            let linkage = if self.cpp { "extern \"C\" " } else { "" };
+            let _ = writeln!(self.shim, "{linkage}{} {{ {body} }}", c_declaration(result, &format!("{wrapper}({params})")));
         }
     }
 
@@ -1346,12 +1569,22 @@ impl Writer {
     }
 
     fn finish(self, header: PathBuf) -> Imported {
-        let shim = format!(
-            "/* The shim of `import c \"{}\"` ([FFI-29]): the layout checks and wrappers Ember needs. */\n#include <stddef.h>\n#include \"{}\"\n\n{}",
-            header.display(),
-            header.to_string_lossy().replace('\\', "/"),
-            self.shim
-        );
+        let shim = if self.cpp {
+            format!(
+                "/* The thunks of `import cpp \"{}\"` ([FFI-3], [FFI-29]): the layout checks and the `extern \"C\"` functions Ember calls. */\n{}#include \"{}\"\n\n{}",
+                header.display(),
+                cpp_prelude(&self.stem),
+                header.to_string_lossy().replace('\\', "/"),
+                self.shim
+            )
+        } else {
+            format!(
+                "/* The shim of `import c \"{}\"` ([FFI-29]): the layout checks and wrappers Ember needs. */\n#include <stddef.h>\n#include \"{}\"\n\n{}",
+                header.display(),
+                header.to_string_lossy().replace('\\', "/"),
+                self.shim
+            )
+        };
         Imported {
             items: self.items,
             header,
@@ -1366,8 +1599,131 @@ impl Writer {
             conflicts: self.conflicts,
             macro_functions: self.macro_functions,
             c_types: self.c_types,
+            anonymous_namespace: self.anonymous_namespace,
         }
     }
+}
+
+/// `[FFI-3]` — a C++ type as a thunk spells it: its canonical spelling, every name qualified.
+fn cpp_spelling(ty: CXType) -> String {
+    // SAFETY(ffi): a type of a live translation unit.
+    type_spelling(unsafe { clang_getCanonicalType(ty) })
+}
+
+/// `[FFI-17]` — a C++ entity's fully qualified name: `::engine::Mesh::size`.
+fn qualified_name(cursor: CXCursor) -> String {
+    let mut parts = vec![spelling(cursor)];
+    // SAFETY(ffi): cursors of a live translation unit.
+    let mut parent = unsafe { clang_getCursorSemanticParent(cursor) };
+    while matches!(kind(parent), CXCursor_Namespace | CXCursor_StructDecl | CXCursor_ClassDecl | CXCursor_ClassTemplate | CXCursor_UnionDecl) {
+        parts.push(spelling(parent));
+        // SAFETY(ffi): as above.
+        parent = unsafe { clang_getCursorSemanticParent(parent) };
+    }
+    parts.reverse();
+    format!("::{}", parts.join("::"))
+}
+
+/// `[FFI-32]`, `[FFI-24]` — what only C++'s own rules answer, asked of Clang in one parse of the
+/// header: for each class it defines, whether it is standard-layout and trivially copyable; for
+/// each function declared `noexcept(expr)`, whether `expr` holds. Each by USR.
+fn cpp_facts(unit: &Unit, main: &Path, include: &str, args: &[String], in_header: &dyn Fn(CXCursor) -> bool) -> Result<(HashMap<String, bool>, HashMap<String, bool>), String> {
+    // (a class's question, the USR, the question)
+    fn gather(cursor: CXCursor, in_header: &dyn Fn(CXCursor) -> bool, out: &mut Vec<(bool, String, String)>) {
+        for child in children(cursor) {
+            if !in_header(child) {
+                continue;
+            }
+            // SAFETY(ffi): cursors and types of a live translation unit.
+            unsafe {
+                match kind(child) {
+                    CXCursor_Namespace | CXCursor_LinkageSpec => gather(child, in_header, out),
+                    CXCursor_StructDecl | CXCursor_ClassDecl if clang_isCursorDefinition(child) != 0 => {
+                        let spelled = cpp_spelling(clang_getCursorType(child));
+                        if !spelled.contains('(') {
+                            out.push((true, usr(child), format!("__is_trivially_copyable({spelled}) && __is_standard_layout({spelled})")));
+                        }
+                        gather(child, in_header, out);
+                    }
+                    CXCursor_FunctionDecl if clang_getCursorExceptionSpecificationType(child) == CXCursor_ExceptionSpecificationKind_ComputedNoexcept => {
+                        let ty = clang_getCursorType(child);
+                        let arguments: Vec<String> = (0..clang_getNumArgTypes(ty).max(0) as u32)
+                            .map(|index| format!("std::declval<{}>()", type_spelling(clang_getArgType(ty, index))))
+                            .collect();
+                        out.push((false, usr(child), format!("noexcept({}({}))", qualified_name(child), arguments.join(", "))));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    let mut questions = Vec::new();
+    gather(unit.cursor(), in_header, &mut questions);
+    let (mut by_value, mut nothrow) = (HashMap::new(), HashMap::new());
+    if questions.is_empty() {
+        return Ok((by_value, nothrow));
+    }
+    let prefix = format!("{}_cpp_fact_", ember_branding::SYMBOL_PREFIX);
+    let mut probe = format!("{include}#include <utility>\n");
+    for (index, (_, _, question)) in questions.iter().enumerate() {
+        let _ = writeln!(probe, "constexpr bool {prefix}{index} = ({question});");
+    }
+    let probed = Unit::parse(main, &probe, args)?;
+    for cursor in children(probed.cursor()) {
+        if kind(cursor) == CXCursor_VarDecl
+            && let Some(index) = spelling(cursor).strip_prefix(&prefix).and_then(|index| index.parse::<usize>().ok())
+            && let Some(answer) = evaluate_unsigned(cursor)
+        {
+            let (class, usr, _) = &questions[index];
+            if *class { &mut by_value } else { &mut nothrow }.insert(usr.clone(), answer != 0);
+        }
+    }
+    Ok((by_value, nothrow))
+}
+
+/// `[FFI-3]`, `[FFI-24]` — the start of an `import cpp`'s thunk file: what the thunks use, and
+/// where a caught exception is kept for the Ember side — its type's name (demangled where the C++
+/// library says how, without MSVC's `class `) and its `what()`, per thread.
+fn cpp_prelude(stem: &str) -> String {
+    let prefix = ember_branding::SYMBOL_PREFIX;
+    format!(
+        r#"#include <cstddef>
+#include <cstdlib>
+#include <cstring>
+#include <exception>
+#include <string>
+#include <typeinfo>
+#include <utility>
+#if __has_include(<cxxabi.h>)
+#include <cxxabi.h>
+#endif
+#define _Static_assert static_assert
+#define _Alignof alignof
+
+namespace {{
+thread_local std::string caught_type, caught_what;
+[[maybe_unused]] std::string type_name(const char* name) {{
+#if __has_include(<cxxabi.h>)
+    int status = 0;
+    char* demangled = abi::__cxa_demangle(name, nullptr, nullptr, &status);
+    if (status == 0 && demangled) {{ std::string out(demangled); std::free(demangled); return out; }}
+#endif
+    std::string out(name);
+    for (const char* tag : {{"class ", "struct "}}) {{ if (out.rfind(tag, 0) == 0) out.erase(0, std::strlen(tag)); }}
+    return out;
+}}
+[[maybe_unused]] void caught() noexcept {{
+    try {{ throw; }}
+    catch (const std::exception& error) {{ caught_type = type_name(typeid(error).name()); caught_what = error.what(); }}
+    catch (...) {{ caught_type = "an exception that is no std::exception"; caught_what.clear(); }}
+}}
+template <class T> [[maybe_unused]] T zero() noexcept {{ union {{ unsigned char bytes[sizeof(T)]; T value; }} none = {{}}; return none.value; }}
+}}
+
+extern "C" const char* {prefix}_cpp_{stem}_error_type(void) noexcept {{ return caught_type.c_str(); }}
+extern "C" const char* {prefix}_cpp_{stem}_error_what(void) noexcept {{ return caught_what.c_str(); }}
+"#
+    )
 }
 
 /// `[FFI-8]` — where in `parent` its anonymous member `member` starts, in bytes: Clang gives a field's
@@ -1521,21 +1877,28 @@ struct Options {
     /// `[FFI-30c]` (ODR-149) — applied first to last.
     overlays: Vec<(String, Span)>,
     implementation: Vec<String>,
+    /// `[FFI-17]` — `import cpp`'s: the `[cpp.<project>]` section, and the explicit template
+    /// instantiations.
+    project: Option<(String, Span)>,
+    instantiate: Vec<String>,
 }
 
 const OPTIONS: &str = "`include_paths`, `defines`, `link`, `overlay` and `implementation`";
+const CPP_OPTIONS: &str = "`project`, `overlay` and `instantiate`";
 
 /// `[FFI-6]` — the options, each a list of strings but `overlay`, a string or a list of them
-/// (`[FFI-30c]`). An unknown option, or one written otherwise, is `E0104`.
-fn options(written: &[AttrArg], sink: &mut Sink) -> Option<Options> {
+/// (`[FFI-30c]`). `[FFI-17]` — `import cpp` takes `project` (a string), `overlay` and
+/// `instantiate` (a list of strings). An unknown option, or one written otherwise, is `E0104`.
+fn options(written: &[AttrArg], cpp: bool, sink: &mut Sink) -> Option<Options> {
     let mut options = Options::default();
     let mut ok = true;
+    let (form, accepted, rule) = if cpp { ("import cpp", CPP_OPTIONS, "FFI-17") } else { ("import c", OPTIONS, "FFI-6") };
     for arg in written {
         let AttrArg::Named { name, value } = arg else {
             let AttrArg::Expr(expr) = arg else { unreachable!() };
             sink.emit(
-                Diagnostic::error(codes::E0104, expr.span, "an option of `import c` is written `name = value`")
-                    .help(format!("the options are {OPTIONS} [FFI-6]")),
+                Diagnostic::error(codes::E0104, expr.span, format!("an option of `{form}` is written `name = value`"))
+                    .help(format!("the options are {accepted} [{rule}]")),
             );
             ok = false;
             continue;
@@ -1545,10 +1908,21 @@ fn options(written: &[AttrArg], sink: &mut Sink) -> Option<Options> {
             items.iter().map(|item| match &item.kind { ExprKind::Lit(Literal::Str(text)) => Some(text.clone()), _ => None }).collect()
         };
         let list = match name.name.as_str() {
-            "include_paths" => &mut options.include_paths,
-            "defines" => &mut options.defines,
-            "link" => &mut options.link,
-            "implementation" => &mut options.implementation,
+            "include_paths" if !cpp => &mut options.include_paths,
+            "defines" if !cpp => &mut options.defines,
+            "link" if !cpp => &mut options.link,
+            "implementation" if !cpp => &mut options.implementation,
+            "instantiate" if cpp => &mut options.instantiate,
+            "project" if cpp => {
+                if let ExprKind::Lit(Literal::Str(project)) = &value.kind {
+                    options.project = Some((project.clone(), value.span));
+                } else {
+                    sink.emit(Diagnostic::error(codes::E0104, value.span, "`project` names a `[cpp.<project>]` section of the manifest: a string")
+                        .help("write `project = \"engine\"` [FFI-17]"));
+                    ok = false;
+                }
+                continue;
+            }
             "overlay" => {
                 let one = |expr: &Expr| match &expr.kind {
                     ExprKind::Lit(Literal::Str(path)) => Some((path.clone(), expr.span)),
@@ -1573,8 +1947,8 @@ fn options(written: &[AttrArg], sink: &mut Sink) -> Option<Options> {
             }
             other => {
                 sink.emit(
-                    Diagnostic::error(codes::E0104, name.span, format!("`{other}` is not an option of `import c`"))
-                        .help(format!("the options are {OPTIONS} [FFI-6]")),
+                    Diagnostic::error(codes::E0104, name.span, format!("`{other}` is not an option of `{form}`"))
+                        .help(format!("the options are {accepted} [{rule}]")),
                 );
                 ok = false;
                 continue;
@@ -1619,23 +1993,48 @@ pub struct Loaded {
 /// options) to its module's path: a second import of it binds the same module and returns `None`.
 /// `base`: where an option's relative path is found (the package's folder, else the importing
 /// file's); `flags`: the package's `[c] flags` (`[BLD-FFI-1a]`).
+#[allow(clippy::too_many_arguments)]
 pub fn load(
     import: &mut ast::Import,
     importer: &Path,
     base: &Path,
     flags: &[String],
+    manifest: Option<&str>,
     known: &mut Known,
     map: &mut SourceMap,
     sink: &mut Sink,
 ) -> Option<Loaded> {
     let span = import.span;
     let ast::ImportKind::Foreign { language, header, options: written, alias } = &import.kind else { return None };
-    if *language == ast::ForeignLanguage::Cpp {
-        sink.emit(Diagnostic::error(codes::E0900, span, "`import cpp` is not implemented yet (Annex C)"));
-        return None;
-    }
-    let options = options(written, sink)?;
-    let bound = alias.map_or_else(|| Symbol::intern("c"), |alias| alias.name);
+    let language = *language;
+    let cpp = language == ast::ForeignLanguage::Cpp;
+    let mut options = options(written, cpp, sink)?;
+    let bound = alias.map_or_else(|| Symbol::intern(if cpp { "cpp" } else { "c" }), |alias| alias.name);
+    // `[FFI-17]`, `[FFI-50]` — the C++ project's configuration: its standard, defines, include
+    // paths and flags, from the manifest's `[cpp.<project>]`.
+    let project = if cpp {
+        let section = options.project.as_ref().map(|(name, _)| format!("cpp.{name}"));
+        let value = |key: &str| section.as_deref().and_then(|section| manifest.and_then(|text| manifest_value(text, section, key)));
+        if let (Some((name, at)), None) = (&options.project, section.as_deref().and_then(|section| manifest.filter(|text| has_section(text, section)))) {
+            sink.emit(
+                Diagnostic::error(codes::E0104, *at, format!("the manifest has no `[cpp.{name}]` section"))
+                    .help(format!("add `[cpp.{name}]` to the package's manifest, with the project's `standard`, `defines`, `include_paths` and `flags` [FFI-50]")),
+            );
+            return None;
+        }
+        options.defines = value("defines").map(|written| manifest_strings(&written)).unwrap_or_default();
+        options.include_paths = value("include_paths").map(|written| manifest_strings(&written)).unwrap_or_default();
+        let standard = value("standard").map(|written| written.trim_matches('"').to_string()).unwrap_or_else(|| "c++17".to_string());
+        let project_flags = value("flags").map(|written| manifest_strings(&written)).unwrap_or_default();
+        let compiler = value("compiler").map(|written| written.trim_matches('"').to_string());
+        Some((standard, project_flags, compiler))
+    } else {
+        None
+    };
+    let flags: &[String] = match &project {
+        Some((_, project_flags, _)) => project_flags,
+        None => flags,
+    };
     // A bare file name's folder is the working one.
     let from_dir = importer.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf();
     // `[BLD-FFI-1]` — `import c "./bridge.c"` compiles `bridge.c` and imports `bridge.h`.
@@ -1644,12 +2043,14 @@ pub fn load(
         None => (header.clone(), None),
     };
     let key = format!(
-        "{}|{header}|{:?}|{:?}|{:?}|{:?}",
+        "{}|{header}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}",
         from_dir.display(),
         options.include_paths,
         options.defines,
         options.overlays.iter().map(|(written, _)| written).collect::<Vec<_>>(),
-        options.implementation
+        options.implementation,
+        project,
+        options.instantiate
     );
     let rewrite = |import: &mut ast::Import, path: &[String]| {
         let segments = path.iter().map(|segment| ast::Ident { name: Symbol::intern(segment), span }).collect();
@@ -1664,7 +2065,7 @@ pub fn load(
         .file_stem()
         .map(|stem| stem.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect())
         .unwrap_or_default();
-    let mut path = vec!["c".to_string(), format!("h_{stem}")];
+    let mut path = vec![if cpp { "cpp" } else { "c" }.to_string(), format!("h_{stem}")];
     let mut suffix = 1;
     while known.modules.values().any(|taken| *taken == path) {
         suffix += 1;
@@ -1680,6 +2081,7 @@ pub fn load(
         symbol_stem: &path.join("_"),
         shared: &known.shared,
         binding: bound.as_str(),
+        cpp: project.as_ref().map(|(standard, ..)| standard.as_str()),
     };
     // `[FFI-7]` — the overlays are part of what the record is for.
     let overlay_text = options
@@ -1729,6 +2131,13 @@ pub fn load(
                 .help("to use it, declare it by hand in an `unsafe extern \"C\":` block with types Ember has, or wrap it in a C function the header declares"),
         );
     }
+    // `[FFI-41]` — an anonymous namespace's entities.
+    for skipped in &imported.anonymous_namespace {
+        sink.emit(
+            Diagnostic::warning(codes::W5034, span, format!("`{}` is not imported from `{shown}`: {}", skipped.name, skipped.reason))
+                .note(format!("declared at {} [FFI-41]", skipped.at)),
+        );
+    }
     for opaque in &imported.opaque {
         sink.emit(
             Diagnostic::warning(codes::W5002, span, format!("`{}` is imported from `{shown}` only as an opaque type, usable behind a pointer: {}", opaque.name, opaque.reason))
@@ -1752,7 +2161,7 @@ pub fn load(
                     .items
                     .iter()
                     .filter_map(|item| match &item.kind {
-                        ast::ItemKind::Overlay(overlay) if overlay.language == ast::ForeignLanguage::C => Some(overlay),
+                        ast::ItemKind::Overlay(overlay) if overlay.language == language => Some(overlay),
                         _ => None,
                     })
                     .collect();
@@ -1783,7 +2192,7 @@ pub fn load(
     // Named for its module: the source map keeps one file per name, and one header imported twice
     // is two modules.
     // No quotes: the name reaches the C as `#line`'s file name ([CG-C-8]).
-    let rendered = render(&imported, &applied);
+    let rendered = render(&imported, &applied, &symbol_stem);
     // `[TCB-1]` — each `@grade(instrumented)` entry an evidence record of this package backs.
     let evidence = if overlay_modules.is_empty() { None } else { crate::foreign::load_evidence(importer) };
     for (_, overlay, backed) in &mut overlay_modules {
@@ -1806,7 +2215,7 @@ pub fn load(
             }
         }
     }
-    let file = map.add(PathBuf::from(format!("<import c {header} as {}>", path.join("."))), rendered);
+    let file = map.add(PathBuf::from(format!("<import {} {header} as {}>", if cpp { "cpp" } else { "c" }, path.join("."))), rendered);
     let text = map.file(file).text.clone();
     let lexed = ember_lexer::lex(file, &text, sink);
     let module = ember_parser::parse(file, &text, lexed.tokens, sink);
@@ -1834,6 +2243,14 @@ pub fn load(
             shim.push_str(wrapper);
         }
     }
+    // `[FFI-24]` — a C++ function whose policy is neither derived nor declared is `E5061` where
+    // it is used.
+    let undecided: Vec<(String, String)> = imported
+        .functions
+        .iter()
+        .filter(|function| function.policy == Policy::Unknown)
+        .map(|function| (function.name.clone(), "[E5061] its exception policy cannot be derived from the header (its specification is not evaluated), and no overlay declares one".to_string()))
+        .collect();
     let mut c_flags: Vec<String> = flags.to_vec();
     c_flags.extend(include_paths.iter().map(|dir| format!("-I{}", dir.display())));
     c_flags.extend(options.defines.iter().map(|define| format!("-D{define}")));
@@ -1848,6 +2265,8 @@ pub fn load(
             .iter()
             .map(|skipped| (skipped.name.clone(), skipped.reason.clone()))
             .chain(imported.macros.iter().filter(|skipped| !declared(&skipped.name)).map(|skipped| (skipped.name.clone(), format!("a macro, {}", skipped.reason))))
+            .chain(imported.anonymous_namespace.iter().map(|skipped| (skipped.name.clone(), skipped.reason.clone())))
+            .chain(undecided)
             .collect(),
         layouts: imported.layouts.iter().map(|layout| (layout.name.clone(), layout.size, layout.align, layout.fields.clone())).collect(),
         shim,
@@ -1858,6 +2277,7 @@ pub fn load(
             .iter()
             .map(|library| if ember_build::cdylib::is_library_path(library) { base.join(library).to_string_lossy().into_owned() } else { library.clone() })
             .collect(),
+        cpp: project.map(|(standard, _, compiler)| (standard, compiler)),
     };
     rewrite(import, &path);
     known.modules.insert(key, path.clone());
@@ -1883,6 +2303,27 @@ pub fn build_objects(
             continue;
         }
         let stem = module.path.join("_");
+        // `[FFI-3]` — an `import cpp`'s thunks are C++, compiled as C++ by the build's compiler
+        // (`[BLD-FFI-4]`), with the project's flags, and the C++ library linked.
+        if let Some((standard, compiler)) = &foreign.cpp {
+            let named = toolchain_name(toolchain);
+            if let Some(compiler) = compiler.as_deref().filter(|compiler| *compiler != named) {
+                return Err(format!("the C++ project of `{}` is compiled with `{compiler}`, and this build's C with `{named}`: one compiler builds both ([BLD-FFI-4])", foreign.header));
+            }
+            let thunks = c_dir.join(format!("{stem}.thunks.cpp"));
+            std::fs::write(&thunks, &foreign.shim).map_err(|e| e.to_string())?;
+            let object = obj_dir.join(format!("{stem}.thunks.{ext}"));
+            ember_build::compile_cpp_object(toolchain, &thunks, &foreign.flags, &object, profile, standard).map_err(|e| e.to_string())?;
+            objects.push(object);
+            libraries.extend(foreign.link.iter().cloned());
+            if !matches!(toolchain, ember_build::Toolchain::Msvc { .. }) {
+                let library = if cfg!(target_os = "macos") { "c++" } else { "stdc++" };
+                if !libraries.iter().any(|known| known == library) {
+                    libraries.push(library.to_string());
+                }
+            }
+            continue;
+        }
         let shim = c_dir.join(format!("{stem}.shim.c"));
         std::fs::write(&shim, &foreign.shim).map_err(|e| e.to_string())?;
         let mut units = vec![(shim, obj_dir.join(format!("{stem}.shim.{ext}")))];
@@ -1897,6 +2338,42 @@ pub fn build_objects(
         libraries.extend(foreign.link.iter().cloned());
     }
     Ok((objects, libraries))
+}
+
+/// `[FFI-50]` — a toolchain by the name a `[cpp.<project>]` section's `compiler` gives it.
+fn toolchain_name(toolchain: &ember_build::Toolchain) -> &'static str {
+    match toolchain {
+        ember_build::Toolchain::Msvc { cl, .. } if cl.file_stem().is_some_and(|stem| stem.to_string_lossy().contains("clang")) => "clang-cl",
+        ember_build::Toolchain::Msvc { .. } => "msvc",
+        ember_build::Toolchain::Clang(_) => "clang",
+        ember_build::Toolchain::Gcc(_) => "gcc",
+    }
+}
+
+/// `[FFI-50]` — the manifest's value of `key` in `[section]`, as written.
+fn manifest_value(manifest: &str, wanted: &str, key: &str) -> Option<String> {
+    let mut section = "";
+    for line in manifest.lines() {
+        let line = line.split_once('#').map_or(line, |(before, _)| before).trim();
+        if let Some(name) = line.strip_prefix('[').and_then(|line| line.strip_suffix(']')) {
+            section = name.trim();
+        } else if let Some((name, value)) = line.split_once('=')
+            && section == wanted
+            && name.trim() == key
+        {
+            return Some(value.trim().to_string());
+        }
+    }
+    None
+}
+
+fn has_section(manifest: &str, wanted: &str) -> bool {
+    manifest.lines().any(|line| line.trim().strip_prefix('[').and_then(|line| line.strip_suffix(']')).is_some_and(|name| name.trim() == wanted))
+}
+
+/// A manifest list of strings as written: `["A", "B=1"]`.
+fn manifest_strings(written: &str) -> Vec<String> {
+    written.trim().trim_start_matches('[').trim_end_matches(']').split(',').map(|item| item.trim().trim_matches('"').to_string()).filter(|item| !item.is_empty()).collect()
 }
 
 /// `[FFI-2]`, `[FFI-12]`, `[FFI-13]`, `[FFI-30a]` — what an import's overlays change in its module:
@@ -2124,13 +2601,14 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                 let body = if result.is_some() { format!("return {call};") } else { format!("{call};") };
                 let declared = if declared.is_empty() { "void".to_string() } else { declared.join(", ") };
                 let c_text = format!("{} {wrapper}({declared}) {{ {body} }}\n", c_result.as_deref().unwrap_or("void"));
-                let c_type = |ty: &ast::TypeExpr, c: &str| CType { ember: snippet(ty.span), pointee: None, char_pointer: false, c: c.to_string() };
+                let c_type = |ty: &ast::TypeExpr, c: &str| CType { ember: snippet(ty.span), pointee: None, char_pointer: false, c: c.to_string(), mode: String::new() };
                 let function = Function {
                     name: found.name.clone(),
                     params: params.iter().zip(&c_params).map(|((param, ty), c)| (param.name.to_string(), c_type(ty, c))).collect(),
                     result: result.as_ref().zip(c_result.as_ref()).map(|(ty, c)| c_type(ty, c)),
                     link_name: Some(wrapper),
                     abi: "C",
+                    policy: Policy::Direct,
                 };
                 // A raw pointer states nothing a call can rely on: the call stays unsafe (`[FFI-2]`).
                 let raw = params.iter().map(|(_, ty)| ty).chain(result).any(|ty| matches!(ty.kind, ast::TypeKind::Ptr { .. }));
@@ -2260,7 +2738,7 @@ fn render_function(function: &Function, entry: Option<&Entry>, renamed: Option<&
     let name = ident(renamed.unwrap_or(&function.name));
     let link = function.link_name.clone().or_else(|| renamed.map(|_| function.name.clone()));
     let mut arguments = Vec::new();
-    let mut params: Vec<String> = function.params.iter().map(|(name, ty)| format!("{name}: {}", ty.ember)).collect();
+    let mut params: Vec<String> = function.params.iter().map(|(name, ty)| format!("{}{name}: {}", ty.mode, ty.ember)).collect();
     let mut result = function.result.as_ref().map(|ty| ty.ember.clone());
     let mut safe = false;
     if let Some(entry) = entry {
@@ -2288,7 +2766,7 @@ fn render_function(function: &Function, entry: Option<&Entry>, renamed: Option<&
         }
         arguments.extend(entry.arguments.iter().cloned());
         if safe {
-            params = function.params.iter().zip(&entry.params).map(|((param, ty), words)| safe_parameter(param, ty, words)).collect();
+            params = function.params.iter().zip(&entry.params).map(|((param, ty), words)| safe_parameter(&format!("{}{param}", ty.mode), ty, words)).collect();
             result = function.result.as_ref().map(|ty| safe_result(ty, &entry.result));
         }
     }
@@ -2309,7 +2787,7 @@ fn render_function(function: &Function, entry: Option<&Entry>, renamed: Option<&
 }
 
 /// The module's text: its declarations with an overlay applied.
-fn render(imported: &Imported, applied: &Applied) -> String {
+fn render(imported: &Imported, applied: &Applied, stem: &str) -> String {
     let header = imported.header.file_name().map_or(String::new(), |name| name.to_string_lossy().into_owned());
     let mut body = String::new();
     let declare = |item: &Item, indent: &str| -> String {
@@ -2349,9 +2827,36 @@ fn render(imported: &Imported, applied: &Applied) -> String {
         }
     }
     // A hidden declaration stays, private to the module: another may name it (`destructor=f`).
+    let mut wrappers = String::new();
     for function in &imported.functions {
         let hidden = applied.hidden.contains(&function.name);
-        member(function.abi, render_function(function, applied.functions.get(&function.name), applied.renamed.get(&function.name), hidden));
+        let (entry, renamed) = (applied.functions.get(&function.name), applied.renamed.get(&function.name));
+        match function.policy {
+            Policy::Direct => member(function.abi, render_function(function, entry, renamed, hidden)),
+            // `E5061` where it is used.
+            Policy::Unknown => {}
+            policy => {
+                let (raw, wrapper) = render_catching(function, entry, renamed, hidden, policy);
+                member(function.abi, raw);
+                wrappers.push_str(&wrapper);
+            }
+        }
+    }
+    if !wrappers.is_empty() {
+        let prefix = ember_branding::SYMBOL_PREFIX;
+        for part in ["type", "what"] {
+            member("C", format!("    @ffi(link_name=\"{prefix}_cpp_{stem}_error_{part}\", result(borrowed, nul_terminated, from(static)))\n    safe fn {prefix}_cpp_error_{part}() -> cstr\n"));
+        }
+        let _ = write!(
+            wrappers,
+            "fn {prefix}_cpp_text(text: cstr) -> String:\n    match text.to_str():\n        Ok(read):\n            return read.to_string()\n        Err(_):\n            return \"(not UTF-8)\".to_string()\n\n\
+             ## `[FFI-24]` — the exception the last catching thunk caught on this thread.\n\
+             fn {prefix}_cpp_error() -> CppError:\n    return CppError(type_name = {prefix}_cpp_text({prefix}_cpp_error_type()), what = {prefix}_cpp_text({prefix}_cpp_error_what()))\n\n\
+             ## `[FFI-24]` — a catching call's value, or the exception its thunk caught.\n\
+             fn {prefix}_cpp_result[T](owned value: T, failed: c_int) -> Result[T, CppError]:\n    if failed != 0:\n        return Err({prefix}_cpp_error())\n    return Ok(value)\n\n\
+             ## `[FFI-24b]` — a call an overlay asserts `noexcept`: a throw panics, naming the declaration.\n\
+             fn {prefix}_cpp_value[T](owned value: T, failed: c_int, name: str) -> T:\n    if failed != 0:\n        error = {prefix}_cpp_error()\n        panic(f\"`{{name}}` threw `{{error.type_name}}` ({{error.what}}), though its overlay asserts it `noexcept` [FFI-24b]\")\n    return value\n\n"
+        );
     }
     // `[FFI-6b]` — each declared macro, bound to its wrapper in the shim.
     for (function, entry, _) in &applied.macros {
@@ -2361,6 +2866,7 @@ fn render(imported: &Imported, applied: &Applied) -> String {
     for (abi, members) in blocks {
         let _ = write!(body, "unsafe extern \"{abi}\":\n{members}\n");
     }
+    body.push_str(&wrappers);
     for extend in &applied.extends {
         let _ = write!(body, "{extend}\n\n");
     }
@@ -2370,7 +2876,7 @@ fn render(imported: &Imported, applied: &Applied) -> String {
     }
     // `std.ffi`'s names the module's text uses: its C aliases (`[FFI-8]`) and `ForeignBox`.
     let words: HashSet<&str> = body.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).collect();
-    let used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox"]).filter(|name| words.contains(name)).collect();
+    let used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox", "CppError"]).filter(|name| words.contains(name)).collect();
     if !used.is_empty() {
         let _ = writeln!(imports, "from std.ffi import {}", used.join(", "));
     }
@@ -2378,6 +2884,58 @@ fn render(imported: &Imported, applied: &Applied) -> String {
         imports.push('\n');
     }
     format!("# The declarations of `{header}`, written by `import c` ([FFI-6]).\n\n{imports}{body}")
+}
+
+/// `[FFI-24]`, `[FFI-24b]` — a C++ function whose thunk catches: the raw declaration, private,
+/// taking the thunk's last argument (set when it caught), and the function the module exports,
+/// which returns `Result[T, CppError]` — or `T`, panicking on a throw, when an overlay asserts
+/// `@ffi(noexcept)`. It is safe to call when an overlay entry says so and no parameter is a raw
+/// pointer.
+fn render_catching(function: &Function, entry: Option<&Entry>, renamed: Option<&String>, hidden: bool, policy: Policy) -> (String, String) {
+    let prefix = ember_branding::SYMBOL_PREFIX;
+    let raw_name = format!("{prefix}_raw_{}", function.name);
+    let mut raw = function.clone();
+    raw.name = raw_name.clone();
+    let failed = CType { ember: "*mut c_int".to_string(), pointee: Some(("c_int".to_string(), false)), char_pointer: false, c: "int*".to_string(), mode: String::new() };
+    raw.params.push(("failed".to_string(), failed));
+    let raw_text = render_function(&raw, None, None, true);
+    let name = ident(renamed.unwrap_or(&function.name));
+    let words_safe = entry.is_some_and(|entry| !entry.params.iter().flatten().chain(&entry.result).any(|written| matches!(word(written), "TODO" | "unsafe")));
+    let safe = words_safe && !function.params.iter().any(|(_, ty)| ty.ember.starts_with('*'));
+    let params: Vec<String> = function.params.iter().map(|(param, ty)| format!("{}{param}: {}", ty.mode, ty.ember)).collect();
+    let arguments: Vec<&str> = function.params.iter().map(|(param, _)| param.as_str()).collect();
+    let value = function.result.as_ref().map(|ty| ty.ember.clone());
+    let returned = match (policy, &value) {
+        (Policy::Asserted, Some(value)) => format!(" -> {value}"),
+        (Policy::Asserted, None) => String::new(),
+        (_, value) => format!(" -> Result[{}, CppError]", value.as_deref().unwrap_or("void")),
+    };
+    let call = format!("{raw_name}({}(ref mut failed) as *mut c_int)", arguments.iter().map(|argument| format!("{argument}, ")).collect::<String>());
+    let quoted = function.name.replace('"', "");
+    let mut text = String::new();
+    if !safe {
+        let _ = writeln!(text, "@safety(\"{UNCONTRACTED}\")");
+    }
+    let public = if hidden { "" } else { "pub " };
+    let _ = writeln!(text, "{public}{}fn {name}({}){returned}:", if safe { "" } else { "unsafe " }, params.join(", "));
+    let _ = writeln!(text, "    failed: c_int = 0");
+    let safety = "# SAFETY: the thunk takes this function's own arguments, and sets `failed` when it caught";
+    match (value.is_some(), policy) {
+        (true, Policy::Asserted) => {
+            let _ = writeln!(text, "    unsafe:  {safety}\n        return {prefix}_cpp_value({call}, failed, \"{quoted}\")");
+        }
+        (true, _) => {
+            let _ = writeln!(text, "    unsafe:  {safety}\n        return {prefix}_cpp_result({call}, failed)");
+        }
+        (false, Policy::Asserted) => {
+            let _ = writeln!(text, "    unsafe:  {safety}\n        {call}\n    {prefix}_cpp_value((), failed, \"{quoted}\")");
+        }
+        (false, _) => {
+            let _ = writeln!(text, "    unsafe:  {safety}\n        {call}\n    return {prefix}_cpp_result((), failed)");
+        }
+    }
+    text.push('\n');
+    (raw_text, text)
 }
 
 /// The overlay entry that states nothing yet for a function: each unknown fact a `TODO(…)` word
@@ -2416,6 +2974,8 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
     let (mut init, mut merge, mut report) = (false, false, false);
     let (mut check, mut overlay, mut baseline, mut write_baseline) = (None, None, None, None);
     let (mut explain, mut emit) = (None, false);
+    // `[FFI-50]` — `--emit-cpp`: the header is C++, and its thunk file is written for inspection.
+    let (mut emit_cpp, mut standard) = (false, "c++17".to_string());
     let mut rest = args.iter();
     while let Some(argument) = rest.next() {
         let mut value = |flag: &str| rest.next().cloned().ok_or(format!("`{flag}` needs a value"));
@@ -2431,6 +2991,8 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
             "-D" => defines.push(value("-D")?),
             "--explain" => explain = Some(value("--explain")?),
             "--emit-embind" => emit = true,
+            "--emit-cpp" => emit_cpp = true,
+            "--std" => standard = value("--std")?,
             flag if flag.starts_with('-') => return Err(format!("unknown `ember bind` option `{flag}`")),
             file if header.is_none() => header = Some(PathBuf::from(file)),
             extra => return Err(format!("unexpected `ember bind` argument `{extra}`")),
@@ -2448,9 +3010,16 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
         flags: &[],
         symbol_stem: "bind",
         shared: &shared,
-        binding: "c",
+        binding: if emit_cpp { "cpp" } else { "c" },
+        cpp: emit_cpp.then_some(standard.as_str()),
     };
     let (imported, files) = import_header(&config)?;
+    if emit_cpp {
+        let path = dir.join(format!("{}.thunks.cpp", header.file_stem().unwrap_or_default().to_string_lossy()));
+        std::fs::write(&path, &imported.shim).map_err(|error| format!("cannot write `{}`: {error}", path.display()))?;
+        println!("wrote {}", path.display());
+        return Ok(ExitCode::SUCCESS);
+    }
     if emit {
         // `[FFI-14]` — the record a build keeps for this header, written beside it.
         let files: Vec<(String, String)> = files.into_iter().filter_map(|file| file_hash(&file).map(|hash| (file, hash))).collect();
@@ -2776,7 +3345,7 @@ mod cbor {
 
 use cbor::Value;
 
-const EMBIND_VERSION: u64 = 2;
+const EMBIND_VERSION: u64 = 3;
 
 fn text_of(value: &Value) -> Option<String> {
     match value {
@@ -2832,6 +3401,7 @@ fn c_type_value(ty: &CType) -> Value {
         Value::Uint(constant),
         Value::Uint(u64::from(ty.char_pointer)),
         Value::Text(ty.c.clone()),
+        Value::Text(ty.mode.clone()),
     ])
 }
 
@@ -2843,6 +3413,7 @@ fn read_c_type(value: &Value) -> Option<CType> {
         pointee: (constant != 2).then(|| Some((text_of(&entry[1])?, constant == 1))).flatten(),
         char_pointer: uint_of(entry.get(3)?)? == 1,
         c: text_of(entry.get(4)?)?,
+        mode: text_of(entry.get(5)?)?,
     })
 }
 
@@ -2889,6 +3460,7 @@ fn embind(imported: &Imported, files: &[(String, String)], configuration: &str, 
                                 Value::Array(function.params.iter().map(|(name, ty)| Value::Array(vec![Value::Text(name.clone()), c_type_value(ty)])).collect()),
                             ),
                             ("result".to_string(), Value::Array(function.result.iter().map(c_type_value).collect())),
+                            ("policy".to_string(), Value::Uint(POLICIES.iter().position(|policy| *policy == function.policy).unwrap_or(0) as u64)),
                         ])
                     })
                     .collect(),
@@ -2929,6 +3501,7 @@ fn embind(imported: &Imported, files: &[(String, String)], configuration: &str, 
             ),
         ),
         ("c_types".to_string(), Value::Array(imported.c_types.iter().map(|(ember, c)| texts(&[ember, c])).collect())),
+        ("anonymous_namespace".to_string(), skips(&imported.anonymous_namespace)),
     ]);
     let mut bytes = Vec::new();
     cbor::encode(&value, &mut bytes);
@@ -2970,6 +3543,7 @@ fn read_embind(bytes: &[u8]) -> Option<(Vec<(String, String)>, Imported)> {
                     [ty] => Some(read_c_type(ty)?),
                     _ => return None,
                 },
+                policy: *POLICIES.get(uint_of(field(entry, "policy")?)? as usize)?,
             })
         })
         .collect::<Option<Vec<_>>>()?;
@@ -3017,6 +3591,7 @@ fn read_embind(bytes: &[u8]) -> Option<(Vec<(String, String)>, Imported)> {
             })
             .collect::<Option<_>>()?,
         c_types: pairs(field(&value, "c_types")?)?,
+        anonymous_namespace: read_skips(field(&value, "anonymous_namespace")?)?,
     };
     Some((files, imported))
 }
