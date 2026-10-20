@@ -427,6 +427,11 @@ def load_baseline():
     }
 
 
+def gate_state(cases, baselined):
+    """`[TST-29]` — a gate whose baseline covers more than a tenth of its cases is `baselined`, not green."""
+    return "baselined" if baselined * 10 > cases else "green"
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--write-baseline", action="store_true")
@@ -617,7 +622,15 @@ def main():
             print(f"  {f}")
         return 1
 
-    print("\nno new problems")
+    # `[TST-29]` — each list measured against what it is a list of.
+    shares = [
+        ("rules without tests", len(known["rules_without_tests"]), len(rules)),
+        ("codes without pages", len(known["codes_without_pages"]), len(registry)),
+        ("codes without tests", len(known.get("codes_without_tests", [])), len(registry)),
+    ]
+    state = "baselined" if any(gate_state(n, b) == "baselined" for _, b, n in shares) else "green"
+    print("\nno new problems; baseline " + ", ".join(f"{b} of {n} {what}" for what, b, n in shares)
+          + f" ({state}) [TST-29]")
     return 0
 
 

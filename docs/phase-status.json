@@ -22,7 +22,6 @@
   "unfinished": {
     "_what": "Rules a test names but that are not fulfilled: each with what is missing and where that is recorded. Remove an entry only when the rule is fulfilled.",
     "BEN-6": "the thresholds are built (`ember bench --compare`, ADR-233); not built: exact allocation counts on `@noalloc` paths, a direct FFI call executing C's instructions, counted-object code against a C++ intrusive count",
-    "TST-29": "the performance gate and the specification-example test report their baselines (ADR-232, ADR-233); `tools/spec_check.py`, `tools/error_pages.py`'s codes without a page and `tools/rule_index.py`'s baseline do not yet report themselves `baselined`",
     "TST-7": "every block is checked by `every_example_of_the_specification_checks` (ADR-232); Part XVI's example is baselined until `std.ffi` has `c_int` and `c_double` (D-742)",
     "FFI-6a": "integer, floating and string macros are constants of their C type; a null-pointer or pointer-cast macro is skipped with W5001; ODR-145 rules it a `const` of its C pointer type (a pointer made from an integer is a compile-time value), not built yet (ADR-231)",
     "FFI-29": "the shim holds the layout assertions and a wrapper for each `static inline` function; the wrappers of [FFI-6b] (function-like macros an overlay declares) are not built; ODR-147 rules how an overlay writes a macro's signature (ADR-231)",

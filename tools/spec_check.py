@@ -14,6 +14,10 @@ unit. `[TST-7]` therefore ships with a **recorded baseline** and fails only on
     python tools/spec_check.py                  # check, non-zero on new failures
     python tools/spec_check.py --write-baseline
     python tools/spec_check.py --report         # list every failing block
+
+`[TST-29]`: the baseline only shrinks (`--write-baseline` refuses to add a block
+unless `--allow-growth` is given), and the result names its size and whether the
+gate is `green` or `baselined`.
 """
 
 import argparse
@@ -139,9 +143,20 @@ def emit_appendix():
     return 0
 
 
+def gate_state(cases, baselined):
+    """`[TST-29]` — a gate whose baseline covers more than a tenth of its cases is `baselined`, not green."""
+    return "baselined" if baselined * 10 > cases else "green"
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--write-baseline", action="store_true")
+    ap.add_argument(
+        "--allow-growth",
+        action="store_true",
+        help="permit --write-baseline to record a block the baseline does not "
+        "already hold. `[TST-29]`: the baseline shrinks and never grows.",
+    )
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--emit-appendix", action="store_true")
     args = ap.parse_args()
@@ -174,6 +189,12 @@ def main():
     print(f"{len(all_blocks) - len(failing)} parse, {len(failing)} do not")
 
     if args.write_baseline:
+        grown = sorted(i for i, _ in failing if i not in known)
+        if grown and not args.allow_growth:
+            print("`[TST-29]`: the baseline may shrink and never grow.")
+            for ident in grown:
+                print(f"  would add: {ident}")
+            return 1
         BASELINE.write_text(
             json.dumps(sorted(i for i, _ in failing), indent=2) + "\n",
             encoding="utf-8",
@@ -199,7 +220,8 @@ def main():
             print(f"  {ident}: {first}")
         return 1
 
-    print(f"no new failures ({len(known)} known)")
+    checked = sum(1 for block in all_blocks if not block["ignored"])
+    print(f"no new failures; baseline {len(known)} of {checked} ({gate_state(checked, len(known))}) [TST-29]")
     return 0
 
 

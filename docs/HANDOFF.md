@@ -10780,6 +10780,7 @@ formal 1/9 count or Phase 2's estimate.
 > `/GL`) open.
 > Then ADR-234: D-752 fixed (a plain `and`/`or`/`not` condition branches on its operands: MSVC
 > unrolls the loop again; Mandelbrot 0.98x C).
+> ADR-235: `[TST-29]` done: the three Python gates print `baseline B of N` and `green`/`baselined`.
 > D-754 open: CI's gate found `s3_skip_step_take` (gcc 1.30x), `s2_zip_and`, `a06_enum_match` (gcc) and
 > `s4_copied_enumerate_skip` (MSVC runner 1.27x) over threshold; baselined per compiler.
 > **Before a push that touches C or the runtime:** `bench/gcc/gate.sh` in WSL (the workspace through

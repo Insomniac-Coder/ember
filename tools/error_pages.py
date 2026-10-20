@@ -228,6 +228,11 @@ def check_page(path: Path, work: Path) -> list[str]:
     return problems
 
 
+def gate_state(cases, baselined):
+    """`[TST-29]` — a gate whose baseline covers more than a tenth of its cases is `baselined`, not green."""
+    return "baselined" if baselined * 10 > cases else "green"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--report", action="store_true")
@@ -294,7 +299,9 @@ def main() -> int:
         for problem in problems:
             print(f"  {problem}")
         return 1
-    print("every page's failing example fails with its code, and every fix compiles")
+    cases = len(emitted & registered)
+    print("every page's failing example fails with its code, and every fix compiles; "
+          f"baseline {len(known)} of {cases} codes ({gate_state(cases, len(known))}) [TST-29]")
     return 0
 
 

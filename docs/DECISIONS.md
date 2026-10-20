@@ -5017,6 +5017,17 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-235 — Every gate with a baseline reports it (`[TST-29]`)
+
+2026-10-20. The performance gate and the specification-example test already printed their baseline
+beside the result (ADR-232, ADR-233). The three Python gates now do too: `tools/spec_check.py`,
+`tools/error_pages.py` and `tools/rule_index.py` end with `baseline B of N` and `green` or
+`baselined`, the latter when B is more than a tenth of N (`gate_state`, the same test as
+`ember bench`'s). `rule_index.py` measures each list against what it lists (rules without tests of
+all rules; codes without pages or tests of all registered codes) and is `baselined` when any list
+is. `spec_check.py`'s `--write-baseline` now refuses growth without `--allow-growth`, as the other
+two already did. Today all three report `baselined`: that is the honest state, not a failure.
+
 ## ADR-234 — A plain `and`/`or`/`not` condition branches on its operands (D-752)
 
 2026-10-20. The performance gate's first run found Mandelbrot float math 1.15x C with MSVC. The
