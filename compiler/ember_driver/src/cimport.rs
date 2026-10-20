@@ -147,9 +147,10 @@ pub struct CType {
     pub char_pointer: bool,
     /// The C type as the header writes it.
     pub c: String,
-    /// `[FFI-40]` — the parameter's mode: `mut ` for a C++ `T&`, `owned ` for a `T&&`, else none;
-    /// `ref ` or `ref mut ` for a reference to an opaque class, whose wrapper takes a reference and
-    /// passes the raw pointer `ember` names on.
+    /// `[FFI-40]` — the parameter's mode: `mut ` for a C++ `T&`, `owned ` for a `T&&`, else none.
+    /// With a `pointee`, the parameter is an opaque class's, which the wrapper takes as a reference
+    /// (`ref `, `ref mut `) or as the `ForeignBox` it moves from (`owned `), and passes on as the
+    /// raw pointer `ember` names ([`wrapped`]).
     pub mode: String,
 }
 
@@ -653,7 +654,8 @@ struct Writer {
     anonymous: HashSet<String>,
     /// `[FFI-17]` — the header is C++: its functions are reached through thunks.
     cpp: bool,
-    /// `[FFI-32]` — each C++ class, by USR, that is standard-layout and trivially copyable.
+    /// `[FFI-32]` — each C++ class, by USR, that is standard-layout and trivially copyable; and, by
+    /// `movable <USR>`, each that can be moved (`[FFI-40]`'s `T&&`).
     by_value: HashMap<String, bool>,
     /// `[FFI-24]` — each C++ function, by USR, whose `noexcept(expr)` holds.
     nothrow: HashMap<String, bool>,
@@ -1705,8 +1707,21 @@ impl Writer {
                 }
                 CXType_RValueReference => {
                     let pointee = clang_getPointeeType(ty);
-                    let mapped = self.ty(pointee, false).map_err(|reason| format!("an rvalue reference to a type that does not map by value: {reason}"))?;
-                    Ok((plain(mapped, "owned "), format!("{} {name}", cpp_spelling(pointee)), format!("std::move({name})")))
+                    let spelled = cpp_spelling(pointee);
+                    match self.ty(pointee, false) {
+                        Ok(mapped) => Ok((plain(mapped, "owned "), format!("{spelled} {name}"), format!("std::move({name})"))),
+                        // An opaque class that can be moved: the `ForeignBox` the caller gives up,
+                        // whose object the callee moves from and whose drop frees what is left.
+                        Err(reason) => {
+                            let class = usr(clang_getTypeDeclaration(clang_getCanonicalType(pointee)));
+                            if !self.by_value.get(&format!("movable {class}")).copied().unwrap_or(false) {
+                                return Err(format!("an rvalue reference to a type that is neither mapped by value ({reason}) nor a class that can be moved"));
+                            }
+                            let inner = self.ty(pointee, true)?;
+                            let ember = CType { ember: format!("*mut {inner}"), pointee: Some((inner, false)), char_pointer: false, c: c.clone(), mode: "owned ".to_string() };
+                            Ok((ember, format!("{spelled}* {name}"), format!("std::move(*{name})")))
+                        }
+                    }
                 }
                 _ => {
                     let mapped = self.c_type(ty, true)?;
@@ -2118,6 +2133,7 @@ fn cpp_facts(unit: &Unit, main: &Path, include: &str, args: &[String], in_header
                         let spelled = cpp_spelling(clang_getCursorType(child));
                         if !spelled.contains('(') {
                             out.push((true, usr(child), format!("__is_trivially_copyable({spelled}) && __is_standard_layout({spelled})")));
+                            out.push((true, format!("movable {}", usr(child)), format!("__is_constructible({spelled}, {spelled}&&)")));
                         }
                         gather(child, in_header, out);
                     }
@@ -3487,7 +3503,7 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
             (derived, None) => derived,
         };
         match (policy, &function.owner) {
-            (Policy::Direct, None) if !function.out && !function.params.iter().any(|(_, ty)| ty.mode.starts_with("ref")) => {
+            (Policy::Direct, None) if !function.out && !function.params.iter().any(|(_, ty)| wrapped(ty)) => {
                 member(function.abi, render_function(function, entry, renamed, hidden))
             }
             // `E5061` where it is used.
@@ -3571,6 +3587,12 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
 /// function returning `Result[T, CppError]` (or `T`, panicking on a throw, when an overlay asserts
 /// `@ffi(noexcept)`). It is safe to call when an overlay entry says so and no parameter is a raw
 /// pointer; a destructor has only its raw declaration, which the type's `ForeignBox` calls.
+/// `[FFI-40]` — a parameter of an opaque class, which the wrapper takes as a reference or a
+/// `ForeignBox` and passes on as a raw pointer.
+fn wrapped(ty: &CType) -> bool {
+    ty.pointee.is_some() && !ty.mode.is_empty()
+}
+
 fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&String>, hidden: bool, policy: Policy) -> (String, String) {
     let prefix = ember_branding::SYMBOL_PREFIX;
     let (owner, member) = match &function.owner {
@@ -3587,7 +3609,7 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     raw.name = raw_name.clone();
     raw.owner = None;
     for (_, ty) in &mut raw.params {
-        if ty.mode.starts_with("ref") {
+        if wrapped(ty) {
             ty.mode.clear();
         }
     }
@@ -3619,12 +3641,13 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         _ => ident(renamed.unwrap_or(&function.name)),
     };
     let words_safe = entry.is_some_and(|entry| !entry.params.iter().flatten().chain(&entry.result).any(|written| matches!(word(written), "TODO" | "unsafe")));
-    let safe = words_safe && !function.params.iter().any(|(_, ty)| ty.ember.starts_with('*') && !ty.mode.starts_with("ref"));
+    let safe = words_safe && !function.params.iter().any(|(_, ty)| ty.ember.starts_with('*') && !wrapped(ty));
     let mut params: Vec<String> = function
         .params
         .iter()
         .map(|(param, ty)| match &ty.pointee {
-            Some((inner, _)) if ty.mode.starts_with("ref") => format!("{param}: {}{inner}", ty.mode),
+            Some((inner, _)) if ty.mode == "owned " => format!("owned {param}: ForeignBox[{inner}]"),
+            Some((inner, _)) if wrapped(ty) => format!("{param}: {}{inner}", ty.mode),
             _ => format!("{}{param}: {}", ty.mode, ty.ember),
         })
         .collect();
@@ -3637,9 +3660,10 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         .params
         .iter()
         .map(|(param, ty)| match &ty.pointee {
-            Some((inner, true)) if ty.mode.starts_with("ref") => format!("(ref {param}) as *{inner}"),
+            _ if ty.mode == "owned " && wrapped(ty) => format!("{param}.as_ptr()"),
+            Some((inner, true)) if wrapped(ty) => format!("(ref {param}) as *{inner}"),
             // The caller lent it mutably; the borrow the wrapper passes on is its own.
-            Some((inner, false)) if ty.mode.starts_with("ref") => format!("((ref {param}) as *{inner}) as *mut {inner}"),
+            Some((inner, false)) if wrapped(ty) => format!("((ref {param}) as *{inner}) as *mut {inner}"),
             _ => param.clone(),
         })
         .collect();
