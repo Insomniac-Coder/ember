@@ -71,7 +71,7 @@ this compiler does not have yet):
     ember explain --borrow <file>:<line>           why each borrow live at that line is still live
     ember explain --cycle <path> <Class[.field]>   one cycle-capable class or field
     ember inspect <item> [--safety [--elided-only] | --alloc | --cost | --deterministic <fn> | --cycle
-                          | --expand | --counts] [--function <name>]
+                          | --expand | --counts | --generics] [--function <name>]
                                                    reports on a program (--expand is not built yet)
     ember audit <file> [--json]                    a one-page summary of the safety surface: unsafe code,
                                                    effects, the foreign boundary, the trusted base
@@ -462,6 +462,9 @@ struct Options {
     require_evidence: bool,
     /// `[LNT-6]` — `ember lint`: check, then report the lints `check` leaves out.
     lint: bool,
+    /// `[MONO-7]` — `ember inspect --generics`: check, then say of each generic whether its
+    /// instances were specialised or share one body, and why.
+    generics_report: bool,
 }
 
 /// What `ember calls --foreign` prints: JSON or text, for one item.
@@ -797,6 +800,7 @@ fn inspect(args: &[String]) -> Result<ExitCode, String> {
     let mut alloc = false;
     let mut deterministic: Option<String> = None;
     let mut cost = false;
+    let mut generics = false;
     let mut elided_only = false;
     let mut json = false;
     let mut function = None;
@@ -810,6 +814,7 @@ fn inspect(args: &[String]) -> Result<ExitCode, String> {
             "--cycle" => cycle = true,
             "--alloc" => alloc = true,
             "--cost" => cost = true,
+            "--generics" => generics = true,
             "--deterministic" => {
                 index += 1;
                 let item = args.get(index).filter(|item| !item.starts_with('-'));
@@ -838,11 +843,20 @@ fn inspect(args: &[String]) -> Result<ExitCode, String> {
         index += 1;
     }
 
-    if [safety, counts, cycle, alloc, cost, deterministic.is_some()].iter().filter(|&&kind| kind).count() > 1 {
+    if [safety, counts, cycle, alloc, cost, generics, deterministic.is_some()].iter().filter(|&&kind| kind).count() > 1 {
         return Err("`ember inspect` accepts only one report kind at a time".to_string());
     }
-    if !safety && !counts && !cycle && !alloc && !cost && deterministic.is_none() {
-        return Err("`ember inspect` requires `--safety`, `--counts`, `--cycle`, `--alloc`, `--cost` or `--deterministic <item>`".to_string());
+    if !safety && !counts && !cycle && !alloc && !cost && !generics && deterministic.is_none() {
+        return Err("`ember inspect` requires `--safety`, `--counts`, `--cycle`, `--alloc`, `--cost`, `--generics` or `--deterministic <item>`".to_string());
+    }
+    // `[MONO-7]` — checked as `ember check` does.
+    if generics {
+        if elided_only || function.is_some() || json {
+            return Err("`--elided-only`, `--function` and `--json` do not apply to `--generics`".to_string());
+        }
+        let path = path.ok_or("`ember inspect --generics` needs a source file")?;
+        let options = Options { generics_report: true, ..Options::default() };
+        return compile(&path, "check", &options);
     }
     // `[COST-4]` — from the safety side table a build wrote, like `--safety`.
     if cost {
@@ -4392,6 +4406,21 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
                     .note(format!("its newest: {}", newest.join(", "))),
                 );
             }
+        }
+    }
+    // `[MONO-7]` — for each generic, whether its instances were specialised or share one body, and
+    // why. With no ceiling set nothing is shared but what `@never_specialize` asks for (`[MONO-6]`).
+    if options.generics_report {
+        println!("Generics:");
+        let standard = format!("{}.", ember_branding::STD_PACKAGE);
+        for entry in checked.instantiations.iter().filter(|entry| !entry.generic.starts_with(&standard)) {
+            let count = entry.instances.len();
+            let line = match entry.sharing {
+                Some(ember_typeck::Sharing::Shared) => format!("shared: its {count} instance(s) forward to one body (`@never_specialize`)"),
+                Some(ember_typeck::Sharing::AlwaysSpecialize) => format!("specialised: {count} instance(s) (`@always_specialize`)"),
+                None => format!("specialised: {count} instance(s) (no `@never_specialize`; this compiler shares no other body)"),
+            };
+            println!("  {}: {line}", entry.generic);
         }
     }
     // `[MONO-2]` — each generic's instances and the time checking them took.

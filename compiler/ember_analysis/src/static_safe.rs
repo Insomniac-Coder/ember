@@ -7,6 +7,13 @@
 //! elisions, `[EXC-8]`/`[EXC-10]`'s hoisting, the never-firing checks) and
 //! before inlining, so a check is the function's own and the answer is the
 //! same in every profile (`[EFF-15]`).
+//!
+//! `[DIA-11]` — each report names the check's reason (`[EFF-11]`) and suggests what that reason
+//! leaves the programmer: a per-access check the analysis did not prove away
+//! (`not_proven_by_analysis`), a restructuring; a loop's one check, which is what exclusivity on a
+//! shared object is (`inherent_to_mechanism`), removing the contract or changing the data
+//! structure, never restructuring code that cannot be improved; a `RefCell`'s
+//! (`requested_by_type`), changing the type.
 
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_mir::{AssertKind, Body, StmtKind, Terminator};
@@ -36,20 +43,24 @@ pub fn check_static_safe_all(bodies: &[Body], sink: &mut Sink) -> usize {
             }
         }
         for (span, site) in sites {
-            let (what, help) = match site {
+            let (what, reason, help) = match site {
                 Site::Access => (
                     "an exclusivity check on a class object",
+                    "`not_proven_by_analysis`: the access may be exclusive, but that was not proved",
                     "hoist the handle into a local the code does not reassign, so the access is proved when it \
                      compiles, or use value types or a query yielding `ref mut`",
                 ),
                 Site::LoopAccess => (
                     "an exclusivity check on a class object, once for the loop",
-                    "a loop's one access check is still made at run time: use value types, or a query yielding \
-                     `ref mut`",
+                    "`inherent_to_mechanism`: one check for the loop is what exclusivity on a shared object is",
+                    "no restructuring of this code removes it: remove `@static_safe`, or change the data \
+                     structure to value types or a query yielding `ref mut`",
                 ),
                 Site::RefCell => (
                     "a `RefCell` borrow check",
-                    "pass the value itself, or a `ref mut` to it, so the access is proved when it compiles",
+                    "`requested_by_type`: a `RefCell` checks every borrow at run time",
+                    "change the type: pass the value itself, or a `ref mut` to it, so the access is proved when \
+                     it compiles",
                 ),
             };
             sink.emit(
@@ -59,6 +70,7 @@ pub fn check_static_safe_all(bodies: &[Body], sink: &mut Sink) -> usize {
                     format!("`@static_safe` function `{}` keeps {what} here", body.name),
                 )
                 .primary_label("checked at run time")
+                .note(format!("the check's reason is {reason} [EFF-11]"))
                 .help(help)
                 .note(
                     "`@static_safe` allows bounds, arithmetic and stale-handle checks, but no check of who else \

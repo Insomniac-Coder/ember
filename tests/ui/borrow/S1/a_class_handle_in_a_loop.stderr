@@ -5,6 +5,7 @@ error[E4030]: `@static_safe` function `fill` keeps an exclusivity check on a cla
    |         ^^^^^^^^ checked at run time
    |
    = help: hoist the handle into a local the code does not reassign, so the access is proved when it compiles, or use value types or a query yielding `ref mut`
+   = note: the check's reason is `not_proven_by_analysis`: the access may be exclusive, but that was not proved [EFF-11]
    = note: `@static_safe` allows bounds, arithmetic and stale-handle checks, but no check of who else holds the data (EFF-12, EFF-13)
 
 error: could not compile due to 1 error(s)

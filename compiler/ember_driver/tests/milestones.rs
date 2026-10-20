@@ -693,6 +693,56 @@ fn main():
     assert_eq!(before.stdout, after.stdout, "parse(fmt(x)) differs from parse(x)");
 }
 
+/// `[MONO-7]` — `ember inspect --generics` says of each of the program's generics whether its
+/// instances share one body or are specialised, and why: `@never_specialize`, `@always_specialize`,
+/// or neither, when with no ceiling set nothing is shared (`[MONO-6]`).
+#[test]
+fn inspect_reports_whether_each_generic_is_shared_or_specialised() {
+    let root = workspace_root();
+    let dir = temporary_directory("inspect-generics");
+    let file = dir.join(ember_branding::source_file("main"));
+    let source = [
+        "interface Shape:",
+        "    fn area(self) -> f64",
+        "",
+        "struct Square:",
+        "    side: f64",
+        "",
+        "extend Square implements Shape:",
+        "    fn area(self) -> f64:",
+        "        return self.side * self.side",
+        "",
+        "@never_specialize",
+        "fn shared[T: Shape](x: T) -> f64:",
+        "    return x.area()",
+        "",
+        "@always_specialize",
+        "fn exact[T: Shape](x: T) -> f64:",
+        "    return x.area()",
+        "",
+        "fn plain[T: Shape](x: T) -> f64:",
+        "    return x.area()",
+        "",
+        "fn main():",
+        "    s = Square(2.0)",
+        "    println(shared(s) + exact(s) + plain(s))",
+        "",
+    ]
+    .join("\n");
+    std::fs::write(&file, source).expect("the source is writable");
+    let report = ember(&["inspect", "--generics", &file.to_string_lossy()], &root);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(report.exit, 0, "{}", report.stderr);
+    for line in [
+        "  shared: shared: its 1 instance(s) forward to one body (`@never_specialize`)",
+        "  exact: specialised: 1 instance(s) (`@always_specialize`)",
+        "  plain: specialised: 1 instance(s) (no `@never_specialize`; this compiler shares no other body)",
+    ] {
+        assert!(report.stdout.lines().any(|written| written == line), "missing {line:?}:\n{}", report.stdout);
+    }
+    assert!(!report.stdout.contains("std."), "the standard library's generics are not the program's:\n{}", report.stdout);
+}
+
 /// `[MONO-2]` — `ember build --report=instantiations` prints, per generic, how many instances it
 /// produced (a function's and a type's alike), each in the order made, and the time checking them
 /// took. `[MONO-3]` — `[build] max_instantiations = N` is a per-generic ceiling: past it, `W2220`

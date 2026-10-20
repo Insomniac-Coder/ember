@@ -5017,6 +5017,40 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-243 — Shape S1 names the check's reason (`[DIA-11]`)
+
+2026-10-20. `E4030` (a `@static_safe` function keeping a dynamic aliasing check) carries the check's
+`[EFF-11]` reason as a note, and its suggestion follows the reason: a per-access exclusivity check
+the analysis did not prove away is `not_proven_by_analysis`, and the help is the restructuring that
+lets it be proved; a loop's one hoisted check is `inherent_to_mechanism`, and the help is to remove
+`@static_safe` or change the data structure, never to restructure the code; a `RefCell`'s borrow check
+is `requested_by_type`, and the help is to change the type. The safety side table now gives a
+`RefCell` borrow check the reason `requested_by_type` too (it said `not_proven_by_analysis`, against
+`[EFF-11]`'s own example).
+
+## ADR-242 — Shared generic bodies: `@never_specialize` (`[MONO-5]`–`[MONO-9]`)
+
+2026-10-20. A generic function is **shareable** (`[MONO-5]`) when each type parameter has bounds a
+method table can hold (each `dyn`-compatible), is the whole type of borrowed parameters only (not
+`owned`, `mut`, `ref T`, `Array[T]`), is not named by the result's type, and in the body each such
+parameter is only ever the receiver of a call to a bound's method that takes `Self` only as its
+receiver (no field read, copy, rebinding, other call, or type written with the parameter in it).
+The type checker reads this off the declaration (`share_blocker`).
+
+`@never_specialize` on a shareable generic function (`[MONO-7]`) makes one instance with each type
+parameter `ref dyn` of its bounds, the **shared body**, and every other instance a forwarder to it:
+its body calls the shared one, each parameter of a type parameter's type passed by reference, which
+converts to `ref dyn` (`[MONO-8]`: the same computation, one indirect call per bound-method call, no
+allocation; a check the body makes on a class object reached through the table is the check
+specialised code makes, through the table). The shared body is one symbol, declared and defined once
+(`[MONO-9]`); an exported or `extern` function is never generic, so never shared. On a generic that is
+not shareable, `@never_specialize` is `E2223`, at the first use that prevents it.
+`@always_specialize` forbids sharing; with neither, every instance is specialised. `[MONO-6]` lets the
+compiler share past a `[MONO-3]` ceiling; this one does not (it shares only what `@never_specialize`
+asks), which the rule permits, and with no ceiling nothing is shared. Both attributes are built on
+generic functions; on a type or a method they stay refused (`E0900`). `ember inspect --generics
+<file>` prints, per generic of the program's, specialised or shared and why.
+
 ## ADR-241 — `ember lint` and `[LNT-6]`'s lints
 
 2026-10-20. `ember lint` is `ember check` and the lints `[LNT-6]` lists, read off the MIR the checks ran

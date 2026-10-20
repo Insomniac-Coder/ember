@@ -146,6 +146,19 @@ pub struct Instantiation {
     /// For each of `instances`, when it was made: its definition's or type's index.
     pub made: Vec<u32>,
     pub elapsed: std::time::Duration,
+    /// `[MONO-7]` — whether its instances share one body, and why: `None` when each is specialised
+    /// because nothing asks for sharing.
+    pub sharing: Option<Sharing>,
+}
+
+/// `[MONO-7]` — a generic's instances: one shared body, or each specialised, and the reason.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Sharing {
+    /// `@never_specialize`: every instance forwards to one body taking a method table for each
+    /// type parameter.
+    Shared,
+    /// `@always_specialize`: never shared.
+    AlwaysSpecialize,
 }
 
 /// `[STD-8a]` — the `contains` an `x in c` selects, and its cost.
@@ -11547,6 +11560,137 @@ impl<'a> Checker<'a> {
         None
     }
 
+    /// `[MONO-5]` — what keeps the generic function `decl` (`def`) from being shareable: the first use
+    /// of a type parameter other than as the receiver of a call to a method of its bounds, and where.
+    /// A type parameter is shareable when it has bounds a method table can hold, it is the whole type
+    /// of borrowed parameters only, the result's type does not name it, and in the body each such
+    /// parameter is only ever the receiver of a call to a bound's method taking `Self` only as its
+    /// receiver.
+    fn share_blocker(&self, decl: &ast::FnDecl, def: DefId) -> Option<(Span, String)> {
+        let generics = &self.signatures[def.0 as usize].generics;
+        if generics.len() != decl.generics.len() {
+            return Some((decl.name.span, "it has a parameter standing for an associated type".to_string()));
+        }
+        let mut methods: HashMap<Symbol, HashSet<Symbol>> = HashMap::new();
+        for (param, written) in generics.iter().zip(&decl.generics) {
+            if param.const_ty.is_some() || param.callable.is_some() || param.count_op.is_some() || !param.bindings.is_empty() {
+                return Some((written.span, format!("no method table can stand for `{}`", param.name)));
+            }
+            if param.bounds.is_empty() {
+                return Some((written.span, format!("`{}` has no bound whose methods a table could hold", param.name)));
+            }
+            let mut names = HashSet::new();
+            for bound in &param.bounds {
+                if let Some(reason) = self.dyn_incompatibility(*bound) {
+                    return Some((written.span, format!("`{}`'s bound `{bound}` cannot be called through a table: {reason}", param.name)));
+                }
+                self.receiver_only_methods(*bound, &mut names, &mut HashSet::new());
+            }
+            methods.insert(param.name, names);
+        }
+        let mut receivers: HashMap<Symbol, Symbol> = HashMap::new();
+        for param in &decl.params {
+            let ast::ParamKind::Named { name, ty } = &param.kind else { continue };
+            if !type_names_any(ty, &methods) {
+                continue;
+            }
+            match whole_type_parameter(ty, &methods) {
+                Some(of) if param.mode == ast::Mode::Borrow => {
+                    receivers.insert(name.name, of);
+                }
+                _ => {
+                    return Some((ty.span, format!("`{}`'s type uses a type parameter other than as the whole type of a borrowed parameter", name.name)));
+                }
+            }
+        }
+        if let Some(ret) = &decl.ret
+            && type_names_any(ret, &methods)
+        {
+            return Some((ret.span, "the result's type names a type parameter".to_string()));
+        }
+        let body = decl.body.as_ref()?;
+        let mut walk = ShareWalk { methods: &methods, receivers: &receivers, allowed: HashSet::new(), blocker: None };
+        walk.block(body);
+        walk.blocker
+    }
+
+    /// The methods of `interface` and its supertraits that a method table holds and that take `Self`
+    /// only as their receiver.
+    fn receiver_only_methods(&self, interface: Symbol, names: &mut HashSet<Symbol>, visiting: &mut HashSet<Symbol>) {
+        if !visiting.insert(interface) {
+            return;
+        }
+        let Some(def) = self.interfaces.get(&interface) else { return };
+        for (method, declaration, receiver, _) in &def.methods {
+            if receiver.is_none() || def.dyn_sized_defaults.contains(declaration) {
+                continue;
+            }
+            let signature = &self.signatures[declaration.0 as usize];
+            let mentions_self = signature.params.iter().skip(1).any(|(_, ty, _, _)| self.types.is_generic(*ty)) || self.types.is_generic(signature.ret);
+            if !mentions_self {
+                names.insert(*method);
+            }
+        }
+        for parent in &def.supertraits {
+            self.receiver_only_methods(*parent, names, visiting);
+        }
+    }
+
+    /// `[MONO-7]` — the type arguments of the one body a `@never_specialize` generic's instances
+    /// share: `ref dyn` of each parameter's bounds. `None` when its instances are specialised.
+    fn shared_type_args(&mut self, def: DefId, decl: &ast::FnDecl, attrs: &[ast::Attribute]) -> Option<Vec<Ty>> {
+        if !has_attribute(attrs, "never_specialize") || has_attribute(attrs, "always_specialize") || self.share_blocker(decl, def).is_some() {
+            return None;
+        }
+        let generics = self.signatures[def.0 as usize].generics.clone();
+        Some(
+            generics
+                .iter()
+                .map(|param| {
+                    let table = self.types.intern(TyKind::Dyn { interfaces: param.bounds.clone() });
+                    self.types.intern(TyKind::Ref { mutable: false, inner: table })
+                })
+                .collect(),
+        )
+    }
+
+    /// `[MONO-8]` — the body of an instance of a shared generic: a call of the shared body
+    /// `target`, each parameter of a type parameter's type passed by reference (which converts to
+    /// `ref dyn`), the others as they are. Its own declaration, the generic's with that body.
+    fn share_forwarder(&mut self, decl: &ast::FnDecl, target: DefId) -> (ast::FnDecl, ast::Block) {
+        let name = Symbol::intern(&format!("{}\u{b7}shared", decl.name.name));
+        let qualified = self.qualified(name);
+        self.fn_ids.insert(qualified, target);
+        let type_params: HashMap<Symbol, HashSet<Symbol>> =
+            decl.generics.iter().map(|param| (param.name.name, HashSet::new())).collect();
+        let span = decl.body.as_ref().map_or(decl.name.span, |body| body.span);
+        let path = |ident: ast::Ident| ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Path { segments: vec![ident] }, span: ident.span };
+        let args = decl
+            .params
+            .iter()
+            .filter_map(|param| {
+                let ast::ParamKind::Named { name, ty } = &param.kind else { return None };
+                let value = if whole_type_parameter(ty, &type_params).is_some() {
+                    ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::RefOf { mutable: false, place: Box::new(path(*name)) }, span: name.span }
+                } else {
+                    path(*name)
+                };
+                Some(ast::Arg { name: None, value, span: param.span })
+            })
+            .collect();
+        let callee = path(ast::Ident { name, span: decl.name.span });
+        let call = ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Call { callee: Box::new(callee), args }, span };
+        let value = match &decl.ret {
+            Some(_) => ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Jump(ast::Jump::Return(Some(Box::new(call)))), span },
+            None => call,
+        };
+        let stmt = ast::Stmt { id: ast::NodeId::DUMMY, attrs: Vec::new(), kind: ast::StmtKind::Expr(value), span };
+        let block = ast::Block { id: ast::NodeId::DUMMY, stmts: vec![stmt], span };
+        let mut forwarded = decl.clone();
+        forwarded.body = Some(block.clone());
+        (forwarded, block)
+    }
+
     /// Return the methods visible through a `dyn` bound in stable vtable
     /// order. Supertrait methods occupy the prefix, followed by the methods
     /// declared by the interface itself. This is the same declaration-order
@@ -17928,6 +18072,22 @@ impl<'a> Checker<'a> {
             // provide is an error here rather than at some instantiation.
             // Nothing is emitted for it: only its instantiations exist at run
             // time.
+            // `[MONO-7]` — `@never_specialize` requires one shared body, which only a shareable
+            // generic can have (`[MONO-5]`).
+            if !self.signatures[def.0 as usize].generics.is_empty()
+                && has_attribute(&item.attrs, "never_specialize")
+                && let Some((span, why)) = self.share_blocker(decl, def)
+            {
+                let attribute = item.attrs.iter().find(|attr| attr.path.first().is_some_and(|name| name.name.as_str() == "never_specialize"));
+                let mut diagnostic = Diagnostic::error(codes::E2223, span, format!("`{}` cannot share one body: {why}", decl.name.name))
+                    .primary_label("this use needs the type itself")
+                    .note("a generic is shareable when each type parameter appears only as the receiver of calls to its bounds' methods [MONO-5]")
+                    .help("remove `@never_specialize`, or use the parameter only through its bounds' methods");
+                if let Some(attribute) = attribute {
+                    diagnostic = diagnostic.secondary(attribute.span, "one shared body is required here");
+                }
+                self.sink.emit(diagnostic);
+            }
             if !self.signatures[def.0 as usize].generics.is_empty() {
                 let outer_static_safe = self.in_static_safe;
                 let outer_static_safe_reported = self.static_safe_unsafe_cell_reported;
@@ -18207,6 +18367,22 @@ impl<'a> Checker<'a> {
                     })
                     .collect();
 
+                // `[MONO-7]`, `[MONO-8]` — an instance of a generic that shares one body is a
+                // forwarder to it: each parameter of a type parameter's type passed as `ref dyn`
+                // of its bounds, the shared body's own instance.
+                let shared = self.shared_type_args(key.def, decl, &item.attrs);
+                let forwarder = match &shared {
+                    Some(args) if *args != key.args => {
+                        let target = self.instantiate(key.def, args, Vec::new(), decl.name.name, item.span);
+                        Some(self.share_forwarder(decl, target))
+                    }
+                    _ => None,
+                };
+                let (decl, block) = match &forwarder {
+                    Some((forwarded, body)) => (forwarded, body),
+                    None => (decl, block),
+                };
+
                 let quiet_before = quiet.diagnostics().len();
                 let saved = std::mem::replace(self.sink, std::mem::take(&mut quiet));
                 let started = std::time::Instant::now();
@@ -18216,7 +18392,20 @@ impl<'a> Checker<'a> {
                 let path = &modules[module_index].path;
                 let generic = if path.is_empty() { decl.name.name.to_string() } else { format!("{}.{}", path.join("."), decl.name.name) };
                 let made_with: Vec<String> = key.args.iter().map(|&ty| self.types.display(ty)).collect();
-                self.note_instantiation(generic, item.span, instance.0, format!("{}[{}]", decl.name.name, made_with.join(", ")), started.elapsed());
+                let sharing = if shared.is_some() {
+                    Some(Sharing::Shared)
+                } else if has_attribute(&item.attrs, "always_specialize") {
+                    Some(Sharing::AlwaysSpecialize)
+                } else {
+                    None
+                };
+                // The shared body is named for what it is made with, not as an instance of its own.
+                if shared.as_ref().is_none_or(|args| *args != key.args) {
+                    self.note_instantiation(generic.clone(), item.span, instance.0, format!("{}[{}]", decl.name.name, made_with.join(", ")), started.elapsed());
+                }
+                if let Some(entry) = self.instantiations.iter_mut().find(|entry| entry.generic == generic) {
+                    entry.sharing = sharing;
+                }
                 quiet = std::mem::replace(self.sink, saved);
                 // `[STD-19]` — an instance can refuse a line its generic check left
                 // to the uses: say which use.
@@ -19663,7 +19852,7 @@ impl<'a> Checker<'a> {
         let entry = match self.instantiations.iter().position(|entry| entry.generic == generic) {
             Some(at) => &mut self.instantiations[at],
             None => {
-                self.instantiations.push(Instantiation { generic, span, instances: Vec::new(), made: Vec::new(), elapsed: std::time::Duration::ZERO });
+                self.instantiations.push(Instantiation { generic, span, instances: Vec::new(), made: Vec::new(), elapsed: std::time::Duration::ZERO, sharing: None });
                 self.instantiations.last_mut().expect("just pushed")
             }
         };
@@ -37420,6 +37609,14 @@ impl<'a> Checker<'a> {
                 && attr.path.len() == 1 && attr.path[0].name.is("export") {
                 continue;
             }
+            // `[MONO-7]` — built on a generic function; on a type, a method or anything else the
+            // table refuses it as not built.
+            if matches!(&item.kind, ast::ItemKind::Fn(decl) if !decl.is_foreign_decl && !decl.generics.is_empty())
+                && attr.path.len() == 1
+                && (attr.path[0].name.is("always_specialize") || attr.path[0].name.is("never_specialize"))
+            {
+                continue;
+            }
             self.check_attribute_list(std::slice::from_ref(attr), site);
         }
         if let ast::ItemKind::Enum(decl) = &item.kind {
@@ -52954,6 +53151,382 @@ fn if_statement_count(branch: &ast::IfStmt) -> usize {
             Some(ast::ElseBranch::If(next)) => if_statement_count(next),
             None => 0,
         }
+}
+
+/// `[MONO-5]` — whether a written type names one of `params` (the generic's type parameters).
+fn type_names_any(ty: &ast::TypeExpr, params: &HashMap<Symbol, HashSet<Symbol>>) -> bool {
+    let mut walk = ShareWalk { methods: params, receivers: &HashMap::new(), allowed: HashSet::new(), blocker: None };
+    walk.ty(ty);
+    walk.blocker.is_some()
+}
+
+/// `[MONO-5]` — the type parameter a written type is, whole (`T`, not `ref T` or `Array[T]`).
+fn whole_type_parameter(ty: &ast::TypeExpr, params: &HashMap<Symbol, HashSet<Symbol>>) -> Option<Symbol> {
+    match &ty.kind {
+        ast::TypeKind::Path { segments, args } if segments.len() == 1 && args.is_empty() && params.contains_key(&segments[0].name) => {
+            Some(segments[0].name)
+        }
+        _ => None,
+    }
+}
+
+/// `[MONO-5]` — a generic body, read for the first use of a type parameter other than as the
+/// receiver of a call to one of its bounds' methods: `methods` holds, per type parameter, the bound
+/// methods a table can call; `receivers`, per parameter whose type is one, which. A name rebound,
+/// a field read, any other use, and any type written with a type parameter in it, is a blocker.
+struct ShareWalk<'a> {
+    methods: &'a HashMap<Symbol, HashSet<Symbol>>,
+    receivers: &'a HashMap<Symbol, Symbol>,
+    /// The receivers seen at a call of a bound's method: those reads are allowed.
+    allowed: HashSet<Span>,
+    blocker: Option<(Span, String)>,
+}
+
+impl ShareWalk<'_> {
+    fn block(&mut self, block: &ast::Block) {
+        for stmt in &block.stmts {
+            self.stmt(stmt);
+        }
+    }
+
+    fn found(&mut self, span: Span, why: String) {
+        if self.blocker.is_none() {
+            self.blocker = Some((span, why));
+        }
+    }
+
+    fn stmt(&mut self, stmt: &ast::Stmt) {
+        if self.blocker.is_some() {
+            return;
+        }
+        match &stmt.kind {
+            ast::StmtKind::Decl { pattern, ty, init } => {
+                self.pattern(pattern);
+                if let Some(ty) = ty {
+                    self.ty(ty);
+                }
+                if let Some(init) = init {
+                    self.expr(init);
+                }
+            }
+            ast::StmtKind::Assign { targets, value, .. } => {
+                for target in targets {
+                    self.expr(target);
+                }
+                self.expr(value);
+            }
+            ast::StmtKind::Expr(expr) => self.expr(expr),
+            ast::StmtKind::Pass => {}
+            ast::StmtKind::If(stmt) => self.if_stmt(stmt),
+            ast::StmtKind::While { cond, body, else_block, .. } => {
+                self.condition(cond);
+                self.block(body);
+                if let Some(block) = else_block {
+                    self.block(block);
+                }
+            }
+            ast::StmtKind::For { pattern, iter, body, else_block, .. } => {
+                self.pattern(pattern);
+                self.expr(iter);
+                self.block(body);
+                if let Some(block) = else_block {
+                    self.block(block);
+                }
+            }
+            ast::StmtKind::Match { scrutinee, arms } => {
+                self.expr(scrutinee);
+                self.arms(arms);
+            }
+            ast::StmtKind::With { items, body } => {
+                for item in items {
+                    if let Some(pattern) = &item.pattern {
+                        self.pattern(pattern);
+                    }
+                    self.expr(&item.value);
+                }
+                self.block(body);
+            }
+            ast::StmtKind::Defer(block) | ast::StmtKind::Unsafe(block) | ast::StmtKind::Comptime(block) => self.block(block),
+            ast::StmtKind::LocalFn(function) => {
+                for param in &function.params {
+                    if let ast::ParamKind::Named { name, ty } = &param.kind {
+                        self.binding(name.name, name.span);
+                        self.ty(ty);
+                    }
+                }
+                if let Some(ret) = &function.ret {
+                    self.ty(ret);
+                }
+                if let Some(body) = &function.body {
+                    self.block(body);
+                }
+            }
+        }
+    }
+
+    fn if_stmt(&mut self, stmt: &ast::IfStmt) {
+        self.condition(&stmt.cond);
+        self.block(&stmt.then_block);
+        match stmt.else_block.as_deref() {
+            Some(ast::ElseBranch::Block(block)) => self.block(block),
+            Some(ast::ElseBranch::If(next)) => self.if_stmt(next),
+            None => {}
+        }
+    }
+
+    fn condition(&mut self, cond: &ast::Condition) {
+        match cond {
+            ast::Condition::Expr(expr) => self.expr(expr),
+            ast::Condition::Pattern { pattern, value } => {
+                self.pattern(pattern);
+                self.expr(value);
+            }
+        }
+    }
+
+    fn arms(&mut self, arms: &[ast::MatchArm]) {
+        for arm in arms {
+            self.pattern(&arm.pattern);
+            if let Some(guard) = &arm.guard {
+                self.expr(guard);
+            }
+            match &arm.body {
+                ast::MatchArmBody::Block(block) => self.block(block),
+                ast::MatchArmBody::Expr(expr) => self.expr(expr),
+            }
+        }
+    }
+
+    /// A name bound again: a receiver's name then means something else.
+    fn binding(&mut self, name: Symbol, span: Span) {
+        if self.receivers.contains_key(&name) {
+            self.found(span, format!("`{name}` is bound again here"));
+        }
+    }
+
+    fn pattern(&mut self, pattern: &ast::Pattern) {
+        match &pattern.kind {
+            ast::PatternKind::Bind { name, sub, .. } => {
+                self.binding(name.name, name.span);
+                if let Some(sub) = sub {
+                    self.pattern(sub);
+                }
+            }
+            ast::PatternKind::Constructor { fields, .. } => {
+                for field in fields {
+                    self.pattern(&field.pattern);
+                }
+            }
+            ast::PatternKind::Tuple(items) | ast::PatternKind::Or(items) => {
+                for item in items {
+                    self.pattern(item);
+                }
+            }
+            ast::PatternKind::Slice { prefix, rest, suffix } => {
+                for item in prefix.iter().chain(suffix) {
+                    self.pattern(item);
+                }
+                if let Some(Some(name)) = rest {
+                    self.binding(name.name, name.span);
+                }
+            }
+            ast::PatternKind::Wild | ast::PatternKind::Lit(_) | ast::PatternKind::Range { .. } | ast::PatternKind::Path { .. } | ast::PatternKind::Error => {}
+        }
+    }
+
+    fn ty(&mut self, ty: &ast::TypeExpr) {
+        if self.blocker.is_some() {
+            return;
+        }
+        match &ty.kind {
+            ast::TypeKind::Path { segments, args } => {
+                if segments.len() == 1 && self.methods.contains_key(&segments[0].name) {
+                    self.found(ty.span, format!("`{}` is named here", segments[0].name));
+                    return;
+                }
+                for arg in args {
+                    match arg {
+                        ast::GenericArg::Type(ty) | ast::GenericArg::Assoc { ty, .. } => self.ty(ty),
+                        ast::GenericArg::Const(expr) => self.expr(expr),
+                    }
+                }
+            }
+            ast::TypeKind::Ref { inner, .. } | ast::TypeKind::Ptr { inner, .. } | ast::TypeKind::SomeType(inner) => self.ty(inner),
+            ast::TypeKind::Tuple(items) | ast::TypeKind::Dyn(items) => {
+                for item in items {
+                    self.ty(item);
+                }
+            }
+            ast::TypeKind::Fn { params, ret, .. } => {
+                for param in params {
+                    self.ty(&param.ty);
+                }
+                if let Some(ret) = ret {
+                    self.ty(ret);
+                }
+            }
+            ast::TypeKind::Array { elem, len } => {
+                self.ty(elem);
+                self.expr(len);
+            }
+            ast::TypeKind::SelfType | ast::TypeKind::Void | ast::TypeKind::Never | ast::TypeKind::Infer => {}
+        }
+    }
+
+    fn exprs<'e>(&mut self, exprs: impl IntoIterator<Item = &'e ast::Expr>) {
+        for expr in exprs {
+            self.expr(expr);
+        }
+    }
+
+    fn args(&mut self, args: &[ast::Arg]) {
+        self.exprs(args.iter().map(|arg| &arg.value));
+    }
+
+    fn expr(&mut self, expr: &ast::Expr) {
+        if self.blocker.is_some() {
+            return;
+        }
+        use ast::ExprKind as E;
+        match &expr.kind {
+            E::Path { segments } => {
+                let first = segments[0].name;
+                if self.methods.contains_key(&first) {
+                    self.found(expr.span, format!("`{first}` is named here"));
+                } else if segments.len() == 1 && !self.allowed.contains(&expr.span)
+                    && let Some(param) = self.receivers.get(&first)
+                {
+                    self.found(expr.span, format!("`{first}` is used other than as the receiver of a call to a method of `{param}`'s bounds"));
+                }
+            }
+            E::MethodCall { recv, name, generic_args, args } => {
+                let mut inner = recv.as_ref();
+                while let E::Paren(wrapped) = &inner.kind {
+                    inner = wrapped;
+                }
+                if let E::Path { segments } = &inner.kind
+                    && let [segment] = segments.as_slice()
+                    && let Some(param) = self.receivers.get(&segment.name)
+                {
+                    if self.methods[param].contains(&name.name) {
+                        self.allowed.insert(inner.span);
+                    } else {
+                        self.found(name.span, format!("`{}` is not a method of `{param}`'s bounds that takes `Self` only as its receiver", name.name));
+                        return;
+                    }
+                }
+                self.expr(recv);
+                for arg in generic_args {
+                    match arg {
+                        ast::GenericArg::Type(ty) | ast::GenericArg::Assoc { ty, .. } => self.ty(ty),
+                        ast::GenericArg::Const(expr) => self.expr(expr),
+                    }
+                }
+                self.args(args);
+            }
+            E::Lit(_) | E::SelfExpr | E::Error => {}
+            E::Field { base, .. } | E::TupleField { base, .. } => self.expr(base),
+            E::IndexOrInstantiate { base, args } => {
+                self.expr(base);
+                for arg in args {
+                    match arg {
+                        ast::TypeOrExpr::Type(ty) | ast::TypeOrExpr::Binding { ty, .. } => self.ty(ty),
+                        ast::TypeOrExpr::Expr(expr) => self.expr(expr),
+                    }
+                }
+            }
+            E::Call { callee, args } => {
+                self.expr(callee);
+                self.args(args);
+            }
+            E::Unary { operand, .. } => self.expr(operand),
+            E::Binary { lhs, rhs, .. } | E::Logical { lhs, rhs, .. } => {
+                self.expr(lhs);
+                self.expr(rhs);
+            }
+            E::CompareChain { first, rest } => {
+                self.expr(first);
+                self.exprs(rest.iter().map(|(_, expr)| expr));
+            }
+            E::Ternary { then_expr, cond, else_expr } => {
+                self.expr(then_expr);
+                self.expr(cond);
+                self.expr(else_expr);
+            }
+            E::Range { lo, hi, .. } => {
+                self.exprs(lo.iter().chain(hi).map(|expr| expr.as_ref()));
+            }
+            E::Cast { expr, ty } | E::Downcast { expr, ty, .. } => {
+                self.expr(expr);
+                self.ty(ty);
+            }
+            E::Try(inner) | E::Paren(inner) | E::Owned(inner) | E::Comptime(inner) | E::AssumeNoalloc(inner) => self.expr(inner),
+            E::RefOf { place, .. } => self.expr(place),
+            E::OptChain { base, generic_args, args, .. } => {
+                self.expr(base);
+                for arg in generic_args {
+                    match arg {
+                        ast::GenericArg::Type(ty) | ast::GenericArg::Assoc { ty, .. } => self.ty(ty),
+                        ast::GenericArg::Const(expr) => self.expr(expr),
+                    }
+                }
+                if let Some(args) = args {
+                    self.args(args);
+                }
+            }
+            E::Lambda(lambda) => {
+                for param in &lambda.params {
+                    if let ast::ParamKind::Named { name, ty } = &param.kind {
+                        self.binding(name.name, name.span);
+                        self.ty(ty);
+                    }
+                }
+                if let Some(ret) = &lambda.ret {
+                    self.ty(ret);
+                }
+                match &lambda.body {
+                    ast::LambdaBody::Expr(body) => self.expr(body),
+                    ast::LambdaBody::Block(body) => self.block(body),
+                }
+            }
+            E::Match { scrutinee, arms } => {
+                self.expr(scrutinee);
+                self.arms(arms);
+            }
+            E::Tuple(items) | E::ArrayLit(items) | E::SetLit(items) => self.exprs(items),
+            E::MapLit(pairs) => {
+                for (key, value) in pairs {
+                    self.expr(key);
+                    self.expr(value);
+                }
+            }
+            E::Comprehension { element, clauses, .. } => {
+                for clause in clauses {
+                    match clause {
+                        ast::CompClause::For { pattern, iter } => {
+                            self.pattern(pattern);
+                            self.expr(iter);
+                        }
+                        ast::CompClause::If(cond) => self.expr(cond),
+                    }
+                }
+                self.expr(element);
+            }
+            E::ArrayRepeat { value, count } => {
+                self.expr(value);
+                self.expr(count);
+            }
+            E::FString(parts) => {
+                for part in parts {
+                    if let ast::FStringPart::Expr { expr, .. } = part {
+                        self.expr(expr);
+                    }
+                }
+            }
+            E::Jump(ast::Jump::Return(Some(value))) | E::Yield(Some(value)) => self.expr(value),
+            E::Jump(_) | E::Yield(None) => {}
+        }
+    }
 }
 
 fn has_attribute(attrs: &[ast::Attribute], name: &str) -> bool {

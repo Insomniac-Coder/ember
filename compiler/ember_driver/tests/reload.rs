@@ -857,8 +857,11 @@ fn wait_for(lines: &std::sync::mpsc::Receiver<(bool, String)>, stdout: bool, nee
 /// program's next `std.hot.checkpoint()`.
 #[test]
 fn run_hot_applies_an_edit_at_the_next_checkpoint() {
-    let source = "import std.hot\n\nfn version() -> int:\n    return 1\n\nfn main():\n    println(\"started\")\n    turns = 0\n    \
-                  while version() == 1 and turns < 20000000:\n        hot.checkpoint()\n        turns += 1\n    println(f\"now {version()}\")\n";
+    // The program waits for the edit by time (two minutes, past `wait_for`'s minute), not by a count
+    // of turns, which a fast machine finishes before the edit is built.
+    let source = "import std.hot\nimport std.time\n\nfn version() -> int:\n    return 1\n\nfn main():\n    println(\"started\")\n    \
+                  start = time.Instant.now()\n    while version() == 1 and start.elapsed().as_millis() < 120000:\n        hot.checkpoint()\n    \
+                  println(f\"now {version()}\")\n";
     let (package, file, mut child, lines) = start_hot("reload-run-hot", source);
     let mut seen = String::new();
     let started = wait_for(&lines, true, "started", &mut seen);
@@ -920,9 +923,11 @@ fn exports_are_the_module_protocol() {
 fn explain_predicts_against_the_running_program() {
     use std::io::BufRead;
     let root = workspace_root();
-    let v1 = "import std.hot\n\n@noreload\nfn fixed() -> int:\n    return 1\n\nfn version() -> int:\n    return 1\n\n\
-              fn main():\n    println(\"started\")\n    turns = 0\n    while version() == 1 and turns < 20000000:\n        \
-              hot.checkpoint()\n        turns += 1\n    println(f\"now {version()} {fixed()}\")\n";
+    // As above: the program waits for the announced image by time, not by a count of turns.
+    let v1 = "import std.hot\nimport std.time\n\n@noreload\nfn fixed() -> int:\n    return 1\n\nfn version() -> int:\n    return 1\n\n\
+              fn main():\n    println(\"started\")\n    start = time.Instant.now()\n    \
+              while version() == 1 and start.elapsed().as_millis() < 120000:\n        \
+              hot.checkpoint()\n    println(f\"now {version()} {fixed()}\")\n";
     let (package, file) = package("reload-explain", RELOAD_ALL, v1);
     let out = package.join("target");
     let (file_arg, out_arg) = (file.to_string_lossy().into_owned(), out.to_string_lossy().into_owned());

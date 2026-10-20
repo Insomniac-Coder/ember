@@ -10806,6 +10806,10 @@ formal 1/9 count or Phase 2's estimate.
 > .claude/worktrees/helper-N3.
 > ADR-241: `ember lint` built with all of `[LNT-6]`'s lints (`ember_analysis::perf_lints`, pages
 > docs/errors/L2001..L7001, tests/conformance/LNT-6/, `#$ command: lint` in the harness).
+> ADR-242: `@never_specialize` shares one body (`ref dyn` of the bounds) behind forwarders; E2223;
+> `ember inspect --generics`. MONO-5..9 done. D-760 fixed: the hot-reload tests wait by time, not
+> by a count of turns (CI's gcc runner finished the count before the rebuild).
+> ADR-243: `E4030` names the check's `[EFF-11]` reason and suggests by it (DIA-11 done).
 > ADR-238: helper N's second job merged (ODR-145..149 built, D-742..D-746 and D-756..D-758 fixed;
 > FFI-6a/6b/29/30c and TST-7 done). Two owner questions open in tasks/90/owner-questions.md.
 > D-754 open: CI's gate found `s3_skip_step_take` (gcc 1.30x), `s2_zip_and`, `a06_enum_match` (gcc) and

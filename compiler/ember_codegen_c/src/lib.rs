@@ -662,17 +662,18 @@ fn safety_json(bodies: &[Body], map: &SourceMap) -> String {
         // explicit `panic` or `assert` is the program's own, not a check.
         for block in &body.blocks {
             let Terminator::Assert { msg, span, .. } = &block.terminator else { continue };
-            let (kind, mechanism) = match msg {
-                AssertKind::Bounds { .. } => ("Bounds", "index test"),
-                AssertKind::Overflow(_) | AssertKind::SignedDivisionOverflow => ("Overflow", "overflow test"),
-                AssertKind::DivisionByZero => ("DivisionByZero", "zero divisor test"),
-                AssertKind::ShiftTooLarge => ("ShiftRange", "shift amount test"),
-                AssertKind::RefCellBorrow { .. } => ("Borrow", "borrow flag test"),
-                AssertKind::Downcast => ("Downcast", "class chain test"),
+            // `[EFF-11]` — a `RefCell`'s borrow check is the type's, which the programmer chose.
+            let (kind, mechanism, reason) = match msg {
+                AssertKind::Bounds { .. } => ("Bounds", "index test", "not_proven_by_analysis"),
+                AssertKind::Overflow(_) | AssertKind::SignedDivisionOverflow => ("Overflow", "overflow test", "not_proven_by_analysis"),
+                AssertKind::DivisionByZero => ("DivisionByZero", "zero divisor test", "not_proven_by_analysis"),
+                AssertKind::ShiftTooLarge => ("ShiftRange", "shift amount test", "not_proven_by_analysis"),
+                AssertKind::RefCellBorrow { .. } => ("Borrow", "borrow flag test", "requested_by_type"),
+                AssertKind::Downcast => ("Downcast", "class chain test", "not_proven_by_analysis"),
                 AssertKind::Panic { .. } => continue,
             };
             entries.push(format!(
-                "{{\"kind\":\"{kind}\",\"source\":{},\"function\":{},\"mechanism\":\"{mechanism}\",\"classification\":\"DYNAMIC_PER_ACCESS\",\"reason\":\"not_proven_by_analysis\",\"status\":\"emitted\"}}",
+                "{{\"kind\":\"{kind}\",\"source\":{},\"function\":{},\"mechanism\":\"{mechanism}\",\"classification\":\"DYNAMIC_PER_ACCESS\",\"reason\":\"{reason}\",\"status\":\"emitted\"}}",
                 json_string(&map.location(*span)),
                 json_string(&body.name),
             ));
