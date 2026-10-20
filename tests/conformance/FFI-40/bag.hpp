@@ -17,11 +17,13 @@ public:
     int total() const noexcept { return total_; }
     int& slot() noexcept { return total_; }
     const int& peek() const noexcept { return total_; }
+    int& look() const noexcept { return *spare_; }
     int& checked() { return total_; }
     void take() && noexcept {}
 
 private:
     int total_ = 0;
+    int* spare_ = &total_;
 };
 
 inline void reset(int& value) noexcept { value = 0; }

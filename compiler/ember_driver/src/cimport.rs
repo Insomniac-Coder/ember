@@ -1623,15 +1623,16 @@ impl Writer {
                     let inner = self.ty(pointee, true).map_err(|reason| format!("its result: {reason}"))?;
                     let pointer = format!("*{}{inner}", if constant { "" } else { "mut " });
                     let c = type_spelling(result_ty);
-                    // `[FFI-40]` — a method's `T&` result is a `ref` borrowing its receiver; any other
-                    // a raw pointer (a free function's has no receiver to borrow, and a `const`
-                    // method's `T&` would be a `ref mut` out of a shared borrow).
-                    let borrowed = match member {
-                        Some((_, Member::MutMethod, _)) => true,
-                        Some((_, Member::Method, _)) => constant,
-                        _ => false,
-                    };
-                    let mode = if borrowed { "ref" } else { "" }.to_string();
+                    // `[FFI-40]` — a method's `T&` result is a reference borrowing its receiver:
+                    // `ref mut` from a `mut self` method unless the `T` is `const`, else `ref` (a
+                    // `const` method's receiver is a shared borrow). A free or static function's
+                    // is a raw pointer: it has no receiver to borrow.
+                    let mode = match member {
+                        Some((_, Member::MutMethod, _)) if !constant => "ref mut",
+                        Some((_, Member::Method | Member::MutMethod, _)) => "ref",
+                        _ => "",
+                    }
+                    .to_string();
                     let ember = CType { ember: pointer, pointee: Some((inner, constant)), char_pointer: false, c, mode };
                     (Some(ember), Some(format!("{}*", cpp_spelling(pointee))), format!("&{call}"))
                 }
@@ -3678,12 +3679,12 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     }
     let mut call = format!("{raw_name}({})", arguments.join(", "));
     // `[FFI-40]` — a method's `T&` result: the reference the thunk's pointer is.
-    let reference = function.result.as_ref().filter(|ty| ty.mode == "ref").and_then(|ty| ty.pointee.clone());
-    if let Some((_, constant)) = &reference {
-        call = format!("{prefix}_cpp_ref{}({call})", if *constant { "" } else { "_mut" });
+    let reference = function.result.as_ref().filter(|ty| ty.mode.starts_with("ref")).and_then(|ty| Some((ty.pointee.clone()?.0, ty.mode == "ref")));
+    if let Some((_, shared)) = &reference {
+        call = format!("{prefix}_cpp_ref{}({call})", if *shared { "" } else { "_mut" });
     }
     let value = match (member, &reference) {
-        (_, Some((inner, constant))) => Some(format!("ref {}{inner}", if *constant { "" } else { "mut " })),
+        (_, Some((inner, shared))) => Some(format!("ref {}{inner}", if *shared { "" } else { "mut " })),
         (member, None) => match member {
         // `[FFI-36a]` — the object a constructor made, owned through its destructor.
         Some(Member::BoxedConstructor) => {
