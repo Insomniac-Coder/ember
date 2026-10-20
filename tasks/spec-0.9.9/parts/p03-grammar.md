@@ -134,8 +134,10 @@ fn_type_param := ["mut" | "owned"] type
 * `[GRM-3]` `Array[T]`, `Map[K, V]`, `Option[T]`, `Result[T, E]`, `Span[T]`, `Box[T]`, and the other
   library types are ordinary `path_type`s; the grammar does not special-case them. Generic arguments
   may appear on any path segment: `SoA[Particle].Ref`.
-* `[GRM-31]` *(new in 0.9.9)* A `some` type (`[TYP-32]`) is legal only as a function's return type, or nested inside
-  one; elsewhere it is `E2260`.
+* `[GRM-31]` *(new in 0.9.9)* *(changed in 0.9.10)* A `some` type (`[TYP-32]`) is legal only as a function's or a
+  method's return type, or nested inside one; elsewhere it is `E2260`. A method an interface declares
+  is not one: each implementation would choose its own type, so an associated type states it
+  (`type Iter: Iterator[Item = T]`) (ODR-144).
 
 ## III.4 Statements
 

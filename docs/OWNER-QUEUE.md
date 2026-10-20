@@ -327,6 +327,19 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-144 — `some` in an interface's method — **CLOSED**
+
+    ID:        ODR-144
+    Status:    CLOSED — ruled under the delegation 2026-10-20; incorporated in 0.9.10_Hardened_22
+    Category:  TYPES
+    Location:  Ember_v0.9.10_Hardened_21.md [GRM-31], [TYP-32]
+
+**The question.** `[GRM-31]` allows `some` as "a function's return type" and `[TYP-32]` has the body choose the type. An interface's method declaration has no body, and each implementation of a default could choose a different type; the rules did not say whether `some` is written there.
+
+**Ruling.** Ruled under the delegation: not there (`E2260`). A function's or a method's own `some` keeps its meaning; what an interface's method returns per implementation is an associated type bounded by the interface (`type Iter: Iterator[Item = T]`). ADR-229.
+
+---
+
 ## ODR-143 — A shared call on `self` inside a `mut self` method — **CLOSED**
 
     ID:        ODR-143

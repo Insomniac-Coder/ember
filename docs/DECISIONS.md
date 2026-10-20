@@ -5017,6 +5017,25 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-229 — `some I` on methods; not in an interface's method (ODR-144, 0.9.10_Hardened_22)
+
+2026-10-20. `[TYP-32]` is built for methods: a type's own (in its body or an `extend` block),
+generic or not, and a generic type's. A body's wrappers are the `some` structs its own declared
+return type names (`some_wrappers_named`: no source can name another function's), so the method
+and function checks, templates and instances alike, put what they return in them without each path
+knowing. A non-generic type's `some` method is checked in the pre-pass with the functions
+(`check_method_bodies` with the one-body filter); a generic type's is completed after its template
+check (`check_generic_type_methods`), which already runs before every function body. A held type
+whose method the compiler builds (`SpanIter`'s `next`) is forwarded to as `held.m()` is compiled
+(`synth_method_on`), not through a definition it does not have; forwarders for interfaces the
+compiler answers for built-in types (`Eq`, `Ord`, `Hash`, `Clone`, `Default`) are made only where
+the held type has the method.
+
+ODR-144, ruled under the delegation: `some` is not written in an interface's method, declared or
+default (`E2260`): each implementation would choose its own type, which an associated type bounded
+by the interface states. Cut as 0.9.10_Hardened_22 (`[GRM-31]` names a method's return type and
+the exclusion; `[TYP-32]` says a method returns one as a function does). The owner's to overturn.
+
 ## ADR-228 — `some I` return types for functions (`[TYP-32]`); D-735, D-736
 
 2026-10-20. `[TYP-32]`: `some I` in a function's return type is one concrete type the body chooses,

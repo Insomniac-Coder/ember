@@ -10768,6 +10768,8 @@ formal 1/9 count or Phase 2's estimate.
 > as specified (`[LT-1]`'s second kind, ODR-048).
 > Then ADR-228: `some I` return types for functions (`[TYP-32]`, wrapper structs with forwarding
 > methods; methods still `E0900`, so the rule stays unfinished), D-735, D-736.
+> Then ADR-229: `some` on methods (`[TYP-32]` done); ODR-144 (0.9.10_Hardened_22): not in an
+> interface's method, `E2260`.
 > **Before a push that touches C or the runtime:** `bench/gcc/gate.sh` in WSL (the workspace through
 > gcc) and `EMBER_CC=clang-cl cargo test --profile ci --workspace` on Windows, besides the full check.
 

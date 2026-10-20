@@ -593,7 +593,8 @@ interface From[T]:
 * `[TYP-32]` *(new in 0.9.9)* `some I` in a return type means "one concrete type, chosen by the function body, that
   implements `I`". The caller sees only `I`; the compiler knows the type and monomorphises through it,
   so there is no indirection. Every `return` in the body must produce the same concrete type
-  (`E2261` otherwise). It is how a function returns an iterator pipeline whose type cannot be written:
+  (`E2261` otherwise). A method returns one as a function does; an interface's method does not
+  (`[GRM-31]`). It is how a function returns an iterator pipeline whose type cannot be written:
 
 ```ember
 fn evens(xs: Span[int]) -> some Iterator[Item = int]:

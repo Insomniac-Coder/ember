@@ -673,7 +673,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[GRM-28]` | III | A `fn_decl` inside a block declares a local function. It may capture … |
 | `[GRM-29]` | III | An `expr_list` of two or more expressions, or of one expression … |
 | `[GRM-30]` | III | `as?` and `as!` are single tokens (`[LEX-21]`): `h as? D` is a … |
-| `[GRM-31]` | III | A `some` type (`[TYP-32]`) is legal only as a function's return type, … |
+| `[GRM-31]` | III | *(changed in 0.9.10)* A `some` type (`[TYP-32]`) is legal only as a … |
 | `[GRM-32]` | III | `comptime(e)` evaluates the expression `e` at compile time (`[CT-6]`). |
 | `[GRM-33]` | III | A bodiless `fn_decl` is legal only in an `interface`, an … |
 | `[GRM-34]` | III | *(changed in 0.9.10)* `extend [T: B] Array[T] implements I:` declares … |

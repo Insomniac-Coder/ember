@@ -422,6 +422,7 @@ ODR-132, the type of `Retained.ptr()` (§H.20).
 | ODR-141 | ruled under the delegation: `run(system, arg)` takes one argument after the system (a tuple for several, `()` for none); `Not[D]`'s item is `()`; `Entity` is a query parameter and `Option[P]` applies to any parameter; the ECS's compiler support is the conversion of a function to a `System` and the compile-time check of `run_parallel`'s literal | `[ECS-3]`, `[ECS-4]` |
 | ODR-142 | ruled under the delegation: a query none of whose parameters requires a component iterates every live entity, in the world's order (creation order with swap-remove holes) | `[ECS-3]`, `[ECS-6]` |
 | ODR-143 | ruled under the delegation: a shared method called on `self` inside a `mut self` method is lent the method's access as a read: its reads are not checked again, and a write to the object under it is | `[EXC-5]` |
+| ODR-144 | ruled under the delegation: `some I` is legal as a function's or a method's return type; in an interface's method (declared or default) it is `E2260`, and an associated type bounded by `I` states what each implementation returns | `[GRM-31]`, `[TYP-32]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -998,3 +999,16 @@ Generated: every rule whose text differs from 0.9.10_Hardened_20.
 | `[ECS-4]` | changed |
 | `[EXC-5]` | changed |
 | `[LAY-2]` | changed |
+
+## H.27 Changes in 0.9.10_Hardened_22 (from 0.9.10_Hardened_21)
+
+**0.9.10_Hardened_22** records ODR-144, ruled under the delegation while `[TYP-32]` was built (`docs/DECISIONS.md` ADR-229):
+
+* A `some` type is a function's or a method's return type, never the return type of a method an interface declares (a declaration or a default): each implementation would choose its own type, which an associated type bounded by the interface already states. Such a `some` is `E2260` (ODR-144).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_21.
+
+| Rule | 0.9.10_Hardened_21 → 0.9.10_Hardened_22 |
+|---|---|
+| `[GRM-31]` | changed |
+| `[TYP-32]` | changed |
