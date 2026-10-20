@@ -83,6 +83,14 @@ pub struct Function {
     pub abi: &'static str,
 }
 
+/// `[FFI-6b]` — a function-like macro: its name and parameters, for an overlay's
+/// `@ffi(macro_fn)` entry to state its signature.
+#[derive(Clone, Debug)]
+pub struct MacroFunction {
+    pub name: String,
+    pub params: Vec<String>,
+}
+
 /// A C type as the importer maps it (`[FFI-8]`).
 #[derive(Clone, Debug)]
 pub struct CType {
@@ -138,6 +146,11 @@ pub struct Imported {
     pub uses: Vec<Vec<String>>,
     pub entities: Vec<(String, String, String)>,
     pub conflicts: Vec<(String, String)>,
+    /// `[FFI-6b]` — the function-like macros, for an overlay entry to declare.
+    pub macro_functions: Vec<MacroFunction>,
+    /// `[FFI-6b]` — each type the module declares, by its Ember name, as C spells it: a macro's
+    /// wrapper is written with it.
+    pub c_types: Vec<(String, String)>,
 }
 
 fn text(string: CXString) -> String {
@@ -497,6 +510,8 @@ struct Writer {
     functions: Vec<Function>,
     /// Object-like macros to evaluate, with where each is defined.
     macro_names: Vec<(String, String)>,
+    macro_functions: Vec<MacroFunction>,
+    c_types: Vec<(String, String)>,
     /// Ember names taken in the module.
     names: HashSet<String>,
     records: HashMap<String, Record>,
@@ -519,6 +534,15 @@ impl Writer {
 
     fn push(&mut self, name: &str, kind: Kind, text: String) {
         self.items.push(Item { name: name.to_string(), kind, text: text.trim_end().to_string() });
+    }
+
+    /// `[FFI-6b]` — the C spelling of a type just declared, by its Ember name: Clang's (`struct
+    /// Pair`, `Point`), or the typedef's name of a struct with no tag of its own.
+    fn spelled(&mut self, cursor: CXCursor, named: &str) {
+        // SAFETY(ffi): a live cursor.
+        let spelled = type_spelling(unsafe { clang_getCursorType(cursor) });
+        let c = if spelled.is_empty() || spelled.contains('(') { named.to_string() } else { spelled };
+        self.c_types.push((ident(named), c));
     }
 
     /// Take `name` in the module's one namespace; C's tags and ordinary names are two.
@@ -732,6 +756,7 @@ impl Writer {
             Ok(None) => Ok(ident(&name)),
             Ok(Some(target)) if self.claim(&name) => {
                 self.push(&name, Kind::Type, format!("type {} = {target}", ident(&name)));
+                self.spelled(cursor, &name);
                 Ok(ident(&name))
             }
             Ok(Some(_)) => {
@@ -848,7 +873,7 @@ impl Writer {
             let size = clang_Type_getSizeOf(ty).max(0) as u64;
             let align = clang_Type_getAlignOf(ty).max(1) as u64;
             let fingerprint = format!("struct {size} {align} {:?}", layout.iter().map(|(_, offset)| offset).collect::<Vec<_>>());
-            if let Some(adopted) = self.adopt(&key, &named, &fingerprint, false) {
+            if let Some(adopted) = self.adopt(cursor, &key, &named, &fingerprint, false) {
                 return adopted;
             }
             if !self.claim(&named) {
@@ -863,6 +888,7 @@ impl Writer {
                 let _ = writeln!(attributes, "@align({align})");
             }
             self.push(&named, Kind::Type, format!("{attributes}struct {name}:\n{}", fields.concat()));
+            self.spelled(cursor, &named);
             // `[FFI-5a]` — the project's C compiler checks the layout on every build.
             // `struct Point`, or the typedef name of a struct with no tag of its own.
             let spelled = type_spelling(ty);
@@ -883,7 +909,7 @@ impl Writer {
     /// `[FFI-30]` — a declaration an earlier import of the build wrote with this layout is that
     /// import's entity: here an alias of it. With another layout it is a distinct entity, `E5011`
     /// unless this import binds a name of its own. `any`: an incomplete struct takes any layout.
-    fn adopt(&mut self, key: &str, named: &str, layout: &str, any: bool) -> Option<Record> {
+    fn adopt(&mut self, cursor: CXCursor, key: &str, named: &str, layout: &str, any: bool) -> Option<Record> {
         let shared = self.shared.get(key)?.clone();
         if !any && shared.layout != layout {
             if shared.binding == self.binding && shared.layout != "opaque" {
@@ -900,6 +926,7 @@ impl Writer {
         let alias = format!("{}_{}.{}", ember_branding::SYMBOL_PREFIX, shared.module.join("_"), shared.name);
         let name = ident(named);
         self.push(named, Kind::Type, format!("type {name} = {alias}"));
+        self.spelled(cursor, named);
         let record = if shared.layout == "opaque" { Record::Opaque(name, None) } else { Record::Full(name) };
         self.records.insert(key.to_string(), record.clone());
         Some(record)
@@ -910,7 +937,7 @@ impl Writer {
     fn opaque(&mut self, cursor: CXCursor, key: &str, named: &str, why: Option<String>) -> Record {
         // An incomplete struct is the entity another import wrote, whatever its layout there.
         if why.is_none()
-            && let Some(adopted) = self.adopt(key, named, "", true)
+            && let Some(adopted) = self.adopt(cursor, key, named, "", true)
         {
             return adopted;
         }
@@ -919,6 +946,7 @@ impl Writer {
         }
         let name = ident(named);
         self.push(named, Kind::Opaque, format!("type {name}"));
+        self.spelled(cursor, named);
         if why.is_none() {
             self.entities.push((key.to_string(), name.clone(), "opaque".to_string()));
         }
@@ -961,7 +989,7 @@ impl Writer {
         };
         // `[FFI-30]` — the enum an earlier import wrote, with these values, is that one.
         if let Ok(repr) = &repr
-            && self.adopt(&key, &named, &layout(repr), false).is_some()
+            && self.adopt(cursor, &key, &named, &layout(repr), false).is_some()
         {
             self.enums.insert(key, Ok(name.clone()));
             return Ok(name);
@@ -992,6 +1020,7 @@ impl Writer {
                     variants.push_str("    pass\n");
                 }
                 self.push(&named, Kind::Type, format!("@repr({repr})\n@non_exhaustive\nenum {name}:\n{variants}"));
+                self.spelled(cursor, &named);
                 self.entities.push((key.clone(), name.clone(), layout(&repr)));
                 for (alias, text) in aliases {
                     if self.claim(&alias) {
@@ -1134,7 +1163,8 @@ impl Writer {
     }
 
     /// `[FFI-6a]` — an object-like macro to evaluate; any other is `W5001`. A macro that expands
-    /// to nothing (an include guard, a feature flag) has no value to import.
+    /// to nothing (an include guard, a feature flag) has no value to import. `[FFI-6b]` — a
+    /// function-like macro is recorded with its parameters, for an overlay entry to declare.
     fn macro_definition(&mut self, cursor: CXCursor) {
         let name = spelling(cursor);
         // SAFETY(ffi): a live macro cursor and its tokens.
@@ -1143,19 +1173,23 @@ impl Writer {
                 return;
             }
             let at = self.at(cursor);
-            if clang_Cursor_isMacroFunctionLike(cursor) != 0 {
-                self.macro_skipped.push(Skipped {
-                    name,
-                    reason: "a function-like macro: Ember has no macros (a `static inline` C function in a header of your own can call it)".to_string(),
-                    at,
-                });
-                return;
-            }
             let tu = clang_Cursor_getTranslationUnit(cursor);
             let mut tokens: *mut CXToken = std::ptr::null_mut();
             let mut count: c_uint = 0;
             clang_tokenize(tu, clang_getCursorExtent(cursor), &mut tokens, &mut count);
+            let spelled: Vec<String> = (0..count as usize).map(|index| text(clang_getTokenSpelling(tu, *tokens.add(index)))).collect();
             clang_disposeTokens(tu, tokens, count);
+            if clang_Cursor_isMacroFunctionLike(cursor) != 0 {
+                // `NAME ( a , b ) …`: its parameters, `...` for a variadic one.
+                let params = spelled.iter().skip(2).take_while(|token| *token != ")").filter(|token| *token != ",").cloned().collect();
+                self.macro_functions.push(MacroFunction { name: name.clone(), params });
+                self.macro_skipped.push(Skipped {
+                    name,
+                    reason: "a function-like macro: an overlay's `@ffi(macro_fn)` entry declares its signature, and the import's shim wraps it ([FFI-6b])".to_string(),
+                    at,
+                });
+                return;
+            }
             if count > 1 {
                 self.macro_names.push((name, at));
             }
@@ -1253,6 +1287,8 @@ impl Writer {
             uses: self.uses,
             entities: self.entities,
             conflicts: self.conflicts,
+            macro_functions: self.macro_functions,
+            c_types: self.c_types,
         }
     }
 }
@@ -1263,14 +1299,15 @@ struct Options {
     include_paths: Vec<String>,
     defines: Vec<String>,
     link: Vec<String>,
-    overlay: Option<(String, Span)>,
+    /// `[FFI-30c]` (ODR-149) — applied first to last.
+    overlays: Vec<(String, Span)>,
     implementation: Vec<String>,
 }
 
 const OPTIONS: &str = "`include_paths`, `defines`, `link`, `overlay` and `implementation`";
 
-/// `[FFI-6]` — the options, each a list of strings but `overlay`, a string. An unknown option, or
-/// one written otherwise, is `E0104`.
+/// `[FFI-6]` — the options, each a list of strings but `overlay`, a string or a list of them
+/// (`[FFI-30c]`). An unknown option, or one written otherwise, is `E0104`.
 fn options(written: &[AttrArg], sink: &mut Sink) -> Option<Options> {
     let mut options = Options::default();
     let mut ok = true;
@@ -1294,12 +1331,24 @@ fn options(written: &[AttrArg], sink: &mut Sink) -> Option<Options> {
             "link" => &mut options.link,
             "implementation" => &mut options.implementation,
             "overlay" => {
-                if let ExprKind::Lit(Literal::Str(path)) = &value.kind {
-                    options.overlay = Some((path.clone(), value.span));
-                } else {
-                    sink.emit(Diagnostic::error(codes::E0104, value.span, "`overlay` names one overlay file: a string")
-                        .help(format!("write `overlay = \"overlays/name.{}\"`", ember_branding::SOURCE_EXT)));
-                    ok = false;
+                let one = |expr: &Expr| match &expr.kind {
+                    ExprKind::Lit(Literal::Str(path)) => Some((path.clone(), expr.span)),
+                    _ => None,
+                };
+                let written = match &value.kind {
+                    ExprKind::ArrayLit(items) => items.iter().map(one).collect::<Option<Vec<_>>>(),
+                    _ => one(value).map(|written| vec![written]),
+                };
+                match written {
+                    Some(written) => options.overlays.extend(written),
+                    None => {
+                        let ext = ember_branding::SOURCE_EXT;
+                        sink.emit(
+                            Diagnostic::error(codes::E0104, value.span, "`overlay` names an overlay file, or a list of them applied first to last")
+                                .help(format!("write `overlay = \"overlays/name.{ext}\"` or `overlay = [\"theirs.{ext}\", \"ours.{ext}\"]` [FFI-30c]")),
+                        );
+                        ok = false;
+                    }
                 }
                 continue;
             }
@@ -1340,9 +1389,10 @@ pub struct Loaded {
     pub path: Vec<String>,
     pub module: ast::Module,
     pub foreign: ember_typeck::ForeignImport,
-    /// The import's overlay file, a module of its own whose entries are checked as any overlay's
-    /// (`[GRM-35]`), with the function entries whose `instrumented` grade evidence backs (`[TCB-1]`).
-    pub overlay: Option<(Vec<String>, ast::Module, Vec<String>)>,
+    /// The import's overlay files, each a module of its own whose entries are checked as any
+    /// overlay's (`[GRM-35]`), with the function entries whose `instrumented` grade evidence backs
+    /// (`[TCB-1]`).
+    pub overlays: Vec<(Vec<String>, ast::Module, Vec<String>)>,
 }
 
 /// `[FFI-6]` — the module an `import c` names, written from its header, and the import rewritten
@@ -1379,7 +1429,7 @@ pub fn load(
         from_dir.display(),
         options.include_paths,
         options.defines,
-        options.overlay.as_ref().map(|o| &o.0),
+        options.overlays.iter().map(|(written, _)| written).collect::<Vec<_>>(),
         options.implementation
     );
     let rewrite = |import: &mut ast::Import, path: &[String]| {
@@ -1412,8 +1462,13 @@ pub fn load(
         shared: &known.shared,
         binding: bound.as_str(),
     };
-    // `[FFI-7]` — the overlay is part of what the record is for.
-    let overlay_text = options.overlay.as_ref().and_then(|(written, _)| std::fs::read_to_string(base.join(written)).ok()).unwrap_or_default();
+    // `[FFI-7]` — the overlays are part of what the record is for.
+    let overlay_text = options
+        .overlays
+        .iter()
+        .map(|(written, _)| std::fs::read_to_string(base.join(written)).unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join("\n\0\n");
     let mut cached = false;
     let imported = match import_cached(&config, &overlay_text, &mut cached) {
         Ok((imported, _)) => {
@@ -1462,16 +1517,11 @@ pub fn load(
                 .help("to reach its fields, wrap them in C functions the header declares"),
         );
     }
-    for skipped in &imported.macros {
-        sink.emit(
-            Diagnostic::warning(codes::W5001, span, format!("macro `{}` is not imported from `{shown}`: {}", skipped.name, skipped.reason))
-                .note(format!("defined at {} [FFI-6a]", skipped.at)),
-        );
-    }
-    // `[FFI-2]` — the overlay, applied before the module is written.
+    // `[FFI-2]` — the overlays, applied first to last before the module is written (`[FFI-30c]`).
+    let symbol_stem = path.join("_");
     let mut applied = Applied::default();
-    let mut overlay_module = None;
-    if let Some((written, at)) = &options.overlay {
+    let mut overlay_modules = Vec::new();
+    for (layer, (written, at)) in options.overlays.iter().enumerate() {
         let overlay_file = base.join(written);
         match map.load(&overlay_file) {
             Err(error) => sink.emit(crate::load_diagnostic(&error, *at)),
@@ -1488,7 +1538,7 @@ pub fn load(
                     })
                     .collect();
                 match overlays.as_slice() {
-                    [overlay] => applied = apply(overlay, &text, &shown, &imported, sink),
+                    [overlay] => apply(&mut applied, layer, overlay, &text, &shown, &imported, &symbol_stem, sink),
                     _ => sink.emit(
                         Diagnostic::error(codes::E5010, *at, format!("`{written}` holds {} `overlay c` declarations: an import's overlay file holds one", overlays.len()))
                             .note("an overlay states the contracts of one header's declarations [FFI-12]"),
@@ -1496,18 +1546,29 @@ pub fn load(
                 }
                 let mut overlay_path = path.clone();
                 overlay_path[1].push_str("_overlay");
-                overlay_module = Some((overlay_path, parsed, Vec::new()));
+                if layer > 0 {
+                    let _ = write!(overlay_path[1], "_{}", layer + 1);
+                }
+                overlay_modules.push((overlay_path, parsed, Vec::new()));
             }
         }
+    }
+    // `[FFI-6b]` — a macro an overlay declares is imported.
+    let declared = |name: &str| applied.macros.iter().any(|(function, ..)| function.name == name);
+    for skipped in imported.macros.iter().filter(|skipped| !declared(&skipped.name)) {
+        sink.emit(
+            Diagnostic::warning(codes::W5001, span, format!("macro `{}` is not imported from `{shown}`: {}", skipped.name, skipped.reason))
+                .note(format!("defined at {} [FFI-6a]", skipped.at)),
+        );
     }
     // Named for its module: the source map keeps one file per name, and one header imported twice
     // is two modules.
     // No quotes: the name reaches the C as `#line`'s file name ([CG-C-8]).
     let rendered = render(&imported, &applied);
     // `[TCB-1]` — each `@grade(instrumented)` entry an evidence record of this package backs.
-    if let Some((_, overlay, backed)) = &mut overlay_module
-        && let Some(evidence) = crate::foreign::load_evidence(importer)
-    {
+    let evidence = if overlay_modules.is_empty() { None } else { crate::foreign::load_evidence(importer) };
+    for (_, overlay, backed) in &mut overlay_modules {
+        let Some(evidence) = &evidence else { break };
         let source_hash = ember_build::content_hash(rendered.as_bytes());
         for item in overlay.items.iter().filter_map(|item| match &item.kind {
             ast::ItemKind::Overlay(overlay) => Some(overlay),
@@ -1521,7 +1582,7 @@ pub fn load(
             });
             let bound_name = applied.renamed.get(name.name.as_str()).map_or(name.name.as_str(), String::as_str);
             let qualified = format!("{}.{bound_name}", path.join("."));
-            if graded && crate::foreign::backs_instrumented(&evidence, &qualified, &source_hash) {
+            if graded && crate::foreign::backs_instrumented(evidence, &qualified, &source_hash) {
                 backed.push(name.name.to_string());
             }
         }
@@ -1548,11 +1609,17 @@ pub fn load(
         }
     }
     shim.push_str(&imported.shim);
+    if !applied.macros.is_empty() {
+        shim.push_str("\n/* The wrappers of the macros the overlays declare ([FFI-6b]). */\n#include <stdint.h>\n");
+        for (_, _, wrapper) in &applied.macros {
+            shim.push_str(wrapper);
+        }
+    }
     let mut c_flags: Vec<String> = flags.to_vec();
     c_flags.extend(include_paths.iter().map(|dir| format!("-I{}", dir.display())));
     c_flags.extend(options.defines.iter().map(|define| format!("-D{define}")));
     let mut identities = vec![("header".to_string(), imported.header.clone())];
-    identities.extend(options.overlay.as_ref().map(|(written, _)| ("overlay".to_string(), base.join(written))));
+    identities.extend(options.overlays.iter().map(|(written, _)| ("overlay".to_string(), base.join(written))));
     let foreign = ember_typeck::ForeignImport {
         backed: Vec::new(),
         header: shown,
@@ -1561,7 +1628,7 @@ pub fn load(
             .skipped
             .iter()
             .map(|skipped| (skipped.name.clone(), skipped.reason.clone()))
-            .chain(imported.macros.iter().map(|skipped| (skipped.name.clone(), format!("a macro, {}", skipped.reason))))
+            .chain(imported.macros.iter().filter(|skipped| !declared(&skipped.name)).map(|skipped| (skipped.name.clone(), format!("a macro, {}", skipped.reason))))
             .collect(),
         layouts: imported.layouts.iter().map(|layout| (layout.name.clone(), layout.size, layout.align, layout.fields.clone())).collect(),
         shim,
@@ -1575,7 +1642,7 @@ pub fn load(
     };
     rewrite(import, &path);
     known.modules.insert(key, path.clone());
-    Some(Loaded { path, module, foreign, overlay: overlay_module })
+    Some(Loaded { path, module, foreign, overlays: overlay_modules })
 }
 
 /// `[FFI-29]`, `[BLD-FFI-1]`, `[BLD-FFI-1a]`, `[BLD-FFI-3]` — each `import c`'s shim and C sources,
@@ -1613,9 +1680,10 @@ pub fn build_objects(
     Ok((objects, libraries))
 }
 
-/// `[FFI-2]`, `[FFI-12]`, `[FFI-13]`, `[FFI-30a]` — what an overlay changes in an imported module:
+/// `[FFI-2]`, `[FFI-12]`, `[FFI-13]`, `[FFI-30a]` — what an import's overlays change in its module:
 /// the contracts, safety and names of functions, facts on opaque types and enums, what is hidden,
-/// and the wrappers its `extend` blocks add. It never changes a type's identity, layout or fields.
+/// the wrappers its `extend` blocks add, and the macros it declares (`[FFI-6b]`). It never changes a
+/// type's identity, layout or fields.
 #[derive(Default)]
 struct Applied {
     hidden: HashSet<String>,
@@ -1626,6 +1694,11 @@ struct Applied {
     functions: HashMap<String, Entry>,
     /// Each `extend` block, as written, at column 0.
     extends: Vec<String>,
+    /// `[FFI-6b]` — each macro an entry declares: its binding, as a function of the header's would
+    /// be, the entry that makes it safe or not, and its wrapper in the shim.
+    macros: Vec<(Function, Entry, String)>,
+    /// `[FFI-30c]` — which overlay, by its place in the import's list, wrote each entry.
+    origins: HashMap<(&'static str, String), usize>,
 }
 
 /// An overlay's function entry: each parameter's contract words, the result's, and the entry's own
@@ -1641,18 +1714,83 @@ fn word(written: &str) -> &str {
     written.split('(').next().unwrap_or(written).trim()
 }
 
-/// `[FFI-12]` — apply an overlay to the module the header made; an entry whose name, parameter
-/// count or parameter names do not match the header is `E5010`.
-fn apply(overlay: &ast::OverlayDecl, text: &str, header: &str, imported: &Imported, sink: &mut Sink) -> Applied {
+/// `[FFI-30c]` (ODR-149) — take the entry of `category` for `name` for the overlay at `layer`: a later
+/// overlay's `override` entry replaces an earlier one's; any other second entry is `E5010`.
+fn take(applied: &mut Applied, sink: &mut Sink, layer: usize, is_override: bool, category: &'static str, name: &ast::Ident) -> bool {
+    let key = (category, name.name.to_string());
+    let note = "an import's overlays compose in the order it lists them, and a later one replaces an entry only with `override` [FFI-30c]";
+    let refused = match applied.origins.get(&key) {
+        None if is_override => format!("`override` replaces an earlier overlay's entry, and none has one for `{}`", name.name),
+        Some(&earlier) if earlier == layer => format!("a second entry for `{}` in one overlay", name.name),
+        Some(_) if !is_override => {
+            sink.emit(
+                Diagnostic::error(codes::E5010, name.span, format!("an earlier overlay has an entry for `{}`", name.name))
+                    .help("begin this entry with `override` to replace it")
+                    .note(note),
+            );
+            return false;
+        }
+        _ => {
+            applied.origins.insert(key, layer);
+            return true;
+        }
+    };
+    sink.emit(Diagnostic::error(codes::E5010, name.span, refused).note(note));
+    false
+}
+
+/// `[FFI-6b]` — the C type a macro's wrapper declares for an Ember type its entry writes: a scalar,
+/// `cstr`, a type of the module (by value only when it is not opaque), or a raw pointer to one.
+fn c_spelling(ty: &ast::TypeExpr, imported: &Imported, behind_pointer: bool) -> Option<String> {
+    match &ty.kind {
+        ast::TypeKind::Ptr { mutable, inner } => {
+            let pointee = if matches!(inner.kind, ast::TypeKind::Void) { "void".to_string() } else { c_spelling(inner, imported, true)? };
+            Some(format!("{pointee}{} *", if *mutable { "" } else { " const" }))
+        }
+        ast::TypeKind::Path { segments, args } if segments.len() == 1 && args.is_empty() => {
+            let name = segments[0].name.as_str();
+            let scalar = match name {
+                "i8" => "int8_t",
+                "i16" => "int16_t",
+                "i32" => "int32_t",
+                "i64" => "int64_t",
+                "u8" => "uint8_t",
+                "u16" => "uint16_t",
+                "u32" => "uint32_t",
+                "u64" => "uint64_t",
+                "isize" => "ptrdiff_t",
+                "usize" => "size_t",
+                "f32" => "float",
+                "f64" => "double",
+                "bool" => "_Bool",
+                "cstr" => "char const *",
+                _ => {
+                    let opaque = imported.items.iter().any(|item| ident(&item.name) == name && item.kind == Kind::Opaque);
+                    if opaque && !behind_pointer {
+                        return None;
+                    }
+                    return imported.c_types.iter().find(|(ember, _)| ember == name).map(|(_, c)| c.clone());
+                }
+            };
+            Some(scalar.to_string())
+        }
+        _ => None,
+    }
+}
+
+/// `[FFI-12]` — apply an overlay, the `layer`th of the import's list, to the module the header
+/// made; an entry whose name, parameter count or parameter names do not match the header is
+/// `E5010`. `stem`: the module's path joined with `_`, which names the shim's wrappers.
+#[allow(clippy::too_many_arguments)]
+fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: &str, header: &str, imported: &Imported, stem: &str, sink: &mut Sink) {
     let snippet = |span: Span| text.get(span.start as usize..span.end as usize).unwrap_or("").to_string();
-    let mut applied = Applied::default();
     let written = Path::new(&overlay.header).file_name().map(|name| name.to_string_lossy().into_owned());
     if written.as_deref() != Some(header) {
         sink.emit(
             Diagnostic::error(codes::E5010, overlay.span, format!("this overlay is for `{}`, and the import is of `{header}`", overlay.header))
                 .note("an overlay states the contracts of one header's declarations [FFI-12]"),
         );
-        return applied;
+        return;
     }
     let item = |name: &str, kind: Kind| imported.items.iter().any(|item| item.name == name && item.kind == kind);
     let mismatch = |sink: &mut Sink, span: Span, message: String| {
@@ -1660,16 +1798,26 @@ fn apply(overlay: &ast::OverlayDecl, text: &str, header: &str, imported: &Import
     };
     for entry in &overlay.items {
         let attributes = || entry.attrs.iter().map(|attr| snippet(attr.span)).collect::<Vec<_>>();
+        // The entry's own `@ffi(…)` arguments, as written; `macro_fn` is what the entry is.
+        let arguments = || -> Vec<String> {
+            entry
+                .attrs
+                .iter()
+                .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+                .flat_map(|attr| &attr.args)
+                .map(|arg| match arg {
+                    AttrArg::Expr(expr) => snippet(expr.span),
+                    AttrArg::Named { name, value } => snippet(name.span.to(value.span)),
+                })
+                .filter(|written| written != "macro_fn")
+                .collect()
+        };
         match &entry.kind {
             ast::OverlayItemKind::Fn { name, params, result } => {
                 let Some(function) = imported.functions.iter().find(|function| function.name == name.name.as_str()) else {
                     mismatch(sink, name.span, format!("`{header}` declares no function `{}`", name.name));
                     continue;
                 };
-                if applied.functions.contains_key(&function.name) {
-                    mismatch(sink, name.span, format!("a second entry for `{}`", name.name));
-                    continue;
-                }
                 if params.len() != function.params.len() {
                     mismatch(sink, name.span, format!("`{}` takes {} parameters in `{header}`, and the entry names {}", name.name, function.params.len(), params.len()));
                     continue;
@@ -1681,27 +1829,80 @@ fn apply(overlay: &ast::OverlayDecl, text: &str, header: &str, imported: &Import
                         matched = false;
                     }
                 }
-                if !matched {
+                if !matched || !take(applied, sink, layer, entry.is_override, "fn", name) {
                     continue;
                 }
-                let arguments = entry
-                    .attrs
-                    .iter()
-                    .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
-                    .flat_map(|attr| &attr.args)
-                    .map(|arg| match arg {
-                        AttrArg::Expr(expr) => snippet(expr.span),
-                        AttrArg::Named { name, value } => snippet(name.span.to(value.span)),
-                    })
-                    .collect();
                 applied.functions.insert(
                     function.name.clone(),
                     Entry {
                         params: params.iter().map(|param| param.contract.iter().map(|word| snippet(word.span)).collect()).collect(),
                         result: result.iter().map(|word| snippet(word.span)).collect(),
-                        arguments,
+                        arguments: arguments(),
                     },
                 );
+            }
+            // `[FFI-6b]` (ODR-147) — a macro's signature in Ember types, and the shim's wrapper.
+            ast::OverlayItemKind::MacroFn { name, params, result } => {
+                let Some(found) = imported.macro_functions.iter().find(|found| found.name == name.name.as_str()) else {
+                    mismatch(sink, name.span, format!("`{header}` defines no function-like macro `{}`", name.name));
+                    continue;
+                };
+                if imported.functions.iter().any(|function| function.name == found.name) {
+                    mismatch(sink, name.span, format!("`{}` is a function of `{header}` as well as a macro: its entry is one without `@ffi(macro_fn)`", name.name));
+                    continue;
+                }
+                if params.len() != found.params.len() {
+                    mismatch(sink, name.span, format!("`{}` takes {} parameters in `{header}`, and the entry names {}", name.name, found.params.len(), params.len()));
+                    continue;
+                }
+                let mut matched = true;
+                for ((param, _), c_name) in params.iter().zip(&found.params) {
+                    if param.name.as_str() != c_name {
+                        mismatch(sink, param.span, format!("parameter `{}` of `{}` is `{c_name}` in `{header}`", param.name, name.name));
+                        matched = false;
+                    }
+                }
+                let mut spell = |ty: &ast::TypeExpr| {
+                    let spelled = c_spelling(ty, imported, false);
+                    if spelled.is_none() {
+                        sink.emit(
+                            Diagnostic::error(codes::E5015, ty.span, format!("`{}` has no C type for the wrapper of macro `{}`", snippet(ty.span), name.name))
+                                .note("a macro's wrapper takes and returns scalars, `cstr`, the header's types and raw pointers [FFI-6b]"),
+                        );
+                        matched = false;
+                    }
+                    spelled.unwrap_or_default()
+                };
+                let c_params: Vec<String> = params.iter().map(|(_, ty)| spell(ty)).collect();
+                let c_result = result.as_ref().map(&mut spell);
+                if !matched || !take(applied, sink, layer, entry.is_override, "fn", name) {
+                    continue;
+                }
+                let wrapper = format!("{}_cshim_{stem}_{}", ember_branding::SYMBOL_PREFIX, found.name);
+                let declared: Vec<String> = c_params.iter().enumerate().map(|(index, c)| format!("{c} a{index}")).collect();
+                let call = format!("{}({})", found.name, (0..params.len()).map(|index| format!("a{index}")).collect::<Vec<_>>().join(", "));
+                let body = if result.is_some() { format!("return {call};") } else { format!("{call};") };
+                let declared = if declared.is_empty() { "void".to_string() } else { declared.join(", ") };
+                let c_text = format!("{} {wrapper}({declared}) {{ {body} }}\n", c_result.as_deref().unwrap_or("void"));
+                let c_type = |ty: &ast::TypeExpr, c: &str| CType { ember: snippet(ty.span), pointee: None, char_pointer: false, c: c.to_string() };
+                let function = Function {
+                    name: found.name.clone(),
+                    params: params.iter().zip(&c_params).map(|((param, ty), c)| (param.name.to_string(), c_type(ty, c))).collect(),
+                    result: result.as_ref().zip(c_result.as_ref()).map(|(ty, c)| c_type(ty, c)),
+                    link_name: Some(wrapper),
+                    abi: "C",
+                };
+                // A raw pointer states nothing a call can rely on: the call stays unsafe (`[FFI-2]`).
+                let raw = params.iter().map(|(_, ty)| ty).chain(result).any(|ty| matches!(ty.kind, ast::TypeKind::Ptr { .. }));
+                let made = Entry {
+                    params: vec![Vec::new(); params.len()],
+                    result: if raw { vec!["unsafe".to_string()] } else { Vec::new() },
+                    arguments: arguments(),
+                };
+                match applied.macros.iter_mut().find(|(earlier, ..)| earlier.name == found.name) {
+                    Some(earlier) => *earlier = (function, made, c_text),
+                    None => applied.macros.push((function, made, c_text)),
+                }
             }
             ast::OverlayItemKind::Type(name) | ast::OverlayItemKind::Enum(name) => {
                 let kind = if matches!(entry.kind, ast::OverlayItemKind::Type(_)) { Kind::Opaque } else { Kind::Type };
@@ -1711,23 +1912,31 @@ fn apply(overlay: &ast::OverlayDecl, text: &str, header: &str, imported: &Import
                     mismatch(sink, name.span, format!("`{header}` declares no {what} `{}`", name.name));
                     continue;
                 }
-                applied.attributes.entry(name.name.to_string()).or_default().extend(attributes());
+                if take(applied, sink, layer, entry.is_override, "type", name) {
+                    applied.attributes.insert(name.name.to_string(), attributes());
+                }
             }
             ast::OverlayItemKind::Rename { from, to } => {
-                let function = imported.functions.iter().any(|function| function.name == from.name.as_str());
+                let function = imported.functions.iter().any(|function| function.name == from.name.as_str())
+                    || imported.macro_functions.iter().any(|found| found.name == from.name.as_str());
                 if !function && !item(from.name.as_str(), Kind::Type) && !item(from.name.as_str(), Kind::Opaque) {
                     mismatch(sink, from.span, format!("`{header}` declares no function or type `{}` to rename", from.name));
                     continue;
                 }
-                applied.renamed.insert(from.name.to_string(), to.name.to_string());
+                if take(applied, sink, layer, entry.is_override, "rename", from) {
+                    applied.renamed.insert(from.name.to_string(), to.name.to_string());
+                }
             }
             ast::OverlayItemKind::Hide(name) => {
-                let function = imported.functions.iter().any(|function| function.name == name.name.as_str());
+                let function = imported.functions.iter().any(|function| function.name == name.name.as_str())
+                    || imported.macro_functions.iter().any(|found| found.name == name.name.as_str());
                 if !function && !imported.items.iter().any(|item| item.name == name.name.as_str()) {
                     mismatch(sink, name.span, format!("`{header}` declares no `{}` to hide", name.name));
                     continue;
                 }
-                applied.hidden.insert(name.name.to_string());
+                if take(applied, sink, layer, entry.is_override, "hide", name) {
+                    applied.hidden.insert(name.name.to_string());
+                }
             }
             // `[FFI-13]` — wrappers written in Ember, over the module's own declarations.
             ast::OverlayItemKind::Extend(_) => {
@@ -1740,7 +1949,6 @@ fn apply(overlay: &ast::OverlayDecl, text: &str, header: &str, imported: &Import
             }
         }
     }
-    applied
 }
 
 /// `[FFI-11]` — the Ember type a contracted pointer parameter is, as a hand declaration writes it:
@@ -1905,6 +2113,11 @@ fn render(imported: &Imported, applied: &Applied) -> String {
         let hidden = applied.hidden.contains(&function.name);
         member(function.abi, render_function(function, applied.functions.get(&function.name), applied.renamed.get(&function.name), hidden));
     }
+    // `[FFI-6b]` — each declared macro, bound to its wrapper in the shim.
+    for (function, entry, _) in &applied.macros {
+        let hidden = applied.hidden.contains(&function.name);
+        member(function.abi, render_function(function, Some(entry), applied.renamed.get(&function.name), hidden));
+    }
     for (abi, members) in blocks {
         let _ = write!(body, "unsafe extern \"{abi}\":\n{members}\n");
     }
@@ -2020,7 +2233,11 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
             })
             .collect();
         match overlays.as_slice() {
-            [overlay] => Ok(apply(overlay, &text, &file, &imported, sink)),
+            [overlay] => {
+                let mut applied = Applied::default();
+                apply(&mut applied, 0, overlay, &text, &file, &imported, "bind", sink);
+                Ok(applied)
+            }
             _ => Err(format!("`{path}` holds {} overlay declarations: it should hold one", overlays.len())),
         }
     };
@@ -2316,7 +2533,7 @@ mod cbor {
 
 use cbor::Value;
 
-const EMBIND_VERSION: u64 = 1;
+const EMBIND_VERSION: u64 = 2;
 
 fn text_of(value: &Value) -> Option<String> {
     match value {
@@ -2458,6 +2675,17 @@ fn embind(imported: &Imported, files: &[(String, String)], configuration: &str, 
         ("uses".to_string(), Value::Array(imported.uses.iter().map(|path| Value::Array(path.iter().map(|segment| Value::Text(segment.clone())).collect())).collect())),
         ("entities".to_string(), Value::Array(imported.entities.iter().map(|(usr, name, layout)| texts(&[usr, name, layout])).collect())),
         ("conflicts".to_string(), Value::Array(imported.conflicts.iter().map(|(name, header)| texts(&[name, header])).collect())),
+        (
+            "macro_functions".to_string(),
+            Value::Array(
+                imported
+                    .macro_functions
+                    .iter()
+                    .map(|found| Value::Array(std::iter::once(&found.name).chain(&found.params).map(|text| Value::Text(text.clone())).collect()))
+                    .collect(),
+            ),
+        ),
+        ("c_types".to_string(), Value::Array(imported.c_types.iter().map(|(ember, c)| texts(&[ember, c])).collect())),
     ]);
     let mut bytes = Vec::new();
     cbor::encode(&value, &mut bytes);
@@ -2538,6 +2766,14 @@ fn read_embind(bytes: &[u8]) -> Option<(Vec<(String, String)>, Imported)> {
         uses: array_of(field(&value, "uses")?)?.iter().map(|path| array_of(path)?.iter().map(text_of).collect::<Option<Vec<_>>>()).collect::<Option<_>>()?,
         entities: triples(field(&value, "entities")?)?,
         conflicts: pairs(field(&value, "conflicts")?)?,
+        macro_functions: array_of(field(&value, "macro_functions")?)?
+            .iter()
+            .map(|entry| {
+                let entry = array_of(entry)?;
+                Some(MacroFunction { name: text_of(entry.first()?)?, params: entry[1..].iter().map(text_of).collect::<Option<_>>()? })
+            })
+            .collect::<Option<_>>()?,
+        c_types: pairs(field(&value, "c_types")?)?,
     };
     Some((files, imported))
 }

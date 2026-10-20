@@ -36922,6 +36922,10 @@ impl<'a> Checker<'a> {
                     _ => self.check_attribute_list(std::slice::from_ref(attr), "overlay item"),
                 }
             }
+            if let ast::OverlayItemKind::MacroFn { name, .. } = &item.kind {
+                fact(name.span, format!("the entry for macro `{}`, which states its signature", name.name));
+                continue;
+            }
             let ast::OverlayItemKind::Fn { name, params, result } = &item.kind else { continue };
             fact(name.span, format!("the entry for `{}`, which asserts it safe to call", name.name));
             for contract in params.iter().flat_map(|param| &param.contract).chain(result) {
@@ -36951,7 +36955,7 @@ impl<'a> Checker<'a> {
     /// claim is unbacked, `W5050` (`E5050` under `--require-evidence`), and the fact stays asserted
     /// (`[TCB-2]`).
     fn check_grade(&mut self, attr: &ast::Attribute, kind: &ast::OverlayItemKind) {
-        if !matches!(kind, ast::OverlayItemKind::Fn { .. } | ast::OverlayItemKind::Type(_) | ast::OverlayItemKind::Enum(_)) {
+        if !matches!(kind, ast::OverlayItemKind::Fn { .. } | ast::OverlayItemKind::MacroFn { .. } | ast::OverlayItemKind::Type(_) | ast::OverlayItemKind::Enum(_)) {
             self.error(codes::E0104, attr.span, "`@grade` applies to an overlay entry that states facts");
             return;
         }

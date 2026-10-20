@@ -192,6 +192,9 @@ impl Printer {
                                     params.iter().map(|param| format!("{}: {}", param.name.name, words(&param.contract))).collect();
                                 p.line(&format!("Fn {}({}) -> {}", name.name, params.join(", "), words(result)));
                             }
+                            OverlayItemKind::MacroFn { name, params, .. } => {
+                                p.line(&format!("MacroFn {}({} parameters)", name.name, params.len()))
+                            }
                             OverlayItemKind::Type(name) => p.line(&format!("Type {}", name.name)),
                             OverlayItemKind::Enum(name) => p.line(&format!("Enum {}", name.name)),
                             OverlayItemKind::Rename { from, to } => p.line(&format!("Rename {} as {}", from.name, to.name)),

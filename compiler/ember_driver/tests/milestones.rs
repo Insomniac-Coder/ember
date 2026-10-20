@@ -7265,7 +7265,8 @@ static inline void bind_zero(int* items, size_t n) { for (size_t i = 0; i < n; i
 int bind_log(const char* format, ...);
 ";
 
-/// `[CLI-5]` — `ember bind <header> --init` writes a starter overlay: each fact the header cannot
+/// `[CLI-5]` — `ember bind <header> --init` writes a starter overlay, `<stem>.overlay.em` beside the
+/// header (`calc.overlay.em` for `calc.h`, ODR-148): each fact the header cannot
 /// state a `TODO(…)` word, each derived one a comment, each skipped declaration a comment with its
 /// reason. It compiles unchanged (every call still `unsafe`), is never written over, and `--merge`
 /// adds only what it lacks, keeping what was written by hand.

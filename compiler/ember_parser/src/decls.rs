@@ -683,9 +683,38 @@ impl Parser<'_> {
     /// | "rename" IDENT "as" IDENT NEWLINE | "hide" IDENT NEWLINE | extend_decl)`; `rename` and
     /// `hide` are keywords only here (`[LEX-15]`).
     fn parse_overlay_item(&mut self) -> Option<OverlayItem> {
+        // `[FFI-30c]` (ODR-149) — `override` replaces an earlier overlay's entry: the item begins
+        // with it, before or after its attributes.
+        let leading = self.eat_kw(Kw::Override);
         let attrs = self.parse_attributes();
         let start = self.span();
+        let is_override = self.eat_kw(Kw::Override) || leading;
+        // `[FFI-6b]` (ODR-147) — an entry for a function-like macro writes Ember types.
+        let macro_fn = attrs.iter().any(|attr| {
+            attr.path.len() == 1 && attr.path[0].name.is("ffi")
+                && attr.args.iter().any(|arg| matches!(arg, AttrArg::Expr(Expr { kind: ExprKind::Path { segments }, .. })
+                    if segments.len() == 1 && segments[0].name.is("macro_fn")))
+        });
         let kind = match self.peek().clone() {
+            TokenKind::Keyword(Kw::Fn) if macro_fn => {
+                self.bump();
+                let name = self.expect_ident();
+                self.expect_punct(Punct::LParen);
+                let mut params = Vec::new();
+                while !self.at_punct(Punct::RParen) && !self.at_eof() && !self.at_newline() {
+                    let name = self.expect_ident();
+                    self.expect_punct(Punct::Colon);
+                    params.push((name, self.parse_type()));
+                    if !self.eat_punct(Punct::Comma) {
+                        break;
+                    }
+                    self.eat_newlines();
+                }
+                self.expect_punct(Punct::RParen);
+                let result = self.eat_punct(Punct::Arrow).then(|| self.parse_type());
+                self.expect_newline();
+                OverlayItemKind::MacroFn { name, params, result }
+            }
             TokenKind::Keyword(Kw::Fn) => {
                 self.bump();
                 let name = self.expect_ident();
@@ -743,7 +772,7 @@ impl Parser<'_> {
                 return None;
             }
         };
-        Some(OverlayItem { attrs, kind, span: start.to(self.prev_span()) })
+        Some(OverlayItem { attrs, is_override, kind, span: start.to(self.prev_span()) })
     }
 
     /// `contract {contract}`, `contract := IDENT ["(" [attr_arg {"," attr_arg}] ")"]`: words
