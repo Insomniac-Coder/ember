@@ -15086,6 +15086,9 @@ impl<'a> Checker<'a> {
         if !self.unsafe_context() {
             self.error(codes::E3100, span, "reading through a raw pointer requires an `unsafe` block");
         }
+        // C's `ref` is a plain pointer: a `const T*` is cast to it first.
+        let plain = self.types.intern(TyKind::Ptr { mutable: true, inner });
+        let pointer = Expr { ty: plain, kind: ExprKind::Cast { expr: Box::new(pointer), to: plain }, span };
         let place = Expr { ty: inner, kind: ExprKind::Deref(Box::new(pointer)), span };
         let ty = self.types.intern(TyKind::Ref { mutable, inner });
         Some(Expr { ty, kind: ExprKind::Ref { place: Box::new(place), mutable }, span })
