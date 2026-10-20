@@ -5017,6 +5017,36 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-228 — `some I` return types for functions (`[TYP-32]`); D-735, D-736
+
+2026-10-20. `[TYP-32]`: `some I` in a function's return type is one concrete type the body chooses,
+seen by the caller only as `I`, with no indirection.
+* **Representation.** Each `some I` written in a return type is a struct the compiler makes: a
+  generic recipe over the function's parameters (`some′N`, a name no identifier can spell, shown to
+  the user as `some I[...]`), with one private field holding the concrete type. Its instances
+  implement `I` and `I`'s parents and nothing else: the associated types are the held type's, each
+  required method forwards to the held type's (a synthesized body that passes the held value in
+  place of `self` or a `Self` parameter and wraps a `Self` result), and the interfaces' defaults are
+  its own. Implicit `Eq` and `Debug` only where `I` reaches them; `Display` and `Debug` print the
+  held value (`printed_as`, as ODR-094's `Box`). A caller using anything else (`five() + 1` on a
+  `some Display`) gets the ordinary error for the wrapper type.
+* **Choosing the type.** Inside the function's body, a value coerced to its wrapper is put in it:
+  the first fixes the concrete type, which must implement `I` with the associated types the bound
+  writes (`E2040`), and every later one must be that type (`E2261`, with an error page). This
+  covers `return`, and a `some` nested in the return type (`Option[some I]`).
+* **Order.** The functions returning `some` are checked before every other body
+  (`check_some_bodies`), a function whose body names another such function after it, so a caller
+  sees the whole type. A generic function's template fixes the associated types; each instance's
+  wrapper holds what that instance's own body returns, because each check makes its own lambdas
+  (`scaled[int]`'s map holds its own lambda type, not the template's with `T` replaced). Instances
+  named before the body is checked are filled after it (`generic_forward`, ADR-226).
+* **Not yet:** a method's `some` return type stays `E0900` (`[TYP-32]` unfinished in
+  phase-status); a `some` function with `const` or hidden parameters, and an interface whose
+  required method is generic, are `E0900`.
+* D-735: `copied()`/`cloned()` take a parameter's `Copy`/`Clone` from its bounds. D-736: an
+  interface default copied onto an instance over the caller's parameters has its own parameters
+  rebased after them (as D-280 does for a generic type's methods).
+
 ## ADR-227 — Bounds named before interfaces are collected (D-728); D-730 as specified
 
 2026-10-20.

@@ -342,6 +342,13 @@ pub fn check(
     let mut functions = Vec::new();
     let mut main = None;
     let mut tests = Vec::new();
+    // `[TYP-32]` — the functions returning `some I` first, so the type each returns is whole (its
+    // field, and the methods it forwards) before any caller is checked.
+    for program in checker.check_some_bodies(modules) {
+        main = main.or(program.main);
+        functions.extend(program.functions);
+        tests.extend(program.tests);
+    }
     for (index, loaded) in modules.iter().enumerate() {
         checker.current_module = index;
         let program = checker.check_bodies(&loaded.module);
@@ -367,6 +374,7 @@ pub fn check(
     while checker.request_debug_writers() {
         functions.extend(checker.check_instantiations(modules));
     }
+    functions.extend(checker.take_some_forwarder_bodies());
     checker.publish_debug_writers(&functions);
     checker.check_declared_layouts();
     // `[CLO-1]` — the functions capture-free closures lowered to. They have no
@@ -1404,6 +1412,19 @@ struct GenericStruct {
     /// type parameters left opaque. An instantiation substitutes them, the
     /// same way it substitutes the fields.
     methods: Vec<GenericMethod>,
+}
+
+/// `[TYP-32]` — a `some I` return type. The struct the compiler makes for it is a generic recipe
+/// over the function's parameters holding the one type the body returns; each instance implements
+/// `I` (and only `I`) by forwarding to that type.
+#[derive(Clone)]
+struct SomeWrapper {
+    /// `I`, over the function's parameters, and the associated types its bound writes.
+    interface: Symbol,
+    bindings: Vec<(Symbol, Symbol, Ty)>,
+    span: Span,
+    /// The type the body returns, over the function's parameters, and where it first did.
+    concrete: Option<(Ty, Span)>,
 }
 
 /// `[TYP-16]` — an enum declared with type parameters. Its variant payloads
@@ -2662,6 +2683,21 @@ struct Checker<'a> {
     /// D-729, D-731 — the generic types being collected, each with the instances named meanwhile
     /// (`Box[Node[T]]` in `Node`'s own field): registered empty, filled once the recipe is whole.
     generic_forward: HashMap<Symbol, Vec<(Ty, Vec<Ty>, Span)>>,
+    /// `[TYP-32]` — each `some I` wrapper recipe, by name.
+    some_wrappers: HashMap<Symbol, SomeWrapper>,
+    /// `[TYP-32]` — the wrappers each function's return type names; such a function's body is
+    /// checked before any other (`check_some_bodies`).
+    fn_some: HashMap<DefId, Vec<Symbol>>,
+    /// The wrappers the return type being read has made, and whether one may be made there.
+    some_made: Vec<Symbol>,
+    some_allowed: bool,
+    /// The wrappers of the body being checked: a value it returns where one is wanted goes in it.
+    some_checking: Vec<Symbol>,
+    /// `[TYP-32]` — the one function `check_bodies` checks, for `check_some_bodies`.
+    body_filter: Option<DefId>,
+    /// `[TYP-32]` — forwarding methods whose bodies are made last: the method, the wrapper
+    /// instance, the interface and the name (the held type's method is found then).
+    some_forwarders: Vec<(DefId, Ty, Symbol, Symbol)>,
     /// D-407 — each interface's associated types by name, and its parents'
     /// names, read before any generic type is collected: a generic type's
     /// field or an interface's method may name `U.Iter` of an interface
@@ -2954,6 +2990,13 @@ impl<'a> Checker<'a> {
             pending_generic_structs: HashMap::new(),
             pending_generic_classes: HashMap::new(),
             generic_forward: HashMap::new(),
+            some_wrappers: HashMap::new(),
+            fn_some: HashMap::new(),
+            some_made: Vec::new(),
+            some_allowed: false,
+            some_checking: Vec::new(),
+            body_filter: None,
+            some_forwarders: Vec::new(),
             noted_assoc: HashMap::new(),
             method_call_expected: None,
             loop_labels: Vec::new(),
@@ -5528,6 +5571,430 @@ impl<'a> Checker<'a> {
             }
             self.fill_forward_instances(name);
         }
+    }
+
+    /// `[TYP-32]` — `some I` in a free function's return type: a struct the compiler makes, generic
+    /// over the function's parameters, holding the one type the body returns. Its field is known once
+    /// the body is checked (`complete_some_wrappers`), and an instance named before then is filled
+    /// then (`generic_forward`). Its name is no identifier, so no source names it.
+    fn some_wrapper(&mut self, bound: &ast::TypeExpr, span: Span) -> Ty {
+        let Some(interface) = self.bound_interface(bound, self.common.error) else { return self.common.error };
+        let bindings = self.bound_bindings(bound, interface);
+        let mut slots: Vec<(u32, Symbol)> = self
+            .type_params
+            .values()
+            .filter_map(|&ty| match *self.types.kind(ty) {
+                TyKind::Param { index, name } => Some((index, name)),
+                _ => None,
+            })
+            .collect();
+        slots.sort();
+        slots.dedup();
+        if slots.iter().enumerate().any(|(at, &(index, _))| index as usize != at)
+            || self.type_params.len() != slots.len()
+        {
+            self.error(codes::E0900, span, "a `some` return type in a function with `const` or hidden parameters is not implemented yet");
+            return self.common.error;
+        }
+        let name = self.qualified(Symbol::intern(&format!("some\u{2032}{}", self.some_wrappers.len())));
+        let generic_params: Vec<GenericParam> = slots
+            .iter()
+            .map(|&(_, name)| GenericParam {
+                name,
+                bounds: Vec::new(),
+                callable: None,
+                default: None,
+                projection: None,
+                count_op: None,
+                bindings: Vec::new(),
+                const_ty: None,
+            })
+            .collect();
+        let args: Vec<Ty> = slots.iter().map(|&(index, name)| self.types.intern(TyKind::Param { index, name })).collect();
+        let reached = self.interface_closure(interface);
+        let reaches = |name: &str| reached.iter().any(|each| each.is(name));
+        let recipe = GenericStruct {
+            params: slots.iter().map(|&(_, name)| name).collect(),
+            generic_params,
+            fields: Vec::new(),
+            derives_copy: false,
+            clone_request: None,
+            opted_out: (!reaches("std.core.Eq"), !reaches("std.core.Debug")),
+            decl_span: span,
+            declaring_module: ember_types::COMPILER_MODULE,
+            defaults: Vec::new(),
+            implements: Vec::new(),
+            methods: Vec::new(),
+        };
+        self.generic_structs.insert(name, recipe.clone());
+        self.generic_forward.insert(name, Vec::new());
+        self.some_wrappers.insert(name, SomeWrapper { interface, bindings, span, concrete: None });
+        self.some_made.push(name);
+        self.instantiate_struct(name, &recipe, &args, span)
+    }
+
+    /// `[TYP-32]` — the wrapper of the body being checked that `expected` is an instance of.
+    fn some_target(&self, expected: Ty) -> Option<Symbol> {
+        if self.some_checking.is_empty() {
+            return None;
+        }
+        let TyKind::Struct(id) = *self.types.kind(expected) else { return None };
+        let (name, _) = self.types.struct_def(id).origin.as_ref()?;
+        self.some_checking.contains(name).then_some(*name)
+    }
+
+    /// `[TYP-32]` — a value the body returns as its `some I`: the first fixes the one concrete type,
+    /// which must implement `I` with the associated types the bound writes; every later one must be
+    /// that type (`E2261`).
+    fn wrap_some(&mut self, expr: Expr, expected: Ty, name: Symbol) -> Expr {
+        let span = expr.span;
+        if expr.ty == self.common.error {
+            return Expr { ty: expected, kind: ExprKind::Error, span };
+        }
+        if expr.ty == self.common.never {
+            return Expr { ty: expected, ..expr };
+        }
+        let expr = self.commit(expr);
+        let TyKind::Struct(id) = *self.types.kind(expected) else { unreachable!("some_target found a struct") };
+        let args = self.types.struct_def(id).origin.as_ref().map(|(_, args)| args.clone()).unwrap_or_default();
+        let wrapper = self.some_wrappers[&name].clone();
+        let found = self.types.display(expr.ty);
+        // A generic function's instance is checked again with its arguments, and its lambdas are
+        // its own: what it returns is its instance's held type (the template fixed the rest).
+        let generic = self.generic_structs.get(&name).is_some_and(|recipe| !recipe.params.is_empty());
+        if generic && !self.is_opaque_instance(expected) {
+            match self.types.struct_def(id).fields.first().map(|field| field.ty) {
+                None => self.types.struct_def_mut(id).fields = vec![self.some_field(expr.ty, wrapper.span)],
+                Some(held) if held != expr.ty => {
+                    let held = self.types.display(held);
+                    self.error(codes::E2261, span, format!("this returns `{found}`, but an earlier `return` gave `{held}`"));
+                    return Expr { ty: expected, kind: ExprKind::Error, span };
+                }
+                Some(_) => {}
+            }
+            return Expr { ty: expected, kind: ExprKind::StructLit { struct_id: id, fields: vec![expr] }, span };
+        }
+        match wrapper.concrete {
+            None => {
+                let mut fits = true;
+                for missed in self.missed_bounds(expr.ty, &[wrapper.interface], &args) {
+                    let interface = self.interface_shown(missed);
+                    self.sink.emit(
+                        Diagnostic::error(codes::E2040, span, format!("`{found}` does not implement `{interface}`, which the function's `some` return type names"))
+                            .primary_label(format!("this is `{found}`"))
+                            .note("`some I` stands for one type the body returns that implements `I` [TYP-32]"),
+                    );
+                    fits = false;
+                }
+                for &(instance, assoc, value) in &wrapper.bindings {
+                    let instance = self.substitute_bound(instance, &args);
+                    let wanted = self.substitute_ty(value, &args);
+                    let saved = self.assoc_instance.replace(instance);
+                    let actual = self.project(expr.ty, assoc);
+                    self.assoc_instance = saved;
+                    if fits && actual != Some(wanted) && wanted != self.common.error {
+                        let wanted_shown = self.types.display(wanted);
+                        let actual_shown = actual.map_or("not stated".to_string(), |actual| format!("`{}`", self.types.display(actual)));
+                        self.error(codes::E2040, span, format!("`{found}`'s `{assoc}` is {actual_shown}, but the `some` return type says `{wanted_shown}`"));
+                        fits = false;
+                    }
+                }
+                if !fits {
+                    return Expr { ty: expected, kind: ExprKind::Error, span };
+                }
+                if let Some(wrapper) = self.some_wrappers.get_mut(&name) {
+                    wrapper.concrete = Some((expr.ty, span));
+                }
+            }
+            Some((concrete, first)) => {
+                let wanted = self.substitute_ty(concrete, &args);
+                if wanted != expr.ty {
+                    let wanted_shown = self.types.display(wanted);
+                    self.sink.emit(
+                        Diagnostic::error(codes::E2261, span, format!("this returns `{found}`, but an earlier `return` gave `{wanted_shown}`"))
+                            .primary_label(format!("this is `{found}`"))
+                            .secondary(first, format!("this is `{wanted_shown}`, the type the `some` stands for"))
+                            .help("a `some I` function returns one concrete type; to return different ones, return a `Box[dyn I]`")
+                            .note("`some I` is the one type the body chooses, the same at every `return` [TYP-32]"),
+                    );
+                    return Expr { ty: expected, kind: ExprKind::Error, span };
+                }
+            }
+        }
+        Expr { ty: expected, kind: ExprKind::StructLit { struct_id: id, fields: vec![expr] }, span }
+    }
+
+    /// `[TYP-32]` — check each function whose return type names `some I` before any other body, one
+    /// whose body names another such function after it, and complete its wrappers.
+    // ponytail: "names" is read from the body's debug text, so an identifier spelled like the other
+    // function counts too; a cycle is checked in source order. Read the calls if that ever misorders.
+    fn check_some_bodies(&mut self, modules: &[LoadedModule]) -> Vec<Program> {
+        let mut remaining = Vec::new();
+        for (module_index, loaded) in modules.iter().enumerate() {
+            self.current_module = module_index;
+            for item in &loaded.module.items {
+                let ast::ItemKind::Fn(decl) = &item.kind else { continue };
+                let Some(&def) = self.fn_ids.get(&self.qualified(decl.name.name)) else { continue };
+                if self.fn_some.contains_key(&def) {
+                    remaining.push((def, module_index, format!("`{}`", decl.name.name), format!("{:?}", decl.body)));
+                }
+            }
+        }
+        let mut programs = Vec::new();
+        while !remaining.is_empty() {
+            let next = (0..remaining.len())
+                .find(|&at| !remaining.iter().enumerate().any(|(other, entry)| other != at && remaining[at].3.contains(&entry.2)))
+                .unwrap_or(0);
+            let (def, module_index, _, _) = remaining.remove(next);
+            self.current_module = module_index;
+            self.body_filter = Some(def);
+            let errors = self.sink.error_count();
+            programs.push(self.check_bodies(&modules[module_index].module));
+            self.body_filter = None;
+            self.complete_some_wrappers(def, self.sink.error_count() > errors);
+        }
+        programs
+    }
+
+    /// `[TYP-32]` — the function `def`'s body is checked: each of its wrappers holds the type it
+    /// returned, and every instance of it named so far is filled.
+    fn complete_some_wrappers(&mut self, def: DefId, body_failed: bool) {
+        for name in self.fn_some.get(&def).cloned().unwrap_or_default() {
+            let Some(wrapper) = self.some_wrappers.get(&name).cloned() else { continue };
+            match wrapper.concrete {
+                Some((concrete, _)) => {
+                    let field = self.some_field(concrete, wrapper.span);
+                    if let Some(recipe) = self.generic_structs.get_mut(&name)
+                        && recipe.params.is_empty()
+                    {
+                        recipe.fields = vec![field];
+                        recipe.defaults = vec![None];
+                    }
+                }
+                None if body_failed => {}
+                None => self.error(codes::E2020, wrapper.span, "this function returns a `some` type, but no `return` gives it a value"),
+            }
+            self.fill_forward_instances(name);
+        }
+    }
+
+    /// `[TYP-32]` — `interface` and every interface it reaches through its parents.
+    fn interface_closure(&self, interface: Symbol) -> Vec<Symbol> {
+        let mut all = vec![interface];
+        let mut at = 0;
+        while at < all.len() {
+            for parent in self.interfaces.get(&all[at]).map(|def| def.supertraits.clone()).unwrap_or_default() {
+                if !all.contains(&parent) {
+                    all.push(parent);
+                }
+            }
+            at += 1;
+        }
+        all
+    }
+
+    /// `[TYP-32]` — the one field of a `some` wrapper, which no source names.
+    fn some_field(&self, ty: Ty, span: Span) -> FieldDef {
+        FieldDef {
+            name: Symbol::intern("inner"),
+            ty,
+            span,
+            ty_span: span,
+            has_default: false,
+            is_let: false,
+            read_only_outside: false,
+            vis: FieldVis::Private,
+        }
+    }
+
+    /// `[TYP-32]` — the instance `ty` of the `some I` wrapper `name` implements `I` and `I`'s parents,
+    /// with the associated types of the type it holds, by methods that forward to that type's; the
+    /// interfaces' defaults are its own. Nothing else of the held type shows.
+    fn complete_some_instance(&mut self, ty: Ty, name: Symbol, args: &[Ty]) {
+        let Some(wrapper) = self.some_wrappers.get(&name).cloned() else { return };
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return };
+        let interface = self.substitute_bound(wrapper.interface, args);
+        let mut shown = self.interface_shown(interface);
+        if !wrapper.bindings.is_empty() {
+            let written: Vec<String> = wrapper
+                .bindings
+                .iter()
+                .map(|&(_, assoc, value)| {
+                    let value = self.substitute_ty(value, args);
+                    format!("{assoc} = {}", self.types.display(value))
+                })
+                .collect();
+            shown = format!("{shown}[{}]", written.join(", "));
+        }
+        self.types.set_shown_as(id, format!("some {shown}"));
+        let all = self.interface_closure(interface);
+        let reaches = |name: &str| all.iter().any(|each| each.is(name));
+        self.types.set_some_prints(id, reaches("std.core.Display"), reaches("std.core.Debug"));
+        let Some((template, _)) = wrapper.concrete else { return };
+        // A generic function's opaque instance holds its template's type; a concrete instance gets
+        // its own when that instance's body is checked (`wrap_some`).
+        if self.types.struct_def(id).fields.is_empty() && self.is_opaque_instance(ty) {
+            let held = self.substitute_ty(template, args);
+            self.types.struct_def_mut(id).fields = vec![self.some_field(held, wrapper.span)];
+        }
+        let mut implementations = Vec::new();
+        for &each in &all {
+            // Read from the template's type, which every instance's is but for its lambdas.
+            for (assoc, _) in self.interface_assoc(each) {
+                let saved = self.assoc_instance.take();
+                let value = self.project(template, assoc);
+                self.assoc_instance = saved;
+                if let Some(value) = value {
+                    let value = self.substitute_ty(value, args);
+                    self.assoc_values.insert((ty, assoc), value);
+                    self.instance_assoc.insert((ty, each, assoc), value);
+                }
+            }
+            self.implemented.push((ty, each, wrapper.span));
+            implementations.push((ty, each, wrapper.span));
+        }
+        let opaque = self.is_opaque_instance(ty);
+        for &each in &all {
+            // `Display` and `Debug` print what the wrapper holds (`printed_as`).
+            if each.is("std.core.Display") || each.is("std.core.Debug") {
+                continue;
+            }
+            let methods = self.interfaces.get(&each).map(|def| def.methods.clone()).unwrap_or_default();
+            for (method, declaration, receiver, has_body) in methods {
+                // A forwarder only where the held type has the method to forward to.
+                if has_body
+                    || (self.interface_methods.get(&(template, each, method)).is_none()
+                        && self.methods.get(&(template, method)).is_none())
+                {
+                    continue;
+                }
+                let mut signature = self.signatures[declaration.0 as usize].clone();
+                if !signature.generics.is_empty() {
+                    self.error(codes::E0900, wrapper.span, format!("a `some` type whose interface's `{method}` is generic is not implemented yet"));
+                    continue;
+                }
+                for (_, param, _, _) in &mut signature.params {
+                    let substituted = self.substitute_self(*param, ty);
+                    *param = self.resolve_assoc(substituted, ty);
+                }
+                let ret = self.substitute_self(signature.ret, ty);
+                signature.ret = self.resolve_assoc(ret, ty);
+                let def = match receiver {
+                    Some(mode) => {
+                        signature.params.insert(0, (Symbol::intern("self"), ty, mode, wrapper.span));
+                        self.register_method(ty, method, signature, mode, Some(each), wrapper.span)
+                    }
+                    None => self.register_associated(ty, method, signature, Some(each), wrapper.span),
+                };
+                if let (Some(def), false) = (def, opaque) {
+                    self.some_forwarders.push((def, ty, each, method));
+                }
+            }
+        }
+        self.register_instantiated_defaults(ty, &implementations);
+    }
+
+    /// `[TYP-32]` — the bodies of the forwarding methods: each calls the held type's method with the
+    /// value the wrapper holds in place of `self` (and of any `Self` parameter), and puts a `Self`
+    /// result back in a wrapper.
+    fn take_some_forwarder_bodies(&mut self) -> Vec<Function> {
+        std::mem::take(&mut self.some_forwarders)
+            .into_iter()
+            .filter_map(|(def, ty, interface, name)| self.some_forwarder_body(def, ty, interface, name))
+            .collect()
+    }
+
+    fn some_forwarder_body(&mut self, def: DefId, ty: Ty, interface: Symbol, name: Symbol) -> Option<Function> {
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
+        let inner = self.types.struct_def(id).fields.first()?.ty;
+        let target = self
+            .interface_methods
+            .get(&(inner, interface, name))
+            .or_else(|| self.methods.get(&(inner, name)))
+            .map(|entry| entry.def)?;
+        let signature = self.signatures[def.0 as usize].clone();
+        let target_signature = self.signatures[target.0 as usize].clone();
+        if signature.params.len() != target_signature.params.len() {
+            return None;
+        }
+        let span = signature.decl;
+        self.locals = Vec::new();
+        let mut params = Vec::new();
+        let mut args = Vec::new();
+        for (&(param, param_ty, mode, param_span), &(target_param, target_ty, _, _)) in signature.params.iter().zip(&target_signature.params) {
+            let local_ty = match mode {
+                Mode::Mut => self.mut_param_ty(param_ty),
+                Mode::Borrow => self.borrow_param_ty_of(def, param, param_ty),
+                Mode::Owned => param_ty,
+            };
+            let local = self.declare(Some(param), local_ty, param_span);
+            params.push(Param { local, mode });
+            let read = Expr { ty: local_ty, kind: ExprKind::Local(local), span };
+            if param_ty != ty || target_ty == ty {
+                args.push(read);
+                continue;
+            }
+            // `self`, or a `Self` parameter: the value the wrapper holds, passed as the target takes it.
+            let place = if local_ty == param_ty { read } else { Expr { ty: param_ty, kind: ExprKind::Deref(Box::new(read)), span } };
+            let held = Expr { ty: target_ty, kind: ExprKind::Field { base: Box::new(place), index: 0 }, span };
+            let arg = match mode {
+                Mode::Mut => {
+                    let ty = self.types.intern(TyKind::Ref { mutable: true, inner: target_ty });
+                    Expr { ty, kind: ExprKind::Ref { place: Box::new(held), mutable: true }, span }
+                }
+                Mode::Borrow if self.borrow_param_ty_of(target, target_param, target_ty) != target_ty => {
+                    let ty = self.types.intern(TyKind::Ref { mutable: false, inner: target_ty });
+                    Expr { ty, kind: ExprKind::Ref { place: Box::new(held), mutable: false }, span }
+                }
+                _ => held,
+            };
+            args.push(arg);
+        }
+        let call = Expr {
+            ty: target_signature.ret,
+            kind: ExprKind::Call { callee: target, arg_eval_order: None, default_arg_locals: None, args, latebound: false },
+            span,
+        };
+        let stmts = if signature.ret == self.common.void {
+            vec![Stmt::Expr(call), Stmt::Return(None)]
+        } else if signature.ret == ty && target_signature.ret != ty {
+            vec![Stmt::Return(Some(Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields: vec![call] }, span }))]
+        } else {
+            vec![Stmt::Return(Some(call))]
+        };
+        let sources = self.sources_of(&signature.params);
+        Some(Function {
+            def,
+            name,
+            class_init: false,
+            class_init_default_fields: Vec::new(),
+            symbol: method_symbol(&self.types.symbol_name(ty), name),
+            is_unsafe: false,
+            abi: None,
+            export_thread_policy: hir::ExportThreadPolicy::Any,
+            params,
+            locals: std::mem::take(&mut self.locals),
+            ret: signature.ret,
+            body: Block { stmts, span },
+            span,
+            overflow: OverflowPolicy::default(),
+            fp: FpMode::Strict,
+            inline: hir::InlineHint::default(),
+            static_safe: false,
+            contracts: hir::Contracts::default(),
+            borrows: None,
+            sources,
+            is_lambda: false,
+            emit_if_used: true,
+            closure_environment: None,
+            closure_captures_by_move: false,
+            class_owner: None,
+            class_virtual_slot: None,
+            borrows_used_fields: false,
+            is_abstract: false,
+            is_extern_declaration: false,
+            ffi_counted: None,
+        })
     }
 
     /// D-729, D-731 — fill the instances of the generic type `name` named while it was collected,
@@ -8258,7 +8725,9 @@ impl<'a> Checker<'a> {
                         .as_ref()
                         .map(|t| {
                             self.in_return_type += 1;
+                            self.some_allowed = !decl.is_foreign_decl && decl.body.is_some();
                             let resolved = self.resolve_type(t);
+                            self.some_allowed = false;
                             self.in_return_type -= 1;
                             self.reject_unsized_by_value(resolved, t.span, "a return type")
                         })
@@ -8345,6 +8814,10 @@ impl<'a> Checker<'a> {
                     self.projection_params.clear();
                     let def = DefId(self.signatures.len() as u32);
                     self.fn_ids.insert(name, def);
+                    let some = std::mem::take(&mut self.some_made);
+                    if !some.is_empty() {
+                        self.fn_some.insert(def, some);
+                    }
                     if let Some(c_result) = c_result {
                         self.foreign_c_results.insert(def, c_result);
                     }
@@ -8362,6 +8835,7 @@ impl<'a> Checker<'a> {
                     if !decl.is_foreign_decl
                         && !decl.is_gen
                         && decl.generics.is_empty()
+                        && !self.fn_some.contains_key(&def)
                         && let Some(body) = &decl.body
                         && !has_attribute(&item.attrs, "noinline")
                         && (has_attribute(&item.attrs, "inline") || statement_count(body) <= INLINE_STATEMENTS)
@@ -8972,7 +9446,13 @@ impl<'a> Checker<'a> {
     fn value_adapter(&mut self, receiver: Expr, inner: Ty, name: ast::Ident, span: Span) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         let copied = name.name.is("copied");
-        let fits = if copied { self.types.is_copy(inner) } else { self.is_cloneable(inner) };
+        // D-735 — a parameter is `Copy` or `Clone` by its bounds (`T: Copy`), which the type table
+        // does not know.
+        let fits = if copied {
+            self.types.is_copy(inner) || self.implements(inner, Symbol::intern("std.core.Copy"))
+        } else {
+            self.is_cloneable(inner) || self.implements(inner, Symbol::intern("std.core.Clone"))
+        };
         if !fits {
             let shown = self.types.display(inner);
             let wanted = if copied { "Copy" } else { "Clone" };
@@ -10088,6 +10568,42 @@ impl<'a> Checker<'a> {
             {
                 let interface = &interface;
                 let mut signature = self.signatures[default.declaration.0 as usize].clone();
+                // D-736 — over an instance that holds the caller's parameters (`SpanIter[T]` in a
+                // generic body), the default's own parameters come after those, as a generic type's
+                // methods' do (D-280): `map[R]`'s `R` shared `T`'s slot, and `Item` read as `R`.
+                let mut prefix = Vec::new();
+                if !signature.generics.is_empty() && !self.generic_prefix.contains_key(&default.declaration) {
+                    let mut mentioned = BTreeMap::new();
+                    self.params_in(ty, &mut mentioned, &mut HashSet::new());
+                    let base = mentioned.keys().next_back().map_or(0, |&last| last as usize + 1);
+                    if base > 0 {
+                        let shift: Vec<Ty> = signature
+                            .generics
+                            .iter()
+                            .enumerate()
+                            .map(|(index, param)| self.types.intern(TyKind::Param { index: (base + index) as u32, name: param.name }))
+                            .collect();
+                        for (_, param, _, _) in &mut signature.params {
+                            *param = self.substitute_ty(*param, &shift);
+                        }
+                        signature.ret = self.substitute_ty(signature.ret, &shift);
+                        let own: Vec<GenericParam> = signature
+                            .generics
+                            .clone()
+                            .iter()
+                            .map(|param| {
+                                let mut param = self.substitute_generic_param(param, &shift);
+                                if let Some((slot, assoc)) = param.projection {
+                                    param.projection = Some(((base + slot as usize) as u32, assoc));
+                                }
+                                param
+                            })
+                            .collect();
+                        prefix = (0..base as u32).map(|slot| mentioned.get(&slot).copied().unwrap_or(self.common.error)).collect();
+                        signature.generics = self.prefix_generics(&prefix);
+                        signature.generics.extend(own);
+                    }
+                }
                 // D-442 — the signature's own parameters are in scope while it
                 // is read for this type, so a type over them with a projection
                 // (`FlatMap[Self, U, F]`'s hidden `U.Iter`) names the hidden
@@ -10145,6 +10661,8 @@ impl<'a> Checker<'a> {
                 // D-437 — the instance's prefix of the caller's parameters
                 // stays ahead of the method's own.
                 if let Some(prefix) = self.generic_prefix.get(&default.declaration).cloned() {
+                    self.generic_prefix.insert(def, prefix);
+                } else if !prefix.is_empty() {
                     self.generic_prefix.insert(def, prefix);
                 }
                 if (interface.is("std.core.Iterator")
@@ -12109,10 +12627,11 @@ impl<'a> Checker<'a> {
             ast::TypeKind::Void => self.common.void,
             ast::TypeKind::Never => self.common.never,
             // `[GRM-31]` — a `some` type in a function's return type, or nested inside one; elsewhere
-            // `E2260`. `[TYP-32]`'s meaning, one concrete type the body chooses, is not built.
+            // `E2260`. `[TYP-32]` — one concrete type the body chooses (`some_wrapper`).
+            ast::TypeKind::SomeType(bound) if self.in_return_type > 0 && self.some_allowed => self.some_wrapper(bound, ty.span),
             ast::TypeKind::SomeType(_) if self.in_return_type > 0 => {
                 self.sink.emit(
-                    Diagnostic::error(codes::E0900, ty.span, "a `some` return type is not implemented yet")
+                    Diagnostic::error(codes::E0900, ty.span, "a `some` return type on a method is not implemented yet")
                         .help("name the type the function returns, or return a `Box[dyn I]`")
                         .note("`some I` is one concrete type the body chooses, monomorphised through [TYP-32]"),
                 );
@@ -12993,10 +13512,11 @@ impl<'a> Checker<'a> {
             } else {
                 format!("`{named}` does not implement `Debug`, which {operation} a `{shown}` needs")
             };
-            self.sink.emit(
-                Diagnostic::error(codes::E2040, span, message)
-                    .note(format!("`{named}`'s declaration opts out with `@no_derive(Debug)` [STR-5]")),
-            );
+            let note = match self.types.some_prints(component) {
+                Some(_) => format!("`{named}` shows only what its interface gives it [TYP-32]"),
+                None => format!("`{named}`'s declaration opts out with `@no_derive(Debug)` [STR-5]"),
+            };
+            self.sink.emit(Diagnostic::error(codes::E2040, span, message).note(note));
         } else if matches!(self.types.kind(component), TyKind::Param { .. }) {
             // Transparent views/wrappers retain the value's Display fallback;
             // an aggregate's elements and fields instead need Debug.
@@ -13035,6 +13555,10 @@ impl<'a> Checker<'a> {
     /// `Debug` (`[TYP-39]`). A struct or enum has it only when it says so,
     /// and a class handle never (printing either falls back to `Debug`).
     fn has_display(&self, ty: Ty) -> bool {
+        // `[TYP-32]` — a `some` wrapper shows only when its interface is or reaches `Display`.
+        if self.types.some_prints(ty).is_some_and(|(display, _)| !display) {
+            return false;
+        }
         // ODR-094 — `Box[T]` and `Cell[T]` print as what they hold.
         if let Some(inner) = self.types.printed_as(ty) {
             return self.has_display(inner);
@@ -13063,6 +13587,18 @@ impl<'a> Checker<'a> {
     /// recursive user type be formatted when all its other fields can be.
     /// The capability predicate and its diagnostic share this traversal.
     fn unformattable_part(&self, ty: Ty, seen: &mut HashSet<Ty>) -> Option<Ty> {
+        // `[TYP-32]` — a `some` wrapper is written as the value it holds when its interface is or
+        // reaches `Display` or `Debug` (`printed_as`), and not at all otherwise.
+        // ponytail: one answer for both, so a `some Display` inside a collection is written by the
+        // held value's `Debug`; split `printed_as` by trait if that ever must be refused.
+        if let Some((display, debug)) = self.types.some_prints(ty) {
+            if !display && !debug {
+                return Some(ty);
+            }
+            // With no held type its body failed, which is reported there.
+            let inner = self.types.printed_as(ty)?;
+            return self.unformattable_part(inner, seen).map(|_| ty);
+        }
         // `[TYP-39]` (ADR-191) — a `dyn` value whose interfaces reach `Debug` writes through its table.
         if self.dyn_reaches(ty, "std.core.Debug") {
             return None;
@@ -15656,6 +16192,7 @@ impl<'a> Checker<'a> {
         }
         self.type_params = saved_interface_params;
         self.apply_generic_extensions(ty, name, args);
+        self.complete_some_instance(ty, name, args);
     }
 
     /// The instances `instantiate_struct` named before the implementations were known, filled in
@@ -17068,6 +17605,10 @@ impl<'a> Checker<'a> {
         let mut tests = Vec::new();
 
         for item in &module.items {
+            // `[TYP-32]` — a filtered pass checks one function and nothing else of the module.
+            if self.body_filter.is_some() && !matches!(item.kind, ast::ItemKind::Fn(_)) {
+                continue;
+            }
             // `[CT-7]` — an item-level `comptime:` block runs once while compiling.
             if let ast::ItemKind::Comptime(block) = &item.kind {
                 self.comptime_block(block, item.span);
@@ -17075,6 +17616,11 @@ impl<'a> Checker<'a> {
             }
             let ast::ItemKind::Fn(decl) = &item.kind else { continue };
             let Some(&def) = self.fn_ids.get(&self.qualified(decl.name.name)) else { continue };
+            // `[TYP-32]` — a function returning `some I` is checked on its own, before the rest.
+            if self.body_filter.map_or(self.fn_some.contains_key(&def), |only| only != def) {
+                continue;
+            }
+            self.some_checking = self.fn_some.get(&def).cloned().unwrap_or_default();
             let outer_overflow = std::mem::replace(&mut self.active_overflow,
                 self.signatures[def.0 as usize].overflow);
         let outer_fp = std::mem::replace(&mut self.active_fp, self.signatures[def.0 as usize].fp);
@@ -17307,7 +17853,10 @@ impl<'a> Checker<'a> {
             self.active_fp = outer_fp;
         }
 
-        functions.extend(self.check_method_bodies(module));
+        self.some_checking.clear();
+        if self.body_filter.is_none() {
+            functions.extend(self.check_method_bodies(module));
+        }
         Program { functions, main, tests, assume_noalloc: Vec::new() }
     }
 
@@ -17380,8 +17929,10 @@ impl<'a> Checker<'a> {
                 let quiet_before = quiet.diagnostics().len();
                 let saved = std::mem::replace(self.sink, std::mem::take(&mut quiet));
                 let started = std::time::Instant::now();
+                self.some_checking = self.fn_some.get(&key.def).cloned().unwrap_or_default();
                 let function = self.check_one_function(decl, block, instance, &item.attrs,
                     &modules[module_index].module.directives, item.span);
+                self.some_checking.clear();
                 // `[MONO-2]` — this instance, and the time its check took.
                 let path = &modules[module_index].path;
                 let generic = if path.is_empty() { decl.name.name.to_string() } else { format!("{}.{}", path.join("."), decl.name.name) };
@@ -30501,6 +31052,11 @@ impl<'a> Checker<'a> {
     /// `[TYP-5]` — coercion sites allow lossless widening; a literal adopts
     /// the expected type; everything else is `E2020`.
     fn coerce(&mut self, expr: Expr, expected: Ty) -> Expr {
+        if let Some(name) = self.some_target(expected)
+            && expr.ty != expected
+        {
+            return self.wrap_some(expr, expected, name);
+        }
         if expr.ty == self.common.error
             && expected != self.common.error
             && let ExprKind::Local(local) = expr.kind
@@ -50954,7 +51510,9 @@ impl<'a> Checker<'a> {
                         span,
                         format!("`{shown}` does not implement `{interface}`, which `{}` needs", op.as_str()),
                     )
-                    .note(if equality && self.no_implicit_eq.contains(&operand_ty) {
+                    .note(if self.types.some_prints(operand_ty).is_some() {
+                        "a `some` type shows only what its interface gives it [TYP-32]"
+                    } else if equality && self.no_implicit_eq.contains(&operand_ty) {
                         "its declaration opts out with `@no_derive(Eq)` [STR-5]"
                     } else if equality {
                         "a type has `Eq` when every field has it [STR-5]"

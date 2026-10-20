@@ -513,6 +513,12 @@ pub struct TypeTable {
     /// (`Cell[i32]`). Kept apart from `origin`, which also decides how a
     /// type resolves.
     written_as: HashMap<StructId, (Symbol, Vec<Ty>)>,
+    /// `[TYP-32]` — how a struct the compiler made for a `some I` return type is shown to the
+    /// user: as the `some I` it stands for, not by its own name.
+    shown_as: HashMap<StructId, String>,
+    /// `[TYP-32]` — whether a `some` wrapper shows (`Display`) and debug-prints (`Debug`) as the
+    /// value it holds, by its interface.
+    some_prints: HashMap<StructId, (bool, bool)>,
     /// `[TYP-35]` — for a generic instance, the arguments of the parameters no
     /// field names (its phantom parameters).
     phantoms: HashMap<Ty, Vec<Ty>>,
@@ -665,6 +671,8 @@ impl TypeTable {
             enums: Vec::new(),
             ranges: Vec::new(),
             written_as: HashMap::new(),
+            shown_as: HashMap::new(),
+            some_prints: HashMap::new(),
             phantoms: HashMap::new(),
             zeroable_derived: HashSet::new(),
             soa_flattened: HashSet::new(),
@@ -1820,6 +1828,10 @@ impl TypeTable {
     /// `dyn` value has no type of its own to print as.
     pub fn printed_as(&self, ty: Ty) -> Option<Ty> {
         let TyKind::Struct(id) = *self.kind(ty) else { return None };
+        // `[TYP-32]` — a `some Display` (or `Debug`) prints as the value it holds.
+        if let Some(&(display, debug)) = self.some_prints.get(&id) {
+            return self.struct_def(id).fields.first().filter(|_| display || debug).map(|field| field.ty);
+        }
         if let Some(inner) = self.compiler_box_inner(id) {
             return (!matches!(self.kind(inner), TyKind::Dyn { .. })).then_some(inner);
         }
@@ -2467,6 +2479,23 @@ impl TypeTable {
         self.phantoms.get(&ty).map_or(&[], Vec::as_slice)
     }
 
+    /// `[TYP-32]` — a `some` wrapper's `Display` and `Debug`: what it holds, where its interface
+    /// gives it them.
+    pub fn set_some_prints(&mut self, id: StructId, display: bool, debug: bool) {
+        self.some_prints.insert(id, (display, debug));
+    }
+
+    /// `[TYP-32]` — whether `ty` is a `some` wrapper, and if so whether it shows and debug-prints.
+    pub fn some_prints(&self, ty: Ty) -> Option<(bool, bool)> {
+        let TyKind::Struct(id) = *self.kind(ty) else { return None };
+        self.some_prints.get(&id).copied()
+    }
+
+    /// `[TYP-32]` — show the struct `id` to the user as `shown` (`some Iterator[Item = i64]`).
+    pub fn set_shown_as(&mut self, id: StructId, shown: String) {
+        self.shown_as.insert(id, shown);
+    }
+
     /// D-232 — record how a compiler-built generic struct is written.
     pub fn set_written_as(&mut self, id: StructId, generic: &str, args: Vec<Ty>) {
         self.written_as.insert(id, (Symbol::intern(generic), args));
@@ -2560,6 +2589,7 @@ impl TypeTable {
             // `[DIA-2]` (D-555) — a closure's environment is the compiler's
             // name for a lambda's own type, never shown.
             TyKind::Struct(_) if user && self.is_closure_environment(ty) => "lambda".to_string(),
+            TyKind::Struct(id) if user && self.shown_as.contains_key(id) => self.shown_as[id].clone(),
             TyKind::Struct(id) => {
                 let def = self.struct_def(*id);
                 self.render_named(def.name, def.origin.as_ref().or(self.written_as.get(id)), user)

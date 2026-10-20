@@ -2031,7 +2031,8 @@ impl Emitter<'_> {
         let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
         match self.types.compiler_box_inner(id) {
             Some(_) => Some((format!("(*({v}))"), inner)),
-            None => Some((format!("(({v}).value)"), inner)),
+            // A `Cell`'s `value`, or a `some` wrapper's one field (`[TYP-32]`).
+            None => Some((format!("(({v}).{})", self.types.struct_def(id).fields[0].name), inner)),
         }
     }
 

@@ -10766,6 +10766,8 @@ formal 1/9 count or Phase 2's estimate.
 > when `T` is, so a struct holding one derives them, is an owner question.
 > Then ADR-227: D-728 fixed (bounds of an instance made before interfaces are collected); D-730 closed
 > as specified (`[LT-1]`'s second kind, ODR-048).
+> Then ADR-228: `some I` return types for functions (`[TYP-32]`, wrapper structs with forwarding
+> methods; methods still `E0900`, so the rule stays unfinished), D-735, D-736.
 > **Before a push that touches C or the runtime:** `bench/gcc/gate.sh` in WSL (the workspace through
 > gcc) and `EMBER_CC=clang-cl cargo test --profile ci --workspace` on Windows, besides the full check.
 
