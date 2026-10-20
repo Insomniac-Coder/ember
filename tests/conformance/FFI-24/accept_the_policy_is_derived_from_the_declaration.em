@@ -5,15 +5,17 @@
 #$ stdout: Odd: an odd number
 #$ stdout: 2
 #$ stdout: an exception that is no std::exception []
+#$ stdout: 6 12 14
 # `[FFI-24]` — every imported C++ function has an exception policy, derived from its declaration:
 # `noexcept(expr)` whose `expr` holds (`quiet`) and `throw()` (`stated`) are called directly and
 # return `T`; a function with no specification (`halve`, `fail`) or a `noexcept(expr)` that does
 # not hold (`loud`) returns `Result[T, CppError]`, its thunk catching every exception: the
 # `CppError` holds the exception's type name and `what()`, and an exception that is no
-# `std::exception` is caught as well.
+# `std::exception` is caught as well. The same holds of a constructor's and a method's
+# `noexcept(expr)` (`Gauge`), and of one an instantiation evaluates (`twice<int>`).
 
 from std.ffi import c_int, CppError
-import cpp "policies.hpp"
+import cpp "policies.hpp" with (instantiate = ["twice<int>"])
 
 fn show(result: Result[c_int, CppError]) -> String:
     match result:
@@ -40,3 +42,6 @@ fn main():
             println("no exception")
         Err(error):
             println(f"{error.type_name} [{error.what}]")
+    unsafe:  # SAFETY(ffi): calls on a value
+        gauge = cpp.Gauge.new(6)
+        println(gauge.read(), show(gauge.strain()), cpp.twice_int(7))
