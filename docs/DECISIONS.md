@@ -5017,6 +5017,21 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-249 — `[LAY-2]`'s last two layouts (ODR-157), and ODR-156 cut (`0.9.10_Hardened_28`)
+
+2026-10-20. `@align(N)` on an enum without payloads is built: such an enum was its bare
+discriminant integer in C, which no C compiler can over-align (an aligned scalar typedef keeps its
+size, so an array of it is refused), so an `@align` one is now a struct holding the `tag` alone, as a
+payload enum without a payload; one predicate, `TypeTable::enum_is_bare`, decides the representation
+wherever the backend and the hot-reload tables chose it by `is_unit_only` (its meaning, `Copy`,
+casts and hashing, is unchanged), and such an enum leaves no unused discriminant for an `Option`
+niche. A SIMD vector in a `@packed` type was `E0900` because MSVC keeps an over-aligned member's
+alignment under `#pragma pack`; ruled under the delegation as ODR-157, it is `E0104`, as ODR-138
+rules for an `@align` type: a vector's alignment is its size (`[SIMD-1]`), which no padding cannot
+honour. ODR-156, the owner's answer on `[FFI-39c]` (the program holds the `Retained` token `self` is
+passed to C++ as), is in the rule's text. Both are cut as `0.9.10_Hardened_28`. Testing the
+enum found D-776: a pattern condition refused a dotted path (`if Some(Mode.Fast) = kept:`).
+
 ## ADR-248 — The fixed-capacity containers (`[STD-7]`)
 
 2026-10-20. `std.collections` has, written in Ember: `FixedArray[T, N]` and `RingBuffer[T, N]`, an

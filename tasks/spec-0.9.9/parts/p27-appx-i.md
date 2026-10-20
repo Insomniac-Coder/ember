@@ -583,7 +583,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-39]` | Annex C | An Ember class may derive from a C++ class the overlay declares with … |
 | `[FFI-39a]` | Annex C | The trampoline calls the overrides through their permanent thunks, so … |
 | `[FFI-39b]` | Annex C | `super.init(…)` selects the C++ base constructor by arity and … |
-| `[FFI-39c]` | Annex C | Passing `self` to a C++ API upcasts it and creates a `Retained` token … |
+| `[FFI-39c]` | Annex C | *(changed in 0.9.10)* A C++ parameter that keeps the pointer it is … |
 | `[FFI-39d]` | Annex C | Re-entrant calls from C++ into the same Ember object are expected. … |
 | `[FFI-39e]` | Annex C | A C++ exception never crosses into Ember code, and an Ember panic … |
 | `[FFI-40]` | Annex C | `const` methods import as `self`, non-`const` methods as `mut self`; … |

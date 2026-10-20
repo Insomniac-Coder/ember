@@ -10820,6 +10820,9 @@ formal 1/9 count or Phase 2's estimate.
 > edit made meanwhile was never seen (CI's gcc runner, reproduced in WSL on four cores).
 > ADR-248: `[STD-7]` done — `FixedArray`, `FixedString`, `RingBuffer`, `Deque`, `SmallArray`,
 > `BitSet`; D-773..D-775 fixed (const arguments in expressions and generic bodies; C member names).
+> ADR-249: `[LAY-2]` done (`@align` on an enum without payloads; a vector in `@packed` is `E0104`,
+> ODR-157); ODR-156 in `[FFI-39c]`'s text; cut as `0.9.10_Hardened_28` (the development target).
+> D-776 fixed: a pattern condition takes dotted paths, as a `match` arm does.
 > ADR-238: helper N's second job merged (ODR-145..149 built, D-742..D-746 and D-756..D-758 fixed;
 > FFI-6a/6b/29/30c and TST-7 done). Two owner questions open in tasks/90/owner-questions.md.
 > D-754 open: CI's gate found `s3_skip_step_take` (gcc 1.30x), `s2_zip_and`, `a06_enum_match` (gcc) and

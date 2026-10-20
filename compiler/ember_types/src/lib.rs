@@ -1766,7 +1766,7 @@ impl TypeTable {
     pub fn enum_unused_discriminant(&self, id: EnumId) -> Option<i128> {
         let def = self.enum_def(id);
         // `[FFI-8]` — an open enum has no unused value: C may send any.
-        if !def.is_unit_only() || def.open {
+        if !self.enum_is_bare(id) || def.open {
             return None;
         }
         let used = def.variants.iter().map(|variant| variant.discriminant).collect::<HashSet<_>>();
@@ -2125,6 +2125,15 @@ impl TypeTable {
     }
 
     /// `[LAY-2]` — the layout attributes a struct or an enum was declared with.
+    /// `[TYP-12]`, `[LAY-2]` — whether an enum is its bare discriminant integer in C: a unit-only
+    /// one, unless `@align(N)` raises its alignment, which C gives only a struct; that one is a
+    /// struct holding the discriminant, as a payload enum's `tag` with no payload.
+    pub fn enum_is_bare(&self, id: EnumId) -> bool {
+        let def = self.enum_def(id);
+        let declared = def.origin.as_ref().map_or(def.name, |(origin, _)| *origin);
+        def.is_unit_only() && self.layout_attrs.get(&declared).is_none_or(|attrs| attrs.align <= 1)
+    }
+
     pub fn layout_attrs(&self, ty: Ty) -> LayoutAttrs {
         let declared = match self.kind(ty) {
             TyKind::Struct(id) => {

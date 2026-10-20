@@ -205,7 +205,9 @@ fn parse(data: Span[u8]) -> Option[u32]:
 
   `@packed` and `@align(N)` are not written on one type, and a `@packed` type holds no field whose
   type states an alignment with `@align`: no padding and a size that is a multiple of `N` cannot
-  both hold, so either is `E0104` (ODR-138).
+  both hold, so either is `E0104` (ODR-138). A SIMD vector states its alignment too (it is aligned
+  to its size, `[SIMD-1]`), so a `@packed` type holding one is `E0104` as well (ODR-157). `@align(N)`
+  on an enum without payloads raises its alignment and rounds its size up like any other type's.
 * `size_of[T]()`, `align_of[T]()` and `offset_of[T](field)` are compile-time functions.
 
 ## IX.6 Handles and pools

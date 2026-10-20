@@ -9275,25 +9275,23 @@ impl<'a> Checker<'a> {
     }
 
     /// `[LAY-2]` — the layouts the attributes ask for that are refused, checked on every struct
-    /// and enum made, generic instances included:
-    /// * a `@packed` type holding a type declared `@align(N)` is `E0104` (ODR-138): that type's
-    ///   places honour `N`, which a field with no padding before it cannot;
-    /// * a `@packed` type holding a SIMD vector is `E0900`: the C compilers disagree on packing
-    ///   a type whose alignment is stated (MSVC keeps it, GCC and Clang pack it);
-    /// * `@align(N)` on an enum without payloads is `E0900`: such an enum is its integer in C.
+    /// and enum made, generic instances included: a `@packed` type holding a type declared
+    /// `@align(N)` is `E0104` (ODR-138), as is one holding a SIMD vector, aligned to its size
+    /// (`[SIMD-1]`, ODR-157): that type's places honour its alignment, which a field with no
+    /// padding before it cannot.
     fn check_declared_layouts(&mut self) {
         let mut reported = HashSet::new();
-        let mut holders: Vec<(Ty, Vec<(Symbol, Ty, Span)>, Option<Span>)> = Vec::new();
+        let mut holders: Vec<(Ty, Vec<(Symbol, Ty, Span)>)> = Vec::new();
         for (id, def) in self.types.structs() {
             let Some(ty) = self.types.find(&TyKind::Struct(id)) else { continue };
-            holders.push((ty, def.fields.iter().map(|field| (field.name, field.ty, field.span)).collect(), None));
+            holders.push((ty, def.fields.iter().map(|field| (field.name, field.ty, field.span)).collect()));
         }
         for (id, def) in self.types.enums() {
             let Some(ty) = self.types.find(&TyKind::Enum(id)) else { continue };
             let fields = def.variants.iter().flat_map(|variant| variant.fields.iter().map(|field| (field.name, field.ty, field.span))).collect();
-            holders.push((ty, fields, def.is_unit_only().then_some(def.span)));
+            holders.push((ty, fields));
         }
-        for (ty, fields, unit_only) in holders {
+        for (ty, fields) in holders {
             let attrs = self.types.layout_attrs(ty);
             if attrs.packed {
                 for &(name, field, span) in &fields {
@@ -9304,8 +9302,9 @@ impl<'a> Checker<'a> {
                             Diagnostic::error(codes::E0104, span, format!("field `{name}` of a `@packed` type holds `{shown}`, whose alignment `@align` states"))
                                 .note("`@packed` leaves no padding, and every place holding an `@align(N)` type honours `N` [LAY-2], ODR-138")
                         } else {
-                            Diagnostic::error(codes::E0900, span, format!("field `{name}` of a `@packed` type holds a SIMD vector (`{shown}`), which is not implemented yet"))
-                                .note("a vector is aligned to its size [SIMD-1]; packing one is not built [ATT-6]")
+                            Diagnostic::error(codes::E0104, span, format!("field `{name}` of a `@packed` type holds a SIMD vector (`{shown}`), aligned to its size"))
+                                .note("`@packed` leaves no padding, and a vector is aligned to its size [SIMD-1]; ODR-157 refuses it as ODR-138 refuses an `@align` type [LAY-2]")
+                                .help("hold the vector's lanes as an array (`[f32; 4]`) in the packed type, and make the vector from them where it is used")
                         });
                     }
                 }
@@ -9321,12 +9320,6 @@ impl<'a> Checker<'a> {
                         );
                     }
                 }
-            }
-            if attrs.align > 1 && let Some(span) = unit_only && reported.insert(span) {
-                self.sink.emit(
-                    Diagnostic::error(codes::E0900, span, "`@align` on an enum without payloads is not implemented yet")
-                        .note("such an enum is its discriminant integer in C [TYP-12]; an alignment beyond it is not built [ATT-6]"),
-                );
             }
         }
     }

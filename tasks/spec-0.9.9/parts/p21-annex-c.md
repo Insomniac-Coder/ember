@@ -120,9 +120,11 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
 * `[FFI-39b]` `super.init(…)` selects the C++ base constructor by arity and argument types and runs it
   before any Ember field is initialised; a base with no default constructor and no declared `init` is
   `E5058`.
-* `[FFI-39c]` Passing `self` to a C++ API upcasts it and creates a `Retained` token (`[FFI-23]`) that
-  keeps the object alive while C++ holds the pointer; an upcast where the token cannot be kept is
-  `E5060`.
+* `[FFI-39c]` *(changed in 0.9.10)* A C++ parameter that keeps the pointer it is given takes a
+  `Retained` token (`[FFI-23]`) the program holds: `tok = Retained.pin(self)` upcasts `self` to the
+  C++ base, the call is given `tok`, and the object lives while the program keeps the token. Passing
+  `self` itself there is `E5060`; a parameter borrowed for the call alone takes `self` with no token
+  (ODR-156).
 * `[FFI-17c]` Destruction of an Ember class derived from a C++ class is derived-first, as `[CLS-6]`
   says for every class: the Ember `drop`, then the Ember fields, and only then the C++ base destructor.
 * `[FFI-17d]` `@ffi(trampoline, owner="ember")`, the default, makes the Ember count own the object;

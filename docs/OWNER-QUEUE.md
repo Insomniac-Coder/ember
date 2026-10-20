@@ -392,6 +392,32 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-156 — Who holds the `Retained` token when `self` is passed to C++ — **CLOSED**
+
+    ID:        ODR-156
+    Status:    CLOSED — the owner's answer 2026-10-20; incorporated in 0.9.10_Hardened_28
+    Category:  SPEC
+    Location:  Ember_v0.9.10_Hardened_27.md [FFI-39c], Annex C
+
+**The question.** `[FFI-39c]` says passing `self` to a C++ API creates a `Retained` token that keeps the object alive while C++ holds the pointer, but not who holds the token, nor how a parameter C++ keeps is told from one borrowed for the call.
+
+**Ruling.** The owner, 2026-10-20: (a) the program holds it. `tok = Retained.pin(self)` and `tok` is passed; `self` itself there is `E5060`; a borrowed parameter takes `self`.
+
+---
+
+## ODR-157 — A SIMD vector in a `@packed` type — **CLOSED**
+
+    ID:        ODR-157
+    Status:    CLOSED — ruled under the delegation 2026-10-20; incorporated in 0.9.10_Hardened_28
+    Category:  SPEC
+    Location:  Ember_v0.9.10_Hardened_27.md [LAY-2], [SIMD-1]
+
+**The question.** `[LAY-2]`'s `@packed` leaves no padding, and `[SIMD-1]` aligns a vector to its size; ODR-138 refuses the same conflict for `@align` types. MSVC keeps an over-aligned member's alignment under `#pragma pack`, so the layout could not be the same on every backend.
+
+**Ruling.** Ruled under the delegation: `E0104`, as ODR-138. ADR-249.
+
+---
+
 ## ODR-155 — Annex A's code broke two of the specification's rules — **CLOSED**
 
     ID:        ODR-155

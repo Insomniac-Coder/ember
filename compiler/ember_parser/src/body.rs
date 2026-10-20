@@ -1822,6 +1822,18 @@ impl Parser<'_> {
         (fields, has_rest)
     }
 
+    /// A constructor pattern from a call's arguments, each reinterpreted as a pattern.
+    fn constructor_pattern(&mut self, path: Vec<Ident>, args: Vec<Arg>) -> PatternKind {
+        let fields = args
+            .into_iter()
+            .map(|arg| {
+                let arg_span = arg.span;
+                FieldPattern { name: arg.name, pattern: self.expr_to_pattern(arg.value), span: arg_span }
+            })
+            .collect();
+        PatternKind::Constructor { path, fields, has_rest: false }
+    }
+
     /// Reinterpret an already-parsed expression as a pattern.
     ///
     /// `=` is not an expression operator, so `if Some(x) = opt:` and
@@ -1839,6 +1851,14 @@ impl Parser<'_> {
                 }
             }
             ExprKind::Path { segments } => PatternKind::Path { segments },
+            // D-776 — `Mode.Fast` arrives as a field of a path, as an expression is read.
+            ExprKind::Field { .. } => match dotted_path(&expr) {
+                Some(segments) => PatternKind::Path { segments },
+                None => {
+                    self.report_code(codes::E0100, span, "this is not a pattern");
+                    PatternKind::Error
+                }
+            },
             ExprKind::Lit(lit) => PatternKind::Lit(PatternLit { negative: false, lit }),
             ExprKind::Unary { op: UnOp::Neg, operand } if matches!(operand.kind, ExprKind::Lit(Literal::Int { .. })) => {
                 let ExprKind::Lit(lit) = operand.kind else { unreachable!("matched above") };
@@ -1848,36 +1868,18 @@ impl Parser<'_> {
                 PatternKind::Tuple(items.into_iter().map(|e| self.expr_to_pattern(e)).collect())
             }
             ExprKind::Paren(inner) => return self.expr_to_pattern(*inner),
+            // D-776 — `Shape.Square(side)` arrives as a method call on the path `Shape`.
+            ExprKind::MethodCall { recv, name, generic_args, args } if generic_args.is_empty() && dotted_path(&recv).is_some() => {
+                let mut path = dotted_path(&recv).expect("just checked");
+                path.push(name);
+                self.constructor_pattern(path, args)
+            }
             ExprKind::Call { callee, args } => {
-                let path = match callee.kind {
-                    ExprKind::Path { segments } => segments,
-                    ExprKind::Field { base, name } => match base.kind {
-                        ExprKind::Path { mut segments } => {
-                            segments.push(name);
-                            segments
-                        }
-                        _ => {
-                            self.report_code(codes::E0100, span, "this is not a pattern");
-                            return Pattern { id: self.next_id(), kind: PatternKind::Error, span };
-                        }
-                    },
-                    _ => {
-                        self.report_code(codes::E0100, span, "this is not a pattern");
-                        return Pattern { id: self.next_id(), kind: PatternKind::Error, span };
-                    }
+                let Some(path) = dotted_path(&callee) else {
+                    self.report_code(codes::E0100, span, "this is not a pattern");
+                    return Pattern { id: self.next_id(), kind: PatternKind::Error, span };
                 };
-                let fields = args
-                    .into_iter()
-                    .map(|arg| {
-                        let arg_span = arg.span;
-                        FieldPattern {
-                            name: arg.name,
-                            pattern: self.expr_to_pattern(arg.value),
-                            span: arg_span,
-                        }
-                    })
-                    .collect();
-                PatternKind::Constructor { path, fields, has_rest: false }
+                self.constructor_pattern(path, args)
             }
             ExprKind::ArrayLit(items) => PatternKind::Slice {
                 prefix: items.into_iter().map(|e| self.expr_to_pattern(e)).collect(),
@@ -1940,5 +1942,19 @@ fn generic_arg(arg: TypeOrExpr) -> GenericArg {
         TypeOrExpr::Type(ty) => GenericArg::Type(ty),
         TypeOrExpr::Expr(expr) => GenericArg::Const(expr),
         TypeOrExpr::Binding { name, ty } => GenericArg::Assoc { name, ty },
+    }
+}
+
+/// D-776 — the names of a dotted path written as an expression (`geometry.Shape.Circle` is a
+/// field of a field of a path), as a pattern's path; `None` for anything else.
+fn dotted_path(expr: &Expr) -> Option<Vec<Ident>> {
+    match &expr.kind {
+        ExprKind::Path { segments } => Some(segments.clone()),
+        ExprKind::Field { base, name } => {
+            let mut segments = dotted_path(base)?;
+            segments.push(*name);
+            Some(segments)
+        }
+        _ => None,
     }
 }

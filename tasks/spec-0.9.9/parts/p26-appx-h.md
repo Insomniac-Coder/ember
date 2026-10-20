@@ -434,6 +434,8 @@ ODR-132, the type of `Retained.ptr()` (§H.20).
 | ODR-153 | ruled with the owner's approval: each benchmark builds each side at several code layouts, the same for both sides, each moving the code to other addresses and changing nothing else, keeps each side's fastest by a short interleaved run, then times the two as before | `[BEN-1]` |
 | ODR-154 | ruled with the owner's approval: the performance gate's verdict of record is the one measured on the recorded reference machine before a change is published; CI on shared machines reports the results without failing (`--report`) | `[TST-28]` |
 | ODR-155 | ruled under the delegation: Annex A's map comprehension names its type (`index: Map[str, int] = …`), and its `unsafe:` block carries a safety note; the annex is generated from `docs/spec-source/appendix-a.em`, which compiles | `[TST-6]`, `[TYP-38]`, `[UNS-8]` |
+| ODR-156 | the owner's answer: a C++ parameter that keeps the pointer takes a `Retained` token the program holds (`tok = Retained.pin(self)`, then `tok`); `self` there is `E5060`; a parameter borrowed for the call takes `self` | `[FFI-39c]`, `[FFI-23]` |
+| ODR-157 | ruled under the delegation: a `@packed` type holding a SIMD vector is `E0104`, as one holding an `@align` type is (ODR-138); a vector's alignment is its size (`[SIMD-1]`) | `[LAY-2]`, `[SIMD-1]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -1104,3 +1106,16 @@ Generated: every rule whose text differs from 0.9.10_Hardened_26.
 | Rule | 0.9.10_Hardened_26 → 0.9.10_Hardened_27 |
 |---|---|
 
+
+## H.33 Changes in 0.9.10_Hardened_28 (from 0.9.10_Hardened_27)
+
+**0.9.10_Hardened_28** records ODR-156, the owner's answer to helper N4's question on `[FFI-39c]`, and ODR-157, ruled under the delegation when `[LAY-2]`'s last two layouts were built (`docs/DECISIONS.md` ADR-249):
+
+* A C++ parameter that keeps the pointer it is given takes a `Retained` token the program holds: `tok = Retained.pin(self)` upcasts `self` to the C++ base and the call is given `tok`; passing `self` itself there is `E5060`, and a parameter borrowed for the call alone takes `self` with no token (ODR-156, the owner's option (a)).
+* A SIMD vector is aligned to its size (`[SIMD-1]`), an alignment stated as `@align` states one, so a `@packed` type holding one is `E0104`, as ODR-138 rules for `@align` types: no padding and that alignment cannot both hold, and MSVC keeps the alignment under `#pragma pack` (ODR-157).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_27.
+
+| Rule | 0.9.10_Hardened_27 → 0.9.10_Hardened_28 |
+|---|---|
+| `[FFI-39c]` | changed |

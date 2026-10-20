@@ -41,7 +41,7 @@
         "XV.7"
       ],
       "rules": 575,
-      "done": 556,
+      "done": 557,
       "missing": [
         "ALC-2",
         "ALC-3",
@@ -50,7 +50,6 @@
         "GRM-28",
         "GRM-38",
         "JOB-5",
-        "LAY-2",
         "LT-39",
         "OPT-1",
         "RFL-1",
@@ -70,7 +69,7 @@
         "XVI"
       ],
       "rules": 632,
-      "done": 608,
+      "done": 609,
       "missing": [
         "ALC-2",
         "ALC-3",
@@ -84,7 +83,6 @@
         "GRM-28",
         "GRM-38",
         "JOB-5",
-        "LAY-2",
         "LT-39",
         "OPT-1",
         "RFL-1",
@@ -104,7 +102,7 @@
         "Annex B"
       ],
       "rules": 691,
-      "done": 656,
+      "done": 657,
       "missing": [
         "ALC-2",
         "ALC-3",
@@ -129,7 +127,6 @@
         "HR-43",
         "HR-9",
         "JOB-5",
-        "LAY-2",
         "LT-39",
         "OPT-1",
         "RFL-1",

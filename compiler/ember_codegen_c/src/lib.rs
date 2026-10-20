@@ -1938,7 +1938,7 @@ impl Emitter<'_> {
         match self.types.kind(ty) {
             TyKind::Fn { abi: None, .. } => return format!("{RT}fn_value_eq({a}, {b})"),
             TyKind::Struct(_) | TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::Vec { .. } => {}
-            TyKind::Enum(id) if !self.types.enum_def(*id).is_unit_only() => {}
+            TyKind::Enum(id) if !self.types.enum_is_bare(*id) => {}
             _ => return format!("(({a}) == ({b}))"),
         }
         let mut fns = self.eq_fns.borrow_mut();
@@ -1983,6 +1983,9 @@ impl Emitter<'_> {
         if !def.is_unit_only() {
             return None;
         }
+        // `[LAY-2]` — an `@align` one holds its discriminant in a struct.
+        let tag = if self.types.enum_is_bare(*id) { v.to_string() } else { self.enum_tag(*id, v) };
+        let v = tag.as_str();
         // `[FFI-8]` — a C enum's value no variant names shows its number (ODR-137).
         let mut expr = match (def.open, matches!(self.types.kind(def.repr), TyKind::Int(_))) {
             (true, true) => format!("{RT}int_text((int64_t)({v}))"),
@@ -2269,7 +2272,7 @@ impl Emitter<'_> {
                             arms.push(format!("case {}: {} break;", variant.discriminant, parts.join(" ")));
                         }
                         // A unit-only enum is its tag.
-                        let tag = if def.is_unit_only() { "*v".to_string() } else { self.enum_tag(id, "*v") };
+                        let tag = if self.types.enum_is_bare(id) { "*v".to_string() } else { self.enum_tag(id, "*v") };
                         // `[FFI-8]` — a C enum's value no variant names: `Color(9)` (ODR-137).
                         let other = if def.open {
                             let name = self.debug_type_name(def.name.as_str(), def.origin.as_ref());
@@ -4919,7 +4922,7 @@ impl Emitter<'_> {
             // payload enum is `{tag, union of variants}`.
             TypeNode::Enum(id) => {
                 let def = self.types.enum_def(id);
-                if def.is_unit_only() {
+                if self.types.enum_is_bare(id) {
                     return Definition::Alias(self.c_type(def.repr));
                 }
                 // `[TYP-13]` — an `Option` with a niche is its payload.
@@ -4954,7 +4957,10 @@ impl Emitter<'_> {
                     union.push(format!("        struct {{ {}}} {};", fields.concat(), member(variant.name)));
                 }
                 union.push("    } payload".to_string());
-                members.push(union.join("\n"));
+                // `[LAY-2]` — an `@align` enum without payloads is its `tag` alone.
+                if !def.is_unit_only() {
+                    members.push(union.join("\n"));
+                }
                 Definition::Struct(members)
             }
             // `[CG-C-*]`'s "function pointer typedefs". A function-pointer
@@ -5536,6 +5542,8 @@ impl Emitter<'_> {
                     && place.projection.is_empty()
                     && operands.is_empty()
                     && self.tag_only_variant(*id)
+                    // `[LAY-2]` — an `@align` enum without payloads has none to zero.
+                    && !self.types.enum_def(*id).is_unit_only()
                     && (self.for_msvc || copied_whole.contains(&place.local))
                 {
                     self.payload_zeros.insert(*id, body.local(place.local).ty);
@@ -5551,7 +5559,7 @@ impl Emitter<'_> {
     /// Whether a payload-free variant of this enum sets only its tag
     /// (`emit_stmt`): a payload enum without a niche.
     fn tag_only_variant(&self, id: EnumId) -> bool {
-        !self.types.enum_def(id).is_unit_only() && self.types.option_niche(id).is_none()
+        !self.types.enum_is_bare(id) && self.types.option_niche(id).is_none()
     }
 
     fn emit_prototypes(&mut self, bodies: &[Body]) {
@@ -10199,6 +10207,18 @@ impl Emitter<'_> {
         }
     }
 
+    /// An operand of a comparison or a cast, which C reads as a number: an `@align` enum without
+    /// payloads is a struct holding its discriminant (`[LAY-2]`), read through its `tag`.
+    fn scalar_operand(&self, operand: &Operand, body: &Body) -> String {
+        let value = self.operand(operand, body);
+        match self.operand_type(operand, body).map(|ty| self.types.kind(ty).clone()) {
+            Some(TyKind::Enum(id)) if self.types.enum_def(id).is_unit_only() && !self.types.enum_is_bare(id) => {
+                self.enum_tag(id, &value)
+            }
+            _ => value,
+        }
+    }
+
     fn operand(&self, operand: &Operand, body: &Body) -> String {
         if let Operand::Copy(place) | Operand::Move(place) = operand
             && place.projection.is_empty()
@@ -10387,18 +10407,19 @@ impl Emitter<'_> {
                 if *op == ember_mir::BinOp::Eq { eq } else { format!("(!{eq})") }
             }
             Rvalue::BinaryOp { op, lhs, rhs } => {
-                let mut right = self.operand(rhs, body);
+                let mut right = self.scalar_operand(rhs, body);
                 // `[CG-C-1]` — a generic `a == a` at an integer type is a
                 // self-comparison clang and gcc warn about; the right side
                 // through a cast to its own type is the same value, unwarned.
                 if op.is_comparison()
                     && let (Operand::Copy(l) | Operand::Move(l), Operand::Copy(r) | Operand::Move(r)) = (lhs, rhs)
                     && l == r
+                    && right == self.operand(rhs, body)
                     && let Some(ty) = self.operand_type(rhs, body)
                 {
                     right = format!("({})({right})", self.c_type(ty));
                 }
-                format!("({} {} {right})", self.operand(lhs, body), op.c_operator())
+                format!("({} {} {right})", self.scalar_operand(lhs, body), op.c_operator())
             }
             Rvalue::UnaryOp { op: ember_mir::UnOp::Neg, operand }
                 if self.operand_type(operand, body).is_some_and(|ty| self.half(ty)) =>
@@ -10444,7 +10465,7 @@ impl Emitter<'_> {
                 {
                     return self.wide_cast(operand, from, *to, body);
                 }
-                let value = self.operand(operand, body);
+                let value = self.scalar_operand(operand, body);
                 let ty = self.c_type(*to);
                 if matches!(kind, CastKind::Numeric)
                     && let Some(from) = self.operand_type(operand, body)
@@ -10533,7 +10554,7 @@ impl Emitter<'_> {
                 let read = self.place_in(place, body);
                 let ty = self.place_ty(place, body);
                 match self.types.kind(ty) {
-                    TyKind::Enum(id) if !self.types.enum_def(*id).is_unit_only() => self.enum_tag(*id, &read),
+                    TyKind::Enum(id) if !self.types.enum_is_bare(*id) => self.enum_tag(*id, &read),
                     _ => read,
                 }
             }
@@ -10599,7 +10620,7 @@ impl Emitter<'_> {
             }
             (AggregateKind::Tuple, TyKind::Tuple(_)) => true,
             (AggregateKind::Enum(id, _), TyKind::Enum(local)) => {
-                id == local && !self.types.enum_def(*id).is_unit_only() && self.types.option_niche(*id).is_none()
+                id == local && !self.types.enum_is_bare(*id) && self.types.option_niche(*id).is_none()
             }
             _ => false,
         }
@@ -10727,7 +10748,7 @@ impl Emitter<'_> {
         let def = self.types.enum_def(id);
         let name = self.c_named(&def.name.to_string());
         let tag = def.variants[variant].discriminant;
-        if def.is_unit_only() {
+        if self.types.enum_is_bare(id) {
             return format!("(({name}){tag})");
         }
         if values.is_empty() {
@@ -11521,7 +11542,7 @@ impl Emitter<'_> {
                     let v = def.variants.get(variant)?;
                     (v.discriminant, member(v.name), v.fields.iter().map(|field| field.ty).collect::<Vec<Ty>>())
                 };
-                let unit_only = def.is_unit_only();
+                let unit_only = self.types.enum_is_bare(id);
                 if !open(tokens) {
                     return None;
                 }
@@ -11691,7 +11712,7 @@ impl Emitter<'_> {
             TyKind::Enum(id) => {
                 let id = *id;
                 let def = self.types.enum_def(id);
-                let tag = if def.is_unit_only() { format!("({access})") } else { self.enum_tag(id, access) };
+                let tag = if self.types.enum_is_bare(id) { format!("({access})") } else { self.enum_tag(id, access) };
                 let variants: Vec<(i128, Vec<Ty>)> = def.variants.iter()
                     .map(|variant| (variant.discriminant, variant.fields.iter().map(|f| f.ty).collect()))
                     .collect();

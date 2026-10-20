@@ -659,7 +659,7 @@ impl Emitter<'_> {
             }
             TyKind::Enum(id) => {
                 let def = self.types.enum_def(*id);
-                if def.is_unit_only() {
+                if self.types.enum_is_bare(*id) {
                     reload.files.contains(&def.span.file)
                 } else {
                     // `[HR-15]` — a payload enum (`Option[MapSlot[int, Particle]]` in a `Map`) has
@@ -692,7 +692,7 @@ impl Emitter<'_> {
                 TyKind::Struct(id) if this.has_schema(elem, reload) => {
                     ("EMBER_RL_KIND_STRUCT", this.types.struct_def(*id).name.to_string())
                 }
-                TyKind::Enum(id) if !this.types.enum_def(*id).is_unit_only() && this.has_schema(elem, reload) => {
+                TyKind::Enum(id) if !this.types.enum_is_bare(*id) && this.has_schema(elem, reload) => {
                     ("EMBER_RL_KIND_PAYLOAD", this.types.enum_def(*id).name.to_string())
                 }
                 _ if this.holds_objects(elem, &mut Vec::new()) => ("EMBER_RL_KIND_OPAQUE", String::new()),
@@ -729,7 +729,7 @@ impl Emitter<'_> {
                 if self.types.option_niche(*id).is_some_and(|niche| matches!(self.types.kind(niche.payload), TyKind::Class(_))) {
                     shape.kind = "EMBER_RL_KIND_OPTION_HANDLE";
                 } else if self.has_schema(ty, reload) {
-                    shape.kind = if self.types.enum_def(*id).is_unit_only() { "EMBER_RL_KIND_ENUM" } else { "EMBER_RL_KIND_PAYLOAD" };
+                    shape.kind = if self.types.enum_is_bare(*id) { "EMBER_RL_KIND_ENUM" } else { "EMBER_RL_KIND_PAYLOAD" };
                     shape.type_name = self.types.enum_def(*id).name.to_string();
                 } else if self.holds_objects(ty, &mut Vec::new()) {
                     shape.kind = "EMBER_RL_KIND_OPAQUE";
@@ -1111,7 +1111,7 @@ impl Emitter<'_> {
             let c_type = self.c_type(ty);
             // `[HR-11]`, `[HR-15]` — a payload enum's schema: its tag as its one field, and each
             // variant's payload fields, which a reload walks for the variant the tag names.
-            let payloads = !def.is_unit_only() && self.has_schema(ty, reload);
+            let payloads = !self.types.enum_is_bare(id) && self.has_schema(ty, reload);
             let tag_name = table(&format!("tag_{}", c_name(&name)));
             if payloads {
                 self.line(&format!(
@@ -1163,7 +1163,7 @@ impl Emitter<'_> {
             types.push(format!(
                 "    {{ {}, EMBER_RL_TYPE_ENUM, NULL, {}, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{:016x}), 0, NULL, NULL, {}, {}u, {}, NULL, NULL, NULL, NULL }},",
                 c_string_literal(&name),
-                if def.is_unit_only() { "EMBER_RL_LAYOUT_UNIT" } else { "0" },
+                if self.types.enum_is_bare(id) { "EMBER_RL_LAYOUT_UNIT" } else { "0" },
                 self.type_schema(ty, &mut Vec::new()),
                 if payloads { format!("1u, {tag_name}") } else { "0, NULL".to_string() },
                 rows.len(),
