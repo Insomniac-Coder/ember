@@ -890,6 +890,57 @@ impl<'a> Builder<'a> {
     /// what it was read from. Storage-only temporaries keep their statement's
     /// end, which no source can tell apart, and leave a loop header that
     /// makes none exactly as it was.
+    /// D-752, `[EXP-3]` — a condition choosing between two blocks: `a and b`, `a or b` and `not a`
+    /// branch on each operand in turn, as C's `&&` does, rather than making the `bool` in a
+    /// temporary and testing that. MSVC's unroller did not see through the temporary: `while i <
+    /// 200 and x * x + y * y <= 4.0` stayed rolled, 1.15x the C loop. Only a plain condition
+    /// (`plain_condition`) is taken apart, so no temporary that needs dropping is made between
+    /// operands and `[EXP-4]`'s order of their ends is kept.
+    fn lower_branch(&mut self, cond: &'a hir::Expr, then_bb: BasicBlockId, else_bb: BasicBlockId) {
+        match &cond.kind {
+            hir::ExprKind::Binary { op: hir::BinOp::And, lhs, rhs } => {
+                let rhs_bb = self.new_block();
+                self.lower_branch(lhs, rhs_bb, else_bb);
+                self.current = rhs_bb;
+                self.lower_branch(rhs, then_bb, else_bb);
+            }
+            hir::ExprKind::Binary { op: hir::BinOp::Or, lhs, rhs } => {
+                let rhs_bb = self.new_block();
+                self.lower_branch(lhs, then_bb, rhs_bb);
+                self.current = rhs_bb;
+                self.lower_branch(rhs, then_bb, else_bb);
+            }
+            hir::ExprKind::Unary { op: hir::UnOp::Not, operand } => self.lower_branch(operand, else_bb, then_bb),
+            _ => {
+                let discr = self.lower_condition(cond);
+                self.terminate(Terminator::SwitchInt { discr, targets: vec![(0, else_bb)], otherwise: then_bb });
+            }
+        }
+    }
+
+    /// D-752 — whether `cond` is an `and`, `or` or `not` made of places, literals, casts and
+    /// operators only, no part of which needs dropping: one `lower_branch` may take apart.
+    fn branches_on_operands(&self, cond: &hir::Expr) -> bool {
+        fn plain(types: &TypeTable, expr: &hir::Expr) -> bool {
+            !types.needs_drop(expr.ty)
+                && match &expr.kind {
+                    hir::ExprKind::Int(_) | hir::ExprKind::Float(_) | hir::ExprKind::Bool(_) | hir::ExprKind::Local(_) => true,
+                    hir::ExprKind::Field { base, .. } | hir::ExprKind::Deref(base) | hir::ExprKind::Cast { expr: base, .. } => {
+                        plain(types, base)
+                    }
+                    hir::ExprKind::Index { base, index } => plain(types, base) && plain(types, index),
+                    hir::ExprKind::Unary { operand, .. } => plain(types, operand),
+                    hir::ExprKind::Binary { lhs, rhs, .. } => plain(types, lhs) && plain(types, rhs),
+                    _ => false,
+                }
+        }
+        let logical = matches!(
+            cond.kind,
+            hir::ExprKind::Binary { op: hir::BinOp::And | hir::BinOp::Or, .. } | hir::ExprKind::Unary { op: hir::UnOp::Not, .. }
+        );
+        logical && plain(self.types, cond)
+    }
+
     fn lower_condition(&mut self, cond: &'a hir::Expr) -> Operand {
         let temps = self.statement_temps.len();
         let discr = self.lower_operand(cond);
@@ -1026,6 +1077,24 @@ impl<'a> Builder<'a> {
                 // start a fresh block so later statements still lower cleanly.
                 self.current = self.new_block();
             }
+            hir::Stmt::If { cond, then_block, else_block } if self.branches_on_operands(cond) => {
+                let then_bb = self.new_block();
+                let else_bb = self.new_block();
+                let join_bb = self.new_block();
+                self.lower_branch(cond, then_bb, else_bb);
+
+                self.current = then_bb;
+                self.lower_block(then_block);
+                self.goto_if_open(join_bb);
+
+                self.current = else_bb;
+                if let Some(block) = else_block {
+                    self.lower_block(block);
+                }
+                self.goto_if_open(join_bb);
+
+                self.current = join_bb;
+            }
             hir::Stmt::If { cond, then_block, else_block } => {
                 let discr = self.lower_condition(cond);
                 let then_bb = self.new_block();
@@ -1060,12 +1129,16 @@ impl<'a> Builder<'a> {
                 self.terminate(Terminator::Goto(head_bb));
 
                 self.current = head_bb;
-                let discr = self.lower_condition(cond);
-                self.terminate(Terminator::SwitchInt {
-                    discr,
-                    targets: vec![(0, else_bb)],
-                    otherwise: body_bb,
-                });
+                if self.branches_on_operands(cond) {
+                    self.lower_branch(cond, body_bb, else_bb);
+                } else {
+                    let discr = self.lower_condition(cond);
+                    self.terminate(Terminator::SwitchInt {
+                        discr,
+                        targets: vec![(0, else_bb)],
+                        otherwise: body_bb,
+                    });
+                }
 
                 self.loops.push(Loop {
                     continue_bb: head_bb,

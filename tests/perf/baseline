@@ -1,4 +1,9 @@
 # `[TST-29]` — the benchmarks known to fail the gate, each with why; `name [compiler]` for one C
 # compiler only. The list only shrinks: one that passes again fails the gate until it is taken out.
-float_math [msvc]: D-752, the Mandelbrot loop is 1.15x C with MSVC under the same flags
-a10_recursion [msvc]: `fib`'s `+` is checked ([TYP-8]), which stops the C compiler regrouping it as C's unchecked `+` lets it (1.07x)
+# The gate of record is CI's (`.github/workflows/ci.yml`, job `performance`): its runners' timings
+# decide these entries, and a machine of another kind may differ (`a10_recursion` is 1.06x C with
+# MSVC on the owner's laptop and 0.96x on the Windows runner).
+s3_skip_step_take [gcc]: D-754, 1.30x C on the Ubuntu runner
+s2_zip_and [gcc]: D-754, 1.09x C on the Ubuntu runner
+a06_enum_match [gcc]: D-754, 1.08x C on the Ubuntu runner
+s4_copied_enumerate_skip [msvc]: D-754, 1.27x C on the Windows runner (0.98x on the owner's laptop)

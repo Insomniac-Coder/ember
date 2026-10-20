@@ -5017,6 +5017,19 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-234 — A plain `and`/`or`/`not` condition branches on its operands (D-752)
+
+2026-10-20. The performance gate's first run found Mandelbrot float math 1.15x C with MSVC. The
+loop's operations were the C's; the difference was shape: a `while` or `if` condition `a and b`
+was lowered as a value, a `bool` temporary set to `false` on the short path and to `b` on the other,
+then tested; MSVC unrolled the C's `while (a && b)` four times and left Ember's loop rolled. Timed
+variants of the C showed it: gotos alone cost nothing, the temporary did. `lower_branch` now lowers a
+condition choosing between two blocks by branching on each operand (`a and b`: `a` to `b`'s test or
+to the else block; `or` and `not` alike), when the condition is plain: places, literals, casts and
+operators, nothing needing a drop, so no temporary ends between operands and `[EXP-4]`'s order of
+ends cannot change. Anything else keeps the value lowering. Result: 0.98x C (`tests/perf/float_math`)
+and 0.99x (`bench`'s `a02`); `float_math` left the baseline.
+
 ## ADR-233 — The performance gate: `ember bench --compare` (`[TST-28]`, `[BEN-1]`..`[BEN-3]`, `[BEN-5]`)
 
 2026-10-20. `compiler/ember_driver/src/bench.rs`. `tests/perf/<name>.em` and its twin `<name>.c`
