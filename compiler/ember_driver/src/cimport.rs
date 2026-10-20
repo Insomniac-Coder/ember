@@ -2369,18 +2369,20 @@ impl Writer {
                 .enumerate()
                 .map(|(k, slot)| format!("{} (*v{k})(void*{})", slot.result_spelled, slot.params.iter().map(|param| format!(", {}", param.c)).collect::<String>()))
                 .collect();
+            // The trampoline's own members, under the prefix no C++ class uses.
+            let p = ember_branding::SYMBOL_PREFIX;
             let mut text = String::new();
             let _ = writeln!(text, "\n/* `[FFI-39]` — the trampoline of `{spelled}`: its named virtuals call the Ember object it was made for. */");
             let _ = writeln!(text, "struct {tramp} final : {spelled} {{");
-            let _ = writeln!(text, "    void* ember_self;\n    void (*ember_deleted)(void*);");
+            let _ = writeln!(text, "    void* {p}_self;\n    void (*{p}_deleted)(void*);");
             for pointer in &pointer_types {
-                let _ = writeln!(text, "    {};", pointer.replacen("(*v", "(*ember_v", 1));
+                let _ = writeln!(text, "    {};", pointer.replacen("(*v", &format!("(*{p}_v"), 1));
             }
-            let _ = writeln!(text, "    bool ember_cpp_deleting = false;");
+            let _ = writeln!(text, "    bool {p}_cpp_deleting = false;");
             let mut parameters = vec!["void* self".to_string(), "void (*deleted)(void*)".to_string()];
             parameters.extend(pointer_types.iter().cloned());
-            let mut initialisers = vec![format!("{spelled}(static_cast<A&&>(a)...)"), "ember_self(self)".to_string(), "ember_deleted(deleted)".to_string()];
-            initialisers.extend((0..slots.len()).map(|k| format!("ember_v{k}(v{k})")));
+            let mut initialisers = vec![format!("{spelled}(static_cast<A&&>(a)...)"), format!("{p}_self(self)"), format!("{p}_deleted(deleted)")];
+            initialisers.extend((0..slots.len()).map(|k| format!("{p}_v{k}(v{k})")));
             let _ = writeln!(text, "    template <class... A>\n    explicit {tramp}({}, A&&... a) : {} {{}}", parameters.join(", "), initialisers.join(", "));
             for (k, slot) in slots.iter().enumerate() {
                 let declared: Vec<&str> = slot.params.iter().map(|param| param.declaration.as_str()).collect();
@@ -2389,7 +2391,7 @@ impl Writer {
                 let fallback = if slot.pure { "std::abort();".to_string() } else { format!("return {spelled}::{}({});", slot.name, locals.join(", ")) };
                 let _ = writeln!(
                     text,
-                    "    {} {}({}){} noexcept override {{ if (ember_self != nullptr) return ember_v{k}(ember_self{to_ember}); {fallback} }}",
+                    "    {} {}({}){} noexcept override {{ if ({p}_self != nullptr) return {p}_v{k}({p}_self{to_ember}); {fallback} }}",
                     slot.result_spelled,
                     slot.name,
                     declared.join(", "),
@@ -2398,7 +2400,7 @@ impl Writer {
             }
             let _ = writeln!(
                 text,
-                "    ~{tramp}() override {{ if (ember_self != nullptr) {{ void* self = ember_self; ember_self = nullptr; ember_cpp_deleting = true; ember_deleted(self); }} }}\n}};"
+                "    ~{tramp}() override {{ if ({p}_self != nullptr) {{ void* self = {p}_self; {p}_self = nullptr; {p}_cpp_deleting = true; {p}_deleted(self); }} }}\n}};"
             );
             self.shim.push_str(&text);
 
@@ -2562,7 +2564,7 @@ impl Writer {
             self.thunks += 1;
             let _ = writeln!(
                 self.shim,
-                "extern \"C\" void {destroy_thunk}({spelled}* object) noexcept {{ auto* made = static_cast<{tramp}*>(object); if (made->ember_cpp_deleting) return; made->ember_self = nullptr; delete made; }}"
+                "extern \"C\" void {destroy_thunk}({spelled}* object) noexcept {{ auto* made = static_cast<{tramp}*>(object); if (made->{prefix}_cpp_deleting) return; made->{prefix}_self = nullptr; delete made; }}"
             );
             let destroy = format!("{prefix}_raw_{class}_destroy");
             let _ = writeln!(raw, "    @ffi(link_name=\"{destroy_thunk}\")\n    fn {destroy}(object: *mut {opaque})");

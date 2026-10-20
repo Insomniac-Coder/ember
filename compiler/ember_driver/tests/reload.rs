@@ -1227,10 +1227,11 @@ fn a_reloadable_package_shares_the_runtime() {
 #[test]
 fn a_trampoline_reaches_an_edited_override_after_a_reload() {
     let root = workspace_root();
-    let v1 = "import std.hot\nimport cpp \"engine.hpp\" with (overlay = \"engine_overlay.em\")\n\n\
+    let overlay = format!("engine_overlay.{}", ember_branding::SOURCE_EXT);
+    let v1 = &(format!("import std.hot\nimport cpp \"engine.hpp\" with (overlay = \"{overlay}\")\n\n") + "\
               class Mine(cpp.Layer):\n    override fn on_update(self, step: i32) -> i32:\n        return step * 10\n\n\
               fn main():\n    layer = Mine()\n    unsafe:  # SAFETY(ffi): C++ calls the object's virtual while it lives\n        println(cpp.drive(layer))\n    \
-              hot.checkpoint()\n    unsafe:  # SAFETY(ffi): as above\n        println(cpp.drive(layer))\n";
+              hot.checkpoint()\n    unsafe:  # SAFETY(ffi): as above\n        println(cpp.drive(layer))\n");
     let v2 = v1.replace("return step * 10", "return step * 1000");
     let (package, file) = package("reload-trampoline", RELOAD_ALL, v1);
     std::fs::write(
@@ -1240,7 +1241,7 @@ fn a_trampoline_reaches_an_edited_override_after_a_reload() {
     )
     .expect("the header is writable");
     std::fs::write(
-        package.join("engine_overlay.em"),
+        package.join(&overlay),
         "unsafe overlay cpp \"engine.hpp\":\n    @ffi(trampoline, virtuals=[\"on_update\"])\n    type Layer\n",
     )
     .expect("the overlay is writable");
