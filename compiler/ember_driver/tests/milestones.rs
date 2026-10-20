@@ -7544,3 +7544,89 @@ fn main():
     let stale = ember(&["check", &entry], &package);
     assert!(stale.stderr.contains("warning[W5050]"), "a stale record still met the claim:\n{}", stale.stderr);
 }
+
+/// `[TST-7]` — every ```` ```ember ```` block of the development target is checked: a plain block
+/// with `ember check` (one holding `#$ test: compile-fail` as the test it is, its `#$ error[…]`
+/// diagnostics on their lines), an `ember,fragment` with `--syntax-only`, an `ember,overlay` as the
+/// overlay it is, and an `ember,ignore` only with its reason, a signature sketch or a deliberate
+/// error example, stated on its first line. `[TST-29]` — the baseline of blocks known to fail is
+/// printed with its size, and a block in it that passes fails this test until it is taken out.
+#[test]
+fn every_example_of_the_specification_checks() {
+    // A block known to fail, by the heading it is under, and why.
+    const BASELINE: &[(&str, &str)] = &[
+        ("Part XVI", "`std.ffi` has no `c_int` or `c_double` yet (D-742)"),
+    ];
+    let root = workspace_root();
+    let pinned = std::fs::read_to_string(root.join("docs/spec-source/development-target.json")).expect("the pin");
+    let path = pinned.split('"').skip_while(|part| *part != "path").nth(2).expect("the pin names the target");
+    let text = std::fs::read_to_string(root.join(path)).expect("the development target");
+    let lines: Vec<&str> = text.lines().collect();
+    let directory = temporary_directory("spec-examples");
+    let (mut heading, mut at, mut checked, mut failures, mut baselined) = (String::new(), 0, 0, Vec::new(), Vec::new());
+    while at < lines.len() {
+        if lines[at].starts_with('#') {
+            heading = lines[at].trim_start_matches('#').trim().to_string();
+        }
+        let Some(kind) = lines[at].strip_prefix("```ember") else {
+            at += 1;
+            continue;
+        };
+        let start = at + 1;
+        let end = start + lines[start..].iter().position(|line| line.starts_with("```")).expect("every block closes");
+        let body = lines[start..end].join("\n") + "\n";
+        at = end + 1;
+        let file = directory.join(format!("block{start}.{SOURCE_EXT}"));
+        std::fs::write(&file, &body).expect("the block is written");
+        let file = file.to_string_lossy().into_owned();
+        let where_ = format!("line {start} ({heading})");
+        let failed = match kind.trim().trim_start_matches(',') {
+            "ignore" => {
+                let reason = lines[start].to_lowercase();
+                if !(reason.starts_with("##") && (reason.contains("signature sketch") || reason.contains("deliberate error"))) {
+                    failures.push(format!("{where_}: `ember,ignore` without a stated reason on its first line"));
+                }
+                continue;
+            }
+            "fragment" => {
+                let run = ember(&["check", "--syntax-only", &file], &directory);
+                (run.exit != 0).then_some(run.stderr)
+            }
+            "overlay" | "" => {
+                let run = ember(&["check", &file], &directory);
+                if body.contains("#$ test: compile-fail") {
+                    let expected: Vec<(usize, &str)> = body
+                        .lines()
+                        .enumerate()
+                        .filter_map(|(index, line)| line.split_once("#$ error[").map(|(_, rest)| (index + 1, rest.trim())))
+                        .collect();
+                    let missing: Vec<String> = expected
+                        .iter()
+                        .filter(|(line, message)| {
+                            !run.stderr.contains(&format!("error[{message}")) || !run.stderr.contains(&format!(":{line}:"))
+                        })
+                        .map(|(line, message)| format!("line {line}: error[{message}"))
+                        .collect();
+                    (run.exit == 0 || !missing.is_empty()).then(|| format!("expected {missing:?}\n{}", run.stderr))
+                } else {
+                    (run.exit != 0).then_some(run.stderr)
+                }
+            }
+            other => Some(format!("an unknown block kind `ember,{other}`")),
+        };
+        checked += 1;
+        let known = BASELINE.iter().find(|(part, _)| heading.starts_with(part));
+        match (failed, known) {
+            (Some(_), Some((_, why))) => baselined.push(format!("{where_}: {why}")),
+            (None, Some(_)) => failures.push(format!("{where_} passes now: take it out of the baseline")),
+            (Some(error), None) => failures.push(format!("{where_}:\n{error}")),
+            (None, None) => {}
+        }
+    }
+    println!("[TST-7] {checked} blocks checked; baseline {} of them ([TST-29]):", baselined.len());
+    for entry in &baselined {
+        println!("  {entry}");
+    }
+    assert!(checked > 30, "the development target's blocks were not found ({checked})");
+    assert!(failures.is_empty(), "{} specification example(s) fail:\n{}", failures.len(), failures.join("\n\n"));
+}

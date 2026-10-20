@@ -9773,6 +9773,9 @@ impl Emitter<'_> {
                     Builtin::PtrIsNull => {
                         return format!("({} == 0)", rendered[0]);
                     }
+                    Builtin::PtrAdd => {
+                        return format!("(({}) + ({}))", rendered[0], rendered[1]);
+                    }
                     Builtin::SizeOf => {
                         return c_size(&self.c_type(*arg_ty));
                     }

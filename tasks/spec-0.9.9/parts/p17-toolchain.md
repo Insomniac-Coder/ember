@@ -253,7 +253,7 @@ large_copy = { level = "warn", threshold = 256 }
 fn main():
     a = [1, 2, 3]
     b = a
-    a.push(4)          #$ error[E3040]: use of moved value `a`
+    a.push(4)          #$ error[E3040]: `a` is borrowed after it has been moved out of
 ```
 
 * `[TST-0]` Test annotations are line comments beginning `#$`, read from the raw source text, so a test

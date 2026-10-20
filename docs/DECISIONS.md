@@ -5017,6 +5017,26 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-232 — `[TST-7]`'s full check of the specification's examples (ODR-150, 0.9.10_Hardened_24)
+
+2026-10-20. `[TST-7]` asks that every ```` ```ember ```` block pass `ember check`; the cut's
+`check_examples.py` ran only `--syntax-only`, and `tools/spec_check.py` checks the 0.8.5 document.
+`every_example_of_the_specification_checks` (milestones) now reads the pinned development target and
+checks each block by its kind: a plain block with `ember check`, one holding `#$ test: compile-fail`
+as that test (its `#$ error[…]` on their lines), `ember,fragment` with `--syntax-only`,
+`ember,overlay` as an overlay, `ember,ignore` only with its reason on its first line. A baseline of
+blocks known to fail is printed with its size (`[TST-29]`), and a block in it that passes fails the
+test until it is taken out. The full check found nine of 45 blocks failing:
+* the compiler's: D-747 (VII.7's `heal_all`), D-748 (IX.4's `p.read()`, `p.add(n)`), D-749 (Part
+  XIII's `?` into `AnyError`), and D-742 (Part XVI's `c_int`, helper N's job; the one baselined
+  block, so `[TST-7]` stays unfinished until it is fixed). D-750 was found on the way.
+* the examples': ODR-150 (ruled under the delegation, cut as 0.9.10_Hardened_24): `mut` on the
+  `MutSpan` parameters Part XII's `integrate`/`scale` and XI.5's `step` write through (`[FN-1]`);
+  XI.5 and XVI.3 marked `ember,fragment` (they name undeclared items); XVII.5's expected diagnostic
+  as the compiler gives it.
+* D-751: the first CI run of the importer failed on Windows only: the compiler crashed at exit while
+  clang-sys's thread-local unloaded libclang. It is now never unloaded.
+
 ## ADR-231 — Helper N's questions ruled (ODR-145..ODR-149, 0.9.10_Hardened_23)
 
 2026-10-20, under the delegation (the owner, 2026-10-19: issues a helper reports are mine to

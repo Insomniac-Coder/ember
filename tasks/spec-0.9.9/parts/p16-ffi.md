@@ -99,7 +99,7 @@ fn main():
 
 ## XVI.3 Importing C headers
 
-```ember
+```ember,fragment
 import c "vulkan/vulkan.h" with (
     include_paths = ["vendor/Vulkan-Headers/include"],
     defines = ["VK_NO_PROTOTYPES"],

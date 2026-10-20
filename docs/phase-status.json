@@ -21,6 +21,7 @@
   },
   "unfinished": {
     "_what": "Rules a test names but that are not fulfilled: each with what is missing and where that is recorded. Remove an entry only when the rule is fulfilled.",
+    "TST-7": "every block is checked by `every_example_of_the_specification_checks` (ADR-232); Part XVI's example is baselined until `std.ffi` has `c_int` and `c_double` (D-742)",
     "FFI-8": "`import c` maps scalars, pointers, function pointers, arrays, structs (`@packed`, `@align`), incomplete structs, enums, typedefs, globals and string macros; not built: unions (imported opaque), bit-field accessors, anonymous members, flexible array members, `_Atomic`, `va_list` and variadic calls, `long double` (`c_longdouble`), `volatile`, `@ffi(newtype)`, and `std.ffi`'s `c_int`/`c_char`/`c_long`/... aliases (tasks/90/N-notes.md D-N4)",
     "FFI-11": "built on hand declarations: `borrowed` with `one`/`count(n)`/`fixed(N)`/`nul_terminated`, `nullable`, `exclusive`/`aliased`, `from(…)`, `owned`, `returns_owned(destructor=f)`, `retained` (with `threads(main | creator)`), `inout_count` on a function whose C result is `void`, `out` and `status` (ODR-137), `TODO(…)`, and the vocabulary checked in overlays; not built: `inout_count` beside `out` or a status result, `callback(…)` with `user_data`, `threads(…)` and `destroys(f)` on functions, `unsafe` (tasks/85/B-notes.md)",
     "FFI-39": "`extern class` is not built: docs/NOT-IMPLEMENTED.md N2, tests/conformance/FFI-39/reject_it_is_not_implemented_yet.em",
