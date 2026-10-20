@@ -147,7 +147,9 @@ pub struct CType {
     pub char_pointer: bool,
     /// The C type as the header writes it.
     pub c: String,
-    /// `[FFI-40]` — the parameter's mode: `mut ` for a C++ `T&`, `owned ` for a `T&&`, else none.
+    /// `[FFI-40]` — the parameter's mode: `mut ` for a C++ `T&`, `owned ` for a `T&&`, else none;
+    /// `ref ` or `ref mut ` for a reference to an opaque class, whose wrapper takes a reference and
+    /// passes the raw pointer `ember` names on.
     pub mode: String,
 }
 
@@ -1684,11 +1686,21 @@ impl Writer {
                     let constant = clang_isConstQualifiedType(pointee) != 0;
                     let by_value = self.ty(pointee, false);
                     let spelled = cpp_spelling(pointee);
+                    // A class that is opaque takes no parameter mode (it is incomplete, `E5015`): its
+                    // `const T&` is a `ref T`, its `T&` a `ref mut T`, which the wrapper passes on
+                    // as the thunk's pointer.
+                    let referenced = |inner: String, constant: bool| CType {
+                        ember: format!("*{}{inner}", if constant { "" } else { "mut " }),
+                        pointee: Some((inner, constant)),
+                        char_pointer: false,
+                        c: c.clone(),
+                        mode: if constant { "ref " } else { "ref mut " }.to_string(),
+                    };
                     Ok(match (constant, by_value) {
                         (true, Ok(mapped)) => (plain(mapped, ""), format!("{spelled} {name}"), name.to_string()),
-                        (true, Err(_)) => (plain(format!("*{}", self.ty(pointee, true)?), ""), format!("{spelled}* {name}"), format!("*{name}")),
+                        (true, Err(_)) => (referenced(self.ty(pointee, true)?, true), format!("{spelled}* {name}"), format!("*{name}")),
                         (false, Ok(mapped)) => (plain(mapped, "mut "), format!("{spelled}* {name}"), format!("*{name}")),
-                        (false, Err(_)) => (plain(format!("*mut {}", self.ty(pointee, true)?), ""), format!("{spelled}* {name}"), format!("*{name}")),
+                        (false, Err(_)) => (referenced(self.ty(pointee, true)?, false), format!("{spelled}* {name}"), format!("*{name}")),
                     })
                 }
                 CXType_RValueReference => {
@@ -3475,7 +3487,9 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
             (derived, None) => derived,
         };
         match (policy, &function.owner) {
-            (Policy::Direct, None) if !function.out => member(function.abi, render_function(function, entry, renamed, hidden)),
+            (Policy::Direct, None) if !function.out && !function.params.iter().any(|(_, ty)| ty.mode.starts_with("ref")) => {
+                member(function.abi, render_function(function, entry, renamed, hidden))
+            }
             // `E5061` where it is used.
             (Policy::Unknown, _) => {}
             (policy, owner) => {
@@ -3572,6 +3586,11 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     let mut raw = function.clone();
     raw.name = raw_name.clone();
     raw.owner = None;
+    for (_, ty) in &mut raw.params {
+        if ty.mode.starts_with("ref") {
+            ty.mode.clear();
+        }
+    }
     let receiver = match member {
         Some(Member::Method) => Some((format!("*{owner}"), "(ref self) as *", true)),
         Some(Member::MutMethod | Member::Destructor) => Some((format!("*mut {owner}"), "(ref mut self) as *mut ", false)),
@@ -3600,14 +3619,30 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         _ => ident(renamed.unwrap_or(&function.name)),
     };
     let words_safe = entry.is_some_and(|entry| !entry.params.iter().flatten().chain(&entry.result).any(|written| matches!(word(written), "TODO" | "unsafe")));
-    let safe = words_safe && !function.params.iter().any(|(_, ty)| ty.ember.starts_with('*'));
-    let mut params: Vec<String> = function.params.iter().map(|(param, ty)| format!("{}{param}: {}", ty.mode, ty.ember)).collect();
+    let safe = words_safe && !function.params.iter().any(|(_, ty)| ty.ember.starts_with('*') && !ty.mode.starts_with("ref"));
+    let mut params: Vec<String> = function
+        .params
+        .iter()
+        .map(|(param, ty)| match &ty.pointee {
+            Some((inner, _)) if ty.mode.starts_with("ref") => format!("{param}: {}{inner}", ty.mode),
+            _ => format!("{}{param}: {}", ty.mode, ty.ember),
+        })
+        .collect();
     match member {
         Some(Member::Method) => params.insert(0, "self".to_string()),
         Some(Member::MutMethod) => params.insert(0, "mut self".to_string()),
         _ => {}
     }
-    let mut arguments: Vec<String> = function.params.iter().map(|(param, _)| param.clone()).collect();
+    let mut arguments: Vec<String> = function
+        .params
+        .iter()
+        .map(|(param, ty)| match &ty.pointee {
+            Some((inner, true)) if ty.mode.starts_with("ref") => format!("(ref {param}) as *{inner}"),
+            // The caller lent it mutably; the borrow the wrapper passes on is its own.
+            Some((inner, false)) if ty.mode.starts_with("ref") => format!("((ref {param}) as *{inner}) as *mut {inner}"),
+            _ => param.clone(),
+        })
+        .collect();
     if let Some((_, conversion, _)) = &receiver {
         arguments.insert(0, format!("{conversion}{owner}"));
     }
