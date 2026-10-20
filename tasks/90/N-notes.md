@@ -76,8 +76,9 @@ floating or string constant becomes a `const` of its C type (`int` → `i32`, `0
 `1ULL << 40` → `u64`, `'A'` → `i32`, `0.5f` → `f32`, `sizeof` → `usize`, `"text"` → `cstr` with
 `c"…"`). Any other is `W5001` with Clang's own diagnostic for that line as the reason ("expected
 expression", "initializer element is not a compile-time constant"); a function-like macro is `W5001`
-too, suggesting a `static inline` C function that calls it. Unparenthesised on purpose: Clang evaluates a string only as the literal itself. A macro that
-expands to nothing (an include guard) is not reported (owner question 2).
+too, suggesting a `static inline` C function that calls it. Unparenthesised on purpose: Clang
+evaluates a string only as the literal itself. A macro that expands to nothing (an include guard)
+is not reported (owner question 2).
 
 ### N3. The shim (`[FFI-29]`, `[FFI-29a]`, `[FFI-5a]`, `[FFI-29b]`)
 
