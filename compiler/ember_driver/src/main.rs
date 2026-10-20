@@ -3297,6 +3297,10 @@ fn load_package_modules(
                 let base = package_dir.unwrap_or_else(|| importer.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf());
                 if let Some(written) = cimport::load(import, &importer, &base, &flags, manifest.as_deref(), &mut foreign_known, map, sink) {
                     seen.insert(written.path.join("."));
+                    for (child_path, child, foreign) in written.children {
+                        seen.insert(child_path.join("."));
+                        queue.push((package, child_path, child, Some(foreign)));
+                    }
                     for (overlay_path, overlay, backed) in written.overlays {
                         seen.insert(overlay_path.join("."));
                         let graded = ember_typeck::ForeignImport { backed, ..Default::default() };

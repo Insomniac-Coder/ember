@@ -71,6 +71,8 @@ pub struct RecordLayout {
     pub size: u64,
     pub align: u64,
     pub fields: Vec<(String, u64)>,
+    /// `[FFI-41]` — the C++ namespace it is in, its module's path under the import's.
+    pub namespace: Vec<String>,
 }
 
 /// A foreign function as the header declares it, for an overlay to contract (`[FFI-2]`).
@@ -90,6 +92,8 @@ pub struct Function {
     pub owner: Option<(String, Member)>,
     /// A C++ class result, which the thunk writes through a pointer the caller gives.
     pub out: bool,
+    /// `[FFI-41]` — the C++ namespace it is in.
+    pub namespace: Vec<String>,
 }
 
 /// `[FFI-40]`, `[FFI-41]`, `[FFI-32]` — what a C++ member function is to its class's Ember type:
@@ -165,6 +169,8 @@ pub struct Item {
     pub kind: Kind,
     /// Its text at column 0; attributes first.
     pub text: String,
+    /// `[FFI-41]` — the C++ namespace it is in.
+    pub namespace: Vec<String>,
 }
 
 pub struct Imported {
@@ -196,6 +202,10 @@ pub struct Imported {
     pub anonymous_namespace: Vec<Skipped>,
     /// `[FFI-40]` — `W5033`: each `&&`-qualified member function.
     pub rvalue_members: Vec<Skipped>,
+    /// `[FFI-41]` — each C++ namespace with declarations (a module of its own), and which
+    /// namespace's module names which other's types.
+    pub namespaces: Vec<Vec<String>>,
+    pub ns_uses: Vec<(Vec<String>, Vec<String>)>,
 }
 
 fn text(string: CXString) -> String {
@@ -597,6 +607,12 @@ struct Writer {
     thunks: usize,
     anonymous_namespace: Vec<Skipped>,
     rvalue_members: Vec<Skipped>,
+    /// `[FFI-41]` — the namespace being written, each declaration's (by USR), every namespace with
+    /// declarations, and which namespace names which other's types.
+    writing: Vec<String>,
+    homes: HashMap<String, Vec<String>>,
+    namespaces: Vec<Vec<String>>,
+    ns_uses: Vec<(Vec<String>, Vec<String>)>,
 }
 
 impl Writer {
@@ -612,7 +628,7 @@ impl Writer {
     }
 
     fn push(&mut self, name: &str, kind: Kind, text: String) {
-        self.items.push(Item { name: name.to_string(), kind, text: text.trim_end().to_string() });
+        self.items.push(Item { name: name.to_string(), kind, text: text.trim_end().to_string(), namespace: self.writing.clone() });
     }
 
     /// `[FFI-6b]` — the C spelling of a type just declared, by its Ember name: Clang's (`struct
@@ -629,7 +645,8 @@ impl Writer {
 
     /// Take `name` in the module's one namespace; C's tags and ordinary names are two.
     fn claim(&mut self, name: &str) -> bool {
-        self.names.insert(name.to_string())
+        // `[FFI-41]` — each C++ namespace is a module, with a namespace of names of its own.
+        self.names.insert(format!("{}::{name}", self.writing.join("::")))
     }
 
     fn declaration(&mut self, cursor: CXCursor) {
@@ -641,24 +658,32 @@ impl Writer {
                     self.declaration(child);
                 }
             }
-            // `[FFI-41]` — an anonymous namespace's entities have internal linkage: `W5034`.
-            // ponytail: a named namespace's entities are skipped until namespaces become module paths.
+            // `[FFI-41]` — a namespace is a module path: its declarations a module under the import's
+            // (`engine::math::dot` is `cpp.math.dot`); an anonymous namespace's entities have
+            // internal linkage, `W5034`.
             CXCursor_Namespace => {
                 // SAFETY(ffi): a live cursor.
                 let anonymous = unsafe { clang_Cursor_isAnonymous(cursor) } != 0 || spelling(cursor).is_empty();
-                for child in children(cursor) {
-                    let name = spelling(child);
-                    if name.is_empty() {
-                        continue;
+                if anonymous {
+                    for child in children(cursor) {
+                        let name = spelling(child);
+                        if !name.is_empty() {
+                            let at = self.at(child);
+                            self.anonymous_namespace.push(Skipped { name, reason: "it is in an anonymous namespace, so each C++ file has its own".to_string(), at });
+                        }
                     }
-                    if anonymous {
-                        let at = self.at(child);
-                        self.anonymous_namespace.push(Skipped { name, reason: "it is in an anonymous namespace, so each C++ file has its own".to_string(), at });
-                    } else {
-                        let reason = format!("it is in namespace `{}` (namespaces as module paths, `[FFI-41]`, are not built yet)", spelling(cursor));
-                        self.skip(child, &name, reason);
-                    }
+                    return;
                 }
+                let mut inner = self.writing.clone();
+                inner.push(spelling(cursor));
+                if !self.namespaces.contains(&inner) {
+                    self.namespaces.push(inner.clone());
+                }
+                let saved = std::mem::replace(&mut self.writing, inner);
+                for child in children(cursor) {
+                    self.declaration(child);
+                }
+                self.writing = saved;
             }
             CXCursor_ClassTemplate | CXCursor_FunctionTemplate | CXCursor_ClassTemplatePartialSpecialization => {
                 let name = spelling(cursor);
@@ -739,7 +764,7 @@ impl Writer {
                         if !behind_pointer && let Some(Record::Opaque(_, why)) = self.typedef_record(declaration) {
                             return Err(opaque_by_value(&alias, why.as_deref()));
                         }
-                        return Ok(alias);
+                        return Ok(self.qualify(alias, declaration));
                     }
                     self.ty(clang_getTypedefDeclUnderlyingType(declaration), behind_pointer)
                 }
@@ -755,8 +780,8 @@ impl Writer {
                         return Err("an anonymous struct or union member (its generated `<Parent>_anon<N>` type is not built yet)".to_string());
                     }
                     match self.record(declaration, None) {
-                        Record::Full(name) | Record::Pending(name) => Ok(name),
-                        Record::Opaque(name, _) if behind_pointer => Ok(name),
+                        Record::Full(name) | Record::Pending(name) => Ok(self.qualify(name, declaration)),
+                        Record::Opaque(name, _) if behind_pointer => Ok(self.qualify(name, declaration)),
                         Record::Opaque(name, why) => Err(opaque_by_value(&name, why.as_deref())),
                     }
                 }
@@ -765,7 +790,8 @@ impl Writer {
                     if clang_Cursor_isAnonymous(declaration) != 0 {
                         return self.ty(clang_getEnumDeclIntegerType(declaration), false);
                     }
-                    self.enumeration(declaration, None)
+                    let name = self.enumeration(declaration, None)?;
+                    Ok(self.qualify(name, declaration))
                 }
                 CXType_Pointer => {
                     let pointee = clang_getPointeeType(ty);
@@ -865,7 +891,41 @@ impl Writer {
         Ok(CType { ember, pointee: Some((inner, constant)), char_pointer: character, c, mode: String::new() })
     }
 
+    /// `[FFI-41]` — write a declaration in the module of its own namespace, and remember where.
+    fn at_home<T>(&mut self, cursor: CXCursor, write: impl FnOnce(&mut Self) -> T) -> T {
+        if !self.cpp {
+            return write(self);
+        }
+        let home = namespace_of(cursor);
+        self.homes.insert(usr(cursor), home.clone());
+        let saved = std::mem::replace(&mut self.writing, home);
+        let out = write(self);
+        self.writing = saved;
+        out
+    }
+
+    /// `[FFI-41]` — a type's name as the namespace being written names it: through the module of
+    /// the namespace it is in, when that is another.
+    fn qualify(&mut self, name: String, declaration: CXCursor) -> String {
+        if !self.cpp || name.contains('.') {
+            return name;
+        }
+        let Some(home) = self.homes.get(&usr(declaration)).cloned() else { return name };
+        if home == self.writing {
+            return name;
+        }
+        let used = (self.writing.clone(), home.clone());
+        if !self.ns_uses.contains(&used) {
+            self.ns_uses.push(used);
+        }
+        format!("{}.{name}", namespace_alias(&home))
+    }
+
     fn typedef(&mut self, cursor: CXCursor) -> Result<String, String> {
+        self.at_home(cursor, |writer| writer.typedef_here(cursor))
+    }
+
+    fn typedef_here(&mut self, cursor: CXCursor) -> Result<String, String> {
         let key = usr(cursor);
         if let Some(done) = self.typedefs.get(&key) {
             return done.clone();
@@ -947,6 +1007,10 @@ impl Writer {
     /// `[FFI-8]` — a complete struct is `@layout(c) struct`, `Copy` (every field is plain data); an
     /// incomplete one an `extern type`. `[FFI-5]` — Clang's layout is recorded.
     fn record(&mut self, cursor: CXCursor, typedef_name: Option<&str>) -> Record {
+        self.at_home(cursor, |writer| writer.record_here(cursor, typedef_name))
+    }
+
+    fn record_here(&mut self, cursor: CXCursor, typedef_name: Option<&str>) -> Record {
         let key = usr(cursor);
         if let Some(done) = self.records.get(&key) {
             return done.clone();
@@ -1066,7 +1130,9 @@ impl Writer {
                 }
             }
             if fields.is_empty() {
-                return self.opaque(cursor, &key, &named, Some("a struct with no fields (a GNU C extension)".to_string()));
+                // A C++ class with no data is an opaque one: its members are what it has.
+                let why = (!self.cpp).then(|| "a struct with no fields (a GNU C extension)".to_string());
+                return self.opaque(cursor, &key, &named, why);
             }
             let fingerprint = format!("struct {size} {align} {:?}", layout.iter().map(|(_, offset)| offset).collect::<Vec<_>>());
             if let Some(adopted) = self.adopt(cursor, &key, &named, &fingerprint, false) {
@@ -1098,7 +1164,7 @@ impl Writer {
                     let _ = writeln!(self.shim, "_Static_assert(offsetof({c_name}, {c_field}) == {offset}, \"{named}.{c_field}: offset\");");
                 }
             }
-            self.layouts.push(RecordLayout { name: name.clone(), size, align, fields: layout });
+            self.layouts.push(RecordLayout { name: name.clone(), size, align, fields: layout, namespace: self.writing.clone() });
             self.entities.push((key.clone(), name.clone(), fingerprint));
             self.records.insert(key, Record::Full(name.clone()));
             Record::Full(name)
@@ -1169,6 +1235,10 @@ impl Writer {
     /// `[FFI-8]` — `@repr(<underlying>) enum`, `@non_exhaustive`: any value may arrive from C. A
     /// second name for a value already named is a constant of the enum.
     fn enumeration(&mut self, cursor: CXCursor, typedef_name: Option<&str>) -> Result<String, String> {
+        self.at_home(cursor, |writer| writer.enumeration_here(cursor, typedef_name))
+    }
+
+    fn enumeration_here(&mut self, cursor: CXCursor, typedef_name: Option<&str>) -> Result<String, String> {
         let key = usr(cursor);
         if let Some(done) = self.enums.get(&key) {
             return done.clone();
@@ -1270,7 +1340,7 @@ impl Writer {
         if !self.seen.insert(format!("fn {key}")) {
             return;
         }
-        if self.cpp && self.functions.iter().any(|function| function.name == name) {
+        if self.cpp && self.functions.iter().any(|function| function.name == name && function.owner.is_none() && function.namespace == self.writing) {
             self.skip(cursor, &name, "an overload: Ember has no overloading, and the first declaration of the name is the one imported");
             return;
         }
@@ -1285,7 +1355,7 @@ impl Writer {
                     self.skip(cursor, &name, "its name is taken by another declaration of the header");
                     return;
                 }
-                self.functions.push(function);
+                self.functions.push(Function { namespace: self.writing.clone(), ..function });
             }
             Err(reason) => self.skip(cursor, &name, reason),
         }
@@ -1321,7 +1391,7 @@ impl Writer {
                 self.wrapper(cursor, &wrapper, name);
                 wrapper
             });
-            Ok(Function { name: name.to_string(), params, result, link_name, abi, policy: Policy::Direct, owner: None, out: false })
+            Ok(Function { name: name.to_string(), params, result, link_name, abi, policy: Policy::Direct, owner: None, out: false, namespace: Vec::new() })
         }
     }
 
@@ -1370,7 +1440,7 @@ impl Writer {
                     item.text = format!("@ffi(destroys({destroys}))\n{}", item.text);
                 }
                 let owner = Some((owner.clone(), Member::Destructor));
-                self.functions.push(Function { name: "drop".to_string(), params: Vec::new(), result: None, link_name: Some(thunk), abi: "C", policy: Policy::Direct, owner, out: false });
+                self.functions.push(Function { name: "drop".to_string(), params: Vec::new(), result: None, link_name: Some(thunk), abi: "C", policy: Policy::Direct, owner, out: false, namespace: self.writing.clone() });
             }
             let mut taken: HashSet<String> = HashSet::new();
             for child in children(definition) {
@@ -1419,7 +1489,7 @@ impl Writer {
                     continue;
                 }
                 match self.cpp_thunk(child, &key, Some((&owner, member, &class_spelled))) {
-                    Ok(function) => self.functions.push(function),
+                    Ok(function) => self.functions.push(Function { namespace: self.writing.clone(), ..function }),
                     Err(reason) => self.skip(child, &format!("{owner}.{key}"), reason),
                 }
             }
@@ -1519,7 +1589,7 @@ impl Writer {
             let returned = returned.unwrap_or_else(|| "void".to_string());
             let _ = writeln!(self.shim, "extern \"C\" {returned} {thunk}({declared}) noexcept {{ {body} }}");
             let owner = member.map(|(owner, member, _)| (owner.to_string(), member));
-            Ok(Function { name: name.to_string(), params, result, link_name: Some(thunk), abi: "C", policy, owner, out: class_result })
+            Ok(Function { name: name.to_string(), params, result, link_name: Some(thunk), abi: "C", policy, owner, out: class_result, namespace: Vec::new() })
         }
     }
 
@@ -1765,8 +1835,34 @@ impl Writer {
             c_types: self.c_types,
             anonymous_namespace: self.anonymous_namespace,
             rvalue_members: self.rvalue_members,
+            namespaces: self.namespaces,
+            ns_uses: self.ns_uses,
         }
     }
+}
+
+/// `[FFI-41]` — the namespaces a declaration is in, outermost first.
+fn namespace_of(cursor: CXCursor) -> Vec<String> {
+    let mut path = Vec::new();
+    // SAFETY(ffi): cursors of a live translation unit.
+    let mut parent = unsafe { clang_getCursorSemanticParent(cursor) };
+    while !matches!(kind(parent), CXCursor_TranslationUnit | CXCursor_InvalidFile | CXCursor_NoDeclFound | CXCursor_NotImplemented) {
+        if kind(parent) == CXCursor_Namespace {
+            path.push(spelling(parent));
+        }
+        // SAFETY(ffi): as above.
+        parent = unsafe { clang_getCursorSemanticParent(parent) };
+        if unsafe { clang_Cursor_isNull(parent) } != 0 {
+            break;
+        }
+    }
+    path.reverse();
+    path
+}
+
+/// `[FFI-41]` — the name a namespace's module is imported under by another namespace's.
+fn namespace_alias(home: &[String]) -> String {
+    format!("{}_ns_{}", ember_branding::SYMBOL_PREFIX, if home.is_empty() { "root".to_string() } else { home.join("_") })
 }
 
 /// `[FFI-3]` — a C++ type as a thunk spells it: its canonical spelling, every name qualified.
@@ -2152,6 +2248,8 @@ pub struct Loaded {
     /// overlay's (`[GRM-35]`), with the function entries whose `instrumented` grade evidence backs
     /// (`[TCB-1]`).
     pub overlays: Vec<(Vec<String>, ast::Module, Vec<String>)>,
+    /// `[FFI-41]` — a module for each C++ namespace of the header, under the import's.
+    pub children: Vec<(Vec<String>, ast::Module, ember_typeck::ForeignImport)>,
 }
 
 /// `[FFI-6]` — the module an `import c` names, written from its header, and the import rewritten
@@ -2365,7 +2463,7 @@ pub fn load(
     // Named for its module: the source map keeps one file per name, and one header imported twice
     // is two modules.
     // No quotes: the name reaches the C as `#line`'s file name ([CG-C-8]).
-    let rendered = render(&imported, &applied, &symbol_stem);
+    let rendered = render(&imported, &applied, &symbol_stem, &path, &[]);
     // `[TCB-1]` — each `@grade(instrumented)` entry an evidence record of this package backs.
     let evidence = if overlay_modules.is_empty() { None } else { crate::foreign::load_evidence(importer) };
     for (_, overlay, backed) in &mut overlay_modules {
@@ -2441,7 +2539,7 @@ pub fn load(
             .chain(imported.anonymous_namespace.iter().map(|skipped| (skipped.name.clone(), skipped.reason.clone())))
             .chain(undecided)
             .collect(),
-        layouts: imported.layouts.iter().map(|layout| (layout.name.clone(), layout.size, layout.align, layout.fields.clone())).collect(),
+        layouts: imported.layouts.iter().filter(|layout| layout.namespace.is_empty()).map(|layout| (layout.name.clone(), layout.size, layout.align, layout.fields.clone())).collect(),
         shim,
         sources: source.into_iter().collect(),
         flags: c_flags,
@@ -2452,9 +2550,35 @@ pub fn load(
             .collect(),
         cpp: project.map(|(standard, _, compiler)| (standard, compiler)),
     };
+    // `[FFI-41]` — each C++ namespace a module under the import's.
+    let children = imported
+        .namespaces
+        .iter()
+        .map(|namespace| {
+            let text = render(&imported, &applied, &symbol_stem, &path, namespace);
+            let child: Vec<String> = path.iter().chain(namespace).cloned().collect();
+            let file = map.add(PathBuf::from(format!("<import cpp {header} as {}>", child.join("."))), text);
+            let text = map.file(file).text.clone();
+            let lexed = ember_lexer::lex(file, &text, sink);
+            let module = ember_parser::parse(file, &text, lexed.tokens, sink);
+            let foreign = ember_typeck::ForeignImport {
+                header: foreign.header.clone(),
+                identities: foreign.identities.clone(),
+                layouts: imported
+                    .layouts
+                    .iter()
+                    .filter(|layout| layout.namespace == *namespace)
+                    .map(|layout| (layout.name.clone(), layout.size, layout.align, layout.fields.clone()))
+                    .collect(),
+                cpp: foreign.cpp.clone(),
+                ..Default::default()
+            };
+            (child, module, foreign)
+        })
+        .collect();
     rewrite(import, &path);
     known.modules.insert(key, path.clone());
-    Some(Loaded { path, module, foreign, overlays: overlay_modules })
+    Some(Loaded { path, module, foreign, overlays: overlay_modules, children })
 }
 
 /// `[FFI-29]`, `[BLD-FFI-1]`, `[BLD-FFI-1a]`, `[BLD-FFI-3]` — each `import c`'s shim and C sources,
@@ -2804,6 +2928,7 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                     policy: Policy::Direct,
                     owner: None,
                     out: false,
+                    namespace: Vec::new(),
                 };
                 // A raw pointer states nothing a call can rely on: the call stays unsafe (`[FFI-2]`).
                 let raw = params.iter().map(|(_, ty)| ty).chain(result).any(|ty| matches!(ty.kind, ast::TypeKind::Ptr { .. }));
@@ -2983,7 +3108,9 @@ fn render_function(function: &Function, entry: Option<&Entry>, renamed: Option<&
 }
 
 /// The module's text: its declarations with an overlay applied.
-fn render(imported: &Imported, applied: &Applied, stem: &str) -> String {
+/// `[FFI-41]` — `namespace`: the C++ namespace whose module this is (`[]` for the import's own),
+/// `root`: the import's module path.
+fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], namespace: &[String]) -> String {
     let header = imported.header.file_name().map_or(String::new(), |name| name.to_string_lossy().into_owned());
     let mut body = String::new();
     let declare = |item: &Item, indent: &str| -> String {
@@ -3004,7 +3131,7 @@ fn render(imported: &Imported, applied: &Applied, stem: &str) -> String {
         out
     };
     let alias = |item: &Item| applied.renamed.get(&item.name).map(|to| format!("pub type {} = {}\n", ident(to), ident(&item.name)));
-    for item in imported.items.iter().filter(|item| matches!(item.kind, Kind::Type | Kind::Const)) {
+    for item in imported.items.iter().filter(|item| matches!(item.kind, Kind::Type | Kind::Const) && item.namespace == namespace) {
         body.push_str(&declare(item, ""));
         if let Some(alias) = alias(item) {
             body.push_str(&alias);
@@ -3016,7 +3143,7 @@ fn render(imported: &Imported, applied: &Applied, stem: &str) -> String {
         Some((_, members)) => members.push_str(&text),
         None => blocks.push((abi, text)),
     };
-    for item in imported.items.iter().filter(|item| matches!(item.kind, Kind::Opaque | Kind::Static)) {
+    for item in imported.items.iter().filter(|item| matches!(item.kind, Kind::Opaque | Kind::Static) && item.namespace == namespace) {
         member("C", declare(item, "    "));
         if let Some(alias) = alias(item) {
             body.push_str(&alias);
@@ -3026,7 +3153,7 @@ fn render(imported: &Imported, applied: &Applied, stem: &str) -> String {
     let mut wrappers = String::new();
     let mut extensions: Vec<(String, String)> = Vec::new();
     let mut catching = false;
-    for function in &imported.functions {
+    for function in imported.functions.iter().filter(|function| function.namespace == namespace) {
         let hidden = applied.hidden.contains(&function.name);
         let (entry, renamed) = (applied.functions.get(&function.name), applied.renamed.get(&function.name));
         // `[FFI-24b]` — an asserted `noexcept` keeps the catching thunk, and a throw panics; a
@@ -3076,7 +3203,7 @@ fn render(imported: &Imported, applied: &Applied, stem: &str) -> String {
         );
     }
     // `[FFI-6b]` — each declared macro, bound to its wrapper in the shim.
-    for (function, entry, _) in &applied.macros {
+    for (function, entry, _) in applied.macros.iter().filter(|_| namespace.is_empty()) {
         let hidden = applied.hidden.contains(&function.name);
         member(function.abi, render_function(function, Some(entry), applied.renamed.get(&function.name), hidden));
     }
@@ -3084,12 +3211,17 @@ fn render(imported: &Imported, applied: &Applied, stem: &str) -> String {
         let _ = write!(body, "unsafe extern \"{abi}\":\n{members}\n");
     }
     body.push_str(&wrappers);
-    for extend in &applied.extends {
+    for extend in applied.extends.iter().filter(|_| namespace.is_empty()) {
         let _ = write!(body, "{extend}\n\n");
     }
     let mut imports = String::new();
     for module in &imported.uses {
         let _ = writeln!(imports, "import {} as {}_{}", module.join("."), ember_branding::SYMBOL_PREFIX, module.join("_"));
+    }
+    // `[FFI-41]` — the other namespaces' modules whose types this one names.
+    for (_, home) in imported.ns_uses.iter().filter(|(from, _)| from == namespace) {
+        let path: Vec<&str> = root.iter().chain(home).map(String::as_str).collect();
+        let _ = writeln!(imports, "import {} as {}", path.join("."), namespace_alias(home));
     }
     // `std.ffi`'s names the module's text uses: its C aliases (`[FFI-8]`) and `ForeignBox`.
     let words: HashSet<&str> = body.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).collect();
@@ -3099,6 +3231,9 @@ fn render(imported: &Imported, applied: &Applied, stem: &str) -> String {
     }
     if !imports.is_empty() {
         imports.push('\n');
+    }
+    if !namespace.is_empty() {
+        return format!("# The declarations of `{header}`'s namespace `{}`, written by `import cpp` ([FFI-41]).\n\n{imports}{body}", namespace.join("::"));
     }
     format!("# The declarations of `{header}`, written by `import c` ([FFI-6]).\n\n{imports}{body}")
 }
@@ -3642,7 +3777,7 @@ mod cbor {
 
 use cbor::Value;
 
-const EMBIND_VERSION: u64 = 3;
+const EMBIND_VERSION: u64 = 4;
 
 fn text_of(value: &Value) -> Option<String> {
     match value {
@@ -3670,6 +3805,14 @@ fn field<'v>(value: &'v Value, name: &str) -> Option<&'v Value> {
         Value::Map(entries) => entries.iter().find(|(key, _)| key == name).map(|(_, item)| item),
         _ => None,
     }
+}
+
+fn split_namespace(written: &str) -> Vec<String> {
+    if written.is_empty() { Vec::new() } else { written.split("::").map(str::to_string).collect() }
+}
+
+fn read_namespace(value: &Value) -> Option<Vec<String>> {
+    text_of(value).map(|written| split_namespace(&written))
 }
 
 fn texts(items: &[&str]) -> Value {
@@ -3736,7 +3879,7 @@ fn embind(imported: &Imported, files: &[(String, String)], configuration: &str, 
                     .iter()
                     .map(|item| {
                         let kind = KINDS.iter().position(|kind| *kind == item.kind).unwrap_or(0) as u64;
-                        Value::Array(vec![Value::Text(item.name.clone()), Value::Uint(kind), Value::Text(item.text.clone())])
+                        Value::Array(vec![Value::Text(item.name.clone()), Value::Uint(kind), Value::Text(item.text.clone()), Value::Text(item.namespace.join("::"))])
                     })
                     .collect(),
             ),
@@ -3759,6 +3902,7 @@ fn embind(imported: &Imported, files: &[(String, String)], configuration: &str, 
                             ("result".to_string(), Value::Array(function.result.iter().map(c_type_value).collect())),
                             ("policy".to_string(), Value::Uint(POLICIES.iter().position(|policy| *policy == function.policy).unwrap_or(0) as u64)),
                             ("out".to_string(), Value::Uint(u64::from(function.out))),
+                            ("namespace".to_string(), Value::Text(function.namespace.join("::"))),
                             ("owner".to_string(), Value::Array(function.owner.iter().map(|(owner, member)| {
                                 Value::Array(vec![Value::Text(owner.clone()), Value::Uint(MEMBERS.iter().position(|known| known == member).unwrap_or(0) as u64)])
                             }).collect())),
@@ -3779,6 +3923,7 @@ fn embind(imported: &Imported, files: &[(String, String)], configuration: &str, 
                             Value::Uint(layout.size),
                             Value::Uint(layout.align),
                             Value::Array(layout.fields.iter().map(|(name, offset)| Value::Array(vec![Value::Text(name.clone()), Value::Uint(*offset)])).collect()),
+                            Value::Text(layout.namespace.join("::")),
                         ])
                     })
                     .collect(),
@@ -3804,6 +3949,8 @@ fn embind(imported: &Imported, files: &[(String, String)], configuration: &str, 
         ("c_types".to_string(), Value::Array(imported.c_types.iter().map(|(ember, c)| texts(&[ember, c])).collect())),
         ("anonymous_namespace".to_string(), skips(&imported.anonymous_namespace)),
         ("rvalue_members".to_string(), skips(&imported.rvalue_members)),
+        ("namespaces".to_string(), Value::Array(imported.namespaces.iter().map(|namespace| Value::Text(namespace.join("::"))).collect())),
+        ("ns_uses".to_string(), Value::Array(imported.ns_uses.iter().map(|(from, to)| texts(&[&from.join("::"), &to.join("::")])).collect())),
     ]);
     let mut bytes = Vec::new();
     cbor::encode(&value, &mut bytes);
@@ -3824,7 +3971,7 @@ fn read_embind(bytes: &[u8]) -> Option<(Vec<(String, String)>, Imported)> {
         .iter()
         .map(|entry| {
             let entry = array_of(entry)?;
-            Some(Item { name: text_of(entry.first()?)?, kind: *KINDS.get(uint_of(entry.get(1)?)? as usize)?, text: text_of(entry.get(2)?)? })
+            Some(Item { name: text_of(entry.first()?)?, kind: *KINDS.get(uint_of(entry.get(1)?)? as usize)?, text: text_of(entry.get(2)?)?, namespace: read_namespace(entry.get(3)?)? })
         })
         .collect::<Option<Vec<_>>>()?;
     let functions = array_of(field(&value, "functions")?)?
@@ -3847,6 +3994,7 @@ fn read_embind(bytes: &[u8]) -> Option<(Vec<(String, String)>, Imported)> {
                 },
                 policy: *POLICIES.get(uint_of(field(entry, "policy")?)? as usize)?,
                 out: uint_of(field(entry, "out")?)? == 1,
+                namespace: read_namespace(field(entry, "namespace")?)?,
                 owner: match array_of(field(entry, "owner")?)? {
                     [] => None,
                     [owner] => Some((text_of(array_of(owner)?.first()?)?, *MEMBERS.get(uint_of(array_of(owner)?.get(1)?)? as usize)?)),
@@ -3867,6 +4015,7 @@ fn read_embind(bytes: &[u8]) -> Option<(Vec<(String, String)>, Imported)> {
                     .iter()
                     .map(|field| Some((text_of(array_of(field)?.first()?)?, uint_of(array_of(field)?.get(1)?)?)))
                     .collect::<Option<_>>()?,
+                namespace: read_namespace(entry.get(4)?)?,
             })
         })
         .collect::<Option<Vec<_>>>()?;
@@ -3901,6 +4050,8 @@ fn read_embind(bytes: &[u8]) -> Option<(Vec<(String, String)>, Imported)> {
         c_types: pairs(field(&value, "c_types")?)?,
         anonymous_namespace: read_skips(field(&value, "anonymous_namespace")?)?,
         rvalue_members: read_skips(field(&value, "rvalue_members")?)?,
+        namespaces: array_of(field(&value, "namespaces")?)?.iter().map(read_namespace).collect::<Option<_>>()?,
+        ns_uses: pairs(field(&value, "ns_uses")?)?.into_iter().map(|(from, to)| (split_namespace(&from), split_namespace(&to))).collect(),
     };
     Some((files, imported))
 }
