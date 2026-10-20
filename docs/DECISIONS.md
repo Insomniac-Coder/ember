@@ -5017,6 +5017,25 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-227 — Bounds named before interfaces are collected (D-728); D-730 as specified
+
+2026-10-20.
+* D-728 (`[TYP-16]`, `[IFC-2]`): a generic type instantiated before interfaces are collected — by an
+  interface's own signature (`fn fetch(storages: Map[u64, int])`), or by another generic type's field
+  (`Set[T]`'s `Map[T, bool, H]`) — had its methods' bounds left as written, since `substitute_bound`
+  needed the interface's definition and returned the bound unchanged without it. `get`'s
+  `Q: AsKey[K]` on `Map[u64, int]` kept `K`'s slot, which in `get_or`'s body, checked for that
+  instance, is `get_or`'s own `Q`: "`Q` does not implement `AsKey[Q]`" in `std`. The substituted
+  bound is now named and queued for instantiation, as D-261's `bound_interface` names a bound written
+  before interfaces are known; once they are collected a missing definition stays as before.
+* D-730 is closed as specified, not fixed: `[LT-1]` makes `view: Maybe[O]` a source of the second
+  kind (a borrowed parameter whose type is not `Copy`), the caller's place, and ODR-048 keeps an
+  instance's parameters as the declaration has them, adding the first kind for a view "too". A
+  generic body may return a reference into that argument's own storage, so the caller's loan is on
+  `m`, and `m` is a by-copy view parameter: `E3060`. A non-generic `Col.get(c)` differs because the
+  callee is checked with `Col` known to be a view passed as a copy, which cannot return its own
+  storage.
+
 ## ADR-226 — Generic types that name themselves; `Box` arguments read through (D-729, D-731..D-733)
 
 2026-10-20. Four defects from one probe, each fixed where every caller routes through:

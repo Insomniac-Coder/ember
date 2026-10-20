@@ -14779,8 +14779,18 @@ impl<'a> Checker<'a> {
     /// instantiated again over their arguments; any other bound is itself.
     fn substitute_bound(&mut self, bound: Symbol, args: &[Ty]) -> Symbol {
         let Some((name, over)) = self.open_interface_origin.get(&bound).cloned() else { return bound };
-        let Some(definition) = self.interfaces.get(&name).cloned() else { return bound };
         let substituted: Vec<Ty> = over.iter().map(|&ty| self.substitute_ty(ty, args)).collect();
+        let Some(definition) = self.interfaces.get(&name).cloned() else {
+            // D-728 — before interfaces are collected (an interface's signature naming
+            // `Map[u64, int]` makes that instance then), the substituted bound is named now and
+            // instantiated once they are, as `bound_interface` does. Returned unsubstituted, a
+            // method's `Q: AsKey[K]` kept `K`'s slot, which is a caller's own parameter's.
+            if self.interfaces_collected {
+                return bound;
+            }
+            self.pending_bound_interfaces.push((name, substituted.clone(), Span::DUMMY));
+            return self.interface_instance_name(name, &substituted);
+        };
         self.instantiate_interface(name, &definition, &substituted, Span::DUMMY).unwrap_or(bound)
     }
 

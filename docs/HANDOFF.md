@@ -10764,6 +10764,8 @@ formal 1/9 count or Phase 2's estimate.
 > Then ADR-226: generic types that name themselves (D-729, D-731), a recursive enum in a diagnostic
 > (D-732, a stack overflow), `Box` arguments read through (D-733); whether `Box[T]` is `Eq`/`Clone`
 > when `T` is, so a struct holding one derives them, is an owner question.
+> Then ADR-227: D-728 fixed (bounds of an instance made before interfaces are collected); D-730 closed
+> as specified (`[LT-1]`'s second kind, ODR-048).
 > **Before a push that touches C or the runtime:** `bench/gcc/gate.sh` in WSL (the workspace through
 > gcc) and `EMBER_CC=clang-cl cargo test --profile ci --workspace` on Windows, besides the full check.
 
