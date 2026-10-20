@@ -7430,3 +7430,31 @@ fn import_c_parses_a_header_again_only_when_it_changes() {
         assert!(explained.stdout.contains(line), "--explain lacks {line:?}:\n{}", explained.stdout);
     }
 }
+
+/// `[FFI-30b]` — the package's interface hash (`[BLD-2]`) includes the layouts of what `pub import c`
+/// re-exports: the header's module is a dependency of the re-exporting module, its interface holds
+/// each imported struct's layout, and a header change that changes a layout changes the hash its
+/// dependants record, so they are rebuilt.
+#[test]
+fn a_reexported_header_layout_is_part_of_the_interface_hash() {
+    let dir = temporary_directory("reexport-interface");
+    let out_dir = dir.join("out");
+    std::fs::write(dir.join("shape.h"), "typedef struct Shape { int w; int h; } Shape;\n").unwrap();
+    std::fs::write(dir.join(format!("lib.{SOURCE_EXT}")), "pub import c \"shape.h\" as shape\n\npub fn area(s: shape.Shape) -> i32:\n    return s.w * s.h\n").unwrap();
+    std::fs::write(dir.join(format!("main.{SOURCE_EXT}")), "import lib\n\nfn main():\n    println(lib.area(lib.shape.Shape(w=2, h=3)))\n").unwrap();
+    let main = format!("main.{SOURCE_EXT}");
+    let check = || {
+        let run = ember(&["check", &main, "--out-dir", &out_dir.to_string_lossy()], &dir);
+        assert_eq!(run.exit, 0, "{}", run.stderr);
+    };
+    check();
+    let before = cached_interface(&out_dir, "lib");
+    let header_hash = before.dependencies.get("c.h_shape").cloned().expect("`lib` depends on the header's module");
+    let layouts = cached_interface(&out_dir, "c.h_shape").layouts;
+    assert!(layouts.iter().any(|(name, layout)| name.contains("Shape") && layout.contains("pub h: i32")), "{layouts:?}");
+    std::fs::write(dir.join("shape.h"), "typedef struct Shape { int w; int h; int d; } Shape;\n").unwrap();
+    std::fs::write(dir.join(format!("main.{SOURCE_EXT}")), "import lib\n\nfn main():\n    println(lib.area(lib.shape.Shape(w=2, h=3, d=4)))\n").unwrap();
+    check();
+    let after = cached_interface(&out_dir, "lib");
+    assert_ne!(after.dependencies.get("c.h_shape"), Some(&header_hash), "a changed layout left the dependency's hash as it was");
+}

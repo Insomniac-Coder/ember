@@ -220,6 +220,7 @@ pub fn check(
         .map(|m| m.foreign.as_ref().map(|foreign| (foreign.header.clone(), foreign.skipped.iter().map(|(name, why)| (Symbol::intern(name), why.clone())).collect())))
         .collect();
     checker.namespaces = vec![HashMap::new(); modules.len()];
+    checker.public_namespaces = vec![HashMap::new(); modules.len()];
     checker.module_overflow = vec![default_overflow; modules.len()];
     checker.module_deterministic = vec![false; modules.len()];
 
@@ -2200,6 +2201,9 @@ struct Checker<'a> {
     /// Per module: names bound to a whole module by `import a.b.c`, so that
     /// `c.thing` resolves.
     namespaces: Vec<HashMap<Symbol, usize>>,
+    /// `[FFI-30b]` — per module: the modules it re-exports (`pub import c "…" as vk`), by name. Only
+    /// these are reached through it (`m.vk.f`, `from m import vk`); a module's other imports are its own.
+    public_namespaces: Vec<HashMap<Symbol, usize>>,
     /// Which module is being collected or checked right now.
     current_module: usize,
     /// `[TYP-16]` — the type parameters in scope right now: opaque while a
@@ -2806,6 +2810,7 @@ impl<'a> Checker<'a> {
             item_spans: HashMap::new(),
             item_visibility: HashMap::new(),
             namespaces: vec![HashMap::new()],
+            public_namespaces: vec![HashMap::new()],
             current_module: 0,
             type_params: HashMap::new(),
             generic_aliases: HashMap::new(),
@@ -4249,7 +4254,14 @@ impl<'a> Checker<'a> {
         };
         let mut module = first_module;
         for (index, segment) in segments.iter().enumerate().skip(1) {
-            let Some(&next) = self.namespaces[module].get(&segment.name) else {
+            // `[GRM-24]` — a module's child module by path (`paths.inner`), or `[FFI-30b]` one it
+            // re-exports; never one it merely imports, which is its own.
+            let child = format!("{}.{}", self.prefixes[module], segment.name);
+            let next = self.public_namespaces[module]
+                .get(&segment.name)
+                .copied()
+                .or_else(|| self.prefixes.iter().position(|prefix| *prefix == child));
+            let Some(next) = next else {
                 return Err(index);
             };
             module = next;
@@ -4358,6 +4370,17 @@ impl<'a> Checker<'a> {
         let by_path: HashMap<String, usize> =
             modules.iter().enumerate().map(|(i, m)| (m.path.join("."), i)).collect();
 
+        // `[FFI-30b]` — what each module re-exports, before any module binds through another.
+        for (index, loaded) in modules.iter().enumerate() {
+            for import in loaded.module.imports.iter().filter(|import| import.public) {
+                if let ast::ImportKind::Module { path, alias: Some(alias) } = &import.kind
+                    && let Some(&target) = by_path.get(&path.iter().map(|s| s.name.to_string()).collect::<Vec<_>>().join("."))
+                {
+                    self.public_namespaces[index].insert(alias.name, target);
+                }
+            }
+        }
+
         for (index, loaded) in modules.iter().enumerate() {
             self.current_module = index;
             // `[MOD-8]` — the glob imports, bound after everything else.
@@ -4409,6 +4432,12 @@ impl<'a> Checker<'a> {
                             continue;
                         }
                         for item in items {
+                            // `[FFI-30b]` — a module `target` re-exports.
+                            if let Some(&reexported) = self.public_namespaces[target].get(&item.name.name) {
+                                let bound = item.alias.map(|a| a.name).unwrap_or(item.name.name);
+                                self.namespaces[index].insert(bound, reexported);
+                                continue;
+                            }
                             let Some(vis) = public_item(&modules[target].module, item.name.name)
                             else {
                                 self.error(
@@ -31599,6 +31628,15 @@ impl<'a> Checker<'a> {
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
                 if self.comptime_names_runtime_local(name, span) {
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+                // A module used as a value: what followed it is none of the things it reaches.
+                if self.namespaces[self.current_module].contains_key(&name) {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E1010, span, format!("`{name}` is a module, and what follows it is not one of its items"))
+                            .note("a module reaches its items, its child modules and the modules it re-exports (`pub import c`); \
+                                   its other imports are its own [MOD-2], [FFI-30b]"),
+                    );
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
                 let mut diagnostic = Diagnostic::error(

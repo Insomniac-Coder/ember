@@ -533,6 +533,21 @@ impl<'a> Parser<'a> {
                 }
                 continue;
             }
+            // `[FFI-30b]` — `pub import c "…"`: only a foreign import may be re-exported.
+            if self.at_kw(Kw::Pub)
+                && matches!(self.peek_at(1), TokenKind::Keyword(Kw::Import))
+                && matches!(self.peek_at(2), TokenKind::Ident(word) if word.is("c") || word.is("cpp"))
+                && matches!(self.peek_at(3), TokenKind::Lit(ember_lexer::Lit::Str(_)))
+            {
+                let start = self.span();
+                self.bump();
+                if let Some(mut import) = self.parse_import() {
+                    import.public = true;
+                    import.span = start.to(import.span);
+                    imports.push(import);
+                }
+                continue;
+            }
             if !self.at_item_start() {
                 let before = self.pos;
                 match self.parse_statement() {

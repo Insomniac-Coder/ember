@@ -26,6 +26,7 @@ impl Parser<'_> {
                 id,
                 kind: ImportKind::Items { path, items, glob },
                 span: start.to(self.prev_span()),
+                public: false,
             });
         }
 
@@ -67,6 +68,7 @@ impl Parser<'_> {
                 id,
                 kind: ImportKind::Foreign { language, header, options, alias },
                 span: start.to(self.prev_span()),
+                public: false,
             });
         }
 
@@ -77,6 +79,7 @@ impl Parser<'_> {
             id,
             kind: ImportKind::Module { path, alias },
             span: start.to(self.prev_span()),
+            public: false,
         })
     }
 

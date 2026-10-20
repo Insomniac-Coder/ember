@@ -215,6 +215,8 @@ pub struct Import {
     pub id: NodeId,
     pub kind: ImportKind,
     pub span: Span,
+    /// `[FFI-30b]` — `pub import c "…" as vk`: the module the import binds is re-exported.
+    pub public: bool,
 }
 
 #[derive(Clone, Debug)]

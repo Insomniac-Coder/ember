@@ -145,6 +145,17 @@ through an alias that names it, and an enum's variants are reached through one
 (`struct_through_alias`, `enum_through_alias` in `ember_typeck`). Before, `Alias(x=1)` was "cannot
 find" (defect D-N3 below).
 
+### N7a. Re-exports (`[FFI-30b]`)
+
+`pub import c "h.h" as vk` parses (the grammar allows `pub` on a foreign import only) and re-exports
+the module: an importer of `m` reaches it as `m.vk`, or imports it with `from m import vk`
+(`Checker::public_namespaces`). A module's other imports are its own: before, `a.m.sqrt(…)` reached
+`std.math` through a module `a` that had `import math as m` (D-N7). A path still reaches a module's
+child module (`paths.inner`, `[GRM-24]`). `m.vk` used where a value is wanted now says `m` is a
+module and what follows is none of its items, instead of "cannot find `m`". The header's module is a
+dependency of the re-exporting module in the interface artifacts (`[BLD-2]`), whose layouts hold the
+imported structs, so a header change changes the hash dependants record.
+
 ### N8. `ember bind` (`[CLI-5]`, `[CLI-6]`, `[CLI-7]`)
 
 `ember bind <header> [-I dir] [-D def] --init [--merge]` writes `<stem>.overlay.em` beside the header:
@@ -211,6 +222,7 @@ the shim's wrapper (its symbol is the wrapper's), and "one direct call" otherwis
 | `FFI-12` | `tests/conformance/FFI-12/*` |
 | `FFI-13` | `FFI-2/accept_an_overlay_makes_calls_safe.em` (the overlay's `extend Size`) |
 | `FFI-30` | `tests/conformance/FFI-30/*` |
+| `FFI-30b` | `tests/conformance/FFI-30b/*`; milestone `a_reexported_header_layout_is_part_of_the_interface_hash` |
 | `FFI-30a` | `FFI-2/accept_an_overlay_makes_calls_safe.em`, `FFI-30/accept_two_imports_of_one_declaration_are_one_entity.em` |
 | `BLD-FFI-1`, `BLD-FFI-1a`, `BLD-FFI-3` | `ember_driver/tests/cdylib.rs` `import_c_compiles_its_source_with_the_c_section_and_links_in_order`; `FFI-6/accept_a_header_and_its_c_source.em`; `FFI-6/accept_static_inline_functions_through_the_shim.em` (defines) |
 | `CLI-5` | milestone `bind_init_writes_a_starter_overlay_that_compiles_unchanged` |
@@ -233,8 +245,6 @@ in a rule folder for a test.
   anonymous members (`<Parent>_anon<N>`), flexible array members (unsized structs), `_Atomic`,
   `va_list` and variadic calls, `long double` (`c_longdouble`), `volatile`, `@ffi(newtype)`; and
   `std.ffi` has none of `c_int`, `c_char`, `c_long` and the other C aliases Part XV lists (D-N4).
-* `[FFI-30b]` — `pub import c … as vk` (re-export) does not parse: Ember has no re-exports or
-  module-in-module namespaces to build it on.
 * `[FFI-30c]` — overlays from several packages, their order and `override`: one overlay file per
   import, holding one overlay.
 * Linux: the importer has not run there (no libclang in WSL here); CI is the first run.
@@ -298,6 +308,10 @@ in a rule folder for a test.
   `unsafe extern "C"` block of one module and defining `pub extern "C" fn add` in another is an ICE
   ("[BLD-2] import-visible callable `add` has more than one declaration contract") rather than a
   diagnostic.
+* **D-N7 (fixed): a module's imports leaked through it.** Module `a` with `import math as m`, then
+  `import a` and `a.m.sqrt(4.0)` compiled: a path went through any import of the module it named.
+  Now only child modules and `pub import c` re-exports are reached; the two tests that went through a
+  module did so to its child modules and still pass.
 * **Noted, not a defect of this job:** a `const A: i32` binds to a `u32` local without a cast
   (`x: u32 = A`): typed constants coerce like literals. The `[FFI-6a]` test checks types through
   `size_of` and wrapping arithmetic instead.
