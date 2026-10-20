@@ -17,7 +17,7 @@ struct Particle:
     vel: Vec3
     life: f32
 
-fn integrate(pos: MutSpan[Vec3], vel: Span[Vec3], dt: f32):
+fn integrate(mut pos: MutSpan[Vec3], vel: Span[Vec3], dt: f32):
     for i in 0..pos.len():
         pos[i] += vel[i] * dt
 
@@ -58,7 +58,7 @@ fn main():
 ```ember
 from std.simd import f32x8
 
-fn scale(xs: Span[f32], out: MutSpan[f32], k: f32):
+fn scale(xs: Span[f32], mut out: MutSpan[f32], k: f32):
     assert(xs.len() == out.len() and xs.len() % 8 == 0)
     kv = f32x8.splat(k)
     for i in (0..xs.len()).step_by(8):

@@ -379,6 +379,19 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-150 — Examples that the rules refuse — **CLOSED**
+
+    ID:        ODR-150
+    Status:    CLOSED — ruled under the delegation 2026-10-20; incorporated in 0.9.10_Hardened_24
+    Category:  EDITORIAL
+    Location:  Ember_v0.9.10_Hardened_23.md [TST-7], [FN-1], [TST-1]
+
+**The question.** Checked with `ember check` (not `--syntax-only`), Part XII's `integrate` and `scale` wrote through borrowed `MutSpan` parameters, which `[FN-1]` refuses; XI.5 and XVI.3 named undeclared items without being marked `fragment`; XVII.5's expected diagnostic text was the compiler's earlier one.
+
+**Ruling.** Ruled under the delegation: the examples follow the rules: `mut` parameters, `ember,fragment` marks, the current diagnostic. ADR-232.
+
+---
+
 ## ODR-149 — Several overlays for one module — **CLOSED**
 
     ID:        ODR-149

@@ -317,7 +317,12 @@ fn load_libclang() -> Result<(), String> {
             "{error}\n  = help: install LLVM (it provides libclang: `winget install LLVM.LLVM` on Windows, \
              `apt install libclang-dev` on Debian and Ubuntu), or set LIBCLANG_PATH to the folder that holds it"
         )
-    })
+    })?;
+    // D-751 — never unloaded: clang-sys keeps the library in a thread-local, and freeing libclang
+    // as that is destroyed at exit crashed the compiler (an access violation after its work was
+    // done) with the LLVM of the Windows CI image. One reference is kept for the process's life.
+    std::mem::forget(clang_sys::get_library());
+    Ok(())
 }
 
 /// The arguments libclang parses with: C11, as the generated C is compiled, for the host target.

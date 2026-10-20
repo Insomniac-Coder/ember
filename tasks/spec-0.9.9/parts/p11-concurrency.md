@@ -211,10 +211,10 @@ The job system is a pool of worker threads with work-stealing queues. The runtim
 `main` in any program that uses `@parallel` or `std.jobs`, with the worker count from the manifest
 (`[jobs] workers = "auto"`, meaning logical cores minus one).
 
-```ember
+```ember,fragment
 import std.jobs
 
-fn step(pos: MutSpan[Vec3], vel: Span[Vec3], life: MutSpan[float], dt: float):
+fn step(mut pos: MutSpan[Vec3], vel: Span[Vec3], mut life: MutSpan[float], dt: float):
     with s = jobs.scope():
         s.submit(fn() => integrate(pos, vel, dt))
         s.submit(fn() => age(life, dt))

@@ -1321,7 +1321,7 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         B::ConstStatic { .. } => (Effects::NONE, "a static in the image"),
         // `[CT-2]` — the two inputs compile time is given, recorded as build inputs.
         B::ComptimeReadFile | B::ComptimeEnv { .. } => (Effects::NONE, "a build input"),
-        B::PtrRead | B::PtrWrite | B::MemFree | B::SpanGetUnchecked | B::RangeNewUnchecked(_)
+        B::PtrRead | B::PtrWrite | B::PtrAdd | B::MemFree | B::SpanGetUnchecked | B::RangeNewUnchecked(_)
         | B::MaybeUninitAssumeInit { .. } | B::MaybeUninitSpanAssumeInit { .. } | B::MaybeUninitWriteAt { .. } => {
             (Effects::UNSAFE, "an `unsafe` operation")
         }

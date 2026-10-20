@@ -1,6 +1,7 @@
 ## `std.io` — standard input, and what goes wrong touching the outside world (`[STD-22]`).
 
 from std.fmt import Formatter, FmtError
+from std.core import Error as ErrorInterface
 
 ## `[STD-22]` — what kind of thing went wrong.
 pub enum ErrorKind:
@@ -36,6 +37,10 @@ pub struct Error:
 extend Error implements Display:
     fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
         return f.write_str(self.message)
+
+## D-749, `[ERR-3]`, `[ERR-8]` — an error type: `?` carries one into an `AnyError` (`fs.read_to_string(path)?`).
+extend Error implements ErrorInterface:
+    pass
 
 ## `[STD-22]` — the process's standard input.
 pub struct Stdin:

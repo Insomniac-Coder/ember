@@ -428,6 +428,7 @@ ODR-132, the type of `Retained.ptr()` (§H.20).
 | ODR-147 | ruled under the delegation: an overlay entry marked `@ffi(macro_fn)` writes one Ember type for each parameter and for the result | `[FFI-6b]`, `[GRM-35]` |
 | ODR-148 | ruled under the delegation: `ember bind --init <header>` writes `<stem>.overlay.em` beside the header | `[CLI-5]` |
 | ODR-149 | ruled under the delegation: `overlay` takes one file or a list applied in order; `override` before an item replaces an earlier file's entry, any other second entry for one name is `E5010` | `[FFI-30c]`, `[GRM-35]` |
+| ODR-150 | ruled under the delegation: the examples are corrected to the rules (`mut` on written `MutSpan` parameters, `[FN-1]`; `ember,fragment` where a block names undeclared items; XVII.5's expected diagnostic); every block is checked as `[TST-7]` says | `[TST-7]`, `[FN-1]`, `[TST-1]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -1037,3 +1038,18 @@ Generated: every rule whose text differs from 0.9.10_Hardened_22.
 | `[FFI-6a]` | changed |
 | `[FFI-6b]` | changed |
 | `[FFI-30c]` | changed |
+
+## H.29 Changes in 0.9.10_Hardened_24 (from 0.9.10_Hardened_23)
+
+**0.9.10_Hardened_24** records ODR-150, ruled under the delegation when `[TST-7]`'s check was built: every ```` ```ember ```` block is now checked with `ember check`, and five examples did not say what the rules do (`docs/DECISIONS.md` ADR-232):
+
+* Part XII's `integrate` and `scale` write through a `MutSpan` parameter, which `[FN-1]` makes `mut` (a borrowed parameter is not assigned through); XI.5's `step` likewise.
+* XI.5's job example and XVI.3's Vulkan import name items the document does not declare (`integrate`, `age`, a header and an overlay file): they are `ember,fragment`.
+* XVII.5's compile-fail test expects the diagnostic the compiler gives, as `[TST-1]` asserts it.
+* VII.7's `heal_all`, IX.4's raw pointer reads and Part XIII's `?` into `AnyError` were the compiler's to fix (D-747, D-748, D-749), not the examples'.
+
+Generated: every rule whose text differs from 0.9.10_Hardened_23.
+
+| Rule | 0.9.10_Hardened_23 → 0.9.10_Hardened_24 |
+|---|---|
+

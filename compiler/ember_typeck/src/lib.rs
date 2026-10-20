@@ -11193,12 +11193,28 @@ impl<'a> Checker<'a> {
             self.error(codes::E1010, ty.span, "a `dyn` bound must name an interface");
             return None;
         };
-        if segments.len() != 1 {
-            self.error(codes::E1010, ty.span, "a `dyn` bound must name an interface");
-            return None;
-        }
-        let written = segments[0].name;
-        let name = self.resolve_name(written);
+        let written = segments[segments.len() - 1].name;
+        // D-750 — `shapes.Shape`: an interface of a module in scope, as a type path names one.
+        let name = if let [prefix @ .., last] = segments.as_slice()
+            && !prefix.is_empty()
+        {
+            let module = match self.resolve_namespace_prefix(prefix) {
+                Ok(module) => module,
+                Err(index) => {
+                    let unresolved = prefix[index];
+                    self.error(codes::E1010, unresolved.span, format!("`{}` is not a module in scope", unresolved.name));
+                    return None;
+                }
+            };
+            let qualified = self.qualified_in_module(module, last.name);
+            if self.interfaces.contains_key(&qualified) && !self.item_accessible(module, qualified) {
+                self.report_item_not_visible(module, qualified, last.span);
+                return None;
+            }
+            qualified
+        } else {
+            self.resolve_name(written)
+        };
         let Some(definition) = self.interfaces.get(&name).cloned() else {
             if !self.report_ambiguous_glob(written, ty.span) {
                 self.error(
@@ -38474,6 +38490,14 @@ impl<'a> Checker<'a> {
     fn reject_write_through_shared_ref(&mut self, place: &Expr, span: Span) -> bool {
         let mut current = place;
         loop {
+            // D-747, `[FN-9]` — a class object's field is written through its handle, however the
+            // handle is reached: the handle is only read (`for p in players: p.health = 100.0`
+            // over a borrowed `Array[Player]`), and the object's exclusivity is checked as it runs.
+            if let ExprKind::Field { base, .. } = &current.kind
+                && matches!(self.types.kind(base.ty), TyKind::Class(_) | TyKind::ClassInterface(_))
+            {
+                return false;
+            }
             // A borrowed parameter passed by address is a `ref T` local, but
             // a write to it is `[FN-1]`'s `E3023`, reported by
             // `reject_borrowed_parameter_write` with its own repairs.
@@ -39921,6 +39945,48 @@ impl<'a> Checker<'a> {
             return Expr { ty: self.common.bool_, kind: ExprKind::Builtin {
                 which: Builtin::PtrIsNull, args: vec![receiver],
             }, span };
+        }
+        // D-748, `[UNS-1]` — reading and writing through a raw pointer and offsetting one, as IX.4's
+        // example spells them: `p.read()`, `p.write(v)` (a `*mut T`), `p.add(n)`. Each needs `unsafe`.
+        if let TyKind::Ptr { mutable, inner } = *self.types.kind(receiver.ty)
+            && matches!(name.name.as_str(), "read" | "write" | "add")
+            && self.lookup_method(receiver.ty, name.name).is_none()
+        {
+            let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            let wanted = if name.name.is("read") { 0 } else { 1 };
+            if !explicit.is_empty() || args.len() != wanted || args.iter().any(|arg| arg.name.is_some()) {
+                let shown = if wanted == 0 { "no arguments".to_string() } else { "one argument".to_string() };
+                self.error(codes::E2020, span, format!("`{}` on a raw pointer takes {shown}", name.name));
+                return error;
+            }
+            if !self.unsafe_context() {
+                self.sink.emit(
+                    Diagnostic::error(codes::E3100, span, format!("`{}` through a raw pointer needs an `unsafe` block", name.name))
+                        .note("`[UNS-1]` lists the operations that do")
+                        .help("wrap the call in `unsafe:`"),
+                );
+                return error;
+            }
+            let usize_ty = self.common.usize;
+            let zero = Expr { ty: usize_ty, kind: ExprKind::Int(0), span };
+            return match name.name.as_str() {
+                "read" => Expr { ty: inner, kind: ExprKind::Builtin { which: Builtin::PtrRead, args: vec![receiver, zero] }, span },
+                "write" => {
+                    if !mutable {
+                        let shown = self.types.display(receiver.ty);
+                        self.error(codes::E2020, span, format!("`write` needs a `*mut` pointer, and this is `{shown}`"));
+                        return error;
+                    }
+                    let value = self.check_expr(&args[0].value, inner);
+                    let void = self.common.void;
+                    Expr { ty: void, kind: ExprKind::Builtin { which: Builtin::PtrWrite, args: vec![receiver, zero, value] }, span }
+                }
+                _ => {
+                    let count = self.check_expr(&args[0].value, usize_ty);
+                    let ty = receiver.ty;
+                    Expr { ty, kind: ExprKind::Builtin { which: Builtin::PtrAdd, args: vec![receiver, count] }, span }
+                }
+            };
         }
         // `[TYP-24]` — `I.m(recv)` names the interface's method, which an
         // extension may give a type the compiler knows a method `m` of. So
