@@ -86,7 +86,27 @@ pub struct Function {
     pub abi: &'static str,
     /// `[FFI-24]` — a C++ function's exception policy; `Direct` for every C function.
     pub policy: Policy,
+    /// `[FFI-40]`, `[FFI-41]` — for a C++ member function: its class's Ember name, and what it is.
+    pub owner: Option<(String, Member)>,
+    /// A C++ class result, which the thunk writes through a pointer the caller gives.
+    pub out: bool,
 }
+
+/// `[FFI-40]`, `[FFI-41]`, `[FFI-32]` — what a C++ member function is to its class's Ember type:
+/// a `const` method (`self`), any other (`mut self`), a static one (an associated function), a
+/// constructor of a class by value (`new(…) -> T`) or of an opaque one (`new(…) ->
+/// ForeignBox[T]`), or the destructor a `ForeignBox` calls.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Member {
+    Method,
+    MutMethod,
+    Static,
+    Constructor,
+    BoxedConstructor,
+    Destructor,
+}
+
+const MEMBERS: [Member; 6] = [Member::Method, Member::MutMethod, Member::Static, Member::Constructor, Member::BoxedConstructor, Member::Destructor];
 
 /// `[FFI-24]` — how a C++ function is called: directly when its declaration is non-throwing,
 /// else through a thunk that catches (its Ember function returns `Result[T, CppError]`); an
@@ -174,6 +194,8 @@ pub struct Imported {
     pub c_types: Vec<(String, String)>,
     /// `[FFI-41]` — `W5034`: each entity of an anonymous namespace.
     pub anonymous_namespace: Vec<Skipped>,
+    /// `[FFI-40]` — `W5033`: each `&&`-qualified member function.
+    pub rvalue_members: Vec<Skipped>,
 }
 
 fn text(string: CXString) -> String {
@@ -574,6 +596,7 @@ struct Writer {
     /// The thunks written, for their names.
     thunks: usize,
     anonymous_namespace: Vec<Skipped>,
+    rvalue_members: Vec<Skipped>,
 }
 
 impl Writer {
@@ -644,7 +667,8 @@ impl Writer {
             CXCursor_ClassDecl => {
                 // SAFETY(ffi): a live cursor.
                 if unsafe { clang_Cursor_isAnonymous(cursor) } == 0 {
-                    let _ = self.record(cursor, None);
+                    let record = self.record(cursor, None);
+                    self.cpp_members(cursor, record);
                 }
             }
             CXCursor_TypeAliasDecl => {
@@ -653,7 +677,10 @@ impl Writer {
             CXCursor_StructDecl | CXCursor_UnionDecl => {
                 // SAFETY(ffi): a live cursor.
                 if unsafe { clang_Cursor_isAnonymous(cursor) } == 0 {
-                    let _ = self.record(cursor, None);
+                    let record = self.record(cursor, None);
+                    if self.cpp && kind(cursor) == CXCursor_StructDecl {
+                        self.cpp_members(cursor, record);
+                    }
                 }
             }
             CXCursor_EnumDecl => {
@@ -1290,7 +1317,7 @@ impl Writer {
                 self.wrapper(cursor, &wrapper, name);
                 wrapper
             });
-            Ok(Function { name: name.to_string(), params, result, link_name, abi, policy: Policy::Direct })
+            Ok(Function { name: name.to_string(), params, result, link_name, abi, policy: Policy::Direct, owner: None, out: false })
         }
     }
 
@@ -1301,6 +1328,92 @@ impl Writer {
     /// passed by address (`mut T`, or `ref mut T` for an opaque class); a `const T&` as a borrowed
     /// value (`T`, or `ref T`); a `T&&` as an owned value, moved in; a `T&` result as a raw pointer.
     fn cpp_function(&mut self, cursor: CXCursor, name: &str) -> Result<Function, String> {
+        self.cpp_thunk(cursor, name, None)
+    }
+
+    /// `[FFI-40]`, `[FFI-41]`, `[FFI-32]` — a C++ class's public members, each through a thunk: its
+    /// methods (`const` ones as `self`, unless the class has a `mutable` member, `[FFI-40a]`), its
+    /// static member functions, its first constructor (not a copy or move one, nor an abstract
+    /// class's), and, for an opaque class, its destructor, which the type's `ForeignBox` calls
+    /// (`@ffi(destroys(…))`, `[FFI-36a]`). An `&&`-qualified member is `W5033`; an operator and an
+    /// overload are skipped (`W5002`).
+    fn cpp_members(&mut self, class: CXCursor, record: Record) {
+        let (owner, by_value) = match record {
+            Record::Full(name) => (name, true),
+            Record::Opaque(name, None) => (name, false),
+            _ => return,
+        };
+        // SAFETY(ffi): cursors and types of a live translation unit.
+        unsafe {
+            let definition = clang_getCursorDefinition(class);
+            if clang_Cursor_isNull(definition) != 0 || !self.seen.insert(format!("members {}", usr(definition))) {
+                return;
+            }
+            let class_spelled = cpp_spelling(clang_getCursorType(definition));
+            let abstract_class = clang_CXXRecord_isAbstract(definition) != 0;
+            let mutable_state = children(definition).into_iter().any(|child| kind(child) == CXCursor_FieldDecl && clang_CXXField_isMutable(child) != 0);
+            let mut taken: HashSet<String> = HashSet::new();
+            for child in children(definition) {
+                if clang_getCXXAccessSpecifier(child) != CX_CXXPublic || clang_getCursorAvailability(child) == CXAvailability_NotAvailable {
+                    continue;
+                }
+                let name = spelling(child);
+                let member = match kind(child) {
+                    CXCursor_Constructor => {
+                        if abstract_class || clang_CXXConstructor_isCopyConstructor(child) != 0 || clang_CXXConstructor_isMoveConstructor(child) != 0 {
+                            continue;
+                        }
+                        if by_value { Member::Constructor } else { Member::BoxedConstructor }
+                    }
+                    CXCursor_Destructor if !by_value => Member::Destructor,
+                    CXCursor_CXXMethod => {
+                        if name.starts_with("operator") {
+                            self.skip(child, &format!("{owner}.{name}"), "an operator (`[FFI-42]`'s operator interfaces are not built yet)");
+                            continue;
+                        }
+                        if clang_Type_getCXXRefQualifier(clang_getCursorType(child)) == CXRefQualifier_RValue {
+                            let at = self.at(child);
+                            self.rvalue_members.push(Skipped { name: format!("{owner}.{name}"), reason: "an `&&`-qualified member function, which only a temporary may call".to_string(), at });
+                            continue;
+                        }
+                        if clang_CXXMethod_isStatic(child) != 0 {
+                            Member::Static
+                        } else if clang_CXXMethod_isConst(child) != 0 && !mutable_state {
+                            Member::Method
+                        } else {
+                            Member::MutMethod
+                        }
+                    }
+                    _ => continue,
+                };
+                let key = match member {
+                    Member::Constructor | Member::BoxedConstructor => "new".to_string(),
+                    Member::Destructor => "drop".to_string(),
+                    _ => name.clone(),
+                };
+                if !taken.insert(key.clone()) {
+                    self.skip(child, &format!("{owner}.{key}"), "an overload: Ember has no overloading, and the first declaration of the name is the one imported");
+                    continue;
+                }
+                match self.cpp_thunk(child, &key, Some((&owner, member, &class_spelled))) {
+                    Ok(function) => {
+                        if member == Member::Destructor {
+                            let destroys = format!("{}_cpp_delete_{owner}", ember_branding::SYMBOL_PREFIX);
+                            if let Some(item) = self.items.iter_mut().find(|item| ident(&item.name) == owner && item.kind == Kind::Opaque) {
+                                item.text = format!("@ffi(destroys({destroys}))\n{}", item.text);
+                            }
+                        }
+                        self.functions.push(function);
+                    }
+                    Err(reason) => self.skip(child, &format!("{owner}.{key}"), reason),
+                }
+            }
+        }
+    }
+
+    /// A thunk for a C++ function or member (`member`: its class's Ember name, what it is, and the
+    /// class as C++ spells it).
+    fn cpp_thunk(&mut self, cursor: CXCursor, name: &str, member: Option<(&str, Member, &str)>) -> Result<Function, String> {
         // SAFETY(ffi): a live function cursor and its types.
         unsafe {
             let ty = clang_getCursorType(cursor);
@@ -1323,10 +1436,30 @@ impl Writer {
             }
             let policy = self.policy(cursor);
             let result_ty = clang_getResultType(ty);
-            let call = format!("{}({})", qualified_name(cursor), passed.join(", "));
-            let (result, returned, call) = match result_ty.kind {
-                CXType_Void => (None, None, call),
-                CXType_LValueReference => {
+            let arguments = passed.join(", ");
+            let call = match member {
+                None | Some((_, Member::Static, _)) => format!("{}({arguments})", qualified_name(cursor)),
+                Some((_, Member::Method | Member::MutMethod, _)) => format!("self->{}({arguments})", spelling(cursor)),
+                Some((_, Member::Constructor, class)) => format!("{class}({arguments})"),
+                Some((_, Member::BoxedConstructor, class)) => format!("new {class}({arguments})"),
+                Some((_, Member::Destructor, _)) => "delete self".to_string(),
+            };
+            match member {
+                Some((_, Member::Method, class)) => declared.insert(0, format!("const {class}* self")),
+                Some((_, Member::MutMethod | Member::Destructor, class)) => declared.insert(0, format!("{class}* self")),
+                _ => {}
+            }
+            let (result, returned, call) = match (member, result_ty.kind) {
+                (Some((owner, Member::Constructor, class)), _) => {
+                    let ember = CType { ember: owner.to_string(), pointee: None, char_pointer: false, c: class.to_string(), mode: String::new() };
+                    (Some(ember), Some(class.to_string()), call)
+                }
+                (Some((owner, Member::BoxedConstructor, class)), _) => {
+                    let ember = CType { ember: format!("*mut {owner}"), pointee: Some((owner.to_string(), false)), char_pointer: false, c: format!("{class}*"), mode: String::new() };
+                    (Some(ember), Some(format!("{class}*")), call)
+                }
+                (_, CXType_Void) => (None, None, call),
+                (_, CXType_LValueReference) => {
                     let pointee = clang_getPointeeType(result_ty);
                     let constant = clang_isConstQualifiedType(pointee) != 0;
                     let inner = self.ty(pointee, true).map_err(|reason| format!("its result: {reason}"))?;
@@ -1340,22 +1473,38 @@ impl Writer {
                     (Some(mapped), Some(cpp_spelling(result_ty)), call)
                 }
             };
+            // A special member the class defaults is non-throwing.
+            let policy = if member.is_some() && clang_CXXMethod_isDefaulted(cursor) != 0 { Policy::Direct } else { policy };
             let thunk = format!("{}_cpp_{}_{}", ember_branding::SYMBOL_PREFIX, self.stem, self.thunks);
             self.thunks += 1;
             let catching = policy != Policy::Direct;
+            // A class by value is written through a pointer the caller gives: MSVC returns a class
+            // with a constructor in memory where C returns a struct of its size in registers.
+            let class_result = matches!(member, Some((_, Member::Constructor, _)))
+                || (result.is_some() && clang_getCanonicalType(result_ty).kind == CXType_Record && !matches!(member, Some((_, Member::BoxedConstructor, _))));
+            let (returned, call) = match (class_result, returned) {
+                (true, Some(class)) => {
+                    declared.push(format!("{class}* out"));
+                    let made = if matches!(member, Some((_, Member::Constructor, _))) { call } else { format!("{class}({call})") };
+                    (None, format!("::new (static_cast<void*>(out)) {made}"))
+                }
+                (_, returned) => (returned, call),
+            };
             if catching {
                 declared.push("int* failed".to_string());
             }
             let declared = if declared.is_empty() { "void".to_string() } else { declared.join(", ") };
+            let cleared = if class_result { " std::memset(static_cast<void*>(out), 0, sizeof *out);" } else { "" };
             let body = match (&returned, catching) {
                 (None, false) => format!("{call};"),
                 (Some(_), false) => format!("return {call};"),
-                (None, true) => format!("try {{ *failed = 0; {call}; }} catch (...) {{ *failed = 1; caught(); }}"),
+                (None, true) => format!("try {{ *failed = 0; {call}; }} catch (...) {{ *failed = 1; caught();{cleared} }}"),
                 (Some(returned), true) => format!("try {{ *failed = 0; return {call}; }} catch (...) {{ *failed = 1; caught(); return zero<{returned}>(); }}"),
             };
             let returned = returned.unwrap_or_else(|| "void".to_string());
             let _ = writeln!(self.shim, "extern \"C\" {returned} {thunk}({declared}) noexcept {{ {body} }}");
-            Ok(Function { name: name.to_string(), params, result, link_name: Some(thunk), abi: "C", policy })
+            let owner = member.map(|(owner, member, _)| (owner.to_string(), member));
+            Ok(Function { name: name.to_string(), params, result, link_name: Some(thunk), abi: "C", policy, owner, out: class_result })
         }
     }
 
@@ -1600,6 +1749,7 @@ impl Writer {
             macro_functions: self.macro_functions,
             c_types: self.c_types,
             anonymous_namespace: self.anonymous_namespace,
+            rvalue_members: self.rvalue_members,
         }
     }
 }
@@ -1691,6 +1841,7 @@ fn cpp_prelude(stem: &str) -> String {
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <new>
 #include <string>
 #include <typeinfo>
 #include <utility>
@@ -2129,6 +2280,13 @@ pub fn load(
             Diagnostic::warning(codes::W5002, span, format!("`{}` is not imported from `{shown}`: {}", skipped.name, skipped.reason))
                 .note(format!("declared at {} [FFI-20a]", skipped.at))
                 .help("to use it, declare it by hand in an `unsafe extern \"C\":` block with types Ember has, or wrap it in a C function the header declares"),
+        );
+    }
+    // `[FFI-40]` — `&&`-qualified members.
+    for skipped in &imported.rvalue_members {
+        sink.emit(
+            Diagnostic::warning(codes::W5033, span, format!("`{}` is not imported from `{shown}`: {}", skipped.name, skipped.reason))
+                .note(format!("declared at {} [FFI-40]", skipped.at)),
         );
     }
     // `[FFI-41]` — an anonymous namespace's entities.
@@ -2609,6 +2767,8 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                     link_name: Some(wrapper),
                     abi: "C",
                     policy: Policy::Direct,
+                    owner: None,
+                    out: false,
                 };
                 // A raw pointer states nothing a call can rely on: the call stays unsafe (`[FFI-2]`).
                 let raw = params.iter().map(|(_, ty)| ty).chain(result).any(|ty| matches!(ty.kind, ast::TypeKind::Ptr { .. }));
@@ -2828,21 +2988,35 @@ fn render(imported: &Imported, applied: &Applied, stem: &str) -> String {
     }
     // A hidden declaration stays, private to the module: another may name it (`destructor=f`).
     let mut wrappers = String::new();
+    let mut extensions: Vec<(String, String)> = Vec::new();
+    let mut catching = false;
     for function in &imported.functions {
         let hidden = applied.hidden.contains(&function.name);
         let (entry, renamed) = (applied.functions.get(&function.name), applied.renamed.get(&function.name));
-        match function.policy {
-            Policy::Direct => member(function.abi, render_function(function, entry, renamed, hidden)),
+        match (function.policy, &function.owner) {
+            (Policy::Direct, None) if !function.out => member(function.abi, render_function(function, entry, renamed, hidden)),
             // `E5061` where it is used.
-            Policy::Unknown => {}
-            policy => {
-                let (raw, wrapper) = render_catching(function, entry, renamed, hidden, policy);
+            (Policy::Unknown, _) => {}
+            (policy, owner) => {
+                let (raw, wrapper) = render_wrapper(function, entry, renamed, hidden, policy);
                 member(function.abi, raw);
-                wrappers.push_str(&wrapper);
+                catching |= policy != Policy::Direct;
+                match owner {
+                    Some((owner, _)) => match extensions.iter_mut().find(|(of, _)| of == owner) {
+                        Some((_, methods)) => methods.push_str(&wrapper),
+                        None => extensions.push((owner.clone(), wrapper)),
+                    },
+                    None => wrappers.push_str(&wrapper),
+                }
             }
         }
     }
-    if !wrappers.is_empty() {
+    for (owner, methods) in &extensions {
+        let indented: String = methods.lines().map(|line| if line.is_empty() { "\n".to_string() } else { format!("    {line}\n") }).collect();
+        let _ = write!(wrappers, "extend {owner}:\n{}\n", indented.trim_end());
+        wrappers.push_str("\n\n");
+    }
+    if catching {
         let prefix = ember_branding::SYMBOL_PREFIX;
         for part in ["type", "what"] {
             member("C", format!("    @ffi(link_name=\"{prefix}_cpp_{stem}_error_{part}\", result(borrowed, nul_terminated, from(static)))\n    safe fn {prefix}_cpp_error_{part}() -> cstr\n"));
@@ -2876,7 +3050,7 @@ fn render(imported: &Imported, applied: &Applied, stem: &str) -> String {
     }
     // `std.ffi`'s names the module's text uses: its C aliases (`[FFI-8]`) and `ForeignBox`.
     let words: HashSet<&str> = body.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).collect();
-    let used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox", "CppError"]).filter(|name| words.contains(name)).collect();
+    let used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox", "CppError", "adopt"]).filter(|name| words.contains(name)).collect();
     if !used.is_empty() {
         let _ = writeln!(imports, "from std.ffi import {}", used.join(", "));
     }
@@ -2886,41 +3060,121 @@ fn render(imported: &Imported, applied: &Applied, stem: &str) -> String {
     format!("# The declarations of `{header}`, written by `import c` ([FFI-6]).\n\n{imports}{body}")
 }
 
-/// `[FFI-24]`, `[FFI-24b]` — a C++ function whose thunk catches: the raw declaration, private,
-/// taking the thunk's last argument (set when it caught), and the function the module exports,
-/// which returns `Result[T, CppError]` — or `T`, panicking on a throw, when an overlay asserts
-/// `@ffi(noexcept)`. It is safe to call when an overlay entry says so and no parameter is a raw
-/// pointer.
-fn render_catching(function: &Function, entry: Option<&Entry>, renamed: Option<&String>, hidden: bool, policy: Policy) -> (String, String) {
+/// `[FFI-24]`, `[FFI-24b]`, `[FFI-40]` — a C++ function reached through an Ember function of the
+/// module: the raw declaration of its thunk, private (taking the receiver first for a method, and
+/// last, when the thunk catches, where it says it caught), and the function the module exports —
+/// a method, associated function or constructor of the class's type in an `extend` block, or a
+/// function returning `Result[T, CppError]` (or `T`, panicking on a throw, when an overlay asserts
+/// `@ffi(noexcept)`). It is safe to call when an overlay entry says so and no parameter is a raw
+/// pointer; a destructor has only its raw declaration, which the type's `ForeignBox` calls.
+fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&String>, hidden: bool, policy: Policy) -> (String, String) {
     let prefix = ember_branding::SYMBOL_PREFIX;
-    let raw_name = format!("{prefix}_raw_{}", function.name);
+    let (owner, member) = match &function.owner {
+        Some((owner, member)) => (owner.as_str(), Some(*member)),
+        None => ("", None),
+    };
+    let raw_name = match member {
+        Some(Member::Destructor) => format!("{prefix}_cpp_delete_{owner}"),
+        Some(_) => format!("{prefix}_raw_{owner}_{}", function.name),
+        None => format!("{prefix}_raw_{}", function.name),
+    };
+    let catching = policy != Policy::Direct;
     let mut raw = function.clone();
     raw.name = raw_name.clone();
-    let failed = CType { ember: "*mut c_int".to_string(), pointee: Some(("c_int".to_string(), false)), char_pointer: false, c: "int*".to_string(), mode: String::new() };
-    raw.params.push(("failed".to_string(), failed));
+    raw.owner = None;
+    let receiver = match member {
+        Some(Member::Method) => Some((format!("*{owner}"), "(ref self) as *", true)),
+        Some(Member::MutMethod | Member::Destructor) => Some((format!("*mut {owner}"), "(ref mut self) as *mut ", false)),
+        _ => None,
+    };
+    if let Some((pointer, _, constant)) = &receiver {
+        let this = CType { ember: pointer.clone(), pointee: Some((owner.to_string(), *constant)), char_pointer: false, c: String::new(), mode: String::new() };
+        raw.params.insert(0, ("this".to_string(), this));
+    }
+    let result_ty = function.result.as_ref().map(|ty| ty.ember.clone()).unwrap_or_default();
+    if function.out {
+        let out = CType { ember: format!("*mut {result_ty}"), pointee: Some((result_ty.clone(), false)), char_pointer: false, c: String::new(), mode: String::new() };
+        raw.params.push(("out".to_string(), out));
+        raw.result = None;
+    }
+    if catching {
+        let failed = CType { ember: "*mut c_int".to_string(), pointee: Some(("c_int".to_string(), false)), char_pointer: false, c: "int*".to_string(), mode: String::new() };
+        raw.params.push(("failed".to_string(), failed));
+    }
     let raw_text = render_function(&raw, None, None, true);
-    let name = ident(renamed.unwrap_or(&function.name));
+    if member == Some(Member::Destructor) {
+        return (raw_text, String::new());
+    }
+    let name = match member {
+        Some(Member::Constructor | Member::BoxedConstructor) => "new".to_string(),
+        _ => ident(renamed.unwrap_or(&function.name)),
+    };
     let words_safe = entry.is_some_and(|entry| !entry.params.iter().flatten().chain(&entry.result).any(|written| matches!(word(written), "TODO" | "unsafe")));
     let safe = words_safe && !function.params.iter().any(|(_, ty)| ty.ember.starts_with('*'));
-    let params: Vec<String> = function.params.iter().map(|(param, ty)| format!("{}{param}: {}", ty.mode, ty.ember)).collect();
-    let arguments: Vec<&str> = function.params.iter().map(|(param, _)| param.as_str()).collect();
-    let value = function.result.as_ref().map(|ty| ty.ember.clone());
+    let mut params: Vec<String> = function.params.iter().map(|(param, ty)| format!("{}{param}: {}", ty.mode, ty.ember)).collect();
+    match member {
+        Some(Member::Method) => params.insert(0, "self".to_string()),
+        Some(Member::MutMethod) => params.insert(0, "mut self".to_string()),
+        _ => {}
+    }
+    let mut arguments: Vec<String> = function.params.iter().map(|(param, _)| param.clone()).collect();
+    if let Some((_, conversion, _)) = &receiver {
+        arguments.insert(0, format!("{conversion}{owner}"));
+    }
+    if function.out {
+        arguments.push(format!("((ref mut slot) as *mut MaybeUninit[{result_ty}]) as *mut {result_ty}"));
+    }
+    if catching {
+        arguments.push("(ref mut failed) as *mut c_int".to_string());
+    }
+    let mut call = format!("{raw_name}({})", arguments.join(", "));
+    let value = match member {
+        // `[FFI-36a]` — the object a constructor made, owned through its destructor.
+        Some(Member::BoxedConstructor) => {
+            call = format!("adopt[{owner}]({call})");
+            Some(format!("ForeignBox[{owner}]"))
+        }
+        _ => function.result.as_ref().map(|ty| ty.ember.clone()),
+    };
     let returned = match (policy, &value) {
-        (Policy::Asserted, Some(value)) => format!(" -> {value}"),
-        (Policy::Asserted, None) => String::new(),
+        (Policy::Direct | Policy::Asserted, Some(value)) => format!(" -> {value}"),
+        (Policy::Direct | Policy::Asserted, None) => String::new(),
         (_, value) => format!(" -> Result[{}, CppError]", value.as_deref().unwrap_or("void")),
     };
-    let call = format!("{raw_name}({}(ref mut failed) as *mut c_int)", arguments.iter().map(|argument| format!("{argument}, ")).collect::<String>());
     let quoted = function.name.replace('"', "");
     let mut text = String::new();
     if !safe {
         let _ = writeln!(text, "@safety(\"{UNCONTRACTED}\")");
     }
     let public = if hidden { "" } else { "pub " };
-    let _ = writeln!(text, "{public}{}fn {name}({}){returned}:", if safe { "" } else { "unsafe " }, params.join(", "));
-    let _ = writeln!(text, "    failed: c_int = 0");
-    let safety = "# SAFETY: the thunk takes this function's own arguments, and sets `failed` when it caught";
+    let note = if safe { String::new() } else { "  # SAFETY: the caller keeps what the header does not state".to_string() };
+    let _ = writeln!(text, "{public}{}fn {name}({}){returned}:{note}", if safe { "" } else { "unsafe " }, params.join(", "));
+    let safety = "# SAFETY: the thunk takes this function's own arguments";
+    if catching {
+        let _ = writeln!(text, "    failed: c_int = 0");
+    }
+    // A class result: the thunk writes it into an uninitialised slot (zeroed when it caught).
+    if function.out {
+        let _ = writeln!(text, "    slot: MaybeUninit[{result_ty}] = MaybeUninit[{result_ty}].uninit()");
+        let _ = writeln!(text, "    unsafe:  {}\n        {call}\n        result = slot.assume_init()", "# SAFETY: the thunk writes the slot, and zeroes it when it caught");
+        let _ = writeln!(text, "    {}", match policy {
+            Policy::Direct => "return result".to_string(),
+            Policy::Asserted => format!("return {prefix}_cpp_value(result, failed, \"{}\")", function.name.replace('"', "")),
+            _ => format!("return {prefix}_cpp_result(result, failed)"),
+        });
+        text.push('\n');
+        let declared = format!("    result: {result_ty}\n");
+        let at = text.find("    slot: ").unwrap_or(text.len());
+        text.insert_str(at, &declared);
+        return (raw_text, text);
+    }
     match (value.is_some(), policy) {
+        (true, Policy::Direct) => {
+            let _ = writeln!(text, "    unsafe:  {safety}\n        return {call}");
+        }
+        (false, Policy::Direct) => {
+            let _ = writeln!(text, "    unsafe:  {safety}\n        {call}");
+        }
         (true, Policy::Asserted) => {
             let _ = writeln!(text, "    unsafe:  {safety}\n        return {prefix}_cpp_value({call}, failed, \"{quoted}\")");
         }
@@ -3461,6 +3715,10 @@ fn embind(imported: &Imported, files: &[(String, String)], configuration: &str, 
                             ),
                             ("result".to_string(), Value::Array(function.result.iter().map(c_type_value).collect())),
                             ("policy".to_string(), Value::Uint(POLICIES.iter().position(|policy| *policy == function.policy).unwrap_or(0) as u64)),
+                            ("out".to_string(), Value::Uint(u64::from(function.out))),
+                            ("owner".to_string(), Value::Array(function.owner.iter().map(|(owner, member)| {
+                                Value::Array(vec![Value::Text(owner.clone()), Value::Uint(MEMBERS.iter().position(|known| known == member).unwrap_or(0) as u64)])
+                            }).collect())),
                         ])
                     })
                     .collect(),
@@ -3502,6 +3760,7 @@ fn embind(imported: &Imported, files: &[(String, String)], configuration: &str, 
         ),
         ("c_types".to_string(), Value::Array(imported.c_types.iter().map(|(ember, c)| texts(&[ember, c])).collect())),
         ("anonymous_namespace".to_string(), skips(&imported.anonymous_namespace)),
+        ("rvalue_members".to_string(), skips(&imported.rvalue_members)),
     ]);
     let mut bytes = Vec::new();
     cbor::encode(&value, &mut bytes);
@@ -3544,6 +3803,12 @@ fn read_embind(bytes: &[u8]) -> Option<(Vec<(String, String)>, Imported)> {
                     _ => return None,
                 },
                 policy: *POLICIES.get(uint_of(field(entry, "policy")?)? as usize)?,
+                out: uint_of(field(entry, "out")?)? == 1,
+                owner: match array_of(field(entry, "owner")?)? {
+                    [] => None,
+                    [owner] => Some((text_of(array_of(owner)?.first()?)?, *MEMBERS.get(uint_of(array_of(owner)?.get(1)?)? as usize)?)),
+                    _ => return None,
+                },
             })
         })
         .collect::<Option<Vec<_>>>()?;
@@ -3592,6 +3857,7 @@ fn read_embind(bytes: &[u8]) -> Option<(Vec<(String, String)>, Imported)> {
             .collect::<Option<_>>()?,
         c_types: pairs(field(&value, "c_types")?)?,
         anonymous_namespace: read_skips(field(&value, "anonymous_namespace")?)?,
+        rvalue_members: read_skips(field(&value, "rvalue_members")?)?,
     };
     Some((files, imported))
 }

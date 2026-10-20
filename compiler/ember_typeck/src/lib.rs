@@ -21719,6 +21719,12 @@ impl<'a> Checker<'a> {
             TyKind::Enum(id) if !self.is_option(ty) && !self.is_result(ty) => {
                 std_name(self.types.enum_def(id).name) == self.is_std_module(here)
             }
+            // `[FFI-13]` — an `extern type` is its declaring module's, as `import c` and `import
+            // cpp` write them: an `extend` block there (or the overlay's) gives it methods.
+            TyKind::Opaque(name) => match name.as_str().rsplit_once('.') {
+                Some((prefix, _)) => self.prefixes.iter().position(|module| module == prefix).is_some_and(|module| self.same_package(here, module)),
+                None => self.same_package(here, 0),
+            },
             _ => self.is_std_module(here),
         }
     }
@@ -40150,6 +40156,13 @@ impl<'a> Checker<'a> {
             }
             return self.synth_shared_method(receiver, inner, name, args, span);
         }
+        // `[FFI-17a]`, `[FFI-36a]` — a `ForeignBox[T]` owns a live foreign object: `get` borrows it
+        // shared and `get_mut` exclusively, for the methods `import cpp` gives an opaque class.
+        if let Some(inner) = self.foreign_box_inner(receiver.ty)
+            && (name.name.is("get") || name.name.is("get_mut"))
+        {
+            return self.synth_foreign_box_get(receiver, inner, name, args, span);
+        }
         // IX.1 — `get` exposes the canonical shared reference. Other method
         // names are resolved after auto-dereferencing to the payload, so Box
         // does not duplicate the payload's method surface.
@@ -43994,6 +44007,34 @@ impl<'a> Checker<'a> {
             kind: ExprKind::Ref { place: Box::new(payload), mutable: false },
             span,
         }
+    }
+
+    /// `[FFI-36a]` — the object a `ForeignBox[T]` owns, when `ty` is one.
+    fn foreign_box_inner(&self, ty: Ty) -> Option<Ty> {
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
+        match &self.types.struct_def(id).origin {
+            Some((name, args)) if name.is("std.ffi.ForeignBox") && args.len() == 1 => Some(args[0]),
+            _ => None,
+        }
+    }
+
+    /// `[FFI-17a]`, `[FFI-36a]` — `box.get()` / `box.get_mut()`: a reference to the object the box
+    /// owns, which lives as long as the box, so the box must be a place (as for `Box.get`).
+    fn synth_foreign_box_get(&mut self, receiver: Expr, inner: Ty, name: ast::Ident, args: &[ast::Arg], span: Span) -> Expr {
+        if !args.is_empty() {
+            self.error(codes::E2020, span, format!("`{}` takes 0 arguments, found {}", name.name, args.len()));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        if !is_place(&receiver.kind) {
+            self.error(codes::E2140, span, format!("`ForeignBox.{}` needs an owner place so its returned reference cannot outlive a temporary", name.name));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let mutable = name.name.is("get_mut");
+        let pointer = self.types.intern(TyKind::Ptr { mutable: true, inner });
+        let field = Expr { ty: pointer, kind: ExprKind::Field { base: Box::new(receiver), index: 0 }, span };
+        let object = Expr { ty: inner, kind: ExprKind::Deref(Box::new(field)), span };
+        let ty = self.types.intern(TyKind::Ref { mutable, inner });
+        Expr { ty, kind: ExprKind::Ref { place: Box::new(object), mutable }, span }
     }
 
     /// `[HEAP-4]`, `[HEAP-5]` — `Shared[T]` borrows its payload. The shared
