@@ -342,6 +342,168 @@ fn the_manifest_names_the_language() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `[BLD-FFI-1b]` — with MSVC, the C++ project's runtime switch (and `_DEBUG`,
+/// `_ITERATOR_DEBUG_LEVEL`) is inherited by every translation unit of the target: a project built
+/// with `/MDd` makes a program whose own C uses the debug C runtime too, and none of the release
+/// one. With any compiler, two projects that disagree are `E9020`, and a project whose flags pass a
+/// response file, which may name its runtime, is `E9021`.
+#[test]
+fn the_cpp_project_s_runtime_is_inherited() {
+    let probe = ember(&["--version"], &std::env::temp_dir());
+    let header = "#pragma once\n#include <string>\ninline int length(int n) { return static_cast<int>(std::string(static_cast<std::size_t>(n), 'x').size()); }\n";
+    let program = "import cpp \"engine.hpp\" with (project = \"engine\")\n\nfn main():\n    unsafe:  # SAFETY(ffi): a scalar call\n        \
+        match cpp.length(5):\n            Ok(n):\n                println(n)\n            Err(error):\n                println(error.what)\n";
+    // The MSVC runtime switch is cl's and clang-cl's: only their builds inherit it.
+    if probe.stdout.lines().any(|line| line.starts_with("C compiler: msvc")) {
+        let dir = scratch();
+        package(&dir, "[package]\nname = \"engine_user\"\nversion = \"0.1.0\"\n\n[cpp.engine]\nflags = [\"/MDd\"]\n", &[("main", program)]);
+        std::fs::write(dir.join("src").join("engine.hpp"), header).unwrap();
+        let run = ember(&["run"], &dir);
+        assert!(run.ok, "{}", run.stderr);
+        assert_eq!(run.stdout.trim(), "5", "{}", run.stderr);
+        let exe = walk(&dir).into_iter().find(|path| path.file_name().is_some_and(|name| name == "main.exe")).expect("the program");
+        let image = String::from_utf8_lossy(&std::fs::read(&exe).unwrap()).to_lowercase();
+        assert!(image.contains("ucrtbased.dll") && image.contains("vcruntime140d.dll"), "the program does not use the debug C runtime");
+        assert!(!image.contains("api-ms-win-crt-") && !image.contains("vcruntime140.dll"), "the program's own C still uses the release C runtime");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    let dir = scratch();
+    let two = "import cpp \"engine.hpp\" with (project = \"engine\")\nimport cpp \"tools.hpp\" with (project = \"tools\")\n\nfn main():\n    pass\n";
+    package(&dir, "[package]\nname = \"two\"\nversion = \"0.1.0\"\n\n[cpp.engine]\nflags = [\"/MDd\"]\n\n[cpp.tools]\nflags = [\"/MD\"]\n", &[("main", two)]);
+    std::fs::write(dir.join("src").join("engine.hpp"), header).unwrap();
+    std::fs::write(dir.join("src").join("tools.hpp"), "#pragma once\ninline int twice(int x) noexcept { return 2 * x; }\n").unwrap();
+    let built = ember(&["build"], &dir);
+    assert!(!built.ok && built.stderr.contains("error[E9020]") && built.stderr.contains("`/MDd`") && built.stderr.contains("`/MD`"), "{}", built.stderr);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let dir = scratch();
+    package(&dir, "[package]\nname = \"rsp\"\nversion = \"0.1.0\"\n\n[cpp.engine]\nflags = [\"@engine.rsp\"]\n", &[("main", program)]);
+    std::fs::write(dir.join("src").join("engine.hpp"), header).unwrap();
+    let built = ember(&["build"], &dir);
+    assert!(!built.ok && built.stderr.contains("error[E9021]") && built.stderr.contains("`engine.rsp`"), "{}", built.stderr);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `[BLD-FFI-4]` — with GCC or Clang, a C++ project whose flags ask for link-time optimisation
+/// (`-flto`) has the program's own C compiled and linked with it too, so the link inlines the
+/// calls into its thunks like any other call: the program runs, and (where `nm` reads it) the
+/// thunk's symbol is gone from it. MSVC's `release` builds both with `/GL` already.
+#[test]
+fn the_cpp_project_s_link_time_optimisation_reaches_the_program() {
+    let probe = ember(&["--version"], &std::env::temp_dir());
+    if probe.stdout.lines().any(|line| line.starts_with("C compiler: msvc")) {
+        return;
+    }
+    let dir = scratch();
+    let program = "import cpp \"engine.hpp\" with (project = \"engine\")\n\nfn main():\n    unsafe:  # SAFETY(ffi): a scalar call\n        println(cpp.twice(21))\n";
+    package(&dir, "[package]\nname = \"lto\"\nversion = \"0.1.0\"\n\n[cpp.engine]\nflags = [\"-flto\"]\n", &[("main", program)]);
+    std::fs::write(dir.join("src").join("engine.hpp"), "#pragma once\ninline int twice(int x) noexcept { return x * 2; }\n").unwrap();
+    let run = ember(&["run", "--profile", "release"], &dir);
+    assert!(run.ok, "{}", run.stderr);
+    assert_eq!(run.stdout.trim(), "42", "{}", run.stderr);
+    let program = walk(&dir).into_iter().find(|path| path.file_stem().is_some_and(|stem| stem == "main") && path.parent().is_some_and(|parent| parent.ends_with("bin"))).expect("the program");
+    if let Ok(listed) = Command::new("nm").arg(&program).output() && listed.status.success() {
+        let thunk = format!("{}_cpp_cpp_h_engine_0", ember_branding::SYMBOL_PREFIX);
+        let symbols = String::from_utf8_lossy(&listed.stdout);
+        assert!(!symbols.lines().any(|line| line.ends_with(&format!(" T {thunk}"))), "the thunk was not inlined across the boundary:\n{symbols}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// CMake, from the path or, on Windows, the copy Visual Studio's build tools carry; `None` without.
+fn cmake() -> Option<PathBuf> {
+    let works = |program: &Path| Command::new(program).arg("--version").output().is_ok_and(|output| output.status.success());
+    if works(Path::new("cmake")) {
+        return Some(PathBuf::from("cmake"));
+    }
+    let roots = ["C:\\Program Files\\Microsoft Visual Studio", "C:\\Program Files (x86)\\Microsoft Visual Studio"];
+    let found = roots.iter().flat_map(|root| std::fs::read_dir(root).into_iter().flatten().flatten()).flat_map(|version| {
+        std::fs::read_dir(version.path()).into_iter().flatten().flatten().map(|edition| {
+            edition.path().join("Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin\\cmake.exe")
+        })
+    });
+    found.into_iter().find(|candidate| cfg!(windows) && works(candidate))
+}
+
+/// `[BLD-FFI-2]` — the toolchain's CMake module builds Ember packages as ordinary targets of a C
+/// project: `ember_add_library(… KIND staticlib …)` is an imported library a C program links and
+/// calls through the package's header, `KIND cdylib` a shared one, `ember_add_executable` an
+/// imported program; `FLAGS_FROM app` makes `ember build --cc-flags-from-target app` take the C
+/// target's compiler and flags from CMake's File API reply, so with MSVC the package is compiled
+/// with the debug runtime a Debug `app` uses (`[BLD-FFI-1b]`). Without a reply the option says so.
+#[test]
+fn the_cmake_module_builds_packages_as_targets_of_a_c_project() {
+    let missing = scratch();
+    package(&missing, "[package]\nname = \"alone\"\nversion = \"0.1.0\"\n", &[("main", "fn main():\n    pass\n")]);
+    let refused = ember(&["build", ".", "--cc-flags-from-target", "app"], &missing);
+    assert!(!refused.ok && refused.stderr.contains("has no CMake File API reply"), "{}", refused.stderr);
+    let _ = std::fs::remove_dir_all(&missing);
+    let Some(cmake) = cmake() else { return };
+    let dir = scratch();
+    // The module `tools/generate_runtime.py` renders: `cmake/<Cli>.cmake`, its functions `<prefix>_add_…`.
+    let cli = ember_branding::CLI_NAME;
+    let module = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../cmake").join(format!("{}{}.cmake", cli[..1].to_uppercase(), &cli[1..]));
+    let module = std::path::absolute(&module).unwrap().to_string_lossy().replace('\\', "/");
+    let p = ember_branding::SYMBOL_PREFIX;
+    let export = "@export(\"twice\")\npub fn twice(x: i32) -> i32:\n    return 2 * x\n";
+    for (folder, kind, entry, text) in [("numbers", "staticlib", "lib", export), ("shared", "cdylib", "lib", export), ("tool", "bin", "main", "fn main():\n    println(\"tool\")\n")] {
+        std::fs::create_dir_all(dir.join(folder).join("src")).unwrap();
+        std::fs::write(dir.join(folder).join(ember_branding::MANIFEST), format!("[package]\nname = \"{folder}\"\nversion = \"0.1.0\"\nkind = \"{kind}\"\n")).unwrap();
+        std::fs::write(dir.join(folder).join("src").join(ember_branding::source_file(entry)), text).unwrap();
+    }
+    std::fs::write(dir.join("main.c"), "#include \"numbers.h\"\n#include <stdio.h>\n\nint main(void) {\n    printf(\"%d\\n\", twice(21));\n    return 0;\n}\n").unwrap();
+    std::fs::write(dir.join("shared.c"), "#include \"shared.h\"\n\nint uses_shared(void) { return twice(2); }\n").unwrap();
+    let (lib, main) = (ember_branding::source_file("lib"), ember_branding::source_file("main"));
+    std::fs::write(dir.join("CMakeLists.txt"), format!("\
+cmake_minimum_required(VERSION 3.20)
+project(demo C)
+include(\"{module}\")
+add_executable(app main.c)
+{p}_add_library(numbers KIND staticlib PACKAGE numbers PROFILE development SOURCES numbers/src/{lib} FLAGS_FROM app)
+target_link_libraries(app PRIVATE numbers)
+{p}_add_library(shared KIND cdylib PACKAGE shared SOURCES shared/src/{lib})
+add_library(user SHARED shared.c)
+target_link_libraries(user PRIVATE shared)
+{p}_add_executable(tool PACKAGE tool SOURCES tool/src/{main})
+")).unwrap();
+    let build = dir.join("build");
+    let run = |args: &[&str]| {
+        let output = Command::new(&cmake).args(args).current_dir(&dir).output().expect("cmake starts");
+        (output.status.success(), format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr)))
+    };
+    let (configured, log) = run(&["-S", ".", "-B", "build", &format!("-DEMBER_EXECUTABLE={EMBER}")]);
+    assert!(configured, "{log}");
+    let (built, log) = run(&["--build", "build", "--config", "Debug"]);
+    assert!(built, "{log}");
+    let files = walk(&build);
+    let find = |name: &str| files.iter().find(|path| path.file_name().is_some_and(|file| file == name)).cloned();
+    let app = find(if cfg!(windows) { "app.exe" } else { "app" }).expect("the C program");
+    let output = Command::new(&app).output().expect("the C program runs");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
+    assert!(find(if cfg!(windows) { "main.exe" } else { "main" }).is_some(), "the Ember program was not built");
+    // MSVC: the package took the Debug program's runtime switch, `/MDd`.
+    if let Some(archive) = find("numbers.lib") {
+        let bytes = std::fs::read(archive).unwrap();
+        assert!(bytes.windows(7).any(|window| window == b"MSVCRTD"), "the package was not compiled with the program's `/MDd`");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Every file under `dir`.
+fn walk(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            out.extend(walk(&path));
+        } else {
+            out.push(path);
+        }
+    }
+    out
+}
+
 /// `[BLD-FFI-4]` — Ember's emitted C and the project's C++ are compiled by one compiler: a
 /// `[cpp.<project>]` section naming the compiler Ember's C is built with builds, and one naming
 /// another is refused, naming both.

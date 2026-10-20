@@ -62,11 +62,10 @@
         "XVI"
       ],
       "rules": 632,
-      "done": 615,
+      "done": 616,
       "missing": [
         "ALC-2",
         "ALC-3",
-        "BLD-FFI-2",
         "CLO-6a",
         "ECS-4",
         "FFI-1",
@@ -89,11 +88,10 @@
         "Annex B"
       ],
       "rules": 691,
-      "done": 663,
+      "done": 664,
       "missing": [
         "ALC-2",
         "ALC-3",
-        "BLD-FFI-2",
         "CLO-6a",
         "ECS-4",
         "FFI-1",

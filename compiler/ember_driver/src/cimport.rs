@@ -41,6 +41,49 @@ pub struct Config<'a> {
     pub cpp: Option<&'a str>,
     /// `[FFI-17b]` — the explicit template instantiations to import: `"Vec<int>"`, `"max<double>"`.
     pub instantiate: &'a [String],
+    /// `[FFI-39]` — the classes the import's overlays declare `@ffi(trampoline, …)`.
+    pub trampolines: &'a [TrampolineDecl],
+}
+
+/// `[FFI-39]`, `[FFI-17d]` — an overlay's `@ffi(trampoline, virtuals=[…], owner=…)` entry for a
+/// C++ class, read before the header is: the class (its Ember name), the virtuals Ember code
+/// overrides, and whether a foreign `delete` destroys the object (`owner="foreign"`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrampolineDecl {
+    pub class: String,
+    pub virtuals: Vec<String>,
+    pub foreign: bool,
+}
+
+/// `[FFI-39]` — the `@ffi(trampoline, …)` entries of overlay sources, as written: an attribute line
+/// naming `trampoline`, then `type Name`. The overlay is applied (and checked, `E5010`) later; this
+/// only tells the importer which classes get a trampoline.
+pub fn trampoline_decls(overlays: &str) -> Vec<TrampolineDecl> {
+    let quoted = |text: &str| -> Vec<String> { text.split('"').skip(1).step_by(2).map(str::to_string).collect() };
+    let mut found = Vec::new();
+    let mut attributes: Vec<String> = Vec::new();
+    for line in overlays.lines() {
+        let line = line.trim();
+        if line.starts_with('@') {
+            attributes.push(line.to_string());
+            continue;
+        }
+        let entry = line.trim_start_matches("override ").trim();
+        if let Some(name) = entry.strip_prefix("type ").map(str::trim)
+            && let Some(attribute) = attributes.iter().find(|attribute| attribute.starts_with("@ffi(") && attribute.contains("trampoline"))
+        {
+            let virtuals = attribute
+                .split_once("virtuals")
+                .and_then(|(_, rest)| rest.split_once('[').and_then(|(_, list)| list.split_once(']')).map(|(list, _)| quoted(list)))
+                .unwrap_or_default();
+            let foreign = attribute.split_once("owner").is_some_and(|(_, rest)| quoted(rest).first().is_some_and(|owner| owner == "foreign"));
+            found.push(TrampolineDecl { class: name.to_string(), virtuals, foreign });
+        }
+        if !line.is_empty() && !line.starts_with('#') {
+            attributes.clear();
+        }
+    }
+    found
 }
 
 /// `[FFI-30]` — a C declaration (by Clang's USR) an import of the build wrote: one Ember entity
@@ -154,6 +197,31 @@ pub struct CType {
     pub mode: String,
 }
 
+/// `[FFI-39]` — a virtual a trampoline overrides: its name, `const`-ness, purity, parameters and
+/// result.
+struct Slot {
+    name: String,
+    constant: bool,
+    pure: bool,
+    params: Vec<SlotParam>,
+    result: Option<CType>,
+    /// The result's C++ type (`void` for none).
+    result_spelled: String,
+}
+
+/// A parameter of a trampoline's virtual: its Ember name and type, the C type the entry function
+/// receives, the C++ expression that passes it there, its declaration in the override, and how
+/// the thunk of the base implementation passes it on.
+struct SlotParam {
+    name: String,
+    ty: CType,
+    c: String,
+    to_ember: String,
+    declaration: String,
+    to_base: String,
+    local: String,
+}
+
 /// What a declaration of the header became: an overlay finds it by its C name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -164,6 +232,8 @@ pub enum Kind {
     Opaque,
     /// An `extern static`.
     Static,
+    /// `[FFI-39]` — a trampoline's Ember class, with what it needs, written at the module's level.
+    Class,
 }
 
 /// One declaration of the module, without `pub` (an overlay may hide it).
@@ -211,6 +281,27 @@ pub struct Imported {
     /// namespace's module names which other's types.
     pub namespaces: Vec<Vec<String>>,
     pub ns_uses: Vec<(Vec<String>, Vec<String>)>,
+    /// `[FFI-39]` — each class with a trampoline.
+    pub trampolines: Vec<Trampoline>,
+    /// `[FFI-42]` — each member operator imported: its class's Ember name, its method's, and the
+    /// Ember operator interface it implements when its call is asserted safe.
+    pub operators: Vec<(String, String, String)>,
+    /// `[FFI-24d]` — each function whose header added or removed `noexcept` since the binding was
+    /// last made (and has not changed it back): its namespace, its Ember name (`Owner.name` for a
+    /// member), and whether it is `noexcept` now.
+    pub policy_changes: Vec<(String, String, bool)>,
+}
+
+/// `[FFI-39]` — a C++ class an Ember class may derive from: its Ember class, the opaque type of
+/// the C++ object it owns, whether the C++ class has a default constructor (`E5058` for a
+/// subclass that declares no `init` otherwise), and the virtuals the trampoline does not override
+/// (`E5056` for a subclass that does).
+#[derive(Clone, Debug, Default)]
+pub struct Trampoline {
+    pub class: String,
+    pub opaque: String,
+    pub default_init: bool,
+    pub unnamed_virtuals: Vec<String>,
 }
 
 fn text(string: CXString) -> String {
@@ -269,6 +360,154 @@ fn type_spelling(ty: CXType) -> String {
 fn kind(cursor: CXCursor) -> CXCursorKind {
     // SAFETY(ffi): as above.
     unsafe { clang_getCursorKind(cursor) }
+}
+
+/// A C++ declaration's skip reason, `context: reason`, tagged with the code the reason carries
+/// (`[FFI-48]`'s `E5034` for a type the importer refuses), else with `default` (a parameter's
+/// `E5031`, `[FFI-32]`) if there is one.
+fn tagged(default: Option<&str>, context: &str, reason: &str) -> String {
+    match (reason.strip_prefix("[E").and_then(|rest| rest.split_once("] ")), default) {
+        (Some((code, rest)), _) => format!("[E{code}] {context}: {rest}"),
+        (None, Some(code)) => format!("[{code}] {context}: {reason}"),
+        (None, None) => format!("{context}: {reason}"),
+    }
+}
+
+/// `[FFI-42]` — the method a C++ member operator imports as, and the Ember operator interface that
+/// method is (`[TYP-21]`): `operator+` with one operand is `Add.add`, `operator-` with none
+/// `Neg.neg`, `operator+=` `AddAssign.add_assign`, `operator==` `Eq.eq`, a `const` `operator[]`
+/// `Index.index` and another `IndexMut.index_mut`; an operator with no such interface is skipped,
+/// saying why.
+fn operator_method(name: &str, operands: c_int, member: Member) -> Result<(&'static str, &'static str), String> {
+    let operator = name.trim_start_matches("operator").trim();
+    let binary = [
+        ("+", "add", "Add"), ("-", "sub", "Sub"), ("*", "mul", "Mul"), ("/", "div", "Div"), ("%", "rem", "Rem"),
+        ("&", "bitand", "BitAnd"), ("|", "bitor", "BitOr"), ("^", "bitxor", "BitXor"), ("<<", "shl", "Shl"), (">>", "shr", "Shr"),
+        ("+=", "add_assign", "AddAssign"), ("-=", "sub_assign", "SubAssign"), ("*=", "mul_assign", "MulAssign"),
+        ("/=", "div_assign", "DivAssign"), ("%=", "rem_assign", "RemAssign"), ("&=", "bitand_assign", "BitAndAssign"),
+        ("|=", "bitor_assign", "BitOrAssign"), ("^=", "bitxor_assign", "BitXorAssign"), ("<<=", "shl_assign", "ShlAssign"),
+        (">>=", "shr_assign", "ShrAssign"), ("==", "eq", "Eq"),
+    ];
+    let found = match (operator, operands) {
+        _ if member == Member::Static => None,
+        ("[]", 1) if member == Member::Method => Some(("index", "Index")),
+        ("[]", 1) => Some(("index_mut", "IndexMut")),
+        ("-", 0) => Some(("neg", "Neg")),
+        ("~", 0) => Some(("not", "Not")),
+        (_, 1) => binary.iter().find(|(spelled, _, _)| *spelled == operator).map(|(_, method, interface)| (*method, *interface)),
+        _ => None,
+    };
+    found.ok_or_else(|| match operator {
+        "!=" => "`operator!=`: Ember's `!=` is `Eq`'s, from `operator==` ([FFI-42])".to_string(),
+        "<" | "<=" | ">" | ">=" | "<=>" => format!("`{name}`: Ember orders through `Ord.cmp`, which no one C++ operator is ([FFI-42])"),
+        "*" | "->" => format!("`{name}`: reading through an object of a class is not built ([FFI-42])"),
+        _ => format!("`{name}`: Ember has no operator interface for it ([FFI-42])"),
+    })
+}
+
+/// `[FFI-42]` — each class the header defines (in a namespace or another class too) with public
+/// `begin()` and `end()` members taking nothing, as C++ spells it.
+fn iterable_classes(cursor: CXCursor, in_header: &dyn Fn(CXCursor) -> bool, out: &mut Vec<String>) {
+    for child in children(cursor) {
+        if !in_header(child) {
+            continue;
+        }
+        // SAFETY(ffi): cursors and types of a live translation unit.
+        unsafe {
+            match kind(child) {
+                CXCursor_Namespace | CXCursor_LinkageSpec => iterable_classes(child, in_header, out),
+                CXCursor_StructDecl | CXCursor_ClassDecl if clang_isCursorDefinition(child) != 0 => {
+                    let members = children(child);
+                    let has = |name: &str| {
+                        members.iter().any(|member| {
+                            kind(*member) == CXCursor_CXXMethod
+                                && spelling(*member) == name
+                                && clang_getCXXAccessSpecifier(*member) == CX_CXXPublic
+                                && clang_CXXMethod_isStatic(*member) == 0
+                                && clang_Cursor_getNumArguments(*member) == 0
+                        })
+                    };
+                    let spelled = cpp_spelling(clang_getCursorType(child));
+                    if has("begin") && has("end") && !spelled.contains('(') {
+                        out.push(spelled);
+                    }
+                    iterable_classes(child, in_header, out);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// `[FFI-11f]` — whether a parameter is declared `[[clang::lifetimebound]]`: an attribute of it
+/// whose text, or that of the macro it expands (`#define LIFETIMEBOUND [[clang::lifetimebound]]`),
+/// names `lifetimebound`.
+fn lifetimebound(param: CXCursor) -> bool {
+    // SAFETY(ffi): cursors of a live translation unit; the tokens are disposed of before returning.
+    unsafe {
+        let unit = clang_Cursor_getTranslationUnit(param);
+        let tokens = |range: CXSourceRange| -> Vec<(String, CXSourceLocation)> {
+            let (mut tokens, mut count) = (std::ptr::null_mut(), 0);
+            clang_tokenize(unit, range, &mut tokens, &mut count);
+            let out = (0..count as usize).map(|at| (text(clang_getTokenSpelling(unit, *tokens.add(at))), clang_getTokenLocation(unit, *tokens.add(at)))).collect();
+            if !tokens.is_null() {
+                clang_disposeTokens(unit, tokens, count);
+            }
+            out
+        };
+        let names = |range: CXSourceRange| {
+            tokens(range).into_iter().any(|(spelled, at)| {
+                if spelled == "lifetimebound" {
+                    return true;
+                }
+                let expansion = clang_getCursor(unit, at);
+                if kind(expansion) != CXCursor_MacroExpansion {
+                    return false;
+                }
+                let definition = clang_getCursorReferenced(expansion);
+                clang_Cursor_isNull(definition) == 0 && tokens(clang_getCursorExtent(definition)).iter().any(|(spelled, _)| spelled == "lifetimebound")
+            })
+        };
+        // Clang shows the attribute as an unexposed one of the parameter.
+        children(param).into_iter().any(|child| clang_isAttribute(kind(child)) != 0 && names(clang_getCursorExtent(child)))
+    }
+}
+
+/// `[FFI-44]` — the definition of a class's base, when it has exactly one, public and not virtual,
+/// that the header (not the system's library) defines.
+fn single_public_base(class: CXCursor) -> Option<CXCursor> {
+    // SAFETY(ffi): cursors and types of a live translation unit.
+    unsafe {
+        let bases: Vec<CXCursor> = children(class).into_iter().filter(|child| kind(*child) == CXCursor_CXXBaseSpecifier).collect();
+        let [base] = bases.as_slice() else { return None };
+        if clang_getCXXAccessSpecifier(*base) != CX_CXXPublic || clang_isVirtualBase(*base) != 0 {
+            return None;
+        }
+        let definition = clang_getCursorDefinition(clang_getTypeDeclaration(clang_getCanonicalType(clang_getCursorType(*base))));
+        (clang_Cursor_isNull(definition) == 0 && !location(definition).2).then_some(definition)
+    }
+}
+
+/// The name of the class template a canonical record type `ty` instantiates, when the template's
+/// outermost namespace is `std` (inline ones, `__1`, `__cxx11`, inside it).
+fn std_template(ty: CXType) -> Option<String> {
+    // SAFETY(ffi): a type of a live translation unit.
+    unsafe {
+        if ty.kind != CXType_Record {
+            return None;
+        }
+        let template = clang_getSpecializedCursorTemplate(clang_getTypeDeclaration(ty));
+        if clang_Cursor_isNull(template) != 0 {
+            return None;
+        }
+        let mut outermost = String::new();
+        let mut parent = clang_getCursorSemanticParent(template);
+        while kind(parent) == CXCursor_Namespace {
+            outermost = spelling(parent);
+            parent = clang_getCursorSemanticParent(parent);
+        }
+        (outermost == "std").then(|| spelling(template))
+    }
 }
 
 fn usr(cursor: CXCursor) -> String {
@@ -421,8 +660,35 @@ fn arguments(config: &Config) -> Vec<String> {
     };
     args.extend(config.include_paths.iter().map(|dir| format!("-I{}", dir.display())));
     args.extend(config.defines.iter().map(|define| format!("-D{define}")));
-    args.extend(config.flags.iter().cloned());
+    args.extend(clang_flags(config.flags));
     args
+}
+
+/// A project's compile flags as libclang parses with them: GCC-style ones as written; MSVC's `/D`,
+/// `/U` and `/I` as their GCC forms; its runtime switch as the macros cl defines for it (`/MDd` is
+/// `_MT`, `_DLL` and `_DEBUG`, which set the C++ standard library's layout, `[BLD-FFI-1b]`); any
+/// other MSVC switch, and a response file, left out, since they change no declaration.
+fn clang_flags(flags: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = flags.iter();
+    while let Some(flag) = rest.next() {
+        let Some(switch) = flag.strip_prefix('/') else {
+            if !flag.starts_with('@') {
+                out.push(flag.clone());
+            }
+            continue;
+        };
+        match switch {
+            "MD" => out.extend(["-D_MT".to_string(), "-D_DLL".to_string()]),
+            "MDd" => out.extend(["-D_MT".to_string(), "-D_DLL".to_string(), "-D_DEBUG".to_string()]),
+            "MT" => out.push("-D_MT".to_string()),
+            "MTd" => out.extend(["-D_MT".to_string(), "-D_DEBUG".to_string()]),
+            "D" | "U" | "I" => out.extend(rest.next().map(|value| format!("-{switch}{value}"))),
+            _ if switch.len() > 1 && matches!(&switch[..1], "D" | "U" | "I") => out.push(format!("-{switch}")),
+            _ => {}
+        }
+    }
+    out
 }
 
 /// `[FFI-6]` — parse the header and write its module.
@@ -446,11 +712,35 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
         return Err(errors.join("\n"));
     }
     let inclusions = unit.inclusions();
+    let header = inclusions.iter().find(|(_, depth)| *depth == 1).map(|(file, _)| file.clone()).ok_or_else(|| format!("`{}` was not found", config.header))?;
+    let in_header = |cursor: CXCursor| {
+        let (file, _, system) = location(cursor);
+        file == header || !(system || file.is_empty() || Path::new(&file) == main)
+    };
+    // `[FFI-42]` — each class with `begin()` and `end()`, whose element type the parse below asks.
+    let mut iterables = Vec::new();
+    if config.cpp.is_some() {
+        iterable_classes(unit.cursor(), &in_header, &mut iterables);
+    }
     // `[FFI-17b]` — each listed instantiation, declared after the header: a class template's
     // explicitly instantiated and named, a function template's address taken.
-    let unit = if config.cpp.is_some() && !config.instantiate.is_empty() {
+    let unit = if config.cpp.is_some() && (!config.instantiate.is_empty() || !iterables.is_empty()) {
         let prefix = ember_branding::SYMBOL_PREFIX;
         let mut source = include.clone();
+        // `[FFI-42]` — `*c.begin()`'s type, or `void` where it or `begin() != end()` does not compile
+        // (the parse with the header's function bodies skipped has not made the iterator's class).
+        if !iterables.is_empty() {
+            let _ = writeln!(
+                source,
+                "#include <utility>\n\
+                 template <class...> struct {prefix}_void {{ using type = void; }};\n\
+                 template <class C, class = void> struct {prefix}_element {{ using type = void; }};\n\
+                 template <class C> struct {prefix}_element<C, typename {prefix}_void<decltype(*std::declval<C&>().begin()), decltype(std::declval<C&>().begin() != std::declval<C&>().end())>::type> {{ using type = decltype(*std::declval<C&>().begin()); }};"
+            );
+            for (index, spelled) in iterables.iter().enumerate() {
+                let _ = writeln!(source, "using {prefix}_element_{index} = {prefix}_element<{spelled}>::type;");
+            }
+        }
         for (index, written) in config.instantiate.iter().enumerate() {
             let id = written.trim().trim_start_matches("::");
             let template = id.split('<').next().unwrap_or(id).trim();
@@ -484,7 +774,6 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
     } else {
         unit
     };
-    let header = inclusions.iter().find(|(_, depth)| *depth == 1).map(|(file, _)| file.clone()).ok_or_else(|| format!("`{}` was not found", config.header))?;
     let files: Vec<String> = inclusions.into_iter().filter(|(_, depth)| *depth > 0).map(|(file, _)| file).collect();
     let header_path = std::path::absolute(from_dir.join(&header)).unwrap_or_else(|_| PathBuf::from(&header));
     let mut writer = Writer {
@@ -493,12 +782,19 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
         shared: config.shared.clone(),
         binding: config.binding.to_string(),
         cpp: config.cpp.is_some(),
+        trampoline_decls: config.trampolines.to_vec(),
         ..Writer::default()
     };
-    let in_header = |cursor: CXCursor| {
-        let (file, _, system) = location(cursor);
-        file == header || !(system || file.is_empty() || Path::new(&file) == main)
-    };
+    let element_prefix = format!("{}_element_", ember_branding::SYMBOL_PREFIX);
+    for cursor in children(unit.cursor()) {
+        if kind(cursor) == CXCursor_TypeAliasDecl
+            && let Some(index) = spelling(cursor).strip_prefix(&element_prefix).and_then(|index| index.parse::<usize>().ok())
+            && let Some(spelled) = iterables.get(index)
+        {
+            // SAFETY(ffi): a type of a live translation unit.
+            writer.elements.insert(spelled.clone(), unsafe { clang_getCanonicalType(clang_getTypedefDeclUnderlyingType(cursor)) });
+        }
+    }
     if writer.cpp {
         // `[FFI-32]`, `[FFI-24]` — what only C++'s own rules answer, asked of Clang in one more parse.
         let probe_args = {
@@ -690,6 +986,30 @@ struct Writer {
     homes: HashMap<String, Vec<String>>,
     namespaces: Vec<Vec<String>>,
     ns_uses: Vec<(Vec<String>, Vec<String>)>,
+    /// `[FFI-39]` — the trampolines the overlays declare, and those made.
+    trampoline_decls: Vec<TrampolineDecl>,
+    trampolines: Vec<Trampoline>,
+    /// `[FFI-17a]` — each bridge type the module uses (by its C++ type and the namespace it is
+    /// used in), with the thunks written for it.
+    bridges: HashMap<(String, Vec<String>), Bridge>,
+    /// `[FFI-42]` — the member operators imported (`Imported::operators`).
+    operators: Vec<(String, String, String)>,
+    /// `[FFI-42]` — for each class with `begin()` and `end()`, as C++ spells it, the type of
+    /// `*c.begin()` (`void` where that or `begin() != end()` does not compile).
+    elements: HashMap<String, CXType>,
+}
+
+/// `[FFI-17a]` — a C++ standard-library type as its bridge type: the Ember type, the C++ type, and
+/// how a value of it is made from the C++ object's address (`@`): `CppVector.from_thunks(@, …)`
+/// with its element type's thunks, or `adopt[T](@)` for a `std::unique_ptr<T>`.
+#[derive(Clone, Debug)]
+struct Bridge {
+    ember: String,
+    spelled: String,
+    make: String,
+    /// `std::unique_ptr<T>`: the thunk gives up the object (`release()`) rather than copying the
+    /// smart pointer to the heap; its raw result is a `*mut T`, not a `*mut u8`.
+    unique: Option<String>,
 }
 
 impl Writer {
@@ -849,7 +1169,11 @@ impl Writer {
                     let declaration = clang_getTypeDeclaration(ty);
                     // `[FFI-17a]` — the C++ standard library's classes cross only as its bridge types.
                     if self.cpp && location(declaration).2 {
-                        return Err(format!("`{}`: the C++ standard library's types cross as `[FFI-17a]`'s bridge types, which are not built yet", cpp_spelling(ty)));
+                        return Err(match self.bridge(ty) {
+                            Some(Ok(bridge)) => format!("`{}` by value or behind a pointer: it crosses as `{}`, by reference or as a result ([FFI-17a])", cpp_spelling(ty), bridge.ember),
+                            Some(Err(reason)) => reason,
+                            None => format!("`{}`: a C++ standard library type with no bridge type ([FFI-17a] bridges `std::vector`, `std::string`, `std::shared_ptr` and `std::unique_ptr`)", cpp_spelling(ty)),
+                        });
                     }
                     // A struct with no tag is known by its typedef's name once that is written
                     // (`typedef struct {…} Rect`, seen through a canonical type).
@@ -1120,6 +1444,11 @@ impl Writer {
                     self.records.insert(key, record.clone());
                     return record;
                 }
+            }
+            // `[FFI-39]` — the C++ object of a class with a trampoline: an opaque type of its own
+            // name, which the Ember class of the class's name owns.
+            if self.cpp && self.trampoline_decls.iter().any(|decl| decl.class == named) {
+                return self.opaque(cursor, &key, &format!("{}_cpp_{named}", ember_branding::SYMBOL_PREFIX), None);
             }
             // `[FFI-32]` — a C++ class is a struct only when it is standard-layout and trivially
             // copyable; any other is opaque behind a pointer, made only by its constructors.
@@ -1437,6 +1766,10 @@ impl Writer {
         if !self.seen.insert(format!("fn {key}")) {
             return;
         }
+        if self.cpp && name.starts_with("operator") {
+            self.free_operator(cursor, &name);
+            return;
+        }
         if self.cpp && self.functions.iter().any(|function| function.name == name && function.owner.is_none() && function.namespace == self.writing) {
             self.skip(cursor, &name, "an overload: Ember has no overloading, and the first declaration of the name is the one imported");
             return;
@@ -1502,6 +1835,55 @@ impl Writer {
         self.cpp_thunk(cursor, name, None)
     }
 
+    /// `[FFI-42]` — an operator declared outside its class: the method of its Ember operator
+    /// interface on the class of its first operand (`P operator+(const P&, const P&)` is `P.add`),
+    /// a `const` or by-value operand its `self` and any other its `mut self`, as a member's would be
+    /// (`[FFI-40a]`'s `mutable` members too). One whose first operand is no class the header
+    /// imports, or that maps to no interface, is skipped, saying why.
+    fn free_operator(&mut self, cursor: CXCursor, name: &str) {
+        // SAFETY(ffi): a live function cursor and its types.
+        unsafe {
+            let operands = clang_Cursor_getNumArguments(cursor);
+            if operands < 1 {
+                return self.skip(cursor, name, "an operator with no operand of a class ([FFI-42])");
+            }
+            let first = clang_getCursorType(clang_Cursor_getArgument(cursor, 0));
+            let (class, constant) = match first.kind {
+                CXType_LValueReference => (clang_getPointeeType(first), clang_isConstQualifiedType(clang_getPointeeType(first)) != 0),
+                CXType_RValueReference => return self.skip(cursor, name, "an operator whose first operand is a `T&&` ([FFI-42])"),
+                _ => (first, true),
+            };
+            let declaration = clang_getTypeDeclaration(clang_getCanonicalType(class));
+            let trampoline = |owner: &str| owner.starts_with(&format!("{}_cpp_", ember_branding::SYMBOL_PREFIX));
+            let record = if clang_getCanonicalType(class).kind == CXType_Record && !location(declaration).2 { Some(self.record(declaration, None)) } else { None };
+            let owner = match record {
+                Some(Record::Full(owner) | Record::Opaque(owner, None)) if !trampoline(&owner) => owner,
+                _ => return self.skip(cursor, name, "an operator whose first operand is no class the header imports ([FFI-42])"),
+            };
+            let mutable_state = children(clang_getCursorDefinition(declaration)).into_iter().any(|child| kind(child) == CXCursor_FieldDecl && clang_CXXField_isMutable(child) != 0);
+            let member = if constant && !mutable_state { Member::Method } else { Member::MutMethod };
+            let shown = format!("{owner}.{name}");
+            let (method, interface) = match operator_method(name, operands - 1, member) {
+                Ok(found) => found,
+                Err(why) => return self.skip(cursor, &shown, why),
+            };
+            if self.functions.iter().any(|function| function.name == method && function.owner.as_ref().is_some_and(|(of, _)| *of == owner)) {
+                return self.skip(cursor, &shown, "an overload: Ember has no overloading, and the first declaration of the name is the one imported");
+            }
+            let spelled = cpp_spelling(clang_getCursorType(declaration));
+            // Written in its class's namespace, with the class's other methods.
+            let saved = std::mem::replace(&mut self.writing, namespace_of(declaration));
+            match self.cpp_thunk(cursor, method, Some((&owner, member, &spelled))) {
+                Ok(function) => {
+                    self.operators.push((owner.clone(), method.to_string(), interface.to_string()));
+                    self.functions.push(Function { namespace: self.writing.clone(), ..function });
+                }
+                Err(reason) => self.skip(cursor, &shown, reason),
+            }
+            self.writing = saved;
+        }
+    }
+
     /// `[FFI-40]`, `[FFI-41]`, `[FFI-32]` — a C++ class's public members, each through a thunk: its
     /// methods (`const` ones as `self`, unless the class has a `mutable` member, `[FFI-40a]`), its
     /// static member functions, its first constructor (not a copy or move one, nor an abstract
@@ -1523,12 +1905,28 @@ impl Writer {
             let class_spelled = cpp_spelling(clang_getCursorType(definition));
             let abstract_class = clang_CXXRecord_isAbstract(definition) != 0;
             let mutable_state = children(definition).into_iter().any(|child| kind(child) == CXCursor_FieldDecl && clang_CXXField_isMutable(child) != 0);
+            // `[FFI-39]` — a class with a trampoline: its methods are its Ember class's, its
+            // constructors and destructor the trampoline's, its named virtuals the Ember class's
+            // virtual methods. One the trampoline cannot be made for is imported as any class.
+            let opaque = owner.clone();
+            let trampoline = match self.trampoline_decls.iter().find(|decl| format!("{}_cpp_{}", ember_branding::SYMBOL_PREFIX, decl.class) == owner).cloned() {
+                Some(decl) => match self.trampoline_check(definition, &decl) {
+                    Ok(named) => Some((decl, named)),
+                    Err((code, why)) => {
+                        self.skip(definition, &decl.class, format!("[{code}] {why}"));
+                        None
+                    }
+                },
+                None => None,
+            };
+            let owner = trampoline.as_ref().map_or(owner, |(decl, _)| ident(&decl.class));
+            let mut unnamed_virtuals = Vec::new();
             // An opaque class's object is freed by its destructor: the one it declares, when that
             // is public, else the implicit one, which is.
             let declared = children(definition).into_iter().find(|child| kind(*child) == CXCursor_Destructor);
             let destructible = by_value
                 || declared.is_none_or(|destructor| clang_getCXXAccessSpecifier(destructor) == CX_CXXPublic && clang_getCursorAvailability(destructor) != CXAvailability_NotAvailable);
-            if !by_value && destructible {
+            if !by_value && destructible && trampoline.is_none() {
                 let destroys = format!("{}_cpp_delete_{owner}", ember_branding::SYMBOL_PREFIX);
                 let thunk = format!("{}_cpp_{}_{}", ember_branding::SYMBOL_PREFIX, self.stem, self.thunks);
                 self.thunks += 1;
@@ -1540,7 +1938,28 @@ impl Writer {
                 self.functions.push(Function { name: "drop".to_string(), params: Vec::new(), result: None, link_name: Some(thunk), abi: "C", policy: Policy::Direct, owner, out: false, namespace: self.writing.clone() });
             }
             let mut taken: HashSet<String> = HashSet::new();
-            for child in children(definition) {
+            let mut friends = Vec::new();
+            // `[FFI-44]` — a class with one public, non-virtual C++ base the header defines has the
+            // base's public methods too (a name of its own hides the base's, as in C++): the thunk
+            // calls them through the derived object.
+            let mut members = children(definition);
+            let own = members.len();
+            if trampoline.is_none() {
+                let mut base = single_public_base(definition);
+                for _ in 0..64 {
+                    let Some(found) = base else { break };
+                    members.extend(children(found).into_iter().filter(|child| kind(*child) == CXCursor_CXXMethod));
+                    base = single_public_base(found);
+                }
+            }
+            for (index, child) in members.into_iter().enumerate() {
+                let inherited = index >= own;
+                // `[FFI-42]` — an operator the class declares its friend (often defined there, found
+                // only by argument-dependent lookup), as one declared outside it, after the members.
+                if kind(child) == CXCursor_FriendDecl {
+                    friends.extend(children(child).into_iter().filter(|friend| kind(*friend) == CXCursor_FunctionDecl && spelling(*friend).starts_with("operator")));
+                    continue;
+                }
                 if clang_getCXXAccessSpecifier(child) != CX_CXXPublic || clang_getCursorAvailability(child) == CXAvailability_NotAvailable {
                     continue;
                 }
@@ -1562,6 +1981,14 @@ impl Writer {
                     }
                     _ => {}
                 }
+                if let Some((decl, _)) = &trampoline {
+                    if kind(child) == CXCursor_Constructor || decl.virtuals.contains(&name) {
+                        continue;
+                    }
+                    if kind(child) == CXCursor_CXXMethod && clang_CXXMethod_isVirtual(child) != 0 {
+                        unnamed_virtuals.push(name.clone());
+                    }
+                }
                 let member = match kind(child) {
                     CXCursor_Constructor => {
                         if abstract_class || clang_CXXConstructor_isCopyConstructor(child) != 0 || clang_CXXConstructor_isMoveConstructor(child) != 0 {
@@ -1579,34 +2006,591 @@ impl Writer {
                     },
                     _ => continue,
                 };
+                // `[FFI-42]` — an operator: the method of its Ember operator interface.
+                let operator = if name.starts_with("operator") {
+                    match operator_method(&name, clang_Cursor_getNumArguments(child), member) {
+                        Ok(found) => Some(found),
+                        Err(why) => {
+                            self.skip(child, &format!("{owner}.{name}"), why);
+                            continue;
+                        }
+                    }
+                } else {
+                    None
+                };
                 let key = match member {
                     Member::Constructor | Member::BoxedConstructor => "new".to_string(),
                     Member::Destructor => "drop".to_string(),
-                    _ => name.clone(),
+                    _ => operator.map_or(name.clone(), |(method, _)| method.to_string()),
                 };
                 if !taken.insert(key.clone()) {
-                    self.skip(child, &format!("{owner}.{key}"), "an overload: Ember has no overloading, and the first declaration of the name is the one imported");
+                    if !inherited {
+                        self.skip(child, &format!("{owner}.{key}"), "an overload: Ember has no overloading, and the first declaration of the name is the one imported");
+                    }
                     continue;
                 }
                 match self.cpp_thunk(child, &key, Some((&owner, member, &class_spelled))) {
-                    Ok(function) => self.functions.push(Function { namespace: self.writing.clone(), ..function }),
+                    Ok(function) => {
+                        if let Some((method, interface)) = operator {
+                            self.operators.push((owner.clone(), method.to_string(), interface.to_string()));
+                        }
+                        self.functions.push(Function { namespace: self.writing.clone(), ..function });
+                    }
                     Err(reason) => self.skip(child, &format!("{owner}.{key}"), reason),
                 }
             }
+            for friend in friends {
+                if self.seen.insert(format!("fn {}", usr(friend))) {
+                    self.free_operator(friend, &spelling(friend));
+                }
+            }
+            if let Some((decl, slots)) = trampoline {
+                self.trampoline(definition, &opaque, &decl, slots, unnamed_virtuals);
+            } else if taken.insert("iter".to_string()) {
+                self.cpp_iteration(definition, &owner, &class_spelled);
+            }
+        }
+    }
+
+    /// `[FFI-42]` — a class with `begin()` and `end()` is iterable: its type gets `iter()`, whose
+    /// iterator gives a `ref` to each element, through thunks that walk the C++ iterators (a throw
+    /// from one aborts at the boundary, `[FFI-39e]`). `iter()` is a call into C++ like any method,
+    /// safe when an overlay entry `fn iter()` asserts it (`[FFI-2]`). `[FFI-42a]` — it takes `mut
+    /// self`, so a `for` loop borrows the container mutably, and every method that could invalidate
+    /// its iterators — every `mut self` one — is refused inside the loop by the borrow rules.
+    fn cpp_iteration(&mut self, class: CXCursor, owner: &str, spelled: &str) {
+        // SAFETY(ffi): cursors and types of a live translation unit.
+        unsafe {
+            let method = |name: &str| {
+                children(class)
+                    .into_iter()
+                    .filter(|child| {
+                        kind(*child) == CXCursor_CXXMethod
+                            && spelling(*child) == name
+                            && clang_getCXXAccessSpecifier(*child) == CX_CXXPublic
+                            && clang_CXXMethod_isStatic(*child) == 0
+                            && clang_Cursor_getNumArguments(*child) == 0
+                    })
+                    // The non-`const` one, which a loop that borrows mutably calls.
+                    .min_by_key(|child| clang_CXXMethod_isConst(*child))
+            };
+            let (Some(begin), Some(_)) = (method("begin"), method("end")) else { return };
+            let name = format!("{owner}.iter");
+            // What `*c.begin()` is, as the parse that asked it of Clang found.
+            let element = self.elements.get(spelled).copied().filter(|reference| reference.kind == CXType_LValueReference).map(|reference| clang_getPointeeType(reference));
+            let Some(element) = element else {
+                self.skip(begin, &name, "`*begin()` gives no `T&` to an element, or `begin() != end()` does not compile ([FFI-42])");
+                return;
+            };
+            let mapped = match self.ty(element, true) {
+                Ok(mapped) => mapped,
+                Err(reason) => {
+                    self.skip(begin, &name, format!("its elements: {reason}"));
+                    return;
+                }
+            };
+            let prefix = ember_branding::SYMBOL_PREFIX;
+            let ops = format!("{prefix}_cpp_{}_iter_{}", self.stem, self.thunks);
+            self.thunks += 1;
+            let _ = writeln!(
+                self.shim,
+                "struct {ops}_range {{ decltype(std::declval<{spelled}&>().begin()) at; decltype(std::declval<{spelled}&>().end()) end; }};\n\
+                 extern \"C\" void* {ops}_begin({spelled}* self) noexcept {{ try {{ return new {ops}_range{{self->begin(), self->end()}}; }} catch (...) {{ crossed(\"{spelled}::begin\"); }} }}\n\
+                 extern \"C\" void* {ops}_next(void* range) noexcept {{ try {{ auto* walk = static_cast<{ops}_range*>(range); if (walk->at == walk->end) return nullptr; auto* item = std::addressof(*walk->at); ++walk->at; return const_cast<void*>(static_cast<const void*>(item)); }} catch (...) {{ crossed(\"the iterator of {spelled}\"); }} }}\n\
+                 extern \"C\" void {ops}_end(void* range) noexcept {{ delete static_cast<{ops}_range*>(range); }}"
+            );
+            let walker = format!("{owner}_cpp_iter");
+            self.push(
+                &walker,
+                Kind::Class,
+                format!(
+                    "## `[FFI-42]` — a `for` loop over a `{spelled}`, through its `begin()` and `end()`: each element a\n\
+                     ## `ref` to it. `[FFI-42a]` — the loop borrows the `{spelled}` mutably.\n\
+                     pub struct {walker}:\n    range: *mut u8\n    owner: ref mut {owner}\n\n\
+                     \x20   pub fn next(mut self) -> Option[ref {mapped}]:\n\
+                     \x20       item = null[*mut {mapped}]()\n\
+                     \x20       unsafe:  # SAFETY(ffi): the range's own thunk, while the iterator holds its container\n\
+                     \x20           item = {ops}_next(self.range)\n\
+                     \x20       if item.is_null():\n            return None\n\
+                     \x20       unsafe:  # SAFETY(ffi): an element of the container the iterator holds\n\
+                     \x20           return Some({prefix}_cpp_ref(item))\n\n\
+                     \x20   fn drop(mut self):\n\
+                     \x20       unsafe:  # SAFETY(ffi): the range's end, once\n\
+                     \x20           {ops}_end(self.range)\n\n\
+                     unsafe extern \"C\":\n\
+                     \x20   @ffi(link_name=\"{ops}_next\")\n    fn {ops}_next(range: *mut u8) -> *mut {mapped}\n\
+                     \x20   @ffi(link_name=\"{ops}_end\")\n    fn {ops}_end(range: *mut u8)\n"
+                ),
+            );
+            let result = CType {
+                ember: "*mut u8".to_string(),
+                pointee: Some((walker.clone(), false)),
+                char_pointer: false,
+                c: "void*".to_string(),
+                mode: format!("bridge {walker}(range = @, owner = ref mut self)"),
+            };
+            let owner = Some((owner.to_string(), Member::MutMethod));
+            self.functions.push(Function {
+                name: "iter".to_string(),
+                params: Vec::new(),
+                result: Some(result),
+                link_name: Some(format!("{ops}_begin")),
+                abi: "C",
+                policy: Policy::Direct,
+                owner,
+                out: false,
+                namespace: self.writing.clone(),
+            });
+        }
+    }
+
+    /// `[FFI-17a]` — the bridge type of a C++ standard-library type, its thunks written the first
+    /// time the module's namespace uses it; `None` for a type that is not one of the bridged
+    /// templates, `Err` for one whose argument does not map.
+    fn bridge(&mut self, ty: CXType) -> Option<Result<Bridge, String>> {
+        // SAFETY(ffi): types and cursors of a live translation unit.
+        unsafe {
+            let ty = clang_getCanonicalType(ty);
+            let name = std_template(ty)?;
+            if !matches!(name.as_str(), "vector" | "basic_string" | "shared_ptr" | "unique_ptr") {
+                return None;
+            }
+            let declaration = clang_getTypeDeclaration(ty);
+            let spelled = cpp_spelling(clang_getCursorType(declaration));
+            let key = (spelled.clone(), self.writing.clone());
+            if let Some(found) = self.bridges.get(&key) {
+                return Some(Ok(found.clone()));
+            }
+            // `[FFI-48]` — a container whose allocator (or a string whose traits) is not the standard
+            // one: the allocator is part of the type and opaque (`E5034`).
+            let defaulted = |index: u32, expected: &str| {
+                index as c_int >= clang_Type_getNumTemplateArguments(ty)
+                    || std_template(clang_getCanonicalType(clang_Type_getTemplateArgumentAsType(ty, index as c_uint))).as_deref() == Some(expected)
+            };
+            let standard = match name.as_str() {
+                "vector" => defaulted(1, "allocator"),
+                "basic_string" => defaulted(1, "char_traits") && defaulted(2, "allocator"),
+                _ => true,
+            };
+            if !standard {
+                return Some(Err(format!(
+                    "[E5034] `{spelled}`: an allocator-parameterised container: the allocator is part of the type and opaque; expose a span, or keep it native ([FFI-48])"
+                )));
+            }
+            // `[FFI-17a]` — a `std::unique_ptr` with a deleter of its own is not built: its
+            // `ForeignBox` frees the object with the class's destructor.
+            if name == "unique_ptr" && !defaulted(1, "default_delete") {
+                return Some(Err(format!("`{spelled}`: a `std::unique_ptr` with a deleter of its own (only `std::default_delete` is built) [FFI-17a]")));
+            }
+            let argument = clang_Type_getTemplateArgumentAsType(ty, 0);
+            let prefix = ember_branding::SYMBOL_PREFIX;
+            let ops = format!("{prefix}_cpp_{}_bridge_{}", self.stem, self.bridges.len());
+            let element = cpp_spelling(argument);
+            let mut decls = String::new();
+            let declare = |decls: &mut String, suffix: &str, signature: &str| {
+                let _ = writeln!(decls, "    @ffi(link_name=\"{ops}_{suffix}\")\n    fn {ops}_{suffix}{signature}");
+            };
+            let bridge = match name.as_str() {
+                "vector" => {
+                    if argument.kind == CXType_Bool {
+                        return Some(Err(format!("`{spelled}`: a `std::vector<bool>` stores bits, which no view of its elements can show ([FFI-17a])")));
+                    }
+                    let mapped = match self.ty(argument, false) {
+                        Ok(mapped) => mapped,
+                        Err(reason) => return Some(Err(format!("`{spelled}`: its elements do not map by value ({reason}) [FFI-17a]"))),
+                    };
+                    let _ = writeln!(
+                        self.shim,
+                        "extern \"C\" {element}* {ops}_data(void* v) noexcept {{ return static_cast<{spelled}*>(v)->data(); }}\n\
+                         extern \"C\" std::size_t {ops}_size(void* v) noexcept {{ return static_cast<{spelled}*>(v)->size(); }}\n\
+                         extern \"C\" void {ops}_push(void* v, const {element}* value) noexcept {{ try {{ static_cast<{spelled}*>(v)->push_back(*value); }} catch (...) {{ crossed(\"std::vector::push_back\"); }} }}\n\
+                         extern \"C\" void {ops}_destroy(void* v) noexcept {{ delete static_cast<{spelled}*>(v); }}"
+                    );
+                    declare(&mut decls, "data", &format!("(object: *mut u8) -> *mut {mapped}"));
+                    declare(&mut decls, "size", "(object: *mut u8) -> usize");
+                    declare(&mut decls, "push", &format!("(object: *mut u8, value: *{mapped})"));
+                    declare(&mut decls, "destroy", "(object: *mut u8)");
+                    Bridge {
+                        ember: format!("CppVector[{mapped}]"),
+                        spelled: spelled.clone(),
+                        make: format!("CppVector.from_thunks(@, {ops}_data, {ops}_size, {ops}_push, {ops}_destroy)"),
+                        unique: None,
+                    }
+                }
+                "basic_string" => {
+                    if !matches!(argument.kind, CXType_Char_S | CXType_Char_U) {
+                        return Some(Err(format!("`{spelled}`: only a string of `char` crosses, as `CppString` ([FFI-17a])")));
+                    }
+                    let _ = writeln!(
+                        self.shim,
+                        "extern \"C\" const char* {ops}_data(void* s) noexcept {{ return static_cast<{spelled}*>(s)->data(); }}\n\
+                         extern \"C\" std::size_t {ops}_size(void* s) noexcept {{ return static_cast<{spelled}*>(s)->size(); }}\n\
+                         extern \"C\" void {ops}_destroy(void* s) noexcept {{ delete static_cast<{spelled}*>(s); }}"
+                    );
+                    declare(&mut decls, "data", "(object: *mut u8) -> *u8");
+                    declare(&mut decls, "size", "(object: *mut u8) -> usize");
+                    declare(&mut decls, "destroy", "(object: *mut u8)");
+                    Bridge { ember: "CppString".to_string(), spelled: spelled.clone(), make: format!("CppString.from_thunks(@, {ops}_data, {ops}_size, {ops}_destroy)"), unique: None }
+                }
+                "shared_ptr" => {
+                    let mapped = match self.ty(argument, true) {
+                        Ok(mapped) => mapped,
+                        Err(reason) => return Some(Err(format!("`{spelled}`: the type it shares does not map ({reason}) [FFI-17a]"))),
+                    };
+                    let _ = writeln!(
+                        self.shim,
+                        "extern \"C\" {element}* {ops}_pointee(void* p) noexcept {{ return static_cast<{spelled}*>(p)->get(); }}\n\
+                         extern \"C\" void* {ops}_copy(void* p) noexcept {{ return new {spelled}(*static_cast<{spelled}*>(p)); }}\n\
+                         extern \"C\" void {ops}_destroy(void* p) noexcept {{ delete static_cast<{spelled}*>(p); }}"
+                    );
+                    declare(&mut decls, "pointee", &format!("(object: *mut u8) -> *mut {mapped}"));
+                    declare(&mut decls, "copy", "(object: *mut u8) -> *mut u8");
+                    declare(&mut decls, "destroy", "(object: *mut u8)");
+                    Bridge {
+                        ember: format!("CppShared[{mapped}]"),
+                        spelled: spelled.clone(),
+                        make: format!("CppShared.from_thunks(@, {ops}_pointee, {ops}_copy, {ops}_destroy)"),
+                        unique: None,
+                    }
+                }
+                _ => {
+                    // `std::unique_ptr<T>`: the object it gives up, owned by a `ForeignBox` that frees
+                    // it with the class's destructor thunk (an opaque class's, `[FFI-36a]`).
+                    let declaration = clang_getTypeDeclaration(clang_getCanonicalType(argument));
+                    let opaque = matches!(self.record(declaration, None), Record::Opaque(_, None));
+                    let mapped = match self.ty(argument, true) {
+                        Ok(mapped) if opaque => mapped,
+                        Ok(_) => return Some(Err(format!("`{spelled}`: a `std::unique_ptr` crosses as a `ForeignBox` of a class Ember holds behind a pointer ([FFI-17a])"))),
+                        Err(reason) => return Some(Err(format!("`{spelled}`: the type it owns does not map ({reason}) [FFI-17a]"))),
+                    };
+                    let bridge = Bridge { ember: format!("ForeignBox[{mapped}]"), spelled: spelled.clone(), make: format!("adopt[{mapped}](@)"), unique: Some(mapped) };
+                    self.bridges.insert(key, bridge.clone());
+                    return Some(Ok(bridge));
+                }
+            };
+            self.push(&ops, Kind::Class, format!("## `[FFI-17a]` — the thunks of `{spelled}`.\nunsafe extern \"C\":\n{decls}"));
+            self.bridges.insert(key, bridge.clone());
+            Some(Ok(bridge))
+        }
+    }
+
+    /// `[FFI-39]`, `[FFI-17d]` — whether a trampoline can be made for a class: it has a virtual
+    /// destructor (`E5059`), is not `final`, each virtual `virtuals` names is one virtual method of
+    /// it (`E5057`), every pure virtual it declares is named (`E5056`), and each named one passes
+    /// values a trampoline can pass (`E5031`). Its named virtuals, as the trampoline calls them.
+    fn trampoline_check(&mut self, definition: CXCursor, decl: &TrampolineDecl) -> Result<Vec<Slot>, (&'static str, String)> {
+        // SAFETY(ffi): cursors and types of a live translation unit.
+        unsafe {
+            let spelled = cpp_spelling(clang_getCursorType(definition));
+            let key = usr(definition);
+            if !self.by_value.get(&format!("virtual_dtor {key}")).copied().unwrap_or(false) {
+                return Err(("E5059", format!("`{spelled}` has no virtual destructor, so its trampoline subclass cannot be destroyed through it ([FFI-17d])")));
+            }
+            if self.by_value.get(&format!("final {key}")).copied().unwrap_or(false) {
+                return Err(("E5034", format!("`{spelled}` is `final`: no class derives from it")));
+            }
+            let methods: Vec<CXCursor> = children(definition).into_iter().filter(|child| kind(*child) == CXCursor_CXXMethod).collect();
+            let mut slots = Vec::new();
+            for name in &decl.virtuals {
+                let found: Vec<CXCursor> = methods.iter().copied().filter(|method| spelling(*method) == *name).collect();
+                let method = match found.as_slice() {
+                    [method] if clang_CXXMethod_isVirtual(*method) != 0 => *method,
+                    [] => return Err(("E5057", format!("`virtuals` names `{name}`, and `{spelled}` declares no method `{name}`"))),
+                    [_] => return Err(("E5057", format!("`virtuals` names `{name}`, which is not virtual in `{spelled}`"))),
+                    _ => return Err(("E5057", format!("`virtuals` names `{name}`, which `{spelled}` overloads: a trampoline overrides one function of a name"))),
+                };
+                let ty = clang_getCursorType(method);
+                let mut params = Vec::new();
+                for index in 0..clang_Cursor_getNumArguments(method).max(0) as u32 {
+                    let argument = clang_Cursor_getArgument(method, index);
+                    let written = spelling(argument);
+                    let param = if written.is_empty() { format!("_{index}") } else { ident(&written) };
+                    let local = format!("a{index}");
+                    let argument_ty = clang_getArgType(ty, index);
+                    let (c_type, declaration, pass) = match self.cpp_parameter(argument_ty, &local) {
+                        Ok(found) if matches!(found.0.mode.as_str(), "" | "ref " | "ref mut ") => found,
+                        Ok(_) => return Err(("E5031", format!("parameter `{param}` of `{spelled}::{name}`: a trampoline passes values, and references to classes Ember holds behind a pointer"))),
+                        Err(reason) => return Err(("E5031", format!("parameter `{param}` of `{spelled}::{name}`: {reason}"))),
+                    };
+                    let Some(c) = declaration.strip_suffix(&local).map(str::trim_end).filter(|c| !c.is_empty() && !c.contains('(')) else {
+                        return Err(("E5031", format!("parameter `{param}` of `{spelled}::{name}`: a type a function pointer passes in another form")));
+                    };
+                    let to_ember = if pass.starts_with('*') { format!("&{local}") } else { local.clone() };
+                    params.push(SlotParam { name: param, ty: c_type, c: c.to_string(), to_ember, declaration: format!("{} {local}", cpp_spelling(argument_ty)), to_base: pass, local });
+                }
+                let result_ty = clang_getResultType(ty);
+                let result = if result_ty.kind == CXType_Void {
+                    None
+                } else {
+                    if matches!(clang_getCanonicalType(result_ty).kind, CXType_Record | CXType_LValueReference | CXType_RValueReference) {
+                        return Err(("E5031", format!("`{spelled}::{name}` returns `{}`: a trampoline returns a value Ember passes as C does", cpp_spelling(result_ty))));
+                    }
+                    Some(self.c_type(result_ty, false).map_err(|reason| ("E5031", format!("the result of `{spelled}::{name}`: {reason}")))?)
+                };
+                let result_spelled = if result.is_some() { cpp_spelling(result_ty) } else { "void".to_string() };
+                slots.push(Slot {
+                    name: name.clone(),
+                    constant: clang_CXXMethod_isConst(method) != 0,
+                    pure: clang_CXXMethod_isPureVirtual(method) != 0,
+                    params,
+                    result,
+                    result_spelled,
+                });
+            }
+            if let Some(pure) = methods.iter().find(|method| clang_CXXMethod_isPureVirtual(**method) != 0 && !decl.virtuals.contains(&spelling(**method))) {
+                return Err(("E5056", format!("`{spelled}::{}` is pure virtual, and `virtuals` does not name it: the trampoline overrides every pure virtual of its base", spelling(*pure))));
+            }
+            Ok(slots)
+        }
+    }
+
+    /// `[FFI-39]`, `[FFI-39b]`, `[FFI-39e]`, `[FFI-17c]`, `[FFI-17d]` — the trampoline of a class: a
+    /// C++ subclass whose named virtuals call Ember through entry functions it is given when made,
+    /// and an Ember `open class` of the class's name, which owns one. Its `init` (and an
+    /// `ember_cpp_init_<k>` for each other constructor, which `super.init(…)` selects among by
+    /// arity and types) makes the C++ object; its named virtuals are virtual methods whose own body
+    /// is the C++ base class's implementation; the C++ object is deleted when the Ember fields have
+    /// been dropped, through a base field of a struct whose `drop` deletes it. With
+    /// `owner="foreign"`, a foreign `delete` destroys the Ember object (which then holds no handle
+    /// but the one given to C++); with `owner="ember"` it panics. An exception that would leave a
+    /// constructor or a base implementation for Ember aborts, naming it.
+    fn trampoline(&mut self, definition: CXCursor, opaque: &str, decl: &TrampolineDecl, slots: Vec<Slot>, unnamed_virtuals: Vec<String>) {
+        let prefix = ember_branding::SYMBOL_PREFIX;
+        let class = ident(&decl.class);
+        let stem = self.stem.clone();
+        // SAFETY(ffi): cursors and types of a live translation unit.
+        unsafe {
+            let spelled = cpp_spelling(clang_getCursorType(definition));
+            let tramp = format!("{prefix}_tramp_{stem}_{}", decl.class);
+            let entry = |k: &dyn std::fmt::Display| format!("{prefix}_cpp_tramp_{stem}_{}_{k}", decl.class);
+            // The entry functions' C types, as the trampoline holds them.
+            let pointer_types: Vec<String> = slots
+                .iter()
+                .enumerate()
+                .map(|(k, slot)| format!("{} (*v{k})(void*{})", slot.result_spelled, slot.params.iter().map(|param| format!(", {}", param.c)).collect::<String>()))
+                .collect();
+            // The trampoline's own members, under the prefix no C++ class uses.
+            let p = ember_branding::SYMBOL_PREFIX;
+            let mut text = String::new();
+            let _ = writeln!(text, "\n/* `[FFI-39]` — the trampoline of `{spelled}`: its named virtuals call the Ember object it was made for. */");
+            let _ = writeln!(text, "struct {tramp} final : {spelled} {{");
+            let _ = writeln!(text, "    void* {p}_self;\n    void (*{p}_deleted)(void*);");
+            for pointer in &pointer_types {
+                let _ = writeln!(text, "    {};", pointer.replacen("(*v", &format!("(*{p}_v"), 1));
+            }
+            let _ = writeln!(text, "    bool {p}_cpp_deleting = false;");
+            let mut parameters = vec!["void* self".to_string(), "void (*deleted)(void*)".to_string()];
+            parameters.extend(pointer_types.iter().cloned());
+            let mut initialisers = vec![format!("{spelled}(static_cast<A&&>(a)...)"), format!("{p}_self(self)"), format!("{p}_deleted(deleted)")];
+            initialisers.extend((0..slots.len()).map(|k| format!("{p}_v{k}(v{k})")));
+            let _ = writeln!(text, "    template <class... A>\n    explicit {tramp}({}, A&&... a) : {} {{}}", parameters.join(", "), initialisers.join(", "));
+            for (k, slot) in slots.iter().enumerate() {
+                let declared: Vec<&str> = slot.params.iter().map(|param| param.declaration.as_str()).collect();
+                let to_ember: String = slot.params.iter().map(|param| format!(", {}", param.to_ember)).collect();
+                let locals: Vec<&str> = slot.params.iter().map(|param| param.local.as_str()).collect();
+                let fallback = if slot.pure { "std::abort();".to_string() } else { format!("return {spelled}::{}({});", slot.name, locals.join(", ")) };
+                let _ = writeln!(
+                    text,
+                    "    {} {}({}){} noexcept override {{ if ({p}_self != nullptr) return {p}_v{k}({p}_self{to_ember}); {fallback} }}",
+                    slot.result_spelled,
+                    slot.name,
+                    declared.join(", "),
+                    if slot.constant { " const" } else { "" }
+                );
+            }
+            let _ = writeln!(
+                text,
+                "    ~{tramp}() override {{ if ({p}_self != nullptr) {{ void* self = {p}_self; {p}_self = nullptr; {p}_cpp_deleting = true; {p}_deleted(self); }} }}\n}};"
+            );
+            self.shim.push_str(&text);
+
+            // The Ember side's raw declarations, entries and class.
+            let mut raw = String::new();
+            let mut body = String::new();
+            let fn_types: Vec<String> = slots
+                .iter()
+                .map(|slot| {
+                    let params: String = slot.params.iter().map(|param| format!(", {}", param.ty.ember)).collect();
+                    let result = slot.result.as_ref().map(|ty| format!(" -> {}", ty.ember)).unwrap_or_default();
+                    format!("extern \"C\" fn(*mut u8{params}){result}")
+                })
+                .collect();
+            let entries: Vec<String> = (0..slots.len()).map(|k| entry(&k)).collect();
+            let deleted = entry(&"deleted");
+            // Each constructor: the default one is `init`, any other an `ember_cpp_init_<k>`;
+            // a class that declares none has the implicit default one.
+            let mut ctors: Vec<Option<CXCursor>> = children(definition)
+                .into_iter()
+                .filter(|child| {
+                    kind(*child) == CXCursor_Constructor
+                        && clang_getCXXAccessSpecifier(*child) != CX_CXXPrivate
+                        && clang_getCursorAvailability(*child) != CXAvailability_NotAvailable
+                        && clang_CXXConstructor_isCopyConstructor(*child) == 0
+                        && clang_CXXConstructor_isMoveConstructor(*child) == 0
+                })
+                .map(Some)
+                .collect();
+            let declares_any = children(definition).into_iter().any(|child| kind(child) == CXCursor_Constructor);
+            if !declares_any {
+                ctors.push(None);
+            }
+            let default_at = ctors.iter().position(|ctor| ctor.is_none_or(|ctor| clang_CXXConstructor_isDefaultConstructor(ctor) != 0));
+            let init_at = default_at.unwrap_or(0);
+            for (j, ctor) in ctors.iter().enumerate() {
+                // A default constructor is called with no arguments, its own defaults applying.
+                let mut params: Vec<(String, CType, String, String)> = Vec::new();
+                if let Some(ctor) = ctor.filter(|_| Some(j) != default_at) {
+                    let ty = clang_getCursorType(ctor);
+                    for index in 0..clang_Cursor_getNumArguments(ctor).max(0) as u32 {
+                        let argument = clang_Cursor_getArgument(ctor, index);
+                        let written = spelling(argument);
+                        let param = if written.is_empty() { format!("_{index}") } else { ident(&written) };
+                        match self.cpp_parameter(clang_getArgType(ty, index), &format!("a{index}")) {
+                            Ok((c_type, declaration, pass)) => params.push((param, c_type, declaration, pass)),
+                            Err(reason) => {
+                                self.skip(ctor, &format!("{class}.init"), tagged(Some("E5031"), &format!("parameter `{param}`"), &reason));
+                                params.clear();
+                                break;
+                            }
+                        }
+                    }
+                    if params.len() != clang_Cursor_getNumArguments(ctor).max(0) as usize {
+                        continue;
+                    }
+                }
+                let thunk = format!("{prefix}_cpp_{stem}_{}", self.thunks);
+                self.thunks += 1;
+                let declared: String = params.iter().map(|(_, _, declaration, _)| format!(", {declaration}")).collect();
+                let passed: String = params.iter().map(|(_, _, _, pass)| format!(", {pass}")).collect();
+                let entry_args: String = (0..slots.len()).map(|k| format!(", v{k}")).collect();
+                let _ = writeln!(
+                    self.shim,
+                    "extern \"C\" {spelled}* {thunk}({}{declared}) noexcept {{ try {{ return new {tramp}(self, deleted{entry_args}{passed}); }} catch (...) {{ crossed(\"the constructor of {spelled}\"); }} }}",
+                    parameters.join(", ")
+                );
+                let construct = format!("{prefix}_raw_{class}_make_{j}");
+                let mut raw_params = vec!["object: *mut u8".to_string(), "deleted: extern \"C\" fn(*mut u8)".to_string()];
+                raw_params.extend(fn_types.iter().enumerate().map(|(k, ty)| format!("v{k}: {ty}")));
+                raw_params.extend(params.iter().map(|(param, ty, _, _)| if wrapped(ty) { format!("{param}: {}", ty.ember) } else { format!("{}{param}: {}", ty.mode, ty.ember) }));
+                let _ = writeln!(raw, "    @ffi(link_name=\"{thunk}\")\n    fn {construct}({}) -> *mut {opaque}", raw_params.join(", "));
+                let init = if j == init_at { "init".to_string() } else { format!("{prefix}_cpp_init_{j}") };
+                let wrapper_params: Vec<String> = params.iter().map(|(param, ty, _, _)| wrapper_param(param, ty)).collect();
+                let arguments: String = params.iter().map(|(param, ty, _, _)| format!(", {}", wrapper_argument(param, ty))).collect();
+                let receiver = if wrapper_params.is_empty() { "mut self".to_string() } else { format!("mut self, {}", wrapper_params.join(", ")) };
+                let _ = write!(
+                    body,
+                    "\n    pub fn {init}({receiver}):\n        unsafe:  # SAFETY: the C++ constructor takes this function's own arguments, and the object's address, which the trampoline keeps without a count\n            self.{prefix}_cpp_base = {prefix}_cpp_base_{class}(object = {construct}({prefix}_cpp_address(self), {deleted}{}{arguments}))\n",
+                    entries.iter().map(|entry| format!(", {entry}")).collect::<String>()
+                );
+            }
+            // The named virtuals: Ember's virtual methods, and the entries the trampoline calls.
+            let mut functions = String::new();
+            for (k, slot) in slots.iter().enumerate() {
+                let wrapper_params: Vec<String> = slot.params.iter().map(|param| wrapper_param(&param.name, &param.ty)).collect();
+                let names: Vec<String> = slot.params.iter().map(|param| param.name.clone()).collect();
+                let result = slot.result.as_ref().map(|ty| format!(" -> {}", ty.ember)).unwrap_or_default();
+                let receiver = if wrapper_params.is_empty() { "self".to_string() } else { format!("self, {}", wrapper_params.join(", ")) };
+                let name = ident(&slot.name);
+                if slot.pure {
+                    let _ = write!(body, "\n    pub virtual fn {name}({receiver}){result}:\n        panic(\"`{spelled}::{}` is pure virtual: a class deriving from `{class}` overrides it\")\n", slot.name);
+                } else {
+                    let helper = format!("{prefix}_cpp_base_{}", slot.name);
+                    let _ = write!(
+                        body,
+                        "\n    pub virtual fn {name}({receiver}){result}:\n        unsafe:  # SAFETY: the C++ class's own implementation; the overlay's trampoline entry asserts its virtuals\n            {}self.{helper}({})\n",
+                        if slot.result.is_some() { "return " } else { "" },
+                        names.join(", ")
+                    );
+                    // The base implementation, reached past the trampoline: an exception that would
+                    // leave it for Ember aborts ([FFI-39e]).
+                    let thunk = format!("{prefix}_cpp_{stem}_{}", self.thunks);
+                    self.thunks += 1;
+                    let declared: String = slot.params.iter().map(|param| format!(", {} {}", param.c, param.local)).collect();
+                    let passed: Vec<&str> = slot.params.iter().map(|param| param.to_base.as_str()).collect();
+                    let _ = writeln!(
+                        self.shim,
+                        "extern \"C\" {} {thunk}({}{spelled}* self{declared}) noexcept {{ try {{ return self->{spelled}::{}({}); }} catch (...) {{ crossed(\"{spelled}::{}\"); }} }}",
+                        slot.result_spelled,
+                        if slot.constant { "const " } else { "" },
+                        slot.name,
+                        passed.join(", "),
+                        slot.name
+                    );
+                    let member = if slot.constant { Member::Method } else { Member::MutMethod };
+                    self.functions.push(Function {
+                        name: helper,
+                        params: slot.params.iter().map(|param| (param.name.clone(), param.ty.clone())).collect(),
+                        result: slot.result.clone(),
+                        link_name: Some(thunk),
+                        abi: "C",
+                        policy: Policy::Direct,
+                        owner: Some((class.clone(), member)),
+                        out: false,
+                        namespace: self.writing.clone(),
+                    });
+                }
+                let entry_params: String = slot.params.iter().map(|param| format!(", {}: {}", param.local, param.ty.ember)).collect();
+                let arguments: Vec<String> = slot
+                    .params
+                    .iter()
+                    .map(|param| match param.ty.mode.as_str() {
+                        "ref " => format!("{prefix}_cpp_ref({})", param.local),
+                        "ref mut " => format!("{prefix}_cpp_ref_mut({})", param.local),
+                        _ => param.local.clone(),
+                    })
+                    .collect();
+                let _ = write!(
+                    functions,
+                    "## `[FFI-39]` — `{spelled}::{}` as its trampoline calls it: the Ember object's own method, virtually.\nextern \"C\" fn {}(object: *mut u8{entry_params}){result}:\n    unsafe:  # SAFETY: the trampoline passes the address of the object it was made for, which lives while C++ calls it\n        {}{prefix}_cpp_handle[{class}](object).{name}({})\n\n",
+                    slot.name,
+                    entries[k],
+                    if slot.result.is_some() { "return " } else { "" },
+                    arguments.join(", ")
+                );
+            }
+            if decl.foreign {
+                let _ = write!(
+                    functions,
+                    "## `[FFI-17d]` — a foreign `delete` of the C++ object (`owner=\"foreign\"`): the Ember object ends with the handle C++ was given.\nextern \"C\" fn {deleted}(object: *mut u8):\n    unsafe:  # SAFETY: C++ deletes the object it was given, whose count is the one it holds\n        _ = {prefix}_cpp_adopt[{class}](object)\n\n"
+                );
+            } else {
+                let _ = write!(
+                    functions,
+                    "## `[FFI-17d]` — a foreign `delete` of an object Ember owns (`owner=\"ember\"`).\nextern \"C\" fn {deleted}(_object: *mut u8):\n    panic(\"a foreign `delete` of a `{class}`, which Ember owns: its trampoline declares `owner=\\\"ember\\\"` [FFI-17d]\")\n\n"
+                );
+            }
+            // The C++ object's end: after the Ember fields, by the base field's `drop` ([FFI-17c]).
+            let destroy_thunk = format!("{prefix}_cpp_{stem}_{}", self.thunks);
+            self.thunks += 1;
+            let _ = writeln!(
+                self.shim,
+                "extern \"C\" void {destroy_thunk}({spelled}* object) noexcept {{ auto* made = static_cast<{tramp}*>(object); if (made->{prefix}_cpp_deleting) return; made->{prefix}_self = nullptr; delete made; }}"
+            );
+            let destroy = format!("{prefix}_raw_{class}_destroy");
+            let _ = writeln!(raw, "    @ffi(link_name=\"{destroy_thunk}\")\n    fn {destroy}(object: *mut {opaque})");
+            let mut item = String::new();
+            let _ = write!(
+                item,
+                "## `[FFI-39]`, `[FFI-17c]` — the C++ object a `{class}` owns, deleted when its Ember fields have been dropped.\nstruct {prefix}_cpp_base_{class}:\n    object: *mut {opaque}\n\n    fn drop(mut self):\n        if not self.object.is_null():\n            unsafe:  # SAFETY: the C++ object this Ember object made, deleted once\n                {destroy}(self.object)\n\n"
+            );
+            let _ = write!(
+                item,
+                "## `[FFI-39]` — `{spelled}`, which an Ember class may derive from: its named virtuals are virtual methods.\npub open class {class}:\n    {prefix}_cpp_base: {prefix}_cpp_base_{class} = {prefix}_cpp_base_{class}(object = null[*mut {opaque}]())\n{body}\n"
+            );
+            item.push_str(&functions);
+            let _ = write!(item, "unsafe extern \"C\":\n{raw}");
+            self.push(&decl.class, Kind::Class, item);
+            self.trampolines.push(Trampoline { class: decl.class.clone(), opaque: opaque.to_string(), default_init: default_at.is_some(), unnamed_virtuals });
         }
     }
 
     /// `[FFI-40]`, `[FFI-41]` — what a method of the class `owner` is: a static one an associated
     /// function, a `const` one `self` (unless the class has a `mutable` member, `[FFI-40a]`), any
-    /// other `mut self`; `None` for an operator (`W5002`) and an `&&`-qualified one (`W5033`).
+    /// other `mut self`; `None` for an `&&`-qualified one (`W5033`).
     fn method_member(&mut self, method: CXCursor, owner: &str, mutable_state: bool) -> Option<Member> {
         let name = spelling(method);
         // SAFETY(ffi): a live method cursor.
         unsafe {
-            if name.starts_with("operator") {
-                self.skip(method, &format!("{owner}.{name}"), "an operator (`[FFI-42]`'s operator interfaces are not built yet)");
-                return None;
-            }
             if clang_Type_getCXXRefQualifier(clang_getCursorType(method)) == CXRefQualifier_RValue {
                 let at = self.at(method);
                 self.rvalue_members.push(Skipped { name: format!("{owner}.{name}"), reason: "an `&&`-qualified member function, which only a temporary may call".to_string(), at });
@@ -1634,23 +2618,38 @@ impl Writer {
             let mut params = Vec::new();
             let mut declared = Vec::new();
             let mut passed = Vec::new();
-            for index in 0..clang_Cursor_getNumArguments(cursor).max(0) as u32 {
+            // `[FFI-42]` — a free operator as a method: its first operand is the receiver.
+            let free_operator = member.is_some() && kind(cursor) == CXCursor_FunctionDecl;
+            // `[FFI-11f]` — the parameters declared `[[clang::lifetimebound]]`, with their modes.
+            let mut lifetime_bound: Vec<(String, String)> = Vec::new();
+            for index in u32::from(free_operator)..clang_Cursor_getNumArguments(cursor).max(0) as u32 {
                 let argument = clang_Cursor_getArgument(cursor, index);
                 let written = spelling(argument);
                 let param = if written.is_empty() { format!("_{index}") } else { ident(&written) };
                 let (c_type, declaration, pass) = self
                     .cpp_parameter(clang_getCursorType(argument), &format!("a{index}"))
-                    .map_err(|reason| format!("[E5031] parameter `{param}`: {reason}"))?;
+                    .map_err(|reason| tagged(Some("E5031"), &format!("parameter `{param}`"), &reason))?;
+                if lifetimebound(argument) {
+                    lifetime_bound.push((param.clone(), c_type.mode.clone()));
+                }
                 params.push((param, c_type));
                 declared.push(declaration);
                 passed.push(pass);
             }
             let policy = self.policy(cursor);
             let result_ty = clang_getResultType(ty);
+            // `[FFI-42]` — a compound assignment's `T&` result is dropped: `AddAssign.add_assign`
+            // and the others give nothing back.
+            let discarded = name.ends_with("_assign") && spelling(cursor).starts_with("operator");
             let arguments = passed.join(", ");
             let call = match member {
                 None => format!("{}({arguments})", self.callee.clone().unwrap_or_else(|| qualified_name(cursor))),
                 Some((_, Member::Static, class)) => format!("::{class}::{}({arguments})", spelling(cursor)),
+                // `[FFI-42]` — a free operator, used as C++ writes it, which finds it as C++ would.
+                Some((_, Member::Method | Member::MutMethod, _)) if free_operator => {
+                    let operator = spelling(cursor).trim_start_matches("operator").trim().to_string();
+                    if arguments.is_empty() { format!("{operator}(*self)") } else { format!("(*self) {operator} ({arguments})") }
+                }
                 Some((_, Member::Method | Member::MutMethod, _)) => format!("self->{}({arguments})", spelling(cursor)),
                 Some((_, Member::Constructor, class)) => format!("{class}({arguments})"),
                 Some((_, Member::BoxedConstructor, class)) => format!("new {class}({arguments})"),
@@ -1661,6 +2660,12 @@ impl Writer {
                 Some((_, Member::MutMethod | Member::Destructor, class)) => declared.insert(0, format!("{class}* self")),
                 _ => {}
             }
+            // `[FFI-17a]` — a standard-library result's bridge type, if it is one.
+            let bridged_result = if discarded || result_ty.kind == CXType_Void || member.is_some_and(|(_, member, _)| matches!(member, Member::Constructor | Member::BoxedConstructor)) {
+                None
+            } else {
+                self.bridge(clang_getCanonicalType(result_ty))
+            };
             let (result, returned, call) = match (member, result_ty.kind) {
                 (Some((owner, Member::Constructor, class)), _) => {
                     let ember = CType { ember: owner.to_string(), pointee: None, char_pointer: false, c: class.to_string(), mode: String::new() };
@@ -1671,10 +2676,26 @@ impl Writer {
                     (Some(ember), Some(format!("{class}*")), call)
                 }
                 (_, CXType_Void) => (None, None, call),
+                _ if discarded => (None, None, call),
+                // `[FFI-17a]` — a standard-library value: moved to the heap (or, for a
+                // `std::unique_ptr`, given up) for its bridge type to own.
+                _ if bridged_result.is_some() => {
+                    let bridge = bridged_result.clone().into_iter().next().expect("a bridge").map_err(|reason| tagged(None, "its result", &reason))?;
+                    match &bridge.unique {
+                        Some(inner) => {
+                            let ember = CType { ember: format!("*mut {inner}"), pointee: Some((bridge.ember.clone(), false)), char_pointer: false, c: "void*".to_string(), mode: format!("bridge {}", bridge.make) };
+                            (Some(ember), Some("void*".to_string()), format!("({call}).release()"))
+                        }
+                        None => {
+                            let ember = CType { ember: "*mut u8".to_string(), pointee: Some((bridge.ember.clone(), false)), char_pointer: false, c: "void*".to_string(), mode: format!("bridge {}", bridge.make) };
+                            (Some(ember), Some("void*".to_string()), format!("static_cast<void*>(new {}({call}))", bridge.spelled))
+                        }
+                    }
+                }
                 (_, CXType_LValueReference) => {
                     let pointee = clang_getPointeeType(result_ty);
                     let constant = clang_isConstQualifiedType(pointee) != 0;
-                    let inner = self.ty(pointee, true).map_err(|reason| format!("its result: {reason}"))?;
+                    let inner = self.ty(pointee, true).map_err(|reason| tagged(None, "its result", &reason))?;
                     let pointer = format!("*{}{inner}", if constant { "" } else { "mut " });
                     let c = type_spelling(result_ty);
                     // `[FFI-40]` — a method's `T&` result is a reference borrowing its receiver:
@@ -1687,11 +2708,23 @@ impl Writer {
                         _ => "",
                     }
                     .to_string();
+                    // `[FFI-11f]` — a result `[[clang::lifetimebound]]` ties to a parameter the thunk
+                    // takes by address (not one it copies): a `ref` borrowing it too, an asserted fact.
+                    let by_address = |mode: &str| matches!(mode, "ref " | "ref mut " | "mut " | "bridged " | "bridged mut " | "tramp ");
+                    let bound: Vec<&(String, String)> = lifetime_bound.iter().filter(|(_, mode)| by_address(mode)).collect();
+                    let method = matches!(member, Some((_, Member::Method | Member::MutMethod, _)));
+                    let mode = if bound.is_empty() {
+                        mode
+                    } else {
+                        let mutable = !constant && !matches!(member, Some((_, Member::Method, _))) && bound.iter().all(|(_, mode)| mode.contains("mut"));
+                        let from: Vec<&str> = method.then_some("self").into_iter().chain(bound.iter().map(|(param, _)| param.as_str())).collect();
+                        format!("ref{} from {}", if mutable { " mut" } else { "" }, from.join(", "))
+                    };
                     let ember = CType { ember: pointer, pointee: Some((inner, constant)), char_pointer: false, c, mode };
                     (Some(ember), Some(format!("{}*", cpp_spelling(pointee))), format!("&{call}"))
                 }
                 _ => {
-                    let mapped = self.c_type(result_ty, false).map_err(|reason| format!("its result: {reason}"))?;
+                    let mapped = self.c_type(result_ty, false).map_err(|reason| tagged(None, "its result", &reason))?;
                     (Some(mapped), Some(cpp_spelling(result_ty)), call)
                 }
             };
@@ -1703,7 +2736,10 @@ impl Writer {
             // A class by value is written through a pointer the caller gives: MSVC returns a class
             // with a constructor in memory where C returns a struct of its size in registers.
             let class_result = matches!(member, Some((_, Member::Constructor, _)))
-                || (result.is_some() && clang_getCanonicalType(result_ty).kind == CXType_Record && !matches!(member, Some((_, Member::BoxedConstructor, _))));
+                || (result.is_some()
+                    && clang_getCanonicalType(result_ty).kind == CXType_Record
+                    && !matches!(member, Some((_, Member::BoxedConstructor, _)))
+                    && !result.as_ref().is_some_and(|ty| ty.mode.starts_with("bridge ")));
             let (returned, call) = match (class_result, returned) {
                 (true, Some(class)) => {
                     declared.push(format!("{class}* out"));
@@ -1736,6 +2772,48 @@ impl Writer {
         // SAFETY(ffi): types of a live translation unit.
         unsafe {
             let c = type_spelling(ty);
+            // `[FFI-17a]` — a standard-library value by reference or by value: the bridge value,
+            // whose C++ object the wrapper passes on (`bridged`): a `const T&` or a `T` borrowed
+            // (the callee copies it), a `T&` lent mutably, a `T&&` given up.
+            let referenced = matches!(ty.kind, CXType_LValueReference | CXType_RValueReference);
+            if referenced || clang_getCanonicalType(ty).kind == CXType_Record {
+                let value = if referenced { clang_getPointeeType(ty) } else { ty };
+                // `[FFI-17a]` — `E5030`: a `std::function` is never a parameter type.
+                if std_template(clang_getCanonicalType(value)).as_deref() == Some("function") {
+                    return Err(format!(
+                        "[E5030] `{}`: a `std::function` is never a parameter type: take a function pointer and a context, or wrap the call in C++ ([FFI-17a])",
+                        cpp_spelling(clang_getCanonicalType(value))
+                    ));
+                }
+                if let Some(found) = self.bridge(clang_getCanonicalType(value)) {
+                    let bridge = found?;
+                    if bridge.unique.is_some() {
+                        return Err(format!("`{}`: a `std::unique_ptr` crosses as a result only", cpp_spelling(value)));
+                    }
+                    let constant = clang_isConstQualifiedType(value) != 0;
+                    let (mode, pass) = match ty.kind {
+                        CXType_LValueReference if !constant => ("bridged mut ", format!("*static_cast<{}*>({name})", bridge.spelled)),
+                        CXType_RValueReference => ("bridged owned ", format!("std::move(*static_cast<{}*>({name}))", bridge.spelled)),
+                        _ => ("bridged ", format!("*static_cast<const {}*>({name})", bridge.spelled)),
+                    };
+                    let ember = CType { ember: "*mut u8".to_string(), pointee: Some((bridge.ember.clone(), mode == "bridged ")), char_pointer: false, c: c.clone(), mode: mode.to_string() };
+                    return Ok((ember, format!("void* {name}"), pass));
+                }
+            }
+            // `[FFI-39]` — a `T*` or `T&` of a class with a trampoline: the Ember object, whose C++
+            // object the wrapper passes on (`tramp`).
+            if matches!(ty.kind, CXType_LValueReference | CXType_Pointer) {
+                let pointee = clang_getPointeeType(ty);
+                let declaration = clang_getTypeDeclaration(clang_getCanonicalType(pointee));
+                let named = nested_name(declaration);
+                if clang_getCanonicalType(pointee).kind == CXType_Record && self.trampoline_decls.iter().any(|decl| decl.class == named) {
+                    let opaque = self.ty(pointee, true)?;
+                    let constant = clang_isConstQualifiedType(pointee) != 0;
+                    let pass = if ty.kind == CXType_LValueReference { format!("*{name}") } else { name.to_string() };
+                    let ember = CType { ember: format!("*{}{opaque}", if constant { "" } else { "mut " }), pointee: Some((ident(&named), constant)), char_pointer: false, c: c.clone(), mode: "tramp ".to_string() };
+                    return Ok((ember, format!("{}* {name}", cpp_spelling(pointee)), pass));
+                }
+            }
             let plain = |ember: String, mode: &str| CType { ember, pointee: None, char_pointer: false, c: c.clone(), mode: mode.to_string() };
             match ty.kind {
                 CXType_LValueReference => {
@@ -1815,7 +2893,7 @@ impl Writer {
                             CXCursor_Constructor if clang_CXXConstructor_isCopyConstructor(*child) == 0 && clang_CXXConstructor_isMoveConstructor(*child) == 0 => {
                                 "a constructor of a class template's instantiation: no C++ expression names one to take its types from"
                             }
-                            CXCursor_CXXMethod if member.starts_with("operator") => "an operator (`[FFI-42]`'s operator interfaces are not built yet)",
+                            CXCursor_CXXMethod if member.starts_with("operator") => "an operator of a class template's instantiation: the import file names no address of it",
                             CXCursor_CXXMethod if declared.iter().filter(|other| kind(**other) == CXCursor_CXXMethod && spelling(**other) == member).count() > 1 => {
                                 "an overload of a class template's instantiation: its address names no one of them"
                             }
@@ -2115,6 +3193,9 @@ impl Writer {
             rvalue_members: self.rvalue_members,
             namespaces: self.namespaces,
             ns_uses: self.ns_uses,
+            trampolines: self.trampolines,
+            operators: self.operators,
+            policy_changes: Vec::new(),
         }
     }
 }
@@ -2288,6 +3369,8 @@ fn cpp_facts(unit: &Unit, main: &Path, include: &str, args: &[String], in_header
                         if !spelled.contains('(') {
                             out.push((true, usr(child), format!("__is_trivially_copyable({spelled}) && __is_standard_layout({spelled})")));
                             out.push((true, format!("movable {}", usr(child)), format!("__is_constructible({spelled}, {spelled}&&)")));
+                            out.push((true, format!("virtual_dtor {}", usr(child)), format!("__has_virtual_destructor({spelled})")));
+                            out.push((true, format!("final {}", usr(child)), format!("__is_final({spelled})")));
                         }
                         gather(child, in_header, out);
                     }
@@ -2330,9 +3413,11 @@ fn cpp_prelude(stem: &str) -> String {
     let prefix = ember_branding::SYMBOL_PREFIX;
     format!(
         r#"#include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <memory>
 #include <new>
 #include <string>
 #include <typeinfo>
@@ -2361,6 +3446,12 @@ thread_local std::string caught_type, caught_what;
     catch (...) {{ caught_type = "an exception that is no std::exception"; caught_what.clear(); }}
 }}
 template <class T> [[maybe_unused]] T zero() noexcept {{ union {{ unsigned char bytes[sizeof(T)]; T value; }} none = {{}}; return none.value; }}
+[[noreturn]] [[maybe_unused]] void crossed(const char* where) noexcept {{
+    caught();
+    std::fprintf(stderr, "a C++ exception would cross into Ember from %s: %s: %s [FFI-39e]\n", where, caught_type.c_str(), caught_what.c_str());
+    std::fflush(stderr);
+    std::abort();
+}}
 }}
 
 extern "C" const char* {prefix}_cpp_{stem}_error_type(void) noexcept {{ return caught_type.c_str(); }}
@@ -2618,6 +3709,9 @@ pub struct Known {
     implementations: HashMap<(PathBuf, String), Span>,
     /// `[FFI-30]` — each C declaration an import wrote, by Clang's USR.
     shared: HashMap<String, Shared>,
+    /// `[BLD-FFI-1b]` — the first import whose flags name the runtime: its header, those flags, and
+    /// what they amount to, which every other import's must agree with.
+    runtime: Option<(String, Vec<&'static str>, (&'static str, bool, u8))>,
 }
 
 /// A module `import c` wrote: its path, its declarations, and what else the import found.
@@ -2682,7 +3776,7 @@ pub fn load(
                     .note("the C++ project's flags are read from CMake's File API [FFI-50]"));
                 return None;
             };
-            match cmake_target(&base.join(&build_dir), &target) {
+            match cmake_target(&base.join(&build_dir), &target, "CXX") {
                 Ok(found) => {
                     options.defines.extend(found.defines);
                     options.include_paths.extend(found.includes);
@@ -2752,6 +3846,7 @@ pub fn load(
         binding: bound.as_str(),
         cpp: project.as_ref().map(|(standard, ..)| standard.as_str()),
         instantiate: &options.instantiate,
+        trampolines: &[],
     };
     // `[FFI-7]` — the overlays are part of what the record is for.
     let overlay_text = options
@@ -2760,6 +3855,9 @@ pub fn load(
         .map(|(written, _)| std::fs::read_to_string(base.join(written)).unwrap_or_default())
         .collect::<Vec<_>>()
         .join("\n\0\n");
+    // `[FFI-39]` — the classes the overlays give a trampoline.
+    let trampolines = if cpp { trampoline_decls(&overlay_text) } else { Vec::new() };
+    let config = Config { trampolines: &trampolines, ..config };
     let mut cached = false;
     let imported = match import_cached(&config, &overlay_text, &mut cached) {
         Ok((imported, _)) => {
@@ -2796,7 +3894,22 @@ pub fn load(
     }
     // `[FFI-17b]` — a template is not reported: it is imported only as its instantiations, and
     // naming it is `E5055`. The code a reason carries for the type checker is not shown here.
-    for skipped in imported.skipped.iter().filter(|skipped| !skipped.reason.starts_with("[E5055]")) {
+    // `[FFI-39]` — a class an overlay gives a trampoline that cannot have one.
+    for skipped in imported.skipped.iter().filter(|skipped| trampolines.iter().any(|decl| decl.class == skipped.name)) {
+        let (code, why) = match skipped.reason.split_once("] ") {
+            Some(("[E5056", why)) => (codes::E5056, why),
+            Some(("[E5057", why)) => (codes::E5057, why),
+            Some(("[E5059", why)) => (codes::E5059, why),
+            Some(("[E5034", why)) => (codes::E5034, why),
+            Some((_, why)) => (codes::E5031, why),
+            None => (codes::E5031, skipped.reason.as_str()),
+        };
+        sink.emit(
+            Diagnostic::error(code, span, format!("`{}` from `{shown}` cannot have a trampoline: {why}", skipped.name))
+                .note(format!("declared at {}; its overlay entry declares `@ffi(trampoline, …)` [FFI-39]", skipped.at)),
+        );
+    }
+    for skipped in imported.skipped.iter().filter(|skipped| !skipped.reason.starts_with("[E5055]") && !trampolines.iter().any(|decl| decl.class == skipped.name)) {
         let reason = skipped.reason.split_once("] ").filter(|(tag, _)| tag.starts_with("[E")).map_or(skipped.reason.as_str(), |(_, rest)| rest);
         let help = if cpp {
             "to use it, wrap it in a C++ function of a header of yours whose types Ember has"
@@ -2939,11 +4052,17 @@ pub fn load(
     let mut c_flags: Vec<String> = flags.to_vec();
     c_flags.extend(include_paths.iter().map(|dir| format!("-I{}", dir.display())));
     c_flags.extend(options.defines.iter().map(|define| format!("-D{define}")));
+    // `[BLD-FFI-1b]` — the runtime switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL` the import's flags
+    // name, which the target inherits and every import must agree on.
+    if let Err(diagnostic) = runtime_agrees(&mut known.runtime, &c_flags, cpp, &shown, span) {
+        sink.emit(diagnostic);
+        return None;
+    }
     let mut identities = vec![("header".to_string(), imported.header.clone())];
     identities.extend(options.overlays.iter().map(|(written, _)| ("overlay".to_string(), base.join(written))));
     let foreign = ember_typeck::ForeignImport {
         backed: Vec::new(),
-        header: shown,
+        header: shown.clone(),
         identities,
         skipped: imported
             .skipped
@@ -2963,6 +4082,13 @@ pub fn load(
             .map(|library| if ember_build::cdylib::is_library_path(library) { base.join(library).to_string_lossy().into_owned() } else { library.clone() })
             .collect(),
         cpp: project.map(|(standard, _, compiler)| (standard, compiler)),
+        trampolines: imported
+            .trampolines
+            .iter()
+            .filter(|found| imported.items.iter().any(|item| item.kind == Kind::Class && item.name == found.class && item.namespace.is_empty()))
+            .map(|found| (ident(&found.class), found.default_init, found.unnamed_virtuals.clone()))
+            .collect(),
+        policy_changes: changed_signatures(&imported, &applied, "", &shown),
     };
     // `[FFI-41]` — each C++ namespace a module under the import's.
     let children = imported
@@ -2985,6 +4111,13 @@ pub fn load(
                     .map(|layout| (layout.name.clone(), layout.size, layout.align, layout.fields.clone()))
                     .collect(),
                 cpp: foreign.cpp.clone(),
+                trampolines: imported
+                    .trampolines
+                    .iter()
+                    .filter(|found| imported.items.iter().any(|item| item.kind == Kind::Class && item.name == found.class && item.namespace == *namespace))
+                    .map(|found| (ident(&found.class), found.default_init, found.unnamed_virtuals.clone()))
+                    .collect(),
+                policy_changes: changed_signatures(&imported, &applied, &namespace.join("::"), &foreign.header),
                 ..Default::default()
             };
             (child, module, foreign)
@@ -3054,6 +4187,88 @@ pub fn build_objects(
     Ok((objects, libraries))
 }
 
+/// `[BLD-FFI-4]` — the link-time optimisation flag a C++ project's GCC or Clang flags give, the last
+/// one written (`-fno-lto` turning it off), which the program's own C inherits.
+pub fn inherited_lto(modules: &[ember_typeck::LoadedModule]) -> Option<&'static str> {
+    const KNOWN: [&str; 4] = ["-flto", "-flto=thin", "-flto=full", "-flto=auto"];
+    modules
+        .iter()
+        .filter_map(|module| module.foreign.as_ref().filter(|foreign| foreign.cpp.is_some()))
+        .find_map(|foreign| {
+            let last = foreign.flags.iter().rev().find(|flag| flag.starts_with("-flto") || *flag == "-fno-lto")?;
+            Some(KNOWN.into_iter().find(|known| known == last).unwrap_or(if last == "-fno-lto" { "" } else { "-flto" }))
+        })
+        .filter(|flag| !flag.is_empty())
+}
+
+/// `[BLD-FFI-1b]` — the MSVC runtime-library switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL` the build
+/// inherits, byte for byte, from the projects of its imports (a C++ project's flags and defines, or
+/// the `[c]` flags a C import is compiled with); each import agreed with the others when it was
+/// loaded (`runtime_agrees`).
+pub fn inherited_runtime(modules: &[ember_typeck::LoadedModule], target: Option<(&str, &[String])>) -> Result<Vec<&'static str>, Diagnostic> {
+    let mut first = None;
+    // `[BLD-FFI-2]` — the CMake target whose flags the build takes, first.
+    if let Some((name, flags)) = target {
+        runtime_agrees(&mut first, flags, false, &format!("CMake target `{name}`"), Span::DUMMY)?;
+    }
+    for module in modules {
+        let Some(foreign) = module.foreign.as_ref().filter(|foreign| !foreign.shim.is_empty()) else { continue };
+        runtime_agrees(&mut first, &foreign.flags, foreign.cpp.is_some(), &foreign.header, Span::DUMMY)?;
+    }
+    Ok(first.map(|(_, flags, _)| flags).unwrap_or_default())
+}
+
+/// `[BLD-FFI-1b]` — whether an import's flags agree on the runtime with the first import's that
+/// named it (`first`, which the first to name it becomes): every import that names any of the
+/// runtime switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL` must name the same, the implied ones
+/// included (`/MDd` defines `_DEBUG`, which makes the iterator debug level 2), or the target's
+/// translation units would disagree (`E9020`). A C++ project whose flags pass a response file,
+/// which may name them, leaves its runtime undetermined (`E9021`).
+fn runtime_agrees(first: &mut Option<(String, Vec<&'static str>, (&'static str, bool, u8))>, flags: &[String], cpp: bool, header: &str, span: Span) -> Result<(), Diagnostic> {
+    if cpp && let Some(file) = flags.iter().find(|flag| flag.starts_with('@')) {
+        return Err(Diagnostic::error(codes::E9021, span, format!("the C++ runtime of `{header}` could not be determined: its project's flags pass the response file `{}`", &file[1..]))
+            .note("the MSVC runtime switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL` change the C++ standard library's layout and heap, and the build inherits them byte for byte [BLD-FFI-1b]")
+            .help("write the project's runtime switch (`/MD`, `/MDd`, `/MT` or `/MTd`) and those defines in its `[cpp.<project>]` flags"));
+    }
+    let (named, meaning) = runtime_flags(flags);
+    if named.is_empty() {
+        return Ok(());
+    }
+    match first {
+        None => *first = Some((header.to_string(), named, meaning)),
+        Some((before, written, was)) if *was != meaning => {
+            return Err(Diagnostic::error(codes::E9020, span, format!("the imports of `{before}` and `{header}` disagree on the C++ runtime"))
+                .note(format!("`{before}` is compiled with `{}`, and `{header}` with `{}`", written.join(" "), named.join(" ")))
+                .note("one target's translation units are compiled with one runtime switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL`, which change the C++ standard library's layout [BLD-FFI-1b]")
+                .help("build the C++ projects with one runtime, and name it in each one's flags"));
+        }
+        Some(_) => {}
+    }
+    Ok(())
+}
+
+/// `[BLD-FFI-1b]` — what of the runtime a list of MSVC flags names: the flags as the build passes
+/// them on (`/MDd`, `/D_DEBUG`, `/D_ITERATOR_DEBUG_LEVEL=1`; `-` forms read too, the last switch
+/// winning as it does for cl), and what they amount to: the switch, whether `_DEBUG` is defined, and
+/// the iterator debug level.
+fn runtime_flags(flags: &[String]) -> (Vec<&'static str>, (&'static str, bool, u8)) {
+    const SWITCHES: [&str; 4] = ["/MD", "/MDd", "/MT", "/MTd"];
+    const LEVELS: [&str; 3] = ["/D_ITERATOR_DEBUG_LEVEL=0", "/D_ITERATOR_DEBUG_LEVEL=1", "/D_ITERATOR_DEBUG_LEVEL=2"];
+    let plain = |flag: &String| flag.replacen('-', "/", 1);
+    let switch = flags.iter().rev().map(plain).find_map(|flag| SWITCHES.into_iter().find(|known| *known == flag));
+    let debug = flags.iter().map(plain).any(|flag| flag == "/D_DEBUG" || flag == "/D_DEBUG=1");
+    let level = flags.iter().rev().map(plain).find_map(|flag| LEVELS.into_iter().find(|known| *known == flag));
+    let mut named: Vec<&'static str> = switch.into_iter().collect();
+    if debug {
+        named.push("/D_DEBUG");
+    }
+    named.extend(level);
+    let shown = switch.unwrap_or("/MD");
+    let debugging = debug || shown.ends_with('d');
+    let iterators = level.and_then(|flag| flag.rsplit('=').next()?.parse().ok()).unwrap_or(if debugging { 2 } else { 0 });
+    (named, (shown, debugging, iterators))
+}
+
 /// `[FFI-50]` — one key of a manifest inline table as written: `build_dir` of
 /// `{ build_dir = "build", target = "engine" }`.
 fn manifest_inline(written: &str, key: &str) -> Option<String> {
@@ -3075,35 +4290,20 @@ struct CmakeTarget {
 /// `[FFI-50]` — read `target`'s C++ compile from the File API reply in `build_dir` (its newest
 /// index, the codemodel it names, the target's own reply). With no reply yet, the query that asks
 /// for one is written, and configuring with CMake again makes it.
-fn cmake_target(build_dir: &Path, target: &str) -> Result<CmakeTarget, String> {
-    let api = build_dir.join(".cmake").join("api").join("v1");
-    let reply = api.join("reply");
-    let read = |path: &Path| -> Result<serde_json::Value, String> {
-        let text = std::fs::read_to_string(path).map_err(|error| format!("cannot read `{}`: {error}", path.display()))?;
-        serde_json::from_str(&text).map_err(|error| format!("`{}` is not JSON: {error}", path.display()))
-    };
-    let mut indexes: Vec<PathBuf> = std::fs::read_dir(&reply)
-        .map(|entries| entries.filter_map(Result::ok).map(|entry| entry.path()).filter(|path| path.file_name().is_some_and(|name| name.to_string_lossy().starts_with("index-"))).collect())
-        .unwrap_or_default();
-    indexes.sort();
-    let Some(index) = indexes.last() else {
-        let query = api.join("query");
-        let _ = std::fs::create_dir_all(&query).and_then(|()| std::fs::write(query.join("codemodel-v2"), ""));
-        return Err(format!("`{}` has no CMake File API reply: the query for one is written there now, so configure it with CMake again", build_dir.display()));
-    };
-    let index = read(index)?;
+fn cmake_target(build_dir: &Path, target: &str, language: &str) -> Result<CmakeTarget, String> {
+    let (reply, index) = cmake_reply(build_dir)?;
     let codemodel = index["reply"]["codemodel-v2"]["jsonFile"].as_str().ok_or("the File API reply has no `codemodel-v2`")?;
-    let codemodel = read(&reply.join(codemodel))?;
+    let codemodel = read_json(&reply.join(codemodel))?;
     let target_file = codemodel["configurations"][0]["targets"]
         .as_array()
         .and_then(|targets| targets.iter().find(|entry| entry["name"].as_str() == Some(target)))
         .and_then(|entry| entry["jsonFile"].as_str())
         .ok_or_else(|| format!("the CMake build has no target `{target}`"))?;
-    let target_reply = read(&reply.join(target_file))?;
+    let target_reply = read_json(&reply.join(target_file))?;
     let group = target_reply["compileGroups"]
         .as_array()
-        .and_then(|groups| groups.iter().find(|group| group["language"].as_str() == Some("CXX")))
-        .ok_or_else(|| format!("CMake compiles no C++ for target `{target}`"))?;
+        .and_then(|groups| groups.iter().find(|group| group["language"].as_str() == Some(language)))
+        .ok_or_else(|| format!("CMake compiles no {} for target `{target}`", if language == "CXX" { "C++" } else { language }))?;
     let texts = |key: &str, field: &str| -> Vec<String> {
         group[key].as_array().into_iter().flatten().filter_map(|entry| entry[field].as_str().map(str::to_string)).collect()
     };
@@ -3116,6 +4316,56 @@ fn cmake_target(build_dir: &Path, target: &str) -> Result<CmakeTarget, String> {
         flags: texts("compileCommandFragments", "fragment").iter().flat_map(|fragment| fragment.split_whitespace().map(str::to_string)).collect(),
         standard: group["languageStandard"]["standard"].as_str().map(|standard| format!("c++{standard}")),
     })
+}
+
+/// A JSON file of the File API's reply.
+fn read_json(path: &Path) -> Result<serde_json::Value, String> {
+    let text = std::fs::read_to_string(path).map_err(|error| format!("cannot read `{}`: {error}", path.display()))?;
+    serde_json::from_str(&text).map_err(|error| format!("`{}` is not JSON: {error}", path.display()))
+}
+
+/// `[FFI-50]`, `[BLD-FFI-2]` — the File API reply folder of a CMake build, and its newest index.
+/// With no reply yet, the queries that ask for one (the code model and the toolchains) are written,
+/// and the error says to configure again.
+fn cmake_reply(build_dir: &Path) -> Result<(PathBuf, serde_json::Value), String> {
+    let api = build_dir.join(".cmake").join("api").join("v1");
+    let reply = api.join("reply");
+    let mut indexes: Vec<PathBuf> = std::fs::read_dir(&reply)
+        .map(|entries| entries.filter_map(Result::ok).map(|entry| entry.path()).filter(|path| path.file_name().is_some_and(|name| name.to_string_lossy().starts_with("index-"))).collect())
+        .unwrap_or_default();
+    indexes.sort();
+    let Some(index) = indexes.last() else {
+        let query = api.join("query");
+        let _ = std::fs::create_dir_all(&query).and_then(|()| std::fs::write(query.join("codemodel-v2"), "")).and_then(|()| std::fs::write(query.join("toolchains-v1"), ""));
+        return Err(format!("`{}` has no CMake File API reply: the query for one is written there now, so configure it with CMake again", build_dir.display()));
+    };
+    let index = read_json(index)?;
+    Ok((reply, index))
+}
+
+/// `[BLD-FFI-2]` — `--cc-flags-from-target <target>`: the C compile of a CMake target, as the File
+/// API reply in the CMake build folder `build_dir` gives it: its defines, include folders (made
+/// absolute) and other flags, in the forms cl, clang and gcc all read (`-D`, `-I`).
+pub fn cmake_c_flags(build_dir: &Path, target: &str) -> Result<Vec<String>, String> {
+    let found = cmake_target(build_dir, target, "C")?;
+    Ok(found.defines.iter().map(|define| format!("-D{define}")).chain(found.includes.iter().map(|dir| format!("-I{dir}"))).chain(found.flags).collect())
+}
+
+/// `[BLD-FFI-2]` — the C compiler of a CMake build, by the name `--cc` gives it, from the File API's
+/// toolchains reply: MSVC's `cl` is `msvc`, Clang with MSVC's driver `clang-cl`, other Clang
+/// `clang`, GCC `gcc`. `None` when the reply does not say.
+pub fn cmake_c_compiler(build_dir: &Path) -> Option<&'static str> {
+    let (reply, index) = cmake_reply(build_dir).ok()?;
+    let toolchains = read_json(&reply.join(index["reply"]["toolchains-v1"]["jsonFile"].as_str()?)).ok()?;
+    let compiler = &toolchains["toolchains"].as_array()?.iter().find(|toolchain| toolchain["language"].as_str() == Some("C"))?["compiler"];
+    let stem = Path::new(compiler["path"].as_str().unwrap_or_default()).file_stem().map(|stem| stem.to_string_lossy().to_lowercase()).unwrap_or_default();
+    match compiler["id"].as_str()? {
+        "MSVC" => Some("msvc"),
+        "Clang" | "AppleClang" if stem.starts_with("clang-cl") => Some("clang-cl"),
+        "Clang" | "AppleClang" => Some("clang"),
+        "GNU" => Some("gcc"),
+        _ => None,
+    }
 }
 
 /// `[FFI-50]` — a toolchain by the name a `[cpp.<project>]` section's `compiler` gives it.
@@ -3439,6 +4689,27 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                     None => applied.macros.push((function, made, c_text)),
                 }
             }
+            // `[FFI-39]` — `@ffi(trampoline, virtuals=[…], owner=…) type Name`: the importer made
+            // the class's trampoline (it read the entry before the header); a class it could not
+            // make one for was reported there.
+            ast::OverlayItemKind::Type(name) if arguments().iter().any(|written| written == "trampoline") => {
+                let made = imported.trampolines.iter().any(|found| found.class == name.name.as_str());
+                let refused = imported.skipped.iter().any(|skipped| skipped.name == name.name.as_str() && skipped.reason.starts_with("[E50"));
+                if !made && !refused {
+                    mismatch(sink, name.span, format!("`{header}` declares no class `{}` that an Ember class could derive from", name.name));
+                    continue;
+                }
+                for written in arguments() {
+                    let key = written.split('=').next().unwrap_or("").trim();
+                    if !matches!(key, "trampoline" | "virtuals" | "owner") {
+                        mismatch(sink, name.span, format!("`@ffi({written})` is no argument of a trampoline entry: it takes `virtuals=[…]` and `owner=\"ember\" | \"foreign\"`"));
+                    }
+                    if key == "owner" && !matches!(written.split('=').nth(1).map(|owner| owner.trim().trim_matches('"')), Some("ember" | "foreign")) {
+                        mismatch(sink, name.span, format!("`{written}`: a trampoline's object is owned by `\"ember\"` (the default) or `\"foreign\"` [FFI-17d]"));
+                    }
+                }
+                let _ = take(applied, sink, layer, entry.is_override, "type", name);
+            }
             ast::OverlayItemKind::Type(name) | ast::OverlayItemKind::Enum(name) => {
                 let kind = if matches!(entry.kind, ast::OverlayItemKind::Type(_)) { Kind::Opaque } else { Kind::Type };
                 let found = imported.items.iter().any(|item| item.name == name.name.as_str() && item.kind == kind && (kind == Kind::Opaque || item.text.starts_with("@repr")));
@@ -3628,7 +4899,13 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
     };
     let alias = |item: &Item| applied.renamed.get(&item.name).map(|to| format!("pub type {} = {}\n", ident(to), ident(&item.name)));
     let in_class = |item: &Item| item.kind == Kind::Const && item.name.contains("::");
-    for item in imported.items.iter().filter(|item| matches!(item.kind, Kind::Type | Kind::Const) && !in_class(item) && item.namespace == namespace) {
+    for item in imported.items.iter().filter(|item| matches!(item.kind, Kind::Type | Kind::Const | Kind::Class) && !in_class(item) && item.namespace == namespace) {
+        // `[FFI-39]` — a trampoline's class is written whole: its parts say what is public.
+        if item.kind == Kind::Class {
+            body.push_str(&item.text);
+            body.push_str("\n\n");
+            continue;
+        }
         body.push_str(&declare(item, ""));
         if let Some(alias) = alias(item) {
             body.push_str(&alias);
@@ -3659,6 +4936,7 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
         }
     }
     let mut catching = false;
+    let mut operators: Vec<(String, String, String)> = Vec::new();
     for function in imported.functions.iter().filter(|function| function.namespace == namespace) {
         let hidden = applied.hidden.contains(&function.name);
         let (entry, renamed) = (applied.functions.get(&function.name), applied.renamed.get(&function.name));
@@ -3670,17 +4948,28 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
             (derived, None) => derived,
         };
         match (policy, &function.owner) {
-            (Policy::Direct, None) if !function.out && !function.params.iter().any(|(_, ty)| wrapped(ty)) => {
+            // A result with a mode of its own (a bridge value, `[FFI-17a]`; a lifetime-bound `ref`,
+            // `[FFI-11f]`) is made by the wrapper too.
+            (Policy::Direct, None) if !function.out && !function.params.iter().any(|(_, ty)| wrapped(ty)) && function.result.as_ref().is_none_or(|ty| ty.mode.is_empty()) => {
                 member(function.abi, render_function(function, entry, renamed, hidden))
             }
             // `E5061` where it is used.
             (Policy::Unknown, _) => {}
             (policy, owner) => {
-                let (raw, wrapper) = render_wrapper(function, entry, renamed, hidden, policy);
+                // `[FFI-39]` — a method of a class with a trampoline is its Ember class's; the base
+                // implementations of its named virtuals are the class's own.
+                let trampoline = owner.as_ref().and_then(|(owner, _)| imported.trampolines.iter().find(|found| ident(&found.class) == *owner)).map(|found| found.opaque.as_str());
+                let hidden = hidden || (trampoline.is_some() && function.name.starts_with(&format!("{}_cpp_base_", ember_branding::SYMBOL_PREFIX)));
+                let (raw, wrapper) = render_wrapper(function, entry, renamed, hidden, policy, trampoline);
                 member(function.abi, raw);
                 catching |= policy != Policy::Direct;
+                // `[FFI-42]` — a member operator, for its interface below.
+                let operator = owner.as_ref().and_then(|(owner, _)| {
+                    imported.operators.iter().find(|(of, method, _)| of == owner && *method == function.name && renamed.is_none())
+                });
                 match owner {
                     Some(_) if wrapper.is_empty() => {}
+                    Some((owner, _)) if let Some((_, _, interface)) = operator => operators.push((owner.clone(), interface.clone(), wrapper)),
                     Some((owner, _)) => match extensions.iter_mut().find(|(of, _)| of == owner) {
                         Some((_, methods)) => methods.push_str(&wrapper),
                         None => extensions.push((owner.clone(), wrapper)),
@@ -3689,6 +4978,41 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
                 }
             }
         }
+    }
+    // `[FFI-42]` — each member operator whose wrapper is its interface's method implements the
+    // interface, in a block of its own (`IndexMut` in `Index`'s); any other is a method of its class.
+    // An `IndexMut` comes after the `Index` it extends.
+    operators.sort_by_key(|(_, interface, _)| interface == "IndexMut");
+    for (owner, interface, wrapper) in operators {
+        let block = match operator_interface(&interface, &owner, &wrapper) {
+            Some((implemented, output)) if interface == "IndexMut" => {
+                let index = implemented.replacen("IndexMut[", "Index[", 1);
+                let output = output.replacen("type Output = ", "", 1);
+                extensions
+                    .iter()
+                    .position(|(of, methods)| *of == format!("{owner} implements {index}") && methods.starts_with(&format!("type Output = {output}\n")))
+                    .map(|at| {
+                        extensions[at].0.push_str(&format!(", {implemented}"));
+                        at
+                    })
+            }
+            Some((implemented, output)) => {
+                extensions.push((format!("{owner} implements {implemented}"), if output.is_empty() { String::new() } else { format!("{output}\n") }));
+                Some(extensions.len() - 1)
+            }
+            None => None,
+        };
+        let at = match block {
+            Some(at) => at,
+            None => match extensions.iter().position(|(of, _)| *of == owner) {
+                Some(at) => at,
+                None => {
+                    extensions.push((owner.clone(), String::new()));
+                    extensions.len() - 1
+                }
+            },
+        };
+        extensions[at].1.push_str(&wrapper);
     }
     for (owner, methods) in &extensions {
         let indented: String = methods.lines().map(|line| if line.is_empty() { "\n".to_string() } else { format!("    {line}\n") }).collect();
@@ -3734,7 +5058,7 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
     }
     // `std.ffi`'s names the module's text uses: its C aliases (`[FFI-8]`) and `ForeignBox`.
     let words: HashSet<&str> = body.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).collect();
-    let used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox", "CppError", "adopt"]).filter(|name| words.contains(name)).collect();
+    let used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox", "CppError", "adopt", "Retained", "CppVector", "CppString", "CppShared"]).filter(|name| words.contains(name)).collect();
     if !used.is_empty() {
         let _ = writeln!(imports, "from std.ffi import {}", used.join(", "));
     }
@@ -3745,6 +5069,39 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
         return format!("# The declarations of `{header}`'s namespace `{}`, written by `import cpp` ([FFI-41]).\n\n{imports}{body}", namespace.join("::"));
     }
     format!("# The declarations of `{header}`, written by `import c` ([FFI-6]).\n\n{imports}{body}")
+}
+
+/// `[FFI-42]` — the interface a member operator's wrapper implements, as its `extend` block names
+/// it, and the block's `type Output` line: only when the wrapper is safe to call (an overlay entry
+/// asserts it, `[FFI-2]`; an interface's method is never `unsafe`) and its signature is the
+/// interface method's. `None` otherwise: the operator is then an ordinary method of its class.
+fn operator_interface(interface: &str, owner: &str, wrapper: &str) -> Option<(String, String)> {
+    let line = wrapper.lines().find(|line| !line.starts_with('@') && !line.starts_with('#'))?;
+    let line = line.strip_prefix("pub ").unwrap_or(line).strip_prefix("fn ")?;
+    let (params, output) = line.split_once('(')?.1.rsplit_once(')')?;
+    let output = output.trim_end_matches(':').trim().strip_prefix("-> ").unwrap_or("");
+    let params: Vec<&str> = if params.is_empty() { Vec::new() } else { params.split(", ").collect() };
+    // The operand: a plain value parameter (an opaque class's `ref T` is no interface's `Rhs`).
+    let operand = match params.get(1) {
+        Some(param) => match param.split_once(": ") {
+            Some((name, ty)) if !name.contains(' ') && !ty.starts_with("ref ") => Some(ty),
+            _ => return None,
+        },
+        None => None,
+    };
+    let assign = interface.ends_with("Assign");
+    match (interface, params.first().copied(), operand, params.len()) {
+        ("Neg" | "Not", Some("self"), None, 1) if !output.is_empty() => Some((interface.to_string(), format!("type Output = {output}"))),
+        ("Eq", Some("self"), Some(ty), 2) if ty == owner && output == "bool" => Some(("Eq".to_string(), String::new())),
+        ("Index", Some("self"), Some(ty), 2) => {
+            output.strip_prefix("ref ").filter(|inner| !inner.starts_with("mut ")).map(|inner| (format!("Index[{ty}]"), format!("type Output = {inner}")))
+        }
+        ("IndexMut", Some("mut self"), Some(ty), 2) => output.strip_prefix("ref mut ").map(|inner| (format!("IndexMut[{ty}]"), format!("type Output = {inner}"))),
+        ("Neg" | "Not" | "Eq" | "Index" | "IndexMut", ..) => None,
+        (_, Some("mut self"), Some(ty), 2) if assign && output.is_empty() => Some((format!("{interface}[{ty}]"), String::new())),
+        (_, Some("self"), Some(ty), 2) if !assign && !output.is_empty() => Some((format!("{interface}[{ty}]"), format!("type Output = {output}"))),
+        _ => None,
+    }
 }
 
 /// `[FFI-24]`, `[FFI-24b]`, `[FFI-40]` — a C++ function reached through an Ember function of the
@@ -3760,7 +5117,41 @@ fn wrapped(ty: &CType) -> bool {
     ty.pointee.is_some() && !ty.mode.is_empty()
 }
 
-fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&String>, hidden: bool, policy: Policy) -> (String, String) {
+/// `[FFI-40]`, `[FFI-39]` — a wrapper's parameter as Ember code writes it.
+fn wrapper_param(param: &str, ty: &CType) -> String {
+    match &ty.pointee {
+        Some((inner, _)) if ty.mode == "owned " => format!("owned {param}: ForeignBox[{inner}]"),
+        Some((inner, _)) if ty.mode == "tramp " => format!("{param}: {inner}"),
+        // `[FFI-17a]` — a bridge value, as the C++ parameter takes it.
+        Some((inner, _)) if ty.mode == "bridged " => format!("{param}: {inner}"),
+        Some((inner, _)) if ty.mode == "bridged mut " => format!("mut {param}: {inner}"),
+        Some((inner, _)) if ty.mode == "bridged owned " => format!("owned {param}: {inner}"),
+        // `[FFI-39c]` (ODR-156) — a `retained` one: the token the program pinned and keeps.
+        Some((inner, _)) if ty.mode == "token " => format!("{param}: Retained[{inner}]"),
+        Some((inner, _)) if wrapped(ty) => format!("{param}: {}{inner}", ty.mode),
+        _ => format!("{}{param}: {}", ty.mode, ty.ember),
+    }
+}
+
+/// `[FFI-40]`, `[FFI-39]` — what a wrapper passes its thunk for a parameter.
+fn wrapper_argument(param: &str, ty: &CType) -> String {
+    let prefix = ember_branding::SYMBOL_PREFIX;
+    match &ty.pointee {
+        _ if ty.mode == "owned " && wrapped(ty) => format!("{param}.as_ptr()"),
+        _ if ty.mode.starts_with("bridged ") => format!("{param}.as_ptr()"),
+        // `[FFI-39]` — the C++ object a trampoline class's object owns.
+        Some((_, true)) if ty.mode == "tramp " => format!("{param}.{prefix}_cpp_base.object as {}", ty.ember),
+        Some((_, false)) if ty.mode == "tramp " => format!("{param}.{prefix}_cpp_base.object"),
+        Some((_, true)) if ty.mode == "token " => format!("{prefix}_cpp_token_object({param}).{prefix}_cpp_base.object as {}", ty.ember),
+        Some((_, false)) if ty.mode == "token " => format!("{prefix}_cpp_token_object({param}).{prefix}_cpp_base.object"),
+        Some((inner, true)) if wrapped(ty) => format!("(ref {param}) as *{inner}"),
+        // The caller lent it mutably; the borrow the wrapper passes on is its own.
+        Some((inner, false)) if wrapped(ty) => format!("((ref {param}) as *{inner}) as *mut {inner}"),
+        _ => param.to_string(),
+    }
+}
+
+fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&String>, hidden: bool, policy: Policy, trampoline: Option<&str>) -> (String, String) {
     let prefix = ember_branding::SYMBOL_PREFIX;
     let (owner, member) = match &function.owner {
         Some((owner, member)) => (owner.as_str(), Some(*member)),
@@ -3780,13 +5171,17 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
             ty.mode.clear();
         }
     }
-    let receiver = match member {
-        Some(Member::Method) => Some((format!("*{owner}"), "(ref self) as *", true)),
-        Some(Member::MutMethod | Member::Destructor) => Some((format!("*mut {owner}"), "(ref mut self) as *mut ", false)),
+    // The receiver: the opaque object's address; for a class with a trampoline, the C++ object
+    // its Ember object owns (`[FFI-39]`).
+    let receiver = match (member, trampoline) {
+        (Some(Member::Method), None) => Some((format!("*{owner}"), format!("(ref self) as *{owner}"), true)),
+        (Some(Member::MutMethod | Member::Destructor), None) => Some((format!("*mut {owner}"), format!("(ref mut self) as *mut {owner}"), false)),
+        (Some(Member::Method), Some(opaque)) => Some((format!("*{opaque}"), format!("self.{prefix}_cpp_base.object as *{opaque}"), true)),
+        (Some(Member::MutMethod), Some(opaque)) => Some((format!("*mut {opaque}"), format!("self.{prefix}_cpp_base.object"), false)),
         _ => None,
     };
     if let Some((pointer, _, constant)) = &receiver {
-        let this = CType { ember: pointer.clone(), pointee: Some((owner.to_string(), *constant)), char_pointer: false, c: String::new(), mode: String::new() };
+        let this = CType { ember: pointer.clone(), pointee: Some((trampoline.unwrap_or(owner).to_string(), *constant)), char_pointer: false, c: String::new(), mode: String::new() };
         raw.params.insert(0, ("this".to_string(), this));
     }
     let result_ty = function.result.as_ref().map(|ty| ty.ember.clone()).unwrap_or_default();
@@ -3809,34 +5204,42 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     };
     let words_safe = entry.is_some_and(|entry| !entry.params.iter().flatten().chain(&entry.result).any(|written| matches!(word(written), "TODO" | "unsafe")));
     let safe = words_safe && !function.params.iter().any(|(_, ty)| ty.ember.starts_with('*') && !wrapped(ty));
-    let mut params: Vec<String> = function
+    // `[FFI-39c]` (ODR-156) — an object of a class with a trampoline that C++ keeps (`retained`)
+    // is passed as the `Retained` token the program holds for as long as C++ does.
+    let retained = |index: usize| entry.and_then(|entry| entry.params.get(index)).is_some_and(|words| words.iter().any(|written| word(written) == "retained"));
+    let wrapper_params: Vec<(String, CType)> = function
         .params
         .iter()
-        .map(|(param, ty)| match &ty.pointee {
-            Some((inner, _)) if ty.mode == "owned " => format!("owned {param}: ForeignBox[{inner}]"),
-            Some((inner, _)) if wrapped(ty) => format!("{param}: {}{inner}", ty.mode),
-            _ => format!("{}{param}: {}", ty.mode, ty.ember),
+        .enumerate()
+        .map(|(index, (param, ty))| {
+            let mut ty = ty.clone();
+            if ty.mode == "tramp " && retained(index) {
+                ty.mode = "token ".to_string();
+            }
+            (param.clone(), ty)
         })
         .collect();
+    let mut params: Vec<String> = wrapper_params.iter().map(|(param, ty)| wrapper_param(param, ty)).collect();
     match member {
         Some(Member::Method) => params.insert(0, "self".to_string()),
+        // A class method's receiver is its handle, which any method may write through ([CLS-7]).
+        Some(Member::MutMethod) if trampoline.is_some() => params.insert(0, "self".to_string()),
         Some(Member::MutMethod) => params.insert(0, "mut self".to_string()),
         _ => {}
     }
-    let mut arguments: Vec<String> = function
+    let mut arguments: Vec<String> = wrapper_params.iter().map(|(param, ty)| wrapper_argument(param, ty)).collect();
+    if let Some((_, argument, _)) = &receiver {
+        arguments.insert(0, argument.clone());
+    }
+    // `[FFI-17d]` — an `owned` object of a class with a trampoline goes to C++ with a count of its
+    // own, which a foreign `delete` ends.
+    let given: Vec<String> = function
         .params
         .iter()
-        .map(|(param, ty)| match &ty.pointee {
-            _ if ty.mode == "owned " && wrapped(ty) => format!("{param}.as_ptr()"),
-            Some((inner, true)) if wrapped(ty) => format!("(ref {param}) as *{inner}"),
-            // The caller lent it mutably; the borrow the wrapper passes on is its own.
-            Some((inner, false)) if wrapped(ty) => format!("((ref {param}) as *{inner}) as *mut {inner}"),
-            _ => param.clone(),
-        })
+        .enumerate()
+        .filter(|(index, (_, ty))| ty.mode == "tramp " && entry.and_then(|entry| entry.params.get(*index)).is_some_and(|words| words.iter().any(|written| word(written) == "owned")))
+        .map(|(_, (param, _))| format!("{prefix}_cpp_give({param})"))
         .collect();
-    if let Some((_, conversion, _)) = &receiver {
-        arguments.insert(0, format!("{conversion}{owner}"));
-    }
     if function.out {
         arguments.push(format!("((ref mut slot) as *mut MaybeUninit[{result_ty}]) as *mut {result_ty}"));
     }
@@ -3845,11 +5248,19 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     }
     let mut call = format!("{raw_name}({})", arguments.join(", "));
     // `[FFI-40]` — a method's `T&` result: the reference the thunk's pointer is.
-    let reference = function.result.as_ref().filter(|ty| ty.mode.starts_with("ref")).and_then(|ty| Some((ty.pointee.clone()?.0, ty.mode == "ref")));
+    let reference = function.result.as_ref().filter(|ty| ty.mode.starts_with("ref")).and_then(|ty| Some((ty.pointee.clone()?.0, !ty.mode.starts_with("ref mut"))));
+    // `[FFI-11f]` — the parameters a `[[clang::lifetimebound]]` result borrows.
+    let lifetime_bound = function.result.as_ref().and_then(|ty| ty.mode.split_once(" from ")).map(|(_, from)| from.to_string());
     if let Some((_, shared)) = &reference {
         call = format!("{prefix}_cpp_ref{}({call})", if *shared { "" } else { "_mut" });
     }
+    // `[FFI-17a]` — a bridge result: the value its bridge type makes of the thunk's object.
+    if let Some(make) = function.result.as_ref().and_then(|ty| ty.mode.strip_prefix("bridge ")) {
+        call = make.replace('@', &call);
+    }
+    let bridged = function.result.as_ref().filter(|ty| ty.mode.starts_with("bridge ")).and_then(|ty| ty.pointee.clone()).map(|(ember, _)| ember);
     let value = match (member, &reference) {
+        _ if bridged.is_some() => bridged.clone(),
         (_, Some((inner, shared))) => Some(format!("ref {}{inner}", if *shared { "" } else { "mut " })),
         (member, None) => match member {
         // `[FFI-36a]` — the object a constructor made, owned through its destructor.
@@ -3872,8 +5283,16 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     }
     let public = if hidden { "" } else { "pub " };
     let note = if safe { String::new() } else { "  # SAFETY: the caller keeps what the header does not state".to_string() };
+    if let Some(from) = &lifetime_bound {
+        let _ = writeln!(text, "@borrows({from})");
+    }
     let _ = writeln!(text, "{public}{}fn {name}({}){returned}:{note}", if safe { "" } else { "unsafe " }, params.join(", "));
-    let safety = "# SAFETY: the thunk takes this function's own arguments";
+    let safety = match &lifetime_bound {
+        Some(from) => format!(
+            "# SAFETY: the thunk takes this function's own arguments; its result lives as long as `{from}`, as the header's `[[clang::lifetimebound]]` states: asserted, never checked, since C++ does not enforce it [FFI-11f]"
+        ),
+        None => "# SAFETY: the thunk takes this function's own arguments".to_string(),
+    };
     if catching {
         let _ = writeln!(text, "    failed: c_int = 0");
     }
@@ -3911,6 +5330,10 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         (false, _) => {
             let _ = writeln!(text, "    unsafe:  {safety}\n        {call}\n    return {prefix}_cpp_result((), failed)");
         }
+    }
+    if !given.is_empty() {
+        let opened = format!("    unsafe:  {safety}\n");
+        text = text.replacen(&opened, &format!("{}{opened}", given.iter().map(|given| format!("    {given}\n")).collect::<String>()), 1);
     }
     text.push('\n');
     (raw_text, text)
@@ -3978,6 +5401,8 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
     }
     let header = header.ok_or("`ember bind` needs a header")?;
     let file = header.file_name().ok_or("`ember bind` needs a header file")?.to_string_lossy().into_owned();
+    // A C++ header by its extension, or for `--emit-cpp`.
+    let cpp = emit_cpp || header.extension().is_some_and(|extension| matches!(extension.to_string_lossy().as_ref(), "hpp" | "hh" | "hxx" | "h++" | "ipp"));
     let dir = header.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf();
     let shared = HashMap::new();
     let config = Config {
@@ -3988,9 +5413,10 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
         flags: &[],
         symbol_stem: "bind",
         shared: &shared,
-        binding: if emit_cpp { "cpp" } else { "c" },
-        cpp: emit_cpp.then_some(standard.as_str()),
+        binding: if cpp { "cpp" } else { "c" },
+        cpp: cpp.then_some(standard.as_str()),
         instantiate: &[],
+        trampolines: &[],
     };
     let (imported, files) = import_header(&config)?;
     if emit_cpp {
@@ -4191,8 +5617,17 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
             }
         }
         let names: Vec<&str> = skipped.iter().map(|skip| skip.name.as_str()).collect();
+        // `[FFI-24d]` — a C++ function's exception policy is part of its Ember signature: the
+        // baseline keeps each one's (`api <name> noexcept|throwing`).
+        let policy = |function: &Function| if function.policy == Policy::Direct { "noexcept" } else { "throwing" };
+        let key = |function: &Function| match &function.owner {
+            Some((owner, _)) => format!("{owner}.{}", function.name),
+            None => function.name.clone(),
+        };
+        let api: Vec<String> = if cpp { imported.functions.iter().map(|function| format!("api {} {}", key(function), policy(function))).collect() } else { Vec::new() };
         if let Some(path) = write_baseline {
-            std::fs::write(&path, names.join("\n") + "\n").map_err(|error| format!("cannot write `{path}`: {error}"))?;
+            let lines: Vec<&str> = names.iter().copied().chain(api.iter().map(String::as_str)).collect();
+            std::fs::write(&path, lines.join("\n") + "\n").map_err(|error| format!("cannot write `{path}`: {error}"))?;
         }
         let known: Vec<String> = match &baseline {
             Some(path) => std::fs::read_to_string(path).map_err(|error| format!("cannot read `{path}`: {error}"))?.lines().map(str::to_string).collect(),
@@ -4202,7 +5637,23 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
         if new > 0 {
             println!("{new} skipped declaration(s){}", if baseline.is_some() { " not in the baseline" } else { "" });
         }
-        return Ok(if new > 0 || sink.has_errors() { ExitCode::FAILURE } else { ExitCode::SUCCESS });
+        // `[FFI-24d]` — API changes: each function whose header added or removed `noexcept` since
+        // the baseline, which changes its Ember signature.
+        let mut changes = 0;
+        for function in imported.functions.iter().filter(|_| cpp) {
+            let name = key(function);
+            let before = known.iter().find_map(|line| line.strip_prefix("api ").and_then(|rest| rest.rsplit_once(' ')).filter(|(found, _)| *found == name).map(|(_, policy)| policy));
+            if let Some(before) = before.filter(|before| *before != policy(function)) {
+                changes += 1;
+                let what = if policy(function) == "noexcept" {
+                    "`noexcept` added: it returns its value, no longer a `Result[…, CppError]`"
+                } else {
+                    "`noexcept` removed: it returns a `Result[…, CppError]`"
+                };
+                println!("API change: `{name}` was {before}: {what} [FFI-24d]");
+            }
+        }
+        return Ok(if new > 0 || changes > 0 || sink.has_errors() { ExitCode::FAILURE } else { ExitCode::SUCCESS });
     }
     Err("`ember bind` needs `--init`, `--report`, `--check <overlay>`, `--explain <fn>` or `--emit-embind`".to_string())
 }
@@ -4324,7 +5775,7 @@ mod cbor {
 
 use cbor::Value;
 
-const EMBIND_VERSION: u64 = 4;
+const EMBIND_VERSION: u64 = 7;
 
 fn text_of(value: &Value) -> Option<String> {
     match value {
@@ -4404,7 +5855,7 @@ fn read_c_type(value: &Value) -> Option<CType> {
     })
 }
 
-const KINDS: [Kind; 4] = [Kind::Type, Kind::Const, Kind::Opaque, Kind::Static];
+const KINDS: [Kind; 5] = [Kind::Type, Kind::Const, Kind::Opaque, Kind::Static, Kind::Class];
 const ABIS: [&str; 4] = ["C", "system", "fastcall", "vectorcall"];
 
 /// `[FFI-14]` — the `.embind` record: the header's files and their hashes (`[FFI-7]`'s "content"),
@@ -4498,6 +5949,21 @@ fn embind(imported: &Imported, files: &[(String, String)], configuration: &str, 
         ("rvalue_members".to_string(), skips(&imported.rvalue_members)),
         ("namespaces".to_string(), Value::Array(imported.namespaces.iter().map(|namespace| Value::Text(namespace.join("::"))).collect())),
         ("ns_uses".to_string(), Value::Array(imported.ns_uses.iter().map(|(from, to)| texts(&[&from.join("::"), &to.join("::")])).collect())),
+        (
+            "trampolines".to_string(),
+            Value::Array(
+                imported
+                    .trampolines
+                    .iter()
+                    .map(|found| texts(&[&found.class, &found.opaque, if found.default_init { "1" } else { "0" }, &found.unnamed_virtuals.join(",")]))
+                    .collect(),
+            ),
+        ),
+        ("operators".to_string(), Value::Array(imported.operators.iter().map(|(owner, method, interface)| texts(&[owner, method, interface])).collect())),
+        (
+            "policy_changes".to_string(),
+            Value::Array(imported.policy_changes.iter().map(|(namespace, name, now)| texts(&[namespace, name, if *now { "1" } else { "0" }])).collect()),
+        ),
     ]);
     let mut bytes = Vec::new();
     cbor::encode(&value, &mut bytes);
@@ -4599,6 +6065,21 @@ fn read_embind(bytes: &[u8]) -> Option<(Vec<(String, String)>, Imported)> {
         rvalue_members: read_skips(field(&value, "rvalue_members")?)?,
         namespaces: array_of(field(&value, "namespaces")?)?.iter().map(read_namespace).collect::<Option<_>>()?,
         ns_uses: pairs(field(&value, "ns_uses")?)?.into_iter().map(|(from, to)| (split_namespace(&from), split_namespace(&to))).collect(),
+        trampolines: array_of(field(&value, "trampolines")?)?
+            .iter()
+            .map(|entry| {
+                let entry = array_of(entry)?;
+                let unnamed = text_of(entry.get(3)?)?;
+                Some(Trampoline {
+                    class: text_of(entry.first()?)?,
+                    opaque: text_of(entry.get(1)?)?,
+                    default_init: text_of(entry.get(2)?)? == "1",
+                    unnamed_virtuals: unnamed.split(',').filter(|name| !name.is_empty()).map(str::to_string).collect(),
+                })
+            })
+            .collect::<Option<_>>()?,
+        operators: triples(field(&value, "operators")?)?,
+        policy_changes: triples(field(&value, "policy_changes")?)?.into_iter().map(|(namespace, name, now)| (namespace, name, now == "1")).collect(),
     };
     Some((files, imported))
 }
@@ -4643,13 +6124,18 @@ fn import_cached(config: &Config, overlay: &str, cached: &mut bool) -> Result<(I
         .as_bytes(),
     );
     let path = ember_build::cache_root().join(ember_branding::BINDING_EXT).join(format!("{key}.{}", ember_branding::BINDING_EXT));
-    if let Some((files, imported)) = std::fs::read(&path).ok().and_then(|bytes| read_embind(&bytes))
-        && files.iter().all(|(file, hash)| file_hash(file).as_deref() == Some(hash.as_str()))
-    {
-        *cached = true;
-        return Ok((imported, path));
+    let previous = match std::fs::read(&path).ok().and_then(|bytes| read_embind(&bytes)) {
+        Some((files, imported)) if files.iter().all(|(file, hash)| file_hash(file).as_deref() == Some(hash.as_str())) => {
+            *cached = true;
+            return Ok((imported, path));
+        }
+        // `[FFI-24d]` — the binding the header's last parse made, to compare with.
+        previous => previous.map(|(_, imported)| imported),
+    };
+    let (mut imported, files) = import_header(config)?;
+    if let Some(previous) = &previous {
+        imported.policy_changes = policy_changes(previous, &imported);
     }
-    let (imported, files) = import_header(config)?;
     let files: Vec<(String, String)> = files.into_iter().filter_map(|file| file_hash(&file).map(|hash| (file, hash))).collect();
     let bytes = embind(&imported, &files, &configuration, &overlay_hash, overlay);
     // Written aside then renamed: builds side by side read whole records only.
@@ -4661,6 +6147,51 @@ fn import_cached(config: &Config, overlay: &str, cached: &mut bool) -> Result<(I
         }
     }
     Ok((imported, path))
+}
+
+/// `[FFI-24d]` — for the module of `namespace`, each function whose Ember signature a `noexcept`
+/// the header added or removed changed (an overlay's `@ffi(noexcept)` keeps it), by its Ember name,
+/// with the note a diagnostic in dependent code gives as the cause.
+fn changed_signatures(imported: &Imported, applied: &Applied, namespace: &str, header: &str) -> Vec<(String, String)> {
+    imported
+        .policy_changes
+        .iter()
+        .filter(|(at, name, _)| at == namespace && applied.functions.get(name.rsplit('.').next().unwrap_or(name)).is_none_or(|entry| entry.policy.is_none()))
+        .map(|(_, name, now)| {
+            let change = if *now {
+                format!("`{header}` now declares `{name}` `noexcept` (it did not when this import was last bound), so it returns its value, no longer a `Result[…, CppError]`")
+            } else {
+                format!("`{header}` no longer declares `{name}` `noexcept` (it did when this import was last bound), so it returns a `Result[…, CppError]`, as a function that may throw does")
+            };
+            (name.clone(), format!("the cause: {change} [FFI-24d]"))
+        })
+        .collect()
+}
+
+/// `[FFI-24d]` — each function of `current` whose header added or removed `noexcept` against
+/// `previous` (a member by `Owner.name`), and each change `previous` recorded that still holds.
+fn policy_changes(previous: &Imported, current: &Imported) -> Vec<(String, String, bool)> {
+    let key = |function: &Function| match &function.owner {
+        Some((owner, _)) => format!("{owner}.{}", function.name),
+        None => function.name.clone(),
+    };
+    let direct = |imported: &Imported, namespace: &str, name: &str| {
+        imported.functions.iter().find(|function| function.namespace.join("::") == namespace && key(function) == name).map(|function| function.policy == Policy::Direct)
+    };
+    let mut changes: Vec<(String, String, bool)> = Vec::new();
+    for function in &current.functions {
+        let (namespace, name) = (function.namespace.join("::"), key(function));
+        let now = function.policy == Policy::Direct;
+        if direct(previous, &namespace, &name).is_some_and(|before| before != now) {
+            changes.push((namespace, name, now));
+        }
+    }
+    for (namespace, name, now) in &previous.policy_changes {
+        if direct(current, namespace, name) == Some(*now) && !changes.iter().any(|(at, found, _)| at == namespace && found == name) {
+            changes.push((namespace.clone(), name.clone(), *now));
+        }
+    }
+    changes
 }
 
 fn opaque_by_value(name: &str, why: Option<&str>) -> String {

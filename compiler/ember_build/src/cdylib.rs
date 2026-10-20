@@ -72,7 +72,7 @@ pub fn link_cdylib(
         Toolchain::Msvc { .. } => {
             let definitions = obj_dir.join(format!("{name}.def"));
             write_definitions(&definitions, name, exports, !matches!(toolchain, Toolchain::Msvc { cl, .. } if crate::is_clang_cl(cl)))?;
-            command.args(["/nologo", "/LD", "/MD"]).args(&objects);
+            command.args(["/nologo", "/LD", crate::msvc_runtime_switch()]).args(&objects);
             if let Some(shared) = shared {
                 command.arg(&shared.link_with);
             }

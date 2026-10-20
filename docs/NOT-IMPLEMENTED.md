@@ -12,13 +12,8 @@ followed.
 
 ---
 
-## N2 — `extern class` (formerly D3)
-
-| | |
-|---|---|
-| **Rule** | `[FFI-39]`, and the production added as amendment A9 |
-| **The feature** | a declared foreign C++ base class: sized, known layout, implicitly `open`, inheritable under `@ffi(trampoline, virtuals=[…])` |
-| **Requires** | the C++ importer, its thunks and the trampoline (Phase 7), none of which exists |
-| **Meanwhile** | it parses, then is refused with `E1010` "not supported yet in this phase". Refused rather than ignored: a declaration that is stored and then ignored would build a program that is wrong |
-| **Can a program notice** | yes, as a rejection |
-| **Plan** | Phase 7, with the importer. ERR-037 |
+There are no entries now. The last, N2 (a C++ base class Ember classes derive from, `[FFI-39]`),
+was built in October 2026 as the current specification declares it: by an overlay's
+`@ffi(trampoline, virtuals=[…])` entry for an imported class (tasks/90/N4-notes.md). The older
+`extern class` production of amendment A9, which the specification no longer has, still parses and
+is still refused with `E1010`.

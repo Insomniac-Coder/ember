@@ -1,6 +1,9 @@
 // The C++ side of reject_a_parameter_that_maps_to_nothing.em.
 #pragma once
-#include <string>
 
-inline int length(std::string text) { return static_cast<int>(text.size()); }
+struct Text {
+    int size() const noexcept { return 4; }
+};
+
+inline int length(int (Text::*text)() const) { return (Text().*text)(); }
 inline int twice(int value) noexcept { return value * 2; }

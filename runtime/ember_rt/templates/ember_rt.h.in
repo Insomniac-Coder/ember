@@ -3159,6 +3159,11 @@ EMBER_PANIC_FN void ember_reload_removed_called(const char* name);
 /* `[FFI-23]` — `Retained.pin` of a class object: its header's pinned flag, set for good (an object
  * foreign code may hold is never moved, `[HR-20]`). */
 void ember_obj_pin(ember_obj_header* object);
+/* `[FFI-17d]` — a foreign `delete` of a class object whose trampoline declares
+ * `owner="foreign"`: the count C++ was given becomes a handle again, which must be the object's
+ * only one (Ember code that still held one would be left with a deleted C++ object); otherwise
+ * it panics, naming `at`. */
+ember_obj_header* ember_cpp_object_adopt(ember_obj_header* object, ember_loc at);
 void* ember_ffi_adopt(void* object, ember_loc at);
 void ember_ffi_release(void* object, uint32_t creator);
 uint32_t ember_ffi_thread(void);

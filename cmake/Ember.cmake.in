@@ -1,0 +1,165 @@
+# Ember's CMake module ([BLD-FFI-2]): an Ember package as an ordinary target of a C or C++ project.
+#
+#   include(<@CLI@>/cmake/@MODULE@.cmake)
+#
+#   @PREFIX@_add_library(<name> KIND staticlib|cdylib SOURCES <file>...
+#                     [PACKAGE <dir>] [PROFILE debug|development|release] [FLAGS_FROM <target>])
+#   @PREFIX@_add_executable(<name> SOURCES <file>...
+#                        [PACKAGE <dir>] [PROFILE debug|development|release] [FLAGS_FROM <target>])
+#
+# PACKAGE is the package's folder, the one holding its manifest (the current source folder by
+# default); SOURCES are the files whose change builds it again. `@CLI@ build` builds it at build
+# time with the C compiler CMake uses (`--cc`); FLAGS_FROM names a C target of the project whose
+# compile flags the build takes (`--cc-flags-from-target`, read from CMake's File API reply in the
+# build folder): the package's C imports are compiled with them, and the C runtime they name is
+# the package's too ([BLD-FFI-1b]). A C++ import takes its project's flags through the File API
+# itself (`[cpp.<project>] cmake = { build_dir, target }`, Annex C).
+#
+# <name> is then an imported target: a library is linked with target_link_libraries(<app> <name>),
+# which also puts its C header's folder on the include path; an executable is run as $<TARGET_FILE:…>.
+# @PREFIX_UPPER@_EXECUTABLE names the compiler when it is not on the path.
+
+include_guard(GLOBAL)
+
+find_program(@PREFIX_UPPER@_EXECUTABLE NAMES @CLI@
+    HINTS "${CMAKE_CURRENT_LIST_DIR}/../target/release" "${CMAKE_CURRENT_LIST_DIR}/../target/ci"
+    DOC "the Ember compiler")
+
+# The File API reply `--cc-flags-from-target` reads, made when CMake generates the build: asked for
+# in this run (CMake 3.27 and later), or by query files the next configure answers.
+if(COMMAND cmake_file_api)
+    cmake_file_api(QUERY API_VERSION 1 CODEMODEL 2 TOOLCHAINS 1)
+else()
+    file(WRITE "${CMAKE_BINARY_DIR}/.cmake/api/v1/query/codemodel-v2" "")
+    file(WRITE "${CMAKE_BINARY_DIR}/.cmake/api/v1/query/toolchains-v1" "")
+endif()
+
+# The C compiler CMake uses, by the name `@CLI@ build --cc` gives it.
+function(_@PREFIX@_compiler out)
+    set(language C)
+    if(NOT CMAKE_C_COMPILER_ID)
+        set(language CXX)
+    endif()
+    set(id "${CMAKE_${language}_COMPILER_ID}")
+    if(id STREQUAL "MSVC")
+        set(name msvc)
+    elseif(id MATCHES "Clang" AND CMAKE_${language}_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+        set(name clang-cl)
+    elseif(id MATCHES "Clang")
+        set(name clang)
+    elseif(id STREQUAL "GNU")
+        set(name gcc)
+    else()
+        set(name auto)
+    endif()
+    set(${out} "${name}" PARENT_SCOPE)
+endfunction()
+
+# The package's name and kind, as its manifest writes them.
+function(_@PREFIX@_manifest package name_out kind_out)
+    file(STRINGS "${package}/@MANIFEST@" lines)
+    set(section "")
+    foreach(line IN LISTS lines)
+        if(line MATCHES "^[ \t]*\\[([^]]+)\\]")
+            set(section "${CMAKE_MATCH_1}")
+        elseif(section STREQUAL "package" AND line MATCHES "^[ \t]*(name|kind)[ \t]*=[ \t]*\"([^\"]*)\"")
+            set(found_${CMAKE_MATCH_1} "${CMAKE_MATCH_2}")
+        endif()
+    endforeach()
+    set(${name_out} "${found_name}" PARENT_SCOPE)
+    set(${kind_out} "${found_kind}" PARENT_SCOPE)
+endfunction()
+
+# The custom command that builds the package, and the target that runs it.
+function(_@PREFIX@_build name package profile flags_from outputs)
+    if(NOT @PREFIX_UPPER@_EXECUTABLE)
+        message(FATAL_ERROR "Ember: no `@CLI@` found; set @PREFIX_UPPER@_EXECUTABLE")
+    endif()
+    _@PREFIX@_compiler(compiler)
+    set(command "${@PREFIX_UPPER@_EXECUTABLE}" build "${package}" --profile "${profile}"
+        --out-dir "${CMAKE_CURRENT_BINARY_DIR}/@CLI@/${name}" --cc "${compiler}")
+    if(flags_from)
+        list(APPEND command --cc-flags-from-target "${flags_from}")
+    endif()
+    add_custom_command(OUTPUT ${outputs}
+        COMMAND ${command}
+        DEPENDS ${ARGN} "${package}/@MANIFEST@"
+        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+        COMMENT "Building Ember package ${name}"
+        VERBATIM)
+    add_custom_target(${name}_@PREFIX@ ALL DEPENDS ${outputs})
+endfunction()
+
+function(@PREFIX@_add_library name)
+    cmake_parse_arguments(PARSE_ARGV 1 @PREFIX_UPPER@ "" "KIND;PACKAGE;PROFILE;FLAGS_FROM" "SOURCES")
+    if(NOT @PREFIX_UPPER@_KIND MATCHES "^(staticlib|cdylib)$")
+        message(FATAL_ERROR "@PREFIX@_add_library(${name}): KIND is staticlib or cdylib")
+    endif()
+    if(NOT @PREFIX_UPPER@_PACKAGE)
+        set(@PREFIX_UPPER@_PACKAGE "${CMAKE_CURRENT_SOURCE_DIR}")
+    endif()
+    get_filename_component(@PREFIX_UPPER@_PACKAGE "${@PREFIX_UPPER@_PACKAGE}" ABSOLUTE)
+    if(NOT @PREFIX_UPPER@_PROFILE)
+        set(@PREFIX_UPPER@_PROFILE release)
+    endif()
+    _@PREFIX@_manifest("${@PREFIX_UPPER@_PACKAGE}" package kind)
+    if(NOT kind STREQUAL @PREFIX_UPPER@_KIND)
+        message(FATAL_ERROR "@PREFIX@_add_library(${name}): the package's manifest says kind = \"${kind}\", not \"${@PREFIX_UPPER@_KIND}\"")
+    endif()
+    if(NOT package)
+        set(package "${name}")
+    endif()
+    _@PREFIX@_compiler(compiler)
+    set(lib "${CMAKE_CURRENT_BINARY_DIR}/@CLI@/${name}/${@PREFIX_UPPER@_PROFILE}/lib")
+    set(runtime "${lib}/@PREFIX@_runtime")
+    if(compiler MATCHES "^(msvc|clang-cl)$")
+        set(archive "${lib}/${package}.lib")
+        set(runtime_archive "${runtime}/@PREFIX@_rt.lib")
+    else()
+        set(archive "${lib}/lib${package}.a")
+        set(runtime_archive "${runtime}/lib@PREFIX@_rt.a")
+    endif()
+    if(@PREFIX_UPPER@_KIND STREQUAL "staticlib")
+        _@PREFIX@_build(${name} "${@PREFIX_UPPER@_PACKAGE}" ${@PREFIX_UPPER@_PROFILE} "${@PREFIX_UPPER@_FLAGS_FROM}" "${archive};${runtime_archive}" ${@PREFIX_UPPER@_SOURCES})
+        add_library(${name} STATIC IMPORTED GLOBAL)
+        set_target_properties(${name} PROPERTIES IMPORTED_LOCATION "${archive}")
+        # The runtime the package's code calls, after it on the link line.
+        target_link_libraries(${name} INTERFACE "${runtime_archive}")
+        if(NOT WIN32)
+            target_link_libraries(${name} INTERFACE m pthread)
+        endif()
+    else()
+        if(WIN32)
+            set(library "${lib}/${package}.dll")
+        else()
+            set(library "${lib}/lib${package}.so")
+        endif()
+        _@PREFIX@_build(${name} "${@PREFIX_UPPER@_PACKAGE}" ${@PREFIX_UPPER@_PROFILE} "${@PREFIX_UPPER@_FLAGS_FROM}" "${library}" ${@PREFIX_UPPER@_SOURCES})
+        add_library(${name} SHARED IMPORTED GLOBAL)
+        set_target_properties(${name} PROPERTIES IMPORTED_LOCATION "${library}")
+        if(WIN32)
+            set_target_properties(${name} PROPERTIES IMPORTED_IMPLIB "${lib}/${package}.lib")
+        endif()
+    endif()
+    # The C header `@CLI@ build` writes, and the runtime's beside it, which C11 reads.
+    file(MAKE_DIRECTORY "${lib}" "${runtime}")
+    target_include_directories(${name} INTERFACE "${lib}" "${runtime}")
+    target_compile_features(${name} INTERFACE c_std_11)
+    add_dependencies(${name} ${name}_@PREFIX@)
+endfunction()
+
+function(@PREFIX@_add_executable name)
+    cmake_parse_arguments(PARSE_ARGV 1 @PREFIX_UPPER@ "" "PACKAGE;PROFILE;FLAGS_FROM" "SOURCES")
+    if(NOT @PREFIX_UPPER@_PACKAGE)
+        set(@PREFIX_UPPER@_PACKAGE "${CMAKE_CURRENT_SOURCE_DIR}")
+    endif()
+    get_filename_component(@PREFIX_UPPER@_PACKAGE "${@PREFIX_UPPER@_PACKAGE}" ABSOLUTE)
+    if(NOT @PREFIX_UPPER@_PROFILE)
+        set(@PREFIX_UPPER@_PROFILE release)
+    endif()
+    set(program "${CMAKE_CURRENT_BINARY_DIR}/@CLI@/${name}/${@PREFIX_UPPER@_PROFILE}/bin/main${CMAKE_EXECUTABLE_SUFFIX}")
+    _@PREFIX@_build(${name} "${@PREFIX_UPPER@_PACKAGE}" ${@PREFIX_UPPER@_PROFILE} "${@PREFIX_UPPER@_FLAGS_FROM}" "${program}" ${@PREFIX_UPPER@_SOURCES})
+    add_executable(${name} IMPORTED GLOBAL)
+    set_target_properties(${name} PROPERTIES IMPORTED_LOCATION "${program}")
+    add_dependencies(${name} ${name}_@PREFIX@)
+endfunction()

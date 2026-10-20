@@ -108,6 +108,8 @@ pub struct HeaderOutput {
     pub source: String,
     /// True when public i128/u128 carriers need the packaged runtime header.
     pub needs_runtime_header: bool,
+    /// `[BLD-FFI-5]` — the C++ header `--cpp` writes beside it.
+    pub cpp_source: String,
 }
 
 /// `[MNG-1]` — the C symbol of a type's `drop` method.
@@ -8728,6 +8730,25 @@ impl Emitter<'_> {
                         };
                     }
                     Builtin::RetainedAddress => return self.retained_address(&rendered[0], *arg_ty),
+                    // `[FFI-39]`, `[FFI-17d]` — a class object's address, and its handle again.
+                    Builtin::CppObjectAddress => return format!("((uint8_t*)({}))", rendered[0]),
+                    Builtin::CppObjectHandle { adopt: false } => {
+                        return format!("({RT}obj_retain(({RT}obj_header*)({0})), (void*)({0}))", rendered[0]);
+                    }
+                    Builtin::CppObjectHandle { adopt: true } => {
+                        return format!("((void*){RT}cpp_object_adopt(({RT}obj_header*)({}), {}))", rendered[0], self.location(span));
+                    }
+                    // `[FFI-17e]` — a C++ container's elements as a view, and a smart pointer's
+                    // object as a reference: the owner (argument 0) is what they borrow.
+                    // Read, so a C compiler sees the owner's temporary used.
+                    Builtin::CppSpan { mutable } => {
+                        let kind = if *mutable { "mutspan" } else { "span" };
+                        return format!("((void)({}), ({RT}{kind}){{ (void*)({}), (size_t)({}) }})", rendered[0], rendered[1], rendered[2]);
+                    }
+                    Builtin::CppPointee => return format!("((void)({}), (void*)({}))", rendered[0], rendered[1]),
+                    Builtin::CppObjectGive => {
+                        return format!("({RT}obj_retain(({RT}obj_header*)({0})), {RT}obj_pin(({RT}obj_header*)({0})))", rendered[0]);
+                    }
                     Builtin::ForeignDestructor { symbol, ret, fn_ty, .. } => {
                         if self.is_void(*ret) {
                             return format!("(({}){})", self.c_type(*fn_ty), rendered[0]);
@@ -12139,10 +12160,13 @@ fn unread_locals(body: &Body, void_place: &dyn Fn(&Place) -> bool) -> Vec<usize>
         block.stmts.iter().for_each(|stmt| stmt_c_reads(stmt, &mut read, void_place));
         terminator_c_reads(&block.terminator, &mut read, void_place);
     }
+    // The return slot is read by each `return`; a body with none (every path panics) never reads
+    // it, and MSVC's C4101 names it.
+    let returns = body.blocks.iter().any(|block| matches!(block.terminator, Terminator::Return));
     body.locals
         .iter()
         .enumerate()
-        .filter(|(index, decl)| decl.kind != LocalKind::Return && !read[*index])
+        .filter(|(index, decl)| (decl.kind != LocalKind::Return || !returns) && !read[*index])
         .map(|(index, _)| index)
         .collect()
 }

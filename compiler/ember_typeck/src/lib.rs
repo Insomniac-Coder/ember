@@ -79,6 +79,12 @@ pub struct ForeignImport {
     /// `[FFI-3]` — for `import cpp`: the shim is the C++ thunks, compiled with this standard, and
     /// the compiler the project names, if it names one (`[FFI-50]`).
     pub cpp: Option<(String, Option<String>)>,
+    /// `[FFI-39]` — each class of the module with a trampoline: whether its C++ class has a default
+    /// constructor (`E5058`), and the virtuals its trampoline does not override (`E5056`).
+    pub trampolines: Vec<(String, bool, Vec<String>)>,
+    /// `[FFI-24d]` — each function whose Ember signature a `noexcept` the header added or removed
+    /// changed, by its name (`Owner.name` for a method), with the note naming the cause.
+    pub policy_changes: Vec<(String, String)>,
 }
 
 /// The semantically resolved declaration surface a build artifact may expose
@@ -264,10 +270,16 @@ pub fn check(
         .map(|m| m.foreign.iter().flat_map(|foreign| foreign.backed.iter().map(|name| Symbol::intern(name))).collect())
         .collect();
     checker.foreign_cpp = modules.iter().map(|m| m.foreign.as_ref().is_some_and(|foreign| foreign.cpp.is_some())).collect();
+    checker.foreign_trampolines = modules.iter().map(|m| m.foreign.as_ref().map(|foreign| foreign.trampolines.clone()).unwrap_or_default()).collect();
     checker.foreign_skipped = modules
         .iter()
         .map(|m| m.foreign.as_ref().map(|foreign| (foreign.header.clone(), foreign.skipped.iter().map(|(name, why)| (Symbol::intern(name), why.clone())).collect())))
         .collect();
+    for loaded in modules {
+        if let Some(foreign) = loaded.foreign.as_ref().filter(|foreign| !foreign.policy_changes.is_empty()) {
+            checker.changed_declarations.extend(changed_declarations(&loaded.module, &foreign.policy_changes));
+        }
+    }
     checker.namespaces = vec![HashMap::new(); modules.len()];
     checker.public_namespaces = vec![HashMap::new(); modules.len()];
     checker.module_overflow = vec![default_overflow; modules.len()];
@@ -559,6 +571,7 @@ pub fn check(
                 .secondary(previous.span, "first definition is here"));
         }
     }
+    checker.note_changed_declarations();
     checker.report_unneeded_unsafe();
     let callable_declarations = checker.callable_declarations(modules);
     // `[CT-1]` — the functions computing what is still to be evaluated go to
@@ -1208,6 +1221,37 @@ struct Signature {
     /// `[DIA-22]` — the function's name where it is declared, the secondary span of a diagnostic
     /// its signature causes at a call; `Span::DUMMY` for one the compiler made.
     decl: Span,
+}
+
+/// `[FFI-24d]` — the declarations of a module `import cpp` wrote whose names `changes` lists (a
+/// function's, or `Owner.name` for a method of an `extend Owner:` block), by their names' spans.
+fn changed_declarations(module: &ast::Module, changes: &[(String, String)]) -> Vec<(Span, String)> {
+    let note = |name: &str| changes.iter().find(|(changed, _)| changed == name).map(|(_, note)| note.clone());
+    let mut out = Vec::new();
+    for item in &module.items {
+        match &item.kind {
+            ast::ItemKind::Fn(decl) => out.extend(note(decl.name.name.as_str()).map(|note| (decl.name.span, note))),
+            ast::ItemKind::Extend(extend) => {
+                let ast::TypeKind::Path { segments, .. } = &extend.target.kind else { continue };
+                let Some(owner) = segments.last() else { continue };
+                for member in &extend.members {
+                    if let ast::MemberKind::Fn(decl) = &member.kind {
+                        out.extend(note(&format!("{}.{}", owner.name, decl.name.name)).map(|note| (decl.name.span, note)));
+                    }
+                }
+            }
+            ast::ItemKind::ExternBlock(block) => {
+                for decl in block.items.iter().filter_map(|item| match &item.kind {
+                    ast::ItemKind::Fn(decl) => Some(decl),
+                    _ => None,
+                }) {
+                    out.extend(note(decl.name.name.as_str()).map(|note| (decl.name.span, note)));
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// The names the compiler knows as types before any module declares them
@@ -2162,6 +2206,11 @@ struct Checker<'a> {
     fn_ids: HashMap<Symbol, DefId>,
     /// A hand-written foreign declaration and whether it asserts a safe call.
     foreign_declarations: HashMap<DefId, bool>,
+    /// `[FFI-24d]` — the declaration (its name's span) of each imported C++ function whose header
+    /// changed its `noexcept`, with the note naming the cause; and where the program calls one
+    /// (the call, and the patterns a `match` on it tests), for the errors there to carry the note.
+    changed_declarations: HashMap<Span, String>,
+    changed_calls: Vec<(Span, String)>,
     /// `[DIA-18]` — for a foreign declaration not asserted safe to call, each fact a safe call
     /// still lacks and the declaration line that would supply it.
     foreign_unknown_facts: HashMap<DefId, ForeignUnknownFacts>,
@@ -2338,6 +2387,8 @@ struct Checker<'a> {
     foreign_skipped: Vec<Option<(String, HashMap<Symbol, String>)>>,
     /// `[FFI-32]` — per module: `import cpp` wrote it.
     foreign_cpp: Vec<bool>,
+    /// `[FFI-39]` — per module, each class with a trampoline (`ForeignImport::trampolines`).
+    foreign_trampolines: Vec<Vec<(String, bool, Vec<String>)>>,
     /// `[TCB-1]` — per module: the overlay entries whose `instrumented` grade evidence backs.
     foreign_backed: Vec<HashSet<Symbol>>,
     /// `[CT-2]` (ODR-145) — a `const`'s initialiser is being checked.
@@ -2987,7 +3038,10 @@ impl<'a> Checker<'a> {
             visible: vec![HashMap::new()],
             ambiguous_globs: vec![HashMap::new()],
             foreign_skipped: Vec::new(),
+            changed_declarations: HashMap::new(),
+            changed_calls: Vec::new(),
             foreign_cpp: Vec::new(),
+            foreign_trampolines: Vec::new(),
             foreign_backed: Vec::new(),
             const_initializer: false,
             item_spans: HashMap::new(),
@@ -4764,9 +4818,13 @@ impl<'a> Checker<'a> {
         // whose exception policy is neither derived nor declared `E5061`.
         let (code, why) = match why.split_once("] ") {
             Some(("[E5031", rest)) => (codes::E5031, rest),
+            Some(("[E5030", rest)) => (codes::E5030, rest),
             Some(("[E5061", rest)) => (codes::E5061, rest),
             Some(("[E5055", rest)) => (codes::E5055, rest),
             Some(("[E5034", rest)) => (codes::E5034, rest),
+            Some(("[E5056", rest)) => (codes::E5056, rest),
+            Some(("[E5057", rest)) => (codes::E5057, rest),
+            Some(("[E5059", rest)) => (codes::E5059, rest),
             _ => (codes::E1010, why.as_str()),
         };
         let note = if code == codes::E5061 {
@@ -4964,6 +5022,18 @@ impl<'a> Checker<'a> {
             let declares_init = decl.members.iter().any(|member| {
                 matches!(&member.kind, ast::MemberKind::Fn(method) if method.name.name.is("init"))
             });
+            if !declares_init && self.cpp_trampoline(base).is_some_and(|(default_init, _)| !default_init) {
+                let shown = self.types.class_def(base).name.as_str().rsplit('.').next().unwrap_or("").to_string();
+                self.sink.emit(
+                    Diagnostic::error(
+                        codes::E5058,
+                        decl.name.span,
+                        format!("class `{}` declares no `init`, and its C++ base `{shown}` has no default constructor", decl.name.name),
+                    )
+                    .help("declare `fn init(self, …)` calling `super.init(…)` with the arguments of one of its constructors")
+                    .note("`super.init(…)` selects the C++ base constructor by arity and argument types [FFI-39b]"),
+                );
+            }
             if !declares_init {
                 for member in &decl.members {
                     if let ast::MemberKind::Field(field) = &member.kind
@@ -5177,6 +5247,22 @@ impl<'a> Checker<'a> {
                 for member in &decl.members {
                     let ast::MemberKind::Fn(method) = &member.kind else { continue };
                     let inherited = self.inherited_class_method_dispatch(modules, id, method.name.name);
+                    let has_receiver = method
+                        .params
+                        .first()
+                        .is_some_and(|param| matches!(param.kind, ast::ParamKind::Receiver { .. }));
+                    if has_receiver
+                        && !matches!(inherited, Some(ast::Dispatch::Virtual | ast::Dispatch::Override))
+                        && let Some(base) = self.cpp_unnamed_virtual(id, method.name.name)
+                    {
+                        let name = method.name.name;
+                        self.sink.emit(
+                            Diagnostic::error(codes::E5056, method.name.span, format!("`{name}` overrides a C++ virtual of `{base}` that its trampoline does not override"))
+                                .help(format!("name it in the overlay's entry: `@ffi(trampoline, virtuals=[…, \"{name}\"]) type {base}`"))
+                                .note("the trampoline calls Ember only for the virtuals it names [FFI-39]"),
+                        );
+                        continue;
+                    }
                     // D-239 — an `override` is virtual in turn: a class
                     // further down may override it again.
                     let virtual_base =
@@ -15138,6 +15224,29 @@ impl<'a> Checker<'a> {
             }
             return Some(Expr { ty: self.common.void, kind: ExprKind::Builtin { which: Builtin::RetainedPin, args: vec![value] }, span });
         }
+        // `[FFI-17e]` — a C++ container's elements, viewed in place, and a smart pointer's object:
+        // `cpp_span(ref owner, pointer, count)`, `cpp_span_mut(ref mut owner, …)` and
+        // `cpp_pointee(ref owner, pointer)`, each borrowing the owner.
+        if (resolved.is("std.ffi.cpp_span") || resolved.is("std.ffi.cpp_span_mut")) && args.len() == 3 {
+            let mutable = resolved.is("std.ffi.cpp_span_mut");
+            let owner = self.synth_committed(&args[0].value);
+            let pointer = self.synth_committed(&args[1].value);
+            let count = self.check_expr(&args[2].value, self.common.usize);
+            let TyKind::Ptr { inner, .. } = *self.types.kind(pointer.ty) else {
+                return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+            };
+            let ty = self.types.intern(TyKind::Span { elem: inner, mutable });
+            return Some(Expr { ty, kind: ExprKind::Builtin { which: Builtin::CppSpan { mutable }, args: vec![owner, pointer, count] }, span });
+        }
+        if resolved.is("std.ffi.cpp_pointee") && args.len() == 2 {
+            let owner = self.synth_committed(&args[0].value);
+            let pointer = self.synth_committed(&args[1].value);
+            let TyKind::Ptr { inner, .. } = *self.types.kind(pointer.ty) else {
+                return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+            };
+            let ty = self.types.intern(TyKind::Ref { mutable: false, inner });
+            return Some(Expr { ty, kind: ExprKind::Builtin { which: Builtin::CppPointee, args: vec![owner, pointer] }, span });
+        }
         if resolved.is("std.ffi.foreign_release") && args.len() == 2 {
             let pointer = self.synth_committed(&args[0].value);
             let creator = self.check_expr(&args[1].value, self.common.u32);
@@ -15724,6 +15833,75 @@ impl<'a> Checker<'a> {
     /// `[FFI-40]` — in a module `import cpp` wrote, and nowhere else: a method's `T&` result as
     /// the reference it is, from the thunk's pointer (the method's signature ties it to its
     /// receiver, `[LT-1]`).
+    /// `[FFI-39]`, `[FFI-17d]` — in a module `import cpp` wrote, and nowhere else: what a
+    /// trampoline's object needs. `ember_cpp_address(h)` is a class object's address, which the
+    /// trampoline keeps without a count; `ember_cpp_handle[C](p)` (`unsafe`) a handle of the object
+    /// at such an address (a count of its own), and `ember_cpp_adopt[C](p)` the handle the count
+    /// C++ held becomes, which must be the object's only one; `ember_cpp_give(h)` a count for C++
+    /// to hold, the object pinned.
+    fn synth_cpp_object(&mut self, name: Symbol, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Option<Expr> {
+        let prefix = ember_branding::SYMBOL_PREFIX;
+        let which = ["address", "handle", "adopt", "give", "token_object"].into_iter().position(|word| name.is(&format!("{prefix}_cpp_{word}")))?;
+        if !self.foreign_cpp.get(self.current_module).copied().unwrap_or(false) {
+            return None;
+        }
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let [arg] = args else { return Some(error) };
+        let value = self.synth_committed(&arg.value);
+        // `[FFI-39c]` — the object a `Retained` token holds (a count of its own).
+        if which == 4 {
+            let Some(held) = self.lock_inner(value.ty, "std.ffi.Retained").filter(|held| matches!(self.types.kind(*held), TyKind::Class(_))) else {
+                return Some(error);
+            };
+            return Some(Expr { ty: held, kind: ExprKind::Field { base: Box::new(value), index: 0 }, span });
+        }
+        if matches!(which, 0 | 3) {
+            if !matches!(self.types.kind(value.ty), TyKind::Class(_)) {
+                return Some(error);
+            }
+            let (ty, builtin) = if which == 0 {
+                (self.types.intern(TyKind::Ptr { mutable: true, inner: self.common.u8 }), Builtin::CppObjectAddress)
+            } else {
+                (self.common.void, Builtin::CppObjectGive)
+            };
+            return Some(Expr { ty, kind: ExprKind::Builtin { which: builtin, args: vec![value] }, span });
+        }
+        let [class] = explicit else { return Some(error) };
+        if !matches!(self.types.kind(*class), TyKind::Class(_)) || !matches!(self.types.kind(value.ty), TyKind::Ptr { .. }) {
+            return Some(error);
+        }
+        if !self.unsafe_context() {
+            self.error(codes::E3100, span, "a handle made from an address requires an `unsafe` block");
+        }
+        Some(Expr { ty: *class, kind: ExprKind::Builtin { which: Builtin::CppObjectHandle { adopt: which == 2 }, args: vec![value] }, span })
+    }
+
+    /// `[FFI-39]` — the trampoline of a class a module `import cpp` wrote: whether its C++ class has
+    /// a default constructor, and the virtuals the trampoline does not override.
+    fn cpp_trampoline(&self, id: ClassId) -> Option<(bool, Vec<String>)> {
+        let def = self.types.class_def(id);
+        let name = def.name.as_str();
+        let short = name.rsplit('.').next().unwrap_or(name);
+        self.foreign_trampolines.get(def.declaring_module)?.iter().find(|found| found.0 == short).map(|found| (found.1, found.2.clone()))
+    }
+
+    /// `[FFI-39]` — the class with a trampoline above `id` whose C++ class has a virtual `name`
+    /// the trampoline does not override.
+    fn cpp_unnamed_virtual(&self, id: ClassId, name: Symbol) -> Option<String> {
+        let mut current = self.types.class_def(id).base;
+        for _ in 0..=self.types.classes().count() {
+            let base = current?;
+            if let Some((_, unnamed)) = self.cpp_trampoline(base)
+                && unnamed.iter().any(|virtual_| name.is(virtual_))
+            {
+                let shown = self.types.class_def(base).name.as_str();
+                return Some(shown.rsplit('.').next().unwrap_or(shown).to_string());
+            }
+            current = self.types.class_def(base).base;
+        }
+        None
+    }
+
     fn synth_cpp_ref(&mut self, name: Symbol, args: &[ast::Arg], span: Span) -> Option<Expr> {
         let cpp_ref = format!("{}_cpp_ref", ember_branding::SYMBOL_PREFIX);
         if !(name.is(&cpp_ref) || name.is(&format!("{cpp_ref}_mut"))) || !self.foreign_cpp.get(self.current_module).copied().unwrap_or(false) {
@@ -20469,7 +20647,29 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[FFI-24d]` — each error at a call of an imported C++ function whose header changed its
+    /// `noexcept` (or at a pattern of a `match` on one) carries the note naming the header, the
+    /// declaration and the change as the cause.
+    fn note_changed_declarations(&mut self) {
+        if self.changed_calls.is_empty() {
+            return;
+        }
+        let calls = std::mem::take(&mut self.changed_calls);
+        for mut diagnostic in self.sink.take() {
+            let at = diagnostic.primary.span;
+            let cause = calls.iter().find(|(span, _)| span.file == at.file && span.start < at.end.max(at.start + 1) && at.start < span.end.max(span.start + 1));
+            if diagnostic.severity == ember_diag::Severity::Error && let Some((_, note)) = cause {
+                diagnostic = diagnostic.note(note.clone());
+            }
+            self.sink.emit(diagnostic);
+        }
+    }
+
     fn check_direct_call_safety(&mut self, def: DefId, span: Span) {
+        // `[FFI-24d]` — a call of a C++ function whose header changed its `noexcept`.
+        if let Some(note) = self.changed_declarations.get(&self.signatures[def.0 as usize].decl) {
+            self.changed_calls.push((span, note.clone()));
+        }
         if !self.signatures[def.0 as usize].is_unsafe || self.unsafe_context() {
             return;
         }
@@ -23905,7 +24105,13 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Owned(inner) => (inner.as_ref(), true),
             _ => (scrutinee, false),
         };
+        let calls = self.changed_calls.len();
         let mut scrutinee = self.synth_committed(scrutinee);
+        // `[FFI-24d]` — a `match` on a call whose result a header's `noexcept` change made another
+        // type: its patterns are where that shows.
+        if let Some((_, note)) = self.changed_calls.get(calls).cloned() {
+            self.changed_calls.extend(arms.iter().map(|arm| (arm.pattern.span, note.clone())));
+        }
         let scrutinee_ty = scrutinee.ty;
         // Through a class handle's field too: the binding's loan holds the
         // field's read access, which the handle's other aliases respect
@@ -32365,6 +32571,34 @@ impl<'a> Checker<'a> {
         if self.emit_callable_mode_mismatch(expr.span, expected, expr.ty) {
             return Expr { ty: expected, kind: ExprKind::Error, span: expr.span };
         }
+        // `[FFI-23]`, `[FFI-39c]` (ODR-156) — a `Retained` token of a class is a token of its base:
+        // the same object, held as long. The base's token holds the upcast handle, a count of its
+        // own that the token's end releases.
+        if let (Some(found), Some(wanted)) = (self.lock_inner(expr.ty, "std.ffi.Retained"), self.lock_inner(expected, "std.ffi.Retained"))
+            && let (TyKind::Class(derived), TyKind::Class(base)) = (self.types.kind(found).clone(), self.types.kind(wanted).clone())
+            && self.types.class_is_subclass_of(derived, base)
+            && let TyKind::Struct(token) = *self.types.kind(expected)
+        {
+            let span = expr.span;
+            let handle = Expr { ty: found, kind: ExprKind::Field { base: Box::new(expr), index: 0 }, span };
+            let upcast = Expr { ty: wanted, kind: ExprKind::Cast { expr: Box::new(handle), to: wanted }, span };
+            return Expr { ty: expected, kind: ExprKind::StructLit { struct_id: token, fields: vec![upcast] }, span };
+        }
+        // `[FFI-39c]` (ODR-156) — an object of a class with a trampoline passed bare where C++
+        // keeps it: nothing would hold the token that keeps it alive.
+        if let Some(wanted) = self.lock_inner(expected, "std.ffi.Retained")
+            && let (TyKind::Class(derived), TyKind::Class(base)) = (self.types.kind(expr.ty).clone(), self.types.kind(wanted).clone())
+            && (derived == base || self.types.class_is_subclass_of(derived, base))
+            && self.cpp_trampoline(base).is_some()
+        {
+            let shown = self.types.display(wanted).rsplit('.').next().unwrap_or_default().to_string();
+            self.sink.emit(
+                Diagnostic::error(codes::E5060, expr.span, format!("C++ keeps this object, and nothing here holds the `Retained` token that keeps it alive for C++"))
+                    .help(format!("pin it and keep the token as long as C++ needs the object: `token = Retained.pin(…)`, then pass `token` (a `Retained[{shown}]`)"))
+                    .note("a parameter that keeps the object takes the token the program holds (ODR-156) [FFI-39c]"),
+            );
+            return Expr { ty: expected, kind: ExprKind::Error, span: expr.span };
+        }
         // `[CLS-4]`/`[DSP-1]` — single-inheritance handles upcast to an
         // open/abstract base without changing the pointed-to object. Keep
         // this as a distinct compiler-inserted cast so C receives a pointer
@@ -34034,6 +34268,21 @@ impl<'a> Checker<'a> {
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
                 let str_ty = self.common.str_;
+                // `[FFI-17a]` — `String.from(c)` of a `CppString` copies its bytes.
+                if let Some(&copy) = self.fn_ids.get(&Symbol::intern("std.ffi.cpp_string_copy"))
+                    && !matches!(args[0].value.kind, ast::ExprKind::Lit(_) | ast::ExprKind::FString(_))
+                {
+                    let mark = self.sink.mark();
+                    let value = self.synth_committed(&args[0].value);
+                    if matches!(self.types.kind(value.ty), TyKind::Struct(id) if self.types.struct_def(*id).name.is("std.ffi.CppString")) {
+                        return Expr {
+                            ty: self.common.string,
+                            kind: ExprKind::Call { callee: copy, arg_eval_order: None, default_arg_locals: None, args: vec![value], latebound: false },
+                            span,
+                        };
+                    }
+                    self.sink.rollback(mark);
+                }
                 let text = self.check_expr(&args[0].value, str_ty);
                 self.to_string_of(text, span)
             }
@@ -34875,6 +35124,9 @@ impl<'a> Checker<'a> {
         // compiler-known constructor: a declared `Box[T]` is built by
         // `Box(5)` (D-305).
         if segments.len() == 1 && let Some(built) = self.synth_cpp_ref(name, args, span) {
+            return built;
+        }
+        if segments.len() == 1 && let Some(built) = self.synth_cpp_object(name, args, &explicit, span) {
             return built;
         }
         let resolved_name = self.resolve_name(name);
@@ -40199,7 +40451,10 @@ impl<'a> Checker<'a> {
         };
         // From here a failed call still counts as the one `super.init`, so
         // `E2100` does not follow it ([DIA-14]).
-        let Some(entry) = self.methods.get(&(base_ty, Symbol::intern("init"))).copied() else {
+        // `[FFI-39b]` — a C++ base's constructors are its `init` and an `ember_cpp_init_<k>`
+        // each: the one of the call's arity whose parameters take its arguments.
+        let chosen = if self.cpp_trampoline(base_id).is_some() { self.cpp_base_constructor(base_ty, args, span) } else { None };
+        let Some(entry) = chosen.or_else(|| self.methods.get(&(base_ty, Symbol::intern("init"))).copied()) else {
             self.error(codes::E1010, span, "the direct base class has no explicit `init`");
             if let Some(state) = self.class_init.as_mut() {
                 state.base_initialized = true;
@@ -40233,6 +40488,39 @@ impl<'a> Checker<'a> {
             },
             span,
         }
+    }
+
+    /// `[FFI-39b]` — the constructor of a C++ base `super.init(args)` selects: of its `init` and
+    /// `ember_cpp_init_<k>`s, the first of the call's arity whose parameter types take the
+    /// arguments (checked and taken back).
+    fn cpp_base_constructor(&mut self, base_ty: Ty, args: &[ast::Arg], span: Span) -> Option<MethodEntry> {
+        let variant = format!("{}_cpp_init_", ember_branding::SYMBOL_PREFIX);
+        let mut candidates: Vec<(String, MethodEntry)> = self
+            .methods
+            .iter()
+            .filter(|((ty, name), _)| *ty == base_ty && (name.is("init") || name.as_str().starts_with(&variant)))
+            .map(|((_, name), entry)| (name.as_str().to_string(), *entry))
+            .collect();
+        candidates.sort_by(|a, b| a.0.cmp(&b.0));
+        let fitting: Vec<MethodEntry> = candidates
+            .into_iter()
+            .map(|(_, entry)| entry)
+            .filter(|entry| self.signatures[entry.def.0 as usize].params.len() == args.len() + 1)
+            .collect();
+        for entry in &fitting {
+            let params = self.signatures[entry.def.0 as usize].params[1..].to_vec();
+            let mark = self.sink.mark();
+            for (arg, (param, param_ty, mode, declared)) in args.iter().zip(&params) {
+                let _ = self.check_argument_of(&arg.value, *param_ty, *mode, *param, *declared);
+            }
+            if !self.sink.rollback(mark) {
+                return Some(*entry);
+            }
+        }
+        if fitting.is_empty() {
+            self.error(codes::E2020, span, format!("no constructor of the C++ base class takes {} argument(s)", args.len()));
+        }
+        fitting.first().copied()
     }
 
     /// Part IV.11 — `recv.m(args)`. The receiver's type decides which method

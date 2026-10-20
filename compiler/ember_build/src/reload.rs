@@ -167,7 +167,7 @@ pub fn shared_runtime(
             Toolchain::Msvc { .. } => {
                 let definitions = staging.join(format!("{stem}.def"));
                 write_definitions(&object, &definitions, &stem)?;
-                command.args(["/nologo", "/LD", "/MD"]).arg(&object).arg(format!("/Fe{}", library.display()));
+                command.args(["/nologo", "/LD", crate::msvc_runtime_switch()]).arg(&object).arg(format!("/Fe{}", library.display()));
                 command.arg("/link").arg(format!("/DEF:{}", definitions.display()))
                     .arg(format!("/IMPLIB:{}", staging.join(format!("{stem}.lib")).display()));
             }
@@ -214,6 +214,7 @@ pub fn link_image(
     runtime: &SharedRuntime,
     manifest_symbol: &str,
     relaxed: &[PathBuf],
+    libraries: &[String],
     obj_dir: &Path,
     output: &Path,
 ) -> Result<(), BuildError> {
@@ -223,7 +224,8 @@ pub fn link_image(
     let mut command = compiler_command(toolchain);
     match toolchain {
         Toolchain::Msvc { .. } => {
-            command.args(["/nologo", "/LD", "/MD"]).arg(&object).args(relaxed).arg(&runtime.link_with)
+            command.args(["/nologo", "/LD", crate::msvc_runtime_switch()]).arg(&object).args(relaxed).arg(&runtime.link_with)
+                .args(libraries.iter().map(|library| crate::cdylib::windows_library(library)))
                 .arg(format!("/Fe{}", output.display()))
                 .arg("/link").arg(format!("/INCLUDE:{manifest_symbol}"));
             if profile != Profile::Release {
@@ -232,10 +234,12 @@ pub fn link_image(
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) if cfg!(windows) => {
             command.arg("-shared").arg(&object).args(relaxed).arg(&runtime.link_with).arg("-o").arg(output)
+                .args(libraries.iter().map(|library| crate::cdylib::gnu_library(library)))
                 .arg(format!("-Wl,/INCLUDE:{manifest_symbol}"));
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.arg("-shared").arg(&object).args(relaxed).arg(&runtime.link_with).arg("-o").arg(output)
+                .args(libraries.iter().map(|library| crate::cdylib::gnu_library(library)))
                 .args(["-lm", "-pthread"]);
         }
     }
@@ -395,6 +399,7 @@ mod tests {
                 true,
                 &shared,
                 &manifest,
+                &[],
                 &[],
                 &obj,
                 &dir.join(format!("t.image.{index}.{}", image_extension())),

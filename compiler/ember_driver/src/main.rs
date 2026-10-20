@@ -402,6 +402,10 @@ struct Options {
     profile: Profile,
     emit: Option<String>,
     emit_header: bool,
+    /// `[BLD-FFI-5]` — `--cpp`: a C++ header beside the C one.
+    cpp_header: bool,
+    /// `[BLD-FFI-2]` — `--cc-flags-from-target <target>`: a CMake target's C compiler and flags.
+    cc_flags_target: Option<String>,
     cc: Option<String>,
     out_dir: Option<PathBuf>,
     json: bool,
@@ -692,6 +696,12 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             }
             if options.emit.as_deref() == Some("header") && command != "build" {
                 return Err("`--emit header` is only valid with `ember build`".to_string());
+            }
+            if options.cc_flags_target.is_some() && command != "build" {
+                return Err("`--cc-flags-from-target` is only valid with `ember build`, run in the CMake build folder".to_string());
+            }
+            if options.cpp_header && command != "build" {
+                return Err("`--cpp` writes a C++ header beside the C one: it is only valid with `ember build`".to_string());
             }
             if options.emit_header && options.emit.as_deref().is_some_and(|stage|
                 !matches!(stage, "c" | "header")) {
@@ -1613,8 +1623,26 @@ fn known_defects() -> Vec<&'static str> {
         .collect()
 }
 
+/// `[TCB-4]`, `[FFI-3]` — the C++ the program trusts: the thunks of each header it imports, which
+/// the C++ compiler builds with the project's flags, and `std.ffi`'s bridge types (`[FFI-17e]`).
+fn cpp_bridge(modules: &[ember_typeck::LoadedModule]) -> String {
+    let mut headers: Vec<&str> = modules
+        .iter()
+        .filter_map(|loaded| loaded.foreign.as_ref().filter(|foreign| foreign.cpp.is_some() && !foreign.header.is_empty()).map(|foreign| foreign.header.as_str()))
+        .collect();
+    headers.sort_unstable();
+    headers.dedup();
+    if headers.is_empty() {
+        return "none: the program imports no C++".to_string();
+    }
+    format!(
+        "the `extern \"C\"` thunks of {}, compiled by the C++ compiler with the project's flags, and `std.ffi`'s bridge types (`CppVector`, `CppString`, `CppShared`) over the C++ standard library",
+        headers.iter().map(|header| format!("`{header}`")).collect::<Vec<_>>().join(", ")
+    )
+}
+
 /// `[TCB-4]` — the trusted base by category, the compiler first, with its version and known defects.
-fn trusted_base_categories() -> Vec<(&'static str, String)> {
+fn trusted_base_categories(modules: &[ember_typeck::LoadedModule]) -> Vec<(&'static str, String)> {
     let requested = std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty());
     let driver = match Toolchain::detect(requested.as_deref()) {
         Ok(toolchain) => format!("{} ({}) and {}", toolchain.name(), toolchain.compiler_path().display(), toolchain.linker()),
@@ -1630,7 +1658,7 @@ fn trusted_base_categories() -> Vec<(&'static str, String)> {
         )),
         ("runtime", format!("{}_rt, the runtime built with this compiler", ember_branding::SYMBOL_PREFIX)),
         ("standard library", format!("{}, as shipped with this compiler", ember_branding::STD_PACKAGE)),
-        ("C++ bridge", "none: C++ interoperability is not built".to_string()),
+        ("C++ bridge", cpp_bridge(modules)),
         ("external libraries", "the foreign declarations below, each linked from its library".to_string()),
         ("driver", driver),
         ("hardware", format!("{} ({})", std::env::consts::ARCH, std::env::consts::OS)),
@@ -2279,7 +2307,7 @@ fn print_tcb_report(
             }
             value
         }).collect();
-        let categories: serde_json::Map<String, serde_json::Value> = trusted_base_categories()
+        let categories: serde_json::Map<String, serde_json::Value> = trusted_base_categories(modules)
             .into_iter()
             .map(|(name, text)| (name.to_string(), serde_json::json!(text)))
             .collect();
@@ -2319,7 +2347,7 @@ fn print_tcb_report(
     println!("Trusted base: {}", input.display());
     println!("Guaranteed by the language, checked by the compiler: {LANGUAGE_GUARANTEES}");
     // `[TCB-4]` — the rest of the base, by category.
-    for (name, text) in trusted_base_categories() {
+    for (name, text) in trusted_base_categories(modules) {
         println!("{}{}: {text}", name[..1].to_uppercase(), &name[1..]);
     }
     println!("Supplied from outside the language, each fact with its grade:");
@@ -2410,6 +2438,13 @@ fn safety_costs_json(
         .map(|body| body.symbol.starts_with(&std_prefix) || standard_files.contains(&body.span.file))
         .collect();
     let by_symbol: std::collections::HashMap<&str, &ember_mir::Body> = bodies.iter().map(|body| (body.symbol.as_str(), body)).collect();
+    // `[FFI-24c]` — the modules `import cpp` wrote: their functions are the program's C++ calls, and
+    // their bodies (the wrappers of the thunks) are the import's, not the program's own.
+    let cpp_files: std::collections::BTreeSet<ember_span::FileId> = modules
+        .iter()
+        .filter(|loaded| loaded.foreign.as_ref().is_some_and(|foreign| foreign.cpp.is_some()))
+        .map(|loaded| loaded.module.span.file)
+        .collect();
     let mut costs: Vec<serde_json::Value> = Vec::new();
     let mut add = |row: &str, class: &str, span: ember_span::Span, function: &str, detail: String| {
         costs.push(serde_json::json!({
@@ -2420,12 +2455,20 @@ fn safety_costs_json(
         add("Allocation", "guaranteed present", site.span, &site.function, site.operations.join(", "));
     }
     for (index, body) in bodies.iter().enumerate() {
-        if standard[index] {
+        if standard[index] || cpp_files.contains(&body.span.file) {
             continue;
         }
         for block in &body.blocks {
             let ember_mir::Terminator::Call { func, .. } = &block.terminator else { continue };
             let span = block.terminator_span;
+            // `[FFI-24c]` — a C++ call, with its exception mode.
+            if let ember_mir::FuncRef::Direct { symbol, .. } = func
+                && let Some(callee) = by_symbol.get(symbol.as_str())
+                && let Some(mode) = cpp_call_mode(callee, &by_symbol, &cpp_files)
+            {
+                add("FFI call", "guaranteed present", span, &body.name, format!("`{}`, a C++ call through its thunk: {mode} [FFI-24c]", callee.name));
+                continue;
+            }
             match func {
                 ember_mir::FuncRef::Interface { .. } => add("Interface call through `dyn`", "guaranteed present", span, &body.name, "one indirect call".to_string()),
                 ember_mir::FuncRef::Virtual { .. } => add("Virtual method call", "conditionally elided", span, &body.name, "one indirect call through the class's method table".to_string()),
@@ -2442,8 +2485,31 @@ fn safety_costs_json(
                         };
                         add("FFI call", "guaranteed present", span, &body.name, detail);
                     }
+                    // `[FFI-17f]` — an operation of a C++ bridge type is a call of its C++ thunk.
+                    if let Some(callee) = by_symbol.get(symbol.as_str())
+                        && symbol.starts_with(&ember_branding::mangled("std.ffi."))
+                        && let Some((_, receiver)) = callee.args().next()
+                        && let Some(bridge) = bridge_type(types, receiver.ty)
+                    {
+                        let method = callee.name.rsplit('.').next().unwrap_or(&callee.name);
+                        if matches!(method, "as_ptr" | "from_thunks") {
+                            continue;
+                        }
+                        add("FFI call", "guaranteed present", span, &body.name, format!("`{bridge}.{method}`, through its C++ thunk: a call, never inlined [FFI-17f]"));
+                    }
                 }
                 _ => {}
+            }
+        }
+        // `[FFI-17f]` — a bridge value's end is a call of its C++ destructor's thunk.
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                if let ember_mir::StmtKind::Drop { place, .. } = &stmt.kind
+                    && place.projection.is_empty()
+                    && let Some(bridge) = bridge_type(types, body.local(place.local).ty)
+                {
+                    add("FFI call", "guaranteed present", stmt.span, &body.name, format!("`{bridge}` dropped, through its C++ destructor's thunk: a call, never inlined [FFI-17f]"));
+                }
             }
         }
     }
@@ -2458,6 +2524,58 @@ fn safety_costs_json(
         add("`contains`", "guaranteed present", use_.span, "", format!("{}: {}", use_.selects, use_.cost));
     }
     serde_json::Value::Array(costs).to_string()
+}
+
+/// `[FFI-24c]` — the exception mode of a call of `callee`, when it is a function `import cpp` wrote:
+/// `noexcept (derived)` for a thunk called directly, or a wrapper whose thunk does not catch;
+/// `noexcept (asserted)` for one an overlay asserts `@ffi(noexcept)`, whose thunk catches and whose
+/// wrapper panics on a throw (`[FFI-24b]`); `catching` for one that returns the throw as a
+/// `CppError` (`[FFI-24]`). `None` for any other function, and for a helper of the import's that
+/// calls no thunk.
+fn cpp_call_mode(
+    callee: &ember_mir::Body,
+    by_symbol: &std::collections::HashMap<&str, &ember_mir::Body>,
+    cpp_files: &std::collections::BTreeSet<ember_span::FileId>,
+) -> Option<&'static str> {
+    if !cpp_files.contains(&callee.span.file) {
+        return None;
+    }
+    if callee.contracts.foreign.is_some() {
+        return Some("noexcept (derived)");
+    }
+    let prefix = ember_branding::SYMBOL_PREFIX;
+    let called: Vec<&str> = callee
+        .blocks
+        .iter()
+        .filter_map(|block| match &block.terminator {
+            ember_mir::Terminator::Call { func: ember_mir::FuncRef::Direct { symbol, .. }, .. } => Some(symbol.as_str()),
+            _ => None,
+        })
+        .collect();
+    let thunk = called.iter().any(|symbol| by_symbol.get(symbol).is_some_and(|body| body.contracts.foreign.is_some() && cpp_files.contains(&body.span.file)));
+    if !thunk {
+        return None;
+    }
+    Some(if called.iter().any(|symbol| symbol.contains(&format!("{prefix}_cpp_value"))) {
+        "noexcept (asserted)"
+    } else if called.iter().any(|symbol| symbol.contains(&format!("{prefix}_cpp_result"))) {
+        "catching"
+    } else {
+        "noexcept (derived)"
+    })
+}
+
+/// `[FFI-17e]` — the name of a C++ bridge type (`std.ffi`'s `CppVector`, `CppString`, `CppShared`),
+/// for `ty` or a reference to one.
+fn bridge_type(types: &TypeTable, ty: ember_types::Ty) -> Option<&'static str> {
+    let ty = match types.kind(ty) {
+        ember_types::TyKind::Ref { inner, .. } => *inner,
+        _ => ty,
+    };
+    let ember_types::TyKind::Struct(id) = types.kind(ty) else { return None };
+    let def = types.struct_def(*id);
+    let name = def.origin.as_ref().map_or(def.name, |(name, _)| *name);
+    ["CppVector", "CppString", "CppShared"].into_iter().find(|bridge| name.as_str() == format!("std.ffi.{bridge}"))
 }
 
 /// `[EFF-16]` — each function of the program with the two facts that together say it has no panic
@@ -3082,6 +3200,8 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             }
             "--emit" => options.emit = Some(value(&mut index, arg)?),
             "--emit-header" => options.emit_header = true,
+            "--cpp" => options.cpp_header = true,
+            "--cc-flags-from-target" => options.cc_flags_target = Some(value(&mut index, arg)?),
             "--emit-optimization-report" => options.optimization_report = true,
             "--timings" => options.timings = Some(false),
             "--timings=json" => options.timings = Some(true),
@@ -3284,13 +3404,16 @@ fn load_modules(
 ) -> Vec<ember_typeck::LoadedModule> {
     // Without a resolution (an error the build reports itself), the root package alone.
     let packages = packages::resolve(root_dir).unwrap_or_else(|_| packages::Packages::alone(root_dir));
-    load_package_modules(root, root_dir, &packages, map, sink)
+    load_package_modules(root, root_dir, &packages, &[], map, sink)
 }
 
+/// `target_flags` — the C flags `--cc-flags-from-target` takes from a CMake target (`[BLD-FFI-2]`),
+/// added to each package's `[c]` flags.
 fn load_package_modules(
     root: ember_ast::Module,
     root_dir: &Path,
     packages: &packages::Packages,
+    target_flags: &[String],
     map: &mut SourceMap,
     sink: &mut Sink,
 ) -> Vec<ember_typeck::LoadedModule> {
@@ -3338,7 +3461,8 @@ fn load_package_modules(
                 let importer = map.file(import.span.file).path.clone();
                 let package_dir = packages.list.get(package).map(|found| found.dir.clone());
                 let manifest = package_dir.as_ref().and_then(|dir| std::fs::read_to_string(dir.join(ember_branding::MANIFEST)).ok());
-                let flags = manifest.as_deref().and_then(|text| manifest_list(text, "c", "flags")).unwrap_or_default();
+                let mut flags = manifest.as_deref().and_then(|text| manifest_list(text, "c", "flags")).unwrap_or_default();
+                flags.extend(target_flags.iter().cloned());
                 let base = package_dir.unwrap_or_else(|| importer.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf());
                 if let Some(written) = cimport::load(import, &importer, &base, &flags, manifest.as_deref(), &mut foreign_known, map, sink) {
                     seen.insert(written.path.join("."));
@@ -4336,7 +4460,14 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[MOD-1]`, `[MAN-2]` — the package's dependencies, and its lock.
     let packages = packages::resolve(&root_dir)?;
     packages::settle_lock(&packages, options.locked)?;
-    let mut modules = load_package_modules(module, &root_dir, &packages, &mut map, &mut sink);
+    // `[BLD-FFI-2]` — the C flags of the CMake target `--cc-flags-from-target` names, from the File
+    // API reply of the CMake build folder this runs in: the package's C imports are parsed and
+    // compiled with them, as with the `[c]` section's, and the runtime they name is inherited.
+    let target_flags = match &options.cc_flags_target {
+        Some(target) => cimport::cmake_c_flags(Path::new("."), target)?,
+        None => Vec::new(),
+    };
+    let mut modules = load_package_modules(module, &root_dir, &packages, &target_flags, &mut map, &mut sink);
     // `[BLD-13]` — what the program's source locations are written relative to: its package's
     // directory, each dependency's (by its name), the standard library's (`std`).
     let mut roots: Vec<(PathBuf, String)> = packages.list.iter().enumerate()
@@ -4999,7 +5130,11 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         if header.needs_runtime_header {
             copy_runtime_header(&layout.lib)?;
         }
-        std::fs::write(header_path, &header.source).map_err(|e| e.to_string())?;
+        std::fs::write(&header_path, &header.source).map_err(|e| e.to_string())?;
+        // `[BLD-FFI-5]` — and the C++ one beside it.
+        if options.cpp_header {
+            std::fs::write(header_path.with_extension("hpp"), &header.cpp_source).map_err(|e| e.to_string())?;
+        }
     }
     if options.emit.as_deref() == Some("header") {
         return Ok(finish(&sink, &map, options));
@@ -5092,20 +5227,43 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let exe = layout.bin.join(exe_name);
 
     // `--cc`, else the variable `cc_var()` names (CI's compiler matrix, D-251).
+    // `[BLD-FFI-2]` — between the two, the compiler of the CMake build whose target's flags it takes.
     let requested = options
         .cc
         .clone()
+        .or_else(|| options.cc_flags_target.as_ref().and_then(|_| cimport::cmake_c_compiler(Path::new(".")).map(str::to_string)))
         .or_else(|| std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty()));
     let toolchain = Toolchain::detect(requested.as_deref()).map_err(|e| e.to_string())?;
+    // `[BLD-FFI-1b]` — the C++ projects' runtime switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL`, which
+    // every translation unit of the target is compiled with.
+    if matches!(toolchain, Toolchain::Msvc { .. }) {
+        match cimport::inherited_runtime(&modules, options.cc_flags_target.as_deref().map(|target| (target, target_flags.as_slice()))) {
+            Ok(flags) => ember_build::inherit_msvc_runtime(flags),
+            Err(diagnostic) => {
+                sink.emit(diagnostic);
+                return Ok(finish(&sink, &map, options));
+            }
+        }
+    } else {
+        // `[BLD-FFI-4]` — and with GCC or Clang, its link-time optimisation.
+        ember_build::inherit_gnu_lto(cimport::inherited_lto(&modules));
+    }
     if options.build_id {
         println!("{}", build_id(&map, options.profile, &toolchain, &runtime)?);
     }
     let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
     let includes = vec![runtime.join("include")];
-    // Annex B — a reloadable program: the shared runtime, an image and the host that runs it.
+    // Annex B — a reloadable program: the shared runtime, an image and the host that runs it. The
+    // image holds the imports' shims and thunks (`[FFI-39a]`: a trampoline's object keeps calling
+    // through the permanent thunks of the entries it was given).
     if let Some(image) = &reload_image {
+        let c_toolchain = match manifest.as_deref().and_then(|text| manifest_string(text, "c", "compiler")) {
+            Some(compiler) => Toolchain::detect(Some(&compiler)).map_err(|e| e.to_string())?,
+            None => toolchain.clone(),
+        };
+        let foreign = cimport::build_objects(&modules, &c_toolchain, &toolchain, &layout.c, &layout.obj, options.profile)?;
         let built = match reload::build(&toolchain, &layout, &module_name, &c_path, &runtime_source, &includes,
-            options.profile, image, &emitted.relaxed_units, options.reload, options.explain, started)
+            options.profile, image, &emitted.relaxed_units, &foreign, options.reload, options.explain, started)
         {
             Ok(built) => built,
             Err(reload::Failure::Other(message)) => return Err(message),
@@ -5216,6 +5374,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             .map_err(|e| e.to_string())?;
         copy_runtime_header(&layout.lib)?;
         std::fs::write(&package_header, &header.source).map_err(|e| e.to_string())?;
+        if options.cpp_header {
+            std::fs::write(package_header.with_extension("hpp"), &header.cpp_source).map_err(|e| e.to_string())?;
+        }
         report(&sink, &map, options);
         eprintln!("built {}", built.library.display());
         return Ok(ExitCode::SUCCESS);
@@ -5246,6 +5407,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
                 .map_err(|e| e.to_string())?;
             copy_runtime_header(&layout.lib)?;
             std::fs::write(&package_header, &header.source).map_err(|e| e.to_string())?;
+            if options.cpp_header {
+                std::fs::write(package_header.with_extension("hpp"), &header.cpp_source).map_err(|e| e.to_string())?;
+            }
             Ok(())
         })();
         if let Err(error) = built {

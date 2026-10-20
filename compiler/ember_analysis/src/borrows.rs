@@ -2593,7 +2593,7 @@ fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elis
         // this the view dangles across the next mutation (D-037).
         FuncRef::Builtin {
             which: Builtin::SpanGet | Builtin::SpanGetUnchecked | Builtin::StringAsStr
-                | Builtin::CStringAsCStr,
+                | Builtin::CStringAsCStr | Builtin::CppSpan { .. } | Builtin::CppPointee,
             ..
         } => Elision::named(vec![0]),
         FuncRef::Builtin { .. } => Elision::Nothing,

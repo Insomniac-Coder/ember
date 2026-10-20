@@ -99,6 +99,38 @@ def generated_tests(out_dir: Path, prefix: str) -> list[tuple[Path, str]]:
     ]
 
 
+CMAKE_TEMPLATE = ROOT / "cmake" / "Ember.cmake.in"
+
+
+def branding_value(name: str) -> str:
+    """A string constant of the branding module (`CLI_NAME`, `MANIFEST`)."""
+
+    match = re.search(rf'pub const {name}: &str = "([^"]*)";', BRANDING.read_text(encoding="utf-8"))
+    if match is None:
+        raise RuntimeError(f"could not find {name} in {BRANDING}")
+    return match.group(1)
+
+
+def generated_cmake(prefix: str) -> tuple[Path, str]:
+    """`[BLD-FFI-2]` — the CMake module the toolchain ships, rendered from its template with the
+    branding's names: the symbol prefix, the CLI name and the manifest file."""
+
+    cli = branding_value("CLI_NAME")
+    module = cli[:1].upper() + cli[1:]
+    text = CMAKE_TEMPLATE.read_text(encoding="utf-8")
+    for token, value in [("@PREFIX_UPPER@", prefix.upper()), ("@PREFIX@", prefix), ("@CLI@", cli),
+                         ("@MANIFEST@", branding_value("MANIFEST")), ("@MODULE@", module)]:
+        text = text.replace(token, value)
+    return ROOT / "cmake" / f"{module}.cmake", f"# {GENERATED_MARKER}\n{text}"
+
+
+def further_outputs(out_dir: Path, prefix: str) -> list[tuple[Path, str]]:
+    """The further headers and the C tests, and the CMake module for the checked-in runtime."""
+
+    cmake = [generated_cmake(prefix)] if out_dir == DEFAULT_OUT else []
+    return [*generated_headers(out_dir, prefix), *generated_tests(out_dir, prefix), *cmake]
+
+
 def write_outputs(out_dir: Path, prefix: str) -> tuple[Path, Path]:
     header_path, source_path = output_paths(out_dir, prefix)
     header, source = generated_contents(prefix)
@@ -106,14 +138,14 @@ def write_outputs(out_dir: Path, prefix: str) -> tuple[Path, Path]:
     source_path.parent.mkdir(parents=True, exist_ok=True)
     header_path.write_text(header, encoding="utf-8", newline="\n")
     source_path.write_text(source, encoding="utf-8", newline="\n")
-    for test_path, test in [*generated_headers(out_dir, prefix), *generated_tests(out_dir, prefix)]:
+    for test_path, test in further_outputs(out_dir, prefix):
         test_path.parent.mkdir(parents=True, exist_ok=True)
         test_path.write_text(test, encoding="utf-8", newline="\n")
     return header_path, source_path
 
 
 def check_outputs(out_dir: Path, prefix: str) -> bool:
-    tests = [*generated_headers(out_dir, prefix), *generated_tests(out_dir, prefix)]
+    tests = further_outputs(out_dir, prefix)
     expected = [*generated_contents(prefix), *(test for _, test in tests)]
     paths = [*output_paths(out_dir, prefix), *(path for path, _ in tests)]
     ok = True

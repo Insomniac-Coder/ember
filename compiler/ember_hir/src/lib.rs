@@ -1470,6 +1470,22 @@ pub enum Builtin {
     /// `[FFI-23]` — the address of the object a class handle or a `Box`
     /// holds, as `*mut u8`.
     RetainedAddress,
+    /// `[FFI-39]` — in a module `import cpp` wrote: a class object's address
+    /// (the argument, a handle), which a trampoline keeps without a count.
+    CppObjectAddress,
+    /// `[FFI-39]` — the handle of the class object at an address a trampoline
+    /// kept (the argument): a new count of it, or, with `adopt`, the count C++
+    /// held, which must be the object's only one (`[FFI-17d]`).
+    CppObjectHandle { adopt: bool },
+    /// `[FFI-17d]` — a count of a class object (the argument, a handle) for
+    /// C++ to hold, its header pinned, as `Retained.pin` does.
+    CppObjectGive,
+    /// `[FFI-17e]` — a view of a C++ container's elements: the owner (a
+    /// reference, which the view borrows), their address and their count.
+    CppSpan { mutable: bool },
+    /// `[FFI-17e]` — the object a C++ smart pointer holds, as a reference:
+    /// the owner (a reference, which it borrows) and the object's address.
+    CppPointee,
     /// `[STA-3]` — a reference to the one value of a `static` whose
     /// initialiser runs on first access: `init`, a function of no
     /// arguments, the first time any thread asks. `name` is the static's, for
@@ -2023,6 +2039,11 @@ impl Builtin {
             Builtin::ForeignDestructor { .. } => "ffi_destructor",
             Builtin::RetainedPin => "retained_pin",
             Builtin::RetainedAddress => "retained_address",
+            Builtin::CppObjectAddress => "cpp_object_address",
+            Builtin::CppObjectHandle { .. } => "cpp_object_handle",
+            Builtin::CppObjectGive => "cpp_object_give",
+            Builtin::CppSpan { .. } => "cpp_span",
+            Builtin::CppPointee => "cpp_pointee",
             Builtin::LazyStatic { .. } => "lazy_static",
             Builtin::ConstStatic { .. } => "constant_static",
             Builtin::ComptimeReadFile => "read_file",

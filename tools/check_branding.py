@@ -32,7 +32,7 @@ import re
 import sys
 from pathlib import Path
 
-from generate_runtime import DEFAULT_OUT, GENERATED_MARKER, branding_prefix, generated_headers, generated_tests
+from generate_runtime import DEFAULT_OUT, GENERATED_MARKER, branding_prefix, generated_cmake, generated_headers, generated_tests
 
 ROOT = Path(__file__).resolve().parent.parent
 BASELINE = ROOT / "tools" / "check_branding_baseline.json"
@@ -56,6 +56,8 @@ GENERATED_RUNTIME.update(
 GENERATED_RUNTIME.update(
     path.relative_to(ROOT) for path, _ in generated_headers(DEFAULT_OUT, branding_prefix())
 )
+# `[BLD-FFI-2]` — the CMake module, rendered from `cmake/Ember.cmake.in` with the branding's names.
+GENERATED_RUNTIME.add(generated_cmake(branding_prefix())[0].relative_to(ROOT))
 
 SEARCH = [
     ("compiler", ("*.rs",)),
