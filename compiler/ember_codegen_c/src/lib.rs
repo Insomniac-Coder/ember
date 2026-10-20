@@ -8712,11 +8712,12 @@ impl Emitter<'_> {
                     }
                     // `[FFI-17e]` — a C++ container's elements as a view, and a smart pointer's
                     // object as a reference: the owner (argument 0) is what they borrow.
+                    // Read, so a C compiler sees the owner's temporary used.
                     Builtin::CppSpan { mutable } => {
                         let kind = if *mutable { "mutspan" } else { "span" };
-                        return format!("(({RT}{kind}){{ (void*)({}), (size_t)({}) }})", rendered[1], rendered[2]);
+                        return format!("((void)({}), ({RT}{kind}){{ (void*)({}), (size_t)({}) }})", rendered[0], rendered[1], rendered[2]);
                     }
-                    Builtin::CppPointee => return format!("((void*)({}))", rendered[1]),
+                    Builtin::CppPointee => return format!("((void)({}), (void*)({}))", rendered[0], rendered[1]),
                     Builtin::CppObjectGive => {
                         return format!("({RT}obj_retain(({RT}obj_header*)({0})), {RT}obj_pin(({RT}obj_header*)({0})))", rendered[0]);
                     }

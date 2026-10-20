@@ -7816,7 +7816,9 @@ fn import_c_parses_a_header_again_only_when_it_changes() {
     assert!(!records.is_empty());
     let bytes = std::fs::read(&records[0]).unwrap();
     assert_eq!(bytes[0] >> 5, 5, "not a CBOR map");
-    assert_eq!(&bytes[1..9], b"\x67version", "the record does not open with its version");
+    // A map of 24 keys or more gives its count in the byte after its head.
+    let head = if bytes[0] & 0x1f < 24 { 1 } else { 2 };
+    assert_eq!(&bytes[head..head + 8], b"\x67version", "the record does not open with its version");
     for wanted in ["files", "clang", "overlay", "contracts", "layouts", "cached.h"] {
         assert!(bytes.windows(wanted.len()).any(|window| window == wanted.as_bytes()), "the record lacks {wanted}");
     }
