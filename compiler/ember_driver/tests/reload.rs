@@ -858,7 +858,7 @@ fn wait_for(lines: &std::sync::mpsc::Receiver<(bool, String)>, stdout: bool, nee
 #[test]
 fn run_hot_applies_an_edit_at_the_next_checkpoint() {
     // The program waits for the edit by time (two minutes, past `wait_for`'s minute), not by a count
-    // of turns, which a fast machine finishes before the edit is built.
+    // of turns, which a fast machine finishes before the edit is built (D-760).
     let source = "import std.hot\nimport std.time\n\nfn version() -> int:\n    return 1\n\nfn main():\n    println(\"started\")\n    \
                   start = time.Instant.now()\n    while version() == 1 and start.elapsed().as_millis() < 120000:\n        hot.checkpoint()\n    \
                   println(f\"now {version()}\")\n";

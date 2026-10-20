@@ -10816,6 +10816,8 @@ formal 1/9 count or Phase 2's estimate.
 > Next helper job N4 (the rest of Annex C): scratchpad jobs/job_N4.md.
 > ADR-246: `[TST-6]` done — Annex A generated from a fixture that compiles; ODR-155 cut as
 > `0.9.10_Hardened_27` (the development target). ADR-247: `ember doc` (`[DOC-3]`).
+> D-760 reopened and fixed: `ember run --hot` looked at the sources after starting the program, so an
+> edit made meanwhile was never seen (CI's gcc runner, reproduced in WSL on four cores).
 > ADR-238: helper N's second job merged (ODR-145..149 built, D-742..D-746 and D-756..D-758 fixed;
 > FFI-6a/6b/29/30c and TST-7 done). Two owner questions open in tasks/90/owner-questions.md.
 > D-754 open: CI's gate found `s3_skip_step_take` (gcc 1.30x), `s2_zip_and`, `a06_enum_match` (gcc) and

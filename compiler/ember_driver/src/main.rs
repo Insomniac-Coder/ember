@@ -5371,6 +5371,10 @@ fn run_hot(input: &Path, options: &Options) -> Result<ExitCode, String> {
         return Err("`ember run --hot` builds under `debug`".to_string());
     }
     let build = Options { emit: None, ..options_for_hot(options, false) };
+    // D-760 — the sources as they are before the first build, so an edit made at any moment after
+    // it starts is seen: one made while the program starts, before a later look, was not.
+    let root = package_source_root(input);
+    let mut seen = source_stamp(&root);
     let code = compile(input, "build", &build)?;
     if code != ExitCode::SUCCESS {
         return Ok(code);
@@ -5383,8 +5387,6 @@ fn run_hot(input: &Path, options: &Options) -> Result<ExitCode, String> {
         .env(format!("{}_HOT", ember_branding::SYMBOL_PREFIX.to_uppercase()), "1")
         .spawn()
         .map_err(|error| format!("cannot start `{}`: {error}", host.display()))?;
-    let root = package_source_root(input);
-    let mut seen = source_stamp(&root);
     loop {
         if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
             if let Some(how) = abnormal_end(&status) {
@@ -5399,6 +5401,12 @@ fn run_hot(input: &Path, options: &Options) -> Result<ExitCode, String> {
         std::thread::sleep(std::time::Duration::from_millis(100));
         let now = source_stamp(&root);
         if now != seen {
+            // `[HR-33]` — which edit the next build is for, so a reload that is slow to come shows
+            // it was seen (D-760).
+            let changed = now.iter().find(|stamp| !seen.contains(stamp)).or(seen.iter().find(|stamp| !now.contains(stamp)));
+            if let Some((path, _, _)) = changed {
+                eprintln!("rebuilding after an edit to {}", path.display());
+            }
             seen = now;
             // A failed build is reported and changes nothing the program runs ([HR-41]).
             match compile(input, "build", &options_for_hot(options, true)) {
