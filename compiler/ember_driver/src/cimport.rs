@@ -375,7 +375,10 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
             // Unparenthesised: Clang evaluates a string only as the literal itself.
             let _ = writeln!(probe, "static const __auto_type {}_macro_{index} = {name};", ember_branding::SYMBOL_PREFIX);
         }
-        let unit = Unit::parse(&main, &probe, &args)?;
+        // Every macro's error reported, however many: each names its own line.
+        let mut probe_args = args.clone();
+        probe_args.push("-ferror-limit=0".to_string());
+        let unit = Unit::parse(&main, &probe, &probe_args)?;
         let main_name = main.to_string_lossy().replace('\\', "/");
         let mut reasons: HashMap<usize, String> = HashMap::new();
         for note in unit.notes().into_iter().filter(|note| note.error) {
@@ -392,12 +395,21 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
                 values.insert(index, cursor);
             }
         }
+        // `[FFI-6a]` (ODR-145) — a null-pointer or pointer-cast macro: its address, from a third parse.
+        let mut addresses: Vec<(usize, String)> = Vec::new();
         for (index, (name, at)) in macros.iter().enumerate() {
             let outcome = match (reasons.get(&index), values.get(&index)) {
                 (Some(reason), _) => Err(format!("Clang: {reason}")),
                 (None, Some(&cursor)) => writer.constant_value(cursor),
                 (None, None) => Err("Clang made no declaration of its value".to_string()),
             };
+            if outcome.is_err()
+                && reasons.get(&index).is_none()
+                && let Some(pointer) = values.get(&index).and_then(|&cursor| writer.pointer_constant(cursor))
+            {
+                addresses.push((index, pointer));
+                continue;
+            }
             match outcome {
                 Ok((ty, value)) if writer.claim(name) => {
                     writer.push(name, Kind::Const, format!("const {}: {ty} = {value}", ident(name)));
@@ -408,6 +420,49 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
                     at: at.clone(),
                 }),
                 Err(reason) => writer.macro_skipped.push(Skipped { name: name.clone(), reason, at: at.clone() }),
+            }
+        }
+        if !addresses.is_empty() {
+            let mut probe = include.clone();
+            for (line, (index, _)) in addresses.iter().enumerate() {
+                let _ = writeln!(probe, "static const unsigned long long {prefix}{line} = (unsigned long long)({});", macros[*index].0);
+            }
+            let unit = Unit::parse(&main, &probe, &probe_args)?;
+            let mut reasons: HashMap<usize, String> = HashMap::new();
+            for note in unit.notes().into_iter().filter(|note| note.error) {
+                if note.file.replace('\\', "/") == main_name && note.line >= 2 {
+                    reasons.entry(note.line as usize - 2).or_insert(note.text);
+                }
+            }
+            let mut values: HashMap<usize, u64> = HashMap::new();
+            for cursor in children(unit.cursor()) {
+                if kind(cursor) == CXCursor_VarDecl
+                    && let Some(line) = spelling(cursor).strip_prefix(&prefix).and_then(|line| line.parse::<usize>().ok())
+                    && let Some(address) = evaluate_unsigned(cursor)
+                {
+                    values.insert(line, address);
+                }
+            }
+            for (line, (index, pointer)) in addresses.iter().enumerate() {
+                let (name, at) = &macros[*index];
+                match (values.get(&line), reasons.get(&line)) {
+                    (Some(address), _) if writer.claim(name) => {
+                        writer.push(name, Kind::Const, format!("const {}: {pointer} = {address}usize as {pointer}", ident(name)));
+                    }
+                    (Some(_), _) => writer.macro_skipped.push(Skipped {
+                        name: name.clone(),
+                        reason: "its name is taken by a declaration of the header".to_string(),
+                        at: at.clone(),
+                    }),
+                    (None, reason) => writer.macro_skipped.push(Skipped {
+                        name: name.clone(),
+                        reason: match reason {
+                            Some(reason) => format!("a pointer whose address Clang does not evaluate: {reason}"),
+                            None => "a pointer whose address Clang does not evaluate to an integer".to_string(),
+                        },
+                        at: at.clone(),
+                    }),
+                }
             }
         }
     }
@@ -1107,6 +1162,24 @@ impl Writer {
         }
     }
 
+    /// `[FFI-6a]` (ODR-145) — the Ember pointer type of a macro whose value is a data pointer that
+    /// is no string: `*mut void` for `((void*)0)`. A function pointer is not one.
+    fn pointer_constant(&mut self, cursor: CXCursor) -> Option<String> {
+        // SAFETY(ffi): a live variable cursor.
+        unsafe {
+            let ty = clang_getCanonicalType(clang_getCursorType(cursor));
+            if ty.kind != CXType_Pointer {
+                return None;
+            }
+            let pointee = clang_getPointeeType(ty);
+            if matches!(clang_getCanonicalType(pointee).kind, CXType_FunctionProto | CXType_FunctionNoProto) {
+                return None;
+            }
+            let inner = self.ty(pointee, true).ok()?;
+            Some(format!("*{}{inner}", if clang_isConstQualifiedType(pointee) != 0 { "" } else { "mut " }))
+        }
+    }
+
     /// A constant's Ember type and literal, as Clang evaluates it (`[FFI-6a]`).
     fn constant_value(&mut self, cursor: CXCursor) -> Result<(String, String), String> {
         // SAFETY(ffi): a live variable cursor; the result is disposed.
@@ -1124,7 +1197,7 @@ impl Writer {
             if ty.kind == CXType_Pointer {
                 let pointee = clang_getCanonicalType(clang_getPointeeType(ty)).kind;
                 if !matches!(pointee, CXType_Char_S | CXType_Char_U) {
-                    return Err("a pointer constant: Ember's compile-time values cannot be pointers ([CT-5])".to_string());
+                    return Err("a function pointer: a `const` holds only an address of data ([CT-2])".to_string());
                 }
             }
             let result = clang_Cursor_Evaluate(cursor);
@@ -2568,6 +2641,20 @@ fn c_declaration(ty: CXType, name: &str) -> String {
             }
             _ => format!("{} {name}", type_spelling(ty)).trim_end().to_string(),
         }
+    }
+}
+
+/// The unsigned integer Clang evaluates a variable's initialiser to.
+fn evaluate_unsigned(cursor: CXCursor) -> Option<u64> {
+    // SAFETY(ffi): a live variable cursor; the result is disposed.
+    unsafe {
+        let result = clang_Cursor_Evaluate(cursor);
+        if result.is_null() {
+            return None;
+        }
+        let value = (clang_EvalResult_getKind(result) == CXEval_Int).then(|| clang_EvalResult_getAsUnsigned(result));
+        clang_EvalResult_dispose(result);
+        value
     }
 }
 

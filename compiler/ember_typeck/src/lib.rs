@@ -2224,6 +2224,8 @@ struct Checker<'a> {
     foreign_skipped: Vec<Option<(String, HashMap<Symbol, String>)>>,
     /// `[TCB-1]` — per module: the overlay entries whose `instrumented` grade evidence backs.
     foreign_backed: Vec<HashSet<Symbol>>,
+    /// `[CT-2]` (ODR-145) — a `const`'s initialiser is being checked.
+    const_initializer: bool,
     /// Declaration spans for module items, keyed by their canonical names.
     /// N1 uses each span's file identity before considering its offset, so
     /// imported aliases never compare unrelated source coordinates.
@@ -2864,6 +2866,7 @@ impl<'a> Checker<'a> {
             ambiguous_globs: vec![HashMap::new()],
             foreign_skipped: Vec::new(),
             foreign_backed: Vec::new(),
+            const_initializer: false,
             item_spans: HashMap::new(),
             item_visibility: HashMap::new(),
             namespaces: vec![HashMap::new()],
@@ -6705,7 +6708,9 @@ impl<'a> Checker<'a> {
         if self.types.is_untyped_literal(ty) {
             return ExprConst { value: value.clone(), module, ok: true, public: true, folded: None, pending: false };
         }
+        let outer = std::mem::replace(&mut self.const_initializer, true);
         let checked = self.check_field_default(value, ty, module, DefaultOwner::Constant);
+        self.const_initializer = outer;
         if self.sink.error_count() != before {
             return refused();
         }
@@ -7117,6 +7122,8 @@ impl<'a> Checker<'a> {
         match &expr.kind {
             ast::ExprKind::Lit(_) => true,
             ast::ExprKind::Paren(inner) | ast::ExprKind::Unary { operand: inner, .. } => self.is_const_expr(inner),
+            // `[CT-2]` (ODR-145) — `0 as *mut T`: a pointer made from an integer.
+            ast::ExprKind::Cast { expr: inner, ty } if matches!(ty.kind, ast::TypeKind::Ptr { .. }) => self.is_const_expr(inner),
             ast::ExprKind::Binary { lhs, rhs, .. } | ast::ExprKind::Logical { lhs, rhs, .. } => {
                 self.is_const_expr(lhs) && self.is_const_expr(rhs)
             }
@@ -33349,8 +33356,11 @@ impl<'a> Checker<'a> {
                      TyKind::Ptr { mutable: target_mutable, inner: target })
                         if source == target && (!target_mutable || *source_mutable)
                 );
+                // `[CT-2]` (ODR-145) — a `const`'s pointer made from an integer is an address read
+                // by nothing: it asks no `unsafe`, as a cast at run time does (`[UNS-1]`).
+                let constant_address = self.const_initializer && pointer_integer_cast && self.types.is_integral(inner.ty);
                 if pointer_integer_cast || pointer_pointer_cast {
-                    if !self.unsafe_context() {
+                    if !constant_address && !self.unsafe_context() {
                         self.error(codes::E3100, span, if pointer_integer_cast {
                             "casting between a raw pointer and an integer requires `unsafe`"
                         } else {

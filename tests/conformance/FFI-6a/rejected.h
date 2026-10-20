@@ -6,4 +6,5 @@ int rejected_next(void);
 #define REJECTED_TYPE unsigned int
 #define REJECTED_CALL rejected_next()
 #define REJECTED_KEPT 1
+#define REJECTED_FEATURE
 #endif

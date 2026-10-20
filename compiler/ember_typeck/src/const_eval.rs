@@ -36,6 +36,8 @@ enum FoldedKind {
     List(Vec<Folded>),
     /// `[CT-5]` — a `String` the evaluator made.
     Text(String),
+    /// `[CT-2]` (ODR-145) — a raw pointer made from an integer: an address, read by nothing.
+    Address(u128),
 }
 
 impl Folded {
@@ -106,6 +108,7 @@ impl Folded {
                 out.push_str(&format!(" v{}", items.len()));
                 items_text(items, out);
             }
+            FoldedKind::Address(address) => out.push_str(&format!(" a{address}")),
         }
     }
 
@@ -146,6 +149,11 @@ impl Folded {
                 let fixed = types.intern(TyKind::Array { elem, len: items.len() as u64 });
                 let literal = Expr { ty: fixed, kind: ExprKind::ArrayLit(all(types, items)), span };
                 ExprKind::Builtin { which: ember_hir::Builtin::ArrayFromLiteral, args: vec![literal] }
+            }
+            // The address, a `usize`, cast to the pointer type.
+            FoldedKind::Address(address) => {
+                let usize = types.intern(TyKind::Uint(ember_types::UintTy::Usize));
+                ExprKind::Cast { expr: Box::new(Expr { ty: usize, kind: ExprKind::Int(*address), span }), to: ty }
             }
         };
         Expr { ty, kind, span }
@@ -219,6 +227,23 @@ pub(crate) fn fold(types: &TypeTable, expr: &Expr, policy: OverflowPolicy) -> Re
             let a = scalar(&left).ok_or(Failure::Unsupported(span))?;
             let b = scalar(&right).ok_or(Failure::Unsupported(span))?;
             binary(types, *op, a, b, left.ty, ty, span, policy)?
+        }
+        // `[CT-2]` (ODR-145) — `0 as *mut T`, `-1 as *mut T`: the integer's low bits at the
+        // pointer's width, as the cast makes them at run time; through `usize` for a 128-bit one.
+        ExprKind::Cast { expr: inner, to } if matches!(types.kind(*to), TyKind::Ptr { .. })
+            || (matches!(types.kind(*to), TyKind::Uint(ember_types::UintTy::Usize)) && matches!(types.kind(inner.ty), TyKind::Int(_) | TyKind::Uint(_))) => {
+            let bits = types.pointer_size() * 8;
+            let low = |value: u128| if bits >= 128 { value } else { value & ((1u128 << bits) - 1) };
+            let address = match scalar(&fold(types, inner, policy)?).ok_or(Failure::Unsupported(span))? {
+                Num::Signed(value) => low(value as u128),
+                Num::Unsigned(value) => low(value),
+                _ => return Err(Failure::Unsupported(span)),
+            };
+            if matches!(types.kind(*to), TyKind::Ptr { .. }) {
+                at(FoldedKind::Address(address))
+            } else {
+                at(FoldedKind::Scalar(Num::Unsigned(address)))
+            }
         }
         _ => return Err(Failure::Unsupported(span)),
     })
@@ -688,6 +713,7 @@ fn read_one<'t>(types: &TypeTable, ty: Ty, tokens: &mut impl Iterator<Item = &'t
             at(FoldedKind::List(fields(vec![*elem; len], tokens)?))
         }
         TyKind::Void => (token == "_").then(|| Folded { ty, kind: FoldedKind::Tuple(Vec::new()) }),
+        TyKind::Ptr { .. } => at(FoldedKind::Address(token.strip_prefix('a')?.parse().ok()?)),
         _ => None,
     }
 }
